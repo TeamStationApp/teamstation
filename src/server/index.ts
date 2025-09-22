@@ -1,39 +1,35 @@
 import cluster from 'cluster'
-import cors from 'cors'
 import { forkChildren } from 'edge-server-tools'
 import express from 'express'
 import http from 'http'
+import { makeExpressRoute } from 'serverlet/express'
 
-import { logging } from './logging'
-import { topRouter } from './router'
 import { serverConfig } from './serverConfig'
-
-const app = express()
-
-// Add analytics:
-app.use(logging)
-
-// Use bodyParser to get the data from a POST:
-app.use(express.json({ limit: '15mb' }))
-
-// Allow CORS requests:
-app.use(cors())
-
-// Route API and other specific paths to topRouter
-app.use('/', topRouter)
+import { allRoutes } from './urls'
 
 async function main(): Promise<void> {
-  const { listenPort = 8008, listenHost } = serverConfig
   if (cluster.isPrimary) {
     forkChildren()
   } else {
-    // Start the HTTP server:
-    const httpServer = http.createServer(app)
-    httpServer.listen(listenPort, listenHost)
-    console.log(`HTTP server listening on port ${listenPort}`)
+    await server()
   }
 }
 
-main().catch((e: unknown) => {
-  console.log(e)
+async function server(): Promise<void> {
+  // Set up Express:
+  const app = express()
+  app.enable('trust proxy')
+  app.use(express.json({ limit: '15mb' }))
+  app.use('/', makeExpressRoute(allRoutes))
+
+  // Start the HTTP server:
+  const { listenPort = 8008, listenHost } = serverConfig
+  const httpServer = http.createServer(app)
+  httpServer.listen(listenPort, listenHost)
+  console.log(`HTTP server listening on port ${listenPort}`)
+}
+
+main().catch((error: unknown) => {
+  console.error(error)
+  process.exit(1)
 })

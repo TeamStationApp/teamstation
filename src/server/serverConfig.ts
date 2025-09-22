@@ -1,5 +1,5 @@
 import { makeConfig } from 'cleaner-config'
-import { asNumber, asObject, asOptional, asString } from 'cleaners'
+import { asArray, asNumber, asObject, asOptional, asString } from 'cleaners'
 
 const configPath = './serverConfig.json'
 
@@ -22,6 +22,34 @@ const asServerConfig = asObject({
   couchUri: asOptional(
     asString,
     `http://${COUCH_USERNAME}:${COUCH_PASSWORD}@${COUCH_HOSTNAME}:5984`
+  ),
+
+  // LWS server:
+  lwsServers: asOptional(
+    asArray(
+      asObject({
+        url: asString,
+        shard: asNumber
+      })
+    ),
+    [
+      {
+        url: 'https://monerolws-wusa1.edge.app',
+        shard: 1
+      },
+      {
+        url: 'https://monerolws-wusa2.edge.app',
+        shard: 2
+      },
+      {
+        url: 'https://monerolws-wusa3.edge.app',
+        shard: 3
+      },
+      {
+        url: 'https://monerolws-wusa4.edge.app',
+        shard: 4
+      }
+    ]
   )
 })
 
