@@ -1,7 +1,15 @@
+import type { DatabaseSetup } from 'edge-server-tools'
 import { setupDatabase } from 'edge-server-tools'
 
-import { settingsDatabaseSetup } from './db/settingsDb'
 import { serverConfig } from './serverConfig'
+
+const settingsDatabaseSetup: DatabaseSetup = {
+  name: 'lwsbalancer_settings',
+
+  templates: {
+    settings: {}
+  }
+}
 
 const databases = [settingsDatabaseSetup]
 
