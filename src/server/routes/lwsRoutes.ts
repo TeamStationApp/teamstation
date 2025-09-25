@@ -1,7 +1,7 @@
 import type { Serverlet } from 'serverlet'
 
 import { serverConfig } from '../serverConfig'
-import type { LwsRequest } from '../types/requestTypes'
+import type { LwsRequest } from '../types/types'
 
 function selectRandomLwsServer(): string {
   const servers = serverConfig.lwsServers

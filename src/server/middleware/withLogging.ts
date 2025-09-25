@@ -1,6 +1,6 @@
 import type { Serverlet } from 'serverlet'
 
-import type { LwsRequest } from '../types/requestTypes'
+import type { LwsRequest } from '../types/types'
 
 export function withLogging<T extends LwsRequest>(
   name: string,

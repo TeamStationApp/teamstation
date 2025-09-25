@@ -9,12 +9,8 @@ import {
   postLwsSubmitRawTx,
   postLwsUnspentOuts
 } from './routes/lwsRoutes'
-import type { LwsRequest } from './types/requestTypes'
-import {
-  statusCodes,
-  statusResponse,
-  successResponse
-} from './types/responseTypes'
+import type { LwsRequest } from './types/types'
+import { statusCodes, statusResponse, successResponse } from './types/types'
 
 const missingRoute = withLogging('missing', (request: LwsRequest) =>
   statusResponse(
