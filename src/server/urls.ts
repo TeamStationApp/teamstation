@@ -1,5 +1,7 @@
 import { pickMethod, pickPath, type Serverlet, withCors } from 'serverlet'
+import type { ExpressRequest } from 'serverlet/express'
 
+import { withKeys } from './middleware/withKeys'
 import { withLogging } from './middleware/withLogging'
 import {
   postLwsAddressInfo,
@@ -9,10 +11,9 @@ import {
   postLwsSubmitRawTx,
   postLwsUnspentOuts
 } from './routes/lwsRoutes'
-import type { LwsRequest } from './types/types'
 import { statusCodes, statusResponse, successResponse } from './types/types'
 
-const missingRoute = withLogging('missing', (request: LwsRequest) =>
+const missingRoute = withLogging('missing', (request: ExpressRequest) =>
   statusResponse(
     request,
     statusCodes.notFound,
@@ -20,20 +21,20 @@ const missingRoute = withLogging('missing', (request: LwsRequest) =>
   )
 )
 
-const healthCheckRoute = withLogging('healthCheck', (request: LwsRequest) =>
+const healthCheckRoute = withLogging('healthCheck', (request: ExpressRequest) =>
   successResponse(request, { status: 'ok', service: 'monero-lws-balancer' })
 )
 
-const urls: Record<string, Serverlet<LwsRequest>> = {
+const urls: Record<string, Serverlet<ExpressRequest>> = {
   '/': healthCheckRoute,
 
   // Monero LWS endpoints - ONLY the requested endpoints, all POST
   '/get_address_info': pickMethod({
-    POST: withLogging('postLwsAddressInfo', postLwsAddressInfo)
+    POST: withLogging('postLwsAddressInfo', withKeys(postLwsAddressInfo))
   }),
 
   '/get_address_txs': pickMethod({
-    POST: withLogging('postLwsAddressTxs', postLwsAddressTxs)
+    POST: withLogging('postLwsAddressTxs', withKeys(postLwsAddressTxs))
   }),
 
   '/get_random_outs': pickMethod({
@@ -41,15 +42,15 @@ const urls: Record<string, Serverlet<LwsRequest>> = {
   }),
 
   '/get_unspent_outs': pickMethod({
-    POST: withLogging('postLwsUnspentOuts', postLwsUnspentOuts)
+    POST: withLogging('postLwsUnspentOuts', withKeys(postLwsUnspentOuts))
   }),
 
   '/login': pickMethod({
-    POST: withLogging('postLwsLogin', postLwsLogin)
+    POST: withLogging('postLwsLogin', withKeys(postLwsLogin))
   }),
 
   '/submit_raw_tx': pickMethod({
-    POST: withLogging('postLwsSubmitRawTx', postLwsSubmitRawTx)
+    POST: withLogging('postLwsSubmitRawTx', withKeys(postLwsSubmitRawTx))
   })
 }
 

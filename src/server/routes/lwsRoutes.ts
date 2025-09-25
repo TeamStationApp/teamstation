@@ -1,4 +1,5 @@
 import type { Serverlet } from 'serverlet'
+import type { ExpressRequest } from 'serverlet/express'
 
 import { serverConfig } from '../serverConfig'
 import type { LwsRequest } from '../types/types'
@@ -98,7 +99,7 @@ export const postLwsAddressTxs: Serverlet<LwsRequest> = async request => {
   }
 }
 
-export const postLwsRandomOuts: Serverlet<LwsRequest> = async request => {
+export const postLwsRandomOuts: Serverlet<ExpressRequest> = async request => {
   try {
     const response = await makeLwsRequest(
       '/get_random_outs',

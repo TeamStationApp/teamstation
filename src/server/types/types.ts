@@ -1,7 +1,11 @@
+import { asNumber, asObject, asOptional, asString } from 'cleaners'
 import type { ExpressRequest } from 'serverlet/express'
-export interface LwsRequest extends ExpressRequest {
-  // Extended request interface for LWS operations
-  // The ExpressRequest already has req.body, req.query, req.ip through the req property
+
+export type LwsRequest = ExpressRequest & {
+  address: string
+  apiKey: string
+  viewKey: string
+  birthdayHeight?: number
 }
 
 export const statusCodes = {
@@ -20,7 +24,7 @@ export interface ServerletResponse {
 }
 
 export function successResponse(
-  request: LwsRequest,
+  request: ExpressRequest,
   data?: any
 ): ServerletResponse {
   return {
@@ -31,7 +35,7 @@ export function successResponse(
 }
 
 export function statusResponse(
-  request: LwsRequest,
+  request: ExpressRequest,
   status: number,
   message: string
 ): ServerletResponse {
@@ -43,7 +47,7 @@ export function statusResponse(
 }
 
 export function jsonResponse(
-  request: LwsRequest,
+  request: ExpressRequest,
   data: any,
   status: number = statusCodes.ok
 ): ServerletResponse {
@@ -53,3 +57,12 @@ export function jsonResponse(
     body: JSON.stringify(data)
   }
 }
+
+export const asLwsKeys = asObject({
+  address: asString,
+  api_key: asString,
+  view_key: asString,
+  birthday_height: asOptional(asNumber)
+})
+
+export type LwsKeys = ReturnType<typeof asLwsKeys>

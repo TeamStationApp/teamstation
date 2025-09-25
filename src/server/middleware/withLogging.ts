@@ -1,11 +1,10 @@
 import type { Serverlet } from 'serverlet'
+import type { ExpressRequest } from 'serverlet/express'
 
-import type { LwsRequest } from '../types/types'
-
-export function withLogging<T extends LwsRequest>(
+export function withLogging(
   name: string,
-  serverlet: Serverlet<T>
-): Serverlet<T> {
+  serverlet: Serverlet<ExpressRequest>
+): Serverlet<ExpressRequest> {
   return async request => {
     const startTime = Date.now()
     const { method, path, req } = request
