@@ -1,13 +1,21 @@
-import type { Serverlet } from 'serverlet'
+import type { HttpResponse, Serverlet } from 'serverlet'
 import type { ExpressRequest } from 'serverlet/express'
 
+import { getAddress, updateAddress } from '../db/couch'
 import { serverConfig } from '../serverConfig'
-import type { LwsRequest } from '../types/types'
+import {
+  asLwsAddressInfo,
+  type LwsAddress,
+  type LwsRequest
+} from '../types/types'
+import { logger } from '../util/utils'
 
 function selectRandomLwsServer(): string {
-  const servers = serverConfig.lwsServers
-  const randomIndex = Math.floor(Math.random() * servers.length)
-  return servers[randomIndex].url
+  // const servers = serverConfig.lwsServers
+  // const randomIndex = Math.floor(Math.random() * servers.length)
+  // return servers[randomIndex].url
+  // XXX Hardcode to proxy mymonero.com
+  return serverConfig.myMoneroServer
 }
 
 async function makeLwsRequest(
@@ -23,6 +31,8 @@ async function makeLwsRequest(
     Accept: 'application/json'
   }
 
+  body.api_key = serverConfig.myMoneroApiKey
+
   const requestOptions: RequestInit = {
     method,
     headers,
@@ -32,7 +42,7 @@ async function makeLwsRequest(
   return await fetch(targetUrl, requestOptions)
 }
 
-async function handleLwsResponse(response: Response): Promise<any> {
+async function handleLwsResponse(response: Response): Promise<HttpResponse> {
   const headersToForward = [
     'content-type',
     'content-length',
@@ -59,7 +69,7 @@ async function handleLwsResponse(response: Response): Promise<any> {
   }
 }
 
-function handleLwsError(error: unknown): any {
+function handleLwsError(error: unknown): HttpResponse {
   console.error('Error proxying to LWS server:', error)
   return {
     status: 500,
@@ -74,15 +84,55 @@ function handleLwsError(error: unknown): any {
 // Individual LWS endpoint implementations - ONLY the requested endpoints
 
 export const postLwsAddressInfo: Serverlet<LwsRequest> = async request => {
+  const { address, viewKey } = request
+  let responseText: string | undefined
   try {
     const response = await makeLwsRequest(
       '/get_address_info',
       'POST',
       request.req.body
     )
-    return await handleLwsResponse(response)
+    const out = await handleLwsResponse(response)
+    responseText = out.body as string
+    return out
   } catch (error) {
     return handleLwsError(error)
+  } finally {
+    try {
+      if (responseText != null) {
+        const { start_height: birthdayHeight } = asLwsAddressInfo(
+          JSON.parse(responseText)
+        )
+        const existingAddress = await getAddress(address)
+        const now = new Date()
+        if (existingAddress != null) {
+          existingAddress.doc.lastVisitedDate = now
+          existingAddress.doc._id = existingAddress.id
+          existingAddress.doc._rev = existingAddress.rev
+          await updateAddress(existingAddress.doc)
+          logger(
+            '/get_address_info: Updated address',
+            address,
+            now.toISOString()
+          )
+        } else {
+          const newAddress: LwsAddress = {
+            _id: address,
+            _rev: undefined,
+            address,
+            birthdayHeight,
+            lastVisitedDate: now,
+            firstSeenDate: now,
+            shard: null,
+            viewKey
+          }
+          await updateAddress(newAddress)
+          logger('/get_address_info: Added address', address, birthdayHeight)
+        }
+      }
+    } catch (error) {
+      logger('/get_address_info: Error updating address', address, error)
+    }
   }
 }
 

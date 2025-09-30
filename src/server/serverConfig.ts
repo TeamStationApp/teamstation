@@ -21,8 +21,12 @@ const asServerConfig = asObject({
   // Databases:
   couchUri: asOptional(
     asString,
-    `http://${COUCH_USERNAME}:${COUCH_PASSWORD}@${COUCH_HOSTNAME}:5984`
+    `https://${COUCH_USERNAME}:${COUCH_PASSWORD}@${COUCH_HOSTNAME}:6984`
   ),
+
+  // MyMonero server:
+  myMoneroServer: asOptional(asString, 'https://edge.mymonero.com:8443'),
+  myMoneroApiKey: asOptional(asString, 'xxxxx'),
 
   // LWS server:
   lwsServers: asOptional(

@@ -1,5 +1,5 @@
 import type { DatabaseSetup } from 'edge-server-tools'
-import { setupDatabase } from 'edge-server-tools'
+import { makeMangoIndex, setupDatabase } from 'edge-server-tools'
 
 import { serverConfig } from './serverConfig'
 import { logger } from './util/utils'
@@ -12,7 +12,20 @@ const settingsDatabaseSetup: DatabaseSetup = {
   }
 }
 
-const databases = [settingsDatabaseSetup]
+const addressesDatabaseSetup: DatabaseSetup = {
+  name: 'lwsbalancer_addresses',
+
+  documents: {
+    '_design/birthdayHeight': makeMangoIndex('birthdayHeight', [
+      'birthdayHeight'
+    ]),
+    '_design/lastVisitedDate': makeMangoIndex('lastVisitedDate', [
+      'lastVisitedDate'
+    ])
+  }
+}
+
+const databases = [settingsDatabaseSetup, addressesDatabaseSetup]
 
 async function main(): Promise<void> {
   const { couchUri } = serverConfig
