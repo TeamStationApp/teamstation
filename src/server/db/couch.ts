@@ -1,17 +1,25 @@
+import { syncedDocument } from 'edge-server-tools'
 import nano from 'nano'
 
 import { serverConfig } from '../serverConfig'
 import {
+  asApiKeys,
   asLwsAddressDoc,
   type LwsAddress,
   type LwsAddressDoc
 } from '../types/types'
-import { logger } from '../util/utils'
+import { createSyncInterval, logger } from '../util/utils'
 
 // Attach to the database:
-const dbAddresses: nano.DocumentScope<LwsAddress> = nano(
-  serverConfig.couchUri
-).db.use('lwsbalancer_addresses')
+const { couchUri } = serverConfig
+
+const dbSettings: nano.DocumentScope<any> = nano(couchUri).db.use(
+  'lwsbalancer_settings'
+)
+
+const dbAddresses: nano.DocumentScope<LwsAddress> = nano(couchUri).db.use(
+  'lwsbalancer_addresses'
+)
 
 export const getAddress = async (
   address: string
@@ -34,3 +42,6 @@ export const getAddress = async (
 export const updateAddress = async (address: LwsAddress): Promise<void> => {
   await dbAddresses.insert(address)
 }
+
+export const apiKeysSyncDoc = syncedDocument('apikeys', asApiKeys)
+createSyncInterval(apiKeysSyncDoc, dbSettings)

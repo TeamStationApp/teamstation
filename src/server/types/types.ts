@@ -5,7 +5,8 @@ import {
   asNumber,
   asObject,
   asOptional,
-  asString
+  asString,
+  asValue
 } from 'cleaners'
 import { asCouchDoc } from 'edge-server-tools'
 import type { ExpressRequest } from 'serverlet/express'
@@ -80,9 +81,27 @@ export const asLwsAddress = asObject({
 
 export const asLwsAddressDoc = asCouchDoc(asLwsAddress)
 
+export const asApiKeys = asObject({
+  apiKeys: asOptional(
+    asObject(
+      asObject({
+        apiKey: asString,
+        email: asString,
+        status: asValue('active', 'disabled'),
+        createdAt: asDate
+      })
+    ),
+    {}
+  )
+})
+
+export const asLwsApiKey = asObject({
+  api_key: asString
+})
+
 export const asLwsKeys = asObject({
+  ...asLwsApiKey.shape,
   address: asString,
-  api_key: asString,
   view_key: asString,
   birthday_height: asOptional(asNumber)
 })

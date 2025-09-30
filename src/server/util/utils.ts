@@ -1,4 +1,7 @@
+import type { SyncedDocument } from 'edge-server-tools'
 import type nano from 'nano'
+
+const ONE_MINUTE = 60 * 1000
 
 /**
  * Removes _id and _rev from a CouchDb document.
@@ -33,4 +36,27 @@ export function safelyCall<In extends any[], Out>(
 export const logger = (...args: any[]): void => {
   const isoDate = new Date().toISOString()
   console.log(`${isoDate}:`, ...args)
+}
+
+/**
+ * Create an interval to manually refresh the synced document.
+ * This is a workaround in case we lose the connection to the CouchDB changes feed.
+ */
+export const createSyncInterval = (
+  syncedDocument: SyncedDocument<unknown>,
+  db: nano.DocumentScope<any>,
+  interval: number = 30 * ONE_MINUTE
+): void => {
+  syncedDocument
+    .sync(db)
+    .then(() => {
+      setInterval(() => {
+        syncedDocument.sync(db).catch((e: unknown) => {
+          console.error('interval sync error', syncedDocument.id, e)
+        })
+      }, interval)
+    })
+    .catch((e: unknown) => {
+      console.error('createSyncInterval error', syncedDocument.id, e)
+    })
 }

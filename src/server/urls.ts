@@ -1,6 +1,7 @@
 import { pickMethod, pickPath, type Serverlet, withCors } from 'serverlet'
 import type { ExpressRequest } from 'serverlet/express'
 
+import { withApiKey } from './middleware/withApiKey'
 import { withKeys } from './middleware/withKeys'
 import { withLogging } from './middleware/withLogging'
 import {
@@ -30,27 +31,39 @@ const urls: Record<string, Serverlet<ExpressRequest>> = {
 
   // Monero LWS endpoints - ONLY the requested endpoints, all POST
   '/get_address_info': pickMethod({
-    POST: withLogging('postLwsAddressInfo', withKeys(postLwsAddressInfo))
+    POST: withLogging(
+      'postLwsAddressInfo',
+      withApiKey(withKeys(postLwsAddressInfo))
+    )
   }),
 
   '/get_address_txs': pickMethod({
-    POST: withLogging('postLwsAddressTxs', withKeys(postLwsAddressTxs))
+    POST: withLogging(
+      'postLwsAddressTxs',
+      withApiKey(withKeys(postLwsAddressTxs))
+    )
   }),
 
   '/get_random_outs': pickMethod({
-    POST: withLogging('postLwsRandomOuts', postLwsRandomOuts)
+    POST: withLogging('postLwsRandomOuts', withApiKey(postLwsRandomOuts))
   }),
 
   '/get_unspent_outs': pickMethod({
-    POST: withLogging('postLwsUnspentOuts', withKeys(postLwsUnspentOuts))
+    POST: withLogging(
+      'postLwsUnspentOuts',
+      withApiKey(withKeys(postLwsUnspentOuts))
+    )
   }),
 
   '/login': pickMethod({
-    POST: withLogging('postLwsLogin', withKeys(postLwsLogin))
+    POST: withLogging('postLwsLogin', withApiKey(withKeys(postLwsLogin)))
   }),
 
   '/submit_raw_tx': pickMethod({
-    POST: withLogging('postLwsSubmitRawTx', withKeys(postLwsSubmitRawTx))
+    POST: withLogging(
+      'postLwsSubmitRawTx',
+      withApiKey(withKeys(postLwsSubmitRawTx))
+    )
   })
 }
 

@@ -8,7 +8,16 @@ const settingsDatabaseSetup: DatabaseSetup = {
   name: 'lwsbalancer_settings',
 
   templates: {
-    settings: {}
+    apikeys: {
+      apiKeys: {
+        xxxApiKeyExample: {
+          apiKey: 'xxxApiKeyExample',
+          email: 'xxx@example.com',
+          status: 'active',
+          createdAt: new Date().toISOString()
+        }
+      }
+    }
   }
 }
 
