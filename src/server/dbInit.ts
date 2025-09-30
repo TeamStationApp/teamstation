@@ -2,6 +2,7 @@ import type { DatabaseSetup } from 'edge-server-tools'
 import { setupDatabase } from 'edge-server-tools'
 
 import { serverConfig } from './serverConfig'
+import { logger } from './util/utils'
 
 const settingsDatabaseSetup: DatabaseSetup = {
   name: 'lwsbalancer_settings',
@@ -18,10 +19,10 @@ async function main(): Promise<void> {
   await Promise.all(
     databases.map(async setup => await setupDatabase(couchUri, setup))
   ).catch((e: unknown) => {
-    console.log(e)
+    logger(e)
   })
 }
 
 main().catch((e: unknown) => {
-  console.log(e)
+  logger(e)
 })

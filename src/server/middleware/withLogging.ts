@@ -1,6 +1,8 @@
 import type { Serverlet } from 'serverlet'
 import type { ExpressRequest } from 'serverlet/express'
 
+import { logger } from '../util/utils'
+
 export function withLogging(
   name: string,
   serverlet: Serverlet<ExpressRequest>
@@ -10,7 +12,7 @@ export function withLogging(
     const { method, path, req } = request
     const { ip, body, query } = req
 
-    console.log(
+    logger(
       JSON.stringify({
         s: 'start',
         date: new Date().toISOString(),
@@ -32,7 +34,7 @@ export function withLogging(
       } catch (error) {
         resBody = response.body as string
       }
-      console.log(
+      logger(
         JSON.stringify({
           s: 'finish',
           date: new Date().toISOString(),

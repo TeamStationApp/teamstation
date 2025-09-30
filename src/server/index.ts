@@ -6,6 +6,7 @@ import { makeExpressRoute } from 'serverlet/express'
 
 import { serverConfig } from './serverConfig'
 import { allRoutes } from './urls'
+import { logger } from './util/utils'
 
 async function main(): Promise<void> {
   if (cluster.isPrimary) {
@@ -26,7 +27,7 @@ async function server(): Promise<void> {
   const { listenPort = 8008, listenHost } = serverConfig
   const httpServer = http.createServer(app)
   httpServer.listen(listenPort, listenHost)
-  console.log(`HTTP server listening on port ${listenPort}`)
+  logger(`HTTP server listening on port ${listenPort}`)
 }
 
 main().catch((error: unknown) => {

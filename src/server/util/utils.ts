@@ -29,3 +29,8 @@ export function safelyCall<In extends any[], Out>(
     return f(...args)
   } catch (e) {}
 }
+
+export const logger = (...args: any[]): void => {
+  const isoDate = new Date().toISOString()
+  console.log(`${isoDate}:`, ...args)
+}
