@@ -1,8 +1,19 @@
-import type { DatabaseSetup } from 'edge-server-tools'
-import { makeMangoIndex, setupDatabase } from 'edge-server-tools'
+import type { DatabaseSetup, SetupDatabaseOptions } from 'edge-server-tools'
+import {
+  asReplicatorSetupDocument,
+  connectCouch,
+  makeMangoIndex,
+  setupDatabase,
+  syncedDocument
+} from 'edge-server-tools'
 
 import { serverConfig } from './serverConfig'
 import { logger } from './util/utils'
+
+export const settingsReplication = syncedDocument(
+  'replication',
+  asReplicatorSetupDocument
+)
 
 const settingsDatabaseSetup: DatabaseSetup = {
   name: 'lwsbalancer_settings',
@@ -17,8 +28,25 @@ const settingsDatabaseSetup: DatabaseSetup = {
           createdAt: new Date().toISOString()
         }
       }
+    },
+    replication: {
+      clusters: {
+        wusa: {
+          url: '',
+          exclude: [],
+          pullFrom: ['eusa'],
+          pushTo: []
+        },
+        eusa: {
+          url: '',
+          exclude: [],
+          pullFrom: ['wusa'],
+          pushTo: []
+        }
+      }
     }
-  }
+  },
+  syncedDocuments: [settingsReplication]
 }
 
 const addressesDatabaseSetup: DatabaseSetup = {
@@ -34,12 +62,17 @@ const addressesDatabaseSetup: DatabaseSetup = {
   }
 }
 
+const options: SetupDatabaseOptions = {
+  replicatorSetup: settingsReplication
+}
+
 const databases = [settingsDatabaseSetup, addressesDatabaseSetup]
 
 async function main(): Promise<void> {
-  const { couchUri } = serverConfig
+  const { couchMainCluster, couchUris } = serverConfig
+  const pool = connectCouch(couchMainCluster, couchUris)
   await Promise.all(
-    databases.map(async setup => await setupDatabase(couchUri, setup))
+    databases.map(async setup => await setupDatabase(pool, setup, options))
   ).catch((e: unknown) => {
     logger(e)
   })
