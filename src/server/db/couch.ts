@@ -1,4 +1,9 @@
-import { syncedDocument } from 'edge-server-tools'
+import {
+  asReplicatorSetupDocument,
+  type DatabaseSetup,
+  makeMangoIndex,
+  syncedDocument
+} from 'edge-server-tools'
 import nano from 'nano'
 
 import { serverConfig } from '../serverConfig'
@@ -13,12 +18,65 @@ import { createSyncInterval, logger } from '../util/utils'
 // Attach to the database:
 const { couchUri } = serverConfig
 
+export const apiKeysSyncDoc = syncedDocument('apikeys', asApiKeys)
+export const settingsReplication = syncedDocument(
+  'replication',
+  asReplicatorSetupDocument
+)
+
+export const settingsDatabaseSetup: DatabaseSetup = {
+  name: 'lwsbalancer_settings',
+
+  templates: {
+    apikeys: {
+      apiKeys: {
+        xxxApiKeyExample: {
+          apiKey: 'xxxApiKeyExample',
+          email: 'xxx@example.com',
+          status: 'active',
+          createdAt: new Date().toISOString()
+        }
+      }
+    },
+    replication: {
+      clusters: {
+        wusa: {
+          url: '',
+          exclude: [],
+          pullFrom: ['eusa'],
+          pushTo: []
+        },
+        eusa: {
+          url: '',
+          exclude: [],
+          pullFrom: ['wusa'],
+          pushTo: []
+        }
+      }
+    }
+  },
+  syncedDocuments: [settingsReplication]
+}
+
+export const addressesDatabaseSetup: DatabaseSetup = {
+  name: 'lwsbalancer_addresses',
+
+  documents: {
+    '_design/birthdayHeight': makeMangoIndex('birthdayHeight', [
+      'birthdayHeight'
+    ]),
+    '_design/lastVisitedDate': makeMangoIndex('lastVisitedDate', [
+      'lastVisitedDate'
+    ])
+  }
+}
+
 const dbSettings: nano.DocumentScope<any> = nano(couchUri).db.use(
-  'lwsbalancer_settings'
+  settingsDatabaseSetup.name
 )
 
 const dbAddresses: nano.DocumentScope<LwsAddress> = nano(couchUri).db.use(
-  'lwsbalancer_addresses'
+  addressesDatabaseSetup.name
 )
 
 export const getAddress = async (
@@ -43,5 +101,4 @@ export const updateAddress = async (address: LwsAddress): Promise<void> => {
   await dbAddresses.insert(address)
 }
 
-export const apiKeysSyncDoc = syncedDocument('apikeys', asApiKeys)
 createSyncInterval(apiKeysSyncDoc, dbSettings)
