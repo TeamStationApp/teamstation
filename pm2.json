@@ -1,0 +1,10 @@
+{
+  "apps": [
+    {
+      "name": "server",
+      "script": "./lib/server/index.js",
+      "error_file": "/var/log/pm2/server.err.log",
+      "out_file": "/var/log/pm2/server.out.log"
+    }
+  ]
+}
