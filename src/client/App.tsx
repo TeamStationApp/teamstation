@@ -1,8 +1,11 @@
 import './App.css'
 
 import React from 'react'
+import { BrowserRouter as Router, Link, Route, Routes } from 'react-router-dom'
 
-const App: React.FC = () => {
+import Scoreboard from './Scoreboard'
+
+const Home: React.FC = () => {
   return (
     <div className="app">
       <div className="logo-container">
@@ -11,8 +14,24 @@ const App: React.FC = () => {
           alt="Edge Logo"
           className="edge-logo"
         />
+        <nav className="nav-links">
+          <Link to="/scoreboard" className="nav-link">
+            Go to Scoreboard
+          </Link>
+        </nav>
       </div>
     </div>
+  )
+}
+
+const App: React.FC = () => {
+  return (
+    <Router>
+      <Routes>
+        <Route path="/" element={<Home />} />
+        <Route path="/scoreboard" element={<Scoreboard />} />
+      </Routes>
+    </Router>
   )
 }
 
