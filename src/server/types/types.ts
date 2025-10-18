@@ -80,6 +80,10 @@ export const asApiKey = asObject({
 export const asScoreState = asObject({
   pitcherName: asString,
   batterName: asString,
+  batterNumber: asNumber,
+  batterNumHits: asNumber,
+  batterAtBats: asNumber,
+  numPitches: asNumber,
   balls: asNumber,
   strikes: asNumber,
   outs: asNumber,

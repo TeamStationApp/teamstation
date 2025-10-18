@@ -8,7 +8,6 @@ import nano from 'nano'
 
 import { serverConfig } from '../serverConfig'
 import { asApiKeys } from '../types/types'
-import { createSyncInterval } from '../util/utils'
 
 // Attach to the database:
 const { couchUri } = serverConfig
@@ -66,8 +65,6 @@ export const addressesDatabaseSetup: DatabaseSetup = {
   }
 }
 
-const dbSettings: nano.DocumentScope<any> = nano(couchUri).db.use(
+export const dbSettings: nano.DocumentScope<any> = nano(couchUri).db.use(
   settingsDatabaseSetup.name
 )
-
-createSyncInterval(apiKeysSyncDoc, dbSettings)
