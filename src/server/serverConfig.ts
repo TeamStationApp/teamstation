@@ -35,10 +35,7 @@ const asServerConfig = asObject({
     }
   })),
 
-  // MyMonero server:
-  myMoneroServer: asOptional(asString, 'https://edge.mymonero.com:8443'),
-  myMoneroApiKey: asOptional(asString, 'xxxxx'),
-
+  xaiApiKey: asOptional(asString, 'xxxxx'),
   // LWS server:
   lwsServers: asOptional(
     asArray(

@@ -1,10 +1,10 @@
 {
   "apps": [
     {
-      "name": "referralServer",
-      "script": "./lib/server/indexReferral.js",
-      "error_file": "/var/log/pm2/referralServer.err.log",
-      "out_file": "/var/log/pm2/referralServer.out.log"
+      "name": "gameChecker",
+      "script": "./lib/server/index.js",
+      "error_file": "/var/log/pm2/gameChecker.err.log",
+      "out_file": "/var/log/pm2/gameChecker.out.log"
     }
   ]
 }
