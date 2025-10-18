@@ -1,10 +1,10 @@
 {
   "apps": [
     {
-      "name": "server",
+      "name": "gameChecker",
       "script": "./lib/server/index.js",
-      "error_file": "/var/log/pm2/server.err.log",
-      "out_file": "/var/log/pm2/server.out.log"
+      "error_file": "/var/log/pm2/gameChecker.err.log",
+      "out_file": "/var/log/pm2/gameChecker.out.log"
     }
   ]
 }

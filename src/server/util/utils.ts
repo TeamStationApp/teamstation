@@ -1,6 +1,7 @@
 import type { SyncedDocument } from 'edge-server-tools'
 import type nano from 'nano'
 
+export const THIRTY_SECONDS = 30 * 1000
 const ONE_MINUTE = 60 * 1000
 
 /**
@@ -60,3 +61,10 @@ export const createSyncInterval = (
       console.error('createSyncInterval error', syncedDocument.id, e)
     })
 }
+
+export const union = <T>(a: Set<T>, b: Set<T>): Set<T> =>
+  new Set([...Array.from(a), ...Array.from(b)])
+export const intersection = <T>(a: Set<T>, b: Set<T>): Set<T> =>
+  new Set([...Array.from(a)].filter(x => b.has(x)))
+export const difference = <T>(a: Set<T>, b: Set<T>): Set<T> =>
+  new Set([...Array.from(a)].filter(x => !b.has(x)))
