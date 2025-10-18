@@ -3,6 +3,7 @@ import http from 'http'
 import { makeExpressRoute } from 'serverlet/express'
 
 import { serverConfig } from './serverConfig'
+import { initializeWebSocketServer } from './sockets'
 import { allRoutes } from './urls'
 import { logger } from './util/utils'
 
@@ -11,6 +12,8 @@ async function main(): Promise<void> {
 }
 
 async function server(): Promise<void> {
+  // createSyncInterval(settingsReplication, dbSettings)
+
   // Set up Express:
   const app = express()
   app.enable('trust proxy')
@@ -22,6 +25,9 @@ async function server(): Promise<void> {
   const httpServer = http.createServer(app)
   httpServer.listen(listenPort, listenHost)
   logger(`HTTP server listening on port ${listenPort}`)
+
+  // Initialize WebSocket server
+  initializeWebSocketServer(httpServer)
 }
 
 main().catch((error: unknown) => {

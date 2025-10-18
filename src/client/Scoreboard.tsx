@@ -1,27 +1,58 @@
 import './Scoreboard.css'
 
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 
 import type { ScoreState } from '../server/types/types'
 
 const Scoreboard: React.FC = () => {
-  const scoreState: ScoreState = {
-    pitcherName: 'KING',
-    batterName: 'SANTANA',
-    balls: 0,
-    strikes: 2,
-    outs: 2,
-    bases: { 1: true, 2: false, 3: true },
-    inning: 1,
-    half: 'bottom',
-    teams: {
-      home: 'Sea  Gulls',
-      away: 'Tierra Santa 1'
-    },
-    scores: {
-      home: 10,
-      away: 0
+  const [scoreState, setScoreState] = useState<ScoreState | null>(null)
+
+  useEffect(() => {
+    // Determine WebSocket URL based on current location
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const host = window.location.host
+    const wsUrl = `${protocol}//${host}/sockets/api/v1/scoreState`
+
+    console.log('Connecting to WebSocket:', wsUrl)
+    const ws = new WebSocket(wsUrl)
+
+    ws.onopen = () => {
+      console.log('WebSocket connected')
     }
+
+    ws.onmessage = event => {
+      try {
+        const newScoreState = JSON.parse(event.data) as ScoreState
+        console.log('Received scoreState update:', newScoreState)
+        setScoreState(newScoreState)
+      } catch (error) {
+        console.error('Error parsing WebSocket message:', error)
+      }
+    }
+
+    ws.onerror = error => {
+      console.error('WebSocket error:', error)
+    }
+
+    ws.onclose = () => {
+      console.log('WebSocket disconnected')
+    }
+
+    // Cleanup on unmount
+    return () => {
+      ws.close()
+    }
+  }, [])
+
+  // Show loading state while waiting for first score update
+  if (scoreState == null) {
+    return (
+      <div className="scoreboard-container">
+        <div className="scoreboard">
+          <div className="loading">Waiting for game data...</div>
+        </div>
+      </div>
+    )
   }
 
   // Additional UI state (not part of ScoreState type)
@@ -33,10 +64,12 @@ const Scoreboard: React.FC = () => {
       <div className="scoreboard">
         {/* Top section - Batter on top, Pitcher with pitch count on bottom */}
         <div className="top-section">
-          <div className="batter-name">{scoreState.batterName}</div>
+          <div className="batter-name">
+            {scoreState.batterName} #{scoreState.batterNumber}
+          </div>
           <div className="pitcher-line">
-            <span className="pitcher-name">P: {scoreState.pitcherName}</span>
-            <span className="pitch-count" />
+            <span className="pitcher-name">{scoreState.pitcherName}</span>
+            <span className="pitch-count">P: {scoreState.numPitches}</span>
           </div>
         </div>
 

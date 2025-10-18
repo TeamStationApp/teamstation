@@ -1,3 +1,4 @@
+import { exec } from 'child_process'
 import type { SyncedDocument } from 'edge-server-tools'
 import type nano from 'nano'
 
@@ -68,3 +69,15 @@ export const intersection = <T>(a: Set<T>, b: Set<T>): Set<T> =>
   new Set([...Array.from(a)].filter(x => b.has(x)))
 export const difference = <T>(a: Set<T>, b: Set<T>): Set<T> =>
   new Set([...Array.from(a)].filter(x => !b.has(x)))
+
+export const execute = async (command: string): Promise<string> => {
+  return await new Promise((resolve, reject) => {
+    exec(command, (_error, stdout, stderr) => {
+      if (stderr !== '') {
+        resolve(stderr)
+        return
+      }
+      resolve(stdout)
+    })
+  })
+}
