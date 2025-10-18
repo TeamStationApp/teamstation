@@ -1,4 +1,12 @@
-import { asDate, asObject, asOptional, asString, asValue } from 'cleaners'
+import {
+  asBoolean,
+  asDate,
+  asNumber,
+  asObject,
+  asOptional,
+  asString,
+  asValue
+} from 'cleaners'
 import type { ExpressRequest } from 'serverlet/express'
 
 export const statusCodes = {
@@ -68,3 +76,18 @@ export const asApiKeys = asObject({
 export const asApiKey = asObject({
   api_key: asString
 })
+
+export const asScoreState = asObject({
+  pitcherName: asString,
+  batterName: asString,
+  balls: asNumber,
+  strikes: asNumber,
+  outs: asNumber,
+  bases: asObject({ 1: asBoolean, 2: asBoolean, 3: asBoolean }),
+  inning: asNumber,
+  half: asValue('top', 'bottom'),
+  teams: asObject({ home: asString, away: asString }),
+  scores: asObject({ home: asNumber, away: asNumber })
+})
+
+export type ScoreState = ReturnType<typeof asScoreState>

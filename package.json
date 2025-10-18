@@ -1,23 +1,22 @@
 {
-  "name": "monero-lws-balancer",
+  "name": "gamestation",
   "version": "1.0.0",
-  "description": "Load balancing wrapper for Monero LWS",
+  "description": "Baseball game scoreboard widget",
   "keywords": [
-    "Airbitz",
-    "Monero",
-    "LWS",
-    "Edge"
+    "Baseball",
+    "Scoreboard",
+    "Widget"
   ],
-  "homepage": "https://github.com/EdgeApp/monero-lws-balancer#readme",
+  "homepage": "https://github.com/paullinator/gamestation#readme",
   "bugs": {
-    "url": "https://github.com/EdgeApp/monero-lws-balancer/issues"
+    "url": "https://github.com/paullinator/gamestation/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+ssh://git@github.com/EdgeApp/monero-lws-balancer.git"
+    "url": "git+ssh://git@github.com/paullinator/gamestation.git"
   },
   "license": "MIT",
-  "author": "Paul Puey <paul@edge.app>",
+  "author": "Paul Puey <paul@vtex.net>",
   "main": "lib/index.js",
   "scripts": {
     "build.web": "webpack --mode production",
@@ -39,10 +38,7 @@
     "*.{js,ts}": "eslint"
   },
   "dependencies": {
-    "@types/react-router-dom": "^5.3.3",
-    "cleaners": "^0.3.9",
-    "react-router-dom": "^7.9.4",
-    "serverlet": "^0.1.3"
+    "cleaners": "^0.3.9"
   },
   "devDependencies": {
     "@eslint/js": "^9.26.0",
@@ -55,6 +51,7 @@
     "@types/node-fetch": "^2.5.3",
     "@types/react": "^19.1.10",
     "@types/react-dom": "^19.1.7",
+    "@types/react-router-dom": "^5.3.3",
     "@types/universal-analytics": "^0.4.3",
     "@typescript-eslint/eslint-plugin": "^4.8.2",
     "@typescript-eslint/parser": "^4.8.2",
@@ -76,10 +73,13 @@
     "node-fetch": "^2.6.0",
     "npm-run-all": "^4.1.5",
     "prettier": "^3.5.3",
+    "puppeteer": "^24.25.0",
     "qrcode-generator": "^1.4.4",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
+    "react-router-dom": "^7.9.4",
     "rimraf": "^3.0.0",
+    "serverlet": "^0.1.3",
     "style-loader": "^4.0.0",
     "sucrase": "^3.35.0",
     "ts-loader": "^9.5.1",
