@@ -5,7 +5,22 @@ import React, { useEffect, useState } from 'react'
 import type { ScoreState } from '../server/types/types'
 
 const Scoreboard: React.FC = () => {
-  const [scoreState, setScoreState] = useState<ScoreState | null>(null)
+  const [scoreState, setScoreState] = useState<ScoreState>({
+    pitcherName: 'Not Set',
+    batterName: 'Not Set',
+    batterNumber: 0,
+    batterNumHits: 0,
+    batterAtBats: 0,
+    numPitches: 0,
+    balls: 0,
+    strikes: 0,
+    outs: 0,
+    bases: { 1: false, 2: false, 3: false },
+    inning: 0,
+    half: 'top',
+    teams: { home: '', away: '' },
+    scores: { home: 0, away: 0 }
+  })
 
   useEffect(() => {
     // Determine WebSocket URL based on current location
@@ -43,17 +58,6 @@ const Scoreboard: React.FC = () => {
       ws.close()
     }
   }, [])
-
-  // Show loading state while waiting for first score update
-  if (scoreState == null) {
-    return (
-      <div className="scoreboard-container">
-        <div className="scoreboard">
-          <div className="loading">Waiting for game data...</div>
-        </div>
-      </div>
-    )
-  }
 
   // Additional UI state (not part of ScoreState type)
   // const numPitches = 22

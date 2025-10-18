@@ -18,6 +18,7 @@ async function server(): Promise<void> {
   const app = express()
   app.enable('trust proxy')
   app.use(express.json({ limit: '15mb' }))
+  app.use('/scoreboard', express.static('dist'))
   app.use('/', makeExpressRoute(allRoutes))
 
   // Start the HTTP server:
