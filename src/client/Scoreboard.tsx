@@ -2,23 +2,7 @@ import './Scoreboard.css'
 
 import React from 'react'
 
-interface ScoreState {
-  pitcherName: string
-  batterName: string
-  balls: number
-  strikes: number
-  outs: number
-  bases: { 1: boolean; 2: boolean; 3: boolean }
-  numPitches: number
-  inning: number
-  half: 'top' | 'bottom'
-  homeTeam: string
-  awayTeam: string
-  homeScore: number
-  awayScore: number
-  batterNumber: number
-  pitchSpeed: number
-}
+import type { ScoreState } from '../server/types/types'
 
 const Scoreboard: React.FC = () => {
   const scoreState: ScoreState = {
@@ -28,28 +12,31 @@ const Scoreboard: React.FC = () => {
     strikes: 2,
     outs: 2,
     bases: { 1: true, 2: false, 3: true },
-    numPitches: 22,
     inning: 1,
     half: 'bottom',
-    homeTeam: 'Sea  Gulls',
-    awayTeam: 'Tierra Santa 1',
-    homeScore: 10,
-    awayScore: 0,
-    batterNumber: 4,
-    pitchSpeed: 94
+    teams: {
+      home: 'Sea  Gulls',
+      away: 'Tierra Santa 1'
+    },
+    scores: {
+      home: 10,
+      away: 0
+    }
   }
+
+  // Additional UI state (not part of ScoreState type)
+  // const numPitches = 22
+  // const batterNumber = 4
 
   return (
     <div className="scoreboard-container">
       <div className="scoreboard">
         {/* Top section - Batter on top, Pitcher with pitch count on bottom */}
         <div className="top-section">
-          <div className="batter-name">
-            {scoreState.batterNumber}. {scoreState.batterName}
-          </div>
+          <div className="batter-name">{scoreState.batterName}</div>
           <div className="pitcher-line">
             <span className="pitcher-name">P: {scoreState.pitcherName}</span>
-            <span className="pitch-count">P: {scoreState.numPitches}</span>
+            <span className="pitch-count" />
           </div>
         </div>
 
@@ -58,12 +45,12 @@ const Scoreboard: React.FC = () => {
           {/* Left: Teams stacked */}
           <div className="teams-stack">
             <div className="team away-team">
-              <div className="team-logo">{scoreState.awayTeam}</div>
-              <div className="team-score">{scoreState.awayScore}</div>
+              <div className="team-logo">{scoreState.teams.away}</div>
+              <div className="team-score">{scoreState.scores.away}</div>
             </div>
             <div className="team home-team">
-              <div className="team-logo">{scoreState.homeTeam}</div>
-              <div className="team-score">{scoreState.homeScore}</div>
+              <div className="team-logo">{scoreState.teams.home}</div>
+              <div className="team-score">{scoreState.scores.home}</div>
             </div>
           </div>
 
