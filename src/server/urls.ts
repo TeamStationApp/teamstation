@@ -21,7 +21,7 @@ const healthCheckRoute = withLogging('healthCheck', (request: ExpressRequest) =>
 const urls: Record<string, Serverlet<ExpressRequest>> = {
   '/': healthCheckRoute,
 
-  '/testRoute': pickMethod({
+  '/v1/testRoute': pickMethod({
     POST: withLogging('testRoute', withApiKey(postTestRoute))
   })
 }

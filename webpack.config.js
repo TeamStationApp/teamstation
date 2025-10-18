@@ -12,7 +12,7 @@ module.exports = (env, argv) => {
       path: path.resolve(__dirname, 'dist'),
       filename: 'bundle.js',
       clean: true,
-      publicPath: '/dashboard/'
+      publicPath: '/scoreboard/'
     },
     resolve: {
       extensions: ['.tsx', '.ts', '.js']
@@ -65,10 +65,10 @@ module.exports = (env, argv) => {
       port: 8080,
       hot: true,
       historyApiFallback: {
-        index: '/dashboard/'
+        index: '/scoreboard/'
       },
       devMiddleware: {
-        publicPath: '/dashboard/'
+        publicPath: '/scoreboard/'
       },
       proxy: {
         '/api': {
