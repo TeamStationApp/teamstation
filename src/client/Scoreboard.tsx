@@ -68,8 +68,11 @@ const Scoreboard: React.FC = () => {
       <div className="scoreboard">
         {/* Top section - Batter on top, Pitcher with pitch count on bottom */}
         <div className="top-section">
-          <div className="batter-name">
-            {scoreState.batterName} #{scoreState.batterNumber}
+          <div className="batter-line">
+            <span className="batter-name">{scoreState.batterName}</span>
+            <span className="batter-stats">
+              {scoreState.batterNumHits}-{scoreState.batterAtBats}
+            </span>
           </div>
           <div className="pitcher-line">
             <span className="pitcher-name">{scoreState.pitcherName}</span>
