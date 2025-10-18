@@ -15,7 +15,9 @@ const Scoreboard: React.FC = () => {
     balls: 0,
     strikes: 0,
     outs: 0,
-    bases: { 1: false, 2: false, 3: false },
+    base1: false,
+    base2: false,
+    base3: false,
     inning: 0,
     half: 'top',
     teams: { home: '', away: '' },
@@ -128,14 +130,14 @@ const Scoreboard: React.FC = () => {
           <div className="bases-display">
             <div className="diamond">
               <div
-                className={`base second ${scoreState.bases[2] ? 'occupied' : ''}`}
+                className={`base second ${scoreState.base2 ? 'occupied' : ''}`}
               />
               <div className="base-row">
                 <div
-                  className={`base third ${scoreState.bases[3] ? 'occupied' : ''}`}
+                  className={`base third ${scoreState.base3 ? 'occupied' : ''}`}
                 />
                 <div
-                  className={`base first ${scoreState.bases[1] ? 'occupied' : ''}`}
+                  className={`base first ${scoreState.base1 ? 'occupied' : ''}`}
                 />
               </div>
             </div>
