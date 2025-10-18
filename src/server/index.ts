@@ -1,5 +1,3 @@
-import cluster from 'cluster'
-import { forkChildren } from 'edge-server-tools'
 import express from 'express'
 import http from 'http'
 import { makeExpressRoute } from 'serverlet/express'
@@ -9,11 +7,7 @@ import { allRoutes } from './urls'
 import { logger } from './util/utils'
 
 async function main(): Promise<void> {
-  if (cluster.isPrimary) {
-    forkChildren()
-  } else {
-    await server()
-  }
+  await server()
 }
 
 async function server(): Promise<void> {

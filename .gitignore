@@ -15,3 +15,9 @@ stats.json
 .DS_Store
 .idea/
 .vscode/
+
+# Chrome data:
+chromeData/
+
+# Images:
+images/
