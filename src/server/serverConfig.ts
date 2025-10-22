@@ -17,6 +17,8 @@ const asServerConfig = asObject({
    */
   couchUri: asOptional(asString, `http://admin:admin@localhost:5984`),
 
+
+  widgetUrl: asOptional(asString, 'ws://localhost:8008'),
   /**
    * The cluster defintions are used by setupDatabases to create the databases and setup
    * replications.
