@@ -18,6 +18,20 @@ export function initializeWebSocketServer(server: HttpServer): void {
     logger('New WebSocket client connected')
     clients.add(ws)
 
+    // Handle incoming messages from clients (e.g., the scanner process)
+    ws.on('message', (data: Buffer) => {
+      try {
+        const message = data.toString()
+        const scoreState: ScoreState = JSON.parse(message)
+        logger('Received score state update, broadcasting to all clients')
+
+        // Broadcast to all other clients
+        broadcastScoreState(scoreState)
+      } catch (error) {
+        console.error('Error parsing incoming message:', error)
+      }
+    })
+
     ws.on('close', () => {
       logger('WebSocket client disconnected')
       clients.delete(ws)
