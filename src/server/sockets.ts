@@ -11,7 +11,7 @@ const clients = new Set<WebSocket>()
 export function initializeWebSocketServer(server: HttpServer): void {
   wss = new WebSocketServer({
     server,
-    path: '/sockets/api/v1/scoreState'
+    path: '/sockets/api/v1/autoState'
   })
 
   wss.on('connection', (ws: WebSocket) => {
@@ -43,7 +43,7 @@ export function initializeWebSocketServer(server: HttpServer): void {
     })
   })
 
-  logger('WebSocket server initialized at /sockets/api/v1/scoreState')
+  logger('WebSocket server initialized at /sockets/api/v1/autoState')
 }
 
 export function broadcastScoreState(scoreState: ScoreState): void {

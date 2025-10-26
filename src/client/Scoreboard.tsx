@@ -28,7 +28,7 @@ const Scoreboard: React.FC = () => {
     // Determine WebSocket URL based on current location
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const host = window.location.host
-    const wsUrl = `${protocol}//${host}/sockets/api/v1/scoreState`
+    const wsUrl = `${protocol}//${host}/sockets/api/v1/autoState`
 
     console.log('Connecting to WebSocket:', wsUrl)
     const ws = new WebSocket(wsUrl)
