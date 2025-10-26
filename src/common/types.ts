@@ -25,7 +25,7 @@ export const asScoreState = asObject({
   base2: asBoolean,
   base3: asBoolean,
   inning: asNumber,
-  half: asValue('top', 'bottom'),
+  half: asValue('top', 'bottom', 'mid'),
   teams: asObject({ home: asString, away: asString }),
   scores: asObject({ home: asNumber, away: asNumber })
 })
