@@ -29,8 +29,6 @@
   gap: 20px;
   width: 100%;
   justify-content: center;
-  margin-bottom: 20px;
-  margin-top: 20px;
 }
 
 .dashboard-container .override-label {
@@ -177,7 +175,7 @@
 }
 
 .dashboard-container .reset-batter-button {
-  margin-top: 20px;
+  margin-top: 5px;
   padding: 16px 60px;
   font-size: 32px;
   font-weight: 500;
@@ -284,12 +282,12 @@
 @media (max-width: 768px) {
   .dashboard-container .dashboard {
     padding: 20px 15px;
-    gap: 25px;
+    gap: 15px;
   }
 
   .dashboard-container .override-toggle-container {
     gap: 15px;
-    margin-bottom: 10px;
+    margin-bottom: 0px;
   }
 
   .dashboard-container .override-label {
@@ -322,7 +320,7 @@
 
   .dashboard-container .stat-label {
     font-size: 18px;
-    margin-bottom: 5px;
+    margin-bottom: 0px;
   }
 
   .dashboard-container .arrow-button {
@@ -362,7 +360,7 @@
   .dashboard-container .reset-batter-button {
     font-size: 18px;
     padding: 10px 30px;
-    margin-top: 10px;
+    margin-top: 0px;
   }
 
   .dashboard-container .reset-button {
