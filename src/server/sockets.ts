@@ -7,6 +7,7 @@ import {
   asScoreState,
   type AutoStateMessage,
   type DashboardOverrides,
+  type OverrideUpdateMessage,
   type ScoreState
 } from '../common/types'
 import { logger } from './util/utils'
@@ -24,6 +25,8 @@ const scoreboardClients = new Set<WebSocket>()
 // State management
 let currentAutoState: ScoreState | null = null
 let currentDashboardOverrides: DashboardOverrides = {
+  overrideCountEnabled: false,
+  overrideBasesEnabled: false,
   overrideCount: undefined,
   overrideBases: undefined
 }
@@ -38,15 +41,21 @@ function mergeFinalState(): ScoreState | null {
 
   const finalState: ScoreState = { ...currentAutoState }
 
-  // Apply count overrides if present
-  if (currentDashboardOverrides.overrideCount != null) {
+  // Apply count overrides if enabled and present
+  if (
+    currentDashboardOverrides.overrideCountEnabled &&
+    currentDashboardOverrides.overrideCount != null
+  ) {
     finalState.balls = currentDashboardOverrides.overrideCount.balls
     finalState.strikes = currentDashboardOverrides.overrideCount.strikes
     finalState.outs = currentDashboardOverrides.overrideCount.outs
   }
 
-  // Apply bases overrides if present
-  if (currentDashboardOverrides.overrideBases != null) {
+  // Apply bases overrides if enabled and present
+  if (
+    currentDashboardOverrides.overrideBasesEnabled &&
+    currentDashboardOverrides.overrideBases != null
+  ) {
     finalState.base1 = currentDashboardOverrides.overrideBases.base1
     finalState.base2 = currentDashboardOverrides.overrideBases.base2
     finalState.base3 = currentDashboardOverrides.overrideBases.base3
@@ -78,6 +87,41 @@ function broadcastToDashboard(scoreState: ScoreState): void {
         client.send(messageStr)
       } catch (error) {
         console.error('Error sending to dashboard client:', error)
+        dashboardClients.delete(client)
+      }
+    }
+  }
+}
+
+/**
+ * Broadcast override updates to all dashboard clients except the sender
+ */
+function broadcastOverridesToDashboards(
+  overrides: DashboardOverrides,
+  excludeClient?: WebSocket
+): void {
+  if (dashboardClients.size === 0) {
+    return
+  }
+
+  const message: OverrideUpdateMessage = {
+    type: 'overrideUpdate',
+    data: overrides
+  }
+  const messageStr = JSON.stringify(message)
+  const targetClients = Array.from(dashboardClients).filter(
+    c => c !== excludeClient
+  )
+  logger(
+    `Broadcasting overrides to ${targetClients.length} dashboard client(s)`
+  )
+
+  for (const client of targetClients) {
+    if (client.readyState === 1) {
+      try {
+        client.send(messageStr)
+      } catch (error) {
+        console.error('Error sending override to dashboard client:', error)
         dashboardClients.delete(client)
       }
     }
@@ -167,12 +211,19 @@ export function initializeWebSocketServer(server: HttpServer): void {
 
     // Send current autoState to new dashboard client
     if (currentAutoState != null) {
-      const message: AutoStateMessage = {
+      const autoMessage: AutoStateMessage = {
         type: 'autoState',
         data: currentAutoState
       }
-      ws.send(JSON.stringify(message))
+      ws.send(JSON.stringify(autoMessage))
     }
+
+    // Send current override state to new dashboard client
+    const overrideMessage: OverrideUpdateMessage = {
+      type: 'overrideUpdate',
+      data: currentDashboardOverrides
+    }
+    ws.send(JSON.stringify(overrideMessage))
 
     // Handle incoming override updates from dashboard
     ws.on('message', (data: Buffer) => {
@@ -184,6 +235,9 @@ export function initializeWebSocketServer(server: HttpServer): void {
 
         // Update current overrides
         currentDashboardOverrides = overrides
+
+        // Broadcast override update to all OTHER dashboard clients (not the sender)
+        broadcastOverridesToDashboards(overrides, ws)
 
         // Merge and broadcast to scoreboard
         const finalState = mergeFinalState()

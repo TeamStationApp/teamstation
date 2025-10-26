@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 
 import {
   asAutoStateMessage,
+  asOverrideUpdateMessage,
   type DashboardOverrides,
   WS_RECONNECT_WAIT_MS
 } from '../common/types'
@@ -11,6 +12,19 @@ import {
 const Dashboard: React.FC = () => {
   const [overrideEnabled, setOverrideEnabled] = useState(false)
   const [overrideBasesEnabled, setOverrideBasesEnabled] = useState(false)
+
+  // Refs to track current values (for use in WebSocket callbacks)
+  const overrideEnabledRef = useRef(false)
+  const overrideBasesEnabledRef = useRef(false)
+
+  // Keep refs in sync with state
+  useEffect(() => {
+    overrideEnabledRef.current = overrideEnabled
+  }, [overrideEnabled])
+
+  useEffect(() => {
+    overrideBasesEnabledRef.current = overrideBasesEnabled
+  }, [overrideBasesEnabled])
   const [overrideBalls, setOverrideBalls] = useState(0)
   const [overrideStrikes, setOverrideStrikes] = useState(0)
   const [overrideOuts, setOverrideOuts] = useState(0)
@@ -81,6 +95,8 @@ const Dashboard: React.FC = () => {
   const sendOverrides = useCallback((): void => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       const overrides: DashboardOverrides = {
+        overrideCountEnabled: overrideEnabled,
+        overrideBasesEnabled,
         overrideCount: undefined,
         overrideBases: undefined
       }
@@ -135,36 +151,60 @@ const Dashboard: React.FC = () => {
       ws.onmessage = event => {
         try {
           const rawData = JSON.parse(event.data)
-          const message = asAutoStateMessage(rawData)
-          if (message.type === 'autoState' && message.data != null) {
+          const messageType = rawData.type
+
+          if (messageType === 'autoState') {
+            const message = asAutoStateMessage(rawData)
             const autoState = message.data
             console.log(
               'Received autoState:',
               JSON.stringify(autoState, null, 2)
             )
 
-            // Update auto values with autoState
+            // Always update auto values with autoState
             setAutoBalls(autoState.balls)
             setAutoStrikes(autoState.strikes)
             setAutoOuts(autoState.outs)
+            setAutoBase1(autoState.base1)
+            setAutoBase2(autoState.base2)
+            setAutoBase3(autoState.base3)
 
-            // If not overriding, update override values too
-            if (!overrideEnabled) {
+            // ONLY update override values if override is disabled (not sticky)
+            if (!overrideEnabledRef.current) {
               setOverrideBalls(autoState.balls)
               setOverrideStrikes(autoState.strikes)
               setOverrideOuts(autoState.outs)
             }
 
-            // Update auto bases
-            setAutoBase1(autoState.base1)
-            setAutoBase2(autoState.base2)
-            setAutoBase3(autoState.base3)
-
-            // If not overriding, update override bases too
-            if (!overrideBasesEnabled) {
+            if (!overrideBasesEnabledRef.current) {
               setOverrideBase1(autoState.base1)
               setOverrideBase2(autoState.base2)
               setOverrideBase3(autoState.base3)
+            }
+          } else if (messageType === 'overrideUpdate') {
+            const message = asOverrideUpdateMessage(rawData)
+            const overrides = message.data
+            console.log(
+              'Received override update from another dashboard:',
+              overrides
+            )
+
+            // Update toggle states
+            setOverrideEnabled(overrides.overrideCountEnabled)
+            setOverrideBasesEnabled(overrides.overrideBasesEnabled)
+
+            // Update override count if present
+            if (overrides.overrideCount != null) {
+              setOverrideBalls(overrides.overrideCount.balls)
+              setOverrideStrikes(overrides.overrideCount.strikes)
+              setOverrideOuts(overrides.overrideCount.outs)
+            }
+
+            // Update override bases if present
+            if (overrides.overrideBases != null) {
+              setOverrideBase1(overrides.overrideBases.base1)
+              setOverrideBase2(overrides.overrideBases.base2)
+              setOverrideBase3(overrides.overrideBases.base3)
             }
           }
         } catch (error) {
@@ -198,7 +238,7 @@ const Dashboard: React.FC = () => {
       }
       wsRef.current?.close()
     }
-  }, [overrideEnabled, overrideBasesEnabled])
+  }, []) // Empty deps - only connect once on mount
 
   // Send overrides when values change and override is enabled
   useEffect(() => {
