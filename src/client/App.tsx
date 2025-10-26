@@ -11,7 +11,7 @@ const Home: React.FC = () => {
     <div className="app">
       <div className="logo-container">
         <img
-          src="/scoreboard/assets/images/edge_logo.png"
+          src="/assets/images/edge_logo.png"
           alt="Edge Logo"
           className="edge-logo"
         />
@@ -29,7 +29,7 @@ const App: React.FC = () => {
   return (
     <Router>
       <Routes>
-        <Route path="/home" element={<Home />} />
+        <Route path="/" element={<Home />} />
         <Route path="/scoreboard" element={<Scoreboard />} />
         <Route path="/dashboard" element={<Dashboard />} />
       </Routes>
