@@ -1,66 +1,219 @@
 import './Dashboard.css'
 
-import React, { useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
+
+import {
+  asAutoStateMessage,
+  type DashboardOverrides,
+  WS_RECONNECT_WAIT_MS
+} from '../common/types'
 
 const Dashboard: React.FC = () => {
   const [overrideEnabled, setOverrideEnabled] = useState(false)
   const [overrideBasesEnabled, setOverrideBasesEnabled] = useState(false)
-  const [balls, setBalls] = useState(0)
-  const [strikes, setStrikes] = useState(0)
-  const [outs, setOuts] = useState(0)
-  const [ballsSecondary] = useState(0)
-  const [strikesSecondary] = useState(0)
-  const [outsSecondary] = useState(0)
-  const [diamonds, setDiamonds] = useState([
-    false,
-    false,
-    false,
-    false,
-    false,
-    false
-  ])
+  const [overrideBalls, setOverrideBalls] = useState(0)
+  const [overrideStrikes, setOverrideStrikes] = useState(0)
+  const [overrideOuts, setOverrideOuts] = useState(0)
+  const [autoBalls, setAutoBalls] = useState(0)
+  const [autoStrikes, setAutoStrikes] = useState(0)
+  const [autoOuts, setAutoOuts] = useState(0)
+  // Auto bases (left diamonds)
+  const [autoBase1, setAutoBase1] = useState(false)
+  const [autoBase2, setAutoBase2] = useState(false)
+  const [autoBase3, setAutoBase3] = useState(false)
+  // Override bases (right diamonds)
+  const [overrideBase1, setOverrideBase1] = useState(false)
+  const [overrideBase2, setOverrideBase2] = useState(false)
+  const [overrideBase3, setOverrideBase3] = useState(false)
+  const wsRef = useRef<WebSocket | null>(null)
 
   const incrementBalls = (): void => {
-    if (balls < 3) setBalls(balls + 1)
+    if (overrideBalls < 3) setOverrideBalls(overrideBalls + 1)
   }
 
   const decrementBalls = (): void => {
-    if (balls > 0) setBalls(balls - 1)
+    if (overrideBalls > 0) setOverrideBalls(overrideBalls - 1)
   }
 
   const incrementStrikes = (): void => {
-    if (strikes < 2) setStrikes(strikes + 1)
+    if (overrideStrikes < 2) setOverrideStrikes(overrideStrikes + 1)
   }
 
   const decrementStrikes = (): void => {
-    if (strikes > 0) setStrikes(strikes - 1)
+    if (overrideStrikes > 0) setOverrideStrikes(overrideStrikes - 1)
   }
 
   const incrementOuts = (): void => {
-    if (outs < 2) setOuts(outs + 1)
+    if (overrideOuts < 2) setOverrideOuts(overrideOuts + 1)
   }
 
   const decrementOuts = (): void => {
-    if (outs > 0) setOuts(outs - 1)
+    if (overrideOuts > 0) setOverrideOuts(overrideOuts - 1)
   }
 
-  const toggleDiamond = (index: number): void => {
-    const newDiamonds = [...diamonds]
-    newDiamonds[index] = !newDiamonds[index]
-    setDiamonds(newDiamonds)
+  const toggleBase1 = (): void => {
+    setOverrideBase1(!overrideBase1)
+  }
+
+  const toggleBase2 = (): void => {
+    setOverrideBase2(!overrideBase2)
+  }
+
+  const toggleBase3 = (): void => {
+    setOverrideBase3(!overrideBase3)
   }
 
   const resetBatter = (): void => {
-    setBalls(0)
-    setStrikes(0)
+    setOverrideBalls(0)
+    setOverrideStrikes(0)
   }
 
   const reset = (): void => {
-    setBalls(0)
-    setStrikes(0)
-    setOuts(0)
-    setDiamonds([false, false, false, false, false, false])
+    setOverrideBalls(0)
+    setOverrideStrikes(0)
+    setOverrideOuts(0)
+    setOverrideBase1(false)
+    setOverrideBase2(false)
+    setOverrideBase3(false)
   }
+
+  // Function to send overrides to server
+  const sendOverrides = useCallback((): void => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      const overrides: DashboardOverrides = {
+        overrideCount: undefined,
+        overrideBases: undefined
+      }
+
+      if (overrideEnabled) {
+        overrides.overrideCount = {
+          balls: overrideBalls,
+          strikes: overrideStrikes,
+          outs: overrideOuts
+        }
+      }
+
+      if (overrideBasesEnabled) {
+        overrides.overrideBases = {
+          base1: overrideBase1,
+          base2: overrideBase2,
+          base3: overrideBase3
+        }
+      }
+
+      wsRef.current.send(JSON.stringify(overrides))
+      console.log('Sent overrides:', overrides)
+    }
+  }, [
+    overrideBalls,
+    overrideStrikes,
+    overrideOuts,
+    overrideBase1,
+    overrideBase2,
+    overrideBase3,
+    overrideEnabled,
+    overrideBasesEnabled
+  ])
+
+  // WebSocket connection with auto-reconnect
+  useEffect(() => {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const host = window.location.host
+    const wsUrl = `${protocol}//${host}/sockets/api/v1/dashboard`
+
+    let reconnectTimeout: NodeJS.Timeout | null = null
+    let shouldReconnect = true
+
+    const connect = (): void => {
+      console.log('Connecting to Dashboard WebSocket:', wsUrl)
+      const ws = new WebSocket(wsUrl)
+
+      ws.onopen = () => {
+        console.log('Dashboard WebSocket connected')
+      }
+
+      ws.onmessage = event => {
+        try {
+          const rawData = JSON.parse(event.data)
+          const message = asAutoStateMessage(rawData)
+          if (message.type === 'autoState' && message.data != null) {
+            const autoState = message.data
+            console.log(
+              'Received autoState:',
+              JSON.stringify(autoState, null, 2)
+            )
+
+            // Update auto values with autoState
+            setAutoBalls(autoState.balls)
+            setAutoStrikes(autoState.strikes)
+            setAutoOuts(autoState.outs)
+
+            // If not overriding, update override values too
+            if (!overrideEnabled) {
+              setOverrideBalls(autoState.balls)
+              setOverrideStrikes(autoState.strikes)
+              setOverrideOuts(autoState.outs)
+            }
+
+            // Update auto bases
+            setAutoBase1(autoState.base1)
+            setAutoBase2(autoState.base2)
+            setAutoBase3(autoState.base3)
+
+            // If not overriding, update override bases too
+            if (!overrideBasesEnabled) {
+              setOverrideBase1(autoState.base1)
+              setOverrideBase2(autoState.base2)
+              setOverrideBase3(autoState.base3)
+            }
+          }
+        } catch (error) {
+          console.error('Error parsing or validating WebSocket message:', error)
+        }
+      }
+
+      ws.onerror = error => {
+        console.error('Dashboard WebSocket error:', error)
+      }
+
+      ws.onclose = () => {
+        console.log('Dashboard WebSocket disconnected')
+        if (shouldReconnect) {
+          console.log(`Reconnecting in ${WS_RECONNECT_WAIT_MS}ms...`)
+          reconnectTimeout = setTimeout(() => {
+            connect()
+          }, WS_RECONNECT_WAIT_MS)
+        }
+      }
+
+      wsRef.current = ws
+    }
+
+    connect()
+
+    return () => {
+      shouldReconnect = false
+      if (reconnectTimeout != null) {
+        clearTimeout(reconnectTimeout)
+      }
+      wsRef.current?.close()
+    }
+  }, [overrideEnabled, overrideBasesEnabled])
+
+  // Send overrides when values change and override is enabled
+  useEffect(() => {
+    sendOverrides()
+  }, [
+    overrideBalls,
+    overrideStrikes,
+    overrideOuts,
+    overrideBase1,
+    overrideBase2,
+    overrideBase3,
+    overrideEnabled,
+    overrideBasesEnabled,
+    sendOverrides
+  ])
 
   return (
     <div className="dashboard-container">
@@ -92,12 +245,12 @@ const Dashboard: React.FC = () => {
               <div
                 className={`stat-value ${!overrideEnabled ? 'grayed-out' : ''}`}
               >
-                {balls}
+                {overrideBalls}
               </div>
               <div
                 className={`stat-value-secondary ${!overrideEnabled ? 'green' : ''}`}
               >
-                {ballsSecondary}
+                {autoBalls}
               </div>
             </div>
             <button
@@ -120,12 +273,12 @@ const Dashboard: React.FC = () => {
               <div
                 className={`stat-value ${!overrideEnabled ? 'grayed-out' : ''}`}
               >
-                {strikes}
+                {overrideStrikes}
               </div>
               <div
                 className={`stat-value-secondary ${!overrideEnabled ? 'green' : ''}`}
               >
-                {strikesSecondary}
+                {autoStrikes}
               </div>
             </div>
             <button
@@ -148,12 +301,12 @@ const Dashboard: React.FC = () => {
               <div
                 className={`stat-value ${!overrideEnabled ? 'grayed-out' : ''}`}
               >
-                {outs}
+                {overrideOuts}
               </div>
               <div
                 className={`stat-value-secondary ${!overrideEnabled ? 'green' : ''}`}
               >
-                {outsSecondary}
+                {autoOuts}
               </div>
             </div>
             <button
@@ -187,15 +340,15 @@ const Dashboard: React.FC = () => {
           <div className="diamond-set">
             <div className="diamond-row">
               <div
-                className={`diamond diamond-readonly ${diamonds[0] ? 'filled' : ''} ${!overrideBasesEnabled ? 'diamond-green' : 'diamond-grey'}`}
+                className={`diamond diamond-readonly ${autoBase2 ? 'filled' : ''} ${!overrideBasesEnabled ? 'diamond-green' : 'diamond-grey'}`}
               />
             </div>
             <div className="diamond-row">
               <div
-                className={`diamond diamond-readonly ${diamonds[1] ? 'filled' : ''} ${!overrideBasesEnabled ? 'diamond-green' : 'diamond-grey'}`}
+                className={`diamond diamond-readonly ${autoBase3 ? 'filled' : ''} ${!overrideBasesEnabled ? 'diamond-green' : 'diamond-grey'}`}
               />
               <div
-                className={`diamond diamond-readonly ${diamonds[2] ? 'filled' : ''} ${!overrideBasesEnabled ? 'diamond-green' : 'diamond-grey'}`}
+                className={`diamond diamond-readonly ${autoBase1 ? 'filled' : ''} ${!overrideBasesEnabled ? 'diamond-green' : 'diamond-grey'}`}
               />
             </div>
           </div>
@@ -203,23 +356,23 @@ const Dashboard: React.FC = () => {
           <div className="diamond-set">
             <div className="diamond-row">
               <div
-                className={`diamond ${diamonds[3] ? 'filled' : ''} ${!overrideBasesEnabled ? 'diamond-grey' : ''}`}
+                className={`diamond ${overrideBase2 ? 'filled' : ''} ${!overrideBasesEnabled ? 'diamond-grey' : ''}`}
                 onClick={() => {
-                  toggleDiamond(3)
+                  toggleBase2()
                 }}
               />
             </div>
             <div className="diamond-row">
               <div
-                className={`diamond ${diamonds[4] ? 'filled' : ''} ${!overrideBasesEnabled ? 'diamond-grey' : ''}`}
+                className={`diamond ${overrideBase3 ? 'filled' : ''} ${!overrideBasesEnabled ? 'diamond-grey' : ''}`}
                 onClick={() => {
-                  toggleDiamond(4)
+                  toggleBase3()
                 }}
               />
               <div
-                className={`diamond ${diamonds[5] ? 'filled' : ''} ${!overrideBasesEnabled ? 'diamond-grey' : ''}`}
+                className={`diamond ${overrideBase1 ? 'filled' : ''} ${!overrideBasesEnabled ? 'diamond-grey' : ''}`}
                 onClick={() => {
-                  toggleDiamond(5)
+                  toggleBase1()
                 }}
               />
             </div>

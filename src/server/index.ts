@@ -20,25 +20,38 @@ async function server(): Promise<void> {
   app.enable('trust proxy')
   app.use(express.json({ limit: '15mb' }))
 
+  // Start the HTTP server first:
+  const { listenPort = 8008, listenHost } = serverConfig
+  const httpServer = http.createServer(app)
+
+  // Initialize WebSocket server BEFORE adding Express routes
+  initializeWebSocketServer(httpServer)
+
   // API routes must come before static files
   app.use('/api', makeExpressRoute(allRoutes))
 
-  // Serve static files
-  app.use(express.static('dist'))
+  // Serve static assets
+  app.use('/assets', express.static('dist/assets'))
+  app.get('/bundle.js', (req, res) => {
+    res.sendFile(path.resolve(__dirname, '../../dist/bundle.js'))
+  })
+  app.get('/bundle.js.LICENSE.txt', (req, res) => {
+    res.sendFile(path.resolve(__dirname, '../../dist/bundle.js.LICENSE.txt'))
+  })
 
-  // SPA fallback - serve index.html for all other routes
-  app.use((req, res) => {
+  // SPA routes - serve index.html for dashboard and scoreboard routes
+  app.get(/^\/(dashboard|scoreboard).*/, (req, res) => {
     res.sendFile(path.resolve(__dirname, '../../dist/index.html'))
   })
 
-  // Start the HTTP server:
-  const { listenPort = 8008, listenHost } = serverConfig
-  const httpServer = http.createServer(app)
+  // Root route
+  app.get('/', (req, res) => {
+    res.sendFile(path.resolve(__dirname, '../../dist/index.html'))
+  })
+
+  // Start listening
   httpServer.listen(listenPort, listenHost)
   logger(`HTTP server listening on port ${listenPort}`)
-
-  // Initialize WebSocket server
-  initializeWebSocketServer(httpServer)
 }
 
 main().catch((error: unknown) => {

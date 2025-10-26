@@ -2,7 +2,11 @@ import './Scoreboard.css'
 
 import React, { useEffect, useState } from 'react'
 
-import type { ScoreState } from '../server/types/types'
+import {
+  asScoreState,
+  type ScoreState,
+  WS_RECONNECT_WAIT_MS
+} from '../common/types'
 
 const Scoreboard: React.FC = () => {
   const [scoreState, setScoreState] = useState<ScoreState>({
@@ -28,36 +32,53 @@ const Scoreboard: React.FC = () => {
     // Determine WebSocket URL based on current location
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const host = window.location.host
-    const wsUrl = `${protocol}//${host}/sockets/api/v1/autoState`
+    const wsUrl = `${protocol}//${host}/sockets/api/v1/scoreboard`
 
-    console.log('Connecting to WebSocket:', wsUrl)
-    const ws = new WebSocket(wsUrl)
+    let reconnectTimeout: NodeJS.Timeout | null = null
+    let shouldReconnect = true
 
-    ws.onopen = () => {
-      console.log('WebSocket connected')
-    }
+    const connect = (): void => {
+      console.log('Connecting to Scoreboard WebSocket:', wsUrl)
+      const ws = new WebSocket(wsUrl)
 
-    ws.onmessage = event => {
-      try {
-        const newScoreState = JSON.parse(event.data) as ScoreState
-        console.log('Received scoreState update:', newScoreState)
-        setScoreState(newScoreState)
-      } catch (error) {
-        console.error('Error parsing WebSocket message:', error)
+      ws.onopen = () => {
+        console.log('Scoreboard WebSocket connected')
+      }
+
+      ws.onmessage = event => {
+        try {
+          const rawData = JSON.parse(event.data)
+          const newScoreState: ScoreState = asScoreState(rawData)
+          console.log('Received scoreState update:', newScoreState)
+          setScoreState(newScoreState)
+        } catch (error) {
+          console.error('Error parsing or validating WebSocket message:', error)
+        }
+      }
+
+      ws.onerror = error => {
+        console.error('Scoreboard WebSocket error:', error)
+      }
+
+      ws.onclose = () => {
+        console.log('Scoreboard WebSocket disconnected')
+        if (shouldReconnect) {
+          console.log(`Reconnecting in ${WS_RECONNECT_WAIT_MS}ms...`)
+          reconnectTimeout = setTimeout(() => {
+            connect()
+          }, WS_RECONNECT_WAIT_MS)
+        }
       }
     }
 
-    ws.onerror = error => {
-      console.error('WebSocket error:', error)
-    }
-
-    ws.onclose = () => {
-      console.log('WebSocket disconnected')
-    }
+    connect()
 
     // Cleanup on unmount
     return () => {
-      ws.close()
+      shouldReconnect = false
+      if (reconnectTimeout != null) {
+        clearTimeout(reconnectTimeout)
+      }
     }
   }, [])
 
