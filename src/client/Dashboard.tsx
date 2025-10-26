@@ -42,38 +42,47 @@ const Dashboard: React.FC = () => {
   const wsRef = useRef<WebSocket | null>(null)
 
   const incrementBalls = (): void => {
+    if (!overrideEnabled) setOverrideEnabled(true)
     if (overrideBalls < 3) setOverrideBalls(overrideBalls + 1)
   }
 
   const decrementBalls = (): void => {
+    if (!overrideEnabled) setOverrideEnabled(true)
     if (overrideBalls > 0) setOverrideBalls(overrideBalls - 1)
   }
 
   const incrementStrikes = (): void => {
+    if (!overrideEnabled) setOverrideEnabled(true)
     if (overrideStrikes < 2) setOverrideStrikes(overrideStrikes + 1)
   }
 
   const decrementStrikes = (): void => {
+    if (!overrideEnabled) setOverrideEnabled(true)
     if (overrideStrikes > 0) setOverrideStrikes(overrideStrikes - 1)
   }
 
   const incrementOuts = (): void => {
+    if (!overrideEnabled) setOverrideEnabled(true)
     if (overrideOuts < 2) setOverrideOuts(overrideOuts + 1)
   }
 
   const decrementOuts = (): void => {
+    if (!overrideEnabled) setOverrideEnabled(true)
     if (overrideOuts > 0) setOverrideOuts(overrideOuts - 1)
   }
 
   const toggleBase1 = (): void => {
+    if (!overrideBasesEnabled) setOverrideBasesEnabled(true)
     setOverrideBase1(!overrideBase1)
   }
 
   const toggleBase2 = (): void => {
+    if (!overrideBasesEnabled) setOverrideBasesEnabled(true)
     setOverrideBase2(!overrideBase2)
   }
 
   const toggleBase3 = (): void => {
+    if (!overrideBasesEnabled) setOverrideBasesEnabled(true)
     setOverrideBase3(!overrideBase3)
   }
 
