@@ -249,6 +249,11 @@
   border-color: #ff3333;
 }
 
+.dashboard-container .diamond.diamond-grey.filled {
+  background: #999;
+  border-color: #999;
+}
+
 .dashboard-container .diamond:hover {
   transform: rotate(45deg) scale(1.1);
 }
