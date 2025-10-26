@@ -1,5 +1,5 @@
 import { makeConfig } from 'cleaner-config'
-import { asArray, asNumber, asObject, asOptional, asString } from 'cleaners'
+import { asNumber, asObject, asOptional, asString } from 'cleaners'
 import { asCouchCredentials } from 'edge-server-tools'
 
 const configPath = './serverConfig.json'
@@ -36,34 +36,7 @@ const asServerConfig = asObject({
     }
   })),
 
-  xaiApiKey: asOptional(asString, 'xxxxx'),
-  // LWS server:
-  lwsServers: asOptional(
-    asArray(
-      asObject({
-        url: asString,
-        shard: asNumber
-      })
-    ),
-    [
-      {
-        url: 'https://upstream-1.example.test',
-        shard: 1
-      },
-      {
-        url: 'https://upstream-2.example.test',
-        shard: 2
-      },
-      {
-        url: 'https://upstream-3.example.test',
-        shard: 3
-      },
-      {
-        url: 'https://upstream-4.example.test',
-        shard: 4
-      }
-    ]
-  )
+  xaiApiKey: asOptional(asString, 'xxxxx')
 })
 
 export type ServerConfig = ReturnType<typeof asServerConfig>
