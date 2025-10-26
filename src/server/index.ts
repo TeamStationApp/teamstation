@@ -1,5 +1,6 @@
 import express from 'express'
 import http from 'http'
+import path from 'path'
 import { makeExpressRoute } from 'serverlet/express'
 
 import { serverConfig } from './serverConfig'
@@ -18,8 +19,17 @@ async function server(): Promise<void> {
   const app = express()
   app.enable('trust proxy')
   app.use(express.json({ limit: '15mb' }))
-  app.use('/scoreboard', express.static('dist'))
-  app.use('/', makeExpressRoute(allRoutes))
+
+  // API routes must come before static files
+  app.use('/api', makeExpressRoute(allRoutes))
+
+  // Serve static files
+  app.use(express.static('dist'))
+
+  // SPA fallback - serve index.html for all other routes
+  app.use((req, res) => {
+    res.sendFile(path.resolve(__dirname, '../../dist/index.html'))
+  })
 
   // Start the HTTP server:
   const { listenPort = 8008, listenHost } = serverConfig
