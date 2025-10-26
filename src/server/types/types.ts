@@ -8,6 +8,7 @@ import {
   asValue
 } from 'cleaners'
 import type { ExpressRequest } from 'serverlet/express'
+import type { WebSocket } from 'ws'
 
 export const statusCodes = {
   ok: 200,
@@ -97,3 +98,7 @@ export const asScoreState = asObject({
 })
 
 export type ScoreState = ReturnType<typeof asScoreState>
+
+export interface WsObject {
+  ws: WebSocket | null
+}
