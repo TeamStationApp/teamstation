@@ -15,7 +15,10 @@ module.exports = (env, argv) => {
       publicPath: '/'
     },
     resolve: {
-      extensions: ['.tsx', '.ts', '.js']
+      extensions: ['.tsx', '.ts', '.js'],
+      alias: {
+        '@common': path.resolve(__dirname, 'src/common')
+      }
     },
     module: {
       rules: [
