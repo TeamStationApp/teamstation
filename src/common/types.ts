@@ -12,6 +12,7 @@ export const WS_RECONNECT_WAIT_MS = 3000
 
 // ScoreState - shared between client and server
 export const asScoreState = asObject({
+  inGame: asBoolean,
   pitcherName: asString,
   batterName: asString,
   batterNumber: asNumber,
