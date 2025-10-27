@@ -1,11 +1,11 @@
 import {
-  asBoolean,
-  asDate,
-  asNumber,
-  asObject,
-  asOptional,
-  asString,
-  asValue
+    asBoolean,
+    asDate,
+    asNumber,
+    asObject,
+    asOptional,
+    asString,
+    asValue
 } from 'cleaners'
 import type { ExpressRequest } from 'serverlet/express'
 import type { WebSocket } from 'ws'
@@ -79,6 +79,7 @@ export const asApiKey = asObject({
 })
 
 export const asScoreState = asObject({
+  inGame: asBoolean,
   pitcherName: asString,
   batterName: asString,
   batterNumber: asNumber,

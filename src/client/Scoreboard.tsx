@@ -10,6 +10,7 @@ import {
 
 const Scoreboard: React.FC = () => {
   const [scoreState, setScoreState] = useState<ScoreState>({
+    inGame: false,
     pitcherName: 'Not Set',
     batterName: 'Not Set',
     batterNumber: 0,
@@ -84,9 +85,9 @@ const Scoreboard: React.FC = () => {
     }
   }, [])
 
-  // Additional UI state (not part of ScoreState type)
-  // const numPitches = 22
-  // const batterNumber = 4
+  if (!scoreState.inGame) {
+    return null
+  }
 
   return (
     <div className="scoreboard-container">
