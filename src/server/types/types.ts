@@ -92,9 +92,11 @@ export const asScoreState = asObject({
   base2: asBoolean,
   base3: asBoolean,
   inning: asNumber,
-  half: asValue('top', 'bottom'),
-  teams: asObject({ home: asString, away: asString }),
-  scores: asObject({ home: asNumber, away: asNumber })
+  half: asValue('top', 'bottom', 'mid'),
+  homeTeam: asString,
+  awayTeam: asString,
+  homeScore: asNumber,
+  awayScore: asNumber
 })
 
 export type ScoreState = ReturnType<typeof asScoreState>
