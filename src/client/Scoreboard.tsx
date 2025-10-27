@@ -24,8 +24,10 @@ const Scoreboard: React.FC = () => {
     base3: false,
     inning: 0,
     half: 'top',
-    teams: { home: '', away: '' },
-    scores: { home: 0, away: 0 }
+    homeTeam: '',
+    awayTeam: '',
+    homeScore: 0,
+    awayScore: 0
   })
 
   useEffect(() => {
@@ -108,12 +110,12 @@ const Scoreboard: React.FC = () => {
           {/* Left: Teams stacked */}
           <div className="teams-stack">
             <div className="team away-team">
-              <div className="team-logo">{scoreState.teams.away}</div>
-              <div className="team-score">{scoreState.scores.away}</div>
+              <div className="team-logo">{scoreState.awayTeam}</div>
+              <div className="team-score">{scoreState.awayScore}</div>
             </div>
             <div className="team home-team">
-              <div className="team-logo">{scoreState.teams.home}</div>
-              <div className="team-score">{scoreState.scores.home}</div>
+              <div className="team-logo">{scoreState.homeTeam}</div>
+              <div className="team-score">{scoreState.homeScore}</div>
             </div>
           </div>
 
