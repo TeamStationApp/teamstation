@@ -1,9 +1,4 @@
-# Monero LWS Load Balancer wrapper
+# Gamestation game scorebug widget
 
-Provides wrapper on top of Monero LWS for the following functionality
-
-- Load balances across multiple LWS instances
-- Automatically enables and disables scanning of addresses based
-on how recent the address is used
-- Holds address info in a Couch database for faster lookup
-- Provides a web interface to look up address status and triggering a rescan
+Provides a dashboard and scoreboard UI web widget that can be used in
+OBS or other streaming apps to overlay a score on video streams
