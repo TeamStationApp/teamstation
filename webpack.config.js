@@ -15,22 +15,35 @@ module.exports = (env, argv) => {
       publicPath: '/'
     },
     resolve: {
-      extensions: ['.tsx', '.ts', '.js'],
+      extensions: ['.web.tsx', '.web.ts', '.tsx', '.ts', '.web.js', '.js'],
       alias: {
-        '@common': path.resolve(__dirname, 'src/common')
+        '@common': path.resolve(__dirname, 'src/common'),
+        'react-native$': 'react-native-web',
+        'react-native-linear-gradient': 'react-native-web-linear-gradient'
       }
     },
     module: {
       rules: [
         {
-          test: /\.tsx?$/,
+          test: /\.(tsx?|jsx?)$/,
+          exclude:
+            /node_modules\/(?!(react-native|@react-native|react-native-web|react-router-native)\/).*/,
           use: {
-            loader: 'ts-loader',
+            loader: 'babel-loader',
             options: {
-              configFile: 'tsconfig.client.json'
+              presets: [
+                '@babel/preset-react',
+                [
+                  '@babel/preset-typescript',
+                  {
+                    isTSX: true,
+                    allExtensions: true
+                  }
+                ]
+              ],
+              plugins: ['react-native-web']
             }
-          },
-          exclude: /node_modules/
+          }
         },
         {
           test: /\.css$/,
