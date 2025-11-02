@@ -378,54 +378,27 @@ const Dashboard: React.FC = () => {
           </Pressable>
         </View>
         <View style={styles.diamondsContainer}>
-          <View style={styles.diamondWrapper}>
-            <Pressable
-              style={[
-                styles.diamond,
-                overrideBasesEnabled && overrideBase2
-                  ? styles.diamondFilled
-                  : {}
-              ]}
-              onPress={toggleBase2}
-            />
-            {(autoBase2 ||
-              (overrideBasesEnabled && autoBase2 !== overrideBase2)) && (
-              <View
-                style={[
-                  styles.innerDiamond,
-                  overrideBasesEnabled && !autoBase2 && overrideBase2
-                    ? styles.innerDiamondDisabled
-                    : overrideBasesEnabled && autoBase2 && overrideBase2
-                      ? styles.innerDiamondDarkened
-                      : overrideBasesEnabled && autoBase2 !== overrideBase2
-                        ? styles.innerDiamondDarkened
-                        : {},
-                  styles.innerDiamondNonInteractive
-                ]}
-              />
-            )}
-          </View>
           <View style={styles.diamondRow}>
             <View style={styles.diamondWrapper}>
               <Pressable
                 style={[
                   styles.diamond,
-                  overrideBasesEnabled && overrideBase3
+                  overrideBasesEnabled && overrideBase2
                     ? styles.diamondFilled
                     : {}
                 ]}
-                onPress={toggleBase3}
+                onPress={toggleBase2}
               />
               {(autoBase3 ||
-                (overrideBasesEnabled && autoBase3 !== overrideBase3)) && (
+                (overrideBasesEnabled && autoBase2 !== overrideBase2)) && (
                 <View
                   style={[
                     styles.innerDiamond,
-                    overrideBasesEnabled && !autoBase3 && overrideBase3
+                    overrideBasesEnabled && !autoBase2 && overrideBase2
                       ? styles.innerDiamondDisabled
-                      : overrideBasesEnabled && autoBase3 && overrideBase3
+                      : overrideBasesEnabled && autoBase2 && overrideBase2
                         ? styles.innerDiamondDarkened
-                        : overrideBasesEnabled && autoBase3 !== overrideBase3
+                        : overrideBasesEnabled && autoBase2 !== overrideBase2
                           ? styles.innerDiamondDarkened
                           : {},
                     styles.innerDiamondNonInteractive
@@ -453,6 +426,35 @@ const Dashboard: React.FC = () => {
                       : overrideBasesEnabled && autoBase1 && overrideBase1
                         ? styles.innerDiamondDarkened
                         : overrideBasesEnabled && autoBase1 !== overrideBase1
+                          ? styles.innerDiamondDarkened
+                          : {},
+                    styles.innerDiamondNonInteractive
+                  ]}
+                />
+              )}
+            </View>
+          </View>
+          <View style={styles.diamondRowLeftAlign}>
+            <View style={styles.diamondWrapper}>
+              <Pressable
+                style={[
+                  styles.diamond,
+                  overrideBasesEnabled && overrideBase3
+                    ? styles.diamondFilled
+                    : {}
+                ]}
+                onPress={toggleBase3}
+              />
+              {(autoBase3 ||
+                (overrideBasesEnabled && autoBase3 !== overrideBase3)) && (
+                <View
+                  style={[
+                    styles.innerDiamond,
+                    overrideBasesEnabled && !autoBase3 && overrideBase3
+                      ? styles.innerDiamondDisabled
+                      : overrideBasesEnabled && autoBase3 && overrideBase3
+                        ? styles.innerDiamondDarkened
+                        : overrideBasesEnabled && autoBase3 !== overrideBase3
                           ? styles.innerDiamondDarkened
                           : {},
                     styles.innerDiamondNonInteractive
@@ -630,14 +632,21 @@ const styles = StyleSheet.create({
   diamondsContainer: {
     display: 'flex',
     flexDirection: 'column',
-    alignItems: 'center',
-    gap: 20
+    alignItems: 'flex-start',
+    marginTop: 24,
+    gap: 8,
+    transform: [{ rotate: '45deg' }]
   },
   diamondRow: {
     display: 'flex',
     flexDirection: 'row',
-    gap: 40,
-    justifyContent: 'center'
+    gap: 8,
+    justifyContent: 'flex-start'
+  },
+  diamondRowLeftAlign: {
+    display: 'flex',
+    flexDirection: 'row',
+    justifyContent: 'flex-start'
   },
   diamondWrapper: {
     position: 'relative',
@@ -653,8 +662,7 @@ const styles = StyleSheet.create({
     height: 50,
     backgroundColor: 'transparent',
     borderWidth: 3,
-    borderColor: '#666',
-    transform: [{ rotate: '45deg' }]
+    borderColor: '#666'
   },
   diamondFilled: {
     backgroundColor: '#ef4444',
@@ -664,8 +672,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     width: 20,
     height: 20,
-    backgroundColor: '#ef4444',
-    transform: [{ rotate: '45deg' }]
+    backgroundColor: '#ef4444'
   },
   innerDiamondDarkened: {
     backgroundColor: '#801010'

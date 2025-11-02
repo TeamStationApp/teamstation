@@ -38,7 +38,7 @@ const asServerConfig = asObject({
   })),
 
   xaiApiKey: asOptional(asString, 'xxxxx')
-})
+}).withRest
 
 export type ServerConfig = ReturnType<typeof asServerConfig>
 export const serverConfig: ServerConfig = makeConfig(asServerConfig, configPath)
