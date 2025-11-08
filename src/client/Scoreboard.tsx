@@ -7,6 +7,7 @@ import {
   type ScoreState,
   WS_RECONNECT_WAIT_MS
 } from '../common/types'
+import { clientConfig } from './clientConfig'
 
 const showDemoBoard = true
 
@@ -40,10 +41,17 @@ const Scoreboard: React.FC = () => {
   })
 
   useEffect(() => {
-    // Determine WebSocket URL based on current location
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const host = window.location.host
-    const wsUrl = `${protocol}//${host}/sockets/api/v1/scoreboard`
+    let wsUrl: string
+    // @ts-expect-error - __WEBPACK_DEV__ is injected by webpack DefinePlugin
+    if (window.__WEBPACK_DEV__ === true) {
+      // Development mode: use apiServer from clientConfig
+      wsUrl = `${clientConfig.apiServer}/sockets/api/v1/scoreboard`
+    } else {
+      // Production mode: use window.location
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+      const host = window.location.host
+      wsUrl = `${protocol}//${host}/sockets/api/v1/scoreboard`
+    }
 
     let reconnectTimeout: NodeJS.Timeout | null = null
     let shouldReconnect = true
