@@ -628,7 +628,7 @@ const Dashboard: React.FC = () => {
           overrideStrikes,
           autoStrikes,
           2,
-          '#ef4444',
+          '#ffa500', // orange
           incrementStrikes,
           clearStrikes
         )}
