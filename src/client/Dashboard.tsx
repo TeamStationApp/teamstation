@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { Pressable, StyleSheet, Text, View } from 'react-native'
+import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native'
 
 import {
   asAutoStateMessage,
@@ -29,6 +29,29 @@ const Dashboard: React.FC = () => {
   const [overrideBase2, setOverrideBase2] = useState(false)
   const [overrideBase3, setOverrideBase3] = useState(false)
   const overrideBasesEnabledRef = useRef(false)
+
+  // Team overrides
+  const [overrideTeamEnabled, setOverrideTeamEnabled] = useState(false)
+  const [autoHomeTeam, setAutoHomeTeam] = useState('')
+  const [autoAwayTeam, setAutoAwayTeam] = useState('')
+  const [overrideHomeTeam, setOverrideHomeTeam] = useState('')
+  const [overrideAwayTeam, setOverrideAwayTeam] = useState('')
+  const overrideTeamEnabledRef = useRef(false)
+
+  // Score overrides
+  const [overrideScoreEnabled, setOverrideScoreEnabled] = useState(false)
+  const [autoHomeScore, setAutoHomeScore] = useState(0)
+  const [autoAwayScore, setAutoAwayScore] = useState(0)
+  const [overrideHomeScore, setOverrideHomeScore] = useState(0)
+  const [overrideAwayScore, setOverrideAwayScore] = useState(0)
+  const overrideScoreEnabledRef = useRef(false)
+
+  // Number picker state
+  const [showScorePicker, setShowScorePicker] = useState<
+    'home' | 'away' | null
+  >(null)
+  const [pickerPosition, setPickerPosition] = useState({ x: 0, y: 0 })
+
   const wsRef = useRef<WebSocket | null>(null)
 
   // Keep refs in sync with state
@@ -39,6 +62,14 @@ const Dashboard: React.FC = () => {
   useEffect(() => {
     overrideBasesEnabledRef.current = overrideBasesEnabled
   }, [overrideBasesEnabled])
+
+  useEffect(() => {
+    overrideTeamEnabledRef.current = overrideTeamEnabled
+  }, [overrideTeamEnabled])
+
+  useEffect(() => {
+    overrideScoreEnabledRef.current = overrideScoreEnabled
+  }, [overrideScoreEnabled])
 
   const incrementBalls = (): void => {
     if (!overrideEnabled) setOverrideEnabled(true)
@@ -91,8 +122,12 @@ const Dashboard: React.FC = () => {
       const overrides: DashboardOverrides = {
         overrideCountEnabled: overrideEnabled,
         overrideBasesEnabled,
+        overrideTeamEnabled,
+        overrideScoreEnabled,
         overrideCount: undefined,
-        overrideBases: undefined
+        overrideBases: undefined,
+        overrideTeam: undefined,
+        overrideScore: undefined
       }
 
       if (overrideEnabled) {
@@ -111,6 +146,20 @@ const Dashboard: React.FC = () => {
         }
       }
 
+      if (overrideTeamEnabled) {
+        overrides.overrideTeam = {
+          homeTeam: overrideHomeTeam,
+          awayTeam: overrideAwayTeam
+        }
+      }
+
+      if (overrideScoreEnabled) {
+        overrides.overrideScore = {
+          homeScore: overrideHomeScore,
+          awayScore: overrideAwayScore
+        }
+      }
+
       wsRef.current.send(JSON.stringify(overrides))
       console.log('Sent overrides:', overrides)
     }
@@ -122,7 +171,13 @@ const Dashboard: React.FC = () => {
     overrideBasesEnabled,
     overrideBase1,
     overrideBase2,
-    overrideBase3
+    overrideBase3,
+    overrideTeamEnabled,
+    overrideHomeTeam,
+    overrideAwayTeam,
+    overrideScoreEnabled,
+    overrideHomeScore,
+    overrideAwayScore
   ])
 
   // WebSocket connection with auto-reconnect
@@ -170,6 +225,10 @@ const Dashboard: React.FC = () => {
             setAutoBase1(autoState.base1)
             setAutoBase2(autoState.base2)
             setAutoBase3(autoState.base3)
+            setAutoHomeTeam(autoState.homeTeam)
+            setAutoAwayTeam(autoState.awayTeam)
+            setAutoHomeScore(autoState.homeScore)
+            setAutoAwayScore(autoState.awayScore)
 
             // ONLY update override values if override is disabled (not sticky)
             if (!overrideEnabledRef.current) {
@@ -183,6 +242,16 @@ const Dashboard: React.FC = () => {
               setOverrideBase2(autoState.base2)
               setOverrideBase3(autoState.base3)
             }
+
+            if (!overrideTeamEnabledRef.current) {
+              setOverrideHomeTeam(autoState.homeTeam)
+              setOverrideAwayTeam(autoState.awayTeam)
+            }
+
+            if (!overrideScoreEnabledRef.current) {
+              setOverrideHomeScore(autoState.homeScore)
+              setOverrideAwayScore(autoState.awayScore)
+            }
           } else if (messageType === 'overrideUpdate') {
             const message = asOverrideUpdateMessage(rawData)
             const overrides = message.data
@@ -194,6 +263,8 @@ const Dashboard: React.FC = () => {
             // Update toggle states
             setOverrideEnabled(overrides.overrideCountEnabled)
             setOverrideBasesEnabled(overrides.overrideBasesEnabled)
+            setOverrideTeamEnabled(overrides.overrideTeamEnabled)
+            setOverrideScoreEnabled(overrides.overrideScoreEnabled)
 
             // Update override count if present
             if (overrides.overrideCount != null) {
@@ -205,6 +276,14 @@ const Dashboard: React.FC = () => {
               setOverrideBase1(overrides.overrideBases.base1)
               setOverrideBase2(overrides.overrideBases.base2)
               setOverrideBase3(overrides.overrideBases.base3)
+            }
+            if (overrides.overrideTeam != null) {
+              setOverrideHomeTeam(overrides.overrideTeam.homeTeam)
+              setOverrideAwayTeam(overrides.overrideTeam.awayTeam)
+            }
+            if (overrides.overrideScore != null) {
+              setOverrideHomeScore(overrides.overrideScore.homeScore)
+              setOverrideAwayScore(overrides.overrideScore.awayScore)
             }
           }
         } catch (error) {
@@ -252,8 +331,186 @@ const Dashboard: React.FC = () => {
     overrideBase1,
     overrideBase2,
     overrideBase3,
+    overrideTeamEnabled,
+    overrideHomeTeam,
+    overrideAwayTeam,
+    overrideScoreEnabled,
+    overrideHomeScore,
+    overrideAwayScore,
     sendOverrides
   ])
+
+  // Number picker component
+  const renderNumberPicker = (): React.ReactNode => {
+    if (showScorePicker == null) return null
+
+    const handleScoreSelect = (value: number): void => {
+      if (showScorePicker === 'home') {
+        setOverrideHomeScore(value)
+        setOverrideScoreEnabled(true)
+      } else {
+        setOverrideAwayScore(value)
+        setOverrideScoreEnabled(true)
+      }
+      setShowScorePicker(null)
+    }
+
+    const numbers = Array.from({ length: 21 }, (_, i) => i)
+    const currentScore =
+      showScorePicker === 'home' ? overrideHomeScore : overrideAwayScore
+    const centerIndex = numbers.indexOf(currentScore)
+
+    return (
+      <Pressable
+        style={styles.pickerOverlay}
+        onPress={() => {
+          setShowScorePicker(null)
+        }}
+      >
+        <View
+          style={[
+            styles.pickerContainer,
+            { left: pickerPosition.x - 50, top: pickerPosition.y - 100 }
+          ]}
+        >
+          {numbers.map((num, index) => {
+            const distance = Math.abs(index - centerIndex)
+            const opacity = Math.max(0.3, 1 - distance * 0.2)
+            const fontSize = distance === 0 ? 32 : 24
+            const fontWeight = distance === 0 ? '700' : '400'
+
+            return (
+              <Pressable
+                key={num}
+                style={[
+                  styles.pickerItem,
+                  distance === 0 && styles.pickerItemSelected
+                ]}
+                onPress={() => {
+                  handleScoreSelect(num)
+                }}
+              >
+                <Text
+                  style={[
+                    styles.pickerItemText,
+                    {
+                      opacity,
+                      fontSize,
+                      fontWeight: fontWeight as
+                        | '400'
+                        | '700'
+                        | '100'
+                        | '200'
+                        | '300'
+                        | '500'
+                        | '600'
+                        | '800'
+                        | '900'
+                        | 'normal'
+                        | 'bold'
+                    }
+                  ]}
+                >
+                  {num}
+                </Text>
+              </Pressable>
+            )
+          })}
+        </View>
+      </Pressable>
+    )
+  }
+
+  // Team score row renderer
+  const renderTeamScoreRow = (
+    autoTeam: string,
+    autoScore: number,
+    overrideTeam: string,
+    overrideScore: number,
+    isHome: boolean
+  ): React.ReactNode => {
+    return (
+      <View style={styles.teamScoreRow}>
+        <View
+          style={[
+            styles.teamNameContainer,
+            overrideTeamEnabled && styles.teamNameContainerActive
+          ]}
+        >
+          <Text
+            style={[
+              styles.superscriptInField,
+              overrideTeamEnabled && styles.superscriptInFieldActive
+            ]}
+          >
+            {autoTeam.toUpperCase()}
+          </Text>
+          <TextInput
+            value={overrideTeamEnabled ? overrideTeam : ''}
+            onChange={e => {
+              setOverrideTeamEnabled(true)
+              if (isHome) {
+                setOverrideHomeTeam(e.nativeEvent.text)
+              } else {
+                setOverrideAwayTeam(e.nativeEvent.text)
+              }
+            }}
+            style={{
+              fontSize: 24,
+              fontWeight: '700',
+              color: 'white',
+              backgroundColor: 'transparent',
+              borderColor: 'transparent',
+              borderWidth: 0,
+              width: '100%',
+              paddingLeft: 0,
+              transform: [{ translateY: 8 }]
+            }}
+            placeholder={autoTeam}
+          />
+          <Pressable
+            style={styles.xButtonInField}
+            onPress={() => {
+              // Turn off team override for BOTH teams
+              setOverrideTeamEnabled(false)
+              setOverrideHomeTeam(autoHomeTeam)
+              setOverrideAwayTeam(autoAwayTeam)
+            }}
+          >
+            <Text style={styles.xButtonText}>✕</Text>
+          </Pressable>
+        </View>
+        <Pressable
+          style={[
+            styles.scoreContainer,
+            overrideScoreEnabled && styles.scoreContainerActive
+          ]}
+          onPress={e => {
+            const nativeEvent = e.nativeEvent as unknown as {
+              pageX: number
+              pageY: number
+            }
+            setPickerPosition({ x: nativeEvent.pageX, y: nativeEvent.pageY })
+            setShowScorePicker(isHome ? 'home' : 'away')
+          }}
+        >
+          <Text style={styles.superscriptInField}>{autoScore.toString()}</Text>
+          <Text style={styles.scoreText}>{overrideScore}</Text>
+          <Pressable
+            style={styles.xButtonInField}
+            onPress={() => {
+              // Turn off score override for BOTH teams
+              setOverrideScoreEnabled(false)
+              setOverrideHomeScore(autoHomeScore)
+              setOverrideAwayScore(autoAwayScore)
+            }}
+          >
+            <Text style={styles.xButtonText}>✕</Text>
+          </Pressable>
+        </Pressable>
+      </View>
+    )
+  }
 
   const renderCountRow = (
     label: string,
@@ -326,6 +583,23 @@ const Dashboard: React.FC = () => {
 
   return (
     <View style={styles.dashboardContainer}>
+      {renderNumberPicker()}
+      <View style={styles.teamScoreCard}>
+        {renderTeamScoreRow(
+          autoAwayTeam,
+          autoAwayScore,
+          overrideAwayTeam,
+          overrideAwayScore,
+          false
+        )}
+        {renderTeamScoreRow(
+          autoHomeTeam,
+          autoHomeScore,
+          overrideHomeTeam,
+          overrideHomeScore,
+          true
+        )}
+      </View>
       <View style={styles.dashboard}>
         <Pressable
           style={[
@@ -487,10 +761,154 @@ const styles = StyleSheet.create({
     backgroundColor: '#1a1a1a',
     padding: 16
   },
+  teamScoreCard: {
+    backgroundColor: '#2d2d2d',
+    borderRadius: 20,
+    marginTop: 8,
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 20,
+    elevation: 8,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 16,
+    width: '100%',
+    maxWidth: 600
+  },
+  teamScoreRow: {
+    display: 'flex',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    justifyContent: 'space-between'
+  },
+  teamNameContainer: {
+    flex: 1,
+    minHeight: 50,
+    backgroundColor: '#3d3d3d',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    paddingRight: 45,
+    display: 'flex',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    position: 'relative',
+    marginRight: 12
+  },
+  teamNameContainerActive: {
+    backgroundColor: '#22c55e'
+  },
+  scoreContainer: {
+    minWidth: 100,
+    minHeight: 50,
+    backgroundColor: '#3d3d3d',
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    paddingRight: 45,
+    display: 'flex',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    position: 'relative',
+    flexShrink: 0
+  },
+  scoreContainerActive: {
+    backgroundColor: '#22c55e'
+  },
+  scoreText: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: 'white'
+  },
+  superscript: {
+    fontSize: 12,
+    fontWeight: '400',
+    color: '#aaa',
+    position: 'absolute',
+    top: 4,
+    left: 4
+  },
+  superscriptInField: {
+    fontSize: 12,
+    fontWeight: '400',
+    color: '#aaaaaa',
+    position: 'absolute',
+    top: 6,
+    left: 12,
+    zIndex: 1
+  },
+  superscriptInFieldActive: {
+    color: '#ffffff'
+  },
+  xButtonInField: {
+    width: 30,
+    height: 30,
+    borderRadius: 6,
+    backgroundColor: '#666',
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    position: 'absolute',
+    right: 8,
+    top: '50%',
+    marginTop: -15
+  },
+  xButtonText: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: 'white'
+  },
+  pickerOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    zIndex: 1000,
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center'
+  },
+  pickerContainer: {
+    position: 'absolute',
+    width: 100,
+    maxHeight: 250,
+    backgroundColor: '#2d2d2d',
+    borderRadius: 12,
+    padding: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.5,
+    shadowRadius: 20,
+    overflow: 'scroll'
+  },
+  pickerItem: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center'
+  },
+  pickerItemSelected: {
+    backgroundColor: '#22c55e',
+    borderRadius: 6
+  },
+  pickerItemText: {
+    color: 'white',
+    textAlign: 'center'
+  },
   dashboard: {
     backgroundColor: '#2d2d2d',
     borderRadius: 20,
-    marginTop: 64,
+    marginTop: 16,
     paddingVertical: 16,
     paddingHorizontal: 20,
     shadowColor: '#000',

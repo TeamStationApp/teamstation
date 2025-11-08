@@ -39,8 +39,8 @@ let currentAutoState: ScoreState = {
   base3: false,
   inning: 0,
   half: 'top',
-  homeTeam: '',
-  awayTeam: '',
+  homeTeam: 'Home Team',
+  awayTeam: 'Away Team',
   homeScore: 0,
   awayScore: 0
 }
@@ -48,8 +48,12 @@ let currentAutoState: ScoreState = {
 let currentDashboardOverrides: DashboardOverrides = {
   overrideCountEnabled: false,
   overrideBasesEnabled: false,
+  overrideTeamEnabled: false,
+  overrideScoreEnabled: false,
   overrideCount: undefined,
-  overrideBases: undefined
+  overrideBases: undefined,
+  overrideTeam: undefined,
+  overrideScore: undefined
 }
 
 /**
@@ -80,6 +84,24 @@ function mergeFinalState(): ScoreState | null {
     finalState.base1 = currentDashboardOverrides.overrideBases.base1
     finalState.base2 = currentDashboardOverrides.overrideBases.base2
     finalState.base3 = currentDashboardOverrides.overrideBases.base3
+  }
+
+  // Apply team overrides if enabled and present
+  if (
+    currentDashboardOverrides.overrideTeamEnabled &&
+    currentDashboardOverrides.overrideTeam != null
+  ) {
+    finalState.homeTeam = currentDashboardOverrides.overrideTeam.homeTeam
+    finalState.awayTeam = currentDashboardOverrides.overrideTeam.awayTeam
+  }
+
+  // Apply score overrides if enabled and present
+  if (
+    currentDashboardOverrides.overrideScoreEnabled &&
+    currentDashboardOverrides.overrideScore != null
+  ) {
+    finalState.homeScore = currentDashboardOverrides.overrideScore.homeScore
+    finalState.awayScore = currentDashboardOverrides.overrideScore.awayScore
   }
 
   return finalState
