@@ -454,7 +454,7 @@ const Dashboard: React.FC = () => {
               overrideTeamEnabled && styles.superscriptInFieldActive
             ]}
           >
-            {autoTeam.toUpperCase()}
+            {autoTeam}
           </Text>
           <TextInput
             value={overrideTeamEnabled ? overrideTeam : ''}
@@ -478,6 +478,7 @@ const Dashboard: React.FC = () => {
               transform: [{ translateY: 8 }]
             }}
             placeholder={autoTeam}
+            placeholderTextColor="#888"
           />
           <Pressable
             style={styles.xButtonInField}
