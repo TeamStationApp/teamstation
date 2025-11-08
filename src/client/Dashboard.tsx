@@ -529,6 +529,14 @@ const Dashboard: React.FC = () => {
             overrideScoreEnabled && styles.scoreContainerActive
           ]}
           onPress={e => {
+            setOverrideScoreEnabled(true)
+            if (isHome) {
+              setOverrideHomeScore(overrideHomeScore + 1)
+            } else {
+              setOverrideAwayScore(overrideAwayScore + 1)
+            }
+          }}
+          onLongPress={e => {
             const nativeEvent = e.nativeEvent as unknown as {
               pageX: number
               pageY: number
