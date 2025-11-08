@@ -39,6 +39,8 @@ export type ScoreState = ReturnType<typeof asScoreState>
 export const asDashboardOverrides = asObject({
   overrideCountEnabled: asBoolean,
   overrideBasesEnabled: asBoolean,
+  overrideTeamEnabled: asBoolean,
+  overrideScoreEnabled: asBoolean,
   overrideCount: asOptional(
     asObject({
       balls: asNumber,
@@ -51,6 +53,18 @@ export const asDashboardOverrides = asObject({
       base1: asBoolean,
       base2: asBoolean,
       base3: asBoolean
+    })
+  ),
+  overrideTeam: asOptional(
+    asObject({
+      homeTeam: asString,
+      awayTeam: asString
+    })
+  ),
+  overrideScore: asOptional(
+    asObject({
+      homeScore: asNumber,
+      awayScore: asNumber
     })
   )
 })
