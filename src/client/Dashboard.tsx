@@ -7,6 +7,7 @@ import {
   type DashboardOverrides,
   WS_RECONNECT_WAIT_MS
 } from '../common/types'
+import { clientConfig } from './clientConfig'
 
 const Dashboard: React.FC = () => {
   const [overrideEnabled, setOverrideEnabled] = useState(false)
@@ -126,9 +127,17 @@ const Dashboard: React.FC = () => {
 
   // WebSocket connection with auto-reconnect
   useEffect(() => {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const host = window.location.host
-    const wsUrl = `${protocol}//${host}/sockets/api/v1/dashboard`
+    let wsUrl: string
+    // @ts-expect-error - __WEBPACK_DEV__ is injected by webpack DefinePlugin
+    if (window.__WEBPACK_DEV__ === true) {
+      // Development mode: use apiServer from clientConfig
+      wsUrl = `${clientConfig.apiServer}/sockets/api/v1/dashboard`
+    } else {
+      // Production mode: use window.location
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+      const host = window.location.host
+      wsUrl = `${protocol}//${host}/sockets/api/v1/dashboard`
+    }
 
     let reconnectTimeout: NodeJS.Timeout | null = null
     let shouldReconnect = true

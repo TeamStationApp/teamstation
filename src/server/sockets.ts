@@ -23,7 +23,28 @@ const dashboardClients = new Set<WebSocket>()
 const scoreboardClients = new Set<WebSocket>()
 
 // State management
-let currentAutoState: ScoreState | null = null
+let currentAutoState: ScoreState = {
+  inGame: false,
+  pitcherName: '',
+  batterName: '',
+  batterNumber: 0,
+  batterNumHits: 0,
+  batterAtBats: 0,
+  numPitches: 0,
+  balls: 0,
+  strikes: 0,
+  outs: 0,
+  base1: false,
+  base2: false,
+  base3: false,
+  inning: 0,
+  half: 'top',
+  homeTeam: '',
+  awayTeam: '',
+  homeScore: 0,
+  awayScore: 0
+}
+
 let currentDashboardOverrides: DashboardOverrides = {
   overrideCountEnabled: false,
   overrideBasesEnabled: false,
