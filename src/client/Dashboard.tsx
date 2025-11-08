@@ -545,7 +545,14 @@ const Dashboard: React.FC = () => {
             setShowScorePicker(isHome ? 'home' : 'away')
           }}
         >
-          <Text style={styles.superscriptInField}>{autoScore.toString()}</Text>
+          <Text
+            style={[
+              styles.superscriptInField,
+              overrideScoreEnabled && styles.superscriptInFieldActive
+            ]}
+          >
+            {autoScore.toString()}
+          </Text>
           <Text style={styles.scoreText}>{overrideScore}</Text>
           <Pressable
             style={styles.xButtonInField}
