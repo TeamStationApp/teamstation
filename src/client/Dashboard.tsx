@@ -1,5 +1,12 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native'
+import {
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View
+} from 'react-native'
 
 import {
   asAutoStateMessage,
@@ -54,6 +61,7 @@ const Dashboard: React.FC = () => {
 
   const wsRef = useRef<WebSocket | null>(null)
   const isReceivingMessageRef = useRef(false)
+  const pickerScrollRef = useRef<any>(null)
 
   // Keep refs in sync with state
   useEffect(() => {
@@ -371,6 +379,19 @@ const Dashboard: React.FC = () => {
       showScorePicker === 'home' ? overrideHomeScore : overrideAwayScore
     const centerIndex = numbers.indexOf(currentScore)
 
+    // Calculate item height: paddingVertical (8*2=16) + fontSize (approx 32) = ~48px
+    const itemHeight = 48
+    // Offset so current value appears at tap position
+    const idealTopOffset = pickerPosition.y - centerIndex * itemHeight - 24
+    // Constrain to viewport bounds (min 20px from top, ensure picker container fits)
+    const topOffset = Math.max(
+      20,
+      Math.min(idealTopOffset, window.innerHeight - 270)
+    )
+
+    // Calculate how much we need to scroll the picker container
+    const scrollOffset = Math.max(0, centerIndex * itemHeight - 100)
+
     return (
       <Pressable
         style={styles.pickerOverlay}
@@ -378,11 +399,21 @@ const Dashboard: React.FC = () => {
           setShowScorePicker(null)
         }}
       >
-        <View
+        <ScrollView
+          ref={pickerScrollRef}
           style={[
             styles.pickerContainer,
-            { left: pickerPosition.x - 50, top: pickerPosition.y - 100 }
+            { left: pickerPosition.x - 50, top: topOffset }
           ]}
+          onLayout={() => {
+            // Scroll to show current value after layout
+            if (pickerScrollRef.current?.scrollTo != null) {
+              pickerScrollRef.current.scrollTo({
+                y: scrollOffset,
+                animated: false
+              })
+            }
+          }}
         >
           {numbers.map((num, index) => {
             const distance = Math.abs(index - centerIndex)
@@ -427,7 +458,7 @@ const Dashboard: React.FC = () => {
               </Pressable>
             )
           })}
-        </View>
+        </ScrollView>
       </Pressable>
     )
   }
