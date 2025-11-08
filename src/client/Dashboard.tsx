@@ -53,6 +53,7 @@ const Dashboard: React.FC = () => {
   const [pickerPosition, setPickerPosition] = useState({ x: 0, y: 0 })
 
   const wsRef = useRef<WebSocket | null>(null)
+  const isReceivingMessageRef = useRef(false)
 
   // Keep refs in sync with state
   useEffect(() => {
@@ -207,6 +208,7 @@ const Dashboard: React.FC = () => {
 
       ws.onmessage = event => {
         try {
+          isReceivingMessageRef.current = true
           const rawData = JSON.parse(event.data)
           const messageType = rawData.type
 
@@ -288,6 +290,11 @@ const Dashboard: React.FC = () => {
           }
         } catch (error) {
           console.error('Error parsing or validating WebSocket message:', error)
+        } finally {
+          // Reset the flag after all state updates have been queued
+          setTimeout(() => {
+            isReceivingMessageRef.current = false
+          }, 0)
         }
       }
 
@@ -321,7 +328,11 @@ const Dashboard: React.FC = () => {
 
   // Send overrides when values change and override is enabled
   useEffect(() => {
-    sendOverrides()
+    // Don't send if we're currently processing a WebSocket message
+    // This prevents feedback loops
+    if (!isReceivingMessageRef.current) {
+      sendOverrides()
+    }
   }, [
     overrideBalls,
     overrideStrikes,
