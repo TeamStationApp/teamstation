@@ -814,6 +814,51 @@ const Dashboard: React.FC = () => {
           >
             <Text style={styles.xButtonText}>✕</Text>
           </Pressable>
+          {/* Mini auto inning display */}
+          <View
+            style={[
+              styles.miniInningContainer,
+              overrideInningEnabled && styles.miniInningContainerActive
+            ]}
+          >
+            <View style={styles.miniArrowsOutsColumn}>
+              <View
+                style={[
+                  styles.miniArrowOuterUp,
+                  autoHalf === 'top'
+                    ? styles.arrowOuterActiveUp
+                    : styles.arrowOuterInactiveUp
+                ]}
+              >
+                <View
+                  style={[
+                    styles.miniArrowInnerUp,
+                    autoHalf === 'top'
+                      ? styles.arrowInnerActiveUp
+                      : styles.arrowInnerInactiveUp
+                  ]}
+                />
+              </View>
+              <Text style={styles.miniInningCount}>{autoInning}</Text>
+              <View
+                style={[
+                  styles.miniArrowOuterDown,
+                  autoHalf === 'bottom'
+                    ? styles.arrowOuterActiveDown
+                    : styles.arrowOuterInactiveDown
+                ]}
+              >
+                <View
+                  style={[
+                    styles.miniArrowInnerDown,
+                    autoHalf === 'bottom'
+                      ? styles.arrowInnerActiveDown
+                      : styles.arrowInnerInactiveDown
+                  ]}
+                />
+              </View>
+            </View>
+          </View>
           <View style={styles.arrowsOutsColumn}>
             <Pressable onPress={handleTopArrowPress}>
               <View
@@ -1454,6 +1499,73 @@ const styles = StyleSheet.create({
   },
   arrowInnerInactiveDown: {
     borderTopColor: '#383838'
+  },
+  // Mini inning display (15% scale)
+  miniInningContainer: {
+    position: 'absolute',
+    top: 8,
+    left: 8,
+    transform: [{ scale: 0.4 }],
+    transformOrigin: 'top left',
+    opacity: 0.6
+  },
+  miniInningContainerActive: {
+    opacity: 1
+  },
+  miniArrowsOutsColumn: {
+    alignItems: 'center'
+  },
+  miniInningCount: {
+    color: '#fff',
+    fontSize: 48,
+    fontWeight: '700',
+    marginVertical: 8
+  },
+  miniArrowOuterUp: {
+    position: 'relative',
+    width: 0,
+    height: 0,
+    borderLeftWidth: 20,
+    borderRightWidth: 20,
+    borderBottomWidth: 28,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    marginBottom: 8
+  },
+  miniArrowInnerUp: {
+    position: 'absolute',
+    top: 3.5,
+    left: -16,
+    width: 0,
+    height: 0,
+    borderLeftWidth: 16,
+    borderRightWidth: 16,
+    borderBottomWidth: 22,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent'
+  },
+  miniArrowOuterDown: {
+    position: 'relative',
+    width: 0,
+    height: 0,
+    borderLeftWidth: 20,
+    borderRightWidth: 20,
+    borderTopWidth: 28,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    marginTop: 8
+  },
+  miniArrowInnerDown: {
+    position: 'absolute',
+    bottom: 3.5,
+    left: -16,
+    width: 0,
+    height: 0,
+    borderLeftWidth: 16,
+    borderRightWidth: 16,
+    borderTopWidth: 22,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent'
   }
 })
 
