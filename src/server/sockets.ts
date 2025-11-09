@@ -50,10 +50,12 @@ let currentDashboardOverrides: DashboardOverrides = {
   overrideBasesEnabled: false,
   overrideTeamEnabled: false,
   overrideScoreEnabled: false,
+  overrideInningEnabled: false,
   overrideCount: undefined,
   overrideBases: undefined,
   overrideTeam: undefined,
-  overrideScore: undefined
+  overrideScore: undefined,
+  overrideInning: undefined
 }
 
 /**
@@ -102,6 +104,15 @@ function mergeFinalState(): ScoreState | null {
   ) {
     finalState.homeScore = currentDashboardOverrides.overrideScore.homeScore
     finalState.awayScore = currentDashboardOverrides.overrideScore.awayScore
+  }
+
+  // Apply inning overrides if enabled and present
+  if (
+    currentDashboardOverrides.overrideInningEnabled &&
+    currentDashboardOverrides.overrideInning != null
+  ) {
+    finalState.inning = currentDashboardOverrides.overrideInning.inning
+    finalState.half = currentDashboardOverrides.overrideInning.half
   }
 
   return finalState

@@ -41,6 +41,7 @@ export const asDashboardOverrides = asObject({
   overrideBasesEnabled: asBoolean,
   overrideTeamEnabled: asBoolean,
   overrideScoreEnabled: asBoolean,
+  overrideInningEnabled: asBoolean,
   overrideCount: asOptional(
     asObject({
       balls: asNumber,
@@ -65,6 +66,12 @@ export const asDashboardOverrides = asObject({
     asObject({
       homeScore: asNumber,
       awayScore: asNumber
+    })
+  ),
+  overrideInning: asOptional(
+    asObject({
+      inning: asNumber,
+      half: asValue('top', 'bottom', 'mid')
     })
   )
 })

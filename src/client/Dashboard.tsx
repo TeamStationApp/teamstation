@@ -53,9 +53,19 @@ const Dashboard: React.FC = () => {
   const [overrideAwayScore, setOverrideAwayScore] = useState(0)
   const overrideScoreEnabledRef = useRef(false)
 
+  // Inning state
+  const [autoInning, setAutoInning] = useState(1)
+  const [autoHalf, setAutoHalf] = useState<'top' | 'bottom' | 'mid'>('top')
+  const [overrideInningEnabled, setOverrideInningEnabled] = useState(false)
+  const [overrideInning, setOverrideInning] = useState(1)
+  const [overrideHalf, setOverrideHalf] = useState<'top' | 'bottom' | 'mid'>(
+    'top'
+  )
+  const overrideInningEnabledRef = useRef(false)
+
   // Number picker state
   const [showScorePicker, setShowScorePicker] = useState<
-    'home' | 'away' | null
+    'home' | 'away' | 'inning' | null
   >(null)
   const [pickerPosition, setPickerPosition] = useState({ x: 0, y: 0 })
 
@@ -79,6 +89,10 @@ const Dashboard: React.FC = () => {
   useEffect(() => {
     overrideScoreEnabledRef.current = overrideScoreEnabled
   }, [overrideScoreEnabled])
+
+  useEffect(() => {
+    overrideInningEnabledRef.current = overrideInningEnabled
+  }, [overrideInningEnabled])
 
   const incrementBalls = (): void => {
     if (!overrideEnabled) setOverrideEnabled(true)
@@ -125,6 +139,40 @@ const Dashboard: React.FC = () => {
     setOverrideBase3(!overrideBase3)
   }
 
+  const handleTopArrowPress = (): void => {
+    setOverrideInningEnabled(true)
+    if (overrideHalf === 'top') {
+      // If already top, switch to mid
+      setOverrideHalf('mid')
+    } else {
+      setOverrideHalf('top')
+    }
+  }
+
+  const handleBottomArrowPress = (): void => {
+    setOverrideInningEnabled(true)
+    if (overrideHalf === 'bottom') {
+      // If already bottom, switch to mid
+      setOverrideHalf('mid')
+    } else {
+      setOverrideHalf('bottom')
+    }
+  }
+
+  const handleInningNumberPress = (): void => {
+    setOverrideInningEnabled(true)
+    setOverrideInning(overrideInning + 1)
+  }
+
+  const handleInningNumberLongPress = (event: {
+    nativeEvent: { pageX: number; pageY: number }
+  }): void => {
+    setOverrideInningEnabled(true)
+    const nativeEvent = event.nativeEvent
+    setPickerPosition({ x: nativeEvent.pageX, y: nativeEvent.pageY })
+    setShowScorePicker('inning' as any)
+  }
+
   // Function to send overrides to server
   const sendOverrides = useCallback((): void => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -133,10 +181,12 @@ const Dashboard: React.FC = () => {
         overrideBasesEnabled,
         overrideTeamEnabled,
         overrideScoreEnabled,
+        overrideInningEnabled,
         overrideCount: undefined,
         overrideBases: undefined,
         overrideTeam: undefined,
-        overrideScore: undefined
+        overrideScore: undefined,
+        overrideInning: undefined
       }
 
       if (overrideEnabled) {
@@ -169,6 +219,13 @@ const Dashboard: React.FC = () => {
         }
       }
 
+      if (overrideInningEnabled) {
+        overrides.overrideInning = {
+          inning: overrideInning,
+          half: overrideHalf
+        }
+      }
+
       wsRef.current.send(JSON.stringify(overrides))
       console.log('Sent overrides:', overrides)
     }
@@ -186,7 +243,10 @@ const Dashboard: React.FC = () => {
     overrideAwayTeam,
     overrideScoreEnabled,
     overrideHomeScore,
-    overrideAwayScore
+    overrideAwayScore,
+    overrideInningEnabled,
+    overrideInning,
+    overrideHalf
   ])
 
   // WebSocket connection with auto-reconnect
@@ -239,6 +299,8 @@ const Dashboard: React.FC = () => {
             setAutoAwayTeam(autoState.awayTeam)
             setAutoHomeScore(autoState.homeScore)
             setAutoAwayScore(autoState.awayScore)
+            setAutoInning(autoState.inning)
+            setAutoHalf(autoState.half)
 
             // ONLY update override values if override is disabled (not sticky)
             if (!overrideEnabledRef.current) {
@@ -262,6 +324,11 @@ const Dashboard: React.FC = () => {
               setOverrideHomeScore(autoState.homeScore)
               setOverrideAwayScore(autoState.awayScore)
             }
+
+            if (!overrideInningEnabledRef.current) {
+              setOverrideInning(autoState.inning)
+              setOverrideHalf(autoState.half)
+            }
           } else if (messageType === 'overrideUpdate') {
             const message = asOverrideUpdateMessage(rawData)
             const overrides = message.data
@@ -275,6 +342,7 @@ const Dashboard: React.FC = () => {
             setOverrideBasesEnabled(overrides.overrideBasesEnabled)
             setOverrideTeamEnabled(overrides.overrideTeamEnabled)
             setOverrideScoreEnabled(overrides.overrideScoreEnabled)
+            setOverrideInningEnabled(overrides.overrideInningEnabled)
 
             // Update override count if present
             if (overrides.overrideCount != null) {
@@ -294,6 +362,10 @@ const Dashboard: React.FC = () => {
             if (overrides.overrideScore != null) {
               setOverrideHomeScore(overrides.overrideScore.homeScore)
               setOverrideAwayScore(overrides.overrideScore.awayScore)
+            }
+            if (overrides.overrideInning != null) {
+              setOverrideInning(overrides.overrideInning.inning)
+              setOverrideHalf(overrides.overrideInning.half)
             }
           }
         } catch (error) {
@@ -356,6 +428,9 @@ const Dashboard: React.FC = () => {
     overrideScoreEnabled,
     overrideHomeScore,
     overrideAwayScore,
+    overrideInningEnabled,
+    overrideInning,
+    overrideHalf,
     sendOverrides
   ])
 
@@ -367,16 +442,23 @@ const Dashboard: React.FC = () => {
       if (showScorePicker === 'home') {
         setOverrideHomeScore(value)
         setOverrideScoreEnabled(true)
-      } else {
+      } else if (showScorePicker === 'away') {
         setOverrideAwayScore(value)
         setOverrideScoreEnabled(true)
+      } else if (showScorePicker === 'inning') {
+        setOverrideInning(value)
+        setOverrideInningEnabled(true)
       }
       setShowScorePicker(null)
     }
 
     const numbers = Array.from({ length: 21 }, (_, i) => i)
     const currentScore =
-      showScorePicker === 'home' ? overrideHomeScore : overrideAwayScore
+      showScorePicker === 'home'
+        ? overrideHomeScore
+        : showScorePicker === 'away'
+          ? overrideAwayScore
+          : overrideInning
     const centerIndex = numbers.indexOf(currentScore)
 
     // Calculate item height: paddingVertical (8*2=16) + fontSize (approx 32) = ~48px
@@ -570,6 +652,20 @@ const Dashboard: React.FC = () => {
     )
   }
 
+  const getInnerDiamondStyle = (
+    overrideEnabled: boolean,
+    autoBase: boolean
+  ): object => {
+    if (!overrideEnabled) {
+      return {}
+    }
+    if (autoBase) {
+      return styles.innerDiamondDarkened
+    } else {
+      return styles.innerDiamondDisabled
+    }
+  }
+
   const renderCountRow = (
     label: string,
     count: number,
@@ -658,19 +754,19 @@ const Dashboard: React.FC = () => {
           true
         )}
       </View>
-      <View style={styles.dashboard}>
+      <View
+        style={[styles.dashboard, overrideEnabled && styles.dashboardActive]}
+      >
         <Pressable
-          style={[
-            styles.overrideToggle,
-            overrideEnabled ? styles.overrideToggleActive : null
-          ]}
+          style={styles.xButtonDashboard}
           onPress={() => {
-            setOverrideEnabled(!overrideEnabled)
+            setOverrideEnabled(false)
+            setOverrideBalls(autoBalls)
+            setOverrideStrikes(autoStrikes)
+            setOverrideOuts(autoOuts)
           }}
         >
-          <Text style={styles.overrideToggleText}>
-            {overrideEnabled ? 'Override Counts ON' : 'Override Counts OFF'}
-          </Text>
+          <Text style={styles.xButtonText}>✕</Text>
         </Pressable>
         {renderCountRow(
           'B',
@@ -700,108 +796,156 @@ const Dashboard: React.FC = () => {
           clearOuts
         )}
       </View>
-      <View style={styles.basesCard}>
-        <View style={styles.basesCardHeader}>
+      <View style={styles.cardsRow}>
+        {/* Inning Card */}
+        <View
+          style={[
+            styles.inningCard,
+            overrideInningEnabled && styles.inningCardActive
+          ]}
+        >
           <Pressable
-            style={[
-              styles.basesToggleButton,
-              overrideBasesEnabled && styles.basesToggleButtonActive
-            ]}
+            style={styles.xButtonInningCard}
             onPress={() => {
-              setOverrideBasesEnabled(!overrideBasesEnabled)
+              setOverrideInningEnabled(false)
+              setOverrideInning(autoInning)
+              setOverrideHalf(autoHalf)
             }}
           >
-            <Text style={styles.basesToggleButtonText}>
-              {overrideBasesEnabled
-                ? 'Override Bases ON'
-                : 'Override Bases OFF'}
-            </Text>
+            <Text style={styles.xButtonText}>✕</Text>
           </Pressable>
-        </View>
-        <View style={styles.diamondsContainer}>
-          <View style={styles.diamondRow}>
-            <View style={styles.diamondWrapper}>
-              <Pressable
+          <View style={styles.arrowsOutsColumn}>
+            <Pressable onPress={handleTopArrowPress}>
+              <View
                 style={[
-                  styles.diamond,
-                  overrideBasesEnabled && overrideBase2
-                    ? styles.diamondFilled
-                    : {}
+                  styles.arrowOuterUp,
+                  overrideHalf === 'top'
+                    ? styles.arrowOuterActiveUp
+                    : styles.arrowOuterInactiveUp
                 ]}
-                onPress={toggleBase2}
-              />
-              {(autoBase3 ||
-                (overrideBasesEnabled && autoBase2 !== overrideBase2)) && (
+              >
                 <View
                   style={[
-                    styles.innerDiamond,
-                    overrideBasesEnabled && !autoBase2 && overrideBase2
-                      ? styles.innerDiamondDisabled
-                      : overrideBasesEnabled && autoBase2 && overrideBase2
-                        ? styles.innerDiamondDarkened
-                        : overrideBasesEnabled && autoBase2 !== overrideBase2
-                          ? styles.innerDiamondDarkened
-                          : {},
-                    styles.innerDiamondNonInteractive
+                    styles.arrowInnerUp,
+                    overrideHalf === 'top'
+                      ? styles.arrowInnerActiveUp
+                      : styles.arrowInnerInactiveUp
                   ]}
                 />
-              )}
-            </View>
-            <View style={styles.diamondWrapper}>
-              <Pressable
+              </View>
+            </Pressable>
+            <Pressable
+              onPress={handleInningNumberPress}
+              onLongPress={handleInningNumberLongPress}
+            >
+              <Text style={styles.inningCount}>{overrideInning}</Text>
+            </Pressable>
+            <Pressable onPress={handleBottomArrowPress}>
+              <View
                 style={[
-                  styles.diamond,
-                  overrideBasesEnabled && overrideBase1
-                    ? styles.diamondFilled
-                    : {}
+                  styles.arrowOuterDown,
+                  overrideHalf === 'bottom'
+                    ? styles.arrowOuterActiveDown
+                    : styles.arrowOuterInactiveDown
                 ]}
-                onPress={toggleBase1}
-              />
-              {(autoBase1 ||
-                (overrideBasesEnabled && autoBase1 !== overrideBase1)) && (
+              >
                 <View
                   style={[
-                    styles.innerDiamond,
-                    overrideBasesEnabled && !autoBase1 && overrideBase1
-                      ? styles.innerDiamondDisabled
-                      : overrideBasesEnabled && autoBase1 && overrideBase1
-                        ? styles.innerDiamondDarkened
-                        : overrideBasesEnabled && autoBase1 !== overrideBase1
-                          ? styles.innerDiamondDarkened
-                          : {},
-                    styles.innerDiamondNonInteractive
+                    styles.arrowInnerDown,
+                    overrideHalf === 'bottom'
+                      ? styles.arrowInnerActiveDown
+                      : styles.arrowInnerInactiveDown
                   ]}
                 />
-              )}
-            </View>
+              </View>
+            </Pressable>
           </View>
-          <View style={styles.diamondRowLeftAlign}>
-            <View style={styles.diamondWrapper}>
-              <Pressable
-                style={[
-                  styles.diamond,
-                  overrideBasesEnabled && overrideBase3
-                    ? styles.diamondFilled
-                    : {}
-                ]}
-                onPress={toggleBase3}
-              />
-              {(autoBase3 ||
-                (overrideBasesEnabled && autoBase3 !== overrideBase3)) && (
-                <View
+        </View>
+        {/* Bases Card */}
+        <View
+          style={[
+            styles.basesCard,
+            overrideBasesEnabled && styles.basesCardActive
+          ]}
+        >
+          <Pressable
+            style={styles.xButtonBasesCard}
+            onPress={() => {
+              setOverrideBasesEnabled(false)
+              setOverrideBase1(autoBase1)
+              setOverrideBase2(autoBase2)
+              setOverrideBase3(autoBase3)
+            }}
+          >
+            <Text style={styles.xButtonText}>✕</Text>
+          </Pressable>
+          <View style={styles.diamondsContainer}>
+            <View style={styles.diamondRow}>
+              <View style={styles.diamondWrapper}>
+                <Pressable
                   style={[
-                    styles.innerDiamond,
-                    overrideBasesEnabled && !autoBase3 && overrideBase3
-                      ? styles.innerDiamondDisabled
-                      : overrideBasesEnabled && autoBase3 && overrideBase3
-                        ? styles.innerDiamondDarkened
-                        : overrideBasesEnabled && autoBase3 !== overrideBase3
-                          ? styles.innerDiamondDarkened
-                          : {},
-                    styles.innerDiamondNonInteractive
+                    styles.diamond,
+                    overrideBasesEnabled && overrideBase2
+                      ? styles.diamondFilled
+                      : {}
                   ]}
+                  onPress={toggleBase2}
                 />
-              )}
+                {(autoBase2 ||
+                  (overrideBasesEnabled && autoBase2 !== overrideBase2)) && (
+                  <View
+                    style={[
+                      styles.innerDiamond,
+                      getInnerDiamondStyle(overrideBasesEnabled, autoBase2),
+                      styles.innerDiamondNonInteractive
+                    ]}
+                  />
+                )}
+              </View>
+              <View style={styles.diamondWrapper}>
+                <Pressable
+                  style={[
+                    styles.diamond,
+                    overrideBasesEnabled && overrideBase1
+                      ? styles.diamondFilled
+                      : {}
+                  ]}
+                  onPress={toggleBase1}
+                />
+                {(autoBase1 ||
+                  (overrideBasesEnabled && autoBase1 !== overrideBase1)) && (
+                  <View
+                    style={[
+                      styles.innerDiamond,
+                      getInnerDiamondStyle(overrideBasesEnabled, autoBase1),
+                      styles.innerDiamondNonInteractive
+                    ]}
+                  />
+                )}
+              </View>
+            </View>
+            <View style={styles.diamondRowLeftAlign}>
+              <View style={styles.diamondWrapper}>
+                <Pressable
+                  style={[
+                    styles.diamond,
+                    overrideBasesEnabled && overrideBase3
+                      ? styles.diamondFilled
+                      : {}
+                  ]}
+                  onPress={toggleBase3}
+                />
+                {(autoBase3 ||
+                  (overrideBasesEnabled && autoBase3 !== overrideBase3)) && (
+                  <View
+                    style={[
+                      styles.innerDiamond,
+                      getInnerDiamondStyle(overrideBasesEnabled, autoBase3),
+                      styles.innerDiamondNonInteractive
+                    ]}
+                  />
+                )}
+              </View>
             </View>
           </View>
         </View>
@@ -809,6 +953,8 @@ const Dashboard: React.FC = () => {
     </View>
   )
 }
+
+const OVERRIDE_BACKGROUND_COLOR = '#116234'
 
 const styles = StyleSheet.create({
   dashboardContainer: {
@@ -859,7 +1005,7 @@ const styles = StyleSheet.create({
     marginRight: 12
   },
   teamNameContainerActive: {
-    backgroundColor: '#22c55e'
+    backgroundColor: OVERRIDE_BACKGROUND_COLOR
   },
   scoreContainer: {
     minWidth: 100,
@@ -878,7 +1024,7 @@ const styles = StyleSheet.create({
     flexShrink: 0
   },
   scoreContainerActive: {
-    backgroundColor: '#22c55e'
+    backgroundColor: OVERRIDE_BACKGROUND_COLOR
   },
   scoreText: {
     fontSize: 28,
@@ -978,7 +1124,24 @@ const styles = StyleSheet.create({
     flexDirection: 'column',
     gap: 8,
     width: '100%',
-    maxWidth: 600
+    maxWidth: 600,
+    position: 'relative'
+  },
+  dashboardActive: {
+    backgroundColor: OVERRIDE_BACKGROUND_COLOR
+  },
+  xButtonDashboard: {
+    width: 30,
+    height: 30,
+    borderRadius: 6,
+    backgroundColor: '#666',
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    position: 'absolute',
+    right: 8,
+    top: 8,
+    zIndex: 10
   },
   overrideToggleContainer: {
     display: 'flex',
@@ -1001,10 +1164,6 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#555'
   },
-  overrideToggleActive: {
-    backgroundColor: '#22c55e',
-    borderColor: '#22c55e'
-  },
   overrideToggleText: {
     fontSize: 24,
     fontWeight: '700',
@@ -1015,7 +1174,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 0,
-    paddingHorizontal: 8,
+    paddingLeft: 8,
+    paddingRight: 28,
     justifyContent: 'space-between'
   },
   rowLabel: {
@@ -1075,9 +1235,45 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#000'
   },
+  cardsRow: {
+    display: 'flex',
+    flexDirection: 'row',
+    gap: 16,
+    width: '100%',
+    maxWidth: 600,
+    marginTop: 16
+  },
+  inningCard: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    backgroundColor: '#2d2d2d',
+    borderRadius: 12,
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative'
+  },
+  inningCardActive: {
+    backgroundColor: OVERRIDE_BACKGROUND_COLOR
+  },
+  xButtonInningCard: {
+    width: 30,
+    height: 30,
+    borderRadius: 6,
+    backgroundColor: '#666',
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    position: 'absolute',
+    right: 8,
+    top: 8,
+    zIndex: 10
+  },
   basesCard: {
-    marginTop: 16,
-    paddingVertical: 20,
+    flex: 2,
+    paddingVertical: 10,
     paddingHorizontal: 20,
     backgroundColor: '#2d2d2d',
     borderRadius: 12,
@@ -1085,8 +1281,23 @@ const styles = StyleSheet.create({
     flexDirection: 'column',
     alignItems: 'center',
     gap: 12,
-    width: '100%',
-    maxWidth: 600
+    position: 'relative'
+  },
+  basesCardActive: {
+    backgroundColor: OVERRIDE_BACKGROUND_COLOR
+  },
+  xButtonBasesCard: {
+    width: 30,
+    height: 30,
+    borderRadius: 6,
+    backgroundColor: '#666',
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    position: 'absolute',
+    right: 8,
+    top: 8,
+    zIndex: 10
   },
   basesCardHeader: {
     width: '100%',
@@ -1105,12 +1316,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#555'
   },
-  basesToggleButtonActive: {
-    backgroundColor: '#22c55e',
-    borderColor: '#22c55e'
-  },
   basesToggleButtonText: {
-    fontSize: 24,
+    fontSize: 16,
     fontWeight: '700',
     color: 'white'
   },
@@ -1167,6 +1374,86 @@ const styles = StyleSheet.create({
   },
   innerDiamondNonInteractive: {
     pointerEvents: 'none'
+  },
+  // Inning card styles (from Scoreboard)
+  arrowsOutsColumn: {
+    alignItems: 'center'
+  },
+  inningCount: {
+    color: '#fff',
+    fontSize: 48,
+    fontWeight: '700',
+    marginVertical: 8
+  },
+  arrowOuterUp: {
+    position: 'relative',
+    width: 0,
+    height: 0,
+    borderLeftWidth: 20,
+    borderRightWidth: 20,
+    borderBottomWidth: 28,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    marginBottom: 8
+  },
+  arrowInnerUp: {
+    position: 'absolute',
+    top: 3.5,
+    left: -16,
+    width: 0,
+    height: 0,
+    borderLeftWidth: 16,
+    borderRightWidth: 16,
+    borderBottomWidth: 22,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent'
+  },
+  arrowOuterActiveUp: {
+    borderBottomColor: '#ef4444'
+  },
+  arrowOuterInactiveUp: {
+    borderBottomColor: '#606060'
+  },
+  arrowInnerActiveUp: {
+    borderBottomColor: '#ef4444'
+  },
+  arrowInnerInactiveUp: {
+    borderBottomColor: '#383838'
+  },
+  arrowOuterDown: {
+    position: 'relative',
+    width: 0,
+    height: 0,
+    borderLeftWidth: 20,
+    borderRightWidth: 20,
+    borderTopWidth: 28,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    marginTop: 8
+  },
+  arrowInnerDown: {
+    position: 'absolute',
+    bottom: 3.5,
+    left: -16,
+    width: 0,
+    height: 0,
+    borderLeftWidth: 16,
+    borderRightWidth: 16,
+    borderTopWidth: 22,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent'
+  },
+  arrowOuterActiveDown: {
+    borderTopColor: '#ef4444'
+  },
+  arrowOuterInactiveDown: {
+    borderTopColor: '#606060'
+  },
+  arrowInnerActiveDown: {
+    borderTopColor: '#ef4444'
+  },
+  arrowInnerInactiveDown: {
+    borderTopColor: '#383838'
   }
 })
 
