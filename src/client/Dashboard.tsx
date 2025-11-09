@@ -754,48 +754,6 @@ const Dashboard: React.FC = () => {
           true
         )}
       </View>
-      <View
-        style={[styles.dashboard, overrideEnabled && styles.dashboardActive]}
-      >
-        <Pressable
-          style={styles.xButtonDashboard}
-          onPress={() => {
-            setOverrideEnabled(false)
-            setOverrideBalls(autoBalls)
-            setOverrideStrikes(autoStrikes)
-            setOverrideOuts(autoOuts)
-          }}
-        >
-          <Text style={styles.xButtonText}>✕</Text>
-        </Pressable>
-        {renderCountRow(
-          'B',
-          overrideBalls,
-          autoBalls,
-          3,
-          '#22c55e',
-          incrementBalls,
-          clearBalls
-        )}
-        {renderCountRow(
-          'S',
-          overrideStrikes,
-          autoStrikes,
-          2,
-          '#ffa500', // orange
-          incrementStrikes,
-          clearStrikes
-        )}
-        {renderCountRow(
-          'O',
-          overrideOuts,
-          autoOuts,
-          2,
-          '#ef4444',
-          incrementOuts,
-          clearOuts
-        )}
-      </View>
       <View style={styles.cardsRow}>
         {/* Inning Card */}
         <View
@@ -994,6 +952,48 @@ const Dashboard: React.FC = () => {
             </View>
           </View>
         </View>
+      </View>
+      <View
+        style={[styles.dashboard, overrideEnabled && styles.dashboardActive]}
+      >
+        <Pressable
+          style={styles.xButtonDashboard}
+          onPress={() => {
+            setOverrideEnabled(false)
+            setOverrideBalls(autoBalls)
+            setOverrideStrikes(autoStrikes)
+            setOverrideOuts(autoOuts)
+          }}
+        >
+          <Text style={styles.xButtonText}>✕</Text>
+        </Pressable>
+        {renderCountRow(
+          'B',
+          overrideBalls,
+          autoBalls,
+          3,
+          '#22c55e',
+          incrementBalls,
+          clearBalls
+        )}
+        {renderCountRow(
+          'S',
+          overrideStrikes,
+          autoStrikes,
+          2,
+          '#ffa500', // orange
+          incrementStrikes,
+          clearStrikes
+        )}
+        {renderCountRow(
+          'O',
+          overrideOuts,
+          autoOuts,
+          2,
+          '#ef4444',
+          incrementOuts,
+          clearOuts
+        )}
       </View>
     </View>
   )
