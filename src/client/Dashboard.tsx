@@ -1,12 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import {
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View
-} from 'react-native'
+import { Pressable, ScrollView, Text, TextInput, View } from 'react-native'
 import { useParams } from 'react-router-dom'
 
 import {
@@ -16,9 +9,13 @@ import {
   WS_RECONNECT_WAIT_MS
 } from '../common/types'
 import { clientConfig } from './clientConfig'
+import { cacheStyles, useTheme } from './ThemeContext'
+import type { Theme } from './types'
 
 const Dashboard: React.FC = () => {
   const { eventId } = useParams<{ eventId: string }>()
+  const theme = useTheme()
+  const styles = getStyles(theme)
   const [overrideEnabled, setOverrideEnabled] = useState(false)
 
   // Refs to track current values (for use in WebSocket callbacks)
@@ -586,19 +583,9 @@ const Dashboard: React.FC = () => {
                 setOverrideAwayTeam(e.nativeEvent.text)
               }
             }}
-            style={{
-              fontSize: 24,
-              fontWeight: '700',
-              color: 'white',
-              backgroundColor: 'transparent',
-              borderColor: 'transparent',
-              borderWidth: 0,
-              width: '100%',
-              paddingLeft: 0,
-              transform: [{ translateY: 8 }]
-            }}
+            style={styles.teamNameInput}
             placeholder={autoTeam}
-            placeholderTextColor="#888"
+            placeholderTextColor={theme.dashboardSuperscript}
           />
           <Pressable
             style={styles.xButtonInField}
@@ -979,7 +966,7 @@ const Dashboard: React.FC = () => {
           overrideBalls,
           autoBalls,
           3,
-          '#22c55e',
+          theme.dashboardCircleGreen,
           incrementBalls,
           clearBalls
         )}
@@ -988,7 +975,7 @@ const Dashboard: React.FC = () => {
           overrideStrikes,
           autoStrikes,
           2,
-          '#ffa500', // orange
+          theme.dashboardCircleOrange,
           incrementStrikes,
           clearStrikes
         )}
@@ -997,7 +984,7 @@ const Dashboard: React.FC = () => {
           overrideOuts,
           autoOuts,
           2,
-          '#ef4444',
+          theme.dashboardCircleRed,
           incrementOuts,
           clearOuts
         )}
@@ -1006,24 +993,22 @@ const Dashboard: React.FC = () => {
   )
 }
 
-const OVERRIDE_BACKGROUND_COLOR = '#116234'
-
-const styles = StyleSheet.create({
+const getStyles = cacheStyles((theme: Theme) => ({
   dashboardContainer: {
     display: 'flex',
     justifyContent: 'flex-start',
     alignItems: 'flex-start',
     minHeight: 1000,
-    backgroundColor: '#1a1a1a',
+    backgroundColor: theme.backgroundColor,
     padding: 16
   },
   teamScoreCard: {
-    backgroundColor: '#2d2d2d',
+    backgroundColor: theme.cardBackgroundDark,
     borderRadius: 20,
     marginTop: 8,
     paddingVertical: 16,
     paddingHorizontal: 20,
-    shadowColor: '#000',
+    shadowColor: theme.shadowColor,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 20,
@@ -1044,7 +1029,7 @@ const styles = StyleSheet.create({
   teamNameContainer: {
     flex: 1,
     minHeight: 50,
-    backgroundColor: '#3d3d3d',
+    backgroundColor: theme.containerBackgroundColor,
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 8,
@@ -1057,12 +1042,24 @@ const styles = StyleSheet.create({
     marginRight: 12
   },
   teamNameContainerActive: {
-    backgroundColor: OVERRIDE_BACKGROUND_COLOR
+    backgroundColor: theme.dashboardOverrideBackground
+  },
+  teamNameInput: {
+    fontSize: 24,
+    fontWeight: '700',
+    fontFamily: theme.secondaryTextFont,
+    color: theme.primaryTextColor,
+    backgroundColor: 'transparent',
+    borderColor: 'transparent',
+    borderWidth: 0,
+    width: '100%',
+    paddingLeft: 0,
+    transform: [{ translateY: 8 }]
   },
   scoreContainer: {
     minWidth: 100,
     minHeight: 50,
-    backgroundColor: '#3d3d3d',
+    backgroundColor: theme.containerBackgroundColor,
     borderRadius: 8,
     paddingHorizontal: 16,
     paddingVertical: 8,
@@ -1076,17 +1073,18 @@ const styles = StyleSheet.create({
     flexShrink: 0
   },
   scoreContainerActive: {
-    backgroundColor: OVERRIDE_BACKGROUND_COLOR
+    backgroundColor: theme.dashboardOverrideBackground
   },
   scoreText: {
     fontSize: 28,
     fontWeight: '700',
-    color: 'white'
+    fontFamily: theme.secondaryTextFont,
+    color: theme.primaryTextColor
   },
   superscript: {
     fontSize: 12,
     fontWeight: '400',
-    color: '#aaa',
+    color: theme.dashboardSuperscript,
     position: 'absolute',
     top: 4,
     left: 4
@@ -1094,20 +1092,20 @@ const styles = StyleSheet.create({
   superscriptInField: {
     fontSize: 12,
     fontWeight: '400',
-    color: '#aaaaaa',
+    color: theme.dashboardSuperscript,
     position: 'absolute',
     top: 6,
     left: 12,
     zIndex: 1
   },
   superscriptInFieldActive: {
-    color: '#ffffff'
+    color: theme.primaryTextColor
   },
   xButtonInField: {
     width: 30,
     height: 30,
     borderRadius: 6,
-    backgroundColor: '#666',
+    backgroundColor: theme.buttonGrayColor,
     display: 'flex',
     justifyContent: 'center',
     alignItems: 'center',
@@ -1119,7 +1117,8 @@ const styles = StyleSheet.create({
   xButtonText: {
     fontSize: 18,
     fontWeight: '700',
-    color: 'white'
+    fontFamily: theme.secondaryTextFont,
+    color: theme.primaryTextColor
   },
   pickerOverlay: {
     position: 'absolute',
@@ -1127,7 +1126,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    backgroundColor: theme.overlayBackgroundColor,
     zIndex: 1000,
     display: 'flex',
     justifyContent: 'center',
@@ -1137,10 +1136,10 @@ const styles = StyleSheet.create({
     position: 'absolute',
     width: 100,
     maxHeight: 250,
-    backgroundColor: '#2d2d2d',
+    backgroundColor: theme.cardBackgroundDark,
     borderRadius: 12,
     padding: 8,
-    shadowColor: '#000',
+    shadowColor: theme.shadowColor,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.5,
     shadowRadius: 20,
@@ -1154,20 +1153,21 @@ const styles = StyleSheet.create({
     alignItems: 'center'
   },
   pickerItemSelected: {
-    backgroundColor: '#22c55e',
+    backgroundColor: theme.secondaryButtonColor,
     borderRadius: 6
   },
   pickerItemText: {
-    color: 'white',
+    color: theme.primaryTextColor,
+    fontFamily: theme.secondaryTextFont,
     textAlign: 'center'
   },
   dashboard: {
-    backgroundColor: '#2d2d2d',
+    backgroundColor: theme.cardBackgroundDark,
     borderRadius: 20,
     marginTop: 16,
     paddingVertical: 16,
     paddingHorizontal: 20,
-    shadowColor: '#000',
+    shadowColor: theme.shadowColor,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 20,
@@ -1180,13 +1180,13 @@ const styles = StyleSheet.create({
     position: 'relative'
   },
   dashboardActive: {
-    backgroundColor: OVERRIDE_BACKGROUND_COLOR
+    backgroundColor: theme.dashboardOverrideBackground
   },
   xButtonDashboard: {
     width: 30,
     height: 30,
     borderRadius: 6,
-    backgroundColor: '#666',
+    backgroundColor: theme.buttonGrayColor,
     display: 'flex',
     justifyContent: 'center',
     alignItems: 'center',
@@ -1201,7 +1201,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 8,
     paddingHorizontal: 16,
-    backgroundColor: '#3d3d3d',
+    backgroundColor: theme.containerBackgroundColor,
     borderRadius: 12,
     marginBottom: 8
   },
@@ -1209,17 +1209,18 @@ const styles = StyleSheet.create({
     width: '100%',
     height: 50,
     borderRadius: 12,
-    backgroundColor: '#4a4a4a',
+    backgroundColor: theme.inactiveBackgroundColor,
     display: 'flex',
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 2,
-    borderColor: '#555'
+    borderColor: theme.dashboardOutlineGray
   },
   overrideToggleText: {
     fontSize: 24,
     fontWeight: '700',
-    color: 'white'
+    fontFamily: theme.secondaryTextFont,
+    color: theme.primaryTextColor
   },
   countRow: {
     display: 'flex',
@@ -1233,7 +1234,8 @@ const styles = StyleSheet.create({
   rowLabel: {
     fontSize: 36,
     fontWeight: '700',
-    color: 'white',
+    fontFamily: theme.secondaryTextFont,
+    color: theme.primaryTextColor,
     minWidth: 45,
     flexShrink: 0
   },
@@ -1262,7 +1264,7 @@ const styles = StyleSheet.create({
     height: 45,
     borderRadius: 22.5,
     borderWidth: 2,
-    borderColor: '#555'
+    borderColor: theme.dashboardOutlineGray
   },
   innerCircle: {
     position: 'absolute',
@@ -1275,7 +1277,7 @@ const styles = StyleSheet.create({
     width: 52,
     height: 52,
     borderRadius: 12,
-    backgroundColor: '#999',
+    backgroundColor: theme.clearButtonColor,
     display: 'flex',
     justifyContent: 'center',
     alignItems: 'center',
@@ -1285,7 +1287,8 @@ const styles = StyleSheet.create({
   clearButtonText: {
     fontSize: 27,
     fontWeight: '700',
-    color: '#000'
+    fontFamily: theme.secondaryTextFont,
+    color: theme.scoreboardScoreText
   },
   cardsRow: {
     display: 'flex',
@@ -1299,7 +1302,7 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 10,
     paddingHorizontal: 20,
-    backgroundColor: '#2d2d2d',
+    backgroundColor: theme.cardBackgroundDark,
     borderRadius: 12,
     display: 'flex',
     flexDirection: 'column',
@@ -1308,13 +1311,13 @@ const styles = StyleSheet.create({
     position: 'relative'
   },
   inningCardActive: {
-    backgroundColor: OVERRIDE_BACKGROUND_COLOR
+    backgroundColor: theme.dashboardOverrideBackground
   },
   xButtonInningCard: {
     width: 30,
     height: 30,
     borderRadius: 6,
-    backgroundColor: '#666',
+    backgroundColor: theme.buttonGrayColor,
     display: 'flex',
     justifyContent: 'center',
     alignItems: 'center',
@@ -1327,7 +1330,7 @@ const styles = StyleSheet.create({
     flex: 2,
     paddingVertical: 10,
     paddingHorizontal: 20,
-    backgroundColor: '#2d2d2d',
+    backgroundColor: theme.cardBackgroundDark,
     borderRadius: 12,
     display: 'flex',
     flexDirection: 'column',
@@ -1336,13 +1339,13 @@ const styles = StyleSheet.create({
     position: 'relative'
   },
   basesCardActive: {
-    backgroundColor: OVERRIDE_BACKGROUND_COLOR
+    backgroundColor: theme.dashboardOverrideBackground
   },
   xButtonBasesCard: {
     width: 30,
     height: 30,
     borderRadius: 6,
-    backgroundColor: '#666',
+    backgroundColor: theme.buttonGrayColor,
     display: 'flex',
     justifyContent: 'center',
     alignItems: 'center',
@@ -1361,17 +1364,18 @@ const styles = StyleSheet.create({
     width: '100%',
     height: 50,
     borderRadius: 8,
-    backgroundColor: '#4a4a4a',
+    backgroundColor: theme.inactiveBackgroundColor,
     display: 'flex',
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#555'
+    borderColor: theme.dashboardOutlineGray
   },
   basesToggleButtonText: {
     fontSize: 16,
     fontWeight: '700',
-    color: 'white'
+    fontFamily: theme.secondaryTextFont,
+    color: theme.primaryTextColor
   },
   diamondsContainer: {
     display: 'flex',
@@ -1406,23 +1410,23 @@ const styles = StyleSheet.create({
     height: 50,
     backgroundColor: 'transparent',
     borderWidth: 3,
-    borderColor: '#666'
+    borderColor: theme.buttonGrayColor
   },
   diamondFilled: {
-    backgroundColor: '#ef4444',
-    borderColor: '#ef4444'
+    backgroundColor: theme.activeColor,
+    borderColor: theme.activeColor
   },
   innerDiamond: {
     position: 'absolute',
     width: 20,
     height: 20,
-    backgroundColor: '#ef4444'
+    backgroundColor: theme.activeColor
   },
   innerDiamondDarkened: {
-    backgroundColor: '#801010'
+    backgroundColor: theme.dashboardDarkBaseRed
   },
   innerDiamondDisabled: {
-    backgroundColor: '#4a4a4a'
+    backgroundColor: theme.inactiveBackgroundColor
   },
   innerDiamondNonInteractive: {
     pointerEvents: 'none'
@@ -1432,9 +1436,10 @@ const styles = StyleSheet.create({
     alignItems: 'center'
   },
   inningCount: {
-    color: '#fff',
+    color: theme.primaryTextColor,
     fontSize: 48,
     fontWeight: '700',
+    fontFamily: theme.secondaryTextFont,
     marginVertical: 8
   },
   arrowOuterUp: {
@@ -1461,16 +1466,16 @@ const styles = StyleSheet.create({
     borderRightColor: 'transparent'
   },
   arrowOuterActiveUp: {
-    borderBottomColor: '#ef4444'
+    borderBottomColor: theme.activeColor
   },
   arrowOuterInactiveUp: {
-    borderBottomColor: '#606060'
+    borderBottomColor: theme.dashboardOutlineGray
   },
   arrowInnerActiveUp: {
-    borderBottomColor: '#ef4444'
+    borderBottomColor: theme.activeColor
   },
   arrowInnerInactiveUp: {
-    borderBottomColor: '#383838'
+    borderBottomColor: theme.dashboardBaseFill
   },
   arrowOuterDown: {
     position: 'relative',
@@ -1496,16 +1501,16 @@ const styles = StyleSheet.create({
     borderRightColor: 'transparent'
   },
   arrowOuterActiveDown: {
-    borderTopColor: '#ef4444'
+    borderTopColor: theme.activeColor
   },
   arrowOuterInactiveDown: {
-    borderTopColor: '#606060'
+    borderTopColor: theme.dashboardOutlineGray
   },
   arrowInnerActiveDown: {
-    borderTopColor: '#ef4444'
+    borderTopColor: theme.activeColor
   },
   arrowInnerInactiveDown: {
-    borderTopColor: '#383838'
+    borderTopColor: theme.dashboardBaseFill
   },
   // Mini inning display (15% scale)
   miniInningContainer: {
@@ -1523,9 +1528,10 @@ const styles = StyleSheet.create({
     alignItems: 'center'
   },
   miniInningCount: {
-    color: '#fff',
+    color: theme.primaryTextColor,
     fontSize: 48,
     fontWeight: '700',
+    fontFamily: theme.secondaryTextFont,
     marginVertical: 8
   },
   miniArrowOuterUp: {
@@ -1574,6 +1580,6 @@ const styles = StyleSheet.create({
     borderLeftColor: 'transparent',
     borderRightColor: 'transparent'
   }
-})
+}))
 
 export default Dashboard

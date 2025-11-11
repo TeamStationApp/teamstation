@@ -1,19 +1,17 @@
 import React, { useState } from 'react'
 import type { ImageStyle } from 'react-native'
-import {
-  Image,
-  Pressable,
-  StyleSheet,
-  Text,
-  TextInput,
-  View
-} from 'react-native'
+import { Image, Pressable, Text, TextInput, View } from 'react-native'
 import { useParams } from 'react-router-dom'
+
+import { cacheStyles, useTheme } from './ThemeContext'
+import type { Theme } from './types'
 
 const EventLinks: React.FC = () => {
   const { eventId } = useParams<{ eventId: string }>()
   const [copiedDashboard, setCopiedDashboard] = useState(false)
   const [copiedScoreboard, setCopiedScoreboard] = useState(false)
+  const theme = useTheme()
+  const styles = getStyles(theme)
 
   const dashboardLink = `${window.location.origin}/dashboard/${eventId ?? ''}`
   const scoreboardLink = `${window.location.origin}/scoreboard/${eventId ?? ''}`
@@ -129,20 +127,20 @@ const EventLinks: React.FC = () => {
   )
 }
 
-const styles = StyleSheet.create({
+const getStyles = cacheStyles((theme: Theme) => ({
   container: {
     flex: 1,
     minHeight: 600,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#667eea'
+    backgroundColor: theme.primaryButtonColor
   },
   card: {
     alignItems: 'center',
     padding: 32,
-    backgroundColor: 'white',
+    backgroundColor: theme.cardBackgroundColor,
     borderRadius: 16,
-    shadowColor: '#000',
+    shadowColor: theme.shadowColor,
     shadowOffset: { width: 0, height: 20 },
     shadowOpacity: 0.1,
     shadowRadius: 25,
@@ -158,13 +156,15 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: '700',
-    color: '#333',
+    fontFamily: theme.boldTextFont,
+    color: theme.secondaryTextColor,
     marginBottom: 16
   },
   eventIdText: {
     fontSize: 18,
-    color: '#667eea',
+    color: theme.primaryButtonColor,
     fontWeight: '600',
+    fontFamily: theme.semiBoldTextFont,
     marginBottom: 24
   },
   linkSection: {
@@ -174,7 +174,8 @@ const styles = StyleSheet.create({
   linkLabel: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#333',
+    fontFamily: theme.semiBoldTextFont,
+    color: theme.secondaryTextColor,
     marginBottom: 8
   },
   linkRow: {
@@ -188,22 +189,23 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     borderRadius: 8,
     borderWidth: 2,
-    borderColor: '#ddd',
+    borderColor: theme.inputBorderColor,
     fontSize: 14,
-    backgroundColor: '#f9f9f9',
-    color: '#333'
+    backgroundColor: theme.inputBackgroundColor,
+    color: theme.inputTextColor
   },
   copyButton: {
     paddingVertical: 12,
     paddingHorizontal: 20,
     borderRadius: 8,
-    backgroundColor: '#667eea',
+    backgroundColor: theme.primaryButtonColor,
     alignItems: 'center',
     justifyContent: 'center'
   },
   copyButtonText: {
-    color: 'white',
+    color: theme.buttonTextColor,
     fontWeight: '600',
+    fontFamily: theme.semiBoldTextFont,
     fontSize: 14
   },
   buttonRow: {
@@ -220,16 +222,17 @@ const styles = StyleSheet.create({
     alignItems: 'center'
   },
   dashboardButton: {
-    backgroundColor: '#667eea'
+    backgroundColor: theme.primaryButtonColor
   },
   scoreboardButton: {
-    backgroundColor: '#22c55e'
+    backgroundColor: theme.secondaryButtonColor
   },
   navButtonText: {
-    color: 'white',
+    color: theme.buttonTextColor,
     fontWeight: '600',
+    fontFamily: theme.semiBoldTextFont,
     fontSize: 16
   }
-})
+}))
 
 export default EventLinks

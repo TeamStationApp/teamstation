@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { StyleSheet, Text, View } from 'react-native'
+import { Text, View } from 'react-native'
 import LinearGradient from 'react-native-linear-gradient'
 import { useParams } from 'react-router-dom'
 
@@ -9,17 +9,15 @@ import {
   WS_RECONNECT_WAIT_MS
 } from '../common/types'
 import { clientConfig } from './clientConfig'
+import { cacheStyles, useTheme } from './ThemeContext'
+import type { Theme } from './types'
 
 const showDemoBoard = true
 
-const BOARD_BACKGROUND = '#2d2d2d'
-const OUTLINE_GRAY = '#606060'
-const ACTIVE_RED = '#ef4444'
-const BASE_FILL = '#383838'
-const FONT_FAMILY = 'Helvetica Neue, Arial, sans-serif'
-
 const Scoreboard: React.FC = () => {
   const { eventId } = useParams<{ eventId: string }>()
+  const theme = useTheme()
+  const styles = getStyles(theme)
   const [scoreState, setScoreState] = useState<ScoreState>({
     inGame: false,
     pitcherName: '',
@@ -152,7 +150,7 @@ const Scoreboard: React.FC = () => {
           <View style={styles.teamsSection}>
             <View style={styles.teamRow}>
               <LinearGradient
-                colors={['#003087', '#3266ad']}
+                colors={theme.scoreboardTeamAwayGradient}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 1 }}
                 style={styles.teamBox}
@@ -165,7 +163,7 @@ const Scoreboard: React.FC = () => {
             </View>
             <View style={styles.teamRow}>
               <LinearGradient
-                colors={['#8B4513', '#DAA520']}
+                colors={theme.scoreboardTeamHomeGradient}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 1 }}
                 style={styles.teamBox}
@@ -275,23 +273,23 @@ const Scoreboard: React.FC = () => {
   )
 }
 
-const styles = StyleSheet.create({
+const getStyles = cacheStyles((theme: Theme) => ({
   scoreboardContainer: {
     alignItems: 'flex-start',
     justifyContent: 'flex-start'
   },
   scoreboard: {
-    backgroundColor: BOARD_BACKGROUND,
+    backgroundColor: theme.scoreboardBackground,
     borderRadius: 12,
     padding: 8,
-    shadowColor: '#000',
+    shadowColor: theme.shadowColor,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 8,
     borderWidth: 2,
-    borderColor: '#4d4d4d',
-    fontFamily: FONT_FAMILY
+    borderColor: theme.scoreboardBorderColor,
+    fontFamily: theme.secondaryTextFont
   },
   // Header Row
   headerRow: {
@@ -302,22 +300,22 @@ const styles = StyleSheet.create({
     paddingBottom: 4
   },
   batterAbbrev: {
-    color: '#fff',
+    color: theme.primaryTextColor,
     fontSize: 20,
     fontWeight: 'bold',
     letterSpacing: 1,
-    fontFamily: FONT_FAMILY
+    fontFamily: theme.secondaryTextFont
   },
   batterAtBatsText: {
-    color: '#fff',
+    color: theme.primaryTextColor,
     fontSize: 20,
     fontWeight: 'bold',
-    fontFamily: FONT_FAMILY
+    fontFamily: theme.secondaryTextFont
   },
   // Separator Line
   separatorLine: {
     height: 1,
-    backgroundColor: '#555',
+    backgroundColor: theme.scoreboardSeparatorColor,
     marginHorizontal: 4
   },
   // Pitcher Row
@@ -329,17 +327,17 @@ const styles = StyleSheet.create({
     paddingVertical: 4
   },
   pitcherName: {
-    color: '#fff',
+    color: theme.primaryTextColor,
     fontSize: 20,
     fontWeight: 'bold',
     textTransform: 'uppercase',
-    fontFamily: FONT_FAMILY
+    fontFamily: theme.secondaryTextFont
   },
   pitchCount: {
-    color: '#fff',
+    color: theme.primaryTextColor,
     fontSize: 20,
     fontWeight: 'bold',
-    fontFamily: FONT_FAMILY
+    fontFamily: theme.secondaryTextFont
   },
   // Main Row
   mainRow: {
@@ -365,16 +363,16 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     marginRight: 4,
     borderWidth: 2,
-    borderColor: OUTLINE_GRAY
+    borderColor: theme.scoreboardOutlineGray
   },
   teamName: {
-    color: '#fff',
+    color: theme.primaryTextColor,
     fontSize: 24,
     fontWeight: 'bold',
-    fontFamily: FONT_FAMILY
+    fontFamily: theme.secondaryTextFont
   },
   scoreBox: {
-    backgroundColor: '#fff',
+    backgroundColor: theme.scoreboardScoreBackground,
     width: 70,
     height: 68,
     borderRadius: 4,
@@ -382,10 +380,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center'
   },
   scoreText: {
-    color: '#000',
+    color: theme.scoreboardScoreText,
     fontSize: 48,
     fontWeight: 'bold',
-    fontFamily: FONT_FAMILY
+    fontFamily: theme.secondaryTextFont
   },
   // Right Section
   rightSection: {
@@ -399,11 +397,11 @@ const styles = StyleSheet.create({
     marginRight: 32
   },
   inningCount: {
-    color: '#fff',
+    color: theme.primaryTextColor,
     fontSize: 28,
     fontWeight: 'bold',
     marginVertical: 4,
-    fontFamily: FONT_FAMILY
+    fontFamily: theme.secondaryTextFont
   },
   // Arrow styles
   arrowOuterUp: {
@@ -431,16 +429,16 @@ const styles = StyleSheet.create({
     borderRightColor: 'transparent'
   },
   arrowOuterActiveUp: {
-    borderBottomColor: ACTIVE_RED
+    borderBottomColor: theme.activeColor
   },
   arrowOuterInactiveUp: {
-    borderBottomColor: OUTLINE_GRAY
+    borderBottomColor: theme.scoreboardOutlineGray
   },
   arrowInnerActiveUp: {
-    borderBottomColor: ACTIVE_RED
+    borderBottomColor: theme.activeColor
   },
   arrowInnerInactiveUp: {
-    borderBottomColor: BASE_FILL
+    borderBottomColor: theme.scoreboardBaseFill
   },
   arrowOuterDown: {
     position: 'relative',
@@ -466,16 +464,16 @@ const styles = StyleSheet.create({
     borderRightColor: 'transparent'
   },
   arrowOuterActiveDown: {
-    borderTopColor: ACTIVE_RED
+    borderTopColor: theme.activeColor
   },
   arrowOuterInactiveDown: {
-    borderTopColor: OUTLINE_GRAY
+    borderTopColor: theme.scoreboardOutlineGray
   },
   arrowInnerActiveDown: {
-    borderTopColor: ACTIVE_RED
+    borderTopColor: theme.activeColor
   },
   arrowInnerInactiveDown: {
-    borderTopColor: BASE_FILL
+    borderTopColor: theme.scoreboardBaseFill
   },
   // Count and Outs Container
   countOutsContainer: {
@@ -483,11 +481,11 @@ const styles = StyleSheet.create({
     marginRight: 20
   },
   countDisplay: {
-    color: '#fff',
+    color: theme.primaryTextColor,
     fontSize: 44,
     fontWeight: 'bold',
     marginBottom: 4,
-    fontFamily: FONT_FAMILY
+    fontFamily: theme.secondaryTextFont
   },
   // Outs Dots Row (horizontal)
   outsDotsRow: {
@@ -499,13 +497,13 @@ const styles = StyleSheet.create({
     height: 20,
     borderRadius: 10,
     borderWidth: 2,
-    borderColor: OUTLINE_GRAY,
-    backgroundColor: BASE_FILL,
+    borderColor: theme.scoreboardOutlineGray,
+    backgroundColor: theme.scoreboardBaseFill,
     marginHorizontal: 4
   },
   outDotActive: {
-    backgroundColor: ACTIVE_RED,
-    borderColor: ACTIVE_RED
+    backgroundColor: theme.activeColor,
+    borderColor: theme.activeColor
   },
   // Bases - Rotated Container Approach
   basesRotatedContainer: {
@@ -523,9 +521,9 @@ const styles = StyleSheet.create({
   baseSquare: {
     width: 20,
     height: 20,
-    backgroundColor: BASE_FILL,
+    backgroundColor: theme.scoreboardBaseFill,
     borderWidth: 2,
-    borderColor: OUTLINE_GRAY,
+    borderColor: theme.scoreboardOutlineGray,
     position: 'absolute'
   },
   // Position each base
@@ -543,8 +541,8 @@ const styles = StyleSheet.create({
   },
   baseSquareGray: {},
   baseSquareFilled: {
-    backgroundColor: ACTIVE_RED,
-    borderColor: ACTIVE_RED
+    backgroundColor: theme.activeColor,
+    borderColor: theme.activeColor
   },
   // No game styles
   noGameContainer: {
@@ -553,17 +551,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center'
   },
   noGameText: {
-    color: '#fff',
+    color: theme.primaryTextColor,
     fontSize: 24,
     fontWeight: 'bold',
     marginBottom: 12,
-    fontFamily: FONT_FAMILY
+    fontFamily: theme.secondaryTextFont
   },
   noGameSubtext: {
-    color: '#999',
+    color: theme.placeholderTextColor,
     fontSize: 16,
-    fontFamily: FONT_FAMILY
+    fontFamily: theme.secondaryTextFont
   }
-})
+}))
 
 export default Scoreboard

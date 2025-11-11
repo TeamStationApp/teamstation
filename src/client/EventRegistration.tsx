@@ -1,18 +1,17 @@
 import React, { useState } from 'react'
 import type { ImageStyle } from 'react-native'
-import {
-  Image,
-  Pressable,
-  StyleSheet,
-  Text,
-  TextInput,
-  View
-} from 'react-native'
+import { Image, Pressable, Text, TextInput, View } from 'react-native'
+import { cacheStyles } from 'react-native-patina'
 import { useNavigate } from 'react-router-dom'
+
+import { useTheme } from './ThemeContext'
+import type { Theme } from './types'
 
 const EventRegistration: React.FC = () => {
   const [eventId, setEventId] = useState('')
   const navigate = useNavigate()
+  const theme = useTheme()
+  const styles = getStyles(theme)
 
   const generateEventId = (): void => {
     // Generate a random unique event ID
@@ -56,7 +55,7 @@ const EventRegistration: React.FC = () => {
         <TextInput
           style={styles.input}
           placeholder="Enter an Event ID"
-          placeholderTextColor="#999"
+          placeholderTextColor={theme.placeholderTextColor}
           value={eventId}
           onChangeText={setEventId}
         />
@@ -76,20 +75,20 @@ const EventRegistration: React.FC = () => {
   )
 }
 
-const styles = StyleSheet.create({
+const getStyles = cacheStyles((theme: Theme) => ({
   container: {
     flex: 1,
     minHeight: 600,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#667eea'
+    backgroundColor: theme.backgroundColor
   },
   card: {
     alignItems: 'center',
     padding: 32,
-    backgroundColor: 'white',
+    backgroundColor: theme.cardBackgroundColor,
     borderRadius: 16,
-    shadowColor: '#000',
+    shadowColor: theme.shadowColor,
     shadowOffset: { width: 0, height: 20 },
     shadowOpacity: 0.1,
     shadowRadius: 25,
@@ -105,12 +104,14 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: '700',
-    color: '#333',
+    fontFamily: theme.boldTextFont,
+    color: theme.secondaryTextColor,
     marginBottom: 16
   },
   description: {
     fontSize: 16,
-    color: '#666',
+    fontFamily: theme.primaryTextFont,
+    color: theme.tertiaryTextColor,
     textAlign: 'center',
     marginBottom: 24,
     lineHeight: 24
@@ -121,29 +122,30 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     borderRadius: 8,
     borderWidth: 2,
-    borderColor: '#ddd',
+    borderColor: theme.inputBorderColor,
     fontSize: 16,
     marginBottom: 16,
-    backgroundColor: '#f9f9f9',
-    color: '#333'
+    backgroundColor: theme.inputBackgroundColor,
+    color: theme.inputTextColor
   },
   button: {
     width: '100%',
     paddingVertical: 14,
     paddingHorizontal: 24,
     borderRadius: 8,
-    backgroundColor: '#667eea',
+    backgroundColor: theme.primaryButtonColor,
     marginBottom: 12,
     alignItems: 'center'
   },
   continueButton: {
-    backgroundColor: '#22c55e'
+    backgroundColor: theme.secondaryButtonColor
   },
   buttonText: {
-    color: 'white',
+    color: theme.buttonTextColor,
     fontWeight: '600',
+    fontFamily: theme.semiBoldTextFont,
     fontSize: 16
   }
-})
+}))
 
 export default EventRegistration
