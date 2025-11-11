@@ -137,67 +137,67 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   card: {
     alignItems: 'center',
-    padding: 32,
+    padding: theme.rem(2),
     backgroundColor: theme.cardBackgroundColor,
-    borderRadius: 16,
+    borderRadius: theme.rem(1),
     shadowColor: theme.shadowColor,
-    shadowOffset: { width: 0, height: 20 },
+    shadowOffset: { width: 0, height: theme.rem(1.25) },
     shadowOpacity: 0.1,
-    shadowRadius: 25,
+    shadowRadius: theme.rem(1.5),
     elevation: 10,
     width: '90%',
     maxWidth: 600
   },
   logo: {
-    height: 64,
-    width: 200,
-    marginBottom: 24
+    height: theme.rem(4),
+    width: theme.rem(12.5),
+    marginBottom: theme.rem(1.5)
   },
   title: {
-    fontSize: 28,
+    fontSize: theme.rem(1.75),
     fontWeight: '700',
     fontFamily: theme.boldTextFont,
     color: theme.secondaryTextColor,
-    marginBottom: 16
+    marginBottom: theme.rem(1)
   },
   eventIdText: {
-    fontSize: 18,
+    fontSize: theme.rem(1.25),
     color: theme.primaryButtonColor,
     fontWeight: '600',
     fontFamily: theme.semiBoldTextFont,
-    marginBottom: 24
+    marginBottom: theme.rem(1.5)
   },
   linkSection: {
     width: '100%',
-    marginBottom: 20
+    marginBottom: theme.rem(1.25)
   },
   linkLabel: {
-    fontSize: 16,
+    fontSize: theme.rem(1),
     fontWeight: '600',
     fontFamily: theme.semiBoldTextFont,
     color: theme.secondaryTextColor,
-    marginBottom: 8
+    marginBottom: theme.rem(0.5)
   },
   linkRow: {
     flexDirection: 'row',
     width: '100%',
-    gap: 8
+    gap: theme.rem(0.5)
   },
   linkInput: {
     flex: 1,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 8,
+    paddingVertical: theme.rem(0.75),
+    paddingHorizontal: theme.rem(1),
+    borderRadius: theme.rem(0.5),
     borderWidth: 2,
     borderColor: theme.inputBorderColor,
-    fontSize: 14,
+    fontSize: theme.rem(1),
     backgroundColor: theme.inputBackgroundColor,
     color: theme.inputTextColor
   },
   copyButton: {
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 8,
+    paddingVertical: theme.rem(0.75),
+    paddingHorizontal: theme.rem(1.25),
+    borderRadius: theme.rem(0.5),
     backgroundColor: theme.primaryButtonColor,
     alignItems: 'center',
     justifyContent: 'center'
@@ -206,19 +206,19 @@ const getStyles = cacheStyles((theme: Theme) => ({
     color: theme.buttonTextColor,
     fontWeight: '600',
     fontFamily: theme.semiBoldTextFont,
-    fontSize: 14
+    fontSize: theme.rem(1)
   },
   buttonRow: {
     flexDirection: 'row',
     width: '100%',
-    gap: 12,
-    marginTop: 12
+    gap: theme.rem(0.75),
+    marginTop: theme.rem(0.75)
   },
   navButton: {
     flex: 1,
-    paddingVertical: 14,
-    paddingHorizontal: 24,
-    borderRadius: 8,
+    paddingVertical: theme.rem(1),
+    paddingHorizontal: theme.rem(1.5),
+    borderRadius: theme.rem(0.5),
     alignItems: 'center'
   },
   dashboardButton: {
@@ -231,7 +231,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
     color: theme.buttonTextColor,
     fontWeight: '600',
     fontFamily: theme.semiBoldTextFont,
-    fontSize: 16
+    fontSize: theme.rem(1)
   }
 }))
 
