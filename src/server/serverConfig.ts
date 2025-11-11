@@ -18,6 +18,8 @@ const asServerConfig = asObject({
 
 
   apiServer: asOptional(asString, 'ws://localhost:8008'),
+  eventId: asOptional(asString, ''),
+
   /**
    * The cluster defintions are used by setupDatabases to create the databases and setup
    * replications.
