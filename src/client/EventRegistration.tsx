@@ -110,7 +110,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   description: {
     fontSize: theme.rem(1),
-    fontFamily: theme.primaryTextFont,
+    fontFamily: theme.regularTextFont,
     color: theme.tertiaryTextColor,
     textAlign: 'center',
     marginBottom: theme.rem(1.5),
