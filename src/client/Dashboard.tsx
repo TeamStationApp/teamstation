@@ -7,6 +7,7 @@ import {
   TextInput,
   View
 } from 'react-native'
+import { useParams } from 'react-router-dom'
 
 import {
   asAutoStateMessage,
@@ -17,6 +18,7 @@ import {
 import { clientConfig } from './clientConfig'
 
 const Dashboard: React.FC = () => {
+  const { eventId } = useParams<{ eventId: string }>()
   const [overrideEnabled, setOverrideEnabled] = useState(false)
 
   // Refs to track current values (for use in WebSocket callbacks)
@@ -251,16 +253,21 @@ const Dashboard: React.FC = () => {
 
   // WebSocket connection with auto-reconnect
   useEffect(() => {
+    if (eventId == null || eventId === '') {
+      console.error('No eventId provided')
+      return
+    }
+
     let wsUrl: string
     // @ts-expect-error - __WEBPACK_DEV__ is injected by webpack DefinePlugin
     if (window.__WEBPACK_DEV__ === true) {
       // Development mode: use apiServer from clientConfig
-      wsUrl = `${clientConfig.apiServer}/sockets/api/v1/dashboard`
+      wsUrl = `${clientConfig.apiServer}/sockets/api/v1/dashboard/${eventId}`
     } else {
       // Production mode: use window.location
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
       const host = window.location.host
-      wsUrl = `${protocol}//${host}/sockets/api/v1/dashboard`
+      wsUrl = `${protocol}//${host}/sockets/api/v1/dashboard/${eventId}`
     }
 
     let reconnectTimeout: NodeJS.Timeout | null = null
@@ -404,7 +411,7 @@ const Dashboard: React.FC = () => {
       }
       wsRef.current?.close()
     }
-  }, []) // Empty deps - only connect once on mount
+  }, [eventId]) // Reconnect when eventId changes
 
   // Send overrides when values change and override is enabled
   useEffect(() => {
