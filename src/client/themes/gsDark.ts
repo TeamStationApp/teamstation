@@ -46,11 +46,11 @@ const palette = {
 
   // Fonts
   helveticaNeue: 'Helvetica Neue, Arial, sans-serif',
-  quicksandBold: 'Quicksand-Bold',
-  quicksandSemiBold: 'Quicksand-SemiBold',
-  quicksandMedium: 'Quicksand-Medium',
-  quicksandRegular: 'Quicksand-Regular',
-  quicksandLight: 'Quicksand-Light'
+  quicksandLight: 'Quicksand, -apple-system, BlinkMacSystemFont, sans-serif',
+  quicksandRegular: 'Quicksand, -apple-system, BlinkMacSystemFont, sans-serif',
+  quicksandMedium: 'Quicksand, -apple-system, BlinkMacSystemFont, sans-serif',
+  quicksandSemiBold: 'Quicksand, -apple-system, BlinkMacSystemFont, sans-serif',
+  quicksandBold: 'Quicksand, -apple-system, BlinkMacSystemFont, sans-serif'
 }
 
 const rem = (size: number): number => {
@@ -82,6 +82,7 @@ export const gsDark: Theme = {
 
   // Secondary fonts
   secondaryTextFont: palette.helveticaNeue,
+  regularTextFont: palette.quicksandRegular,
   boldTextFont: palette.quicksandBold,
   semiBoldTextFont: palette.quicksandSemiBold,
 

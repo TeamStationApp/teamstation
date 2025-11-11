@@ -54,6 +54,7 @@ export interface Theme {
 
   // Secondary fonts
   secondaryTextFont: string
+  regularTextFont: string
   boldTextFont: string
   semiBoldTextFont: string
 
