@@ -40,6 +40,20 @@ const Scoreboard: React.FC = () => {
     awayScore: 0
   })
 
+  // Set transparent background for scoreboard (for OBS chroma key)
+  useEffect(() => {
+    const originalBodyBg = document.body.style.backgroundColor
+    const originalHtmlBg = document.documentElement.style.backgroundColor
+
+    document.body.style.backgroundColor = 'transparent'
+    document.documentElement.style.backgroundColor = 'transparent'
+
+    return () => {
+      document.body.style.backgroundColor = originalBodyBg
+      document.documentElement.style.backgroundColor = originalHtmlBg
+    }
+  }, [])
+
   useEffect(() => {
     if (eventId == null || eventId === '') {
       console.error('No eventId provided')
