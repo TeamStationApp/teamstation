@@ -7484,6 +7484,11 @@ react-native-linear-gradient@^2.8.3:
   resolved "https://registry.yarnpkg.com/react-native-linear-gradient/-/react-native-linear-gradient-2.8.3.tgz#9a116649f86d74747304ee13db325e20b21e564f"
   integrity sha512-KflAXZcEg54PXkLyflaSZQ3PJp4uC4whM7nT/Uot9m0e/qxFV3p6uor1983D1YOBJbJN7rrWdqIjq0T42jOJyA==
 
+react-native-patina@^0.1.6:
+  version "0.1.6"
+  resolved "https://registry.yarnpkg.com/react-native-patina/-/react-native-patina-0.1.6.tgz#eb60194a4e4e427a51391b92a2acebb557f3f3ca"
+  integrity sha512-3mtDnDRbkTx3mtS9BsaYgFy5C+RuSTTHLu5VV+8g8lJtvaSdcsflpmf5dh3ZmCSJc2tDORfzU+nuRQ2keVY91Q==
+
 react-native-web-linear-gradient@^1.1.2:
   version "1.1.2"
   resolved "https://registry.yarnpkg.com/react-native-web-linear-gradient/-/react-native-web-linear-gradient-1.1.2.tgz#33f85f7085a0bb5ffa5106faf02ed105b92a9ed7"
