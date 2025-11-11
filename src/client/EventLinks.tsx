@@ -42,7 +42,7 @@ const EventLinks: React.FC = () => {
     <View style={styles.container}>
       <View style={styles.card}>
         <Image
-          source={{ uri: '/assets/images/edge_logo.png' }}
+          source={{ uri: '/assets/images/gs_logo.png' }}
           style={styles.logo as ImageStyle}
           resizeMode="contain"
         />
@@ -133,7 +133,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
     minHeight: 600,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: theme.primaryButtonColor
+    backgroundColor: theme.backgroundColor
   },
   card: {
     alignItems: 'center',
@@ -146,7 +146,8 @@ const getStyles = cacheStyles((theme: Theme) => ({
     shadowRadius: theme.rem(1.5),
     elevation: 10,
     width: '90%',
-    maxWidth: 600
+    maxWidth: 600,
+    marginTop: theme.rem(2)
   },
   logo: {
     height: theme.rem(4),
@@ -181,10 +182,13 @@ const getStyles = cacheStyles((theme: Theme) => ({
   linkRow: {
     flexDirection: 'row',
     width: '100%',
-    gap: theme.rem(0.5)
+    gap: theme.rem(0.5),
+    alignItems: 'center'
   },
   linkInput: {
     flex: 1,
+    minWidth: 0,
+    flexShrink: 1,
     paddingVertical: theme.rem(0.75),
     paddingHorizontal: theme.rem(1),
     borderRadius: theme.rem(0.5),
@@ -200,7 +204,8 @@ const getStyles = cacheStyles((theme: Theme) => ({
     borderRadius: theme.rem(0.5),
     backgroundColor: theme.primaryButtonColor,
     alignItems: 'center',
-    justifyContent: 'center'
+    justifyContent: 'center',
+    flexShrink: 0
   },
   copyButtonText: {
     color: theme.buttonTextColor,

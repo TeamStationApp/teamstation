@@ -39,7 +39,7 @@ const EventRegistration: React.FC = () => {
     <View style={styles.container}>
       <View style={styles.card}>
         <Image
-          source={{ uri: '/assets/images/edge_logo.png' }}
+          source={{ uri: '/assets/images/gs_logo.png' }}
           style={styles.logo as ImageStyle}
           resizeMode="contain"
         />
@@ -94,7 +94,8 @@ const getStyles = cacheStyles((theme: Theme) => ({
     shadowRadius: theme.rem(1.5),
     elevation: 10,
     width: '90%',
-    maxWidth: 500
+    maxWidth: 500,
+    marginTop: theme.rem(2)
   },
   logo: {
     height: theme.rem(4),

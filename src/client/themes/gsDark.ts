@@ -6,6 +6,15 @@ const palette = {
   black: '#000000',
   transparent: '#00000000',
 
+  // GS Logo Colors - from gs_logo.png
+  gsBeige: '#E8E4D8',
+  gsLightOlive: '#7A9860',
+  gsMediumOlive: '#6B8E4E',
+  gsDarkOlive: '#3D4E2F',
+  gsVeryDarkGreen: '#1F2418',
+  gsAccentGreen: '#88A870',
+  gsPaleGreen: '#C4D4B8',
+
   // Blues and Greens
   indigoBlue: '#667eea',
   emeraldGreen: '#22c55e',
@@ -62,23 +71,23 @@ export const gsDark: Theme = {
   isDark: true,
 
   // Common border
-  defaultBorderColor: palette.veryLightGray,
+  defaultBorderColor: palette.gsPaleGreen,
 
   // Backgrounds
-  backgroundColor: palette.nearBlack,
-  cardBackgroundColor: palette.white,
-  cardBackgroundDark: palette.darkerGray,
-  containerBackgroundColor: palette.charcoal,
-  inactiveBackgroundColor: palette.ash,
+  backgroundColor: palette.gsVeryDarkGreen,
+  cardBackgroundColor: palette.gsBeige,
+  cardBackgroundDark: palette.gsDarkOlive,
+  containerBackgroundColor: palette.gsVeryDarkGreen,
+  inactiveBackgroundColor: palette.gsDarkOlive,
   overlayBackgroundColor: palette.blackOp70,
 
   // Primary text
   primaryTextFont: palette.quicksandBold,
   primaryTextFontSizeRem: 1.25,
-  primaryTextColor: palette.white,
-  secondaryTextColor: palette.darkGray,
-  tertiaryTextColor: palette.mediumGray,
-  placeholderTextColor: palette.mediumLightGray,
+  primaryTextColor: palette.gsBeige,
+  secondaryTextColor: palette.gsVeryDarkGreen,
+  tertiaryTextColor: palette.gsDarkOlive,
+  placeholderTextColor: palette.gsMediumOlive,
 
   // Secondary fonts
   secondaryTextFont: palette.helveticaNeue,
@@ -87,32 +96,32 @@ export const gsDark: Theme = {
   semiBoldTextFont: palette.quicksandSemiBold,
 
   // Buttons
-  primaryButtonColor: palette.indigoBlue,
-  secondaryButtonColor: palette.emeraldGreen,
-  buttonGrayColor: palette.mediumGray,
-  clearButtonColor: palette.mediumLightGray,
-  buttonTextColor: palette.white,
+  primaryButtonColor: palette.gsMediumOlive,
+  secondaryButtonColor: palette.gsLightOlive,
+  buttonGrayColor: palette.gsAccentGreen,
+  clearButtonColor: palette.gsPaleGreen,
+  buttonTextColor: palette.gsBeige,
 
   // Inputs
-  inputBackgroundColor: palette.almostWhite,
-  inputBorderColor: palette.veryLightGray,
-  inputTextColor: palette.darkGray,
+  inputBackgroundColor: palette.white,
+  inputBorderColor: palette.gsMediumOlive,
+  inputTextColor: palette.gsVeryDarkGreen,
 
   // Status colors
-  activeColor: palette.coralRed,
-  successColor: palette.emeraldGreen,
+  activeColor: palette.coralRed, // PRESERVED - used for bases and inning arrows
+  successColor: palette.gsLightOlive,
   warningColor: palette.amber,
   dangerColor: palette.coralRed,
 
   // Dashboard specific
-  dashboardOverrideBackground: palette.forestGreen,
-  dashboardCircleGreen: palette.emeraldGreen,
-  dashboardCircleOrange: palette.amber,
-  dashboardCircleRed: palette.coralRed,
-  dashboardInactiveColor: palette.ash,
-  dashboardBaseFill: palette.darkCharcoal,
-  dashboardOutlineGray: palette.steel,
-  dashboardSuperscript: palette.lightGray,
+  dashboardOverrideBackground: palette.gsMediumOlive,
+  dashboardCircleGreen: palette.emeraldGreen, // PRESERVED - balls color
+  dashboardCircleOrange: palette.amber, // PRESERVED - strikes color
+  dashboardCircleRed: palette.coralRed, // PRESERVED - outs color
+  dashboardInactiveColor: palette.gsDarkOlive,
+  dashboardBaseFill: palette.gsVeryDarkGreen,
+  dashboardOutlineGray: palette.gsAccentGreen,
+  dashboardSuperscript: palette.gsPaleGreen,
   dashboardDarkBaseRed: palette.crimsonRed,
 
   // Scoreboard specific
@@ -130,7 +139,7 @@ export const gsDark: Theme = {
   shadowColor: palette.black,
 
   // Gradients (kept for compatibility)
-  backgroundGradientColors: [palette.nearBlack, palette.nearBlack],
+  backgroundGradientColors: [palette.gsVeryDarkGreen, palette.gsDarkOlive],
   backgroundGradientStart: { x: 0, y: 0 },
   backgroundGradientEnd: { x: 1, y: 1 }
 }
