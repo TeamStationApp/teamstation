@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { StyleSheet, Text, View } from 'react-native'
 import LinearGradient from 'react-native-linear-gradient'
+import { useParams } from 'react-router-dom'
 
 import {
   asScoreState,
@@ -18,6 +19,7 @@ const BASE_FILL = '#383838'
 const FONT_FAMILY = 'Helvetica Neue, Arial, sans-serif'
 
 const Scoreboard: React.FC = () => {
+  const { eventId } = useParams<{ eventId: string }>()
   const [scoreState, setScoreState] = useState<ScoreState>({
     inGame: false,
     pitcherName: '',
@@ -41,16 +43,21 @@ const Scoreboard: React.FC = () => {
   })
 
   useEffect(() => {
+    if (eventId == null || eventId === '') {
+      console.error('No eventId provided')
+      return
+    }
+
     let wsUrl: string
     // @ts-expect-error - __WEBPACK_DEV__ is injected by webpack DefinePlugin
     if (window.__WEBPACK_DEV__ === true) {
       // Development mode: use apiServer from clientConfig
-      wsUrl = `${clientConfig.apiServer}/sockets/api/v1/scoreboard`
+      wsUrl = `${clientConfig.apiServer}/sockets/api/v1/scoreboard/${eventId}`
     } else {
       // Production mode: use window.location
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
       const host = window.location.host
-      wsUrl = `${protocol}//${host}/sockets/api/v1/scoreboard`
+      wsUrl = `${protocol}//${host}/sockets/api/v1/scoreboard/${eventId}`
     }
 
     let reconnectTimeout: NodeJS.Timeout | null = null
@@ -99,7 +106,7 @@ const Scoreboard: React.FC = () => {
         clearTimeout(reconnectTimeout)
       }
     }
-  }, [])
+  }, [eventId])
 
   if (!scoreState.inGame && !showDemoBoard) {
     return (

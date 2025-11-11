@@ -17,112 +17,121 @@ let autoStateWss: WebSocketServer | undefined
 let dashboardWss: WebSocketServer | undefined
 let scoreboardWss: WebSocketServer | undefined
 
-// Client sets
-const autoStateClients = new Set<WebSocket>()
-const dashboardClients = new Set<WebSocket>()
-const scoreboardClients = new Set<WebSocket>()
-
-// State management
-let currentAutoState: ScoreState = {
-  inGame: false,
-  pitcherName: '',
-  batterName: '',
-  batterNumber: 0,
-  batterNumHits: 0,
-  batterAtBats: 0,
-  numPitches: 0,
-  balls: 0,
-  strikes: 0,
-  outs: 0,
-  base1: false,
-  base2: false,
-  base3: false,
-  inning: 0,
-  half: 'top',
-  homeTeam: 'Home Team',
-  awayTeam: 'Away Team',
-  homeScore: 0,
-  awayScore: 0
+// Event state management - one per eventId
+interface EventState {
+  autoState: ScoreState
+  dashboardOverrides: DashboardOverrides
+  autoStateClients: Set<WebSocket>
+  dashboardClients: Set<WebSocket>
+  scoreboardClients: Set<WebSocket>
 }
 
-let currentDashboardOverrides: DashboardOverrides = {
-  overrideCountEnabled: false,
-  overrideBasesEnabled: false,
-  overrideTeamEnabled: false,
-  overrideScoreEnabled: false,
-  overrideInningEnabled: false,
-  overrideCount: undefined,
-  overrideBases: undefined,
-  overrideTeam: undefined,
-  overrideScore: undefined,
-  overrideInning: undefined
+// Map of eventId to EventState
+const eventStates = new Map<string, EventState>()
+
+/**
+ * Get or create event state for a given eventId
+ */
+function getOrCreateEventState(eventId: string): EventState {
+  let state = eventStates.get(eventId)
+  if (state == null) {
+    state = {
+      autoState: {
+        inGame: false,
+        pitcherName: '',
+        batterName: '',
+        batterNumber: 0,
+        batterNumHits: 0,
+        batterAtBats: 0,
+        numPitches: 0,
+        balls: 0,
+        strikes: 0,
+        outs: 0,
+        base1: false,
+        base2: false,
+        base3: false,
+        inning: 0,
+        half: 'top',
+        homeTeam: 'Home Team',
+        awayTeam: 'Away Team',
+        homeScore: 0,
+        awayScore: 0
+      },
+      dashboardOverrides: {
+        overrideCountEnabled: false,
+        overrideBasesEnabled: false,
+        overrideTeamEnabled: false,
+        overrideScoreEnabled: false,
+        overrideInningEnabled: false,
+        overrideCount: undefined,
+        overrideBases: undefined,
+        overrideTeam: undefined,
+        overrideScore: undefined,
+        overrideInning: undefined
+      },
+      autoStateClients: new Set<WebSocket>(),
+      dashboardClients: new Set<WebSocket>(),
+      scoreboardClients: new Set<WebSocket>()
+    }
+    eventStates.set(eventId, state)
+    logger(`Created new event state for eventId: ${eventId}`)
+  }
+  return state
 }
 
 /**
  * Merge autoState with dashboard overrides to create final scoreboard state
  */
-function mergeFinalState(): ScoreState | null {
-  if (currentAutoState == null) {
+function mergeFinalState(eventId: string): ScoreState | null {
+  const state = eventStates.get(eventId)
+  if (state?.autoState == null) {
     return null
   }
 
-  const finalState: ScoreState = { ...currentAutoState }
+  const finalState: ScoreState = { ...state.autoState }
+  const overrides = state.dashboardOverrides
 
   // Apply count overrides if enabled and present
-  if (
-    currentDashboardOverrides.overrideCountEnabled &&
-    currentDashboardOverrides.overrideCount != null
-  ) {
-    finalState.balls = currentDashboardOverrides.overrideCount.balls
-    finalState.strikes = currentDashboardOverrides.overrideCount.strikes
-    finalState.outs = currentDashboardOverrides.overrideCount.outs
+  if (overrides.overrideCountEnabled && overrides.overrideCount != null) {
+    finalState.balls = overrides.overrideCount.balls
+    finalState.strikes = overrides.overrideCount.strikes
+    finalState.outs = overrides.overrideCount.outs
   }
 
   // Apply bases overrides if enabled and present
-  if (
-    currentDashboardOverrides.overrideBasesEnabled &&
-    currentDashboardOverrides.overrideBases != null
-  ) {
-    finalState.base1 = currentDashboardOverrides.overrideBases.base1
-    finalState.base2 = currentDashboardOverrides.overrideBases.base2
-    finalState.base3 = currentDashboardOverrides.overrideBases.base3
+  if (overrides.overrideBasesEnabled && overrides.overrideBases != null) {
+    finalState.base1 = overrides.overrideBases.base1
+    finalState.base2 = overrides.overrideBases.base2
+    finalState.base3 = overrides.overrideBases.base3
   }
 
   // Apply team overrides if enabled and present
-  if (
-    currentDashboardOverrides.overrideTeamEnabled &&
-    currentDashboardOverrides.overrideTeam != null
-  ) {
-    finalState.homeTeam = currentDashboardOverrides.overrideTeam.homeTeam
-    finalState.awayTeam = currentDashboardOverrides.overrideTeam.awayTeam
+  if (overrides.overrideTeamEnabled && overrides.overrideTeam != null) {
+    finalState.homeTeam = overrides.overrideTeam.homeTeam
+    finalState.awayTeam = overrides.overrideTeam.awayTeam
   }
 
   // Apply score overrides if enabled and present
-  if (
-    currentDashboardOverrides.overrideScoreEnabled &&
-    currentDashboardOverrides.overrideScore != null
-  ) {
-    finalState.homeScore = currentDashboardOverrides.overrideScore.homeScore
-    finalState.awayScore = currentDashboardOverrides.overrideScore.awayScore
+  if (overrides.overrideScoreEnabled && overrides.overrideScore != null) {
+    finalState.homeScore = overrides.overrideScore.homeScore
+    finalState.awayScore = overrides.overrideScore.awayScore
   }
 
   // Apply inning overrides if enabled and present
-  if (
-    currentDashboardOverrides.overrideInningEnabled &&
-    currentDashboardOverrides.overrideInning != null
-  ) {
-    finalState.inning = currentDashboardOverrides.overrideInning.inning
-    finalState.half = currentDashboardOverrides.overrideInning.half
+  if (overrides.overrideInningEnabled && overrides.overrideInning != null) {
+    finalState.inning = overrides.overrideInning.inning
+    finalState.half = overrides.overrideInning.half
   }
 
   return finalState
 }
 
 /**
- * Broadcast autoState to dashboard clients
+ * Broadcast autoState to dashboard clients for a specific event
  */
-function broadcastToDashboard(scoreState: ScoreState): void {
-  if (dashboardClients.size === 0) {
+function broadcastToDashboard(eventId: string, scoreState: ScoreState): void {
+  const state = eventStates.get(eventId)
+  if (state == null || state.dashboardClients.size === 0) {
     return
   }
 
@@ -132,29 +141,31 @@ function broadcastToDashboard(scoreState: ScoreState): void {
   }
   const messageStr = JSON.stringify(message)
   logger(
-    `Broadcasting autoState to ${dashboardClients.size} dashboard client(s)`
+    `Broadcasting autoState to ${state.dashboardClients.size} dashboard client(s) for event ${eventId}`
   )
 
-  for (const client of Array.from(dashboardClients)) {
+  for (const client of Array.from(state.dashboardClients)) {
     if (client.readyState === 1) {
       try {
         client.send(messageStr)
       } catch (error) {
         console.error('Error sending to dashboard client:', error)
-        dashboardClients.delete(client)
+        state.dashboardClients.delete(client)
       }
     }
   }
 }
 
 /**
- * Broadcast override updates to all dashboard clients except the sender
+ * Broadcast override updates to all dashboard clients except the sender for a specific event
  */
 function broadcastOverridesToDashboards(
+  eventId: string,
   overrides: DashboardOverrides,
   excludeClient?: WebSocket
 ): void {
-  if (dashboardClients.size === 0) {
+  const state = eventStates.get(eventId)
+  if (state == null || state.dashboardClients.size === 0) {
     return
   }
 
@@ -163,11 +174,11 @@ function broadcastOverridesToDashboards(
     data: overrides
   }
   const messageStr = JSON.stringify(message)
-  const targetClients = Array.from(dashboardClients).filter(
+  const targetClients = Array.from(state.dashboardClients).filter(
     c => c !== excludeClient
   )
   logger(
-    `Broadcasting overrides to ${targetClients.length} dashboard client(s)`
+    `Broadcasting overrides to ${targetClients.length} dashboard client(s) for event ${eventId}`
   )
 
   for (const client of targetClients) {
@@ -176,35 +187,51 @@ function broadcastOverridesToDashboards(
         client.send(messageStr)
       } catch (error) {
         console.error('Error sending override to dashboard client:', error)
-        dashboardClients.delete(client)
+        state.dashboardClients.delete(client)
       }
     }
   }
 }
 
 /**
- * Broadcast final merged state to scoreboard clients
+ * Broadcast final merged state to scoreboard clients for a specific event
  */
-function broadcastToScoreboard(scoreState: ScoreState): void {
-  if (scoreboardClients.size === 0) {
+function broadcastToScoreboard(eventId: string, scoreState: ScoreState): void {
+  const state = eventStates.get(eventId)
+  if (state == null || state.scoreboardClients.size === 0) {
     return
   }
 
   const message = JSON.stringify(scoreState)
   logger(
-    `Broadcasting final state to ${scoreboardClients.size} scoreboard client(s)`
+    `Broadcasting final state to ${state.scoreboardClients.size} scoreboard client(s) for event ${eventId}`
   )
 
-  for (const client of Array.from(scoreboardClients)) {
+  for (const client of Array.from(state.scoreboardClients)) {
     if (client.readyState === 1) {
       try {
         client.send(message)
       } catch (error) {
         console.error('Error sending to scoreboard client:', error)
-        scoreboardClients.delete(client)
+        state.scoreboardClients.delete(client)
       }
     }
   }
+}
+
+/**
+ * Extract eventId from WebSocket URL path
+ */
+function extractEventId(pathname: string, prefix: string): string | null {
+  if (!pathname.startsWith(prefix)) {
+    return null
+  }
+  const eventId = pathname.slice(prefix.length)
+  if (eventId === '' || eventId === '/') {
+    return null
+  }
+  // Remove leading slash if present
+  return eventId.startsWith('/') ? eventId.slice(1) : eventId
 }
 
 export function initializeWebSocketServer(server: HttpServer): void {
@@ -213,9 +240,10 @@ export function initializeWebSocketServer(server: HttpServer): void {
     noServer: true
   })
 
-  autoStateWss.on('connection', (ws: WebSocket) => {
-    logger('New autoState client connected (engine)')
-    autoStateClients.add(ws)
+  autoStateWss.on('connection', (ws: WebSocket, eventId: string) => {
+    logger(`New autoState client connected for event: ${eventId}`)
+    const state = getOrCreateEventState(eventId)
+    state.autoStateClients.add(ws)
 
     // Handle incoming autoState updates from engine
     ws.on('message', (data: Buffer) => {
@@ -223,18 +251,18 @@ export function initializeWebSocketServer(server: HttpServer): void {
         const message = data.toString()
         const rawData = JSON.parse(message)
         const scoreState: ScoreState = asScoreState(rawData)
-        logger('Received autoState update from engine')
+        logger(`Received autoState update from engine for event: ${eventId}`)
 
-        // Store current autoState
-        currentAutoState = scoreState
+        // Store current autoState for this event
+        state.autoState = scoreState
 
-        // Broadcast to dashboard
-        broadcastToDashboard(scoreState)
+        // Broadcast to dashboard for this event
+        broadcastToDashboard(eventId, scoreState)
 
-        // Merge and broadcast to scoreboard
-        const finalState = mergeFinalState()
+        // Merge and broadcast to scoreboard for this event
+        const finalState = mergeFinalState(eventId)
         if (finalState != null) {
-          broadcastToScoreboard(finalState)
+          broadcastToScoreboard(eventId, finalState)
         }
       } catch (error) {
         console.error('Error parsing or validating autoState message:', error)
@@ -242,32 +270,33 @@ export function initializeWebSocketServer(server: HttpServer): void {
     })
 
     ws.on('close', () => {
-      logger('AutoState client disconnected')
-      autoStateClients.delete(ws)
+      logger(`AutoState client disconnected for event: ${eventId}`)
+      state.autoStateClients.delete(ws)
     })
 
     ws.on('error', error => {
       console.error('AutoState WebSocket error:', error)
-      autoStateClients.delete(ws)
+      state.autoStateClients.delete(ws)
     })
   })
 
-  logger('WebSocket server initialized at /sockets/api/v1/autoState')
+  logger('WebSocket server initialized at /sockets/api/v1/autoState/{eventId}')
 
   // 2. Dashboard endpoint - sends autoState updates, receives override updates
   dashboardWss = new WebSocketServer({
     noServer: true
   })
 
-  dashboardWss.on('connection', (ws: WebSocket) => {
-    logger('New dashboard client connected')
-    dashboardClients.add(ws)
+  dashboardWss.on('connection', (ws: WebSocket, eventId: string) => {
+    logger(`New dashboard client connected for event: ${eventId}`)
+    const state = getOrCreateEventState(eventId)
+    state.dashboardClients.add(ws)
 
     // Send current autoState to new dashboard client
-    if (currentAutoState != null) {
+    if (state.autoState != null) {
       const autoMessage: AutoStateMessage = {
         type: 'autoState',
-        data: currentAutoState
+        data: state.autoState
       }
       ws.send(JSON.stringify(autoMessage))
     }
@@ -275,7 +304,7 @@ export function initializeWebSocketServer(server: HttpServer): void {
     // Send current override state to new dashboard client
     const overrideMessage: OverrideUpdateMessage = {
       type: 'overrideUpdate',
-      data: currentDashboardOverrides
+      data: state.dashboardOverrides
     }
     ws.send(JSON.stringify(overrideMessage))
 
@@ -285,18 +314,18 @@ export function initializeWebSocketServer(server: HttpServer): void {
         const message = data.toString()
         const rawData = JSON.parse(message)
         const overrides: DashboardOverrides = asDashboardOverrides(rawData)
-        logger('Received dashboard override update')
+        logger(`Received dashboard override update for event: ${eventId}`)
 
-        // Update current overrides
-        currentDashboardOverrides = overrides
+        // Update current overrides for this event
+        state.dashboardOverrides = overrides
 
         // Broadcast override update to all OTHER dashboard clients (not the sender)
-        broadcastOverridesToDashboards(overrides, ws)
+        broadcastOverridesToDashboards(eventId, overrides, ws)
 
-        // Merge and broadcast to scoreboard
-        const finalState = mergeFinalState()
+        // Merge and broadcast to scoreboard for this event
+        const finalState = mergeFinalState(eventId)
         if (finalState != null) {
-          broadcastToScoreboard(finalState)
+          broadcastToScoreboard(eventId, finalState)
         }
       } catch (error) {
         console.error(
@@ -307,70 +336,91 @@ export function initializeWebSocketServer(server: HttpServer): void {
     })
 
     ws.on('close', () => {
-      logger('Dashboard client disconnected')
-      dashboardClients.delete(ws)
+      logger(`Dashboard client disconnected for event: ${eventId}`)
+      state.dashboardClients.delete(ws)
     })
 
     ws.on('error', error => {
       console.error('Dashboard WebSocket error:', error)
-      dashboardClients.delete(ws)
+      state.dashboardClients.delete(ws)
     })
   })
 
-  logger('WebSocket server initialized at /sockets/api/v1/dashboard')
+  logger('WebSocket server initialized at /sockets/api/v1/dashboard/{eventId}')
 
   // 3. Scoreboard endpoint - receives final merged state
   scoreboardWss = new WebSocketServer({
     noServer: true
   })
 
-  scoreboardWss.on('connection', (ws: WebSocket) => {
-    logger('New scoreboard client connected')
-    scoreboardClients.add(ws)
+  scoreboardWss.on('connection', (ws: WebSocket, eventId: string) => {
+    logger(`New scoreboard client connected for event: ${eventId}`)
+    const state = getOrCreateEventState(eventId)
+    state.scoreboardClients.add(ws)
 
     // Send current final state to new scoreboard client
-    const finalState = mergeFinalState()
+    const finalState = mergeFinalState(eventId)
     if (finalState != null) {
       ws.send(JSON.stringify(finalState))
     }
 
     ws.on('close', () => {
-      logger('Scoreboard client disconnected')
-      scoreboardClients.delete(ws)
+      logger(`Scoreboard client disconnected for event: ${eventId}`)
+      state.scoreboardClients.delete(ws)
     })
 
     ws.on('error', error => {
       console.error('Scoreboard WebSocket error:', error)
-      scoreboardClients.delete(ws)
+      state.scoreboardClients.delete(ws)
     })
   })
 
-  logger('WebSocket server initialized at /sockets/api/v1/scoreboard')
+  logger('WebSocket server initialized at /sockets/api/v1/scoreboard/{eventId}')
 
   // Handle upgrade requests manually
   server.on('upgrade', (request, socket, head) => {
-    const pathname = request.url
+    const pathname = request.url ?? ''
 
-    if (pathname === '/sockets/api/v1/autoState') {
-      autoStateWss?.handleUpgrade(request, socket, head, ws => {
-        autoStateWss?.emit('connection', ws, request)
-      })
-    } else if (pathname === '/sockets/api/v1/dashboard') {
-      dashboardWss?.handleUpgrade(request, socket, head, ws => {
-        dashboardWss?.emit('connection', ws, request)
-      })
-    } else if (pathname === '/sockets/api/v1/scoreboard') {
-      scoreboardWss?.handleUpgrade(request, socket, head, ws => {
-        scoreboardWss?.emit('connection', ws, request)
-      })
+    // Extract eventId from each endpoint type
+    let eventId: string | null = null
+    let targetWss: WebSocketServer | undefined
+
+    if (pathname.startsWith('/sockets/api/v1/autoState/')) {
+      eventId = extractEventId(pathname, '/sockets/api/v1/autoState/')
+      targetWss = autoStateWss
+    } else if (pathname.startsWith('/sockets/api/v1/dashboard/')) {
+      eventId = extractEventId(pathname, '/sockets/api/v1/dashboard/')
+      targetWss = dashboardWss
+    } else if (pathname.startsWith('/sockets/api/v1/scoreboard/')) {
+      eventId = extractEventId(pathname, '/sockets/api/v1/scoreboard/')
+      targetWss = scoreboardWss
     } else {
+      logger(`Invalid WebSocket path: ${pathname}`)
       socket.destroy()
+      return
     }
+
+    if (eventId == null || eventId === '') {
+      logger(`No eventId found in path: ${pathname}`)
+      socket.destroy()
+      return
+    }
+
+    if (targetWss == null) {
+      logger(`No WebSocket server found for path: ${pathname}`)
+      socket.destroy()
+      return
+    }
+
+    // Upgrade the connection and pass the eventId
+    targetWss.handleUpgrade(request, socket, head, ws => {
+      targetWss?.emit('connection', ws, eventId)
+    })
   })
 }
 
 // Keep old function for backward compatibility, but it's no longer used
 export function broadcastScoreState(scoreState: ScoreState): void {
-  // Deprecated - now handled internally
+  // Deprecated - now handled internally per event
   logger('Warning: broadcastScoreState is deprecated')
 }
