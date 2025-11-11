@@ -85,56 +85,56 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   card: {
     alignItems: 'center',
-    padding: 32,
+    padding: theme.rem(2),
     backgroundColor: theme.cardBackgroundColor,
-    borderRadius: 16,
+    borderRadius: theme.rem(1),
     shadowColor: theme.shadowColor,
-    shadowOffset: { width: 0, height: 20 },
+    shadowOffset: { width: 0, height: theme.rem(1.25) },
     shadowOpacity: 0.1,
-    shadowRadius: 25,
+    shadowRadius: theme.rem(1.5),
     elevation: 10,
     width: '90%',
     maxWidth: 500
   },
   logo: {
-    height: 64,
-    width: 200,
-    marginBottom: 24
+    height: theme.rem(4),
+    width: theme.rem(12.5),
+    marginBottom: theme.rem(1.5)
   },
   title: {
-    fontSize: 28,
+    fontSize: theme.rem(1.75),
     fontWeight: '700',
     fontFamily: theme.boldTextFont,
     color: theme.secondaryTextColor,
-    marginBottom: 16
+    marginBottom: theme.rem(1)
   },
   description: {
-    fontSize: 16,
+    fontSize: theme.rem(1),
     fontFamily: theme.primaryTextFont,
     color: theme.tertiaryTextColor,
     textAlign: 'center',
-    marginBottom: 24,
-    lineHeight: 24
+    marginBottom: theme.rem(1.5),
+    lineHeight: theme.rem(1.5)
   },
   input: {
     width: '100%',
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    borderRadius: 8,
+    paddingVertical: theme.rem(1),
+    paddingHorizontal: theme.rem(1),
+    borderRadius: theme.rem(0.5),
     borderWidth: 2,
     borderColor: theme.inputBorderColor,
-    fontSize: 16,
-    marginBottom: 16,
+    fontSize: theme.rem(1),
+    marginBottom: theme.rem(1),
     backgroundColor: theme.inputBackgroundColor,
     color: theme.inputTextColor
   },
   button: {
     width: '100%',
-    paddingVertical: 14,
-    paddingHorizontal: 24,
-    borderRadius: 8,
+    paddingVertical: theme.rem(1),
+    paddingHorizontal: theme.rem(1.5),
+    borderRadius: theme.rem(0.5),
     backgroundColor: theme.primaryButtonColor,
-    marginBottom: 12,
+    marginBottom: theme.rem(0.75),
     alignItems: 'center'
   },
   continueButton: {
@@ -144,7 +144,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
     color: theme.buttonTextColor,
     fontWeight: '600',
     fontFamily: theme.semiBoldTextFont,
-    fontSize: 16
+    fontSize: theme.rem(1)
   }
 }))
 

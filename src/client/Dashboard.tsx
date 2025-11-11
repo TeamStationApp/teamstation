@@ -1000,22 +1000,22 @@ const getStyles = cacheStyles((theme: Theme) => ({
     alignItems: 'flex-start',
     minHeight: 1000,
     backgroundColor: theme.backgroundColor,
-    padding: 16
+    padding: theme.rem(1)
   },
   teamScoreCard: {
     backgroundColor: theme.cardBackgroundDark,
-    borderRadius: 20,
-    marginTop: 8,
-    paddingVertical: 16,
-    paddingHorizontal: 20,
+    borderRadius: theme.rem(1.25),
+    marginTop: theme.rem(0.5),
+    paddingVertical: theme.rem(1),
+    paddingHorizontal: theme.rem(1.25),
     shadowColor: theme.shadowColor,
-    shadowOffset: { width: 0, height: 4 },
+    shadowOffset: { width: 0, height: theme.rem(0.25) },
     shadowOpacity: 0.3,
-    shadowRadius: 20,
+    shadowRadius: theme.rem(1.25),
     elevation: 8,
     display: 'flex',
     flexDirection: 'column',
-    gap: 16,
+    gap: theme.rem(1),
     width: '100%',
     maxWidth: 600
   },
@@ -1023,29 +1023,29 @@ const getStyles = cacheStyles((theme: Theme) => ({
     display: 'flex',
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: theme.rem(0.75),
     justifyContent: 'space-between'
   },
   teamNameContainer: {
     flex: 1,
-    minHeight: 50,
+    minHeight: theme.rem(3),
     backgroundColor: theme.containerBackgroundColor,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    paddingRight: 45,
+    borderRadius: theme.rem(0.5),
+    paddingHorizontal: theme.rem(0.75),
+    paddingVertical: theme.rem(0.5),
+    paddingRight: theme.rem(3),
     display: 'flex',
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: theme.rem(0.5),
     position: 'relative',
-    marginRight: 12
+    marginRight: theme.rem(0.75)
   },
   teamNameContainerActive: {
     backgroundColor: theme.dashboardOverrideBackground
   },
   teamNameInput: {
-    fontSize: 24,
+    fontSize: theme.rem(1.5),
     fontWeight: '700',
     fontFamily: theme.secondaryTextFont,
     color: theme.primaryTextColor,
@@ -1054,21 +1054,21 @@ const getStyles = cacheStyles((theme: Theme) => ({
     borderWidth: 0,
     width: '100%',
     paddingLeft: 0,
-    transform: [{ translateY: 8 }]
+    transform: [{ translateY: theme.rem(0.5) }]
   },
   scoreContainer: {
-    minWidth: 100,
-    minHeight: 50,
+    minWidth: theme.rem(6.25),
+    minHeight: theme.rem(3),
     backgroundColor: theme.containerBackgroundColor,
-    borderRadius: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    paddingRight: 45,
+    borderRadius: theme.rem(0.5),
+    paddingHorizontal: theme.rem(1),
+    paddingVertical: theme.rem(0.5),
+    paddingRight: theme.rem(3),
     display: 'flex',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
+    gap: theme.rem(0.5),
     position: 'relative',
     flexShrink: 0
   },
@@ -1076,46 +1076,46 @@ const getStyles = cacheStyles((theme: Theme) => ({
     backgroundColor: theme.dashboardOverrideBackground
   },
   scoreText: {
-    fontSize: 28,
+    fontSize: theme.rem(1.75),
     fontWeight: '700',
     fontFamily: theme.secondaryTextFont,
     color: theme.primaryTextColor
   },
   superscript: {
-    fontSize: 12,
+    fontSize: theme.rem(0.75),
     fontWeight: '400',
     color: theme.dashboardSuperscript,
     position: 'absolute',
-    top: 4,
-    left: 4
+    top: theme.rem(0.25),
+    left: theme.rem(0.25)
   },
   superscriptInField: {
-    fontSize: 12,
+    fontSize: theme.rem(0.75),
     fontWeight: '400',
     color: theme.dashboardSuperscript,
     position: 'absolute',
-    top: 6,
-    left: 12,
+    top: theme.rem(0.5),
+    left: theme.rem(0.75),
     zIndex: 1
   },
   superscriptInFieldActive: {
     color: theme.primaryTextColor
   },
   xButtonInField: {
-    width: 30,
-    height: 30,
-    borderRadius: 6,
+    width: theme.rem(2),
+    height: theme.rem(2),
+    borderRadius: theme.rem(0.5),
     backgroundColor: theme.buttonGrayColor,
     display: 'flex',
     justifyContent: 'center',
     alignItems: 'center',
     position: 'absolute',
-    right: 8,
+    right: theme.rem(0.5),
     top: '50%',
-    marginTop: -15
+    marginTop: theme.rem(-1)
   },
   xButtonText: {
-    fontSize: 18,
+    fontSize: theme.rem(1),
     fontWeight: '700',
     fontFamily: theme.secondaryTextFont,
     color: theme.primaryTextColor
@@ -1134,27 +1134,27 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   pickerContainer: {
     position: 'absolute',
-    width: 100,
-    maxHeight: 250,
+    width: theme.rem(6.25),
+    maxHeight: theme.rem(15.75),
     backgroundColor: theme.cardBackgroundDark,
-    borderRadius: 12,
-    padding: 8,
+    borderRadius: theme.rem(0.75),
+    padding: theme.rem(0.5),
     shadowColor: theme.shadowColor,
-    shadowOffset: { width: 0, height: 4 },
+    shadowOffset: { width: 0, height: theme.rem(0.25) },
     shadowOpacity: 0.5,
-    shadowRadius: 20,
+    shadowRadius: theme.rem(1.25),
     overflow: 'scroll'
   },
   pickerItem: {
-    paddingVertical: 8,
-    paddingHorizontal: 12,
+    paddingVertical: theme.rem(0.5),
+    paddingHorizontal: theme.rem(0.75),
     display: 'flex',
     justifyContent: 'center',
     alignItems: 'center'
   },
   pickerItemSelected: {
     backgroundColor: theme.secondaryButtonColor,
-    borderRadius: 6
+    borderRadius: theme.rem(0.5)
   },
   pickerItemText: {
     color: theme.primaryTextColor,
@@ -1163,18 +1163,18 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   dashboard: {
     backgroundColor: theme.cardBackgroundDark,
-    borderRadius: 20,
-    marginTop: 16,
-    paddingVertical: 16,
-    paddingHorizontal: 20,
+    borderRadius: theme.rem(1.25),
+    marginTop: theme.rem(1),
+    paddingVertical: theme.rem(1),
+    paddingHorizontal: theme.rem(1.25),
     shadowColor: theme.shadowColor,
-    shadowOffset: { width: 0, height: 4 },
+    shadowOffset: { width: 0, height: theme.rem(0.25) },
     shadowOpacity: 0.3,
-    shadowRadius: 20,
+    shadowRadius: theme.rem(1.25),
     elevation: 8,
     display: 'flex',
     flexDirection: 'column',
-    gap: 8,
+    gap: theme.rem(0.5),
     width: '100%',
     maxWidth: 600,
     position: 'relative'
@@ -1183,32 +1183,32 @@ const getStyles = cacheStyles((theme: Theme) => ({
     backgroundColor: theme.dashboardOverrideBackground
   },
   xButtonDashboard: {
-    width: 30,
-    height: 30,
-    borderRadius: 6,
+    width: theme.rem(2),
+    height: theme.rem(2),
+    borderRadius: theme.rem(0.5),
     backgroundColor: theme.buttonGrayColor,
     display: 'flex',
     justifyContent: 'center',
     alignItems: 'center',
     position: 'absolute',
-    right: 8,
-    top: 8,
+    right: theme.rem(0.5),
+    top: theme.rem(0.5),
     zIndex: 10
   },
   overrideToggleContainer: {
     display: 'flex',
     justifyContent: 'center',
     alignItems: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 16,
+    paddingVertical: theme.rem(0.5),
+    paddingHorizontal: theme.rem(1),
     backgroundColor: theme.containerBackgroundColor,
-    borderRadius: 12,
-    marginBottom: 8
+    borderRadius: theme.rem(0.75),
+    marginBottom: theme.rem(0.5)
   },
   overrideToggle: {
     width: '100%',
-    height: 50,
-    borderRadius: 12,
+    height: theme.rem(3),
+    borderRadius: theme.rem(0.75),
     backgroundColor: theme.inactiveBackgroundColor,
     display: 'flex',
     justifyContent: 'center',
@@ -1217,7 +1217,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
     borderColor: theme.dashboardOutlineGray
   },
   overrideToggleText: {
-    fontSize: 24,
+    fontSize: theme.rem(1.5),
     fontWeight: '700',
     fontFamily: theme.secondaryTextFont,
     color: theme.primaryTextColor
@@ -1227,16 +1227,16 @@ const getStyles = cacheStyles((theme: Theme) => ({
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 0,
-    paddingLeft: 8,
-    paddingRight: 28,
+    paddingLeft: theme.rem(0.5),
+    paddingRight: theme.rem(1.75),
     justifyContent: 'space-between'
   },
   rowLabel: {
-    fontSize: 36,
+    fontSize: theme.rem(2.25),
     fontWeight: '700',
     fontFamily: theme.secondaryTextFont,
     color: theme.primaryTextColor,
-    minWidth: 45,
+    minWidth: theme.rem(3),
     flexShrink: 0
   },
   circleContainer: {
@@ -1247,45 +1247,45 @@ const getStyles = cacheStyles((theme: Theme) => ({
   circlesGroup: {
     display: 'flex',
     flexDirection: 'row',
-    gap: 12,
+    gap: theme.rem(0.75),
     justifyContent: 'flex-start'
   },
   circleWrapper: {
     position: 'relative',
-    width: 45,
-    height: 45,
+    width: theme.rem(3),
+    height: theme.rem(3),
     display: 'flex',
     justifyContent: 'center',
     alignItems: 'center'
   },
   circle: {
     position: 'absolute',
-    width: 45,
-    height: 45,
-    borderRadius: 22.5,
+    width: theme.rem(3),
+    height: theme.rem(3),
+    borderRadius: theme.rem(1.5),
     borderWidth: 2,
     borderColor: theme.dashboardOutlineGray
   },
   innerCircle: {
     position: 'absolute',
-    width: 22.5,
-    height: 22.5,
-    borderRadius: 11.25,
+    width: theme.rem(1.5),
+    height: theme.rem(1.5),
+    borderRadius: theme.rem(0.75),
     borderWidth: 0
   },
   clearButton: {
-    width: 52,
-    height: 52,
-    borderRadius: 12,
+    width: theme.rem(3.25),
+    height: theme.rem(3.25),
+    borderRadius: theme.rem(0.75),
     backgroundColor: theme.clearButtonColor,
     display: 'flex',
     justifyContent: 'center',
     alignItems: 'center',
-    marginLeft: 8,
+    marginLeft: theme.rem(0.5),
     flexShrink: 0
   },
   clearButtonText: {
-    fontSize: 27,
+    fontSize: theme.rem(1.75),
     fontWeight: '700',
     fontFamily: theme.secondaryTextFont,
     color: theme.scoreboardScoreText
@@ -1293,17 +1293,17 @@ const getStyles = cacheStyles((theme: Theme) => ({
   cardsRow: {
     display: 'flex',
     flexDirection: 'row',
-    gap: 16,
+    gap: theme.rem(1),
     width: '100%',
     maxWidth: 600,
-    marginTop: 16
+    marginTop: theme.rem(1)
   },
   inningCard: {
     flex: 1,
-    paddingVertical: 10,
-    paddingHorizontal: 20,
+    paddingVertical: theme.rem(0.75),
+    paddingHorizontal: theme.rem(1.25),
     backgroundColor: theme.cardBackgroundDark,
-    borderRadius: 12,
+    borderRadius: theme.rem(0.75),
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
@@ -1314,44 +1314,44 @@ const getStyles = cacheStyles((theme: Theme) => ({
     backgroundColor: theme.dashboardOverrideBackground
   },
   xButtonInningCard: {
-    width: 30,
-    height: 30,
-    borderRadius: 6,
+    width: theme.rem(2),
+    height: theme.rem(2),
+    borderRadius: theme.rem(0.5),
     backgroundColor: theme.buttonGrayColor,
     display: 'flex',
     justifyContent: 'center',
     alignItems: 'center',
     position: 'absolute',
-    right: 8,
-    top: 8,
+    right: theme.rem(0.5),
+    top: theme.rem(0.5),
     zIndex: 10
   },
   basesCard: {
     flex: 2,
-    paddingVertical: 10,
-    paddingHorizontal: 20,
+    paddingVertical: theme.rem(0.75),
+    paddingHorizontal: theme.rem(1.25),
     backgroundColor: theme.cardBackgroundDark,
-    borderRadius: 12,
+    borderRadius: theme.rem(0.75),
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
-    gap: 12,
+    gap: theme.rem(0.75),
     position: 'relative'
   },
   basesCardActive: {
     backgroundColor: theme.dashboardOverrideBackground
   },
   xButtonBasesCard: {
-    width: 30,
-    height: 30,
-    borderRadius: 6,
+    width: theme.rem(2),
+    height: theme.rem(2),
+    borderRadius: theme.rem(0.5),
     backgroundColor: theme.buttonGrayColor,
     display: 'flex',
     justifyContent: 'center',
     alignItems: 'center',
     position: 'absolute',
-    right: 8,
-    top: 8,
+    right: theme.rem(0.5),
+    top: theme.rem(0.5),
     zIndex: 10
   },
   basesCardHeader: {
@@ -1362,8 +1362,8 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   basesToggleButton: {
     width: '100%',
-    height: 50,
-    borderRadius: 8,
+    height: theme.rem(3),
+    borderRadius: theme.rem(0.5),
     backgroundColor: theme.inactiveBackgroundColor,
     display: 'flex',
     justifyContent: 'center',
@@ -1372,7 +1372,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
     borderColor: theme.dashboardOutlineGray
   },
   basesToggleButtonText: {
-    fontSize: 16,
+    fontSize: theme.rem(1),
     fontWeight: '700',
     fontFamily: theme.secondaryTextFont,
     color: theme.primaryTextColor
@@ -1381,14 +1381,14 @@ const getStyles = cacheStyles((theme: Theme) => ({
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'flex-start',
-    marginTop: 24,
-    gap: 8,
+    marginTop: theme.rem(1.5),
+    gap: theme.rem(0.5),
     transform: [{ rotate: '45deg' }]
   },
   diamondRow: {
     display: 'flex',
     flexDirection: 'row',
-    gap: 8,
+    gap: theme.rem(0.5),
     justifyContent: 'flex-start'
   },
   diamondRowLeftAlign: {
@@ -1398,16 +1398,16 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   diamondWrapper: {
     position: 'relative',
-    width: 60,
-    height: 60,
+    width: theme.rem(4),
+    height: theme.rem(4),
     display: 'flex',
     justifyContent: 'center',
     alignItems: 'center'
   },
   diamond: {
     position: 'absolute',
-    width: 50,
-    height: 50,
+    width: theme.rem(3),
+    height: theme.rem(3),
     backgroundColor: 'transparent',
     borderWidth: 3,
     borderColor: theme.buttonGrayColor
@@ -1418,8 +1418,8 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   innerDiamond: {
     position: 'absolute',
-    width: 20,
-    height: 20,
+    width: theme.rem(1.25),
+    height: theme.rem(1.25),
     backgroundColor: theme.activeColor
   },
   innerDiamondDarkened: {
@@ -1437,31 +1437,31 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   inningCount: {
     color: theme.primaryTextColor,
-    fontSize: 48,
+    fontSize: theme.rem(3),
     fontWeight: '700',
     fontFamily: theme.secondaryTextFont,
-    marginVertical: 8
+    marginVertical: theme.rem(0.5)
   },
   arrowOuterUp: {
     position: 'relative',
     width: 0,
     height: 0,
-    borderLeftWidth: 20,
-    borderRightWidth: 20,
-    borderBottomWidth: 28,
+    borderLeftWidth: theme.rem(1.25),
+    borderRightWidth: theme.rem(1.25),
+    borderBottomWidth: theme.rem(1.75),
     borderLeftColor: 'transparent',
     borderRightColor: 'transparent',
-    marginBottom: 8
+    marginBottom: theme.rem(0.5)
   },
   arrowInnerUp: {
     position: 'absolute',
-    top: 3.5,
-    left: -16,
+    top: theme.rem(0.21875),
+    left: theme.rem(-1),
     width: 0,
     height: 0,
-    borderLeftWidth: 16,
-    borderRightWidth: 16,
-    borderBottomWidth: 22,
+    borderLeftWidth: theme.rem(1),
+    borderRightWidth: theme.rem(1),
+    borderBottomWidth: theme.rem(1.375),
     borderLeftColor: 'transparent',
     borderRightColor: 'transparent'
   },
@@ -1481,22 +1481,22 @@ const getStyles = cacheStyles((theme: Theme) => ({
     position: 'relative',
     width: 0,
     height: 0,
-    borderLeftWidth: 20,
-    borderRightWidth: 20,
-    borderTopWidth: 28,
+    borderLeftWidth: theme.rem(1.25),
+    borderRightWidth: theme.rem(1.25),
+    borderTopWidth: theme.rem(1.75),
     borderLeftColor: 'transparent',
     borderRightColor: 'transparent',
-    marginTop: 8
+    marginTop: theme.rem(0.5)
   },
   arrowInnerDown: {
     position: 'absolute',
-    bottom: 3.5,
-    left: -16,
+    bottom: theme.rem(0.21875),
+    left: theme.rem(-1),
     width: 0,
     height: 0,
-    borderLeftWidth: 16,
-    borderRightWidth: 16,
-    borderTopWidth: 22,
+    borderLeftWidth: theme.rem(1),
+    borderRightWidth: theme.rem(1),
+    borderTopWidth: theme.rem(1.375),
     borderLeftColor: 'transparent',
     borderRightColor: 'transparent'
   },
@@ -1515,8 +1515,8 @@ const getStyles = cacheStyles((theme: Theme) => ({
   // Mini inning display (15% scale)
   miniInningContainer: {
     position: 'absolute',
-    top: 8,
-    left: 8,
+    top: theme.rem(0.5),
+    left: theme.rem(0.5),
     transform: [{ scale: 0.4 }],
     transformOrigin: 'top left',
     opacity: 0.6
@@ -1529,31 +1529,31 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   miniInningCount: {
     color: theme.primaryTextColor,
-    fontSize: 48,
+    fontSize: theme.rem(3),
     fontWeight: '700',
     fontFamily: theme.secondaryTextFont,
-    marginVertical: 8
+    marginVertical: theme.rem(0.5)
   },
   miniArrowOuterUp: {
     position: 'relative',
     width: 0,
     height: 0,
-    borderLeftWidth: 20,
-    borderRightWidth: 20,
-    borderBottomWidth: 28,
+    borderLeftWidth: theme.rem(1.25),
+    borderRightWidth: theme.rem(1.25),
+    borderBottomWidth: theme.rem(1.75),
     borderLeftColor: 'transparent',
     borderRightColor: 'transparent',
-    marginBottom: 8
+    marginBottom: theme.rem(0.5)
   },
   miniArrowInnerUp: {
     position: 'absolute',
-    top: 3.5,
-    left: -16,
+    top: theme.rem(0.21875),
+    left: theme.rem(-1),
     width: 0,
     height: 0,
-    borderLeftWidth: 16,
-    borderRightWidth: 16,
-    borderBottomWidth: 22,
+    borderLeftWidth: theme.rem(1),
+    borderRightWidth: theme.rem(1),
+    borderBottomWidth: theme.rem(1.375),
     borderLeftColor: 'transparent',
     borderRightColor: 'transparent'
   },
@@ -1561,22 +1561,22 @@ const getStyles = cacheStyles((theme: Theme) => ({
     position: 'relative',
     width: 0,
     height: 0,
-    borderLeftWidth: 20,
-    borderRightWidth: 20,
-    borderTopWidth: 28,
+    borderLeftWidth: theme.rem(1.25),
+    borderRightWidth: theme.rem(1.25),
+    borderTopWidth: theme.rem(1.75),
     borderLeftColor: 'transparent',
     borderRightColor: 'transparent',
-    marginTop: 8
+    marginTop: theme.rem(0.5)
   },
   miniArrowInnerDown: {
     position: 'absolute',
-    bottom: 3.5,
-    left: -16,
+    bottom: theme.rem(0.21875),
+    left: theme.rem(-1),
     width: 0,
     height: 0,
-    borderLeftWidth: 16,
-    borderRightWidth: 16,
-    borderTopWidth: 22,
+    borderLeftWidth: theme.rem(1),
+    borderRightWidth: theme.rem(1),
+    borderTopWidth: theme.rem(1.375),
     borderLeftColor: 'transparent',
     borderRightColor: 'transparent'
   }

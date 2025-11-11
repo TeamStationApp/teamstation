@@ -280,12 +280,12 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   scoreboard: {
     backgroundColor: theme.scoreboardBackground,
-    borderRadius: 12,
-    padding: 8,
+    borderRadius: theme.rem(0.75),
+    padding: theme.rem(0.5),
     shadowColor: theme.shadowColor,
-    shadowOffset: { width: 0, height: 4 },
+    shadowOffset: { width: 0, height: theme.rem(0.25) },
     shadowOpacity: 0.3,
-    shadowRadius: 8,
+    shadowRadius: theme.rem(0.5),
     elevation: 8,
     borderWidth: 2,
     borderColor: theme.scoreboardBorderColor,
@@ -296,19 +296,19 @@ const getStyles = cacheStyles((theme: Theme) => ({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingBottom: 4
+    paddingHorizontal: theme.rem(0.5),
+    paddingBottom: theme.rem(0.25)
   },
   batterAbbrev: {
     color: theme.primaryTextColor,
-    fontSize: 20,
+    fontSize: theme.rem(1.25),
     fontWeight: 'bold',
     letterSpacing: 1,
     fontFamily: theme.secondaryTextFont
   },
   batterAtBatsText: {
     color: theme.primaryTextColor,
-    fontSize: 20,
+    fontSize: theme.rem(1.25),
     fontWeight: 'bold',
     fontFamily: theme.secondaryTextFont
   },
@@ -316,26 +316,26 @@ const getStyles = cacheStyles((theme: Theme) => ({
   separatorLine: {
     height: 1,
     backgroundColor: theme.scoreboardSeparatorColor,
-    marginHorizontal: 4
+    marginHorizontal: theme.rem(0.25)
   },
   // Pitcher Row
   pitcherRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 4
+    paddingHorizontal: theme.rem(0.5),
+    paddingVertical: theme.rem(0.25)
   },
   pitcherName: {
     color: theme.primaryTextColor,
-    fontSize: 20,
+    fontSize: theme.rem(1.25),
     fontWeight: 'bold',
     textTransform: 'uppercase',
     fontFamily: theme.secondaryTextFont
   },
   pitchCount: {
     color: theme.primaryTextColor,
-    fontSize: 20,
+    fontSize: theme.rem(1.25),
     fontWeight: 'bold',
     fontFamily: theme.secondaryTextFont
   },
@@ -358,30 +358,30 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   teamBox: {
     flex: 1,
-    paddingVertical: 18,
-    paddingHorizontal: 14,
-    borderRadius: 6,
-    marginRight: 4,
+    paddingVertical: theme.rem(1.25),
+    paddingHorizontal: theme.rem(1),
+    borderRadius: theme.rem(0.5),
+    marginRight: theme.rem(0.25),
     borderWidth: 2,
     borderColor: theme.scoreboardOutlineGray
   },
   teamName: {
     color: theme.primaryTextColor,
-    fontSize: 24,
+    fontSize: theme.rem(1.5),
     fontWeight: 'bold',
     fontFamily: theme.secondaryTextFont
   },
   scoreBox: {
     backgroundColor: theme.scoreboardScoreBackground,
-    width: 70,
-    height: 68,
-    borderRadius: 4,
+    width: theme.rem(4.5),
+    height: theme.rem(4.25),
+    borderRadius: theme.rem(0.25),
     alignItems: 'center',
     justifyContent: 'center'
   },
   scoreText: {
     color: theme.scoreboardScoreText,
-    fontSize: 48,
+    fontSize: theme.rem(3),
     fontWeight: 'bold',
     fontFamily: theme.secondaryTextFont
   },
@@ -389,18 +389,18 @@ const getStyles = cacheStyles((theme: Theme) => ({
   rightSection: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginLeft: 32
+    marginLeft: theme.rem(2)
   },
   // Arrows and Outs Column
   arrowsOutsColumn: {
     alignItems: 'center',
-    marginRight: 32
+    marginRight: theme.rem(2)
   },
   inningCount: {
     color: theme.primaryTextColor,
-    fontSize: 28,
+    fontSize: theme.rem(1.75),
     fontWeight: 'bold',
-    marginVertical: 4,
+    marginVertical: theme.rem(0.25),
     fontFamily: theme.secondaryTextFont
   },
   // Arrow styles
@@ -408,23 +408,23 @@ const getStyles = cacheStyles((theme: Theme) => ({
     position: 'relative',
     width: 0,
     height: 0,
-    borderLeftWidth: 14,
-    borderRightWidth: 14,
-    borderBottomWidth: 19,
+    borderLeftWidth: theme.rem(0.875),
+    borderRightWidth: theme.rem(0.875),
+    borderBottomWidth: theme.rem(1.1875),
     borderLeftColor: 'transparent',
     borderRightColor: 'transparent',
-    marginBottom: 8
+    marginBottom: theme.rem(0.5)
   },
 
   arrowInnerUp: {
     position: 'absolute',
-    top: 2.5,
-    left: -11,
+    top: theme.rem(0.15625),
+    left: theme.rem(-0.6875),
     width: 0,
     height: 0,
-    borderLeftWidth: 11,
-    borderRightWidth: 11,
-    borderBottomWidth: 15,
+    borderLeftWidth: theme.rem(0.6875),
+    borderRightWidth: theme.rem(0.6875),
+    borderBottomWidth: theme.rem(0.9375),
     borderLeftColor: 'transparent',
     borderRightColor: 'transparent'
   },
@@ -444,22 +444,22 @@ const getStyles = cacheStyles((theme: Theme) => ({
     position: 'relative',
     width: 0,
     height: 0,
-    borderLeftWidth: 14,
-    borderRightWidth: 14,
-    borderTopWidth: 19,
+    borderLeftWidth: theme.rem(0.875),
+    borderRightWidth: theme.rem(0.875),
+    borderTopWidth: theme.rem(1.1875),
     borderLeftColor: 'transparent',
     borderRightColor: 'transparent',
-    marginTop: 8
+    marginTop: theme.rem(0.5)
   },
   arrowInnerDown: {
     position: 'absolute',
-    bottom: 2.5,
-    left: -11,
+    bottom: theme.rem(0.15625),
+    left: theme.rem(-0.6875),
     width: 0,
     height: 0,
-    borderLeftWidth: 11,
-    borderRightWidth: 11,
-    borderTopWidth: 15,
+    borderLeftWidth: theme.rem(0.6875),
+    borderRightWidth: theme.rem(0.6875),
+    borderTopWidth: theme.rem(0.9375),
     borderLeftColor: 'transparent',
     borderRightColor: 'transparent'
   },
@@ -478,13 +478,13 @@ const getStyles = cacheStyles((theme: Theme) => ({
   // Count and Outs Container
   countOutsContainer: {
     alignItems: 'center',
-    marginRight: 20
+    marginRight: theme.rem(1.25)
   },
   countDisplay: {
     color: theme.primaryTextColor,
-    fontSize: 44,
+    fontSize: theme.rem(2.75),
     fontWeight: 'bold',
-    marginBottom: 4,
+    marginBottom: theme.rem(0.25),
     fontFamily: theme.secondaryTextFont
   },
   // Outs Dots Row (horizontal)
@@ -493,13 +493,13 @@ const getStyles = cacheStyles((theme: Theme) => ({
     justifyContent: 'center'
   },
   outDot: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
+    width: theme.rem(1.25),
+    height: theme.rem(1.25),
+    borderRadius: theme.rem(0.75),
     borderWidth: 2,
     borderColor: theme.scoreboardOutlineGray,
     backgroundColor: theme.scoreboardBaseFill,
-    marginHorizontal: 4
+    marginHorizontal: theme.rem(0.25)
   },
   outDotActive: {
     backgroundColor: theme.activeColor,
@@ -508,19 +508,19 @@ const getStyles = cacheStyles((theme: Theme) => ({
   // Bases - Rotated Container Approach
   basesRotatedContainer: {
     transform: [{ rotate: '45deg' }],
-    width: 64,
-    height: 56,
+    width: theme.rem(4),
+    height: theme.rem(3.5),
     justifyContent: 'center',
     alignItems: 'center'
   },
   basesGrid: {
-    width: 42,
-    height: 42,
+    width: theme.rem(2.75),
+    height: theme.rem(2.75),
     position: 'relative'
   },
   baseSquare: {
-    width: 20,
-    height: 20,
+    width: theme.rem(1.25),
+    height: theme.rem(1.25),
     backgroundColor: theme.scoreboardBaseFill,
     borderWidth: 2,
     borderColor: theme.scoreboardOutlineGray,
@@ -533,10 +533,10 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   baseFirstPos: {
     top: 0,
-    left: 28
+    left: theme.rem(1.75)
   },
   baseThirdPos: {
-    top: 28,
+    top: theme.rem(1.75),
     left: 0
   },
   baseSquareGray: {},
@@ -546,20 +546,20 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   // No game styles
   noGameContainer: {
-    padding: 40,
+    padding: theme.rem(2.5),
     alignItems: 'center',
     justifyContent: 'center'
   },
   noGameText: {
     color: theme.primaryTextColor,
-    fontSize: 24,
+    fontSize: theme.rem(1.5),
     fontWeight: 'bold',
-    marginBottom: 12,
+    marginBottom: theme.rem(0.75),
     fontFamily: theme.secondaryTextFont
   },
   noGameSubtext: {
     color: theme.placeholderTextColor,
-    fontSize: 16,
+    fontSize: theme.rem(1),
     fontFamily: theme.secondaryTextFont
   }
 }))
