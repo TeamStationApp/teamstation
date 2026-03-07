@@ -136,27 +136,32 @@ const Scoreboard: React.FC = () => {
   return (
     <View style={styles.scoreboardContainer}>
       <View style={styles.scoreboard}>
-        {/* Header Row: Batter abbreviation and inning */}
-        <View style={styles.headerRow}>
-          <Text style={styles.batterAbbrev}>
-            {scoreState.batterName.toUpperCase()}
-          </Text>
-          <Text style={styles.batterAtBatsText}>
-            {scoreState.batterNumHits}-{scoreState.batterAtBats}
-          </Text>
-        </View>
+        {scoreState.batterName.trim() !== '' ||
+        scoreState.pitcherName.trim() !== '' ? (
+          <>
+            {/* Header Row: Batter abbreviation and inning */}
+            <View style={styles.headerRow}>
+              <Text style={styles.batterAbbrev}>
+                {scoreState.batterName.toUpperCase()}
+              </Text>
+              <Text style={styles.batterAtBatsText}>
+                {scoreState.batterNumHits}-{scoreState.batterAtBats}
+              </Text>
+            </View>
 
-        {/* Separator line */}
-        <View style={styles.separatorLine} />
+            {/* Separator line */}
+            <View style={styles.separatorLine} />
 
-        {/* Pitcher Row */}
-        <View style={styles.pitcherRow}>
-          <Text style={styles.pitcherName}>{scoreState.pitcherName}</Text>
-          <Text style={styles.pitchCount}>P: {scoreState.numPitches}</Text>
-        </View>
+            {/* Pitcher Row */}
+            <View style={styles.pitcherRow}>
+              <Text style={styles.pitcherName}>{scoreState.pitcherName}</Text>
+              <Text style={styles.pitchCount}>P: {scoreState.numPitches}</Text>
+            </View>
 
-        {/* Separator line */}
-        <View style={styles.separatorLine} />
+            {/* Separator line */}
+            <View style={styles.separatorLine} />
+          </>
+        ) : null}
 
         {/* Main Content Row */}
         <View style={styles.mainRow}>
