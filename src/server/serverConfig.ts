@@ -1,5 +1,13 @@
 import { makeConfig } from 'cleaner-config'
-import { asNumber, asObject, asOptional, asString } from 'cleaners'
+import {
+  asArray,
+  asBoolean,
+  asEither,
+  asNumber,
+  asObject,
+  asOptional,
+  asString
+} from 'cleaners'
 import { asCouchCredentials } from 'edge-server-tools'
 
 const configPath = './serverConfig.json'
@@ -38,7 +46,30 @@ const asServerConfig = asObject({
     }
   })),
 
-  xaiApiKey: asOptional(asString, 'xxxxx')
+  xaiApiKey: asOptional(asString, 'xxxxx'),
+  nanogptApiKey: asOptional(asString, 'xxxxx'),
+  minimaxApiKey: asOptional(asString, 'xxxxx'),
+
+  /**
+   * When true, only the pitcher and batter crops are uploaded for OCR
+   * (pitcher name + pitch count, batter name + hits/at-bats).
+   * All other image analysis (inning, scores, bases, count, etc.) is skipped.
+   */
+  rosterOnly: asOptional(asBoolean, false),
+
+  /**
+   * OCR models for image analysis. Can be a single string or an array.
+   * Load is distributed round-robin across models, with failover to
+   * the next model on error. Supported prefixes:
+   * - "xai/" - XAI's Grok models
+   * - "ollama/" - Local Ollama models
+   * - "nanogpt/" - NanoGPT models
+   * - "minimax/" - MiniMax direct API
+   */
+  ocrModels: asOptional(
+    asEither(asArray(asString), (raw: any) => [asString(raw)]),
+    ['nanogpt/minimax/minimax-01']
+  )
 }).withRest
 
 export type ServerConfig = ReturnType<typeof asServerConfig>
