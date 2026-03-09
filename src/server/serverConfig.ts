@@ -6,7 +6,8 @@ import {
   asNumber,
   asObject,
   asOptional,
-  asString
+  asString,
+  asValue
 } from 'cleaners'
 import { asCouchCredentials } from 'edge-server-tools'
 
@@ -57,6 +58,11 @@ const asServerConfig = asObject({
    * All other image analysis (inning, scores, bases, count, etc.) is skipped.
    */
   rosterOnly: asOptional(asBoolean, false),
+
+  scanMethod: asOptional(
+    asValue('screenshot', 'viewHierarchy'),
+    'viewHierarchy'
+  ),
 
   /**
    * OCR models for image analysis. Can be a single string or an array.
