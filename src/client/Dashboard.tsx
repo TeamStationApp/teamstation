@@ -172,6 +172,13 @@ const Dashboard: React.FC = () => {
     setShowScorePicker('inning' as any)
   }
 
+  const handleReset = (): void => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'reset' }))
+      console.log('Sent reset request for current session')
+    }
+  }
+
   // Function to send overrides to server
   const sendOverrides = useCallback((): void => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -989,6 +996,9 @@ const Dashboard: React.FC = () => {
           clearOuts
         )}
       </View>
+      <Pressable style={styles.resetButton} onPress={handleReset}>
+        <Text style={styles.resetButtonText}>Reset Game State</Text>
+      </Pressable>
     </View>
   )
 }
@@ -1579,6 +1589,29 @@ const getStyles = cacheStyles((theme: Theme) => ({
     borderTopWidth: theme.rem(1.375),
     borderLeftColor: 'transparent',
     borderRightColor: 'transparent'
+  },
+  resetButton: {
+    width: '100%',
+    maxWidth: 600,
+    marginTop: theme.rem(1),
+    paddingVertical: theme.rem(1),
+    paddingHorizontal: theme.rem(1.25),
+    borderRadius: theme.rem(0.75),
+    backgroundColor: theme.dashboardCircleOrange,
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: theme.shadowColor,
+    shadowOffset: { width: 0, height: theme.rem(0.25) },
+    shadowOpacity: 0.3,
+    shadowRadius: theme.rem(1.25),
+    elevation: 8
+  },
+  resetButtonText: {
+    fontSize: theme.rem(1.25),
+    fontWeight: '700',
+    fontFamily: theme.secondaryTextFont,
+    color: theme.scoreboardScoreText
   }
 }))
 

@@ -29,6 +29,45 @@ interface EventState {
 // Map of eventId to EventState
 const eventStates = new Map<string, EventState>()
 
+function createDefaultAutoState(): ScoreState {
+  return {
+    inGame: false,
+    pitcherName: '',
+    batterName: '',
+    batterNumber: 0,
+    batterNumHits: 0,
+    batterAtBats: 0,
+    numPitches: 0,
+    balls: 0,
+    strikes: 0,
+    outs: 0,
+    base1: false,
+    base2: false,
+    base3: false,
+    inning: 0,
+    half: 'top',
+    homeTeam: 'Home Team',
+    awayTeam: 'Away Team',
+    homeScore: 0,
+    awayScore: 0
+  }
+}
+
+function createDefaultDashboardOverrides(): DashboardOverrides {
+  return {
+    overrideCountEnabled: false,
+    overrideBasesEnabled: false,
+    overrideTeamEnabled: false,
+    overrideScoreEnabled: false,
+    overrideInningEnabled: false,
+    overrideCount: undefined,
+    overrideBases: undefined,
+    overrideTeam: undefined,
+    overrideScore: undefined,
+    overrideInning: undefined
+  }
+}
+
 /**
  * Get or create event state for a given eventId
  */
@@ -36,39 +75,8 @@ function getOrCreateEventState(eventId: string): EventState {
   let state = eventStates.get(eventId)
   if (state == null) {
     state = {
-      autoState: {
-        inGame: false,
-        pitcherName: '',
-        batterName: '',
-        batterNumber: 0,
-        batterNumHits: 0,
-        batterAtBats: 0,
-        numPitches: 0,
-        balls: 0,
-        strikes: 0,
-        outs: 0,
-        base1: false,
-        base2: false,
-        base3: false,
-        inning: 0,
-        half: 'top',
-        homeTeam: 'Home Team',
-        awayTeam: 'Away Team',
-        homeScore: 0,
-        awayScore: 0
-      },
-      dashboardOverrides: {
-        overrideCountEnabled: false,
-        overrideBasesEnabled: false,
-        overrideTeamEnabled: false,
-        overrideScoreEnabled: false,
-        overrideInningEnabled: false,
-        overrideCount: undefined,
-        overrideBases: undefined,
-        overrideTeam: undefined,
-        overrideScore: undefined,
-        overrideInning: undefined
-      },
+      autoState: createDefaultAutoState(),
+      dashboardOverrides: createDefaultDashboardOverrides(),
       autoStateClients: new Set<WebSocket>(),
       dashboardClients: new Set<WebSocket>(),
       scoreboardClients: new Set<WebSocket>()
@@ -77,6 +85,30 @@ function getOrCreateEventState(eventId: string): EventState {
     logger(`Created new event state for eventId: ${eventId}`)
   }
   return state
+}
+
+/**
+ * Reset in-memory game state for a given eventId only.
+ * Other sessions are unaffected. Connected clients remain connected and
+ * receive broadcasts so they immediately reflect cleared state.
+ */
+function resetEventState(eventId: string): void {
+  const state = eventStates.get(eventId)
+  if (state == null) {
+    logger(`Reset requested for unknown eventId: ${eventId}`)
+    return
+  }
+
+  state.autoState = createDefaultAutoState()
+  state.dashboardOverrides = createDefaultDashboardOverrides()
+  logger(`Reset in-memory game state for event: ${eventId}`)
+
+  broadcastToDashboard(eventId, state.autoState)
+  broadcastOverridesToDashboards(eventId, state.dashboardOverrides)
+  const finalState = mergeFinalState(eventId)
+  if (finalState != null) {
+    broadcastToScoreboard(eventId, finalState)
+  }
 }
 
 /**
@@ -313,6 +345,13 @@ export function initializeWebSocketServer(server: HttpServer): void {
       try {
         const message = data.toString()
         const rawData = JSON.parse(message)
+
+        if (rawData?.type === 'reset') {
+          logger(`Received dashboard reset request for event: ${eventId}`)
+          resetEventState(eventId)
+          return
+        }
+
         const overrides: DashboardOverrides = asDashboardOverrides(rawData)
         logger(`Received dashboard override update for event: ${eventId}`)
 
