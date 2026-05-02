@@ -1,0 +1,30 @@
+node_modules/
+.yarn/
+yarn-error.log
+*.log
+.maestro-out/
+.maestro-debug/
+maestro/config.env
+
+# React Native
+.bundle/
+.gradle/
+build/
+.idea/
+.cxx/
+local.properties
+*.iml
+*.keystore
+!debug.keystore
+.kotlin/
+
+# iOS (not used but keep clean)
+ios/Pods/
+
+# Metro
+.metro-health-check*
+
+# Android build artifacts
+**/android/app/build/
+**/android/build/
+**/android/.gradle/
