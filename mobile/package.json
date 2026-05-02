@@ -1,0 +1,14 @@
+{
+  "name": "gamestationMobile",
+  "version": "1.0.0",
+  "description": "GameStation's native apps; each app's package.json holds its own scripts",
+  "private": true,
+  "workspaces": {
+    "packages": [
+      "apps/*"
+    ]
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
