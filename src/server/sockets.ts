@@ -4,11 +4,12 @@ import { WebSocketServer } from 'ws'
 
 import {
   asDashboardOverrides,
-  asScoreState,
+  asScoreStateUpdate,
   type AutoStateMessage,
   type DashboardOverrides,
   type OverrideUpdateMessage,
-  type ScoreState
+  type ScoreState,
+  type ScoreStateUpdate
 } from '../common/types'
 import { logger } from './util/utils'
 
@@ -49,8 +50,29 @@ function createDefaultAutoState(): ScoreState {
     homeTeam: 'Home Team',
     awayTeam: 'Away Team',
     homeScore: 0,
-    awayScore: 0
+    awayScore: 0,
+    pitchSpeed: 0
   }
+}
+
+/**
+ * Merge a partial ScoreStateUpdate into an existing ScoreState. Only fields
+ * present (not undefined) in the update override the corresponding fields.
+ * This is the shared write path for every engine that sends an update, each
+ * of which may contribute its own subset of ScoreState (a Tag One reader
+ * sends just `pitchSpeed`).
+ */
+function mergeScoreStateUpdate(
+  current: ScoreState,
+  update: ScoreStateUpdate
+): ScoreState {
+  const next: ScoreState = { ...current }
+  for (const key of Object.keys(update) as Array<keyof ScoreStateUpdate>) {
+    const value = update[key]
+    if (value === undefined) continue
+    ;(next as any)[key] = value
+  }
+  return next
 }
 
 function createDefaultDashboardOverrides(): DashboardOverrides {
@@ -282,14 +304,16 @@ export function initializeWebSocketServer(server: HttpServer): void {
       try {
         const message = data.toString()
         const rawData = JSON.parse(message)
-        const scoreState: ScoreState = asScoreState(rawData)
+        const update: ScoreStateUpdate = asScoreStateUpdate(rawData)
         logger(`Received autoState update from engine for event: ${eventId}`)
 
-        // Store current autoState for this event
-        state.autoState = scoreState
+        // Merge partial update into canonical autoState for this event so
+        // disjoint engines can each contribute their own slice without
+        // clobbering each other's fields.
+        state.autoState = mergeScoreStateUpdate(state.autoState, update)
 
-        // Broadcast to dashboard for this event
-        broadcastToDashboard(eventId, scoreState)
+        // Broadcast the merged canonical state to dashboard clients.
+        broadcastToDashboard(eventId, state.autoState)
 
         // Merge and broadcast to scoreboard for this event
         const finalState = mergeFinalState(eventId)

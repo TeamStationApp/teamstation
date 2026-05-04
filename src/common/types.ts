@@ -30,10 +30,41 @@ export const asScoreState = asObject({
   homeTeam: asString,
   awayTeam: asString,
   homeScore: asNumber,
-  awayScore: asNumber
+  awayScore: asNumber,
+  pitchSpeed: asNumber
 })
 
 export type ScoreState = ReturnType<typeof asScoreState>
+
+/**
+ * Partial update to ScoreState sent by engines. Each engine may contribute a
+ * subset of fields (for example, the on-device Tag One parser only sets
+ * pitchSpeed). The server merges defined fields into the canonical autoState.
+ */
+export const asScoreStateUpdate = asObject({
+  inGame: asOptional(asBoolean),
+  pitcherName: asOptional(asString),
+  batterName: asOptional(asString),
+  batterNumber: asOptional(asNumber),
+  batterNumHits: asOptional(asNumber),
+  batterAtBats: asOptional(asNumber),
+  numPitches: asOptional(asNumber),
+  balls: asOptional(asNumber),
+  strikes: asOptional(asNumber),
+  outs: asOptional(asNumber),
+  base1: asOptional(asBoolean),
+  base2: asOptional(asBoolean),
+  base3: asOptional(asBoolean),
+  inning: asOptional(asNumber),
+  half: asOptional(asValue('top', 'bottom', 'mid')),
+  homeTeam: asOptional(asString),
+  awayTeam: asOptional(asString),
+  homeScore: asOptional(asNumber),
+  awayScore: asOptional(asNumber),
+  pitchSpeed: asOptional(asNumber)
+})
+
+export type ScoreStateUpdate = Partial<ScoreState>
 
 // Dashboard overrides - shared between client and server
 export const asDashboardOverrides = asObject({
