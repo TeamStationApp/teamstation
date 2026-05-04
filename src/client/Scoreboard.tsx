@@ -37,7 +37,8 @@ const Scoreboard: React.FC = () => {
     homeTeam: 'Home Team',
     awayTeam: 'Away Team',
     homeScore: 10,
-    awayScore: 0
+    awayScore: 0,
+    pitchSpeed: 0
   })
 
   // Set transparent background for scoreboard (for OBS chroma key)
@@ -254,35 +255,52 @@ const Scoreboard: React.FC = () => {
               </View>
             </View>
 
-            {/* Bases Diamond */}
-            <View style={styles.basesRotatedContainer}>
-              <View style={styles.basesGrid}>
-                {/* Second base - top center */}
-                <View
-                  style={[
-                    styles.baseSquare,
-                    styles.baseSecondPos,
-                    scoreState.base2 && styles.baseSquareFilled
-                  ]}
-                />
-                {/* First base - right */}
-                <View
-                  style={[
-                    styles.baseSquare,
-                    styles.baseFirstPos,
-                    styles.baseSquareGray,
-                    scoreState.base1 && styles.baseSquareFilled
-                  ]}
-                />
-                {/* Third base - bottom left */}
-                <View
-                  style={[
-                    styles.baseSquare,
-                    styles.baseThirdPos,
-                    styles.baseSquareGray,
-                    scoreState.base3 && styles.baseSquareFilled
-                  ]}
-                />
+            {/* Bases Diamond + Pitch Speed */}
+            <View style={styles.basesAndSpeedColumn}>
+              <View style={styles.basesRotatedContainer}>
+                <View style={styles.basesGrid}>
+                  {/* Second base - top center */}
+                  <View
+                    style={[
+                      styles.baseSquare,
+                      styles.baseSecondPos,
+                      scoreState.base2 && styles.baseSquareFilled
+                    ]}
+                  />
+                  {/* First base - right */}
+                  <View
+                    style={[
+                      styles.baseSquare,
+                      styles.baseFirstPos,
+                      styles.baseSquareGray,
+                      scoreState.base1 && styles.baseSquareFilled
+                    ]}
+                  />
+                  {/* Third base - bottom left */}
+                  <View
+                    style={[
+                      styles.baseSquare,
+                      styles.baseThirdPos,
+                      styles.baseSquareGray,
+                      scoreState.base3 && styles.baseSquareFilled
+                    ]}
+                  />
+                </View>
+              </View>
+              {/* Always render the pitch-speed slot so the bases diamond
+                  above it doesn't reflow when the value transitions
+                  to/from 0. The slot keeps its full footprint; only the
+                  text becomes transparent when there's no live reading. */}
+              <View
+                style={[
+                  styles.pitchSpeedContainer,
+                  scoreState.pitchSpeed === 0 && styles.pitchSpeedHidden
+                ]}
+              >
+                <Text style={styles.pitchSpeedNumber}>
+                  {scoreState.pitchSpeed}
+                </Text>
+                <Text style={styles.pitchSpeedUnit}>MPH</Text>
               </View>
             </View>
           </View>
@@ -524,11 +542,16 @@ const getStyles = cacheStyles((theme: Theme) => ({
     backgroundColor: theme.activeColor,
     borderColor: theme.activeColor
   },
+  // Bases + Pitch Speed column
+  basesAndSpeedColumn: {
+    alignItems: 'center',
+    justifyContent: 'flex-start'
+  },
   // Bases - Rotated Container Approach
   basesRotatedContainer: {
     transform: [{ rotate: '45deg' }],
     width: theme.rem(4),
-    height: theme.rem(3.5),
+    height: theme.rem(2.75),
     justifyContent: 'center',
     alignItems: 'center'
   },
@@ -536,6 +559,34 @@ const getStyles = cacheStyles((theme: Theme) => ({
     width: theme.rem(2.75),
     height: theme.rem(2.75),
     position: 'relative'
+  },
+  // Pitch Speed (below bases)
+  pitchSpeedContainer: {
+    alignItems: 'center',
+    marginTop: theme.rem(0.25)
+  },
+  pitchSpeedNumber: {
+    color: theme.primaryTextColor,
+    fontSize: theme.rem(2.75),
+    fontWeight: 'bold',
+    lineHeight: theme.rem(2.75),
+    fontFamily: theme.secondaryTextFont
+  },
+  pitchSpeedUnit: {
+    color: theme.primaryTextColor,
+    fontSize: theme.rem(0.75),
+    fontWeight: 'bold',
+    letterSpacing: 1,
+    marginTop: theme.rem(-0.125),
+    fontFamily: theme.secondaryTextFont
+  },
+  // Layout-preserving "hidden" state for the pitch-speed slot: the View
+  // still occupies its full size (so the bases above don't reflow when
+  // the speed clears to 0), but renders nothing visible. Aria-hide via
+  // `accessibilityElementsHidden` would be appropriate on a native UI;
+  // on web/OBS chroma-key this is purely visual.
+  pitchSpeedHidden: {
+    opacity: 0
   },
   baseSquare: {
     width: theme.rem(1.25),
