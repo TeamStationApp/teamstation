@@ -21,3 +21,6 @@ chromeData/
 
 # Images:
 /images/
+
+# Visual regression artifacts:
+/screenshots/
