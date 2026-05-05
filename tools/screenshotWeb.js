@@ -19,7 +19,9 @@ const mockWs = require('./mockWebSockets')
 
 const REPO_ROOT = path.resolve(__dirname, '..')
 const WEBPACK_PORT = 8080
-const MOCK_WS_PORT = 8008
+// Use a non-default port so the screenshot harness never collides with
+// a locally running gamestation server (which listens on 8008).
+const MOCK_WS_PORT = Number(process.env.MOCK_WS_PORT ?? 8009)
 
 const ROUTES = [
   { slug: 'home', path: '/' },
@@ -88,6 +90,33 @@ async function captureRoute(browser, route, outDir) {
       return seed / 233280
     }
   })
+
+  // Redirect the client's WebSocket URLs to our mock port so the
+  // screenshot harness does not collide with a real local gamestation
+  // server already listening on the default 8008.
+  await page.evaluateOnNewDocument(mockPort => {
+    const Original = window.WebSocket
+    function Patched(url, protocols) {
+      try {
+        const u = new URL(url)
+        if (
+          (u.hostname === 'localhost' || u.hostname === '127.0.0.1') &&
+          (u.port === '8008' || u.port === '')
+        ) {
+          u.port = String(mockPort)
+          // eslint-disable-next-line no-param-reassign
+          url = u.toString()
+        }
+      } catch (_) {}
+      return new Original(url, protocols)
+    }
+    Patched.prototype = Original.prototype
+    Patched.CONNECTING = Original.CONNECTING
+    Patched.OPEN = Original.OPEN
+    Patched.CLOSING = Original.CLOSING
+    Patched.CLOSED = Original.CLOSED
+    window.WebSocket = Patched
+  }, MOCK_WS_PORT)
 
   const url = `http://localhost:${WEBPACK_PORT}${route.path}`
   console.log(`[screenshotWeb] visit ${url}`)
