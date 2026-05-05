@@ -237,6 +237,8 @@ const Scoreboard: React.FC = () => {
               </View>
             </View>
 
+            <View style={styles.inningCountSeparator} />
+
             {/* Count and Outs Dots */}
             <View style={styles.countOutsContainer}>
               <Text style={styles.countDisplay}>
@@ -300,7 +302,11 @@ const Scoreboard: React.FC = () => {
                 <Text style={styles.pitchSpeedNumber}>
                   {scoreState.pitchSpeed}
                 </Text>
-                <Text style={styles.pitchSpeedUnit}>MPH</Text>
+                <View style={styles.pitchSpeedLettersColumn}>
+                  <Text style={styles.pitchSpeedLetter}>M</Text>
+                  <Text style={styles.pitchSpeedLetter}>P</Text>
+                  <Text style={styles.pitchSpeedLetter}>H</Text>
+                </View>
               </View>
             </View>
           </View>
@@ -310,328 +316,355 @@ const Scoreboard: React.FC = () => {
   )
 }
 
-const getStyles = cacheStyles((theme: Theme) => ({
-  scoreboardContainer: {
-    alignItems: 'flex-start',
-    justifyContent: 'flex-start'
-  },
-  scoreboard: {
-    backgroundColor: theme.scoreboardBackground,
-    borderRadius: theme.rem(0.75),
-    padding: theme.rem(0.5),
-    shadowColor: theme.shadowColor,
-    shadowOffset: { width: 0, height: theme.rem(0.25) },
-    shadowOpacity: 0.3,
-    shadowRadius: theme.rem(0.5),
-    elevation: 8,
-    borderWidth: 2,
-    borderColor: theme.scoreboardBorderColor,
-    fontFamily: theme.secondaryTextFont
-  },
-  // Header Row
-  headerRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: theme.rem(0.5),
-    paddingBottom: theme.rem(0.25)
-  },
-  batterAbbrev: {
-    color: theme.primaryTextColor,
-    fontSize: theme.rem(1.25),
-    fontWeight: 'bold',
-    letterSpacing: 1,
-    fontFamily: theme.secondaryTextFont
-  },
-  batterAtBatsText: {
-    color: theme.primaryTextColor,
-    fontSize: theme.rem(1.25),
-    fontWeight: 'bold',
-    fontFamily: theme.secondaryTextFont
-  },
-  // Separator Line
-  separatorLine: {
-    height: 1,
-    backgroundColor: theme.scoreboardSeparatorColor,
-    marginHorizontal: theme.rem(0.25)
-  },
-  // Pitcher Row
-  pitcherRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: theme.rem(0.5),
-    paddingVertical: theme.rem(0.25)
-  },
-  pitcherName: {
-    color: theme.primaryTextColor,
-    fontSize: theme.rem(1.25),
-    fontWeight: 'bold',
-    textTransform: 'uppercase',
-    fontFamily: theme.secondaryTextFont
-  },
-  pitchCount: {
-    color: theme.primaryTextColor,
-    fontSize: theme.rem(1.25),
-    fontWeight: 'bold',
-    fontFamily: theme.secondaryTextFont
-  },
-  // Main Row
-  mainRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between'
-  },
-  // Teams Section
-  teamsSection: {
-    marginTop: 2,
-    flexDirection: 'column',
-    flex: 1
-  },
-  teamRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 3
-  },
-  teamBox: {
-    flex: 1,
-    paddingVertical: theme.rem(1.25),
-    paddingHorizontal: theme.rem(1),
-    borderRadius: theme.rem(0.5),
-    marginRight: theme.rem(0.25),
-    borderWidth: 2,
-    borderColor: theme.scoreboardOutlineGray
-  },
-  teamName: {
-    color: theme.primaryTextColor,
-    fontSize: theme.rem(1.5),
-    fontWeight: 'bold',
-    fontFamily: theme.secondaryTextFont
-  },
-  scoreBox: {
-    backgroundColor: theme.scoreboardScoreBackground,
-    width: theme.rem(4.5),
-    height: theme.rem(4.25),
-    borderRadius: theme.rem(0.25),
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  scoreText: {
-    color: theme.scoreboardScoreText,
-    fontSize: theme.rem(3),
-    fontWeight: 'bold',
-    fontFamily: theme.secondaryTextFont
-  },
-  // Right Section
-  rightSection: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginLeft: theme.rem(2)
-  },
-  // Arrows and Outs Column
-  arrowsOutsColumn: {
-    alignItems: 'center',
-    marginRight: theme.rem(2)
-  },
-  inningCount: {
-    color: theme.primaryTextColor,
-    fontSize: theme.rem(1.75),
-    fontWeight: 'bold',
-    marginVertical: theme.rem(0.25),
-    fontFamily: theme.secondaryTextFont
-  },
-  // Arrow styles
-  arrowOuterUp: {
-    position: 'relative',
-    width: 0,
-    height: 0,
-    borderLeftWidth: theme.rem(0.875),
-    borderRightWidth: theme.rem(0.875),
-    borderBottomWidth: theme.rem(1.1875),
-    borderLeftColor: 'transparent',
-    borderRightColor: 'transparent',
-    marginBottom: theme.rem(0.5)
-  },
+const getStyles = cacheStyles((theme: Theme) => {
+  const teamScoreBoxHeight = theme.rem(3.5)
+  // Horizontal gap: score → inning, inning column → vertical line, and line
+  // → balls/strikes (rightSection.marginLeft, arrowsOutsColumn.marginRight,
+  // inningCountSeparator.marginRight).
+  const gapScoreToInning = theme.rem(1)
+  return {
+    scoreboardContainer: {
+      alignItems: 'flex-start',
+      justifyContent: 'flex-start'
+    },
+    scoreboard: {
+      backgroundColor: theme.scoreboardBackground,
+      borderRadius: theme.rem(0.75),
+      padding: theme.rem(0.5),
+      shadowColor: theme.shadowColor,
+      shadowOffset: { width: 0, height: theme.rem(0.25) },
+      shadowOpacity: 0.3,
+      shadowRadius: theme.rem(0.5),
+      elevation: 8,
+      borderWidth: 2,
+      borderColor: theme.scoreboardBorderColor,
+      fontFamily: theme.secondaryTextFont
+    },
+    // Header Row
+    headerRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingHorizontal: theme.rem(0.5),
+      paddingBottom: theme.rem(0.25)
+    },
+    batterAbbrev: {
+      color: theme.primaryTextColor,
+      fontSize: theme.rem(1.25),
+      fontWeight: 'bold',
+      letterSpacing: 1,
+      fontFamily: theme.secondaryTextFont
+    },
+    batterAtBatsText: {
+      color: theme.primaryTextColor,
+      fontSize: theme.rem(1.25),
+      fontWeight: 'bold',
+      fontFamily: theme.secondaryTextFont
+    },
+    // Separator Line
+    separatorLine: {
+      height: 1,
+      backgroundColor: theme.scoreboardSeparatorColor,
+      marginHorizontal: theme.rem(0.25)
+    },
+    // Same 1px thickness and color as separatorLine; vertical between inning
+    // column and balls/strikes.
+    inningCountSeparator: {
+      width: 1,
+      alignSelf: 'stretch',
+      backgroundColor: theme.scoreboardSeparatorColor,
+      marginLeft: 0,
+      marginRight: gapScoreToInning
+    },
+    // Pitcher Row
+    pitcherRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingHorizontal: theme.rem(0.5),
+      paddingVertical: theme.rem(0.25)
+    },
+    pitcherName: {
+      color: theme.primaryTextColor,
+      fontSize: theme.rem(1.25),
+      fontWeight: 'bold',
+      textTransform: 'uppercase',
+      fontFamily: theme.secondaryTextFont
+    },
+    pitchCount: {
+      color: theme.primaryTextColor,
+      fontSize: theme.rem(1.25),
+      fontWeight: 'bold',
+      fontFamily: theme.secondaryTextFont
+    },
+    // Main Row
+    mainRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between'
+    },
+    // Teams Section
+    teamsSection: {
+      marginTop: 1,
+      flexDirection: 'column',
+      flex: 1
+    },
+    teamRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: 1.5
+    },
+    teamBox: {
+      flex: 1,
+      height: teamScoreBoxHeight,
+      justifyContent: 'center',
+      alignItems: 'center',
+      paddingHorizontal: theme.rem(1),
+      borderRadius: theme.rem(0.5),
+      marginRight: theme.rem(0.25),
+      borderWidth: 2,
+      borderColor: theme.scoreboardOutlineGray
+    },
+    teamName: {
+      color: theme.primaryTextColor,
+      fontSize: theme.rem(1.5),
+      fontWeight: 'bold',
+      textAlign: 'center',
+      fontFamily: theme.secondaryTextFont
+    },
+    scoreBox: {
+      backgroundColor: theme.scoreboardScoreBackground,
+      width: theme.rem(4.5),
+      height: teamScoreBoxHeight,
+      borderRadius: theme.rem(0.25),
+      alignItems: 'center',
+      justifyContent: 'center'
+    },
+    scoreText: {
+      color: theme.scoreboardScoreText,
+      fontSize: theme.rem(3),
+      fontWeight: 'bold',
+      fontFamily: theme.secondaryTextFont
+    },
+    // Right Section
+    rightSection: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginLeft: gapScoreToInning
+    },
+    // Arrows and Outs Column
+    arrowsOutsColumn: {
+      alignItems: 'center',
+      marginRight: gapScoreToInning
+    },
+    inningCount: {
+      color: theme.primaryTextColor,
+      fontSize: theme.rem(2.25),
+      fontWeight: 'bold',
+      marginVertical: theme.rem(0.0625),
+      fontFamily: theme.secondaryTextFont
+    },
+    // Arrow styles
+    arrowOuterUp: {
+      position: 'relative',
+      width: 0,
+      height: 0,
+      borderLeftWidth: theme.rem(0.875),
+      borderRightWidth: theme.rem(0.875),
+      borderBottomWidth: theme.rem(1.1875),
+      borderLeftColor: 'transparent',
+      borderRightColor: 'transparent',
+      marginBottom: theme.rem(0.125)
+    },
 
-  arrowInnerUp: {
-    position: 'absolute',
-    top: theme.rem(0.15625),
-    left: theme.rem(-0.6875),
-    width: 0,
-    height: 0,
-    borderLeftWidth: theme.rem(0.6875),
-    borderRightWidth: theme.rem(0.6875),
-    borderBottomWidth: theme.rem(0.9375),
-    borderLeftColor: 'transparent',
-    borderRightColor: 'transparent'
-  },
-  arrowOuterActiveUp: {
-    borderBottomColor: theme.activeColor
-  },
-  arrowOuterInactiveUp: {
-    borderBottomColor: theme.scoreboardOutlineGray
-  },
-  arrowInnerActiveUp: {
-    borderBottomColor: theme.activeColor
-  },
-  arrowInnerInactiveUp: {
-    borderBottomColor: theme.scoreboardBaseFill
-  },
-  arrowOuterDown: {
-    position: 'relative',
-    width: 0,
-    height: 0,
-    borderLeftWidth: theme.rem(0.875),
-    borderRightWidth: theme.rem(0.875),
-    borderTopWidth: theme.rem(1.1875),
-    borderLeftColor: 'transparent',
-    borderRightColor: 'transparent',
-    marginTop: theme.rem(0.5)
-  },
-  arrowInnerDown: {
-    position: 'absolute',
-    bottom: theme.rem(0.15625),
-    left: theme.rem(-0.6875),
-    width: 0,
-    height: 0,
-    borderLeftWidth: theme.rem(0.6875),
-    borderRightWidth: theme.rem(0.6875),
-    borderTopWidth: theme.rem(0.9375),
-    borderLeftColor: 'transparent',
-    borderRightColor: 'transparent'
-  },
-  arrowOuterActiveDown: {
-    borderTopColor: theme.activeColor
-  },
-  arrowOuterInactiveDown: {
-    borderTopColor: theme.scoreboardOutlineGray
-  },
-  arrowInnerActiveDown: {
-    borderTopColor: theme.activeColor
-  },
-  arrowInnerInactiveDown: {
-    borderTopColor: theme.scoreboardBaseFill
-  },
-  // Count and Outs Container
-  countOutsContainer: {
-    alignItems: 'center',
-    marginRight: theme.rem(1.25)
-  },
-  countDisplay: {
-    color: theme.primaryTextColor,
-    fontSize: theme.rem(2.75),
-    fontWeight: 'bold',
-    marginBottom: theme.rem(0.25),
-    fontFamily: theme.secondaryTextFont
-  },
-  // Outs Dots Row (horizontal)
-  outsDotsRow: {
-    flexDirection: 'row',
-    justifyContent: 'center'
-  },
-  outDot: {
-    width: theme.rem(1.25),
-    height: theme.rem(1.25),
-    borderRadius: theme.rem(0.75),
-    borderWidth: 2,
-    borderColor: theme.scoreboardOutlineGray,
-    backgroundColor: theme.scoreboardBaseFill,
-    marginHorizontal: theme.rem(0.25)
-  },
-  outDotActive: {
-    backgroundColor: theme.activeColor,
-    borderColor: theme.activeColor
-  },
-  // Bases + Pitch Speed column
-  basesAndSpeedColumn: {
-    alignItems: 'center',
-    justifyContent: 'flex-start'
-  },
-  // Bases - Rotated Container Approach
-  basesRotatedContainer: {
-    transform: [{ rotate: '45deg' }],
-    width: theme.rem(4),
-    height: theme.rem(2.75),
-    justifyContent: 'center',
-    alignItems: 'center'
-  },
-  basesGrid: {
-    width: theme.rem(2.75),
-    height: theme.rem(2.75),
-    position: 'relative'
-  },
-  // Pitch Speed (below bases)
-  pitchSpeedContainer: {
-    alignItems: 'center',
-    marginTop: theme.rem(0.25)
-  },
-  pitchSpeedNumber: {
-    color: theme.primaryTextColor,
-    fontSize: theme.rem(2.75),
-    fontWeight: 'bold',
-    lineHeight: theme.rem(2.75),
-    fontFamily: theme.secondaryTextFont
-  },
-  pitchSpeedUnit: {
-    color: theme.primaryTextColor,
-    fontSize: theme.rem(0.75),
-    fontWeight: 'bold',
-    letterSpacing: 1,
-    marginTop: theme.rem(-0.125),
-    fontFamily: theme.secondaryTextFont
-  },
-  // Layout-preserving "hidden" state for the pitch-speed slot: the View
-  // still occupies its full size (so the bases above don't reflow when
-  // the speed clears to 0), but renders nothing visible. Aria-hide via
-  // `accessibilityElementsHidden` would be appropriate on a native UI;
-  // on web/OBS chroma-key this is purely visual.
-  pitchSpeedHidden: {
-    opacity: 0
-  },
-  baseSquare: {
-    width: theme.rem(1.25),
-    height: theme.rem(1.25),
-    backgroundColor: theme.scoreboardBaseFill,
-    borderWidth: 2,
-    borderColor: theme.scoreboardOutlineGray,
-    position: 'absolute'
-  },
-  // Position each base
-  baseSecondPos: {
-    top: 0,
-    left: 0
-  },
-  baseFirstPos: {
-    top: 0,
-    left: theme.rem(1.75)
-  },
-  baseThirdPos: {
-    top: theme.rem(1.75),
-    left: 0
-  },
-  baseSquareGray: {},
-  baseSquareFilled: {
-    backgroundColor: theme.activeColor,
-    borderColor: theme.activeColor
-  },
-  // No game styles
-  noGameContainer: {
-    padding: theme.rem(2.5),
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  noGameText: {
-    color: theme.primaryTextColor,
-    fontSize: theme.rem(1.5),
-    fontWeight: 'bold',
-    marginBottom: theme.rem(0.75),
-    fontFamily: theme.secondaryTextFont
-  },
-  noGameSubtext: {
-    color: theme.placeholderTextColor,
-    fontSize: theme.rem(1),
-    fontFamily: theme.secondaryTextFont
+    arrowInnerUp: {
+      position: 'absolute',
+      top: theme.rem(0.15625),
+      left: theme.rem(-0.6875),
+      width: 0,
+      height: 0,
+      borderLeftWidth: theme.rem(0.6875),
+      borderRightWidth: theme.rem(0.6875),
+      borderBottomWidth: theme.rem(0.9375),
+      borderLeftColor: 'transparent',
+      borderRightColor: 'transparent'
+    },
+    arrowOuterActiveUp: {
+      borderBottomColor: theme.activeColor
+    },
+    arrowOuterInactiveUp: {
+      borderBottomColor: theme.scoreboardOutlineGray
+    },
+    arrowInnerActiveUp: {
+      borderBottomColor: theme.activeColor
+    },
+    arrowInnerInactiveUp: {
+      borderBottomColor: theme.scoreboardBaseFill
+    },
+    arrowOuterDown: {
+      position: 'relative',
+      width: 0,
+      height: 0,
+      borderLeftWidth: theme.rem(0.875),
+      borderRightWidth: theme.rem(0.875),
+      borderTopWidth: theme.rem(1.1875),
+      borderLeftColor: 'transparent',
+      borderRightColor: 'transparent',
+      marginTop: theme.rem(0.125)
+    },
+    arrowInnerDown: {
+      position: 'absolute',
+      bottom: theme.rem(0.15625),
+      left: theme.rem(-0.6875),
+      width: 0,
+      height: 0,
+      borderLeftWidth: theme.rem(0.6875),
+      borderRightWidth: theme.rem(0.6875),
+      borderTopWidth: theme.rem(0.9375),
+      borderLeftColor: 'transparent',
+      borderRightColor: 'transparent'
+    },
+    arrowOuterActiveDown: {
+      borderTopColor: theme.activeColor
+    },
+    arrowOuterInactiveDown: {
+      borderTopColor: theme.scoreboardOutlineGray
+    },
+    arrowInnerActiveDown: {
+      borderTopColor: theme.activeColor
+    },
+    arrowInnerInactiveDown: {
+      borderTopColor: theme.scoreboardBaseFill
+    },
+    // Count and Outs Container
+    countOutsContainer: {
+      alignItems: 'center',
+      marginRight: theme.rem(1.25)
+    },
+    countDisplay: {
+      color: theme.primaryTextColor,
+      fontSize: theme.rem(2.75),
+      fontWeight: 'bold',
+      marginBottom: theme.rem(0.25),
+      fontFamily: theme.secondaryTextFont
+    },
+    // Outs Dots Row (horizontal)
+    outsDotsRow: {
+      flexDirection: 'row',
+      justifyContent: 'center'
+    },
+    outDot: {
+      width: theme.rem(1.25),
+      height: theme.rem(1.25),
+      borderRadius: theme.rem(0.75),
+      borderWidth: 2,
+      borderColor: theme.scoreboardOutlineGray,
+      backgroundColor: theme.scoreboardBaseFill,
+      marginHorizontal: theme.rem(0.25)
+    },
+    outDotActive: {
+      backgroundColor: theme.activeColor,
+      borderColor: theme.activeColor
+    },
+    // Bases + Pitch Speed column
+    basesAndSpeedColumn: {
+      alignItems: 'center',
+      justifyContent: 'flex-start'
+    },
+    // Bases - Rotated Container Approach
+    basesRotatedContainer: {
+      transform: [{ rotate: '45deg' }],
+      width: theme.rem(4),
+      height: theme.rem(2.75),
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginTop: theme.rem(1)
+    },
+    basesGrid: {
+      width: theme.rem(2.75),
+      height: theme.rem(2.75),
+      position: 'relative'
+    },
+    // Pitch Speed (below bases): number + vertical "M","P","H" to the right
+    pitchSpeedContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginTop: theme.rem(0.25)
+    },
+    pitchSpeedNumber: {
+      color: theme.primaryTextColor,
+      fontSize: theme.rem(2.75),
+      fontWeight: 'bold',
+      lineHeight: theme.rem(2.75),
+      fontFamily: theme.secondaryTextFont
+    },
+    pitchSpeedLettersColumn: {
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginLeft: theme.rem(0.25)
+    },
+    pitchSpeedLetter: {
+      color: theme.primaryTextColor,
+      fontSize: theme.rem(0.75),
+      fontWeight: 'bold',
+      lineHeight: theme.rem(0.8),
+      fontFamily: theme.secondaryTextFont
+    },
+    // Layout-preserving "hidden" state for the pitch-speed slot: the View
+    // still occupies its full size (so the bases above don't reflow when
+    // the speed clears to 0), but renders nothing visible. Aria-hide via
+    // `accessibilityElementsHidden` would be appropriate on a native UI;
+    // on web/OBS chroma-key this is purely visual.
+    pitchSpeedHidden: {
+      opacity: 0
+    },
+    baseSquare: {
+      width: theme.rem(1.25),
+      height: theme.rem(1.25),
+      backgroundColor: theme.scoreboardBaseFill,
+      borderWidth: 2,
+      borderColor: theme.scoreboardOutlineGray,
+      position: 'absolute'
+    },
+    // Position each base
+    baseSecondPos: {
+      top: 0,
+      left: 0
+    },
+    baseFirstPos: {
+      top: 0,
+      left: theme.rem(1.75)
+    },
+    baseThirdPos: {
+      top: theme.rem(1.75),
+      left: 0
+    },
+    baseSquareGray: {},
+    baseSquareFilled: {
+      backgroundColor: theme.activeColor,
+      borderColor: theme.activeColor
+    },
+    // No game styles
+    noGameContainer: {
+      padding: theme.rem(2.5),
+      alignItems: 'center',
+      justifyContent: 'center'
+    },
+    noGameText: {
+      color: theme.primaryTextColor,
+      fontSize: theme.rem(1.5),
+      fontWeight: 'bold',
+      marginBottom: theme.rem(0.75),
+      fontFamily: theme.secondaryTextFont
+    },
+    noGameSubtext: {
+      color: theme.placeholderTextColor,
+      fontSize: theme.rem(1),
+      fontFamily: theme.secondaryTextFont
+    }
   }
-}))
+})
 
 export default Scoreboard

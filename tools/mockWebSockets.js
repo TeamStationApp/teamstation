@@ -32,9 +32,10 @@ const FIXED_SCORE_STATE = {
   inning: 7,
   half: 'top',
   homeTeam: 'Cyclones',
-  awayTeam: 'Hawks',
-  homeScore: 10,
-  awayScore: 23
+  awayTeam: 'North Pines Hawks',
+  homeScore: 9,
+  awayScore: 23,
+  pitchSpeed: 51
 }
 
 const FIXED_OVERRIDES = {
