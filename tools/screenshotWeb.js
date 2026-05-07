@@ -104,7 +104,6 @@ async function captureRoute(browser, route, outDir) {
           (u.port === '8008' || u.port === '')
         ) {
           u.port = String(mockPort)
-          // eslint-disable-next-line no-param-reassign
           url = u.toString()
         }
       } catch (_) {}
