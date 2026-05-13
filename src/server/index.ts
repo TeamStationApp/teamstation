@@ -3,6 +3,7 @@ import http from 'http'
 import path from 'path'
 import { makeExpressRoute } from 'serverlet/express'
 
+import { initializeRtmpSplitter } from './rtmp/splitter'
 import { serverConfig } from './serverConfig'
 import { initializeWebSocketServer } from './sockets'
 import { allRoutes } from './urls'
@@ -39,8 +40,8 @@ async function server(): Promise<void> {
     res.sendFile(path.resolve(__dirname, '../../dist/bundle.js.LICENSE.txt'))
   })
 
-  // SPA routes - serve index.html for dashboard, scoreboard, and links routes
-  app.get(/^\/(dashboard|scoreboard|links).*/, (req, res) => {
+  // SPA routes - serve index.html for dashboard, scoreboard, links, and split routes
+  app.get(/^\/(dashboard|scoreboard|links|split).*/, (req, res) => {
     res.sendFile(path.resolve(__dirname, '../../dist/index.html'))
   })
 
@@ -52,6 +53,9 @@ async function server(): Promise<void> {
   // Start listening
   httpServer.listen(listenPort, listenHost)
   logger(`HTTP server listening on port ${listenPort}`)
+
+  // Start RTMP splitter (independent TCP listener on rtmpPort)
+  initializeRtmpSplitter()
 }
 
 main().catch((error: unknown) => {

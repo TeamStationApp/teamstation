@@ -1,4 +1,5 @@
 import {
+  asArray,
   asBoolean,
   asNumber,
   asObject,
@@ -129,3 +130,54 @@ export const asDashboardMessage = asObject({
 })
 
 export type DashboardMessage = AutoStateMessage | OverrideUpdateMessage
+
+/**
+ * RTMP splitter live status. Pushed over a WebSocket so the /split UI can
+ * render a real-time indicator for ingress packet flow and per-destination
+ * outbound state.
+ */
+export const asSplitOutboundState = asValue(
+  'idle',
+  'connecting',
+  'connected',
+  'error',
+  'stopped'
+)
+
+export type SplitOutboundState = ReturnType<typeof asSplitOutboundState>
+
+export const asSplitIngressStatus = asObject({
+  publishing: asBoolean,
+  receivingPackets: asBoolean,
+  bytesReceived: asNumber,
+  bytesPerSecond: asNumber
+})
+
+export type SplitIngressStatus = ReturnType<typeof asSplitIngressStatus>
+
+export const asSplitOutboundStatus = asObject({
+  url: asString,
+  state: asSplitOutboundState,
+  lastError: asOptional(asString),
+  bytesSent: asOptional(asNumber),
+  bytesPerSecond: asOptional(asNumber),
+  restartCount: asNumber
+})
+
+export type SplitOutboundStatus = ReturnType<typeof asSplitOutboundStatus>
+
+export const asSplitStatus = asObject({
+  eventId: asString,
+  destinations: asArray(asString),
+  ingress: asSplitIngressStatus,
+  outbounds: asArray(asSplitOutboundStatus)
+})
+
+export type SplitStatus = ReturnType<typeof asSplitStatus>
+
+export const asSplitStatusMessage = asObject({
+  type: asValue('splitStatus'),
+  data: asSplitStatus
+})
+
+export type SplitStatusMessage = ReturnType<typeof asSplitStatusMessage>

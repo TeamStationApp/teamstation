@@ -31,7 +31,7 @@
     "start": "node -r sucrase/register src/server/index.ts",
     "start.web": "webpack serve --mode development",
     "setup": "node -r sucrase/register src/server/dbInit.ts",
-    "test": "mocha -r sucrase/register 'src/__tests__/**/*.ts'",
+    "test": "mocha -r sucrase/register --exit 'src/__tests__/**/*.ts'",
     "types": "npm run build",
     "screenshots.baseline": "node tools/screenshotWeb.js --out=screenshots/baseline",
     "screenshots.upgraded": "node tools/screenshotWeb.js --out=screenshots/upgraded",
@@ -46,6 +46,7 @@
   },
   "dependencies": {
     "cleaners": "^0.3.9",
+    "node-media-server": "^4.2.4",
     "ollama": "^0.6.3",
     "react": "19.2.5",
     "react-dom": "19.2.5",
