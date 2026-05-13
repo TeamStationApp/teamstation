@@ -1,6 +1,4 @@
 node_modules/
-.yarn/
-yarn-error.log
 *.log
 .maestro-out/
 .maestro-debug/

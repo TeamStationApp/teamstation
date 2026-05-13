@@ -17,7 +17,7 @@ export default [
       // The mobile/ workspace is a React Native monorepo with its own
       // toolchain (RN babel, Metro, Hermes) and lint conventions that
       // diverge from the Node server's standard-kit config. It has its
-      // own typecheck via `yarn lint` inside each app.
+      // own typecheck via `npm run lint` inside each app.
       'mobile/**'
     ]
   }
