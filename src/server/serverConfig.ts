@@ -18,6 +18,31 @@ const asServerConfig = asObject({
   listenHost: asOptional(asString, 'localhost'),
   listenPort: asOptional(asNumber, 8008),
 
+  /**
+   * RTMP splitter ingress server. The RTMP splitter accepts incoming RTMP
+   * publishes at `{splitterUrl}/split/{eventId}` and pass-through forwards
+   * the encoded stream to two configured destinations (no transcoding).
+   *
+   * - `rtmpHost` is the local bind address for the RTMP socket.
+   * - `rtmpPort` is the local listen port.
+   * - `splitterUrl` is the publicly-reachable base URL (scheme + host +
+   *   port) shown to operators in the UI and used as the publish target
+   *   from OBS / encoders. It must NOT include a trailing slash or any
+   *   path; the application appends `/split/{eventId}` automatically.
+   *   Examples:
+   *     "rtmp://app.gamestation.co:1935"
+   *     "rtmps://app.gamestation.co:1935"   (if fronted by a TLS proxy)
+   *   When empty, falls back to `rtmp://{listenHost}:{rtmpPort}` which
+   *   is only useful in single-host dev setups. A server cannot reliably
+   *   detect its own public DNS name (reverse-DNS PTRs frequently don't
+   *   match the public name, and proxied / load-balanced deployments
+   *   hide the real hostname entirely), so this MUST be configured
+   *   explicitly in production.
+   */
+  rtmpHost: asOptional(asString, '0.0.0.0'),
+  rtmpPort: asOptional(asNumber, 1935),
+  splitterUrl: asOptional(asString, ''),
+
   // Databases:
   /**
    * Used by the primary app engine to connect to couchdb. In production this should

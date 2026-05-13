@@ -9,14 +9,20 @@ import {
   type DashboardOverrides,
   type OverrideUpdateMessage,
   type ScoreState,
-  type ScoreStateUpdate
+  type ScoreStateUpdate,
+  type SplitStatusMessage
 } from '../common/types'
+import {
+  subscribeStatus as subscribeSplitStatus,
+  unsubscribeStatus as unsubscribeSplitStatus
+} from './rtmp/splitter'
 import { logger } from './util/utils'
 
 // WebSocket servers for each endpoint
 let autoStateWss: WebSocketServer | undefined
 let dashboardWss: WebSocketServer | undefined
 let scoreboardWss: WebSocketServer | undefined
+let splitWss: WebSocketServer | undefined
 
 // Event state management - one per eventId
 interface EventState {
@@ -440,6 +446,37 @@ export function initializeWebSocketServer(server: HttpServer): void {
 
   logger('WebSocket server initialized at /sockets/api/v1/scoreboard/{eventId}')
 
+  // 4. Split status endpoint - pushes RTMP splitter ingress/outbound status
+  splitWss = new WebSocketServer({
+    noServer: true
+  })
+
+  splitWss.on('connection', (ws: WebSocket, eventId: string) => {
+    logger(`New split status client connected for event: ${eventId}`)
+    const snapshot = subscribeSplitStatus(eventId, ws)
+    const initial: SplitStatusMessage = {
+      type: 'splitStatus',
+      data: snapshot
+    }
+    try {
+      ws.send(JSON.stringify(initial))
+    } catch (error) {
+      logger('Error sending initial split status:', error)
+    }
+
+    ws.on('close', () => {
+      logger(`Split status client disconnected for event: ${eventId}`)
+      unsubscribeSplitStatus(eventId, ws)
+    })
+
+    ws.on('error', error => {
+      console.error('Split status WebSocket error:', error)
+      unsubscribeSplitStatus(eventId, ws)
+    })
+  })
+
+  logger('WebSocket server initialized at /sockets/api/v1/split/{eventId}')
+
   // Handle upgrade requests manually
   server.on('upgrade', (request, socket, head) => {
     const pathname = request.url ?? ''
@@ -457,6 +494,9 @@ export function initializeWebSocketServer(server: HttpServer): void {
     } else if (pathname.startsWith('/sockets/api/v1/scoreboard/')) {
       eventId = extractEventId(pathname, '/sockets/api/v1/scoreboard/')
       targetWss = scoreboardWss
+    } else if (pathname.startsWith('/sockets/api/v1/split/')) {
+      eventId = extractEventId(pathname, '/sockets/api/v1/split/')
+      targetWss = splitWss
     } else {
       logger(`Invalid WebSocket path: ${pathname}`)
       socket.destroy()
