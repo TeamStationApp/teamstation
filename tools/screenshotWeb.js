@@ -61,7 +61,7 @@ async function waitForPort(port, host = '127.0.0.1', timeoutMs = 90000) {
 
 function startWebpackDevServer() {
   console.log('[screenshotWeb] starting webpack-dev-server on :' + WEBPACK_PORT)
-  const child = spawn('yarn', ['start.web'], {
+  const child = spawn('npm', ['run', 'start.web'], {
     cwd: REPO_ROOT,
     stdio: ['ignore', 'pipe', 'pipe'],
     env: process.env

@@ -94,8 +94,6 @@ All React components were converted from standard React DOM to React Native comp
 To run the application in development mode with hot-reload:
 
 ```bash
-yarn start.web
-# or
 npm run start.web
 ```
 
@@ -106,8 +104,6 @@ This will start the webpack dev server on http://localhost:8080
 To build the application for production:
 
 ```bash
-yarn build.web
-# or
 npm run build.web
 ```
 
@@ -118,8 +114,6 @@ This creates an optimized production build in the `dist/` directory.
 The server-side code remains unchanged and can be built with:
 
 ```bash
-yarn build.server
-# or
 npm run build.server
 ```
 
@@ -187,8 +181,8 @@ After migration:
 If you encounter build errors:
 
 1. Clear build cache: `rm -rf dist node_modules/.cache`
-2. Reinstall dependencies: `yarn install`
-3. Rebuild: `yarn build.web`
+2. Reinstall dependencies: `npm install`
+3. Rebuild: `npm run build.web`
 
 ### Runtime Errors
 
