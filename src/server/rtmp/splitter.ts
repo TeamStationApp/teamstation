@@ -37,8 +37,31 @@ interface OutboundRuntime {
   bytesPerSecond: number
   bytesAtLastTick: number
   restartCount: number
+  // The ChildProcess instance the splitter currently considers the active
+  // forwarder for this outbound. Its 'exit' is the one that triggers the
+  // restart / state-machine logic. Earlier spawns that should have already
+  // exited (or whose 'exit' event we no longer trust) are still tracked via
+  // `spawned` below but are NOT this reference.
   child?: ChildProcess
+  // Every ChildProcess we have spawned for this outbound and for which we
+  // are not OS-confirmed dead yet.
+  //
+  // We can't fully trust child.on('exit'): in production we have observed
+  // Node fire 'exit' for ffmpeg children whose OS process was still alive
+  // (likely a libuv SIGCHLD reap race when many children exit in rapid
+  // succession). When that happens the splitter previously cleared
+  // outbound.child and forgot about the still-running ffmpeg, leaving an
+  // orphan pushing to the destination forever.
+  //
+  // By keeping every spawned child here until pollSampler confirms its PID
+  // is gone, stopOutbound / releaseOutbounds can reliably SIGTERM (and
+  // escalate to SIGKILL) every survivor.
+  spawned: Set<ChildProcess>
   restartTimer?: NodeJS.Timeout
+  // After SIGTERM we schedule a SIGKILL escalation. ffmpeg can ignore
+  // SIGTERM during certain blocking operations (TLS writes, in-flight
+  // RTMP handshakes, etc.) so we don't rely on it to actually exit.
+  killEscalationTimer?: NodeJS.Timeout
   // Once true the runtime has been retired and must never spawn another
   // ffmpeg child. Set when the entry is reconfigured or cleared so that
   // any in-flight exit handler / restart timer from the previous
@@ -67,6 +90,12 @@ interface SplitEntry {
 const APP_NAME = 'split'
 const SAMPLE_INTERVAL_MS = 1000
 const BACKOFF_STEPS_MS = [1000, 2000, 5000, 10000]
+// How long to wait between SIGTERM and SIGKILL when shutting an
+// outbound ffmpeg child down. Kept low because once we decide a child
+// must die we want the destination's stream key freed quickly so the
+// next spawn can claim it (e.g. AWS IVS only allows one publisher per
+// key).
+const SIGKILL_GRACE_MS = 3000
 
 const splits = new Map<string, SplitEntry>()
 let initialized = false
@@ -100,7 +129,40 @@ function createOutboundRuntime(url: string): OutboundRuntime {
     bytesPerSecond: 0,
     bytesAtLastTick: 0,
     restartCount: 0,
+    spawned: new Set<ChildProcess>(),
     released: false
+  }
+}
+
+/**
+ * Check whether a PID corresponds to a live OS process. Returns false on
+ * any error -- including ESRCH (no such process) AND less-expected errors
+ * like EINVAL -- so a misbehaving environment can never cause us to
+ * SIGKILL an unrelated PID.
+ */
+function isPidAlive(pid: number | undefined): boolean {
+  if (pid == null || pid <= 0) return false
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Send `signal` to `pid` via the raw process.kill syscall (NOT via the
+ * ChildProcess wrapper). Necessary at SIGKILL-escalation time because
+ * Node's ChildProcess sets an internal `killed` flag after the first
+ * kill() call and may refuse subsequent ones even if the OS process is
+ * actually still alive.
+ */
+function killByPid(pid: number | undefined, signal: NodeJS.Signals): void {
+  if (pid == null || pid <= 0) return
+  try {
+    process.kill(pid, signal)
+  } catch {
+    /* ignore -- pid may already be gone, which is fine */
   }
 }
 
@@ -390,6 +452,14 @@ function spawnOutbound(entry: SplitEntry, outbound: OutboundRuntime): void {
     clearTimeout(outbound.restartTimer)
     outbound.restartTimer = undefined
   }
+  // A spawn after a stop means the operator decided to forward again
+  // (e.g. publisher reconnected after a 'publisher disconnected' stop).
+  // Cancel any pending SIGKILL escalation so we don't accidentally
+  // SIGKILL the brand-new child we are about to register.
+  if (outbound.killEscalationTimer != null) {
+    clearTimeout(outbound.killEscalationTimer)
+    outbound.killEscalationTimer = undefined
+  }
   // The runtime was retired between the restart timer being scheduled and
   // it firing (e.g. user reconfigured destinations or cleared the entry).
   // Do not spawn another ffmpeg child against a stale URL.
@@ -408,6 +478,7 @@ function spawnOutbound(entry: SplitEntry, outbound: OutboundRuntime): void {
     return
   }
   outbound.child = child
+  outbound.spawned.add(child)
   outbound.state = 'connecting'
   outbound.lastError = undefined
   broadcastStatus(entry)
@@ -456,10 +527,43 @@ function spawnOutbound(entry: SplitEntry, outbound: OutboundRuntime): void {
   child.stderr?.on('data', onData)
   child.stdout?.on('data', onData)
 
+  let exitHandled = false
   child.on('exit', (code, signal) => {
+    // De-dup: Node has been observed in production to emit 'exit' more
+    // than once per ChildProcess. Treat the first emission as canonical
+    // and ignore the rest so we never double-increment restartCount or
+    // double-schedule a restart.
+    if (exitHandled) {
+      logger(
+        `[split:${entry.eventId}] duplicate exit for ffmpeg pid=${child.pid} url=${outbound.url}; ignoring`
+      )
+      return
+    }
+    exitHandled = true
+    const pid = child.pid
     logger(
-      `[split:${entry.eventId}] ffmpeg for ${outbound.url} exited code=${code} signal=${signal}`
+      `[split:${entry.eventId}] ffmpeg for ${outbound.url} exited code=${code} signal=${signal} pid=${pid}`
     )
+    // Phantom exit detection. If Node says the child died but the OS
+    // still has the PID alive, force-kill it and DO NOT process this as
+    // a real exit. We keep the child in `outbound.spawned` so the next
+    // pollSampler tick (or an explicit stopOutbound) can finish the job.
+    if (isPidAlive(pid)) {
+      logger(
+        `[split:${entry.eventId}] phantom exit: ffmpeg pid=${pid} still alive; sending SIGKILL`
+      )
+      killByPid(pid, 'SIGKILL')
+      broadcastStatus(entry)
+      return
+    }
+    outbound.spawned.delete(child)
+    // An earlier spawn's 'exit' arrived after we'd already moved on to a
+    // newer child. Drop tracking for the stale child but don't touch
+    // the state machine -- the current child is responsible for that.
+    if (outbound.child !== child) {
+      broadcastStatus(entry)
+      return
+    }
     outbound.child = undefined
     // If the runtime was retired (reconfigure / clear) it must never
     // restart, regardless of state, error, or current publish status.
@@ -491,6 +595,9 @@ function spawnOutbound(entry: SplitEntry, outbound: OutboundRuntime): void {
     outbound.restartCount += 1
     outbound.state = 'connecting'
     broadcastStatus(entry)
+    if (outbound.restartTimer != null) {
+      clearTimeout(outbound.restartTimer)
+    }
     outbound.restartTimer = setTimeout(() => {
       spawnOutbound(entry, outbound)
     }, backoff)
@@ -523,11 +630,38 @@ function stopOutbound(outbound: OutboundRuntime): void {
   }
   outbound.state = 'stopped'
   outbound.bytesPerSecond = 0
-  if (outbound.child != null) {
+  // SIGTERM every tracked child. In the common case `outbound.spawned`
+  // contains just the current `child`, but if a previous spawn had a
+  // phantom 'exit' event there will be additional survivors in here
+  // which the old code couldn't reach.
+  for (const c of outbound.spawned) {
     try {
-      outbound.child.kill('SIGTERM')
-    } catch {}
+      c.kill('SIGTERM')
+    } catch {
+      /* ignore */
+    }
   }
+  // Snapshot the set NOW. If a publisher reconnects between SIGTERM and
+  // SIGKILL grace (e.g. when stopOutbound is called from donePublish),
+  // a new ChildProcess could end up in outbound.spawned by the time the
+  // escalation timer fires; we don't want to kill it.
+  const toEscalate = Array.from(outbound.spawned)
+  if (outbound.killEscalationTimer != null) {
+    clearTimeout(outbound.killEscalationTimer)
+  }
+  outbound.killEscalationTimer = setTimeout(() => {
+    outbound.killEscalationTimer = undefined
+    for (const c of toEscalate) {
+      const pid = c.pid
+      if (isPidAlive(pid)) {
+        logger(
+          `[split] SIGKILL escalation for ffmpeg pid=${pid} url=${outbound.url}: did not respond to SIGTERM within ${SIGKILL_GRACE_MS}ms`
+        )
+        killByPid(pid, 'SIGKILL')
+      }
+    }
+  }, SIGKILL_GRACE_MS)
+  outbound.killEscalationTimer.unref?.()
 }
 
 /**
@@ -579,6 +713,16 @@ function pollSampler(): void {
       dirty = true
     }
     for (const outbound of entry.outbounds) {
+      // Sweep `outbound.spawned` of any ChildProcess whose OS PID is no
+      // longer alive. This is the canonical cleanup path for entries
+      // that landed in the set via a phantom 'exit' event (where the
+      // process was still alive at exit-emit time and we kept tracking
+      // it).
+      if (outbound.spawned.size > 0) {
+        for (const c of outbound.spawned) {
+          if (!isPidAlive(c.pid)) outbound.spawned.delete(c)
+        }
+      }
       const delta = outbound.bytesSent - outbound.bytesAtLastTick
       const bps = delta > 0 ? delta : 0
       outbound.bytesAtLastTick = outbound.bytesSent
@@ -635,6 +779,22 @@ export function initializeRtmpSplitter(): void {
     if (entry == null || entry.destinations.length === 0) {
       logger(
         `[split:${eventId}] publisher connected but no destinations configured; ignoring`
+      )
+      return
+    }
+    // NMS v4 fires `postPublish` BEFORE its "streamPath already has a
+    // publisher" guard runs, so a duplicate publisher attempt (e.g. the
+    // encoder reconnecting before the old session has been torn down)
+    // triggers this handler even though NMS will immediately reject the
+    // new session. If we already have an active ingress session, ignore
+    // the new one -- otherwise we would (a) overwrite our reference to
+    // the still-active publisher, losing track of it for donePublish,
+    // and (b) re-spawn outbound ffmpegs that fight the existing ones
+    // for the destination stream key, producing the dozen-retries
+    // failure mode the splitter previously got stuck in.
+    if (entry.ingress.session != null && entry.ingress.publishing) {
+      logger(
+        `[split:${eventId}] duplicate publisher attempt (session ${session.id}) ignored; already publishing as session ${entry.ingress.session.id}`
       )
       return
     }
