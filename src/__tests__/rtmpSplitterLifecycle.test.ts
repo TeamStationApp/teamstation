@@ -30,7 +30,12 @@ interface SpawnRecord {
   child: FakeChild
 }
 
-let nextPid = 10000
+// Fake-child PIDs are assigned from a deliberately-very-high range so
+// the splitter's new isPidAlive() probe -- which calls
+// `process.kill(pid, 0)` -- never accidentally collides with a real
+// process on the test runner. Linux's pid_max is at most 2^22, so any
+// value above that is guaranteed to return ESRCH.
+let nextPid = 1_000_000_000
 
 function makeFakeChild(url: string): FakeChild {
   const emitter = new EventEmitter() as FakeChild
@@ -279,6 +284,81 @@ describe('rtmp splitter lifecycle', () => {
       }, 1500)
     })
   }).timeout(5000)
+
+  it('a duplicate exit event on the same child does not double-spawn or double-count restarts', done => {
+    const fake = installFakeSpawn()
+    restoreSpawn = fake.restore
+    const splitter = loadSplitter()
+
+    splitter.setSplit('evtDup', [DEST_A])
+    splitter.forcePublishForTest('evtDup', true)
+    expect(fake.spawned).to.have.length(1)
+    const child1 = fake.spawned[0].child
+
+    // Fire 'exit' twice in rapid succession on the SAME ChildProcess.
+    // Node has been observed to do this for ffmpeg children in
+    // production; the splitter's de-dup guard must handle it.
+    child1.fakeExit(251)
+    child1.fakeExit(251)
+
+    // After the (single) restart backoff fires we should see exactly
+    // ONE additional spawn -- the canonical restart -- not two.
+    setTimeout(() => {
+      const totalA = fake.spawned.filter(s => s.url === DEST_A).length
+      expect(totalA, 'spawns for DEST_A after double-exit').to.equal(2)
+      const snap = splitter.getStatusSnapshot('evtDup') as {
+        outbounds: Array<{ restartCount: number }>
+      } | null
+      expect(
+        snap!.outbounds[0].restartCount,
+        'restartCount not double-incremented'
+      ).to.equal(1)
+      done()
+    }, 1500)
+  }).timeout(3000)
+
+  it('stopSplit sends SIGTERM to every still-tracked child (not just the canonical current one)', done => {
+    const fake = installFakeSpawn()
+    restoreSpawn = fake.restore
+    const splitter = loadSplitter()
+
+    splitter.setSplit('evtMulti', [DEST_A])
+    splitter.forcePublishForTest('evtMulti', true)
+    expect(fake.spawned).to.have.length(1)
+    const child1 = fake.spawned[0].child
+
+    // Suppress child1's auto-exit so it remains in outbound.spawned
+    // even after we tell the splitter we believe it died. Track which
+    // signals it actually receives.
+    const child1Signals: Array<NodeJS.Signals | number | undefined> = []
+    child1.kill = (signal?: NodeJS.Signals | number): boolean => {
+      child1Signals.push(signal)
+      return true
+    }
+
+    // Simulated NORMAL exit -> a real restart kicks in. After the
+    // backoff fires the splitter spawns child2 and outbound.child
+    // points at child2. child1 is removed from outbound.spawned by the
+    // (non-phantom) branch of the exit handler.
+    child1.fakeExit(251)
+
+    setTimeout(() => {
+      expect(fake.spawned.length, 'restart spawned child2').to.equal(2)
+      const child2 = fake.spawned[1].child
+      const child2Signals: Array<NodeJS.Signals | number | undefined> = []
+      child2.kill = (signal?: NodeJS.Signals | number): boolean => {
+        child2Signals.push(signal)
+        return true
+      }
+      // stopSplit must SIGTERM child2 (the current canonical child).
+      // child1 was already cleanly removed when its exit fired, so it
+      // should NOT be re-signalled.
+      splitter.stopSplit('evtMulti')
+      expect(child2Signals, 'child2 SIGTERM').to.deep.equal(['SIGTERM'])
+      expect(child1Signals, 'child1 not re-signalled').to.deep.equal([])
+      done()
+    }, 1300)
+  }).timeout(3000)
 
   it('clearSplit retires outbounds even when publisher is offline', done => {
     const fake = installFakeSpawn()
