@@ -248,11 +248,11 @@ export function setSplit(
   if (
     !Array.isArray(destinations) ||
     destinations.length < 1 ||
-    destinations.length > 2
+    destinations.length > 4
   ) {
     return {
       ok: false,
-      error: 'destinations must be an array of 1 or 2 URLs'
+      error: 'destinations must be an array of 1 to 4 URLs'
     }
   }
   for (const url of destinations) {
