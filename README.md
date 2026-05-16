@@ -8,15 +8,15 @@ OBS or other streaming apps to overlay a score on video streams.
 - `/` - register a new event.
 - `/dashboard/{eventId}` - manual overrides and engine status.
 - `/scoreboard/{eventId}` - the live scoreboard widget (use this in OBS).
-- `/split/{eventId}` - RTMP splitter UI: configure two destination URLs
-  and stream once into the splitter; it pass-through forwards to both
-  destinations (no transcoding).
+- `/split/{eventId}` - RTMP splitter UI: configure up to four
+  destination URLs and stream once into the splitter; it pass-through
+  forwards to every configured destination (no transcoding).
 
 ## RTMP splitter
 
 The server boots a built-in RTMP ingress on `serverConfig.rtmpPort`
 (default `1935`). Publishing to `{splitterUrl}/split/{eventId}` relays
-the encoded stream to both configured destinations using
+the encoded stream to up to four configured destinations using
 `ffmpeg -c copy` (no decoding/re-encoding).
 
 `splitterUrl` (in `serverConfig.json`) is the publicly-reachable base

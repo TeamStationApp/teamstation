@@ -18,6 +18,11 @@ interface SplitConfigResponse {
   app: string
 }
 
+const MAX_DESTINATIONS = 4
+
+const emptyDestinations = (): string[] =>
+  Array.from({ length: MAX_DESTINATIONS }, () => '')
+
 const emptyStatus = (eventId: string): SplitStatus => ({
   eventId,
   destinations: [],
@@ -44,8 +49,7 @@ const Splitter: React.FC = () => {
   const styles = getStyles(theme)
 
   const [eventIdInput, setEventIdInput] = useState(eventIdParam ?? '')
-  const [destination1, setDestination1] = useState('')
-  const [destination2, setDestination2] = useState('')
+  const [destinations, setDestinations] = useState<string[]>(emptyDestinations)
   const [splitConfig, setSplitConfig] = useState<SplitConfigResponse | null>(
     null
   )
@@ -55,7 +59,7 @@ const Splitter: React.FC = () => {
   const [ingressCopied, setIngressCopied] = useState(false)
 
   const wsRef = useRef<WebSocket | null>(null)
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const shouldReconnectRef = useRef(true)
   // Last destination values we know the server is holding for this
   // event. Used to decide whether it is safe to auto-overwrite the
@@ -64,8 +68,15 @@ const Splitter: React.FC = () => {
   // last-known server value, so locally-typed edits are never silently
   // clobbered. Updated on initial GET, on successful save, and from the
   // status WebSocket.
-  const serverDest1Ref = useRef<string>('')
-  const serverDest2Ref = useRef<string>('')
+  const serverDestsRef = useRef<string[]>(emptyDestinations())
+
+  const setDestinationAt = useCallback((index: number, value: string): void => {
+    setDestinations(current => {
+      const next = current.slice()
+      next[index] = value
+      return next
+    })
+  }, [])
 
   // Load splitter config (rtmp host/port) once on mount
   useEffect(() => {
@@ -106,10 +117,8 @@ const Splitter: React.FC = () => {
     // Reset form + sync state so we don't briefly show another event's
     // destinations while the GET round-trip completes.
     setStatus(emptyStatus(eventIdParam))
-    setDestination1('')
-    setDestination2('')
-    serverDest1Ref.current = ''
-    serverDest2Ref.current = ''
+    setDestinations(emptyDestinations())
+    serverDestsRef.current = emptyDestinations()
 
     let wsUrl: string
     // @ts-expect-error injected by webpack DefinePlugin in dev mode
@@ -151,12 +160,12 @@ const Splitter: React.FC = () => {
       .then(async r => await r.json())
       .then((json: SplitStatus) => {
         setStatus(json)
-        const d0 = json.destinations[0] ?? ''
-        const d1 = json.destinations[1] ?? ''
-        setDestination1(d0)
-        setDestination2(d1)
-        serverDest1Ref.current = d0
-        serverDest2Ref.current = d1
+        const next = emptyDestinations()
+        for (let i = 0; i < MAX_DESTINATIONS; i++) {
+          next[i] = json.destinations[i] ?? ''
+        }
+        setDestinations(next)
+        serverDestsRef.current = next.slice()
       })
       .catch((err: unknown) => {
         console.error('Failed to load split snapshot:', err)
@@ -179,18 +188,29 @@ const Splitter: React.FC = () => {
   // user has diverged, we leave their unsaved edits alone.
   useEffect(() => {
     if (status == null) return
-    const d0 = status.destinations[0] ?? ''
-    const d1 = status.destinations[1] ?? ''
-    if (d0 !== serverDest1Ref.current) {
-      const prev = serverDest1Ref.current
-      setDestination1(current => (current === prev ? d0 : current))
-      serverDest1Ref.current = d0
+    const prev = serverDestsRef.current
+    const incoming = emptyDestinations()
+    for (let i = 0; i < MAX_DESTINATIONS; i++) {
+      incoming[i] = status.destinations[i] ?? ''
     }
-    if (d1 !== serverDest2Ref.current) {
-      const prev = serverDest2Ref.current
-      setDestination2(current => (current === prev ? d1 : current))
-      serverDest2Ref.current = d1
+    let changed = false
+    for (let i = 0; i < MAX_DESTINATIONS; i++) {
+      if (incoming[i] !== prev[i]) {
+        changed = true
+        break
+      }
     }
+    if (!changed) return
+    setDestinations(current => {
+      const next = current.slice()
+      for (let i = 0; i < MAX_DESTINATIONS; i++) {
+        if (incoming[i] !== prev[i] && current[i] === prev[i]) {
+          next[i] = incoming[i]
+        }
+      }
+      return next
+    })
+    serverDestsRef.current = incoming
   }, [status])
 
   const handleEnter = useCallback((): void => {
@@ -226,13 +246,12 @@ const Splitter: React.FC = () => {
 
   const saveDestinations = useCallback(async (): Promise<void> => {
     if (eventIdParam == null) return
-    const dest1 = destination1.trim()
-    const dest2 = destination2.trim()
+    const trimmed = destinations.map(d => d.trim())
     // Collect only the non-empty destinations. The splitter accepts 1
-    // or 2 URLs, so leaving Destination 2 blank is a valid way to fan
-    // out to a single endpoint.
-    const destinations = [dest1, dest2].filter(d => d !== '')
-    if (destinations.length === 0) {
+    // to 4 URLs, so leaving the optional fields blank is a valid way
+    // to fan out to fewer endpoints.
+    const payload = trimmed.filter(d => d !== '')
+    if (payload.length === 0) {
       setFeedback('At least one destination is required.')
       return
     }
@@ -242,7 +261,7 @@ const Splitter: React.FC = () => {
       const res = await fetch(`/api/v1/split/${eventIdParam}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ destinations })
+        body: JSON.stringify({ destinations: payload })
       })
       const json = await res.json()
       if (!res.ok) {
@@ -252,16 +271,22 @@ const Splitter: React.FC = () => {
         // Record the just-saved values as the new server baseline so
         // the auto-sync effect treats the imminent WS echo as a no-op,
         // and any *subsequent* remote change is still recognized as a
-        // divergence and reflected in the inputs.
-        serverDest1Ref.current = dest1
-        serverDest2Ref.current = dest2
+        // divergence and reflected in the inputs. The server stores the
+        // filtered (compacted) list, so non-empty entries shift up to
+        // fill in any blanks that were left between them.
+        const baseline = emptyDestinations()
+        for (let i = 0; i < MAX_DESTINATIONS; i++) {
+          baseline[i] = payload[i] ?? ''
+        }
+        serverDestsRef.current = baseline
+        setDestinations(baseline)
       }
     } catch (error) {
       setFeedback(`Save failed: ${String(error)}`)
     } finally {
       setIsSaving(false)
     }
-  }, [eventIdParam, destination1, destination2])
+  }, [eventIdParam, destinations])
 
   const stopSplit = useCallback(async (): Promise<void> => {
     if (eventIdParam == null) return
@@ -293,7 +318,7 @@ const Splitter: React.FC = () => {
           <Text style={styles.title}>RTMP Splitter</Text>
           <Text style={styles.description}>
             Pick a unique event ID. The splitter will accept an RTMP publish at
-            its ingress URL and forward it to two configured destinations
+            its ingress URL and forward it to up to four configured destinations
             without transcoding.
           </Text>
           <TextInput
@@ -348,28 +373,29 @@ const Splitter: React.FC = () => {
           </View>
         </View>
 
-        <View style={styles.linkSection}>
-          <Text style={styles.linkLabel}>Destination 1:</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="rtmp://destination1.example.com/live/key1"
-            placeholderTextColor={theme.placeholderTextColor}
-            value={destination1}
-            onChangeText={setDestination1}
-            autoCapitalize="none"
-          />
-        </View>
-        <View style={styles.linkSection}>
-          <Text style={styles.linkLabel}>Destination 2 (optional):</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="rtmps://destination2.example.com/live/key2"
-            placeholderTextColor={theme.placeholderTextColor}
-            value={destination2}
-            onChangeText={setDestination2}
-            autoCapitalize="none"
-          />
-        </View>
+        {destinations.map((value, index) => {
+          const label =
+            index === 0
+              ? 'Destination 1:'
+              : `Destination ${index + 1} (optional):`
+          const scheme = index === 1 ? 'rtmps' : 'rtmp'
+          const placeholder = `${scheme}://destination${index + 1}.example.com/live/key${index + 1}`
+          return (
+            <View key={index} style={styles.linkSection}>
+              <Text style={styles.linkLabel}>{label}</Text>
+              <TextInput
+                style={styles.input}
+                placeholder={placeholder}
+                placeholderTextColor={theme.placeholderTextColor}
+                value={value}
+                onChangeText={text => {
+                  setDestinationAt(index, text)
+                }}
+                autoCapitalize="none"
+              />
+            </View>
+          )
+        })}
 
         <View style={styles.buttonRow}>
           <Pressable

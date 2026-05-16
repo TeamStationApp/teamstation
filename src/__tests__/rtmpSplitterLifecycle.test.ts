@@ -142,7 +142,7 @@ describe('rtmp splitter lifecycle', () => {
     }
   })
 
-  it('setSplit accepts a single destination and rejects empty arrays', () => {
+  it('setSplit accepts 1 to 4 destinations and rejects out-of-range arrays', () => {
     const fake = installFakeSpawn()
     restoreSpawn = fake.restore
     const splitter = loadSplitter()
@@ -150,11 +150,11 @@ describe('rtmp splitter lifecycle', () => {
     // Empty array → rejected
     let res = splitter.setSplit('evt1b', [])
     expect(res.ok, 'empty array rejected').to.equal(false)
-    expect(res.error ?? '').to.match(/array of 1 or 2/)
+    expect(res.error ?? '').to.match(/array of 1 to 4/)
 
-    // 3+ destinations → rejected
-    res = splitter.setSplit('evt1b', [DEST_A, DEST_B, DEST_C])
-    expect(res.ok, '3 destinations rejected').to.equal(false)
+    // 5+ destinations → rejected
+    res = splitter.setSplit('evt1b', [DEST_A, DEST_B, DEST_C, DEST_D, DEST_A])
+    expect(res.ok, '5 destinations rejected').to.equal(false)
 
     // Single destination → accepted
     res = splitter.setSplit('evt1b', [DEST_A])
@@ -171,10 +171,31 @@ describe('rtmp splitter lifecycle', () => {
     const snap2 = splitter.getStatusSnapshot('evt1b') as typeof snap
     expect(snap2!.destinations).to.deep.equal([DEST_A, DEST_B])
 
-    // Downgrading from 2 → 1 destination works
-    splitter.setSplit('evt1b', [DEST_C])
+    // Three destinations → accepted
+    splitter.setSplit('evt1b', [DEST_A, DEST_B, DEST_C])
     const snap3 = splitter.getStatusSnapshot('evt1b') as typeof snap
-    expect(snap3!.destinations).to.deep.equal([DEST_C])
+    expect(snap3!.destinations).to.deep.equal([DEST_A, DEST_B, DEST_C])
+    expect(snap3!.outbounds.map(o => o.url)).to.deep.equal([
+      DEST_A,
+      DEST_B,
+      DEST_C
+    ])
+
+    // Four destinations → accepted
+    splitter.setSplit('evt1b', [DEST_A, DEST_B, DEST_C, DEST_D])
+    const snap4 = splitter.getStatusSnapshot('evt1b') as typeof snap
+    expect(snap4!.destinations).to.deep.equal([DEST_A, DEST_B, DEST_C, DEST_D])
+    expect(snap4!.outbounds.map(o => o.url)).to.deep.equal([
+      DEST_A,
+      DEST_B,
+      DEST_C,
+      DEST_D
+    ])
+
+    // Downgrading from 4 → 1 destination works
+    splitter.setSplit('evt1b', [DEST_C])
+    const snap5 = splitter.getStatusSnapshot('evt1b') as typeof snap
+    expect(snap5!.destinations).to.deep.equal([DEST_C])
   })
 
   it('orphan exit handler does not spawn new ffmpeg after reconfigure', done => {
