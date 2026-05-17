@@ -22,6 +22,21 @@ interface NmsSession {
   streamPath?: string
   inBytes?: number
   isPublisher?: boolean
+  // RtmpSession.close() ends the underlying TCP socket, which (when the
+  // socket is healthy) cascades through onClose -> broadcast.donePublish
+  // -> our donePublish event handler, releasing NMS's "already has a
+  // publisher" lock for this streamPath.
+  close?: () => void
+  // The raw net.Socket. Exposed for the rare case where close() is a
+  // no-op because the socket is already half-closed (e.g. zombie session
+  // whose TCP peer died without FIN/RST), and we need to forcibly
+  // destroy() it to make Node fire the close event.
+  socket?: { destroy?: () => void }
+  // The BroadcastServer instance NMS attaches to a publishing session in
+  // RtmpSession.onConnect. Calling .donePublish(session) directly on it
+  // releases the streamPath publisher lock even when the socket-close
+  // path doesn't fire (it's idempotent: checks session === publisher).
+  broadcast?: { donePublish?: (session: NmsSession) => void }
 }
 interface NmsInstance {
   on: (event: string, listener: (session: NmsSession) => void) => void
@@ -77,6 +92,14 @@ interface IngressRuntime {
   bytesPerSecond: number
   bytesAtLastTick: number
   session?: NmsSession
+  // Number of consecutive pollSampler ticks during which we were
+  // publishing=true but observed 0 bytes/sec. Reset on bytes flowing,
+  // on a new publisher session connecting, or on any cleanup path.
+  // When this reaches STALE_INGRESS_TICKS the splitter assumes node-
+  // media-server has held onto a dead TCP connection (no FIN/RST ever
+  // arrived, so onClose -> donePublish never fired) and force-clears
+  // the ingress.
+  zeroByteTicks: number
 }
 
 interface SplitEntry {
@@ -96,6 +119,13 @@ const BACKOFF_STEPS_MS = [1000, 2000, 5000, 10000]
 // next spawn can claim it (e.g. AWS IVS only allows one publisher per
 // key).
 const SIGKILL_GRACE_MS = 3000
+// How many consecutive 1-second pollSampler ticks of "publishing=true
+// but 0 bytes/sec" before we conclude the publisher session is a
+// zombie (the TCP peer died silently and NMS never fired donePublish)
+// and force-clear it. 30s is generous enough to ride out an OBS
+// keyframe-interval wait or a brief encoder hiccup but tight enough
+// that operators don't have to PM2-restart the process to recover.
+const STALE_INGRESS_TICKS = 30
 
 const splits = new Map<string, SplitEntry>()
 let initialized = false
@@ -117,7 +147,8 @@ function createIngressRuntime(): IngressRuntime {
     receivingPackets: false,
     bytesReceived: 0,
     bytesPerSecond: 0,
-    bytesAtLastTick: 0
+    bytesAtLastTick: 0,
+    zeroByteTicks: 0
   }
 }
 
@@ -289,6 +320,14 @@ export function setSplit(
  * - Kills any running ffmpeg children and marks each outbound runtime
  *   as released (so the closure-captured exit handlers / restart timers
  *   become no-ops).
+ * - Force-closes the ingress publisher (if any). Stop is the operator's
+ *   way of saying "fully reset this event," so we kick the publisher
+ *   too -- otherwise an alive publisher would keep filling NMS's
+ *   buffers (and our `bytesReceived` counter) for an event that has no
+ *   destinations to forward to, AND a *zombie* publisher (TCP peer died
+ *   silently) would never be cleared because Stop only used to release
+ *   outbounds. The operator can resume by clicking Save / Activate,
+ *   which prompts the encoder to reconnect against fresh state.
  * - Sets each outbound's state to 'stopped' so the UI can display
  *   "Destination N: Stopped" instead of suddenly hiding the row.
  * - LEAVES `entry.destinations` and `entry.outbounds` populated so the
@@ -303,6 +342,16 @@ export function setSplit(
 export function stopSplit(eventId: string): boolean {
   const entry = splits.get(eventId)
   if (entry == null) return false
+  // forceCloseIngress only handles ingress; outbound teardown is
+  // releaseOutbounds's job. Order doesn't matter for correctness here
+  // (the two operate on disjoint parts of the entry) but we do
+  // ingress first so the eventual NMS donePublish event handler -- if
+  // it fires from session.close() / socket.destroy() -- can be a
+  // total no-op (its `if (entry.ingress.session !== session)` guard
+  // already passes by the time NMS gets around to it).
+  if (entry.ingress.publishing || entry.ingress.session != null) {
+    forceCloseIngress(entry, 'stopped')
+  }
   releaseOutbounds(entry, 'stopped')
   broadcastStatus(entry)
   return true
@@ -315,6 +364,9 @@ export function stopSplit(eventId: string): boolean {
 export function clearSplit(eventId: string): boolean {
   const entry = splits.get(eventId)
   if (entry == null) return false
+  if (entry.ingress.publishing || entry.ingress.session != null) {
+    forceCloseIngress(entry, 'cleared')
+  }
   releaseOutbounds(entry, 'cleared')
   entry.destinations = []
   entry.outbounds = []
@@ -341,6 +393,39 @@ export function unsubscribeStatus(eventId: string, ws: WebSocket): void {
 }
 
 /**
+ * Test-only: drive a single pollSampler tick on demand. Unit tests
+ * don't run `initializeRtmpSplitter` (which is what installs the 1Hz
+ * interval timer), so without this export there is no way to exercise
+ * the stale-publisher detector in deterministic time. Calling N times
+ * is equivalent to N seconds of wall-clock time as far as the sampler
+ * is concerned.
+ */
+export function tickSamplerForTest(): void {
+  pollSampler()
+}
+
+/**
+ * Test-only: install a fake NMS session on the ingress runtime. Used
+ * by tests that need to verify forceCloseIngress's three-step cleanup
+ * cascade (close -> destroy -> broadcast.donePublish) actually fires
+ * each step. forcePublishForTest alone leaves session=undefined.
+ */
+export function attachIngressSessionForTest(
+  eventId: string,
+  session: {
+    id: string
+    inBytes?: number
+    close?: () => void
+    socket?: { destroy?: () => void }
+    broadcast?: { donePublish?: (session: unknown) => void }
+  }
+): void {
+  const entry = splits.get(eventId)
+  if (entry == null) return
+  entry.ingress.session = session as NmsSession
+}
+
+/**
  * Test-only: flip the ingress publishing flag for an event. Lets unit
  * tests exercise outbound spawn / restart logic without standing up
  * node-media-server. Mirrors the side-effects of postPublish/donePublish
@@ -359,11 +444,13 @@ export function forcePublishForTest(
     entry.ingress.bytesReceived = 0
     entry.ingress.receivingPackets = false
     entry.ingress.bytesPerSecond = 0
+    entry.ingress.zeroByteTicks = 0
     startOutbounds(entry)
   } else if (!publishing && entry.ingress.publishing) {
     entry.ingress.publishing = false
     entry.ingress.receivingPackets = false
     entry.ingress.bytesPerSecond = 0
+    entry.ingress.zeroByteTicks = 0
     stopOutbounds(entry, 'test publisher disconnected')
   }
 }
@@ -665,6 +752,85 @@ function stopOutbound(outbound: OutboundRuntime): void {
 }
 
 /**
+ * Forcibly clear an entry's ingress publisher state, without waiting
+ * for node-media-server to notice the publisher is gone.
+ *
+ * Use cases:
+ *   1. Stale-publisher detection from pollSampler -- the TCP peer died
+ *      silently (no FIN/RST), so NMS still believes the streamPath has
+ *      an active publisher and rejects every reconnect attempt with
+ *      "already has a publisher". The operator-visible symptom is a
+ *      yellow "Connected, no packets" indicator that never recovers.
+ *   2. stopSplit / clearSplit -- the operator explicitly asked to stop;
+ *      we don't want a still-alive publisher to keep filling NMS's
+ *      buffers (and our `bytesReceived` counter) for an event that has
+ *      no destinations to forward to.
+ *
+ * The cleanup happens in three layered attempts so we recover even
+ * when the underlying socket is in an unusual state:
+ *
+ *   a. session.close() -- graceful socket.end(). Works in the common
+ *      case where the publisher socket is alive.
+ *   b. session.socket.destroy() -- forceful socket teardown. Catches
+ *      cases where end() is a no-op because the socket is already
+ *      half-closed.
+ *   c. session.broadcast.donePublish(session) -- direct call into NMS
+ *      to release its "this streamPath has a publisher" lock, in case
+ *      neither of the above triggers RtmpSession.onClose. donePublish
+ *      is idempotent (checks session === this.publisher).
+ *
+ * Crucially, our local `entry.ingress` is reset BEFORE invoking any of
+ * those, so:
+ *   - If our donePublish event handler fires from one of (a)/(b)/(c),
+ *     it short-circuits via `if (entry.ingress.session !== session)`.
+ *   - If none of them work, the splitter UI still recovers because we
+ *     no longer reference the dead session and the next pollSampler
+ *     tick won't read its frozen inBytes.
+ *
+ * NOTE: this function does NOT touch outbounds. Each caller decides
+ * whether to `stopOutbounds` (let them respawn on next publisher) or
+ * `releaseOutbounds` (refuse to respawn until setSplit is called). The
+ * stale-publisher path wants the former; stopSplit/clearSplit want the
+ * latter. Centralizing outbound cleanup here would either double-kill
+ * children (if the caller also called release/stop) or silently change
+ * the release semantics depending on how forceCloseIngress was called.
+ */
+function forceCloseIngress(entry: SplitEntry, reason: string): void {
+  const session = entry.ingress.session
+  entry.ingress.publishing = false
+  entry.ingress.receivingPackets = false
+  entry.ingress.bytesPerSecond = 0
+  entry.ingress.zeroByteTicks = 0
+  entry.ingress.session = undefined
+  if (session != null) {
+    logger(
+      `[split:${entry.eventId}] forcing publisher session ${session.id} closed (${reason})`
+    )
+    try {
+      session.close?.()
+    } catch (error) {
+      logger(
+        `[split:${entry.eventId}] session.close() threw during force-close: ${String(error)}`
+      )
+    }
+    try {
+      session.socket?.destroy?.()
+    } catch (error) {
+      logger(
+        `[split:${entry.eventId}] socket.destroy() threw during force-close: ${String(error)}`
+      )
+    }
+    try {
+      session.broadcast?.donePublish?.(session)
+    } catch (error) {
+      logger(
+        `[split:${entry.eventId}] broadcast.donePublish() threw during force-close: ${String(error)}`
+      )
+    }
+  }
+}
+
+/**
  * Permanently retire the current outbound runtimes for an entry. After
  * this returns the OutboundRuntime objects are guaranteed never to spawn
  * another ffmpeg child even if their previously-scheduled restart timer
@@ -703,13 +869,34 @@ function pollSampler(): void {
         ingress.receivingPackets = nextReceiving
         dirty = true
       }
-      if (ingress.bytesPerSecond > 0) dirty = true
+      if (ingress.bytesPerSecond > 0) {
+        dirty = true
+        ingress.zeroByteTicks = 0
+      } else {
+        ingress.zeroByteTicks += 1
+        if (ingress.zeroByteTicks >= STALE_INGRESS_TICKS) {
+          logger(
+            `[split:${entry.eventId}] stale publisher detected: 0 bytes for ${ingress.zeroByteTicks}s; force-closing`
+          )
+          // Stop, but do NOT release: when a fresh publisher reconnects
+          // (e.g. OBS auto-reconnect after we kicked the zombie) the
+          // existing destination configuration should kick back in
+          // automatically, the same way it would if the publisher had
+          // never gone stale.
+          forceCloseIngress(entry, 'stale publisher (no bytes)')
+          stopOutbounds(entry, 'stale publisher (no bytes)')
+          broadcastStatus(entry)
+          continue
+        }
+      }
     } else if (
       ingress.bytesPerSecond !== 0 ||
-      ingress.receivingPackets === true
+      ingress.receivingPackets === true ||
+      ingress.zeroByteTicks !== 0
     ) {
       ingress.bytesPerSecond = 0
       ingress.receivingPackets = false
+      ingress.zeroByteTicks = 0
       dirty = true
     }
     for (const outbound of entry.outbounds) {
@@ -805,6 +992,7 @@ export function initializeRtmpSplitter(): void {
     entry.ingress.bytesReceived = session.inBytes ?? 0
     entry.ingress.receivingPackets = false
     entry.ingress.bytesPerSecond = 0
+    entry.ingress.zeroByteTicks = 0
     broadcastStatus(entry)
     startOutbounds(entry)
   })
@@ -820,6 +1008,7 @@ export function initializeRtmpSplitter(): void {
     entry.ingress.publishing = false
     entry.ingress.receivingPackets = false
     entry.ingress.bytesPerSecond = 0
+    entry.ingress.zeroByteTicks = 0
     entry.ingress.session = undefined
     stopOutbounds(entry, 'publisher disconnected')
     broadcastStatus(entry)

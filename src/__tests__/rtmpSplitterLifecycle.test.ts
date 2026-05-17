@@ -94,6 +94,17 @@ interface SplitterModule {
   clearSplit: (eventId: string) => boolean
   getStatusSnapshot: (eventId: string) => unknown
   forcePublishForTest: (eventId: string, publishing: boolean) => void
+  tickSamplerForTest: () => void
+  attachIngressSessionForTest: (
+    eventId: string,
+    session: {
+      id: string
+      inBytes?: number
+      close?: () => void
+      socket?: { destroy?: () => void }
+      broadcast?: { donePublish?: (session: unknown) => void }
+    }
+  ) => void
 }
 
 function loadSplitter(): SplitterModule {
@@ -380,6 +391,184 @@ describe('rtmp splitter lifecycle', () => {
       done()
     }, 1300)
   }).timeout(3000)
+
+  it('stopSplit force-closes the ingress publisher when one is active', done => {
+    const fake = installFakeSpawn()
+    restoreSpawn = fake.restore
+    const splitter = loadSplitter()
+
+    splitter.setSplit('evtStopIngress', [DEST_A])
+    splitter.forcePublishForTest('evtStopIngress', true)
+    expect(fake.spawned).to.have.length(1)
+
+    // Track which cleanup steps fire on the fake session.
+    const closeCalls: string[] = []
+    const destroyCalls: string[] = []
+    const broadcastDoneCalls: unknown[] = []
+    const fakeSession = {
+      id: 'fake-session-1',
+      inBytes: 0,
+      close: (): void => {
+        closeCalls.push('close')
+      },
+      socket: {
+        destroy: (): void => {
+          destroyCalls.push('destroy')
+        }
+      },
+      broadcast: {
+        donePublish: (session: unknown): void => {
+          broadcastDoneCalls.push(session)
+        }
+      }
+    }
+    splitter.attachIngressSessionForTest('evtStopIngress', fakeSession)
+
+    // Sanity: ingress is publishing before stop.
+    let snap = splitter.getStatusSnapshot('evtStopIngress') as {
+      ingress: { publishing: boolean }
+      outbounds: Array<{ state: string }>
+    } | null
+    expect(snap!.ingress.publishing, 'publishing before stop').to.equal(true)
+
+    splitter.stopSplit('evtStopIngress')
+
+    // After stop: ingress flipped to not-publishing AND every cleanup
+    // step fired against the fake session. We assert all three even
+    // though only one would suffice in production -- the layered
+    // cleanup is the contract that lets us recover from sockets in
+    // unusual states (zombie/half-closed/etc).
+    snap = splitter.getStatusSnapshot('evtStopIngress') as typeof snap
+    expect(snap!.ingress.publishing, 'publishing after stop').to.equal(false)
+    expect(closeCalls, 'session.close called').to.deep.equal(['close'])
+    expect(destroyCalls, 'socket.destroy called').to.deep.equal(['destroy'])
+    expect(broadcastDoneCalls, 'broadcast.donePublish called').to.deep.equal([
+      fakeSession
+    ])
+
+    // Outbounds should also be marked stopped (existing stopSplit
+    // behaviour, regression-tested here so the new ingress-clearing
+    // logic doesn't accidentally skip the outbound teardown).
+    for (const o of snap!.outbounds) {
+      expect(o.state).to.equal('stopped')
+    }
+
+    // No outbounds should respawn even if a publisher reconnects: the
+    // outbound runtimes must still be `released` after the stop.
+    splitter.forcePublishForTest('evtStopIngress', true)
+    setTimeout(() => {
+      const respawns = fake.spawned.filter(s => s.url === DEST_A).length
+      expect(respawns, 'no respawn after stopSplit').to.equal(1)
+      done()
+    }, 1500)
+  }).timeout(5000)
+
+  it('pollSampler force-closes a publisher that has been silent for STALE_INGRESS_TICKS ticks', done => {
+    const fake = installFakeSpawn()
+    restoreSpawn = fake.restore
+    const splitter = loadSplitter()
+
+    splitter.setSplit('evtStale', [DEST_A])
+    splitter.forcePublishForTest('evtStale', true)
+    expect(fake.spawned).to.have.length(1)
+
+    let closed = false
+    let destroyed = false
+    let broadcastDone = false
+    splitter.attachIngressSessionForTest('evtStale', {
+      id: 'stale-session',
+      // inBytes is held at 0 for the entire test -- the zombie-
+      // publisher symptom. (Using a non-zero fixed inBytes would make
+      // tick #1 see a positive delta against bytesAtLastTick=0 and
+      // reset the counter; that's a different scenario covered by the
+      // "resets ... when bytes flow again" test.)
+      inBytes: 0,
+      close: (): void => {
+        closed = true
+      },
+      socket: {
+        destroy: (): void => {
+          destroyed = true
+        }
+      },
+      broadcast: {
+        donePublish: (): void => {
+          broadcastDone = true
+        }
+      }
+    })
+
+    // Drive the sampler. STALE_INGRESS_TICKS is 30 in the splitter; we
+    // run 29 ticks first to confirm the detector hasn't tripped early
+    // (false-positive guard), then one more to push it over.
+    for (let i = 0; i < 29; i++) splitter.tickSamplerForTest()
+    let snap = splitter.getStatusSnapshot('evtStale') as {
+      ingress: { publishing: boolean }
+    } | null
+    expect(snap!.ingress.publishing, 'still publishing at 29 ticks').to.equal(
+      true
+    )
+    expect(closed, 'close not yet called at 29 ticks').to.equal(false)
+
+    splitter.tickSamplerForTest() // 30th tick
+    snap = splitter.getStatusSnapshot('evtStale') as typeof snap
+    expect(
+      snap!.ingress.publishing,
+      'publishing cleared after 30 stale ticks'
+    ).to.equal(false)
+    expect(closed, 'session.close fired').to.equal(true)
+    expect(destroyed, 'socket.destroy fired').to.equal(true)
+    expect(broadcastDone, 'broadcast.donePublish fired').to.equal(true)
+    done()
+  }).timeout(3000)
+
+  it('pollSampler resets the stale counter when bytes flow again', () => {
+    const fake = installFakeSpawn()
+    restoreSpawn = fake.restore
+    const splitter = loadSplitter()
+
+    splitter.setSplit('evtRecover', [DEST_A])
+    splitter.forcePublishForTest('evtRecover', true)
+    expect(fake.spawned).to.have.length(1)
+
+    const bytesBox = { value: 0 }
+    let closed = false
+    splitter.attachIngressSessionForTest('evtRecover', {
+      id: 'recover-session',
+      get inBytes(): number {
+        return bytesBox.value
+      },
+      close: (): void => {
+        closed = true
+      },
+      socket: { destroy: (): void => {} },
+      broadcast: { donePublish: (): void => {} }
+    } as unknown as Parameters<
+      SplitterModule['attachIngressSessionForTest']
+    >[1])
+
+    // Run 25 silent ticks (just under threshold).
+    for (let i = 0; i < 25; i++) splitter.tickSamplerForTest()
+    expect(closed, 'close not called yet').to.equal(false)
+
+    // Then bytes flow on tick 26 -- should reset the counter.
+    bytesBox.value += 100_000
+    splitter.tickSamplerForTest()
+
+    // Now 25 more silent ticks. With the reset this should still be
+    // under threshold. (Without the reset, 25+1+25 = 51 ticks, well
+    // past the 30-tick threshold, and the close would have already
+    // fired.)
+    for (let i = 0; i < 25; i++) splitter.tickSamplerForTest()
+    expect(closed, 'close still not called after recovery').to.equal(false)
+    const snap = splitter.getStatusSnapshot('evtRecover') as {
+      ingress: { publishing: boolean }
+    } | null
+    expect(
+      snap!.ingress.publishing,
+      'still publishing after byte-flow recovery'
+    ).to.equal(true)
+  })
 
   it('clearSplit retires outbounds even when publisher is offline', done => {
     const fake = installFakeSpawn()
