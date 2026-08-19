@@ -1,0 +1,123 @@
+name: Cameraman
+
+options:
+  bundleIdPrefix: co.gamestation
+  createIntermediateGroups: true
+  deploymentTarget:
+    iOS: "18.0"
+  groupSortPosition: top
+  minimumXcodeGenVersion: "2.40.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "18.0"
+    # iPhone only. An iPad runs it scaled, which is acceptable; a stretched layout is not a target.
+    TARGETED_DEVICE_FAMILY: "1"
+    DEVELOPMENT_TEAM: G5LQ7MERPK
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    SWIFT_TREAT_WARNINGS_AS_ERRORS: NO
+    GCC_TREAT_WARNINGS_AS_ERRORS: NO
+    ALWAYS_SEARCH_USER_PATHS: NO
+    ENABLE_MODULE_VERIFIER: NO
+
+packages:
+  CameramanCore:
+    path: Packages/CameramanCore
+  CameramanCapture:
+    path: Packages/CameramanCapture
+  CameramanEncode:
+    path: Packages/CameramanEncode
+  CameramanRTSP:
+    path: Packages/CameramanRTSP
+  CameramanUI:
+    path: Packages/CameramanUI
+  CameramanTestHarness:
+    path: Packages/CameramanTestHarness
+  # Test target only. Our packetizers are round-tripped through GS Producer's own depacketizers, so
+  # interop is proven by construction rather than by inspection. This compiles that package's
+  # sources; it never builds or launches the Producer app.
+  ProducerRTSP:
+    path: ../gsProducer/Packages/ProducerRTSP
+
+targets:
+  Cameraman:
+    type: application
+    platform: iOS
+    sources:
+      - path: App
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: co.gamestation.cameraman
+        PRODUCT_NAME: GS Cameraman
+        INFOPLIST_FILE: App/Info.plist
+        CURRENT_PROJECT_VERSION: "1"
+        MARKETING_VERSION: "1.0"
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD: NO
+        LD_RUNPATH_SEARCH_PATHS: $(inherited) @executable_path/Frameworks
+    dependencies:
+      - package: CameramanCore
+        product: CameramanCore
+      - package: CameramanCapture
+        product: CameramanCapture
+      - package: CameramanEncode
+        product: CameramanEncode
+      - package: CameramanRTSP
+        product: CameramanRTSP
+      - package: CameramanUI
+        product: CameramanUI
+      - package: CameramanTestHarness
+        product: CameramanTestHarness
+
+  CameramanUnitTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests/CameramanUnitTests
+        excludes:
+          - Fixtures/**
+    dependencies:
+      - target: Cameraman
+      - package: CameramanCore
+        product: CameramanCore
+      - package: CameramanCapture
+        product: CameramanCapture
+      - package: CameramanEncode
+        product: CameramanEncode
+      - package: CameramanRTSP
+        product: CameramanRTSP
+      - package: CameramanTestHarness
+        product: CameramanTestHarness
+      - package: ProducerRTSP
+        product: ProducerRTSP
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: co.gamestation.cameraman.unittests
+        GENERATE_INFOPLIST_FILE: YES
+        # XcodeGen derives the test host from the target name, `Cameraman`, but the app's
+        # PRODUCT_NAME is `GS Cameraman`, so without this the host path names an app that is
+        # never built and the scheme fails before any test runs.
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/GS Cameraman.app/GS Cameraman
+        BUNDLE_LOADER: $(TEST_HOST)
+
+schemes:
+  Cameraman:
+    build:
+      targets:
+        Cameraman: all
+        CameramanUnitTests: [ test ]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      gatherCoverageData: false
+      targets:
+        - CameramanUnitTests
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release
