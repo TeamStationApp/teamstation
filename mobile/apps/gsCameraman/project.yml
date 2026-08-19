@@ -40,6 +40,10 @@ packages:
   # sources; it never builds or launches the Producer app.
   ProducerRTSP:
     path: ../gsProducer/Packages/ProducerRTSP
+  # Same reason: the camera-identity rules Producer will use to adopt our advertised name are pure
+  # value logic, so they are verified here rather than left uncompiled until the end-to-end phase.
+  ProducerSources:
+    path: ../gsProducer/Packages/ProducerSources
 
 targets:
   Cameraman:
@@ -92,6 +96,8 @@ targets:
         product: CameramanTestHarness
       - package: ProducerRTSP
         product: ProducerRTSP
+      - package: ProducerSources
+        product: ProducerSources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: co.gamestation.cameraman.unittests
