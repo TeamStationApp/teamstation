@@ -1,0 +1,42 @@
+appId: co.gamestation.cameraman
+---
+# Lens switching and flip, asserted through the on-screen lens index rather than by looking at the
+# picture. The index comes from the hardware's switchover factors, so this also proves the preset row
+# was derived from the device and not hardcoded: 0.5x / 1x / 3x on the back triple camera, and a
+# single 1x on the single-lens front camera.
+#
+# Verified on an iPhone 13 Pro, iOS 26.6.1, 2026-08-19.
+- launchApp
+- waitForAnimationToEnd:
+    timeout: 5000
+- assertVisible:
+    id: "camera-screen"
+
+# Opens at 1x on the wide lens, not at 0.5x on the ultra-wide: 1x is what an operator pointing a
+# phone at a field expects to see.
+- assertVisible: "1x"
+- assertVisible: "lens 1"
+- assertVisible: "1920x1080@30"
+
+- tapOn:
+    id: "zoom-preset-3x"
+- waitForAnimationToEnd:
+    timeout: 2000
+- assertVisible: "lens 2"
+
+- tapOn:
+    id: "zoom-preset-0.5x"
+- waitForAnimationToEnd:
+    timeout: 2000
+- assertVisible: "lens 0"
+
+- tapOn:
+    id: "flip-button"
+- waitForAnimationToEnd:
+    timeout: 3000
+# The front camera has one lens and one preset.
+- assertVisible: "lens 0"
+- assertVisible:
+    id: "zoom-preset-1x"
+- assertNotVisible:
+    id: "zoom-preset-3x"
