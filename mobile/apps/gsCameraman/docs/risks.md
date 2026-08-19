@@ -37,6 +37,27 @@ That property reports **189** on every device on this handset, a displayed 94.5x
 displayed, and is what the app uses. The front camera reports no recommendation at all and falls back
 to 5.
 
+### Both codecs and the AAC path produce decodable streams — 2026-08-19, iPhone 13 Pro
+
+`scripts/verifyEncode.sh` records the encoder's real output, pulls it off the device and makes ffmpeg
+decode every frame. Measured over ~6 s at 1080p30, 6 Mbps requested:
+
+| | H.264 | HEVC |
+|-----------------|-----------------|-----------------|
+| Profile / level | High, 4.0 | Main, 4.0 |
+| Frames | 180 | 171 |
+| Keyframes | 6 | 6 |
+| Parameter sets | 96 B (SPS+PPS) | 408 B (+VPS) |
+| Measured rate | 5.7 Mbps | 1.8 Mbps |
+
+HEVC coming in far under the requested rate is the encoder being asked for an average, not a floor, on
+a near-static scene. It is not a sign the bitrate setting was ignored — `Summary.measuredBitrate`
+exists so that a genuinely ignored setting stays visible.
+
+Audio: AAC-LC, 48 kHz mono, 283 access units over the same window. 283 × 1024 samples at 48 kHz is
+6.04 s against the video's 5.97 s, so the two clocks agree and no access units were dropped or padded
+at buffer boundaries.
+
 ### Maestro cannot see system permission alerts on device — 2026-08-19
 
 They sit outside the app's accessibility hierarchy, so `tapOn: "Allow"` finds nothing while the dialog

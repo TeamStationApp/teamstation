@@ -12,7 +12,8 @@
     "test:unit": "bash scripts/test-unit.sh",
     "test:integration": "node scripts/testIntegration.js",
     "test:ui": "node scripts/run-maestro.js",
-    "probe": "node scripts/probe.js"
+    "probe": "node scripts/probe.js",
+    "verify:encode": "bash scripts/verifyEncode.sh"
   },
   "engines": {
     "node": ">=20"

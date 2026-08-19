@@ -1,6 +1,7 @@
 import AVFoundation
 import CameramanCapture
 import CameramanCore
+import CameramanEncode
 import CameramanTestHarness
 import Observation
 import SwiftUI
@@ -11,6 +12,8 @@ import SwiftUI
 public final class AppEnvironment {
   public let launch: LaunchConfiguration
   public let camera = CameraSession()
+  public let videoEncoder = VideoEncoder()
+  public let audioEncoder = AudioEncoder()
 
   public private(set) var identity: DeviceIdentity
   public var settings: StreamSettings
@@ -19,8 +22,11 @@ public final class AppEnvironment {
   public private(set) var cameraAuthorized = false
   public private(set) var microphoneAuthorized = false
   public private(set) var status = "starting"
+  public private(set) var encodeFailure: String?
 
   private let identityProvider: DeviceIdentityProvider
+  private var recorder: ElementaryStreamRecorder?
+  private var audioRecorder: AudioStreamRecorder?
 
   public init(launch: LaunchConfiguration = LaunchConfiguration(), store: IdentityStore? = nil) {
     self.launch = launch
@@ -68,9 +74,69 @@ public final class AppEnvironment {
     camera.onStateChange = { [weak self] state in
       self?.cameraState = state
     }
+    startEncoding()
     camera.configure(position: .back, settings: settings)
     camera.start()
     status = "running"
+
+    if launch.recordSeconds > 0 {
+      await record(seconds: launch.recordSeconds)
+    }
+  }
+
+  private func startEncoding() {
+    videoEncoder.onFailure = { [weak self] failure in
+      Task { @MainActor in self?.encodeFailure = failure.description }
+    }
+    audioEncoder.onFailure = { [weak self] failure in
+      Task { @MainActor in self?.encodeFailure = failure.description }
+    }
+    videoEncoder.configure(settings: settings)
+    if settings.audioEnabled {
+      audioEncoder.configure(sampleRate: settings.audioSampleRate, channelCount: 1)
+    }
+
+    camera.onVideoFrame = { [videoEncoder] sample in
+      videoEncoder.encode(SampleBufferRef(sample.buffer))
+    }
+    camera.onAudioFrame = { [audioEncoder] sample in
+      audioEncoder.encode(SampleBufferRef(sample.buffer))
+    }
+  }
+
+  /// Records the encoder's real output so it can be put through ffprobe. A compression session that
+  /// accepts every property and emits an undecodable stream reports no error anywhere, so the only
+  /// way to know is to decode the bytes.
+  private func record(seconds: Double) async {
+    let extension_ = settings.codec == .hevc ? "h265" : "h264"
+    let recorder = ElementaryStreamRecorder(filename: "encode-\(settings.codec.rawValue).\(extension_)")
+    let audioRecorder = AudioStreamRecorder(filename: "encode-audio.aac")
+    self.recorder = recorder
+    self.audioRecorder = audioRecorder
+    videoEncoder.onFrame = { frame in recorder.append(frame) }
+    audioEncoder.onFrame = { frame in audioRecorder.append(frame) }
+    status = "recording"
+
+    try? await Task.sleep(for: .seconds(seconds))
+
+    let summary = recorder.finish()
+    let audioSummary = audioRecorder.finish()
+    videoEncoder.onFrame = nil
+    audioEncoder.onFrame = nil
+    status = "recorded"
+
+    print("CAMERAMAN_RECORDING_BEGIN")
+    printJSON(summary)
+    print("CAMERAMAN_RECORDING_END")
+    print("CAMERAMAN_AUDIO_RECORDING_BEGIN")
+    printJSON(audioSummary)
+    print("CAMERAMAN_AUDIO_RECORDING_END")
+  }
+
+  private func printJSON<Value: Encodable>(_ value: Value) {
+    guard let json = try? JSONEncoder().encode(value),
+          let text = String(data: json, encoding: .utf8) else { return }
+    print(text)
   }
 
   /// Takes about 90 seconds — it makes every format on every device active in turn — and it needs its
