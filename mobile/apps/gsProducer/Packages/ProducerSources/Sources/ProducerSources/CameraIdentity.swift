@@ -2,7 +2,8 @@ import Foundation
 import ProducerCore
 
 /// What discovery finds on the network this instant. The host is where RTSP answers today, not
-/// who the camera is: that comes from `_awx_service._tcp` TXT when the camera publishes it.
+/// who the camera is: that comes from `_awx_service._tcp` TXT when the camera publishes it, or
+/// from the SDP/RTCP `CNAME` when it does not.
 public struct CameraEndpoint: Hashable, Sendable, Codable {
   public let host: String
   public let port: Int
@@ -33,6 +34,32 @@ public struct CameraEndpoint: Hashable, Sendable, Codable {
   }
 }
 
+/// What a camera says about itself, read from the SDP at `DESCRIBE` and from RTCP SDES while
+/// streaming. Advisory: a camera can claim any name, and most claim nothing at all.
+///
+/// Distinct from `CameraAdvertisement`, which is the NearStream `_awx_service._tcp` TXT blob.
+public struct StreamAdvertisement: Hashable, Sendable, Codable {
+  /// RFC 3550 `CNAME`. Stable across address changes and app restarts, which is what makes it
+  /// usable as an identity where the address is not.
+  public let cname: String?
+  public let name: String?
+
+  public init(cname: String? = nil, name: String? = nil) {
+    self.cname = cname
+    self.name = name
+  }
+
+  public var isEmpty: Bool { cname == nil && name == nil }
+}
+
+/// Where a camera's current name came from.
+public enum NameOrigin: String, Codable, Sendable {
+  /// Following whatever the camera announces, so renaming it on the phone renames it here.
+  case advertised
+  /// The operator has spoken. The camera no longer overrides it.
+  case operatorAssigned
+}
+
 /// What the operator named, and what persists across launches. The durable entity.
 ///
 /// Keyed by a UUID rather than by the name, because the name is a label the operator edits
@@ -41,6 +68,12 @@ public struct CameraEndpoint: Hashable, Sendable, Codable {
 public struct CameraRecord: Hashable, Sendable, Codable, Identifiable {
   public let id: UUID
   public var name: String
+  public var nameOrigin: NameOrigin
+  /// Last name the camera announced, kept whether or not it is the name in use, so the UI can
+  /// offer to go back to following the camera after an operator rename.
+  public var advertisedName: String?
+  /// Last `CNAME` this camera presented. Outranks the address when re-binding.
+  public var lastKnownCNAME: String?
   /// Last address this camera answered on. A hint for auto-binding when no TXT unique id is known.
   public var lastKnownHost: String
   /// Stable id from `_awx_service._tcp` TXT: `modelname` first, else `wlanmac`. Nil for cameras
@@ -55,6 +88,9 @@ public struct CameraRecord: Hashable, Sendable, Codable, Identifiable {
   public init(
     id: UUID = UUID(),
     name: String,
+    nameOrigin: NameOrigin = .operatorAssigned,
+    advertisedName: String? = nil,
+    lastKnownCNAME: String? = nil,
     lastKnownHost: String,
     lastSeenAt: Date,
     hardwareID: String? = nil,
@@ -62,10 +98,54 @@ public struct CameraRecord: Hashable, Sendable, Codable, Identifiable {
   ) {
     self.id = id
     self.name = name
+    self.nameOrigin = nameOrigin
+    self.advertisedName = advertisedName
+    self.lastKnownCNAME = lastKnownCNAME
     self.lastKnownHost = lastKnownHost
     self.lastSeenAt = lastSeenAt
     self.hardwareID = hardwareID
     self.playoutMilliseconds = playoutMilliseconds
+  }
+
+  /// Decoded by hand because a cache written before cameras had identity has none of these keys,
+  /// and the synthesised decoder would throw on the first missing one — taking every named camera
+  /// on the iPad with it.
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    id = try container.decode(UUID.self, forKey: .id)
+    name = try container.decode(String.self, forKey: .name)
+    nameOrigin = try container.decodeIfPresent(NameOrigin.self, forKey: .nameOrigin) ?? .operatorAssigned
+    advertisedName = try container.decodeIfPresent(String.self, forKey: .advertisedName)
+    lastKnownCNAME = try container.decodeIfPresent(String.self, forKey: .lastKnownCNAME)
+    lastKnownHost = try container.decode(String.self, forKey: .lastKnownHost)
+    lastSeenAt = try container.decode(Date.self, forKey: .lastSeenAt)
+    hardwareID = try container.decodeIfPresent(String.self, forKey: .hardwareID)
+    playoutMilliseconds = try container.decodeIfPresent(Double.self, forKey: .playoutMilliseconds)
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(id, forKey: .id)
+    try container.encode(name, forKey: .name)
+    try container.encode(nameOrigin, forKey: .nameOrigin)
+    try container.encodeIfPresent(advertisedName, forKey: .advertisedName)
+    try container.encodeIfPresent(lastKnownCNAME, forKey: .lastKnownCNAME)
+    try container.encode(lastKnownHost, forKey: .lastKnownHost)
+    try container.encode(lastSeenAt, forKey: .lastSeenAt)
+    try container.encodeIfPresent(hardwareID, forKey: .hardwareID)
+    try container.encodeIfPresent(playoutMilliseconds, forKey: .playoutMilliseconds)
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case id
+    case name
+    case nameOrigin
+    case advertisedName
+    case lastKnownCNAME
+    case lastKnownHost
+    case hardwareID
+    case lastSeenAt
+    case playoutMilliseconds
   }
 }
 
@@ -74,6 +154,8 @@ public struct CameraBinding: Hashable, Sendable {
   public enum Origin: String, Hashable, Sendable {
     /// Matched because `_awx_service._tcp` TXT identified this camera (modelname, else wlanmac).
     case autoByIdentity
+    /// Matched on the identifier the camera presented in SDP/RTCP. Survives a lease change.
+    case autoByCNAME
     /// Matched automatically because the endpoint's address is the one this camera last used.
     case autoByHost
     /// The operator chose this pairing, so automatic matching must not override it.
@@ -112,26 +194,51 @@ public enum CameraIdentityRules {
 
   // MARK: - Automatic binding
 
-  /// Pairs endpoints with records. TXT unique ids outrank last-known address, so a DHCP swap does
-  /// not silently put the wrong camera on a tile.
+  /// Pairs endpoints with records. TXT unique ids outrank `CNAME`, which outranks last-known
+  /// address, so a DHCP swap does not silently put the wrong camera on a tile.
   public static func autoBind(
     endpoints: [CameraEndpoint],
     records: [CameraRecord],
-    advertisements: [String: CameraAdvertisement] = [:]
+    advertisements: [String: CameraAdvertisement] = [:],
+    streamAdvertisements: [CameraEndpoint: StreamAdvertisement] = [:]
   ) -> [CameraBinding] {
     var claimed: Set<UUID> = []
-    return sorted(endpoints).map { endpoint in
-      guard let match = match(
-        endpoint,
-        records: records,
-        advertisements: advertisements,
-        excluding: claimed
-      ) else {
-        return CameraBinding(endpoint: endpoint)
-      }
-      claimed.insert(match.record.id)
-      return CameraBinding(endpoint: endpoint, cameraID: match.record.id, origin: match.origin)
+    var bindings: [CameraEndpoint: CameraBinding] = [:]
+
+    // Three passes, so a camera that identified itself is never beaten to its record by another
+    // endpoint that merely inherited its address.
+    for endpoint in sorted(endpoints) {
+      guard
+        let uniqueID = advertisements[endpoint.host]?.uniqueID,
+        let record = records.first(where: { $0.hardwareID == uniqueID && !claimed.contains($0.id) })
+      else { continue }
+      claimed.insert(record.id)
+      bindings[endpoint] = CameraBinding(endpoint: endpoint, cameraID: record.id, origin: .autoByIdentity)
     }
+
+    for endpoint in sorted(endpoints) where bindings[endpoint] == nil {
+      guard
+        let cname = streamAdvertisements[endpoint]?.cname,
+        let record = records.first(where: { $0.lastKnownCNAME == cname && !claimed.contains($0.id) })
+      else { continue }
+      claimed.insert(record.id)
+      bindings[endpoint] = CameraBinding(endpoint: endpoint, cameraID: record.id, origin: .autoByCNAME)
+    }
+
+    for endpoint in sorted(endpoints) where bindings[endpoint] == nil {
+      guard let record = bestRecord(for: endpoint, in: records, excluding: claimed) else {
+        bindings[endpoint] = CameraBinding(endpoint: endpoint)
+        continue
+      }
+      claimed.insert(record.id)
+      // A record that already carries a TXT unique id stays identity-bound when Bonjour is quiet
+      // for a moment. Matching still uses lastKnownHost, so a live advertisement remains the only
+      // way to follow a camera that actually moved.
+      let origin: CameraBinding.Origin = record.hardwareID == nil ? .autoByHost : .autoByIdentity
+      bindings[endpoint] = CameraBinding(endpoint: endpoint, cameraID: record.id, origin: origin)
+    }
+
+    return sorted(endpoints).compactMap { bindings[$0] }
   }
 
   /// Folds a fresh discovery result into the bindings this session already has.
@@ -143,11 +250,12 @@ public enum CameraIdentityRules {
     bindings: [CameraBinding],
     endpoints: [CameraEndpoint],
     records: [CameraRecord],
-    advertisements: [String: CameraAdvertisement] = [:]
+    advertisements: [String: CameraAdvertisement] = [:],
+    streamAdvertisements: [CameraEndpoint: StreamAdvertisement] = [:]
   ) -> [CameraBinding] {
     let live = Set(endpoints)
-    var claimed: Set<UUID> = []
     var kept: [CameraEndpoint: CameraBinding] = [:]
+    var claimed: Set<UUID> = []
 
     for binding in bindings where live.contains(binding.endpoint) {
       guard
@@ -160,19 +268,17 @@ public enum CameraIdentityRules {
       kept[binding.endpoint] = binding
     }
 
-    return sorted(endpoints).map { endpoint in
-      if let binding = kept[endpoint] { return binding }
-      guard let match = match(
-        endpoint,
-        records: records,
-        advertisements: advertisements,
-        excluding: claimed
-      ) else {
-        return CameraBinding(endpoint: endpoint)
-      }
-      claimed.insert(match.record.id)
-      return CameraBinding(endpoint: endpoint, cameraID: match.record.id, origin: match.origin)
-    }
+    let free = endpoints.filter { kept[$0] == nil }
+    let resolved = autoBind(
+      endpoints: free,
+      records: records.filter { !claimed.contains($0.id) },
+      advertisements: advertisements,
+      streamAdvertisements: streamAdvertisements
+    )
+
+    var byEndpoint = kept
+    for binding in resolved { byEndpoint[binding.endpoint] = binding }
+    return sorted(endpoints).compactMap { byEndpoint[$0] }
   }
 
   // MARK: - Manual binding
@@ -224,10 +330,16 @@ public enum CameraIdentityRules {
     host: String,
     now: Date,
     hardwareID: String? = nil,
+    nameOrigin: NameOrigin = .operatorAssigned,
+    advertisedName: String? = nil,
+    lastKnownCNAME: String? = nil,
     in records: inout [CameraRecord]
   ) -> UUID {
     let record = CameraRecord(
       name: uniqueName(name, in: records),
+      nameOrigin: nameOrigin,
+      advertisedName: advertisedName,
+      lastKnownCNAME: lastKnownCNAME,
       lastKnownHost: host,
       lastSeenAt: now,
       hardwareID: hardwareID
@@ -236,8 +348,8 @@ public enum CameraIdentityRules {
     return record.id
   }
 
-  /// Folds Bonjour identity into the cache. Existing names are never overwritten: the advertised
-  /// name is only the default for a camera we have not seen before.
+  /// Folds Bonjour identity into the cache. Existing operator names are never overwritten: the
+  /// advertised name is only adopted while the record is still following the camera.
   public static func applyAdvertisements(
     _ advertisements: [CameraAdvertisement],
     to records: inout [CameraRecord],
@@ -245,9 +357,12 @@ public enum CameraIdentityRules {
   ) {
     for advertisement in advertisements {
       guard let uniqueID = advertisement.uniqueID else { continue }
+      let advertised = trimmed(advertisement.advertisedName)
       if let position = records.firstIndex(where: { $0.hardwareID == uniqueID }) {
         records[position].lastKnownHost = advertisement.host
         records[position].lastSeenAt = now
+        if let advertised { records[position].advertisedName = advertised }
+        adoptAdvertisedNameIfFollowing(at: position, in: &records)
         continue
       }
       if let position = records.firstIndex(where: {
@@ -255,13 +370,16 @@ public enum CameraIdentityRules {
       }) {
         records[position].hardwareID = uniqueID
         records[position].lastSeenAt = now
+        if let advertised { records[position].advertisedName = advertised }
         continue
       }
       makeRecord(
-        named: advertisement.advertisedName,
+        named: advertised ?? advertisement.advertisedName,
         host: advertisement.host,
         now: now,
         hardwareID: uniqueID,
+        nameOrigin: advertised == nil ? .operatorAssigned : .advertised,
+        advertisedName: advertised,
         in: &records
       )
     }
@@ -289,6 +407,8 @@ public enum CameraIdentityRules {
     return "\(defaultNamePrefix) \(n)"
   }
 
+  /// An operator rename stops the camera overriding the name from then on. A camera that renames
+  /// itself mid-game must not undo what the operator just typed.
   public static func rename(
     _ cameraID: UUID,
     to name: String,
@@ -297,6 +417,60 @@ public enum CameraIdentityRules {
     guard let position = records.firstIndex(where: { $0.id == cameraID }) else { return }
     let others = records.filter { $0.id != cameraID }
     records[position].name = uniqueName(name, in: others)
+    records[position].nameOrigin = .operatorAssigned
+  }
+
+  // MARK: - What the camera says about itself
+
+  /// Folds an SDP/RTCP advertisement into a record.
+  ///
+  /// The advertised name is always remembered so the UI can offer it, but it only takes effect
+  /// while the record is still following the camera. The `CNAME` is recorded either way, because
+  /// identity is not a naming preference — an operator-named camera still has to be findable after
+  /// it moves.
+  public static func apply(
+    _ advertisement: StreamAdvertisement,
+    to cameraID: UUID,
+    in records: inout [CameraRecord]
+  ) {
+    guard let position = records.firstIndex(where: { $0.id == cameraID }) else { return }
+    if let cname = advertisement.cname { records[position].lastKnownCNAME = cname }
+
+    guard let advertised = trimmed(advertisement.name) else { return }
+    records[position].advertisedName = advertised
+    adoptAdvertisedNameIfFollowing(at: position, in: &records)
+  }
+
+  /// Puts a record back under the camera's control, adopting the last advertised name at once so
+  /// the choice has a visible effect without waiting for the camera to say it again.
+  public static func followCamera(
+    _ cameraID: UUID,
+    in records: inout [CameraRecord]
+  ) {
+    guard let position = records.firstIndex(where: { $0.id == cameraID }) else { return }
+    records[position].nameOrigin = .advertised
+    adoptAdvertisedNameIfFollowing(at: position, in: &records)
+  }
+
+  /// Creates a record for a camera that introduced itself, taking its name and following it.
+  @discardableResult
+  public static func makeRecord(
+    adopting advertisement: StreamAdvertisement,
+    host: String,
+    now: Date,
+    in records: inout [CameraRecord]
+  ) -> UUID {
+    let advertised = trimmed(advertisement.name)
+    let proposed = advertised ?? nextDefaultName(in: records)
+    return makeRecord(
+      named: proposed,
+      host: host,
+      now: now,
+      nameOrigin: advertised == nil ? .operatorAssigned : .advertised,
+      advertisedName: advertised,
+      lastKnownCNAME: advertisement.cname,
+      in: &records
+    )
   }
 
   /// Forgetting takes the bindings too. Leaving an endpoint pointing at a deleted record would put
@@ -349,26 +523,6 @@ public enum CameraIdentityRules {
     }
   }
 
-  /// TXT unique id first; last-known host only when the camera has never advertised one.
-  private static func match(
-    _ endpoint: CameraEndpoint,
-    records: [CameraRecord],
-    advertisements: [String: CameraAdvertisement],
-    excluding claimed: Set<UUID>
-  ) -> (record: CameraRecord, origin: CameraBinding.Origin)? {
-    if let uniqueID = advertisements[endpoint.host]?.uniqueID,
-       let record = records.first(where: { $0.hardwareID == uniqueID && !claimed.contains($0.id) }) {
-      return (record, .autoByIdentity)
-    }
-    guard let record = bestRecord(for: endpoint, in: records, excluding: claimed) else {
-      return nil
-    }
-    // A record that already carries a TXT unique id stays identity-bound when Bonjour is quiet
-    // for a moment. Matching still uses lastKnownHost, so a live advertisement remains the only
-    // way to follow a camera that actually moved.
-    return (record, record.hardwareID == nil ? .autoByHost : .autoByIdentity)
-  }
-
   /// Most recently seen record for this address. Ties break on the identifier so a rediscovery
   /// cannot reshuffle tiles for no reason.
   private static func bestRecord(
@@ -401,6 +555,24 @@ public enum CameraIdentityRules {
     guard let position = records.firstIndex(where: { $0.id == cameraID }) else { return }
     records[position].lastKnownHost = host
     records[position].lastSeenAt = now
+  }
+
+  private static func trimmed(_ value: String?) -> String? {
+    guard let value else { return nil }
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
+  }
+
+  private static func adoptAdvertisedNameIfFollowing(
+    at position: Int,
+    in records: inout [CameraRecord]
+  ) {
+    guard records[position].nameOrigin == .advertised,
+          let advertised = records[position].advertisedName
+    else { return }
+    let id = records[position].id
+    let others = records.filter { $0.id != id }
+    records[position].name = uniqueName(advertised, in: others)
   }
 }
 

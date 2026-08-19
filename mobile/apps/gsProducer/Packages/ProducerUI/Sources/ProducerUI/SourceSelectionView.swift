@@ -284,9 +284,14 @@ public struct SourceSelectionView: View {
     return "\(record.name) · last seen \(record.lastKnownHost)"
   }
 
+  /// Why this camera is on this row. `ID` and `IP` are both automatic but are not equally
+  /// trustworthy: an identifier match is the camera saying who it is, an address match is a guess
+  /// that two cameras swapping leases will get wrong, and that difference is what the operator
+  /// needs when a tile shows the wrong field.
   private func originBadge(for selection: SourceSelection) -> String? {
     switch environment.bindingOrigin(for: selection.id) {
-    case .autoByIdentity, .autoByHost: "AUTO"
+    case .autoByIdentity, .autoByCNAME: "ID"
+    case .autoByHost: "IP"
     case .manual: "MANUAL"
     case .unbound: nil
     }

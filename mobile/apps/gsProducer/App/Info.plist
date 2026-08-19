@@ -38,9 +38,15 @@
 
   <key>NSLocalNetworkUsageDescription</key>
   <string>GS Producer discovers cameras and the gamestation scoreboard on your local network.</string>
+  <!--
+    Browsing for a service iOS 14+ has not been told about fails with -65555 (NoAuth) and takes the
+    NWBrowser down with it. NearStream identity is `_awx_service._tcp`; GS Cameraman and many
+    phones publish `_rtsp._tcp`.
+  -->
   <key>NSBonjourServices</key>
   <array>
     <string>_awx_service._tcp</string>
+    <string>_rtsp._tcp</string>
   </array>
   <key>NSCameraUsageDescription</key>
   <string>GS Producer does not use the built-in camera; video comes from cameras on the network.</string>

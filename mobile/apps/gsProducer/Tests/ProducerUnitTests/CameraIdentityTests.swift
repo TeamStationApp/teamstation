@@ -600,4 +600,96 @@ struct CameraIdentityTests {
     #expect(records[0].name == "Third Base")
     #expect(records[0].hardwareID == "model:VM33_00D9D")
   }
+
+  // MARK: - SDP / RTCP CNAME
+
+  @Test("A camera that presents a CNAME is matched on it after it moves")
+  func autoBindsByCNAMEAfterALeaseChange() {
+    var records: [CameraRecord] = []
+    let advertisement = StreamAdvertisement(cname: "3f2504e04f8911d3@gs-cameraman", name: "Third Base")
+    let id = CameraIdentityRules.makeRecord(
+      adopting: advertisement,
+      host: "10.10.7.148",
+      now: epoch,
+      in: &records
+    )
+    let moved = endpoint("10.10.8.2")
+    let bindings = CameraIdentityRules.autoBind(
+      endpoints: [ moved ],
+      records: records,
+      streamAdvertisements: [ moved: advertisement ]
+    )
+
+    #expect(bindings[0].cameraID == id)
+    #expect(bindings[0].origin == .autoByCNAME)
+    #expect(records[0].name == "Third Base")
+    #expect(records[0].nameOrigin == .advertised)
+  }
+
+  @Test("TXT unique id outranks a CNAME when both are present")
+  func txtIdentityBeatsCNAME() {
+    let txt = CameraAdvertisement(
+      host: "10.10.7.148",
+      advertisedName: "00D9D 3rd",
+      modelName: "VM33_00D9D"
+    )
+    let records = [
+      CameraRecord(
+        name: "Third Base",
+        lastKnownCNAME: "phone@example",
+        lastKnownHost: "10.10.7.99",
+        lastSeenAt: epoch,
+        hardwareID: "model:VM33_00D9D"
+      )
+    ]
+    let endpoint = endpoint("10.10.7.148")
+    let bindings = CameraIdentityRules.autoBind(
+      endpoints: [ endpoint ],
+      records: records,
+      advertisements: [ "10.10.7.148": txt ],
+      streamAdvertisements: [ endpoint: StreamAdvertisement(cname: "phone@example", name: "iPhone") ]
+    )
+
+    #expect(bindings[0].origin == .autoByIdentity)
+    #expect(bindings[0].cameraID == records[0].id)
+  }
+
+  @Test("An operator rename is not undone by a later advertisement")
+  func operatorNameSurvivesStreamRename() {
+    var records: [CameraRecord] = []
+    let id = CameraIdentityRules.makeRecord(
+      adopting: StreamAdvertisement(cname: "a@x", name: "Third Base"),
+      host: "10.10.7.148",
+      now: epoch,
+      in: &records
+    )
+    CameraIdentityRules.rename(id, to: "Home", in: &records)
+    CameraIdentityRules.apply(
+      StreamAdvertisement(cname: "a@x", name: "First Base"),
+      to: id,
+      in: &records
+    )
+
+    #expect(records[0].name == "Home")
+    #expect(records[0].nameOrigin == .operatorAssigned)
+    #expect(records[0].advertisedName == "First Base")
+    #expect(records[0].lastKnownCNAME == "a@x")
+  }
+
+  @Test("A cache written before identity fields existed still loads")
+  func legacyRecordDecodesWithoutIdentityKeys() throws {
+    let payload = """
+    [{"id":"3F2504E0-4F89-11D3-9A0C-0305E82C3301","name":"Third Base",\
+    "lastKnownHost":"10.10.7.148","lastSeenAt":-978307200}]
+    """
+    let records = try JSONDecoder().decode(
+      [CameraRecord].self,
+      from: Data(payload.utf8)
+    )
+
+    #expect(records[0].name == "Third Base")
+    #expect(records[0].nameOrigin == .operatorAssigned)
+    #expect(records[0].lastKnownCNAME == nil)
+    #expect(records[0].hardwareID == nil)
+  }
 }
