@@ -29,6 +29,12 @@ public struct SDPDescription: Sendable, Equatable {
     /// `fmtp` parameters, keys lower-cased. Values keep their original case because they carry
     /// base64 and hex payloads.
     public let formatParameters: [String: String]
+    /// `a=ssrc:<id> cname:<value>` per RFC 5576. The same identifier the sender repeats in its RTCP
+    /// SDES, so a camera can be recognised across an address change. Absent on cameras that do not
+    /// send it, which is most of them.
+    public let cname: String?
+    /// `a=ssrc:<id> name:<value>` — the human-readable label, when the sender includes one.
+    public let name: String?
 
     public var videoCodec: VideoCodec? {
       switch rtpMap?.encodingName.uppercased() {
@@ -80,6 +86,8 @@ public struct SDPDescription: Sendable, Equatable {
 
   public var video: Media? { media.first { $0.kind == .video } }
   public var audio: Media? { media.first { $0.kind == .audio } }
+  public var streamCNAME: String? { video?.cname ?? audio?.cname }
+  public var streamName: String? { video?.name ?? audio?.name }
 
   public static func parse(_ text: String) -> SDPDescription {
     var sessionControl: String?
@@ -91,6 +99,8 @@ public struct SDPDescription: Sendable, Equatable {
     var control: String?
     var rtpMap: RTPMap?
     var formatParameters: [String: String] = [:]
+    var cname: String?
+    var sdesName: String?
 
     func flush() {
       guard let kind else { return }
@@ -99,7 +109,9 @@ public struct SDPDescription: Sendable, Equatable {
         payloadTypes: payloadTypes,
         control: control,
         rtpMap: rtpMap,
-        formatParameters: formatParameters
+        formatParameters: formatParameters,
+        cname: cname,
+        name: sdesName
       ))
     }
 
@@ -124,6 +136,8 @@ public struct SDPDescription: Sendable, Equatable {
         control = nil
         rtpMap = nil
         formatParameters = [:]
+        cname = nil
+        sdesName = nil
       case "a":
         let (name, attribute) = Self.splitAttribute(value)
         switch name {
@@ -134,6 +148,9 @@ public struct SDPDescription: Sendable, Equatable {
           rtpMap = Self.parseRTPMap(attribute)
         case "fmtp":
           formatParameters = Self.parseFormatParameters(attribute)
+        case "ssrc":
+          cname = Self.parseSSRCAttribute(attribute, named: "cname") ?? cname
+          sdesName = Self.parseSSRCAttribute(attribute, named: "name") ?? sdesName
         default:
           break
         }
@@ -160,6 +177,18 @@ public struct SDPDescription: Sendable, Equatable {
       return String(base[base.startIndex ..< pathStart]) + control
     }
     return base.hasSuffix("/") ? base + control : base + "/" + control
+  }
+
+  /// `1234567 cname:phone@example` reduced to the value of the named attribute.
+  ///
+  /// A sender lists several attributes for one SSRC on separate lines, so this reads one line and
+  /// returns nil for the ones that carry something else.
+  private static func parseSSRCAttribute(_ value: String, named wanted: String) -> String? {
+    let parts = value.split(separator: " ", maxSplits: 1)
+    guard parts.count == 2, UInt32(parts[0]) != nil else { return nil }
+    let (name, argument) = splitAttribute(String(parts[1]))
+    guard name == wanted, !argument.isEmpty else { return nil }
+    return argument.trimmingCharacters(in: .whitespaces)
   }
 
   private static func splitAttribute(_ value: String) -> (name: String, argument: String) {

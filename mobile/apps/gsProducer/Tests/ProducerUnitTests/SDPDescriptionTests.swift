@@ -155,4 +155,21 @@ struct SDPDescriptionTests {
       base: "rtsp://192.168.7.148:554/live/mainstream/"
     ) == "rtsp://192.168.7.148:554/live/mainstream/trackID=0")
   }
+
+  @Test("RFC 5576 SSRC attributes yield the sender's CNAME and name")
+  func ssrcAttributes() {
+    let sdp = SDPDescription.parse("""
+      v=0
+      s=GS Cameraman
+      m=video 0 RTP/AVP 96
+      a=rtpmap:96 H265/90000
+      a=ssrc:286331153 cname:3f2504e04f8911d3@gs-cameraman
+      a=ssrc:286331153 name:Third Base
+      """)
+
+    #expect(sdp.streamCNAME == "3f2504e04f8911d3@gs-cameraman")
+    #expect(sdp.streamName == "Third Base")
+    #expect(sdp.video?.cname == "3f2504e04f8911d3@gs-cameraman")
+    #expect(sdp.video?.name == "Third Base")
+  }
 }
