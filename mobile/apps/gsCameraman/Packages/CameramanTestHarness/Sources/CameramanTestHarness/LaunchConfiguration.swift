@@ -22,7 +22,9 @@ public struct LaunchConfiguration: Sendable, Equatable {
     "identityUUID",
     "debugHUD",
     "measureCapabilities",
-    "recordSeconds"
+    "recordSeconds",
+    "selfTest",
+    "advertise"
   ]
 
   public var isUITest = false
@@ -34,6 +36,10 @@ public struct LaunchConfiguration: Sendable, Equatable {
   /// Records this many seconds of the encoder's output to an Annex-B file so it can be pulled off the
   /// device and put through ffprobe. Zero means no recording.
   public var recordSeconds: Double = 0
+  /// Connects to the app's own listener and reports whether it answers.
+  public var selfTest = false
+  /// Bonjour advertising, on by default. Off isolates the listener from the advertisement.
+  public var advertise = true
   public var settings = StreamSettings.default
   public var cameraName: String?
   /// Pins the identity so a flow can assert an exact CNAME instead of whatever the Keychain holds.
@@ -75,6 +81,8 @@ public struct LaunchConfiguration: Sendable, Equatable {
     useSyntheticCamera = Self.bool(values["syntheticCamera"]) ?? false
     measureCapabilities = Self.bool(values["measureCapabilities"]) ?? false
     recordSeconds = values["recordSeconds"].flatMap(Double.init) ?? 0
+    selfTest = Self.bool(values["selfTest"]) ?? false
+    advertise = Self.bool(values["advertise"]) ?? true
     showDebugHUD = Self.bool(values["debugHUD"]) ?? isUITest
     cameraName = values["cameraName"]
     identityUUID = values["identityUUID"]
