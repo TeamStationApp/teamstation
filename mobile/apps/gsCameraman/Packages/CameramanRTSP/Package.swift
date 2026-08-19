@@ -8,12 +8,13 @@ let package = Package(
     .library(name: "CameramanRTSP", targets: [ "CameramanRTSP" ])
   ],
   dependencies: [
-    .package(path: "../CameramanCore")
+    .package(path: "../CameramanCore"),
+    .package(path: "../CameramanEncode")
   ],
   targets: [
     .target(
       name: "CameramanRTSP",
-      dependencies: [ "CameramanCore" ],
+      dependencies: [ "CameramanCore", "CameramanEncode" ],
       swiftSettings: [ .swiftLanguageMode(.v6) ]
     )
   ]
