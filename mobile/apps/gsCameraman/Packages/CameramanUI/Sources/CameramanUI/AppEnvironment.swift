@@ -2,8 +2,10 @@ import AVFoundation
 import CameramanCapture
 import CameramanCore
 import CameramanEncode
+import CameramanRTSP
 import CameramanTestHarness
 import Observation
+import os
 import SwiftUI
 
 /// Wiring for the whole app, injected by the app target so the UI package owns no globals.
@@ -23,10 +25,15 @@ public final class AppEnvironment {
   public private(set) var microphoneAuthorized = false
   public private(set) var status = "starting"
   public private(set) var encodeFailure: String?
+  public private(set) var serverStatus = RTSPServer.Status()
 
   private let identityProvider: DeviceIdentityProvider
   private var recorder: ElementaryStreamRecorder?
   private var audioRecorder: AudioStreamRecorder?
+  private var server: RTSPServer?
+  /// The parameter sets arrive with the first keyframe, and a client may DESCRIBE before then, so the
+  /// latest ones are kept for the SDP rather than read out of the encoder on demand.
+  private let latestParameterSets = OSAllocatedUnfairLock(initialState: [Data]())
 
   public init(launch: LaunchConfiguration = LaunchConfiguration(), store: IdentityStore? = nil) {
     self.launch = launch
@@ -77,12 +84,89 @@ public final class AppEnvironment {
     startEncoding()
     camera.configure(position: .back, settings: settings)
     camera.start()
+
+    // Recording is a verification mode that writes to a file instead of serving clients, so the
+    // server stays down for it and the port is left free.
+    if launch.recordSeconds > 0 {
+      status = "running"
+      await record(seconds: launch.recordSeconds)
+      return
+    }
+
+    startServer()
     status = "running"
 
-    if launch.recordSeconds > 0 {
-      await record(seconds: launch.recordSeconds)
+    if launch.selfTest {
+      // Give the listener a moment to reach .ready before knocking on it.
+      try? await Task.sleep(for: .seconds(2))
+      let result = await LoopbackProbe.run(
+        port: UInt16(clamping: settings.port),
+        path: settings.path
+      )
+      print("CAMERAMAN_LOOPBACK_BEGIN")
+      printJSON(result)
+      print("CAMERAMAN_LOOPBACK_END")
     }
   }
+
+  private func startServer() {
+    let identity = identity
+    let settings = settings
+    let sets = latestParameterSets
+
+    let server = RTSPServer(
+      describe: { [audioEncoder] videoSSRC, audioSSRC in
+        SDPBuilder(
+          identity: identity,
+          video: SDPBuilder.VideoTrack(
+            codec: settings.codec,
+            parameterSets: sets.withLock { $0 },
+            width: settings.width,
+            height: settings.height
+          ),
+          audio: audioEncoder.audioSpecificConfig.map {
+            SDPBuilder.AudioTrack(
+              audioSpecificConfig: $0,
+              sampleRate: settings.audioSampleRate,
+              channelCount: 1
+            )
+          },
+          videoSSRC: videoSSRC,
+          audioSSRC: audioSSRC
+        ).build()
+      },
+      hasAudio: { [audioEncoder] in
+        settings.audioEnabled && audioEncoder.audioSpecificConfig != nil
+      },
+      identity: { identity },
+      requestKeyframe: { [videoEncoder] in videoEncoder.requestKeyframe() }
+    )
+    server.onStatusChange = { [weak self] status in
+      Task { @MainActor in
+        self?.serverStatus = status
+        // Printed as well as shown, because a bind failure on a handset is otherwise invisible from
+        // the Mac driving the test.
+        self?.printJSON(status)
+      }
+    }
+
+    videoEncoder.onFrame = { [weak server] frame in
+      if !frame.parameterSets.isEmpty { sets.withLock { $0 = frame.parameterSets } }
+      server?.send(video: frame, codec: settings.codec)
+    }
+    audioEncoder.onFrame = { [weak server] frame in
+      server?.send(audio: frame)
+    }
+
+    server.start(
+      port: UInt16(clamping: settings.port),
+      fallbackPort: UInt16(clamping: StreamSettings.fallbackPort),
+      path: settings.path,
+      advertise: launch.advertise
+    )
+    self.server = server
+  }
+
 
   private func startEncoding() {
     videoEncoder.onFailure = { [weak self] failure in

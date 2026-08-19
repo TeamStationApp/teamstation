@@ -1,0 +1,123 @@
+import CameramanRTSP
+import Foundation
+import ProducerRTSP
+import Testing
+
+/// The request parser sees whatever the network hands it, which is not whole messages.
+struct RTSPServerMessageTests {
+  @Test func parsesARequestProducerWouldSend() throws {
+    // Built with Producer's own writer, so the two halves are checked against each other rather than
+    // against a hand-written string that might not match what it emits.
+    var builder = RTSPRequestBuilder()
+    let outgoing = builder.make(
+      .describe,
+      uri: "rtsp://10.0.0.1/live",
+      headers: [ (name: "Accept", value: "application/sdp") ]
+    )
+
+    let (request, consumed) = try #require(RTSPServerRequest.parse(outgoing.wireFormat))
+
+    #expect(request.method == "DESCRIBE")
+    #expect(request.uri == "rtsp://10.0.0.1/live")
+    #expect(request.cseq == "1")
+    #expect(request.headers["accept"] == "application/sdp")
+    #expect(request.headers["user-agent"] == "GS Producer/1.0")
+    #expect(consumed == outgoing.wireFormat.count)
+  }
+
+  @Test func returnsNilUntilTheHeaderBlockIsComplete() {
+    let full = Data("OPTIONS rtsp://x/ RTSP/1.0\r\nCSeq: 1\r\n\r\n".utf8)
+
+    // Every prefix short of the terminator must read as "not yet", never as an error and never as a
+    // request with missing headers.
+    for count in 1 ..< full.count {
+      #expect(RTSPServerRequest.parse(full.prefix(count)) == nil, "prefix of \(count)")
+    }
+    #expect(RTSPServerRequest.parse(full) != nil)
+  }
+
+  @Test func waitsForTheWholeBodyBeforeReturning() throws {
+    let head = "SET_PARAMETER rtsp://x/ RTSP/1.0\r\nCSeq: 3\r\nContent-Length: 10\r\n\r\n"
+    #expect(RTSPServerRequest.parse(Data(head.utf8)) == nil, "headers alone are not a whole request")
+    #expect(RTSPServerRequest.parse(Data((head + "12345").utf8)) == nil, "a partial body is not either")
+
+    let (request, consumed) = try #require(RTSPServerRequest.parse(Data((head + "1234567890").utf8)))
+    #expect(request.body == Data("1234567890".utf8))
+    #expect(consumed == head.utf8.count + 10)
+  }
+
+  @Test func consumedCountLetsPipelinedRequestsBeDrained() throws {
+    // A client may put several requests in one segment. A parser that reports the wrong consumed
+    // count either loses the second request or reparses part of the first.
+    let text = "OPTIONS rtsp://x/ RTSP/1.0\r\nCSeq: 1\r\n\r\nDESCRIBE rtsp://x/ RTSP/1.0\r\nCSeq: 2\r\n\r\n"
+    var buffer = Data(text.utf8)
+    var methods: [String] = []
+
+    while let (request, consumed) = RTSPServerRequest.parse(buffer) {
+      methods.append(request.method)
+      buffer.removeFirst(consumed)
+    }
+
+    #expect(methods == [ "OPTIONS", "DESCRIBE" ])
+    #expect(buffer.isEmpty)
+  }
+
+  @Test func headerNamesAreCaseInsensitive() throws {
+    let text = "PLAY rtsp://x/ RTSP/1.0\r\ncseq: 4\r\nSESSION: ABC\r\nTrAnSpOrT: RTP/AVP/TCP\r\n\r\n"
+    let (request, _) = try #require(RTSPServerRequest.parse(Data(text.utf8)))
+
+    #expect(request.cseq == "4")
+    #expect(request.session == "ABC")
+    #expect(request.headers["transport"] == "RTP/AVP/TCP")
+  }
+
+  @Test func foldedHeaderValuesAreJoined() throws {
+    let text = "SETUP rtsp://x/ RTSP/1.0\r\nCSeq: 1\r\nTransport: RTP/AVP/TCP;unicast;\r\n interleaved=0-1\r\n\r\n"
+    let (request, _) = try #require(RTSPServerRequest.parse(Data(text.utf8)))
+
+    #expect(request.headers["transport"] == "RTP/AVP/TCP;unicast; interleaved=0-1")
+  }
+
+  @Test func aMethodItDoesNotKnowStillParses() throws {
+    // Answering 501 requires parsing the request first, so an unknown method must not fail to parse.
+    let (request, _) = try #require(RTSPServerRequest.parse(
+      Data("REDIRECT rtsp://x/ RTSP/1.0\r\nCSeq: 1\r\n\r\n".utf8)
+    ))
+    #expect(request.method == "REDIRECT")
+  }
+
+  @Test func responsesAreReadableByProducersParser() throws {
+    let response = RTSPServerResponse(
+      headers: [ (name: "CSeq", value: "5"), (name: "Session", value: "ABC;timeout=60") ],
+      body: Data("v=0\r\n".utf8)
+    )
+
+    let (parsed, consumed) = try #require(RTSPResponse.parse(response.wireFormat))
+
+    #expect(parsed.statusCode == 200)
+    #expect(parsed.cseq == 5)
+    #expect(parsed.session == "ABC")
+    #expect(parsed.sessionTimeout == 60)
+    #expect(parsed.bodyText == "v=0\r\n")
+    #expect(consumed == response.wireFormat.count)
+  }
+
+  @Test func contentLengthIsWrittenOnlyWhenThereIsABody() {
+    let empty = RTSPServerResponse(headers: [ (name: "CSeq", value: "1") ])
+    let text = String(decoding: empty.wireFormat, as: UTF8.self)
+
+    #expect(!text.contains("Content-Length"))
+    #expect(text.hasSuffix("\r\n\r\n"), "the header block must still be terminated")
+  }
+
+  @Test func contentLengthCountsBytesNotCharacters() throws {
+    // A multi-byte body with a character count in Content-Length leaves the client waiting for bytes
+    // that never come, which presents as a hang rather than an error.
+    let body = Data("s=Café ⚽\r\n".utf8)
+    let response = RTSPServerResponse(headers: [ (name: "CSeq", value: "1") ], body: body)
+    let (parsed, _) = try #require(RTSPResponse.parse(response.wireFormat))
+
+    #expect(parsed.body == body)
+    #expect(parsed.header("content-length") == String(body.count))
+  }
+}

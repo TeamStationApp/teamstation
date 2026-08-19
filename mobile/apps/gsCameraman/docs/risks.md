@@ -58,6 +58,32 @@ Audio: AAC-LC, 48 kHz mono, 283 access units over the same window. 283 × 1024 s
 6.04 s against the video's 5.97 s, so the two clocks agree and no access units were dropped or padded
 at buffer boundaries.
 
+### A client that joins mid-stream needs a keyframe forced for it — 2026-08-19, iPhone 13 Pro
+
+Sending whatever frame the encoder produces next after `PLAY` hands the client inter-coded frames that
+reference pictures it never received. ffmpeg reports `Could not find ref with POC` until the next
+scheduled keyframe, up to a full keyframe interval of garbage. `PLAY` therefore asks the encoder for a
+keyframe and the connection drops video until one arrives, so the first frame a client decodes is
+always an IDR.
+
+### The capture clock repeats a presentation time — 2026-08-19, iPhone 13 Pro
+
+A receiver ends a picture when the RTP timestamp changes, so two frames sharing one timestamp are
+reassembled into a single malformed access unit. `RTSPClientConnection` forces the sent timestamp to
+advance rather than trusting the capture clock to be strictly increasing.
+
+Measured over a 6 s ffmpeg pull afterwards: 180 frames, no duplicate and no backward timestamps, gaps
+clustered on 3000 ticks with jitter between 2585 and 4919. ffmpeg's `-f null` pass still prints
+`non monotonically increasing dts`; that is its rescale into the null muxer's coarser timebase, not
+something present in the stream, and the RTSP pull itself is warning-free.
+
+### Both codecs survive a real client over the wire — 2026-08-19, iPhone 13 Pro
+
+`scripts/verifyStream.sh` builds, launches, discovers the phone over Bonjour, pulls with
+`scripts/rtspClient.js` and hands the result to ffprobe and ffmpeg. Both codecs stream at ~30 fps with
+no sequence-number gaps, the RTCP `CNAME` matches the `a=ssrc` line in the SDP, and ffmpeg decodes
+every frame. ffmpeg pulling directly, with no involvement from our client, produces the same result.
+
 ### Maestro cannot see system permission alerts on device — 2026-08-19
 
 They sit outside the app's accessibility hierarchy, so `tapOn: "Allow"` finds nothing while the dialog
