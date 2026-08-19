@@ -8,12 +8,13 @@ let package = Package(
     .library(name: "CameramanTestHarness", targets: [ "CameramanTestHarness" ])
   ],
   dependencies: [
-    .package(path: "../CameramanCore")
+    .package(path: "../CameramanCore"),
+    .package(path: "../CameramanEncode")
   ],
   targets: [
     .target(
       name: "CameramanTestHarness",
-      dependencies: [ "CameramanCore" ],
+      dependencies: [ "CameramanCore", "CameramanEncode" ],
       swiftSettings: [ .swiftLanguageMode(.v6) ]
     )
   ]

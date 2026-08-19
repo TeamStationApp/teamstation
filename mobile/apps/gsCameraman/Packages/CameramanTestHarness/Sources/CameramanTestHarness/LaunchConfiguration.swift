@@ -21,7 +21,8 @@ public struct LaunchConfiguration: Sendable, Equatable {
     "cameraName",
     "identityUUID",
     "debugHUD",
-    "measureCapabilities"
+    "measureCapabilities",
+    "recordSeconds"
   ]
 
   public var isUITest = false
@@ -30,6 +31,9 @@ public struct LaunchConfiguration: Sendable, Equatable {
   /// Runs the capability measurement instead of the camera. It takes about 90 seconds and needs its
   /// own capture session, so it is never on by default.
   public var measureCapabilities = false
+  /// Records this many seconds of the encoder's output to an Annex-B file so it can be pulled off the
+  /// device and put through ffprobe. Zero means no recording.
+  public var recordSeconds: Double = 0
   public var settings = StreamSettings.default
   public var cameraName: String?
   /// Pins the identity so a flow can assert an exact CNAME instead of whatever the Keychain holds.
@@ -70,6 +74,7 @@ public struct LaunchConfiguration: Sendable, Equatable {
     isUITest = Self.bool(values["uiTest"]) ?? false
     useSyntheticCamera = Self.bool(values["syntheticCamera"]) ?? false
     measureCapabilities = Self.bool(values["measureCapabilities"]) ?? false
+    recordSeconds = values["recordSeconds"].flatMap(Double.init) ?? 0
     showDebugHUD = Self.bool(values["debugHUD"]) ?? isUITest
     cameraName = values["cameraName"]
     identityUUID = values["identityUUID"]
