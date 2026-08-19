@@ -10,8 +10,11 @@ import SwiftUI
 @Observable
 public final class AppEnvironment {
   public let launch: LaunchConfiguration
+  public let camera = CameraSession()
+
   public private(set) var identity: DeviceIdentity
   public var settings: StreamSettings
+  public private(set) var cameraState = CameraSession.State()
   public private(set) var capability: CameraCapabilityReport?
   public private(set) var cameraAuthorized = false
   public private(set) var microphoneAuthorized = false
@@ -47,13 +50,32 @@ public final class AppEnvironment {
     identity = identityProvider.save(name: name)
   }
 
-  /// Phase 1 startup: permissions, then the capability measurement, which is written to stdout so
-  /// `devicectl device process launch --console` can capture it off the device.
   public func start() async {
     status = "requesting permissions"
     cameraAuthorized = await AVCaptureDevice.requestAccess(for: .video)
     microphoneAuthorized = await AVCaptureDevice.requestAccess(for: .audio)
 
+    if launch.measureCapabilities {
+      await measureCapabilities()
+      return
+    }
+
+    guard cameraAuthorized else {
+      status = "camera permission denied"
+      return
+    }
+
+    camera.onStateChange = { [weak self] state in
+      self?.cameraState = state
+    }
+    camera.configure(position: .back, settings: settings)
+    camera.start()
+    status = "running"
+  }
+
+  /// Takes about 90 seconds — it makes every format on every device active in turn — and it needs its
+  /// own capture session, so it runs instead of the live camera rather than alongside it.
+  private func measureCapabilities() async {
     status = "measuring capabilities"
     let report = await CameraCapabilityProbe().run()
     capability = report
@@ -62,38 +84,6 @@ public final class AppEnvironment {
     print(report.jsonString())
     print("CAMERAMAN_CAPABILITIES_END")
 
-    status = "ready"
-  }
-
-  /// Zoom mapping for the widest virtual back camera the measurement found, which is what the
-  /// preset pills and the pinch gesture are derived from.
-  public var backZoomMapping: ZoomMapping? {
-    guard let device = capability?.devices.first(where: { $0.position == "back" }) else { return nil }
-    // The ceiling comes from the format's recommended range, not the device's available maximum,
-    // which is a 189x digital-upscaling limit on this hardware.
-    let recommended = device.formats.compactMap(\.recommendedMaxZoom).min()
-    return ZoomMapping(
-      minimumDeviceZoom: device.minAvailableZoom,
-      maximumDeviceZoom: ZoomMapping.resolveMaximumDeviceZoom(
-        recommended: recommended,
-        available: device.maxAvailableZoom
-      ),
-      displayMultiplier: device.displayZoomMultiplier,
-      switchOverDeviceZooms: device.switchOverZoomFactors
-    )
-  }
-
-  public var backFormatCatalogue: FormatCatalogue? {
-    guard let device = capability?.devices.first(where: { $0.position == "back" }) else { return nil }
-    return FormatCatalogue(formats: device.formats.map {
-      CaptureFormatDescriptor(
-        width: $0.width,
-        height: $0.height,
-        minimumFrameRate: $0.minFrameRate,
-        maximumFrameRate: $0.maxFrameRate,
-        supportsMultiLensSwitching: $0.keepsMultiLensSwitching,
-        isBinned: $0.isBinned
-      )
-    })
+    status = "measured"
   }
 }

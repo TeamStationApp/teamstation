@@ -44,11 +44,13 @@ log "Launching with a console attached"
 # The app keeps running after it prints, so the read has to be bounded. A non-zero exit from
 # `timeout` here is expected and is not a failure.
 set +e
-timeout "${CONSOLE_TIMEOUT:-120}" xcrun devicectl device process launch \
+# `-measureCapabilities` runs the measurement instead of the camera. Without it the app opens the
+# live session and never prints anything, so the read would time out with no explanation.
+timeout "${CONSOLE_TIMEOUT:-180}" xcrun devicectl device process launch \
   --device "$CAMERAMAN_DEVICE_UDID" \
   --console \
   --terminate-existing \
-  "$CAMERAMAN_BUNDLE_ID" > "$CONSOLE" 2>&1
+  "$CAMERAMAN_BUNDLE_ID" -measureCapabilities true > "$CONSOLE" 2>&1
 set -e
 
 node -e '
