@@ -12,9 +12,10 @@
     "test:unit": "bash scripts/test-unit.sh",
     "test:integration": "node scripts/rtspClient.js",
     "test:ui": "node scripts/run-maestro.js",
-    "probe": "node scripts/probe.js",
     "verify:encode": "bash scripts/verifyEncode.sh",
-    "verify:stream": "bash scripts/verifyStream.sh"
+    "verify:stream": "bash scripts/verifyStream.sh",
+    "verify:clients": "bash scripts/verifyClientCount.sh",
+    "control": "node scripts/control.js"
   },
   "engines": {
     "node": ">=20"

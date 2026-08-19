@@ -25,6 +25,10 @@ public final class CameraSession: @unchecked Sendable {
     public var mapping: ZoomMapping = ZoomMapping(maximumDeviceZoom: 1)
     public var deviceZoom: Double = 1
     public var activeFormat: CaptureFormatDescriptor?
+    /// Every format the current device offers, for the settings picker. Read from the device rather
+    /// than assumed, because the front and back cameras offer different sets and neither matches
+    /// what a hardcoded list would say.
+    public var availableFormats: [CaptureFormatDescriptor] = []
     public var isRunning = false
     public var failure: String?
 
@@ -149,6 +153,7 @@ public final class CameraSession: @unchecked Sendable {
     applyFormat(to: selected)
     state.position = position
     state.deviceType = selected.deviceType.rawValue
+    state.availableFormats = Self.descriptors(of: selected)
     state.mapping = Self.mapping(for: selected)
     state.failure = nil
     // Start at the wide lens rather than the ultra-wide: 1x is what an operator pointing a phone at a
@@ -187,11 +192,15 @@ public final class CameraSession: @unchecked Sendable {
     }
   }
 
+  /// Every format the device offers, reduced to what the picker and the catalogue need.
+  static func descriptors(of device: AVCaptureDevice) -> [CaptureFormatDescriptor] {
+    let isVirtual = !device.virtualDeviceSwitchOverVideoZoomFactors.isEmpty
+    return device.formats.compactMap { descriptor($0, keepsMultiLensSwitching: isVirtual) }
+  }
+
   private func applyFormat(to device: AVCaptureDevice) {
     let isVirtual = !device.virtualDeviceSwitchOverVideoZoomFactors.isEmpty
-    let catalogue = FormatCatalogue(formats: device.formats.compactMap {
-      Self.descriptor($0, keepsMultiLensSwitching: isVirtual)
-    })
+    let catalogue = FormatCatalogue(formats: Self.descriptors(of: device))
     guard let wanted = catalogue.selection(
       width: settings.width,
       height: settings.height,

@@ -1,0 +1,28 @@
+appId: co.gamestation.cameraman
+---
+# A client connects and the app notices. The number on screen is what an operator uses to answer
+# "is anyone actually watching this camera?", and it is read from the server's own connection list
+# rather than from anything the client reports, so a stale count shows up here.
+#
+# The client is started by scripts/verifyClientCount.sh, not from inside this flow: Maestro's
+# runScript runs in its own JS engine and cannot spawn a process. Run this through that script
+# rather than on its own, or the waits below will simply time out.
+#
+# Needs the real device — the client connects to the phone over the LAN.
+- launchApp
+- waitForAnimationToEnd:
+    timeout: 8000
+
+- assertVisible: "clients 0"
+- assertVisible: "rtsp :554/live/mainstream"
+
+# Generous, because the script outside is waiting for this launch to settle before it connects.
+- extendedWaitUntil:
+    visible: "clients 1"
+    timeout: 60000
+
+# And the count comes back down when the client leaves, which is the half a counter that increments
+# on connect and never decrements would still pass without.
+- extendedWaitUntil:
+    visible: "clients 0"
+    timeout: 60000
