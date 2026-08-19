@@ -1,0 +1,20 @@
+{
+  "name": "@gamestation/cameraman",
+  "version": "1.0.0",
+  "private": true,
+  "description": "GS Cameraman — turns an iPhone into an RTSP camera source. Node scripts only; the app itself is built with xcodebuild.",
+  "scripts": {
+    "bootstrap": "bash scripts/bootstrap.sh",
+    "build:sim": "bash scripts/build-sim.sh",
+    "build:device": "bash scripts/build-device.sh",
+    "boot:sim": "bash scripts/boot-sim.sh",
+    "capabilities": "bash scripts/capabilities.sh",
+    "test:unit": "bash scripts/test-unit.sh",
+    "test:integration": "node scripts/testIntegration.js",
+    "test:ui": "node scripts/run-maestro.js",
+    "probe": "node scripts/probe.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
