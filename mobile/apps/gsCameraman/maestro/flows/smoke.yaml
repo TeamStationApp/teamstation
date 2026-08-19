@@ -1,0 +1,28 @@
+appId: co.gamestation.cameraman
+---
+# The app opens, the camera runs, and the RTSP server is listening — the three things that have to
+# be true before any other flow means anything. Kept short so a failure here says "nothing works"
+# rather than pointing at one feature.
+- launchApp
+- waitForAnimationToEnd:
+    timeout: 8000
+
+- assertVisible:
+    id: "camera-screen"
+- assertVisible:
+    id: "camera-name"
+
+# The default framing and format, before anything has been changed.
+- assertVisible: "1x"
+- assertVisible: "1920x1080@30"
+
+# The port matters as text: a fallback to 8554 is the case an operator has to be told about, and it
+# is the one thing on this screen that cannot be inferred from anywhere else.
+- assertVisible: "rtsp :554/live/mainstream"
+- assertVisible: "clients 0"
+
+# The controls exist and are reachable — tapping them is other flows' business.
+- assertVisible:
+    id: "flip-button"
+- assertVisible:
+    id: "settings-button"

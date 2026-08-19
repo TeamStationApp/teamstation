@@ -8,6 +8,7 @@ public struct CameraView: View {
   /// The zoom the pinch started from. Pinch is multiplicative against this rather than against the
   /// live value, which is what makes it track the fingers instead of drifting.
   @State private var zoomAtGestureStart: Double?
+  @State private var isShowingSettings = false
 
   public init(environment: AppEnvironment) {
     self.environment = environment
@@ -27,7 +28,10 @@ public struct CameraView: View {
         HStack(alignment: .top) {
           streamBadge
           Spacer()
-          flipButton
+          VStack(spacing: 14) {
+            flipButton
+            settingsButton
+          }
         }
         Spacer()
         presetPills
@@ -35,6 +39,9 @@ public struct CameraView: View {
       .padding(24)
     }
     .background(.black)
+    .sheet(isPresented: $isShowingSettings) {
+      SettingsView(environment: environment)
+    }
   }
 
   private var pinch: some Gesture {
@@ -65,6 +72,13 @@ public struct CameraView: View {
           .font(.system(.caption, design: .monospaced))
           .accessibilityIdentifier("active-format")
       }
+      Text(serverLine)
+        .font(.system(.caption, design: .monospaced))
+        .foregroundStyle(environment.serverStatus.isListening ? .green : .orange)
+        .accessibilityIdentifier("server-status")
+      Text("clients \(environment.serverStatus.clientCount)")
+        .font(.system(.caption, design: .monospaced))
+        .accessibilityIdentifier("client-count")
       if let failure = environment.cameraState.failure {
         Text(failure)
           .font(.caption)
@@ -75,6 +89,29 @@ public struct CameraView: View {
     .foregroundStyle(.white)
     .padding(10)
     .background(.black.opacity(0.45), in: .rect(cornerRadius: 10))
+  }
+
+  /// The bound port, not the requested one. A fallback to 8554 is the case where an operator who
+  /// reads "554" off the screen spends ten minutes pointing a client at a port nothing is on.
+  private var serverLine: String {
+    guard let port = environment.serverStatus.port else {
+      return environment.serverStatus.lastError ?? "not listening"
+    }
+    return "rtsp :\(port)\(environment.settings.path)"
+  }
+
+  private var settingsButton: some View {
+    Button {
+      isShowingSettings = true
+    } label: {
+      Image(systemName: "slider.horizontal.3")
+        .font(.title2)
+        .padding(14)
+        .background(.black.opacity(0.45), in: .circle)
+    }
+    .foregroundStyle(.white)
+    .accessibilityIdentifier("settings-button")
+    .accessibilityLabel("Camera settings")
   }
 
   private var flipButton: some View {

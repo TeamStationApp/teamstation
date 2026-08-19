@@ -96,6 +96,25 @@ Even a flow with no `launchApp`. A `devicectl ... --console` session started fir
 signal 9, so permission-granting has to happen **before** the console launch, not after. This is why
 `scripts/capabilities.sh` runs the Maestro flow first.
 
+### The simulator binds 554 and runs the whole path — 2026-08-19, iPhone 16 Pro simulator, iOS 18.3
+
+This was open from Phase 1. It binds, VideoToolbox encodes, and the server serves: 30.1 fps over
+RTSP with the synthetic source, 223 frames in 8 s, all decoded by ffmpeg. `StreamSettings.fallbackPort`
+stays, but not for this reason.
+
+### A per-pixel test pattern is slower than the encoder — 2026-08-19
+
+`SyntheticCamera` first drew 1080p pixel by pixel and delivered about two frames a second in a debug
+build, which reads as an encoder that has stopped rather than a slow source. Written with `memset`
+per row it reaches 30 fps on the same machine. Worth remembering for any future test source: three
+million bounds-checked writes a frame is not free in an unoptimised build.
+
+### `devicectl` eats launch arguments containing its own short flags — 2026-08-19
+
+`--terminate-existing <bundle> -uiTest true` fails with `The value 'true' is invalid for '-t'`:
+`-uiTest` is parsed as bundled short flags. A `--` before the app's arguments fixes it. `-codec` and
+`-recordSeconds` happen to contain no colliding letters, which is why this only surfaced in Phase 6.
+
 ## Open
 
 ### A different handset will read differently

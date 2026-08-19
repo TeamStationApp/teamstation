@@ -1,0 +1,59 @@
+appId: co.gamestation.cameraman
+---
+# Codec and bitrate are set in the sheet and have to survive leaving it. A setting that reverts on
+# dismiss looks identical to one that was never applied, so the assertions are made after Done.
+- launchApp
+- waitForAnimationToEnd:
+    timeout: 8000
+
+- tapOn:
+    id: "settings-button"
+- waitForAnimationToEnd:
+    timeout: 3000
+
+- assertVisible:
+    id: "settings-codec"
+- assertVisible:
+    id: "settings-bitrate-value"
+    text: ".*6.0 Mbps"
+
+# The identifier is shown but not editable. Worth asserting, because a camera whose identity changed
+# when its settings did would be a new camera to Producer every time.
+- assertVisible:
+    id: "settings-cname"
+- copyTextFrom:
+    id: "settings-cname"
+- evalScript: ${output.cname = maestro.copiedText}
+
+- tapOn:
+    id: "settings-codec"
+- tapOn: "HEVC"
+- waitForAnimationToEnd:
+    timeout: 2000
+
+- tapOn:
+    id: "settings-done"
+- waitForAnimationToEnd:
+    timeout: 3000
+
+# Back on the camera screen, still running and still serving — changing the codec reconfigures the
+# encoder, and a reconfiguration that kills the session would show up here.
+- assertVisible:
+    id: "camera-screen"
+- assertVisible: "rtsp :554/live/mainstream"
+
+- tapOn:
+    id: "settings-button"
+- waitForAnimationToEnd:
+    timeout: 3000
+
+# The choice stuck, and the identity did not move with it.
+- assertVisible:
+    id: "settings-codec"
+    text: ".*HEVC"
+- assertVisible:
+    id: "settings-cname"
+    text: ".*${output.cname}"
+
+- tapOn:
+    id: "settings-done"
