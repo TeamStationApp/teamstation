@@ -369,6 +369,7 @@ public final class AppEnvironment {
 
       do {
         let replacement = try discovery.makeSource(for: source)
+        observeStreamIdentity(replacement, id: pipeline.sourceID)
         try router.replaceSource(replacement, for: pipeline.sourceID)
         pipelineEndpoints[pipeline.sourceID] = endpoint
         statusMessage = "\(source.advertisedName) moved to \(endpoint.host)"
@@ -435,12 +436,51 @@ public final class AppEnvironment {
     cameras.endpoint(for: cameraID)?.host
   }
 
+  /// Hands naming back to the camera, adopting the name it last advertised.
+  public func followCamera(for id: SourceID) {
+    guard let camera = boundCamera(for: id) else { return }
+    cameras.followCamera(camera.id)
+    cameraRecords = cameras.records
+    refreshDiscovery()
+    pushDisplayNamesToTiles()
+  }
+
+  /// What the camera at this row calls itself, if it says so at all.
+  public func advertisement(for id: SourceID) -> StreamAdvertisement? {
+    guard let endpoint = endpoint(for: id) else { return nil }
+    return cameras.advertisement(for: endpoint)
+  }
+
+  /// Records a claim read off the wire — the SDP at `DESCRIBE`, then RTCP SDES while streaming.
+  ///
+  /// Both carry the same `CNAME`, and taking either means a camera is recognised before its first
+  /// frame decodes rather than after.
+  public func noteAdvertisement(_ advertisement: StreamAdvertisement, for id: SourceID) {
+    guard let endpoint = endpoint(for: id), !advertisement.isEmpty else { return }
+    cameras.note(advertisement, from: endpoint)
+    cameraRecords = cameras.records
+    if let tileIndex = selections.first(where: { $0.id == id })?.tileIndex,
+       let cname = advertisement.cname, !cname.isEmpty {
+      telemetry.mutateTile(tileIndex) { $0.cname = cname }
+    }
+    pushDisplayNamesToTiles()
+  }
+
   public func forgetCamera(for id: SourceID) {
     guard let camera = boundCamera(for: id) else { return }
     cameras.forget(camera.id)
     cameraRecords = cameras.records
     refreshDiscovery()
     pushDisplayNamesToTiles()
+  }
+
+  private func observeStreamIdentity(_ source: FrameSource, id: SourceID) {
+    guard let reporting = source as? StreamIdentityReporting else { return }
+    reporting.onStreamAdvertisement = { [weak self] advertisement in
+      DispatchQueue.main.async {
+        self?.noteAdvertisement(advertisement, for: id)
+      }
+    }
   }
 
   /// Republishes the current endpoints through the identity layer, so a binding change is visible
@@ -645,6 +685,7 @@ public final class AppEnvironment {
     ) else { return }
     do {
       let source = try discovery.makeSource(for: discovered)
+      observeStreamIdentity(source, id: id)
       let pipeline = SourcePipeline(
         sourceID: id,
         tileIndex: tileIndex,

@@ -14,6 +14,9 @@ public final class CameraRegistry: @unchecked Sendable {
   /// Last non-empty `_awx_service._tcp` snapshot. A rename or forget must not wait on Bonjour:
   /// an empty browse update would otherwise demote every identity binding to address matching.
   private var lastAdvertisements: [CameraAdvertisement] = []
+  /// What each endpoint last said about itself on SDP/RTCP. Session-only: an advertisement is a
+  /// live claim, and a stale one would let a camera that has gone away keep its hold on a record.
+  private var advertised: [CameraEndpoint: StreamAdvertisement] = [:]
 
   /// Shared by every camera's delay line: it holds them all to one delay and hands each the size it
   /// learned last time. It lives here because this is what already knows which camera is which
@@ -95,12 +98,22 @@ public final class CameraRegistry: @unchecked Sendable {
     let ads = remembered(advertisements)
     CameraIdentityRules.applyAdvertisements(ads, to: &cachedRecords, now: now)
     let byHost = Dictionary(ads.map { ($0.host, $0) }, uniquingKeysWith: { _, latest in latest })
+    advertised = advertised.filter { endpoints.contains($0.key) }
     cachedBindings = CameraIdentityRules.reconcile(
       bindings: cachedBindings,
       endpoints: endpoints,
       records: cachedRecords,
-      advertisements: byHost
+      advertisements: byHost,
+      streamAdvertisements: advertised
     )
+
+    // A camera that has just been matched to its record may have advertised a new name while the
+    // binding was still being worked out, so the adoption happens after the match, not before it.
+    for binding in cachedBindings {
+      guard let cameraID = binding.cameraID, let claim = advertised[binding.endpoint] else { continue }
+      CameraIdentityRules.apply(claim, to: cameraID, in: &cachedRecords)
+    }
+
     let records = cachedRecords
     let bindings = cachedBindings
     lock.unlock()
@@ -170,6 +183,51 @@ public final class CameraRegistry: @unchecked Sendable {
     store.save(records)
   }
 
+  /// Puts a camera back under its own control, adopting the name it last advertised.
+  public func followCamera(_ cameraID: UUID) {
+    lock.lock()
+    CameraIdentityRules.followCamera(cameraID, in: &cachedRecords)
+    let records = cachedRecords
+    lock.unlock()
+
+    store.save(records)
+  }
+
+  /// Records what a camera said about itself, so the next `resolve` can match on the identifier
+  /// and a camera being followed picks up a rename made on the phone.
+  ///
+  /// Kept for endpoints with no record too: a camera that introduces itself before the operator has
+  /// named it must still be matchable by identifier once it is named.
+  public func note(_ advertisement: StreamAdvertisement, from endpoint: CameraEndpoint) {
+    guard !advertisement.isEmpty else { return }
+
+    lock.lock()
+    let merged = StreamAdvertisement(
+      cname: advertisement.cname ?? advertised[endpoint]?.cname,
+      name: advertisement.name ?? advertised[endpoint]?.name
+    )
+    if advertised[endpoint] == merged {
+      lock.unlock()
+      return
+    }
+    advertised[endpoint] = merged
+    let cameraID = cachedBindings.first { $0.endpoint == endpoint }?.cameraID
+    if let cameraID {
+      CameraIdentityRules.apply(merged, to: cameraID, in: &cachedRecords)
+    }
+    let records = cachedRecords
+    lock.unlock()
+
+    guard cameraID != nil else { return }
+    store.save(records)
+  }
+
+  public func advertisement(for endpoint: CameraEndpoint) -> StreamAdvertisement? {
+    lock.lock()
+    defer { lock.unlock() }
+    return advertised[endpoint]
+  }
+
   public func forget(_ cameraID: UUID, now: Date = Date()) {
     lock.lock()
     CameraIdentityRules.forget(cameraID, from: &cachedRecords, bindings: &cachedBindings)
@@ -182,7 +240,8 @@ public final class CameraRegistry: @unchecked Sendable {
       bindings: cachedBindings,
       endpoints: cachedBindings.map(\.endpoint),
       records: cachedRecords,
-      advertisements: byHost
+      advertisements: byHost,
+      streamAdvertisements: advertised
     )
     let records = cachedRecords
     lock.unlock()
@@ -226,6 +285,7 @@ public final class CameraRegistry: @unchecked Sendable {
     cachedRecords = []
     cachedBindings = []
     lastAdvertisements = []
+    advertised = [:]
     lock.unlock()
 
     store.clear()

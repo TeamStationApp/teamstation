@@ -12,13 +12,25 @@ import ProducerSources
 /// Reconnection is this class's job and is genuinely new work. An RTSP session does not heal
 /// itself: when a camera reboots or its lease changes, the socket either dies or goes quiet, and
 /// without supervision the tile stays black for the rest of the game.
-public final class RTSPFrameSource: FrameSource, @unchecked Sendable {
+public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unchecked Sendable {
   /// Called when reconnecting to the same address has repeatedly failed, so the camera has probably
   /// moved and its identity needs re-resolving against a fresh scan.
   public typealias RelocationHandler = @Sendable (SourceID) -> Void
 
   public let sourceID: SourceID
   public let displayName: String
+  public var onStreamAdvertisement: (@Sendable (StreamAdvertisement) -> Void)? {
+    get {
+      lock.lock()
+      defer { lock.unlock() }
+      return streamAdvertisementHandler
+    }
+    set {
+      lock.lock()
+      streamAdvertisementHandler = newValue
+      lock.unlock()
+    }
+  }
 
   private let configuration: RTSPSession.Configuration
   private let clock: ProducerClock
@@ -78,6 +90,7 @@ public final class RTSPFrameSource: FrameSource, @unchecked Sendable {
   private var stallTimer: DispatchSourceTimer?
   private var reconnectItem: DispatchWorkItem?
   private var pendingWaitStart: DispatchTime?
+  private var streamAdvertisementHandler: (@Sendable (StreamAdvertisement) -> Void)?
   private var jitter = JitterWindow()
 
   private var playout: PlayoutController
@@ -264,6 +277,7 @@ public final class RTSPFrameSource: FrameSource, @unchecked Sendable {
     switch event {
     case let .playing(description, channels):
       configure(with: description, channels: channels)
+      publishAdvertisement(cname: description.streamCNAME, name: description.streamName)
 
     case let .packet(channel, packet):
       if channel == self.channels.video {
@@ -272,9 +286,21 @@ public final class RTSPFrameSource: FrameSource, @unchecked Sendable {
         handleAudio(packet)
       }
 
+    case let .rtcp(report):
+      publishAdvertisement(cname: report.cname, name: report.name)
+
     case let .failed(reason):
       scheduleReconnect(reason: reason)
     }
+  }
+
+  private func publishAdvertisement(cname: String?, name: String?) {
+    let advertisement = StreamAdvertisement(cname: cname, name: name)
+    guard !advertisement.isEmpty else { return }
+    lock.lock()
+    let handler = streamAdvertisementHandler
+    lock.unlock()
+    handler?(advertisement)
   }
 
   private func configure(with description: SDPDescription, channels: RTSPSession.Channels) {

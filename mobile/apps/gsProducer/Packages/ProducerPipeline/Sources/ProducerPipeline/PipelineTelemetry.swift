@@ -87,6 +87,10 @@ public struct TileTelemetry: Sendable, Codable, Equatable {
   public var packetsLost: UInt64 = 0
   /// Why this source last stopped delivering, in the words of whatever noticed. Empty while healthy.
   public var sourceStatus = ""
+  /// The `CNAME` this camera presents, empty for the cameras that present none. Worth surfacing
+  /// because a tile bound to the wrong camera and a tile bound to the right one look identical
+  /// until you can see which identifier the stream is actually carrying.
+  public var cname = ""
   /// Share of the receive thread's time spent blocked waiting on the network, 0-1. Near 1 means the
   /// loop is starved for frames; well below 1 means our own work on that thread is the limit.
   public var receiveWaitFraction: Double = 0

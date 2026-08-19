@@ -51,6 +51,7 @@ public final class RTSPSession: @unchecked Sendable {
   public enum Event: Sendable {
     case playing(description: SDPDescription, channels: Channels)
     case packet(channel: UInt8, packet: RTPPacket)
+    case rtcp(RTCPReport)
     /// Every way a session can end arrives here, including the camera closing the socket cleanly:
     /// from the receiver's point of view an orderly shutdown mid-game is still a failure.
     case failed(reason: String)
@@ -411,10 +412,13 @@ public final class RTSPSession: @unchecked Sendable {
     for item in items {
       switch item {
       case let .interleaved(channel, payload):
-        // RTCP arrives on the odd channels. Sender reports are the right way to align a camera's
-        // clock to wall clock, and are deliberately unused here: the DVR places frames by arrival.
-        guard channel.isMultiple(of: 2), let packet = RTPPacket.parse(payload) else { continue }
-        onEvent(.packet(channel: channel, packet: packet))
+        if channel.isMultiple(of: 2) {
+          // Even channels are RTP. Odd channels are RTCP for the preceding even channel.
+          guard let packet = RTPPacket.parse(payload) else { continue }
+          onEvent(.packet(channel: channel, packet: packet))
+        } else if let report = RTCPReport.parse(payload), !report.isEmpty {
+          onEvent(.rtcp(report))
+        }
 
       case let .response(response):
         lock.lock()

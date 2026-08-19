@@ -204,7 +204,11 @@ public struct SourceSelectionView: View {
       "name=\(rowName(for: selection)) on=\(selection.isEnabled ? 1 : 0) "
         + "audio=\(selection.usesAudio ? 1 : 0) "
         + "host=\(environment.endpoint(for: selection.id)?.host ?? "") "
-        + "origin=\(environment.bindingOrigin(for: selection.id).rawValue)"
+        + "origin=\(environment.bindingOrigin(for: selection.id).rawValue) "
+        // Both, because a flow asserting on a rename has to tell "the camera renamed itself and we
+        // followed" apart from "the operator renamed it and the camera's name is being ignored".
+        + "advertised=\(environment.boundCamera(for: selection.id)?.advertisedName ?? "") "
+        + "nameOrigin=\(environment.boundCamera(for: selection.id)?.nameOrigin.rawValue ?? "")"
     )
   }
 
@@ -229,6 +233,15 @@ public struct SourceSelectionView: View {
         draftName = bound?.name ?? ""
       }
       .accessibilityIdentifier("camera-rename-\(index + 1)")
+
+      // Only worth offering when it would change something: the camera has a name of its own and
+      // the operator has overridden it. Otherwise this is already what the row is doing.
+      if let advertised = bound?.advertisedName, bound?.nameOrigin == .operatorAssigned {
+        Button("Use camera's name (\"\(advertised)\")") {
+          environment.followCamera(for: selection.id)
+        }
+        .accessibilityIdentifier("camera-use-advertised-\(index + 1)")
+      }
 
       Button("New camera…") {
         environment.nameCamera(

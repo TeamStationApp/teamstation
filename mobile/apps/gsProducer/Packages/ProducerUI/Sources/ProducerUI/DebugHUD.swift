@@ -60,6 +60,9 @@ public struct DebugHUD: View {
         if let status = sourceStatus {
           label("hud-source-status", "src=\(status)")
         }
+        if let cname = programCNAME {
+          label("hud-cname", "cname=\(cname)")
+        }
       }
       ForEach(snapshot.tiles, id: \.index) { tile in
         label("hud-tile-\(tile.index + 1)-state", tile.accessibilityValue)
@@ -88,6 +91,15 @@ public struct DebugHUD: View {
   /// so; several failing at once are almost always failing for the same reason.
   private var sourceStatus: String? {
     snapshot.tiles.first { !$0.sourceStatus.isEmpty }?.sourceStatus
+  }
+
+  /// The identifier the camera currently on air is presenting. Only the programme tile, because the
+  /// HUD has one line for it and the question it answers — "is the right camera on air?" — is only
+  /// ever asked about that tile.
+  private var programCNAME: String? {
+    guard let index = snapshot.programTile else { return nil }
+    let cname = snapshot.tiles.first { $0.index == index }?.cname
+    return (cname?.isEmpty == false) ? cname : nil
   }
 
   /// R6, from the most recent replay on any tile. Only one tile replays at a time, so taking the
