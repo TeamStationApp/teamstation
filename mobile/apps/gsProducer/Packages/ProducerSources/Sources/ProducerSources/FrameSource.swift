@@ -273,6 +273,11 @@ public struct ReceiveStats: Sendable, Equatable {
 /// The single boundary between "we have pixels" and "where the pixels came from".
 /// Everything above this — DVR, index, proxy, scrub, replay, compositor, program encode,
 /// export — is written against this protocol and never learns which transport delivered a frame.
+/// A live camera that announces itself in SDP or RTCP. Optional: synthetic sources do not.
+public protocol StreamIdentityReporting: AnyObject {
+  var onStreamAdvertisement: (@Sendable (StreamAdvertisement) -> Void)? { get set }
+}
+
 public protocol FrameSource: AnyObject, Sendable {
   var sourceID: SourceID { get }
   var displayName: String { get }

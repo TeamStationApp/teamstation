@@ -58,4 +58,27 @@ struct CameraRegistryTests {
     #expect(cameras.records[0].name == "0107B Mound")
     #expect(cameras.bindings[0].origin == .autoByIdentity)
   }
+
+  @Test("A CNAME claimed on the wire rebinds the camera after it moves")
+  func noteCNAMERebindsAfterMove() {
+    let cameras = registry()
+    let first = CameraEndpoint(host: "10.10.8.2")
+    let moved = CameraEndpoint(host: "10.10.8.9")
+    let claim = StreamAdvertisement(cname: "phone@gs-cameraman", name: "iPhone 13 Pro")
+
+    _ = cameras.resolve(endpoints: [ first ])
+    let id = cameras.adopt(endpoint: first, name: "Sideline")
+    cameras.note(claim, from: first)
+    cameras.rename(id, to: "Sideline")
+
+    _ = cameras.resolve(endpoints: [ moved ])
+    cameras.note(claim, from: moved)
+    _ = cameras.resolve(endpoints: [ moved ])
+
+    #expect(cameras.record(id: id)?.lastKnownCNAME == "phone@gs-cameraman")
+    #expect(cameras.record(id: id)?.advertisedName == "iPhone 13 Pro")
+    #expect(cameras.record(id: id)?.name == "Sideline")
+    #expect(cameras.binding(for: moved)?.cameraID == id)
+    #expect(cameras.binding(for: moved)?.origin == .autoByCNAME)
+  }
 }
