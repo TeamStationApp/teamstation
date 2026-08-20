@@ -40,6 +40,13 @@ public final class AppEnvironment {
   /// The parameter sets arrive with the first keyframe, and a client may DESCRIBE before then, so the
   /// latest ones are kept for the SDP rather than read out of the encoder on demand.
   private let latestParameterSets = OSAllocatedUnfairLock(initialState: [Data]())
+  /// DESCRIBE and RTCP read these rather than the values captured at `startServer`, so a rename or
+  /// a codec change is visible to the next client without tearing the listener down.
+  private let publishedIdentity: OSAllocatedUnfairLock<DeviceIdentity>
+  private let publishedSettings: OSAllocatedUnfairLock<StreamSettings>
+  /// The settings last pushed into the encoder and capture session. Compared on apply so Done after
+  /// a no-op visit to Settings does not restart anything.
+  private var appliedSettings: StreamSettings
 
   public init(launch: LaunchConfiguration = LaunchConfiguration(), store: IdentityStore? = nil) {
     self.launch = launch
@@ -63,10 +70,15 @@ public final class AppEnvironment {
       loaded = provider.save(name: name)
     }
     self.identity = loaded
+    self.publishedIdentity = OSAllocatedUnfairLock(initialState: loaded)
+    self.publishedSettings = OSAllocatedUnfairLock(initialState: launch.settings)
+    self.appliedSettings = launch.settings
   }
 
   public func rename(to name: String) {
-    identity = identityProvider.save(name: name)
+    let next = identityProvider.save(name: name)
+    identity = next
+    publishedIdentity.withLock { $0 = next }
   }
 
   /// The formats this camera actually offers, for the settings picker. Empty until capture has
@@ -85,14 +97,27 @@ public final class AppEnvironment {
 
   /// Pushes edited settings into the pieces that care. Called once when the settings sheet closes
   /// rather than on each change, so a drag along the bitrate slider does not reconfigure the
-  /// encoder fifty times.
+  /// encoder fifty times. A visit that changed nothing is a no-op, so the stream is not cut by
+  /// opening Settings to copy the URL.
   public func applySettings() {
-    videoEncoder.configure(settings: settings)
-    if settings.audioEnabled {
-      audioEncoder.configure(sampleRate: settings.audioSampleRate, channelCount: 1)
+    let next = settings
+    publishedSettings.withLock { $0 = next }
+    let previous = appliedSettings
+    let pipelineChanged = next.codec != previous.codec
+      || next.width != previous.width
+      || next.height != previous.height
+      || next.frameRate != previous.frameRate
+      || next.bitrate != previous.bitrate
+      || next.audioEnabled != previous.audioEnabled
+      || next.audioSampleRate != previous.audioSampleRate
+    guard pipelineChanged else { return }
+    appliedSettings = next
+    videoEncoder.configure(settings: next)
+    if next.audioEnabled {
+      audioEncoder.configure(sampleRate: next.audioSampleRate, channelCount: 1)
     }
     guard !launch.useSyntheticCamera else { return }
-    camera.configure(position: cameraState.position, settings: settings)
+    camera.configure(position: cameraState.position, settings: next)
   }
 
   public func start() async {
@@ -151,13 +176,15 @@ public final class AppEnvironment {
   }
 
   private func startServer() {
-    let identity = identity
-    let settings = settings
     let sets = latestParameterSets
+    let identityLock = publishedIdentity
+    let settingsLock = publishedSettings
 
     let server = RTSPServer(
       describe: { [audioEncoder] videoSSRC, audioSSRC in
-        SDPBuilder(
+        let identity = identityLock.withLock { $0 }
+        let settings = settingsLock.withLock { $0 }
+        return SDPBuilder(
           identity: identity,
           video: SDPBuilder.VideoTrack(
             codec: settings.codec,
@@ -177,9 +204,9 @@ public final class AppEnvironment {
         ).build()
       },
       hasAudio: { [audioEncoder] in
-        settings.audioEnabled && audioEncoder.audioSpecificConfig != nil
+        settingsLock.withLock { $0.audioEnabled } && audioEncoder.audioSpecificConfig != nil
       },
-      identity: { identity },
+      identity: { identityLock.withLock { $0 } },
       requestKeyframe: { [videoEncoder] in videoEncoder.requestKeyframe() }
     )
     server.onStatusChange = { [weak self] status in
@@ -193,7 +220,7 @@ public final class AppEnvironment {
 
     videoEncoder.onFrame = { [weak self, weak server] frame in
       if !frame.parameterSets.isEmpty { sets.withLock { $0 = frame.parameterSets } }
-      server?.send(video: frame, codec: settings.codec)
+      server?.send(video: frame, codec: settingsLock.withLock { $0.codec })
       Task { @MainActor in self?.encodedFrames += 1 }
     }
     audioEncoder.onFrame = { [weak server] frame in
@@ -201,9 +228,9 @@ public final class AppEnvironment {
     }
 
     server.start(
-      port: UInt16(clamping: settings.port),
+      port: UInt16(clamping: settingsLock.withLock { $0.port }),
       fallbackPort: UInt16(clamping: StreamSettings.fallbackPort),
-      path: settings.path,
+      path: settingsLock.withLock { $0.path },
       advertise: launch.advertise
     )
     self.server = server
@@ -223,6 +250,9 @@ public final class AppEnvironment {
     }
 
     guard fromCamera else { return }
+    camera.onCaptureRotationChange = { [videoEncoder] in
+      videoEncoder.requestKeyframe()
+    }
     camera.onVideoFrame = { [weak self, videoEncoder] sample in
       videoEncoder.encode(SampleBufferRef(sample.buffer))
       Task { @MainActor in self?.capturedFrames += 1 }
@@ -372,12 +402,14 @@ public final class AppEnvironment {
     case let .setBitrate(mbps):
       guard mbps > 0 else { return nil }
       settings.bitrate = Int(mbps * 1_000_000)
+      noteSettingsApplied()
       videoEncoder.configure(settings: settings)
       return ok()
 
     case let .setCodec(name):
       guard let codec = StreamCodec(rawValue: name) else { return nil }
       settings.codec = codec
+      noteSettingsApplied()
       videoEncoder.configure(settings: settings)
       return ok()
 
@@ -386,21 +418,30 @@ public final class AppEnvironment {
       settings.width = width
       settings.height = height
       settings.frameRate = Double(fps)
+      noteSettingsApplied()
       camera.configure(position: cameraState.position, settings: settings)
       videoEncoder.configure(settings: settings)
       return ok()
 
     case let .setAudio(on):
       settings.audioEnabled = on
+      noteSettingsApplied()
       if on { audioEncoder.configure(sampleRate: settings.audioSampleRate, channelCount: 1) }
       return ok()
 
     case .reset:
       settings = launch.settings
+      noteSettingsApplied()
       videoEncoder.configure(settings: settings)
       camera.configure(position: .back, settings: settings)
       return ok()
     }
+  }
+
+  private func noteSettingsApplied() {
+    let next = settings
+    appliedSettings = next
+    publishedSettings.withLock { $0 = next }
   }
 
   private func ok() -> Data { Data(#"{"ok":true}"#.utf8) }

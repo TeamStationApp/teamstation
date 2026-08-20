@@ -36,11 +36,12 @@ appId: co.gamestation.cameraman
 - waitForAnimationToEnd:
     timeout: 3000
 
-# Back on the camera screen, still running and still serving — changing the codec reconfigures the
-# encoder, and a reconfiguration that kills the session would show up here.
+# Back on the camera screen, still running — changing the codec reconfigures the encoder, and a
+# reconfiguration that kills the session would show up here.
 - assertVisible:
     id: "camera-screen"
-- assertVisible: "rtsp :554/live/mainstream"
+- assertVisible:
+    id: "zoom-label"
 
 - tapOn:
     id: "settings-button"

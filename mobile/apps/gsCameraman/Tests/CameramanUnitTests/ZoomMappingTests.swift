@@ -15,8 +15,17 @@ struct ZoomMappingTests {
     switchOverDeviceZooms: [ 2, 6 ]
   )
 
-  /// Front camera: one lens, so the two scales coincide.
+  /// Front camera: one lens, so the two scales coincide. The recommended ceiling still becomes a
+  /// tappable preset — digital, not a second lens.
   private let front = ZoomMapping(minimumDeviceZoom: 1, maximumDeviceZoom: 8)
+
+  /// iPhone 13 Pro recommended range: device 1…18, displayed 0.5x…9x.
+  private let thirteenPro = ZoomMapping(
+    minimumDeviceZoom: 1,
+    maximumDeviceZoom: 18,
+    displayMultiplier: 0.5,
+    switchOverDeviceZooms: [ 2, 6 ]
+  )
 
   @Test("Device zoom 1.0 on a triple camera reads as 0.5x, not 1x")
   func widestReadsAsHalf() {
@@ -69,9 +78,10 @@ struct ZoomMappingTests {
 
   @Test("Preset pills come out of the hardware, not a hardcoded 0.5/1/2/5")
   func presets() {
-    #expect(triple.presetDisplayedZooms == [ 0.5, 1, 3 ])
-    // The front camera offers exactly one preset, so no pill row should imply otherwise.
-    #expect(front.presetDisplayedZooms == [ 1 ])
+    #expect(triple.presetDisplayedZooms == [ 0.5, 1, 3, 7.5 ])
+    #expect(thirteenPro.presetDisplayedZooms == [ 0.5, 1, 3, 9 ])
+    // One lens plus the digital ceiling — not a second optical preset.
+    #expect(front.presetDisplayedZooms == [ 1, 8 ])
   }
 
   @Test("Pinch multiplies against the zoom at gesture start")
@@ -161,5 +171,65 @@ struct ZoomMappingTests {
     #expect(ZoomMapping.label(forDisplayed: 1) == "1x")
     #expect(ZoomMapping.label(forDisplayed: 3.0) == "3x")
     #expect(ZoomMapping.label(forDisplayed: 2.5) == "2.5x")
+  }
+
+  @Test("An exact lens zoom lights the preset, not a neighbouring tick")
+  func exactPresetLightsTheButton() {
+    #expect(thirteenPro.scaleHighlight(forDisplayed: 0.5) == .preset(0.5))
+    #expect(thirteenPro.scaleHighlight(forDisplayed: 1) == .preset(1))
+    #expect(thirteenPro.scaleHighlight(forDisplayed: 3) == .preset(3))
+    #expect(thirteenPro.scaleHighlight(forDisplayed: 9) == .preset(9))
+    // The label rounds to one decimal, so 1.04 still reads 1x and should keep the 1x button lit.
+    #expect(thirteenPro.scaleHighlight(forDisplayed: 1.04) == .preset(1))
+  }
+
+  @Test("A pinch between two lenses lights one of the five bars")
+  func ticksBetweenPresets() {
+    #expect(thirteenPro.scaleSegmentCount == 3)
+    // 0.5x…1x. 0.7x is well inside and rounds to 0.7x, not a preset.
+    let betweenWide = thirteenPro.scaleHighlight(forDisplayed: 0.7)
+    #expect(betweenWide == .tick(segment: 0, index: 2))
+    let betweenTele = thirteenPro.scaleHighlight(forDisplayed: 2)
+    #expect(betweenTele == .tick(segment: 1, index: 2))
+    // First bar of a segment, not the left-hand preset.
+    #expect(thirteenPro.scaleHighlight(forDisplayed: 0.6) == .tick(segment: 0, index: 1))
+    // 3x…9x is now a real segment, not "past the last lens".
+    let betweenMax = thirteenPro.scaleHighlight(forDisplayed: 6)
+    #expect(betweenMax == .tick(segment: 2, index: 2))
+  }
+
+  @Test("A pinch between the telephoto and the digital ceiling lights the last segment")
+  func ticksBetweenTeleAndMax() {
+    #expect(thirteenPro.scaleHighlight(forDisplayed: 5) == .tick(segment: 2, index: 1))
+  }
+
+  @Test("A single-lens camera still gets a digital-max preset")
+  func singleLensHasDigitalMax() {
+    #expect(front.scaleSegmentCount == 1)
+    #expect(front.scaleHighlight(forDisplayed: 1) == .preset(1))
+    #expect(front.scaleHighlight(forDisplayed: 8) == .preset(8))
+    #expect(front.scaleHighlight(forDisplayed: 3) == .tick(segment: 0, index: 1))
+  }
+
+  @Test("Scale progress is equal per pill gap, not per zoom ratio")
+  func scaleProgressWalksPillsEvenly() {
+    #expect(abs(thirteenPro.scaleProgress(forDisplayed: 0.5) - 0) < 0.000_1)
+    #expect(abs(thirteenPro.scaleProgress(forDisplayed: 1) - 1 / 3) < 0.000_1)
+    #expect(abs(thirteenPro.scaleProgress(forDisplayed: 3) - 2 / 3) < 0.000_1)
+    #expect(abs(thirteenPro.scaleProgress(forDisplayed: 9) - 1) < 0.000_1)
+    #expect(abs(thirteenPro.displayedZoom(forScaleProgress: 0) - 0.5) < 0.000_1)
+    #expect(abs(thirteenPro.displayedZoom(forScaleProgress: 1 / 3) - 1) < 0.000_1)
+    #expect(abs(thirteenPro.displayedZoom(forScaleProgress: 2 / 3) - 3) < 0.000_1)
+    #expect(abs(thirteenPro.displayedZoom(forScaleProgress: 1) - 9) < 0.000_1)
+  }
+
+  @Test("A drag as long as one pill gap walks exactly one segment")
+  func dragMatchesPillSpacing() {
+    let gap = 80.0
+    #expect(thirteenPro.displayedZoom(draggingFrom: 1, byPoints: gap, pointsPerSegment: gap) == 3)
+    #expect(thirteenPro.displayedZoom(draggingFrom: 3, byPoints: gap, pointsPerSegment: gap) == 9)
+    #expect(thirteenPro.displayedZoom(draggingFrom: 1, byPoints: -gap, pointsPerSegment: gap) == 0.5)
+    #expect(thirteenPro.displayedZoom(draggingFrom: 1, byPoints: gap / 2, pointsPerSegment: gap) == 2)
+    #expect(thirteenPro.displayedZoom(draggingFrom: 1, byPoints: 4 * gap, pointsPerSegment: gap) == 9)
   }
 }

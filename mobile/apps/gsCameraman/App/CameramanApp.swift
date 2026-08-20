@@ -3,8 +3,21 @@ import CameramanUI
 import SwiftUI
 import UIKit
 
+/// Landscape only. Declared here as well as in Info.plist because SwiftUI's window can otherwise
+/// come up in portrait on a phone that was launched from portrait lock, which then draws the whole
+/// UI on its side.
+final class CameramanAppDelegate: NSObject, UIApplicationDelegate {
+  func application(
+    _ application: UIApplication,
+    supportedInterfaceOrientationsFor window: UIWindow?
+  ) -> UIInterfaceOrientationMask {
+    .landscape
+  }
+}
+
 @main
 struct CameramanApp: App {
+  @UIApplicationDelegateAdaptor(CameramanAppDelegate.self) private var appDelegate
   @State private var environment: AppEnvironment
 
   init() {

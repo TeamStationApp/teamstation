@@ -59,12 +59,23 @@ public struct ZoomMapping: Sendable, Equatable {
     }
   }
 
-  /// Preset pills in displayed units: the minimum plus every switchover.
+  /// Preset pills in displayed units: the minimum, every lens switchover, and the recommended
+  /// maximum.
   ///
-  /// Derived rather than hardcoded. A literal `0.5 / 1 / 2 / 5` is wrong on every non-Pro iPhone
-  /// and wrong on the front camera of all of them.
+  /// The far-right mark is the zoom ceiling even when that value is digital rather than a
+  /// constituent lens. On an iPhone 13 Pro that is 9x. A literal `0.5 / 1 / 2 / 5` is wrong on
+  /// every non-Pro iPhone and wrong on the front camera of all of them.
   public var presetDisplayedZooms: [Double] {
-    ([ minimumDeviceZoom ] + switchOverDeviceZooms).map { displayedZoom(forDevice: $0) }
+    var marks = ([ minimumDeviceZoom ] + switchOverDeviceZooms).map { displayedZoom(forDevice: $0) }
+    let maximum = displayedZoom(forDevice: maximumDeviceZoom)
+    if let last = marks.last {
+      if Self.label(forDisplayed: maximum) != Self.label(forDisplayed: last) {
+        marks.append(maximum)
+      }
+    } else {
+      marks.append(maximum)
+    }
+    return marks
   }
 
   /// Pinch is multiplicative against the zoom captured when the gesture began, which is what makes
@@ -72,6 +83,55 @@ public struct ZoomMapping: Sendable, Equatable {
   public func pinchedDeviceZoom(from start: Double, scale: Double) -> Double {
     guard scale > 0, scale.isFinite else { return clampDeviceZoom(start) }
     return clampDeviceZoom(start * scale)
+  }
+
+  /// How far along the drawn scale a displayed zoom sits, 0 at the widest pill and 1 at the tightest.
+  ///
+  /// Segments are equal in *screen* space, not in zoom ratio: 0.5x→1x, 1x→3x and 3x→9x each occupy
+  /// a third of the column on a 13 Pro. A drag that covers one pill-to-pill gap therefore walks one
+  /// of those segments, which is the contract for the full-screen scrub.
+  public func scaleProgress(forDisplayed displayedZoom: Double) -> Double {
+    let presets = presetDisplayedZooms
+    let zoom = clampDisplayedZoom(displayedZoom)
+    guard presets.count >= 2 else { return 0 }
+    if zoom <= presets[0] { return 0 }
+    let last = presets.count - 1
+    if zoom >= presets[last] { return 1 }
+    let segments = Double(last)
+    for index in 0..<last {
+      let lo = presets[index]
+      let hi = presets[index + 1]
+      guard hi > lo, zoom >= lo, zoom <= hi else { continue }
+      return (Double(index) + (zoom - lo) / (hi - lo)) / segments
+    }
+    return 1
+  }
+
+  public func displayedZoom(forScaleProgress progress: Double) -> Double {
+    let presets = presetDisplayedZooms
+    guard let first = presets.first else { return 1 }
+    guard presets.count >= 2 else { return first }
+    let clamped = min(max(progress, 0), 1)
+    let scaled = clamped * Double(presets.count - 1)
+    var index = Int(scaled)
+    if index >= presets.count - 1 { index = presets.count - 2 }
+    let t = scaled - Double(index)
+    return presets[index] + (presets[index + 1] - presets[index]) * t
+  }
+
+  /// Relative scrub along the scale. `draggedPoints` is up-positive; a drag equal to
+  /// `pointsPerSegment` moves from one pill to the next.
+  public func displayedZoom(
+    draggingFrom start: Double,
+    byPoints draggedPoints: Double,
+    pointsPerSegment: Double
+  ) -> Double {
+    guard draggedPoints.isFinite, pointsPerSegment > 0, pointsPerSegment.isFinite else {
+      return clampDisplayedZoom(start)
+    }
+    let segments = Double(max(scaleSegmentCount, 1))
+    let progress = scaleProgress(forDisplayed: start) + draggedPoints / (pointsPerSegment * segments)
+    return clampDisplayedZoom(displayedZoom(forScaleProgress: progress))
   }
 
   /// Picks the zoom ceiling to expose to the operator.
@@ -100,5 +160,55 @@ public struct ZoomMapping: Sendable, Equatable {
       return "\(Int(rounded.rounded()))x"
     }
     return String(format: "%.1fx", rounded)
+  }
+
+  /// Tick marks drawn between each pair of lens presets.
+  public static let scaleTicksPerSegment = 5
+
+  /// Which mark on the zoom scale should light up for a displayed zoom.
+  ///
+  /// A preset lights when the rounded label matches that lens (`1.04` still reads `1x`). Anything
+  /// else lights one of the five bars in the segment that contains it, so a pinch between 1x and 3x
+  /// is never a row of identical dark marks.
+  public enum ScaleHighlight: Sendable, Equatable {
+    case preset(Double)
+    case tick(segment: Int, index: Int)
+  }
+
+  public var scaleSegmentCount: Int {
+    max(presetDisplayedZooms.count - 1, 0)
+  }
+
+  public func scaleHighlight(forDisplayed displayedZoom: Double) -> ScaleHighlight {
+    let zoom = clampDisplayedZoom(displayedZoom)
+    let presets = presetDisplayedZooms
+    guard let last = presets.last else { return .preset(zoom) }
+
+    if let match = presets.first(where: { Self.label(forDisplayed: zoom) == Self.label(forDisplayed: $0) }) {
+      return .preset(match)
+    }
+
+    guard scaleSegmentCount > 0 else { return .preset(last) }
+
+    if zoom >= last {
+      return .tick(segment: scaleSegmentCount - 1, index: Self.scaleTicksPerSegment - 1)
+    }
+
+    for (segment, hi) in presets.dropFirst().enumerated() {
+      let lo = presets[segment]
+      guard zoom >= lo, zoom < hi, hi > lo else { continue }
+      // Work in thousandths so 0.7 − 0.5 does not become 0.199999 and land on the wrong bar.
+      let milli = Int((zoom * 1000).rounded())
+      let loMilli = Int((lo * 1000).rounded())
+      let hiMilli = Int((hi * 1000).rounded())
+      let span = hiMilli - loMilli
+      guard span > 0 else { continue }
+      var index = (milli - loMilli) * Self.scaleTicksPerSegment / span
+      if index >= Self.scaleTicksPerSegment { index = Self.scaleTicksPerSegment - 1 }
+      if index < 0 { index = 0 }
+      return .tick(segment: segment, index: index)
+    }
+
+    return .preset(last)
   }
 }

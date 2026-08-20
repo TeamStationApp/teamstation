@@ -1,8 +1,7 @@
 appId: co.gamestation.cameraman
 ---
-# The app opens, the camera runs, and the RTSP server is listening — the three things that have to
-# be true before any other flow means anything. Kept short so a failure here says "nothing works"
-# rather than pointing at one feature.
+# The app opens, the camera runs, and the operator-facing chrome is the name plus the zoom scale.
+# Stream details live in Settings — asserting them here would pin chrome we just removed.
 - launchApp
 - waitForAnimationToEnd:
     timeout: 8000
@@ -12,17 +11,42 @@ appId: co.gamestation.cameraman
 - assertVisible:
     id: "camera-name"
 
-# The default framing and format, before anything has been changed.
-- assertVisible: "1x"
-- assertVisible: "1920x1080@30"
+# Opens at 1x on the wide lens.
+- assertVisible:
+    id: "zoom-label"
+    text: "1x"
+- assertVisible:
+    id: "zoom-preset-1x"
+- assertVisible:
+    id: "zoom-scale"
+- waitForAnimationToEnd:
+    timeout: 2500
+- takeScreenshot: overlay-landscape
 
-# The port matters as text: a fallback to 8554 is the case an operator has to be told about, and it
-# is the one thing on this screen that cannot be inferred from anywhere else.
-- assertVisible: "rtsp :554/live/mainstream"
-- assertVisible: "clients 0"
-
-# The controls exist and are reachable — tapping them is other flows' business.
 - assertVisible:
     id: "flip-button"
 - assertVisible:
     id: "settings-button"
+
+# The address and client count moved into Settings. Opening the sheet must not hide the camera
+# screen underneath in a way that a later flow cannot recover from.
+- tapOn:
+    id: "settings-button"
+- waitForAnimationToEnd:
+    timeout: 3000
+- assertVisible:
+    id: "settings-url"
+- assertVisible:
+    id: "settings-url-copy"
+- assertVisible:
+    id: "settings-clients"
+    text: "0"
+- assertVisible:
+    id: "settings-name-edit"
+- takeScreenshot: settings-landscape
+- tapOn:
+    id: "settings-done"
+- waitForAnimationToEnd:
+    timeout: 3000
+- assertVisible:
+    id: "camera-screen"
