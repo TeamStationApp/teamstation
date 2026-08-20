@@ -1,0 +1,39 @@
+# A6/A7/A4: five-camera cap. A sixth enable is refused; Start Production stays
+# disabled until at least one camera is on.
+appId: co.gamestation.producer
+---
+- launchApp:
+    appId: co.gamestation.producer
+    arguments:
+      clearState: true
+      uiTest: true
+      debugHUD: true
+      sourceProfile: synthetic4
+      sourceCount: 6
+
+- extendedWaitUntil:
+    visible:
+      id: 'source-row-6'
+    timeout: 20000
+- runFlow: shared/settle-source-list.yaml
+
+- assertVisible: '0/5 enabled'
+
+- tapOn:
+    id: 'source-toggle-1'
+- tapOn:
+    id: 'source-toggle-2'
+- tapOn:
+    id: 'source-toggle-3'
+- tapOn:
+    id: 'source-toggle-4'
+- tapOn:
+    id: 'source-toggle-5'
+- assertVisible: '5/5 enabled'
+
+- tapOn:
+    id: 'source-toggle-6'
+- extendedWaitUntil:
+    visible: 'Five sources maximum.*'
+    timeout: 5000
+- assertVisible: '5/5 enabled'

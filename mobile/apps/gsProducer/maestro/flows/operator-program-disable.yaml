@@ -1,0 +1,76 @@
+# B9: disabling the on-air camera leaves exactly one Output highlight.
+#
+# Synthetic is enough for this UI bug. Live rewind is a different vector.
+appId: co.gamestation.producer
+---
+- launchApp:
+    appId: co.gamestation.producer
+    arguments:
+      clearState: true
+      uiTest: true
+      debugHUD: true
+      sourceProfile: synthetic4
+      sourceCount: 3
+      syntheticEntropy: low
+
+- extendedWaitUntil:
+    visible:
+      id: 'source-row-3'
+    timeout: 15000
+- runFlow: shared/settle-source-list.yaml
+- tapOn:
+    id: 'source-toggle-1'
+- extendedWaitUntil:
+    visible: '1/5 enabled'
+    timeout: 8000
+- tapOn:
+    id: 'source-toggle-2'
+- extendedWaitUntil:
+    visible: '2/5 enabled'
+    timeout: 8000
+- tapOn:
+    id: 'source-toggle-3'
+- extendedWaitUntil:
+    visible: '3/5 enabled'
+    timeout: 8000
+- tapOn:
+    id: 'start-production'
+
+- extendedWaitUntil:
+    visible: 'tile=1 state=live.*'
+    timeout: 20000
+- extendedWaitUntil:
+    visible: 'tile=3 state=live.*'
+    timeout: 20000
+
+- tapOn:
+    id: 'tile-2'
+- extendedWaitUntil:
+    visible: 'output src=CAM2 .*'
+    timeout: 8000
+- assertVisible: 'tile=2 .*onair=1'
+- assertVisible: 'tile=1 .*onair=0'
+- assertVisible: 'tile=3 .*onair=0'
+
+- tapOn:
+    id: 'cameras-button'
+- extendedWaitUntil:
+    visible: 'Choose up to five cameras for the production grid, and whose audio to mix.'
+    timeout: 15000
+- tapOn:
+    id: 'source-toggle-2'
+- extendedWaitUntil:
+    visible: '2/5 enabled'
+    timeout: 8000
+- tapOn:
+    id: 'start-production'
+
+- extendedWaitUntil:
+    visible: 'tile=2 state=empty .*'
+    timeout: 15000
+- assertVisible: 'tile=2 .*onair=0'
+- assertVisible: 'tile=1 .*onair=1'
+- assertVisible: 'tile=3 .*onair=0'
+- assertVisible: 'output src=CAM1 .*'
+- assertVisible:
+    id: 'output-tile'

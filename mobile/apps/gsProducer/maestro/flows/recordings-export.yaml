@@ -1,0 +1,49 @@
+# After a recording stops, Recordings lists it by date and offers the cameras plus programme.
+appId: co.gamestation.producer
+---
+- launchApp:
+    appId: co.gamestation.producer
+    arguments:
+      clearState: true
+      uiTest: true
+      debugHUD: true
+      sourceProfile: synthetic4
+      segmentSeconds: 2
+
+- extendedWaitUntil:
+    visible:
+      id: 'source-row-1'
+    timeout: 15000
+- runFlow: shared/settle-source-list.yaml
+- tapOn:
+    id: 'source-toggle-1'
+- tapOn:
+    id: 'start-production'
+- extendedWaitUntil:
+    visible: 'tile=1 state=live.*'
+    timeout: 15000
+
+- tapOn:
+    id: 'record-button'
+- extendedWaitUntil:
+    visible: 'dur=[2-9][0-9]'
+    timeout: 60000
+- tapOn:
+    id: 'record-button'
+- extendedWaitUntil:
+    visible: 'rec=0'
+    timeout: 60000
+
+- tapOn:
+    id: 'recordings-button'
+- extendedWaitUntil:
+    visible:
+      id: 'recordings-dates'
+    timeout: 15000
+- extendedWaitUntil:
+    visible:
+      id: 'recordings-export'
+    timeout: 15000
+- tapOn:
+    id: 'recordings-export'
+- takeScreenshot: recordings-export
