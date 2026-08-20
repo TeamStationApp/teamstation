@@ -1,0 +1,46 @@
+# G3/G4: cameras sheet opens over the live grid and does not stop a recording.
+appId: co.gamestation.producer
+---
+- launchApp:
+    appId: co.gamestation.producer
+    arguments:
+      clearState: true
+      uiTest: true
+      debugHUD: true
+      sourceProfile: synthetic4
+      sourceCount: 2
+      segmentSeconds: 2
+
+- extendedWaitUntil:
+    visible:
+      id: 'source-row-1'
+    timeout: 15000
+- runFlow: shared/settle-source-list.yaml
+- tapOn:
+    id: 'source-toggle-1'
+- tapOn:
+    id: 'start-production'
+
+- extendedWaitUntil:
+    visible: 'tile=1 state=live.*'
+    timeout: 20000
+
+- tapOn:
+    id: 'record-button'
+- assertVisible: 'rec=1'
+
+- tapOn:
+    id: 'cameras-button'
+
+- extendedWaitUntil:
+    visible:
+      id: 'source-row-1'
+    timeout: 20000
+- assertVisible: '1/5 enabled'
+- assertVisible: 'Choose up to five cameras for the production grid, and whose audio to mix.'
+- assertVisible: 'rec=1'
+
+- tapOn:
+    id: 'start-production'
+- assertVisible: 'rec=1'
+- assertVisible: 'tile=1 state=live.*'

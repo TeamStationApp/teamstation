@@ -1,0 +1,4 @@
+# Captures whatever is on screen without relaunching, for checking how the app actually looks.
+appId: co.gamestation.producer
+---
+- takeScreenshot: screen

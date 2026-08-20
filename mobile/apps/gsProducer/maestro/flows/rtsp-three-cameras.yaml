@@ -1,0 +1,63 @@
+# H1: the three real cameras, found by scanning and received over RTSP.
+#
+# Launched through Maestro rather than `devicectl` because a `devicectl` launch is never offered the
+# local network prompt, so the scan finds nothing and the source list comes up empty.
+appId: co.gamestation.producer
+---
+- launchApp:
+    appId: co.gamestation.producer
+    arguments:
+      clearState: true
+      uiTest: true
+      debugHUD: true
+      sourceProfile: rtsp
+
+- runFlow: shared/allow-local-network.yaml
+
+# A scan of a /24 takes a few seconds, and each camera is then confirmed with a DESCRIBE.
+- extendedWaitUntil:
+    visible:
+      id: 'source-row-3'
+    timeout: 60000
+- runFlow: shared/settle-source-list.yaml
+
+# This venue often has an extra RTSP host besides the three VM33s. Identity is `awx=`; `confirmed=`
+# is every camera that answered DESCRIBE.
+- assertVisible: 'awx=3'
+- assertVisible: 'confirmed=[3-9]'
+- extendedWaitUntil:
+    visible: 'origin=autoByIdentity'
+    timeout: 20000
+
+- tapOn:
+    id: 'source-toggle-1'
+- tapOn:
+    id: 'source-toggle-2'
+- tapOn:
+    id: 'source-toggle-3'
+- waitForAnimationToEnd:
+    timeout: 3000
+
+- tapOn:
+    id: 'start-production'
+
+- extendedWaitUntil:
+    visible:
+      id: 'tile-3'
+    timeout: 30000
+
+# Every camera decoding, whichever codec it happens to be sending: two of these three are HEVC at
+# 1080p and one is H.264 at 720p.
+- extendedWaitUntil:
+    visible: 'tile=1 .*state=live.*'
+    timeout: 60000
+- extendedWaitUntil:
+    visible: 'tile=2 .*state=live.*'
+    timeout: 60000
+- extendedWaitUntil:
+    visible: 'tile=3 .*state=live.*'
+    timeout: 60000
+
+# One decoder per camera, and nothing lost on the way in.
+- assertVisible: 'dec=3'
+- assertVisible: 'loss=0'

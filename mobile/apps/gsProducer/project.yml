@@ -1,0 +1,154 @@
+name: Producer
+
+options:
+  bundleIdPrefix: co.gamestation
+  createIntermediateGroups: true
+  deploymentTarget:
+    iOS: "18.0"
+  groupSortPosition: top
+  minimumXcodeGenVersion: "2.40.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "18.0"
+    # D5: iPad only.
+    TARGETED_DEVICE_FAMILY: "2"
+    DEVELOPMENT_TEAM: G5LQ7MERPK
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    SWIFT_TREAT_WARNINGS_AS_ERRORS: NO
+    GCC_TREAT_WARNINGS_AS_ERRORS: NO
+    ALWAYS_SEARCH_USER_PATHS: NO
+    ENABLE_MODULE_VERIFIER: NO
+
+packages:
+  ProducerCore:
+    path: Packages/ProducerCore
+  ProducerSources:
+    path: Packages/ProducerSources
+  ProducerPipeline:
+    path: Packages/ProducerPipeline
+  ProducerDVR:
+    path: Packages/ProducerDVR
+  ProducerRTSP:
+    path: Packages/ProducerRTSP
+  ProducerUI:
+    path: Packages/ProducerUI
+  ProducerTestHarness:
+    path: Packages/ProducerTestHarness
+
+targets:
+  Producer:
+    type: application
+    platform: iOS
+    sources:
+      - path: App
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: co.gamestation.producer
+        PRODUCT_NAME: GS Producer
+        INFOPLIST_FILE: App/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        CURRENT_PROJECT_VERSION: "1"
+        MARKETING_VERSION: "1.0"
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD: NO
+        LD_RUNPATH_SEARCH_PATHS: $(inherited) @executable_path/Frameworks
+    dependencies:
+      - package: ProducerCore
+        product: ProducerCore
+      - package: ProducerSources
+        product: ProducerSources
+      - package: ProducerPipeline
+        product: ProducerPipeline
+      - package: ProducerDVR
+        product: ProducerDVR
+      - package: ProducerRTSP
+        product: ProducerRTSP
+      - package: ProducerUI
+        product: ProducerUI
+      - package: ProducerTestHarness
+        product: ProducerTestHarness
+
+  ProducerUnitTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests/ProducerUnitTests
+        # Captured camera output, read from disk by the parser suites. Listing it as a source would
+        # put it in a build phase that has no idea what to do with an .sdp file.
+        excludes:
+          - Fixtures/**
+    dependencies:
+      - target: Producer
+      - package: ProducerCore
+        product: ProducerCore
+      - package: ProducerSources
+        product: ProducerSources
+      - package: ProducerPipeline
+        product: ProducerPipeline
+      - package: ProducerDVR
+        product: ProducerDVR
+      - package: ProducerRTSP
+        product: ProducerRTSP
+      - package: ProducerTestHarness
+        product: ProducerTestHarness
+      - package: ProducerUI
+        product: ProducerUI
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: co.gamestation.producer.unittests
+        GENERATE_INFOPLIST_FILE: YES
+        # XcodeGen derives the test host from the target name, which is `Producer`, but the app's
+        # PRODUCT_NAME is `GS Producer`. Without this the host path points at an app that is never
+        # built and the whole scheme fails before a single test runs.
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/GS Producer.app/GS Producer
+        BUNDLE_LOADER: $(TEST_HOST)
+
+  ProducerIntegrationTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests/ProducerIntegrationTests
+    dependencies:
+      - target: Producer
+      - package: ProducerCore
+        product: ProducerCore
+      - package: ProducerSources
+        product: ProducerSources
+      - package: ProducerPipeline
+        product: ProducerPipeline
+      - package: ProducerDVR
+        product: ProducerDVR
+      - package: ProducerTestHarness
+        product: ProducerTestHarness
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: co.gamestation.producer.integrationtests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/GS Producer.app/GS Producer
+        BUNDLE_LOADER: $(TEST_HOST)
+
+schemes:
+  Producer:
+    build:
+      targets:
+        Producer: all
+        ProducerUnitTests: [ test ]
+        ProducerIntegrationTests: [ test ]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      gatherCoverageData: false
+      targets:
+        - ProducerUnitTests
+        - ProducerIntegrationTests
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release

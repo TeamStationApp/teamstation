@@ -1,0 +1,13 @@
+# Cheapest possible check that the Maestro toolchain, WebDriverAgent and the device are all alive.
+# Run this first after a reboot or a fresh pairing: it is the flow that surfaces the iOS UI
+# automation approval prompt, and failing here means nothing else is worth running.
+appId: co.gamestation.producer
+---
+- launchApp:
+    appId: co.gamestation.producer
+    arguments:
+      uiTest: true
+      sourceProfile: synthetic4
+
+- assertVisible: 'Choose up to five cameras for the production grid, and whose audio to mix.'
+- takeScreenshot: smoke

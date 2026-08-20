@@ -1,0 +1,10 @@
+# After a reinstall iOS asks to use the local network. Camera discovery is empty until that
+# is allowed. Match whole words only: a substring "OK" hits the debug HUD's `replayerr=ok`.
+appId: co.gamestation.producer
+---
+- tapOn:
+    text: '^OK$'
+    optional: true
+- tapOn:
+    text: '^Allow$'
+    optional: true

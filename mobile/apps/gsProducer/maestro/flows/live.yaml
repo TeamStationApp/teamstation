@@ -1,0 +1,30 @@
+# Ordinary use on the real cameras, rather than a measurement run.
+#
+# Launched through Maestro because a `devicectl` launch gets no camera discovery at all — the
+# local network prompt is never answered for it, so the source list comes up empty. See
+# docs/risks.md.
+#
+# Differences from the characterisation flows: Maestro does not reinstall the app, so the source
+# selection and settings survive. The telemetry overlay follows the Settings toggle rather than
+# being forced off for the session.
+appId: co.gamestation.producer
+---
+- launchApp:
+    appId: co.gamestation.producer
+    arguments:
+      uiTest: true
+      sourceProfile: synthetic4
+      cameraCodec: hevc
+
+- extendedWaitUntil:
+    visible:
+      id: 'source-row-1'
+    timeout: 30000
+
+# Whatever was enabled last time is still enabled, so this goes straight to the grid.
+- tapOn:
+    id: 'start-production'
+- extendedWaitUntil:
+    visible:
+      id: 'tile-1'
+    timeout: 30000
