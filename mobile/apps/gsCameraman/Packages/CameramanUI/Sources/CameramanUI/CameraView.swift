@@ -2,12 +2,17 @@ import CameramanCapture
 import CameramanCore
 import SwiftUI
 
-/// The operating screen: full-bleed preview, pinch to zoom, a flip button and preset pills.
+/// The operating screen: full-bleed preview, pinch to zoom, chrome in the corners, zoom on the right.
 public struct CameraView: View {
   @Bindable private var environment: AppEnvironment
   /// The zoom the pinch started from. Pinch is multiplicative against this rather than against the
   /// live value, which is what makes it track the fingers instead of drifting.
   @State private var zoomAtGestureStart: Double?
+  /// Displayed zoom when a vertical scrub began. Relative to this, not to the live value, so the
+  /// finger does not fight the highlight.
+  @State private var scrubAtGestureStart: Double?
+  /// Center-to-center gap between adjacent pills, measured from the drawn column.
+  @State private var pointsPerSegment: CGFloat = 72
   @State private var isShowingSettings = false
 
   public init(environment: AppEnvironment) {
@@ -16,29 +21,50 @@ public struct CameraView: View {
 
   public var body: some View {
     ZStack {
-      CameraPreview(session: environment.camera.captureSession)
-        .ignoresSafeArea()
-        .gesture(pinch)
-        // On the preview rather than on the enclosing ZStack: an accessibility identifier on a
-        // container makes SwiftUI publish it as one element and hides the controls inside it, so a
-        // flow can then see the screen but none of its values.
-        .accessibilityIdentifier("camera-screen")
+      CameraPreview(
+        session: environment.camera.captureSession,
+        position: environment.cameraState.position,
+        captureRotation: environment.cameraState.captureRotationAngle
+      )
+      .ignoresSafeArea()
+      .gesture(pinch)
+      // On the preview rather than on the enclosing ZStack: an accessibility identifier on a
+      // container makes SwiftUI publish it as one element and hides the controls inside it, so a
+      // flow can then see the screen but none of its values.
+      .accessibilityIdentifier("camera-screen")
 
       VStack {
-        HStack(alignment: .top) {
-          streamBadge
+        HStack(alignment: .center, spacing: 10) {
+          settingsButton
+          nameBadge
           Spacer()
-          VStack(spacing: 14) {
-            flipButton
-            settingsButton
-          }
         }
         Spacer()
-        presetPills
+        HStack {
+          flipButton
+          Spacer()
+        }
       }
       .padding(24)
+      .allowsHitTesting(true)
+
+      HStack {
+        Spacer()
+        ZoomScaleView(
+          mapping: environment.cameraState.mapping,
+          displayedZoom: environment.cameraState.displayedZoom,
+          onSelect: { environment.camera.setDisplayedZoom($0) },
+          onSegmentLength: { length in
+            if abs(pointsPerSegment - length) > 0.5 { pointsPerSegment = length }
+          }
+        )
+        .padding(.vertical, 24)
+        .padding(.trailing, 16)
+      }
     }
     .background(.black)
+    .contentShape(Rectangle())
+    .simultaneousGesture(verticalScrub)
     .sheet(isPresented: $isShowingSettings) {
       SettingsView(environment: environment)
     }
@@ -56,55 +82,37 @@ public struct CameraView: View {
       .onEnded { _ in zoomAtGestureStart = nil }
   }
 
-  private var streamBadge: some View {
-    VStack(alignment: .leading, spacing: 2) {
-      Text(environment.identity.name)
-        .font(.headline)
-        .accessibilityIdentifier("camera-name")
-      Text(ZoomMapping.label(forDisplayed: environment.cameraState.displayedZoom))
-        .font(.system(.subheadline, design: .monospaced))
-        .accessibilityIdentifier("zoom-label")
-      Text("lens \(environment.cameraState.lensIndex)")
-        .font(.system(.caption, design: .monospaced))
-        .accessibilityIdentifier("lens-index")
-      if let format = environment.cameraState.activeFormat {
-        Text(format.label)
-          .font(.system(.caption, design: .monospaced))
-          .accessibilityIdentifier("active-format")
+  /// Vertical drag anywhere. Up zooms in. A drag as long as one pill-to-pill gap walks one segment.
+  private var verticalScrub: some Gesture {
+    DragGesture(minimumDistance: 12)
+      .onChanged { value in
+        let start = scrubAtGestureStart ?? environment.cameraState.displayedZoom
+        scrubAtGestureStart = start
+        let displayed = environment.cameraState.mapping.displayedZoom(
+          draggingFrom: start,
+          byPoints: Double(-value.translation.height),
+          pointsPerSegment: Double(pointsPerSegment)
+        )
+        environment.camera.setDisplayedZoom(displayed)
       }
-      Text(serverLine)
-        .font(.system(.caption, design: .monospaced))
-        .foregroundStyle(environment.serverStatus.isListening ? .green : .orange)
-        .accessibilityIdentifier("server-status")
-      Text("clients \(environment.serverStatus.clientCount)")
-        .font(.system(.caption, design: .monospaced))
-        .accessibilityIdentifier("client-count")
-      if let failure = environment.cameraState.failure {
-        Text(failure)
-          .font(.caption)
-          .foregroundStyle(.red)
-          .accessibilityIdentifier("camera-failure")
-      }
-    }
-    .foregroundStyle(.white)
-    .padding(10)
-    .background(.black.opacity(0.45), in: .rect(cornerRadius: 10))
+      .onEnded { _ in scrubAtGestureStart = nil }
   }
 
-  /// The bound port, not the requested one. A fallback to 8554 is the case where an operator who
-  /// reads "554" off the screen spends ten minutes pointing a client at a port nothing is on.
-  private var serverLine: String {
-    guard let port = environment.serverStatus.port else {
-      return environment.serverStatus.lastError ?? "not listening"
-    }
-    return "rtsp :\(port)\(environment.settings.path)"
+  private var nameBadge: some View {
+    Text(environment.identity.name)
+      .font(.headline)
+      .foregroundStyle(.white)
+      .padding(.horizontal, 12)
+      .padding(.vertical, 8)
+      .background(.black.opacity(0.45), in: .rect(cornerRadius: 10))
+      .accessibilityIdentifier("camera-name")
   }
 
   private var settingsButton: some View {
     Button {
       isShowingSettings = true
     } label: {
-      Image(systemName: "slider.horizontal.3")
+      Image(systemName: "gearshape")
         .font(.title2)
         .padding(14)
         .background(.black.opacity(0.45), in: .circle)
@@ -126,25 +134,5 @@ public struct CameraView: View {
     .foregroundStyle(.white)
     .accessibilityIdentifier("flip-button")
     .accessibilityLabel("Flip camera")
-  }
-
-  /// Derived from the hardware's switchover factors, so this row is 0.5x / 1x / 3x on a triple
-  /// camera and a single 1x on the front camera. A hardcoded set would be wrong on both.
-  private var presetPills: some View {
-    HStack(spacing: 10) {
-      ForEach(environment.cameraState.mapping.presetDisplayedZooms, id: \.self) { preset in
-        let isActive = abs(environment.cameraState.displayedZoom - preset) < 0.05
-        Button {
-          environment.camera.setDisplayedZoom(preset)
-        } label: {
-          Text(ZoomMapping.label(forDisplayed: preset))
-            .font(.system(.subheadline, design: .rounded).weight(.semibold))
-            .frame(minWidth: 46, minHeight: 46)
-            .background(isActive ? .white.opacity(0.9) : .black.opacity(0.45), in: .circle)
-            .foregroundStyle(isActive ? .black : .white)
-        }
-        .accessibilityIdentifier("zoom-preset-\(ZoomMapping.label(forDisplayed: preset))")
-      }
-    }
   }
 }

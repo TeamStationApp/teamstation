@@ -31,6 +31,9 @@ public final class CameraSession: @unchecked Sendable {
     public var availableFormats: [CaptureFormatDescriptor] = []
     public var isRunning = false
     public var failure: String?
+    /// 0° or 180° last applied to the capture connection. The preview layer uses the same value so
+    /// the operator frames what the encoder sends, including after a front-camera flip.
+    public var captureRotationAngle: Double = 180
 
     public init() {}
 
@@ -49,9 +52,17 @@ public final class CameraSession: @unchecked Sendable {
   private var audioInput: AVCaptureDeviceInput?
   private var settings = StreamSettings.default
   private var state = State()
+  private var rotationCoordinator: AVCaptureDevice.RotationCoordinator?
+  private var rotationObservation: NSKeyValueObservation?
+  /// Last 0°/180° applied to the capture connection. Portrait angles from the coordinator at launch
+  /// would swap 1920×1080 into portrait; those are ignored and this is used instead.
+  private var lastLandscapeCaptureAngle: CGFloat = 180
 
   /// Delivered on the main queue, because every consumer is UI.
   public var onStateChange: (@MainActor @Sendable (State) -> Void)?
+  /// Fired on the capture queue when the encoded buffers are rotated. A client that has already
+  /// decoded a GOP at the previous angle otherwise shows the next frames inverted until a keyframe.
+  public var onCaptureRotationChange: (@Sendable () -> Void)?
   public var onVideoFrame: (@Sendable (SampleBuffer) -> Void)? {
     get { outputDelegate.onVideo }
     set { outputDelegate.onVideo = newValue }
@@ -147,11 +158,14 @@ public final class CameraSession: @unchecked Sendable {
     input = newInput
     device = selected
 
+    // Position is recorded before the new input's rotation is applied so a flip publishes the
+    // matching camera and angle together.
+    state.position = position
     attachOutputs()
     session.commitConfiguration()
+    attachRotationCoordinator(for: selected)
 
     applyFormat(to: selected)
-    state.position = position
     state.deviceType = selected.deviceType.rawValue
     state.availableFormats = Self.descriptors(of: selected)
     state.mapping = Self.mapping(for: selected)
@@ -170,9 +184,19 @@ public final class CameraSession: @unchecked Sendable {
       videoOutput.setSampleBufferDelegate(outputDelegate, queue: queue)
       if session.canAddOutput(videoOutput) { session.addOutput(videoOutput) }
     }
-    // Landscape only, so the connection is pinned once rather than tracked against device rotation.
+    // Rotation is applied by `RotationCoordinator` so a 180° flip of the phone inverts the encoded
+    // buffers rather than leaving Producer upside down. 0° here is only the placeholder until that
+    // coordinator has a device.
     if let connection = videoOutput.connection(with: .video) {
-      connection.videoRotationAngle = 0
+      if connection.isVideoMirroringSupported {
+        connection.automaticallyAdjustsVideoMirroring = false
+        connection.isVideoMirrored = false
+      }
+      let angle = lastLandscapeCaptureAngle
+      if connection.isVideoRotationAngleSupported(angle) {
+        connection.videoRotationAngle = angle
+        state.captureRotationAngle = Double(angle)
+      }
     }
 
     guard settings.audioEnabled else {
@@ -227,6 +251,52 @@ public final class CameraSession: @unchecked Sendable {
       return
     }
     state.activeFormat = wanted
+  }
+
+  /// Rotates the buffers that go to the encoder so Producer is upright in both landscape holds.
+  ///
+  /// The preview layer uses the same 0°/180°. Pinning capture at 0° left one hold inverted on the
+  /// wire. `RotationCoordinator` tracks gravity and reports the horizon-level capture angle.
+  /// 90°/270° would turn 1920×1080 into portrait, which this app does not send.
+  private func attachRotationCoordinator(for device: AVCaptureDevice) {
+    rotationObservation?.invalidate()
+    let coordinator = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: nil)
+    rotationCoordinator = coordinator
+    applyCaptureRotation(coordinator.videoRotationAngleForHorizonLevelCapture)
+    rotationObservation = coordinator.observe(\.videoRotationAngleForHorizonLevelCapture) { [weak self] coordinator, _ in
+      let angle = coordinator.videoRotationAngleForHorizonLevelCapture
+      self?.applyCaptureRotation(angle)
+    }
+  }
+
+  private func applyCaptureRotation(_ proposed: CGFloat) {
+    queue.async { [self] in
+      switch proposed {
+      case 180, 270:
+        lastLandscapeCaptureAngle = 180
+      case 0:
+        lastLandscapeCaptureAngle = 0
+      default:
+        break
+      }
+      let angle = lastLandscapeCaptureAngle
+      guard let connection = videoOutput.connection(with: .video) else { return }
+      if connection.isVideoMirroringSupported {
+        connection.automaticallyAdjustsVideoMirroring = false
+        if connection.isVideoMirrored {
+          connection.isVideoMirrored = false
+        }
+      }
+      guard connection.isVideoRotationAngleSupported(angle) else { return }
+      if connection.videoRotationAngle != angle {
+        connection.videoRotationAngle = angle
+        onCaptureRotationChange?()
+      }
+      if state.captureRotationAngle != Double(angle) {
+        state.captureRotationAngle = Double(angle)
+        publish()
+      }
+    }
   }
 
   private func publish() {

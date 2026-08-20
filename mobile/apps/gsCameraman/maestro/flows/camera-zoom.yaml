@@ -1,9 +1,7 @@
 appId: co.gamestation.cameraman
 ---
-# Lens switching and flip, asserted through the on-screen lens index rather than by looking at the
-# picture. The index comes from the hardware's switchover factors, so this also proves the preset row
-# was derived from the device and not hardcoded: 0.5x / 1x / 3x on the back triple camera, and a
-# single 1x on the single-lens front camera.
+# Lens switching and flip. Asserted through the zoom label and the preset row rather than a lens
+# index that no longer lives on the operating screen.
 #
 # Verified on an iPhone 13 Pro, iOS 26.6.1, 2026-08-19.
 - launchApp
@@ -12,31 +10,53 @@ appId: co.gamestation.cameraman
 - assertVisible:
     id: "camera-screen"
 
-# Opens at 1x on the wide lens, not at 0.5x on the ultra-wide: 1x is what an operator pointing a
-# phone at a field expects to see.
-- assertVisible: "1x"
-- assertVisible: "lens 1"
-- assertVisible: "1920x1080@30"
+# Opens at 1x on the wide lens, not at 0.5x on the ultra-wide.
+- assertVisible:
+    id: "zoom-label"
+    text: "1x"
+- assertVisible:
+    id: "zoom-preset-0.5x"
+- assertVisible:
+    id: "zoom-preset-1x"
+- assertVisible:
+    id: "zoom-preset-3x"
+- assertVisible:
+    id: "zoom-preset-9x"
+
+- tapOn:
+    id: "zoom-preset-9x"
+- waitForAnimationToEnd:
+    timeout: 2000
+- assertVisible:
+    id: "zoom-label"
+    text: "9x"
 
 - tapOn:
     id: "zoom-preset-3x"
 - waitForAnimationToEnd:
     timeout: 2000
-- assertVisible: "lens 2"
+- assertVisible:
+    id: "zoom-label"
+    text: "3x"
 
 - tapOn:
     id: "zoom-preset-0.5x"
 - waitForAnimationToEnd:
     timeout: 2000
-- assertVisible: "lens 0"
+- assertVisible:
+    id: "zoom-label"
+    text: "0.5x"
 
 - tapOn:
     id: "flip-button"
 - waitForAnimationToEnd:
     timeout: 3000
-# The front camera has one lens and one preset.
-- assertVisible: "lens 0"
+# The front camera has one lens plus a digital-max preset, not the rear 3x/9x.
 - assertVisible:
     id: "zoom-preset-1x"
+- assertVisible:
+    id: "zoom-preset-5x"
 - assertNotVisible:
     id: "zoom-preset-3x"
+- assertNotVisible:
+    id: "zoom-preset-9x"

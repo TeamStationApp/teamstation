@@ -59,6 +59,8 @@
   <dict/>
   <key>UIStatusBarHidden</key>
   <true/>
+  <key>UIInterfaceOrientation</key>
+  <string>UIInterfaceOrientationLandscapeRight</string>
   <key>UIUserInterfaceStyle</key>
   <string>Dark</string>
   <key>UIRequiresFullScreen</key>
