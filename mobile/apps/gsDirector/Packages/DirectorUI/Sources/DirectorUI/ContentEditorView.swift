@@ -2,16 +2,18 @@ import DirectorCore
 import DirectorPipeline
 import PhotosUI
 import SwiftUI
+import UIKit
 
 /// Live Output plus every overlay, so graphics can be placed on the picture they will burn into.
 struct ContentEditorView: View {
   @Environment(AppEnvironment.self) private var environment
   @Environment(\.dismiss) private var dismiss
 
-  @State private var addingWeb = false
-  @State private var webURL = ""
+  @State private var showingList = false
+  @State private var choosingKind = false
   @State private var photoItem: PhotosPickerItem?
-  @State private var editing: ProgramOverlay?
+  @State private var addShowInRewind = false
+  @State private var editing: OverlayEditSession?
 
   var body: some View {
     NavigationStack {
@@ -50,7 +52,7 @@ struct ContentEditorView: View {
                 onResizeEnd: {
                   environment.commitOverlayResize(id: overlay.id, displayCanvas: canvas)
                 },
-                onEdit: { editing = overlay }
+                onEdit: { editing = .existing(overlay) }
               )
             }
           }
@@ -60,7 +62,7 @@ struct ContentEditorView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
       }
       .background(Color.deckBackground)
-      .navigationTitle("Add Content")
+      .navigationTitle("Add/Edit Content")
       .navigationBarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
@@ -68,46 +70,71 @@ struct ContentEditorView: View {
             .accessibilityIdentifier("content-editor-done")
         }
         ToolbarItemGroup(placement: .primaryAction) {
-          Button("Web") {
-            webURL = "https://"
-            addingWeb = true
-          }
-          .accessibilityIdentifier("content-add-web")
-          PhotosPicker(selection: $photoItem, matching: .images) {
-            Text("Image")
-          }
-          .accessibilityIdentifier("content-add-image")
+          Button("List") { showingList = true }
+            .accessibilityIdentifier("content-list")
+          Button("Add") { choosingKind = true }
+            .accessibilityIdentifier("content-add")
         }
       }
-      .alert("Web view URL", isPresented: $addingWeb) {
-        TextField("URL", text: $webURL)
-          .textInputAutocapitalization(.never)
-          .autocorrectionDisabled()
-        Button("Add") {
-          let trimmed = webURL.trimmingCharacters(in: .whitespacesAndNewlines)
-          guard !trimmed.isEmpty else { return }
-          environment.addWebOverlay(url: trimmed)
+      .confirmationDialog("Add content", isPresented: $choosingKind, titleVisibility: .visible) {
+        Button("Web") {
+          addShowInRewind = false
+          editing = .add(.web)
         }
+        .accessibilityIdentifier("content-add-web")
+        Button("Image") {
+          addShowInRewind = false
+          editing = .add(.image)
+        }
+        .accessibilityIdentifier("content-add-image")
         Button("Cancel", role: .cancel) {}
       }
       .onChange(of: photoItem) { _, item in
-        Task { await importPhoto(item, replacing: editing?.id) }
+        Task { await importPhoto(item) }
       }
-      .sheet(item: $editing) { overlay in
+      .sheet(isPresented: $showingList) {
+        OverlayListSheet()
+          .environment(environment)
+      }
+      .sheet(item: $editing) { session in
         OverlayEditSheet(
-          overlay: overlay,
+          session: session,
           photoItem: $photoItem,
-          onSaveURL: { url in
-            environment.updateOverlayURL(id: overlay.id, url: url)
+          showInRewind: showInRewindBinding(for: session),
+          onSaveURL: { url, showInRewind in
+            switch session {
+            case .add:
+              environment.addWebOverlay(url: url, showInRewind: showInRewind)
+            case .existing(let overlay):
+              environment.updateOverlayURL(id: overlay.id, url: url)
+              environment.setOverlayShowInRewind(id: overlay.id, showInRewind: showInRewind)
+            }
             editing = nil
           },
           onDelete: {
-            environment.removeOverlay(id: overlay.id)
+            if case .existing(let overlay) = session {
+              environment.removeOverlay(id: overlay.id)
+            }
             editing = nil
           }
         )
-        .id(overlay.id)
+        .id(session.id)
       }
+    }
+  }
+
+  private func showInRewindBinding(for session: OverlayEditSession) -> Binding<Bool> {
+    switch session {
+    case .add:
+      return $addShowInRewind
+    case .existing(let overlay):
+      return Binding(
+        get: {
+          environment.overlays.first(where: { $0.id == overlay.id })?.showInRewind
+            ?? overlay.showInRewind
+        },
+        set: { environment.setOverlayShowInRewind(id: overlay.id, showInRewind: $0) }
+      )
     }
   }
 
@@ -118,20 +145,179 @@ struct ContentEditorView: View {
     return CGSize(width: width * scale, height: height * scale)
   }
 
-  private func importPhoto(_ item: PhotosPickerItem?, replacing: UUID?) async {
-    defer {
-      photoItem = nil
-    }
+  private func importPhoto(_ item: PhotosPickerItem?) async {
+    defer { photoItem = nil }
     guard
       let item,
       let data = try? await item.loadTransferable(type: Data.self)
     else { return }
     let name = item.itemIdentifier ?? "Photo"
-    if let replacing {
-      environment.replaceOverlayImage(id: replacing, data: data, displayName: name)
-    } else {
+    switch editing {
+    case .existing(let overlay):
+      environment.replaceOverlayImage(id: overlay.id, data: data, displayName: name)
+      editing = nil
+    case .add:
+      environment.addImageOverlay(data: data, displayName: name, showInRewind: addShowInRewind)
+      editing = nil
+    case .none:
       environment.addImageOverlay(data: data, displayName: name)
     }
+  }
+}
+
+private enum OverlayEditSession: Identifiable {
+  case add(ProgramOverlayKind)
+  case existing(ProgramOverlay)
+
+  var id: String {
+    switch self {
+    case .add(let kind): "add-\(kind.rawValue)"
+    case .existing(let overlay): overlay.id.uuidString
+    }
+  }
+
+  var kind: ProgramOverlayKind {
+    switch self {
+    case .add(let kind): kind
+    case .existing(let overlay): overlay.kind
+    }
+  }
+
+  var overlay: ProgramOverlay? {
+    if case .existing(let overlay) = self { return overlay }
+    return nil
+  }
+}
+
+private struct OverlayListSheet: View {
+  @Environment(AppEnvironment.self) private var environment
+  @Environment(\.dismiss) private var dismiss
+  @State private var photoItem: PhotosPickerItem?
+  @State private var editing: OverlayEditSession?
+
+  var body: some View {
+    NavigationStack {
+      List {
+        if environment.overlays.isEmpty {
+          Text("No content yet. Tap Add.")
+            .foregroundStyle(.secondary)
+            .accessibilityIdentifier("content-list-empty")
+        }
+        ForEach(Array(environment.overlays.enumerated()), id: \.element.id) { index, overlay in
+          VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 12) {
+              OverlayListThumb(
+                overlay: overlay,
+                image: environment.overlayPreviewUIImage(for: overlay)
+              )
+              Text(listTitle(overlay))
+                .lineLimit(2)
+              Spacer()
+              Button("Edit") { editing = .existing(overlay) }
+                .accessibilityIdentifier("content-list-edit-\(index + 1)")
+            }
+            Toggle(
+              "Show in rewind",
+              isOn: Binding(
+                get: {
+                  environment.overlays.first(where: { $0.id == overlay.id })?.showInRewind ?? false
+                },
+                set: { environment.setOverlayShowInRewind(id: overlay.id, showInRewind: $0) }
+              )
+            )
+            .accessibilityIdentifier("content-list-rewind-\(index + 1)")
+          }
+          .accessibilityIdentifier("content-list-row-\(index + 1)")
+        }
+      }
+      .navigationTitle("Content")
+      .navigationBarTitleDisplayMode(.inline)
+      .toolbar {
+        ToolbarItem(placement: .cancellationAction) {
+          Button("Done") { dismiss() }
+            .accessibilityIdentifier("content-list-done")
+        }
+      }
+      .onChange(of: photoItem) { _, item in
+        Task { await importPhoto(item) }
+      }
+      .sheet(item: $editing) { session in
+        OverlayEditSheet(
+          session: session,
+          photoItem: $photoItem,
+          showInRewind: Binding(
+            get: {
+              environment.overlays.first(where: { $0.id == session.overlay?.id })?.showInRewind
+                ?? false
+            },
+            set: { value in
+              if let id = session.overlay?.id {
+                environment.setOverlayShowInRewind(id: id, showInRewind: value)
+              }
+            }
+          ),
+          onSaveURL: { url, showInRewind in
+            if let overlay = session.overlay {
+              environment.updateOverlayURL(id: overlay.id, url: url)
+              environment.setOverlayShowInRewind(id: overlay.id, showInRewind: showInRewind)
+            }
+            editing = nil
+          },
+          onDelete: {
+            if let overlay = session.overlay {
+              environment.removeOverlay(id: overlay.id)
+            }
+            editing = nil
+          }
+        )
+        .id(session.id)
+      }
+    }
+    .presentationDetents([.medium, .large])
+  }
+
+  private func listTitle(_ overlay: ProgramOverlay) -> String {
+    switch overlay.kind {
+    case .web:
+      overlay.url
+    case .image:
+      overlay.imageDisplayName.isEmpty ? overlay.imageFilename : overlay.imageDisplayName
+    }
+  }
+
+  private func importPhoto(_ item: PhotosPickerItem?) async {
+    defer { photoItem = nil }
+    guard
+      let item,
+      let data = try? await item.loadTransferable(type: Data.self),
+      case .existing(let overlay) = editing
+    else { return }
+    let name = item.itemIdentifier ?? "Photo"
+    environment.replaceOverlayImage(id: overlay.id, data: data, displayName: name)
+    editing = nil
+  }
+}
+
+private struct OverlayListThumb: View {
+  let overlay: ProgramOverlay
+  let image: UIImage?
+
+  var body: some View {
+    ZStack {
+      RoundedRectangle(cornerRadius: 6)
+        .fill(Color(uiColor: .tertiarySystemFill))
+      if let image {
+        Image(uiImage: image)
+          .resizable()
+          .aspectRatio(contentMode: overlay.kind == .image ? .fit : .fill)
+      } else {
+        Image(systemName: overlay.kind == .web ? "globe" : "photo")
+          .foregroundStyle(.secondary)
+      }
+    }
+    .frame(width: 48, height: 48)
+    .clipShape(RoundedRectangle(cornerRadius: 6))
+    .accessibilityHidden(true)
   }
 }
 
@@ -305,31 +491,34 @@ private struct OverlayHandle: View {
 }
 
 private struct OverlayEditSheet: View {
-  let overlay: ProgramOverlay
+  let session: OverlayEditSession
   @Binding var photoItem: PhotosPickerItem?
-  let onSaveURL: (String) -> Void
+  @Binding var showInRewind: Bool
+  let onSaveURL: (String, Bool) -> Void
   let onDelete: () -> Void
 
   @State private var url: String
   @Environment(\.dismiss) private var dismiss
 
   init(
-    overlay: ProgramOverlay,
+    session: OverlayEditSession,
     photoItem: Binding<PhotosPickerItem?>,
-    onSaveURL: @escaping (String) -> Void,
+    showInRewind: Binding<Bool>,
+    onSaveURL: @escaping (String, Bool) -> Void,
     onDelete: @escaping () -> Void
   ) {
-    self.overlay = overlay
+    self.session = session
     _photoItem = photoItem
+    _showInRewind = showInRewind
     self.onSaveURL = onSaveURL
     self.onDelete = onDelete
-    _url = State(initialValue: overlay.url)
+    _url = State(initialValue: session.overlay?.url ?? "https://")
   }
 
   var body: some View {
     NavigationStack {
       Form {
-        if overlay.kind == .web {
+        if session.kind == .web {
           Section("URL") {
             TextField("URL", text: $url)
               .textInputAutocapitalization(.never)
@@ -338,16 +527,28 @@ private struct OverlayEditSheet: View {
           }
         } else {
           Section("Image") {
-            Text(overlay.imageDisplayName.isEmpty ? overlay.imageFilename : overlay.imageDisplayName)
+            if let overlay = session.overlay {
+              Text(
+                overlay.imageDisplayName.isEmpty ? overlay.imageFilename : overlay.imageDisplayName
+              )
+            }
             PhotosPicker(selection: $photoItem, matching: .images) {
-              Text("Choose another photo")
+              Text(session.overlay == nil ? "Choose a photo" : "Choose another photo")
             }
             .accessibilityIdentifier("overlay-edit-image")
           }
         }
         Section {
-          Button("Remove", role: .destructive, action: onDelete)
-            .accessibilityIdentifier("overlay-edit-delete")
+          Toggle("Show in rewind", isOn: $showInRewind)
+            .accessibilityIdentifier("overlay-edit-rewind")
+        } footer: {
+          Text("Off: live Output only. On: also during scrub and Instant Replay.")
+        }
+        if session.overlay != nil {
+          Section {
+            Button("Remove", role: .destructive, action: onDelete)
+              .accessibilityIdentifier("overlay-edit-delete")
+          }
         }
       }
       .navigationTitle("Edit content")
@@ -356,11 +557,12 @@ private struct OverlayEditSheet: View {
         ToolbarItem(placement: .cancellationAction) {
           Button("Cancel") { dismiss() }
         }
-        if overlay.kind == .web {
+        if session.kind == .web {
           ToolbarItem(placement: .confirmationAction) {
             Button("Save") {
-              onSaveURL(url.trimmingCharacters(in: .whitespacesAndNewlines))
+              onSaveURL(url.trimmingCharacters(in: .whitespacesAndNewlines), showInRewind)
             }
+            .accessibilityIdentifier("overlay-edit-save")
           }
         }
       }
@@ -368,6 +570,5 @@ private struct OverlayEditSheet: View {
     .presentationDetents([.medium])
     .presentationDragIndicator(.hidden)
     .interactiveDismissDisabled()
-    .onAppear { url = overlay.url }
   }
 }
