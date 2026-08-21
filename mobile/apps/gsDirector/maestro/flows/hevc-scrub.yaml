@@ -29,7 +29,7 @@ appId: co.gamestation.director
     id: 'start-directing'
 
 - extendedWaitUntil:
-    visible: 'tile=1 state=live.*'
+    visible: 'source=1 state=live.*'
     timeout: 15000
 
 - tapOn:
@@ -52,7 +52,7 @@ appId: co.gamestation.director
 # rewound state is not guaranteed to still be on screen when the next poll comes round; the
 # latency reading stays put and is the evidence that HEVC segments decoded.
 - extendedWaitUntil:
-    visible: 'tile=1 state=(scrubbing|replaying).*off=-|replayms=[1-9][0-9]{0,3}'
+    visible: 'source=1 state=(scrubbing|replaying).*off=-|replayms=[1-9][0-9]{0,3}'
     timeout: 10000
 
 - takeScreenshot: hevc-scrub-after-swipe
@@ -67,8 +67,8 @@ appId: co.gamestation.director
     id: 'return-to-live-1'
     optional: true
 - extendedWaitUntil:
-    visible: 'tile=1 state=live .*off=0\.0.*'
+    visible: 'source=1 state=live .*off=0\.0.*'
     timeout: 30000
 - extendedWaitUntil:
-    visible: 'tile=1 state=live .*out=[1-9]'
+    visible: 'source=1 state=live .*out=[1-9]'
     timeout: 10000

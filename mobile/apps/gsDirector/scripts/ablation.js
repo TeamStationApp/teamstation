@@ -16,7 +16,13 @@
 //
 // Requires the app launched with camera discovery working, which means launched through Maestro.
 
-const BASE = process.env.DIRECTOR_ADDRESS || 'http://Pauls-iPad-Pro.local:8765'
+const BASE = process.env.DIRECTOR_ADDRESS
+if (!BASE) {
+  process.stderr.write(
+    'set DIRECTOR_ADDRESS to the control server, e.g. http://127.0.0.1:8765\n'
+  )
+  process.exit(1)
+}
 
 const call = async path =>
   (await fetch(`${BASE}${path}`, { signal: AbortSignal.timeout(10000) })).json()

@@ -48,19 +48,19 @@ appId: co.gamestation.director
 
 - extendedWaitUntil:
     visible:
-      id: 'tile-3'
+      id: 'source-3'
     timeout: 30000
 
 # Every camera decoding, whichever codec it happens to be sending: two of these three are HEVC at
 # 1080p and one is H.264 at 720p.
 - extendedWaitUntil:
-    visible: 'tile=1 .*state=live.*'
+    visible: 'source=1 .*state=live.*'
     timeout: 60000
 - extendedWaitUntil:
-    visible: 'tile=2 .*state=live.*'
+    visible: 'source=2 .*state=live.*'
     timeout: 60000
 - extendedWaitUntil:
-    visible: 'tile=3 .*state=live.*'
+    visible: 'source=3 .*state=live.*'
     timeout: 60000
 
 # One decoder per camera, and nothing lost on the way in.

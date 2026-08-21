@@ -30,7 +30,7 @@ appId: co.gamestation.director
     id: 'start-directing'
 
 - extendedWaitUntil:
-    visible: 'tile=1 state=live.*'
+    visible: 'source=1 state=live.*'
     timeout: 15000
 
 - tapOn:
@@ -49,7 +49,7 @@ appId: co.gamestation.director
 - takeScreenshot: incremental-after-first-left
 
 - extendedWaitUntil:
-    visible: 'tile=1 state=(scrubbing|replaying).*off=-'
+    visible: 'source=1 state=(scrubbing|replaying).*off=-'
     timeout: 8000
 
 - assertVisible: 'replayerr=ok'
@@ -64,9 +64,9 @@ appId: co.gamestation.director
 - takeScreenshot: incremental-after-second-left
 
 - extendedWaitUntil:
-    visible: 'tile=1 state=(scrubbing|replaying).*off=-'
+    visible: 'source=1 state=(scrubbing|replaying).*off=-'
     timeout: 8000
-- assertNotVisible: 'tile=1 state=live .*off=0\.0'
+- assertNotVisible: 'source=1 state=live .*off=0\.0'
 
 # Short right-swipe toward live. From playhead this eases forward; from live origin it
 # used to map to offset 0 and jump to the front. Stay on the tile: ~quarter of its width.
@@ -77,18 +77,18 @@ appId: co.gamestation.director
     duration: 300
 
 - takeScreenshot: incremental-after-short-right
-- assertVisible: 'tile=1 state=(scrubbing|replaying).*off=-'
-- assertNotVisible: 'tile=1 state=live .*off=0\.0'
+- assertVisible: 'source=1 state=(scrubbing|replaying).*off=-'
+- assertNotVisible: 'source=1 state=live .*off=0\.0'
 - assertVisible: 'rec=1'
 
 - tapOn:
     id: 'return-to-live-1'
     optional: true
 - extendedWaitUntil:
-    visible: 'tile=1 state=live .*off=0\.0.*'
+    visible: 'source=1 state=live .*off=0\.0.*'
     timeout: 25000
 - extendedWaitUntil:
-    visible: 'tile=1 state=live .*out=[1-9]'
+    visible: 'source=1 state=live .*out=[1-9]'
     timeout: 10000
 
 - tapOn:

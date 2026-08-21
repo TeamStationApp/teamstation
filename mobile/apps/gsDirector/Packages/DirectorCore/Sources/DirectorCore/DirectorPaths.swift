@@ -27,6 +27,11 @@ public enum DirectorPaths {
   /// Operator-placed Output overlays (images and the saved layout).
   public static var overlays: URL { applicationSupport.appendingPathComponent("Overlays", isDirectory: true) }
 
+  /// Named remote-control templates (button chords → director actions).
+  public static var remoteControl: URL {
+    applicationSupport.appendingPathComponent("RemoteControl", isDirectory: true)
+  }
+
   public static var overlayManifest: URL { overlays.appendingPathComponent("overlays.json") }
 
   /// SQLite wall-clock index shared by the archive and the proxy store.
@@ -45,7 +50,7 @@ public enum DirectorPaths {
 
   public static func createAll() throws {
     let manager = FileManager.default
-    for url in [ applicationSupport, archives, proxies, program, exports, overlays ] {
+    for url in [ applicationSupport, archives, proxies, program, exports, overlays, remoteControl ] {
       try manager.createDirectory(at: url, withIntermediateDirectories: true)
     }
   }

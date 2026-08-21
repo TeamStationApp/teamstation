@@ -18,16 +18,16 @@ public struct SourceID: Hashable, Sendable, Codable, CustomStringConvertible {
   }
 }
 
-/// Position of a source tile in the 3×3 grid (five sources beside Output).
-public struct TileIndex: Hashable, Sendable, Codable, Comparable, CustomStringConvertible {
+/// Position of a source in the 3×3 grid (five sources beside Output).
+public struct SourceIndex: Hashable, Sendable, Codable, Comparable, CustomStringConvertible {
   public static let count = 5
-  public static let all: [TileIndex] = (0 ..< count).map { TileIndex(unchecked: $0) }
+  public static let all: [SourceIndex] = (0 ..< count).map { SourceIndex(unchecked: $0) }
 
   public let value: Int
 
   /// Fails for anything outside 0...4 so the grid invariant is enforced at the type boundary.
   public init?(_ value: Int) {
-    guard (0 ..< TileIndex.count).contains(value) else { return nil }
+    guard (0 ..< SourceIndex.count).contains(value) else { return nil }
     self.value = value
   }
 
@@ -39,5 +39,5 @@ public struct TileIndex: Hashable, Sendable, Codable, Comparable, CustomStringCo
   public var displayNumber: Int { value + 1 }
   public var description: String { "\(displayNumber)" }
 
-  public static func < (lhs: TileIndex, rhs: TileIndex) -> Bool { lhs.value < rhs.value }
+  public static func < (lhs: SourceIndex, rhs: SourceIndex) -> Bool { lhs.value < rhs.value }
 }

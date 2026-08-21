@@ -18,7 +18,7 @@ public struct SourceSummary: Sendable, Codable, Equatable {
   public var isEnabled: Bool
   public var usesAudio: Bool
   public var isPresent: Bool
-  public var tileIndex: Int?
+  public var sourceIndex: Int?
 
   public init(
     index: Int,
@@ -26,14 +26,14 @@ public struct SourceSummary: Sendable, Codable, Equatable {
     isEnabled: Bool,
     usesAudio: Bool,
     isPresent: Bool,
-    tileIndex: Int?
+    sourceIndex: Int?
   ) {
     self.index = index
     self.name = name
     self.isEnabled = isEnabled
     self.usesAudio = usesAudio
     self.isPresent = isPresent
-    self.tileIndex = tileIndex
+    self.sourceIndex = sourceIndex
   }
 }
 
@@ -144,7 +144,7 @@ public struct TileTelemetry: Sendable, Codable, Equatable {
   /// given: assertions have to match on text alone, and without the number in the string
   /// "tile 2 is live" cannot be distinguished from "some tile is live".
   public var accessibilityValue: String {
-    var parts = [ "tile=\(index + 1)", "state=\(state.rawValue)" ]
+    var parts = [ "source=\(index + 1)", "state=\(state.rawValue)" ]
     parts.append("src=\(displayName ?? "none")")
     parts.append("f=\(frameID)")
     parts.append(String(format: "off=%.1f", offsetSeconds))
@@ -220,7 +220,7 @@ public struct TelemetrySnapshot: Sendable, Codable, Equatable {
   public var generatedAt: Double = 0
   public var clockSeconds: Double = 0
   public var sourceProfile: String = ""
-  public var tiles: [TileTelemetry] = TileIndex.all.map { TileTelemetry(index: $0.value) }
+  public var tiles: [TileTelemetry] = SourceIndex.all.map { TileTelemetry(index: $0.value) }
   public var dvr = DVRTelemetry()
   public var sessions = SessionTelemetry()
   public var converter = ConverterTelemetry()
@@ -243,7 +243,7 @@ public struct TelemetrySnapshot: Sendable, Codable, Equatable {
   public var availableMemoryMB = 0
   /// Resident set, including surfaces lent to the display and encoder daemons.
   public var physFootprintMB = 0
-  public var programTile: Int?
+  public var programSource: Int?
   /// Whether this session is on real cameras rather than generated or file-backed ones.
   public var sourceAvailable = false
   public var discoveredSourceCount = 0
@@ -278,10 +278,10 @@ public struct TelemetrySnapshot: Sendable, Codable, Equatable {
   public init() {}
 
   public var programSourceLabel: String {
-    guard let programTile, let tile = tiles.first(where: { $0.index == programTile }) else {
+    guard let programSource, let tile = tiles.first(where: { $0.index == programSource }) else {
       return "none"
     }
-    return tile.displayName ?? "tile\(programTile + 1)"
+    return tile.displayName ?? "source\(programSource + 1)"
   }
 }
 
@@ -312,8 +312,8 @@ public final class PipelineTelemetry: @unchecked Sendable {
     copy.dvr.freeDiskBytes = DirectorPaths.freeDiskBytes()
     let now = CFAbsoluteTimeGetCurrent()
     for index in copy.tiles.indices {
-      let tileIndex = copy.tiles[index].index
-      let last = displayedTimestamps[tileIndex]?.last ?? 0
+      let sourceIndex = copy.tiles[index].index
+      let last = displayedTimestamps[sourceIndex]?.last ?? 0
       if now - last > 1.2 {
         copy.tiles[index].displayedFramesPerSecond = 0
       }
@@ -333,6 +333,35 @@ public final class PipelineTelemetry: @unchecked Sendable {
       body(&state.tiles[position])
     }
     lock.unlock()
+  }
+
+  /// Slot `a` and slot `b` exchange telemetry (index numbers stay with the slot).
+  public func swapSlots(_ a: Int, _ b: Int) {
+    guard a != b else { return }
+    lock.lock()
+    defer { lock.unlock() }
+    guard
+      let ia = state.tiles.firstIndex(where: { $0.index == a }),
+      let ib = state.tiles.firstIndex(where: { $0.index == b })
+    else { return }
+    var first = state.tiles[ia]
+    var second = state.tiles[ib]
+    swap(&first, &second)
+    first.index = a
+    second.index = b
+    state.tiles[ia] = first
+    state.tiles[ib] = second
+    if state.programSource == a {
+      state.programSource = b
+    } else if state.programSource == b {
+      state.programSource = a
+    }
+    let frameA = frameTimestamps[a]
+    frameTimestamps[a] = frameTimestamps[b]
+    frameTimestamps[b] = frameA
+    let displayedA = displayedTimestamps[a]
+    displayedTimestamps[a] = displayedTimestamps[b]
+    displayedTimestamps[b] = displayedA
   }
 
   public func recordReceivedFrame(tile: Int, frameID: UInt64) {

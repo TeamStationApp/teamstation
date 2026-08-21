@@ -4,7 +4,7 @@ What the operator can do, written as English conditions a person or a Maestro fl
 Video is invisible to the accessibility tree, so a tile that *looks* live and a tile that is
 frozen on the last replay frame are distinguished by telemetry, not by a screenshot:
 
-- Source tiles publish `tile=N state=… src=… off=… onair=0|1 out=…`
+- Source tiles publish `source=N state=… src=… off=… onair=0|1 out=…`
 - `f=` counts **received** frames and keeps ticking during replay, so it cannot prove the preview
   is moving.
 - `out=` is displayed-frame rate. After Return to Live, `state=live out=0` means the small preview
@@ -44,7 +44,7 @@ memory, degradation ladder) stay out of that list so a regression pass finishes 
 | A5 | AUDIO toggle is independent of VIDEO | Camera can be on the grid with `audio=0`, or enabled with audio on | `operator-audio-mix` |
 | A6 | Five cameras is the cap | Enabling a sixth is refused; status “Five sources maximum — turn one off first”; still `5/5 enabled` | `operator-source-cap` |
 | A7 | Start Production with nothing enabled is blocked | Button disabled while `0/5 enabled` | `operator-source-cap` |
-| A8 | Start Production with ≥1 camera opens the grid | `output-tile` and `tile-1` appear | `operator-program-cut` |
+| A8 | Start Production with ≥1 camera opens the grid | `output` and `source-1` appear | `operator-program-cut` |
 | A9 | Rename a source | Pencil → type → check; grid nameplate and `src=` use the new name | `rtsp-camera-naming` |
 | A13 | A live row names a camera, not a row | Name menu → Name… → type; row value `name=…`; the name survives a relaunch on the same unique id | `rtsp-camera-naming` |
 | A14 | The name menu offers cameras already known | Every cached camera is listed with where it was last seen | `rtsp-camera-rebind` |
@@ -59,19 +59,21 @@ memory, degradation ladder) stay out of that list so a regression pass finishes 
 ## B. Grid, program cut, empty slots
 
 The layout is a 3×3 with the top-left four cells merged into Output. Source tiles are 1…5
-(accessibility `tile-1` … `tile-5`), left-to-right, top-to-bottom beside and below Output.
+(accessibility `source-1` … `source-5`), left-to-right, top-to-bottom beside and below Output.
 
 | ID | Condition | Pass | Flow |
 |---|---|---|---|
-| B1 | First enabled camera is Output | `output src=CAM1`, `tile=1 … onair=1`, others `onair=0` | `operator-program-cut` |
-| B2 | Tap any live source tile → it becomes Output | Tap `tile-2` → `output src=CAM2`, `tile=2 onair=1`, previous `onair=0` | `operator-program-cut` |
+| B1 | First enabled camera is Output | `output src=CAM1`, `source=1 … onair=1`, others `onair=0` | `operator-program-cut` |
+| B2 | Tap any live source tile → it becomes Output | Tap `source-2` → `output src=CAM2`, `source=2 onair=1`, previous `onair=0` | `operator-program-cut` |
 | B3 | Tap every occupied tile in turn | Each tap moves Output to that camera; exactly one `onair=1` | `operator-program-cut` |
 | B4 | Tap the current Output tile again | Still that camera; no empty Output | `operator-program-cut` |
-| B5 | Unused slots stay empty | With two cameras, `tile=3`…`tile=5` are `state=empty src=none` | `operator-empty-tiles` |
+| B5 | Unused slots stay empty | With two cameras, `source=3`…`source=5` are `state=empty src=none` | `operator-empty-tiles` |
 | B6 | Tap an empty slot | Output source unchanged | `operator-empty-tiles` |
 | B7 | Output shows the composited picture | `composed=` grows; scorebug, if configured, is in this tile not the source tiles | `program-five-sources` |
 | B8 | Cutting picture does not change the audio mix | `mix=N` stays at the number of AUDIO toggles, not which tile is Output | `operator-audio-mix` |
 | B9 | Disable the on-air camera while the grid is live | Exactly one `onair=1`; disabled slot `state=empty onair=0`; Output still has a source | `operator-program-disable` |
+| B10 | Settings Remote Control templates | Default row, editor lists Source 1–5 live + six Instant Replays, Done returns | `remote-control` |
+| B11 | Injected pad chord cuts Source 2 live | `/bind-remote?action=live-2&controls=a` then `/remote-chord?controls=a` → `source=2 onair=1` | `remote-control` |
 
 ---
 
@@ -128,12 +130,12 @@ This is the operator path that was janky: output moving, small previews frozen.
 | E1 | Tap a replaying non-Output tile | It becomes Output (`onair=1`, `output src=` that camera) **while still replaying** | `operator-scrub-cut-return` |
 | E2 | Output shows the rewind, not live | Large tile follows the replay; `composed=` still growing | `operator-scrub-cut-return` |
 | E3 | Return to Live on that tile | Button `return-to-live-N` only while `scrubbing`/`replaying`; after tap, `state=live off=0.0` | `operator-scrub-cut-return` |
-| E4 | **The small tile actually plays** after Return to Live | Within ~3 s, `tile=N state=live … out=[1-9]` — not `out=0` | `operator-scrub-cut-return` |
+| E4 | **The small tile actually plays** after Return to Live | Within ~3 s, `source=N state=live … out=[1-9]` — not `out=0` | `operator-scrub-cut-return` |
 | E5 | Other source tiles still play | Each occupied live tile has `out=` > 0 | `operator-scrub-cut-return` |
 | E6 | Output still plays | `composed=` increases after return; `output src=` remains that camera until another cut | `operator-scrub-cut-return` |
 | E7 | Return to Live on a non-Output replaying tile | That preview unfreezes; Output stays on the live Output source | `operator-scrub-cut-return` |
 | E8 | Catch-up without tapping Return to Live | A replay of N seconds returns to `live off=0.0` by itself; then `out=` > 0 | `hevc-scrub` |
-| E9 | Return to Live on Output | `return-to-live-output` returns the current Output source to live | visual / `output-tile` |
+| E9 | Return to Live on Output | `return-to-live-output` returns the current Output source to live | visual / `output` |
 
 ---
 

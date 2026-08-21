@@ -3,11 +3,17 @@
 
 // Works out which control-channel source index drives which tile, by enabling one at a time.
 //
-// Needed because selection order is not tile order: selections carry a persistent `tileIndex`, so
+// Needed because selection order is not tile order: selections carry a persistent `sourceIndex`, so
 // enabling index 0 can light up tile 3. An ablation that assumes index N == tile N silently
 // measures the wrong tile and reports zeros for cameras that are working fine.
 
-const BASE = process.env.DIRECTOR_ADDRESS || 'http://Pauls-iPad-Pro.local:8765'
+const BASE = process.env.DIRECTOR_ADDRESS
+if (!BASE) {
+  process.stderr.write(
+    'set DIRECTOR_ADDRESS to the control server, e.g. http://127.0.0.1:8765\n'
+  )
+  process.exit(1)
+}
 
 const call = async path =>
   (await fetch(`${BASE}${path}`, { signal: AbortSignal.timeout(10000) })).json()
