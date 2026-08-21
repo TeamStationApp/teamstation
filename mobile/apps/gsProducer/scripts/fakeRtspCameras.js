@@ -125,19 +125,42 @@ function sdpMedia(sdp) {
   }
 }
 
+function isIPv4(entry) {
+  return entry.family === 'IPv4' || entry.family === 4
+}
+
+/// The address that actually routes off-box — leftover ifconfig aliases are listed first
+/// and are not reachable after Wi-Fi moves to another subnet.
 function lanInterface() {
+  const routed = defaultRouteInterface()
   const nics = os.networkInterfaces()
-  const preferred = ['en0', 'en1']
-  for (const name of preferred) {
-    const entries = nics[name] || []
-    const ipv4 = entries.find(entry => entry.family === 'IPv4' && !entry.internal)
-    if (ipv4) return { name, address: ipv4.address, netmask: ipv4.netmask }
-  }
-  for (const [name, entries] of Object.entries(nics)) {
-    const ipv4 = (entries || []).find(entry => entry.family === 'IPv4' && !entry.internal)
-    if (ipv4) return { name, address: ipv4.address, netmask: ipv4.netmask }
+  const names = [routed?.name, 'en0', 'en1', ...Object.keys(nics)].filter(Boolean)
+  for (const name of names) {
+    const match = ipv4OnSubnet(nics[name] || [], routed?.gateway)
+    if (match) return { name, address: match.address, netmask: match.netmask }
   }
   throw new Error('no LAN IPv4 interface')
+}
+
+function defaultRouteInterface() {
+  const result = spawnSync('route', ['-n', 'get', 'default'], { encoding: 'utf8' })
+  const name = /(?:^|\n)\s*interface:\s+(\S+)/.exec(result.stdout || '')?.[1]
+  const gateway = /(?:^|\n)\s*gateway:\s+(\S+)/.exec(result.stdout || '')?.[1]
+  return name ? { name, gateway } : null
+}
+
+function ipv4OnSubnet(entries, gateway) {
+  const ipv4s = entries.filter(entry => isIPv4(entry) && !entry.internal)
+  const gw = gateway ? parseIPv4(gateway) : null
+  if (gw != null) {
+    const match = ipv4s.find(entry => {
+      const addr = parseIPv4(entry.address)
+      const mask = parseIPv4(entry.netmask)
+      return addr != null && mask != null && (addr & mask) === (gw & mask)
+    })
+    if (match) return match
+  }
+  return ipv4s[0] || null
 }
 
 function parseIPv4(text) {
