@@ -1,0 +1,211 @@
+import Foundation
+import DirectorCore
+import DirectorSources
+
+/// Test configuration read from the launch environment.
+///
+/// I1: `maestro-runner` is an independent reimplementation of Maestro and its handling of
+/// `launchApp.arguments` is unverified, so every plausible shape is accepted — `-key value`
+/// (which also lands in `UserDefaults`), `--key=value`, bare `key=value`, and environment
+/// variables. If all of them fail, `ControlChannel.configure` provides the `openLink` fallback.
+public struct LaunchConfiguration: Sendable, Equatable {
+  /// Master switch. Nothing test-only appears in the UI unless this is set (D7).
+  public var isUITest = false
+  /// Nil means the saved Settings toggle chooses live vs simulated cameras.
+  public var sourceProfile: SourceProfile?
+  public var useTestClock = false
+  public var autoRecord = false
+  public var clearState = false
+  public var fixtureDirectory: String?
+  public var scoreboardURL: String?
+  public var syntheticFrameRate: Double = 30
+  public var syntheticWidth = 1920
+  public var syntheticHeight = 1080
+  /// Segment length override so a flow can produce many segments in a few seconds.
+  public var segmentSeconds: Double?
+  /// Detail level of generated frames. Defaults to `.high` so an encode measurement taken without
+  /// thinking about it is the pessimistic one rather than the flattering one.
+  public var syntheticEntropy: SyntheticEntropy = .high
+  /// Whether per-camera archives carry an audio track. Exists to test a specific suspicion: a
+  /// camera whose audio lags its video throttles the writer's video input, so the archive drops
+  /// most frames while the camera looks like it is at fault.
+  public var archiveAudio = true
+  /// Programme master codec override. Worth being able to set from a flow: the same hardware
+  /// sustains 118 fps of 1080p H.264 and 296 fps of 1080p HEVC, and the programme master is the
+  /// only output this app still encodes.
+  public var programCodec: ProgramCodec?
+  /// What a simulated camera puts on the wire. Real cameras in the population send a mix of H.264
+  /// and HEVC, and since archives are copies of the wire this is the only way a flow can cover an
+  /// HEVC archive without an HEVC camera on the bench.
+  public var cameraCodec: CompressedFrame.Codec = .h264
+  /// Telemetry overlay override. Left nil so the stored preference wins, which is what makes the
+  /// Settings toggle stick between runs.
+  public var debugHUD: Bool?
+  /// How many synthetic cameras to generate. Five fills the grid, which is the only way to exercise
+  /// the fifth tile without five real cameras on the bench.
+  public var syntheticCount = 4
+  /// `tcp` or `udp`. Only TCP is implemented; a flow asking for UDP fails rather than quietly
+  /// testing TCP and reporting a pass.
+  public var rtspTransport = "tcp"
+  /// Cameras to try directly, bypassing the scan. Needed for another subnet, and the escape hatch
+  /// when a venue blocks scanning.
+  public var rtspHosts: [String] = []
+  public var rtspPath = "/live/mainstream"
+  /// False turns the subnet scan off, leaving only `rtspHosts`.
+  public var rtspScan = true
+
+  public init() {}
+
+  public static func resolve(
+    arguments: [String] = ProcessInfo.processInfo.arguments,
+    environment: [String: String] = ProcessInfo.processInfo.environment,
+    defaults: UserDefaults = .standard
+  ) -> LaunchConfiguration {
+    let values = parse(arguments: arguments, environment: environment, defaults: defaults)
+    var configuration = LaunchConfiguration()
+
+    configuration.isUITest = boolean(values["uiTest"]) ?? false
+    if let raw = values["sourceProfile"], let profile = SourceProfile(rawValue: raw) {
+      configuration.sourceProfile = profile
+    }
+    configuration.useTestClock = boolean(values["testClock"]) ?? configuration.isUITest
+    configuration.autoRecord = boolean(values["autoRecord"]) ?? false
+    configuration.clearState = boolean(values["clearState"]) ?? false
+    configuration.fixtureDirectory = values["fixtureDir"]
+    configuration.scoreboardURL = values["scoreboardURL"]
+    if let rate = values["frameRate"].flatMap({ Double($0) }), rate > 0 {
+      configuration.syntheticFrameRate = rate
+    }
+    if let width = values["sourceWidth"].flatMap({ Int($0) }), width > 0 {
+      configuration.syntheticWidth = width
+    }
+    if let height = values["sourceHeight"].flatMap({ Int($0) }), height > 0 {
+      configuration.syntheticHeight = height
+    }
+    if let seconds = values["segmentSeconds"].flatMap({ Double($0) }), seconds > 0 {
+      configuration.segmentSeconds = seconds
+    }
+    if let raw = values["syntheticEntropy"]?.lowercased(), let level = SyntheticEntropy(rawValue: raw) {
+      configuration.syntheticEntropy = level
+    }
+    configuration.archiveAudio = boolean(values["archiveAudio"]) ?? true
+    if let raw = values["programCodec"]?.lowercased(), let codec = ProgramCodec(rawValue: raw) {
+      configuration.programCodec = codec
+    }
+    if let raw = values["cameraCodec"]?.lowercased(), let codec = CompressedFrame.Codec(rawValue: raw) {
+      configuration.cameraCodec = codec
+    }
+    configuration.debugHUD = boolean(values["debugHUD"])
+    if let count = values["sourceCount"].flatMap({ Int($0) }), count > 0 {
+      configuration.syntheticCount = count
+    }
+    if let transport = values["rtspTransport"]?.lowercased(), !transport.isEmpty {
+      configuration.rtspTransport = transport
+    }
+    if let hosts = values["rtspHosts"] {
+      configuration.rtspHosts = hosts
+        .split(separator: ",")
+        .map { $0.trimmingCharacters(in: .whitespaces) }
+        .filter { !$0.isEmpty }
+    }
+    if let path = values["rtspPath"], !path.isEmpty {
+      configuration.rtspPath = path
+    }
+    configuration.rtspScan = boolean(values["rtspScan"]) ?? true
+
+    // `-key value` is registered in UserDefaults by the system before `main` runs, and it stays
+    // there after the process exits. The next tap of the icon would then still be running last
+    // night's Maestro arguments — which is how a test scoreboard URL replaced the one the operator
+    // had saved, and how the telemetry overlay vanished after `live.yaml` passed `debugHUD: false`.
+    for key in knownKeys {
+      defaults.removeObject(forKey: key)
+    }
+
+    return configuration
+  }
+
+  /// Merges values delivered later over the control channel, so the `openLink` fallback can
+  /// reconfigure an already-launched app.
+  public mutating func apply(queryItems: [String: String]) {
+    if let value = queryItems["uiTest"], let flag = Self.boolean(value) { isUITest = flag }
+    if let raw = queryItems["sourceProfile"], let profile = SourceProfile(rawValue: raw) {
+      sourceProfile = profile
+    }
+    if let value = queryItems["testClock"], let flag = Self.boolean(value) { useTestClock = flag }
+    if let value = queryItems["autoRecord"], let flag = Self.boolean(value) { autoRecord = flag }
+    if let value = queryItems["scoreboardURL"] { scoreboardURL = value }
+    if let value = queryItems["frameRate"], let rate = Double(value), rate > 0 { syntheticFrameRate = rate }
+    if let value = queryItems["segmentSeconds"], let seconds = Double(value), seconds > 0 {
+      segmentSeconds = seconds
+    }
+  }
+
+  /// Names of every key understood here, surfaced in the HUD so a failing flow shows what the
+  /// app actually received.
+  public static let knownKeys = [
+    "uiTest", "sourceProfile", "testClock", "autoRecord", "clearState", "fixtureDir",
+    "scoreboardURL", "frameRate", "sourceWidth", "sourceHeight", "segmentSeconds",
+    "syntheticEntropy", "archiveAudio", "programCodec", "cameraCodec", "debugHUD", "sourceCount",
+    // A key missing from this array is silently ignored, which has already cost this project
+    // debugging time; every argument above must appear here.
+    "rtspTransport", "rtspHosts", "rtspPath", "rtspScan"
+  ]
+
+  static func parse(
+    arguments: [String],
+    environment: [String: String],
+    defaults: UserDefaults
+  ) -> [String: String] {
+    var values: [String: String] = [:]
+
+    for key in knownKeys {
+      // `-key value` is consumed by UserDefaults before main() runs, so the current launch's
+      // arguments have to be read from there. Values left behind by a previous launch must not:
+      // they are why a Maestro scoreboard URL outlived the test and replaced the operator's.
+      if let value = defaults.string(forKey: key), launchedWith(key, in: arguments) {
+        values[key] = value
+      }
+      if let value = environment[key] { values[key] = value }
+      if let value = environment["GSP_" + key] { values[key] = value }
+    }
+
+    var index = 0
+    while index < arguments.count {
+      let argument = arguments[index]
+      if argument.hasPrefix("--"), argument.contains("=") {
+        let parts = argument.dropFirst(2).split(separator: "=", maxSplits: 1)
+        if parts.count == 2 { values[String(parts[0])] = String(parts[1]) }
+      } else if argument.hasPrefix("-"), !argument.hasPrefix("--"), index + 1 < arguments.count {
+        let key = String(argument.dropFirst())
+        if knownKeys.contains(key) { values[key] = arguments[index + 1] }
+        index += 1
+      } else if argument.contains("="), !argument.hasPrefix("-") {
+        let parts = argument.split(separator: "=", maxSplits: 1)
+        if parts.count == 2, knownKeys.contains(String(parts[0])) {
+          values[String(parts[0])] = String(parts[1])
+        }
+      }
+      index += 1
+    }
+    return values
+  }
+
+  /// True when this process was actually launched with `key`, as opposed to UserDefaults still
+  /// holding a value written by a previous `-key value` launch.
+  private static func launchedWith(_ key: String, in arguments: [String]) -> Bool {
+    arguments.contains("-" + key)
+      || arguments.contains("--" + key)
+      || arguments.contains { argument in
+        argument.hasPrefix("--\(key)=") || argument.hasPrefix("\(key)=")
+      }
+  }
+
+  static func boolean(_ value: String?) -> Bool? {
+    guard let value = value?.lowercased() else { return nil }
+    switch value {
+    case "1", "true", "yes", "on": return true
+    case "0", "false", "no", "off": return false
+    default: return nil
+    }
+  }
+}
