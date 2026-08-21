@@ -46,8 +46,8 @@ public struct ProgramOverlay: Sendable, Codable, Identifiable, Hashable {
   public var placement: OverlayPlacement
   public var role: String?
   public var hasLaidOut: Bool
-  /// When false, the graphic is live Output only. When true, it also burns in during scrub and
-  /// Instant Replay.
+  /// When false, the graphic is live Output only and collapses to zero size during scrub and
+  /// Instant Replay so attached children move with it. When true, it also burns in off-live.
   public var showInRewind: Bool
 
   public init(
@@ -194,6 +194,51 @@ public enum OverlayLayout {
       width: overlay.width * canvas.width,
       height: overlay.height * canvas.height
     )
+  }
+
+  /// Programme-canvas rectangles after live-only overlays collapse off-live. Does not mutate
+  /// stored overlay size; attached children are re-parked against the collapsed parent.
+  public static func displayRects(
+    overlays: [ProgramOverlay],
+    canvas: CGSize,
+    programIsOffLive: Bool
+  ) -> [UUID: CGRect] {
+    var rects: [UUID: CGRect] = [:]
+    var collapsedAny = false
+    for overlay in overlays {
+      var rect = pixelRect(overlay, canvas: canvas)
+      if OverlayVisibility.shouldCollapse(
+        showInRewind: overlay.showInRewind,
+        programIsOffLive: programIsOffLive
+      ) {
+        rect.size = .zero
+        collapsedAny = true
+      }
+      rects[overlay.id] = rect
+    }
+    guard collapsedAny else { return rects }
+
+    func applyChildren(of parentID: UUID, depth: Int) {
+      guard depth < 16, let parentRect = rects[parentID] else { return }
+      for overlay in overlays {
+        guard overlay.anchorID == parentID, let edge = overlay.anchorEdge else { continue }
+        guard var childRect = rects[overlay.id] else { continue }
+        let origin = anchoredOrigin(
+          parent: parentRect,
+          child: childRect,
+          edge: edge,
+          gap: CGFloat(overlay.anchorGap)
+        )
+        childRect.origin = origin
+        rects[overlay.id] = childRect
+        applyChildren(of: overlay.id, depth: depth + 1)
+      }
+    }
+
+    for overlay in overlays where overlay.anchorID == nil {
+      applyChildren(of: overlay.id, depth: 0)
+    }
+    return rects
   }
 
   /// Scale the rect from its top-left. Web overlays grow right and down; they are not cropped

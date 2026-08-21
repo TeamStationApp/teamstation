@@ -10,6 +10,7 @@ public struct SettingsView: View {
   @State private var showingClearCameraMemory = false
   @State private var renaming: OverlayTemplate?
   @State private var renameText = ""
+  @State private var deleting: OverlayTemplate?
   @State private var showingNewTemplate = false
   @State private var newTemplateName = ""
   @State private var copyFromID: UUID?
@@ -32,25 +33,46 @@ public struct SettingsView: View {
             HStack {
               Button {
                 environment.selectTemplate(id: template.id)
-                showingContentEditor = true
               } label: {
-                HStack {
-                  Image(systemName: "checkmark")
-                    .opacity(template.id == environment.activeTemplateID ? 1 : 0)
-                  Text(template.name)
-                  Spacer()
-                }
-              }
-              .accessibilityIdentifier("settings-content-template-\(index + 1)")
-
-              Button {
-                renaming = template
-                renameText = template.name
-              } label: {
-                Image(systemName: "pencil")
+                Image(
+                  systemName: template.id == environment.activeTemplateID
+                    ? "circle.inset.filled"
+                    : "circle"
+                )
               }
               .buttonStyle(.borderless)
-              .accessibilityIdentifier("settings-content-template-rename-\(index + 1)")
+              .padding(.trailing, 12)
+              .accessibilityLabel("Select \(template.name)")
+              .accessibilityIdentifier("settings-content-template-select-\(index + 1)")
+
+              Button {
+                environment.selectTemplate(id: template.id)
+                showingContentEditor = true
+              } label: {
+                Text(template.name)
+                  .frame(maxWidth: .infinity, alignment: .leading)
+              }
+              .buttonStyle(.borderless)
+              .accessibilityIdentifier("settings-content-template-\(index + 1)")
+
+              HStack(spacing: 20) {
+                Button {
+                  renaming = template
+                  renameText = template.name
+                } label: {
+                  Image(systemName: "pencil")
+                }
+                .buttonStyle(.borderless)
+                .accessibilityIdentifier("settings-content-template-rename-\(index + 1)")
+
+                Button(role: .destructive) {
+                  deleting = template
+                } label: {
+                  Image(systemName: "trash")
+                }
+                .buttonStyle(.borderless)
+                .accessibilityIdentifier("settings-content-template-delete-\(index + 1)")
+              }
             }
           }
 
@@ -64,7 +86,8 @@ public struct SettingsView: View {
           Text("Content Templates")
         } footer: {
           Text(
-            "Templates switch the Output graphics. Tap a row to place and add content. Pencil renames."
+            "Radio selects the Output template. Tap the name to place and add content. "
+              + "Pencil renames. Trash deletes."
           )
         }
 
@@ -205,9 +228,14 @@ public struct SettingsView: View {
         templates: environment.templates,
         copyFromID: $copyFromID,
         name: $newTemplateName,
-        onCreate: {
-          guard let copyFromID else { return }
-          if environment.duplicateTemplate(from: copyFromID, name: newTemplateName) != nil {
+        onCreate: { sourceID in
+          let created: UUID?
+          if let sourceID {
+            created = environment.duplicateTemplate(from: sourceID, name: newTemplateName)
+          } else {
+            created = environment.createTemplate(name: newTemplateName)
+          }
+          if created != nil {
             showingNewTemplate = false
             showingContentEditor = true
           }
@@ -231,6 +259,24 @@ public struct SettingsView: View {
       }
       .accessibilityIdentifier("settings-content-template-rename-save")
       Button("Cancel", role: .cancel) { renaming = nil }
+    }
+    .alert(
+      "Delete template?",
+      isPresented: Binding(
+        get: { deleting != nil },
+        set: { if !$0 { deleting = nil } }
+      )
+    ) {
+      Button("Delete", role: .destructive) {
+        if let deleting {
+          environment.deleteTemplate(id: deleting.id)
+        }
+        deleting = nil
+      }
+      .accessibilityIdentifier("settings-content-template-delete-confirm")
+      Button("Cancel", role: .cancel) { deleting = nil }
+    } message: {
+      Text("Removes “\(deleting?.name ?? "")” from Output.")
     }
     .confirmationDialog(
       "Clear camera memory?",
@@ -262,24 +308,40 @@ public struct SettingsView: View {
 }
 
 private struct NewTemplateSheet: View {
+  enum Source: String, Hashable {
+    case blank
+    case copy
+  }
+
   let templates: [OverlayTemplate]
   @Binding var copyFromID: UUID?
   @Binding var name: String
-  let onCreate: () -> Void
+  let onCreate: (UUID?) -> Void
   @Environment(\.dismiss) private var dismiss
+  @State private var source: Source = .copy
 
   var body: some View {
     NavigationStack {
       Form {
-        Section("Copy from") {
-          Picker("Template", selection: $copyFromID) {
-            ForEach(templates) { template in
-              Text(template.name).tag(Optional(template.id))
-            }
+        Section {
+          Picker("Create as", selection: $source) {
+            Text("Blank").tag(Source.blank)
+            Text("Copy from").tag(Source.copy)
           }
-          .labelsHidden()
-          .pickerStyle(.inline)
-          .accessibilityIdentifier("settings-new-template-copy-from")
+          .pickerStyle(.segmented)
+          .accessibilityIdentifier("settings-new-template-source")
+        }
+        if source == .copy {
+          Section("Copy from") {
+            Picker("Template", selection: $copyFromID) {
+              ForEach(templates) { template in
+                Text(template.name).tag(Optional(template.id))
+              }
+            }
+            .labelsHidden()
+            .pickerStyle(.inline)
+            .accessibilityIdentifier("settings-new-template-copy-from")
+          }
         }
         Section("Name") {
           TextField("Name", text: $name)
@@ -294,15 +356,18 @@ private struct NewTemplateSheet: View {
             .accessibilityIdentifier("settings-new-template-cancel")
         }
         ToolbarItem(placement: .confirmationAction) {
-          Button("Create", action: onCreate)
-            .disabled(
-              name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || copyFromID == nil
-            )
-            .accessibilityIdentifier("settings-new-template-create")
+          Button("Create") {
+            onCreate(source == .copy ? copyFromID : nil)
+          }
+          .disabled(
+            name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+              || (source == .copy && copyFromID == nil)
+          )
+          .accessibilityIdentifier("settings-new-template-create")
         }
       }
     }
-    .presentationDetents([.medium])
+    .presentationDetents([.medium, .large])
   }
 }
 

@@ -1269,12 +1269,14 @@ public final class AppEnvironment {
 
   private func composedOverlayItems() -> [MetalCompositor.OverlayItem] {
     let canvas = overlayCanvas
+    let rects = OverlayLayout.displayRects(
+      overlays: overlays,
+      canvas: canvas,
+      programIsOffLive: programSourceIsOffLive()
+    )
     return overlays.compactMap { overlay in
-      guard OverlayVisibility.isVisible(
-        showInRewind: overlay.showInRewind,
-        programIsOffLive: programSourceIsOffLive()
-      ) else { return nil }
-      let rect = OverlayLayout.pixelRect(overlay, canvas: canvas)
+      let rect = rects[overlay.id] ?? .zero
+      guard rect.width > 0.5, rect.height > 0.5 else { return nil }
       let image: CGImage?
       switch overlay.kind {
       case .web: image = webSnapshots[overlay.id]?.0
@@ -1581,6 +1583,20 @@ public final class AppEnvironment {
     persistActiveTemplate()
   }
 
+  public func createTemplate(name: String) -> UUID? {
+    persistActiveTemplate()
+    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+    let template = OverlayTemplate(id: UUID(), name: trimmed)
+    templates.append(template)
+    activeTemplateID = template.id
+    overlays = []
+    persistActiveTemplate()
+    stopUnusedOverlayMedia()
+    reloadOverlayMedia()
+    return template.id
+  }
+
   public func duplicateTemplate(from sourceID: UUID, name: String) -> UUID? {
     persistActiveTemplate()
     guard let source = templates.first(where: { $0.id == sourceID }) else { return nil }
@@ -1595,6 +1611,28 @@ public final class AppEnvironment {
     stopUnusedOverlayMedia()
     reloadOverlayMedia()
     return template.id
+  }
+
+  public func deleteTemplate(id: UUID) {
+    persistActiveTemplate()
+    guard let index = templates.firstIndex(where: { $0.id == id }) else { return }
+    let removed = templates[index]
+    for overlay in removed.overlays where overlay.kind == .image {
+      overlayStore.removeImage(filename: overlay.imageFilename)
+    }
+    if templates.count == 1 {
+      apply(OverlayManifest.emptyDefault())
+    } else {
+      templates.remove(at: index)
+      if activeTemplateID == id {
+        let next = templates[min(index, templates.count - 1)]
+        activeTemplateID = next.id
+        overlays = next.overlays
+      }
+    }
+    persistActiveTemplate()
+    stopUnusedOverlayMedia()
+    reloadOverlayMedia()
   }
 
   public func overlayPreviewUIImage(for overlay: ProgramOverlay) -> UIImage? {
