@@ -12,7 +12,7 @@ LOG="$DIRECTOR_DERIVED_DATA/build-sim.log"
 mkdir -p "$DIRECTOR_DERIVED_DATA"
 
 SIM_UDID="$(resolve_simulator_udid)"
-log "Building $DIRECTOR_SCHEME for '$DIRECTOR_SIMULATOR' ($SIM_UDID, $CONFIGURATION)"
+log "Building $DIRECTOR_SCHEME for simulator $SIM_UDID ($CONFIGURATION)"
 set +e
 xcodebuild build \
   -project "$DIRECTOR_PROJECT" \

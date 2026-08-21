@@ -33,17 +33,6 @@ public struct DirectorGridView: View {
 
   private var toolbar: some View {
     HStack(spacing: 14) {
-      if environment.isRecording {
-        Text("REC")
-          .font(.system(size: 11, weight: .heavy, design: .rounded))
-          .tracking(1)
-          .padding(.horizontal, 10)
-          .padding(.vertical, 7)
-          .background(Color.recordRed, in: RoundedRectangle(cornerRadius: 8))
-          .foregroundStyle(.white)
-          .accessibilityIdentifier("header-rec")
-      }
-
       Menu {
         Button {
           environment.openCameras()
@@ -80,6 +69,22 @@ public struct DirectorGridView: View {
         .font(.system(size: 15, weight: .black, design: .rounded))
         .tracking(2.5)
         .foregroundStyle(.white.opacity(0.9))
+
+      if environment.isStreaming {
+        Text(String(format: "%.2f", environment.streamMegabitsPerSecond))
+          .font(.system(size: 13, weight: .semibold, design: .rounded))
+          .monospacedDigit()
+          .foregroundStyle(.white.opacity(0.9))
+          .accessibilityIdentifier("header-stream-mbps")
+          .accessibilityLabel("\(String(format: "%.2f", environment.streamMegabitsPerSecond)) megabits per second")
+
+        Text("drop \(environment.streamDroppedPackets)")
+          .font(.system(size: 13, weight: .semibold, design: .rounded))
+          .monospacedDigit()
+          .foregroundStyle(.white.opacity(0.9))
+          .accessibilityIdentifier("header-stream-drops")
+          .accessibilityLabel("\(environment.streamDroppedPackets) dropped packets")
+      }
 
       Spacer()
 
@@ -118,7 +123,24 @@ public struct DirectorGridView: View {
       .accessibilityIdentifier("settings-button")
 
       archivePill
-      recordButton
+      programTransportButton(
+        isActive: environment.isStreaming,
+        idleLabel: "STREAM",
+        activeLabel: "STREAMING",
+        identifier: "stream-button",
+        accessibilityValue: environment.isStreaming ? "streaming" : "stopped"
+      ) {
+        environment.toggleStreaming()
+      }
+      programTransportButton(
+        isActive: environment.isRecording,
+        idleLabel: "RECORD",
+        activeLabel: "RECORDING",
+        identifier: "record-button",
+        accessibilityValue: environment.isRecording ? "recording" : "stopped"
+      ) {
+        environment.toggleRecording()
+      }
     }
   }
 
@@ -156,31 +178,20 @@ public struct DirectorGridView: View {
       )
   }
 
-  private var recordButton: some View {
-    Button {
-      environment.toggleRecording()
-    } label: {
-      HStack(spacing: 8) {
-        if environment.isRecording {
-          RoundedRectangle(cornerRadius: 2).frame(width: 11, height: 11)
-        } else {
-          Circle().frame(width: 13, height: 13)
-        }
-        Text(environment.isRecording ? "STOP" : "RECORD")
-          .font(.system(size: 13, weight: .heavy, design: .rounded))
-          .tracking(1)
-      }
-      .padding(.horizontal, 16)
-      .padding(.vertical, 8)
-      .background(
-        environment.isRecording ? Color.recordRed : Color.recordRed.opacity(0.18),
-        in: RoundedRectangle(cornerRadius: 8)
-      )
-      .foregroundStyle(environment.isRecording ? .white : Color.recordRed)
+  private func programTransportButton(
+    isActive: Bool,
+    idleLabel: String,
+    activeLabel: String,
+    identifier: String,
+    accessibilityValue: String,
+    action: @escaping () -> Void
+  ) -> some View {
+    Button(action: action) {
+      PulsingTransportLabel(isActive: isActive, idleLabel: idleLabel, activeLabel: activeLabel)
     }
     .buttonStyle(.plain)
-    .accessibilityIdentifier("record-button")
-    .accessibilityValue(environment.isRecording ? "recording" : "stopped")
+    .accessibilityIdentifier(identifier)
+    .accessibilityValue(accessibilityValue)
   }
 
   /// A 3×3 grid whose top-left four cells are merged into Output:
@@ -236,5 +247,52 @@ public struct DirectorGridView: View {
       pipeline: environment.router.pipeline(at: index),
       telemetry: environment.snapshot.tiles.first { $0.index == index } ?? TileTelemetry(index: index)
     )
+  }
+}
+
+private struct PulsingTransportLabel: View {
+  let isActive: Bool
+  let idleLabel: String
+  let activeLabel: String
+  @State private var pulseBright = false
+
+  private static let darkerRed = Color(red: 0.78, green: 0.16, blue: 0.18)
+  private static let brighterRed = Color(red: 1.0, green: 0.32, blue: 0.36)
+
+  var body: some View {
+    HStack(spacing: 8) {
+      if isActive {
+        RoundedRectangle(cornerRadius: 2).frame(width: 11, height: 11)
+      } else {
+        Circle().frame(width: 13, height: 13)
+      }
+      Text(isActive ? activeLabel : idleLabel)
+        .font(.system(size: 13, weight: .heavy, design: .rounded))
+        .tracking(1)
+    }
+    .padding(.horizontal, 16)
+    .padding(.vertical, 8)
+    .background(fill, in: RoundedRectangle(cornerRadius: 8))
+    .foregroundStyle(isActive ? Color.white : Color.recordRed)
+    .onChange(of: isActive) { _, active in
+      pulseBright = false
+      if active {
+        withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) {
+          pulseBright = true
+        }
+      }
+    }
+    .onAppear {
+      if isActive {
+        withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) {
+          pulseBright = true
+        }
+      }
+    }
+  }
+
+  private var fill: Color {
+    if !isActive { return Color.recordRed.opacity(0.18) }
+    return pulseBright ? Self.brighterRed : Self.darkerRed
   }
 }

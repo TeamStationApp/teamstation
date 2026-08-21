@@ -79,7 +79,7 @@ The layout is a 3×3 with the top-left four cells merged into Output. Source til
 
 | ID | Condition | Pass | Flow |
 |---|---|---|---|
-| C1 | Record starts | HUD `rec=1`, record button reads STOP | `record-and-stop`, `operator-scrub-cut-return` |
+| C1 | Record starts | HUD `rec=1`, record button reads RECORDING | `record-and-stop`, `operator-scrub-cut-return` |
 | C2 | Archives accumulate | `dur=` and/or `seg=` increase while recording | `record-and-stop` |
 | C3 | Stop completes | `rec=0`, `flush=` is a real duration, program file `progbytes=` non-zero | `record-and-stop` |
 | C4 | Live preview continues after stop | Tiles stay `state=live` with `out=` > 0 | `operator-scrub-cut-return` |
@@ -200,13 +200,14 @@ Flows in `scripts/run-maestro.js --suite operator`, in order:
 5. `operator-program-disable` — B9
 6. `operator-empty-tiles` — B5, B6
 7. `operator-menu-back` — G3, G4
-8. `scrub-without-history` — D1
-9. `scrub-before-first-segment` — D2
-10. `operator-scrub-cut-return` — D3, D4, E1–E7, C1, C4
-11. `scrub-and-return` — D6, D9, E3
-12. `hevc-scrub` — D5, D7, E8, D12
-13. `scrub-incremental` — D13, D14
-14. `program-five-sources` — B7, F1, F3, G1, G7
-15. `recordings-export` — G2
+8. `stream-controls` — stream URL field and clear X; empty-URL toast; Stream left of Record; RECORDING not STOP; no REC pill
+9. `scrub-without-history` — D1
+10. `scrub-before-first-segment` — D2
+11. `operator-scrub-cut-return` — D3, D4, E1–E7, C1, C4
+12. `scrub-and-return` — D6, D9, E3
+13. `hevc-scrub` — D5, D7, E8, D12
+14. `scrub-incremental` — D13, D14
+15. `program-five-sources` — B7, F1, F3, G1, G7
+16. `recordings-export` — G2
 
 After any code fix, re-run this suite from the top.

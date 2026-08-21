@@ -354,6 +354,7 @@ public final class TileRouter: @unchecked Sendable {
   private let converter: PixelConverter
   private let compositor: MetalCompositor?
   private let programEncoder: ProgramEncoder
+  private let programStreamer: ProgramStreamer
 
   /// Display layer for the programme preview tile, fed the composited frame.
   public let programRenderer = TileRenderer()
@@ -368,14 +369,17 @@ public final class TileRouter: @unchecked Sendable {
     converter: PixelConverter,
     compositor: MetalCompositor?,
     programEncoder: ProgramEncoder,
+    programStreamer: ProgramStreamer,
     clock: DirectorClock
   ) {
     self.telemetry = telemetry
     self.converter = converter
     self.compositor = compositor
     self.programEncoder = programEncoder
-    self.audioMixer = AudioMixer(clock: clock) { [programEncoder] frame in
+    self.programStreamer = programStreamer
+    self.audioMixer = AudioMixer(clock: clock) { [programEncoder, programStreamer] frame in
       programEncoder.append(audio: frame)
+      programStreamer.append(audio: frame)
     }
   }
 
@@ -493,7 +497,8 @@ public final class TileRouter: @unchecked Sendable {
     audioMixer.retainContributors(ids)
   }
 
-  /// Composites the programme frame and sends it to the preview tile as well as the encoder.
+  /// Composites the programme frame and sends it to the preview tile as well as the
+/// file encoder and the RTMP streamer, each only while that output is running.
   ///
   /// The compositing happens whether or not anything is recording, which is the point of the
   /// preview: the operator has to be able to see overlays sitting over the picture before
@@ -501,7 +506,11 @@ public final class TileRouter: @unchecked Sendable {
   private func composeAndEncode(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime) {
     let composed = compositor?.compose(program: pixelBuffer) ?? pixelBuffer
     programRenderer.enqueue(pixelBuffer: composed, presentationTime: presentationTime)
-    guard programEncoder.running else { return }
-    programEncoder.append(composed, presentationTime: presentationTime)
+    if programEncoder.running {
+      programEncoder.append(composed, presentationTime: presentationTime)
+    }
+    if programStreamer.running {
+      programStreamer.append(composed, presentationTime: presentationTime)
+    }
   }
 }
