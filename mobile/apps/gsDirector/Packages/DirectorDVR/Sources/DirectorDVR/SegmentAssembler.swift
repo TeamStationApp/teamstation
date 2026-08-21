@@ -49,7 +49,8 @@ public struct SegmentAssembler: Sendable {
     from: WallClock,
     to: WallClock,
     maximumSegments: Int = .max,
-    destination: URL? = nil
+    destination: URL? = nil,
+    progress: (@Sendable (Double) -> Void)? = nil
   ) throws -> Assembly {
     let resolved = try resolve(sourceID: sourceID, from: from, to: to, maximumSegments: maximumSegments)
     let base = DirectorPaths.archiveDirectory(for: sourceID)
@@ -64,10 +65,12 @@ public struct SegmentAssembler: Sendable {
     defer { try? handle.close() }
 
     try handle.write(contentsOf: Data(contentsOf: base.appendingPathComponent(resolved.initialization.filename)))
-    for segment in resolved.media {
+    let total = max(resolved.media.count, 1)
+    for (index, segment) in resolved.media.enumerated() {
       let url = base.appendingPathComponent(segment.filename)
       guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else { continue }
       try handle.write(contentsOf: data)
+      progress?(Double(index + 1) / Double(total))
     }
 
     return assembly(url: output, media: resolved.media)

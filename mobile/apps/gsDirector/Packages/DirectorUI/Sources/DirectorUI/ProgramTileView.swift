@@ -1,11 +1,11 @@
 import DirectorPipeline
 import SwiftUI
 
-/// The merged 2×2 cell: what Output actually looks like, scorebug included.
+/// The merged 2×2 cell: what Output actually looks like, overlays included.
 ///
 /// It renders the composited frame rather than the source tile's, so the operator is watching the
 /// same pixels the encoder is being handed. That distinction is the reason the tile exists — a
-/// scorebug that is mispositioned, stale or missing is invisible in the source tiles, and until now
+/// graphic that is mispositioned, stale or missing is invisible in the source tiles, and until now
 /// would only have shown up in the recorded file after the game.
 public struct ProgramTileView: View {
   @Environment(AppEnvironment.self) private var environment
@@ -25,31 +25,17 @@ public struct ProgramTileView: View {
       TileVideoView(renderer: renderer)
         .allowsHitTesting(false)
 
-      VStack(alignment: .trailing, spacing: 6) {
-        HStack(alignment: .top, spacing: 8) {
+      VStack(spacing: 0) {
+        HStack(alignment: .center, spacing: 6) {
+          if isRewinding {
+            returnToLiveButton
+            offsetBadge
+          }
           nameplate
           Spacer()
-          if snapshot.dvr.isRecording {
-            Text("REC")
-              .font(.system(size: 10, weight: .heavy, design: .rounded))
-              .tracking(1)
-              .padding(.horizontal, 6)
-              .padding(.vertical, 3)
-              .background(Color.recordRed, in: RoundedRectangle(cornerRadius: 3))
-              .foregroundStyle(.white)
-          }
-          if isRewinding {
-            VStack(alignment: .trailing, spacing: 6) {
-              offsetBadge
-              returnToLiveButton
-            }
-          }
         }
         Spacer()
           .allowsHitTesting(false)
-        if isRewinding {
-          InstantReplayCaption(accessibilityIdentifier: "output-instant-replay")
-        }
         if snapshot.programTile != nil {
           ReplayHotkeyBar(
             tileIndex: snapshot.programTile ?? 0,

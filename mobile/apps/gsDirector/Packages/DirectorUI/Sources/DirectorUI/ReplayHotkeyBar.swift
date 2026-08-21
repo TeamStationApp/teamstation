@@ -8,7 +8,7 @@ struct ReplayHotkeyBar: View {
   let slowMotionRate: Double
   let onReplay: (Double, Float) -> Void
 
-  private static let offsets: [Double] = [2.5, 5, 7.5, 10]
+  private static let offsets: [Double] = [5, 7.5, 10]
 
   var body: some View {
     VStack(spacing: 4) {
@@ -40,7 +40,7 @@ struct ReplayHotkeyBar: View {
   }
 
   private func identifier(seconds: Double, rate: Float) -> String {
-    let amount = seconds == 2.5 ? "2.5" : String(Int(seconds))
+    let amount = seconds == seconds.rounded() ? String(Int(seconds)) : String(format: "%g", seconds)
     if rate == 1 {
       return "\(accessibilityPrefix)-replay-\(amount)"
     }

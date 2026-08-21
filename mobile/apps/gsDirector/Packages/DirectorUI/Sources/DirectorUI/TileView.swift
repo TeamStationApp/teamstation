@@ -114,22 +114,24 @@ public struct TileView: View {
         .foregroundStyle(.white.opacity(0.32))
       }
 
-      VStack(alignment: .trailing, spacing: 6) {
-        HStack(alignment: .top) {
+      if isRewinding {
+        InstantReplayCaption(accessibilityIdentifier: "tile-\(tileIndex + 1)-instant-replay")
+          .padding(10)
+          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+          .allowsHitTesting(false)
+      }
+
+      VStack(spacing: 0) {
+        HStack(alignment: .center, spacing: 6) {
+          if isRewinding {
+            returnToLiveButton
+            offsetBadge
+          }
           nameplate
           Spacer()
-          if isRewinding {
-            VStack(alignment: .trailing, spacing: 6) {
-              offsetBadge
-              returnToLiveButton
-            }
-          }
         }
         Spacer()
           .allowsHitTesting(false)
-        if isRewinding {
-          InstantReplayCaption(accessibilityIdentifier: "tile-\(tileIndex + 1)-instant-replay")
-        }
         if pipeline != nil {
           ReplayHotkeyBar(
             tileIndex: tileIndex,
