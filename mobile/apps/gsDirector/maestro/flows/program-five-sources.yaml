@@ -1,13 +1,8 @@
-# Fills the 3×3 grid: five synthetic cameras, a scorebug over the program output, and every
-# camera's audio in the mix.
+# Fills the 3×3 grid: five synthetic cameras and every camera's audio in the mix.
 #
 # Synthetic rather than live so the flow does not depend on five real cameras being awake, and
 # because the synthetic sources generate a tone per camera — which is what makes a mix of five
 # sources audible as something other than one of them.
-#
-# The scorebug is served by the app's own control server over loopback, so the flow does not depend
-# on local network access — which iOS withholds until it is granted, and whose absence looks exactly
-# like a scorebug that simply never appears.
 appId: co.gamestation.director
 ---
 - launchApp:
@@ -21,7 +16,6 @@ appId: co.gamestation.director
       syntheticEntropy: low
       segmentSeconds: 3
       cameraCodec: hevc
-      scoreboardURL: 'http://127.0.0.1:8765/test-scorebug'
 
 - extendedWaitUntil:
     visible:

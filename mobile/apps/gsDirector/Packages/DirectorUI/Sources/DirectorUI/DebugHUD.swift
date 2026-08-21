@@ -50,7 +50,7 @@ public struct DebugHUD: View {
         label("hud-avail-memory", "avail=\(snapshot.availableMemoryMB)")
       }
       HStack(spacing: 10) {
-        label("hud-scorebug", "scorebug=\(snapshot.scorebug.isEmpty ? "off" : snapshot.scorebug)")
+        label("hud-overlay", "overlay=\(snapshot.overlay.isEmpty ? "off" : snapshot.overlay)")
         label("hud-composed", "composed=\(snapshot.composedFrames)")
         label("hud-audio-mix", "mix=\(snapshot.audioMixContributors)")
         label("hud-audio-mix-seconds", "mixs=\(snapshot.audioMixSeconds)")

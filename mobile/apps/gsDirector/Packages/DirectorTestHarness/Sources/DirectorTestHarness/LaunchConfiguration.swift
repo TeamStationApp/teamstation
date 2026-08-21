@@ -17,7 +17,6 @@ public struct LaunchConfiguration: Sendable, Equatable {
   public var autoRecord = false
   public var clearState = false
   public var fixtureDirectory: String?
-  public var scoreboardURL: String?
   public var syntheticFrameRate: Double = 30
   public var syntheticWidth = 1920
   public var syntheticHeight = 1080
@@ -72,7 +71,6 @@ public struct LaunchConfiguration: Sendable, Equatable {
     configuration.autoRecord = boolean(values["autoRecord"]) ?? false
     configuration.clearState = boolean(values["clearState"]) ?? false
     configuration.fixtureDirectory = values["fixtureDir"]
-    configuration.scoreboardURL = values["scoreboardURL"]
     if let rate = values["frameRate"].flatMap({ Double($0) }), rate > 0 {
       configuration.syntheticFrameRate = rate
     }
@@ -115,11 +113,12 @@ public struct LaunchConfiguration: Sendable, Equatable {
 
     // `-key value` is registered in UserDefaults by the system before `main` runs, and it stays
     // there after the process exits. The next tap of the icon would then still be running last
-    // night's Maestro arguments — which is how a test scoreboard URL replaced the one the operator
-    // had saved, and how the telemetry overlay vanished after `live.yaml` passed `debugHUD: false`.
+    // night's Maestro arguments — which is how a test flag replaced a stored operator setting,
+    // and how the telemetry overlay vanished after `live.yaml` passed `debugHUD: false`.
     for key in knownKeys {
       defaults.removeObject(forKey: key)
     }
+    defaults.removeObject(forKey: "scoreboardURL")
 
     return configuration
   }
@@ -133,7 +132,6 @@ public struct LaunchConfiguration: Sendable, Equatable {
     }
     if let value = queryItems["testClock"], let flag = Self.boolean(value) { useTestClock = flag }
     if let value = queryItems["autoRecord"], let flag = Self.boolean(value) { autoRecord = flag }
-    if let value = queryItems["scoreboardURL"] { scoreboardURL = value }
     if let value = queryItems["frameRate"], let rate = Double(value), rate > 0 { syntheticFrameRate = rate }
     if let value = queryItems["segmentSeconds"], let seconds = Double(value), seconds > 0 {
       segmentSeconds = seconds
@@ -144,7 +142,7 @@ public struct LaunchConfiguration: Sendable, Equatable {
   /// app actually received.
   public static let knownKeys = [
     "uiTest", "sourceProfile", "testClock", "autoRecord", "clearState", "fixtureDir",
-    "scoreboardURL", "frameRate", "sourceWidth", "sourceHeight", "segmentSeconds",
+    "frameRate", "sourceWidth", "sourceHeight", "segmentSeconds",
     "syntheticEntropy", "archiveAudio", "programCodec", "cameraCodec", "debugHUD", "sourceCount",
     // A key missing from this array is silently ignored, which has already cost this project
     // debugging time; every argument above must appear here.
@@ -161,7 +159,7 @@ public struct LaunchConfiguration: Sendable, Equatable {
     for key in knownKeys {
       // `-key value` is consumed by UserDefaults before main() runs, so the current launch's
       // arguments have to be read from there. Values left behind by a previous launch must not:
-      // they are why a Maestro scoreboard URL outlived the test and replaced the operator's.
+      // they are why a Maestro argument outlived the test and replaced an operator setting.
       if let value = defaults.string(forKey: key), launchedWith(key, in: arguments) {
         values[key] = value
       }

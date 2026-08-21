@@ -92,14 +92,14 @@ public final class ControlServer: @unchecked Sendable {
       return
     }
 
-    // A scorebug the app can reach without any network at all.
+    // A local overlay page the app can reach without any network at all.
     //
-    // Pointing the scoreboard URL at a page on another machine makes the compositor path untestable
+    // Pointing an overlay URL at a page on another machine makes the compositor path untestable
     // wherever local network access is unavailable — and on iOS that includes any device where the
     // permission has not been granted, which fails by simply never connecting. Served from
     // loopback, the overlay can be verified on a device in flight mode.
-    if target.hasPrefix("/test-scorebug") {
-      sendPage(Self.testScorebugPage, on: connection)
+    if target.hasPrefix("/test-overlay") {
+      sendPage(Self.testOverlayPage, on: connection)
       return
     }
 
@@ -160,7 +160,7 @@ public final class ControlServer: @unchecked Sendable {
 
   /// Transparent background, one fixed-size graphic at the origin, and a clock that ticks every
   /// second — so the blend, the placement and the mutation-driven refresh are all exercised.
-  private static let testScorebugPage = """
+  private static let testOverlayPage = """
   <!doctype html><html><head><meta charset="utf-8"><style>
   html,body{margin:0;padding:0;background:transparent}
   #bug{display:inline-flex;align-items:center;gap:18px;

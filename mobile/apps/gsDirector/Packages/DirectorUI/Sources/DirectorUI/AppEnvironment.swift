@@ -75,8 +75,7 @@ public final class AppEnvironment {
   public private(set) var launch: LaunchConfiguration
   /// What is actually running this session, including launch-argument overlays.
   public private(set) var config: AppConfig
-  /// What Settings edits and what survives a relaunch. Launch arguments never write here, which is
-  /// how a Maestro scoreboard URL stays a test fixture instead of replacing the operator's.
+  /// What Settings edits and what survives a relaunch. Launch arguments never write here.
   public private(set) var persistedConfig: AppConfig
   public private(set) var selections: [SourceSelection] = []
   /// Every camera the operator has ever named. Survives relaunches so a name typed at the first
@@ -101,6 +100,8 @@ public final class AppEnvironment {
   public private(set) var lastExport: ExportService.Result?
   public private(set) var lastRecordingShare: [URL] = []
   public var isSharingRecordings = false
+  public private(set) var isExporting = false
+  public private(set) var exportItems: [ExportService.ItemProgress] = []
   public private(set) var programOutput: URL?
   public private(set) var probeResult: EncodeSessionProbe.Result?
   public private(set) var discoveryUnavailableReason: String?
@@ -117,7 +118,7 @@ public final class AppEnvironment {
   public let clock: DirectorClock
   public let telemetry: PipelineTelemetry
   public let router: TileRouter
-  public let scorebug: ScorebugController
+  public private(set) var overlays: [ProgramOverlay] = []
 
   let converter: PixelConverter
   let index: ArchiveIndex
@@ -145,11 +146,12 @@ public final class AppEnvironment {
   private var pollTimer: Timer?
   /// Width of one small source tile, used so Output scrub (if added) shares the 60s-per-width rate.
   public var smallTileWidth: Double = 300
-  private var latestScorebugImage: CGImage?
-  private var latestScorebugSize: CGSize = .zero
+  private let overlayStore = OverlayStore()
+  private var webControllers: [UUID: WebOverlayController] = [:]
+  private var webSnapshots: [UUID: (CGImage, CGSize)] = [:]
+  private var overlayImages: [UUID: CGImage] = [:]
   private var retentionTimer: Timer?
   private var testClock: TestClock?
-  private var scorebugLoaded = false
   private var announcedCameraStatus: [SourceID: String] = [:]
 
   // MARK: - Lifecycle
@@ -197,9 +199,6 @@ public final class AppEnvironment {
       programEncoder: programEncoder,
       clock: clock
     )
-    self.scorebug = ScorebugController(
-      size: CGSize(width: session.programResolution.width, height: session.programResolution.height)
-    )
 
     do {
       try DirectorPaths.createAll()
@@ -237,11 +236,8 @@ public final class AppEnvironment {
       statusMessage = "Recovered index: dropped \(result.removed) missing segment(s)"
     }
 
-    scorebug.onSnapshot = { [weak self] image, size in
-      self?.latestScorebugImage = image
-      self?.latestScorebugSize = size
-      self?.applyScorebugOverlay()
-    }
+    overlays = overlayStore.load()
+    reloadOverlayMedia()
 
     startDiscovery()
     startPolling()
@@ -261,7 +257,8 @@ public final class AppEnvironment {
     if isRecording { await stopRecording() }
     router.removeAll()
     discovery?.stop()
-    scorebug.stop()
+    for controller in webControllers.values { controller.stop() }
+    webControllers.removeAll()
     controlServer?.stop()
     controlServer = nil
   }
@@ -474,6 +471,23 @@ public final class AppEnvironment {
     pushDisplayNamesToTiles()
   }
 
+  /// Wipes every remembered camera and tile mapping. Live cameras that still advertise a hardened
+  /// id (NearStream TXT or RTSP CNAME) are discovered again as new records.
+  public func clearCameraMemory() {
+    cameras.clear()
+    selectionStore.clear()
+    selections = []
+    cameraRecords = []
+    rowEndpoints = [:]
+    if let discovered = discovery?.currentSources, !discovered.isEmpty {
+      applyDiscovery(discovered)
+    } else {
+      cameraRecords = cameras.records
+    }
+    Task { await syncEnabledSources() }
+    statusMessage = "Camera memory cleared"
+  }
+
   private func observeStreamIdentity(_ source: FrameSource, id: SourceID) {
     guard let reporting = source as? StreamIdentityReporting else { return }
     reporting.onStreamAdvertisement = { [weak self] advertisement in
@@ -546,7 +560,6 @@ public final class AppEnvironment {
       if isRecording { await stopRecording() }
       router.removeAll()
       pipelineEndpoints.removeAll()
-      scorebug.load(urlString: config.scoreboardURL)
     }
     startDiscovery()
     if profileChanged { openCameras() }
@@ -603,10 +616,6 @@ public final class AppEnvironment {
   public func ensureProductionReady() {
     screen = .directing
     UIApplication.shared.isIdleTimerDisabled = true
-    if !scorebugLoaded {
-      scorebug.load(urlString: config.scoreboardURL)
-      scorebugLoaded = true
-    }
   }
 
   public func openCameras() {
@@ -751,7 +760,7 @@ public final class AppEnvironment {
   public func selectProgram(tileIndex: Int) {
     guard router.pipeline(at: tileIndex) != nil else { return }
     router.selectProgram(tileIndex: tileIndex)
-    applyScorebugOverlay()
+    applyProgramOverlays()
   }
 
   // MARK: - Recording
@@ -1045,7 +1054,7 @@ public final class AppEnvironment {
       return false
     }
     pipeline.beginScrubbing()
-    applyScorebugOverlay()
+    applyProgramOverlays()
     return true
   }
 
@@ -1071,7 +1080,7 @@ public final class AppEnvironment {
       historySeconds: history
     ) else {
       pipeline.returnToLive()
-      applyScorebugOverlay()
+      applyProgramOverlays()
       return
     }
 
@@ -1107,7 +1116,7 @@ public final class AppEnvironment {
           // which do not exist yet in the first few seconds, and never exist at T3. Stay on
           // the still; Return to live is on the tile.
           self?.statusMessage = "Holding still — archive not ready to replay yet"
-          self?.applyScorebugOverlay()
+          self?.applyProgramOverlays()
         }
         return
       }
@@ -1129,6 +1138,7 @@ public final class AppEnvironment {
   /// tape at `rate`, then return this tile to live.
   public func startInstantReplay(tileIndex: Int, seconds: Double, rate: Float) {
     guard seconds > 0 else { return }
+    selectProgram(tileIndex: tileIndex)
     guard beginScrub(tileIndex: tileIndex) else { return }
     let history = availableHistorySeconds(tileIndex: tileIndex)
     let offset = -min(seconds, max(history, 0))
@@ -1139,7 +1149,7 @@ public final class AppEnvironment {
       rate: rate,
       playDuration: seconds
     )
-    applyScorebugOverlay()
+    applyProgramOverlays()
   }
 
   private func startReplay(
@@ -1165,7 +1175,7 @@ public final class AppEnvironment {
       // snap to live — which is how "rewind never works" looks. Keep the proxy still.
       pipeline.revertToScrubbing()
       statusMessage = "Holding still — archive not ready to replay yet"
-      applyScorebugOverlay()
+      applyProgramOverlays()
       return
     }
     let telemetry = self.telemetry
@@ -1198,7 +1208,7 @@ public final class AppEnvironment {
           self?.statusMessage = "Holding still — replay failed: \(error)"
           self?.telemetry.mutate { $0.lastReplayError = "\(error)" }
           self?.router.pipeline(at: tileIndex)?.revertToScrubbing()
-          self?.applyScorebugOverlay()
+          self?.applyProgramOverlays()
         }
       }
     )
@@ -1207,11 +1217,11 @@ public final class AppEnvironment {
       try await pipeline.beginReplay(decoder, offsetSeconds: offsetSeconds)
       statusMessage = nil
       telemetry.mutate { $0.lastReplayError = "" }
-      applyScorebugOverlay()
+      applyProgramOverlays()
     } catch {
       statusMessage = "Holding still — replay failed: \(error)"
       telemetry.mutate { $0.lastReplayError = "\(error)" }
-      applyScorebugOverlay()
+      applyProgramOverlays()
     }
   }
 
@@ -1220,31 +1230,382 @@ public final class AppEnvironment {
     if router.currentProgramTile == tileIndex {
       router.programRenderer.prepareForLive()
     }
-    applyScorebugOverlay()
+    applyProgramOverlays()
   }
 
-  /// Scorebug burns into Output only while that camera is live. A rewind of Output drops the
-  /// overlay without unloading the page; a rewind of a non-Output tile leaves it in place.
+  private static func pngData(_ data: Data) -> Data {
+    if data.starts(with: [0x89, 0x50, 0x4E, 0x47]) { return data }
+    return UIImage(data: data)?.pngData() ?? data
+  }
+
+  /// Instant Replay burns into Output whenever that camera is off live. Other overlays stay up.
   private func programSourceIsRewinding() -> Bool {
     guard let index = router.currentProgramTile else { return false }
     let state = telemetry.snapshot.tiles.first { $0.index == index }?.state
-    return state == .scrubbing || state == .replaying
+    return state == .replaying
   }
 
-  private func applyScorebugOverlay() {
-    if programSourceIsRewinding() {
-      compositor?.setOverlay(nil, size: .zero)
+  private func applyProgramOverlays() {
+    compositor?.setInstantReplayVisible(programSourceIsRewinding())
+    compositor?.setOverlays(composedOverlayItems())
+  }
+
+  private var overlayCanvas: CGSize {
+    CGSize(
+      width: compositor?.width ?? config.programResolution.width,
+      height: compositor?.height ?? config.programResolution.height
+    )
+  }
+
+  private func composedOverlayItems() -> [MetalCompositor.OverlayItem] {
+    let canvas = overlayCanvas
+    return overlays.compactMap { overlay in
+      let rect = OverlayLayout.pixelRect(overlay, canvas: canvas)
+      let image: CGImage?
+      switch overlay.kind {
+      case .web: image = webSnapshots[overlay.id]?.0
+      case .image: image = overlayImages[overlay.id]
+      }
+      guard let image else { return nil }
+      return MetalCompositor.OverlayItem(image: image, origin: rect.origin, size: rect.size)
+    }
+  }
+
+  private func reloadOverlayMedia() {
+    for overlay in overlays {
+      switch overlay.kind {
+      case .web:
+        startWebOverlay(overlay)
+      case .image:
+        loadOverlayImage(overlay)
+      }
+    }
+    applyProgramOverlays()
+  }
+
+  private func startWebOverlay(_ overlay: ProgramOverlay) {
+    guard overlay.kind == .web else { return }
+    if overlay.url.isEmpty {
+      webControllers[overlay.id]?.stop()
+      webControllers[overlay.id] = nil
       return
     }
-    if let image = latestScorebugImage {
-      compositor?.setOverlay(image, size: latestScorebugSize)
+    let controller: WebOverlayController
+    if let existing = webControllers[overlay.id] {
+      controller = existing
+    } else {
+      controller = WebOverlayController(size: overlayCanvas)
+      let id = overlay.id
+      controller.onSnapshot = { [weak self] image, size in
+        self?.handleWebSnapshot(id: id, image: image, size: size)
+      }
+      webControllers[id] = controller
     }
+    controller.load(urlString: overlay.url)
+  }
+
+  private func loadOverlayImage(_ overlay: ProgramOverlay) {
+    let url = overlayStore.imageURL(filename: overlay.imageFilename)
+    guard
+      let data = try? Data(contentsOf: url),
+      let image = UIImage(data: data)?.cgImage
+    else { return }
+    overlayImages[overlay.id] = image
+    if !overlay.hasLaidOut {
+      applyInitialLayout(id: overlay.id, native: CGSize(width: image.width, height: image.height))
+    }
+  }
+
+  private func handleWebSnapshot(id: UUID, image: CGImage?, size: CGSize) {
+    if let image, size.width >= 1, size.height >= 1 {
+      webSnapshots[id] = (image, size)
+      fitWebOverlay(id: id, native: size)
+    } else {
+      webSnapshots[id] = nil
+    }
+    applyProgramOverlays()
+  }
+
+  /// Web overlays keep their top-left. Display size is natural page size times the user's scale,
+  /// so a refresh that grows the page grows the box down and to the right instead of cropping.
+  private func fitWebOverlay(id: UUID, native: CGSize) {
+    guard let index = overlays.firstIndex(where: { $0.id == id }) else { return }
+    let canvas = overlayCanvas
+    let firstMeasure = overlays[index].nativeWidth < 1
+    overlays[index].nativeWidth = Double(native.width)
+    overlays[index].nativeHeight = Double(native.height)
+    if !overlays[index].hasLaidOut {
+      if overlays[index].placement == .topLeftNative {
+        overlays[index].scale = 1
+        overlays[index].originX = Double(OverlayLayout.topLeftInset.x / canvas.width)
+        overlays[index].originY = Double(OverlayLayout.topLeftInset.y / canvas.height)
+      } else {
+        overlays[index].scale = OverlayLayout.scaleFittingQuarter(native: native, canvas: canvas)
+        let size = CGSize(
+          width: native.width * overlays[index].scale,
+          height: native.height * overlays[index].scale
+        )
+        overlays[index].originX = Double((canvas.width - size.width) / 2 / canvas.width)
+        overlays[index].originY = Double((canvas.height - size.height) / 2 / canvas.height)
+      }
+    } else if firstMeasure, overlays[index].width > 0 {
+      overlays[index].scale = (overlays[index].width * canvas.width) / max(Double(native.width), 1)
+    }
+    let size = OverlayLayout.scaledNormalized(
+      native: native,
+      scale: overlays[index].scale,
+      canvas: canvas
+    )
+    overlays[index].width = size.width
+    overlays[index].height = size.height
+    overlays[index].hasLaidOut = true
+    applyAnchoredChildren(of: id)
+    overlayStore.save(overlays)
+  }
+
+  private func syncDisplaySize(at index: Int, canvas: CGSize) {
+    let overlay = overlays[index]
+    guard overlay.kind == .web, overlay.nativeWidth >= 1 else { return }
+    let size = OverlayLayout.scaledNormalized(
+      native: CGSize(width: overlay.nativeWidth, height: overlay.nativeHeight),
+      scale: overlay.scale,
+      canvas: canvas
+    )
+    overlays[index].width = size.width
+    overlays[index].height = size.height
+  }
+
+  private func applyInitialLayout(id: UUID, native: CGSize) {
+    guard let index = overlays.firstIndex(where: { $0.id == id }) else { return }
+    let canvas = overlayCanvas
+    let rect = overlays[index].placement == .topLeftNative
+      ? OverlayLayout.topLeftNative(native: native, canvas: canvas)
+      : OverlayLayout.centerQuarter(native: native, canvas: canvas)
+    let normalized = OverlayLayout.normalized(rect, canvas: canvas)
+    overlays[index].originX = normalized.originX
+    overlays[index].originY = normalized.originY
+    overlays[index].width = normalized.width
+    overlays[index].height = normalized.height
+    overlays[index].hasLaidOut = true
+    overlayStore.save(overlays)
+  }
+
+  public func addWebOverlay(url: String) {
+    let canvas = overlayCanvas
+    let rect = OverlayLayout.centerQuarter(native: CGSize(width: 800, height: 450), canvas: canvas)
+    let normalized = OverlayLayout.normalized(rect, canvas: canvas)
+    let overlay = ProgramOverlay(
+      kind: .web,
+      url: url,
+      originX: normalized.originX,
+      originY: normalized.originY,
+      width: normalized.width,
+      height: normalized.height,
+      placement: .centerQuarter
+    )
+    overlays.append(overlay)
+    overlayStore.save(overlays)
+    startWebOverlay(overlay)
+    applyProgramOverlays()
+  }
+
+  public func addImageOverlay(data: Data, displayName: String) {
+    let filename = "\(UUID().uuidString).png"
+    do {
+      try overlayStore.writeImage(Self.pngData(data), filename: filename)
+    } catch {
+      statusMessage = "Could not save image: \(error)"
+      return
+    }
+    let canvas = overlayCanvas
+    let rect = OverlayLayout.centerQuarter(native: CGSize(width: 800, height: 800), canvas: canvas)
+    let normalized = OverlayLayout.normalized(rect, canvas: canvas)
+    let overlay = ProgramOverlay(
+      kind: .image,
+      imageFilename: filename,
+      imageDisplayName: displayName,
+      originX: normalized.originX,
+      originY: normalized.originY,
+      width: normalized.width,
+      height: normalized.height,
+      placement: .centerQuarter
+    )
+    overlays.append(overlay)
+    overlayStore.save(overlays)
+    loadOverlayImage(overlay)
+    applyProgramOverlays()
+  }
+
+  public func replaceOverlayImage(id: UUID, data: Data, displayName: String) {
+    guard let index = overlays.firstIndex(where: { $0.id == id }) else { return }
+    let filename = "\(UUID().uuidString).png"
+    do {
+      try overlayStore.writeImage(Self.pngData(data), filename: filename)
+    } catch {
+      statusMessage = "Could not save image: \(error)"
+      return
+    }
+    overlayStore.removeImage(filename: overlays[index].imageFilename)
+    overlays[index].imageFilename = filename
+    overlays[index].imageDisplayName = displayName
+    overlays[index].hasLaidOut = false
+    overlayStore.save(overlays)
+    loadOverlayImage(overlays[index])
+    applyProgramOverlays()
+  }
+
+  public func updateOverlayURL(id: UUID, url: String) {
+    guard let index = overlays.firstIndex(where: { $0.id == id }) else { return }
+    overlays[index].url = url
+    overlayStore.save(overlays)
+    startWebOverlay(overlays[index])
+  }
+
+  public func moveOverlay(
+    id: UUID,
+    originX: Double,
+    originY: Double
+  ) {
+    guard let index = overlays.firstIndex(where: { $0.id == id }) else { return }
+    let dx = originX - overlays[index].originX
+    let dy = originY - overlays[index].originY
+    overlays[index].originX = originX
+    overlays[index].originY = originY
+    overlays[index].hasLaidOut = true
+    if overlays[index].kind == .web {
+      shiftDescendants(of: id, dx: dx, dy: dy)
+    }
+    applyProgramOverlays()
+  }
+
+  public func commitOverlayMove(id: UUID, displayCanvas: CGSize) {
+    refreshAttachments(displayCanvas: displayCanvas)
+    overlayStore.save(overlays)
+    applyProgramOverlays()
+  }
+
+  public func resizeOverlay(
+    id: UUID,
+    originX: Double,
+    originY: Double,
+    width: Double,
+    height: Double
+  ) {
+    guard let index = overlays.firstIndex(where: { $0.id == id }) else { return }
+    overlays[index].originX = originX
+    overlays[index].originY = originY
+    overlays[index].width = min(max(width, 0.02), 4)
+    overlays[index].height = min(max(height, 0.02), 4)
+    overlays[index].hasLaidOut = true
+    let canvas = overlayCanvas
+    if overlays[index].kind == .web, overlays[index].nativeWidth >= 1 {
+      overlays[index].scale = (overlays[index].width * canvas.width) / overlays[index].nativeWidth
+      syncDisplaySize(at: index, canvas: canvas)
+      applyAnchoredChildren(of: id)
+    }
+    applyProgramOverlays()
+  }
+
+  public func commitOverlayResize(id: UUID, displayCanvas: CGSize) {
+    refreshAttachments(displayCanvas: displayCanvas)
+    overlayStore.save(overlays)
+  }
+
+  public func removeOverlay(id: UUID) {
+    guard let index = overlays.firstIndex(where: { $0.id == id }) else { return }
+    let overlay = overlays.remove(at: index)
+    for i in overlays.indices where overlays[i].anchorID == id {
+      overlays[i].anchorID = nil
+      overlays[i].anchorEdge = nil
+      overlays[i].anchorGap = 0
+    }
+    overlayStore.save(overlays)
+    webControllers[id]?.stop()
+    webControllers[id] = nil
+    webSnapshots[id] = nil
+    overlayImages[id] = nil
+    if overlay.kind == .image {
+      overlayStore.removeImage(filename: overlay.imageFilename)
+    }
+    applyProgramOverlays()
+  }
+
+  private func shiftDescendants(of parentID: UUID, dx: Double, dy: Double) {
+    for i in overlays.indices where overlays[i].anchorID == parentID {
+      overlays[i].originX += dx
+      overlays[i].originY += dy
+      shiftDescendants(of: overlays[i].id, dx: dx, dy: dy)
+    }
+  }
+
+  private func applyAnchoredChildren(of parentID: UUID) {
+    let canvas = overlayCanvas
+    guard let parent = overlays.first(where: { $0.id == parentID }) else { return }
+    let parentRect = OverlayLayout.pixelRect(parent, canvas: canvas)
+    for i in overlays.indices {
+      guard overlays[i].anchorID == parentID, let edge = overlays[i].anchorEdge else { continue }
+      let childRect = OverlayLayout.pixelRect(overlays[i], canvas: canvas)
+      let origin = OverlayLayout.anchoredOrigin(
+        parent: parentRect,
+        child: childRect,
+        edge: edge,
+        gap: CGFloat(overlays[i].anchorGap)
+      )
+      overlays[i].originX = Double(origin.x / max(canvas.width, 1))
+      overlays[i].originY = Double(origin.y / max(canvas.height, 1))
+      applyAnchoredChildren(of: overlays[i].id)
+    }
+  }
+
+  /// Nearby overlays (within 20 display pixels of a web view's right or bottom edge) become
+  /// relative to that page so a later refresh can push them.
+  private func refreshAttachments(displayCanvas: CGSize) {
+    guard displayCanvas.width >= 1, displayCanvas.height >= 1 else { return }
+    let output = overlayCanvas
+    let gapScale = output.width / displayCanvas.width
+    for i in overlays.indices {
+      overlays[i].anchorID = nil
+      overlays[i].anchorEdge = nil
+      overlays[i].anchorGap = 0
+    }
+    for i in overlays.indices {
+      let child = overlays[i]
+      let childRect = OverlayLayout.pixelRect(child, canvas: displayCanvas)
+      var best: (id: UUID, edge: OverlayAnchorEdge, gap: CGFloat, distance: CGFloat)?
+      for parent in overlays where parent.kind == .web && parent.id != child.id {
+        if isDescendant(parent.id, of: child.id) { continue }
+        let parentRect = OverlayLayout.pixelRect(parent, canvas: displayCanvas)
+        guard let found = OverlayLayout.attachment(parent: parentRect, child: childRect) else {
+          continue
+        }
+        let distance = abs(found.gap)
+        if best == nil || distance < best!.distance {
+          best = (parent.id, found.edge, found.gap, distance)
+        }
+      }
+      if let best {
+        overlays[i].anchorID = best.id
+        overlays[i].anchorEdge = best.edge
+        overlays[i].anchorGap = Double(best.gap * gapScale)
+      }
+    }
+  }
+
+  private func isDescendant(_ id: UUID, of ancestor: UUID) -> Bool {
+    var currentID: UUID? = id
+    var hops = 0
+    while let next = currentID, hops < 16 {
+      if next == ancestor { return true }
+      currentID = overlays.first(where: { $0.id == next })?.anchorID
+      hops += 1
+    }
+    return false
   }
 
   /// The scrubbable depth for a tile, used to scale the drag gesture.
   ///
   /// Measured from proxy stills of the current recording, not from completed archive segments.
-  /// Segments close every `segmentSeconds` (6 by default) and the previous gate required the last
+  /// Segments close every `segmentSeconds` (3 by default) and the previous gate required the last
   /// closed file to be less than 5 s old — so scrubbing was dark for most of every segment, and
   /// dark forever at T3 where nothing is archived. Stills are 1 fps from the first second.
   public func availableHistorySeconds(tileIndex: Int) -> Double {
@@ -1277,23 +1638,17 @@ public final class AppEnvironment {
     session.replaySlowMotionRate = AppConfig.clampedReplaySlowMotionRate(session.replaySlowMotionRate)
     // Launch `-debugHUD` is a one-time overlay. Saving Settings must be able to hide the HUD.
     session.showDebugHUD = newConfig.showDebugHUD
-    let scoreboardChanged = session.scoreboardURL != config.scoreboardURL
     config = session
     applyDisplayLatencyCap()
-    if scoreboardChanged {
-      scorebug.load(urlString: session.scoreboardURL)
-      scorebugLoaded = true
-    }
     if wantsSimulated != sessionIsSimulated {
       Task { await applySourceProfile(SourceProfile.forSimulatedCameras(wantsSimulated)) }
     }
   }
 
   /// Launch arguments overlay the running session and are forgotten when the process exits.
-  /// Writing them back is how a test URL became the saved scoreboard, so they never touch disk.
+  /// Writing them back is how a test flag became a saved setting, so they never touch disk.
   private static func applying(_ launch: LaunchConfiguration, to config: AppConfig) -> AppConfig {
     var config = config
-    if let url = launch.scoreboardURL { config.scoreboardURL = url }
     if let seconds = launch.segmentSeconds { config.segmentSeconds = seconds }
     if let codec = launch.programCodec { config.programCodec = codec }
     if let hud = launch.debugHUD { config.showDebugHUD = hud }
@@ -1359,20 +1714,54 @@ public final class AppEnvironment {
     cameras: [(SourceID, String)],
     includeProgram: Bool
   ) {
-    do {
-      let urls = try exporter.exportRecording(
-        recording,
-        cameras: cameras.map { (sourceID: $0.0, name: $0.1) },
-        includeProgram: includeProgram
-      )
-      guard !urls.isEmpty else {
-        statusMessage = "Nothing to export for that recording"
-        return
+    guard !isExporting else { return }
+    var items: [ExportService.ItemProgress] = []
+    if includeProgram && recording.programFilename != nil {
+      items.append(ExportService.ItemProgress(id: "program", name: "Primary output", fraction: 0))
+    }
+    for camera in cameras {
+      items.append(ExportService.ItemProgress(id: camera.0.rawValue, name: camera.1, fraction: 0))
+    }
+    exportItems = items
+    isExporting = true
+
+    let exporter = self.exporter
+    let cameraList = cameras.map { (sourceID: $0.0, name: $0.1) }
+    Task { [weak self] in
+      do {
+        let urls = try await Task.detached(priority: .userInitiated) {
+          try exporter.exportRecording(
+            recording,
+            cameras: cameraList,
+            includeProgram: includeProgram,
+            progress: { item in
+              Task { @MainActor in
+                guard let self else { return }
+                if let index = self.exportItems.firstIndex(where: { $0.id == item.id }) {
+                  self.exportItems[index].fraction = item.fraction
+                } else {
+                  self.exportItems.append(item)
+                }
+              }
+            }
+          )
+        }.value
+        await MainActor.run {
+          guard let self else { return }
+          self.isExporting = false
+          guard !urls.isEmpty else {
+            self.statusMessage = "Nothing to export for that recording"
+            return
+          }
+          self.lastRecordingShare = urls
+          self.isSharingRecordings = true
+        }
+      } catch {
+        await MainActor.run {
+          self?.isExporting = false
+          self?.statusMessage = "Export failed: \(error)"
+        }
       }
-      lastRecordingShare = urls
-      isSharingRecordings = true
-    } catch {
-      statusMessage = "Export failed: \(error)"
     }
   }
 
@@ -1443,14 +1832,14 @@ public final class AppEnvironment {
       )
     }
     let mix = router.audioMixer.currentStatistics
-    let scorebugStatus = scorebug.status
+    let overlayStatus = webControllers.values.map(\.status).joined(separator: " ")
     let composedFrames = compositor?.frameCount ?? 0
     let discoveryStatus = discovery?.diagnostic ?? ""
     let displayLatency = cameras.playout.programMilliseconds
     telemetry.mutate {
       $0.statusMessage = status
       $0.sources = summaries
-      $0.scorebug = scorebugStatus
+      $0.overlay = overlayStatus
       $0.composedFrames = composedFrames
       $0.audioMixContributors = mix.contributors
       $0.audioMixSeconds = (mix.emittedSeconds * 10).rounded() / 10
@@ -1515,7 +1904,7 @@ public final class AppEnvironment {
     if !isRecording { announcedCameraStatus.removeAll() }
     telemetry.recordLiveDecodeSessions(liveDecodeSessions)
     snapshot = telemetry.snapshot
-    applyScorebugOverlay()
+    applyProgramOverlays()
   }
 
   // MARK: - Control channel

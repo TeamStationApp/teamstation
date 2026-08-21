@@ -230,9 +230,9 @@ public struct TelemetrySnapshot: Sendable, Codable, Equatable {
   /// cannot distinguish.
   /// How many sources are feeding the programme audio mix, and how much mixed audio it has
   /// produced. Both are needed to tell "nobody is selected" apart from "the mix is stalled".
-  /// Scorebug size and snapshot count, or the load error. See `ScorebugController.status`.
-  public var scorebug = ""
-  /// Frames the compositor has produced, which is how a scorebug that loaded but never reached the
+  /// Overlay snapshot status, or empty when none are loaded.
+  public var overlay = ""
+  /// Frames the compositor has produced, which is how an overlay that loaded but never reached the
   /// picture is told apart from one that never loaded.
   public var composedFrames: UInt64 = 0
   public var audioMixContributors = 0

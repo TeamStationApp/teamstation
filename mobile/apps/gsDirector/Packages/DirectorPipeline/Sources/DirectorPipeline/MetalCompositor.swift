@@ -2,9 +2,11 @@ import CoreGraphics
 import CoreVideo
 import Foundation
 import Metal
+import DirectorCore
 import DirectorSources
+import UIKit
 
-/// Composites the program tile with the scorebug overlay into a single frame for the program
+/// Composites the program tile with overlays into a single frame for the program
 /// encoder.
 ///
 /// The shader is compiled from source at startup rather than shipped as a `.metallib`
@@ -18,14 +20,20 @@ public final class MetalCompositor: @unchecked Sendable {
   private let textureCache: CVMetalTextureCache
   private let outputPool: PixelBufferFactory
 
-  /// Where the scorebug sits in the composited frame, in output pixels from the top-left. The
-  /// overlay keeps its own size rather than being stretched to the frame, so a scorebug that grows
-  /// grows rightwards and downwards from this corner.
-  public static let overlayInset = CGPoint(x: 20, y: 20)
+  /// Default parking spot for a native-size overlay.
+  public static let overlayInset = OverlayLayout.topLeftInset
+
+  private struct PlacedTexture {
+    var texture: MTLTexture
+    var origin: CGPoint
+    var size: CGSize
+  }
 
   private let lock = NSLock()
-  private var overlayTexture: MTLTexture?
-  private var overlaySize = CGSize.zero
+  private var overlayTextures: [PlacedTexture] = []
+  private var captionTexture: MTLTexture?
+  private var captionSize = CGSize.zero
+  private var showInstantReplay = false
   private var composedFrames: UInt64 = 0
 
   public let width: Int
@@ -52,7 +60,7 @@ public final class MetalCompositor: @unchecked Sendable {
     overlayDescriptor.fragmentFunction = overlayFunction
     overlayDescriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
     overlayDescriptor.colorAttachments[0].isBlendingEnabled = true
-    overlayDescriptor.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
+    overlayDescriptor.colorAttachments[0].sourceRGBBlendFactor = .one
     overlayDescriptor.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
     overlayDescriptor.colorAttachments[0].sourceAlphaBlendFactor = .one
     overlayDescriptor.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
@@ -81,6 +89,10 @@ public final class MetalCompositor: @unchecked Sendable {
     self.outputPool = outputPool
     self.width = width
     self.height = height
+    if let caption = Self.makeCaptionImage() {
+      self.captionTexture = Self.makeTexture(device: device, image: caption.image)
+      self.captionSize = caption.size
+    }
   }
 
   public var frameCount: UInt64 {
@@ -89,54 +101,33 @@ public final class MetalCompositor: @unchecked Sendable {
     return composedFrames
   }
 
-  /// Replaces the cached scorebug texture. Called only when the page actually changed, so the
-  /// common case costs one texture bind and nothing else.
-  ///
-  /// `size` is how large the scorebug should appear in the composited frame, in output pixels. It
-  /// is passed separately from the image because a snapshot comes back at the screen's scale, so
-  /// the texture is typically twice the size it should be drawn at — using the texture's own
-  /// dimensions would double every scorebug on a Retina device.
-  public func setOverlay(_ image: CGImage?, size: CGSize) {
-    guard let image, size.width >= 1, size.height >= 1 else {
-      lock.lock()
-      overlayTexture = nil
-      overlaySize = .zero
-      lock.unlock()
-      return
+  public struct OverlayItem {
+    public var image: CGImage
+    public var origin: CGPoint
+    public var size: CGSize
+
+    public init(image: CGImage, origin: CGPoint, size: CGSize) {
+      self.image = image
+      self.origin = origin
+      self.size = size
     }
+  }
 
-    let descriptor = MTLTextureDescriptor.texture2DDescriptor(
-      pixelFormat: .bgra8Unorm,
-      width: image.width,
-      height: image.height,
-      mipmapped: false
-    )
-    descriptor.usage = [ .shaderRead ]
-    guard let texture = device.makeTexture(descriptor: descriptor) else { return }
-
-    let bytesPerRow = image.width * 4
-    var bytes = [UInt8](repeating: 0, count: bytesPerRow * image.height)
-    guard let context = CGContext(
-      data: &bytes,
-      width: image.width,
-      height: image.height,
-      bitsPerComponent: 8,
-      bytesPerRow: bytesPerRow,
-      space: CGColorSpaceCreateDeviceRGB(),
-      bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
-    ) else { return }
-    context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
-
-    texture.replace(
-      region: MTLRegionMake2D(0, 0, image.width, image.height),
-      mipmapLevel: 0,
-      withBytes: bytes,
-      bytesPerRow: bytesPerRow
-    )
-
+  /// Replaces every burned-in graphic. Called when overlay content or layout changes, not per frame.
+  public func setOverlays(_ items: [OverlayItem]) {
+    let placed: [PlacedTexture] = items.compactMap { item in
+      guard item.size.width >= 1, item.size.height >= 1 else { return nil }
+      guard let texture = Self.makeTexture(device: device, image: item.image) else { return nil }
+      return PlacedTexture(texture: texture, origin: item.origin, size: item.size)
+    }
     lock.lock()
-    overlayTexture = texture
-    overlaySize = size
+    overlayTextures = placed
+    lock.unlock()
+  }
+
+  public func setInstantReplayVisible(_ visible: Bool) {
+    lock.lock()
+    showInstantReplay = visible
     lock.unlock()
   }
 
@@ -165,14 +156,25 @@ public final class MetalCompositor: @unchecked Sendable {
     encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
 
     lock.lock()
-    let overlay = overlayTexture
-    let size = overlaySize
+    let overlays = overlayTextures
+    let caption = showInstantReplay ? captionTexture : nil
+    let captionDrawSize = captionSize
     lock.unlock()
-    if let overlay {
-      var rect = overlayRect(for: size)
-      encoder.setRenderPipelineState(pipelineOverlay)
+    encoder.setRenderPipelineState(pipelineOverlay)
+    for overlay in overlays {
+      var rect = overlayRect(origin: overlay.origin, size: overlay.size)
       encoder.setVertexBytes(&rect, length: MemoryLayout<SIMD4<Float>>.size, index: 0)
-      encoder.setFragmentTexture(overlay, index: 0)
+      encoder.setFragmentTexture(overlay.texture, index: 0)
+      encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+    }
+    if let caption {
+      let origin = CGPoint(
+        x: OverlayLayout.topLeftInset.x,
+        y: CGFloat(height) - captionDrawSize.height - OverlayLayout.topLeftInset.y
+      )
+      var rect = overlayRect(origin: origin, size: captionDrawSize)
+      encoder.setVertexBytes(&rect, length: MemoryLayout<SIMD4<Float>>.size, index: 0)
+      encoder.setFragmentTexture(caption, index: 0)
       encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
     }
     encoder.endEncoding()
@@ -188,11 +190,11 @@ public final class MetalCompositor: @unchecked Sendable {
 
   /// The overlay quad in clip space: `(minX, minY, maxX, maxY)`, with y running upwards.
   ///
-  /// Clamped to the frame so an oversized scorebug is cropped at the edges rather than being
+  /// Clamped to the frame so an oversized graphic is cropped at the edges rather than being
   /// stretched or silently dropped.
-  private func overlayRect(for size: CGSize) -> SIMD4<Float> {
-    let left = Self.overlayInset.x
-    let top = Self.overlayInset.y
+  private func overlayRect(origin: CGPoint, size: CGSize) -> SIMD4<Float> {
+    let left = origin.x
+    let top = origin.y
     let right = min(CGFloat(width), left + size.width)
     let bottom = min(CGFloat(height), top + size.height)
 
@@ -201,6 +203,67 @@ public final class MetalCompositor: @unchecked Sendable {
     let y0 = Float(1 - 2 * bottom / CGFloat(height))
     let y1 = Float(1 - 2 * top / CGFloat(height))
     return SIMD4<Float>(x0, y0, x1, y1)
+  }
+
+  private static func makeTexture(device: MTLDevice, image: CGImage) -> MTLTexture? {
+    let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+      pixelFormat: .bgra8Unorm,
+      width: image.width,
+      height: image.height,
+      mipmapped: false
+    )
+    descriptor.usage = [ .shaderRead ]
+    guard let texture = device.makeTexture(descriptor: descriptor) else { return nil }
+
+    let bytesPerRow = image.width * 4
+    var bytes = [UInt8](repeating: 0, count: bytesPerRow * image.height)
+    guard let context = CGContext(
+      data: &bytes,
+      width: image.width,
+      height: image.height,
+      bitsPerComponent: 8,
+      bytesPerRow: bytesPerRow,
+      space: CGColorSpaceCreateDeviceRGB(),
+      bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+    ) else { return nil }
+    context.clear(CGRect(x: 0, y: 0, width: image.width, height: image.height))
+    context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+
+    texture.replace(
+      region: MTLRegionMake2D(0, 0, image.width, image.height),
+      mipmapLevel: 0,
+      withBytes: bytes,
+      bytesPerRow: bytesPerRow
+    )
+    return texture
+  }
+
+  /// Drawn once; the compositor just binds it while Output is rewinding.
+  private static func makeCaptionImage() -> (image: CGImage, size: CGSize)? {
+    let text = "INSTANT REPLAY" as NSString
+    let font = UIFont.systemFont(ofSize: 42, weight: .heavy)
+    let attributes: [NSAttributedString.Key: Any] = [
+      .font: font,
+      .foregroundColor: UIColor.white
+    ]
+    let textSize = text.size(withAttributes: attributes)
+    let padding = CGSize(width: 8, height: 6)
+    let size = CGSize(
+      width: ceil(textSize.width + padding.width * 2),
+      height: ceil(textSize.height + padding.height * 2)
+    )
+    let bounds = CGRect(origin: .zero, size: size)
+    let renderer = UIGraphicsImageRenderer(size: size)
+    let image = renderer.image { _ in
+      UIColor.clear.setFill()
+      UIRectFill(bounds)
+      text.draw(
+        at: CGPoint(x: padding.width, y: padding.height),
+        withAttributes: attributes
+      )
+    }
+    guard let cgImage = image.cgImage else { return nil }
+    return (cgImage, size)
   }
 
   private func makeTexture(
@@ -250,7 +313,7 @@ public final class MetalCompositor: @unchecked Sendable {
   }
 
   // Same quad, placed at an arbitrary clip-space rectangle (minX, minY, maxX, maxY) so the
-  // scorebug can sit in a corner at its own size instead of covering the frame.
+  // overlay can sit in a corner at its own size instead of covering the frame.
   vertex VertexOut director_vertex_rect(uint id [[vertex_id]],
                                         constant float4 &rect [[buffer(0)]]) {
     const float2 uvs[4] = { float2(0, 1), float2(1, 1), float2(0, 0), float2(1, 0) };

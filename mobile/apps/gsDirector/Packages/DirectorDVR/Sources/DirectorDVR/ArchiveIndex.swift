@@ -382,7 +382,7 @@ public final class ArchiveIndex: @unchecked Sendable {
 
   /// Wall-clock span of stills written at or after `floor`. The scrub gesture uses this, not
   /// completed archive segments: stills land at 1 fps from the first second of a recording, while
-  /// a media segment is only indexed when its file closes (default 6 s), and T3 writes no segments
+  /// a media segment is only indexed when its file closes (default 3 s), and T3 writes no segments
   /// at all.
   public func proxyTimelineBounds(
     for sourceID: SourceID,

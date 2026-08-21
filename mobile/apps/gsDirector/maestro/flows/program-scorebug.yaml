@@ -1,8 +1,5 @@
-# Brings the grid up on the real cameras with a scorebug URL set, so the program tile and the
-# composited output can be checked together.
-#
-# The scorebug is served by tools/scorebugServer.js on the Mac; pass its address as
-# SCOREBUG_URL when running this flow. The default points at the machine this was written on.
+# Brings the grid up on synthetic cameras so the program tile and the composited output
+# can be checked together.
 appId: co.gamestation.director
 ---
 - launchApp:
@@ -13,7 +10,6 @@ appId: co.gamestation.director
       cameraCodec: hevc
       segmentSeconds: 3
       debugHUD: false
-      scoreboardURL: 'http://10.10.7.195:8000/scoreboard'
 
 - extendedWaitUntil:
     visible:

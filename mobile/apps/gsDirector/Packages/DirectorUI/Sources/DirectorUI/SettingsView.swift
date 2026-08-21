@@ -6,6 +6,8 @@ public struct SettingsView: View {
   @Environment(\.dismiss) private var dismiss
 
   @State private var draft = AppConfig.default
+  @State private var showingContentEditor = false
+  @State private var showingClearCameraMemory = false
 
   public init() {}
 
@@ -13,14 +15,22 @@ public struct SettingsView: View {
     NavigationStack {
       Form {
         Section {
-          TextField("URL", text: $draft.scoreboardURL)
-            .textInputAutocapitalization(.never)
-            .autocorrectionDisabled()
-            .accessibilityIdentifier("settings-scoreboard-url")
+          ReplaySlowMotionSlider(percent: $draft.replaySlowMotionRate)
         } header: {
-          Text("Scoreboard")
+          Text("Instant replay")
         } footer: {
-          Text("Saved on this iPad when you hit Save. Test launches no longer overwrite it.")
+          Text("Slow-motion buttons play at this percent of live speed. 50 is half speed.")
+        }
+
+        Section {
+          Button("Add Content") {
+            showingContentEditor = true
+          }
+          .accessibilityIdentifier("settings-add-content")
+        } header: {
+          Text("Output overlays")
+        } footer: {
+          Text("Place a web view or an image on Output. Drag to position. Long-press to edit.")
         }
 
         Section {
@@ -74,7 +84,7 @@ public struct SettingsView: View {
           Text("Programme master")
         } footer: {
           Text("""
-          The programme master is a composite — cut, scorebug and mixed audio — so it is the one \
+          The programme master is a composite — cut, overlays and mixed audio — so it is the one \
           output that has to be encoded. These settings apply to it alone.
           """)
         }
@@ -107,23 +117,20 @@ public struct SettingsView: View {
         Section {
           Toggle("Simulated cameras", isOn: $draft.useSimulatedCameras)
             .accessibilityIdentifier("settings-simulated-cameras")
+
+          Button("Clear camera memory", role: .destructive) {
+            showingClearCameraMemory = true
+          }
+          .accessibilityIdentifier("settings-clear-camera-memory")
         } header: {
           Text("Sources")
         } footer: {
           Text(
             "On: generated test patterns. Off: cameras on the network. "
-              + "Takes effect when you Save — no rebuild."
+              + "Takes effect when you Save — no rebuild. "
+              + "Clear camera memory forgets every named camera. Only cameras with a NearStream "
+              + "serial/MAC or an RTSP identifier are remembered after that."
           )
-        }
-
-        Section {
-          TextField("Rate", value: $draft.replaySlowMotionRate, format: .number)
-            .keyboardType(.decimalPad)
-            .accessibilityIdentifier("settings-replay-slowmo")
-        } header: {
-          Text("Instant replay")
-        } footer: {
-          Text("Slow-motion buttons play at this rate. 0.5 is half speed. Values outside 0.1–1.0 are clamped.")
         }
 
         Section("Diagnostics") {
@@ -141,7 +148,7 @@ public struct SettingsView: View {
         ToolbarItem(placement: .confirmationAction) {
           Button("Save") {
             draft.replaySlowMotionRate = AppConfig.clampedReplaySlowMotionRate(
-              draft.replaySlowMotionRate
+              draft.replaySlowMotionRate / 100
             )
             environment.update(config: draft)
             dismiss()
@@ -150,8 +157,33 @@ public struct SettingsView: View {
         }
       }
     }
+    .sheet(isPresented: $showingContentEditor) {
+      ContentEditorView()
+        .environment(environment)
+        .presentationDetents([.large])
+        .presentationDragIndicator(.hidden)
+        .presentationContentInteraction(.scrolls)
+        .presentationSizing(.page)
+    }
+    .confirmationDialog(
+      "Clear camera memory?",
+      isPresented: $showingClearCameraMemory,
+      titleVisibility: .visible
+    ) {
+      Button("Clear camera memory", role: .destructive) {
+        environment.clearCameraMemory()
+      }
+      .accessibilityIdentifier("settings-clear-camera-memory-confirm")
+      Button("Cancel", role: .cancel) {}
+    } message: {
+      Text(
+        "Removes every saved camera name and mapping. Cameras without a NearStream serial/MAC "
+          + "or an RTSP identifier will not be remembered."
+      )
+    }
     .onAppear {
       draft = environment.persistedConfig
+      draft.replaySlowMotionRate = environment.persistedConfig.replaySlowMotionRate * 100
       draft.useSimulatedCameras = environment.isUsingSimulatedCameras
       draft.showDebugHUD = environment.config.showDebugHUD
     }
@@ -159,5 +191,49 @@ public struct SettingsView: View {
 
   private static func gigabytes(_ bytes: Int64) -> String {
     String(format: "%.1f GB", Double(bytes) / 1_073_741_824)
+  }
+}
+
+/// 0–100 percent of live speed, with a tick every 10 and a taller mark every 25.
+private struct ReplaySlowMotionSlider: View {
+  @Binding var percent: Double
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      Text("\(Int(percent.rounded()))%")
+        .font(.subheadline)
+        .foregroundStyle(.secondary)
+        .accessibilityIdentifier("settings-replay-slowmo-value")
+
+      VStack(spacing: 4) {
+        Slider(value: $percent, in: 0 ... 100, step: 1)
+          .accessibilityIdentifier("settings-replay-slowmo")
+
+        GeometryReader { geo in
+          ZStack(alignment: .bottomLeading) {
+            ForEach(Array(stride(from: 0.0, through: 100, by: 10)), id: \.self) { tick in
+              Rectangle()
+                .fill(Color.secondary.opacity(isMajor(tick) ? 0.75 : 0.35))
+                .frame(width: 1, height: isMajor(tick) ? 12 : 6)
+                .offset(x: tick / 100 * geo.size.width)
+            }
+          }
+        }
+        .frame(height: 12)
+        .padding(.horizontal, 4)
+
+        HStack {
+          Text("0")
+          Spacer()
+          Text("100")
+        }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+      }
+    }
+  }
+
+  private func isMajor(_ tick: Double) -> Bool {
+    tick == 0 || tick == 100 || tick.truncatingRemainder(dividingBy: 25) == 0
   }
 }
