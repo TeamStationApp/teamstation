@@ -46,6 +46,9 @@ public struct ProgramOverlay: Sendable, Codable, Identifiable, Hashable {
   public var placement: OverlayPlacement
   public var role: String?
   public var hasLaidOut: Bool
+  /// When false, the graphic is live Output only. When true, it also burns in during scrub and
+  /// Instant Replay.
+  public var showInRewind: Bool
 
   public init(
     id: UUID = UUID(),
@@ -65,7 +68,8 @@ public struct ProgramOverlay: Sendable, Codable, Identifiable, Hashable {
     anchorGap: Double = 0,
     placement: OverlayPlacement,
     role: String? = nil,
-    hasLaidOut: Bool = false
+    hasLaidOut: Bool = false,
+    showInRewind: Bool = false
   ) {
     self.id = id
     self.kind = kind
@@ -85,6 +89,7 @@ public struct ProgramOverlay: Sendable, Codable, Identifiable, Hashable {
     self.placement = placement
     self.role = role
     self.hasLaidOut = hasLaidOut
+    self.showInRewind = showInRewind
   }
 
   public init(from decoder: Decoder) throws {
@@ -108,6 +113,7 @@ public struct ProgramOverlay: Sendable, Codable, Identifiable, Hashable {
       ?? .centerQuarter
     role = try container.decodeIfPresent(String.self, forKey: .role)
     hasLaidOut = try container.decodeIfPresent(Bool.self, forKey: .hasLaidOut) ?? false
+    showInRewind = try container.decodeIfPresent(Bool.self, forKey: .showInRewind) ?? false
   }
 }
 
@@ -300,45 +306,11 @@ public enum OverlayLayout {
       return (CGPoint(x: x, y: parent.maxY), CGPoint(x: x, y: child.minY))
     }
   }
-}
 
-public struct OverlayStore: Sendable {
-  private static let manifestName = "overlays.json"
-
-  public init() {}
-
-  public func load() -> [ProgramOverlay] {
-    let url = DirectorPaths.overlayManifest
-    guard
-      let data = try? Data(contentsOf: url),
-      let decoded = try? JSONDecoder().decode([ProgramOverlay].self, from: data)
-    else { return [] }
-    return decoded
-  }
-
-  public func save(_ overlays: [ProgramOverlay]) {
-    try? FileManager.default.createDirectory(
-      at: DirectorPaths.overlays,
-      withIntermediateDirectories: true
-    )
-    guard let data = try? JSONEncoder().encode(overlays) else { return }
-    try? data.write(to: DirectorPaths.overlayManifest, options: .atomic)
-  }
-
-  public func imageURL(filename: String) -> URL {
-    DirectorPaths.overlays.appendingPathComponent(filename)
-  }
-
-  public func writeImage(_ data: Data, filename: String) throws {
-    try FileManager.default.createDirectory(
-      at: DirectorPaths.overlays,
-      withIntermediateDirectories: true
-    )
-    try data.write(to: imageURL(filename: filename), options: .atomic)
-  }
-
-  public func removeImage(filename: String) {
-    guard !filename.isEmpty else { return }
-    try? FileManager.default.removeItem(at: imageURL(filename: filename))
+  /// Top-left square of a content-sized web snapshot, side min(width, height).
+  public static func webThumbnailCrop(contentSize: CGSize) -> CGRect {
+    let side = min(contentSize.width, contentSize.height)
+    guard side >= 1 else { return .zero }
+    return CGRect(x: 0, y: 0, width: side, height: side)
   }
 }

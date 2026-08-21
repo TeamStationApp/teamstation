@@ -1,5 +1,6 @@
 import CoreGraphics
 import DirectorCore
+import Foundation
 import Testing
 
 @Suite("Overlay layout")
@@ -143,5 +144,40 @@ struct OverlayLayoutTests {
     let down = OverlayLayout.anchoredOrigin(parent: grown, child: child, edge: .bottom, gap: 10)
     #expect(abs(down.x - 250) < 0.5)
     #expect(abs(down.y - 190) < 0.5)
+  }
+
+  @Test("Web list thumb is the top-left min(width, height) square")
+  func webThumbnailCrop() {
+    let wide = OverlayLayout.webThumbnailCrop(contentSize: CGSize(width: 1000, height: 200))
+    #expect(wide == CGRect(x: 0, y: 0, width: 200, height: 200))
+    let tall = OverlayLayout.webThumbnailCrop(contentSize: CGSize(width: 200, height: 600))
+    #expect(tall == CGRect(x: 0, y: 0, width: 200, height: 200))
+  }
+
+  @Test("Live-only overlays drop off Output while the programme source is off live")
+  func rewindVisibility() {
+    #expect(OverlayVisibility.isVisible(showInRewind: false, programIsOffLive: false))
+    #expect(!OverlayVisibility.isVisible(showInRewind: false, programIsOffLive: true))
+    #expect(OverlayVisibility.isVisible(showInRewind: true, programIsOffLive: false))
+    #expect(OverlayVisibility.isVisible(showInRewind: true, programIsOffLive: true))
+  }
+
+  @Test("Missing showInRewind decodes as live-only")
+  func showInRewindDefault() throws {
+    let overlay = ProgramOverlay(
+      kind: .web,
+      originX: 0,
+      originY: 0,
+      width: 0.2,
+      height: 0.2,
+      placement: .centerQuarter
+    )
+    var object = try JSONSerialization.jsonObject(
+      with: JSONEncoder().encode(overlay)
+    ) as? [String: Any]
+    object?["showInRewind"] = nil
+    let data = try JSONSerialization.data(withJSONObject: object ?? [:])
+    let decoded = try JSONDecoder().decode(ProgramOverlay.self, from: data)
+    #expect(decoded.showInRewind == false)
   }
 }

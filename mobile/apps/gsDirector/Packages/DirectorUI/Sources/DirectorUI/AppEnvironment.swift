@@ -119,6 +119,8 @@ public final class AppEnvironment {
   public let telemetry: PipelineTelemetry
   public let router: TileRouter
   public private(set) var overlays: [ProgramOverlay] = []
+  public private(set) var templates: [OverlayTemplate] = []
+  public private(set) var activeTemplateID = UUID()
 
   let converter: PixelConverter
   let index: ArchiveIndex
@@ -236,7 +238,8 @@ public final class AppEnvironment {
       statusMessage = "Recovered index: dropped \(result.removed) missing segment(s)"
     }
 
-    overlays = overlayStore.load()
+    let manifest = overlayStore.loadManifest()
+    apply(manifest)
     reloadOverlayMedia()
 
     startDiscovery()
@@ -1238,15 +1241,22 @@ public final class AppEnvironment {
     return UIImage(data: data)?.pngData() ?? data
   }
 
-  /// Instant Replay burns into Output whenever that camera is off live. Other overlays stay up.
-  private func programSourceIsRewinding() -> Bool {
+  /// Instant Replay caption burns into Output whenever that camera is replaying. Scrub uses the
+  /// same off-live path for operator overlays, but not for the caption.
+  private func programSourceIsReplaying() -> Bool {
     guard let index = router.currentProgramTile else { return false }
     let state = telemetry.snapshot.tiles.first { $0.index == index }?.state
     return state == .replaying
   }
 
+  private func programSourceIsOffLive() -> Bool {
+    guard let index = router.currentProgramTile else { return false }
+    let state = telemetry.snapshot.tiles.first { $0.index == index }?.state
+    return state == .replaying || state == .scrubbing
+  }
+
   private func applyProgramOverlays() {
-    compositor?.setInstantReplayVisible(programSourceIsRewinding())
+    compositor?.setInstantReplayVisible(programSourceIsReplaying())
     compositor?.setOverlays(composedOverlayItems())
   }
 
@@ -1260,6 +1270,10 @@ public final class AppEnvironment {
   private func composedOverlayItems() -> [MetalCompositor.OverlayItem] {
     let canvas = overlayCanvas
     return overlays.compactMap { overlay in
+      guard OverlayVisibility.isVisible(
+        showInRewind: overlay.showInRewind,
+        programIsOffLive: programSourceIsOffLive()
+      ) else { return nil }
       let rect = OverlayLayout.pixelRect(overlay, canvas: canvas)
       let image: CGImage?
       switch overlay.kind {
@@ -1360,7 +1374,7 @@ public final class AppEnvironment {
     overlays[index].height = size.height
     overlays[index].hasLaidOut = true
     applyAnchoredChildren(of: id)
-    overlayStore.save(overlays)
+    persistActiveTemplate()
   }
 
   private func syncDisplaySize(at index: Int, canvas: CGSize) {
@@ -1387,10 +1401,10 @@ public final class AppEnvironment {
     overlays[index].width = normalized.width
     overlays[index].height = normalized.height
     overlays[index].hasLaidOut = true
-    overlayStore.save(overlays)
+    persistActiveTemplate()
   }
 
-  public func addWebOverlay(url: String) {
+  public func addWebOverlay(url: String, showInRewind: Bool = false) {
     let canvas = overlayCanvas
     let rect = OverlayLayout.centerQuarter(native: CGSize(width: 800, height: 450), canvas: canvas)
     let normalized = OverlayLayout.normalized(rect, canvas: canvas)
@@ -1401,15 +1415,16 @@ public final class AppEnvironment {
       originY: normalized.originY,
       width: normalized.width,
       height: normalized.height,
-      placement: .centerQuarter
+      placement: .centerQuarter,
+      showInRewind: showInRewind
     )
     overlays.append(overlay)
-    overlayStore.save(overlays)
+    persistActiveTemplate()
     startWebOverlay(overlay)
     applyProgramOverlays()
   }
 
-  public func addImageOverlay(data: Data, displayName: String) {
+  public func addImageOverlay(data: Data, displayName: String, showInRewind: Bool = false) {
     let filename = "\(UUID().uuidString).png"
     do {
       try overlayStore.writeImage(Self.pngData(data), filename: filename)
@@ -1428,10 +1443,11 @@ public final class AppEnvironment {
       originY: normalized.originY,
       width: normalized.width,
       height: normalized.height,
-      placement: .centerQuarter
+      placement: .centerQuarter,
+      showInRewind: showInRewind
     )
     overlays.append(overlay)
-    overlayStore.save(overlays)
+    persistActiveTemplate()
     loadOverlayImage(overlay)
     applyProgramOverlays()
   }
@@ -1449,15 +1465,31 @@ public final class AppEnvironment {
     overlays[index].imageFilename = filename
     overlays[index].imageDisplayName = displayName
     overlays[index].hasLaidOut = false
-    overlayStore.save(overlays)
+    persistActiveTemplate()
     loadOverlayImage(overlays[index])
     applyProgramOverlays()
+  }
+
+  public func setOverlayShowInRewind(id: UUID, showInRewind: Bool) {
+    guard let index = overlays.firstIndex(where: { $0.id == id }) else { return }
+    overlays[index].showInRewind = showInRewind
+    persistActiveTemplate()
+    applyProgramOverlays()
+  }
+
+  public func overlayPreviewImage(for overlay: ProgramOverlay) -> CGImage? {
+    switch overlay.kind {
+    case .image:
+      return overlayImages[overlay.id]
+    case .web:
+      return webSnapshots[overlay.id]?.0
+    }
   }
 
   public func updateOverlayURL(id: UUID, url: String) {
     guard let index = overlays.firstIndex(where: { $0.id == id }) else { return }
     overlays[index].url = url
-    overlayStore.save(overlays)
+    persistActiveTemplate()
     startWebOverlay(overlays[index])
   }
 
@@ -1480,7 +1512,7 @@ public final class AppEnvironment {
 
   public func commitOverlayMove(id: UUID, displayCanvas: CGSize) {
     refreshAttachments(displayCanvas: displayCanvas)
-    overlayStore.save(overlays)
+    persistActiveTemplate()
     applyProgramOverlays()
   }
 
@@ -1508,7 +1540,7 @@ public final class AppEnvironment {
 
   public func commitOverlayResize(id: UUID, displayCanvas: CGSize) {
     refreshAttachments(displayCanvas: displayCanvas)
-    overlayStore.save(overlays)
+    persistActiveTemplate()
   }
 
   public func removeOverlay(id: UUID) {
@@ -1519,7 +1551,7 @@ public final class AppEnvironment {
       overlays[i].anchorEdge = nil
       overlays[i].anchorGap = 0
     }
-    overlayStore.save(overlays)
+    persistActiveTemplate()
     webControllers[id]?.stop()
     webControllers[id] = nil
     webSnapshots[id] = nil
@@ -1528,6 +1560,117 @@ public final class AppEnvironment {
       overlayStore.removeImage(filename: overlay.imageFilename)
     }
     applyProgramOverlays()
+  }
+
+  public func selectTemplate(id: UUID) {
+    persistActiveTemplate()
+    guard templates.contains(where: { $0.id == id }) else { return }
+    activeTemplateID = id
+    overlays = templates.first(where: { $0.id == id })?.overlays ?? []
+    persistActiveTemplate()
+    stopUnusedOverlayMedia()
+    reloadOverlayMedia()
+  }
+
+  public func renameTemplate(id: UUID, name: String) {
+    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return }
+    persistActiveTemplate()
+    guard let index = templates.firstIndex(where: { $0.id == id }) else { return }
+    templates[index].name = trimmed
+    persistActiveTemplate()
+  }
+
+  public func duplicateTemplate(from sourceID: UUID, name: String) -> UUID? {
+    persistActiveTemplate()
+    guard let source = templates.first(where: { $0.id == sourceID }) else { return nil }
+    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+    let copied = copyOverlays(source.overlays)
+    let template = OverlayTemplate(id: UUID(), name: trimmed, overlays: copied)
+    templates.append(template)
+    activeTemplateID = template.id
+    overlays = template.overlays
+    persistActiveTemplate()
+    stopUnusedOverlayMedia()
+    reloadOverlayMedia()
+    return template.id
+  }
+
+  public func overlayPreviewUIImage(for overlay: ProgramOverlay) -> UIImage? {
+    guard let image = overlayPreviewImage(for: overlay) else { return nil }
+    if overlay.kind == .web {
+      return Self.topLeftSquare(image)
+    }
+    return UIImage(cgImage: image)
+  }
+
+  private func apply(_ manifest: OverlayManifest) {
+    templates = manifest.templates
+    activeTemplateID = manifest.activeTemplateID
+    overlays = templates.first(where: { $0.id == activeTemplateID })?.overlays ?? []
+  }
+
+  private func persistActiveTemplate() {
+    if let index = templates.firstIndex(where: { $0.id == activeTemplateID }) {
+      templates[index].overlays = overlays
+    } else if templates.isEmpty {
+      let fallback = OverlayTemplate(
+        id: activeTemplateID,
+        name: OverlayTemplate.defaultName,
+        overlays: overlays
+      )
+      templates = [ fallback ]
+    }
+    overlayStore.save(
+      OverlayManifest(templates: templates, activeTemplateID: activeTemplateID)
+    )
+  }
+
+  private func copyOverlays(_ source: [ProgramOverlay]) -> [ProgramOverlay] {
+    var idMap: [UUID: UUID] = [:]
+    var copies: [ProgramOverlay] = []
+    copies.reserveCapacity(source.count)
+    for overlay in source {
+      let newID = UUID()
+      idMap[overlay.id] = newID
+      var copy = overlay
+      copy.id = newID
+      if overlay.kind == .image, !overlay.imageFilename.isEmpty {
+        if let filename = try? overlayStore.copyImage(filename: overlay.imageFilename) {
+          copy.imageFilename = filename
+        }
+      }
+      copies.append(copy)
+    }
+    for i in copies.indices {
+      if let old = copies[i].anchorID {
+        copies[i].anchorID = idMap[old]
+      }
+    }
+    return copies
+  }
+
+  private func stopUnusedOverlayMedia() {
+    let ids = Set(overlays.map(\.id))
+    for id in webControllers.keys where !ids.contains(id) {
+      webControllers[id]?.stop()
+      webControllers[id] = nil
+      webSnapshots[id] = nil
+    }
+    for id in overlayImages.keys where !ids.contains(id) {
+      overlayImages[id] = nil
+    }
+  }
+
+  private static func topLeftSquare(_ image: CGImage) -> UIImage {
+    let crop = OverlayLayout.webThumbnailCrop(
+      contentSize: CGSize(width: image.width, height: image.height)
+    )
+    let renderer = UIGraphicsImageRenderer(size: crop.size)
+    return renderer.image { _ in
+      UIImage(cgImage: image).draw(at: .zero)
+    }
   }
 
   private func shiftDescendants(of parentID: UUID, dx: Double, dy: Double) {
