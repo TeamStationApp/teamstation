@@ -10,7 +10,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 FLOW="${1:-smoke}"
 DEADLINE=$(( $(date +%s) + 7200 ))
-UDID="6569F691-DADE-5AD7-98D2-9B1A2D9765AC"
+UDID="${DIRECTOR_DEVICE_UDID:?set DIRECTOR_DEVICE_UDID to the iPad UDID}"
 
 attached() {
   xcrun devicectl list devices 2>/dev/null | grep -q "$UDID.*connected"
@@ -19,7 +19,7 @@ attached() {
 while [ "$(date +%s)" -lt "$DEADLINE" ]; do
   if attached; then
     echo "DEVICE ATTACHED — starting Maestro at $(date '+%H:%M:%S')"
-    if node scripts/run-maestro.js "$FLOW" 2>&1 | tee /tmp/maestro-await.log | grep -qE "Flow passed|✓ Flow|status.*passed"; then
+    if node scripts/run-maestro.js --device "$UDID" "$FLOW" 2>&1 | tee /tmp/maestro-await.log | grep -qE "Flow passed|✓ Flow|status.*passed"; then
       echo "UI AUTOMATION APPROVED — flow ran"
       exit 0
     fi

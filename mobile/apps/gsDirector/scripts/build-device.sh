@@ -8,6 +8,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 require xcodebuild
 require xcrun
+require_device_udid >/dev/null
 [ -d "$DIRECTOR_PROJECT" ] || fail "run 'socket npm run bootstrap' first"
 
 CONFIGURATION="${CONFIGURATION:-Debug}"

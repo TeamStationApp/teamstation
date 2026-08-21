@@ -10,6 +10,7 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 require xcrun
+require_device_udid >/dev/null
 
 COMMAND="${1:-}"
 shift || true

@@ -1,17 +1,16 @@
 #!/usr/bin/env node
-// Runs Maestro flows against the connected iPad, or a simulator with --sim.
+// Runs Maestro flows against an iPad or simulator. The target UDID is always passed in so the
+// same YAML can run on different machines in parallel.
 //
-// Defaults to the device: it is the hardware the app has to work on, and a simulator cannot say
-// anything about thermals or sustained encode. The simulator is still worth running the camera flows
-// on, because it reaches the real cameras through the Mac's own network.
-//
-//   node scripts/run-maestro.js                      all flows in maestro/flows
-//   node scripts/run-maestro.js smoke                one flow by name
-//   node scripts/run-maestro.js --sim rtsp-camera-naming   on the booted simulator
-//   node scripts/run-maestro.js --suite operator     product-behavior vectors
+//   node scripts/run-maestro.js --device <udid> smoke
+//   node scripts/run-maestro.js --sim --device <udid> rtsp-camera-naming
+//   node scripts/run-maestro.js --sim --device <udid> --suite operator
 //   node scripts/run-maestro.js --list
+//
+// `--device` / DIRECTOR_SIMULATOR_UDID / DIRECTOR_DEVICE_UDID select the hardware. Flows never
+// name a simulator.
 
-const { execFileSync, spawnSync } = require('node:child_process')
+const { spawnSync } = require('node:child_process')
 const fs = require('node:fs')
 const path = require('node:path')
 const os = require('node:os')
@@ -39,6 +38,7 @@ const OPERATOR_SUITE = [
   'operator-program-disable',
   'operator-empty-tiles',
   'operator-menu-back',
+  'stream-controls',
   'scrub-without-history',
   'scrub-before-first-segment',
   'operator-scrub-cut-return',
@@ -68,29 +68,29 @@ function flowFiles(names) {
   })
 }
 
-function simulatorUdid() {
-  if (process.env.DIRECTOR_SIMULATOR_UDID)
-    return process.env.DIRECTOR_SIMULATOR_UDID
-  const name = process.env.DIRECTOR_SIMULATOR ?? 'iPad Pro 13-inch (M5)'
-  const raw = execFileSync('xcrun', ['simctl', 'list', 'devices', 'available'], {
-    encoding: 'utf8'
-  })
-  // Booted first: the same name exists under several runtimes, and a flow should land on the
-  // simulator that is already up rather than booting a second one.
-  const matches = raw
-    .split('\n')
-    .filter(line => line.includes(`${name} (`))
-    .sort((a, b) => Number(b.includes('Booted')) - Number(a.includes('Booted')))
-  const udid = matches[0]?.match(/\(([0-9A-Fa-f-]{36})\)/)?.[1]
-  if (!udid) throw new Error(`no available simulator named '${name}'`)
-  return udid
-}
+const UDID_PATTERN =
+  /^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$/
 
-function parseFlowNames(args) {
+function parseArgs(args) {
   const names = []
+  let device
+  let useSimulator = false
   for (let index = 0; index < args.length; index += 1) {
     const value = args[index]
     if (value === '--list') continue
+    if (value === '--sim') {
+      useSimulator = true
+      continue
+    }
+    if (value === '--device') {
+      const next = args[index + 1]
+      if (!next || next.startsWith('--') || !UDID_PATTERN.test(next)) {
+        throw new Error('pass --device <udid>')
+      }
+      device = next
+      index += 1
+      continue
+    }
     if (value === '--suite') {
       const suite = args[index + 1]
       index += 1
@@ -100,10 +100,25 @@ function parseFlowNames(args) {
       names.push(...OPERATOR_SUITE)
       continue
     }
-    if (value.startsWith('--')) continue
+    if (value.startsWith('--')) {
+      throw new Error(`unknown flag '${value}'`)
+    }
     names.push(value)
   }
-  return names
+  return { names, device, useSimulator }
+}
+
+function requireTargetUdid(useSimulator, cliUdid) {
+  const udid = useSimulator
+    ? (cliUdid ?? process.env.DIRECTOR_SIMULATOR_UDID)
+    : (cliUdid ?? process.env.DIRECTOR_DEVICE_UDID)
+  const flag = useSimulator ? 'DIRECTOR_SIMULATOR_UDID' : 'DIRECTOR_DEVICE_UDID'
+  if (!udid) {
+    throw new Error(`pass --device <udid> or set ${flag}`)
+  }
+  if (useSimulator) process.env.DIRECTOR_SIMULATOR_UDID = udid
+  else process.env.DIRECTOR_DEVICE_UDID = udid
+  return udid
 }
 
 function main() {
@@ -127,13 +142,16 @@ function main() {
     )
   }
 
-  const useSimulator = args.includes('--sim')
-  const flows = flowFiles(parseFlowNames(args))
-  const device = useSimulator ? null : resolveDevice()
-  const target = useSimulator ? simulatorUdid() : device.udid
+  const parsed = parseArgs(args)
+  const useSimulator = parsed.useSimulator
+  const flows = flowFiles(parsed.names)
+  const target = requireTargetUdid(useSimulator, parsed.device)
   const targetName = useSimulator
     ? `simulator ${target}`
-    : `${device.name} — ${device.model}`
+    : (() => {
+        const device = resolveDevice()
+        return `${device.name} — ${device.model}`
+      })()
   process.stdout.write(`Running ${flows.length} flow(s) on ${targetName}\n`)
 
   // `clearState` reinstalls the bundle, which the runner can only do if it is handed the built app.
