@@ -1,0 +1,26 @@
+---
+description: After GS Director fixes, verify on the M4 iPad with the built test suite
+alwaysApply: true
+---
+
+# GS Director: verify on the M4
+
+Whenever Paul asks to **fix, change, or finish** GS Director (`mobile/apps/gsDirector`), treat M4 device verification as part of the work — not an optional follow-up.
+
+## Device
+
+- Run on **Pauls iPad Pro (2) — iPad Pro 11-inch (M4)** (`00008132-0000193801B9001C`).
+- Do not stop at the simulator. Do not use the 2018 A12X unless Paul named it or the task is thermal measurement.
+- If both iPads are attached, pin `DIRECTOR_DEVICE_UDID=00008132-0000193801B9001C`. If the M4 is missing, stop and say so.
+
+## How much testing
+
+After the code change, run **as much of the suite that already exists** as the change can affect:
+
+1. `./scripts/build-device.sh` so Maestro `clearState` has a device `.app`
+2. `./scripts/test-unit.sh` when Swift logic changed
+3. `node scripts/run-maestro.js --suite operator` on the M4 for product/UI/pipeline work
+
+Quote the runner line that names the M4. Fix failures before handing back.
+
+Simulator is for compile iteration only. Thermals on the A12X stay a separate series (Peltier rule).

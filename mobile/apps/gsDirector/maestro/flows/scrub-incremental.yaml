@@ -1,0 +1,98 @@
+# Additional swipes scrub from the current playhead, not from live.
+#
+# The old mapping treated every drag as origin 0 (the live edge). A second left-swipe
+# jumped to the start of the tape, and any right-swipe snapped to live. After the first
+# rewind, a short right drag must stay replaying — that is the case that used to be
+# indistinguishable from "let go and jump to now".
+#
+# Value checks are text-only: this runner ignores `text` when an `id` is also present.
+appId: co.gamestation.director
+---
+- launchApp:
+    appId: co.gamestation.director
+    arguments:
+      clearState: true
+      uiTest: true
+      debugHUD: true
+      sourceProfile: synthetic4
+      segmentSeconds: 2
+      syntheticEntropy: low
+      archiveAudio: false
+
+- extendedWaitUntil:
+    visible:
+      id: 'source-row-1'
+    timeout: 15000
+- runFlow: shared/settle-source-list.yaml
+- tapOn:
+    id: 'source-toggle-1'
+- tapOn:
+    id: 'start-directing'
+
+- extendedWaitUntil:
+    visible: 'tile=1 state=live.*'
+    timeout: 15000
+
+- tapOn:
+    id: 'record-button'
+
+# Enough history that a half-tile swipe is well past the 0.5s snap-to-live window.
+- extendedWaitUntil:
+    visible: 'dur=[2-9][0-9]'
+    timeout: 60000
+
+- swipe:
+    start: "93%, 27%"
+    end: "68%, 27%"
+    duration: 900
+
+- takeScreenshot: incremental-after-first-left
+
+- extendedWaitUntil:
+    visible: 'tile=1 state=(scrubbing|replaying).*off=-'
+    timeout: 8000
+
+- assertVisible: 'replayerr=ok'
+- assertVisible: 'rec=1'
+
+# Second left-swipe from the playhead: must stay in the past, not snap to live.
+- swipe:
+    start: "93%, 27%"
+    end: "75%, 27%"
+    duration: 700
+
+- takeScreenshot: incremental-after-second-left
+
+- extendedWaitUntil:
+    visible: 'tile=1 state=(scrubbing|replaying).*off=-'
+    timeout: 8000
+- assertNotVisible: 'tile=1 state=live .*off=0\.0'
+
+# Short right-swipe toward live. From playhead this eases forward; from live origin it
+# used to map to offset 0 and jump to the front. Stay on the tile: ~quarter of its width.
+# Assert immediately: a remaining offset of a few seconds will catch up if we wait.
+- swipe:
+    start: "82%, 28%"
+    end: "88%, 28%"
+    duration: 300
+
+- takeScreenshot: incremental-after-short-right
+- assertVisible: 'tile=1 state=(scrubbing|replaying).*off=-'
+- assertNotVisible: 'tile=1 state=live .*off=0\.0'
+- assertVisible: 'rec=1'
+
+- tapOn:
+    id: 'return-to-live-1'
+    optional: true
+- extendedWaitUntil:
+    visible: 'tile=1 state=live .*off=0\.0.*'
+    timeout: 25000
+- extendedWaitUntil:
+    visible: 'tile=1 state=live .*out=[1-9]'
+    timeout: 10000
+
+- tapOn:
+    id: 'record-button'
+- extendedWaitUntil:
+    visible: 'rec=0'
+    timeout: 60000

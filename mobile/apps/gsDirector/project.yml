@@ -1,0 +1,154 @@
+name: Director
+
+options:
+  bundleIdPrefix: co.gamestation
+  createIntermediateGroups: true
+  deploymentTarget:
+    iOS: "18.0"
+  groupSortPosition: top
+  minimumXcodeGenVersion: "2.40.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "18.0"
+    # D5: iPad only.
+    TARGETED_DEVICE_FAMILY: "2"
+    DEVELOPMENT_TEAM: G5LQ7MERPK
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    SWIFT_TREAT_WARNINGS_AS_ERRORS: NO
+    GCC_TREAT_WARNINGS_AS_ERRORS: NO
+    ALWAYS_SEARCH_USER_PATHS: NO
+    ENABLE_MODULE_VERIFIER: NO
+
+packages:
+  DirectorCore:
+    path: Packages/DirectorCore
+  DirectorSources:
+    path: Packages/DirectorSources
+  DirectorPipeline:
+    path: Packages/DirectorPipeline
+  DirectorDVR:
+    path: Packages/DirectorDVR
+  DirectorRTSP:
+    path: Packages/DirectorRTSP
+  DirectorUI:
+    path: Packages/DirectorUI
+  DirectorTestHarness:
+    path: Packages/DirectorTestHarness
+
+targets:
+  Director:
+    type: application
+    platform: iOS
+    sources:
+      - path: App
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: co.gamestation.director
+        PRODUCT_NAME: GS Director
+        INFOPLIST_FILE: App/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        CURRENT_PROJECT_VERSION: "1"
+        MARKETING_VERSION: "1.0"
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD: NO
+        LD_RUNPATH_SEARCH_PATHS: $(inherited) @executable_path/Frameworks
+    dependencies:
+      - package: DirectorCore
+        product: DirectorCore
+      - package: DirectorSources
+        product: DirectorSources
+      - package: DirectorPipeline
+        product: DirectorPipeline
+      - package: DirectorDVR
+        product: DirectorDVR
+      - package: DirectorRTSP
+        product: DirectorRTSP
+      - package: DirectorUI
+        product: DirectorUI
+      - package: DirectorTestHarness
+        product: DirectorTestHarness
+
+  DirectorUnitTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests/DirectorUnitTests
+        # Captured camera output, read from disk by the parser suites. Listing it as a source would
+        # put it in a build phase that has no idea what to do with an .sdp file.
+        excludes:
+          - Fixtures/**
+    dependencies:
+      - target: Director
+      - package: DirectorCore
+        product: DirectorCore
+      - package: DirectorSources
+        product: DirectorSources
+      - package: DirectorPipeline
+        product: DirectorPipeline
+      - package: DirectorDVR
+        product: DirectorDVR
+      - package: DirectorRTSP
+        product: DirectorRTSP
+      - package: DirectorTestHarness
+        product: DirectorTestHarness
+      - package: DirectorUI
+        product: DirectorUI
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: co.gamestation.director.unittests
+        GENERATE_INFOPLIST_FILE: YES
+        # XcodeGen derives the test host from the target name, which is `Director`, but the app's
+        # PRODUCT_NAME is `GS Director`. Without this the host path points at an app that is never
+        # built and the whole scheme fails before a single test runs.
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/GS Director.app/GS Director
+        BUNDLE_LOADER: $(TEST_HOST)
+
+  DirectorIntegrationTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests/DirectorIntegrationTests
+    dependencies:
+      - target: Director
+      - package: DirectorCore
+        product: DirectorCore
+      - package: DirectorSources
+        product: DirectorSources
+      - package: DirectorPipeline
+        product: DirectorPipeline
+      - package: DirectorDVR
+        product: DirectorDVR
+      - package: DirectorTestHarness
+        product: DirectorTestHarness
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: co.gamestation.director.integrationtests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/GS Director.app/GS Director
+        BUNDLE_LOADER: $(TEST_HOST)
+
+schemes:
+  Director:
+    build:
+      targets:
+        Director: all
+        DirectorUnitTests: [ test ]
+        DirectorIntegrationTests: [ test ]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      gatherCoverageData: false
+      targets:
+        - DirectorUnitTests
+        - DirectorIntegrationTests
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release
