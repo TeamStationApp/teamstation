@@ -228,8 +228,18 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
         confirmed.append(endpoint)
         continue
       }
-      guard await confirmHost(endpoint) else { continue }
-      confirmed.append(endpoint)
+      if await confirmHost(endpoint) {
+        confirmed.append(endpoint)
+        continue
+      }
+      // GS Cameraman often fails a 2–5s DESCRIBE probe from another iOS device even when Bonjour
+      // published a LAN IPv4. Listing it from the advertisement is how the operator can enable it;
+      // the session then has peer-to-peer TCP and does not abort on `.waiting`.
+      if let advertisement = rawAds.first(where: { $0.host == endpoint.host }),
+         advertisement.uuid != nil,
+         advertisement.hasUsableMediaHost {
+        confirmed.append(endpoint)
+      }
     }
 
     let collapsed = CameraIdentityRules.deduplicate(endpoints: confirmed, advertisements: rawAds)
@@ -259,7 +269,8 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
     }
 
     let awxCount = ads.filter { $0.modelName != nil || $0.wlanMAC != nil }.count
-    let rtspCount = ads.filter { $0.uuid != nil }.count
+    let rtspAds = ads.filter { $0.uuid != nil }
+    let rtspHosts = rtspAds.map(\.host).joined(separator: ",")
     let diagnostic = [
       "scan=\(scan?.subnet ?? "off")",
       "probed=\(scan?.probedCount ?? 0)",
@@ -268,7 +279,8 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
       "streaming=\(skipped)",
       "manual=\(configuration.manualHosts.count)",
       "awx=\(awxCount)",
-      "rtsp=\(rtspCount)",
+      "rtsp=\(rtspAds.count)",
+      rtspHosts.isEmpty ? nil : "rtsphost=\(rtspHosts)",
       "awxbrowse=\(advertisementBrowser.browseState)",
       scan?.diagnostic
     ]

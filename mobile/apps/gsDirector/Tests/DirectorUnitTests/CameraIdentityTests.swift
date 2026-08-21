@@ -560,6 +560,21 @@ struct CameraIdentityTests {
     #expect(CameraAdvertisement.isUUIDHostname("3278e89a-60d9-411d-a93e-5960cb08de79.local"))
   }
 
+  @Test("LAN IPv4 is preferred over USB link-local and a Bonjour UUID hostname")
+  func preferredMediaHostSkipsUSBAndUUID() {
+    #expect(
+      CameraAdvertisement.preferredMediaHost(among: [
+        "cc99f648-8e79-4952-8ad7-20ad3bb8b796.local",
+        "169.254.113.105",
+        "10.10.7.118"
+      ]) == "10.10.7.118"
+    )
+    #expect(
+      CameraAdvertisement.preferredMediaHost(among: [ "169.254.113.105", "cc99f648-8e79-4952-8ad7-20ad3bb8b796" ])
+        == nil
+    )
+  }
+
   @Test("A Cameraman seen on link-local and LAN collapses to one LAN endpoint")
   func cameramanLinkLocalAndLANDedup() {
     let advertisement = CameraAdvertisement(
