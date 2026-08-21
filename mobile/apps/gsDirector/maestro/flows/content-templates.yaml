@@ -1,0 +1,121 @@
+# Content Templates: default row, Add/Edit canvas, web overlay, list rewind toggle, copy template.
+appId: co.gamestation.director
+---
+- launchApp:
+    appId: co.gamestation.director
+    arguments:
+      clearState: true
+      uiTest: true
+      debugHUD: true
+      sourceProfile: synthetic4
+      sourceCount: 1
+      syntheticEntropy: low
+      archiveAudio: false
+
+- extendedWaitUntil:
+    visible:
+      id: 'source-row-1'
+    timeout: 15000
+- runFlow: shared/settle-source-list.yaml
+- tapOn:
+    id: 'source-toggle-1'
+- tapOn:
+    id: 'start-directing'
+
+- extendedWaitUntil:
+    visible: 'tile=1 state=live.*'
+    timeout: 20000
+
+- tapOn:
+    id: 'settings-button'
+- extendedWaitUntil:
+    visible:
+      id: 'settings-content-template-1'
+    timeout: 10000
+- assertVisible: 'default template'
+- tapOn:
+    id: 'settings-content-template-1'
+
+- extendedWaitUntil:
+    visible:
+      id: 'content-editor-done'
+    timeout: 10000
+- tapOn:
+    id: 'content-add'
+- tapOn:
+    id: 'content-add-web'
+- extendedWaitUntil:
+    visible:
+      id: 'overlay-edit-url'
+    timeout: 10000
+- tapOn:
+    id: 'overlay-edit-url'
+- eraseText
+- inputText: 'https://example.com'
+- tapOn:
+    id: 'overlay-edit-save'
+
+- tapOn:
+    id: 'content-list'
+- extendedWaitUntil:
+    visible:
+      id: 'content-list-row-1'
+    timeout: 10000
+- assertVisible: 'https://example.com'
+- tapOn:
+    id: 'content-list-rewind-1'
+- tapOn:
+    id: 'content-list-done'
+- tapOn:
+    id: 'content-editor-done'
+
+- extendedWaitUntil:
+    visible:
+      id: 'settings-add-content-template'
+    timeout: 10000
+- tapOn:
+    id: 'settings-add-content-template'
+- extendedWaitUntil:
+    visible:
+      id: 'settings-new-template-name'
+    timeout: 10000
+- tapOn:
+    id: 'settings-new-template-name'
+- inputText: 'Saturday JV'
+- tapOn:
+    id: 'settings-new-template-create'
+- extendedWaitUntil:
+    visible:
+      id: 'content-editor-done'
+    timeout: 10000
+- tapOn:
+    id: 'content-editor-done'
+- assertVisible: 'Saturday JV'
+- tapOn:
+    id: 'settings-content-template-select-1'
+- assertNotVisible:
+    id: 'content-editor-done'
+- tapOn:
+    id: 'settings-add-content-template'
+- extendedWaitUntil:
+    visible:
+      id: 'settings-new-template-name'
+    timeout: 10000
+- tapOn: 'Blank'
+- tapOn:
+    id: 'settings-new-template-name'
+- inputText: 'Empty Game'
+- tapOn:
+    id: 'settings-new-template-create'
+- extendedWaitUntil:
+    visible:
+      id: 'content-editor-done'
+    timeout: 10000
+- tapOn:
+    id: 'content-editor-done'
+- assertVisible: 'Empty Game'
+- tapOn:
+    id: 'settings-content-template-delete-2'
+- tapOn:
+    id: 'settings-content-template-delete-confirm'
+- assertNotVisible: 'Saturday JV'

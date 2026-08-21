@@ -46,6 +46,9 @@ public struct ProgramOverlay: Sendable, Codable, Identifiable, Hashable {
   public var placement: OverlayPlacement
   public var role: String?
   public var hasLaidOut: Bool
+  /// When false, the graphic is live Output only and collapses to zero size during scrub and
+  /// Instant Replay so attached children move with it. When true, it also burns in off-live.
+  public var showInRewind: Bool
 
   public init(
     id: UUID = UUID(),
@@ -65,7 +68,8 @@ public struct ProgramOverlay: Sendable, Codable, Identifiable, Hashable {
     anchorGap: Double = 0,
     placement: OverlayPlacement,
     role: String? = nil,
-    hasLaidOut: Bool = false
+    hasLaidOut: Bool = false,
+    showInRewind: Bool = false
   ) {
     self.id = id
     self.kind = kind
@@ -85,6 +89,7 @@ public struct ProgramOverlay: Sendable, Codable, Identifiable, Hashable {
     self.placement = placement
     self.role = role
     self.hasLaidOut = hasLaidOut
+    self.showInRewind = showInRewind
   }
 
   public init(from decoder: Decoder) throws {
@@ -108,6 +113,7 @@ public struct ProgramOverlay: Sendable, Codable, Identifiable, Hashable {
       ?? .centerQuarter
     role = try container.decodeIfPresent(String.self, forKey: .role)
     hasLaidOut = try container.decodeIfPresent(Bool.self, forKey: .hasLaidOut) ?? false
+    showInRewind = try container.decodeIfPresent(Bool.self, forKey: .showInRewind) ?? false
   }
 }
 
@@ -188,6 +194,51 @@ public enum OverlayLayout {
       width: overlay.width * canvas.width,
       height: overlay.height * canvas.height
     )
+  }
+
+  /// Programme-canvas rectangles after live-only overlays collapse off-live. Does not mutate
+  /// stored overlay size; attached children are re-parked against the collapsed parent.
+  public static func displayRects(
+    overlays: [ProgramOverlay],
+    canvas: CGSize,
+    programIsOffLive: Bool
+  ) -> [UUID: CGRect] {
+    var rects: [UUID: CGRect] = [:]
+    var collapsedAny = false
+    for overlay in overlays {
+      var rect = pixelRect(overlay, canvas: canvas)
+      if OverlayVisibility.shouldCollapse(
+        showInRewind: overlay.showInRewind,
+        programIsOffLive: programIsOffLive
+      ) {
+        rect.size = .zero
+        collapsedAny = true
+      }
+      rects[overlay.id] = rect
+    }
+    guard collapsedAny else { return rects }
+
+    func applyChildren(of parentID: UUID, depth: Int) {
+      guard depth < 16, let parentRect = rects[parentID] else { return }
+      for overlay in overlays {
+        guard overlay.anchorID == parentID, let edge = overlay.anchorEdge else { continue }
+        guard var childRect = rects[overlay.id] else { continue }
+        let origin = anchoredOrigin(
+          parent: parentRect,
+          child: childRect,
+          edge: edge,
+          gap: CGFloat(overlay.anchorGap)
+        )
+        childRect.origin = origin
+        rects[overlay.id] = childRect
+        applyChildren(of: overlay.id, depth: depth + 1)
+      }
+    }
+
+    for overlay in overlays where overlay.anchorID == nil {
+      applyChildren(of: overlay.id, depth: 0)
+    }
+    return rects
   }
 
   /// Scale the rect from its top-left. Web overlays grow right and down; they are not cropped
@@ -300,45 +351,11 @@ public enum OverlayLayout {
       return (CGPoint(x: x, y: parent.maxY), CGPoint(x: x, y: child.minY))
     }
   }
-}
 
-public struct OverlayStore: Sendable {
-  private static let manifestName = "overlays.json"
-
-  public init() {}
-
-  public func load() -> [ProgramOverlay] {
-    let url = DirectorPaths.overlayManifest
-    guard
-      let data = try? Data(contentsOf: url),
-      let decoded = try? JSONDecoder().decode([ProgramOverlay].self, from: data)
-    else { return [] }
-    return decoded
-  }
-
-  public func save(_ overlays: [ProgramOverlay]) {
-    try? FileManager.default.createDirectory(
-      at: DirectorPaths.overlays,
-      withIntermediateDirectories: true
-    )
-    guard let data = try? JSONEncoder().encode(overlays) else { return }
-    try? data.write(to: DirectorPaths.overlayManifest, options: .atomic)
-  }
-
-  public func imageURL(filename: String) -> URL {
-    DirectorPaths.overlays.appendingPathComponent(filename)
-  }
-
-  public func writeImage(_ data: Data, filename: String) throws {
-    try FileManager.default.createDirectory(
-      at: DirectorPaths.overlays,
-      withIntermediateDirectories: true
-    )
-    try data.write(to: imageURL(filename: filename), options: .atomic)
-  }
-
-  public func removeImage(filename: String) {
-    guard !filename.isEmpty else { return }
-    try? FileManager.default.removeItem(at: imageURL(filename: filename))
+  /// Top-left square of a content-sized web snapshot, side min(width, height).
+  public static func webThumbnailCrop(contentSize: CGSize) -> CGRect {
+    let side = min(contentSize.width, contentSize.height)
+    guard side >= 1 else { return .zero }
+    return CGRect(x: 0, y: 0, width: side, height: side)
   }
 }

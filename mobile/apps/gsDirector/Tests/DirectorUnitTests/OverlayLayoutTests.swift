@@ -1,5 +1,6 @@
 import CoreGraphics
 import DirectorCore
+import Foundation
 import Testing
 
 @Suite("Overlay layout")
@@ -143,5 +144,102 @@ struct OverlayLayoutTests {
     let down = OverlayLayout.anchoredOrigin(parent: grown, child: child, edge: .bottom, gap: 10)
     #expect(abs(down.x - 250) < 0.5)
     #expect(abs(down.y - 190) < 0.5)
+  }
+
+  @Test("Web list thumb is the top-left min(width, height) square")
+  func webThumbnailCrop() {
+    let wide = OverlayLayout.webThumbnailCrop(contentSize: CGSize(width: 1000, height: 200))
+    #expect(wide == CGRect(x: 0, y: 0, width: 200, height: 200))
+    let tall = OverlayLayout.webThumbnailCrop(contentSize: CGSize(width: 200, height: 600))
+    #expect(tall == CGRect(x: 0, y: 0, width: 200, height: 200))
+  }
+
+  @Test("Live-only overlays collapse off live so attached children move")
+  func rewindCollapse() {
+    #expect(!OverlayVisibility.shouldCollapse(showInRewind: false, programIsOffLive: false))
+    #expect(OverlayVisibility.shouldCollapse(showInRewind: false, programIsOffLive: true))
+    #expect(!OverlayVisibility.shouldCollapse(showInRewind: true, programIsOffLive: false))
+    #expect(!OverlayVisibility.shouldCollapse(showInRewind: true, programIsOffLive: true))
+
+    let canvas = CGSize(width: 1000, height: 1000)
+    let parentID = UUID()
+    let childID = UUID()
+    let grandchildID = UUID()
+    let parent = ProgramOverlay(
+      id: parentID,
+      kind: .web,
+      originX: 0.1,
+      originY: 0.1,
+      width: 0.2,
+      height: 0.2,
+      placement: .centerQuarter,
+      hasLaidOut: true
+    )
+    let child = ProgramOverlay(
+      id: childID,
+      kind: .image,
+      originX: 0.31,
+      originY: 0.12,
+      width: 0.05,
+      height: 0.05,
+      anchorID: parentID,
+      anchorEdge: .right,
+      anchorGap: 10,
+      placement: .centerQuarter,
+      hasLaidOut: true,
+      showInRewind: true
+    )
+    let grandchild = ProgramOverlay(
+      id: grandchildID,
+      kind: .image,
+      originX: 0.37,
+      originY: 0.12,
+      width: 0.04,
+      height: 0.04,
+      anchorID: childID,
+      anchorEdge: .right,
+      anchorGap: 10,
+      placement: .centerQuarter,
+      hasLaidOut: true,
+      showInRewind: true
+    )
+    let live = OverlayLayout.displayRects(
+      overlays: [parent, child, grandchild],
+      canvas: canvas,
+      programIsOffLive: false
+    )
+    #expect(abs((live[parentID]?.width ?? 0) - 200) < 0.5)
+    #expect(abs((live[childID]?.minX ?? 0) - 310) < 0.5)
+
+    let rewind = OverlayLayout.displayRects(
+      overlays: [parent, child, grandchild],
+      canvas: canvas,
+      programIsOffLive: true
+    )
+    #expect(rewind[parentID]?.width == 0)
+    #expect(rewind[parentID]?.height == 0)
+    #expect(abs((rewind[parentID]?.minX ?? 0) - 100) < 0.5)
+    #expect(abs((rewind[childID]?.minX ?? 0) - 110) < 0.5)
+    #expect(abs((rewind[childID]?.width ?? 0) - 50) < 0.5)
+    #expect(abs((rewind[grandchildID]?.minX ?? 0) - 170) < 0.5)
+  }
+
+  @Test("Missing showInRewind decodes as live-only")
+  func showInRewindDefault() throws {
+    let overlay = ProgramOverlay(
+      kind: .web,
+      originX: 0,
+      originY: 0,
+      width: 0.2,
+      height: 0.2,
+      placement: .centerQuarter
+    )
+    var object = try JSONSerialization.jsonObject(
+      with: JSONEncoder().encode(overlay)
+    ) as? [String: Any]
+    object?["showInRewind"] = nil
+    let data = try JSONSerialization.data(withJSONObject: object ?? [:])
+    let decoded = try JSONDecoder().decode(ProgramOverlay.self, from: data)
+    #expect(decoded.showInRewind == false)
   }
 }
