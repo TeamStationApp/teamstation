@@ -1,0 +1,52 @@
+appId: co.gamestation.cameraman
+---
+# The app opens, the camera runs, and the operator-facing chrome is the name plus the zoom scale.
+# Stream details live in Settings — asserting them here would pin chrome we just removed.
+- launchApp
+- waitForAnimationToEnd:
+    timeout: 8000
+
+- assertVisible:
+    id: "camera-screen"
+- assertVisible:
+    id: "camera-name"
+
+# Opens at 1x on the wide lens.
+- assertVisible:
+    id: "zoom-label"
+    text: "1x"
+- assertVisible:
+    id: "zoom-preset-1x"
+- assertVisible:
+    id: "zoom-scale"
+- waitForAnimationToEnd:
+    timeout: 2500
+- takeScreenshot: overlay-landscape
+
+- assertVisible:
+    id: "flip-button"
+- assertVisible:
+    id: "settings-button"
+
+# The address and client count moved into Settings. Opening the sheet must not hide the camera
+# screen underneath in a way that a later flow cannot recover from.
+- tapOn:
+    id: "settings-button"
+- waitForAnimationToEnd:
+    timeout: 3000
+- assertVisible:
+    id: "settings-url"
+- assertVisible:
+    id: "settings-url-copy"
+- assertVisible:
+    id: "settings-clients"
+    text: "0"
+- assertVisible:
+    id: "settings-name-edit"
+- takeScreenshot: settings-landscape
+- tapOn:
+    id: "settings-done"
+- waitForAnimationToEnd:
+    timeout: 3000
+- assertVisible:
+    id: "camera-screen"

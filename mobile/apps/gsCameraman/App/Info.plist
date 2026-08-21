@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleDisplayName</key>
+  <string>GS Cameraman</string>
+  <key>CFBundleExecutable</key>
+  <string>$(EXECUTABLE_NAME)</string>
+  <key>CFBundleIdentifier</key>
+  <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleName</key>
+  <string>$(PRODUCT_NAME)</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>$(MARKETING_VERSION)</string>
+  <key>CFBundleVersion</key>
+  <string>$(CURRENT_PROJECT_VERSION)</string>
+  <key>LSRequiresIPhoneOS</key>
+  <true/>
+
+  <!-- Test control channel. Commands are ignored unless the app was launched with uiTest. -->
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>co.gamestation.cameraman.control</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>gscameraman</string>
+      </array>
+    </dict>
+  </array>
+
+  <key>NSCameraUsageDescription</key>
+  <string>GS Cameraman streams this camera to your production over RTSP.</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>GS Cameraman streams this microphone alongside the camera.</string>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>GS Cameraman serves an RTSP stream to GS Producer on your local network.</string>
+  <!-- Measured 2026-08-19: without this, advertising _rtsp._tcp fails with -65555
+       kDNSServiceErr_NoAuth and takes the whole NWListener down with it. The usage description
+       above is not sufficient on its own. -->
+  <key>NSBonjourServices</key>
+  <array>
+    <string>_rtsp._tcp</string>
+  </array>
+
+  <key>UIApplicationSceneManifest</key>
+  <dict>
+    <key>UIApplicationSupportsMultipleScenes</key>
+    <false/>
+  </dict>
+  <key>UILaunchScreen</key>
+  <dict/>
+  <key>UIStatusBarHidden</key>
+  <true/>
+  <key>UIInterfaceOrientation</key>
+  <string>UIInterfaceOrientationLandscapeRight</string>
+  <key>UIUserInterfaceStyle</key>
+  <string>Dark</string>
+  <key>UIRequiresFullScreen</key>
+  <true/>
+  <!-- Landscape only, so the encoded dimensions never change mid-stream. -->
+  <key>UISupportedInterfaceOrientations</key>
+  <array>
+    <string>UIInterfaceOrientationLandscapeLeft</string>
+    <string>UIInterfaceOrientationLandscapeRight</string>
+  </array>
+  <key>UISupportedInterfaceOrientations~ipad</key>
+  <array>
+    <string>UIInterfaceOrientationLandscapeLeft</string>
+    <string>UIInterfaceOrientationLandscapeRight</string>
+  </array>
+
+  <!-- The control channel and any RTSP client are plain HTTP/RTSP on the LAN. -->
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsLocalNetworking</key>
+    <true/>
+  </dict>
+</dict>
+</plist>
