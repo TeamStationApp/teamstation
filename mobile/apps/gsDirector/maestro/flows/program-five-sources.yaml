@@ -1,0 +1,57 @@
+# Fills the 3×3 grid: five synthetic cameras and every camera's audio in the mix.
+#
+# Synthetic rather than live so the flow does not depend on five real cameras being awake, and
+# because the synthetic sources generate a tone per camera — which is what makes a mix of five
+# sources audible as something other than one of them.
+appId: co.gamestation.director
+---
+- launchApp:
+    appId: co.gamestation.director
+    arguments:
+      clearState: true
+      uiTest: true
+      debugHUD: true
+      sourceProfile: synthetic4
+      sourceCount: 5
+      syntheticEntropy: low
+      segmentSeconds: 3
+      cameraCodec: hevc
+
+- extendedWaitUntil:
+    visible:
+      id: 'source-row-5'
+    timeout: 20000
+
+- runFlow: shared/settle-source-list.yaml
+
+- tapOn:
+    id: 'source-toggle-1'
+- tapOn:
+    id: 'source-toggle-2'
+- tapOn:
+    id: 'source-toggle-3'
+- tapOn:
+    id: 'source-toggle-4'
+- tapOn:
+    id: 'source-toggle-5'
+
+# Fails here rather than three assertions later if a tap went missing.
+- assertVisible: '5/5 enabled'
+
+- tapOn:
+    id: 'start-directing'
+
+- extendedWaitUntil:
+    visible:
+      id: 'output-tile'
+    timeout: 20000
+
+# Every enabled source feeds the mix, so the count reaches five once each has sent a buffer.
+- extendedWaitUntil:
+    visible: 'output src=CAM1 mix=5 .*'
+    timeout: 30000
+
+# And the mix is producing output rather than merely having contributors.
+- extendedWaitUntil:
+    visible: 'output src=CAM1 mix=5 mixs=[1-9][0-9]*'
+    timeout: 30000
