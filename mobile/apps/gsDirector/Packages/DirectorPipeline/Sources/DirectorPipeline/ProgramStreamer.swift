@@ -72,14 +72,14 @@ public final class ProgramStreamer: @unchecked Sendable {
     client.onFailure { [weak self] error in
       self?.handleFailure(error.description)
     }
+    markStarted(client)
+    telemetry.recordEncodeSessionChange(delta: 1)
     do {
       try await client.publish(to: url)
     } catch {
       stop()
       throw error
     }
-    markStarted(client)
-    telemetry.recordEncodeSessionChange(delta: 1)
   }
 
   /// NSLock cannot be taken inside an async function; these two helpers keep `start` legal.
@@ -147,12 +147,18 @@ public final class ProgramStreamer: @unchecked Sendable {
 
     var time = CMTimeSubtract(presentationTime, base)
     if time < .zero { time = .zero }
+    lock.lock()
+    let forceKey = !sentVideoConfig
+    lock.unlock()
+    let properties: CFDictionary? = forceKey
+      ? [ kVTEncodeFrameOptionKey_ForceKeyFrame: kCFBooleanTrue ] as CFDictionary
+      : nil
     VTCompressionSessionEncodeFrame(
       session,
       imageBuffer: encodable,
       presentationTimeStamp: time,
       duration: CMTime(value: 1, timescale: CMTimeScale(max(frameRate, 1))),
-      frameProperties: nil,
+      frameProperties: properties,
       sourceFrameRefcon: nil,
       infoFlagsOut: nil
     )
@@ -160,12 +166,16 @@ public final class ProgramStreamer: @unchecked Sendable {
 
   public func append(audio frame: AudioFrame) {
     lock.lock()
-    guard isRunning, let client else {
+    guard isRunning, let client, client.isLive else {
       lock.unlock()
       return
     }
     let packets = aac.encode(frame.sampleBuffer)
     let cookie = aac.audioSpecificConfig
+    guard sentVideoConfig else {
+      lock.unlock()
+      return
+    }
     let sentAudio = sentAudioConfig
     if !sentAudioConfig { sentAudioConfig = true }
     let audioTime: CMTime
@@ -214,7 +224,7 @@ public final class ProgramStreamer: @unchecked Sendable {
     VTSessionSetProperty(
       session,
       key: kVTCompressionPropertyKey_ProfileLevel,
-      value: kVTProfileLevel_H264_High_AutoLevel
+      value: kVTProfileLevel_H264_Baseline_AutoLevel
     )
     VTSessionSetProperty(
       session,
@@ -251,7 +261,7 @@ public final class ProgramStreamer: @unchecked Sendable {
     let keyframe = isKeyframe(sample)
 
     lock.lock()
-    guard isRunning, let client else {
+    guard isRunning, let client, client.isLive else {
       lock.unlock()
       return
     }
@@ -265,9 +275,14 @@ public final class ProgramStreamer: @unchecked Sendable {
       client.sendMetadata(width: width, height: height, frameRate: frameRate, bitrate: bitrate)
       lock.lock()
     }
-    if keyframe, !sentVideoConfig, let format = CMSampleBufferGetFormatDescription(sample),
-      let record = Self.avcRecord(from: format)
-    {
+    if !sentVideoConfig {
+      guard keyframe,
+        let format = CMSampleBufferGetFormatDescription(sample),
+        let record = Self.avcRecord(from: format)
+      else {
+        lock.unlock()
+        return
+      }
       sentVideoConfig = true
       lock.unlock()
       client.sendVideo(timestampMs: timestamp, tag: FLVTag.video(keyframe: true, packetType: 0, payload: record))
@@ -328,7 +343,16 @@ public final class ProgramStreamer: @unchecked Sendable {
       return Data(bytes: pointer, count: size)
     }
 
-    guard let sps = parameterSet(at: 0), let pps = parameterSet(at: 1) else { return nil }
+    guard let first = parameterSet(at: 0), let second = parameterSet(at: 1) else { return nil }
+    let sps: Data
+    let pps: Data
+    if first.count > 0, (first[0] & 0x1F) == 7 {
+      sps = first
+      pps = second
+    } else {
+      sps = second
+      pps = first
+    }
     return FLVTag.avcDecoderConfigurationRecord(sps: sps, pps: pps)
   }
 }
@@ -403,23 +427,8 @@ final class AACPacketizer: @unchecked Sendable {
     guard AudioConverterNew(&input, &output, &converter) == noErr, let converter else { return }
     var bitrate: UInt32 = 128_000
     AudioConverterSetProperty(converter, kAudioConverterEncodeBitRate, 4, &bitrate)
-    var cookieSize: UInt32 = 0
-    if AudioConverterGetPropertyInfo(
-      converter,
-      kAudioConverterCompressionMagicCookie,
-      &cookieSize,
-      nil
-    ) == noErr, cookieSize > 0 {
-      var cookie = [UInt8](repeating: 0, count: Int(cookieSize))
-      if AudioConverterGetProperty(
-        converter,
-        kAudioConverterCompressionMagicCookie,
-        &cookieSize,
-        &cookie
-      ) == noErr {
-        audioSpecificConfig = Data(cookie)
-      }
-    }
+    // FLV AAC packet type 0 is AudioSpecificConfig (2 bytes), not Apple's MP4 magic cookie.
+    audioSpecificConfig = Data([ 0x11, 0x90 ])
     self.converter = converter
   }
 

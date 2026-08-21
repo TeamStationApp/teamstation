@@ -71,6 +71,18 @@ struct RTMPWireTests {
     #expect(packet[0] == 3)
   }
 
+  @Test("S0 plus S1 is not yet a full hello")
+  func splitHelloNeedsS2() {
+    var hello = Data([ 0x03 ])
+    hello.append(Data(count: RTMPHandshake.packetSize))
+    #expect(RTMPHandshake.splitServerHello(hello) == nil)
+    hello.append(Data(count: RTMPHandshake.packetSize))
+    let parts = RTMPHandshake.splitServerHello(hello)
+    #expect(parts?.s0 == 3)
+    #expect(parts?.s1.count == RTMPHandshake.packetSize)
+    #expect(parts?.s2.count == RTMPHandshake.packetSize)
+  }
+
   @Test("A fmt-0 command message round-trips through the chunk reader")
   func chunkRoundTrip() {
     let payload = AMF0.encode([ .string("createStream"), .number(2), .null ])
@@ -92,6 +104,29 @@ struct RTMPWireTests {
     #expect(decoded.count == 1)
     #expect(decoded[0].payload.count == 300)
     #expect(decoded[0].timestamp == 40)
+  }
+
+  @Test("Inbound setChunkSize applies before the next message in the same packet")
+  func setChunkSizeBeforeFollowingMessage() {
+    var size = UInt32(4096).bigEndian
+    let sizeBytes = withUnsafeBytes(of: &size) { Data($0) }
+    let control = RTMPChunk.encode(
+      RTMPMessage(streamID: 0, type: .setChunkSize, timestamp: 0, payload: sizeBytes),
+      chunkStreamID: 2,
+      chunkSize: 128
+    )
+    let payload = AMF0.encode([ .string("_result"), .number(1), .null ])
+      + Data(repeating: 0x02, count: 80)
+    let command = RTMPChunk.encode(
+      RTMPMessage(streamID: 0, type: .amf0Command, timestamp: 0, payload: payload),
+      chunkStreamID: 3,
+      chunkSize: 4096
+    )
+    let decoded = RTMPChunkReader().push(control + command)
+    #expect(decoded.count == 2)
+    #expect(decoded[0].type == .setChunkSize)
+    #expect(decoded[1].type == .amf0Command)
+    #expect(decoded[1].payload == payload)
   }
 }
 
