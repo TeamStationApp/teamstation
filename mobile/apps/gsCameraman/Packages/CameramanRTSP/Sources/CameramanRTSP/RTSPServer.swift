@@ -42,6 +42,8 @@ public final class RTSPServer: @unchecked Sendable {
     var listener: NWListener?
     var connections: [ObjectIdentifier: RTSPClientConnection] = [:]
     var status = Status()
+    var advertise = false
+    var path = "/live/mainstream"
   }
 
   public var onStatusChange: (@Sendable (Status) -> Void)?
@@ -77,6 +79,36 @@ public final class RTSPServer: @unchecked Sendable {
     queue.async { [self] in stopLocked() }
   }
 
+  /// Re-publishes `_rtsp._tcp` under the current name. A rename that only updated the in-memory
+  /// identity would otherwise keep advertising the old instance until the listener was restarted.
+  public func refreshAdvertisement() {
+    queue.async { [self] in
+      let snapshot: (NWListener, String)? = state.withLock { current in
+        guard current.advertise, let listener = current.listener else { return nil }
+        return (listener, current.path)
+      }
+      guard let (listener, path) = snapshot else { return }
+      listener.service = Self.bonjourService(identity: identity(), path: path)
+    }
+  }
+
+  /// TXT keys Director reads for Cameraman identity. `uuid` is the CNAME; `name` is the label.
+  public static func bonjourTXT(identity: DeviceIdentity, path: String) -> [String: String] {
+    [
+      "uuid": identity.cname,
+      "name": identity.name,
+      "path": path
+    ]
+  }
+
+  public static func bonjourService(identity: DeviceIdentity, path: String) -> NWListener.Service {
+    NWListener.Service(
+      name: identity.name,
+      type: bonjourServiceType,
+      txtRecord: NWTXTRecord(bonjourTXT(identity: identity, path: path))
+    )
+  }
+
   private func bind(port: UInt16, requested: UInt16, path: String, advertise: Bool) -> Bool {
     guard let endpointPort = NWEndpoint.Port(rawValue: port) else { return false }
 
@@ -100,17 +132,12 @@ public final class RTSPServer: @unchecked Sendable {
     // NSLocalNetworkUsageDescription alone gives no hint that anything is missing.
     //
     // The TXT record carries the identity so a browsing client can label the camera before connecting.
+    state.withLock {
+      $0.advertise = advertise
+      $0.path = path
+    }
     if advertise {
-      let current = identity()
-      listener.service = NWListener.Service(
-        name: current.name,
-        type: Self.bonjourServiceType,
-        txtRecord: NWTXTRecord([
-          "uuid": current.cname,
-          "name": current.name,
-          "path": path
-        ])
-      )
+      listener.service = Self.bonjourService(identity: identity(), path: path)
     }
 
     listener.newConnectionHandler = { [weak self] connection in
