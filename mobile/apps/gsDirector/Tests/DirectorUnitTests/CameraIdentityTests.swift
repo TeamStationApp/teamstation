@@ -27,8 +27,8 @@ struct CameraIdentityTests {
 
   // MARK: - Automatic binding
 
-  @Test("A camera returning on the address it last used keeps its name without being asked")
-  func autoBindsByHost() {
+  @Test("A camera returning on an address it last used stays unbound until it identifies itself")
+  func autoDoesNotBindByHost() {
     let records = [ record("Third Base", host: "192.168.7.148") ]
     let bindings = CameraIdentityRules.autoBind(
       endpoints: [ endpoint("192.168.7.148") ],
@@ -36,8 +36,8 @@ struct CameraIdentityTests {
     )
 
     #expect(bindings.count == 1)
-    #expect(bindings[0].cameraID == records[0].id)
-    #expect(bindings[0].origin == .autoByHost)
+    #expect(bindings[0].cameraID == nil)
+    #expect(bindings[0].origin == .unbound)
   }
 
   @Test("An address no cached camera has used stays unbound rather than guessing")
@@ -51,8 +51,8 @@ struct CameraIdentityTests {
     #expect(bindings[0].origin == .unbound)
   }
 
-  @Test("When two cameras claim one address the most recently seen wins and the other waits")
-  func duplicateHostClaimsResolveByRecency() {
+  @Test("Two records that last used the same address do not claim it")
+  func duplicateHostDoesNotAutoBind() {
     let stale = record("First Base", host: "192.168.7.148", secondsAfterEpoch: 0)
     let fresh = record("Third Base", host: "192.168.7.148", secondsAfterEpoch: 60)
 
@@ -62,16 +62,31 @@ struct CameraIdentityTests {
     )
 
     #expect(bindings.count == 1)
-    #expect(bindings[0].cameraID == fresh.id)
+    #expect(bindings[0].cameraID == nil)
   }
 
   @Test("One camera cannot occupy two endpoints at once")
   func aRecordBindsToAtMostOneEndpoint() {
-    // Both endpoints last saw the same camera, which is only possible after address churn.
-    let single = record("Third Base", host: "192.168.7.148")
+    let advertisement = CameraAdvertisement(
+      host: "192.168.7.148",
+      advertisedName: "00001 3rd",
+      modelName: "VM33_00001"
+    )
+    let records = [
+      CameraRecord(
+        name: "Third Base",
+        lastKnownHost: "192.168.7.148",
+        lastSeenAt: epoch,
+        hardwareID: "model:VM33_00001"
+      )
+    ]
     let bindings = CameraIdentityRules.autoBind(
-      endpoints: [ CameraEndpoint(host: "192.168.7.148", port: 554), CameraEndpoint(host: "192.168.7.148", port: 8554) ],
-      records: [ single ]
+      endpoints: [
+        CameraEndpoint(host: "192.168.7.148", port: 554),
+        CameraEndpoint(host: "192.168.7.148", port: 8554)
+      ],
+      records: records,
+      advertisements: [ "192.168.7.148": advertisement ]
     )
 
     #expect(bindings.filter(\.isBound).count == 1)
@@ -100,10 +115,10 @@ struct CameraIdentityTests {
   @Test("Naming an unnamed camera takes it from whichever endpoint held it")
   func manualBindSteals() {
     var records = [ record("Third Base", host: "192.168.7.148") ]
-    var bindings = CameraIdentityRules.autoBind(
-      endpoints: [ endpoint("192.168.7.148"), endpoint("192.168.7.225") ],
-      records: records
-    )
+    var bindings = [
+      CameraBinding(endpoint: endpoint("192.168.7.148"), cameraID: records[0].id, origin: .manual),
+      CameraBinding(endpoint: endpoint("192.168.7.225"))
+    ]
 
     CameraIdentityRules.bind(
       endpoint: endpoint("192.168.7.225"),
@@ -123,17 +138,16 @@ struct CameraIdentityTests {
 
   @Test("Two cameras that exchanged addresses are fixed by correcting either one")
   func manualBindSwapsWhenBothHeld() {
-    // The leases swapped overnight, so both cameras auto-bound to the wrong address.
     var records = [
       record("Third Base", host: "192.168.7.148"),
       record("First Base", host: "192.168.7.225")
     ]
     let thirdBase = records[0].id
     let firstBase = records[1].id
-    var bindings = CameraIdentityRules.autoBind(
-      endpoints: [ endpoint("192.168.7.148"), endpoint("192.168.7.225") ],
-      records: records
-    )
+    var bindings = [
+      CameraBinding(endpoint: endpoint("192.168.7.148"), cameraID: thirdBase, origin: .manual),
+      CameraBinding(endpoint: endpoint("192.168.7.225"), cameraID: firstBase, origin: .manual)
+    ]
 
     CameraIdentityRules.bind(
       endpoint: endpoint("192.168.7.225"),
@@ -150,7 +164,7 @@ struct CameraIdentityTests {
     #expect(at148?.origin == .manual)
   }
 
-  @Test("Binding records the address so the next launch matches it automatically")
+  @Test("Binding records the session address without making IP the identity")
   func bindingUpdatesTheCache() {
     var records = [ record("Third Base", host: "192.168.7.148") ]
     var bindings: [CameraBinding] = []
@@ -276,10 +290,9 @@ struct CameraIdentityTests {
   @Test("Forgetting a camera also frees the endpoint that was holding it")
   func forgetUnbinds() {
     var records = [ record("Third Base", host: "192.168.7.148") ]
-    var bindings = CameraIdentityRules.autoBind(
-      endpoints: [ endpoint("192.168.7.148") ],
-      records: records
-    )
+    var bindings = [
+      CameraBinding(endpoint: endpoint("192.168.7.148"), cameraID: records[0].id, origin: .manual)
+    ]
 
     CameraIdentityRules.forget(records[0].id, from: &records, bindings: &bindings)
 
@@ -319,8 +332,8 @@ struct CameraIdentityTests {
     #expect(bindings[0].origin == .autoByIdentity)
   }
 
-  @Test("A record that already has a TXT unique id stays identity-bound when Bonjour is quiet")
-  func hardwareRecordMatchedByHostIsIdentity() {
+  @Test("A TXT camera stays unbound until this session sees its advertisement")
+  func hardwareRecordIsNotMatchedByHost() {
     let records = [
       CameraRecord(
         name: "Third Base",
@@ -336,18 +349,22 @@ struct CameraIdentityTests {
       advertisements: [:]
     )
 
-    #expect(bindings[0].cameraID == records[0].id)
-    #expect(bindings[0].origin == .autoByIdentity)
+    #expect(bindings[0].cameraID == nil)
+    #expect(bindings[0].origin == .unbound)
   }
 
   // MARK: - The pipeline key
 
   @Test("A bound camera keys the archive by identity, not by address")
   func sourceIDComesFromTheRecord() {
-    let records = [ record("Third Base", host: "192.168.7.148") ]
-    let bindings = CameraIdentityRules.autoBind(
-      endpoints: [ endpoint("192.168.7.148") ],
-      records: records
+    var records = [ record("Third Base", host: "192.168.7.148") ]
+    var bindings: [CameraBinding] = []
+    CameraIdentityRules.bind(
+      endpoint: endpoint("192.168.7.148"),
+      to: records[0].id,
+      in: &bindings,
+      records: &records,
+      now: epoch
     )
 
     #expect(CameraIdentityRules.sourceID(for: bindings[0]).rawValue == records[0].id.uuidString)
@@ -363,11 +380,16 @@ struct CameraIdentityTests {
   @Test("A camera keeps its key across an address change, so the archive stays continuous")
   func sourceIDSurvivesAnAddressChange() {
     var records = [ record("Third Base", host: "192.168.7.148") ]
-    let before = CameraIdentityRules.sourceID(
-      for: CameraIdentityRules.autoBind(endpoints: [ endpoint("192.168.7.148") ], records: records)[0]
-    )
-
     var bindings: [CameraBinding] = []
+    CameraIdentityRules.bind(
+      endpoint: endpoint("192.168.7.148"),
+      to: records[0].id,
+      in: &bindings,
+      records: &records,
+      now: epoch
+    )
+    let before = CameraIdentityRules.sourceID(for: bindings[0])
+
     CameraIdentityRules.bind(
       endpoint: endpoint("192.168.7.201"),
       to: records[0].id,
@@ -376,7 +398,8 @@ struct CameraIdentityTests {
       now: epoch
     )
 
-    #expect(CameraIdentityRules.sourceID(for: bindings[0]) == before)
+    let after = bindings.first { $0.endpoint.host == "192.168.7.201" }
+    #expect(after.flatMap { CameraIdentityRules.sourceID(for: $0) } == before)
   }
 
   // MARK: - Recovering a camera that moved
@@ -414,10 +437,9 @@ struct CameraIdentityTests {
   @Test("Nothing free means nothing to report but the absence")
   func reresolveWithNoCandidate() {
     var records = [ record("Third Base", host: "192.168.7.148") ]
-    var bindings = CameraIdentityRules.autoBind(
-      endpoints: [ endpoint("192.168.7.148") ],
-      records: records
-    )
+    var bindings = [
+      CameraBinding(endpoint: endpoint("192.168.7.148"), cameraID: records[0].id, origin: .manual)
+    ]
 
     let outcome = CameraIdentityRules.reresolve(
       records[0].id, in: &bindings, records: &records, now: epoch
@@ -428,22 +450,50 @@ struct CameraIdentityTests {
 
   // MARK: - Persistence
 
-  @Test("The cache round-trips, because a name typed once must survive a relaunch")
+  @Test("The cache round-trips cameras that have a hardened id, and drops IP-only ones")
   func recordsRoundTripThroughTheStore() throws {
     let defaults = try #require(UserDefaults(suiteName: "co.gamestation.director.tests.cameras"))
     defaults.removePersistentDomain(forName: "co.gamestation.director.tests.cameras")
     let store = CameraRecordStore(store: ConfigStore(defaults: defaults))
 
-    let records = [
-      record("Third Base", host: "192.168.7.148"),
-      record("First Base", host: "192.168.7.225", secondsAfterEpoch: 30)
-    ]
-    store.save(records)
+    let identified = CameraRecord(
+      name: "Third Base",
+      lastKnownCNAME: nil,
+      lastKnownHost: "192.168.7.148",
+      lastSeenAt: epoch,
+      hardwareID: "model:VM33_00001"
+    )
+    let byCNAME = CameraRecord(
+      name: "Sideline",
+      lastKnownCNAME: "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+      lastKnownHost: "192.168.7.225",
+      lastSeenAt: epoch.addingTimeInterval(30)
+    )
+    let ipOnly = record("Scratch camera", host: "192.168.7.99")
+    store.save([ identified, byCNAME, ipOnly ])
 
-    #expect(store.load() == records)
+    let loaded = store.load()
+    #expect(loaded.count == 2)
+    #expect(loaded.map(\.name).sorted() == [ "Sideline", "Third Base" ])
+    #expect(loaded.allSatisfy { $0.lastKnownHost.isEmpty })
+    #expect(loaded.allSatisfy { $0.hasHardenedIdentity })
 
     store.clear()
     #expect(store.load().isEmpty)
+  }
+
+  @Test("Persisted JSON does not store the last IP address")
+  func persistedJSONOmitsLastKnownHost() throws {
+    let record = CameraRecord(
+      name: "Third Base",
+      lastKnownHost: "192.168.7.148",
+      lastSeenAt: epoch,
+      hardwareID: "model:VM33_00001"
+    )
+    let data = try JSONEncoder().encode([ record ])
+    let json = try #require(String(data: data, encoding: .utf8))
+    #expect(!json.contains("lastKnownHost"))
+    #expect(!json.contains("192.168.7.148"))
   }
 
   // MARK: - TXT unique ids
@@ -581,8 +631,8 @@ struct CameraIdentityTests {
     #expect(records[0].hardwareID == "model:VM33_00001")
   }
 
-  @Test("A legacy record at this address is stamped with the TXT unique id")
-  func legacyHostRecordGainsHardwareID() {
+  @Test("A host-only record is not stamped with a TXT unique id")
+  func txtUniqueIDDoesNotAttachByHost() {
     var records = [ record("Third Base", host: "192.168.7.148") ]
     CameraIdentityRules.applyAdvertisements(
       [
@@ -596,9 +646,11 @@ struct CameraIdentityTests {
       now: epoch
     )
 
-    #expect(records.count == 1)
+    #expect(records.count == 2)
     #expect(records[0].name == "Third Base")
-    #expect(records[0].hardwareID == "model:VM33_00001")
+    #expect(records[0].hardwareID == nil)
+    #expect(records[1].name == "00001 3rd")
+    #expect(records[1].hardwareID == "model:VM33_00001")
   }
 
   // MARK: - SDP / RTCP CNAME
@@ -691,5 +743,7 @@ struct CameraIdentityTests {
     #expect(records[0].nameOrigin == .operatorAssigned)
     #expect(records[0].lastKnownCNAME == nil)
     #expect(records[0].hardwareID == nil)
+    #expect(records[0].lastKnownHost.isEmpty)
+    #expect(!records[0].hasHardenedIdentity)
   }
 }
