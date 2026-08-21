@@ -36,9 +36,12 @@ public final class RTMPClient: @unchecked Sendable {
   public typealias FailureHandler = @Sendable (RTMPClientError) -> Void
 
   private let queue = DispatchQueue(label: "co.gamestation.director.rtmp")
+  private let ioQueue = DispatchQueue(label: "co.gamestation.director.rtmp.io")
   private static let queueKey = DispatchSpecificKey<UInt8>()
   private let lock = NSLock()
-  private var connection: NWConnection?
+  private var socketFD: Int32 = -1
+  private var readSource: DispatchSourceRead?
+  private var connectSource: DispatchSourceWrite?
   private var reader = RTMPChunkReader()
   private var handshakeBuffer = Data()
   private var phase = Phase.idle
@@ -55,6 +58,11 @@ public final class RTMPClient: @unchecked Sendable {
   private var onFailure: FailureHandler?
   private var url: RTMPURL?
   private var socketReady = false
+  private var sentC2 = false
+  private var handshakePeer = ""
+  private var handshakeSent = 0
+  private var handshakeRecv = 0
+  private var handshakeTrace = ""
 
   private enum Phase {
     case idle, handshaking, connected, creatingStream, publishing, live, failed
@@ -84,7 +92,7 @@ public final class RTMPClient: @unchecked Sendable {
     return phase == .live
   }
 
-  public func publish(to url: RTMPURL, timeoutSeconds: Double = 12) async throws {
+  public func publish(to url: RTMPURL, timeoutSeconds: Double = 20) async throws {
     try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
       queue.async {
         self.begin(url: url, continuation: continuation)
@@ -94,8 +102,14 @@ public final class RTMPClient: @unchecked Sendable {
           let ready = self.socketReady
           self.lock.unlock()
           if waiting {
+            let peer = self.handshakePeer
+            let sent = self.handshakeSent
+            let recv = self.handshakeRecv
+            let trace = self.handshakeTrace
             self.fail(
-              ready ? .timeout : .connectFailed("could not open a TCP connection to the stream server"),
+              ready
+                ? .connectFailed("handshake timeout peer=\(peer) sent=\(sent) recv=\(recv)\(trace)")
+                : .connectFailed("could not open a TCP connection to the stream server"),
               notifyWaiter: true
             )
           }
@@ -169,28 +183,108 @@ public final class RTMPClient: @unchecked Sendable {
     handshakeBuffer.removeAll()
     reader = RTMPChunkReader()
     socketReady = false
+    sentC2 = false
+    handshakePeer = ""
+    handshakeSent = 0
+    handshakeRecv = 0
+    handshakeTrace = ""
     lock.unlock()
 
-    guard let port = NWEndpoint.Port(rawValue: UInt16(url.port)) else {
+    guard let port = UInt16(exactly: url.port) else {
       fail(.connectFailed("invalid port \(url.port)"), notifyWaiter: true)
       return
     }
-    let parameters = NWParameters.tcp
-    if let options = parameters.defaultProtocolStack.transportProtocol as? NWProtocolTCP.Options {
-      options.noDelay = true
-      options.connectionTimeout = 8
+    let host = url.host
+    do {
+      try openSocket(host: host, port: port)
+    } catch {
+      fail(.connectFailed(error.localizedDescription), notifyWaiter: true)
+      return
     }
-    // Prefer IPv6, then IPv4. Dual-stack hostname lookup in Network.framework can sit in
-    // `.preparing` until the handshake timeout when one family is firewalled.
-    let host = Self.ipLiteral(for: url.host, family: AF_INET6)
-      ?? Self.ipLiteral(for: url.host, family: AF_INET)
-      ?? url.host
-    let connection = NWConnection(host: NWEndpoint.Host(host), port: port, using: parameters)
-    self.connection = connection
-    connection.stateUpdateHandler = { [weak self] state in
-      self?.handle(state: state)
+  }
+
+  private func openSocket(host: String, port: UInt16) throws {
+    var hints = addrinfo()
+    hints.ai_family = AF_INET
+    hints.ai_socktype = SOCK_STREAM
+    hints.ai_protocol = IPPROTO_TCP
+    var info: UnsafeMutablePointer<addrinfo>?
+    let lookup = host.withCString { getaddrinfo($0, String(port), &hints, &info) }
+    guard lookup == 0, let first = info else {
+      throw RTMPClientError.connectFailed("could not resolve \(host)")
     }
-    connection.start(queue: queue)
+    defer { freeaddrinfo(info) }
+
+    let fd = Darwin.socket(first.pointee.ai_family, first.pointee.ai_socktype, first.pointee.ai_protocol)
+    guard fd >= 0 else { throw RTMPClientError.connectFailed("could not open a TCP socket") }
+    var noSig = Int32(1)
+    setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSig, socklen_t(MemoryLayout<Int32>.size))
+    var noDelay = Int32(1)
+    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &noDelay, socklen_t(MemoryLayout<Int32>.size))
+    socketFD = fd
+    var storage = sockaddr_storage()
+    let addrLen = first.pointee.ai_addrlen
+    _ = withUnsafeMutableBytes(of: &storage) { dest in
+      memcpy(dest.baseAddress, first.pointee.ai_addr, Int(addrLen))
+    }
+    ioQueue.async { [weak self] in
+      self?.blockingConnectAndRead(fd: fd, storage: storage, addrLen: addrLen)
+    }
+  }
+
+  private func blockingConnectAndRead(fd: Int32, storage: sockaddr_storage, addrLen: socklen_t) {
+    var storage = storage
+    let rc = withUnsafePointer(to: &storage) { pointer in
+      pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.connect(fd, $0, addrLen) }
+    }
+    if rc != 0 {
+      queue.async { self.fail(.connectFailed("could not open a TCP connection to the stream server"), notifyWaiter: true) }
+      return
+    }
+    queue.async {
+      self.lock.lock()
+      self.socketReady = true
+      self.lock.unlock()
+    }
+    let hello = RTMPHandshake.c0c1()
+    let sent = hello.withUnsafeBytes { Darwin.send(fd, $0.baseAddress, $0.count, 0) }
+    if sent < hello.count {
+      queue.async { self.fail(.connectFailed("could not send the stream handshake"), notifyWaiter: true) }
+      return
+    }
+    let peer = Self.peerDescription(storage: storage, addrLen: addrLen)
+    queue.async {
+      self.lock.lock()
+      self.handshakePeer = peer
+      self.handshakeSent = sent
+      self.lock.unlock()
+    }
+    var buffer = [UInt8](repeating: 0, count: 64 * 1024)
+    while true {
+      let count = buffer.withUnsafeMutableBytes { Darwin.recv(fd, $0.baseAddress, $0.count, 0) }
+      if count > 0 {
+        let chunk = Data(buffer.prefix(count))
+        queue.async {
+          self.lock.lock()
+          self.handshakeRecv += count
+          self.lock.unlock()
+          self.handle(received: chunk)
+        }
+        continue
+      }
+      if count == 0 {
+        queue.async {
+          self.lock.lock()
+          let trace = self.handshakeTrace
+          self.lock.unlock()
+          self.fail(.disconnected("server closed the socket\(trace)"), notifyWaiter: true)
+        }
+        return
+      }
+      if errno == EINTR { continue }
+      queue.async { self.fail(.disconnected("socket read failed (\(errno))"), notifyWaiter: true) }
+      return
+    }
   }
 
   /// Literal address for `host` in `family` (`AF_INET` or `AF_INET6`), or nil if lookup fails.
@@ -221,37 +315,16 @@ public final class RTMPClient: @unchecked Sendable {
     return literal.isEmpty ? nil : literal
   }
 
-  private func handle(state: NWConnection.State) {
-    switch state {
-    case .ready:
-      lock.lock()
-      socketReady = true
-      lock.unlock()
-      receive()
-      write(RTMPHandshake.c0c1())
-    case let .failed(error):
-      fail(.connectFailed(error.localizedDescription), notifyWaiter: true)
-    case .cancelled:
-      fail(.cancelled, notifyWaiter: true)
-    default:
-      break
-    }
-  }
-
-  private func receive() {
-    connection?.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, isComplete, error in
-      guard let self else { return }
-      self.queue.async {
-        if let error {
-          self.fail(.disconnected(error.localizedDescription), notifyWaiter: true)
-          return
-        }
-        if let data, !data.isEmpty { self.handle(received: data) }
-        if isComplete {
-          self.fail(.disconnected("server closed the socket"), notifyWaiter: true)
-          return
-        }
-        self.receive()
+  private static func peerDescription(storage: sockaddr_storage, addrLen: socklen_t) -> String {
+    var storage = storage
+    return withUnsafePointer(to: &storage) { pointer in
+      pointer.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { sin in
+        var address = sin.pointee.sin_addr
+        var buffer = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+        inet_ntop(AF_INET, &address, &buffer, socklen_t(INET_ADDRSTRLEN))
+        let host = String(cString: buffer)
+        let port = Int(UInt16(bigEndian: sin.pointee.sin_port))
+        return "\(host):\(port)"
       }
     }
   }
@@ -262,14 +335,26 @@ public final class RTMPClient: @unchecked Sendable {
     lock.unlock()
     if phase == .handshaking {
       handshakeBuffer.append(data)
-      guard let hello = RTMPHandshake.splitServerHello(handshakeBuffer) else { return }
+      // nginx-rtmp often withholds S2 until it has C2. Waiting for the full 3073-byte hello
+      // before echoing S1 deadlocks the handshake until our timeout.
+      let s0s1 = 1 + RTMPHandshake.packetSize
+      if !sentC2, handshakeBuffer.count >= s0s1 {
+        sentC2 = true
+        write(RTMPHandshake.c2(fromS1: Data(handshakeBuffer[1 ..< s0s1])))
+      }
+      guard RTMPHandshake.splitServerHello(handshakeBuffer) != nil else { return }
       let consumed = 1 + RTMPHandshake.packetSize * 2
       let leftover = handshakeBuffer.count > consumed ? Data(handshakeBuffer[consumed...]) : Data()
       handshakeBuffer.removeAll()
-      write(RTMPHandshake.c2(fromS1: hello.s1))
       sendConnect()
       if !leftover.isEmpty {
+        lock.lock()
+        handshakeTrace += " leftover=\(leftover.count)"
+        lock.unlock()
         let messages = reader.push(leftover)
+        lock.lock()
+        handshakeTrace += " parsed=\(messages.count)"
+        lock.unlock()
         for message in messages { handle(message: message) }
       }
       return
@@ -279,14 +364,32 @@ public final class RTMPClient: @unchecked Sendable {
   }
 
   private func handle(message: RTMPMessage) {
+    lock.lock()
+    handshakeTrace += " t\(message.type.rawValue)/\(message.payload.count)"
+    lock.unlock()
     switch message.type {
     case .setChunkSize:
       if message.payload.count >= 4 {
         let size = Int(readUInt32BE(message.payload))
         if size > 0 { reader.setChunkSize(size) }
       }
-    case .windowAckSize, .setPeerBandwidth, .userControl, .acknowledgement, .abort:
+    case .windowAckSize, .setPeerBandwidth, .acknowledgement, .abort:
       break
+    case .userControl:
+      if message.payload.count >= 6 {
+        let event = (UInt16(message.payload[0]) << 8) | UInt16(message.payload[1])
+        if event == 6 {
+          var pong = Data([ 0x00, 0x07 ])
+          pong.append(message.payload[2...])
+          write(
+            RTMPChunk.encode(
+              RTMPMessage(streamID: 0, type: .userControl, timestamp: 0, payload: pong),
+              chunkStreamID: Self.controlChunk,
+              chunkSize: outChunkSize
+            )
+          )
+        }
+      }
     case .amf0Command, .amf3Command:
       handleCommand(message.payload)
     default:
@@ -296,8 +399,16 @@ public final class RTMPClient: @unchecked Sendable {
 
   private func handleCommand(_ payload: Data) {
     let values = AMF0.decodeList(payload)
-    guard let name = values.first?.stringValue else { return }
     let tx = values.dropFirst().first?.numberValue.map { Int($0) } ?? 0
+    guard let name = values.first?.stringValue else {
+      lock.lock()
+      handshakeTrace += " amf0empty"
+      lock.unlock()
+      return
+    }
+    lock.lock()
+    handshakeTrace += " \(name)#\(tx)"
+    lock.unlock()
     switch name {
     case "_result":
       lock.lock()
@@ -315,6 +426,9 @@ public final class RTMPClient: @unchecked Sendable {
       fail(.rejected(detail), notifyWaiter: true)
     case "onStatus":
       let code = values.compactMap(\.objectValue).first?["code"]?.stringValue ?? ""
+      lock.lock()
+      handshakeTrace += " \(code)"
+      lock.unlock()
       if code.contains("Publish.Start") {
         markLive()
       } else if code.contains("Publish.BadName") || code.contains("Failed") || code.contains("Rejected") {
@@ -411,8 +525,6 @@ public final class RTMPClient: @unchecked Sendable {
         chunkSize: outChunkSize
       )
     )
-    // nginx-rtmp and PeerTube start forwarding as soon as publish lands; waiting for onStatus
-    // leaves the first GOP on the floor if the server never sends it.
     markLive()
   }
 
@@ -479,22 +591,28 @@ public final class RTMPClient: @unchecked Sendable {
       return
     }
     let data = sendQueue.removeFirst()
+    let fd = socketFD
     lock.unlock()
-    connection?.send(content: data, completion: .contentProcessed { [weak self] error in
-      guard let self else { return }
-      self.queue.async {
-        if let error {
-          self.fail(.disconnected(error.localizedDescription), notifyWaiter: true)
-          return
-        }
-        self.lock.lock()
-        self.bytesSent += UInt64(data.count)
-        self.bytesThisWindow += UInt64(data.count)
-        self.refreshMegabitsLocked()
-        self.lock.unlock()
-        self.flush()
+    guard fd >= 0 else {
+      fail(.disconnected("socket closed"), notifyWaiter: true)
+      return
+    }
+    var remaining = data
+    while !remaining.isEmpty {
+      let sent = remaining.withUnsafeBytes { Darwin.send(fd, $0.baseAddress, $0.count, 0) }
+      if sent < 0 {
+        if errno == EINTR { continue }
+        fail(.disconnected("socket write failed (\(errno))"), notifyWaiter: true)
+        return
       }
-    })
+      remaining = Data(remaining.dropFirst(max(sent, 0)))
+      lock.lock()
+      bytesSent += UInt64(max(sent, 0))
+      bytesThisWindow += UInt64(max(sent, 0))
+      refreshMegabitsLocked()
+      lock.unlock()
+    }
+    flush()
   }
 
   private func refreshMegabitsLocked() {
@@ -518,8 +636,14 @@ public final class RTMPClient: @unchecked Sendable {
     connectWait = nil
     let handler = onFailure
     lock.unlock()
-    connection?.cancel()
-    connection = nil
+    readSource?.cancel()
+    readSource = nil
+    connectSource?.cancel()
+    connectSource = nil
+    if socketFD >= 0 {
+      Darwin.close(socketFD)
+      socketFD = -1
+    }
     sendQueue.removeAll()
     isSending = false
     waiter?.resume(throwing: error)

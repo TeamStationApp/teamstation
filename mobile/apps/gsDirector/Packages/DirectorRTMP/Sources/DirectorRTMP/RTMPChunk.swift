@@ -224,6 +224,15 @@ public final class RTMPChunkReader: @unchecked Sendable {
     buffer.removeSubrange(0 ..< (cursor + take))
 
     if state.remaining == 0, let type = RTMPMessageType(rawValue: state.type) {
+      if type == .setChunkSize, state.payload.count >= 4 {
+        let size = Int(
+          (UInt32(state.payload[0]) << 24)
+            | (UInt32(state.payload[1]) << 16)
+            | (UInt32(state.payload[2]) << 8)
+            | UInt32(state.payload[3])
+        )
+        if size > 0 { chunkSize = size }
+      }
       let message = RTMPMessage(
         streamID: state.streamID,
         type: type,
