@@ -127,6 +127,10 @@ public final class AppEnvironment {
   public private(set) var overlays: [ProgramOverlay] = []
   public private(set) var templates: [OverlayTemplate] = []
   public private(set) var activeTemplateID = UUID()
+  public private(set) var remoteTemplates: [RemoteControlTemplate] = []
+  public private(set) var activeRemoteTemplateID = UUID()
+  /// Editor capture target. Nil means pad presses fire production actions.
+  public var capturingRemoteAction: RemoteAction?
 
   let converter: PixelConverter
   let index: ArchiveIndex
@@ -157,6 +161,8 @@ public final class AppEnvironment {
   /// Width of one small source tile, used so Output scrub (if added) shares the 60s-per-width rate.
   public var smallTileWidth: Double = 300
   private let overlayStore = OverlayStore()
+  public let remoteInput = RemoteInputSession()
+  private let remoteStore = RemoteControlStore()
   private var webControllers: [UUID: WebOverlayController] = [:]
   private var webSnapshots: [UUID: (CGImage, CGSize)] = [:]
   private var overlayImages: [UUID: CGImage] = [:]
@@ -255,6 +261,11 @@ public final class AppEnvironment {
     let manifest = overlayStore.loadManifest()
     apply(manifest)
     reloadOverlayMedia()
+    apply(remoteStore.loadManifest())
+    remoteInput.onDown = { [weak self] id, pressed in
+      self?.handleRemoteDown(id, pressed: pressed)
+    }
+    remoteInput.start()
 
     startDiscovery()
     startPolling()
@@ -280,6 +291,7 @@ public final class AppEnvironment {
     webControllers.removeAll()
     controlServer?.stop()
     controlServer = nil
+    remoteInput.stop()
   }
 
   /// True while this session is on generated test-pattern cameras rather than live ones.
@@ -475,9 +487,9 @@ public final class AppEnvironment {
     guard let endpoint = endpoint(for: id), !advertisement.isEmpty else { return }
     cameras.note(advertisement, from: endpoint)
     cameraRecords = cameras.records
-    if let tileIndex = selections.first(where: { $0.id == id })?.tileIndex,
+    if let sourceIndex = selections.first(where: { $0.id == id })?.sourceIndex,
        let cname = advertisement.cname, !cname.isEmpty {
-      telemetry.mutateTile(tileIndex) { $0.cname = cname }
+      telemetry.mutateTile(sourceIndex) { $0.cname = cname }
     }
     refreshDiscovery()
     pushDisplayNamesToTiles()
@@ -549,7 +561,7 @@ public final class AppEnvironment {
       guard let name = selections.first(where: { $0.id == pipeline.sourceID })?.displayName else {
         continue
       }
-      telemetry.mutateTile(pipeline.tileIndex) { $0.displayName = name }
+      telemetry.mutateTile(pipeline.sourceIndex) { $0.displayName = name }
     }
   }
 
@@ -606,8 +618,8 @@ public final class AppEnvironment {
       statusMessage = nil
       selectionStore.save(selections)
       switch result {
-      case let .enabled(tileIndex):
-        Task { await startSource(id: id, tileIndex: tileIndex) }
+      case let .enabled(sourceIndex):
+        Task { await startSource(id: id, sourceIndex: sourceIndex) }
       case .disabled:
         stopSource(id)
       default:
@@ -617,12 +629,26 @@ public final class AppEnvironment {
     return result
   }
 
+  public func assignSource(slot: Int, to id: SourceID) {
+    switch SourceSelectionRules.assign(slot: slot, to: id, in: &selections) {
+    case .unchanged, .unknownSource, .invalidSlot:
+      return
+    case let .applied(move):
+      selectionStore.save(selections)
+      if let move {
+        returnToLive(sourceIndex: move.from)
+        returnToLive(sourceIndex: move.to)
+        router.reassign(from: move.from, to: move.to)
+      }
+    }
+  }
+
   public func rename(_ name: String?, for id: SourceID) {
     SourceSelectionRules.rename(name, for: id, in: &selections)
     selectionStore.save(selections)
     if let pipeline = router.pipeline(for: id),
        let selection = selections.first(where: { $0.id == id }) {
-      telemetry.mutateTile(pipeline.tileIndex) { $0.displayName = selection.displayName }
+      telemetry.mutateTile(pipeline.sourceIndex) { $0.displayName = selection.displayName }
     }
   }
 
@@ -760,24 +786,24 @@ public final class AppEnvironment {
       stopSource(pipeline.sourceID)
     }
     for selection in enabled {
-      guard let tileIndex = selection.tileIndex else { continue }
-      await startSource(id: selection.id, tileIndex: tileIndex)
+      guard let sourceIndex = selection.sourceIndex else { continue }
+      await startSource(id: selection.id, sourceIndex: sourceIndex)
     }
-    if router.currentProgramTile == nil, let first = enabled.first?.tileIndex {
-      router.selectProgram(tileIndex: first)
+    if router.currentProgramSource == nil, let first = enabled.first?.sourceIndex {
+      router.selectProgram(sourceIndex: first)
     }
     applyAudioContributors()
   }
 
-  private func startSource(id: SourceID, tileIndex: Int) async {
+  private func startSource(id: SourceID, sourceIndex: Int) async {
     if let existing = router.pipeline(for: id) {
-      if existing.tileIndex != tileIndex || !existing.sourceIsRunning {
+      if existing.sourceIndex != sourceIndex || !existing.sourceIsRunning {
         stopSource(id)
       } else {
         return
       }
     }
-    if router.pipeline(at: tileIndex) != nil {
+    if router.pipeline(at: sourceIndex) != nil {
       return
     }
     guard let discovery else { return }
@@ -791,7 +817,7 @@ public final class AppEnvironment {
       observeStreamIdentity(source, id: id)
       let pipeline = SourcePipeline(
         sourceID: id,
-        tileIndex: tileIndex,
+        sourceIndex: sourceIndex,
         source: source,
         converter: converter,
         telemetry: telemetry
@@ -801,9 +827,9 @@ public final class AppEnvironment {
       router.audioMixer.start()
       router.audioPlayer.start()
       pipelineEndpoints[id] = CameraEndpoint(address: discovered.address)
-      telemetry.mutateTile(tileIndex) { $0.displayName = selection.displayName }
-      if router.currentProgramTile == nil {
-        router.selectProgram(tileIndex: tileIndex)
+      telemetry.mutateTile(sourceIndex) { $0.displayName = selection.displayName }
+      if router.currentProgramSource == nil {
+        router.selectProgram(sourceIndex: sourceIndex)
       }
       applyAudioContributors()
       if isRecording, let recordingID {
@@ -831,7 +857,7 @@ public final class AppEnvironment {
     }
     proxies[id] = nil
     pipelineEndpoints[id] = nil
-    router.remove(tileIndex: pipeline.tileIndex)
+    router.remove(sourceIndex: pipeline.sourceIndex)
     applyAudioContributors()
   }
 
@@ -852,9 +878,9 @@ public final class AppEnvironment {
     applyAudioContributors()
   }
 
-  public func selectProgram(tileIndex: Int) {
-    guard router.pipeline(at: tileIndex) != nil else { return }
-    router.selectProgram(tileIndex: tileIndex)
+  public func selectProgram(sourceIndex: Int) {
+    guard router.pipeline(at: sourceIndex) != nil else { return }
+    router.selectProgram(sourceIndex: sourceIndex)
     applyProgramOverlays()
   }
 
@@ -977,7 +1003,7 @@ public final class AppEnvironment {
   private func attachProxy(to pipeline: SourcePipeline) {
     let proxy = ProxyStore(
       sourceID: pipeline.sourceID,
-      tileIndex: pipeline.tileIndex,
+      sourceIndex: pipeline.sourceIndex,
       index: index,
       telemetry: telemetry,
       converter: converter,
@@ -1007,7 +1033,7 @@ public final class AppEnvironment {
     )
     let writer = SegmentWriter(
       sourceID: pipeline.sourceID,
-      tileIndex: pipeline.tileIndex,
+      sourceIndex: pipeline.sourceIndex,
       recordingID: recordingID,
       index: index,
       telemetry: telemetry,
@@ -1199,9 +1225,9 @@ public final class AppEnvironment {
   /// glass. The 1 fps proxy stills are what the drag shows, and they start with the recording, so
   /// before Record there is genuinely no past to show.
   @discardableResult
-  public func beginScrub(tileIndex: Int) -> Bool {
-    guard let pipeline = router.pipeline(at: tileIndex) else { return false }
-    guard availableHistorySeconds(tileIndex: tileIndex) > 0 else {
+  public func beginScrub(sourceIndex: Int) -> Bool {
+    guard let pipeline = router.pipeline(at: sourceIndex) else { return false }
+    guard availableHistorySeconds(sourceIndex: sourceIndex) > 0 else {
       statusMessage = isRecording
         ? "Nothing to scrub yet — still building history"
         : "Nothing to scrub — start recording first"
@@ -1213,8 +1239,8 @@ public final class AppEnvironment {
   }
 
   /// `offsetSeconds` is negative: how far behind the live edge the finger currently is.
-  public func updateScrub(tileIndex: Int, offsetSeconds: Double) {
-    guard let pipeline = router.pipeline(at: tileIndex) else { return }
+  public func updateScrub(sourceIndex: Int, offsetSeconds: Double) {
+    guard let pipeline = router.pipeline(at: sourceIndex) else { return }
     let target = (pipeline.liveEdge ?? clock.now) + offsetSeconds
     guard let still = proxyReader.still(for: pipeline.sourceID, at: target),
           let buffer = PixelBufferDrawing.makeBGRA(from: still.image) else { return }
@@ -1222,13 +1248,13 @@ public final class AppEnvironment {
   }
 
   public func endScrub(
-    tileIndex: Int,
+    sourceIndex: Int,
     offsetSeconds: Double,
     rate: Float = 1,
     playDuration: TimeInterval? = nil
   ) {
-    guard let pipeline = router.pipeline(at: tileIndex) else { return }
-    let history = availableHistorySeconds(tileIndex: tileIndex)
+    guard let pipeline = router.pipeline(at: sourceIndex) else { return }
+    let history = availableHistorySeconds(sourceIndex: sourceIndex)
     guard !ScrubMapping.shouldReturnToLive(
       offsetSeconds: offsetSeconds,
       historySeconds: history
@@ -1276,7 +1302,7 @@ public final class AppEnvironment {
       }
 
       await self?.startReplay(
-        tileIndex: tileIndex,
+        sourceIndex: sourceIndex,
         assembly: assembly,
         target: target,
         offsetSeconds: offsetSeconds,
@@ -1290,15 +1316,15 @@ public final class AppEnvironment {
 
   /// Instant-replay hotkey: rewind this many seconds from the live edge, play that duration of
   /// tape at `rate`, then return this tile to live.
-  public func startInstantReplay(tileIndex: Int, seconds: Double, rate: Float) {
+  public func startInstantReplay(sourceIndex: Int, seconds: Double, rate: Float) {
     guard seconds > 0 else { return }
-    selectProgram(tileIndex: tileIndex)
-    guard beginScrub(tileIndex: tileIndex) else { return }
-    let history = availableHistorySeconds(tileIndex: tileIndex)
+    selectProgram(sourceIndex: sourceIndex)
+    guard beginScrub(sourceIndex: sourceIndex) else { return }
+    let history = availableHistorySeconds(sourceIndex: sourceIndex)
     let offset = -min(seconds, max(history, 0))
-    updateScrub(tileIndex: tileIndex, offsetSeconds: offset)
+    updateScrub(sourceIndex: sourceIndex, offsetSeconds: offset)
     endScrub(
-      tileIndex: tileIndex,
+      sourceIndex: sourceIndex,
       offsetSeconds: offset,
       rate: rate,
       playDuration: seconds
@@ -1307,7 +1333,7 @@ public final class AppEnvironment {
   }
 
   private func startReplay(
-    tileIndex: Int,
+    sourceIndex: Int,
     assembly: SegmentAssembler.Assembly,
     target: WallClock,
     offsetSeconds: Double,
@@ -1316,7 +1342,7 @@ public final class AppEnvironment {
     playDuration: TimeInterval?,
     releasedAt: UInt64
   ) async {
-    guard let pipeline = router.pipeline(at: tileIndex) else { return }
+    guard let pipeline = router.pipeline(at: sourceIndex) else { return }
 
     // File-relative: the first assembled sample is t=0 for the decoder, even though fragment
     // PTS is counted from the start of the recording.
@@ -1339,14 +1365,14 @@ public final class AppEnvironment {
         url: assembly.url,
         startOffset: startOffset,
         frameRate: frameRate,
-        port: ReplayDecoder.loopbackPort(forTile: tileIndex),
+        port: ReplayDecoder.loopbackPort(forSource: sourceIndex),
         rate: rate,
         playDuration: playDuration
       ),
       onFrame: { [weak pipeline] buffer, time, played in
         if reported.claim() {
           let elapsed = Double(DispatchTime.now().uptimeNanoseconds - releasedAt) / 1_000_000
-          telemetry.mutateTile(tileIndex) { $0.replayLatencyMilliseconds = elapsed }
+          telemetry.mutateTile(sourceIndex) { $0.replayLatencyMilliseconds = elapsed }
         }
         pipeline?.deliverReplayFrame(
           buffer,
@@ -1355,13 +1381,13 @@ public final class AppEnvironment {
         )
       },
       onFinish: { [weak self] in
-        Task { @MainActor in self?.returnToLive(tileIndex: tileIndex) }
+        Task { @MainActor in self?.returnToLive(sourceIndex: sourceIndex) }
       },
       onFailure: { [weak self] error in
         Task { @MainActor in
           self?.statusMessage = "Holding still — replay failed: \(error)"
           self?.telemetry.mutate { $0.lastReplayError = "\(error)" }
-          self?.router.pipeline(at: tileIndex)?.revertToScrubbing()
+          self?.router.pipeline(at: sourceIndex)?.revertToScrubbing()
           self?.applyProgramOverlays()
         }
       }
@@ -1379,9 +1405,9 @@ public final class AppEnvironment {
     }
   }
 
-  public func returnToLive(tileIndex: Int) {
-    router.pipeline(at: tileIndex)?.returnToLive()
-    if router.currentProgramTile == tileIndex {
+  public func returnToLive(sourceIndex: Int) {
+    router.pipeline(at: sourceIndex)?.returnToLive()
+    if router.currentProgramSource == sourceIndex {
       router.programRenderer.prepareForLive()
     }
     applyProgramOverlays()
@@ -1395,13 +1421,13 @@ public final class AppEnvironment {
   /// Instant Replay caption burns into Output whenever that camera is replaying. Scrub uses the
   /// same off-live path for operator overlays, but not for the caption.
   private func programSourceIsReplaying() -> Bool {
-    guard let index = router.currentProgramTile else { return false }
+    guard let index = router.currentProgramSource else { return false }
     let state = telemetry.snapshot.tiles.first { $0.index == index }?.state
     return state == .replaying
   }
 
   private func programSourceIsOffLive() -> Bool {
-    guard let index = router.currentProgramTile else { return false }
+    guard let index = router.currentProgramSource else { return false }
     let state = telemetry.snapshot.tiles.first { $0.index == index }?.state
     return state == .replaying || state == .scrubbing
   }
@@ -1816,6 +1842,155 @@ public final class AppEnvironment {
     )
   }
 
+  private func apply(_ manifest: RemoteControlManifest) {
+    remoteTemplates = manifest.templates
+    activeRemoteTemplateID = manifest.activeTemplateID
+  }
+
+  private func persistActiveRemoteTemplate() {
+    remoteStore.save(
+      RemoteControlManifest(templates: remoteTemplates, activeTemplateID: activeRemoteTemplateID)
+    )
+  }
+
+  public var activeRemoteTemplate: RemoteControlTemplate? {
+    remoteTemplates.first { $0.id == activeRemoteTemplateID }
+  }
+
+  public func selectRemoteTemplate(id: UUID) {
+    persistActiveRemoteTemplate()
+    guard remoteTemplates.contains(where: { $0.id == id }) else { return }
+    activeRemoteTemplateID = id
+    persistActiveRemoteTemplate()
+  }
+
+  public func renameRemoteTemplate(id: UUID, name: String) {
+    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return }
+    persistActiveRemoteTemplate()
+    guard let index = remoteTemplates.firstIndex(where: { $0.id == id }) else { return }
+    remoteTemplates[index].name = trimmed
+    persistActiveRemoteTemplate()
+  }
+
+  public func createRemoteTemplate(name: String) -> UUID? {
+    persistActiveRemoteTemplate()
+    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+    let template = RemoteControlTemplate(id: UUID(), name: trimmed)
+    remoteTemplates.append(template)
+    activeRemoteTemplateID = template.id
+    persistActiveRemoteTemplate()
+    return template.id
+  }
+
+  public func duplicateRemoteTemplate(from sourceID: UUID, name: String) -> UUID? {
+    persistActiveRemoteTemplate()
+    guard let source = remoteTemplates.first(where: { $0.id == sourceID }) else { return nil }
+    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+    let template = RemoteControlTemplate(
+      id: UUID(),
+      name: trimmed,
+      remoteType: source.remoteType,
+      bindings: source.bindings,
+      lastSeenProductName: source.lastSeenProductName
+    )
+    remoteTemplates.append(template)
+    activeRemoteTemplateID = template.id
+    persistActiveRemoteTemplate()
+    return template.id
+  }
+
+  public func deleteRemoteTemplate(id: UUID) {
+    persistActiveRemoteTemplate()
+    guard let index = remoteTemplates.firstIndex(where: { $0.id == id }) else { return }
+    if remoteTemplates.count == 1 {
+      apply(RemoteControlManifest.emptyDefault())
+    } else {
+      remoteTemplates.remove(at: index)
+      if activeRemoteTemplateID == id {
+        activeRemoteTemplateID = remoteTemplates[min(index, remoteTemplates.count - 1)].id
+      }
+    }
+    persistActiveRemoteTemplate()
+  }
+
+  public func setRemoteType(_ type: RemoteType, for id: UUID) {
+    persistActiveRemoteTemplate()
+    guard let index = remoteTemplates.firstIndex(where: { $0.id == id }) else { return }
+    let fit = RemoteChordRules.bestFit(bindings: remoteTemplates[index].bindings, to: type)
+    remoteTemplates[index].remoteType = type
+    remoteTemplates[index].bindings = fit.kept
+    persistActiveRemoteTemplate()
+  }
+
+  public func appendRemoteControl(_ id: ControlID, to action: RemoteAction) {
+    persistActiveRemoteTemplate()
+    guard let index = remoteTemplates.firstIndex(where: { $0.id == activeRemoteTemplateID }) else {
+      return
+    }
+    RemoteChordRules.append(id, to: action, in: &remoteTemplates[index].bindings)
+    persistActiveRemoteTemplate()
+  }
+
+  public func clearRemoteChord(for action: RemoteAction) {
+    persistActiveRemoteTemplate()
+    guard let index = remoteTemplates.firstIndex(where: { $0.id == activeRemoteTemplateID }) else {
+      return
+    }
+    RemoteChordRules.clear(action: action, in: &remoteTemplates[index].bindings)
+    persistActiveRemoteTemplate()
+  }
+
+  public func bindRemoteAction(_ action: RemoteAction, controls: [ControlID]) {
+    persistActiveRemoteTemplate()
+    guard let index = remoteTemplates.firstIndex(where: { $0.id == activeRemoteTemplateID }) else {
+      return
+    }
+    RemoteChordRules.clear(action: action, in: &remoteTemplates[index].bindings)
+    for id in controls {
+      RemoteChordRules.append(id, to: action, in: &remoteTemplates[index].bindings)
+    }
+    persistActiveRemoteTemplate()
+  }
+
+  public func cutSourceLive(sourceIndex: Int) {
+    guard router.pipeline(at: sourceIndex) != nil else { return }
+    selectProgram(sourceIndex: sourceIndex)
+    returnToLive(sourceIndex: sourceIndex)
+  }
+
+  private func handleRemoteDown(_ id: ControlID, pressed: Set<ControlID>) {
+    if capturingRemoteAction != nil {
+      appendRemoteControl(id, to: capturingRemoteAction!)
+      return
+    }
+    guard activeSheet == nil else { return }
+    guard let template = activeRemoteTemplate else { return }
+    guard let action = RemoteChordRules.match(pressed: pressed, bindings: template.bindings) else {
+      return
+    }
+    guard template.chord(for: action).set.contains(id) else { return }
+    performRemote(action)
+  }
+
+  public func injectRemoteChord(_ ids: [ControlID]) {
+    remoteInput.inject(chord: ids)
+  }
+
+  private func performRemote(_ action: RemoteAction) {
+    switch action {
+    case let .cutLive(sourceIndex):
+      cutSourceLive(sourceIndex: sourceIndex)
+    case let .instantReplay(sourceIndex, seconds, speed):
+      guard let pipeline = router.pipeline(at: sourceIndex) else { return }
+      guard pipeline.currentState == .live else { return }
+      let rate: Float = speed == .slow ? Float(config.replaySlowMotionRate) : 1
+      startInstantReplay(sourceIndex: sourceIndex, seconds: seconds, rate: rate)
+    }
+  }
+
   private func copyOverlays(_ source: [ProgramOverlay]) -> [ProgramOverlay] {
     var idMap: [UUID: UUID] = [:]
     var copies: [ProgramOverlay] = []
@@ -1940,8 +2115,8 @@ public final class AppEnvironment {
   /// Segments close every `segmentSeconds` (3 by default) and the previous gate required the last
   /// closed file to be less than 5 s old — so scrubbing was dark for most of every segment, and
   /// dark forever at T3 where nothing is archived. Stills are 1 fps from the first second.
-  public func availableHistorySeconds(tileIndex: Int) -> Double {
-    guard isRecording, let pipeline = router.pipeline(at: tileIndex) else { return 0 }
+  public func availableHistorySeconds(sourceIndex: Int) -> Double {
+    guard isRecording, let pipeline = router.pipeline(at: sourceIndex) else { return 0 }
     let now = pipeline.liveEdge ?? clock.now
     let floor: WallClock
     if let started = telemetry.snapshot.dvr.recordingStartedAt {
@@ -2012,8 +2187,8 @@ public final class AppEnvironment {
     )
   }
 
-  public func export(tileIndex: Int, lastSeconds: Double) {
-    guard let pipeline = router.pipeline(at: tileIndex) else { return }
+  public func export(sourceIndex: Int, lastSeconds: Double) {
+    guard let pipeline = router.pipeline(at: sourceIndex) else { return }
     let end = pipeline.liveEdge ?? clock.now
     do {
       lastExport = try exporter.export(
@@ -2161,7 +2336,7 @@ public final class AppEnvironment {
         isEnabled: selection.isEnabled,
         usesAudio: selection.usesAudio,
         isPresent: selection.isPresent,
-        tileIndex: selection.tileIndex
+        sourceIndex: selection.sourceIndex
       )
     }
     let mix = router.audioMixer.currentStatistics
@@ -2192,7 +2367,7 @@ public final class AppEnvironment {
       let connections = pipeline.connections
       let receive = pipeline.receiveStats
       liveDecodeSessions += receive.decodeSessions
-      telemetry.mutateTile(pipeline.tileIndex) { tile in
+      telemetry.mutateTile(pipeline.sourceIndex) { tile in
         tile.sourceWidth = format?.width ?? 0
         tile.sourceHeight = format?.height ?? 0
         tile.sourceFrameRate = format?.frameRate ?? 0
@@ -2268,20 +2443,30 @@ public final class AppEnvironment {
       } else {
         startDiscovery()
       }
-    case let .scrub(tile, offset):
-      beginScrub(tileIndex: tile)
-      updateScrub(tileIndex: tile, offsetSeconds: offset)
-      endScrub(tileIndex: tile, offsetSeconds: offset)
-    case let .returnToLive(tile):
-      returnToLive(tileIndex: tile)
+    case let .scrub(source, offset):
+      beginScrub(sourceIndex: source)
+      updateScrub(sourceIndex: source, offsetSeconds: offset)
+      endScrub(sourceIndex: source, offsetSeconds: offset)
+    case let .returnToLive(source):
+      returnToLive(sourceIndex: source)
     case let .record(on):
       if on { startRecording() } else { Task { await stopRecording() } }
     case let .stream(on):
       if on { startStreaming() } else { Task { await stopStreaming() } }
     case .startDirecting:
       Task { await enterDirecting() }
-    case let .selectProgram(tile):
-      selectProgram(tileIndex: tile)
+    case let .selectProgram(source):
+      selectProgram(sourceIndex: source)
+    case let .assignSource(index, slot):
+      guard index >= 0, index < selections.count else { return false }
+      assignSource(slot: slot, to: selections[index].id)
+    case let .remoteChord(names):
+      let ids = names.compactMap { ControlID(rawValue: $0) }
+      guard !ids.isEmpty else { return false }
+      injectRemoteChord(ids)
+    case let .bindRemote(actionID, names):
+      guard let action = RemoteAction.parseControl(actionID) else { return false }
+      bindRemoteAction(action, controls: names.compactMap { ControlID(rawValue: $0) })
     case let .enableSource(index, on):
       guard index >= 0, index < selections.count else { return false }
       setEnabled(on, for: selections[index].id)

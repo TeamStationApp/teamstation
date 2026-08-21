@@ -27,7 +27,7 @@ appId: co.gamestation.director
     id: 'start-directing'
 
 - extendedWaitUntil:
-    visible: 'tile=1 state=live.*'
+    visible: 'source=1 state=live.*'
     timeout: 15000
 
 # Not recording, so there is no history behind this tile.
@@ -46,4 +46,4 @@ appId: co.gamestation.director
     timeout: 10000
 
 # The tile is still live and unfrozen rather than paused on a stale still.
-- assertVisible: 'tile=1 state=live .*off=0\.0.*'
+- assertVisible: 'source=1 state=live .*off=0\.0.*'

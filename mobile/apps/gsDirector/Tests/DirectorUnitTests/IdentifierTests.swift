@@ -3,13 +3,13 @@ import Testing
 
 @Suite("Identifiers")
 struct IdentifierTests {
-  @Test("TileIndex rejects positions outside the five source tiles")
-  func tileIndexBounds() {
-    #expect(TileIndex(0)?.displayNumber == 1)
-    #expect(TileIndex(4)?.displayNumber == 5)
-    #expect(TileIndex(5) == nil)
-    #expect(TileIndex(-1) == nil)
-    #expect(TileIndex.all.count == 5)
+  @Test("SourceIndex rejects positions outside the five sources")
+  func sourceIndexBounds() {
+    #expect(SourceIndex(0)?.displayNumber == 1)
+    #expect(SourceIndex(4)?.displayNumber == 5)
+    #expect(SourceIndex(5) == nil)
+    #expect(SourceIndex(-1) == nil)
+    #expect(SourceIndex.all.count == 5)
   }
 
   @Test("SourceID slugs are safe as path components")

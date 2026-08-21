@@ -11,6 +11,8 @@ require xcrun
 require_device_udid >/dev/null
 [ -d "$DIRECTOR_PROJECT" ] || fail "run 'socket npm run bootstrap' first"
 
+require_device_udid
+
 CONFIGURATION="${CONFIGURATION:-Debug}"
 LOG="$DIRECTOR_DERIVED_DATA/build-device.log"
 mkdir -p "$DIRECTOR_DERIVED_DATA"

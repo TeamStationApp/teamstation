@@ -14,8 +14,9 @@ public struct SourceSelection: Identifiable, Hashable, Sendable, Codable {
   /// because the two decisions are genuinely separate: a wide shot may be the picture you never cut
   /// to and the only microphone worth hearing.
   public var usesAudio: Bool
-  /// Which grid position it occupies, assigned on enable.
-  public var tileIndex: Int?
+  /// Preferred (and, when enabled, occupied) grid slot. Kept when VIDEO is off so re-enable
+  /// restores it if that source is free.
+  public var sourceIndex: Int?
   /// False once discovery stops seeing it, but the row stays so a rename is not lost when a
   /// camera briefly drops off the network.
   public var isPresent: Bool
@@ -27,7 +28,7 @@ public struct SourceSelection: Identifiable, Hashable, Sendable, Codable {
     customName: String? = nil,
     isEnabled: Bool = false,
     usesAudio: Bool = true,
-    tileIndex: Int? = nil,
+    sourceIndex: Int? = nil,
     isPresent: Bool = true
   ) {
     self.id = id
@@ -36,12 +37,17 @@ public struct SourceSelection: Identifiable, Hashable, Sendable, Codable {
     self.customName = customName
     self.isEnabled = isEnabled
     self.usesAudio = usesAudio
-    self.tileIndex = tileIndex
+    self.sourceIndex = sourceIndex
     self.isPresent = isPresent
   }
 
+  enum CodingKeys: String, CodingKey {
+    case id, kind, advertisedName, customName, isEnabled, usesAudio, sourceIndex, isPresent
+    case tileIndex
+  }
+
   /// Selections saved before `usesAudio` existed decode with audio on, matching the old behaviour
-  /// where the program tile's audio was always taken.
+  /// where the program source's audio was always taken. `tileIndex` is the pre-rename slot key.
   public init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     self.init(
@@ -51,9 +57,23 @@ public struct SourceSelection: Identifiable, Hashable, Sendable, Codable {
       customName: try container.decodeIfPresent(String.self, forKey: .customName),
       isEnabled: try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? false,
       usesAudio: try container.decodeIfPresent(Bool.self, forKey: .usesAudio) ?? true,
-      tileIndex: try container.decodeIfPresent(Int.self, forKey: .tileIndex),
+      sourceIndex: try container.decodeIfPresent(Int.self, forKey: .sourceIndex)
+        ?? container.decodeIfPresent(Int.self, forKey: .tileIndex),
       isPresent: try container.decodeIfPresent(Bool.self, forKey: .isPresent) ?? true
     )
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(id, forKey: .id)
+    try container.encode(kind, forKey: .kind)
+    try container.encode(advertisedName, forKey: .advertisedName)
+    try container.encodeIfPresent(customName, forKey: .customName)
+    try container.encode(isEnabled, forKey: .isEnabled)
+    try container.encode(usesAudio, forKey: .usesAudio)
+    try container.encodeIfPresent(sourceIndex, forKey: .sourceIndex)
+    try container.encodeIfPresent(sourceIndex, forKey: .tileIndex)
+    try container.encode(isPresent, forKey: .isPresent)
   }
 
   public var displayName: String {
@@ -113,14 +133,19 @@ public enum SourceSelectionRules {
   }
 
   public enum EnableResult: Equatable {
-    case enabled(tileIndex: Int)
+    case enabled(sourceIndex: Int)
     case disabled
     case rejectedAtCap
     case unknownSource
   }
 
+  /// Live occupancy: source indexes held by currently enabled cameras.
+  public static func occupiedSlots(in selections: [SourceSelection]) -> Set<Int> {
+    Set(selections.compactMap { $0.isEnabled ? $0.sourceIndex : nil })
+  }
+
   /// Enabling one past the cap is rejected rather than silently swapping one out — the operator
-  /// must decide which camera loses its tile.
+  /// must decide which camera loses its source.
   @discardableResult
   public static func setEnabled(
     _ enabled: Bool,
@@ -131,20 +156,75 @@ public enum SourceSelectionRules {
 
     if !enabled {
       selections[position].isEnabled = false
-      selections[position].tileIndex = nil
       return .disabled
     }
-    if selections[position].isEnabled, let tile = selections[position].tileIndex {
-      return .enabled(tileIndex: tile)
+    if selections[position].isEnabled, let slot = selections[position].sourceIndex {
+      return .enabled(sourceIndex: slot)
     }
 
-    let used = Set(selections.compactMap { $0.isEnabled ? $0.tileIndex : nil })
+    let used = occupiedSlots(in: selections)
+    if let preferred = selections[position].sourceIndex, !used.contains(preferred) {
+      selections[position].isEnabled = true
+      return .enabled(sourceIndex: preferred)
+    }
     guard used.count < maximumEnabled, let free = (0 ..< maximumEnabled).first(where: { !used.contains($0) })
     else { return .rejectedAtCap }
 
     selections[position].isEnabled = true
-    selections[position].tileIndex = free
-    return .enabled(tileIndex: free)
+    selections[position].sourceIndex = free
+    return .enabled(sourceIndex: free)
+  }
+
+  public enum AssignResult: Equatable {
+    case unchanged
+    case applied(reassign: SourceMove?)
+    case unknownSource
+    case invalidSlot
+  }
+
+  public struct SourceMove: Equatable, Sendable {
+    public var from: Int
+    public var to: Int
+
+    public init(from: Int, to: Int) {
+      self.from = from
+      self.to = to
+    }
+  }
+
+  /// Puts `id` on `slot`, swapping with whoever already has that index. Enabled cameras never
+  /// lose their slot to `nil`.
+  @discardableResult
+  public static func assign(
+    slot: Int,
+    to id: SourceID,
+    in selections: inout [SourceSelection]
+  ) -> AssignResult {
+    guard (0 ..< maximumEnabled).contains(slot) else { return .invalidSlot }
+    guard let position = selections.firstIndex(where: { $0.id == id }) else { return .unknownSource }
+    let from = selections[position].sourceIndex
+    if from == slot { return .unchanged }
+
+    let other = selections.firstIndex(where: { $0.id != id && $0.sourceIndex == slot })
+    if let other, selections[other].isEnabled, from == nil {
+      let used = occupiedSlots(in: selections)
+      guard let park = (0 ..< maximumEnabled).first(where: { $0 != slot && !used.contains($0) })
+      else { return .unchanged }
+      selections[other].sourceIndex = park
+      selections[position].sourceIndex = slot
+      return .applied(reassign: SourceMove(from: slot, to: park))
+    }
+    if let other {
+      selections[other].sourceIndex = from
+    }
+    selections[position].sourceIndex = slot
+    if selections[position].isEnabled, let from {
+      return .applied(reassign: SourceMove(from: from, to: slot))
+    }
+    if let other, selections[other].isEnabled, let from {
+      return .applied(reassign: SourceMove(from: slot, to: from))
+    }
+    return .applied(reassign: nil)
   }
 
   public static func setUsesAudio(
@@ -170,8 +250,8 @@ public enum SourceSelectionRules {
 
   public static func enabled(in selections: [SourceSelection]) -> [SourceSelection] {
     selections
-      .filter { $0.isEnabled && $0.tileIndex != nil }
-      .sorted { ($0.tileIndex ?? 0) < ($1.tileIndex ?? 0) }
+      .filter { $0.isEnabled && $0.sourceIndex != nil }
+      .sorted { ($0.sourceIndex ?? 0) < ($1.sourceIndex ?? 0) }
   }
 
   /// A camera the scanner has not published has no stream to open. Starting it anyway is what

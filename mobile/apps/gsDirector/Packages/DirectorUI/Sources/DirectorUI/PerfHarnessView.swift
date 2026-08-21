@@ -93,7 +93,7 @@ public struct PerfHarnessView: View {
                 .font(.system(size: 12, design: .monospaced))
                 .foregroundStyle(.secondary)
             }
-            .accessibilityIdentifier("perf-tile-\(tile.index + 1)")
+            .accessibilityIdentifier("perf-source-\(tile.index + 1)")
           }
         }
       }

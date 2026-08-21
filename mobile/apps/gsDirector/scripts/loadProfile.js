@@ -7,7 +7,13 @@
 // of CPU to decode arriving frames, or the frames are not arriving. Only the first one is fixed by
 // buying a faster iPad, so the distinction decides a hardware purchase.
 
-const BASE = process.env.DIRECTOR_ADDRESS || 'http://Tests-iPad-Pro.local:8765'
+const BASE = process.env.DIRECTOR_ADDRESS
+if (!BASE) {
+  process.stderr.write(
+    'set DIRECTOR_ADDRESS to the control server, e.g. http://127.0.0.1:8765\n'
+  )
+  process.exit(1)
+}
 
 async function call(path) {
   const response = await fetch(`${BASE}${path}`, {

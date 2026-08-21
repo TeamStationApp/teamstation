@@ -24,7 +24,7 @@ appId: co.gamestation.director
     id: 'start-directing'
 
 - extendedWaitUntil:
-    visible: 'tile=1 state=live.*'
+    visible: 'source=1 state=live.*'
     timeout: 20000
 
 - tapOn:
@@ -45,21 +45,21 @@ appId: co.gamestation.director
     id: 'settings-cancel'
 
 - assertVisible:
-    id: 'tile-1-replay-5'
+    id: 'source-1-replay-5'
 - assertVisible:
-    id: 'tile-1-replay-7.5'
+    id: 'source-1-replay-7.5'
 - assertVisible:
-    id: 'tile-1-replay-10'
+    id: 'source-1-replay-10'
 - assertVisible:
-    id: 'tile-1-replay-slow-5'
+    id: 'source-1-replay-slow-5'
 - assertVisible:
-    id: 'tile-1-replay-slow-7.5'
+    id: 'source-1-replay-slow-7.5'
 - assertVisible:
-    id: 'tile-1-replay-slow-10'
+    id: 'source-1-replay-slow-10'
 - assertNotVisible:
-    id: 'tile-1-replay-2.5'
+    id: 'source-1-replay-2.5'
 - assertNotVisible:
-    id: 'tile-1-replay-slow-2.5'
+    id: 'source-1-replay-slow-2.5'
 - assertVisible:
     id: 'output-replay-5'
 - assertNotVisible:
@@ -78,9 +78,9 @@ appId: co.gamestation.director
     timeout: 15000
 
 - tapOn:
-    id: 'tile-1-replay-5'
+    id: 'source-1-replay-5'
 - extendedWaitUntil:
-    visible: 'tile=1 state=replaying.*off=-'
+    visible: 'source=1 state=replaying.*off=-'
     timeout: 10000
 - extendedWaitUntil:
     visible: 'replayms=[1-9][0-9]{0,3}'
@@ -92,7 +92,7 @@ appId: co.gamestation.director
     id: 'return-to-live-1'
     optional: true
 - extendedWaitUntil:
-    visible: 'tile=1 state=live .*off=0\.0.*'
+    visible: 'source=1 state=live .*off=0\.0.*'
     timeout: 15000
 
 - tapOn:

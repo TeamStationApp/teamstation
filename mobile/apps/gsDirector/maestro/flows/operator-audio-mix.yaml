@@ -31,7 +31,7 @@ appId: co.gamestation.director
 
 - extendedWaitUntil:
     visible:
-      id: 'output-tile'
+      id: 'output'
     timeout: 20000
 
 - extendedWaitUntil:
@@ -39,9 +39,9 @@ appId: co.gamestation.director
     timeout: 30000
 
 - tapOn:
-    id: 'tile-3'
+    id: 'source-3'
 - extendedWaitUntil:
     visible: 'output src=CAM3 mix=2 .*'
     timeout: 10000
-- assertVisible: 'tile=3 .*onair=1'
-- assertVisible: 'tile=1 .*onair=0'
+- assertVisible: 'source=3 .*onair=1'
+- assertVisible: 'source=1 .*onair=0'

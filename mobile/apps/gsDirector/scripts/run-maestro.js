@@ -47,6 +47,7 @@ const OPERATOR_SUITE = [
   'scrub-incremental',
   'program-five-sources',
   'recordings-export',
+  'remote-control',
   'operator-background-record'
 ]
 

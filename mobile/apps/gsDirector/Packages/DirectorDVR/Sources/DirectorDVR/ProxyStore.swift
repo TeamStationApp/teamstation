@@ -26,7 +26,7 @@ public final class ProxyStore: ProxySink, @unchecked Sendable {
   public static let stillsPerChunk = 600
 
   private let sourceID: SourceID
-  private let tileIndex: Int
+  private let sourceIndex: Int
   private let directory: URL
   private let index: ArchiveIndex
   private let telemetry: PipelineTelemetry
@@ -44,7 +44,7 @@ public final class ProxyStore: ProxySink, @unchecked Sendable {
 
   public init(
     sourceID: SourceID,
-    tileIndex: Int,
+    sourceIndex: Int,
     index: ArchiveIndex,
     telemetry: PipelineTelemetry,
     converter: PixelConverter,
@@ -53,7 +53,7 @@ public final class ProxyStore: ProxySink, @unchecked Sendable {
     directory: URL? = nil
   ) {
     self.sourceID = sourceID
-    self.tileIndex = tileIndex
+    self.sourceIndex = sourceIndex
     self.index = index
     self.telemetry = telemetry
     self.converter = converter
@@ -165,7 +165,7 @@ public final class ProxyStore: ProxySink, @unchecked Sendable {
         offset: offset,
         length: Int64(data.count)
       )
-      telemetry.recordProxyStill(tile: tileIndex)
+      telemetry.recordProxyStill(tile: sourceIndex)
     } catch {
       telemetry.recordError("proxy index write failed: \(error)")
     }
