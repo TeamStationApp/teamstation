@@ -1,0 +1,112 @@
+import Foundation
+
+public enum StreamCodec: String, Sendable, Codable, Equatable, CaseIterable {
+  case h264
+  case hevc
+
+  /// The SDP encoding name. `H265` rather than `HEVC` because that is what GS Producer's
+  /// `SDPDescription.videoCodec` matches first, and what ffmpeg and VLC expect.
+  public var sdpEncodingName: String {
+    switch self {
+    case .h264: "H264"
+    case .hevc: "H265"
+    }
+  }
+
+  /// HEVC buys roughly the same picture at two thirds the rate, so the defaults differ.
+  public var defaultBitrate: Int {
+    switch self {
+    case .h264: 6_000_000
+    case .hevc: 4_000_000
+    }
+  }
+}
+
+/// Everything the operator can change about the outgoing stream.
+public struct StreamSettings: Sendable, Codable, Equatable {
+  public static let canonicalPath = "/live/mainstream"
+  public static let defaultPort = 554
+  /// Used when 554 cannot be bound, which has been reported on the simulator.
+  public static let fallbackPort = 8554
+
+  public var width: Int
+  public var height: Int
+  public var frameRate: Double
+  public var codec: StreamCodec
+  public var bitrate: Int
+  public var port: Int
+  public var path: String
+  public var audioEnabled: Bool
+  public var audioSampleRate: Int
+
+  public init(
+    width: Int = 1920,
+    height: Int = 1080,
+    frameRate: Double = 30,
+    codec: StreamCodec = .h264,
+    bitrate: Int = 6_000_000,
+    port: Int = StreamSettings.defaultPort,
+    path: String = StreamSettings.canonicalPath,
+    audioEnabled: Bool = true,
+    audioSampleRate: Int = 48_000
+  ) {
+    self.width = width
+    self.height = height
+    self.frameRate = frameRate
+    self.codec = codec
+    self.bitrate = bitrate
+    self.port = port
+    self.path = path
+    self.audioEnabled = audioEnabled
+    self.audioSampleRate = audioSampleRate
+  }
+
+  public static let `default` = StreamSettings()
+
+  public var dimensionsLabel: String { "\(width)x\(height)" }
+
+  /// Switching codec carries the matching default rate across unless the operator has already
+  /// chosen something other than the outgoing codec's default.
+  public mutating func setCodec(_ newCodec: StreamCodec) {
+    if bitrate == codec.defaultBitrate { bitrate = newCodec.defaultBitrate }
+    codec = newCodec
+  }
+}
+
+/// One capture format, reduced to the facts that decide whether it is usable.
+///
+/// A plain value type rather than an `AVCaptureDeviceFormat` so the selection rules can be tested
+/// without a camera, which matters because the simulator has none.
+public struct CaptureFormatDescriptor: Sendable, Equatable, Codable, Hashable {
+  public let width: Int
+  public let height: Int
+  public let minimumFrameRate: Double
+  public let maximumFrameRate: Double
+  /// False when selecting this format collapses the virtual device to a single lens. On an A15 this
+  /// is expected at 4K60, and losing it silently would remove the app's headline feature.
+  public let supportsMultiLensSwitching: Bool
+  public let isBinned: Bool
+
+  public init(
+    width: Int,
+    height: Int,
+    minimumFrameRate: Double,
+    maximumFrameRate: Double,
+    supportsMultiLensSwitching: Bool,
+    isBinned: Bool = false
+  ) {
+    self.width = width
+    self.height = height
+    self.minimumFrameRate = minimumFrameRate
+    self.maximumFrameRate = maximumFrameRate
+    self.supportsMultiLensSwitching = supportsMultiLensSwitching
+    self.isBinned = isBinned
+  }
+
+  public var pixelCount: Int { width * height }
+  public var label: String { "\(width)x\(height)@\(Int(maximumFrameRate))" }
+
+  public func supports(frameRate: Double) -> Bool {
+    frameRate >= minimumFrameRate - 0.01 && frameRate <= maximumFrameRate + 0.01
+  }
+}

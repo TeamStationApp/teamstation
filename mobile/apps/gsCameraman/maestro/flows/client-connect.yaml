@@ -1,0 +1,37 @@
+appId: co.gamestation.cameraman
+---
+# A client connects and the app notices. The count lives in Settings so this flow also proves the
+# stream keeps running with the sheet open — a reconfigure on present would drop the client and
+# the wait below would time out.
+#
+# The client is started by scripts/verifyClientCount.sh, not from inside this flow: Maestro's
+# runScript runs in its own JS engine and cannot spawn a process. Run this through that script
+# rather than on its own, or the waits below will simply time out.
+#
+# Needs the real device — the client connects to the phone over the LAN.
+- launchApp
+- waitForAnimationToEnd:
+    timeout: 8000
+
+- tapOn:
+    id: "settings-button"
+- waitForAnimationToEnd:
+    timeout: 3000
+
+- assertVisible:
+    id: "settings-clients"
+    text: "0"
+- assertVisible:
+    id: "settings-url"
+
+- extendedWaitUntil:
+    visible:
+      id: "settings-clients"
+      text: "1"
+    timeout: 60000
+
+- extendedWaitUntil:
+    visible:
+      id: "settings-clients"
+      text: "0"
+    timeout: 60000

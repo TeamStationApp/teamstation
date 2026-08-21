@@ -1,0 +1,62 @@
+appId: co.gamestation.cameraman
+---
+# Lens switching and flip. Asserted through the zoom label and the preset row rather than a lens
+# index that no longer lives on the operating screen.
+#
+# Verified on an iPhone 13 Pro, iOS 26.6.1, 2026-08-19.
+- launchApp
+- waitForAnimationToEnd:
+    timeout: 5000
+- assertVisible:
+    id: "camera-screen"
+
+# Opens at 1x on the wide lens, not at 0.5x on the ultra-wide.
+- assertVisible:
+    id: "zoom-label"
+    text: "1x"
+- assertVisible:
+    id: "zoom-preset-0.5x"
+- assertVisible:
+    id: "zoom-preset-1x"
+- assertVisible:
+    id: "zoom-preset-3x"
+- assertVisible:
+    id: "zoom-preset-9x"
+
+- tapOn:
+    id: "zoom-preset-9x"
+- waitForAnimationToEnd:
+    timeout: 2000
+- assertVisible:
+    id: "zoom-label"
+    text: "9x"
+
+- tapOn:
+    id: "zoom-preset-3x"
+- waitForAnimationToEnd:
+    timeout: 2000
+- assertVisible:
+    id: "zoom-label"
+    text: "3x"
+
+- tapOn:
+    id: "zoom-preset-0.5x"
+- waitForAnimationToEnd:
+    timeout: 2000
+- assertVisible:
+    id: "zoom-label"
+    text: "0.5x"
+
+- tapOn:
+    id: "flip-button"
+- waitForAnimationToEnd:
+    timeout: 3000
+# The front camera has one lens plus a digital-max preset, not the rear 3x/9x.
+- assertVisible:
+    id: "zoom-preset-1x"
+- assertVisible:
+    id: "zoom-preset-5x"
+- assertNotVisible:
+    id: "zoom-preset-3x"
+- assertNotVisible:
+    id: "zoom-preset-9x"
