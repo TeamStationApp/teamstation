@@ -1,6 +1,6 @@
 import CameramanRTSP
 import Foundation
-import ProducerRTSP
+import DirectorRTSP
 import Testing
 
 /// Framing is checked against GS Producer's own `RTSPStreamParser` rather than against a second

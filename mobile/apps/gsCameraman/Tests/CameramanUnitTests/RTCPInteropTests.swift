@@ -4,7 +4,7 @@ import Testing
 @testable import CameramanCore
 @testable import CameramanRTSP
 
-import ProducerRTSP
+import DirectorRTSP
 
 /// What Cameraman writes has to be what Producer reads. Both sides are ours, so agreement between
 /// them proves only self-consistency — the byte-level assertions against RFC 3550 live in

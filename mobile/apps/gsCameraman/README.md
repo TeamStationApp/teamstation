@@ -44,10 +44,10 @@ VideoToolbox present.
 
 ## Interop is proven, not asserted
 
-The unit test target compiles GS Producer's `ProducerRTSP` package directly, by relative path, and
-round-trips this app's packetizers and framing through Producer's own depacketizers and stream
+The unit test target compiles GS Director's `DirectorRTSP` package directly, by relative path, and
+round-trips this app's packetizers and framing through Director's own depacketizers and stream
 parser. If the two ever disagree about the wire format, the test fails here rather than showing a
-black tile on the iPad. The Producer *app* is never built or launched by anything in this directory.
+black tile on the iPad. The Director *app* is never built or launched by anything in this directory.
 
 ## Measured, not assumed
 

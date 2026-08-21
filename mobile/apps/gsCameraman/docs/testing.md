@@ -13,17 +13,17 @@ itself:
 
 | Suite | What it settles |
 |---|---|
-| `PacketizerRoundTripTests` | our RTP output fed through **Producer's** depacketizers and back to the original access unit |
-| `SDPBuilderTests` | our SDP parsed by **Producer's** `SDPDescription` |
-| `InterleavedFramerTests` | our framing parsed by **Producer's** `RTSPStreamParser` |
-| `RTCPInteropTests` | our RTCP read by **Producer's** `RTCPReport` |
-| `CameraIdentityAdoptionTests` | **Producer's** naming and binding rules, compiled here |
+| `PacketizerRoundTripTests` | our RTP output fed through **Director's** depacketizers and back to the original access unit |
+| `SDPBuilderTests` | our SDP parsed by **Director's** `SDPDescription` |
+| `InterleavedFramerTests` | our framing parsed by **Director's** `RTSPStreamParser` |
+| `RTCPInteropTests` | our RTCP read by **Director's** `RTCPReport` |
+| `CameraIdentityAdoptionTests` | **Director's** naming and binding rules, compiled here |
 | `RTSPResponderTests` | the method state machine, including what it refuses |
 | `StreamSendQueueTests` | backpressure drops to the next keyframe rather than growing |
 | `ZoomMappingTests` | device/displayed conversion at each switchover, from real fixtures |
 
-Producer's packages are path dependencies of the test target only. Nothing here builds or launches
-the Producer app.
+Director's packages are path dependencies of the test target only. Nothing here builds or launches
+the Director app.
 
 ## Encode verification — device, no network
 

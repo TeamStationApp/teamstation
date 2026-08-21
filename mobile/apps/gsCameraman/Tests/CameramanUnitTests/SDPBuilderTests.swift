@@ -2,7 +2,7 @@ import CameramanCore
 import CameramanEncode
 import CameramanRTSP
 import Foundation
-import ProducerRTSP
+import DirectorRTSP
 import Testing
 
 /// Builds session descriptions and reads them back with GS Producer's parser.

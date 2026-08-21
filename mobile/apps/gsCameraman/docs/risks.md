@@ -127,7 +127,7 @@ reason.
 ### Thermals under sustained encode are unmeasured
 
 No sustained-stream run has been done yet, so nothing is known about how long the phone holds 1080p30
-before throttling, or what 4K30 costs. Unlike the iPad in `../gsProducer/docs/risks.md`, this handset
+before throttling, or what 4K30 costs. Unlike the iPad in `../gsDirector/docs/risks.md`, this handset
 is not sitting on a Peltier cooler.
 
 ### The simulator has no camera
