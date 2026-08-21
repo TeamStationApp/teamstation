@@ -118,9 +118,13 @@ struct SDPBuilderTests {
     let parsed = SDPDescription.parse(sdp)
 
     #expect(parsed.sessionName == "Sideline Left")
-    // RFC 5576 §6.1. The same string the RTCP SDES CNAME carries.
+    #expect(parsed.streamName == "Sideline Left")
+    #expect(parsed.video?.name == "Sideline Left")
+    // RFC 5576 §6.1. The same strings the RTCP SDES CNAME and NAME carry.
     #expect(sdp.contains("a=ssrc:286331153 cname:\(identity.cname)"))
+    #expect(sdp.contains("a=ssrc:286331153 name:\(identity.name)"))
     #expect(sdp.contains("a=ssrc:572662306 cname:\(identity.cname)"))
+    #expect(sdp.contains("a=ssrc:572662306 name:\(identity.name)"))
   }
 
   @Test func audioIsOmittedEntirelyWhenMuted() {
