@@ -200,21 +200,29 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
       scan = nil
     }
 
-    // Manual hosts are merged in before confirmation so they go through the same check as scanned
-    // ones — a mistyped address should not become a permanently broken tile.
-    var candidates = scan?.openHosts ?? []
-    for host in configuration.manualHosts where !candidates.contains(host) {
-      candidates.append(host)
+    // Manual hosts and Bonjour-resolved cameras are merged in before confirmation so they go
+    // through the same check as scanned ones — a mistyped address should not become a permanently
+    // broken tile. GS Cameraman is found on `_rtsp._tcp`, not the subnet scan: iOS does not answer
+    // unsolicited TCP to :554 the way a NearStream box does, and it may be on 8554.
+    let rawAds = advertisementBrowser.advertisements
+    var seen = Set<CameraEndpoint>()
+    var candidates: [CameraEndpoint] = []
+    for host in (scan?.openHosts ?? []) + configuration.manualHosts {
+      let endpoint = endpoint(for: host, advertisements: rawAds)
+      if seen.insert(endpoint).inserted {
+        candidates.append(endpoint)
+      }
     }
-    let ads = advertisementBrowser.advertisements
-    for advertisement in ads where !candidates.contains(advertisement.host) {
-      candidates.append(advertisement.host)
+    for advertisement in rawAds {
+      let endpoint = advertisement.endpoint
+      if seen.insert(endpoint).inserted {
+        candidates.append(endpoint)
+      }
     }
 
     var confirmed: [CameraEndpoint] = []
     var skipped = 0
-    for host in candidates {
-      let endpoint = CameraEndpoint(host: host, port: configuration.port, path: configuration.path)
+    for endpoint in candidates {
       if isBeingWatched(endpoint) {
         skipped += 1
         confirmed.append(endpoint)
@@ -223,6 +231,10 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
       guard await confirmHost(endpoint) else { continue }
       confirmed.append(endpoint)
     }
+
+    let collapsed = CameraIdentityRules.deduplicate(endpoints: confirmed, advertisements: rawAds)
+    confirmed = collapsed.endpoints
+    let ads = collapsed.advertisements
 
     let identifiedHosts = Set(ads.compactMap { advertisement -> String? in
       advertisement.uniqueID == nil ? nil : advertisement.host
@@ -246,6 +258,8 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
       )
     }
 
+    let awxCount = ads.filter { $0.modelName != nil || $0.wlanMAC != nil }.count
+    let rtspCount = ads.filter { $0.uuid != nil }.count
     let diagnostic = [
       "scan=\(scan?.subnet ?? "off")",
       "probed=\(scan?.probedCount ?? 0)",
@@ -253,7 +267,8 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
       "confirmed=\(confirmed.count)",
       "streaming=\(skipped)",
       "manual=\(configuration.manualHosts.count)",
-      "awx=\(ads.count)",
+      "awx=\(awxCount)",
+      "rtsp=\(rtspCount)",
       "awxbrowse=\(advertisementBrowser.browseState)",
       scan?.diagnostic
     ]
@@ -261,6 +276,15 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
       .joined(separator: " ")
 
     publish(sources: discovered, endpoints: confirmed, diagnostic: diagnostic)
+  }
+
+  /// Prefer the port and path Bonjour advertised for this host, so a Cameraman that bound 8554 is
+  /// probed there rather than on the NearStream default of 554.
+  private func endpoint(for host: String, advertisements: [CameraAdvertisement]) -> CameraEndpoint {
+    if let advertisement = advertisements.first(where: { $0.host == host }) {
+      return advertisement.endpoint
+    }
+    return CameraEndpoint(host: host, port: configuration.port, path: configuration.path)
   }
 
   /// Separate from `sweep` because a lock may not be taken across a suspension point, and this is

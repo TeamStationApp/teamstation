@@ -34,7 +34,10 @@ struct DirectorApp: App {
           resolveIdentity: { cameras.resolve(endpoints: $0, advertisements: $1) },
           requestRelocation: { cameras.reresolve(sourceID: $0) },
           coordinator: cameras.playout,
-          advertisementBrowser: AWXServiceBrowser()
+          advertisementBrowser: CompositeAdvertisementBrowser([
+            AWXServiceBrowser(),
+            RTSPServiceBrowser()
+          ])
         )
       }
     ))

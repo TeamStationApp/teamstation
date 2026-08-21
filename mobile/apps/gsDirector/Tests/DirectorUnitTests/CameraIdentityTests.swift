@@ -520,6 +520,194 @@ struct CameraIdentityTests {
     #expect(advertisement.uniqueID == "mac:02:00:00:00:00:01")
   }
 
+  @Test("GS Cameraman TXT uuid is the unique id when NearStream keys are absent")
+  func cameramanUUIDIsTheUniqueID() {
+    let advertisement = CameraAdvertisement.parseTXT(
+      [
+        "uuid": "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+        "name": "Camera 14E7",
+        "path": "/live/mainstream"
+      ],
+      instanceName: "Camera 14E7",
+      host: "192.168.7.50",
+      port: 8554
+    )
+    #expect(advertisement.uniqueID == "uuid:3f2504e0-4f89-11d3-9a0c-0305e82c3301")
+    #expect(advertisement.port == 8554)
+    #expect(advertisement.path == "/live/mainstream")
+    #expect(advertisement.endpoint == CameraEndpoint(host: "192.168.7.50", port: 8554, path: "/live/mainstream"))
+  }
+
+  @Test("Cameraman TXT name wins over a stale Bonjour instance string")
+  func cameramanTXTNameBeatsInstanceName() {
+    let advertisement = CameraAdvertisement.parseTXT(
+      [
+        "uuid": "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+        "name": "handheld",
+        "path": "/live/mainstream"
+      ],
+      instanceName: "Left Field",
+      host: "192.168.7.118"
+    )
+    #expect(advertisement.advertisedName == "handheld")
+  }
+
+  @Test("Link-local and UUID hostnames are not usable media addresses")
+  func linkLocalAndUUIDHostsAreNotUsable() {
+    #expect(CameraAdvertisement.isUsableMediaHost("192.168.7.118"))
+    #expect(!CameraAdvertisement.isUsableMediaHost("169.254.113.105"))
+    #expect(!CameraAdvertisement.isUsableMediaHost("3278e89a-60d9-411d-a93e-5960cb08de79"))
+    #expect(CameraAdvertisement.isUUIDHostname("3278e89a-60d9-411d-a93e-5960cb08de79.local"))
+  }
+
+  @Test("A Cameraman seen on link-local and LAN collapses to one LAN endpoint")
+  func cameramanLinkLocalAndLANDedup() {
+    let advertisement = CameraAdvertisement(
+      host: "169.254.113.105",
+      advertisedName: "Left Field",
+      uuid: "c94df9ca-d7c2-468f-8529-97d01fba14e7"
+    )
+    let collapsed = CameraIdentityRules.deduplicate(
+      endpoints: [
+        CameraEndpoint(host: "169.254.113.105"),
+        CameraEndpoint(host: "192.168.7.118")
+      ],
+      advertisements: [ advertisement ]
+    )
+    #expect(collapsed.endpoints.map(\.host) == [ "192.168.7.118" ])
+    #expect(collapsed.advertisements.map(\.host) == [ "192.168.7.118" ])
+    #expect(collapsed.advertisements.first?.advertisedName == "Left Field")
+  }
+
+  @Test("A following Cameraman record takes the new Bonjour name")
+  func cameramanBonjourRenameIsFollowed() {
+    var records: [CameraRecord] = []
+    CameraIdentityRules.applyAdvertisements(
+      [
+        CameraAdvertisement(
+          host: "192.168.7.118",
+          advertisedName: "Left Field",
+          uuid: "c94df9ca-d7c2-468f-8529-97d01fba14e7"
+        )
+      ],
+      to: &records,
+      now: epoch
+    )
+    CameraIdentityRules.applyAdvertisements(
+      [
+        CameraAdvertisement(
+          host: "192.168.7.118",
+          advertisedName: "handheld",
+          uuid: "c94df9ca-d7c2-468f-8529-97d01fba14e7"
+        )
+      ],
+      to: &records,
+      now: epoch
+    )
+    #expect(records.count == 1)
+    #expect(records[0].name == "handheld")
+    #expect(records[0].nameOrigin == .advertised)
+  }
+
+  @Test("A stale SDP session name does not undo a Cameraman Bonjour rename")
+  func staleSDPNameDoesNotOverrideCameramanBonjour() {
+    var records: [CameraRecord] = []
+    CameraIdentityRules.applyAdvertisements(
+      [
+        CameraAdvertisement(
+          host: "192.168.7.118",
+          advertisedName: "handheld",
+          uuid: "c94df9ca-d7c2-468f-8529-97d01fba14e7"
+        )
+      ],
+      to: &records,
+      now: epoch
+    )
+    CameraIdentityRules.apply(
+      StreamAdvertisement(cname: "c94df9ca-d7c2-468f-8529-97d01fba14e7", name: "Left Field"),
+      to: records[0].id,
+      in: &records
+    )
+    #expect(records[0].name == "handheld")
+    #expect(records[0].advertisedName == "handheld")
+  }
+
+  @Test("A CNAME-only record is reused when the Cameraman uuid advertisement arrives")
+  func cameramanAdvertisementAttachesToExistingCNAME() {
+    var records: [CameraRecord] = []
+    CameraIdentityRules.makeRecord(
+      adopting: StreamAdvertisement(cname: "c94df9ca-d7c2-468f-8529-97d01fba14e7", name: "Left Field"),
+      host: "192.168.7.118",
+      now: epoch,
+      in: &records
+    )
+    CameraIdentityRules.applyAdvertisements(
+      [
+        CameraAdvertisement(
+          host: "192.168.7.118",
+          advertisedName: "handheld",
+          uuid: "c94df9ca-d7c2-468f-8529-97d01fba14e7"
+        )
+      ],
+      to: &records,
+      now: epoch
+    )
+    #expect(records.count == 1)
+    #expect(records[0].hardwareID == "uuid:c94df9ca-d7c2-468f-8529-97d01fba14e7")
+    #expect(records[0].name == "handheld")
+  }
+
+  @Test("A Cameraman TXT uuid and the later SDP CNAME share one record")
+  func cameramanBonjourAndCNAMEDoNotDuplicate() {
+    var records: [CameraRecord] = []
+    let advertisement = CameraAdvertisement(
+      host: "192.168.7.50",
+      advertisedName: "Camera 14E7",
+      uuid: "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+    )
+    CameraIdentityRules.applyAdvertisements([ advertisement ], to: &records, now: epoch)
+    #expect(records.count == 1)
+    #expect(records[0].hardwareID == "uuid:3f2504e0-4f89-11d3-9a0c-0305e82c3301")
+    #expect(records[0].lastKnownCNAME == "3f2504e0-4f89-11d3-9a0c-0305e82c3301")
+
+    CameraIdentityRules.applyStreamAdvertisements(
+      [
+        endpoint("192.168.7.50"): StreamAdvertisement(
+          cname: "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+          name: "Camera 14E7"
+        )
+      ],
+      to: &records,
+      now: epoch
+    )
+    #expect(records.count == 1)
+    #expect(records[0].name == "Camera 14E7")
+  }
+
+  @Test("A CNAME attaches to a record that only has the Cameraman uuid hardwareID")
+  func cnameMatchesUuidHardwareIDWithoutPriorCNAME() {
+    var records = [
+      CameraRecord(
+        name: "Camera 14E7",
+        lastKnownHost: "192.168.7.50",
+        lastSeenAt: epoch,
+        hardwareID: "uuid:3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+      )
+    ]
+    CameraIdentityRules.applyStreamAdvertisements(
+      [
+        endpoint("192.168.7.50"): StreamAdvertisement(
+          cname: "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+          name: "Camera 14E7"
+        )
+      ],
+      to: &records,
+      now: epoch
+    )
+    #expect(records.count == 1)
+    #expect(records[0].lastKnownCNAME == "3f2504e0-4f89-11d3-9a0c-0305e82c3301")
+  }
+
   @Test("TXT ip= is the host when the closed SRV port cannot be connected")
   func txtIPIsAUsableHost() {
     let fields = [

@@ -79,6 +79,7 @@ public final class AppEnvironment {
     let next = identityProvider.save(name: name)
     identity = next
     publishedIdentity.withLock { $0 = next }
+    server?.refreshAdvertisement()
   }
 
   /// The formats this camera actually offers, for the settings picker. Empty until capture has

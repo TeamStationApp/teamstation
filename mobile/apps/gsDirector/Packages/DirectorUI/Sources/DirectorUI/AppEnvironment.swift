@@ -463,6 +463,7 @@ public final class AppEnvironment {
        let cname = advertisement.cname, !cname.isEmpty {
       telemetry.mutateTile(tileIndex) { $0.cname = cname }
     }
+    refreshDiscovery()
     pushDisplayNamesToTiles()
   }
 

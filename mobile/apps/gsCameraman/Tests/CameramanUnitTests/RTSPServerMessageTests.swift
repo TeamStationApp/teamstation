@@ -1,3 +1,4 @@
+import CameramanCore
 import CameramanRTSP
 import Foundation
 import DirectorRTSP
@@ -119,5 +120,14 @@ struct RTSPServerMessageTests {
 
     #expect(parsed.body == body)
     #expect(parsed.header("content-length") == String(body.count))
+  }
+
+  @Test func bonjourTXTCarriesTheLiveNameAndUUID() {
+    let identity = DeviceIdentity(uuid: "c94df9ca-d7c2-468f-8529-97d01fba14e7", name: "handheld")
+    #expect(RTSPServer.bonjourTXT(identity: identity, path: "/live/mainstream") == [
+      "uuid": "c94df9ca-d7c2-468f-8529-97d01fba14e7",
+      "name": "handheld",
+      "path": "/live/mainstream"
+    ])
   }
 }
