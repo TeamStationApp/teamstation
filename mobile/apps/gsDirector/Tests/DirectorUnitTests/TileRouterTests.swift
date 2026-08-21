@@ -1,3 +1,6 @@
+import AVFoundation
+import CoreMedia
+import CoreVideo
 import DirectorCore
 import DirectorPipeline
 import DirectorSources
@@ -38,6 +41,21 @@ struct TileRouterTests {
     #expect(snapshot.tiles.first { $0.index == 1 }?.isProgram == false)
     #expect(onAir(in: telemetry) == [0])
     #expect(snapshot.tiles.filter(\.isProgram).count == 1)
+  }
+
+  @Test("Clearing every camera keeps Output attached so the next cut can paint")
+  func removeAllKeepsProgramDisplayLayer() throws {
+    let (router, telemetry) = makeRouter()
+    let layer = AVSampleBufferDisplayLayer()
+    router.programRenderer.attach(layer: layer)
+    router.add(pipeline(index: 0, telemetry: telemetry))
+    router.removeAll()
+
+    let factory = try #require(
+      PixelBufferFactory(width: 64, height: 64, pixelFormat: kCVPixelFormatType_32BGRA)
+    )
+    let buffer = try #require(factory.makeBuffer())
+    #expect(router.programRenderer.enqueue(pixelBuffer: buffer, presentationTime: .zero))
   }
 
   private func makeRouter() -> (TileRouter, PipelineTelemetry) {
