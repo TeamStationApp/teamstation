@@ -91,3 +91,31 @@ appId: co.gamestation.director
 - tapOn:
     id: 'content-editor-done'
 - assertVisible: 'Saturday JV'
+- tapOn:
+    id: 'settings-content-template-select-1'
+- assertNotVisible:
+    id: 'content-editor-done'
+- tapOn:
+    id: 'settings-add-content-template'
+- extendedWaitUntil:
+    visible:
+      id: 'settings-new-template-name'
+    timeout: 10000
+- tapOn: 'Blank'
+- tapOn:
+    id: 'settings-new-template-name'
+- inputText: 'Empty Game'
+- tapOn:
+    id: 'settings-new-template-create'
+- extendedWaitUntil:
+    visible:
+      id: 'content-editor-done'
+    timeout: 10000
+- tapOn:
+    id: 'content-editor-done'
+- assertVisible: 'Empty Game'
+- tapOn:
+    id: 'settings-content-template-delete-2'
+- tapOn:
+    id: 'settings-content-template-delete-confirm'
+- assertNotVisible: 'Saturday JV'
