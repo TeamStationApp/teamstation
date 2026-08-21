@@ -77,6 +77,12 @@ public struct CameraAdvertisement: Hashable, Sendable {
     return UUID(uuidString: withoutDomain) != nil
   }
 
+  /// Wi-Fi / Ethernet IPv4 wins. A phone plugged into USB also publishes `169.254.*`, which the
+  /// iPad cannot reach, so that address must not become the media host.
+  public static func preferredMediaHost(among hosts: [String]) -> String? {
+    hosts.first { isUsableMediaHost($0) }
+  }
+
   /// TXT keys are matched case-insensitively. `instanceName` is the Bonjour instance (`00001 3rd`).
   /// Cameraman also puts the operator name in TXT `name`; that wins when both are present so a
   /// rename is visible even if the instance string lags.
