@@ -119,17 +119,18 @@ struct CameraIdentityAdoptionTests {
     #expect(bindings.first { $0.endpoint.host == "10.0.0.4" }?.cameraID == nil)
   }
 
-  @Test func aCameraThatSaysNothingStillBindsByAddress() {
+  @Test func aCameraThatSaysNothingStaysUnbound() {
     var records: [CameraRecord] = []
-    let id = CameraIdentityRules.makeRecord(named: "Third Base", host: "10.0.0.4", now: now, in: &records)
+    CameraIdentityRules.makeRecord(named: "Third Base", host: "10.0.0.4", now: now, in: &records)
 
     let bindings = CameraIdentityRules.autoBind(
       endpoints: [ CameraEndpoint(host: "10.0.0.4") ],
       records: records
     )
 
-    #expect(bindings.first?.cameraID == id)
-    #expect(bindings.first?.origin == .autoByHost)
+    // IP is not identity. Cameraman has to present a CNAME or the tile stays empty.
+    #expect(bindings.first?.cameraID == nil)
+    #expect(bindings.first?.origin == .unbound)
   }
 
   @Test func aManualCorrectionSurvivesTheCameraIdentifyingItself() {
