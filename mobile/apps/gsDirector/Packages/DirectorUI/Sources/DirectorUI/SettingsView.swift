@@ -8,6 +8,11 @@ public struct SettingsView: View {
   @State private var draft = AppConfig.default
   @State private var showingContentEditor = false
   @State private var showingClearCameraMemory = false
+  @State private var renaming: OverlayTemplate?
+  @State private var renameText = ""
+  @State private var showingNewTemplate = false
+  @State private var newTemplateName = ""
+  @State private var copyFromID: UUID?
 
   public init() {}
 
@@ -23,14 +28,44 @@ public struct SettingsView: View {
         }
 
         Section {
-          Button("Add Content") {
-            showingContentEditor = true
+          ForEach(Array(environment.templates.enumerated()), id: \.element.id) { index, template in
+            HStack {
+              Button {
+                environment.selectTemplate(id: template.id)
+                showingContentEditor = true
+              } label: {
+                HStack {
+                  Image(systemName: "checkmark")
+                    .opacity(template.id == environment.activeTemplateID ? 1 : 0)
+                  Text(template.name)
+                  Spacer()
+                }
+              }
+              .accessibilityIdentifier("settings-content-template-\(index + 1)")
+
+              Button {
+                renaming = template
+                renameText = template.name
+              } label: {
+                Image(systemName: "pencil")
+              }
+              .buttonStyle(.borderless)
+              .accessibilityIdentifier("settings-content-template-rename-\(index + 1)")
+            }
           }
-          .accessibilityIdentifier("settings-add-content")
+
+          Button("Add New Template") {
+            copyFromID = environment.activeTemplateID
+            newTemplateName = ""
+            showingNewTemplate = true
+          }
+          .accessibilityIdentifier("settings-add-content-template")
         } header: {
-          Text("Output overlays")
+          Text("Content Templates")
         } footer: {
-          Text("Place a web view or an image on Output. Drag to position. Long-press to edit.")
+          Text(
+            "Templates switch the Output graphics. Tap a row to place and add content. Pencil renames."
+          )
         }
 
         Section {
@@ -165,6 +200,38 @@ public struct SettingsView: View {
         .presentationContentInteraction(.scrolls)
         .presentationSizing(.page)
     }
+    .sheet(isPresented: $showingNewTemplate) {
+      NewTemplateSheet(
+        templates: environment.templates,
+        copyFromID: $copyFromID,
+        name: $newTemplateName,
+        onCreate: {
+          guard let copyFromID else { return }
+          if environment.duplicateTemplate(from: copyFromID, name: newTemplateName) != nil {
+            showingNewTemplate = false
+            showingContentEditor = true
+          }
+        }
+      )
+    }
+    .alert(
+      "Rename template",
+      isPresented: Binding(
+        get: { renaming != nil },
+        set: { if !$0 { renaming = nil } }
+      )
+    ) {
+      TextField("Name", text: $renameText)
+        .accessibilityIdentifier("settings-content-template-rename-field")
+      Button("Save") {
+        if let renaming {
+          environment.renameTemplate(id: renaming.id, name: renameText)
+        }
+        renaming = nil
+      }
+      .accessibilityIdentifier("settings-content-template-rename-save")
+      Button("Cancel", role: .cancel) { renaming = nil }
+    }
     .confirmationDialog(
       "Clear camera memory?",
       isPresented: $showingClearCameraMemory,
@@ -191,6 +258,51 @@ public struct SettingsView: View {
 
   private static func gigabytes(_ bytes: Int64) -> String {
     String(format: "%.1f GB", Double(bytes) / 1_073_741_824)
+  }
+}
+
+private struct NewTemplateSheet: View {
+  let templates: [OverlayTemplate]
+  @Binding var copyFromID: UUID?
+  @Binding var name: String
+  let onCreate: () -> Void
+  @Environment(\.dismiss) private var dismiss
+
+  var body: some View {
+    NavigationStack {
+      Form {
+        Section("Copy from") {
+          Picker("Template", selection: $copyFromID) {
+            ForEach(templates) { template in
+              Text(template.name).tag(Optional(template.id))
+            }
+          }
+          .labelsHidden()
+          .pickerStyle(.inline)
+          .accessibilityIdentifier("settings-new-template-copy-from")
+        }
+        Section("Name") {
+          TextField("Name", text: $name)
+            .accessibilityIdentifier("settings-new-template-name")
+        }
+      }
+      .navigationTitle("New template")
+      .navigationBarTitleDisplayMode(.inline)
+      .toolbar {
+        ToolbarItem(placement: .cancellationAction) {
+          Button("Cancel") { dismiss() }
+            .accessibilityIdentifier("settings-new-template-cancel")
+        }
+        ToolbarItem(placement: .confirmationAction) {
+          Button("Create", action: onCreate)
+            .disabled(
+              name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || copyFromID == nil
+            )
+            .accessibilityIdentifier("settings-new-template-create")
+        }
+      }
+    }
+    .presentationDetents([.medium])
   }
 }
 
