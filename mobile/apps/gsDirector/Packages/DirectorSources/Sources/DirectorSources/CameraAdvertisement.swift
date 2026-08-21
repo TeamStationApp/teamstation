@@ -1,59 +1,102 @@
 import Foundation
 
-/// What a camera published about itself on `_awx_service._tcp`.
+/// What a camera published about itself on Bonjour.
 ///
-/// The SRV port is not a media port — RTSP stays on 554. This blob is identity: a stable unique id
-/// and the name the operator already typed on the camera.
+/// NearStream (`_awx_service._tcp`) uses TXT `modelname` / `wlanmac` for identity; its SRV port is
+/// closed and media stays RTSP `:554`. GS Cameraman (`_rtsp._tcp`) puts the UUID in TXT `uuid` and
+/// the media port in the SRV record — which may be 8554 when 554 is taken.
 public struct CameraAdvertisement: Hashable, Sendable {
   public var host: String
   public var advertisedName: String
   public var modelName: String?
   public var wlanMAC: String?
   public var isBusy: Bool
+  /// Media port. 554 for NearStream; the `_rtsp._tcp` SRV port for GS Cameraman.
+  public var port: Int
+  /// RTSP path. NearStream and GS Cameraman both use `/live/mainstream` unless TXT `path` says otherwise.
+  public var path: String
+  /// GS Cameraman TXT `uuid` — the same string as the SDP/RTCP CNAME.
+  public var uuid: String?
 
   public init(
     host: String,
     advertisedName: String,
     modelName: String? = nil,
     wlanMAC: String? = nil,
-    isBusy: Bool = false
+    isBusy: Bool = false,
+    port: Int = 554,
+    path: String = "/live/mainstream",
+    uuid: String? = nil
   ) {
     self.host = host
     self.advertisedName = advertisedName
     self.modelName = Self.trimmed(modelName)
     self.wlanMAC = Self.normalizeMAC(wlanMAC)
     self.isBusy = isBusy
+    self.port = port
+    self.path = Self.normalizedPath(path)
+    self.uuid = Self.trimmed(uuid)
   }
 
-  /// `modelname` first, then TXT `wlanmac`. Prefixes keep a serial from colliding with a MAC.
+  /// `modelname` first, then TXT `wlanmac`, then Cameraman `uuid`. Prefixes keep the namespaces apart.
   public var uniqueID: String? {
-    Self.uniqueID(modelName: modelName, wlanMAC: wlanMAC)
+    Self.uniqueID(modelName: modelName, wlanMAC: wlanMAC, uuid: uuid)
   }
 
-  public static func uniqueID(modelName: String?, wlanMAC: String?) -> String? {
+  public var endpoint: CameraEndpoint {
+    CameraEndpoint(host: host, port: port, path: path)
+  }
+
+  public static func uniqueID(modelName: String?, wlanMAC: String?, uuid: String? = nil) -> String? {
     if let model = trimmed(modelName), !model.isEmpty {
       return "model:\(model)"
     }
     if let mac = normalizeMAC(wlanMAC) {
       return "mac:\(mac)"
     }
+    if let uuid = trimmed(uuid), !uuid.isEmpty {
+      return "uuid:\(uuid)"
+    }
     return nil
   }
 
+  /// A dotted-quad LAN IPv4. Link-local `169.254.*` and Bonjour UUID hostnames are the same
+  /// camera seen on another interface, and must not become a second row.
+  public var hasUsableMediaHost: Bool { Self.isUsableMediaHost(host) }
+
+  public static func isUsableMediaHost(_ host: String) -> Bool {
+    dottedQuad(host) != nil && !host.hasPrefix("169.254.")
+  }
+
+  /// Bonjour target like `3278e89a-60d9-411d-a93e-5960cb08de79.local`.
+  public static func isUUIDHostname(_ host: String) -> Bool {
+    let trimmed = host.trimmingCharacters(in: .whitespacesAndNewlines)
+    let withoutDomain = trimmed.lowercased().hasSuffix(".local")
+      ? String(trimmed.dropLast(6))
+      : trimmed
+    return UUID(uuidString: withoutDomain) != nil
+  }
+
   /// TXT keys are matched case-insensitively. `instanceName` is the Bonjour instance (`00D9D 3rd`).
+  /// Cameraman also puts the operator name in TXT `name`; that wins when both are present so a
+  /// rename is visible even if the instance string lags.
   public static func parseTXT(
     _ fields: [String: String],
     instanceName: String,
-    host: String
+    host: String,
+    port: Int = 554
   ) -> CameraAdvertisement {
     let lookup = Self.lookup(fields)
     let busy = lookup["busy"]?.lowercased() == "yes"
     return CameraAdvertisement(
       host: host,
-      advertisedName: instanceName,
+      advertisedName: trimmed(lookup["name"]) ?? instanceName,
       modelName: lookup["modelname"],
       wlanMAC: lookup["wlanmac"],
-      isBusy: busy
+      isBusy: busy,
+      port: port,
+      path: lookup["path"] ?? "/live/mainstream",
+      uuid: lookup["uuid"]
     )
   }
 
@@ -83,6 +126,12 @@ public struct CameraAdvertisement: Hashable, Sendable {
     guard let value else { return nil }
     let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
     return trimmed.isEmpty ? nil : trimmed
+  }
+
+  private static func normalizedPath(_ raw: String) -> String {
+    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmed.isEmpty { return "/live/mainstream" }
+    return trimmed.hasPrefix("/") ? trimmed : "/\(trimmed)"
   }
 
   /// Canonical `aa:bb:cc:dd:ee:ff`. iOS cannot read LAN MACs itself; this is only the TXT string.

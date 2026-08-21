@@ -70,8 +70,9 @@ public enum SourceSelectionRules {
   public static let maximumEnabled = 5
 
   /// Folds a fresh discovery result into the existing list: new sources are appended, known
-  /// ones keep their rename and enabled state, and vanished ones are marked absent rather than
-  /// deleted.
+  /// ones keep their rename and enabled state. Enabled (or operator-renamed) cameras that vanish
+  /// stay as absent rows. Unidentified ghosts are dropped so an IP and a Bonjour uuid for the
+  /// same camera cannot both occupy the list.
   public static func merge(
     existing: [SourceSelection],
     discovered: [DiscoveredSource]
@@ -94,7 +95,10 @@ public enum SourceSelectionRules {
       }
     }
 
+    // Named cameras on a tile stay when they drop off the network. An unidentified IP or UUID
+    // hostname that identity later bound to a real camera must not remain as a grey duplicate.
     for var absent in existing where !seen.contains(absent.id) {
+      guard absent.isEnabled || !(absent.customName?.isEmpty ?? true) else { continue }
       absent.isPresent = false
       result.append(absent)
     }

@@ -41,7 +41,7 @@ public protocol SourceDiscovery: AnyObject, Sendable {
   var currentSources: [DiscoveredSource] { get }
   /// Compact finder/Bonjour status for the HUD and `/dump-state`. Empty for fake sources.
   var diagnostic: String { get }
-  /// `_awx_service._tcp` advertisements keyed for identity. Empty for kinds that do not browse.
+  /// Bonjour advertisements keyed for identity (`_awx_service._tcp` and `_rtsp._tcp`). Empty for kinds that do not browse.
   var advertisements: [CameraAdvertisement] { get }
 
   func start(onChange: @escaping DiscoveryChangeHandler)

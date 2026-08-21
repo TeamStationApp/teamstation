@@ -15,7 +15,7 @@ extension CameraAdvertisementBrowsing {
   public var browseState: String { "idle" }
 }
 
-/// Test double. Production uses `AWXServiceBrowser`.
+/// Test double. Production uses `CompositeAdvertisementBrowser` of AWX and `_rtsp._tcp`.
 public final class StaticAdvertisementBrowser: CameraAdvertisementBrowsing, @unchecked Sendable {
   public var advertisements: [CameraAdvertisement]
 
@@ -25,6 +25,31 @@ public final class StaticAdvertisementBrowser: CameraAdvertisementBrowsing, @unc
 
   public func start() {}
   public func stop() {}
+}
+
+/// NearStream identity plus GS Cameraman `_rtsp._tcp`, so one discovery sweep sees both.
+public final class CompositeAdvertisementBrowser: CameraAdvertisementBrowsing, @unchecked Sendable {
+  private let browsers: [any CameraAdvertisementBrowsing]
+
+  public init(_ browsers: [any CameraAdvertisementBrowsing]) {
+    self.browsers = browsers
+  }
+
+  public var advertisements: [CameraAdvertisement] {
+    browsers.flatMap(\.advertisements)
+  }
+
+  public var browseState: String {
+    browsers.map(\.browseState).joined(separator: ",")
+  }
+
+  public func start() {
+    for browser in browsers { browser.start() }
+  }
+
+  public func stop() {
+    for browser in browsers { browser.stop() }
+  }
 }
 
 /// Browses AuditoryWorks VM33 advertisements and resolves each instance to an IPv4 address.
