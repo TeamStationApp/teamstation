@@ -1,0 +1,110 @@
+# Live NearStream rewind: three identity cameras, fourth host off, Mound as Output,
+# scrub First Base. Synthetic hevc-scrub is not this product.
+appId: co.gamestation.director
+---
+- launchApp:
+    appId: co.gamestation.director
+    arguments:
+      clearState: true
+      uiTest: true
+      debugHUD: true
+      sourceProfile: rtsp
+
+- runFlow: shared/allow-local-network.yaml
+
+- extendedWaitUntil:
+    visible:
+      id: 'source-row-3'
+    timeout: 60000
+- runFlow: shared/settle-source-list.yaml
+
+- extendedWaitUntil:
+    visible: 'awx=3'
+    timeout: 45000
+- assertVisible: 'confirmed=[3-9]'
+- extendedWaitUntil:
+    visible: 'origin=autoByIdentity'
+    timeout: 20000
+
+- tapOn:
+    id: 'source-toggle-1'
+- extendedWaitUntil:
+    visible: '1/5 enabled'
+    timeout: 8000
+- tapOn:
+    id: 'source-toggle-2'
+- extendedWaitUntil:
+    visible: '2/5 enabled'
+    timeout: 8000
+- tapOn:
+    id: 'source-toggle-3'
+- extendedWaitUntil:
+    visible: '3/5 enabled'
+    timeout: 8000
+
+- tapOn:
+    id: 'start-directing'
+
+- extendedWaitUntil:
+    visible: 'tile=1 state=live.*'
+    timeout: 60000
+- extendedWaitUntil:
+    visible: 'tile=3 state=live.*'
+    timeout: 60000
+
+- tapOn:
+    id: 'record-button'
+- extendedWaitUntil:
+    visible: 'dur=[1-9][0-9]'
+    timeout: 90000
+
+# Identified cameras stay first: 1st, Mound, 3rd. Cut Output to Mound.
+- tapOn:
+    id: 'tile-2'
+- extendedWaitUntil:
+    visible: 'output src=.*Mound.*|tile=2 .*onair=1'
+    timeout: 8000
+
+# Scrub First Base (tile 1), not Output.
+- swipe:
+    start: "93%, 27%"
+    end: "68%, 27%"
+    duration: 900
+
+- extendedWaitUntil:
+    visible: 'tile=1 state=(scrubbing|replaying).*off=-|replayms=[1-9]|Holding still'
+    timeout: 15000
+- assertVisible: 'replayerr=ok'
+
+# Concurrent rewind: Third Base while First Base stays in the past.
+- swipe:
+    start: "28%, 80%"
+    end: "8%, 80%"
+    duration: 900
+- extendedWaitUntil:
+    visible: 'tile=1 state=(scrubbing|replaying).*off=-'
+    timeout: 8000
+- extendedWaitUntil:
+    visible: 'tile=3 state=(scrubbing|replaying).*off=-'
+    timeout: 15000
+- assertVisible: 'replayerr=ok'
+- takeScreenshot: rtsp-three-cam-scrub
+
+# Cold-start: same three cameras still enabled. Do not toggle VIDEO.
+- launchApp:
+    appId: co.gamestation.director
+    arguments:
+      clearState: false
+      uiTest: true
+      debugHUD: true
+      sourceProfile: rtsp
+- runFlow: shared/allow-local-network.yaml
+- tapOn:
+    id: 'start-directing'
+    optional: true
+- extendedWaitUntil:
+    visible: 'tile=1 state=live.*f=[1-9]'
+    timeout: 60000
+- extendedWaitUntil:
+    visible: 'tile=3 state=live.*f=[1-9]'
+    timeout: 30000
