@@ -204,6 +204,64 @@ public enum CameraIdentityRules {
 
   // MARK: - Automatic binding
 
+  /// One media address per camera. The same phone on Wi-Fi and a link-local interface, or a VM33
+  /// found by both TXT and the subnet scan, must not become two rows.
+  public static func deduplicate(
+    endpoints: [CameraEndpoint],
+    advertisements: [CameraAdvertisement]
+  ) -> (endpoints: [CameraEndpoint], advertisements: [CameraAdvertisement]) {
+    let adsByHost = Dictionary(
+      advertisements.map { ($0.host, $0) },
+      uniquingKeysWith: { _, latest in latest }
+    )
+
+    var groups: [String: [CameraEndpoint]] = [:]
+    var unidentified: [CameraEndpoint] = []
+    for endpoint in sorted(endpoints) {
+      if let uniqueID = adsByHost[endpoint.host]?.uniqueID {
+        groups[uniqueID, default: []].append(endpoint)
+      } else {
+        unidentified.append(endpoint)
+      }
+    }
+
+    let orphanAds = advertisements.filter { advertisement in
+      guard let uniqueID = advertisement.uniqueID else { return false }
+      let members = groups[uniqueID] ?? []
+      return !members.contains { CameraAdvertisement.isUsableMediaHost($0.host) }
+    }
+    if orphanAds.count == 1, unidentified.count == 1,
+       let uniqueID = orphanAds[0].uniqueID, let leftover = unidentified.first {
+      groups[uniqueID, default: []].append(leftover)
+      unidentified = []
+    }
+
+    var chosen: [CameraEndpoint] = []
+    var rewritten: [String: CameraAdvertisement] = [:]
+    for advertisement in advertisements {
+      guard let uniqueID = advertisement.uniqueID else {
+        rewritten[advertisement.host] = advertisement
+        continue
+      }
+      let members = groups[uniqueID] ?? []
+      let winner = preferredEndpoint(members, advertisement: advertisement)
+      var next = advertisement
+      if let winner {
+        next.host = winner.host
+        chosen.append(winner)
+      }
+      rewritten[uniqueID] = next
+    }
+
+    let claimedHosts = Set(chosen.map(\.host))
+    for endpoint in unidentified where !claimedHosts.contains(endpoint.host) {
+      chosen.append(endpoint)
+    }
+
+    let uniqueChosen = Array(Set(chosen))
+    return (sorted(uniqueChosen), Array(rewritten.values))
+  }
+
   /// Pairs endpoints with records. TXT unique ids outrank `CNAME`. Address is never a match key:
   /// DHCP would otherwise silently put the wrong camera on a tile.
   public static func autoBind(
@@ -358,6 +416,22 @@ public enum CameraIdentityRules {
       guard let uniqueID = advertisement.uniqueID else { continue }
       let advertised = trimmed(advertisement.advertisedName)
       if let position = records.firstIndex(where: { $0.hardwareID == uniqueID }) {
+        let keeperID = records[position].id
+        records[position].lastKnownHost = advertisement.host
+        records[position].lastSeenAt = now
+        if let advertised { records[position].advertisedName = advertised }
+        if let uuid = advertisement.uuid {
+          records[position].lastKnownCNAME = uuid
+          records.removeAll { $0.id != keeperID && $0.lastKnownCNAME == uuid }
+        }
+        if let next = records.firstIndex(where: { $0.id == keeperID }) {
+          adoptAdvertisedNameIfFollowing(at: next, in: &records)
+        }
+        continue
+      }
+      if let uuid = advertisement.uuid,
+         let position = records.firstIndex(where: { $0.lastKnownCNAME == uuid }) {
+        records[position].hardwareID = uniqueID
         records[position].lastKnownHost = advertisement.host
         records[position].lastSeenAt = now
         if let advertised { records[position].advertisedName = advertised }
@@ -371,6 +445,7 @@ public enum CameraIdentityRules {
         hardwareID: uniqueID,
         nameOrigin: advertised == nil ? .operatorAssigned : .advertised,
         advertisedName: advertised,
+        lastKnownCNAME: advertisement.uuid,
         in: &records
       )
     }
@@ -428,6 +503,17 @@ public enum CameraIdentityRules {
         apply(claim, to: records[position].id, in: &records)
         continue
       }
+      // GS Cameraman's Bonjour TXT uuid is stored as hardwareID `uuid:…` before DESCRIBE supplies
+      // the same string as a CNAME. Matching here keeps one record instead of minting a second.
+      if let position = records.firstIndex(where: {
+        $0.hardwareID == CameraAdvertisement.uniqueID(modelName: nil, wlanMAC: nil, uuid: cname)
+      }) {
+        records[position].lastKnownCNAME = cname
+        records[position].lastKnownHost = endpoint.host
+        records[position].lastSeenAt = now
+        apply(claim, to: records[position].id, in: &records)
+        continue
+      }
       makeRecord(adopting: claim, host: endpoint.host, now: now, in: &records)
     }
   }
@@ -447,6 +533,9 @@ public enum CameraIdentityRules {
     if let cname = advertisement.cname { records[position].lastKnownCNAME = cname }
 
     guard let advertised = trimmed(advertisement.name) else { return }
+    // Cameraman Bonjour is the live rename. SDP `s=` is a snapshot from DESCRIBE and must not
+    // pull the name back after the operator already renamed the phone.
+    if records[position].hardwareID?.hasPrefix("uuid:") == true { return }
     records[position].advertisedName = advertised
     adoptAdvertisedNameIfFollowing(at: position, in: &records)
   }
@@ -531,6 +620,27 @@ public enum CameraIdentityRules {
     endpoints.sorted {
       ($0.host, $0.port, $0.path) < ($1.host, $1.port, $1.path)
     }
+  }
+
+  private static func hostRank(_ host: String) -> Int {
+    if CameraAdvertisement.isUsableMediaHost(host) { return 0 }
+    if host.hasPrefix("169.254.") { return 1 }
+    if CameraAdvertisement.isUUIDHostname(host) { return 2 }
+    return 3
+  }
+
+  private static func preferredEndpoint(
+    _ endpoints: [CameraEndpoint],
+    advertisement: CameraAdvertisement
+  ) -> CameraEndpoint? {
+    let winner = endpoints.min { left, right in
+      let leftRank = hostRank(left.host)
+      let rightRank = hostRank(right.host)
+      if leftRank != rightRank { return leftRank < rightRank }
+      return left.host < right.host
+    }
+    guard let winner else { return nil }
+    return CameraEndpoint(host: winner.host, port: advertisement.port, path: advertisement.path)
   }
 
   private static func index(

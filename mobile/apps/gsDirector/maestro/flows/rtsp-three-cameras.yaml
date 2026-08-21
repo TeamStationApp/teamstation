@@ -21,9 +21,14 @@ appId: co.gamestation.director
     timeout: 60000
 - runFlow: shared/settle-source-list.yaml
 
-# This venue often has an extra RTSP host besides the three VM33s. Identity is `awx=`; `confirmed=`
-# is every camera that answered DESCRIBE.
+# This venue often has an extra RTSP host besides the three VM33s. Identity for NearStream is
+# `awx=`; GS Cameraman is `rtsp=` (`Left Field` on the iPhone). `confirmed=` is every camera that
+# answered DESCRIBE.
+- extendedWaitUntil:
+    visible: 'rtsp=1'
+    timeout: 30000
 - assertVisible: 'awx=3'
+- assertVisible: 'Left Field'
 - assertVisible: 'confirmed=[3-9]'
 - extendedWaitUntil:
     visible: 'origin=autoByIdentity'
