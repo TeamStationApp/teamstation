@@ -10,12 +10,13 @@ let package = Package(
   dependencies: [
     .package(path: "../DirectorCore"),
     .package(path: "../DirectorSources"),
+    .package(path: "../DirectorRTMP"),
     .package(path: "../DirectorTestHarness")
   ],
   targets: [
     .target(
       name: "DirectorPipeline",
-      dependencies: [ "DirectorCore", "DirectorSources", "DirectorTestHarness" ],
+      dependencies: [ "DirectorCore", "DirectorSources", "DirectorRTMP", "DirectorTestHarness" ],
       swiftSettings: [ .swiftLanguageMode(.v6) ]
     )
   ]

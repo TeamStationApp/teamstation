@@ -12,6 +12,7 @@ let package = Package(
     .package(path: "../DirectorSources"),
     .package(path: "../DirectorPipeline"),
     .package(path: "../DirectorDVR"),
+    .package(path: "../DirectorRTMP"),
     .package(path: "../DirectorTestHarness")
   ],
   targets: [
@@ -22,6 +23,7 @@ let package = Package(
         "DirectorSources",
         "DirectorPipeline",
         "DirectorDVR",
+        "DirectorRTMP",
         "DirectorTestHarness"
       ],
       swiftSettings: [ .swiftLanguageMode(.v6) ]

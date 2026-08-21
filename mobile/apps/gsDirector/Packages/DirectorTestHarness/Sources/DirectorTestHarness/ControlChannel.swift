@@ -10,6 +10,7 @@ public enum ControlCommand: Sendable, Equatable {
   case scrub(tile: Int, offsetSeconds: Double)
   case returnToLive(tile: Int)
   case record(on: Bool)
+  case stream(on: Bool)
   case startDirecting
   case selectProgram(tile: Int)
   case enableSource(index: Int, on: Bool)
@@ -60,6 +61,8 @@ public enum ControlChannel {
       return .returnToLive(tile: tile - 1)
     case "record":
       return .record(on: LaunchConfiguration.boolean(query["on"]) ?? true)
+    case "stream":
+      return .stream(on: LaunchConfiguration.boolean(query["on"]) ?? true)
     case "start", "start-directing", "startdirecting":
       return .startDirecting
     case "program":

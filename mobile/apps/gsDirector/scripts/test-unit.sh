@@ -26,7 +26,7 @@ mkdir -p "$DIRECTOR_DERIVED_DATA"
 rm -rf "$DIRECTOR_DERIVED_DATA/TestResults.xcresult"
 
 SIM_UDID="$(resolve_simulator_udid)"
-log "Testing on '$DIRECTOR_SIMULATOR' ($SIM_UDID)"
+log "Testing on simulator $SIM_UDID"
 set +e
 xcodebuild test \
   -project "$DIRECTOR_PROJECT" \

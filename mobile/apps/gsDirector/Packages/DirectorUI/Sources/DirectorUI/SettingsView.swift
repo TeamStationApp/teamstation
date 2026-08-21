@@ -147,6 +147,31 @@ public struct SettingsView: View {
           """)
         }
 
+        Section {
+          HStack {
+            TextField("rtmp://host:1935/live/key", text: $draft.streamURL)
+              .keyboardType(.URL)
+              .textInputAutocapitalization(.never)
+              .autocorrectionDisabled()
+              .accessibilityIdentifier("settings-stream-url")
+            if !draft.streamURL.isEmpty {
+              Button {
+                draft.streamURL = ""
+              } label: {
+                Image(systemName: "xmark.circle.fill")
+                  .foregroundStyle(.secondary)
+              }
+              .buttonStyle(.borderless)
+              .accessibilityIdentifier("settings-stream-url-clear")
+              .accessibilityLabel("Clear stream URL")
+            }
+          }
+        } header: {
+          Text("Stream")
+        } footer: {
+          Text("RTMP URL the Stream button publishes the programme output to.")
+        }
+
         Section("Retention") {
           Stepper(
             "Keep \(String(format: "%.1f", draft.retentionHours)) hours",
