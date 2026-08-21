@@ -294,6 +294,9 @@ public struct SourceSelectionView: View {
     if let host = environment.presentHost(forCamera: record.id) {
       return "\(record.name) · in use by \(host)"
     }
+    if record.lastKnownHost.isEmpty {
+      return record.name
+    }
     return "\(record.name) · last seen \(record.lastKnownHost)"
   }
 

@@ -72,12 +72,13 @@ public struct CameraRecord: Hashable, Sendable, Codable, Identifiable {
   /// Last name the camera announced, kept whether or not it is the name in use, so the UI can
   /// offer to go back to following the camera after an operator rename.
   public var advertisedName: String?
-  /// Last `CNAME` this camera presented. Outranks the address when re-binding.
+  /// Last `CNAME` this camera presented. SDP/RTCP identity for cameras that do not publish
+  /// `_awx_service._tcp` TXT — GS Cameraman puts its UUID here.
   public var lastKnownCNAME: String?
-  /// Last address this camera answered on. A hint for auto-binding when no TXT unique id is known.
+  /// Address this camera answered on in the current session. Never persisted: IP is not identity.
   public var lastKnownHost: String
   /// Stable id from `_awx_service._tcp` TXT: `modelname` first, else `wlanmac`. Nil for cameras
-  /// named before that browse existed, and for anything that does not advertise.
+  /// that do not advertise NearStream identity.
   public var hardwareID: String?
   public var lastSeenAt: Date
   /// The smoothing buffer this camera settled on last time it was used. A camera's jitter comes
@@ -117,7 +118,9 @@ public struct CameraRecord: Hashable, Sendable, Codable, Identifiable {
     nameOrigin = try container.decodeIfPresent(NameOrigin.self, forKey: .nameOrigin) ?? .operatorAssigned
     advertisedName = try container.decodeIfPresent(String.self, forKey: .advertisedName)
     lastKnownCNAME = try container.decodeIfPresent(String.self, forKey: .lastKnownCNAME)
-    lastKnownHost = try container.decode(String.self, forKey: .lastKnownHost)
+    // Discards a previously persisted address. Matching by IP is how the wrong camera takes a tile
+    // after DHCP; the host is session state only.
+    lastKnownHost = ""
     lastSeenAt = try container.decode(Date.self, forKey: .lastSeenAt)
     hardwareID = try container.decodeIfPresent(String.self, forKey: .hardwareID)
     playoutMilliseconds = try container.decodeIfPresent(Double.self, forKey: .playoutMilliseconds)
@@ -130,10 +133,17 @@ public struct CameraRecord: Hashable, Sendable, Codable, Identifiable {
     try container.encode(nameOrigin, forKey: .nameOrigin)
     try container.encodeIfPresent(advertisedName, forKey: .advertisedName)
     try container.encodeIfPresent(lastKnownCNAME, forKey: .lastKnownCNAME)
-    try container.encode(lastKnownHost, forKey: .lastKnownHost)
     try container.encode(lastSeenAt, forKey: .lastSeenAt)
     try container.encodeIfPresent(hardwareID, forKey: .hardwareID)
     try container.encodeIfPresent(playoutMilliseconds, forKey: .playoutMilliseconds)
+  }
+
+  /// Only NearStream TXT (`hardwareID`) or RTSP SDP/RTCP `CNAME` is durable. An IP-only camera is
+  /// session-scoped and must not be written to disk.
+  public var hasHardenedIdentity: Bool {
+    if let hardwareID, !hardwareID.isEmpty { return true }
+    if let lastKnownCNAME, !lastKnownCNAME.isEmpty { return true }
+    return false
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -156,7 +166,7 @@ public struct CameraBinding: Hashable, Sendable {
     case autoByIdentity
     /// Matched on the identifier the camera presented in SDP/RTCP. Survives a lease change.
     case autoByCNAME
-    /// Matched automatically because the endpoint's address is the one this camera last used.
+    /// Session-only: the operator paired this address. Not restored from disk.
     case autoByHost
     /// The operator chose this pairing, so automatic matching must not override it.
     case manual
@@ -194,8 +204,8 @@ public enum CameraIdentityRules {
 
   // MARK: - Automatic binding
 
-  /// Pairs endpoints with records. TXT unique ids outrank `CNAME`, which outranks last-known
-  /// address, so a DHCP swap does not silently put the wrong camera on a tile.
+  /// Pairs endpoints with records. TXT unique ids outrank `CNAME`. Address is never a match key:
+  /// DHCP would otherwise silently put the wrong camera on a tile.
   public static func autoBind(
     endpoints: [CameraEndpoint],
     records: [CameraRecord],
@@ -205,8 +215,6 @@ public enum CameraIdentityRules {
     var claimed: Set<UUID> = []
     var bindings: [CameraEndpoint: CameraBinding] = [:]
 
-    // Three passes, so a camera that identified itself is never beaten to its record by another
-    // endpoint that merely inherited its address.
     for endpoint in sorted(endpoints) {
       guard
         let uniqueID = advertisements[endpoint.host]?.uniqueID,
@@ -226,16 +234,7 @@ public enum CameraIdentityRules {
     }
 
     for endpoint in sorted(endpoints) where bindings[endpoint] == nil {
-      guard let record = bestRecord(for: endpoint, in: records, excluding: claimed) else {
-        bindings[endpoint] = CameraBinding(endpoint: endpoint)
-        continue
-      }
-      claimed.insert(record.id)
-      // A record that already carries a TXT unique id stays identity-bound when Bonjour is quiet
-      // for a moment. Matching still uses lastKnownHost, so a live advertisement remains the only
-      // way to follow a camera that actually moved.
-      let origin: CameraBinding.Origin = record.hardwareID == nil ? .autoByHost : .autoByIdentity
-      bindings[endpoint] = CameraBinding(endpoint: endpoint, cameraID: record.id, origin: origin)
+      bindings[endpoint] = CameraBinding(endpoint: endpoint)
     }
 
     return sorted(endpoints).compactMap { bindings[$0] }
@@ -365,14 +364,6 @@ public enum CameraIdentityRules {
         adoptAdvertisedNameIfFollowing(at: position, in: &records)
         continue
       }
-      if let position = records.firstIndex(where: {
-        $0.hardwareID == nil && $0.lastKnownHost == advertisement.host
-      }) {
-        records[position].hardwareID = uniqueID
-        records[position].lastSeenAt = now
-        if let advertised { records[position].advertisedName = advertised }
-        continue
-      }
       makeRecord(
         named: advertised ?? advertisement.advertisedName,
         host: advertisement.host,
@@ -421,6 +412,25 @@ public enum CameraIdentityRules {
   }
 
   // MARK: - What the camera says about itself
+
+  /// Folds live SDP/RTCP claims into the cache. A new `CNAME` becomes a persistable record; IP is
+  /// not used to attach the claim to an existing unnamed camera.
+  public static func applyStreamAdvertisements(
+    _ claims: [CameraEndpoint: StreamAdvertisement],
+    to records: inout [CameraRecord],
+    now: Date
+  ) {
+    for (endpoint, claim) in claims {
+      guard let cname = trimmed(claim.cname) else { continue }
+      if let position = records.firstIndex(where: { $0.lastKnownCNAME == cname }) {
+        records[position].lastKnownHost = endpoint.host
+        records[position].lastSeenAt = now
+        apply(claim, to: records[position].id, in: &records)
+        continue
+      }
+      makeRecord(adopting: claim, host: endpoint.host, now: now, in: &records)
+    }
+  }
 
   /// Folds an SDP/RTCP advertisement into a record.
   ///
@@ -523,20 +533,6 @@ public enum CameraIdentityRules {
     }
   }
 
-  /// Most recently seen record for this address. Ties break on the identifier so a rediscovery
-  /// cannot reshuffle tiles for no reason.
-  private static func bestRecord(
-    for endpoint: CameraEndpoint,
-    in records: [CameraRecord],
-    excluding claimed: Set<UUID>
-  ) -> CameraRecord? {
-    records
-      .filter { $0.lastKnownHost == endpoint.host && !claimed.contains($0.id) }
-      .max {
-        ($0.lastSeenAt, $0.id.uuidString) < ($1.lastSeenAt, $1.id.uuidString)
-      }
-  }
-
   private static func index(
     of endpoint: CameraEndpoint,
     in bindings: inout [CameraBinding]
@@ -586,11 +582,11 @@ public struct CameraRecordStore: Sendable {
   }
 
   public func load() -> [CameraRecord] {
-    store.codableValue([CameraRecord].self, forKey: Self.key) ?? []
+    (store.codableValue([CameraRecord].self, forKey: Self.key) ?? []).filter(\.hasHardenedIdentity)
   }
 
   public func save(_ records: [CameraRecord]) {
-    store.setCodableValue(records, forKey: Self.key)
+    store.setCodableValue(records.filter(\.hasHardenedIdentity), forKey: Self.key)
   }
 
   public func clear() {

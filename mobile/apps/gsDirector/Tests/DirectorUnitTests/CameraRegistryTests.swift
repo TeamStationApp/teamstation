@@ -81,4 +81,44 @@ struct CameraRegistryTests {
     #expect(cameras.binding(for: moved)?.cameraID == id)
     #expect(cameras.binding(for: moved)?.origin == .autoByCNAME)
   }
+
+  @Test("An IP-only name is not written to disk")
+  func adoptWithoutIdentityDoesNotPersist() {
+    let suite = "co.gamestation.director.tests.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suite)!
+    defaults.removePersistentDomain(forName: suite)
+    let store = CameraRecordStore(store: ConfigStore(defaults: defaults))
+    let cameras = CameraRegistry(store: store)
+
+    _ = cameras.adopt(endpoint: CameraEndpoint(host: "10.10.7.99"), name: "Scratch")
+
+    #expect(cameras.records.count == 1)
+    #expect(!cameras.records[0].hasHardenedIdentity)
+    #expect(store.load().isEmpty)
+    #expect(CameraRegistry(store: store).records.isEmpty)
+  }
+
+  @Test("Clearing the registry empties the store")
+  func clearEmptiesTheStore() {
+    let suite = "co.gamestation.director.tests.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suite)!
+    defaults.removePersistentDomain(forName: suite)
+    let store = CameraRecordStore(store: ConfigStore(defaults: defaults))
+    let cameras = CameraRegistry(store: store)
+    _ = cameras.resolve(
+      endpoints: [ CameraEndpoint(host: "10.10.7.244") ],
+      advertisements: [
+        CameraAdvertisement(
+          host: "10.10.7.244",
+          advertisedName: "0107B Mound",
+          modelName: "VM33_0107B"
+        )
+      ]
+    )
+    #expect(!store.load().isEmpty)
+    cameras.clear()
+    #expect(cameras.records.isEmpty)
+    #expect(cameras.bindings.isEmpty)
+    #expect(store.load().isEmpty)
+  }
 }

@@ -97,6 +97,7 @@ public final class CameraRegistry: @unchecked Sendable {
     lock.lock()
     let ads = remembered(advertisements)
     CameraIdentityRules.applyAdvertisements(ads, to: &cachedRecords, now: now)
+    CameraIdentityRules.applyStreamAdvertisements(advertised, to: &cachedRecords, now: now)
     let byHost = Dictionary(ads.map { ($0.host, $0) }, uniquingKeysWith: { _, latest in latest })
     advertised = advertised.filter { endpoints.contains($0.key) }
     cachedBindings = CameraIdentityRules.reconcile(
@@ -154,10 +155,15 @@ public final class CameraRegistry: @unchecked Sendable {
   public func adopt(endpoint: CameraEndpoint, name: String? = nil, now: Date = Date()) -> UUID {
     lock.lock()
     let proposed = name ?? CameraIdentityRules.nextDefaultName(in: cachedRecords)
+    let hardwareID = lastAdvertisements.first { $0.host == endpoint.host }?.uniqueID
+    let claim = advertised[endpoint]
     let id = CameraIdentityRules.makeRecord(
       named: proposed,
       host: endpoint.host,
       now: now,
+      hardwareID: hardwareID,
+      advertisedName: claim?.name,
+      lastKnownCNAME: claim?.cname,
       in: &cachedRecords
     )
     CameraIdentityRules.bind(
@@ -214,11 +220,16 @@ public final class CameraRegistry: @unchecked Sendable {
     let cameraID = cachedBindings.first { $0.endpoint == endpoint }?.cameraID
     if let cameraID {
       CameraIdentityRules.apply(merged, to: cameraID, in: &cachedRecords)
+    } else {
+      CameraIdentityRules.applyStreamAdvertisements(
+        [ endpoint: merged ],
+        to: &cachedRecords,
+        now: Date()
+      )
     }
     let records = cachedRecords
     lock.unlock()
 
-    guard cameraID != nil else { return }
     store.save(records)
   }
 
