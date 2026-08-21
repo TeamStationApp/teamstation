@@ -33,6 +33,17 @@ public struct DirectorGridView: View {
 
   private var toolbar: some View {
     HStack(spacing: 14) {
+      if environment.isRecording {
+        Text("REC")
+          .font(.system(size: 11, weight: .heavy, design: .rounded))
+          .tracking(1)
+          .padding(.horizontal, 10)
+          .padding(.vertical, 7)
+          .background(Color.recordRed, in: RoundedRectangle(cornerRadius: 8))
+          .foregroundStyle(.white)
+          .accessibilityIdentifier("header-rec")
+      }
+
       Menu {
         Button {
           environment.openCameras()

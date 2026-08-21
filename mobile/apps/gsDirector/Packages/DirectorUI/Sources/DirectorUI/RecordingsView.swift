@@ -11,17 +11,24 @@ public struct RecordingsView: View {
   @State private var selectedID: Int64?
   @State private var selectedProgram = true
   @State private var selectedCameras: Set<String> = []
+  @State private var showExportProgress = false
 
   public init() {}
 
   public var body: some View {
     NavigationStack {
-      HStack(spacing: 0) {
-        dateColumn
-        Divider()
-        filesColumn
+      ZStack {
+        HStack(spacing: 0) {
+          dateColumn
+          Divider()
+          filesColumn
+        }
+        .background(Color.deckBackground)
+
+        if showExportProgress || environment.isExporting {
+          exportProgress
+        }
       }
-      .background(Color.deckBackground)
       .navigationTitle("Recordings")
       .navigationBarTitleDisplayMode(.inline)
       .toolbar {
@@ -38,32 +45,44 @@ public struct RecordingsView: View {
         if selectedID == nil { selectedID = recordings.first?.id }
         selectAll(in: selectedRecording)
       }
+      .onChange(of: environment.isSharingRecordings) { _, sharing in
+        if sharing { showExportProgress = false }
+      }
+      .onChange(of: environment.isExporting) { _, exporting in
+        if exporting { showExportProgress = true }
+        if !exporting && environment.lastRecordingShare.isEmpty {
+          showExportProgress = false
+        }
+      }
     }
   }
 
   private var dateColumn: some View {
-    List(recordings, id: \.id, selection: $selectedID) { recording in
-      Button {
-        selectedID = recording.id
-        selectAll(in: recording)
-      } label: {
-        VStack(alignment: .leading, spacing: 4) {
-          Text(dateLabel(recording.startedAt))
-            .font(.system(size: 15, weight: .semibold, design: .monospaced))
-            .foregroundStyle(.primary)
-          Text(lengthLabel(recording))
-            .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(.secondary)
+    List {
+      ForEach(recordings) { recording in
+        Button {
+          selectedID = recording.id
+        } label: {
+          VStack(alignment: .leading, spacing: 4) {
+            Text(dateLabel(recording.startedAt))
+              .font(.system(size: 15, weight: .semibold, design: .monospaced))
+              .foregroundStyle(.primary)
+            Text(lengthLabel(recording))
+              .font(.system(size: 12, weight: .medium))
+              .foregroundStyle(.secondary)
+          }
+          .padding(.vertical, 6)
         }
-        .padding(.vertical, 6)
+        .buttonStyle(.plain)
+        .listRowBackground(
+          selectedID == recording.id ? Color.white.opacity(0.12) : Color.clear
+        )
+        .accessibilityIdentifier("recording-row-\(recording.id)")
       }
-      .listRowBackground(
-        selectedID == recording.id ? Color.white.opacity(0.12) : Color.clear
-      )
-      .accessibilityIdentifier("recording-row-\(recording.id)")
     }
     .listStyle(.plain)
     .frame(minWidth: 280, maxWidth: 360)
+    .accessibilityElement(children: .contain)
     .accessibilityIdentifier("recordings-dates")
   }
 
@@ -82,8 +101,10 @@ public struct RecordingsView: View {
           }
         }
         .listStyle(.plain)
+        .id(recording.id)
 
         Button {
+          showExportProgress = true
           export(recording)
         } label: {
           Text("EXPORT")
@@ -95,17 +116,58 @@ public struct RecordingsView: View {
             .foregroundStyle(canExport(recording) ? .black : .white.opacity(0.35))
         }
         .buttonStyle(.plain)
-        .disabled(!canExport(recording))
+        .disabled(!canExport(recording) || environment.isExporting)
         .accessibilityIdentifier("recordings-export")
         .padding(16)
       } else {
-        Text("No recordings yet")
+        Text(recordings.isEmpty ? "No recordings yet" : "Choose a recording")
           .font(.system(size: 14, weight: .medium))
           .foregroundStyle(.secondary)
           .frame(maxWidth: .infinity, maxHeight: .infinity)
           .accessibilityIdentifier("recordings-empty")
       }
     }
+  }
+
+  private var exportProgress: some View {
+    ZStack {
+      Color.black.opacity(0.72)
+        .ignoresSafeArea()
+      VStack(alignment: .leading, spacing: 16) {
+        Text("Preparing export")
+          .font(.system(size: 18, weight: .bold, design: .rounded))
+          .foregroundStyle(.white)
+        ForEach(environment.exportItems) { item in
+          VStack(alignment: .leading, spacing: 6) {
+            HStack {
+              Text(item.name)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.white)
+              Spacer()
+              Text("\(Int((item.fraction * 100).rounded()))%")
+                .font(.system(size: 12, weight: .bold, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.7))
+            }
+            GeometryReader { geo in
+              ZStack(alignment: .leading) {
+                Capsule().fill(Color.white.opacity(0.12))
+                Capsule()
+                  .fill(Color.programGreen)
+                  .frame(width: max(0, geo.size.width * item.fraction))
+              }
+            }
+            .frame(height: 8)
+          }
+        }
+      }
+      .padding(24)
+      .frame(maxWidth: 480)
+      .background(Color.deckPanel, in: RoundedRectangle(cornerRadius: 12))
+    }
+    .accessibilityElement(children: .contain)
+    .accessibilityAddTraits(.isModal)
+    .accessibilityIdentifier("export-progress")
+    .accessibilityLabel("Preparing export")
   }
 
   private var selectedRecording: RecordingSummary? {

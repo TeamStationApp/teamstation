@@ -60,12 +60,25 @@ public struct ExportService: Sendable {
     )
   }
 
+  public struct ItemProgress: Sendable, Identifiable, Equatable {
+    public var id: String
+    public var name: String
+    public var fraction: Double
+
+    public init(id: String, name: String, fraction: Double) {
+      self.id = id
+      self.name = name
+      self.fraction = fraction
+    }
+  }
+
   /// Assembles the chosen cameras and/or programme of one recording into shareable `.mov` files.
   public func exportRecording(
     _ recording: RecordingSummary,
     cameras: [(sourceID: SourceID, name: String)],
     includeProgram: Bool,
-    destinationDirectory: URL = DirectorPaths.exports
+    destinationDirectory: URL = DirectorPaths.exports,
+    progress: (@Sendable (ItemProgress) -> Void)? = nil
   ) throws -> [URL] {
     try FileManager.default.createDirectory(at: destinationDirectory, withIntermediateDirectories: true)
     var urls: [URL] = []
@@ -79,22 +92,30 @@ public struct ExportService: Sendable {
         try? FileManager.default.removeItem(at: destination)
         try FileManager.default.copyItem(at: source, to: destination)
         urls.append(destination)
+        progress?(ItemProgress(id: "program", name: "Primary output", fraction: 1))
       }
     }
 
     for camera in cameras {
-      guard let bounds = try index.recordingBounds(id: recording.id, sourceID: camera.sourceID)
+      let sourceID = camera.sourceID
+      let name = camera.name
+      guard let bounds = try index.recordingBounds(id: recording.id, sourceID: sourceID)
       else { continue }
       let destination = destinationDirectory.appendingPathComponent(
-        RecordingExport.cameraFilename(startedAt: recording.startedAt, cameraName: camera.name)
+        RecordingExport.cameraFilename(startedAt: recording.startedAt, cameraName: name)
       )
       try? FileManager.default.removeItem(at: destination)
+      progress?(ItemProgress(id: sourceID.rawValue, name: name, fraction: 0))
       _ = try assembler.assemble(
-        sourceID: camera.sourceID,
+        sourceID: sourceID,
         from: bounds.start,
         to: bounds.end,
-        destination: destination
+        destination: destination,
+        progress: { fraction in
+          progress?(ItemProgress(id: sourceID.rawValue, name: name, fraction: fraction))
+        }
       )
+      progress?(ItemProgress(id: sourceID.rawValue, name: name, fraction: 1))
       urls.append(destination)
     }
 
