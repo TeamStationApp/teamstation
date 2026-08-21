@@ -10,7 +10,7 @@ final class RTSPClientConnection: @unchecked Sendable {
   private let connection: NWConnection
   private let queue: DispatchQueue
   private let sdp: @Sendable (UInt32, UInt32) -> String
-  private let identity: DeviceIdentity
+  private let identity: @Sendable () -> DeviceIdentity
   private let requestKeyframe: @Sendable () -> Void
   private var responder: RTSPResponder
 
@@ -40,7 +40,7 @@ final class RTSPClientConnection: @unchecked Sendable {
     queue: DispatchQueue,
     sdp: @escaping @Sendable (UInt32, UInt32) -> String,
     hasAudio: Bool,
-    identity: DeviceIdentity,
+    identity: @escaping @Sendable () -> DeviceIdentity,
     requestKeyframe: @escaping @Sendable () -> Void
   ) {
     self.connection = connection
@@ -291,7 +291,7 @@ final class RTSPClientConnection: @unchecked Sendable {
     guard now.timeIntervalSince(lastReportTime) >= 1 else { return }
     lastReportTime = now
 
-    let writer = RTCPWriter(ssrc: videoSSRC, identity: identity)
+    let writer = RTCPWriter(ssrc: videoSSRC, identity: identity())
     let report = writer.compoundPacket(
       ntpTime: RTCPWriter.ntpTime(from: now),
       rtpTimestamp: rtpTimestamp,

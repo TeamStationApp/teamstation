@@ -115,15 +115,18 @@ public struct SDPBuilder: Sendable {
     }
 
     lines.append("a=framesize:\(Self.videoPayloadType) \(video.width)-\(video.height)")
-    lines.append(cnameLine(ssrc: videoSSRC))
+    lines.append(contentsOf: identityLines(ssrc: videoSSRC))
     return lines
   }
 
-  /// RFC 5576 §6.1. This must be the same string the RTCP SDES CNAME carries, which is why both read
-  /// `identity.cname`. It lets a client identify the camera from the DESCRIBE alone, without waiting
+  /// RFC 5576 §6.1. These must be the same strings the RTCP SDES CNAME and NAME carry, which is why
+  /// both read `identity`. A client can label the camera from the DESCRIBE alone, without waiting
   /// for the first RTCP packet.
-  private func cnameLine(ssrc: UInt32) -> String {
-    "a=ssrc:\(ssrc) cname:\(identity.cname)"
+  private func identityLines(ssrc: UInt32) -> [String] {
+    [
+      "a=ssrc:\(ssrc) cname:\(identity.cname)",
+      "a=ssrc:\(ssrc) name:\(identity.name)"
+    ]
   }
 
   private func audioLines(_ audio: AudioTrack) -> [String] {
@@ -142,9 +145,8 @@ public struct SDPBuilder: Sendable {
       "c=IN IP4 0.0.0.0",
       "a=rtpmap:\(rtpmap)",
       "a=control:\(SDPBuilder.audioTrackControl)",
-      "a=fmtp:\(Self.audioPayloadType) \(parameters.joined(separator: "; "))",
-      cnameLine(ssrc: audioSSRC)
-    ]
+      "a=fmtp:\(Self.audioPayloadType) \(parameters.joined(separator: "; "))"
+    ] + identityLines(ssrc: audioSSRC)
   }
 
   public static let videoTrackControl = "trackID=0"

@@ -153,7 +153,7 @@ public final class RTSPServer: @unchecked Sendable {
       queue: queue,
       sdp: describe,
       hasAudio: hasAudio(),
-      identity: identity(),
+      identity: identity,
       requestKeyframe: requestKeyframe
     )
     let key = ObjectIdentifier(client)
