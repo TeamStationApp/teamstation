@@ -1,5 +1,6 @@
 import Foundation
 import Network
+import Darwin
 import DirectorSources
 
 /// Live snapshot of `_rtsp._tcp` instances — GS Cameraman, and any other phone that advertises RTSP.
@@ -118,8 +119,6 @@ public final class RTSPServiceBrowser: CameraAdvertisementBrowsing, @unchecked S
 
     let parameters = NWParameters.tcp
     parameters.includePeerToPeer = true
-    // Same IPv4 the subnet scanner uses. An IPv6-only path would be dropped and Cameraman would
-    // stay invisible even though Bonjour found it.
     if let ipOptions = parameters.defaultProtocolStack.internetProtocol as? NWProtocolIP.Options {
       ipOptions.version = .v4
     }
@@ -127,30 +126,20 @@ public final class RTSPServiceBrowser: CameraAdvertisementBrowsing, @unchecked S
     resolvers[cacheKey] = connection
     lock.unlock()
 
-    let finish: @Sendable (NWConnection) -> Void = { [weak self] connection in
+    let finish: @Sendable (NWConnection, Bool) -> Void = { [weak self] connection, force in
       guard let self else { return }
-      let resolved = Self.hostPort(from: connection.currentPath?.remoteEndpoint)
+      let media = Self.usableMediaHost(from: connection.currentPath?.remoteEndpoint)
+      if media == nil, !force { return }
       connection.cancel()
       self.lock.lock()
       self.resolvers[cacheKey] = nil
-      if let resolved {
-        let current = self.cached[cacheKey]
-        let keepExisting = current.map { CameraAdvertisement.isUsableMediaHost($0.host) } ?? false
-        if CameraAdvertisement.isUsableMediaHost(resolved.host) {
-          self.cached[cacheKey] = CameraAdvertisement.parseTXT(
-            fields,
-            instanceName: instanceName,
-            host: resolved.host,
-            port: Int(resolved.port)
-          )
-        } else if !keepExisting, !CameraAdvertisement.isUUIDHostname(resolved.host) {
-          self.cached[cacheKey] = CameraAdvertisement.parseTXT(
-            fields,
-            instanceName: instanceName,
-            host: resolved.host,
-            port: Int(resolved.port)
-          )
-        }
+      if let media {
+        self.cached[cacheKey] = CameraAdvertisement.parseTXT(
+          fields,
+          instanceName: instanceName,
+          host: media.host,
+          port: Int(media.port)
+        )
       }
       self.lock.unlock()
     }
@@ -159,7 +148,7 @@ public final class RTSPServiceBrowser: CameraAdvertisementBrowsing, @unchecked S
       guard let self, let connection else { return }
       switch state {
       case .ready:
-        finish(connection)
+        finish(connection, false)
       case .failed, .cancelled:
         connection.cancel()
         self.lock.lock()
@@ -172,9 +161,9 @@ public final class RTSPServiceBrowser: CameraAdvertisementBrowsing, @unchecked S
       }
     }
     connection.start(queue: .global(qos: .utility))
-    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2) { [weak connection] in
+    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 6) { [weak connection] in
       guard let connection else { return }
-      finish(connection)
+      finish(connection, true)
     }
   }
 
@@ -204,6 +193,48 @@ public final class RTSPServiceBrowser: CameraAdvertisementBrowsing, @unchecked S
       fields[key] = value
     }
     return fields
+  }
+
+  private static func usableMediaHost(from endpoint: NWEndpoint?) -> (host: String, port: UInt16)? {
+    let resolved = hostPort(from: endpoint)
+    if let resolved, CameraAdvertisement.isUsableMediaHost(resolved.host) {
+      return resolved
+    }
+    if let host = resolved?.host, CameraAdvertisement.isUUIDHostname(host),
+       let lan = lanIPv4(for: host) {
+      return (lan, resolved?.port ?? 554)
+    }
+    return nil
+  }
+
+  /// mDNS A records for a Bonjour target. Picks the LAN address and ignores USB link-local.
+  private static func lanIPv4(for hostname: String) -> String? {
+    var hints = addrinfo(
+      ai_flags: 0,
+      ai_family: AF_INET,
+      ai_socktype: SOCK_STREAM,
+      ai_protocol: IPPROTO_TCP,
+      ai_addrlen: 0,
+      ai_canonname: nil,
+      ai_addr: nil,
+      ai_next: nil
+    )
+    var info: UnsafeMutablePointer<addrinfo>?
+    guard getaddrinfo(hostname, nil, &hints, &info) == 0, let first = info else { return nil }
+    defer { freeaddrinfo(first) }
+
+    var hosts: [String] = []
+    var cursor: UnsafeMutablePointer<addrinfo>? = first
+    while let current = cursor {
+      if current.pointee.ai_family == AF_INET, let addr = current.pointee.ai_addr {
+        var ipv4 = addr.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { $0.pointee }
+        var buffer = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+        inet_ntop(AF_INET, &ipv4.sin_addr, &buffer, socklen_t(INET_ADDRSTRLEN))
+        hosts.append(String(cString: buffer))
+      }
+      cursor = current.pointee.ai_next
+    }
+    return CameraAdvertisement.preferredMediaHost(among: hosts)
   }
 
   private static func hostPort(from endpoint: NWEndpoint?) -> (host: String, port: UInt16)? {

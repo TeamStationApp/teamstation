@@ -104,11 +104,12 @@ public final class RTSPSession: @unchecked Sendable {
     }
 
     let parameters = NWParameters.tcp
+    parameters.includePeerToPeer = true
     // A control connection that Nagles delays every request by up to 40 ms, and the setup handshake
     // is five round trips before a single frame arrives.
     if let options = parameters.defaultProtocolStack.transportProtocol as? NWProtocolTCP.Options {
       options.noDelay = true
-      options.connectionTimeout = 5
+      options.connectionTimeout = 8
     }
 
     let connection = NWConnection(
@@ -132,10 +133,10 @@ public final class RTSPSession: @unchecked Sendable {
         finish(reason: "connection failed: \(error.localizedDescription)")
       case .cancelled:
         break
-      case let .waiting(error):
-        // `waiting` on a LAN means unreachable rather than "about to work", and the supervisor's
-        // backoff is a better answer than sitting here.
-        finish(reason: "connection waiting: \(error.localizedDescription)")
+      case .waiting:
+        // iOS-to-iOS RTSP (GS Cameraman) sits in `.waiting` for Local Network / peer-to-peer
+        // before `.ready`. NearStream boxes skip this state; aborting it made the iPhone look dead.
+        break
       default:
         break
       }

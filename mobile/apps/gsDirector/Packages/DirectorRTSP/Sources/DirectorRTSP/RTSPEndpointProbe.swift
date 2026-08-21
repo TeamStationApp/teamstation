@@ -14,7 +14,7 @@ public struct RTSPEndpointProbe: Sendable {
 
   private let timeout: TimeInterval
 
-  public init(timeout: TimeInterval = 2) {
+  public init(timeout: TimeInterval = 5) {
     self.timeout = timeout
   }
 
@@ -28,7 +28,9 @@ public struct RTSPEndpointProbe: Sendable {
     ])
 
     return await withCheckedContinuation { continuation in
-      let connection = NWConnection(host: NWEndpoint.Host(host), port: nwPort, using: .tcp)
+      let parameters = NWParameters.tcp
+      parameters.includePeerToPeer = true
+      let connection = NWConnection(host: NWEndpoint.Host(host), port: nwPort, using: parameters)
       let state = OSAllocatedUnfairLock(initialState: ProbeState())
 
       // A continuation may be resumed exactly once, and the timeout races the state handler.
@@ -50,9 +52,12 @@ public struct RTSPEndpointProbe: Sendable {
           connection.send(content: request.wireFormat, completion: .contentProcessed { error in
             if error != nil { finish(nil) }
           })
-        case .failed, .cancelled, .waiting:
+        case .failed, .cancelled:
           finish(nil)
         default:
+          // `.waiting` is how iOS-to-iOS Local Network / peer-to-peer RTSP starts. Aborting here
+          // made GS Cameraman disappear while NearStream boxes, which go straight to `.ready`,
+          // still confirmed.
           break
         }
       }
