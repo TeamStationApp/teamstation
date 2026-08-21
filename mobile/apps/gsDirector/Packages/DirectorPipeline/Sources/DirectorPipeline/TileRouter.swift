@@ -195,11 +195,16 @@ public final class SourcePipeline: @unchecked Sendable {
     // This is what makes "scrub back while it keeps recording" true rather than aspirational.
     proxy?.offer(converted)
 
-    guard state == .live else { return }
-    if renderer.enqueue(converted) {
-      telemetry.recordDisplayedFrame(tile: tileIndex)
+    // The small tile shows stills while the finger is down. Output stays on live until the
+    // scrub is released, so the operator can preview rewind without cutting the programme.
+    if state == .live {
+      if renderer.enqueue(converted) {
+        telemetry.recordDisplayedFrame(tile: tileIndex)
+      }
     }
-    programSink?(converted.pixelBuffer, converted.presentationTime)
+    if state != .replaying {
+      programSink?(converted.pixelBuffer, converted.presentationTime)
+    }
   }
 
   private func handle(audio frame: AudioFrame) {
@@ -413,7 +418,10 @@ public final class TileRouter: @unchecked Sendable {
     lock.unlock()
     for pipeline in existing { pipeline.stop() }
     audioMixer.stop()
-    programRenderer.attach(layer: nil)
+    // Output's TileVideoView stays on screen — the grid is always the root. Detaching its
+    // layer here freezes the last frame: SwiftUI will not call updateUIView because
+    // `programRenderer` is the same object, and later cuts enqueue into nowhere.
+    programRenderer.prepareForLive()
     telemetry.mutate { $0.programTile = nil }
   }
 
@@ -488,7 +496,7 @@ public final class TileRouter: @unchecked Sendable {
   /// Composites the programme frame and sends it to the preview tile as well as the encoder.
   ///
   /// The compositing happens whether or not anything is recording, which is the point of the
-  /// preview: the operator has to be able to see the scorebug sitting over the picture before
+  /// preview: the operator has to be able to see overlays sitting over the picture before
   /// committing it to a file, not discover afterwards that it was mispositioned.
   private func composeAndEncode(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime) {
     let composed = compositor?.compose(program: pixelBuffer) ?? pixelBuffer
