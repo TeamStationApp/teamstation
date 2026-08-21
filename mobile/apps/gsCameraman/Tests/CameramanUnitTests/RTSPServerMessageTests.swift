@@ -1,6 +1,6 @@
 import CameramanRTSP
 import Foundation
-import ProducerRTSP
+import DirectorRTSP
 import Testing
 
 /// The request parser sees whatever the network hands it, which is not whole messages.
@@ -21,7 +21,7 @@ struct RTSPServerMessageTests {
     #expect(request.uri == "rtsp://10.0.0.1/live")
     #expect(request.cseq == "1")
     #expect(request.headers["accept"] == "application/sdp")
-    #expect(request.headers["user-agent"] == "GS Producer/1.0")
+    #expect(request.headers["user-agent"] == "GS Director/1.0")
     #expect(consumed == outgoing.wireFormat.count)
   }
 

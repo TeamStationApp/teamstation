@@ -1,6 +1,6 @@
 import CameramanRTSP
 import Foundation
-import ProducerRTSP
+import DirectorRTSP
 import Testing
 
 /// Drives the responder through the method sequence a real client uses, and reads its answers back

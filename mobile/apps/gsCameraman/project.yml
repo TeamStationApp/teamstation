@@ -35,15 +35,15 @@ packages:
     path: Packages/CameramanUI
   CameramanTestHarness:
     path: Packages/CameramanTestHarness
-  # Test target only. Our packetizers are round-tripped through GS Producer's own depacketizers, so
+  # Test target only. Our packetizers are round-tripped through GS Director's own depacketizers, so
   # interop is proven by construction rather than by inspection. This compiles that package's
-  # sources; it never builds or launches the Producer app.
-  ProducerRTSP:
-    path: ../gsProducer/Packages/ProducerRTSP
-  # Same reason: the camera-identity rules Producer will use to adopt our advertised name are pure
+  # sources; it never builds or launches the Director app.
+  DirectorRTSP:
+    path: ../gsDirector/Packages/DirectorRTSP
+  # Same reason: the camera-identity rules Director will use to adopt our advertised name are pure
   # value logic, so they are verified here rather than left uncompiled until the end-to-end phase.
-  ProducerSources:
-    path: ../gsProducer/Packages/ProducerSources
+  DirectorSources:
+    path: ../gsDirector/Packages/DirectorSources
 
 targets:
   Cameraman:
@@ -94,10 +94,10 @@ targets:
         product: CameramanRTSP
       - package: CameramanTestHarness
         product: CameramanTestHarness
-      - package: ProducerRTSP
-        product: ProducerRTSP
-      - package: ProducerSources
-        product: ProducerSources
+      - package: DirectorRTSP
+        product: DirectorRTSP
+      - package: DirectorSources
+        product: DirectorSources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: co.gamestation.cameraman.unittests

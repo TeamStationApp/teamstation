@@ -1,10 +1,10 @@
 import Foundation
 import Testing
 
-import ProducerSources
+import DirectorSources
 
-/// The rules Producer applies to the name and identifier Cameraman advertises. Pure value logic,
-/// so it is compiled and run here rather than waiting for the Producer app to be built.
+/// The rules Director applies to the name and identifier Cameraman advertises. Pure value logic,
+/// so it is compiled and run here rather than waiting for the Director app to be built.
 struct CameraIdentityAdoptionTests {
   private let now = Date(timeIntervalSince1970: 1_700_000_000)
   private let cname = "3f2504e04f8911d3@gs-cameraman"
@@ -12,7 +12,7 @@ struct CameraIdentityAdoptionTests {
   private func adopted(name: String? = "Third Base") -> (UUID, [CameraRecord]) {
     var records: [CameraRecord] = []
     let id = CameraIdentityRules.makeRecord(
-      adopting: CameraAdvertisement(cname: cname, name: name),
+      adopting: StreamAdvertisement(cname: cname, name: name),
       host: "10.0.0.4",
       now: now,
       in: &records
@@ -42,7 +42,7 @@ struct CameraIdentityAdoptionTests {
 
   @Test func renamingOnTheCameraRenamesItHere() {
     var (id, records) = adopted()
-    CameraIdentityRules.apply(CameraAdvertisement(cname: cname, name: "First Base"), to: id, in: &records)
+    CameraIdentityRules.apply(StreamAdvertisement(cname: cname, name: "First Base"), to: id, in: &records)
 
     #expect(records.first?.name == "First Base")
     #expect(records.first?.nameOrigin == .advertised)
@@ -51,7 +51,7 @@ struct CameraIdentityAdoptionTests {
   @Test func theOperatorOutranksTheCamera() {
     var (id, records) = adopted()
     CameraIdentityRules.rename(id, to: "Left Field", in: &records)
-    CameraIdentityRules.apply(CameraAdvertisement(cname: cname, name: "First Base"), to: id, in: &records)
+    CameraIdentityRules.apply(StreamAdvertisement(cname: cname, name: "First Base"), to: id, in: &records)
 
     #expect(records.first?.name == "Left Field")
     #expect(records.first?.nameOrigin == .operatorAssigned)
@@ -62,7 +62,7 @@ struct CameraIdentityAdoptionTests {
   @Test func theOperatorCanHandControlBack() {
     var (id, records) = adopted()
     CameraIdentityRules.rename(id, to: "Left Field", in: &records)
-    CameraIdentityRules.apply(CameraAdvertisement(cname: cname, name: "First Base"), to: id, in: &records)
+    CameraIdentityRules.apply(StreamAdvertisement(cname: cname, name: "First Base"), to: id, in: &records)
 
     CameraIdentityRules.followCamera(id, in: &records)
 
@@ -74,7 +74,7 @@ struct CameraIdentityAdoptionTests {
   @Test func anOperatorNamedCameraStillGetsItsIdentifierRecorded() {
     var (id, records) = adopted(name: nil)
     CameraIdentityRules.rename(id, to: "Left Field", in: &records)
-    CameraIdentityRules.apply(CameraAdvertisement(cname: "moved@gs-cameraman", name: nil), to: id, in: &records)
+    CameraIdentityRules.apply(StreamAdvertisement(cname: "moved@gs-cameraman", name: nil), to: id, in: &records)
 
     // Identity is not a naming preference: an operator-named camera must still be findable.
     #expect(records.first?.lastKnownCNAME == "moved@gs-cameraman")
@@ -84,11 +84,11 @@ struct CameraIdentityAdoptionTests {
   @Test func twoCamerasClaimingOneNameStayDistinguishable() {
     var records: [CameraRecord] = []
     CameraIdentityRules.makeRecord(
-      adopting: CameraAdvertisement(cname: "a@x", name: "Third Base"),
+      adopting: StreamAdvertisement(cname: "a@x", name: "Third Base"),
       host: "10.0.0.4", now: now, in: &records
     )
     CameraIdentityRules.makeRecord(
-      adopting: CameraAdvertisement(cname: "b@x", name: "Third Base"),
+      adopting: StreamAdvertisement(cname: "b@x", name: "Third Base"),
       host: "10.0.0.5", now: now, in: &records
     )
 
@@ -100,7 +100,7 @@ struct CameraIdentityAdoptionTests {
   @Test func theIdentifierBeatsTheAddressWhenTheLeaseMoved() {
     var records: [CameraRecord] = []
     let moved = CameraIdentityRules.makeRecord(
-      adopting: CameraAdvertisement(cname: cname, name: "Third Base"),
+      adopting: StreamAdvertisement(cname: cname, name: "Third Base"),
       host: "10.0.0.4", now: now, in: &records
     )
 
@@ -109,7 +109,7 @@ struct CameraIdentityAdoptionTests {
     let bindings = CameraIdentityRules.autoBind(
       endpoints: [ CameraEndpoint(host: "10.0.0.4"), itsNewAddress ],
       records: records,
-      advertisements: [ itsNewAddress: CameraAdvertisement(cname: cname, name: "Third Base") ]
+      streamAdvertisements: [ itsNewAddress: StreamAdvertisement(cname: cname, name: "Third Base") ]
     )
 
     let binding = bindings.first { $0.endpoint == itsNewAddress }
@@ -135,7 +135,7 @@ struct CameraIdentityAdoptionTests {
   @Test func aManualCorrectionSurvivesTheCameraIdentifyingItself() {
     var records: [CameraRecord] = []
     let wrong = CameraIdentityRules.makeRecord(
-      adopting: CameraAdvertisement(cname: cname, name: "Third Base"),
+      adopting: StreamAdvertisement(cname: cname, name: "Third Base"),
       host: "10.0.0.4", now: now, in: &records
     )
     let chosen = CameraIdentityRules.makeRecord(named: "Left Field", host: "10.0.0.9", now: now, in: &records)
@@ -146,7 +146,7 @@ struct CameraIdentityAdoptionTests {
       bindings: bindings,
       endpoints: [ endpoint ],
       records: records,
-      advertisements: [ endpoint: CameraAdvertisement(cname: cname, name: "Third Base") ]
+      streamAdvertisements: [ endpoint: StreamAdvertisement(cname: cname, name: "Third Base") ]
     )
 
     // The operator has already looked at the screen and disagreed; a rediscovery seconds later must
@@ -159,7 +159,7 @@ struct CameraIdentityAdoptionTests {
   @Test func rediscoveryKeepsFollowingTheIdentifier() {
     var records: [CameraRecord] = []
     let id = CameraIdentityRules.makeRecord(
-      adopting: CameraAdvertisement(cname: cname, name: "Third Base"),
+      adopting: StreamAdvertisement(cname: cname, name: "Third Base"),
       host: "10.0.0.4", now: now, in: &records
     )
 
@@ -168,7 +168,7 @@ struct CameraIdentityAdoptionTests {
       bindings: [ CameraBinding(endpoint: CameraEndpoint(host: "10.0.0.4"), cameraID: id, origin: .autoByHost) ],
       endpoints: [ moved ],
       records: records,
-      advertisements: [ moved: CameraAdvertisement(cname: cname, name: "Third Base") ]
+      streamAdvertisements: [ moved: StreamAdvertisement(cname: cname, name: "Third Base") ]
     )
 
     #expect(bindings.count == 1)

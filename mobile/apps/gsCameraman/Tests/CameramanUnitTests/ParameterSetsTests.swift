@@ -2,7 +2,7 @@ import CameramanCore
 import CameramanEncode
 import CoreMedia
 import Foundation
-import ProducerRTSP
+import DirectorRTSP
 import Testing
 
 /// Parameter-set handling is checked against a real `CMFormatDescription`, built the same way

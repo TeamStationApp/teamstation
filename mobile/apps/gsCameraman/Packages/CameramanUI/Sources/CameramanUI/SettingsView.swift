@@ -79,7 +79,7 @@ struct SettingsView: View {
     } footer: {
       // Worth saying, because the obvious assumption is the opposite: that renaming a camera is
       // what makes it a different camera.
-      Text("Renaming does not make this a new camera in GS Producer.")
+      Text("Renaming does not make this a new camera in GS Director.")
     }
   }
 

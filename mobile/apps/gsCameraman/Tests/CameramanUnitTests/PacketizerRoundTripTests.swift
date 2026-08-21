@@ -1,7 +1,7 @@
 import CameramanCore
 import CameramanRTSP
 import Foundation
-import ProducerRTSP
+import DirectorRTSP
 import Testing
 
 /// Packetizes frames and puts the bytes back through GS Producer's own depacketizers.
