@@ -209,6 +209,34 @@ struct RTSPDiscoveryTests {
     #expect(discovery.diagnostic.contains("awx=1"))
   }
 
+  @Test("A _rtsp._tcp advertisement is probed on its SRV port, not the NearStream default")
+  func rtspAdvertisementUsesAdvertisedPortAndPath() async {
+    let advertisement = CameraAdvertisement(
+      host: "10.10.7.50",
+      advertisedName: "Camera 14E7",
+      port: 8554,
+      path: "/live/mainstream",
+      uuid: "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+    )
+    let probed = Probed()
+    let discovery = RTSPDiscovery(
+      configuration: RTSPDiscovery.Configuration(isScanEnabled: false),
+      advertisementBrowser: StaticAdvertisementBrowser([ advertisement ]),
+      confirmHost: { endpoint in
+        probed.record(endpoint)
+        return endpoint.port == 8554
+      }
+    )
+
+    await discovery.sweepNow()
+
+    #expect(probed.endpoints == [ CameraEndpoint(host: "10.10.7.50", port: 8554, path: "/live/mainstream") ])
+    #expect(discovery.currentEndpoints == probed.endpoints)
+    #expect(discovery.currentSources.first?.address == "rtsp://10.10.7.50:8554/live/mainstream")
+    #expect(discovery.diagnostic.contains("rtsp=1"))
+    #expect(discovery.diagnostic.contains("awx=0"))
+  }
+
   @Test("Cameras that advertised a unique id are listed before unidentified RTSP hosts")
   func identifiedCamerasSortFirst() async {
     let advertisement = CameraAdvertisement(
@@ -230,6 +258,28 @@ struct RTSPDiscoveryTests {
     #expect(discovery.currentEndpoints.map(\.host) == [ "10.10.7.244", "10.10.7.118" ])
   }
 
+  @Test("A Cameraman advertised on link-local and found on LAN is published once")
+  func cameramanDuplicateAddressesCollapse() async {
+    let advertisement = CameraAdvertisement(
+      host: "169.254.113.105",
+      advertisedName: "Left Field",
+      uuid: "c94df9ca-d7c2-468f-8529-97d01fba14e7"
+    )
+    let discovery = RTSPDiscovery(
+      configuration: RTSPDiscovery.Configuration(
+        manualHosts: [ "10.10.7.118" ],
+        isScanEnabled: false
+      ),
+      advertisementBrowser: StaticAdvertisementBrowser([ advertisement ]),
+      confirmHost: { _ in true }
+    )
+
+    await discovery.sweepNow()
+
+    #expect(discovery.currentEndpoints.map(\.host) == [ "10.10.7.118" ])
+    #expect(discovery.currentSources.count == 1)
+  }
+
   @Test("An address without a host yields no endpoint, so a bad row cannot become a source")
   func endpointParsing() {
     #expect(CameraEndpoint(address: "rtsp://10.10.7.148:554/live/mainstream")
@@ -245,6 +295,7 @@ struct RTSPDiscoveryTests {
   final class Probed: @unchecked Sendable {
     private let lock = NSLock()
     private var recorded: [String] = []
+    private var recordedEndpoints: [CameraEndpoint] = []
 
     var hosts: [String] {
       lock.lock()
@@ -252,9 +303,22 @@ struct RTSPDiscoveryTests {
       return recorded
     }
 
+    var endpoints: [CameraEndpoint] {
+      lock.lock()
+      defer { lock.unlock() }
+      return recordedEndpoints
+    }
+
     func record(_ host: String) {
       lock.lock()
       recorded.append(host)
+      lock.unlock()
+    }
+
+    func record(_ endpoint: CameraEndpoint) {
+      lock.lock()
+      recorded.append(endpoint.host)
+      recordedEndpoints.append(endpoint)
       lock.unlock()
     }
   }

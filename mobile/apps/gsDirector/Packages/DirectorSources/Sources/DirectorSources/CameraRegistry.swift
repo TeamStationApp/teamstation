@@ -95,14 +95,19 @@ public final class CameraRegistry: @unchecked Sendable {
     now: Date = Date()
   ) -> [CameraEndpoint: (id: SourceID, name: String)] {
     lock.lock()
-    let ads = remembered(advertisements)
+    let collapsed = CameraIdentityRules.deduplicate(
+      endpoints: endpoints,
+      advertisements: remembered(advertisements)
+    )
+    let ads = collapsed.advertisements
+    let live = collapsed.endpoints
     CameraIdentityRules.applyAdvertisements(ads, to: &cachedRecords, now: now)
     CameraIdentityRules.applyStreamAdvertisements(advertised, to: &cachedRecords, now: now)
     let byHost = Dictionary(ads.map { ($0.host, $0) }, uniquingKeysWith: { _, latest in latest })
-    advertised = advertised.filter { endpoints.contains($0.key) }
+    advertised = advertised.filter { live.contains($0.key) }
     cachedBindings = CameraIdentityRules.reconcile(
       bindings: cachedBindings,
-      endpoints: endpoints,
+      endpoints: live,
       records: cachedRecords,
       advertisements: byHost,
       streamAdvertisements: advertised
@@ -306,18 +311,29 @@ public final class CameraRegistry: @unchecked Sendable {
   /// latest browse has the host but empty TXT. Replacing the snapshot would make Forget leave
   /// the row unnamed until the next full sweep.
   private func remembered(_ incoming: [CameraAdvertisement]) -> [CameraAdvertisement] {
-    var byHost: [String: CameraAdvertisement] = Dictionary(
-      lastAdvertisements.map { ($0.host, $0) },
-      uniquingKeysWith: { _, latest in latest }
-    )
-    for advertisement in incoming {
-      if advertisement.uniqueID != nil {
-        byHost[advertisement.host] = advertisement
-      } else if byHost[advertisement.host] == nil {
+    var byUniqueID: [String: CameraAdvertisement] = [:]
+    var byHost: [String: CameraAdvertisement] = [:]
+
+    func store(_ advertisement: CameraAdvertisement) {
+      if let uniqueID = advertisement.uniqueID {
+        byUniqueID[uniqueID] = advertisement
+      } else {
         byHost[advertisement.host] = advertisement
       }
     }
-    lastAdvertisements = Array(byHost.values)
+
+    lastAdvertisements.forEach(store)
+    for advertisement in incoming {
+      if advertisement.uniqueID != nil {
+        store(advertisement)
+      } else if byHost[advertisement.host] == nil,
+                byUniqueID.values.allSatisfy({ $0.host != advertisement.host }) {
+        store(advertisement)
+      }
+    }
+
+    let claimedHosts = Set(byUniqueID.values.map(\.host))
+    lastAdvertisements = Array(byUniqueID.values) + byHost.values.filter { !claimedHosts.contains($0.host) }
     return lastAdvertisements
   }
 }

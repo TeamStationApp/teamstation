@@ -15,6 +15,39 @@ struct SourceSelectionTests {
     #expect(merged[0].isPresent == false)
   }
 
+  @Test("An unidentified IP that identity later bound does not stay as a grey duplicate")
+  func unidentifiedAbsentRowsAreDropped() {
+    let existing = [
+      SourceSelection(
+        id: .init("camera-10.10.7.118"),
+        kind: .rtsp,
+        advertisedName: "10.10.7.118",
+        isPresent: true
+      ),
+      SourceSelection(
+        id: .init("C94DF9CA-D7C2-468F-8529-97D01FBA14E7"),
+        kind: .rtsp,
+        advertisedName: "Left Field",
+        isEnabled: true,
+        isPresent: true
+      )
+    ]
+    let merged = SourceSelectionRules.merge(
+      existing: existing,
+      discovered: [
+        DiscoveredSource(
+          id: .init("C94DF9CA-D7C2-468F-8529-97D01FBA14E7"),
+          kind: .rtsp,
+          advertisedName: "handheld",
+          address: "rtsp://10.10.7.118:554/live/mainstream"
+        )
+      ]
+    )
+    #expect(merged.map(\.id.rawValue) == [ "C94DF9CA-D7C2-468F-8529-97D01FBA14E7" ])
+    #expect(merged[0].advertisedName == "handheld")
+    #expect(merged[0].isPresent)
+  }
+
   @Test("Switching profile drops rows of the other kind so they cannot look like live cameras")
   func retainingKindDropsTheOther() {
     let mixed = [
