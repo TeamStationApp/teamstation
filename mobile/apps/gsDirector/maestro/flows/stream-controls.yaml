@@ -1,0 +1,69 @@
+# Stream URL in Settings, clear X, empty-URL toast, Stream left of Record, RECORDING not STOP.
+appId: co.gamestation.director
+---
+- launchApp:
+    appId: co.gamestation.director
+    arguments:
+      clearState: true
+      uiTest: true
+      debugHUD: true
+      sourceProfile: synthetic4
+
+- extendedWaitUntil:
+    visible:
+      id: 'source-row-1'
+    timeout: 15000
+- runFlow: shared/settle-source-list.yaml
+- tapOn:
+    id: 'source-toggle-1'
+- tapOn:
+    id: 'start-directing'
+
+- extendedWaitUntil:
+    visible: 'tile=1 state=live.*'
+    timeout: 15000
+
+- assertVisible:
+    id: 'stream-button'
+- assertVisible:
+    id: 'record-button'
+- assertNotVisible:
+    id: 'header-rec'
+- assertNotVisible:
+    id: 'header-stream-mbps'
+- assertNotVisible:
+    id: 'header-stream-drops'
+
+- tapOn:
+    id: 'stream-button'
+- extendedWaitUntil:
+    visible:
+      id: 'status-toast'
+    timeout: 5000
+- tapOn:
+    id: 'status-dismiss'
+
+- tapOn:
+    id: 'settings-button'
+- scrollUntilVisible:
+    element:
+      id: 'settings-stream-url'
+    direction: DOWN
+    timeout: 20000
+- tapOn:
+    id: 'settings-stream-url'
+- inputText: 'rtmp://example.test/live/key'
+- tapOn:
+    id: 'settings-stream-url-clear'
+- tapOn:
+    id: 'settings-cancel'
+
+- tapOn:
+    id: 'record-button'
+- assertVisible: 'rec=1'
+- assertVisible: 'RECORDING'
+- tapOn:
+    id: 'record-button'
+- extendedWaitUntil:
+    visible: 'rec=0'
+    timeout: 60000

@@ -4,6 +4,7 @@ import Observation
 import DirectorCore
 import DirectorDVR
 import DirectorPipeline
+import DirectorRTMP
 import DirectorSources
 import DirectorTestHarness
 import UIKit
@@ -91,6 +92,9 @@ public final class AppEnvironment {
   private var rowEndpoints: [SourceID: CameraEndpoint] = [:]
   public private(set) var snapshot = TelemetrySnapshot()
   public private(set) var isRecording = false
+  public private(set) var isStreaming = false
+  public private(set) var streamMegabitsPerSecond = 0.0
+  public private(set) var streamDroppedPackets: UInt64 = 0
   public private(set) var statusMessage: String?
 
   public func dismissStatusMessage() {
@@ -129,6 +133,8 @@ public final class AppEnvironment {
   let exporter: ExportService
   let retention: RetentionPolicy
   let programEncoder: ProgramEncoder
+  let programStreamer: ProgramStreamer
+  private var streamErrorGate = StreamErrorGate()
 
   private let compositor: MetalCompositor?
   /// Builds the live-camera discovery. Injected because the transport lives in its own module and
@@ -194,11 +200,13 @@ public final class AppEnvironment {
       height: session.programResolution.height
     )
     self.programEncoder = ProgramEncoder(telemetry: telemetry, converter: converter, config: session)
+    self.programStreamer = ProgramStreamer(telemetry: telemetry, converter: converter)
     self.router = TileRouter(
       telemetry: telemetry,
       converter: converter,
       compositor: compositor,
       programEncoder: programEncoder,
+      programStreamer: programStreamer,
       clock: clock
     )
 
@@ -643,6 +651,10 @@ public final class AppEnvironment {
   /// hardware encoder is unavailable to a suspended app, so a recording that survives suspension
   /// only produces a truncated file and a set of sessions nobody closes.
   public func prepareForSuspension() async {
+    if isStreaming {
+      reportStreamError("Streaming stopped — app moved to the background")
+      await stopStreaming()
+    }
     guard isRecording else { return }
     statusMessage = "Recording stopped — app moved to the background"
 
@@ -822,6 +834,63 @@ public final class AppEnvironment {
       $0.dvr.recordingStartedAt = now.seconds
     }
     startRetentionSweeps()
+  }
+
+  public func toggleStreaming() {
+    if isStreaming {
+      Task { await stopStreaming() }
+    } else {
+      startStreaming()
+    }
+  }
+
+  public func startStreaming() {
+    guard !isStreaming else { return }
+    streamErrorGate.reset()
+    isStreaming = true
+    let url = config.streamURL
+    let session = config
+    Task { [weak self] in
+      guard let self else { return }
+      do {
+        try await self.programStreamer.start(urlString: url, config: session) { [weak self] message in
+          Task { @MainActor in
+            self?.reportStreamError(message)
+            await self?.stopStreaming()
+          }
+        }
+      } catch {
+        await MainActor.run {
+          self.reportStreamError(Self.streamErrorMessage(error))
+          self.isStreaming = false
+        }
+      }
+    }
+  }
+
+  public func stopStreaming() async {
+    guard isStreaming || programStreamer.running else {
+      isStreaming = false
+      return
+    }
+    isStreaming = false
+    programStreamer.stop()
+    streamMegabitsPerSecond = 0
+    streamDroppedPackets = 0
+    streamErrorGate.reset()
+  }
+
+  private func reportStreamError(_ message: String) {
+    guard streamErrorGate.shouldPresent(message) else { return }
+    statusMessage = message
+    telemetry.mutate { $0.dvr.lastError = message }
+  }
+
+  private static func streamErrorMessage(_ error: Error) -> String {
+    if let parse = error as? RTMPURL.ParseError { return parse.description }
+    if let client = error as? RTMPClientError { return client.description }
+    if let encoder = error as? ProgramStreamerError { return encoder.description }
+    return error.localizedDescription
   }
 
   private func attachProxy(to pipeline: SourcePipeline) {
@@ -1833,6 +1902,7 @@ public final class AppEnvironment {
     if let seconds = launch.segmentSeconds { config.segmentSeconds = seconds }
     if let codec = launch.programCodec { config.programCodec = codec }
     if let hud = launch.debugHUD { config.showDebugHUD = hud }
+    if let url = launch.streamURL { config.streamURL = url }
     return config
   }
 
@@ -2084,6 +2154,11 @@ public final class AppEnvironment {
     }
     if !isRecording { announcedCameraStatus.removeAll() }
     telemetry.recordLiveDecodeSessions(liveDecodeSessions)
+    if isStreaming {
+      let stream = programStreamer.metrics
+      streamMegabitsPerSecond = stream.megabitsPerSecond
+      streamDroppedPackets = stream.droppedPackets
+    }
     snapshot = telemetry.snapshot
     applyProgramOverlays()
   }
@@ -2116,6 +2191,8 @@ public final class AppEnvironment {
       returnToLive(tileIndex: tile)
     case let .record(on):
       if on { startRecording() } else { Task { await stopRecording() } }
+    case let .stream(on):
+      if on { startStreaming() } else { Task { await stopStreaming() } }
     case .startDirecting:
       Task { await enterDirecting() }
     case let .selectProgram(tile):

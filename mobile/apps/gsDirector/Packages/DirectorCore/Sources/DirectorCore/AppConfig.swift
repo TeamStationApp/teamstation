@@ -57,6 +57,9 @@ public struct AppConfig: Hashable, Sendable, Codable {
   public var displayLatencyCapMilliseconds: Double
   /// Playback rate for every slow-motion instant-replay button. One setting for the whole board.
   public var replaySlowMotionRate: Double
+  /// RTMP publish URL for the programme output. Empty means streaming is off until the operator
+  /// enters one. Not a launch-only flag: it has to still be there tomorrow.
+  public var streamURL: String
 
   public static let displayLatencyCapDefaultMilliseconds: Double = 500
   public static let displayLatencyCapMinimumMilliseconds: Double = 10
@@ -78,7 +81,8 @@ public struct AppConfig: Hashable, Sendable, Codable {
     useSimulatedCameras: Bool = false,
     displayLatencyCapEnabled: Bool = false,
     displayLatencyCapMilliseconds: Double = AppConfig.displayLatencyCapDefaultMilliseconds,
-    replaySlowMotionRate: Double = AppConfig.replaySlowMotionRateDefault
+    replaySlowMotionRate: Double = AppConfig.replaySlowMotionRateDefault,
+    streamURL: String = ""
   ) {
     self.programCodec = programCodec
     self.programResolution = programResolution
@@ -93,6 +97,7 @@ public struct AppConfig: Hashable, Sendable, Codable {
     self.displayLatencyCapEnabled = displayLatencyCapEnabled
     self.displayLatencyCapMilliseconds = Self.clampedDisplayLatencyCap(displayLatencyCapMilliseconds)
     self.replaySlowMotionRate = Self.clampedReplaySlowMotionRate(replaySlowMotionRate)
+    self.streamURL = streamURL
   }
 
   public static func clampedDisplayLatencyCap(_ milliseconds: Double) -> Double {
@@ -148,7 +153,9 @@ public struct AppConfig: Hashable, Sendable, Codable {
       replaySlowMotionRate: try container.decodeIfPresent(
         Double.self,
         forKey: .replaySlowMotionRate
-      ) ?? fallback.replaySlowMotionRate
+      ) ?? fallback.replaySlowMotionRate,
+      streamURL: try container.decodeIfPresent(String.self, forKey: .streamURL)
+        ?? fallback.streamURL
     )
   }
 

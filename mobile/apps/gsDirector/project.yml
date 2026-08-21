@@ -33,6 +33,8 @@ packages:
     path: Packages/DirectorDVR
   DirectorRTSP:
     path: Packages/DirectorRTSP
+  DirectorRTMP:
+    path: Packages/DirectorRTMP
   DirectorUI:
     path: Packages/DirectorUI
   DirectorTestHarness:
@@ -67,6 +69,8 @@ targets:
         product: DirectorDVR
       - package: DirectorRTSP
         product: DirectorRTSP
+      - package: DirectorRTMP
+        product: DirectorRTMP
       - package: DirectorUI
         product: DirectorUI
       - package: DirectorTestHarness
@@ -93,6 +97,8 @@ targets:
         product: DirectorDVR
       - package: DirectorRTSP
         product: DirectorRTSP
+      - package: DirectorRTMP
+        product: DirectorRTMP
       - package: DirectorTestHarness
         product: DirectorTestHarness
       - package: DirectorUI

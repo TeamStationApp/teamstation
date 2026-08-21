@@ -8,24 +8,15 @@ const path = require('node:path')
 
 const BUNDLE_ID = process.env.DIRECTOR_BUNDLE_ID ?? 'co.gamestation.director'
 
-function bootedSimulatorUDID() {
-  const raw = execFileSync(
-    'xcrun',
-    ['simctl', 'list', 'devices', 'booted', '-j'],
-    {
-      encoding: 'utf8'
-    }
-  )
-  const data = JSON.parse(raw)
-  for (const runtime of Object.keys(data.devices)) {
-    for (const device of data.devices[runtime]) {
-      if (device.state === 'Booted') return device.udid
-    }
+function simulatorUDID() {
+  const udid = process.env.DIRECTOR_SIMULATOR_UDID
+  if (!udid) {
+    throw new Error('set DIRECTOR_SIMULATOR_UDID to the simulator UDID')
   }
-  throw new Error('no booted simulator — run `socket npm run boot:sim`')
+  return udid
 }
 
-function dataContainer(udid = bootedSimulatorUDID()) {
+function dataContainer(udid = simulatorUDID()) {
   return execFileSync(
     'xcrun',
     ['simctl', 'get_app_container', udid, BUNDLE_ID, 'data'],
@@ -57,7 +48,8 @@ function directorPaths(container) {
 
 module.exports = {
   BUNDLE_ID,
-  bootedSimulatorUDID,
+  simulatorUDID,
+  bootedSimulatorUDID: simulatorUDID,
   dataContainer,
   directorPaths
 }

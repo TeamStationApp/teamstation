@@ -87,10 +87,10 @@ including Ethernet, which is why `SubnetScanner` looks at every non-loopback int
 
 ### Which iPad
 
-Every script resolves the target itself: whichever iPad `devicectl` reports as connected, or the one
-named by `DIRECTOR_DEVICE_UDID` when both are plugged in. Two very different machines have been used
-here — a 2018 A12X and an M4 — and `run-maestro.js` prints the model it chose for exactly that
-reason:
+Every script takes the target UDID before it runs (`--device <udid>`, `DIRECTOR_DEVICE_UDID`, or
+`DIRECTOR_SIMULATOR_UDID`). Flows in `maestro/flows` do not name a device, so parallel agents can
+point the same YAML at different machines. Two very different iPads have been used here — a 2018
+A12X and an M4 — and `run-maestro.js` prints the model it was given:
 
 ```
 Running 3 flow(s) on Bench iPad (2) — iPad Pro 11-inch (M4)

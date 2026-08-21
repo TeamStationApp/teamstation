@@ -63,11 +63,13 @@ struct TileRouterTests {
     let telemetry = PipelineTelemetry(clock: clock)
     let converter = PixelConverter()
     let encoder = ProgramEncoder(telemetry: telemetry, converter: converter, config: .default)
+    let streamer = ProgramStreamer(telemetry: telemetry, converter: converter)
     let router = TileRouter(
       telemetry: telemetry,
       converter: converter,
       compositor: nil,
       programEncoder: encoder,
+      programStreamer: streamer,
       clock: clock
     )
     return (router, telemetry)

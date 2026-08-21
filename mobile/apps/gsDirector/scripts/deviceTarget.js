@@ -1,8 +1,7 @@
 // Which iPad the scripts talk to, and how to reach its control server.
 //
-// This project has been measured on a 2018 A12X and on an M4, and the two are not interchangeable in
-// any thermal or throughput reading — so the target is whichever iPad is actually attached rather
-// than a UDID pasted into each script. `DIRECTOR_DEVICE_UDID` pins one when both are plugged in.
+// The caller always passes DIRECTOR_DEVICE_UDID (or `--device <udid>`). Auto-picking the first
+// connected iPad would send parallel agents to the same machine.
 
 const { execFileSync } = require('node:child_process')
 
@@ -18,24 +17,15 @@ function pairedDevices() {
 }
 
 function resolveDevice() {
-  const devices = pairedDevices()
   const wanted = process.env.DIRECTOR_DEVICE_UDID
-  const connectedPads = devices.filter(
-    entry =>
-      entry.hardwareProperties.deviceType === 'iPad' &&
-      entry.connectionProperties.tunnelState === 'connected'
-  )
-  const m4 = connectedPads.find(entry =>
-    (entry.hardwareProperties.marketingName ?? '').includes('M4')
-  )
-  const device = wanted
-    ? devices.find(entry => entry.hardwareProperties.udid === wanted)
-    : (m4 ?? connectedPads[0])
+  if (!wanted) {
+    throw new Error('set DIRECTOR_DEVICE_UDID or pass --device <udid>')
+  }
+  const devices = pairedDevices()
+  const device = devices.find(entry => entry.hardwareProperties.udid === wanted)
   if (!device) {
     throw new Error(
-      wanted
-        ? `iPad ${wanted} is not paired — plug it in and trust this Mac`
-        : 'no iPad is connected — plug one in, or set DIRECTOR_DEVICE_UDID'
+      `iPad ${wanted} is not paired — plug it in and trust this Mac`
     )
   }
   return {

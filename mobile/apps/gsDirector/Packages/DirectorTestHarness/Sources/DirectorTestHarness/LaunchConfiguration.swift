@@ -52,6 +52,8 @@ public struct LaunchConfiguration: Sendable, Equatable {
   public var rtspPath = "/live/mainstream"
   /// False turns the subnet scan off, leaving only `rtspHosts`.
   public var rtspScan = true
+  /// RTMP publish URL overlay for a flow. Session-only; never written back to Settings.
+  public var streamURL: String?
 
   public init() {}
 
@@ -110,6 +112,7 @@ public struct LaunchConfiguration: Sendable, Equatable {
       configuration.rtspPath = path
     }
     configuration.rtspScan = boolean(values["rtspScan"]) ?? true
+    configuration.streamURL = values["streamURL"]
 
     // `-key value` is registered in UserDefaults by the system before `main` runs, and it stays
     // there after the process exits. The next tap of the icon would then still be running last
@@ -136,6 +139,7 @@ public struct LaunchConfiguration: Sendable, Equatable {
     if let value = queryItems["segmentSeconds"], let seconds = Double(value), seconds > 0 {
       segmentSeconds = seconds
     }
+    if let value = queryItems["streamURL"] { streamURL = value }
   }
 
   /// Names of every key understood here, surfaced in the HUD so a failing flow shows what the
@@ -146,7 +150,7 @@ public struct LaunchConfiguration: Sendable, Equatable {
     "syntheticEntropy", "archiveAudio", "programCodec", "cameraCodec", "debugHUD", "sourceCount",
     // A key missing from this array is silently ignored, which has already cost this project
     // debugging time; every argument above must appear here.
-    "rtspTransport", "rtspHosts", "rtspPath", "rtspScan"
+    "rtspTransport", "rtspHosts", "rtspPath", "rtspScan", "streamURL"
   ]
 
   static func parse(

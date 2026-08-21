@@ -9,6 +9,7 @@ struct AppConfigDefaultsTests {
     let config = AppConfig()
     #expect(config.programCodec == .hevc)
     #expect(config.segmentSeconds == 3)
+    #expect(config.streamURL == "")
   }
 
   @Test("A config saved before those keys existed loads the same defaults")
@@ -16,5 +17,6 @@ struct AppConfigDefaultsTests {
     let config = try JSONDecoder().decode(AppConfig.self, from: Data("{}".utf8))
     #expect(config.programCodec == .hevc)
     #expect(config.segmentSeconds == 3)
+    #expect(config.streamURL == "")
   }
 }
