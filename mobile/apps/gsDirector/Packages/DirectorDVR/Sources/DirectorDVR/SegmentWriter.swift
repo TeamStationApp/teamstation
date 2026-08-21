@@ -14,7 +14,7 @@ public struct SegmentWriterSettings: Sendable, Equatable {
   public var minimumFreeDiskBytes: Int64
 
   public init(
-    segmentSeconds: Double = 6,
+    segmentSeconds: Double = 3,
     includesAudio: Bool = true,
     minimumFreeDiskBytes: Int64 = 4 * 1024 * 1024 * 1024
   ) {

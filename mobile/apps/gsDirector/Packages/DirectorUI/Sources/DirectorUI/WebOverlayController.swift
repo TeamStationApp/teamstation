@@ -4,14 +4,14 @@ import DirectorPipeline
 import UIKit
 import WebKit
 
-/// Renders the gamestation scoreboard page off-screen and snapshots it when it changes.
+/// Renders a web overlay off-screen and snapshots it when the page changes.
 ///
-/// Snapshot-on-change rather than snapshot-per-frame: a scoreboard is static for tens of
+/// Snapshot-on-change rather than snapshot-per-frame: overlay pages are static for tens of
 /// seconds at a time, and `takeSnapshot` at 30 fps would cost more than the compositor it
 /// feeds. A `MutationObserver` in the page reports real changes, and a slow heartbeat covers
 /// anything that updates through canvas or CSS animation without mutating the DOM.
 @MainActor
-public final class ScorebugController: NSObject {
+public final class WebOverlayController: NSObject {
   public private(set) var latestImage: CGImage?
   public private(set) var lastUpdate: Date?
   public private(set) var loadError: String?
@@ -19,11 +19,7 @@ public final class ScorebugController: NSObject {
   public private(set) var latestSize: CGSize = .zero
   public private(set) var snapshotCount: UInt64 = 0
 
-  /// One line describing whether the scorebug is working, for the telemetry snapshot.
-  ///
-  /// Until now a scorebug that failed to load looked exactly like one that was working: the load
-  /// error was recorded on this object and read by nobody, so a wrong URL only revealed itself in
-  /// the recorded file, after the game.
+  /// One line describing whether this overlay is working, for the telemetry snapshot.
   public var status: String {
     if let loadError { return "error \(loadError)" }
     guard hasRequested else { return "idle" }
@@ -56,12 +52,15 @@ public final class ScorebugController: NSObject {
     webView = WKWebView(frame: CGRect(origin: .zero, size: size), configuration: configuration)
     webView.isOpaque = false
     webView.backgroundColor = .clear
+    webView.underPageBackgroundColor = .clear
     webView.scrollView.backgroundColor = .clear
+    webView.scrollView.isOpaque = false
     webView.scrollView.isScrollEnabled = false
+    webView.scrollView.contentInsetAdjustmentBehavior = .never
 
     super.init()
 
-    controller.add(ScorebugMessageProxy(controller: self), name: "scorebugChanged")
+    controller.add(WebOverlayMessageProxy(controller: self), name: "overlayChanged")
     webView.navigationDelegate = self
   }
 
@@ -69,7 +68,7 @@ public final class ScorebugController: NSObject {
   // heartbeat holds `self` weakly and is invalidated in `stop()`, which the owner calls.
   public func load(urlString: String) {
     guard let url = URL(string: urlString) else {
-      loadError = "invalid scoreboard URL"
+      loadError = "invalid overlay URL"
       return
     }
     loadError = nil
@@ -100,7 +99,7 @@ public final class ScorebugController: NSObject {
   public func snapshot() {
     // Nothing has loaded yet, so there is nothing to measure. `evaluateJavaScript` against a web
     // view with no page never calls back at all, which used to wedge `isSnapshotting` true forever
-    // and stop the scorebug updating for the rest of the session.
+    // and stop the overlay updating for the rest of the session.
     guard hasLoaded else { return }
     guard !isSnapshotting else {
       pendingSnapshot = true
@@ -110,7 +109,7 @@ public final class ScorebugController: NSObject {
     armWatchdog()
 
     // Measure before capturing. The web view is laid out to the page's own content size so the
-    // snapshot is the scorebug and nothing else — capturing at the full frame size instead would
+    // snapshot is the overlay graphic and nothing else — capturing at the full frame size instead would
     // wrap the graphic in a sheet of transparent pixels, and positioning it would then mean
     // positioning that sheet rather than the graphic.
     measureContent { [weak self] size in
@@ -126,12 +125,17 @@ public final class ScorebugController: NSObject {
         Task { @MainActor in
           guard let self else { return }
           self.finishSnapshot()
-          if let image = image?.cgImage {
-            self.latestImage = image
-            self.latestSize = size
+          if let image, let cgImage = image.cgImage {
+            let scale = max(image.scale, 1)
+            let pointSize = CGSize(
+              width: CGFloat(cgImage.width) / scale,
+              height: CGFloat(cgImage.height) / scale
+            )
+            self.latestImage = cgImage
+            self.latestSize = pointSize
             self.snapshotCount &+= 1
             self.lastUpdate = Date()
-            self.onSnapshot?(image, size)
+            self.onSnapshot?(cgImage, pointSize)
           } else if let error {
             self.loadError = error.localizedDescription
           }
@@ -169,7 +173,7 @@ public final class ScorebugController: NSObject {
       Task { @MainActor in
         guard let self, self.isSnapshotting else { return }
         self.isSnapshotting = false
-        self.loadError = "scorebug snapshot timed out"
+        self.loadError = "overlay snapshot timed out"
       }
     }
   }
@@ -180,31 +184,24 @@ public final class ScorebugController: NSObject {
     isSnapshotting = false
   }
 
-  /// Asks the page how big it actually is, clamped to the frame it has to fit inside.
-  ///
-  /// Measured at full width every time, because measuring inside the previous result is circular:
-  /// a page laid out in a 500-point view reports 500 points wide whatever its content needs, so the
-  /// overlay could shrink but never grow back.
+  /// Lays the page out in a large viewport, then shrink-wraps to the graphic — not to the
+  /// viewport. Full-bleed wrappers would otherwise report the whole programme width.
   private func measureContent(_ completion: @escaping @MainActor (CGSize) -> Void) {
-    webView.frame = CGRect(origin: .zero, size: maximumSize)
+    let viewport = CGSize(width: maximumSize.width, height: max(maximumSize.height * 2, 2160))
+    webView.frame = CGRect(origin: .zero, size: viewport)
     webView.layoutIfNeeded()
 
     webView.evaluateJavaScript(Self.contentSizeScript) { [weak self] value, _ in
       Task { @MainActor in
         guard let self else { return }
         let numbers = value as? [Double] ?? []
-        let width = numbers.count == 2 ? numbers[0] : 0
-        let height = numbers.count == 2 ? numbers[1] : 0
-        guard width >= 1, height >= 1 else {
-          // A page that reports nothing has not laid out yet. Keep the previous size rather than
-          // collapsing the overlay to a point.
-          completion(self.latestSize == .zero ? self.maximumSize : self.latestSize)
+        let measuredWidth = numbers.count == 2 ? numbers[0] : 0
+        let measuredHeight = numbers.count == 2 ? numbers[1] : 0
+        guard measuredWidth >= 1, measuredHeight >= 1 else {
+          completion(self.latestSize == .zero ? CGSize(width: 400, height: 100) : self.latestSize)
           return
         }
-        completion(CGSize(
-          width: min(width, self.maximumSize.width - MetalCompositor.overlayInset.x),
-          height: min(height, self.maximumSize.height - MetalCompositor.overlayInset.y)
-        ))
+        completion(CGSize(width: measuredWidth, height: measuredHeight))
       }
     }
   }
@@ -213,20 +210,31 @@ public final class ScorebugController: NSObject {
   (function () {
     var b = document.body;
     if (!b) { return [0, 0]; }
-    // The far edge of the laid-out content, not `scrollWidth`: a block-level element fills the
-    // viewport, so the scroll extents report the width of the web view rather than of the scorebug
-    // and the overlay ends up as wide as the frame with the graphic lost in one corner of it.
+    var vw = document.documentElement.clientWidth || 0;
+    var vh = document.documentElement.clientHeight || 0;
     var right = 0;
     var bottom = 0;
     var nodes = b.getElementsByTagName('*');
     for (var i = 0; i < nodes.length; i++) {
       var box = nodes[i].getBoundingClientRect();
-      if (box.width === 0 || box.height === 0) { continue; }
+      if (box.width < 1 || box.height < 1) { continue; }
+      // Skip page-sized wrappers. A block that fills the web view would make the overlay
+      // as wide as Output with the graphic smashed into one strip of it.
+      if (vw > 0 && box.width >= vw * 0.98) { continue; }
+      if (vh > 0 && box.height >= vh * 0.98) { continue; }
       right = Math.max(right, box.right);
       bottom = Math.max(bottom, box.bottom);
     }
-    // Only when nothing measurable was found, which means the page is not laid out the way this
-    // expects and a whole-page capture is the safer answer.
+    if (right < 1 || bottom < 1) {
+      right = 0;
+      bottom = 0;
+      for (var j = 0; j < nodes.length; j++) {
+        var all = nodes[j].getBoundingClientRect();
+        if (all.width < 1 || all.height < 1) { continue; }
+        right = Math.max(right, all.right);
+        bottom = Math.max(bottom, all.bottom);
+      }
+    }
     if (right < 1) { right = b.scrollWidth; }
     if (bottom < 1) { bottom = b.scrollHeight; }
     return [Math.ceil(right), Math.ceil(bottom)];
@@ -245,7 +253,7 @@ public final class ScorebugController: NSObject {
       pending = true;
       setTimeout(function () {
         pending = false;
-        window.webkit.messageHandlers.scorebugChanged.postMessage(1);
+        window.webkit.messageHandlers.overlayChanged.postMessage(1);
       }, 120);
     }
     var observer = new MutationObserver(notify);
@@ -257,7 +265,7 @@ public final class ScorebugController: NSObject {
   """
 }
 
-extension ScorebugController: WKNavigationDelegate {
+extension WebOverlayController: WKNavigationDelegate {
   public nonisolated func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
     Task { @MainActor in
       self.hasLoaded = true
@@ -284,10 +292,10 @@ extension ScorebugController: WKNavigationDelegate {
 }
 
 /// Breaks the retain cycle WKUserContentController would otherwise create with its handler.
-private final class ScorebugMessageProxy: NSObject, WKScriptMessageHandler {
-  private weak var controller: ScorebugController?
+private final class WebOverlayMessageProxy: NSObject, WKScriptMessageHandler {
+  private weak var controller: WebOverlayController?
 
-  init(controller: ScorebugController) {
+  init(controller: WebOverlayController) {
     self.controller = controller
   }
 

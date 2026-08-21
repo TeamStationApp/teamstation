@@ -2,7 +2,7 @@ import CoreGraphics
 import CoreVideo
 import Foundation
 
-/// Turns CoreGraphics images into pixel buffers so proxy stills and the scorebug snapshot can
+/// Turns CoreGraphics images into pixel buffers so proxy stills and overlay snapshots can
 /// travel the same path as camera frames.
 public enum PixelBufferDrawing {
   public static func makeBGRA(from image: CGImage, width: Int? = nil, height: Int? = nil) -> CVPixelBuffer? {

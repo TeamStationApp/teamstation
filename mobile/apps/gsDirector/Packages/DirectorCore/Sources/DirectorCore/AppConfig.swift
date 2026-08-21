@@ -35,7 +35,6 @@ public struct ProgramResolution: Hashable, Sendable, Codable {
 /// and there is nothing to configure. The codec and canvas settings below describe the programme
 /// master, which is a composite and therefore has to be encoded.
 public struct AppConfig: Hashable, Sendable, Codable {
-  public var scoreboardURL: String
   public var programCodec: ProgramCodec
   public var programResolution: ProgramResolution
   public var programFrameRate: Int
@@ -63,16 +62,15 @@ public struct AppConfig: Hashable, Sendable, Codable {
   public static let displayLatencyCapMinimumMilliseconds: Double = 10
   public static let displayLatencyCapMaximumMilliseconds: Double = 2_000
   public static let replaySlowMotionRateDefault: Double = 0.5
-  public static let replaySlowMotionRateMinimum: Double = 0.1
+  public static let replaySlowMotionRateMinimum: Double = 0
   public static let replaySlowMotionRateMaximum: Double = 1.0
 
   public init(
-    scoreboardURL: String = AppConfig.defaultScoreboardURL,
-    programCodec: ProgramCodec = .h264,
+    programCodec: ProgramCodec = .hevc,
     programResolution: ProgramResolution = .hd1080,
     programFrameRate: Int = 30,
     gopSeconds: Double = 2,
-    segmentSeconds: Double = 6,
+    segmentSeconds: Double = 3,
     retentionHours: Double = 6,
     programBitrate: Int = 12_000_000,
     minimumFreeDiskBytes: Int64 = 4 * 1024 * 1024 * 1024,
@@ -82,7 +80,6 @@ public struct AppConfig: Hashable, Sendable, Codable {
     displayLatencyCapMilliseconds: Double = AppConfig.displayLatencyCapDefaultMilliseconds,
     replaySlowMotionRate: Double = AppConfig.replaySlowMotionRateDefault
   ) {
-    self.scoreboardURL = scoreboardURL
     self.programCodec = programCodec
     self.programResolution = programResolution
     self.programFrameRate = programFrameRate
@@ -118,8 +115,6 @@ public struct AppConfig: Hashable, Sendable, Codable {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     let fallback = AppConfig()
     self.init(
-      scoreboardURL: try container.decodeIfPresent(String.self, forKey: .scoreboardURL)
-        ?? fallback.scoreboardURL,
       programCodec: try container.decodeIfPresent(ProgramCodec.self, forKey: .programCodec)
         ?? fallback.programCodec,
       programResolution: try container.decodeIfPresent(
@@ -157,7 +152,6 @@ public struct AppConfig: Hashable, Sendable, Codable {
     )
   }
 
-  public static let defaultScoreboardURL = "http://localhost:8000/scoreboard"
   public static let `default` = AppConfig()
 }
 

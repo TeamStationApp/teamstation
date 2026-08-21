@@ -24,6 +24,11 @@ public enum DirectorPaths {
   /// Export destination, in Documents so it is reachable over Files / iTunes sharing.
   public static var exports: URL { documents.appendingPathComponent("Exports", isDirectory: true) }
 
+  /// Operator-placed Output overlays (images and the saved layout).
+  public static var overlays: URL { applicationSupport.appendingPathComponent("Overlays", isDirectory: true) }
+
+  public static var overlayManifest: URL { overlays.appendingPathComponent("overlays.json") }
+
   /// SQLite wall-clock index shared by the archive and the proxy store.
   public static var indexDatabase: URL { applicationSupport.appendingPathComponent("index.sqlite") }
 
@@ -40,7 +45,7 @@ public enum DirectorPaths {
 
   public static func createAll() throws {
     let manager = FileManager.default
-    for url in [ applicationSupport, archives, proxies, program, exports ] {
+    for url in [ applicationSupport, archives, proxies, program, exports, overlays ] {
       try manager.createDirectory(at: url, withIntermediateDirectories: true)
     }
   }
