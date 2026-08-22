@@ -1930,7 +1930,7 @@ public final class AppEnvironment {
     guard let index = remoteTemplates.firstIndex(where: { $0.id == activeRemoteTemplateID }) else {
       return
     }
-    RemoteChordRules.append(id, to: action, in: &remoteTemplates[index].bindings)
+    RemoteChordRules.capture(id, for: action, in: &remoteTemplates[index].bindings)
     persistActiveRemoteTemplate()
   }
 
@@ -1948,10 +1948,7 @@ public final class AppEnvironment {
     guard let index = remoteTemplates.firstIndex(where: { $0.id == activeRemoteTemplateID }) else {
       return
     }
-    RemoteChordRules.clear(action: action, in: &remoteTemplates[index].bindings)
-    for id in controls {
-      RemoteChordRules.append(id, to: action, in: &remoteTemplates[index].bindings)
-    }
+    RemoteChordRules.bind(action, controls: controls, in: &remoteTemplates[index].bindings)
     persistActiveRemoteTemplate()
   }
 
