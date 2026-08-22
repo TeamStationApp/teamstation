@@ -54,6 +54,9 @@ public struct DebugHUD: View {
         label("hud-composed", "composed=\(snapshot.composedFrames)")
         label("hud-audio-mix", "mix=\(snapshot.audioMixContributors)")
         label("hud-audio-mix-seconds", "mixs=\(snapshot.audioMixSeconds)")
+        label("hud-audio-out", "aout=\(snapshot.programAudioPlaying ? "1" : "0")")
+        label("hud-bg-keep", "bgkeep=\(snapshot.keepAliveInBackground ? "1" : "0")")
+        label("hud-pip", "pip=\(snapshot.pictureInPictureActive ? "1" : "0")")
         // Loss belongs next to the mix rather than per tile: a link losing packets loses them for
         // every camera at once, which is the reading that tells the operator it is the network.
         label("hud-packets-lost", "loss=\(totalPacketsLost)")
