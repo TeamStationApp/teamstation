@@ -46,7 +46,8 @@ const OPERATOR_SUITE = [
   'hevc-scrub',
   'scrub-incremental',
   'program-five-sources',
-  'recordings-export'
+  'recordings-export',
+  'operator-background-record'
 ]
 
 function flowFiles(names) {
@@ -170,30 +171,61 @@ function main() {
     )
   }
 
-  const result = spawnSync(
-    RUNNER,
-    [
-      '--platform',
-      'ios',
-      '--device',
-      target,
-      // A simulator needs no signing identity, and passing one makes the runner look for a
-      // provisioning profile that cannot apply to it.
-      ...(useSimulator ? [] : ['--team-id', TEAM_ID]),
-      '--driver-start-timeout',
-      '180',
-      ...appArgs,
-      '--artifacts',
-      'always',
-      '--output',
-      REPORT_DIR,
-      'test',
-      ...flows
-    ],
-    { stdio: 'inherit' }
-  )
+  const runnerArgs = [
+    '--platform',
+    'ios',
+    '--device',
+    target,
+    // A simulator needs no signing identity, and passing one makes the runner look for a
+    // provisioning profile that cannot apply to it.
+    ...(useSimulator ? [] : ['--team-id', TEAM_ID]),
+    '--driver-start-timeout',
+    '180',
+    '--shutdown-after=false',
+    ...appArgs,
+    '--artifacts',
+    'always',
+    '--output',
+    REPORT_DIR
+  ]
 
-  process.exit(result.status ?? 1)
+  let status = 0
+  let batch = []
+  const flush = () => {
+    if (batch.length === 0) return
+    const result = spawnSync(RUNNER, [...runnerArgs, 'test', ...batch], {
+      stdio: 'inherit'
+    })
+    status = result.status ?? 1
+    batch = []
+  }
+
+  for (const flow of flows) {
+    if (status !== 0) break
+    if (flow.endsWith('operator-background-record.yaml')) {
+      flush()
+      if (status !== 0) break
+      const result = spawnSync(
+        process.execPath,
+        [
+          path.join(ROOT, 'scripts', 'operatorBackgroundRecord.js'),
+          '--device',
+          target,
+          ...(useSimulator ? ['--sim'] : []),
+          ...appArgs,
+          '--output',
+          REPORT_DIR
+        ],
+        { stdio: 'inherit' }
+      )
+      status = result.status ?? 1
+      continue
+    }
+    batch.push(flow)
+  }
+  if (status === 0) flush()
+
+  process.exit(status)
 }
 
 try {

@@ -95,6 +95,8 @@ public final class AppEnvironment {
   public private(set) var isStreaming = false
   public private(set) var streamMegabitsPerSecond = 0.0
   public private(set) var streamDroppedPackets: UInt64 = 0
+  public let pictureInPicture = ProgramPictureInPicture()
+  private var isInBackground = false
   public private(set) var statusMessage: String?
 
   public func dismissStatusMessage() {
@@ -227,6 +229,10 @@ public final class AppEnvironment {
     telemetry.mutate { [sourceProfile] snapshot in
       snapshot.sourceProfile = sourceProfile.rawValue
     }
+
+    pictureInPicture.onStateChange = { [weak self] in
+      self?.publishLiveSessionTelemetry()
+    }
   }
 
   /// Called once from the app's `task` modifier.
@@ -266,6 +272,8 @@ public final class AppEnvironment {
     pollTimer?.invalidate()
     retentionTimer?.invalidate()
     if isRecording { await stopRecording() }
+    pictureInPicture.tearDown()
+    router.audioPlayer.stop()
     router.removeAll()
     discovery?.stop()
     for controller in webControllers.values { controller.stop() }
@@ -648,9 +656,46 @@ public final class AppEnvironment {
     dismissCameras()
   }
 
-  /// Called when the scene goes to the background. Recording is stopped rather than paused: the
-  /// hardware encoder is unavailable to a suspended app, so a recording that survives suspension
-  /// only produces a truncated file and a set of sessions nobody closes.
+  public var shouldKeepAliveInBackground: Bool {
+    BackgroundKeepAlive.shouldStayActive(isRecording: isRecording, isStreaming: isStreaming)
+  }
+
+  public func attachProgramPictureInPicture(host: UIView) {
+    pictureInPicture.attach(renderer: router.programRenderer, host: host)
+  }
+
+  public func handleForeground() {
+    isInBackground = false
+    syncLiveSessionPresentation()
+  }
+
+  public func handleInactive() {
+    guard shouldKeepAliveInBackground else { return }
+    pictureInPicture.prepare()
+    pictureInPicture.startIfPossible()
+    publishLiveSessionTelemetry()
+  }
+
+  /// Recording or streaming keeps the programme mix playing so iOS does not suspend the process.
+  /// Anything else still finalises an in-flight recording (there should not be one) and lets the
+  /// system freeze the preview.
+  public func handleBackground() async {
+    isInBackground = true
+    if shouldKeepAliveInBackground {
+      router.audioPlayer.start()
+      pictureInPicture.startIfPossible()
+      publishLiveSessionTelemetry()
+      return
+    }
+    await prepareForSuspension()
+    router.audioPlayer.stop()
+    pictureInPicture.tearDown()
+    publishLiveSessionTelemetry()
+  }
+
+  /// Called when the scene goes to the background without a live session. Recording is stopped
+  /// rather than paused: the hardware encoder is unavailable to a suspended app, so a recording
+  /// that survives suspension only produces a truncated file and a set of sessions nobody closes.
   public func prepareForSuspension() async {
     if isStreaming {
       reportStreamError("Streaming stopped — app moved to the background")
@@ -666,6 +711,39 @@ public final class AppEnvironment {
     let assertion = BackgroundAssertion(name: "finalise-recording")
     await stopRecording()
     assertion.end()
+  }
+
+  private func syncLiveSessionPresentation() {
+    if shouldKeepAliveInBackground {
+      router.audioPlayer.start()
+      pictureInPicture.prepare()
+      if isInBackground {
+        pictureInPicture.startIfPossible()
+      } else {
+        pictureInPicture.stopOverlay()
+      }
+    } else if isInBackground {
+      router.audioPlayer.stop()
+      pictureInPicture.tearDown()
+    } else if !router.activePipelines.isEmpty {
+      router.audioPlayer.start()
+      pictureInPicture.prepare()
+    } else {
+      router.audioPlayer.stop()
+      pictureInPicture.tearDown()
+    }
+    publishLiveSessionTelemetry()
+  }
+
+  private func publishLiveSessionTelemetry() {
+    let keepAlive = shouldKeepAliveInBackground
+    let playing = router.audioPlayer.isRunning
+    let pip = pictureInPicture.isActive
+    telemetry.mutate {
+      $0.keepAliveInBackground = keepAlive
+      $0.programAudioPlaying = playing
+      $0.pictureInPictureActive = pip
+    }
   }
 
   public func returnToSources() async {
@@ -721,6 +799,7 @@ public final class AppEnvironment {
       router.add(pipeline)
       try pipeline.start()
       router.audioMixer.start()
+      router.audioPlayer.start()
       pipelineEndpoints[id] = CameraEndpoint(address: discovered.address)
       telemetry.mutateTile(tileIndex) { $0.displayName = selection.displayName }
       if router.currentProgramTile == nil {
@@ -835,6 +914,7 @@ public final class AppEnvironment {
       $0.dvr.recordingStartedAt = now.seconds
     }
     startRetentionSweeps()
+    syncLiveSessionPresentation()
   }
 
   public func toggleStreaming() {
@@ -1017,6 +1097,7 @@ public final class AppEnvironment {
     recordingID = nil
     telemetry.mutate { $0.dvr.isRecording = false }
     setRecordingStage("idle")
+    syncLiveSessionPresentation()
   }
 
   private func setRecordingStage(_ stage: String) {
@@ -2101,6 +2182,9 @@ public final class AppEnvironment {
       $0.physFootprintMB = ProcessLoad.physFootprintMB()
       $0.discoveryStatus = discoveryStatus
       $0.displayLatencyMilliseconds = displayLatency
+      $0.programAudioPlaying = self.router.audioPlayer.isRunning
+      $0.keepAliveInBackground = self.shouldKeepAliveInBackground
+      $0.pictureInPictureActive = self.pictureInPicture.isActive
     }
     var liveDecodeSessions = 0
     for pipeline in router.activePipelines {

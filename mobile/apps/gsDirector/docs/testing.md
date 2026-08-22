@@ -56,7 +56,7 @@ So anything involving real cameras starts by letting a flow launch the app, then
 process over the control server:
 
 ```bash
-node scripts/run-maestro.js smoke               # launches, selects cameras, enters the grid
+node scripts/run-maestro.js --device <udid> smoke   # launches, selects cameras, enters the grid
 node scripts/control.js --device send "/record?on=true"
 node scripts/measure.js --device --seconds 30
 ```
@@ -69,10 +69,10 @@ The simulator inherits the Mac's interfaces, so a simulator run reaches the same
 does — as long as the Mac is on their network, wired or not:
 
 ```bash
-bash scripts/build-sim.sh
-node scripts/run-maestro.js --sim rtsp-three-cameras
-node scripts/run-maestro.js --sim rtsp-camera-naming
-node scripts/run-maestro.js --sim rtsp-camera-rebind
+DIRECTOR_SIMULATOR_UDID=<udid> bash scripts/build-sim.sh
+node scripts/run-maestro.js --device <udid> --sim rtsp-three-cameras
+node scripts/run-maestro.js --device <udid> --sim rtsp-camera-naming
+node scripts/run-maestro.js --device <udid> --sim rtsp-camera-rebind
 ```
 
 That covers the transport, the search and the identity rules against real cameras without the iPad on
@@ -92,12 +92,14 @@ Every script takes the target UDID before it runs (`--device <udid>`, `DIRECTOR_
 point the same YAML at different machines. Two very different iPads have been used here — a 2018
 A12X and an M4 — and `run-maestro.js` prints the model it was given:
 
-```
-Running 3 flow(s) on Bench iPad (2) — iPad Pro 11-inch (M4)
+```bash
+export DIRECTOR_DEVICE_UDID=<udid>            # physical scripts
+export DIRECTOR_SIMULATOR_UDID=<udid>         # build-sim / test-unit
+node scripts/run-maestro.js --device <udid> --suite operator
 ```
 
-Quote that line with any measurement. A number in `docs/risks.md` without a device attached to it
-cannot be compared with anything.
+`run-maestro.js` prints the UDID it was given. Quote that line with any measurement. A number in
+`docs/risks.md` without a device attached to it cannot be compared with anything.
 
 ### What to look at when a camera does not appear
 
@@ -276,8 +278,8 @@ the test runner rather than the app.
 
 ```bash
 node scripts/run-maestro.js --list
-node scripts/run-maestro.js --suite operator
-node scripts/run-maestro.js smoke
+node scripts/run-maestro.js --device <udid> --suite operator
+node scripts/run-maestro.js --device <udid> smoke
 ```
 
 Operator-facing conditions (tap to program, scrub a preview, cut a rewind, Return to Live not
