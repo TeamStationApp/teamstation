@@ -11,10 +11,16 @@ struct RemoteControlTests {
   func mostSpecificSubsetWins() {
     let bindings = [
       RemoteBinding(action: .cutLive(0), chord: RemoteChord(controls: [ .a ])),
-      RemoteBinding(action: .cutLive(1), chord: RemoteChord(controls: [ .l1, .a ]))
+      RemoteBinding(
+        action: .instantReplay(source: 0, seconds: 5, speed: .full),
+        chord: RemoteChord(controls: [ .a, .l1 ])
+      )
     ]
     #expect(RemoteChordRules.match(pressed: [ .a ], bindings: bindings) == .cutLive(0))
-    #expect(RemoteChordRules.match(pressed: [ .l1, .a ], bindings: bindings) == .cutLive(1))
+    #expect(
+      RemoteChordRules.match(pressed: [ .l1, .a ], bindings: bindings)
+        == .instantReplay(source: 0, seconds: 5, speed: .full)
+    )
     #expect(RemoteChordRules.match(pressed: [ .l1 ], bindings: bindings) == nil)
     #expect(RemoteChordRules.match(pressed: [ .b ], bindings: bindings) == nil)
   }
@@ -25,14 +31,103 @@ struct RemoteControlTests {
     #expect(RemoteChordRules.match(pressed: [ .a ], bindings: bindings) == nil)
   }
 
-  @Test("Recording a chord on one action clears the same set on another")
-  func duplicateChordIsUnique() {
+  @Test("A primary cannot be used by two sources")
+  func duplicatePrimaryIsStolen() {
     var bindings = [
       RemoteBinding(action: .cutLive(0), chord: RemoteChord(controls: [ .a ]))
     ]
-    RemoteChordRules.append(.a, to: .cutLive(1), in: &bindings)
-    #expect(bindings.contains { $0.action == .cutLive(0) } == false)
-    #expect(bindings.first { $0.action == .cutLive(1) }?.chord.controls == [ .a ])
+    RemoteChordRules.setPrimary(.a, source: 1, in: &bindings)
+    #expect(RemoteChordRules.primary(source: 0, in: bindings) == nil)
+    #expect(RemoteChordRules.primary(source: 1, in: bindings) == .a)
+  }
+
+  @Test("Setting a primary rewrites that source's rewind chords")
+  func primaryRewritesRewind() {
+    var bindings: [RemoteBinding] = []
+    RemoteChordRules.setPrimary(.dpadLeft, source: 0, in: &bindings)
+    RemoteChordRules.setModifier(
+      .l1,
+      for: .instantReplay(source: 0, seconds: 5, speed: .full),
+      in: &bindings
+    )
+    RemoteChordRules.setPrimary(.dpadRight, source: 0, in: &bindings)
+    #expect(RemoteChordRules.primary(source: 0, in: bindings) == .dpadRight)
+    #expect(
+      bindings.first {
+        $0.action == .instantReplay(source: 0, seconds: 5, speed: .full)
+      }?.chord.controls == [ .dpadRight, .l1 ]
+    )
+  }
+
+  @Test("A modifier equal to any primary is ignored")
+  func modifierMatchingPrimaryIsIgnored() {
+    var bindings: [RemoteBinding] = []
+    RemoteChordRules.setPrimary(.a, source: 0, in: &bindings)
+    RemoteChordRules.setModifier(
+      .a,
+      for: .instantReplay(source: 0, seconds: 5, speed: .full),
+      in: &bindings
+    )
+    #expect(
+      RemoteChordRules.globalModifier(seconds: 5, speed: .full, in: bindings) == nil
+    )
+  }
+
+  @Test("Two rewind kinds cannot share a modifier")
+  func duplicateModifierIsStolen() {
+    var bindings: [RemoteBinding] = []
+    RemoteChordRules.setPrimary(.a, source: 0, in: &bindings)
+    let five = RemoteAction.instantReplay(source: 0, seconds: 5, speed: .full)
+    let ten = RemoteAction.instantReplay(source: 0, seconds: 10, speed: .full)
+    RemoteChordRules.setModifier(.l1, for: five, in: &bindings)
+    RemoteChordRules.setModifier(.l1, for: ten, in: &bindings)
+    #expect(RemoteChordRules.globalModifier(seconds: 5, speed: .full, in: bindings) == nil)
+    #expect(RemoteChordRules.globalModifier(seconds: 10, speed: .full, in: bindings) == .l1)
+  }
+
+  @Test("A rewind modifier applies to every source")
+  func modifierIsSharedAcrossSources() {
+    var bindings: [RemoteBinding] = []
+    RemoteChordRules.setPrimary(.dpadLeft, source: 0, in: &bindings)
+    RemoteChordRules.setPrimary(.dpadRight, source: 1, in: &bindings)
+    RemoteChordRules.setModifier(
+      .l1,
+      for: .instantReplay(source: 0, seconds: 5, speed: .full),
+      in: &bindings
+    )
+    #expect(
+      bindings.first {
+        $0.action == .instantReplay(source: 0, seconds: 5, speed: .full)
+      }?.chord.controls == [ .dpadLeft, .l1 ]
+    )
+    #expect(
+      bindings.first {
+        $0.action == .instantReplay(source: 1, seconds: 5, speed: .full)
+      }?.chord.controls == [ .dpadRight, .l1 ]
+    )
+    #expect(
+      RemoteChordRules.match(
+        pressed: [ .dpadRight, .l1 ],
+        bindings: bindings
+      ) == .instantReplay(source: 1, seconds: 5, speed: .full)
+    )
+  }
+
+  @Test("Editor labels are sourceN:live and rewind amounts")
+  func editorLabels() {
+    #expect(RemoteAction.cutLive(0).editorTargetLabel(slowMotionPercent: 0.5) == "source1:live")
+    #expect(RemoteAction.cutLive(1).editorRoleLabel == "primary")
+    #expect(
+      RemoteAction.instantReplay(source: 0, seconds: 5, speed: .full)
+        .editorTargetLabel(slowMotionPercent: 0.5) == "rewind 5 seconds"
+    )
+    #expect(
+      RemoteAction.instantReplay(source: 0, seconds: 7.5, speed: .slow)
+        .editorTargetLabel(slowMotionPercent: 0.5) == "rewind 7.5 seconds ×50%"
+    )
+    #expect(
+      RemoteAction.instantReplay(source: 0, seconds: 5, speed: .full).editorRoleLabel == "modifier"
+    )
   }
 
   @Test("Analog sticks digitalize on the dominant axis past the deadzone")
@@ -51,7 +146,7 @@ struct RemoteControlTests {
       RemoteBinding(action: .cutLive(1), chord: RemoteChord(controls: [ .touchpadButton ]))
     ]
     let xbox = RemoteChordRules.bestFit(bindings: bindings, to: .xbox)
-    #expect(xbox.kept.first { $0.action == .cutLive(0) }?.chord.controls == [ .a, .paddle1 ])
+    #expect(xbox.kept.first { $0.action == .cutLive(0) }?.chord.controls == [ .a ])
     #expect(xbox.kept.contains { $0.action == .cutLive(1) } == false)
 
     let dualShock = RemoteChordRules.bestFit(bindings: bindings, to: .dualShock)
@@ -62,6 +157,37 @@ struct RemoteControlTests {
   @Test("Catalog always lists 35 actions")
   func catalogHasThirtyFiveActions() {
     #expect(RemoteActionCatalog.all.count == 35)
+  }
+
+  @Test("Editor lists five primaries then six shared rewind modifiers")
+  func editorRowsArePrimariesThenSharedRewinds() {
+    #expect(RemoteActionCatalog.editorActions.map(\.id) == [
+      "live-0", "live-1", "live-2", "live-3", "live-4",
+      "replay-0-5-full", "replay-0-7.5-full", "replay-0-10-full",
+      "replay-0-5-slow", "replay-0-7.5-slow", "replay-0-10-slow"
+    ])
+  }
+
+  @Test("Repeated presses of the same control stay one entry")
+  func repeatedPressIsDeduped() {
+    var chord = RemoteChord()
+    chord.append(.a)
+    chord.append(.a)
+    chord.append(.r1)
+    chord.append(.a)
+    #expect(chord.controls == [ .a, .r1 ])
+  }
+
+  @Test("D-pad and each stick keep only the last direction")
+  func exclusiveDirectionsLastWins() {
+    var chord = RemoteChord(controls: [ .dpadUp, .a ])
+    chord.append(.dpadRight)
+    chord.append(.leftStickUp)
+    chord.append(.leftStickLeft)
+    chord.append(.rightStickDown)
+    chord.append(.rightStickUp)
+    #expect(chord.controls == [ .a, .dpadRight, .leftStickLeft, .rightStickUp ])
+    #expect(RemoteChord(controls: [ .dpadUp, .dpadRight ]).controls == [ .dpadRight ])
   }
 
   @Test("Control-channel action ids are 1-based")

@@ -40,7 +40,6 @@ appId: co.gamestation.director
     visible:
       id: 'settings-remote-template-1'
     timeout: 10000
-- assertVisible: 'default remote'
 - tapOn:
     id: 'settings-remote-template-1'
 
@@ -48,10 +47,14 @@ appId: co.gamestation.director
     visible:
       id: 'remote-editor-done'
     timeout: 10000
+- assertVisible: 'source1:live'
 - assertVisible:
     id: 'remote-action-live-0'
 - assertVisible:
-    id: 'remote-action-replay-0-10-slow'
+    id: 'remote-chord-field-live-0'
+- assertVisible: 'rewind 5 seconds'
+- assertVisible: 'primary'
+- assertVisible: 'modifier'
 - tapOn:
     id: 'remote-editor-done'
 

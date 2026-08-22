@@ -97,6 +97,22 @@ public enum ControlID: String, Sendable, Codable, Hashable, CaseIterable, Identi
     default: ""
     }
   }
+
+  /// D-pad and each analog stick can contribute at most one direction to a chord.
+  public var exclusiveGroup: ControlExclusiveGroup? {
+    switch self {
+    case .dpadUp, .dpadDown, .dpadLeft, .dpadRight: .dpad
+    case .leftStickUp, .leftStickDown, .leftStickLeft, .leftStickRight: .leftStick
+    case .rightStickUp, .rightStickDown, .rightStickLeft, .rightStickRight: .rightStick
+    default: nil
+    }
+  }
+}
+
+public enum ControlExclusiveGroup: Sendable, Equatable {
+  case dpad
+  case leftStick
+  case rightStick
 }
 
 public enum ReplaySpeed: String, Sendable, Codable, Hashable {
@@ -129,14 +145,25 @@ public enum RemoteAction: Sendable, Codable, Hashable, Identifiable {
   }
 
   public func title(slowMotionPercent: Double) -> String {
-    let n = sourceIndex + 1
+    editorTargetLabel(slowMotionPercent: slowMotionPercent)
+  }
+
+  public func editorTargetLabel(slowMotionPercent: Double) -> String {
     switch self {
     case .cutLive:
-      return "Source \(n) live"
+      return "source\(sourceIndex + 1):live"
     case let .instantReplay(_, seconds, speed):
       let amount = seconds == seconds.rounded() ? String(Int(seconds)) : String(format: "%g", seconds)
-      if speed == .full { return "Source \(n) · \(amount)s" }
-      return "Source \(n) · \(amount)s ×\(Int((slowMotionPercent * 100).rounded()))%"
+      let base = "rewind \(amount) seconds"
+      if speed == .full { return base }
+      return "\(base) ×\(Int((slowMotionPercent * 100).rounded()))%"
+    }
+  }
+
+  public var editorRoleLabel: String {
+    switch self {
+    case .cutLive: "primary"
+    case .instantReplay: "modifier"
     }
   }
 
@@ -162,15 +189,32 @@ public enum RemoteAction: Sendable, Codable, Hashable, Identifiable {
 public enum RemoteActionCatalog {
   public static let replayOffsets: [Double] = [ 5, 7.5, 10 ]
 
-  public static let all: [RemoteAction] = {
-    (0 ..< SourceIndex.count).flatMap { source in
-      [ RemoteAction.cutLive(source) ] + replayOffsets.flatMap { seconds in
-        [
-          RemoteAction.instantReplay(source: source, seconds: seconds, speed: .full),
-          RemoteAction.instantReplay(source: source, seconds: seconds, speed: .slow)
-        ]
-      }
+  public static var rewindKinds: [(seconds: Double, speed: ReplaySpeed)] {
+    replayOffsets.map { ($0, ReplaySpeed.full) } + replayOffsets.map { ($0, .slow) }
+  }
+
+  public static func actions(for source: Int) -> [RemoteAction] {
+    let live = [ RemoteAction.cutLive(source) ]
+    let full = replayOffsets.map {
+      RemoteAction.instantReplay(source: source, seconds: $0, speed: .full)
     }
+    let slow = replayOffsets.map {
+      RemoteAction.instantReplay(source: source, seconds: $0, speed: .slow)
+    }
+    return live + full + slow
+  }
+
+  /// Five primaries, then the six shared rewind modifiers.
+  public static let editorActions: [RemoteAction] = {
+    let primaries = (0 ..< SourceIndex.count).map { RemoteAction.cutLive($0) }
+    let modifiers = rewindKinds.map {
+      RemoteAction.instantReplay(source: 0, seconds: $0.seconds, speed: $0.speed)
+    }
+    return primaries + modifiers
+  }()
+
+  public static let all: [RemoteAction] = {
+    (0 ..< SourceIndex.count).flatMap { actions(for: $0) }
   }()
 }
 
@@ -178,20 +222,34 @@ public struct RemoteChord: Sendable, Codable, Hashable {
   public var controls: [ControlID]
 
   public init(controls: [ControlID] = []) {
-    var seen: Set<ControlID> = []
-    self.controls = controls.filter { seen.insert($0).inserted }
+    self.controls = []
+    for id in controls { append(id) }
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    let raw = try container.decode([ControlID].self, forKey: .controls)
+    self.controls = []
+    for id in raw { append(id) }
   }
 
   public var set: Set<ControlID> { Set(controls) }
   public var isEmpty: Bool { controls.isEmpty }
 
   public mutating func append(_ id: ControlID) {
-    if !controls.contains(id) { controls.append(id) }
+    if let group = id.exclusiveGroup {
+      controls.removeAll { $0.exclusiveGroup == group }
+    } else if controls.contains(id) {
+      return
+    }
+    controls.append(id)
   }
 
   public mutating func clear() {
     controls = []
   }
+
+  private enum CodingKeys: String, CodingKey { case controls }
 }
 
 public struct RemoteBinding: Sendable, Codable, Hashable, Identifiable {
@@ -274,41 +332,210 @@ public enum RemoteDigitalizer {
 }
 
 public enum RemoteChordRules {
-  /// Largest chord that is a subset of `pressed`. Empty chords never match.
+  /// Largest eligible chord that is a subset of `pressed`. Live needs one button; rewind needs two.
   public static func match(
     pressed: Set<ControlID>,
     bindings: [RemoteBinding]
   ) -> RemoteAction? {
     bindings
-      .filter { !$0.chord.isEmpty && $0.chord.set.isSubset(of: pressed) }
+      .filter { binding in
+        !binding.chord.isEmpty
+          && binding.chord.set.isSubset(of: pressed)
+          && binding.chord.controls.count == requiredCount(binding.action)
+      }
       .max { lhs, rhs in lhs.chord.controls.count < rhs.chord.controls.count }?
       .action
   }
 
-  /// Record `id` on `action`. Another action that ends up with the same set is cleared.
+  private static func requiredCount(_ action: RemoteAction) -> Int {
+    switch action {
+    case .cutLive: 1
+    case .instantReplay: 2
+    }
+  }
+
+  public static func primary(source: Int, in bindings: [RemoteBinding]) -> ControlID? {
+    bindings.first { $0.action == .cutLive(source) }?.chord.controls.first
+  }
+
+  public static func modifier(for action: RemoteAction, in bindings: [RemoteBinding]) -> ControlID? {
+    guard case .instantReplay = action else { return nil }
+    let controls = bindings.first { $0.action == action }?.chord.controls ?? []
+    guard let first = controls.first else { return nil }
+    if let primary = primary(source: action.sourceIndex, in: bindings) {
+      return controls.first { $0 != primary }
+    }
+    return first
+  }
+
+  public static func fieldControl(for action: RemoteAction, in bindings: [RemoteBinding]) -> ControlID? {
+    switch action {
+    case let .cutLive(source): primary(source: source, in: bindings)
+    case let .instantReplay(_, seconds, speed):
+      globalModifier(seconds: seconds, speed: speed, in: bindings)
+    }
+  }
+
+  public static func globalModifier(
+    seconds: Double,
+    speed: ReplaySpeed,
+    in bindings: [RemoteBinding]
+  ) -> ControlID? {
+    for source in 0 ..< SourceIndex.count {
+      let action = RemoteAction.instantReplay(source: source, seconds: seconds, speed: speed)
+      if let modifier = modifier(for: action, in: bindings) { return modifier }
+    }
+    return nil
+  }
+
+  public static func capture(
+    _ id: ControlID,
+    for action: RemoteAction,
+    in bindings: inout [RemoteBinding]
+  ) {
+    switch action {
+    case let .cutLive(source): setPrimary(id, source: source, in: &bindings)
+    case .instantReplay: setModifier(id, for: action, in: &bindings)
+    }
+  }
+
+  public static func setPrimary(
+    _ id: ControlID,
+    source: Int,
+    in bindings: inout [RemoteBinding]
+  ) {
+    let modifiers = snapshotModifiers(in: bindings)
+    for kind in RemoteActionCatalog.rewindKinds {
+      if modifiers[kindKey(kind)] == id {
+        clearModifierKind(seconds: kind.seconds, speed: kind.speed, in: &bindings)
+      }
+    }
+    for other in 0 ..< SourceIndex.count where other != source {
+      if primary(source: other, in: bindings) == id {
+        clearPrimary(source: other, in: &bindings)
+      }
+    }
+    let remaining = snapshotModifiers(in: bindings)
+    upsert(.cutLive(source), controls: [ id ], in: &bindings)
+    applyModifiers(remaining, to: source, primary: id, in: &bindings)
+  }
+
+  public static func setModifier(
+    _ id: ControlID,
+    for action: RemoteAction,
+    in bindings: inout [RemoteBinding]
+  ) {
+    guard case let .instantReplay(_, seconds, speed) = action else { return }
+    if (0 ..< SourceIndex.count).contains(where: { primary(source: $0, in: bindings) == id }) {
+      return
+    }
+    for kind in RemoteActionCatalog.rewindKinds {
+      if kind.seconds == seconds && kind.speed == speed { continue }
+      if globalModifier(seconds: kind.seconds, speed: kind.speed, in: bindings) == id {
+        clearModifierKind(seconds: kind.seconds, speed: kind.speed, in: &bindings)
+      }
+    }
+    writeModifier(id, seconds: seconds, speed: speed, in: &bindings)
+  }
+
+  public static func clearPrimary(source: Int, in bindings: inout [RemoteBinding]) {
+    let modifiers = snapshotModifiers(in: bindings)
+    bindings.removeAll { $0.action == .cutLive(source) }
+    applyModifiers(modifiers, to: source, primary: nil, in: &bindings)
+  }
+
+  public static func clearModifier(for action: RemoteAction, in bindings: inout [RemoteBinding]) {
+    guard case let .instantReplay(_, seconds, speed) = action else { return }
+    clearModifierKind(seconds: seconds, speed: speed, in: &bindings)
+  }
+
+  public static func clear(action: RemoteAction, in bindings: inout [RemoteBinding]) {
+    switch action {
+    case let .cutLive(source): clearPrimary(source: source, in: &bindings)
+    case .instantReplay: clearModifier(for: action, in: &bindings)
+    }
+  }
+
+  /// Record `id` on `action` using primary/modifier capture.
   public static func append(
     _ id: ControlID,
     to action: RemoteAction,
     in bindings: inout [RemoteBinding]
   ) {
-    if let index = bindings.firstIndex(where: { $0.action == action }) {
-      bindings[index].chord.append(id)
-    } else {
-      var chord = RemoteChord()
-      chord.append(id)
-      bindings.append(RemoteBinding(action: action, chord: chord))
-    }
-    let set = Set(bindings.first { $0.action == action }?.chord.controls ?? [])
-    for index in bindings.indices where bindings[index].action != action {
-      if Set(bindings[index].chord.controls) == set {
-        bindings[index].chord.clear()
-      }
-    }
-    bindings.removeAll { $0.chord.isEmpty && $0.action != action }
+    capture(id, for: action, in: &bindings)
   }
 
-  public static func clear(action: RemoteAction, in bindings: inout [RemoteBinding]) {
-    bindings.removeAll { $0.action == action }
+  public static func bind(
+    _ action: RemoteAction,
+    controls: [ControlID],
+    in bindings: inout [RemoteBinding]
+  ) {
+    switch action {
+    case let .cutLive(source):
+      if let id = controls.last { setPrimary(id, source: source, in: &bindings) }
+    case .instantReplay:
+      if controls.count >= 2 {
+        setPrimary(controls[0], source: action.sourceIndex, in: &bindings)
+        setModifier(controls[1], for: action, in: &bindings)
+      } else if let id = controls.first {
+        setModifier(id, for: action, in: &bindings)
+      }
+    }
+  }
+
+  public static func normalize(_ bindings: [RemoteBinding]) -> [RemoteBinding] {
+    var primaries: [Int: ControlID] = [:]
+    var used: Set<ControlID> = []
+    for source in 0 ..< SourceIndex.count {
+      guard let id = bindings.first(where: { $0.action == .cutLive(source) })?.chord.controls.first
+      else { continue }
+      if used.contains(id) { continue }
+      used.insert(id)
+      primaries[source] = id
+    }
+    var modifiers: [String: ControlID] = [:]
+    for kind in RemoteActionCatalog.rewindKinds {
+      let key = kindKey(kind)
+      for source in 0 ..< SourceIndex.count {
+        let action = RemoteAction.instantReplay(
+          source: source,
+          seconds: kind.seconds,
+          speed: kind.speed
+        )
+        let controls = bindings.first { $0.action == action }?.chord.controls ?? []
+        let candidate: ControlID?
+        if let primary = primaries[source] {
+          candidate = controls.first { $0 != primary }
+        } else {
+          candidate = controls.first
+        }
+        guard let candidate, !used.contains(candidate), !modifiers.values.contains(candidate) else {
+          continue
+        }
+        modifiers[key] = candidate
+        break
+      }
+    }
+    var result: [RemoteBinding] = []
+    for source in 0 ..< SourceIndex.count {
+      if let primary = primaries[source] {
+        result.append(RemoteBinding(action: .cutLive(source), chord: RemoteChord(controls: [ primary ])))
+      }
+      for kind in RemoteActionCatalog.rewindKinds {
+        guard let modifier = modifiers[kindKey(kind)] else { continue }
+        let action = RemoteAction.instantReplay(
+          source: source,
+          seconds: kind.seconds,
+          speed: kind.speed
+        )
+        if let primary = primaries[source] {
+          result.append(RemoteBinding(action: action, chord: RemoteChord(controls: [ primary, modifier ])))
+        } else {
+          result.append(RemoteBinding(action: action, chord: RemoteChord(controls: [ modifier ])))
+        }
+      }
+    }
+    return result
   }
 
   public static func bestFit(
@@ -321,13 +548,92 @@ public enum RemoteChordRules {
     for binding in bindings {
       let remaining = binding.chord.controls.filter { allowed.contains($0) }
       dropped += binding.chord.controls.count - remaining.count
-      if remaining.isEmpty {
-        if !binding.chord.isEmpty { dropped += 0 }
-        continue
-      }
+      if remaining.isEmpty { continue }
       kept.append(RemoteBinding(action: binding.action, chord: RemoteChord(controls: remaining)))
     }
-    return (kept, dropped)
+    return (normalize(kept), dropped)
+  }
+
+  private static func snapshotModifiers(in bindings: [RemoteBinding]) -> [String: ControlID] {
+    var result: [String: ControlID] = [:]
+    for kind in RemoteActionCatalog.rewindKinds {
+      if let modifier = globalModifier(seconds: kind.seconds, speed: kind.speed, in: bindings) {
+        result[kindKey(kind)] = modifier
+      }
+    }
+    return result
+  }
+
+  private static func applyModifiers(
+    _ modifiers: [String: ControlID],
+    to source: Int,
+    primary: ControlID?,
+    in bindings: inout [RemoteBinding]
+  ) {
+    for kind in RemoteActionCatalog.rewindKinds {
+      let action = RemoteAction.instantReplay(
+        source: source,
+        seconds: kind.seconds,
+        speed: kind.speed
+      )
+      guard let modifier = modifiers[kindKey(kind)], modifier != primary else {
+        bindings.removeAll { $0.action == action }
+        continue
+      }
+      if let primary {
+        upsert(action, controls: [ primary, modifier ], in: &bindings)
+      } else {
+        upsert(action, controls: [ modifier ], in: &bindings)
+      }
+    }
+  }
+
+  private static func writeModifier(
+    _ id: ControlID,
+    seconds: Double,
+    speed: ReplaySpeed,
+    in bindings: inout [RemoteBinding]
+  ) {
+    for source in 0 ..< SourceIndex.count {
+      let action = RemoteAction.instantReplay(source: source, seconds: seconds, speed: speed)
+      if let primary = primary(source: source, in: bindings), primary != id {
+        upsert(action, controls: [ primary, id ], in: &bindings)
+      } else {
+        upsert(action, controls: [ id ], in: &bindings)
+      }
+    }
+  }
+
+  private static func clearModifierKind(
+    seconds: Double,
+    speed: ReplaySpeed,
+    in bindings: inout [RemoteBinding]
+  ) {
+    for source in 0 ..< SourceIndex.count {
+      let action = RemoteAction.instantReplay(source: source, seconds: seconds, speed: speed)
+      bindings.removeAll { $0.action == action }
+    }
+  }
+
+  private static func kindKey(_ kind: (seconds: Double, speed: ReplaySpeed)) -> String {
+    "\(kind.seconds)-\(kind.speed.rawValue)"
+  }
+
+  private static func upsert(
+    _ action: RemoteAction,
+    controls: [ControlID],
+    in bindings: inout [RemoteBinding]
+  ) {
+    let chord = RemoteChord(controls: controls)
+    if chord.isEmpty {
+      bindings.removeAll { $0.action == action }
+      return
+    }
+    if let index = bindings.firstIndex(where: { $0.action == action }) {
+      bindings[index].chord = chord
+    } else {
+      bindings.append(RemoteBinding(action: action, chord: chord))
+    }
   }
 }
 
@@ -366,6 +672,11 @@ public struct RemoteControlStore: Sendable {
     }
     if !manifest.templates.contains(where: { $0.id == manifest.activeTemplateID }) {
       manifest.activeTemplateID = manifest.templates[0].id
+    }
+    for index in manifest.templates.indices {
+      manifest.templates[index].bindings = RemoteChordRules.normalize(
+        manifest.templates[index].bindings
+      )
     }
     return manifest
   }

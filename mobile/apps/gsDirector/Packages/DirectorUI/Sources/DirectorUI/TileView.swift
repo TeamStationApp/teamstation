@@ -245,7 +245,7 @@ public struct TileView: View {
           .background(Color.programGreen, in: RoundedRectangle(cornerRadius: 3))
           .foregroundStyle(.black)
       }
-      Text(telemetry.displayName ?? "—")
+      Text("source: \(sourceIndex + 1) \(telemetry.displayName ?? "—")")
         .font(.system(size: 13, weight: .semibold, design: .rounded))
         .foregroundStyle(.white)
       if telemetry.isArchiving {
@@ -291,4 +291,5 @@ extension Color {
   static let replayAmber = Color(red: 0.99, green: 0.76, blue: 0.24)
   static let deckBackground = Color(red: 0.043, green: 0.047, blue: 0.055)
   static let deckPanel = Color(red: 0.09, green: 0.095, blue: 0.11)
+  static let sourceBlue = Color(red: 0.18, green: 0.48, blue: 0.95)
 }

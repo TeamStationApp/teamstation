@@ -62,7 +62,10 @@ struct ContentEditorView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
       }
       .background(Color.deckBackground)
-      .navigationTitle("Add/Edit Content")
+      .navigationTitle(
+        environment.templates.first { $0.id == environment.activeTemplateID }?.name
+          ?? OverlayTemplate.defaultName
+      )
       .navigationBarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {

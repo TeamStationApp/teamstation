@@ -14,14 +14,13 @@ public struct RemoteControlEditorView: View {
       VStack(alignment: .leading, spacing: 12) {
         typePicker
         padStatus
-        HStack(alignment: .top, spacing: 16) {
-          actionColumn
-          chordColumn
-        }
+        bindingList
       }
       .padding(16)
       .background(Color.black)
-      .navigationTitle("Remote Control")
+      .navigationTitle(
+        environment.activeRemoteTemplate?.name ?? RemoteControlTemplate.defaultName
+      )
       .navigationBarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .confirmationAction) {
@@ -66,89 +65,93 @@ public struct RemoteControlEditorView: View {
     return "No pad connected — pair in iPad Settings, or inject chords in tests"
   }
 
-  private var actionColumn: some View {
+  private var bindingList: some View {
     ScrollView {
-      VStack(alignment: .leading, spacing: 4) {
-        ForEach(RemoteActionCatalog.all) { action in
-          Button {
-            capturing = action
-            environment.capturingRemoteAction = action
-          } label: {
-            Text(action.title(slowMotionPercent: environment.config.replaySlowMotionRate))
-              .font(.system(size: 13, weight: capturing == action ? .bold : .regular))
-              .foregroundStyle(capturing == action ? Color.white : Color.white.opacity(0.7))
-              .frame(maxWidth: .infinity, alignment: .leading)
-              .padding(.vertical, 6)
-              .padding(.horizontal, 8)
-              .background(
-                capturing == action ? Color.white.opacity(0.12) : Color.clear,
-                in: RoundedRectangle(cornerRadius: 6)
-              )
-          }
-          .buttonStyle(.plain)
-          .accessibilityIdentifier("remote-action-\(action.accessibilitySuffix)")
+      VStack(alignment: .leading, spacing: 8) {
+        ForEach(RemoteActionCatalog.editorActions) { action in
+          row(for: action)
         }
       }
     }
-    .frame(maxWidth: .infinity)
     .accessibilityIdentifier("remote-action-list")
   }
 
-  private var chordColumn: some View {
-    VStack(alignment: .leading, spacing: 8) {
-      Text(capturing.map { "Chord for \($0.title(slowMotionPercent: environment.config.replaySlowMotionRate))" }
-        ?? "Select an action, then press pad buttons")
-        .font(.footnote)
-        .foregroundStyle(.secondary)
-      chordField
-      Spacer()
+  private func row(for action: RemoteAction) -> some View {
+    let isCapturing = capturing == action
+    return HStack(alignment: .center, spacing: 12) {
+      Button {
+        select(action)
+      } label: {
+        Text(action.editorTargetLabel(slowMotionPercent: environment.config.replaySlowMotionRate))
+          .font(.system(size: 16, weight: isCapturing ? .bold : .regular))
+          .foregroundStyle(isCapturing ? Color.white : Color.white.opacity(0.7))
+          .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+          .padding(.horizontal, 12)
+          .padding(.vertical, 12)
+      }
+      .buttonStyle(.plain)
+      .frame(minWidth: 220, maxWidth: 280, alignment: .leading)
+      .accessibilityIdentifier("remote-action-\(action.accessibilitySuffix)")
+
+      Text(action.editorRoleLabel)
+        .font(.system(size: 15, weight: .semibold, design: .rounded))
+        .foregroundStyle(.white.opacity(0.55))
+        .frame(width: 88, alignment: .leading)
+        .accessibilityIdentifier("remote-role-\(action.accessibilitySuffix)")
+
+      chordField(for: action, isCapturing: isCapturing)
     }
-    .frame(maxWidth: .infinity)
   }
 
-  private var chordField: some View {
-    HStack(spacing: 8) {
+  private func chordField(for action: RemoteAction, isCapturing: Bool) -> some View {
+    let control = fieldControl(for: action)
+    return HStack(spacing: 8) {
       ScrollView(.horizontal, showsIndicators: false) {
         HStack(spacing: 6) {
-          ForEach(currentChord.controls, id: \.self) { id in
-            pill(id)
-          }
-          if currentChord.isEmpty {
-            Text(capturing == nil ? "—" : "Press buttons")
-              .font(.system(size: 13))
+          if let control {
+            pill(control)
+          } else {
+            Text(isCapturing ? "Press a button" : "—")
+              .font(.system(size: 15))
               .foregroundStyle(.white.opacity(0.35))
           }
         }
       }
       Button {
-        if let capturing {
-          environment.clearRemoteChord(for: capturing)
-        }
+        environment.clearRemoteChord(for: action)
+        select(action)
       } label: {
         Image(systemName: "xmark.circle.fill")
           .font(.system(size: 22))
           .foregroundStyle(.white.opacity(0.55))
       }
       .buttonStyle(.plain)
-      .disabled(capturing == nil || currentChord.isEmpty)
-      .accessibilityIdentifier("remote-chord-clear")
+      .disabled(control == nil)
+      .accessibilityIdentifier(
+        isCapturing ? "remote-chord-clear" : "remote-chord-clear-\(action.accessibilitySuffix)"
+      )
     }
-    .padding(10)
-    .frame(minHeight: 52)
+    .padding(12)
+    .frame(maxWidth: .infinity, minHeight: 72)
     .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
     .overlay(
       RoundedRectangle(cornerRadius: 8)
-        .strokeBorder(capturing == nil ? Color.clear : Color.white.opacity(0.35), lineWidth: 1)
+        .strokeBorder(isCapturing ? Color.blue : Color.clear, lineWidth: 2)
     )
-    .accessibilityIdentifier("remote-chord-field")
-    .accessibilityValue(currentChord.controls.map(\.rawValue).joined(separator: ","))
+    .contentShape(Rectangle())
+    .onTapGesture { select(action) }
+    .accessibilityIdentifier("remote-chord-field-\(action.accessibilitySuffix)")
+    .accessibilityValue(control?.rawValue ?? "")
   }
 
-  private var currentChord: RemoteChord {
-    guard let capturing, let template = environment.activeRemoteTemplate else {
-      return RemoteChord()
-    }
-    return template.chord(for: capturing)
+  private func fieldControl(for action: RemoteAction) -> ControlID? {
+    guard let template = environment.activeRemoteTemplate else { return nil }
+    return RemoteChordRules.fieldControl(for: action, in: template.bindings)
+  }
+
+  private func select(_ action: RemoteAction) {
+    capturing = action
+    environment.capturingRemoteAction = action
   }
 
   private func pill(_ id: ControlID) -> some View {
@@ -158,7 +161,7 @@ public struct RemoteControlEditorView: View {
       }
       Text(id.pillTitle)
     }
-    .font(.system(size: 12, weight: .semibold, design: .rounded))
+    .font(.system(size: 13, weight: .semibold, design: .rounded))
     .padding(.horizontal, 8)
     .padding(.vertical, 5)
     .background(Color.white.opacity(0.16), in: Capsule())
