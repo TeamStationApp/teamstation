@@ -283,4 +283,15 @@ struct ControlChannelSourceTests {
     )
     #expect(command == .assignSource(index: 0, slot: 2))
   }
+
+  @Test("Source-layout uses 1-based source numbers in visual-slot order")
+  func sourceLayoutCommand() {
+    let command = ControlChannel.command(
+      from: URL(string: "gsdirector://test/source-layout?order=5,1,2,3,4")!
+    )
+    #expect(command == .sourceLayout(order: [4, 0, 1, 2, 3]))
+    #expect(
+      ControlChannel.command(from: URL(string: "gsdirector://test/source-layout?order=1,2")!) == nil
+    )
+  }
 }

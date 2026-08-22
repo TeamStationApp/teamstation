@@ -274,6 +274,8 @@ public struct TelemetrySnapshot: Sendable, Codable, Equatable {
   public var keepAliveInBackground = false
   /// System Picture-in-Picture of the programme output is showing over other apps.
   public var pictureInPictureActive = false
+  /// 1-based source numbers in visual-slot order (top-right, mid-right, then the bottom row).
+  public var sourceLayout = "1,2,3,4,5"
 
   public init() {}
 

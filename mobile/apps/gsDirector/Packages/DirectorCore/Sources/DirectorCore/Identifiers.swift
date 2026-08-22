@@ -18,7 +18,8 @@ public struct SourceID: Hashable, Sendable, Codable, CustomStringConvertible {
   }
 }
 
-/// Position of a source in the 3×3 grid (five sources beside Output).
+/// Stable number of a director source (Source 1…5). Independent of which camera is mapped
+/// to it and of where its tile sits on the grid.
 public struct SourceIndex: Hashable, Sendable, Codable, Comparable, CustomStringConvertible {
   public static let count = 5
   public static let all: [SourceIndex] = (0 ..< count).map { SourceIndex(unchecked: $0) }

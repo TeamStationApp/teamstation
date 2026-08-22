@@ -160,6 +160,13 @@ public final class AppEnvironment {
   private var pollTimer: Timer?
   /// Width of one small source tile, used so Output scrub (if added) shares the 60s-per-width rate.
   public var smallTileWidth: Double = 300
+  /// Visual order of Source 1…5. Independent of which camera occupies a source.
+  public private(set) var sourceLayout = SourceLayout.default
+  /// Source currently being dragged to a new slot, if any. Scrub and program-tap stand down.
+  public var draggingSourceIndex: Int?
+  /// Wall time until which a lift after a reorder must not cut that tile to Output.
+  public var ignoreProgramTapUntil: TimeInterval = 0
+  private let layoutStore: SourceLayoutStore
   private let overlayStore = OverlayStore()
   public let remoteInput = RemoteInputSession()
   private let remoteStore = RemoteControlStore()
@@ -192,6 +199,7 @@ public final class AppEnvironment {
     self.sourceProfile = Self.resolveSourceProfile(launch: launch, config: session)
 
     self.selectionStore = SourceSelectionStore(store: configStore)
+    self.layoutStore = SourceLayoutStore(store: configStore)
     // The app target passes the same registry it gave to discovery; anything without a transport
     // gets its own, which is empty and harmless.
     let registry = cameras ?? CameraRegistry(store: CameraRecordStore(store: configStore))
@@ -246,10 +254,12 @@ public final class AppEnvironment {
     if launch.isUITest { UIApplication.shared.isIdleTimerDisabled = true }
     if launch.clearState {
       selectionStore.clear()
+      layoutStore.clear()
       cameras.clear()
       telemetry.reset()
     }
     selections = selectionStore.load()
+    sourceLayout = layoutStore.load()
     cameraRecords = cameras.records
 
     // A mid-segment kill leaves index rows describing files that were never written. Cleaning
@@ -605,6 +615,24 @@ public final class AppEnvironment {
       includingPropertiesForKeys: nil
     )) ?? []
     return contents.filter { $0.pathExtension == "mp4" }.sorted { $0.path < $1.path }
+  }
+
+  // MARK: - Source layout
+
+  /// Swaps `sourceIndex` into `slot` with whoever is already there. Saved on drop, not here, so
+  /// a drag that crosses several tiles is one write.
+  public func moveSource(_ sourceIndex: Int, toSlot slot: Int) {
+    sourceLayout.moveSource(sourceIndex, toSlot: slot)
+  }
+
+  public func commitSourceLayout() {
+    layoutStore.save(sourceLayout)
+    telemetry.mutate { $0.sourceLayout = sourceLayout.displayOrder }
+  }
+
+  public func setSourceLayout(_ layout: SourceLayout) {
+    sourceLayout = layout
+    commitSourceLayout()
   }
 
   // MARK: - Selection
@@ -2357,6 +2385,7 @@ public final class AppEnvironment {
       $0.programAudioPlaying = self.router.audioPlayer.isRunning
       $0.keepAliveInBackground = self.shouldKeepAliveInBackground
       $0.pictureInPictureActive = self.pictureInPicture.isActive
+      $0.sourceLayout = self.sourceLayout.displayOrder
     }
     var liveDecodeSessions = 0
     for pipeline in router.activePipelines {
@@ -2503,6 +2532,8 @@ public final class AppEnvironment {
       telemetry.reset()
       testClock?.reset()
       statusMessage = nil
+    case let .sourceLayout(order):
+      setSourceLayout(SourceLayout(order: order))
     }
     return true
   }

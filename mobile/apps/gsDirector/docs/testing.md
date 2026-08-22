@@ -41,6 +41,7 @@ node scripts/control.js --device send "/record?on=true"
 node scripts/control.js --device send "/name-camera?index=1&name=Third%20Base"
 node scripts/control.js --device send "/bind-camera?index=1&name=First%20Base"
 node scripts/control.js --device send /search-cameras
+node scripts/control.js --device send "/source-layout?order=5,1,2,3,4"
 ```
 
 The camera commands exist so identity can be asserted without driving a menu by coordinates, and
@@ -261,7 +262,7 @@ makes it arrive sooner — see the keyframe entry in `risks.md`.
 |----------|--------|
 | `-uiTest true` | Enables the control server and the control channel |
 | `-sourceProfile synthetic4\|file4\|rtsp` | Which sources to use |
-| `-clearState true` | Forget saved source selection and every named camera |
+| `-clearState true` | Forget saved source selection, source-tile order, and every named camera |
 | `-failEncoders N` | Fault injection for the degradation ladder |
 | `-segmentSeconds N` | Shorter segments so a flow produces several in seconds |
 | `-rtspHosts a,b,c` | Cameras to try directly, bypassing the search |

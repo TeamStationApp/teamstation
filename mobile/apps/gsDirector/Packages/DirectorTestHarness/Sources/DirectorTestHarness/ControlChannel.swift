@@ -32,6 +32,8 @@ public enum ControlCommand: Sendable, Equatable {
   case probeWriter(options: [String: String])
   case dumpState
   case reset
+  /// Visual-slot order of the five sources, 0-based. Source numbers stay put; only tiles move.
+  case sourceLayout(order: [Int])
 }
 
 public enum ControlChannel {
@@ -124,6 +126,9 @@ public enum ControlChannel {
       return .dumpState
     case "reset":
       return .reset
+    case "source-layout", "sourcelayout":
+      guard let order = Self.layoutOrder(query) else { return nil }
+      return .sourceLayout(order: order)
     default:
       return nil
     }
@@ -139,6 +144,17 @@ public enum ControlChannel {
       .split(separator: ",")
       .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
       .filter { !$0.isEmpty }
+  }
+
+  /// 1-based source numbers in visual-slot order, converted to 0-based indices.
+  private static func layoutOrder(_ query: [String: String]) -> [Int]? {
+    let parts = (query["order"] ?? "")
+      .split(separator: ",")
+      .compactMap { Int($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+    guard parts.count == SourceIndex.count else { return nil }
+    let order = parts.map { $0 - 1 }
+    guard order.allSatisfy({ (0 ..< SourceIndex.count).contains($0) }) else { return nil }
+    return order
   }
 }
 
