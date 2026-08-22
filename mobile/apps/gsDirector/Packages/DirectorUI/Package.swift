@@ -26,7 +26,8 @@ let package = Package(
         "DirectorRTMP",
         "DirectorTestHarness"
       ],
-      swiftSettings: [ .swiftLanguageMode(.v6) ]
+      swiftSettings: [ .swiftLanguageMode(.v6) ],
+      linkerSettings: [ .linkedFramework("GameController") ]
     )
   ]
 )

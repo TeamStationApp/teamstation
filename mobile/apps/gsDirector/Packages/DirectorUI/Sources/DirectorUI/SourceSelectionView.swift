@@ -151,14 +151,35 @@ public struct SourceSelectionView: View {
           )
       }
 
-      if let tile = selection.tileIndex, selection.isEnabled {
-        Text("TILE \(tile + 1)")
-          .font(.system(size: 10, weight: .heavy, design: .rounded))
-          .tracking(1)
-          .padding(.horizontal, 7)
-          .padding(.vertical, 3)
-          .background(Color.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 4))
-          .foregroundStyle(.white.opacity(0.7))
+      if let slot = selection.sourceIndex {
+        Menu {
+          Section("Assign camera to source.") {
+            ForEach(0 ..< SourceIndex.count, id: \.self) { index in
+              Button {
+                environment.assignSource(slot: index, to: selection.id)
+              } label: {
+                if let other = environment.selections.first(where: {
+                  $0.id != selection.id && $0.sourceIndex == index
+                }) {
+                  Text("Source \(index + 1) · \(other.displayName)")
+                } else {
+                  Text("Source \(index + 1)")
+                }
+              }
+              .accessibilityIdentifier("source-assign-\(index + 1)")
+            }
+          }
+        } label: {
+          Text("SOURCE \(slot + 1)")
+            .font(.system(size: 13, weight: .heavy, design: .rounded))
+            .tracking(0.6)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color.sourceBlue, in: RoundedRectangle(cornerRadius: 8))
+            .foregroundStyle(.white)
+        }
+        .accessibilityIdentifier("source-slot-\(index + 1)")
+        .accessibilityValue("source=\(slot + 1)")
       }
 
       Button {

@@ -8,7 +8,7 @@ import Network
 /// twenty alerts. This listener has no such gate: on the simulator the host Mac and the guest
 /// share a network stack, so `curl http://127.0.0.1:8765/dump-state` reaches the app directly;
 /// on a device the same request works against the iPad's LAN address. Replay HLS is a separate
-/// loopback listener per tile at `127.0.0.1:(18701+tileIndex)`.
+/// loopback listener per tile at `127.0.0.1:(18701+sourceIndex)`.
 ///
 /// It only runs when the app was launched with `uiTest` (D7), and it only speaks to loopback
 /// plus the local network — there is nothing here that a normal user session ever starts.

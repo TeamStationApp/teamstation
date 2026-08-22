@@ -95,9 +95,9 @@ struct ReplayHTTPServerTests {
 
   @Test("binds the port it was asked for so two tiles cannot share a listener")
   func bindsRequestedPort() async throws {
-    #expect(ReplayDecoder.loopbackPort(forTile: 0) == 18_701)
-    #expect(ReplayDecoder.loopbackPort(forTile: 1) == 18_702)
-    #expect(ReplayDecoder.loopbackPort(forTile: 4) == 18_705)
+    #expect(ReplayDecoder.loopbackPort(forSource: 0) == 18_701)
+    #expect(ReplayDecoder.loopbackPort(forSource: 1) == 18_702)
+    #expect(ReplayDecoder.loopbackPort(forSource: 4) == 18_705)
 
     let root = try staging(files: ["index.m3u8": Data("#EXTM3U\n".utf8)])
     defer { try? FileManager.default.removeItem(at: root) }

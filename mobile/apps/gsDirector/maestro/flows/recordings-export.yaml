@@ -20,7 +20,7 @@ appId: co.gamestation.director
 - tapOn:
     id: 'start-directing'
 - extendedWaitUntil:
-    visible: 'tile=1 state=live.*'
+    visible: 'source=1 state=live.*'
     timeout: 15000
 
 - tapOn:

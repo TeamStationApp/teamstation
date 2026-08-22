@@ -22,7 +22,7 @@ appId: co.gamestation.director
     id: 'start-directing'
 
 - extendedWaitUntil:
-    visible: 'tile=1 state=live.*'
+    visible: 'source=1 state=live.*'
     timeout: 20000
 
 - tapOn:
@@ -43,4 +43,4 @@ appId: co.gamestation.director
 - tapOn:
     id: 'start-directing'
 - assertVisible: 'rec=1'
-- assertVisible: 'tile=1 state=live.*'
+- assertVisible: 'source=1 state=live.*'

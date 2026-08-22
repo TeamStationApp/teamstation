@@ -27,7 +27,7 @@ public protocol ProxySink: AnyObject, Sendable {
 /// because the archive sink never sees `state`.
 public final class SourcePipeline: @unchecked Sendable {
   public let sourceID: SourceID
-  public let tileIndex: Int
+  public private(set) var sourceIndex: Int
   public let renderer = TileRenderer()
 
   private let converter: PixelConverter
@@ -48,16 +48,23 @@ public final class SourcePipeline: @unchecked Sendable {
 
   public init(
     sourceID: SourceID,
-    tileIndex: Int,
+    sourceIndex: Int,
     source: FrameSource,
     converter: PixelConverter,
     telemetry: PipelineTelemetry
   ) {
     self.sourceID = sourceID
-    self.tileIndex = tileIndex
+    self.sourceIndex = sourceIndex
     self.source = source
     self.converter = converter
     self.telemetry = telemetry
+  }
+
+  /// Moves this pipeline to another grid slot. Callers must also rekey `TileRouter` and telemetry.
+  public func reindex(_ value: Int) {
+    lock.lock()
+    sourceIndex = value
+    lock.unlock()
   }
 
   public var displayName: String { currentSource.displayName }
@@ -100,7 +107,7 @@ public final class SourcePipeline: @unchecked Sendable {
 
   public func start() throws {
     let source = currentSource
-    telemetry.mutateTile(tileIndex) {
+    telemetry.mutateTile(sourceIndex) {
       $0.sourceID = sourceID.rawValue
       $0.displayName = source.displayName
       $0.state = .live
@@ -119,7 +126,7 @@ public final class SourcePipeline: @unchecked Sendable {
     lock.unlock()
 
     previous.stop()
-    telemetry.mutateTile(tileIndex) { $0.displayName = replacement.displayName }
+    telemetry.mutateTile(sourceIndex) { $0.displayName = replacement.displayName }
     try replacement.start(sinks: frameSinks)
   }
 
@@ -141,7 +148,7 @@ public final class SourcePipeline: @unchecked Sendable {
     replay?.stop()
     source.stop()
     renderer.attach(layer: nil)
-    telemetry.mutateTile(tileIndex) {
+    telemetry.mutateTile(sourceIndex) {
       $0.state = .empty
       $0.sourceID = nil
       $0.displayName = nil
@@ -165,7 +172,7 @@ public final class SourcePipeline: @unchecked Sendable {
     lock.lock()
     programSink = sink
     lock.unlock()
-    telemetry.mutateTile(tileIndex) { $0.isProgram = sink != nil }
+    telemetry.mutateTile(sourceIndex) { $0.isProgram = sink != nil }
   }
 
   public func setAudioSink(_ sink: (@Sendable (AudioFrame) -> Void)?) {
@@ -178,7 +185,7 @@ public final class SourcePipeline: @unchecked Sendable {
 
   private func handle(_ frame: PixelFrame) {
     guard let converted = converter.convert(frame) else {
-      telemetry.recordDroppedFrame(tile: tileIndex)
+      telemetry.recordDroppedFrame(tile: sourceIndex)
       return
     }
 
@@ -189,7 +196,7 @@ public final class SourcePipeline: @unchecked Sendable {
     let programSink = self.programSink
     lock.unlock()
 
-    telemetry.recordReceivedFrame(tile: tileIndex, frameID: converted.frameID)
+    telemetry.recordReceivedFrame(tile: sourceIndex, frameID: converted.frameID)
 
     // The proxy runs regardless of what the tile is showing, as the archive does on its own path.
     // This is what makes "scrub back while it keeps recording" true rather than aspirational.
@@ -199,7 +206,7 @@ public final class SourcePipeline: @unchecked Sendable {
     // scrub is released, so the operator can preview rewind without cutting the programme.
     if state == .live {
       if renderer.enqueue(converted) {
-        telemetry.recordDisplayedFrame(tile: tileIndex)
+        telemetry.recordDisplayedFrame(tile: sourceIndex)
       }
     }
     if state != .replaying {
@@ -211,7 +218,7 @@ public final class SourcePipeline: @unchecked Sendable {
     lock.lock()
     let audioSink = self.audioSink
     lock.unlock()
-    telemetry.mutateTile(tileIndex) { $0.audioFrames &+= 1 }
+    telemetry.mutateTile(sourceIndex) { $0.audioFrames &+= 1 }
     audioSink?(frame)
   }
 
@@ -243,7 +250,7 @@ public final class SourcePipeline: @unchecked Sendable {
     lock.unlock()
     replay?.stop()
     renderer.setPaused(true)
-    telemetry.mutateTile(tileIndex) { $0.state = .scrubbing }
+    telemetry.mutateTile(sourceIndex) { $0.state = .scrubbing }
   }
 
   /// Shows a proxy still while the finger is down. The still is pushed straight into the same
@@ -251,10 +258,10 @@ public final class SourcePipeline: @unchecked Sendable {
   public func showScrubStill(_ pixelBuffer: CVPixelBuffer, offsetSeconds: Double) {
     renderer.setPaused(false)
     if renderer.enqueue(pixelBuffer: pixelBuffer, presentationTime: .invalid) {
-      telemetry.recordDisplayedFrame(tile: tileIndex)
+      telemetry.recordDisplayedFrame(tile: sourceIndex)
     }
     renderer.setPaused(true)
-    telemetry.mutateTile(tileIndex) {
+    telemetry.mutateTile(sourceIndex) {
       $0.state = .scrubbing
       $0.offsetSeconds = offsetSeconds
     }
@@ -282,7 +289,7 @@ public final class SourcePipeline: @unchecked Sendable {
     renderer.invalidateFormatCache()
     renderer.flush()
     telemetry.recordDecodeSessionChange(delta: 1)
-    telemetry.mutateTile(tileIndex) {
+    telemetry.mutateTile(sourceIndex) {
       $0.state = .replaying
       $0.offsetSeconds = offsetSeconds
     }
@@ -299,7 +306,7 @@ public final class SourcePipeline: @unchecked Sendable {
     replay?.stop()
     if wasReplaying { telemetry.recordDecodeSessionChange(delta: -1) }
     renderer.setPaused(true)
-    telemetry.mutateTile(tileIndex) { $0.state = .scrubbing }
+    telemetry.mutateTile(sourceIndex) { $0.state = .scrubbing }
   }
 
   /// Called by the replay decoder for each decoded frame.
@@ -315,7 +322,7 @@ public final class SourcePipeline: @unchecked Sendable {
     guard state == .replaying else { return }
 
     if renderer.enqueue(pixelBuffer: pixelBuffer, presentationTime: presentationTime) {
-      telemetry.recordDisplayedFrame(tile: tileIndex)
+      telemetry.recordDisplayedFrame(tile: sourceIndex)
     }
     // Spec 6.4: the master output carries whatever the program tile is showing, replay
     // included.
@@ -323,7 +330,7 @@ public final class SourcePipeline: @unchecked Sendable {
     // Only while the tile still reports itself replaying. A frame already in flight when the
     // replay reaches the live edge would otherwise write its offset back over the zero that
     // `returnToLive` just published, leaving a live tile claiming to be fifteen seconds behind.
-    telemetry.mutateTile(tileIndex) { tile in
+    telemetry.mutateTile(sourceIndex) { tile in
       guard tile.state == .replaying else { return }
       tile.offsetSeconds = offsetSeconds
     }
@@ -340,7 +347,7 @@ public final class SourcePipeline: @unchecked Sendable {
     replay?.stop()
     if wasReplaying { telemetry.recordDecodeSessionChange(delta: -1) }
     renderer.prepareForLive()
-    telemetry.mutateTile(tileIndex) {
+    telemetry.mutateTile(sourceIndex) {
       $0.state = .live
       $0.offsetSeconds = 0
     }
@@ -363,7 +370,7 @@ public final class TileRouter: @unchecked Sendable {
 
   private let lock = NSLock()
   private var pipelines: [Int: SourcePipeline] = [:]
-  private var programTile: Int?
+  private var programSource: Int?
 
   public init(
     telemetry: PipelineTelemetry,
@@ -390,19 +397,45 @@ public final class TileRouter: @unchecked Sendable {
   public var activePipelines: [SourcePipeline] {
     lock.lock()
     defer { lock.unlock() }
-    return pipelines.values.sorted { $0.tileIndex < $1.tileIndex }
+    return pipelines.values.sorted { $0.sourceIndex < $1.sourceIndex }
   }
 
-  public func pipeline(at tileIndex: Int) -> SourcePipeline? {
+  public func pipeline(at sourceIndex: Int) -> SourcePipeline? {
     lock.lock()
     defer { lock.unlock() }
-    return pipelines[tileIndex]
+    return pipelines[sourceIndex]
   }
 
   public func pipeline(for sourceID: SourceID) -> SourcePipeline? {
     lock.lock()
     defer { lock.unlock() }
     return pipelines.values.first { $0.sourceID == sourceID }
+  }
+
+  /// Swaps two occupied slots, or moves one pipeline onto an empty slot. Output follows the slot.
+  /// Return both sources to live before calling if either is replaying.
+  public func reassign(from: Int, to: Int) {
+    guard from != to else { return }
+    lock.lock()
+    let moving = pipelines[from]
+    let occupant = pipelines[to]
+    if moving == nil && occupant == nil {
+      lock.unlock()
+      return
+    }
+    moving?.reindex(to)
+    occupant?.reindex(from)
+    pipelines[from] = occupant
+    pipelines[to] = moving
+    if programSource == from {
+      programSource = to
+    } else if programSource == to {
+      programSource = from
+    }
+    let selected = programSource
+    lock.unlock()
+    telemetry.swapSlots(from, to)
+    selectProgram(sourceIndex: selected)
   }
 
   /// Repoints one tile's camera at a new session. Nothing else about the grid changes: the tile
@@ -414,7 +447,7 @@ public final class TileRouter: @unchecked Sendable {
 
   public func add(_ pipeline: SourcePipeline) {
     lock.lock()
-    pipelines[pipeline.tileIndex] = pipeline
+    pipelines[pipeline.sourceIndex] = pipeline
     lock.unlock()
   }
 
@@ -422,7 +455,7 @@ public final class TileRouter: @unchecked Sendable {
     lock.lock()
     let existing = Array(pipelines.values)
     pipelines.removeAll()
-    programTile = nil
+    programSource = nil
     lock.unlock()
     for pipeline in existing { pipeline.stop() }
     audioMixer.stop()
@@ -431,44 +464,44 @@ public final class TileRouter: @unchecked Sendable {
     // layer here freezes the last frame: SwiftUI will not call updateUIView because
     // `programRenderer` is the same object, and later cuts enqueue into nowhere.
     programRenderer.prepareForLive()
-    telemetry.mutate { $0.programTile = nil }
+    telemetry.mutate { $0.programSource = nil }
   }
 
   /// Stops one tile without touching the others. Opening the camera list must not rebuild the grid.
-  public func remove(tileIndex: Int) {
+  public func remove(sourceIndex: Int) {
     lock.lock()
-    let pipeline = pipelines.removeValue(forKey: tileIndex)
-    let wasProgram = programTile == tileIndex
-    if wasProgram { programTile = nil }
-    let remaining = pipelines.values.sorted { $0.tileIndex < $1.tileIndex }
+    let pipeline = pipelines.removeValue(forKey: sourceIndex)
+    let wasProgram = programSource == sourceIndex
+    if wasProgram { programSource = nil }
+    let remaining = pipelines.values.sorted { $0.sourceIndex < $1.sourceIndex }
     lock.unlock()
     pipeline?.stop()
     if remaining.isEmpty {
       audioMixer.stop()
     }
     if wasProgram {
-      selectProgram(tileIndex: remaining.first?.tileIndex)
+      selectProgram(sourceIndex: remaining.first?.sourceIndex)
     }
   }
 
-  public var currentProgramTile: Int? {
+  public var currentProgramSource: Int? {
     lock.lock()
     defer { lock.unlock() }
-    return programTile
+    return programSource
   }
 
   /// The exactly-one-program invariant lives here rather than in the view, so it holds even
   /// when program is changed over the control channel.
-  public func selectProgram(tileIndex: Int?) {
+  public func selectProgram(sourceIndex: Int?) {
     lock.lock()
-    programTile = tileIndex
+    programSource = sourceIndex
     let all = pipelines
     lock.unlock()
 
     // Audio is no longer tied to whichever tile is on program — it comes from every source the
     // operator ticked, mixed together — so cutting the picture leaves the sound alone.
     for (index, pipeline) in all {
-      if index == tileIndex {
+      if index == sourceIndex {
         pipeline.setProgramSink { [weak self] buffer, time in
           self?.composeAndEncode(buffer, presentationTime: time)
         }
@@ -477,9 +510,9 @@ public final class TileRouter: @unchecked Sendable {
       }
     }
     telemetry.mutate { snapshot in
-      snapshot.programTile = tileIndex
+      snapshot.programSource = sourceIndex
       for index in snapshot.tiles.indices {
-        snapshot.tiles[index].isProgram = snapshot.tiles[index].index == tileIndex
+        snapshot.tiles[index].isProgram = snapshot.tiles[index].index == sourceIndex
       }
     }
   }
@@ -497,7 +530,7 @@ public final class TileRouter: @unchecked Sendable {
         sink = { [weak self] frame in self?.audioMixer.append(frame) }
       }
       pipeline.setAudioSink(sink)
-      telemetry.mutateTile(pipeline.tileIndex) { $0.contributesAudio = contributes }
+      telemetry.mutateTile(pipeline.sourceIndex) { $0.contributesAudio = contributes }
     }
     audioMixer.retainContributors(ids)
   }

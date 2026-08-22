@@ -82,7 +82,7 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
   private static let maximumFrameDuration: Double = 2
 
   public let sourceID: SourceID
-  public let tileIndex: Int
+  public let sourceIndex: Int
   public let settings: SegmentWriterSettings
 
   private let directory: URL
@@ -138,7 +138,7 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
 
   public init(
     sourceID: SourceID,
-    tileIndex: Int,
+    sourceIndex: Int,
     recordingID: Int64,
     index: ArchiveIndex,
     telemetry: PipelineTelemetry,
@@ -148,7 +148,7 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     onFormatChange: FormatChangeHandler? = nil
   ) {
     self.sourceID = sourceID
-    self.tileIndex = tileIndex
+    self.sourceIndex = sourceIndex
     self.recordingID = recordingID
     self.index = index
     self.telemetry = telemetry
@@ -204,7 +204,7 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     sequence = next
     lock.unlock()
 
-    telemetry.mutateTile(tileIndex) { $0.isArchiving = true }
+    telemetry.mutateTile(sourceIndex) { $0.isArchiving = true }
   }
 
   /// Marks this writer as replaced by another for the same tile, so that closing it does not
@@ -220,7 +220,7 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     let superseded = self.superseded
     lock.unlock()
     guard !superseded else { return }
-    telemetry.mutateTile(tileIndex) {
+    telemetry.mutateTile(sourceIndex) {
       $0.isArchiving = false
       $0.archiveHeight = 0
     }
@@ -326,7 +326,7 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
       lock.unlock()
       let detail = ProgramEncoder.describe(error)
       telemetry.recordError("archive \(sourceID.rawValue) failed: \(detail)")
-      telemetry.mutateTile(tileIndex) { $0.lastError = detail }
+      telemetry.mutateTile(sourceIndex) { $0.lastError = detail }
       return
     }
 
@@ -427,7 +427,7 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     guard presentationTime.isNumeric, presentationTime >= .zero else {
       droppedFrames &+= 1
       lock.unlock()
-      telemetry.recordDroppedFrame(tile: tileIndex)
+      telemetry.recordDroppedFrame(tile: sourceIndex)
       return
     }
     // A timestamp that does not advance means the camera's clock reset. Passing it on would fail
@@ -435,7 +435,7 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     if started, presentationTime <= lastVideoTime {
       droppedFrames &+= 1
       lock.unlock()
-      telemetry.recordDroppedFrame(tile: tileIndex)
+      telemetry.recordDroppedFrame(tile: sourceIndex)
       return
     }
 
@@ -464,7 +464,7 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
       lock.lock()
       droppedFrames &+= 1
       lock.unlock()
-      telemetry.recordDroppedFrame(tile: tileIndex)
+      telemetry.recordDroppedFrame(tile: sourceIndex)
       return
     }
 
@@ -478,7 +478,7 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
       lock.lock()
       droppedFrames &+= 1
       lock.unlock()
-      telemetry.recordDroppedFrame(tile: tileIndex)
+      telemetry.recordDroppedFrame(tile: sourceIndex)
       return
     }
 
@@ -487,13 +487,13 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
       appendedFrames &+= 1
       lock.unlock()
       let seconds = presentationTime.seconds
-      telemetry.mutateTile(tileIndex) { $0.archiveVideoSeconds = seconds }
-      telemetry.recordArchivedFrame(tile: tileIndex)
+      telemetry.mutateTile(sourceIndex) { $0.archiveVideoSeconds = seconds }
+      telemetry.recordArchivedFrame(tile: sourceIndex)
     } else {
       lock.lock()
       droppedFrames &+= 1
       lock.unlock()
-      telemetry.recordDroppedFrame(tile: tileIndex)
+      telemetry.recordDroppedFrame(tile: sourceIndex)
     }
 
     // Small budget: audio's own arrival does the bulk, and this runs between video appends.
@@ -554,7 +554,7 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     started = true
     lock.unlock()
 
-    telemetry.mutateTile(tileIndex) {
+    telemetry.mutateTile(sourceIndex) {
       $0.isArchiving = true
       $0.archiveHeight = Int(dimensions.height)
     }
@@ -566,7 +566,7 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     stopError = error
     lock.unlock()
     telemetry.recordError("archive \(sourceID.rawValue) failed: \(error.description)")
-    telemetry.mutateTile(tileIndex) { $0.lastError = error.description }
+    telemetry.mutateTile(sourceIndex) { $0.lastError = error.description }
   }
 
   // MARK: - Audio
@@ -620,7 +620,7 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     // already lost. Bounding it keeps a stalled writer from growing without limit.
     if pendingAudio.count > Self.maximumPendingAudio {
       pendingAudio.removeFirst(pendingAudio.count - Self.maximumPendingAudio)
-      telemetry.mutateTile(tileIndex) { $0.audioBuffersDiscarded &+= 1 }
+      telemetry.mutateTile(sourceIndex) { $0.audioBuffersDiscarded &+= 1 }
     }
     lock.unlock()
 
@@ -629,7 +629,7 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
 
   private func report(_ placement: ArchiveAudioTimeline.Placement) {
     guard placement.rejectedClock || placement.resynced || placement.drift != nil else { return }
-    telemetry.mutateTile(tileIndex) { tile in
+    telemetry.mutateTile(sourceIndex) { tile in
       if placement.rejectedClock { tile.audioClockRejected = true }
       if placement.resynced { tile.audioResyncs &+= 1 }
       if let drift = placement.drift { tile.lastAudioDrift = drift }
@@ -680,7 +680,7 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
       // One telemetry update per drain rather than one per buffer: this path is hot and every
       // update takes another lock.
       if let written {
-        telemetry.mutateTile(tileIndex) { $0.archiveAudioSeconds = written }
+        telemetry.mutateTile(sourceIndex) { $0.archiveAudioSeconds = written }
       }
     }
 

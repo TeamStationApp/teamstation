@@ -20,7 +20,7 @@ public struct DebugHUD: View {
     VStack(alignment: .leading, spacing: 2) {
       HStack(spacing: 10) {
         label("hud-profile", "profile=\(snapshot.sourceProfile)")
-        label("hud-program-source", "output=\(snapshot.programTile.map { String($0 + 1) } ?? "none")")
+        label("hud-program-source", "output=\(snapshot.programSource.map { String($0 + 1) } ?? "none")")
         label("hud-thermal-state", "thermal=\(snapshot.thermalState)")
         label("hud-source-available", "live=\(snapshot.sourceAvailable ? "1" : "0")")
         label("hud-disc", "disc=\(snapshot.discoveredSourceCount)")
@@ -68,7 +68,7 @@ public struct DebugHUD: View {
         }
       }
       ForEach(snapshot.tiles, id: \.index) { tile in
-        label("hud-tile-\(tile.index + 1)-state", tile.accessibilityValue)
+        label("hud-source-\(tile.index + 1)-state", tile.accessibilityValue)
       }
     }
     .font(.system(size: 11, weight: .medium, design: .monospaced))
@@ -100,7 +100,7 @@ public struct DebugHUD: View {
   /// HUD has one line for it and the question it answers — "is the right camera on air?" — is only
   /// ever asked about that tile.
   private var programCNAME: String? {
-    guard let index = snapshot.programTile else { return nil }
+    guard let index = snapshot.programSource else { return nil }
     let cname = snapshot.tiles.first { $0.index == index }?.cname
     return (cname?.isEmpty == false) ? cname : nil
   }

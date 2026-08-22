@@ -80,7 +80,7 @@ struct CameraPreviewView: UIViewRepresentable {
 public struct TileView: View {
   @Environment(AppEnvironment.self) private var environment
 
-  private let tileIndex: Int
+  private let sourceIndex: Int
   private let pipeline: SourcePipeline?
   private let telemetry: TileTelemetry
 
@@ -91,8 +91,8 @@ public struct TileView: View {
   @State private var isDragging = false
   @State private var tileWidth: CGFloat = 600
 
-  public init(tileIndex: Int, pipeline: SourcePipeline?, telemetry: TileTelemetry) {
-    self.tileIndex = tileIndex
+  public init(sourceIndex: Int, pipeline: SourcePipeline?, telemetry: TileTelemetry) {
+    self.sourceIndex = sourceIndex
     self.pipeline = pipeline
     self.telemetry = telemetry
   }
@@ -115,7 +115,7 @@ public struct TileView: View {
       }
 
       if isRewinding {
-        InstantReplayCaption(accessibilityIdentifier: "tile-\(tileIndex + 1)-instant-replay")
+        InstantReplayCaption(accessibilityIdentifier: "source-\(sourceIndex + 1)-instant-replay")
           .padding(10)
           .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
           .allowsHitTesting(false)
@@ -134,11 +134,11 @@ public struct TileView: View {
           .allowsHitTesting(false)
         if pipeline != nil {
           ReplayHotkeyBar(
-            tileIndex: tileIndex,
-            accessibilityPrefix: "tile-\(tileIndex + 1)",
+            sourceIndex: sourceIndex,
+            accessibilityPrefix: "source-\(sourceIndex + 1)",
             slowMotionRate: environment.config.replaySlowMotionRate
           ) { seconds, rate in
-            environment.startInstantReplay(tileIndex: tileIndex, seconds: seconds, rate: rate)
+            environment.startInstantReplay(sourceIndex: sourceIndex, seconds: seconds, rate: rate)
           }
         }
       }
@@ -162,12 +162,12 @@ public struct TileView: View {
     }
     .onTapGesture {
       guard pipeline != nil else { return }
-      environment.selectProgram(tileIndex: tileIndex)
+      environment.selectProgram(sourceIndex: sourceIndex)
     }
     .gesture(scrubGesture)
     .accessibilityElement(children: .contain)
-    .accessibilityIdentifier("tile-\(tileIndex + 1)")
-    .accessibilityLabel(telemetry.displayName ?? "empty tile \(tileIndex + 1)")
+    .accessibilityIdentifier("source-\(sourceIndex + 1)")
+    .accessibilityLabel(telemetry.displayName ?? "empty source \(sourceIndex + 1)")
     .accessibilityValue(telemetry.accessibilityValue)
   }
 
@@ -185,11 +185,11 @@ public struct TileView: View {
       .onChanged { value in
         guard pipeline != nil else { return }
         if !isDragging {
-          guard environment.beginScrub(tileIndex: tileIndex) else { return }
+          guard environment.beginScrub(sourceIndex: sourceIndex) else { return }
           isDragging = true
           // Sampled once, because the live edge keeps advancing: re-reading it every frame would
           // shift the time a given finger position maps to while the finger is still on it.
-          dragHistorySeconds = environment.availableHistorySeconds(tileIndex: tileIndex)
+          dragHistorySeconds = environment.availableHistorySeconds(sourceIndex: sourceIndex)
           dragOriginOffset = telemetry.offsetSeconds
           dragFarthestTranslation = 0
         }
@@ -203,14 +203,14 @@ public struct TileView: View {
           historySeconds: dragHistorySeconds,
           playheadOffset: dragOriginOffset
         )
-        environment.updateScrub(tileIndex: tileIndex, offsetSeconds: dragOffsetSeconds)
+        environment.updateScrub(sourceIndex: sourceIndex, offsetSeconds: dragOffsetSeconds)
       }
       .onEnded { value in
         let lift = Double(value.translation.width)
         if !isDragging {
           guard abs(lift) >= 12 || abs(dragFarthestTranslation) >= 12 else { return }
-          guard environment.beginScrub(tileIndex: tileIndex) else { return }
-          dragHistorySeconds = environment.availableHistorySeconds(tileIndex: tileIndex)
+          guard environment.beginScrub(sourceIndex: sourceIndex) else { return }
+          dragHistorySeconds = environment.availableHistorySeconds(sourceIndex: sourceIndex)
           dragOriginOffset = telemetry.offsetSeconds
         }
         isDragging = false
@@ -224,7 +224,7 @@ public struct TileView: View {
           historySeconds: dragHistorySeconds,
           playheadOffset: dragOriginOffset
         )
-        environment.endScrub(tileIndex: tileIndex, offsetSeconds: offset)
+        environment.endScrub(sourceIndex: sourceIndex, offsetSeconds: offset)
         dragOffsetSeconds = 0
         dragOriginOffset = 0
         dragFarthestTranslation = 0
@@ -245,7 +245,7 @@ public struct TileView: View {
           .background(Color.programGreen, in: RoundedRectangle(cornerRadius: 3))
           .foregroundStyle(.black)
       }
-      Text(telemetry.displayName ?? "—")
+      Text("source: \(sourceIndex + 1) \(telemetry.displayName ?? "—")")
         .font(.system(size: 13, weight: .semibold, design: .rounded))
         .foregroundStyle(.white)
       if telemetry.isArchiving {
@@ -266,12 +266,12 @@ public struct TileView: View {
       .padding(.vertical, 4)
       .background(Color.replayAmber, in: Capsule())
       .foregroundStyle(.black)
-      .accessibilityIdentifier("tile-\(tileIndex + 1)-offset")
+      .accessibilityIdentifier("source-\(sourceIndex + 1)-offset")
   }
 
   private var returnToLiveButton: some View {
     Button {
-      environment.returnToLive(tileIndex: tileIndex)
+      environment.returnToLive(sourceIndex: sourceIndex)
     } label: {
       Label("Return to live", systemImage: "forward.end.fill")
         .font(.system(size: 12, weight: .bold, design: .rounded))
@@ -281,7 +281,7 @@ public struct TileView: View {
         .foregroundStyle(.black)
     }
     .buttonStyle(.plain)
-    .accessibilityIdentifier("return-to-live-\(tileIndex + 1)")
+    .accessibilityIdentifier("return-to-live-\(sourceIndex + 1)")
   }
 }
 
@@ -291,4 +291,5 @@ extension Color {
   static let replayAmber = Color(red: 0.99, green: 0.76, blue: 0.24)
   static let deckBackground = Color(red: 0.043, green: 0.047, blue: 0.055)
   static let deckPanel = Color(red: 0.09, green: 0.095, blue: 0.11)
+  static let sourceBlue = Color(red: 0.18, green: 0.48, blue: 0.95)
 }

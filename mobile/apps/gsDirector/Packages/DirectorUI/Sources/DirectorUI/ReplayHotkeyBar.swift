@@ -3,7 +3,7 @@ import SwiftUI
 /// Two-row instant-replay controls. Hits stay on the buttons so a tap cannot cut the camera
 /// to Output and a drag cannot start a scrub.
 struct ReplayHotkeyBar: View {
-  let tileIndex: Int
+  let sourceIndex: Int
   let accessibilityPrefix: String
   let slowMotionRate: Double
   let onReplay: (Double, Float) -> Void

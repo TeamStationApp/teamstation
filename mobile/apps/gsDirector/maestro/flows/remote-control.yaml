@@ -1,0 +1,73 @@
+# Remote Control: Settings list/editor plus control-channel injected chords.
+# Targets the device/simulator UDID passed to maestro-runner. Does not boot or
+# shut down a simulator — run-maestro.js must not pass --start-simulator.
+appId: co.gamestation.director
+---
+- launchApp:
+    appId: co.gamestation.director
+    arguments:
+      clearState: true
+      uiTest: true
+      debugHUD: true
+      sourceProfile: synthetic4
+      sourceCount: 3
+      syntheticEntropy: low
+
+- extendedWaitUntil:
+    visible:
+      id: 'source-row-3'
+    timeout: 15000
+- runFlow: shared/settle-source-list.yaml
+- tapOn:
+    id: 'source-toggle-1'
+- tapOn:
+    id: 'source-toggle-2'
+- tapOn:
+    id: 'source-toggle-3'
+- tapOn:
+    id: 'start-directing'
+
+- extendedWaitUntil:
+    visible: 'source=1 state=live.*'
+    timeout: 20000
+- extendedWaitUntil:
+    visible: 'source=3 state=live.*'
+    timeout: 15000
+
+- tapOn:
+    id: 'settings-button'
+- extendedWaitUntil:
+    visible:
+      id: 'settings-remote-template-1'
+    timeout: 10000
+- tapOn:
+    id: 'settings-remote-template-1'
+
+- extendedWaitUntil:
+    visible:
+      id: 'remote-editor-done'
+    timeout: 10000
+- assertVisible: 'source1:live'
+- assertVisible:
+    id: 'remote-action-live-0'
+- assertVisible:
+    id: 'remote-chord-field-live-0'
+- assertVisible: 'rewind 5 seconds'
+- assertVisible: 'primary'
+- assertVisible: 'modifier'
+- tapOn:
+    id: 'remote-editor-done'
+
+- tapOn:
+    id: 'settings-cancel'
+- extendedWaitUntil:
+    visible: 'source=1 .*onair=1'
+    timeout: 10000
+
+- openLink: 'gsdirector://test/bind-remote?action=live-2&controls=a'
+- openLink: 'gsdirector://test/remote-chord?controls=a'
+- extendedWaitUntil:
+    visible: 'source=2 .*onair=1'
+    timeout: 8000
+- assertVisible: 'source=1 .*onair=0'
+- assertVisible: 'output src=CAM2 .*'

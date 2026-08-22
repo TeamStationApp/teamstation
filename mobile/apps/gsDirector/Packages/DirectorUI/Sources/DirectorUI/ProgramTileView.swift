@@ -36,14 +36,14 @@ public struct ProgramTileView: View {
         }
         Spacer()
           .allowsHitTesting(false)
-        if snapshot.programTile != nil {
+        if snapshot.programSource != nil {
           ReplayHotkeyBar(
-            tileIndex: snapshot.programTile ?? 0,
+            sourceIndex: snapshot.programSource ?? 0,
             accessibilityPrefix: "output",
             slowMotionRate: environment.config.replaySlowMotionRate
           ) { seconds, rate in
-            guard let tileIndex = snapshot.programTile else { return }
-            environment.startInstantReplay(tileIndex: tileIndex, seconds: seconds, rate: rate)
+            guard let sourceIndex = snapshot.programSource else { return }
+            environment.startInstantReplay(sourceIndex: sourceIndex, seconds: seconds, rate: rate)
           }
         }
       }
@@ -66,12 +66,12 @@ public struct ProgramTileView: View {
         .strokeBorder(Color.programGreen, lineWidth: 3)
     )
     .accessibilityElement(children: .contain)
-    .accessibilityIdentifier("output-tile")
+    .accessibilityIdentifier("output")
     .accessibilityValue(accessibilityValue)
   }
 
   private var programTelemetry: TileTelemetry? {
-    guard let index = snapshot.programTile else { return nil }
+    guard let index = snapshot.programSource else { return nil }
     return snapshot.tiles.first { $0.index == index }
   }
 
@@ -113,8 +113,8 @@ public struct ProgramTileView: View {
 
   private var returnToLiveButton: some View {
     Button {
-      guard let tileIndex = snapshot.programTile else { return }
-      environment.returnToLive(tileIndex: tileIndex)
+      guard let sourceIndex = snapshot.programSource else { return }
+      environment.returnToLive(sourceIndex: sourceIndex)
     } label: {
       Label("Return to live", systemImage: "forward.end.fill")
         .font(.system(size: 12, weight: .bold, design: .rounded))
