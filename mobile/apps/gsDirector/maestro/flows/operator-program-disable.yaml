@@ -37,20 +37,20 @@ appId: co.gamestation.director
     id: 'start-directing'
 
 - extendedWaitUntil:
-    visible: 'tile=1 state=live.*'
+    visible: 'source=1 state=live.*'
     timeout: 20000
 - extendedWaitUntil:
-    visible: 'tile=3 state=live.*'
+    visible: 'source=3 state=live.*'
     timeout: 20000
 
 - tapOn:
-    id: 'tile-2'
+    id: 'source-2'
 - extendedWaitUntil:
     visible: 'output src=CAM2 .*'
     timeout: 8000
-- assertVisible: 'tile=2 .*onair=1'
-- assertVisible: 'tile=1 .*onair=0'
-- assertVisible: 'tile=3 .*onair=0'
+- assertVisible: 'source=2 .*onair=1'
+- assertVisible: 'source=1 .*onair=0'
+- assertVisible: 'source=3 .*onair=0'
 
 - tapOn:
     id: 'cameras-button'
@@ -66,11 +66,11 @@ appId: co.gamestation.director
     id: 'start-directing'
 
 - extendedWaitUntil:
-    visible: 'tile=2 state=empty .*'
+    visible: 'source=2 state=empty .*'
     timeout: 15000
-- assertVisible: 'tile=2 .*onair=0'
-- assertVisible: 'tile=1 .*onair=1'
-- assertVisible: 'tile=3 .*onair=0'
+- assertVisible: 'source=2 .*onair=0'
+- assertVisible: 'source=1 .*onair=1'
+- assertVisible: 'source=3 .*onair=0'
 - assertVisible: 'output src=CAM1 .*'
 - assertVisible:
-    id: 'output-tile'
+    id: 'output'

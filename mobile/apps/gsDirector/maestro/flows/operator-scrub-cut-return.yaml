@@ -34,15 +34,15 @@ appId: co.gamestation.director
     id: 'start-directing'
 
 - extendedWaitUntil:
-    visible: 'tile=1 state=live.*'
+    visible: 'source=1 state=live.*'
     timeout: 20000
 - extendedWaitUntil:
-    visible: 'tile=3 state=live.*'
+    visible: 'source=3 state=live.*'
     timeout: 20000
 
 - assertVisible: 'output src=CAM1 .*'
-- assertVisible: 'tile=1 .*onair=1'
-- assertVisible: 'tile=2 .*onair=0'
+- assertVisible: 'source=1 .*onair=1'
+- assertVisible: 'source=2 .*onair=0'
 
 - tapOn:
     id: 'record-button'
@@ -61,7 +61,7 @@ appId: co.gamestation.director
 # Cut immediately: a replay runs only until it reaches the live edge of the assembled playlist,
 # so every poll spent confirming the rewound state is a chance to lose it.
 - tapOn:
-    id: 'tile-2'
+    id: 'source-2'
 
 - takeScreenshot: operator-scrub-non-program
 
@@ -75,25 +75,25 @@ appId: co.gamestation.director
 - extendedWaitUntil:
     visible: 'output src=CAM2 .*'
     timeout: 8000
-- assertVisible: 'tile=2 .*onair=1'
-- assertVisible: 'tile=1 .*onair=0'
+- assertVisible: 'source=2 .*onair=1'
+- assertVisible: 'source=1 .*onair=0'
 
 - tapOn:
     id: 'return-to-live-2'
     optional: true
 - extendedWaitUntil:
-    visible: 'tile=2 state=live .*off=0\.0.*'
+    visible: 'source=2 state=live .*off=0\.0.*'
     timeout: 25000
 
 # Displayed-frame rate, not received-frame rate: `f=` ticks on a frozen preview.
 - extendedWaitUntil:
-    visible: 'tile=2 state=live .*out=[1-9]'
+    visible: 'source=2 state=live .*out=[1-9]'
     timeout: 10000
 - extendedWaitUntil:
-    visible: 'tile=1 state=live .*out=[1-9]'
+    visible: 'source=1 state=live .*out=[1-9]'
     timeout: 8000
 - extendedWaitUntil:
-    visible: 'tile=3 state=live .*out=[1-9]'
+    visible: 'source=3 state=live .*out=[1-9]'
     timeout: 8000
 - assertVisible: 'output src=CAM2 .*composed=[1-9]'
 
@@ -104,20 +104,20 @@ appId: co.gamestation.director
     duration: 900
 
 - extendedWaitUntil:
-    visible: 'tile=3 state=(scrubbing|replaying).*off=-|replayms=[1-9][0-9]{0,3}'
+    visible: 'source=3 state=(scrubbing|replaying).*off=-|replayms=[1-9][0-9]{0,3}'
     timeout: 10000
 
 - tapOn:
     id: 'return-to-live-3'
     optional: true
 - extendedWaitUntil:
-    visible: 'tile=3 state=live .*off=0\.0.*'
+    visible: 'source=3 state=live .*off=0\.0.*'
     timeout: 10000
 - extendedWaitUntil:
-    visible: 'tile=3 state=live .*out=[1-9]'
+    visible: 'source=3 state=live .*out=[1-9]'
     timeout: 10000
 - assertVisible: 'output src=CAM2 .*'
-- assertVisible: 'tile=2 state=live .*out=[1-9]'
+- assertVisible: 'source=2 state=live .*out=[1-9]'
 
 - tapOn:
     id: 'record-button'

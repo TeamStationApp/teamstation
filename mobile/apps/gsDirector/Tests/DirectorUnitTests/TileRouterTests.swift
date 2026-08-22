@@ -13,13 +13,13 @@ struct TileRouterTests {
     let (router, telemetry) = makeRouter()
     router.add(pipeline(index: 0, telemetry: telemetry))
     router.add(pipeline(index: 1, telemetry: telemetry))
-    router.selectProgram(tileIndex: 0)
+    router.selectProgram(sourceIndex: 0)
 
     #expect(onAir(in: telemetry) == [0])
 
-    router.remove(tileIndex: 0)
+    router.remove(sourceIndex: 0)
     let snapshot = telemetry.snapshot
-    #expect(snapshot.programTile == 1)
+    #expect(snapshot.programSource == 1)
     #expect(snapshot.tiles.first { $0.index == 0 }?.isProgram == false)
     #expect(snapshot.tiles.first { $0.index == 1 }?.isProgram == true)
     #expect(onAir(in: telemetry) == [1])
@@ -31,16 +31,30 @@ struct TileRouterTests {
     router.add(pipeline(index: 0, telemetry: telemetry))
     router.add(pipeline(index: 1, telemetry: telemetry))
     router.add(pipeline(index: 2, telemetry: telemetry))
-    router.selectProgram(tileIndex: 1)
+    router.selectProgram(sourceIndex: 1)
 
     #expect(onAir(in: telemetry) == [1])
 
-    router.remove(tileIndex: 1)
+    router.remove(sourceIndex: 1)
     let snapshot = telemetry.snapshot
-    #expect(snapshot.programTile == 0)
+    #expect(snapshot.programSource == 0)
     #expect(snapshot.tiles.first { $0.index == 1 }?.isProgram == false)
     #expect(onAir(in: telemetry) == [0])
     #expect(snapshot.tiles.filter(\.isProgram).count == 1)
+  }
+
+  @Test("Reassigning two live sources swaps pipelines and Output follows the slot")
+  func reassignSwapsPipelinesAndProgram() {
+    let (router, telemetry) = makeRouter()
+    router.add(pipeline(index: 0, telemetry: telemetry))
+    router.add(pipeline(index: 1, telemetry: telemetry))
+    router.selectProgram(sourceIndex: 0)
+    router.reassign(from: 0, to: 1)
+
+    #expect(router.pipeline(at: 0)?.sourceID.rawValue == "cam-1")
+    #expect(router.pipeline(at: 1)?.sourceID.rawValue == "cam-0")
+    #expect(router.currentProgramSource == 1)
+    #expect(onAir(in: telemetry) == [1])
   }
 
   @Test("Clearing every camera keeps Output attached so the next cut can paint")
@@ -91,7 +105,7 @@ struct TileRouterTests {
   private func pipeline(index: Int, telemetry: PipelineTelemetry) -> SourcePipeline {
     SourcePipeline(
       sourceID: SourceID("cam-\(index)"),
-      tileIndex: index,
+      sourceIndex: index,
       source: DummyFrameSource(id: "cam-\(index)", name: "CAM\(index + 1)"),
       converter: PixelConverter(),
       telemetry: telemetry

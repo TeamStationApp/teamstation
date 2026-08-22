@@ -243,7 +243,7 @@ public struct DirectorGridView: View {
 
   private func tile(_ index: Int) -> some View {
     TileView(
-      tileIndex: index,
+      sourceIndex: index,
       pipeline: environment.router.pipeline(at: index),
       telemetry: environment.snapshot.tiles.first { $0.index == index } ?? TileTelemetry(index: index)
     )

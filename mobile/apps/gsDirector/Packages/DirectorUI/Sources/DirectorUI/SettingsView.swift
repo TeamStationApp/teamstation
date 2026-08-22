@@ -7,6 +7,7 @@ public struct SettingsView: View {
 
   @State private var draft = AppConfig.default
   @State private var showingContentEditor = false
+  @State private var showingRemoteEditor = false
   @State private var showingClearCameraMemory = false
   @State private var renaming: OverlayTemplate?
   @State private var renameText = ""
@@ -14,6 +15,12 @@ public struct SettingsView: View {
   @State private var showingNewTemplate = false
   @State private var newTemplateName = ""
   @State private var copyFromID: UUID?
+  @State private var renamingRemote: RemoteControlTemplate?
+  @State private var renameRemoteText = ""
+  @State private var deletingRemote: RemoteControlTemplate?
+  @State private var showingNewRemote = false
+  @State private var newRemoteName = ""
+  @State private var copyRemoteFromID: UUID?
 
   public init() {}
 
@@ -87,6 +94,69 @@ public struct SettingsView: View {
         } footer: {
           Text(
             "Radio selects the Output template. Tap the name to place and add content. "
+              + "Pencil renames. Trash deletes."
+          )
+        }
+
+        Section {
+          ForEach(Array(environment.remoteTemplates.enumerated()), id: \.element.id) { index, template in
+            HStack {
+              Button {
+                environment.selectRemoteTemplate(id: template.id)
+              } label: {
+                Image(
+                  systemName: template.id == environment.activeRemoteTemplateID
+                    ? "circle.inset.filled"
+                    : "circle"
+                )
+              }
+              .buttonStyle(.borderless)
+              .padding(.trailing, 12)
+              .accessibilityLabel("Select \(template.name)")
+              .accessibilityIdentifier("settings-remote-template-select-\(index + 1)")
+
+              Button {
+                environment.selectRemoteTemplate(id: template.id)
+                showingRemoteEditor = true
+              } label: {
+                Text(template.name)
+                  .frame(maxWidth: .infinity, alignment: .leading)
+              }
+              .buttonStyle(.borderless)
+              .accessibilityIdentifier("settings-remote-template-\(index + 1)")
+
+              HStack(spacing: 20) {
+                Button {
+                  renamingRemote = template
+                  renameRemoteText = template.name
+                } label: {
+                  Image(systemName: "pencil")
+                }
+                .buttonStyle(.borderless)
+                .accessibilityIdentifier("settings-remote-template-rename-\(index + 1)")
+
+                Button(role: .destructive) {
+                  deletingRemote = template
+                } label: {
+                  Image(systemName: "trash")
+                }
+                .buttonStyle(.borderless)
+                .accessibilityIdentifier("settings-remote-template-delete-\(index + 1)")
+              }
+            }
+          }
+
+          Button("Add New Template") {
+            copyRemoteFromID = environment.activeRemoteTemplateID
+            newRemoteName = ""
+            showingNewRemote = true
+          }
+          .accessibilityIdentifier("settings-add-remote-template")
+        } header: {
+          Text("Remote Control")
+        } footer: {
+          Text(
+            "Radio selects the pad mapping. Tap the name to bind actions to button chords. "
               + "Pencil renames. Trash deletes."
           )
         }
@@ -248,6 +318,35 @@ public struct SettingsView: View {
         .presentationContentInteraction(.scrolls)
         .presentationSizing(.page)
     }
+    .sheet(isPresented: $showingRemoteEditor) {
+      RemoteControlEditorView()
+        .environment(environment)
+        .presentationDetents([.large])
+        .presentationDragIndicator(.hidden)
+        .presentationContentInteraction(.scrolls)
+        .presentationSizing(.page)
+    }
+    .sheet(isPresented: $showingNewRemote) {
+      NewTemplateSheet(
+        templates: environment.remoteTemplates.map {
+          OverlayTemplate(id: $0.id, name: $0.name)
+        },
+        copyFromID: $copyRemoteFromID,
+        name: $newRemoteName,
+        onCreate: { sourceID in
+          let created: UUID?
+          if let sourceID {
+            created = environment.duplicateRemoteTemplate(from: sourceID, name: newRemoteName)
+          } else {
+            created = environment.createRemoteTemplate(name: newRemoteName)
+          }
+          if created != nil {
+            showingNewRemote = false
+            showingRemoteEditor = true
+          }
+        }
+      )
+    }
     .sheet(isPresented: $showingNewTemplate) {
       NewTemplateSheet(
         templates: environment.templates,
@@ -302,6 +401,42 @@ public struct SettingsView: View {
       Button("Cancel", role: .cancel) { deleting = nil }
     } message: {
       Text("Removes “\(deleting?.name ?? "")” from Output.")
+    }
+    .alert(
+      "Rename remote template",
+      isPresented: Binding(
+        get: { renamingRemote != nil },
+        set: { if !$0 { renamingRemote = nil } }
+      )
+    ) {
+      TextField("Name", text: $renameRemoteText)
+        .accessibilityIdentifier("settings-remote-template-rename-field")
+      Button("Save") {
+        if let renamingRemote {
+          environment.renameRemoteTemplate(id: renamingRemote.id, name: renameRemoteText)
+        }
+        renamingRemote = nil
+      }
+      .accessibilityIdentifier("settings-remote-template-rename-save")
+      Button("Cancel", role: .cancel) { renamingRemote = nil }
+    }
+    .alert(
+      "Delete remote template?",
+      isPresented: Binding(
+        get: { deletingRemote != nil },
+        set: { if !$0 { deletingRemote = nil } }
+      )
+    ) {
+      Button("Delete", role: .destructive) {
+        if let deletingRemote {
+          environment.deleteRemoteTemplate(id: deletingRemote.id)
+        }
+        deletingRemote = nil
+      }
+      .accessibilityIdentifier("settings-remote-template-delete-confirm")
+      Button("Cancel", role: .cancel) { deletingRemote = nil }
+    } message: {
+      Text("Removes “\(deletingRemote?.name ?? "")” from Remote Control.")
     }
     .confirmationDialog(
       "Clear camera memory?",

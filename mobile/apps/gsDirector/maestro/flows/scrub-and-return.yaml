@@ -27,7 +27,7 @@ appId: co.gamestation.director
     id: 'start-directing'
 
 - extendedWaitUntil:
-    visible: 'tile=1 state=live.*'
+    visible: 'source=1 state=live.*'
     timeout: 15000
 
 - tapOn:
@@ -49,7 +49,7 @@ appId: co.gamestation.director
     duration: 900
 
 - extendedWaitUntil:
-    visible: 'tile=1 state=(scrubbing|replaying).*'
+    visible: 'source=1 state=(scrubbing|replaying).*'
     timeout: 10000
 
 # Still recording while the tile shows the past.
@@ -68,10 +68,10 @@ appId: co.gamestation.director
 - tapOn:
     id: 'return-to-live-1'
 - extendedWaitUntil:
-    visible: 'tile=1 state=live .*off=0\.0.*'
+    visible: 'source=1 state=live .*off=0\.0.*'
     timeout: 10000
 - extendedWaitUntil:
-    visible: 'tile=1 state=live .*out=[1-9]'
+    visible: 'source=1 state=live .*out=[1-9]'
     timeout: 10000
 
 - tapOn:

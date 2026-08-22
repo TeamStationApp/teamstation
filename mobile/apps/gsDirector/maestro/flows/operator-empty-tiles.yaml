@@ -25,18 +25,18 @@ appId: co.gamestation.director
     id: 'start-directing'
 
 - extendedWaitUntil:
-    visible: 'tile=1 state=live.*'
+    visible: 'source=1 state=live.*'
     timeout: 20000
 - extendedWaitUntil:
-    visible: 'tile=2 state=live.*'
+    visible: 'source=2 state=live.*'
     timeout: 20000
 
-- assertVisible: 'tile=3 state=empty .*src=none'
-- assertVisible: 'tile=4 state=empty .*src=none'
-- assertVisible: 'tile=5 state=empty .*src=none'
+- assertVisible: 'source=3 state=empty .*src=none'
+- assertVisible: 'source=4 state=empty .*src=none'
+- assertVisible: 'source=5 state=empty .*src=none'
 - assertVisible: 'output src=CAM1 .*'
 
 - tapOn:
-    id: 'tile-5'
+    id: 'source-5'
 - assertVisible: 'output src=CAM1 .*'
-- assertVisible: 'tile=1 .*onair=1'
+- assertVisible: 'source=1 .*onair=1'

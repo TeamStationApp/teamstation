@@ -19,5 +19,5 @@ appId: co.gamestation.director
     id: 'start-directing'
 - extendedWaitUntil:
     visible:
-      id: 'output-tile'
+      id: 'output'
     timeout: 30000

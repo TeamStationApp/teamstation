@@ -47,11 +47,11 @@ public final class ReplayDecoder: @unchecked Sendable {
     }
   }
 
-  /// Control server is `:8765`. Replay HTTP is `18701 + tileIndex` so HUD/debug can name the port.
+  /// Control server is `:8765`. Replay HTTP is `18701 + sourceIndex` so HUD/debug can name the port.
   public static let loopbackBasePort: UInt16 = 18_701
 
-  public static func loopbackPort(forTile tileIndex: Int) -> UInt16 {
-    UInt16(Int(loopbackBasePort) + max(0, tileIndex))
+  public static func loopbackPort(forSource sourceIndex: Int) -> UInt16 {
+    UInt16(Int(loopbackBasePort) + max(0, sourceIndex))
   }
 
   public typealias FrameHandler = @Sendable (CVPixelBuffer, CMTime, TimeInterval) -> Void

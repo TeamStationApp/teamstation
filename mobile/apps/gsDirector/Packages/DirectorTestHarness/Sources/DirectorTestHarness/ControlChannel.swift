@@ -7,15 +7,18 @@ import DirectorCore
 /// gesture coverage — the drag keeps its own `swipe` flow.
 public enum ControlCommand: Sendable, Equatable {
   case configure([String: String])
-  case scrub(tile: Int, offsetSeconds: Double)
-  case returnToLive(tile: Int)
+  case scrub(source: Int, offsetSeconds: Double)
+  case returnToLive(source: Int)
   case record(on: Bool)
   case stream(on: Bool)
   case startDirecting
-  case selectProgram(tile: Int)
+  case selectProgram(source: Int)
   case enableSource(index: Int, on: Bool)
   case sourceAudio(index: Int, on: Bool)
   case renameSource(index: Int, name: String)
+  case assignSource(index: Int, slot: Int)
+  case remoteChord(controls: [String])
+  case bindRemote(action: String, controls: [String])
   /// Names the camera on a row, or points that row at a camera already in the cache. The two
   /// operations a flow needs to exercise identity without driving a menu by coordinates.
   case nameCamera(index: Int, name: String)
@@ -53,12 +56,12 @@ public enum ControlChannel {
     case "configure":
       return .configure(query)
     case "scrub":
-      guard let tile = query["tile"].flatMap({ Int($0) }) else { return nil }
+      guard let source = Self.slot(query) else { return nil }
       let offset = query["offset"].flatMap { Double($0) } ?? 0
-      return .scrub(tile: tile - 1, offsetSeconds: offset)
+      return .scrub(source: source - 1, offsetSeconds: offset)
     case "return-to-live", "returntolive":
-      guard let tile = query["tile"].flatMap({ Int($0) }) else { return nil }
-      return .returnToLive(tile: tile - 1)
+      guard let source = Self.slot(query) else { return nil }
+      return .returnToLive(source: source - 1)
     case "record":
       return .record(on: LaunchConfiguration.boolean(query["on"]) ?? true)
     case "stream":
@@ -66,8 +69,18 @@ public enum ControlChannel {
     case "start", "start-directing", "startdirecting":
       return .startDirecting
     case "program":
-      guard let tile = query["tile"].flatMap({ Int($0) }) else { return nil }
-      return .selectProgram(tile: tile - 1)
+      guard let source = Self.slot(query) else { return nil }
+      return .selectProgram(source: source - 1)
+    case "assign-source", "assignsource":
+      guard let index = query["index"].flatMap({ Int($0) }) else { return nil }
+      let slot = query["slot"].flatMap { Int($0) } ?? Self.slot(query)
+      guard let slot else { return nil }
+      return .assignSource(index: index - 1, slot: slot - 1)
+    case "remote-chord", "remotechord":
+      return .remoteChord(controls: Self.csv(query["controls"]))
+    case "bind-remote", "bindremote":
+      guard let actionID = query["action"] else { return nil }
+      return .bindRemote(action: actionID, controls: Self.csv(query["controls"]))
     case "probe-encoders", "probeencoders":
       return .probeEncoders(
         maximum: query["max"].flatMap { Int($0) } ?? 8,
@@ -114,6 +127,18 @@ public enum ControlChannel {
     default:
       return nil
     }
+  }
+
+  /// 1-based slot from `source=` or the pre-rename `tile=` query.
+  private static func slot(_ query: [String: String]) -> Int? {
+    (query["source"] ?? query["tile"]).flatMap { Int($0) }
+  }
+
+  private static func csv(_ value: String?) -> [String] {
+    (value ?? "")
+      .split(separator: ",")
+      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+      .filter { !$0.isEmpty }
   }
 }
 
