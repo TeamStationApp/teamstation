@@ -162,12 +162,14 @@ public struct TileView: View {
     }
     .onTapGesture {
       guard pipeline != nil else { return }
+      guard environment.draggingSourceIndex == nil else { return }
+      guard ProcessInfo.processInfo.systemUptime >= environment.ignoreProgramTapUntil else { return }
       environment.selectProgram(sourceIndex: sourceIndex)
     }
     .gesture(scrubGesture)
     .accessibilityElement(children: .contain)
     .accessibilityIdentifier("source-\(sourceIndex + 1)")
-    .accessibilityLabel(telemetry.displayName ?? "empty source \(sourceIndex + 1)")
+    .accessibilityLabel("source \(sourceIndex + 1): \(telemetry.displayName ?? "—")")
     .accessibilityValue(telemetry.accessibilityValue)
   }
 
@@ -184,6 +186,7 @@ public struct TileView: View {
     DragGesture(minimumDistance: 12)
       .onChanged { value in
         guard pipeline != nil else { return }
+        guard environment.draggingSourceIndex == nil else { return }
         if !isDragging {
           guard environment.beginScrub(sourceIndex: sourceIndex) else { return }
           isDragging = true
@@ -206,6 +209,7 @@ public struct TileView: View {
         environment.updateScrub(sourceIndex: sourceIndex, offsetSeconds: dragOffsetSeconds)
       }
       .onEnded { value in
+        guard environment.draggingSourceIndex == nil else { return }
         let lift = Double(value.translation.width)
         if !isDragging {
           guard abs(lift) >= 12 || abs(dragFarthestTranslation) >= 12 else { return }
@@ -245,9 +249,10 @@ public struct TileView: View {
           .background(Color.programGreen, in: RoundedRectangle(cornerRadius: 3))
           .foregroundStyle(.black)
       }
-      Text("source: \(sourceIndex + 1) \(telemetry.displayName ?? "—")")
+      Text("source \(sourceIndex + 1): \(telemetry.displayName ?? "—")")
         .font(.system(size: 13, weight: .semibold, design: .rounded))
         .foregroundStyle(.white)
+        .accessibilityIdentifier("source-\(sourceIndex + 1)-nameplate")
       if telemetry.isArchiving {
         Circle()
           .fill(Color.recordRed)
