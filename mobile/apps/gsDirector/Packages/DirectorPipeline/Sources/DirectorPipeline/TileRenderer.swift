@@ -14,6 +14,8 @@ public final class TileRenderer: @unchecked Sendable {
   private weak var layer: AVSampleBufferDisplayLayer?
   /// Extra monitors (the camera picker thumbnail) that must not steal the grid tile's layer.
   private let previewLayers = NSHashTable<AVSampleBufferDisplayLayer>.weakObjects()
+  /// Programme overlay for Picture-in-Picture. Same enqueue path as the Output tile.
+  private weak var pictureInPictureLayer: AVSampleBufferDisplayLayer?
   private var formatDescription: CMFormatDescription?
   private var lastPixelFormat: OSType = 0
   private var lastDimensions = CMVideoDimensions(width: 0, height: 0)
@@ -27,6 +29,12 @@ public final class TileRenderer: @unchecked Sendable {
     lock.unlock()
   }
 
+  public var attachedLayer: AVSampleBufferDisplayLayer? {
+    lock.lock()
+    defer { lock.unlock() }
+    return layer
+  }
+
   public func attachPreview(_ layer: AVSampleBufferDisplayLayer) {
     lock.lock()
     previewLayers.add(layer)
@@ -36,6 +44,31 @@ public final class TileRenderer: @unchecked Sendable {
   public func detachPreview(_ layer: AVSampleBufferDisplayLayer) {
     lock.lock()
     previewLayers.remove(layer)
+    lock.unlock()
+  }
+
+  public func attachPictureInPicture(_ layer: AVSampleBufferDisplayLayer) {
+    lock.lock()
+    pictureInPictureLayer = layer
+    lock.unlock()
+    var timebase: CMTimebase?
+    CMTimebaseCreateWithSourceClock(
+      allocator: kCFAllocatorDefault,
+      sourceClock: CMClockGetHostTimeClock(),
+      timebaseOut: &timebase
+    )
+    if let timebase {
+      CMTimebaseSetTime(timebase, time: CMClockGetTime(CMClockGetHostTimeClock()))
+      CMTimebaseSetRate(timebase, rate: 1.0)
+      layer.controlTimebase = timebase
+    }
+  }
+
+  public func detachPictureInPicture(_ layer: AVSampleBufferDisplayLayer) {
+    lock.lock()
+    if pictureInPictureLayer === layer {
+      pictureInPictureLayer = nil
+    }
     lock.unlock()
   }
 
@@ -87,7 +120,8 @@ public final class TileRenderer: @unchecked Sendable {
       return false
     }
     let layers = displayLayersLocked()
-    guard !layers.isEmpty else {
+    let pipLayer = pictureInPictureLayer
+    guard !layers.isEmpty || pipLayer != nil else {
       lock.unlock()
       return false
     }
@@ -152,27 +186,47 @@ public final class TileRenderer: @unchecked Sendable {
     }
 
     for layer in layers {
-      let renderer = layer.sampleBufferRenderer
-      if renderer.status == .failed {
-        renderer.flush(removingDisplayedImage: false)
-      }
-      // A live monitor only needs the newest frame. Enqueueing every arrival while the display
-      // daemon is behind is how 1080p IOSurfaces piled up in `mediaplaybackd` until jetsam killed
-      // Director and left the iPad unable to swipe. Cancel anything not yet shown, keep the current
-      // image, then hand over this frame — but only when the renderer is already backed up. Flushing
-      // on every frame is a stutter of its own.
-      if !renderer.isReadyForMoreMediaData {
-        renderer.flush(removingDisplayedImage: false)
-      }
-      renderer.enqueue(sampleBuffer)
+      enqueue(sampleBuffer, onto: layer)
     }
+    enqueueToPictureInPicture(pixelBuffer: pixelBuffer, formatDescription: formatDescription)
     return true
+  }
+
+  private func enqueueToPictureInPicture(
+    pixelBuffer: CVPixelBuffer,
+    formatDescription: CMFormatDescription
+  ) {
+    lock.lock()
+    let layer = pictureInPictureLayer
+    lock.unlock()
+    guard let layer else { return }
+    let time = CMClockGetTime(CMClockGetHostTimeClock())
+    guard let sampleBuffer = makeSampleBuffer(
+      pixelBuffer: pixelBuffer,
+      formatDescription: formatDescription,
+      presentationTime: time,
+      duration: CMTime(value: 1, timescale: 30)
+    ) else { return }
+    enqueue(sampleBuffer, onto: layer)
+  }
+
+  private func enqueue(_ sampleBuffer: CMSampleBuffer, onto layer: AVSampleBufferDisplayLayer) {
+    let renderer = layer.sampleBufferRenderer
+    if renderer.status == .failed {
+      renderer.flush(removingDisplayedImage: false)
+    }
+    if !renderer.isReadyForMoreMediaData {
+      renderer.flush(removingDisplayedImage: false)
+    }
+    renderer.enqueue(sampleBuffer)
   }
 
   private func snapshotLayers() -> [AVSampleBufferDisplayLayer] {
     lock.lock()
     defer { lock.unlock() }
-    return displayLayersLocked()
+    var layers = displayLayersLocked()
+    if let pictureInPictureLayer { layers.append(pictureInPictureLayer) }
+    return layers
   }
 
   private func displayLayersLocked() -> [AVSampleBufferDisplayLayer] {
@@ -202,10 +256,11 @@ public final class TileRenderer: @unchecked Sendable {
   private func makeSampleBuffer(
     pixelBuffer: CVPixelBuffer,
     formatDescription: CMFormatDescription,
-    presentationTime: CMTime
+    presentationTime: CMTime,
+    duration: CMTime = .invalid
   ) -> CMSampleBuffer? {
     var timing = CMSampleTimingInfo(
-      duration: .invalid,
+      duration: duration,
       presentationTimeStamp: presentationTime,
       decodeTimeStamp: .invalid
     )

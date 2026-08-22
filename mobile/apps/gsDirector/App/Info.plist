@@ -53,7 +53,7 @@
   <key>NSPhotoLibraryUsageDescription</key>
   <string>GS Director places photos you choose as graphics on the programme output.</string>
 
-  <!-- R3: keep the pipeline alive while recording; validated on device in phase 14. -->
+  <!-- Keep the pipeline alive while programme audio is playing (record / stream). -->
   <key>UIBackgroundModes</key>
   <array>
     <string>audio</string>

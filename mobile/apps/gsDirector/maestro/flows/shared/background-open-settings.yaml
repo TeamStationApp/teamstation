@@ -1,0 +1,7 @@
+# Opens Settings in front of a recording Director so the programme PiP can appear over another app.
+appId: com.apple.Preferences
+---
+- launchApp:
+    appId: com.apple.Preferences
+    stopApp: false
+- takeScreenshot: pip-over-settings

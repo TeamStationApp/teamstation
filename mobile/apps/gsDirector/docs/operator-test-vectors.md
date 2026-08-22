@@ -25,7 +25,7 @@ comparable to earlier cooling-pad or bare-device numbers.
 
 ```bash
 cd mobile/apps/gsDirector
-node scripts/run-maestro.js --suite operator
+node scripts/run-maestro.js --device <udid> --suite operator
 ```
 
 `--suite operator` is the product-behavior set below. Characterization flows (bandwidth,
@@ -83,7 +83,7 @@ The layout is a 3×3 with the top-left four cells merged into Output. Source til
 | C2 | Archives accumulate | `dur=` and/or `seg=` increase while recording | `record-and-stop` |
 | C3 | Stop completes | `rec=0`, `flush=` is a real duration, program file `progbytes=` non-zero | `record-and-stop` |
 | C4 | Live preview continues after stop | Tiles stay `state=live` with `out=` > 0 | `operator-scrub-cut-return` |
-| C5 | Backgrounding while recording stops the recording | Status explains why (cannot encode while suspended) | manual |
+| C5 | Backgrounding while recording keeps the session alive | HUD/control `rec=1`, `aout=1`, `bgkeep=1`, `pip=1`; mix/segments still advance; hovering programme PiP is visible over another app | `operator-background-record` |
 
 ---
 
@@ -191,7 +191,7 @@ in the list, so enabling rows 1–3 still puts the VM33s on the grid.
 
 ## Operator suite (automated)
 
-Flows in `scripts/run-maestro.js --suite operator`, in order:
+Flows in `scripts/run-maestro.js --device <udid> --suite operator`, in order:
 
 1. `smoke`
 2. `operator-source-cap` — A6, A7, A4

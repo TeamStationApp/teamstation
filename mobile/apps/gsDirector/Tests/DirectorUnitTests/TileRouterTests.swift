@@ -58,6 +58,19 @@ struct TileRouterTests {
     #expect(router.programRenderer.enqueue(pixelBuffer: buffer, presentationTime: .zero))
   }
 
+  @Test("Programme frames still enqueue when only the Picture-in-Picture layer is attached")
+  func enqueueToPictureInPictureWithoutOutputTile() throws {
+    let (router, _) = makeRouter()
+    let layer = AVSampleBufferDisplayLayer()
+    layer.bounds = CGRect(x: 0, y: 0, width: 128, height: 72)
+    router.programRenderer.attachPictureInPicture(layer)
+    let factory = try #require(
+      PixelBufferFactory(width: 64, height: 64, pixelFormat: kCVPixelFormatType_32BGRA)
+    )
+    let buffer = try #require(factory.makeBuffer())
+    #expect(router.programRenderer.enqueue(pixelBuffer: buffer, presentationTime: .zero))
+  }
+
   private func makeRouter() -> (TileRouter, PipelineTelemetry) {
     let clock = SystemClock()
     let telemetry = PipelineTelemetry(clock: clock)
