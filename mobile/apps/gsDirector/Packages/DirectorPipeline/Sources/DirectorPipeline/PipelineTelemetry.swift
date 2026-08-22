@@ -17,6 +17,7 @@ public struct SourceSummary: Sendable, Codable, Equatable {
   public var name: String
   public var isEnabled: Bool
   public var usesAudio: Bool
+  public var inputGain: Double
   public var isPresent: Bool
   public var sourceIndex: Int?
 
@@ -25,6 +26,7 @@ public struct SourceSummary: Sendable, Codable, Equatable {
     name: String,
     isEnabled: Bool,
     usesAudio: Bool,
+    inputGain: Double,
     isPresent: Bool,
     sourceIndex: Int?
   ) {
@@ -32,6 +34,7 @@ public struct SourceSummary: Sendable, Codable, Equatable {
     self.name = name
     self.isEnabled = isEnabled
     self.usesAudio = usesAudio
+    self.inputGain = inputGain
     self.isPresent = isPresent
     self.sourceIndex = sourceIndex
   }
