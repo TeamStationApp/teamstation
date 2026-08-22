@@ -1,9 +1,14 @@
+import DirectorCore
 import DirectorPipeline
 import SwiftUI
+import UIKit
 
 /// Spec 6.2: the main directing screen. Four tiles, one program, one record button.
 public struct DirectorGridView: View {
   @Environment(AppEnvironment.self) private var environment
+  @State private var draggingSource: Int?
+  @State private var dragLocation: CGPoint = .zero
+  @State private var dragGrabOffset = CGSize.zero
 
   public init() {}
 
@@ -198,47 +203,119 @@ public struct DirectorGridView: View {
   ///
   /// ```
   /// ┌─────────────┬───────┐
-  /// │             │ cam 1 │
+  /// │             │ src 1 │
   /// │   Output    ├───────┤
-  /// │             │ cam 2 │
+  /// │             │ src 2 │
   /// ├───────┬─────┼───────┤
-  /// │ cam 3 │ cam4│ cam 5 │
+  /// │ src 3 │src 4│ src 5 │
   /// └───────┴─────┴───────┘
   /// ```
   ///
-  /// Output gets the large cell because it is the thing being broadcast; the five sources
-  /// are there to be watched for the next cut, which needs less resolution than judging the output
-  /// does.
+  /// Output stays in the large cell. Long-pressing a source tile and dragging it over another
+  /// swaps them; the order is by source number, not by which camera is on that source.
   private var grid: some View {
-    GeometryReader { geometry in
-      let spacing: CGFloat = 8
-      let width = (geometry.size.width - spacing * 2) / 3
-      let height = (geometry.size.height - spacing * 2) / 3
-      let programWidth = width * 2 + spacing
-      let programHeight = height * 2 + spacing
+    GeometryReader { proxy in
+      let geometry = SourceGridGeometry(size: proxy.size)
+      ZStack(alignment: .topLeading) {
+        ProgramTileView(
+          renderer: environment.router.programRenderer,
+          snapshot: environment.snapshot
+        )
+        .frame(width: geometry.programFrame.width, height: geometry.programFrame.height)
+        .position(x: geometry.programFrame.midX, y: geometry.programFrame.midY)
 
-      VStack(spacing: spacing) {
-        HStack(spacing: spacing) {
-          ProgramTileView(
-            renderer: environment.router.programRenderer,
-            snapshot: environment.snapshot
-          )
-          .frame(width: programWidth, height: programHeight)
-
-          VStack(spacing: spacing) {
-            tile(0).frame(width: width, height: height)
-            tile(1).frame(width: width, height: height)
-          }
-        }
-        HStack(spacing: spacing) {
-          tile(2).frame(width: width, height: height)
-          tile(3).frame(width: width, height: height)
-          tile(4).frame(width: width, height: height)
+        ForEach(0 ..< SourceIndex.count, id: \.self) { sourceIndex in
+          sourceTile(sourceIndex, geometry: geometry)
+            .id(sourceIndex)
         }
       }
-      .onAppear { environment.smallTileWidth = Double(width) }
-      .onChange(of: width) { _, value in environment.smallTileWidth = Double(value) }
+      .coordinateSpace(name: "directorGrid")
+      .overlay(alignment: .topLeading) {
+        Color.clear
+          .frame(width: 1, height: 1)
+          .allowsHitTesting(false)
+          .accessibilityIdentifier("source-layout")
+          .accessibilityValue("order=\(environment.sourceLayout.displayOrder)")
+      }
+      .onAppear { environment.smallTileWidth = Double(geometry.tileWidth) }
+      .onChange(of: geometry.tileWidth) { _, value in environment.smallTileWidth = Double(value) }
+      .onChange(of: environment.sourceLayout.order) { _, _ in
+        guard draggingSource != nil else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+      }
     }
+  }
+
+  private func sourceTile(_ sourceIndex: Int, geometry: SourceGridGeometry) -> some View {
+    let slot = environment.sourceLayout.slot(forSource: sourceIndex)
+    let frame = geometry.slotFrames[slot]
+    let isDragging = draggingSource == sourceIndex
+    let center: CGPoint = {
+      if isDragging {
+        return CGPoint(
+          x: dragLocation.x - dragGrabOffset.width,
+          y: dragLocation.y - dragGrabOffset.height
+        )
+      }
+      return CGPoint(x: frame.midX, y: frame.midY)
+    }()
+
+    return tile(sourceIndex)
+      .frame(width: geometry.tileWidth, height: geometry.tileHeight)
+      .scaleEffect(isDragging ? 1.05 : 1)
+      .shadow(
+        color: .black.opacity(isDragging ? 0.45 : 0),
+        radius: isDragging ? 18 : 0,
+        y: isDragging ? 10 : 0
+      )
+      .position(center)
+      .zIndex(isDragging ? 10 : 0)
+      .simultaneousGesture(reorderGesture(sourceIndex: sourceIndex, geometry: geometry))
+  }
+
+  private func reorderGesture(sourceIndex: Int, geometry: SourceGridGeometry) -> some Gesture {
+    LongPressGesture(minimumDuration: 0.45, maximumDistance: 14)
+      .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .named("directorGrid")))
+      .onChanged { value in
+        switch value {
+        case .second(true, let drag):
+          if draggingSource == nil {
+            beginReorder(sourceIndex: sourceIndex, geometry: geometry, location: drag?.location)
+          }
+          guard draggingSource == sourceIndex, let drag else { return }
+          dragLocation = drag.location
+          if let slot = geometry.slot(containing: drag.location),
+             environment.sourceLayout.slot(forSource: sourceIndex) != slot {
+            withAnimation(.easeInOut(duration: 0.18)) {
+              environment.moveSource(sourceIndex, toSlot: slot)
+            }
+          }
+        default:
+          break
+        }
+      }
+      .onEnded { _ in
+        endReorder(sourceIndex: sourceIndex)
+      }
+  }
+
+  private func beginReorder(sourceIndex: Int, geometry: SourceGridGeometry, location: CGPoint?) {
+    let frame = geometry.slotFrames[environment.sourceLayout.slot(forSource: sourceIndex)]
+    let point = location ?? CGPoint(x: frame.midX, y: frame.midY)
+    draggingSource = sourceIndex
+    environment.draggingSourceIndex = sourceIndex
+    dragLocation = point
+    dragGrabOffset = CGSize(width: point.x - frame.midX, height: point.y - frame.midY)
+    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+  }
+
+  private func endReorder(sourceIndex: Int) {
+    guard draggingSource == sourceIndex else { return }
+    environment.commitSourceLayout()
+    environment.draggingSourceIndex = nil
+    environment.ignoreProgramTapUntil = ProcessInfo.processInfo.systemUptime + 0.35
+    draggingSource = nil
+    dragGrabOffset = .zero
   }
 
   private func tile(_ index: Int) -> some View {

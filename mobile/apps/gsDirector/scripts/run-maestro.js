@@ -37,6 +37,7 @@ const OPERATOR_SUITE = [
   'operator-program-cut',
   'operator-program-disable',
   'operator-empty-tiles',
+  'operator-source-layout',
   'operator-menu-back',
   'stream-controls',
   'scrub-without-history',

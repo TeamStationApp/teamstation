@@ -74,6 +74,8 @@ The layout is a 3×3 with the top-left four cells merged into Output. Source til
 | B9 | Disable the on-air camera while the grid is live | Exactly one `onair=1`; disabled slot `state=empty onair=0`; Output still has a source | `operator-program-disable` |
 | B10 | Settings Remote Control templates | Default row, editor lists Source 1–5 live + six Instant Replays, Done returns | `remote-control` |
 | B11 | Injected pad chord cuts Source 2 live | `/bind-remote?action=live-2&controls=a` then `/remote-chord?controls=a` → `source=2 onair=1` | `remote-control` |
+| B12 | Nameplate is `source N: camera` | `source 1: CAM1`, not `source: 1 CAM1` | `operator-source-layout` |
+| B13 | Source tiles keep a saved screen order | Long-press drag swaps by source number; `order=` survives relaunch even if the camera on Source 1 changes | `operator-source-layout` |
 
 ---
 
@@ -201,15 +203,16 @@ Flows in `scripts/run-maestro.js --device <udid> --suite operator`, in order:
 4. `operator-program-cut` — A3, A8, B1–B4
 5. `operator-program-disable` — B9
 6. `operator-empty-tiles` — B5, B6
-7. `operator-menu-back` — G3, G4
-8. `stream-controls` — stream URL field and clear X; empty-URL toast; Stream left of Record; RECORDING not STOP; no REC pill
-9. `scrub-without-history` — D1
-10. `scrub-before-first-segment` — D2
-11. `operator-scrub-cut-return` — D3, D4, E1–E7, C1, C4
-12. `scrub-and-return` — D6, D9, E3
-13. `hevc-scrub` — D5, D7, E8, D12
-14. `scrub-incremental` — D13, D14
-15. `program-five-sources` — B7, F1, F3, G1, G7
-16. `recordings-export` — G2
+7. `operator-source-layout` — B12, B13
+8. `operator-menu-back` — G3, G4
+9. `stream-controls` — stream URL field and clear X; empty-URL toast; Stream left of Record; RECORDING not STOP; no REC pill
+10. `scrub-without-history` — D1
+11. `scrub-before-first-segment` — D2
+12. `operator-scrub-cut-return` — D3, D4, E1–E7, C1, C4
+13. `scrub-and-return` — D6, D9, E3
+14. `hevc-scrub` — D5, D7, E8, D12
+15. `scrub-incremental` — D13, D14
+16. `program-five-sources` — B7, F1, F3, G1, G7
+17. `recordings-export` — G2
 
 After any code fix, re-run this suite from the top.
