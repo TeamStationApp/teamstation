@@ -2376,6 +2376,8 @@ public final class AppEnvironment {
       $0.composedFrames = composedFrames
       $0.audioMixContributors = mix.contributors
       $0.audioMixSeconds = (mix.emittedSeconds * 10).rounded() / 10
+      $0.audioMixLateBuffers = mix.lateBuffers
+      $0.audioMixFutureBuffers = mix.futureBuffers
       $0.cpuPercent = (cpu * 10).rounded() / 10
       $0.cpuCores = ProcessLoad.coreCount
       $0.availableMemoryMB = ProcessLoad.availableMemoryMB()

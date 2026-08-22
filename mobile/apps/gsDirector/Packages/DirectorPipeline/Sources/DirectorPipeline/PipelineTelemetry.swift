@@ -237,6 +237,10 @@ public struct TelemetrySnapshot: Sendable, Codable, Equatable {
   public var composedFrames: UInt64 = 0
   public var audioMixContributors = 0
   public var audioMixSeconds: Double = 0
+  /// Mixer ring misses. `late` is audio that arrived after its slot had already been emitted —
+  /// silence in the programme. `future` overran the ring the other way.
+  public var audioMixLateBuffers: UInt64 = 0
+  public var audioMixFutureBuffers: UInt64 = 0
   public var cpuPercent: Double = 0
   public var cpuCores = 0
   /// What iPadOS will still let this process allocate, which is far below physical RAM.

@@ -296,4 +296,32 @@ struct PlayoutCoordinatorTests {
     coordinator.setCap(milliseconds: nil)
     #expect(coordinator.programMilliseconds == 800)
   }
+
+  @Test("Audio PTS in a keyframe burst still schedules a packet apart")
+  func audioBurstKeepsPacketSpacing() {
+    var controller = PlayoutController(seedMilliseconds: 300)
+    controller.note(lateness: 1.0, at: 1.0)
+
+    let burstArrival = 1.5
+    controller.advance(to: burstArrival)
+    let packet = 0.032
+    let dues = (0..<8).map { index in
+      controller.scheduleTime(
+        presentationSeconds: Double(index) * packet,
+        nowUptime: burstArrival
+      )
+    }
+
+    for index in 1..<dues.count {
+      #expect(abs(dues[index] - dues[index - 1] - packet) < 0.0001)
+    }
+  }
+
+  @Test("Audio arriving before the first picture waits the seed, not uptime zero")
+  func audioBeforeOffsetUsesSeed() {
+    let controller = PlayoutController(seedMilliseconds: 300)
+    #expect(!controller.hasOffset)
+    let due = controller.scheduleTime(presentationSeconds: 0, nowUptime: 12.0)
+    #expect(abs(due - 12.3) < 0.0001)
+  }
 }
