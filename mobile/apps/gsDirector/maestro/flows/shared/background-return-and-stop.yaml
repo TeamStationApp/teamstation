@@ -1,0 +1,16 @@
+# Returns to a Director that was backgrounded while recording. stopApp: false is load-bearing:
+# a relaunch would kill the keep-alive session this flow exists to check.
+appId: co.gamestation.director
+---
+- launchApp:
+    appId: co.gamestation.director
+    stopApp: false
+- extendedWaitUntil:
+    visible: 'rec=1'
+    timeout: 15000
+- tapOn:
+    id: 'record-button'
+- extendedWaitUntil:
+    visible: 'rec=0'
+    timeout: 60000
+- takeScreenshot: background-record-stopped

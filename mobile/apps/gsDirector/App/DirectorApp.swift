@@ -48,23 +48,29 @@ struct DirectorApp: App {
       DirectorRootView(environment: environment)
     }
     .onChange(of: scenePhase) { _, phase in
-      // Finalise the recording before iOS suspends us. A suspended app keeps its encode sessions
-      // open but cannot feed them, and if it is then killed the writers never finish — the files
-      // are truncated and the encode sessions are left for the media daemon to reclaim.
-      guard phase == .background else { return }
-      Task { await environment.prepareForSuspension() }
+      switch phase {
+      case .inactive:
+        // Leave the deck alone while directing. Start the overlay only once the scene is
+        // resigning (Control Center, app switch, Settings) during a keep-alive session.
+        environment.handleInactive()
+      case .background:
+        Task { await environment.handleBackground() }
+      case .active:
+        environment.handleForeground()
+      default:
+        break
+      }
     }
   }
 
-  /// Playback category with mixing so the app never interrupts anything else on the iPad.
+  /// Playback category so the programme mix can use the iPad's current audio route.
   ///
-  /// R3: the `audio` background mode in Info.plist does **not** keep the pipeline running when the
-  /// app is backgrounded. iOS grants that only while audio is actually flowing, and this app plays
-  /// none — the session exists so recording does not duck other audio. Backgrounding therefore
-  /// finalises the recording rather than continuing it; see `prepareForSuspension`.
+  /// The `audio` background mode in Info.plist only keeps the process running while that mix is
+  /// actually playing. Recording and streaming start the player and leave it running after the
+  /// scene backgrounds; a preview-only session still lets iOS suspend. See `handleBackground`.
   private static func configureAudioSession() {
     let session = AVAudioSession.sharedInstance()
-    try? session.setCategory(.playback, mode: .default, options: [ .mixWithOthers ])
+    try? session.setCategory(.playback, mode: .moviePlayback, options: [])
     try? session.setActive(true)
   }
 }

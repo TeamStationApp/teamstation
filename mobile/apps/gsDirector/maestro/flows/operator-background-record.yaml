@@ -1,0 +1,41 @@
+# Recording stays up in the background, and programme output appears as system PiP.
+#
+# Device is passed to maestro-runner / run-maestro.js (--device <udid>), not in this file.
+#
+# After Record, this flow opens Settings so Director is behind another app. The hovering
+# window is a screenshot artifact; keep-alive is asserted by scripts/assertBackgroundKeepAlive.js
+# which run-maestro.js runs while Settings is in front (HUD is gone).
+appId: co.gamestation.director
+---
+- launchApp:
+    appId: co.gamestation.director
+    arguments:
+      clearState: true
+      uiTest: true
+      debugHUD: true
+      sourceProfile: synthetic4
+      segmentSeconds: 3
+
+- extendedWaitUntil:
+    visible:
+      id: 'source-row-1'
+    timeout: 15000
+- runFlow: shared/settle-source-list.yaml
+- tapOn:
+    id: 'source-toggle-1'
+- tapOn:
+    id: 'source-toggle-2'
+- tapOn:
+    id: 'start-directing'
+
+- extendedWaitUntil:
+    visible: 'tile=1 state=live.*'
+    timeout: 15000
+
+- tapOn:
+    id: 'record-button'
+- assertVisible: 'rec=1'
+- assertVisible: 'aout=1'
+- assertVisible: 'bgkeep=1'
+
+- takeScreenshot: recording-foreground

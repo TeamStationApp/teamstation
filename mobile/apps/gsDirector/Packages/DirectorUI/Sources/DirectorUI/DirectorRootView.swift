@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 public struct DirectorRootView: View {
   @State private var environment: AppEnvironment
@@ -39,5 +40,33 @@ public struct DirectorRootView: View {
       .onOpenURL { url in
         _ = environment.handle(url: url)
       }
+      .background {
+        ProgramPictureInPictureAnchor(environment: environment)
+          .frame(width: 1, height: 1)
+          .allowsHitTesting(false)
+          .accessibilityHidden(true)
+      }
   }
 }
+
+/// Invisible window hook for the off-screen programme sample-buffer layer that Picture-in-Picture
+/// reads. SwiftUI can dismantle the Output tile when the scene backgrounds; this view stays in
+/// the window so the PiP source is not torn down with it.
+struct ProgramPictureInPictureAnchor: UIViewRepresentable {
+  let environment: AppEnvironment
+
+  func makeUIView(context: Context) -> ProgramPictureInPictureHostView {
+    let view = ProgramPictureInPictureHostView()
+    view.backgroundColor = .clear
+    view.isUserInteractionEnabled = false
+    view.isAccessibilityElement = false
+    environment.attachProgramPictureInPicture(host: view)
+    return view
+  }
+
+  func updateUIView(_ uiView: ProgramPictureInPictureHostView, context: Context) {
+    environment.attachProgramPictureInPicture(host: uiView)
+  }
+}
+
+final class ProgramPictureInPictureHostView: UIView {}

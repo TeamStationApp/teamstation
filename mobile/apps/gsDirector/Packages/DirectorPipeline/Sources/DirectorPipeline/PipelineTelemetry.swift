@@ -268,6 +268,12 @@ public struct TelemetrySnapshot: Sendable, Codable, Equatable {
   /// Delay the live preview is currently holding, in milliseconds — the engine's choice, already
   /// clamped by the operator cap when one is on.
   public var displayLatencyMilliseconds: Double = 0
+  /// Programme mix is actually playing through the system audio route.
+  public var programAudioPlaying = false
+  /// Recording or streaming, so backgrounding must not suspend the pipeline.
+  public var keepAliveInBackground = false
+  /// System Picture-in-Picture of the programme output is showing over other apps.
+  public var pictureInPictureActive = false
 
   public init() {}
 

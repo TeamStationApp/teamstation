@@ -49,11 +49,11 @@ sudo -E "$(command -v node)" scripts/fakeRtspCameras.js
 ## Tests
 
 ```bash
-socket npm test                                       # unit tests in the simulator
+DIRECTOR_SIMULATOR_UDID=<udid> socket npm test        # unit tests in the simulator
 node scripts/run-maestro.js --list                    # available flows
-node scripts/run-maestro.js --suite operator          # product-behavior vectors
-node scripts/run-maestro.js smoke                     # one flow on the iPad
-node scripts/run-maestro.js --sim rtsp-three-cameras  # camera flows in the simulator
+node scripts/run-maestro.js --device <udid> --suite operator          # product-behavior vectors
+node scripts/run-maestro.js --device <udid> smoke                     # one flow on the iPad
+node scripts/run-maestro.js --device <udid> --sim rtsp-three-cameras  # camera flows in the simulator
 ```
 
 The simulator inherits the Mac's network, so the camera flows can run there against the real

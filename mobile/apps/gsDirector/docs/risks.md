@@ -668,24 +668,23 @@ telemetry now says which cameras those are.
 
 `ndi-four-cameras-audio.yaml` runs this against `ndi-four-cameras.yaml` as the control.
 
-### Backgrounding finalises the recording, and now has time to
+### Backgrounding while recording keeps the pipeline running
 
-`prepareForSuspension` stops recording when the scene backgrounds, because a suspended app cannot
-feed the hardware encoder. It was doing so without a background task assertion, which means iOS was
-free to freeze the process partway through finalising four segmented writers and the program file —
-leaving exactly the truncated files the method exists to prevent. The work now runs inside an
-assertion that is also ended from its expiration handler.
+`handleBackground` used to always finalise the recording, because a suspended app cannot feed the
+hardware encoder and this app did not actually play audio — so the `audio` background mode in
+`Info.plist` bought nothing. The programme mix now plays through `ProgramAudioPlayer` on the
+system's current audio route. While recording (or streaming), that playback continues after the
+scene backgrounds, which is what lets iOS keep the process running. Programme output is shown as
+a system Picture-in-Picture overlay over other apps.
 
-Worth stating plainly, because a comment in the source claimed otherwise: the `audio` background
-mode in `Info.plist` buys nothing here. iOS grants background execution for it only while audio is
-actually flowing, and this app plays none. Recording cannot continue in the background at all.
+A preview-only session still lets iOS suspend. If keep-alive is off and a recording were somehow
+still open, `prepareForSuspension` still finalises inside a background task assertion so writers
+are not frozen mid-flush.
 
-Verified by recording four cameras, launching Settings to background the app, and probing what was
-left on disk: all four archives finalise and decode. One detail only the file showed — draining
-queued audio just once before finishing was not enough, because a writer mid-segment is often not
-accepting audio at that instant, and giving up on the first refusal cost about nine seconds off the
-end of the audio track. Finishing now waits up to two seconds for the input to come back, which
-brings the drift on a backgrounded stop to −0.02s and −0.08s.
+`operator-background-record.yaml` records two synthetic cameras, opens Settings in front of
+Director, and checks the control server while backgrounded: `rec`, `aout` and `bgkeep` stay on,
+and mix seconds or segments keep advancing. The hovering programme window is the screenshot
+artifact `pip-over-settings`.
 
 ### Scrub-to-replay latency is now measured rather than assumed
 

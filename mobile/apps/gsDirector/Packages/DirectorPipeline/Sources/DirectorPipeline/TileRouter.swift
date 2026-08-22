@@ -359,6 +359,7 @@ public final class TileRouter: @unchecked Sendable {
   /// Display layer for the programme preview tile, fed the composited frame.
   public let programRenderer = TileRenderer()
   public let audioMixer: AudioMixer
+  public let audioPlayer: ProgramAudioPlayer
 
   private let lock = NSLock()
   private var pipelines: [Int: SourcePipeline] = [:]
@@ -377,9 +378,12 @@ public final class TileRouter: @unchecked Sendable {
     self.compositor = compositor
     self.programEncoder = programEncoder
     self.programStreamer = programStreamer
-    self.audioMixer = AudioMixer(clock: clock) { [programEncoder, programStreamer] frame in
+    let audioPlayer = ProgramAudioPlayer()
+    self.audioPlayer = audioPlayer
+    self.audioMixer = AudioMixer(clock: clock) { [programEncoder, programStreamer, audioPlayer] frame in
       programEncoder.append(audio: frame)
       programStreamer.append(audio: frame)
+      audioPlayer.schedule(frame)
     }
   }
 
@@ -422,6 +426,7 @@ public final class TileRouter: @unchecked Sendable {
     lock.unlock()
     for pipeline in existing { pipeline.stop() }
     audioMixer.stop()
+    audioPlayer.stop()
     // Output's TileVideoView stays on screen — the grid is always the root. Detaching its
     // layer here freezes the last frame: SwiftUI will not call updateUIView because
     // `programRenderer` is the same object, and later cuts enqueue into nowhere.
