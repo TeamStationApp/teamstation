@@ -52,6 +52,8 @@ public final class AudioMixer: @unchecked Sendable {
   /// buffer arrives, since there is nothing to anchor to before that.
   private var emitCursor: Int64?
   private var contributors: Set<SourceID> = []
+  /// Operator input gain per source, 0...1. Fifty percent is unity; 100 percent is +6 dB.
+  private var inputGains: [SourceID: Double] = [:]
   private var statistics = Statistics()
   private var timer: DispatchSourceTimer?
   private let queue = DispatchQueue(label: "co.gamestation.director.audiomix")
@@ -87,6 +89,13 @@ public final class AudioMixer: @unchecked Sendable {
     lock.unlock()
   }
 
+  /// Replaces the per-source input gains used on the next `append`. Missing sources stay at 50%.
+  public func setInputGains(_ gains: [SourceID: Double]) {
+    lock.lock()
+    inputGains = gains
+    lock.unlock()
+  }
+
   public func start() {
     guard timer == nil else { return }
     let timer = DispatchSource.makeTimerSource(queue: queue)
@@ -108,9 +117,18 @@ public final class AudioMixer: @unchecked Sendable {
 
   /// Mixes one source buffer in at the position its wall clock claims.
   public func append(_ frame: AudioFrame) {
-    guard let samples = Self.stereoSamples(from: frame.sampleBuffer) else { return }
+    guard var samples = AudioPCM.stereoSamples(
+      from: frame.sampleBuffer,
+      sampleRate: Self.sampleRate,
+      channelCount: Self.channelCount
+    ) else { return }
     let frameCount = samples.count / Self.channelCount
     guard frameCount > 0 else { return }
+
+    lock.lock()
+    let multiplier = (inputGains[frame.sourceID] ?? 0.5) * 2
+    lock.unlock()
+    AudioPCM.scale(&samples, multiplier: multiplier)
 
     let start = Int64((frame.wallClock.seconds * Self.sampleRate).rounded())
 
@@ -189,50 +207,5 @@ public final class AudioMixer: @unchecked Sendable {
 
   private static func clamp(_ value: Int32) -> Int16 {
     Int16(max(Int32(Int16.min), min(Int32(Int16.max), value)))
-  }
-
-  /// Reads a source buffer as interleaved 16-bit stereo at the mix rate.
-  ///
-  /// Mono is duplicated across both channels and anything wider is truncated to the first two, so a
-  /// camera's channel count never changes the shape of the bus. Sample rates other than 48 kHz are
-  /// resampled by nearest neighbour, which is crude but only ever applies to a source that is
-  /// already unusual.
-  private static func stereoSamples(from sampleBuffer: CMSampleBuffer) -> [Int16]? {
-    guard
-      let format = CMSampleBufferGetFormatDescription(sampleBuffer),
-      let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(format)?.pointee,
-      asbd.mFormatID == kAudioFormatLinearPCM,
-      asbd.mBitsPerChannel == 16,
-      let block = CMSampleBufferGetDataBuffer(sampleBuffer)
-    else { return nil }
-
-    var length = 0
-    var pointer: UnsafeMutablePointer<CChar>?
-    guard CMBlockBufferGetDataPointer(
-      block,
-      atOffset: 0,
-      lengthAtOffsetOut: nil,
-      totalLengthOut: &length,
-      dataPointerOut: &pointer
-    ) == kCMBlockBufferNoErr, let pointer else { return nil }
-
-    let sourceChannels = max(1, Int(asbd.mChannelsPerFrame))
-    let available = length / (2 * sourceChannels)
-    guard available > 0 else { return nil }
-
-    let source = UnsafeRawPointer(pointer).bindMemory(to: Int16.self, capacity: length / 2)
-    let ratio = asbd.mSampleRate > 0 ? sampleRate / asbd.mSampleRate : 1
-    let outputFrames = ratio == 1 ? available : max(1, Int(Double(available) * ratio))
-
-    var result = [Int16](repeating: 0, count: outputFrames * channelCount)
-    for index in 0 ..< outputFrames {
-      let sourceFrame = ratio == 1 ? index : min(available - 1, Int(Double(index) / ratio))
-      let base = sourceFrame * sourceChannels
-      let left = source[base]
-      let right = sourceChannels > 1 ? source[base + 1] : left
-      result[index * channelCount] = left
-      result[index * channelCount + 1] = right
-    }
-    return result
   }
 }

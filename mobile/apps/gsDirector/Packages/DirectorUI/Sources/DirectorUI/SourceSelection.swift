@@ -14,6 +14,9 @@ public struct SourceSelection: Identifiable, Hashable, Sendable, Codable {
   /// because the two decisions are genuinely separate: a wide shot may be the picture you never cut
   /// to and the only microphone worth hearing.
   public var usesAudio: Bool
+  /// Input volume for this camera's native audio, 0...1. Fifty percent is unity into the mix;
+  /// 100 percent is twice as loud and can clip.
+  public var inputGain: Double
   /// Preferred (and, when enabled, occupied) grid slot. Kept when VIDEO is off so re-enable
   /// restores it if that source is free.
   public var sourceIndex: Int?
@@ -28,6 +31,7 @@ public struct SourceSelection: Identifiable, Hashable, Sendable, Codable {
     customName: String? = nil,
     isEnabled: Bool = false,
     usesAudio: Bool = true,
+    inputGain: Double = SourceSelectionRules.defaultInputGain,
     sourceIndex: Int? = nil,
     isPresent: Bool = true
   ) {
@@ -37,17 +41,19 @@ public struct SourceSelection: Identifiable, Hashable, Sendable, Codable {
     self.customName = customName
     self.isEnabled = isEnabled
     self.usesAudio = usesAudio
+    self.inputGain = SourceSelectionRules.clampedInputGain(inputGain)
     self.sourceIndex = sourceIndex
     self.isPresent = isPresent
   }
 
   enum CodingKeys: String, CodingKey {
-    case id, kind, advertisedName, customName, isEnabled, usesAudio, sourceIndex, isPresent
+    case id, kind, advertisedName, customName, isEnabled, usesAudio, inputGain, sourceIndex, isPresent
     case tileIndex
   }
 
   /// Selections saved before `usesAudio` existed decode with audio on, matching the old behaviour
-  /// where the program source's audio was always taken. `tileIndex` is the pre-rename slot key.
+  /// where the program source's audio was always taken. Missing `inputGain` is 50 percent, which is
+  /// unity. `tileIndex` is the pre-rename slot key.
   public init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     self.init(
@@ -57,6 +63,8 @@ public struct SourceSelection: Identifiable, Hashable, Sendable, Codable {
       customName: try container.decodeIfPresent(String.self, forKey: .customName),
       isEnabled: try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? false,
       usesAudio: try container.decodeIfPresent(Bool.self, forKey: .usesAudio) ?? true,
+      inputGain: try container.decodeIfPresent(Double.self, forKey: .inputGain)
+        ?? SourceSelectionRules.defaultInputGain,
       sourceIndex: try container.decodeIfPresent(Int.self, forKey: .sourceIndex)
         ?? container.decodeIfPresent(Int.self, forKey: .tileIndex),
       isPresent: try container.decodeIfPresent(Bool.self, forKey: .isPresent) ?? true
@@ -71,6 +79,7 @@ public struct SourceSelection: Identifiable, Hashable, Sendable, Codable {
     try container.encodeIfPresent(customName, forKey: .customName)
     try container.encode(isEnabled, forKey: .isEnabled)
     try container.encode(usesAudio, forKey: .usesAudio)
+    try container.encode(inputGain, forKey: .inputGain)
     try container.encodeIfPresent(sourceIndex, forKey: .sourceIndex)
     try container.encodeIfPresent(sourceIndex, forKey: .tileIndex)
     try container.encode(isPresent, forKey: .isPresent)
@@ -234,6 +243,27 @@ public enum SourceSelectionRules {
   ) {
     guard let position = selections.firstIndex(where: { $0.id == id }) else { return }
     selections[position].usesAudio = usesAudio
+  }
+
+  public static let defaultInputGain: Double = 0.5
+
+  public static func clampedInputGain(_ value: Double) -> Double {
+    min(1, max(0, value))
+  }
+
+  /// Mix amplitude for a stored gain. 50 percent is 1.0 so the default matches the previous
+  /// unscaled camera; 100 percent is 2.0 and will clip a full-scale source.
+  public static func mixMultiplier(forGain gain: Double) -> Double {
+    clampedInputGain(gain) * 2
+  }
+
+  public static func setInputGain(
+    _ gain: Double,
+    for id: SourceID,
+    in selections: inout [SourceSelection]
+  ) {
+    guard let position = selections.firstIndex(where: { $0.id == id }) else { return }
+    selections[position].inputGain = clampedInputGain(gain)
   }
 
   /// Sources whose audio belongs in the program mix. A source that is not on a tile contributes

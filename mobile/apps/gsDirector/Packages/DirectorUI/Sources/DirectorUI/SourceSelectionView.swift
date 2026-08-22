@@ -7,6 +7,7 @@ public struct SourceSelectionView: View {
   @Environment(AppEnvironment.self) private var environment
   @State private var renamingID: SourceID?
   @State private var draftName = ""
+  @State private var waveformID: SourceID?
   /// Without this the field appears but the keyboard goes to nobody, so the first thing the operator
   /// types is lost.
   @FocusState private var isNamingFocused: Bool
@@ -22,6 +23,22 @@ public struct SourceSelectionView: View {
         Divider().overlay(Color.white.opacity(0.08))
         list
         footer
+      }
+
+      if let waveformID,
+         let selection = environment.selections.first(where: { $0.id == waveformID }) {
+        ZStack {
+          Color.black.opacity(0.55)
+            .ignoresSafeArea()
+            .onTapGesture { self.waveformID = nil }
+          SourceWaveformDetailView(
+            selection: selection,
+            monitor: environment.router.waveformMonitor,
+            onClose: { self.waveformID = nil },
+            onGain: { environment.setInputGain($0, for: selection.id) }
+          )
+          .padding(28)
+        }
       }
 
       if environment.config.showDebugHUD {
@@ -214,6 +231,15 @@ public struct SourceSelectionView: View {
         tint: .replayAmber,
         isOn: selection.usesAudio
       ) { environment.setUsesAudio($0, for: selection.id) }
+
+      SourceWaveformThumb(
+        index: index,
+        sourceID: selection.id,
+        gain: selection.inputGain,
+        monitor: environment.router.waveformMonitor
+      ) {
+        waveformID = selection.id
+      }
     }
     .padding(.horizontal, 16)
     .padding(.vertical, 16)
@@ -224,6 +250,7 @@ public struct SourceSelectionView: View {
     .accessibilityValue(
       "name=\(rowName(for: selection)) on=\(selection.isEnabled ? 1 : 0) "
         + "audio=\(selection.usesAudio ? 1 : 0) "
+        + "gain=\(SourceWaveformThumb.percent(selection.inputGain)) "
         + "host=\(environment.endpoint(for: selection.id)?.host ?? "") "
         + "origin=\(environment.bindingOrigin(for: selection.id).rawValue) "
         // Both, because a flow asserting on a rename has to tell "the camera renamed itself and we
