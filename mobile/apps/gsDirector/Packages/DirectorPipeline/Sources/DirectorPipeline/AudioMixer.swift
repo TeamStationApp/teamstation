@@ -23,9 +23,10 @@ public final class AudioMixer: @unchecked Sendable {
   public static let sampleRate: Double = 48_000
   public static let channelCount = 2
 
-  /// How far behind the live edge the emitter runs. Covers network jitter and the spread between
-  /// cameras: anything arriving later than this is already past and gets dropped.
-  private static let mixDelaySeconds = 0.25
+  /// How far behind the live edge the emitter runs. One mixer chunk, so the ring's live edge is
+  /// complete. Camera jitter is absorbed by the RTP delay line before audio is mixed; a
+  /// quarter-second here would play the programme behind the picture.
+  public static let mixDelaySeconds = 0.02
   /// Ring depth. Comfortably longer than the delay so a burst cannot wrap onto unread samples.
   private static let windowSeconds = 3.0
   private static let chunkSeconds = 0.02
