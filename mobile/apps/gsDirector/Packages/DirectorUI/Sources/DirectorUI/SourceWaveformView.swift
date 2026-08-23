@@ -36,7 +36,9 @@ struct SourceWaveformCanvas: View {
       var bar = Path()
       bar.move(to: CGPoint(x: 0, y: barY))
       bar.addLine(to: CGPoint(x: size.width, y: barY))
-      context.stroke(bar, with: .color(Color.sourceBlue), lineWidth: 2)
+      // Amber, not the outline blue, so the gain cue does not look tappable. Opacity keeps it
+      // readable without competing with the green sweep.
+      context.stroke(bar, with: .color(Color.replayAmber.opacity(0.75)), lineWidth: 1.5)
     }
   }
 
@@ -84,16 +86,36 @@ struct SourceWaveformDetailView: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 14) {
-      HStack(alignment: .firstTextBaseline) {
+      HStack(alignment: .firstTextBaseline, spacing: 12) {
         Text(selection.displayName)
           .font(.system(size: 18, weight: .semibold, design: .rounded))
           .foregroundStyle(.white)
         Spacer()
-        Text("\(SourceWaveformThumb.percent(selection.inputGain))%")
-          .font(.system(size: 22, weight: .heavy, design: .rounded))
-          .foregroundStyle(.white)
-          .accessibilityIdentifier("source-gain-value")
-          .accessibilityValue("gain=\(SourceWaveformThumb.percent(selection.inputGain))")
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+          Text("input volume")
+            .font(.system(size: 12, weight: .heavy, design: .rounded))
+            .tracking(0.4)
+            .foregroundStyle(.white.opacity(0.55))
+          Text("\(SourceWaveformThumb.percent(selection.inputGain))%")
+            .font(.system(size: 22, weight: .heavy, design: .rounded))
+            .foregroundStyle(.white)
+            .accessibilityIdentifier("source-gain-value")
+            .accessibilityValue("gain=\(SourceWaveformThumb.percent(selection.inputGain))")
+        }
+        Button {
+          onGain(SourceSelectionRules.defaultInputGain)
+        } label: {
+          Text("RESET")
+            .font(.system(size: 12, weight: .heavy, design: .rounded))
+            .tracking(1)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+            .foregroundStyle(.white)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("source-gain-reset")
+        .accessibilityLabel("Reset input volume")
         Button(action: onClose) {
           Text("CLOSE")
             .font(.system(size: 12, weight: .heavy, design: .rounded))
