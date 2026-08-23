@@ -1366,6 +1366,7 @@ public final class AppEnvironment {
     let liveEdge = pipeline.liveEdge ?? clock.now
     let target = liveEdge + offsetSeconds
     let sourceID = pipeline.sourceID
+    let epoch = pipeline.currentReplayEpoch
     let assembler = self.assembler
     // The archive runs at whatever the camera sends, so the replay pump has to follow the source
     // rather than any setting of ours.
@@ -1387,17 +1388,21 @@ public final class AppEnvironment {
         }.value
       } catch {
         await MainActor.run {
+          guard let self, self.isCurrentReplay(sourceIndex: sourceIndex, sourceID: sourceID, epoch: epoch)
+          else { return }
           // The drag already showed the past via JPEGs. Replay needs closed archive segments,
           // which do not exist yet in the first few seconds, and never exist at T3. Stay on
           // the still; Return to live is on the tile.
-          self?.statusMessage = "Holding still — archive not ready to replay yet"
-          self?.applyProgramOverlays()
+          self.statusMessage = "Holding still — archive not ready to replay yet"
+          self.applyProgramOverlays()
         }
         return
       }
 
       await self?.startReplay(
         sourceIndex: sourceIndex,
+        sourceID: sourceID,
+        epoch: epoch,
         assembly: assembly,
         target: target,
         offsetSeconds: offsetSeconds,
@@ -1429,6 +1434,8 @@ public final class AppEnvironment {
 
   private func startReplay(
     sourceIndex: Int,
+    sourceID: SourceID,
+    epoch: UInt64,
     assembly: SegmentAssembler.Assembly,
     target: WallClock,
     offsetSeconds: Double,
@@ -1438,6 +1445,7 @@ public final class AppEnvironment {
     releasedAt: UInt64,
     isContinuation: Bool = false
   ) async {
+    guard isCurrentReplay(sourceIndex: sourceIndex, sourceID: sourceID, epoch: epoch) else { return }
     guard let pipeline = router.pipeline(at: sourceIndex) else { return }
 
     // File-relative: the first assembled sample is t=0 for the decoder, even though fragment
@@ -1487,6 +1495,8 @@ public final class AppEnvironment {
         Task { @MainActor in
           self?.handleReplayEnded(
             sourceIndex: sourceIndex,
+            sourceID: sourceID,
+            epoch: epoch,
             target: target,
             offsetSeconds: offsetSeconds,
             played: playedBox.load(),
@@ -1499,20 +1509,24 @@ public final class AppEnvironment {
       },
       onFailure: { [weak self] error in
         Task { @MainActor in
-          self?.statusMessage = "Holding still — replay failed: \(error)"
-          self?.telemetry.mutate { $0.lastReplayError = "\(error)" }
-          self?.router.pipeline(at: sourceIndex)?.revertToScrubbing()
-          self?.applyProgramOverlays()
+          guard let self, self.isCurrentReplay(sourceIndex: sourceIndex, sourceID: sourceID, epoch: epoch)
+          else { return }
+          self.statusMessage = "Holding still — replay failed: \(error)"
+          self.telemetry.mutate { $0.lastReplayError = "\(error)" }
+          self.router.pipeline(at: sourceIndex)?.revertToScrubbing()
+          self.applyProgramOverlays()
         }
       }
     )
 
     do {
       try await pipeline.beginReplay(decoder, offsetSeconds: offsetSeconds)
+      guard isCurrentReplay(sourceIndex: sourceIndex, sourceID: sourceID, epoch: epoch) else { return }
       statusMessage = nil
       telemetry.mutate { $0.lastReplayError = "" }
       applyProgramOverlays()
     } catch {
+      guard isCurrentReplay(sourceIndex: sourceIndex, sourceID: sourceID, epoch: epoch) else { return }
       if isContinuation {
         returnToLive(sourceIndex: sourceIndex)
         return
@@ -1527,6 +1541,8 @@ public final class AppEnvironment {
   /// whatever has since been flushed rather than snapping to live while the countdown is still up.
   private func handleReplayEnded(
     sourceIndex: Int,
+    sourceID: SourceID,
+    epoch: UInt64,
     target: WallClock,
     offsetSeconds: Double,
     played: TimeInterval,
@@ -1535,22 +1551,19 @@ public final class AppEnvironment {
     playDuration: TimeInterval?,
     releasedAt: UInt64
   ) {
+    guard isCurrentReplay(sourceIndex: sourceIndex, sourceID: sourceID, epoch: epoch) else { return }
     let currentOffset = offsetSeconds + played
     guard played >= 0.25, ScrubMapping.shouldContinueReplay(currentOffsetSeconds: currentOffset) else {
       returnToLive(sourceIndex: sourceIndex)
       return
     }
-    guard let pipeline = router.pipeline(at: sourceIndex) else {
-      returnToLive(sourceIndex: sourceIndex)
-      return
-    }
+    guard let pipeline = router.pipeline(at: sourceIndex) else { return }
     let continueFrom = target + played
     let remaining = playDuration.map { max(0, $0 - played) }
     if let remaining, remaining <= ScrubMapping.snapToLiveSeconds {
       returnToLive(sourceIndex: sourceIndex)
       return
     }
-    let sourceID = pipeline.sourceID
     let liveEdge = pipeline.liveEdge ?? clock.now
     let assembler = self.assembler
     Task { [weak self] in
@@ -1565,11 +1578,17 @@ public final class AppEnvironment {
           )
         }.value
       } catch {
-        await MainActor.run { self?.returnToLive(sourceIndex: sourceIndex) }
+        await MainActor.run {
+          guard let self, self.isCurrentReplay(sourceIndex: sourceIndex, sourceID: sourceID, epoch: epoch)
+          else { return }
+          self.returnToLive(sourceIndex: sourceIndex)
+        }
         return
       }
       await self?.startReplay(
         sourceIndex: sourceIndex,
+        sourceID: sourceID,
+        epoch: epoch,
         assembly: assembly,
         target: continueFrom,
         offsetSeconds: currentOffset,
@@ -1588,6 +1607,11 @@ public final class AppEnvironment {
       router.programRenderer.prepareForLive()
     }
     applyProgramOverlays()
+  }
+
+  /// False when the operator has scrubbed, returned to live, or moved this camera since `epoch`.
+  private func isCurrentReplay(sourceIndex: Int, sourceID: SourceID, epoch: UInt64) -> Bool {
+    router.pipeline(at: sourceIndex)?.isCurrentReplay(sourceID: sourceID, epoch: epoch) == true
   }
 
   private static func pngData(_ data: Data) -> Data {

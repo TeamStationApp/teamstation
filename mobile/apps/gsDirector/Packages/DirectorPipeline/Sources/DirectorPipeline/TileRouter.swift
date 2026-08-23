@@ -45,6 +45,9 @@ public final class SourcePipeline: @unchecked Sendable {
   private var replay: ReplayDecoder?
   private var lastLiveWall: WallClock?
   private var sawAudio = false
+  /// Bumped when the operator starts a new scrub or returns to live, so a continuation that was
+  /// assembling a playlist cannot restart tape after that session has already ended.
+  private var replayEpoch: UInt64 = 0
 
   public init(
     sourceID: SourceID,
@@ -139,8 +142,22 @@ public final class SourcePipeline: @unchecked Sendable {
     )
   }
 
+  public var currentReplayEpoch: UInt64 {
+    lock.lock()
+    defer { lock.unlock() }
+    return replayEpoch
+  }
+
+  /// Whether this pipeline is still the camera and scrub/replay generation that captured `epoch`.
+  public func isCurrentReplay(sourceID: SourceID, epoch: UInt64) -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return self.sourceID == sourceID && replayEpoch == epoch
+  }
+
   public func stop() {
     lock.lock()
+    replayEpoch &+= 1
     let replay = self.replay
     self.replay = nil
     let source = self.source
@@ -250,6 +267,7 @@ public final class SourcePipeline: @unchecked Sendable {
 
   public func beginScrubbing() {
     lock.lock()
+    replayEpoch &+= 1
     state = .scrubbing
     let replay = self.replay
     self.replay = nil
@@ -278,9 +296,19 @@ public final class SourcePipeline: @unchecked Sendable {
     do {
       try await decoder.start()
     } catch {
-      revertToScrubbing()
+      // The operator may have returned to live or started a new scrub while start() waited on
+      // the player. Reverting would drag a live tile back onto a still.
+      if isAttachedReplay(decoder) {
+        revertToScrubbing()
+      }
       throw error
     }
+  }
+
+  private func isAttachedReplay(_ decoder: ReplayDecoder) -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return replay === decoder
   }
 
   private func attachReplay(_ decoder: ReplayDecoder, offsetSeconds: Double) {
@@ -344,6 +372,7 @@ public final class SourcePipeline: @unchecked Sendable {
 
   public func returnToLive() {
     lock.lock()
+    replayEpoch &+= 1
     let wasReplaying = state == .replaying
     let replay = self.replay
     self.replay = nil
