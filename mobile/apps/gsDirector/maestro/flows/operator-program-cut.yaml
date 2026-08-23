@@ -33,10 +33,13 @@ appId: co.gamestation.director
     visible: 'source=3 state=live.*'
     timeout: 15000
 
-- assertVisible: 'output src=CAM1 .*'
-- assertVisible: 'source=1 .*onair=1'
+- assertVisible: 'output src=CAM3 .*'
+- assertVisible: 'source=3 .*onair=1'
+- assertVisible: 'source=1 .*onair=0'
 - assertVisible: 'source=2 .*onair=0'
-- assertVisible: 'source=3 .*onair=0'
+- extendedWaitUntil:
+    visible: 'output src=CAM3 .*composed=[1-9]'
+    timeout: 15000
 
 - tapOn:
     id: 'source-2'

@@ -76,4 +76,10 @@ public enum ScrubMapping: Sendable {
     guard let requested else { return false }
     return played >= requested - 0.02
   }
+
+  /// The assembled playlist ended while the playhead is still behind live. Closed segments lag
+  /// the open GOP by up to one segment, so a 5 s rewind would otherwise snap back at about −2 s.
+  public static func shouldContinueReplay(currentOffsetSeconds: Double) -> Bool {
+    currentOffsetSeconds < -snapToLiveSeconds
+  }
 }

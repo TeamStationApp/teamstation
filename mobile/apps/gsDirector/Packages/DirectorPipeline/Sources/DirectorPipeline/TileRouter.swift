@@ -175,6 +175,12 @@ public final class SourcePipeline: @unchecked Sendable {
     telemetry.mutateTile(sourceIndex) { $0.isProgram = sink != nil }
   }
 
+  public var hasProgramSink: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return programSink != nil
+  }
+
   public func setAudioSink(_ sink: (@Sendable (AudioFrame) -> Void)?) {
     lock.lock()
     audioSink = sink
@@ -452,7 +458,13 @@ public final class TileRouter: @unchecked Sendable {
   public func add(_ pipeline: SourcePipeline) {
     lock.lock()
     pipelines[pipeline.sourceIndex] = pipeline
+    let selected = programSource
     lock.unlock()
+    // Output can be chosen before this camera's pipeline exists (the first enable, or a
+    // persisted cut restored at launch). Rebind so frames actually reach the programme tile.
+    if selected == pipeline.sourceIndex {
+      selectProgram(sourceIndex: selected)
+    }
   }
 
   public func removeAll() {
