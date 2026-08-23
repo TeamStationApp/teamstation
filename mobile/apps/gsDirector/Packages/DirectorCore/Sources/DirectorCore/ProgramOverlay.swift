@@ -187,6 +187,102 @@ public enum OverlayLayout {
     )
   }
 
+  /// CSS shrink-wrap when the page reported one; otherwise the snapshot converted to points.
+  ///
+  /// `takeSnapshot` sometimes returns a 1× `UIImage.scale` for the first off-screen capture even
+  /// when the bitmap is retina. Dividing only by that scale treats pixels as points and the overlay
+  /// jumps to about twice the saved size until a later layout (the content editor) recaptures it.
+  public static func webNativeSize(
+    measured: CGSize,
+    pixelWidth: CGFloat,
+    pixelHeight: CGFloat,
+    imageScale: CGFloat,
+    displayScale: CGFloat
+  ) -> CGSize {
+    if measured.width >= 1, measured.height >= 1 {
+      return CGSize(width: measured.width.rounded(.up), height: measured.height.rounded(.up))
+    }
+    let scale = max(imageScale, displayScale, 1)
+    return CGSize(width: pixelWidth / scale, height: pixelHeight / scale)
+  }
+
+  public static func nativesAgree(
+    _ a: CGSize,
+    _ b: CGSize,
+    tolerance: CGFloat = 0.08
+  ) -> Bool {
+    guard a.width >= 1, a.height >= 1, b.width >= 1, b.height >= 1 else { return false }
+    let widthDelta = abs(a.width - b.width) / max(a.width, b.width)
+    let heightDelta = abs(a.height - b.height) / max(a.height, b.height)
+    return widthDelta <= tolerance && heightDelta <= tolerance
+  }
+
+  /// True when `incoming` is the saved page at 2× or 3× — a display-scale artifact, not growth.
+  public static func isDisplayScaleArtifact(saved: CGSize, incoming: CGSize) -> Bool {
+    guard saved.width >= 1, saved.height >= 1, incoming.width >= 1, incoming.height >= 1 else {
+      return false
+    }
+    let widthRatio = incoming.width / saved.width
+    let heightRatio = incoming.height / saved.height
+    for factor in [CGFloat(2), CGFloat(3)] {
+      if abs(widthRatio - factor) <= 0.08, abs(heightRatio - factor) <= 0.08 {
+        return true
+      }
+    }
+    return false
+  }
+
+  /// How a new page measure should affect a web overlay that already has a saved native size.
+  public struct WebNativeResolution: Equatable, Sendable {
+    public var native: CGSize
+    public var pending: CGSize?
+    public var applyLayout: Bool
+
+    public init(native: CGSize, pending: CGSize?, applyLayout: Bool) {
+      self.native = native
+      self.pending = pending
+      self.applyLayout = applyLayout
+    }
+  }
+
+  /// True when the shrink-wrap failed and reported the web view itself.
+  public static func isViewportFilling(_ size: CGSize, viewport: CGSize) -> Bool {
+    guard size.width >= 1, viewport.width >= 1 else { return false }
+    return size.width >= viewport.width * 0.98
+  }
+
+  /// Keep the saved box until a measure matches it or is clearly smaller (finished CSS). Two
+  /// identical larger snapshots are not enough — MutationObserver fires twice on load before the
+  /// page has shrink-wrapped, which is what still made Output jump after the first snapshot was
+  /// ignored.
+  public static func resolveWebNative(
+    incoming: CGSize,
+    saved: CGSize,
+    pending: CGSize?,
+    savedConfirmed: Bool = false,
+    viewport: CGSize = .zero
+  ) -> WebNativeResolution {
+    if saved.width < 1 || saved.height < 1 {
+      return WebNativeResolution(native: incoming, pending: nil, applyLayout: true)
+    }
+    if isViewportFilling(incoming, viewport: viewport) {
+      return WebNativeResolution(native: saved, pending: pending, applyLayout: false)
+    }
+    if nativesAgree(saved, incoming) {
+      return WebNativeResolution(native: incoming, pending: nil, applyLayout: true)
+    }
+    if isDisplayScaleArtifact(saved: saved, incoming: incoming) {
+      return WebNativeResolution(native: saved, pending: nil, applyLayout: true)
+    }
+    if incoming.width + 1 < saved.width * 0.72 {
+      return WebNativeResolution(native: incoming, pending: nil, applyLayout: true)
+    }
+    if savedConfirmed, let pending, nativesAgree(pending, incoming) {
+      return WebNativeResolution(native: incoming, pending: nil, applyLayout: true)
+    }
+    return WebNativeResolution(native: saved, pending: incoming, applyLayout: false)
+  }
+
   public static func pixelRect(_ overlay: ProgramOverlay, canvas: CGSize) -> CGRect {
     CGRect(
       x: overlay.originX * canvas.width,
