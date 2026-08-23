@@ -284,6 +284,20 @@ public enum SourceSelectionRules {
       .sorted { ($0.sourceIndex ?? 0) < ($1.sourceIndex ?? 0) }
   }
 
+  /// Slot that should be Output: the persisted camera if it is still on a tile, otherwise the
+  /// last enabled camera in list order (the one the operator most recently turned on, once
+  /// `preferredID` is updated on each enable).
+  public static func programSourceIndex(
+    preferring preferredID: SourceID?,
+    among selections: [SourceSelection]
+  ) -> Int? {
+    let live = selections.filter { $0.isEnabled && $0.sourceIndex != nil }
+    if let preferredID, let match = live.first(where: { $0.id == preferredID }) {
+      return match.sourceIndex
+    }
+    return live.last?.sourceIndex
+  }
+
   /// A camera the scanner has not published has no stream to open. Starting it anyway is what
   /// produced "no stream address" toasts at launch for cameras that were simply still off.
   public static func startableSource(
@@ -304,6 +318,28 @@ public enum OperatorAlert {
   ) -> String? {
     guard isRecording, !detail.isEmpty else { return nil }
     return "\(displayName) went offline: \(detail)"
+  }
+}
+
+/// Last camera put on Output. Survives reboot so the programme tile comes back on that source.
+public struct ProgramSourceStore: Sendable {
+  private static let key = "co.gamestation.director.programSource"
+  private let store: ConfigStore
+
+  public init(store: ConfigStore = ConfigStore()) {
+    self.store = store
+  }
+
+  public func load() -> SourceID? {
+    store.codableValue(SourceID.self, forKey: Self.key)
+  }
+
+  public func save(_ id: SourceID) {
+    store.setCodableValue(id, forKey: Self.key)
+  }
+
+  public func clear() {
+    store.removeValue(forKey: Self.key)
   }
 }
 

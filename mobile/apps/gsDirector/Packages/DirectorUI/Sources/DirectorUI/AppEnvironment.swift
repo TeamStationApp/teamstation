@@ -24,6 +24,25 @@ private final class FirstFrameStamp: @unchecked Sendable {
   }
 }
 
+/// Last `played` value from the replay decoder, because `onFinish` runs after the player has
+/// already been torn down.
+private final class PlayedSeconds: @unchecked Sendable {
+  private let lock = NSLock()
+  private var value: TimeInterval = 0
+
+  func store(_ played: TimeInterval) {
+    lock.lock()
+    value = played
+    lock.unlock()
+  }
+
+  func load() -> TimeInterval {
+    lock.lock()
+    defer { lock.unlock() }
+    return value
+  }
+}
+
 /// Buys wall-clock time from iOS to finish work that a backgrounded app would otherwise be
 /// suspended in the middle of.
 ///
@@ -167,6 +186,9 @@ public final class AppEnvironment {
   /// Wall time until which a lift after a reorder must not cut that tile to Output.
   public var ignoreProgramTapUntil: TimeInterval = 0
   private let layoutStore: SourceLayoutStore
+  private let programSourceStore: ProgramSourceStore
+  /// Last camera put on Output, including the last one enabled in the picker.
+  private var preferredProgramSourceID: SourceID?
   private let overlayStore = OverlayStore()
   public let remoteInput = RemoteInputSession()
   private let remoteStore = RemoteControlStore()
@@ -200,6 +222,7 @@ public final class AppEnvironment {
 
     self.selectionStore = SourceSelectionStore(store: configStore)
     self.layoutStore = SourceLayoutStore(store: configStore)
+    self.programSourceStore = ProgramSourceStore(store: configStore)
     // The app target passes the same registry it gave to discovery; anything without a transport
     // gets its own, which is empty and harmless.
     let registry = cameras ?? CameraRegistry(store: CameraRecordStore(store: configStore))
@@ -255,11 +278,13 @@ public final class AppEnvironment {
     if launch.clearState {
       selectionStore.clear()
       layoutStore.clear()
+      programSourceStore.clear()
       cameras.clear()
       telemetry.reset()
     }
     selections = selectionStore.load()
     sourceLayout = layoutStore.load()
+    preferredProgramSourceID = programSourceStore.load()
     cameraRecords = cameras.records
 
     // A mid-segment kill leaves index rows describing files that were never written. Cleaning
@@ -518,6 +543,8 @@ public final class AppEnvironment {
   public func clearCameraMemory() {
     cameras.clear()
     selectionStore.clear()
+    programSourceStore.clear()
+    preferredProgramSourceID = nil
     selections = []
     cameraRecords = []
     rowEndpoints = [:]
@@ -647,6 +674,7 @@ public final class AppEnvironment {
       selectionStore.save(selections)
       switch result {
       case let .enabled(sourceIndex):
+        rememberProgramSource(id)
         Task { await startSource(id: id, sourceIndex: sourceIndex) }
       case .disabled:
         stopSource(id)
@@ -707,7 +735,9 @@ public final class AppEnvironment {
   public func enterDirecting() async {
     ensureProductionReady()
     await syncEnabledSources()
+    applyProgramSelection(force: true)
     dismissCameras()
+    router.programRenderer.prepareForLive()
   }
 
   public var shouldKeepAliveInBackground: Bool {
@@ -817,9 +847,7 @@ public final class AppEnvironment {
       guard let sourceIndex = selection.sourceIndex else { continue }
       await startSource(id: selection.id, sourceIndex: sourceIndex)
     }
-    if router.currentProgramSource == nil, let first = enabled.first?.sourceIndex {
-      router.selectProgram(sourceIndex: first)
-    }
+    applyProgramSelection()
     applyAudioContributors()
   }
 
@@ -828,6 +856,7 @@ public final class AppEnvironment {
       if existing.sourceIndex != sourceIndex || !existing.sourceIsRunning {
         stopSource(id)
       } else {
+        applyProgramSelection()
         return
       }
     }
@@ -856,9 +885,7 @@ public final class AppEnvironment {
       router.audioPlayer.start()
       pipelineEndpoints[id] = CameraEndpoint(address: discovered.address)
       telemetry.mutateTile(sourceIndex) { $0.displayName = selection.displayName }
-      if router.currentProgramSource == nil {
-        router.selectProgram(sourceIndex: sourceIndex)
-      }
+      applyProgramSelection()
       applyAudioContributors()
       if isRecording, let recordingID {
         attachArchive(to: pipeline, recordingID: recordingID)
@@ -886,6 +913,10 @@ public final class AppEnvironment {
     proxies[id] = nil
     pipelineEndpoints[id] = nil
     router.remove(sourceIndex: pipeline.sourceIndex)
+    if let index = router.currentProgramSource,
+       let remaining = router.pipeline(at: index) {
+      rememberProgramSource(remaining.sourceID)
+    }
     applyAudioContributors()
   }
 
@@ -918,10 +949,34 @@ public final class AppEnvironment {
     router.setInputGains(gains)
   }
 
-  public func selectProgram(sourceIndex: Int) {
-    guard router.pipeline(at: sourceIndex) != nil else { return }
+  public func selectProgram(sourceIndex: Int, persist: Bool = true) {
+    guard let pipeline = router.pipeline(at: sourceIndex) else { return }
     router.selectProgram(sourceIndex: sourceIndex)
+    if persist { rememberProgramSource(pipeline.sourceID) }
     applyProgramOverlays()
+  }
+
+  private func rememberProgramSource(_ id: SourceID) {
+    preferredProgramSourceID = id
+    programSourceStore.save(id)
+  }
+
+  /// Puts Output on the persisted camera if that tile is live, otherwise the last enabled
+  /// camera that is actually running.
+  private func applyProgramSelection(force: Bool = false) {
+    let preferred = SourceSelectionRules.programSourceIndex(
+      preferring: preferredProgramSourceID,
+      among: selections
+    )
+    let target = preferred.flatMap { router.pipeline(at: $0) != nil ? $0 : nil }
+      ?? SourceSelectionRules.enabled(in: selections)
+        .reversed()
+        .compactMap(\.sourceIndex)
+        .first { router.pipeline(at: $0) != nil }
+    guard let target else { return }
+    if force || router.currentProgramSource != target {
+      selectProgram(sourceIndex: target, persist: preferred == target)
+    }
   }
 
   // MARK: - Recording
@@ -1311,6 +1366,7 @@ public final class AppEnvironment {
     let liveEdge = pipeline.liveEdge ?? clock.now
     let target = liveEdge + offsetSeconds
     let sourceID = pipeline.sourceID
+    let epoch = pipeline.currentReplayEpoch
     let assembler = self.assembler
     // The archive runs at whatever the camera sends, so the replay pump has to follow the source
     // rather than any setting of ours.
@@ -1332,17 +1388,21 @@ public final class AppEnvironment {
         }.value
       } catch {
         await MainActor.run {
+          guard let self, self.isCurrentReplay(sourceIndex: sourceIndex, sourceID: sourceID, epoch: epoch)
+          else { return }
           // The drag already showed the past via JPEGs. Replay needs closed archive segments,
           // which do not exist yet in the first few seconds, and never exist at T3. Stay on
           // the still; Return to live is on the tile.
-          self?.statusMessage = "Holding still — archive not ready to replay yet"
-          self?.applyProgramOverlays()
+          self.statusMessage = "Holding still — archive not ready to replay yet"
+          self.applyProgramOverlays()
         }
         return
       }
 
       await self?.startReplay(
         sourceIndex: sourceIndex,
+        sourceID: sourceID,
+        epoch: epoch,
         assembly: assembly,
         target: target,
         offsetSeconds: offsetSeconds,
@@ -1374,14 +1434,18 @@ public final class AppEnvironment {
 
   private func startReplay(
     sourceIndex: Int,
+    sourceID: SourceID,
+    epoch: UInt64,
     assembly: SegmentAssembler.Assembly,
     target: WallClock,
     offsetSeconds: Double,
     frameRate: Double,
     rate: Float,
     playDuration: TimeInterval?,
-    releasedAt: UInt64
+    releasedAt: UInt64,
+    isContinuation: Bool = false
   ) async {
+    guard isCurrentReplay(sourceIndex: sourceIndex, sourceID: sourceID, epoch: epoch) else { return }
     guard let pipeline = router.pipeline(at: sourceIndex) else { return }
 
     // File-relative: the first assembled sample is t=0 for the decoder, even though fragment
@@ -1391,6 +1455,10 @@ public final class AppEnvironment {
       assemblyDuration: assembly.duration,
       startOffset: startOffset
     ) {
+      if isContinuation {
+        returnToLive(sourceIndex: sourceIndex)
+        return
+      }
       // A playlist that is shorter than the scrub would play for a fraction of a second and
       // snap to live — which is how "rewind never works" looks. Keep the proxy still.
       pipeline.revertToScrubbing()
@@ -1400,6 +1468,8 @@ public final class AppEnvironment {
     }
     let telemetry = self.telemetry
     let reported = FirstFrameStamp()
+    let playedBox = PlayedSeconds()
+    let remainingDuration = playDuration
     let decoder = ReplayDecoder(
       configuration: .init(
         url: assembly.url,
@@ -1407,10 +1477,11 @@ public final class AppEnvironment {
         frameRate: frameRate,
         port: ReplayDecoder.loopbackPort(forSource: sourceIndex),
         rate: rate,
-        playDuration: playDuration
+        playDuration: remainingDuration
       ),
       onFrame: { [weak pipeline] buffer, time, played in
-        if reported.claim() {
+        playedBox.store(played)
+        if !isContinuation, reported.claim() {
           let elapsed = Double(DispatchTime.now().uptimeNanoseconds - releasedAt) / 1_000_000
           telemetry.mutateTile(sourceIndex) { $0.replayLatencyMilliseconds = elapsed }
         }
@@ -1421,27 +1492,112 @@ public final class AppEnvironment {
         )
       },
       onFinish: { [weak self] in
-        Task { @MainActor in self?.returnToLive(sourceIndex: sourceIndex) }
+        Task { @MainActor in
+          self?.handleReplayEnded(
+            sourceIndex: sourceIndex,
+            sourceID: sourceID,
+            epoch: epoch,
+            target: target,
+            offsetSeconds: offsetSeconds,
+            played: playedBox.load(),
+            frameRate: frameRate,
+            rate: rate,
+            playDuration: remainingDuration,
+            releasedAt: releasedAt
+          )
+        }
       },
       onFailure: { [weak self] error in
         Task { @MainActor in
-          self?.statusMessage = "Holding still — replay failed: \(error)"
-          self?.telemetry.mutate { $0.lastReplayError = "\(error)" }
-          self?.router.pipeline(at: sourceIndex)?.revertToScrubbing()
-          self?.applyProgramOverlays()
+          guard let self, self.isCurrentReplay(sourceIndex: sourceIndex, sourceID: sourceID, epoch: epoch)
+          else { return }
+          self.statusMessage = "Holding still — replay failed: \(error)"
+          self.telemetry.mutate { $0.lastReplayError = "\(error)" }
+          self.router.pipeline(at: sourceIndex)?.revertToScrubbing()
+          self.applyProgramOverlays()
         }
       }
     )
 
     do {
       try await pipeline.beginReplay(decoder, offsetSeconds: offsetSeconds)
+      guard isCurrentReplay(sourceIndex: sourceIndex, sourceID: sourceID, epoch: epoch) else { return }
       statusMessage = nil
       telemetry.mutate { $0.lastReplayError = "" }
       applyProgramOverlays()
     } catch {
+      guard isCurrentReplay(sourceIndex: sourceIndex, sourceID: sourceID, epoch: epoch) else { return }
+      if isContinuation {
+        returnToLive(sourceIndex: sourceIndex)
+        return
+      }
       statusMessage = "Holding still — replay failed: \(error)"
       telemetry.mutate { $0.lastReplayError = "\(error)" }
       applyProgramOverlays()
+    }
+  }
+
+  /// Closed segments lag the open GOP, so a hotkey playlist often ends around −2 s. Extend from
+  /// whatever has since been flushed rather than snapping to live while the countdown is still up.
+  private func handleReplayEnded(
+    sourceIndex: Int,
+    sourceID: SourceID,
+    epoch: UInt64,
+    target: WallClock,
+    offsetSeconds: Double,
+    played: TimeInterval,
+    frameRate: Double,
+    rate: Float,
+    playDuration: TimeInterval?,
+    releasedAt: UInt64
+  ) {
+    guard isCurrentReplay(sourceIndex: sourceIndex, sourceID: sourceID, epoch: epoch) else { return }
+    let currentOffset = offsetSeconds + played
+    guard played >= 0.25, ScrubMapping.shouldContinueReplay(currentOffsetSeconds: currentOffset) else {
+      returnToLive(sourceIndex: sourceIndex)
+      return
+    }
+    guard let pipeline = router.pipeline(at: sourceIndex) else { return }
+    let continueFrom = target + played
+    let remaining = playDuration.map { max(0, $0 - played) }
+    if let remaining, remaining <= ScrubMapping.snapToLiveSeconds {
+      returnToLive(sourceIndex: sourceIndex)
+      return
+    }
+    let liveEdge = pipeline.liveEdge ?? clock.now
+    let assembler = self.assembler
+    Task { [weak self] in
+      let assembly: SegmentAssembler.Assembly
+      do {
+        assembly = try await Task.detached(priority: .userInitiated) {
+          try assembler.assemblePlaylist(
+            sourceID: sourceID,
+            from: continueFrom,
+            to: liveEdge,
+            maximumSegments: 64
+          )
+        }.value
+      } catch {
+        await MainActor.run {
+          guard let self, self.isCurrentReplay(sourceIndex: sourceIndex, sourceID: sourceID, epoch: epoch)
+          else { return }
+          self.returnToLive(sourceIndex: sourceIndex)
+        }
+        return
+      }
+      await self?.startReplay(
+        sourceIndex: sourceIndex,
+        sourceID: sourceID,
+        epoch: epoch,
+        assembly: assembly,
+        target: continueFrom,
+        offsetSeconds: currentOffset,
+        frameRate: frameRate,
+        rate: rate,
+        playDuration: remaining,
+        releasedAt: releasedAt,
+        isContinuation: true
+      )
     }
   }
 
@@ -1451,6 +1607,11 @@ public final class AppEnvironment {
       router.programRenderer.prepareForLive()
     }
     applyProgramOverlays()
+  }
+
+  /// False when the operator has scrubbed, returned to live, or moved this camera since `epoch`.
+  private func isCurrentReplay(sourceIndex: Int, sourceID: SourceID, epoch: UInt64) -> Bool {
+    router.pipeline(at: sourceIndex)?.isCurrentReplay(sourceID: sourceID, epoch: epoch) == true
   }
 
   private static func pngData(_ data: Data) -> Data {

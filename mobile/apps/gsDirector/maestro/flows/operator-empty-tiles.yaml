@@ -34,9 +34,9 @@ appId: co.gamestation.director
 - assertVisible: 'source=3 state=empty .*src=none'
 - assertVisible: 'source=4 state=empty .*src=none'
 - assertVisible: 'source=5 state=empty .*src=none'
-- assertVisible: 'output src=CAM1 .*'
+- assertVisible: 'output src=CAM2 .*'
 
 - tapOn:
     id: 'source-5'
-- assertVisible: 'output src=CAM1 .*'
-- assertVisible: 'source=1 .*onair=1'
+- assertVisible: 'output src=CAM2 .*'
+- assertVisible: 'source=2 .*onair=1'

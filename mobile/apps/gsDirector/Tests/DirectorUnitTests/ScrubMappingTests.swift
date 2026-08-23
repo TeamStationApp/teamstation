@@ -178,4 +178,12 @@ struct ScrubMappingTests {
     #expect(ScrubMapping.hasPlayedRequestedDuration(played: 9.99, requested: 10) == true)
     #expect(ScrubMapping.hasPlayedRequestedDuration(played: 20, requested: nil) == false)
   }
+
+  @Test("A playlist that ends a couple of seconds behind live should keep replaying")
+  func earlyPlaylistEndContinuesReplay() {
+    #expect(ScrubMapping.shouldContinueReplay(currentOffsetSeconds: -2) == true)
+    #expect(ScrubMapping.shouldContinueReplay(currentOffsetSeconds: -1.2) == true)
+    #expect(ScrubMapping.shouldContinueReplay(currentOffsetSeconds: -0.4) == false)
+    #expect(ScrubMapping.shouldContinueReplay(currentOffsetSeconds: 0) == false)
+  }
 }

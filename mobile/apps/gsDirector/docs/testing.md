@@ -262,7 +262,7 @@ makes it arrive sooner — see the keyframe entry in `risks.md`.
 |----------|--------|
 | `-uiTest true` | Enables the control server and the control channel |
 | `-sourceProfile synthetic4\|file4\|rtsp` | Which sources to use |
-| `-clearState true` | Forget saved source selection, source-tile order, and every named camera |
+| `-clearState true` | Forget saved source selection, source-tile order, last Output camera, and every named camera |
 | `-failEncoders N` | Fault injection for the degradation ladder |
 | `-segmentSeconds N` | Shorter segments so a flow produces several in seconds |
 | `-rtspHosts a,b,c` | Cameras to try directly, bypassing the search |

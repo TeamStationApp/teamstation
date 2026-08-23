@@ -23,6 +23,9 @@ public struct TileVideoView: UIViewRepresentable {
   }
 
   public static func dismantleUIView(_ uiView: SampleBufferView, coordinator: ()) {
+    // Flush this view's layer only. Do not `attach(nil)` — SwiftUI can dismantle the old
+    // host after the replacement has already attached, which would leave Output enqueueing
+    // into nowhere (black programme tile, cuts still update the nameplate).
     uiView.displayLayer.sampleBufferRenderer.flush(removingDisplayedImage: false)
   }
 
