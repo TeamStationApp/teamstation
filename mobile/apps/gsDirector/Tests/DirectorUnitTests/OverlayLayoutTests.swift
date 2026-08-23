@@ -78,6 +78,103 @@ struct OverlayLayoutTests {
     #expect(abs(grown.minY - rect.minY) < 0.5)
   }
 
+  @Test("Web native size prefers the CSS shrink-wrap over a 2x snapshot bitmap")
+  func webNativePrefersMeasured() {
+    let measured = OverlayLayout.webNativeSize(
+      measured: CGSize(width: 800, height: 200),
+      pixelWidth: 1600,
+      pixelHeight: 400,
+      imageScale: 1,
+      displayScale: 2
+    )
+    #expect(abs(measured.width - 800) < 0.5)
+    #expect(abs(measured.height - 200) < 0.5)
+
+    let fromPixels = OverlayLayout.webNativeSize(
+      measured: .zero,
+      pixelWidth: 1600,
+      pixelHeight: 400,
+      imageScale: 1,
+      displayScale: 2
+    )
+    #expect(abs(fromPixels.width - 800) < 0.5)
+    #expect(abs(fromPixels.height - 200) < 0.5)
+  }
+
+  @Test("The first oversized snapshot after launch keeps the saved box")
+  func firstDisagreeingSnapshotKeepsSaved() {
+    let saved = CGSize(width: 800, height: 200)
+    let first = OverlayLayout.resolveWebNative(
+      incoming: CGSize(width: 1200, height: 300),
+      saved: saved,
+      pending: nil
+    )
+    #expect(first.applyLayout == false)
+    #expect(abs(first.native.width - 800) < 0.5)
+    #expect(abs((first.pending?.width ?? 0) - 1200) < 0.5)
+
+    let matchesSaved = OverlayLayout.resolveWebNative(
+      incoming: saved,
+      saved: saved,
+      pending: first.pending
+    )
+    #expect(matchesSaved.applyLayout == true)
+    #expect(abs(matchesSaved.native.width - 800) < 0.5)
+    #expect(matchesSaved.pending == nil)
+
+    let retina = OverlayLayout.resolveWebNative(
+      incoming: CGSize(width: 1600, height: 400),
+      saved: saved,
+      pending: nil
+    )
+    #expect(retina.applyLayout == true)
+    #expect(abs(retina.native.width - 800) < 0.5)
+    #expect(retina.pending == nil)
+
+    let growthPending = OverlayLayout.resolveWebNative(
+      incoming: CGSize(width: 1000, height: 250),
+      saved: saved,
+      pending: nil
+    )
+    let growthUnconfirmed = OverlayLayout.resolveWebNative(
+      incoming: CGSize(width: 1000, height: 250),
+      saved: saved,
+      pending: growthPending.pending,
+      savedConfirmed: false
+    )
+    #expect(growthUnconfirmed.applyLayout == false)
+    #expect(abs(growthUnconfirmed.native.width - 800) < 0.5)
+
+    let growthConfirmed = OverlayLayout.resolveWebNative(
+      incoming: CGSize(width: 1000, height: 250),
+      saved: saved,
+      pending: growthPending.pending,
+      savedConfirmed: true
+    )
+    #expect(growthConfirmed.applyLayout == true)
+    #expect(abs(growthConfirmed.native.width - 1000) < 0.5)
+    #expect(growthConfirmed.pending == nil)
+
+    let viewport = OverlayLayout.resolveWebNative(
+      incoming: CGSize(width: 1920, height: 400),
+      saved: saved,
+      pending: CGSize(width: 1920, height: 400),
+      savedConfirmed: true,
+      viewport: CGSize(width: 1920, height: 1080)
+    )
+    #expect(viewport.applyLayout == false)
+    #expect(abs(viewport.native.width - 800) < 0.5)
+
+    let recovered = OverlayLayout.resolveWebNative(
+      incoming: saved,
+      saved: CGSize(width: 1920, height: 400),
+      pending: nil,
+      viewport: CGSize(width: 1920, height: 1080)
+    )
+    #expect(recovered.applyLayout == true)
+    #expect(abs(recovered.native.width - 800) < 0.5)
+  }
+
   @Test("Web corner scale plants the origin so the box grows right and down")
   func scaledFromOrigin() {
     let start = CGRect(x: 100, y: 80, width: 400, height: 200)
