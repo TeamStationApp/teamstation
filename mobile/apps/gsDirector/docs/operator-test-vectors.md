@@ -64,7 +64,7 @@ The layout is a 3×3 with the top-left four cells merged into Output. Source til
 
 | ID | Condition | Pass | Flow |
 |---|---|---|---|
-| B1 | First enabled camera is Output | `output src=CAM1`, `source=1 … onair=1`, others `onair=0` | `operator-program-cut` |
+| B1 | Last enabled camera is Output | `output src=CAM3` after enabling 1 then 2 then 3; `source=3 … onair=1`, others `onair=0` | `operator-program-cut` |
 | B2 | Tap any live source tile → it becomes Output | Tap `source-2` → `output src=CAM2`, `source=2 onair=1`, previous `onair=0` | `operator-program-cut` |
 | B3 | Tap every occupied tile in turn | Each tap moves Output to that camera; exactly one `onair=1` | `operator-program-cut` |
 | B4 | Tap the current Output tile again | Still that camera; no empty Output | `operator-program-cut` |

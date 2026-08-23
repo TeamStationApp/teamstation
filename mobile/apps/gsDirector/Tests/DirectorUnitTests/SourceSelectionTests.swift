@@ -145,4 +145,52 @@ struct SourceSelectionTests {
     let decoded = try JSONDecoder().decode([SourceSelection].self, from: data)
     #expect(decoded[0].inputGain == 0.75)
   }
+
+  @Test("Output prefers the persisted camera, then the last enabled row")
+  func programSourcePrefersPersistedThenLastEnabled() {
+    let cam1 = SourceSelection(
+      id: .init("CAM1"),
+      kind: .synthetic,
+      advertisedName: "CAM1",
+      isEnabled: true,
+      sourceIndex: 0
+    )
+    let cam2 = SourceSelection(
+      id: .init("CAM2"),
+      kind: .synthetic,
+      advertisedName: "CAM2",
+      isEnabled: true,
+      sourceIndex: 1
+    )
+    let cam3 = SourceSelection(
+      id: .init("CAM3"),
+      kind: .synthetic,
+      advertisedName: "CAM3",
+      isEnabled: true,
+      sourceIndex: 2
+    )
+    let selections = [cam1, cam2, cam3]
+    #expect(
+      SourceSelectionRules.programSourceIndex(preferring: .init("CAM2"), among: selections) == 1
+    )
+    #expect(
+      SourceSelectionRules.programSourceIndex(preferring: nil, among: selections) == 2
+    )
+    #expect(
+      SourceSelectionRules.programSourceIndex(preferring: .init("CAM9"), among: selections) == 2
+    )
+  }
+
+  @Test("Program source store remembers a camera id")
+  func programSourceStoreRoundTrip() {
+    let suite = "co.gamestation.director.tests.programSource"
+    let defaults = UserDefaults(suiteName: suite)!
+    defaults.removePersistentDomain(forName: suite)
+    let store = ProgramSourceStore(store: ConfigStore(defaults: defaults))
+    #expect(store.load() == nil)
+    store.save(SourceID("CAM3"))
+    #expect(store.load() == SourceID("CAM3"))
+    store.clear()
+    #expect(store.load() == nil)
+  }
 }
