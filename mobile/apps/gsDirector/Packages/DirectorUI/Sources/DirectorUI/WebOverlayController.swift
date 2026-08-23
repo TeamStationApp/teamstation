@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import DirectorCore
 import DirectorPipeline
 import UIKit
 import WebKit
@@ -107,6 +108,7 @@ public final class WebOverlayController: NSObject {
     }
     isSnapshotting = true
     armWatchdog()
+    attachToWindow()
 
     // Measure before capturing. The web view is laid out to the page's own content size so the
     // snapshot is the overlay graphic and nothing else — capturing at the full frame size instead would
@@ -114,6 +116,14 @@ public final class WebOverlayController: NSObject {
     // positioning that sheet rather than the graphic.
     measureContent { [weak self] size in
       guard let self else { return }
+      guard size.width >= 1, size.height >= 1 else {
+        self.finishSnapshot()
+        if self.pendingSnapshot {
+          self.pendingSnapshot = false
+          self.snapshot()
+        }
+        return
+      }
       self.webView.frame = CGRect(origin: .zero, size: size)
       self.webView.layoutIfNeeded()
 
@@ -126,16 +136,25 @@ public final class WebOverlayController: NSObject {
           guard let self else { return }
           self.finishSnapshot()
           if let image, let cgImage = image.cgImage {
-            let scale = max(image.scale, 1)
-            let pointSize = CGSize(
-              width: CGFloat(cgImage.width) / scale,
-              height: CGFloat(cgImage.height) / scale
+            let displayScale = max(
+              self.webView.window?.screen.scale ?? 0,
+              self.webView.traitCollection.displayScale,
+              1
+            )
+            // Layout uses the CSS shrink-wrap, not the bitmap. Pixel size / image.scale is wrong
+            // on the first capture when UIImage.scale is still 1 on a retina device.
+            let native = OverlayLayout.webNativeSize(
+              measured: size,
+              pixelWidth: CGFloat(cgImage.width),
+              pixelHeight: CGFloat(cgImage.height),
+              imageScale: image.scale,
+              displayScale: displayScale
             )
             self.latestImage = cgImage
-            self.latestSize = pointSize
+            self.latestSize = native
             self.snapshotCount &+= 1
             self.lastUpdate = Date()
-            self.onSnapshot?(cgImage, pointSize)
+            self.onSnapshot?(cgImage, native)
           } else if let error {
             self.loadError = error.localizedDescription
           }
@@ -195,10 +214,10 @@ public final class WebOverlayController: NSObject {
       Task { @MainActor in
         guard let self else { return }
         let numbers = value as? [Double] ?? []
-        let measuredWidth = numbers.count == 2 ? numbers[0] : 0
-        let measuredHeight = numbers.count == 2 ? numbers[1] : 0
+        let measuredWidth = numbers.count >= 2 ? numbers[0] : 0
+        let measuredHeight = numbers.count >= 2 ? numbers[1] : 0
         guard measuredWidth >= 1, measuredHeight >= 1 else {
-          completion(self.latestSize == .zero ? CGSize(width: 400, height: 100) : self.latestSize)
+          completion(.zero)
           return
         }
         completion(CGSize(width: measuredWidth, height: measuredHeight))
@@ -210,8 +229,14 @@ public final class WebOverlayController: NSObject {
   (function () {
     var b = document.body;
     if (!b) { return [0, 0]; }
+    // Refuse to measure a page that is still arriving. A late web font measures too narrow and a
+    // wrapper that has not shrink-wrapped measures the whole viewport, and either one persisted
+    // would resize the overlay to something the finished page never looks like.
+    if (document.readyState !== 'complete') { return [0, 0]; }
+    if (document.fonts && document.fonts.status === 'loading') { return [0, 0]; }
     var vw = document.documentElement.clientWidth || 0;
     var vh = document.documentElement.clientHeight || 0;
+    if (vw < 1 || vh < 1) { return [0, 0]; }
     var right = 0;
     var bottom = 0;
     var nodes = b.getElementsByTagName('*');
@@ -260,6 +285,12 @@ public final class WebOverlayController: NSObject {
     observer.observe(document.documentElement, {
       childList: true, subtree: true, characterData: true, attributes: true
     });
+    // The measure refuses to run until images and fonts have landed, so ask for a snapshot when
+    // they do. Without these the first correct measure would wait for the 5s heartbeat.
+    window.addEventListener('load', notify);
+    if (document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(notify);
+    }
     notify();
   })();
   """
