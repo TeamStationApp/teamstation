@@ -42,6 +42,7 @@ memory, degradation ladder) stay out of that list so a regression pass finishes 
 | A3 | VIDEO toggle enables a camera | Row value `on=1`, footer `1/5 enabled`, Start Production becomes enabled | `operator-program-cut` |
 | A4 | VIDEO toggle disables a camera | Row `on=0`, tile slot freed | `operator-source-cap` |
 | A5 | AUDIO toggle is independent of VIDEO | Camera can be on the grid with `audio=0`, or enabled with audio on | `operator-audio-mix` |
+| A17 | Native-audio waveform sits to the right of AUDIO | Blue-outlined `source-waveform-N` is tappable; detail shows a 0–100% fader starting at 50% | `operator-audio-waveform` |
 | A6 | Five cameras is the cap | Enabling a sixth is refused; status “Five sources maximum — turn one off first”; still `5/5 enabled` | `operator-source-cap` |
 | A7 | Start Production with nothing enabled is blocked | Button disabled while `0/5 enabled` | `operator-source-cap` |
 | A8 | Start Production with ≥1 camera opens the grid | `output` and `source-1` appear | `operator-program-cut` |
@@ -149,6 +150,7 @@ This is the operator path that was janky: output moving, small previews frozen.
 | F2 | Untick AUDIO on one enabled camera | `mix=` is enabled-minus-one; picture still on the grid | `operator-audio-mix` |
 | F3 | Mix produces samples | `mixs=` (and program `mixs=`) increase | `program-five-sources` |
 | F4 | Changing program does not drop mix contributors | After tapping another tile, `mix=` unchanged | `operator-audio-mix` |
+| F5 | Input gain scales that camera's waveform and mix | Detail slider 0–100%; 50% is unity; clipping shows at the rails when set too hot | `operator-audio-waveform` |
 
 ---
 
@@ -200,19 +202,20 @@ Flows in `scripts/run-maestro.js --device <udid> --suite operator`, in order:
 1. `smoke`
 2. `operator-source-cap` — A6, A7, A4
 3. `operator-audio-mix` — A5, F2, F4, B8
-4. `operator-program-cut` — A3, A8, B1–B4
-5. `operator-program-disable` — B9
-6. `operator-empty-tiles` — B5, B6
-7. `operator-source-layout` — B12, B13
-8. `operator-menu-back` — G3, G4
-9. `stream-controls` — stream URL field and clear X; empty-URL toast; Stream left of Record; RECORDING not STOP; no REC pill
-10. `scrub-without-history` — D1
-11. `scrub-before-first-segment` — D2
-12. `operator-scrub-cut-return` — D3, D4, E1–E7, C1, C4
-13. `scrub-and-return` — D6, D9, E3
-14. `hevc-scrub` — D5, D7, E8, D12
-15. `scrub-incremental` — D13, D14
-16. `program-five-sources` — B7, F1, F3, G1, G7
-17. `recordings-export` — G2
+4. `operator-audio-waveform` — A17, F5
+5. `operator-program-cut` — A3, A8, B1–B4
+6. `operator-program-disable` — B9
+7. `operator-empty-tiles` — B5, B6
+8. `operator-source-layout` — B12, B13
+9. `operator-menu-back` — G3, G4
+10. `stream-controls` — stream URL field and clear X; empty-URL toast; Stream left of Record; RECORDING not STOP; no REC pill
+11. `scrub-without-history` — D1
+12. `scrub-before-first-segment` — D2
+13. `operator-scrub-cut-return` — D3, D4, E1–E7, C1, C4
+14. `scrub-and-return` — D6, D9, E3
+15. `hevc-scrub` — D5, D7, E8, D12
+16. `scrub-incremental` — D13, D14
+17. `program-five-sources` — B7, F1, F3, G1, G7
+18. `recordings-export` — G2
 
 After any code fix, re-run this suite from the top.

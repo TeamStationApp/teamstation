@@ -79,6 +79,7 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
 
   private var frameID: UInt64 = 0
   private var baseVideoTimestamp: UInt32?
+  private var baseAudioTimestamp: UInt32?
   private var lastPresentationTime: CMTime?
   private var lastAccessUnitAt: Date?
   private var sessionStartedAt: Date?
@@ -262,6 +263,7 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     videoTracker = RTPSequenceTracker()
     audioTracker = RTPSequenceTracker()
     baseVideoTimestamp = nil
+    baseAudioTimestamp = nil
     lastPresentationTime = nil
     jitter = JitterWindow()
     // A new session restarts the timeline, so every frame held against the old one is stale and
@@ -551,11 +553,13 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     lock.unlock()
 
     for (offset, accessUnit) in depacketizer.accessUnits(from: packet).enumerated() {
+      let step = CompressedAudioFrame.framesPerPacket * Int64(offset)
+      let rtpTimestamp = packet.timestamp &+ UInt32(truncatingIfNeeded: step)
+
       // The archive takes the camera's own AAC. The mixer cannot: it sums several cameras at one
       // rate, so that path still decodes and resamples — but only what reaches the programme, and
       // never what reaches disk.
       if let archive, let config {
-        let step = CompressedAudioFrame.framesPerPacket * Int64(offset)
         archive(
           CompressedAudioFrame(
             sourceID: sourceID,
@@ -584,6 +588,14 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
         )
       }
       let formatDescription = audioFormatDescription
+      if baseAudioTimestamp == nil { baseAudioTimestamp = packet.timestamp }
+      let base = baseAudioTimestamp ?? packet.timestamp
+      let rate = config?.sampleRate ?? output.sampleRate
+      let elapsed = Int64(Int32(bitPattern: rtpTimestamp &- base))
+      let presentationSeconds = rate > 0 ? Double(max(0, elapsed)) / rate : 0
+      let nowUptime = Self.seconds(.now())
+      let due = playout.scheduleTime(presentationSeconds: presentationSeconds, nowUptime: nowUptime)
+      let dueWall = clock.now + (due - nowUptime)
       lock.unlock()
 
       guard
@@ -591,18 +603,18 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
         let sampleBuffer = AudioSampleBuilder.makeSampleBuffer(
           samples: output.samples,
           formatDescription: formatDescription,
-          presentationTime: CMTime(
-            value: CMTimeValue(packet.timestamp),
-            timescale: CMTimeScale(output.sampleRate)
-          )
+          presentationTime: CMTime(seconds: presentationSeconds, preferredTimescale: 48_000)
         )
       else { continue }
 
-      // Audio has no burst of its own to smooth, but it has to stay level with the picture, so it
-      // waits the same length of time the video is being held for.
-      let frame = AudioFrame(sourceID: sourceID, sampleBuffer: sampleBuffer, wallClock: clock.now)
+      // Same delay line as the picture, against the camera's RTP timeline. Stamping arrival time
+      // and holding a flat `holdSeconds` stacked every access unit that rode behind a keyframe
+      // onto one mix slot, which the operator heard as stutter and pumping.
       lock.lock()
-      audioFrames.enqueue(frame, due: Self.seconds(.now()) + playout.holdSeconds)
+      audioFrames.enqueue(
+        AudioFrame(sourceID: sourceID, sampleBuffer: sampleBuffer, wallClock: dueWall),
+        due: due
+      )
       lock.unlock()
     }
   }

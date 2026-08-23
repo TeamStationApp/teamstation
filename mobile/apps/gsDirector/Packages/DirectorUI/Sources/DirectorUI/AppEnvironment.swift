@@ -898,12 +898,24 @@ public final class AppEnvironment {
   public func applyAudioContributors() {
     let ids = Set(SourceSelectionRules.audioContributors(in: selections).map(\.id))
     router.setAudioContributors(ids)
+    applyInputGains()
   }
 
   public func setUsesAudio(_ usesAudio: Bool, for id: SourceID) {
     SourceSelectionRules.setUsesAudio(usesAudio, for: id, in: &selections)
     selectionStore.save(selections)
     applyAudioContributors()
+  }
+
+  public func setInputGain(_ gain: Double, for id: SourceID) {
+    SourceSelectionRules.setInputGain(gain, for: id, in: &selections)
+    selectionStore.save(selections)
+    applyInputGains()
+  }
+
+  private func applyInputGains() {
+    let gains = Dictionary(uniqueKeysWithValues: selections.map { ($0.id, $0.inputGain) })
+    router.setInputGains(gains)
   }
 
   public func selectProgram(sourceIndex: Int) {
@@ -2360,6 +2372,7 @@ public final class AppEnvironment {
         name: selection.displayName,
         isEnabled: selection.isEnabled,
         usesAudio: selection.usesAudio,
+        inputGain: selection.inputGain,
         isPresent: selection.isPresent,
         sourceIndex: selection.sourceIndex
       )
@@ -2376,6 +2389,8 @@ public final class AppEnvironment {
       $0.composedFrames = composedFrames
       $0.audioMixContributors = mix.contributors
       $0.audioMixSeconds = (mix.emittedSeconds * 10).rounded() / 10
+      $0.audioMixLateBuffers = mix.lateBuffers
+      $0.audioMixFutureBuffers = mix.futureBuffers
       $0.cpuPercent = (cpu * 10).rounded() / 10
       $0.cpuCores = ProcessLoad.coreCount
       $0.availableMemoryMB = ProcessLoad.availableMemoryMB()
@@ -2499,6 +2514,9 @@ public final class AppEnvironment {
     case let .sourceAudio(index, on):
       guard index >= 0, index < selections.count else { return false }
       setUsesAudio(on, for: selections[index].id)
+    case let .sourceGain(index, gain):
+      guard index >= 0, index < selections.count else { return false }
+      setInputGain(gain, for: selections[index].id)
     case let .renameSource(index, name):
       guard index >= 0, index < selections.count else { return false }
       rename(name, for: selections[index].id)

@@ -15,6 +15,7 @@ public enum ControlCommand: Sendable, Equatable {
   case selectProgram(source: Int)
   case enableSource(index: Int, on: Bool)
   case sourceAudio(index: Int, on: Bool)
+  case sourceGain(index: Int, gain: Double)
   case renameSource(index: Int, name: String)
   case assignSource(index: Int, slot: Int)
   case remoteChord(controls: [String])
@@ -105,6 +106,10 @@ public enum ControlChannel {
     case "source-audio", "sourceaudio":
       guard let index = query["index"].flatMap({ Int($0) }) else { return nil }
       return .sourceAudio(index: index - 1, on: LaunchConfiguration.boolean(query["on"]) ?? true)
+    case "source-gain", "sourcegain":
+      guard let index = query["index"].flatMap({ Int($0) }) else { return nil }
+      let gain = query["gain"].flatMap { Double($0) } ?? 0.5
+      return .sourceGain(index: index - 1, gain: gain)
     case "rename-source", "renamesource":
       guard let index = query["index"].flatMap({ Int($0) }), let name = query["name"] else { return nil }
       return .renameSource(index: index - 1, name: name)
