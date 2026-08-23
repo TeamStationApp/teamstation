@@ -194,6 +194,8 @@ public final class AppEnvironment {
   private let remoteStore = RemoteControlStore()
   private var webControllers: [UUID: WebOverlayController] = [:]
   private var webSnapshots: [UUID: (CGImage, CGSize)] = [:]
+  /// Page size that disagrees with the saved one, held until it proves it is not a transient.
+  private var pendingWebNative: [UUID: OverlayLayout.PendingWebNative] = [:]
   private var overlayImages: [UUID: CGImage] = [:]
   private var retentionTimer: Timer?
   private var testClock: TestClock?
@@ -1682,8 +1684,10 @@ public final class AppEnvironment {
     if overlay.url.isEmpty {
       webControllers[overlay.id]?.stop()
       webControllers[overlay.id] = nil
+      pendingWebNative[overlay.id] = nil
       return
     }
+    pendingWebNative[overlay.id] = nil
     let controller: WebOverlayController
     if let existing = webControllers[overlay.id] {
       controller = existing
@@ -1711,21 +1715,78 @@ public final class AppEnvironment {
   }
 
   private func handleWebSnapshot(id: UUID, image: CGImage?, size: CGSize) {
-    if let image, size.width >= 1, size.height >= 1 {
-      webSnapshots[id] = (image, size)
-      fitWebOverlay(id: id, native: size)
-    } else {
+    guard let image, size.width >= 1, size.height >= 1 else {
       webSnapshots[id] = nil
+      applyProgramOverlays()
+      return
+    }
+    let applied = fitWebOverlay(id: id, native: size)
+    if applied || webSnapshots[id] == nil || snapshotFitsRect(id: id, native: size) {
+      webSnapshots[id] = (image, size)
     }
     applyProgramOverlays()
   }
 
+  /// The compositor stretches this bitmap into the overlay's stored rectangle, so a capture whose
+  /// aspect ratio disagrees with that rectangle arrives squashed. Those are the captures whose
+  /// size was just held back as unproven, so show the last good one until the size is accepted.
+  private func snapshotFitsRect(id: UUID, native: CGSize) -> Bool {
+    guard
+      let overlay = overlays.first(where: { $0.id == id }),
+      overlay.width > 0, overlay.height > 0
+    else { return true }
+    let canvas = overlayCanvas
+    return OverlayLayout.aspectsAgree(
+      Double(native.width / max(native.height, 1)),
+      (overlay.width * Double(canvas.width)) / (overlay.height * Double(canvas.height))
+    )
+  }
+
   /// Web overlays keep their top-left. Display size is natural page size times the user's scale,
   /// so a refresh that grows the page grows the box down and to the right instead of cropping.
-  private func fitWebOverlay(id: UUID, native: CGSize) {
-    guard let index = overlays.firstIndex(where: { $0.id == id }) else { return }
+  ///
+  /// After a relaunch the first snapshot is often larger than the saved page (unfinished CSS or a
+  /// 1× image.scale on retina). Applying that native size immediately is what made Output jump to
+  /// about half the frame until the content editor forced a second layout.
+  ///
+  /// Returns whether the overlay was laid out, so the caller knows the new bitmap fits the box.
+  @discardableResult
+  private func fitWebOverlay(id: UUID, native incoming: CGSize) -> Bool {
+    guard let index = overlays.firstIndex(where: { $0.id == id }) else { return false }
     let canvas = overlayCanvas
     let firstMeasure = overlays[index].nativeWidth < 1
+    var native = incoming
+    if overlays[index].hasLaidOut, !firstMeasure {
+      let saved = CGSize(
+        width: overlays[index].nativeWidth,
+        height: overlays[index].nativeHeight
+      )
+      let resolved = OverlayLayout.resolveWebNative(
+        incoming: incoming,
+        saved: saved,
+        pending: pendingWebNative[id],
+        now: Date()
+      )
+      pendingWebNative[id] = resolved.pending
+      guard resolved.applyLayout else { return false }
+      native = resolved.native
+      // The page picks its own CSS scale from the layout viewport it happens to load into, so the
+      // NPLL scoreboard measures 637x170 on one load and 405x108 on the next for the same graphic.
+      // Only a change of shape means the content itself changed, so that is the only thing allowed
+      // to move a box the operator has already sized.
+      if OverlayLayout.aspectsAgree(
+        Double(saved.width / max(saved.height, 1)),
+        Double(native.width / max(native.height, 1))
+      ) {
+        overlays[index].scale = OverlayLayout.scalePreservingDisplay(
+          scale: overlays[index].scale,
+          from: saved,
+          to: native
+        )
+      }
+    } else {
+      pendingWebNative[id] = nil
+    }
     overlays[index].nativeWidth = Double(native.width)
     overlays[index].nativeHeight = Double(native.height)
     if !overlays[index].hasLaidOut {
@@ -1755,6 +1816,7 @@ public final class AppEnvironment {
     overlays[index].hasLaidOut = true
     applyAnchoredChildren(of: id)
     persistActiveTemplate()
+    return true
   }
 
   private func syncDisplaySize(at index: Int, canvas: CGSize) {
@@ -1935,6 +1997,7 @@ public final class AppEnvironment {
     webControllers[id]?.stop()
     webControllers[id] = nil
     webSnapshots[id] = nil
+    pendingWebNative[id] = nil
     overlayImages[id] = nil
     if overlay.kind == .image {
       overlayStore.removeImage(filename: overlay.imageFilename)
@@ -2219,6 +2282,7 @@ public final class AppEnvironment {
       webControllers[id]?.stop()
       webControllers[id] = nil
       webSnapshots[id] = nil
+      pendingWebNative[id] = nil
     }
     for id in overlayImages.keys where !ids.contains(id) {
       overlayImages[id] = nil
