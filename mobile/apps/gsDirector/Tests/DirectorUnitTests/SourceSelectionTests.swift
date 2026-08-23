@@ -1,3 +1,4 @@
+import Foundation
 import DirectorCore
 import DirectorSources
 import DirectorUI
@@ -104,5 +105,44 @@ struct SourceSelectionTests {
     #expect(
       OperatorAlert.cameraFailure(displayName: "Cam 1", detail: "", isRecording: true) == nil
     )
+  }
+
+  @Test("Missing inputGain decodes as 50 percent")
+  func missingInputGainDefaultsToHalf() throws {
+    let json = Data("""
+    [{"id":{"rawValue":"CAM1"},"kind":"synthetic","advertisedName":"CAM1","isEnabled":true,"usesAudio":true,"isPresent":true}]
+    """.utf8)
+    let decoded = try JSONDecoder().decode([SourceSelection].self, from: json)
+    #expect(decoded[0].inputGain == 0.5)
+  }
+
+  @Test("Input gain clamps to 0...1 and 50 percent is unity")
+  func inputGainClampsAndHalfIsUnity() {
+    #expect(SourceSelectionRules.clampedInputGain(-1) == 0)
+    #expect(SourceSelectionRules.clampedInputGain(2) == 1)
+    #expect(SourceSelectionRules.mixMultiplier(forGain: 0) == 0)
+    #expect(SourceSelectionRules.mixMultiplier(forGain: 0.5) == 1)
+    #expect(SourceSelectionRules.mixMultiplier(forGain: 1) == 2)
+    var selections = [
+      SourceSelection(id: .init("CAM1"), kind: .synthetic, advertisedName: "CAM1")
+    ]
+    #expect(selections[0].inputGain == 0.5)
+    SourceSelectionRules.setInputGain(1.5, for: .init("CAM1"), in: &selections)
+    #expect(selections[0].inputGain == 1)
+    SourceSelectionRules.setInputGain(-0.2, for: .init("CAM1"), in: &selections)
+    #expect(selections[0].inputGain == 0)
+  }
+
+  @Test("Persisted inputGain survives a round trip")
+  func inputGainRoundTrip() throws {
+    let original = SourceSelection(
+      id: .init("CAM1"),
+      kind: .synthetic,
+      advertisedName: "CAM1",
+      inputGain: 0.75
+    )
+    let data = try JSONEncoder().encode([original])
+    let decoded = try JSONDecoder().decode([SourceSelection].self, from: data)
+    #expect(decoded[0].inputGain == 0.75)
   }
 }

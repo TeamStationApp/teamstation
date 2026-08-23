@@ -34,6 +34,7 @@ const OPERATOR_SUITE = [
   'smoke',
   'operator-source-cap',
   'operator-audio-mix',
+  'operator-audio-waveform',
   'operator-program-cut',
   'operator-program-disable',
   'operator-empty-tiles',

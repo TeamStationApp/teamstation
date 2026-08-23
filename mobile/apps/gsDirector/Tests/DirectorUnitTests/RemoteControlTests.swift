@@ -294,4 +294,12 @@ struct ControlChannelSourceTests {
       ControlChannel.command(from: URL(string: "gsdirector://test/source-layout?order=1,2")!) == nil
     )
   }
+
+  @Test("Source-gain uses 1-based index and 0...1 gain")
+  func sourceGainCommand() {
+    let command = ControlChannel.command(
+      from: URL(string: "gsdirector://test/source-gain?index=2&gain=0.75")!
+    )
+    #expect(command == .sourceGain(index: 1, gain: 0.75))
+  }
 }

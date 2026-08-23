@@ -54,6 +54,8 @@ public struct DebugHUD: View {
         label("hud-composed", "composed=\(snapshot.composedFrames)")
         label("hud-audio-mix", "mix=\(snapshot.audioMixContributors)")
         label("hud-audio-mix-seconds", "mixs=\(snapshot.audioMixSeconds)")
+        label("hud-audio-mix-late", "mixlate=\(snapshot.audioMixLateBuffers)")
+        label("hud-audio-mix-future", "mixfut=\(snapshot.audioMixFutureBuffers)")
         label("hud-audio-out", "aout=\(snapshot.programAudioPlaying ? "1" : "0")")
         label("hud-bg-keep", "bgkeep=\(snapshot.keepAliveInBackground ? "1" : "0")")
         label("hud-pip", "pip=\(snapshot.pictureInPictureActive ? "1" : "0")")

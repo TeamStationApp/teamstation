@@ -367,10 +367,14 @@ public final class TileRouter: @unchecked Sendable {
   public let programRenderer = TileRenderer()
   public let audioMixer: AudioMixer
   public let audioPlayer: ProgramAudioPlayer
+  public let waveformMonitor = AudioWaveformMonitor()
 
   private let lock = NSLock()
   private var pipelines: [Int: SourcePipeline] = [:]
   private var programSource: Int?
+  /// Cameras whose PCM is summed into the programme mix. Every live pipeline still taps audio so
+  /// the waveform can draw when AUDIO is off.
+  private var mixContributorIDs: Set<SourceID> = []
 
   public init(
     telemetry: PipelineTelemetry,
@@ -457,7 +461,10 @@ public final class TileRouter: @unchecked Sendable {
     pipelines.removeAll()
     programSource = nil
     lock.unlock()
-    for pipeline in existing { pipeline.stop() }
+    for pipeline in existing {
+      waveformMonitor.remove(source: pipeline.sourceID)
+      pipeline.stop()
+    }
     audioMixer.stop()
     audioPlayer.stop()
     // Output's TileVideoView stays on screen — the grid is always the root. Detaching its
@@ -475,7 +482,10 @@ public final class TileRouter: @unchecked Sendable {
     if wasProgram { programSource = nil }
     let remaining = pipelines.values.sorted { $0.sourceIndex < $1.sourceIndex }
     lock.unlock()
-    pipeline?.stop()
+    if let pipeline {
+      waveformMonitor.remove(source: pipeline.sourceID)
+      pipeline.stop()
+    }
     if remaining.isEmpty {
       audioMixer.stop()
     }
@@ -517,22 +527,34 @@ public final class TileRouter: @unchecked Sendable {
     }
   }
 
-  /// Points the named sources at the programme mix and everything else at nothing.
+  /// Points the named sources at the programme mix. Every live pipeline still taps PCM so the
+  /// cameras-list oscilloscope can draw native audio even when AUDIO is off.
   public func setAudioContributors(_ ids: Set<SourceID>) {
     lock.lock()
+    mixContributorIDs = ids
     let all = Array(pipelines.values)
     lock.unlock()
 
     for pipeline in all {
       let contributes = ids.contains(pipeline.sourceID)
-      var sink: (@Sendable (AudioFrame) -> Void)?
-      if contributes {
-        sink = { [weak self] frame in self?.audioMixer.append(frame) }
-      }
-      pipeline.setAudioSink(sink)
+      pipeline.setAudioSink { [weak self] frame in self?.handleTappedAudio(frame) }
       telemetry.mutateTile(pipeline.sourceIndex) { $0.contributesAudio = contributes }
     }
     audioMixer.retainContributors(ids)
+  }
+
+  public func setInputGains(_ gains: [SourceID: Double]) {
+    audioMixer.setInputGains(gains)
+  }
+
+  private func handleTappedAudio(_ frame: AudioFrame) {
+    waveformMonitor.append(source: frame.sourceID, sampleBuffer: frame.sampleBuffer)
+    lock.lock()
+    let mix = mixContributorIDs.contains(frame.sourceID)
+    lock.unlock()
+    if mix {
+      audioMixer.append(frame)
+    }
   }
 
   /// Composites the programme frame and sends it to the preview tile as well as the

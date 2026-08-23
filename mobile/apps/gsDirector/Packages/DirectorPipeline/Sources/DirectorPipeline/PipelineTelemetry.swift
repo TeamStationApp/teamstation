@@ -17,6 +17,7 @@ public struct SourceSummary: Sendable, Codable, Equatable {
   public var name: String
   public var isEnabled: Bool
   public var usesAudio: Bool
+  public var inputGain: Double
   public var isPresent: Bool
   public var sourceIndex: Int?
 
@@ -25,6 +26,7 @@ public struct SourceSummary: Sendable, Codable, Equatable {
     name: String,
     isEnabled: Bool,
     usesAudio: Bool,
+    inputGain: Double,
     isPresent: Bool,
     sourceIndex: Int?
   ) {
@@ -32,6 +34,7 @@ public struct SourceSummary: Sendable, Codable, Equatable {
     self.name = name
     self.isEnabled = isEnabled
     self.usesAudio = usesAudio
+    self.inputGain = inputGain
     self.isPresent = isPresent
     self.sourceIndex = sourceIndex
   }
@@ -237,6 +240,10 @@ public struct TelemetrySnapshot: Sendable, Codable, Equatable {
   public var composedFrames: UInt64 = 0
   public var audioMixContributors = 0
   public var audioMixSeconds: Double = 0
+  /// Mixer ring misses. `late` is audio that arrived after its slot had already been emitted —
+  /// silence in the programme. `future` overran the ring the other way.
+  public var audioMixLateBuffers: UInt64 = 0
+  public var audioMixFutureBuffers: UInt64 = 0
   public var cpuPercent: Double = 0
   public var cpuCores = 0
   /// What iPadOS will still let this process allocate, which is far below physical RAM.
