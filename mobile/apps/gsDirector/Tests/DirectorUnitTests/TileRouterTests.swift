@@ -57,6 +57,18 @@ struct TileRouterTests {
     #expect(onAir(in: telemetry) == [1])
   }
 
+  @Test("Selecting Output before the pipeline exists still attaches the sink on add")
+  func selectProgramBeforeAddAttachesSink() {
+    let (router, telemetry) = makeRouter()
+    router.selectProgram(sourceIndex: 0)
+    let pipe = pipeline(index: 0, telemetry: telemetry)
+    #expect(pipe.hasProgramSink == false)
+    router.add(pipe)
+    #expect(pipe.hasProgramSink)
+    #expect(router.currentProgramSource == 0)
+    #expect(onAir(in: telemetry) == [0])
+  }
+
   @Test("Clearing every camera keeps Output attached so the next cut can paint")
   func removeAllKeepsProgramDisplayLayer() throws {
     let (router, telemetry) = makeRouter()

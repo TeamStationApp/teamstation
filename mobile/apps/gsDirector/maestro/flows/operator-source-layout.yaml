@@ -62,3 +62,4 @@ appId: co.gamestation.director
     timeout: 20000
 - assertVisible: 'order=5,1,2,3,4'
 - assertVisible: 'source 1: CAM1'
+- assertVisible: 'output src=CAM3 .*'
