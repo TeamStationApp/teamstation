@@ -232,55 +232,88 @@ public enum OverlayLayout {
     return false
   }
 
+  /// Two aspect ratios close enough that stretching a bitmap of one into a rectangle of the
+  /// other is invisible.
+  public static func aspectsAgree(_ a: Double, _ b: Double, tolerance: Double = 0.08) -> Bool {
+    guard a > 0, b > 0 else { return false }
+    return abs(a - b) / max(a, b) <= tolerance
+  }
+
+  /// Scale that leaves a web overlay the same size on screen after the page reports a different
+  /// natural size for the same graphic.
+  public static func scalePreservingDisplay(
+    scale: Double,
+    from saved: CGSize,
+    to native: CGSize
+  ) -> Double {
+    guard saved.width >= 1, native.width >= 1 else { return scale }
+    return scale * Double(saved.width / native.width)
+  }
+
+  /// A page size that disagrees with the saved one, waiting to prove it is not a transient.
+  public struct PendingWebNative: Equatable, Sendable {
+    public var size: CGSize
+    public var firstSeen: Date
+
+    public init(size: CGSize, firstSeen: Date) {
+      self.size = size
+      self.firstSeen = firstSeen
+    }
+  }
+
   /// How a new page measure should affect a web overlay that already has a saved native size.
   public struct WebNativeResolution: Equatable, Sendable {
     public var native: CGSize
-    public var pending: CGSize?
+    public var pending: PendingWebNative?
     public var applyLayout: Bool
 
-    public init(native: CGSize, pending: CGSize?, applyLayout: Bool) {
+    public init(native: CGSize, pending: PendingWebNative?, applyLayout: Bool) {
       self.native = native
       self.pending = pending
       self.applyLayout = applyLayout
     }
   }
 
-  /// True when the shrink-wrap failed and reported the web view itself.
-  public static func isViewportFilling(_ size: CGSize, viewport: CGSize) -> Bool {
-    guard size.width >= 1, viewport.width >= 1 else { return false }
-    return size.width >= viewport.width * 0.98
-  }
+  /// How long a changed page size must hold before it is believed.
+  public static let webNativeSettleSeconds: TimeInterval = 2
 
-  /// Keep the saved box until a measure matches it or is clearly smaller (finished CSS). Two
-  /// identical larger snapshots are not enough — MutationObserver fires twice on load before the
-  /// page has shrink-wrapped, which is what still made Output jump after the first snapshot was
-  /// ignored.
+  /// Resize only to a page size that has held steady, in either direction.
+  ///
+  /// The measures right after a load are wrong both ways: wrappers that have not shrink-wrapped
+  /// report the whole viewport, and text measured before its web font arrives reports too narrow.
+  /// Both settle within a few hundred milliseconds, whereas a page that really did change size
+  /// keeps reporting the new one, so elapsed time separates them where a sample count cannot —
+  /// `MutationObserver` fires twice within 120ms of a load.
+  ///
+  /// Applying this rule to shrinking as well as growth is what lets a saved size that is already
+  /// wrong recover on its own: the true size disagrees, holds, and replaces it.
   public static func resolveWebNative(
     incoming: CGSize,
     saved: CGSize,
-    pending: CGSize?,
-    savedConfirmed: Bool = false,
-    viewport: CGSize = .zero
+    pending: PendingWebNative?,
+    now: Date
   ) -> WebNativeResolution {
     if saved.width < 1 || saved.height < 1 {
       return WebNativeResolution(native: incoming, pending: nil, applyLayout: true)
     }
-    if isViewportFilling(incoming, viewport: viewport) {
-      return WebNativeResolution(native: saved, pending: pending, applyLayout: false)
-    }
     if nativesAgree(saved, incoming) {
       return WebNativeResolution(native: incoming, pending: nil, applyLayout: true)
     }
+    // An exact 2× or 3× is the snapshot bitmap reported in pixels, never a real page change.
     if isDisplayScaleArtifact(saved: saved, incoming: incoming) {
       return WebNativeResolution(native: saved, pending: nil, applyLayout: true)
     }
-    if incoming.width + 1 < saved.width * 0.72 {
-      return WebNativeResolution(native: incoming, pending: nil, applyLayout: true)
+    guard let pending, nativesAgree(pending.size, incoming) else {
+      return WebNativeResolution(
+        native: saved,
+        pending: PendingWebNative(size: incoming, firstSeen: now),
+        applyLayout: false
+      )
     }
-    if savedConfirmed, let pending, nativesAgree(pending, incoming) {
-      return WebNativeResolution(native: incoming, pending: nil, applyLayout: true)
+    guard now.timeIntervalSince(pending.firstSeen) >= webNativeSettleSeconds else {
+      return WebNativeResolution(native: saved, pending: pending, applyLayout: false)
     }
-    return WebNativeResolution(native: saved, pending: incoming, applyLayout: false)
+    return WebNativeResolution(native: incoming, pending: nil, applyLayout: true)
   }
 
   public static func pixelRect(_ overlay: ProgramOverlay, canvas: CGSize) -> CGRect {

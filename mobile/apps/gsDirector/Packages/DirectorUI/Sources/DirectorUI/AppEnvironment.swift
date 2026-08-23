@@ -194,10 +194,8 @@ public final class AppEnvironment {
   private let remoteStore = RemoteControlStore()
   private var webControllers: [UUID: WebOverlayController] = [:]
   private var webSnapshots: [UUID: (CGImage, CGSize)] = [:]
-  /// Unconfirmed page size after a load. The first disagreeing snapshot keeps the saved box.
-  private var pendingWebNative: [UUID: CGSize] = [:]
-  /// True after a snapshot matched the saved page size this session, so later growth is real.
-  private var confirmedWebNative: Set<UUID> = []
+  /// Page size that disagrees with the saved one, held until it proves it is not a transient.
+  private var pendingWebNative: [UUID: OverlayLayout.PendingWebNative] = [:]
   private var overlayImages: [UUID: CGImage] = [:]
   private var retentionTimer: Timer?
   private var testClock: TestClock?
@@ -1670,7 +1668,6 @@ public final class AppEnvironment {
   }
 
   private func reloadOverlayMedia() {
-    resetViewportSizedWebOverlays()
     for overlay in overlays {
       switch overlay.kind {
       case .web:
@@ -1682,41 +1679,15 @@ public final class AppEnvironment {
     applyProgramOverlays()
   }
 
-  /// A launch that treated the web view as the page writes nativeWidth ≈ Output. That box must
-  /// not be kept: later snapshots are ignored as viewport-filling, so the graphic would stay huge.
-  private func resetViewportSizedWebOverlays() {
-    let canvas = overlayCanvas
-    var changed = false
-    for index in overlays.indices {
-      guard overlays[index].kind == .web else { continue }
-      let saved = CGSize(
-        width: overlays[index].nativeWidth,
-        height: overlays[index].nativeHeight
-      )
-      guard OverlayLayout.isViewportFilling(saved, viewport: canvas) else { continue }
-      overlays[index].nativeWidth = 0
-      overlays[index].nativeHeight = 0
-      if overlays[index].width > Double(OverlayLayout.quarter) {
-        let aspect = overlays[index].height / max(overlays[index].width, 0.001)
-        overlays[index].width = Double(OverlayLayout.quarter)
-        overlays[index].height = Double(OverlayLayout.quarter) * aspect
-      }
-      changed = true
-    }
-    if changed { persistActiveTemplate() }
-  }
-
   private func startWebOverlay(_ overlay: ProgramOverlay) {
     guard overlay.kind == .web else { return }
     if overlay.url.isEmpty {
       webControllers[overlay.id]?.stop()
       webControllers[overlay.id] = nil
       pendingWebNative[overlay.id] = nil
-      confirmedWebNative.remove(overlay.id)
       return
     }
     pendingWebNative[overlay.id] = nil
-    confirmedWebNative.remove(overlay.id)
     let controller: WebOverlayController
     if let existing = webControllers[overlay.id] {
       controller = existing
@@ -1744,13 +1715,31 @@ public final class AppEnvironment {
   }
 
   private func handleWebSnapshot(id: UUID, image: CGImage?, size: CGSize) {
-    if let image, size.width >= 1, size.height >= 1 {
-      webSnapshots[id] = (image, size)
-      fitWebOverlay(id: id, native: size)
-    } else {
+    guard let image, size.width >= 1, size.height >= 1 else {
       webSnapshots[id] = nil
+      applyProgramOverlays()
+      return
+    }
+    let applied = fitWebOverlay(id: id, native: size)
+    if applied || webSnapshots[id] == nil || snapshotFitsRect(id: id, native: size) {
+      webSnapshots[id] = (image, size)
     }
     applyProgramOverlays()
+  }
+
+  /// The compositor stretches this bitmap into the overlay's stored rectangle, so a capture whose
+  /// aspect ratio disagrees with that rectangle arrives squashed. Those are the captures whose
+  /// size was just held back as unproven, so show the last good one until the size is accepted.
+  private func snapshotFitsRect(id: UUID, native: CGSize) -> Bool {
+    guard
+      let overlay = overlays.first(where: { $0.id == id }),
+      overlay.width > 0, overlay.height > 0
+    else { return true }
+    let canvas = overlayCanvas
+    return OverlayLayout.aspectsAgree(
+      Double(native.width / max(native.height, 1)),
+      (overlay.width * Double(canvas.width)) / (overlay.height * Double(canvas.height))
+    )
   }
 
   /// Web overlays keep their top-left. Display size is natural page size times the user's scale,
@@ -1759,8 +1748,11 @@ public final class AppEnvironment {
   /// After a relaunch the first snapshot is often larger than the saved page (unfinished CSS or a
   /// 1× image.scale on retina). Applying that native size immediately is what made Output jump to
   /// about half the frame until the content editor forced a second layout.
-  private func fitWebOverlay(id: UUID, native incoming: CGSize) {
-    guard let index = overlays.firstIndex(where: { $0.id == id }) else { return }
+  ///
+  /// Returns whether the overlay was laid out, so the caller knows the new bitmap fits the box.
+  @discardableResult
+  private func fitWebOverlay(id: UUID, native incoming: CGSize) -> Bool {
+    guard let index = overlays.firstIndex(where: { $0.id == id }) else { return false }
     let canvas = overlayCanvas
     let firstMeasure = overlays[index].nativeWidth < 1
     var native = incoming
@@ -1769,38 +1761,28 @@ public final class AppEnvironment {
         width: overlays[index].nativeWidth,
         height: overlays[index].nativeHeight
       )
-      if OverlayLayout.isViewportFilling(saved, viewport: canvas) {
-        if OverlayLayout.isViewportFilling(incoming, viewport: canvas) {
-          return
-        }
-        overlays[index].nativeWidth = Double(incoming.width)
-        overlays[index].nativeHeight = Double(incoming.height)
-        overlays[index].scale = OverlayLayout.scaleFittingQuarter(native: incoming, canvas: canvas)
-        let size = OverlayLayout.scaledNormalized(
-          native: incoming,
-          scale: overlays[index].scale,
-          canvas: canvas
-        )
-        overlays[index].width = size.width
-        overlays[index].height = size.height
-        pendingWebNative[id] = nil
-        confirmedWebNative.insert(id)
-        applyAnchoredChildren(of: id)
-        persistActiveTemplate()
-        return
-      }
       let resolved = OverlayLayout.resolveWebNative(
         incoming: incoming,
         saved: saved,
         pending: pendingWebNative[id],
-        savedConfirmed: confirmedWebNative.contains(id),
-        viewport: canvas
+        now: Date()
       )
       pendingWebNative[id] = resolved.pending
-      guard resolved.applyLayout else { return }
+      guard resolved.applyLayout else { return false }
       native = resolved.native
-      if OverlayLayout.nativesAgree(saved, incoming) {
-        confirmedWebNative.insert(id)
+      // The page picks its own CSS scale from the layout viewport it happens to load into, so the
+      // NPLL scoreboard measures 637x170 on one load and 405x108 on the next for the same graphic.
+      // Only a change of shape means the content itself changed, so that is the only thing allowed
+      // to move a box the operator has already sized.
+      if OverlayLayout.aspectsAgree(
+        Double(saved.width / max(saved.height, 1)),
+        Double(native.width / max(native.height, 1))
+      ) {
+        overlays[index].scale = OverlayLayout.scalePreservingDisplay(
+          scale: overlays[index].scale,
+          from: saved,
+          to: native
+        )
       }
     } else {
       pendingWebNative[id] = nil
@@ -1834,6 +1816,7 @@ public final class AppEnvironment {
     overlays[index].hasLaidOut = true
     applyAnchoredChildren(of: id)
     persistActiveTemplate()
+    return true
   }
 
   private func syncDisplaySize(at index: Int, canvas: CGSize) {
@@ -2015,7 +1998,6 @@ public final class AppEnvironment {
     webControllers[id] = nil
     webSnapshots[id] = nil
     pendingWebNative[id] = nil
-    confirmedWebNative.remove(id)
     overlayImages[id] = nil
     if overlay.kind == .image {
       overlayStore.removeImage(filename: overlay.imageFilename)
@@ -2301,7 +2283,6 @@ public final class AppEnvironment {
       webControllers[id] = nil
       webSnapshots[id] = nil
       pendingWebNative[id] = nil
-      confirmedWebNative.remove(id)
     }
     for id in overlayImages.keys where !ids.contains(id) {
       overlayImages[id] = nil
