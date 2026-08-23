@@ -29,15 +29,24 @@ appId: co.gamestation.director
     visible:
       id: 'source-waveform-detail'
     timeout: 5000
+- assertVisible: 'input volume'
 - assertVisible:
     id: 'source-gain-value'
 - assertVisible:
     id: 'source-gain-slider'
+- assertVisible:
+    id: 'source-gain-reset'
 
 - swipe:
     from:
       id: 'source-gain-slider'
     direction: UP
+
+- tapOn:
+    id: 'source-gain-reset'
+- assertVisible:
+    id: 'source-gain-value'
+    text: '50%'
 
 - tapOn:
     id: 'source-waveform-close'
