@@ -214,8 +214,8 @@ public final class WebOverlayController: NSObject {
       Task { @MainActor in
         guard let self else { return }
         let numbers = value as? [Double] ?? []
-        let measuredWidth = numbers.count == 2 ? numbers[0] : 0
-        let measuredHeight = numbers.count == 2 ? numbers[1] : 0
+        let measuredWidth = numbers.count >= 2 ? numbers[0] : 0
+        let measuredHeight = numbers.count >= 2 ? numbers[1] : 0
         guard measuredWidth >= 1, measuredHeight >= 1 else {
           completion(.zero)
           return
@@ -229,6 +229,11 @@ public final class WebOverlayController: NSObject {
   (function () {
     var b = document.body;
     if (!b) { return [0, 0]; }
+    // Refuse to measure a page that is still arriving. A late web font measures too narrow and a
+    // wrapper that has not shrink-wrapped measures the whole viewport, and either one persisted
+    // would resize the overlay to something the finished page never looks like.
+    if (document.readyState !== 'complete') { return [0, 0]; }
+    if (document.fonts && document.fonts.status === 'loading') { return [0, 0]; }
     var vw = document.documentElement.clientWidth || 0;
     var vh = document.documentElement.clientHeight || 0;
     if (vw < 1 || vh < 1) { return [0, 0]; }
@@ -257,7 +262,6 @@ public final class WebOverlayController: NSObject {
     }
     if (right < 1) { right = b.scrollWidth; }
     if (bottom < 1) { bottom = b.scrollHeight; }
-    if (right >= vw * 0.98) { return [0, 0]; }
     return [Math.ceil(right), Math.ceil(bottom)];
   })();
   """
@@ -281,6 +285,12 @@ public final class WebOverlayController: NSObject {
     observer.observe(document.documentElement, {
       childList: true, subtree: true, characterData: true, attributes: true
     });
+    // The measure refuses to run until images and fonts have landed, so ask for a snapshot when
+    // they do. Without these the first correct measure would wait for the 5s heartbeat.
+    window.addEventListener('load', notify);
+    if (document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(notify);
+    }
     notify();
   })();
   """
