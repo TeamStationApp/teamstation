@@ -2623,6 +2623,7 @@ public final class AppEnvironment {
       $0.discoveryStatus = discoveryStatus
       $0.displayLatencyMilliseconds = displayLatency
       $0.programAudioPlaying = self.router.audioPlayer.isRunning
+      $0.isStreaming = self.isStreaming
       $0.keepAliveInBackground = self.shouldKeepAliveInBackground
       $0.pictureInPictureActive = self.pictureInPicture.isActive
       $0.sourceLayout = self.sourceLayout.displayOrder
@@ -2723,6 +2724,9 @@ public final class AppEnvironment {
       Task { await enterDirecting() }
     case let .selectProgram(source):
       selectProgram(sourceIndex: source)
+    case let .replay(source, seconds, speed):
+      let rate: Float = speed == "slow" ? Float(config.replaySlowMotionRate) : 1
+      startInstantReplay(sourceIndex: source, seconds: seconds, rate: rate)
     case let .assignSource(index, slot):
       guard index >= 0, index < selections.count else { return false }
       assignSource(slot: slot, to: selections[index].id)

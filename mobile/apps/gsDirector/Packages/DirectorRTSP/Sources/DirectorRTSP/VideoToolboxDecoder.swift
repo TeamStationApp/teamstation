@@ -41,6 +41,15 @@ public final class VideoToolboxDecoder: @unchecked Sendable {
     self.onFrame = onFrame
   }
 
+  /// Presentation time for one in-flight decode. Retained as `frameRefCon` until the C callback
+  /// (or a failed `DecodeFrame`) releases it.
+  fileprivate final class DecodeFrameToken {
+    let presentationTime: CMTime
+    init(presentationTime: CMTime) {
+      self.presentationTime = presentationTime
+    }
+  }
+
   deinit {
     if let session {
       VTDecompressionSessionInvalidate(session)
@@ -82,7 +91,7 @@ public final class VideoToolboxDecoder: @unchecked Sendable {
       return false
     }
 
-    let created = Self.makeSession(formatDescription: description)
+    let created = makeSession(formatDescription: description)
     lock.lock()
     let previous = session
     session = created
@@ -124,53 +133,67 @@ public final class VideoToolboxDecoder: @unchecked Sendable {
       return false
     }
 
-    guard let sampleBuffer = Self.makeSampleBuffer(
-      data: unit.data,
-      formatDescription: description,
-      presentationTime: presentationTime
-    ) else {
-      lock.lock()
-      statistics.failures &+= 1
-      lock.unlock()
-      return false
-    }
-
-    let handler = onFrame
-    let status = VTDecompressionSessionDecodeFrame(
-      session,
-      sampleBuffer: sampleBuffer,
-      flags: [],
-      infoFlagsOut: nil
-    ) { [weak self] status, _, imageBuffer, decodedPresentationTime, _ in
-      guard let self else { return }
-      guard status == noErr, let imageBuffer else {
-        self.lock.lock()
-        self.statistics.failures &+= 1
-        self.lock.unlock()
-        return
-      }
-      self.lock.lock()
-      self.statistics.decoded &+= 1
-      self.lock.unlock()
-      handler(imageBuffer, decodedPresentationTime.isValid ? decodedPresentationTime : presentationTime)
-    }
-
-    guard status == noErr else {
-      lock.lock()
-      statistics.failures &+= 1
-      lock.unlock()
-      // A session that has gone bad stays bad; dropping it forces a rebuild on the next
-      // parameter sets rather than failing every frame from here on.
-      if status == kVTInvalidSessionErr {
+    return autoreleasepool {
+      guard let sampleBuffer = Self.makeSampleBuffer(
+        data: unit.data,
+        formatDescription: description,
+        presentationTime: presentationTime
+      ) else {
         lock.lock()
-        self.session = nil
-        parameterSets = []
+        statistics.failures &+= 1
         lock.unlock()
-        VTDecompressionSessionInvalidate(session)
+        return false
       }
-      return false
+
+      // The block-based DecodeFrame copies a Swift closure per picture. VideoToolbox has been
+      // observed to retain those handlers (and their sample buffers) for the life of the session,
+      // which grows with compressed bitrate. The C callback record is one function pointer.
+      let token = DecodeFrameToken(presentationTime: presentationTime)
+      let tokenPointer = Unmanaged.passRetained(token).toOpaque()
+      var infoFlags: VTDecodeInfoFlags = []
+      let status = VTDecompressionSessionDecodeFrame(
+        session,
+        sampleBuffer: sampleBuffer,
+        flags: [],
+        frameRefcon: tokenPointer,
+        infoFlagsOut: &infoFlags
+      )
+
+      guard status == noErr else {
+        _ = Unmanaged<DecodeFrameToken>.fromOpaque(tokenPointer).takeRetainedValue()
+        lock.lock()
+        statistics.failures &+= 1
+        lock.unlock()
+        // A session that has gone bad stays bad; dropping it forces a rebuild on the next
+        // parameter sets rather than failing every frame from here on.
+        if status == kVTInvalidSessionErr {
+          lock.lock()
+          self.session = nil
+          parameterSets = []
+          lock.unlock()
+          VTDecompressionSessionInvalidate(session)
+        }
+        return false
+      }
+      return true
     }
-    return true
+  }
+
+  fileprivate func handleDecoded(
+    status: OSStatus,
+    imageBuffer: CVImageBuffer?,
+    presentationTime: CMTime
+  ) {
+    guard status == noErr, let imageBuffer else {
+      lock.lock()
+      statistics.failures &+= 1
+      lock.unlock()
+      return
+    }
+    lock.lock()
+    statistics.decoded &+= 1
+    lock.unlock()
+    onFrame(imageBuffer, presentationTime)
   }
 
   public func invalidate() {
@@ -193,22 +216,26 @@ public final class VideoToolboxDecoder: @unchecked Sendable {
     CompressedSample.videoFormatDescription(codec: codec.compressed, parameterSets: sets)
   }
 
-  private static func makeSession(
+  private func makeSession(
     formatDescription: CMVideoFormatDescription
   ) -> VTDecompressionSession? {
     let imageAttributes: [String: Any] = [
-      kCVPixelBufferPixelFormatTypeKey as String: outputPixelFormat,
+      kCVPixelBufferPixelFormatTypeKey as String: Self.outputPixelFormat,
       kCVPixelBufferIOSurfacePropertiesKey as String: [:] as [String: Any],
       kCVPixelBufferMetalCompatibilityKey as String: true
     ]
 
+    var callback = VTDecompressionOutputCallbackRecord(
+      decompressionOutputCallback: videoToolboxDecompressionCallback,
+      decompressionOutputRefCon: Unmanaged.passUnretained(self).toOpaque()
+    )
     var session: VTDecompressionSession?
     let status = VTDecompressionSessionCreate(
       allocator: kCFAllocatorDefault,
       formatDescription: formatDescription,
       decoderSpecification: nil,
       imageBufferAttributes: imageAttributes as CFDictionary,
-      outputCallback: nil,
+      outputCallback: &callback,
       decompressionSessionOut: &session
     )
     guard status == noErr, let session else { return nil }
@@ -227,6 +254,37 @@ public final class VideoToolboxDecoder: @unchecked Sendable {
     CompressedSample.videoSampleBuffer(
       data: data,
       formatDescription: formatDescription,
+      presentationTime: presentationTime
+    )
+  }
+}
+
+private func videoToolboxDecompressionCallback(
+  decompressionOutputRefCon: UnsafeMutableRawPointer?,
+  sourceFrameRefCon: UnsafeMutableRawPointer?,
+  status: OSStatus,
+  infoFlags: VTDecodeInfoFlags,
+  imageBuffer: CVImageBuffer?,
+  presentationTimeStamp: CMTime,
+  presentationDuration: CMTime
+) {
+  var presentationTime = presentationTimeStamp
+  if let sourceFrameRefCon {
+    let token = Unmanaged<VideoToolboxDecoder.DecodeFrameToken>
+      .fromOpaque(sourceFrameRefCon)
+      .takeRetainedValue()
+    if !presentationTime.isValid {
+      presentationTime = token.presentationTime
+    }
+  }
+  guard let decompressionOutputRefCon else { return }
+  let decoder = Unmanaged<VideoToolboxDecoder>
+    .fromOpaque(decompressionOutputRefCon)
+    .takeUnretainedValue()
+  autoreleasepool {
+    decoder.handleDecoded(
+      status: status,
+      imageBuffer: imageBuffer,
       presentationTime: presentationTime
     )
   }

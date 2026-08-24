@@ -37,6 +37,10 @@ public final class ProgramStreamer: @unchecked Sendable {
   private var baseTime: CMTime?
   private var audioBase: CMTime?
   private var onFailure: FailureHandler?
+  /// VideoToolbox keeps each submitted pixel buffer until the encode callback. Without a cap,
+  /// a slow RTMP ingest lets that queue grow without bound at programme frame rate.
+  private var pendingEncodes = 0
+  private static let maximumPendingEncodes = 3
 
   public init(telemetry: PipelineTelemetry, converter: PixelConverter) {
     self.telemetry = telemetry
@@ -117,6 +121,7 @@ public final class ProgramStreamer: @unchecked Sendable {
     self.session = nil
     let client = self.client
     self.client = nil
+    pendingEncodes = 0
     lock.unlock()
     if let session {
       VTCompressionSessionCompleteFrames(session, untilPresentationTimeStamp: .invalid)
@@ -149,11 +154,16 @@ public final class ProgramStreamer: @unchecked Sendable {
     if time < .zero { time = .zero }
     lock.lock()
     let forceKey = !sentVideoConfig
+    if pendingEncodes >= Self.maximumPendingEncodes {
+      lock.unlock()
+      return
+    }
+    pendingEncodes += 1
     lock.unlock()
     let properties: CFDictionary? = forceKey
       ? [ kVTEncodeFrameOptionKey_ForceKeyFrame: kCFBooleanTrue ] as CFDictionary
       : nil
-    VTCompressionSessionEncodeFrame(
+    let status = VTCompressionSessionEncodeFrame(
       session,
       imageBuffer: encodable,
       presentationTimeStamp: time,
@@ -162,6 +172,11 @@ public final class ProgramStreamer: @unchecked Sendable {
       sourceFrameRefcon: nil,
       infoFlagsOut: nil
     )
+    if status != noErr {
+      lock.lock()
+      pendingEncodes = max(0, pendingEncodes - 1)
+      lock.unlock()
+    }
   }
 
   public func append(audio frame: AudioFrame) {
@@ -242,6 +257,11 @@ public final class ProgramStreamer: @unchecked Sendable {
       value: gopSeconds as CFNumber
     )
     VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse)
+    VTSessionSetProperty(
+      session,
+      key: kVTCompressionPropertyKey_MaxFrameDelayCount,
+      value: Self.maximumPendingEncodes as CFNumber
+    )
     VTCompressionSessionPrepareToEncodeFrames(session)
     lock.lock()
     self.session = session
@@ -249,6 +269,9 @@ public final class ProgramStreamer: @unchecked Sendable {
   }
 
   private func didEncode(sample: CMSampleBuffer, flags: VTEncodeInfoFlags) {
+    lock.lock()
+    pendingEncodes = max(0, pendingEncodes - 1)
+    lock.unlock()
     if flags.contains(.frameDropped) { return }
     guard let dataBuffer = CMSampleBufferGetDataBuffer(sample) else { return }
     var length = 0

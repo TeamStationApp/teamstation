@@ -277,6 +277,8 @@ public struct TelemetrySnapshot: Sendable, Codable, Equatable {
   public var displayLatencyMilliseconds: Double = 0
   /// Programme mix is actually playing through the system audio route.
   public var programAudioPlaying = false
+  /// Programme RTMP publish is currently running. Distinct from `dvr.isRecording`.
+  public var isStreaming = false
   /// Recording or streaming, so backgrounding must not suspend the pipeline.
   public var keepAliveInBackground = false
   /// System Picture-in-Picture of the programme output is showing over other apps.

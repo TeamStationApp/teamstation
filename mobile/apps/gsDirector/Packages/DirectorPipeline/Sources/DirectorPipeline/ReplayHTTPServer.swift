@@ -5,16 +5,25 @@ import Network
 /// (the item stays `.unknown` forever) and `AVAssetResourceLoader` is unreliable for
 /// `#EXT-X-MAP` fMP4; HTTP on 127.0.0.1 is the path that actually starts.
 final class ReplayHTTPServer: @unchecked Sendable {
+  private static let queueKey = DispatchSpecificKey<Void>()
+
   private let root: URL
   private let port: UInt16?
-  private let queue = DispatchQueue(label: "co.gamestation.director.replay.http")
+  private let queue: DispatchQueue
   private var listener: NWListener?
   private var startContinuation: CheckedContinuation<UInt16, Error>?
   private var open: [NWConnection] = []
+  private var stopped = false
 
   init(root: URL, port: UInt16? = nil) {
     self.root = root
     self.port = port
+    self.queue = DispatchQueue(label: "co.gamestation.director.replay.http")
+    queue.setSpecific(key: Self.queueKey, value: ())
+  }
+
+  deinit {
+    stop()
   }
 
   func start() async throws -> URL {
@@ -34,6 +43,12 @@ final class ReplayHTTPServer: @unchecked Sendable {
 
     let port = try await withCheckedThrowingContinuation { (cont: CheckedContinuation<UInt16, Error>) in
       queue.async {
+        if self.stopped {
+          listener.cancel()
+          self.listener = nil
+          cont.resume(throwing: CancellationError())
+          return
+        }
         self.startContinuation = cont
         listener.stateUpdateHandler = { [weak self] state in
           switch state {
@@ -54,20 +69,39 @@ final class ReplayHTTPServer: @unchecked Sendable {
       }
     }
 
-    guard let url = URL(string: "http://127.0.0.1:\(port)/index.m3u8") else {
+    let playlist = root.appendingPathComponent("index.m3u8")
+    let resource: String
+    if FileManager.default.fileExists(atPath: playlist.path) {
+      resource = "index.m3u8"
+    } else if let mp4 = try? FileManager.default.contentsOfDirectory(
+      at: root,
+      includingPropertiesForKeys: nil
+    ).first(where: { $0.pathExtension.lowercased() == "mp4" }) {
+      resource = mp4.lastPathComponent
+    } else {
+      resource = "index.m3u8"
+    }
+    guard let url = URL(string: "http://127.0.0.1:\(port)/\(resource)") else {
       throw ReplayDecoder.ReplayError.startFailed("could not build loopback playlist URL")
     }
     return url
   }
 
   func stop() {
-    queue.async { [weak self] in
-      guard let self else { return }
-      listener?.cancel()
-      listener = nil
-      for connection in open { connection.cancel() }
-      open.removeAll()
+    if DispatchQueue.getSpecific(key: Self.queueKey) != nil {
+      tearDownLocked()
+    } else {
+      queue.sync { tearDownLocked() }
     }
+  }
+
+  private func tearDownLocked() {
+    stopped = true
+    listener?.cancel()
+    listener = nil
+    for connection in open { connection.cancel() }
+    open.removeAll()
+    finishStart(.failure(CancellationError()))
   }
 
   private func finishStart(_ result: Result<UInt16, Error>) {
@@ -77,7 +111,14 @@ final class ReplayHTTPServer: @unchecked Sendable {
   }
 
   private func accept(_ connection: NWConnection) {
-    queue.async { [weak self] in self?.open.append(connection) }
+    queue.async { [weak self] in
+      guard let self else { return }
+      while self.open.count >= 8 {
+        let oldest = self.open.removeFirst()
+        oldest.cancel()
+      }
+      self.open.append(connection)
+    }
     connection.start(queue: queue)
     receive(on: connection, accumulated: Data())
   }
@@ -132,7 +173,26 @@ final class ReplayHTTPServer: @unchecked Sendable {
     }
 
     let file = root.appendingPathComponent(name)
-    guard let data = try? Data(contentsOf: file) else {
+    guard let handle = try? FileHandle(forReadingFrom: file) else {
+      send(status: "404 Not Found", type: "text/plain", body: Data(), leftover: leftover, on: connection)
+      return
+    }
+    defer { try? handle.close() }
+
+    let size: Int
+    do {
+      size = Int(try handle.seekToEnd())
+    } catch {
+      send(status: "404 Not Found", type: "text/plain", body: Data(), leftover: leftover, on: connection)
+      return
+    }
+
+    let bounds = Self.byteRange(from: head, size: size)
+    let slice: Data
+    do {
+      try handle.seek(toOffset: UInt64(bounds.offset))
+      slice = try handle.read(upToCount: bounds.length) ?? Data()
+    } catch {
       send(status: "404 Not Found", type: "text/plain", body: Data(), leftover: leftover, on: connection)
       return
     }
@@ -140,12 +200,11 @@ final class ReplayHTTPServer: @unchecked Sendable {
     let type = name.lowercased().hasSuffix(".m3u8")
       ? "application/vnd.apple.mpegurl"
       : "video/mp4"
-    let (status, slice, rangeHeader) = Self.byteRange(from: head, data: data)
     send(
-      status: status,
+      status: bounds.status,
       type: type,
       body: slice,
-      rangeHeader: rangeHeader,
+      rangeHeader: bounds.header,
       leftover: leftover,
       on: connection
     )
@@ -211,8 +270,10 @@ final class ReplayHTTPServer: @unchecked Sendable {
     return (head, Data(buffer[range.upperBound...]))
   }
 
-  private static func byteRange(from head: String, data: Data) -> (String, Data, String?) {
-    let size = data.count
+  private static func byteRange(
+    from head: String,
+    size: Int
+  ) -> (status: String, offset: Int, length: Int, header: String?) {
     for raw in head.split(whereSeparator: \.isNewline) {
       let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
       guard line.lowercased().hasPrefix("range:") else { continue }
@@ -228,13 +289,13 @@ final class ReplayHTTPServer: @unchecked Sendable {
         end = size - 1
       }
       guard start >= 0, start <= end, start < size else { continue }
-      let slice = data.subdata(in: start..<(end + 1))
       return (
-        "206 Partial Content",
-        slice,
-        "Content-Range: bytes \(start)-\(end)/\(size)"
+        status: "206 Partial Content",
+        offset: start,
+        length: end - start + 1,
+        header: "Content-Range: bytes \(start)-\(end)/\(size)"
       )
     }
-    return ("200 OK", data, nil)
+    return (status: "200 OK", offset: 0, length: size, header: nil)
   }
 }

@@ -38,8 +38,10 @@ function resolveDevice() {
 
 function hostnamesFor(device) {
   const hosts = new Set()
-  const name = (device.deviceProperties.name ?? '').replace(/[^A-Za-z0-9]+/g, '-')
-  if (name) hosts.add(`${name}.local`)
+  const slug = (device.deviceProperties.name ?? '')
+    .replace(/[^A-Za-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+  if (slug) hosts.add(`${slug}.local`)
   for (const host of device.connectionProperties.potentialHostnames ?? [])
     hosts.add(host)
   return [...hosts]

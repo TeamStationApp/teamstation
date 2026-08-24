@@ -389,7 +389,8 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     playout.note(lateness: now - presentationTime.seconds, at: now)
     pictures.enqueue(
       PendingPicture(unit: unit, presentationTime: presentationTime),
-      due: playout.dueTime(presentationSeconds: presentationTime.seconds)
+      due: playout.dueTime(presentationSeconds: presentationTime.seconds),
+      keepingAtMost: 90
     )
 
     let id = frameID
@@ -457,14 +458,16 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     if shouldReport, let coordinator { coordinator.report(buffer, for: sourceID) }
 
     for picture in toDecode {
-      let began = DispatchTime.now()
-      let ok = decoder?.decode(picture.unit, presentationTime: picture.presentationTime) ?? false
-      let spent = Double(DispatchTime.now().uptimeNanoseconds - began.uptimeNanoseconds) / 1_000_000_000
+      autoreleasepool {
+        let began = DispatchTime.now()
+        let ok = decoder?.decode(picture.unit, presentationTime: picture.presentationTime) ?? false
+        let spent = Double(DispatchTime.now().uptimeNanoseconds - began.uptimeNanoseconds) / 1_000_000_000
 
-      lock.lock()
-      stats.deliverySeconds += spent
-      if !ok { stats.formatMisses &+= 1 }
-      lock.unlock()
+        lock.lock()
+        stats.deliverySeconds += spent
+        if !ok { stats.formatMisses &+= 1 }
+        lock.unlock()
+      }
     }
 
     // Decoding above only moves pictures into `decodedFrames`; this is where they reach the app, on
@@ -532,7 +535,8 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
         frameID: id,
         markerValue: nil
       ),
-      due: playout.dueTime(presentationSeconds: presentationTime.seconds)
+      due: playout.dueTime(presentationSeconds: presentationTime.seconds),
+      keepingAtMost: 8
     )
     lock.unlock()
   }
