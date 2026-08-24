@@ -544,7 +544,8 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
       recordStartFailure(.writerFailed(error.localizedDescription))
       return false
     }
-    writer.shouldOptimizeForNetworkUse = false
+    // Moov-at-front so instant replay can open the file without scanning to the end.
+    writer.shouldOptimizeForNetworkUse = true
 
     let videoInput = AVAssetWriterInput(
       mediaType: .video,
@@ -618,7 +619,9 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     baseWallClock = nil
     lastVideoTime = .negativeInfinity
     pendingFirstFrameID = nil
-    held = nil
+    // Keep `held`. Recycle runs from appendVideo of the keyframe that *opens* the next file,
+    // and `held` is already the picture after that keyframe. Clearing it dropped one frame
+    // at every 3s cut. That frame belongs on the new file's timeline.
     pendingAudio.removeAll()
     isDraining = false
     audioTimeline = ArchiveAudioTimeline()

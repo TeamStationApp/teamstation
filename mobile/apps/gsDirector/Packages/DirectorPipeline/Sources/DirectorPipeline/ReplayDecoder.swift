@@ -2,21 +2,20 @@ import AVFoundation
 import CoreMedia
 import CoreVideo
 import Foundation
-import Darwin
 import DirectorCore
 import DirectorSources
 
-/// Plays an assembled HLS playlist back at wall-clock pace so a scrubbed tile shows moving video.
+/// Plays archived tape back at wall-clock pace so a scrubbed tile shows moving video.
 ///
-/// Archive segments are `mpeg4AppleHLS` fragments. Concatenating them into one `.mp4` is valid
-/// for ffmpeg, but `AVAssetReader` on iOS decodes no frames from that file — especially HEVC —
-/// and `AVPlayer` will not play the same playlist from a `file://` URL (the item stays
-/// `.unknown` forever). Replay therefore stages the fragments and serves them over loopback
-/// HTTP, which is the shape `AVPlayer` actually accepts.
+/// Finger-scrub and instant-replay hotkeys share this decoder. Complete MP4 archive files are
+/// decoded on one producer thread into a 2–3 second pixel FIFO; the display timer only pops
+/// that FIFO, one frame per tick, so file boundaries cannot hitch or skip the picture.
+/// Fragmented HLS recordings still go through loopback HTTP, because iOS `AVPlayer` will not
+/// play `file://` HLS and `AVAssetReader` does not decode concatenated `mpeg4AppleHLS`
+/// fragments.
 ///
 /// This is the decode session for replay specifically, kept separate from the camera decoders
-/// so a scrub can never disturb a live tile. Each tile may replay independently; decode budget
-/// is one `AVPlayer` per camera that is in rewind, not a global singleton.
+/// so a scrub can never disturb a live tile. Each tile may replay independently.
 public final class ReplayDecoder: @unchecked Sendable {
   public struct Configuration: Sendable {
     public var url: URL
@@ -25,12 +24,17 @@ public final class ReplayDecoder: @unchecked Sendable {
     public var startOffset: TimeInterval
     public var frameRate: Double
     /// Loopback port this decoder's HTTP server binds. One port per tile so two replays cannot
-    /// share a listener. Tile 0 is `loopbackBasePort`.
+    /// share a listener. Tile 0 is `loopbackBasePort`. Unused when `fileURLs` is set.
     public var port: UInt16
     /// `AVPlayer.rate`. Instant-replay slow-mo uses the Settings value; a finger scrub is 1.
     public var rate: Float
     /// When set, return to live after this many seconds of *content*, not wall clock.
     public var playDuration: TimeInterval?
+    /// Complete archive MP4s in play order. When non-empty, replay reads them with
+    /// `AVAssetReader` instead of loopback HLS.
+    public var fileURLs: [URL]
+    /// Index durations for `fileURLs`, used to skip `startOffset` across files.
+    public var fileDurations: [TimeInterval]
 
     public init(
       url: URL,
@@ -38,7 +42,9 @@ public final class ReplayDecoder: @unchecked Sendable {
       frameRate: Double = 30,
       port: UInt16,
       rate: Float = 1,
-      playDuration: TimeInterval? = nil
+      playDuration: TimeInterval? = nil,
+      fileURLs: [URL] = [],
+      fileDurations: [TimeInterval] = []
     ) {
       self.url = url
       self.startOffset = startOffset
@@ -46,6 +52,8 @@ public final class ReplayDecoder: @unchecked Sendable {
       self.port = port
       self.rate = rate
       self.playDuration = playDuration
+      self.fileURLs = fileURLs
+      self.fileDurations = fileDurations
     }
   }
 
@@ -62,6 +70,9 @@ public final class ReplayDecoder: @unchecked Sendable {
   private let onFrame: FrameHandler
   private let onFinish: @Sendable () -> Void
   private let onFailure: @Sendable (Error) -> Void
+  /// Playlist ended before `playDuration`. The owner stages newly closed archive files and
+  /// calls `appendFiles` so playback does not stop and restart.
+  private let onNeedsMoreFiles: @Sendable (TimeInterval) -> Void
   private let queue: DispatchQueue
 
   private let lock = NSLock()
@@ -78,18 +89,36 @@ public final class ReplayDecoder: @unchecked Sendable {
   /// Replay copies out of `AVPlayer`'s IOSurfaces into this cap. Handing player buffers to the
   /// display layer, compositor and encoder pins `mediaplaybackd` memory until jetsam.
   private var framePool: PixelBufferFactory?
+  private var fileReader: ReplayFileReader?
+  private var filePumpTick: UInt64 = 0
+  private var waitingForMoreFiles = false
 
   public init(
     configuration: Configuration,
     onFrame: @escaping FrameHandler,
     onFinish: @escaping @Sendable () -> Void = {},
-    onFailure: @escaping @Sendable (Error) -> Void = { _ in }
+    onFailure: @escaping @Sendable (Error) -> Void = { _ in },
+    onNeedsMoreFiles: @escaping @Sendable (TimeInterval) -> Void = { _ in }
   ) {
     self.configuration = configuration
     self.onFrame = onFrame
     self.onFinish = onFinish
     self.onFailure = onFailure
+    self.onNeedsMoreFiles = onNeedsMoreFiles
     self.queue = DispatchQueue(label: "co.gamestation.director.replay", qos: .userInitiated)
+  }
+
+  /// Closed archive files that were not in the first assembly. Playback continues without
+  /// tearing down the tile. Finger-scrub and hotkeys both append this way so the next file can
+  /// be primed before the current one ends.
+  public func appendFiles(urls: [URL], durations: [TimeInterval]) {
+    guard !urls.isEmpty else { return }
+    queue.async {
+      self.lock.lock()
+      self.fileReader?.append(urls: urls, durations: durations)
+      self.waitingForMoreFiles = false
+      self.lock.unlock()
+    }
   }
 
   deinit {
@@ -112,6 +141,10 @@ public final class ReplayDecoder: @unchecked Sendable {
 
   public func start() async throws {
     let generation = beginStart()
+    if !configuration.fileURLs.isEmpty {
+      try await startFromCompleteFiles(generation)
+      return
+    }
     var session: Session?
     do {
       let server = ReplayHTTPServer(root: configuration.url.deletingLastPathComponent(), port: configuration.port)
@@ -128,9 +161,10 @@ public final class ReplayDecoder: @unchecked Sendable {
       observe(created.item)
       adopt(player: created.player, output: created.output)
       try throwIfCancelled(generation)
-      created.player.rate = configuration.rate
+      created.player.rate = 0
       try await copyFirstFrame(player: created.player, output: created.output)
       try throwIfCancelled(generation)
+      created.player.rate = configuration.rate
       armTimer()
     } catch {
       discardLocalSession(session)
@@ -154,6 +188,47 @@ public final class ReplayDecoder: @unchecked Sendable {
     if current != generation {
       throw ReplayError.startFailed("cancelled")
     }
+  }
+
+  private func startFromCompleteFiles(_ generation: UInt64) async throws {
+    try await startFromFileReader(generation)
+  }
+
+  private func startFromFileReader(_ generation: UInt64) async throws {
+    try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+      queue.async {
+        do {
+          try self.throwIfCancelled(generation)
+          try self.primeCompleteFiles()
+          try self.throwIfCancelled(generation)
+          self.armTimer()
+          cont.resume()
+        } catch {
+          self.stop()
+          cont.resume(throwing: error)
+        }
+      }
+    }
+  }
+
+  private func primeCompleteFiles() throws {
+    let reader = ReplayFileReader(
+      urls: configuration.fileURLs,
+      durations: configuration.fileDurations,
+      frameRate: configuration.frameRate,
+      playDuration: configuration.playDuration
+    )
+    try reader.open(startOffset: configuration.startOffset)
+    guard let frame = reader.pop() else { throw ReplayError.noSamples }
+    guard let copy = detachedCopy(frame.pixel) else { throw ReplayError.noSamples }
+    lock.lock()
+    fileReader = reader
+    running = true
+    elapsed = 0
+    deliveredFrames = 0
+    filePumpTick = 0
+    lock.unlock()
+    deliver(pixelBuffer: copy, time: CMClockGetTime(CMClockGetHostTimeClock()), played: 0)
   }
 
   /// An `AVPlayer` created before `adopt` is not on `self` yet, so `stop()` would miss it.
@@ -222,16 +297,24 @@ public final class ReplayDecoder: @unchecked Sendable {
     let failedObserver = self.failedObserver
     self.endObserver = nil
     self.failedObserver = nil
+    let files = fileReader
+    fileReader = nil
+    waitingForMoreFiles = false
     lock.unlock()
 
     timer?.cancel()
+    files?.cancel()
     if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
     if let failedObserver { NotificationCenter.default.removeObserver(failedObserver) }
     player?.pause()
     if let player, let output {
       player.currentItem?.remove(output)
     }
-    player?.replaceCurrentItem(with: nil)
+    if let queuePlayer = player as? AVQueuePlayer {
+      queuePlayer.removeAllItems()
+    } else {
+      player?.replaceCurrentItem(with: nil)
+    }
     server?.stop()
     cleanupStagingDirectory()
     framePool = nil
@@ -256,7 +339,11 @@ public final class ReplayDecoder: @unchecked Sendable {
   }
 
   private func seekIfNeeded(player: AVPlayer, item: AVPlayerItem) async throws {
-    let target = max(0, configuration.startOffset)
+    try await seekItem(player: player, item: item, seconds: configuration.startOffset)
+  }
+
+  private func seekItem(player: AVPlayer, item: AVPlayerItem, seconds: TimeInterval) async throws {
+    let target = max(0, seconds)
     guard target > 0.04 else { return }
 
     for _ in 0..<40 {
@@ -265,8 +352,8 @@ public final class ReplayDecoder: @unchecked Sendable {
     }
 
     let duration = item.duration.isNumeric ? item.duration.seconds : target
-    let seconds = min(target, max(0, duration - 0.05))
-    let time = CMTime(seconds: seconds, preferredTimescale: 600)
+    let skip = min(target, max(0, duration - 0.05))
+    let time = CMTime(seconds: skip, preferredTimescale: 600)
     let finished = await player.seek(
       to: time,
       toleranceBefore: .zero,
@@ -279,8 +366,13 @@ public final class ReplayDecoder: @unchecked Sendable {
 
   private func copyFirstFrame(player: AVPlayer, output: AVPlayerItemVideoOutput) async throws {
     for _ in 0..<100 {
-      if let pixelBuffer = copyPixelBuffer(from: output, at: player.currentTime(), force: true) {
-        deliver(pixelBuffer: pixelBuffer, time: player.currentTime(), played: 0)
+      let time = player.currentTime()
+      if let pixelBuffer = copyPixelBuffer(from: output, at: time, force: true) {
+        deliver(
+          pixelBuffer: pixelBuffer,
+          time: time,
+          played: max(0, time.seconds - configuration.startOffset)
+        )
         return
       }
       try await Task.sleep(for: .milliseconds(20))
@@ -322,22 +414,82 @@ public final class ReplayDecoder: @unchecked Sendable {
 
   private func pump() {
     lock.lock()
-    guard running, let player, let output = videoOutput else {
+    guard running else {
       lock.unlock()
       return
     }
+    let files = fileReader
+    let player = self.player
+    let output = videoOutput
     lock.unlock()
+
+    if let files {
+      pumpFiles(files)
+      return
+    }
+    guard let player, let output else { return }
 
     let time = player.currentTime()
     guard let pixelBuffer = copyPixelBuffer(from: output, at: time) else { return }
     let played = max(0, time.seconds - configuration.startOffset)
+    deliver(pixelBuffer: pixelBuffer, time: time, played: played)
+    if ScrubMapping.hasPlayedRequestedDuration(played: played, requested: configuration.playDuration) {
+      finishSuccessfully()
+    }
+  }
+
+  private func pumpFiles(_ reader: ReplayFileReader) {
+    lock.lock()
+    let shown = elapsed
+    filePumpTick += 1
+    let tick = filePumpTick
+    lock.unlock()
+    let step = 1 / max(configuration.frameRate, 1)
+    if ScrubMapping.hasPlayedRequestedDuration(played: shown, requested: configuration.playDuration) {
+      finishSuccessfully()
+      return
+    }
+    if reader.shouldPrefetchMore {
+      requestMoreFiles(played: shown)
+    }
+    let ticksPerFrame = max(1, Int((1 / Double(max(configuration.rate, 0.05))).rounded()))
+    if tick % UInt64(ticksPerFrame) != 0 { return }
+    guard let frame = reader.pop() else {
+      if reader.isExhausted {
+        finishSuccessfully()
+      } else {
+        requestMoreFiles(played: shown)
+      }
+      return
+    }
+    guard let copy = detachedCopy(frame.pixel) else { return }
+    let played = shown + step
     deliver(
-      pixelBuffer: pixelBuffer,
-      time: time,
+      pixelBuffer: copy,
+      time: CMClockGetTime(CMClockGetHostTimeClock()),
       played: played
     )
     if ScrubMapping.hasPlayedRequestedDuration(played: played, requested: configuration.playDuration) {
       finishSuccessfully()
+    }
+  }
+
+  private func requestMoreFiles(played: TimeInterval) {
+    if ScrubMapping.hasPlayedRequestedDuration(played: played, requested: configuration.playDuration) {
+      finishSuccessfully()
+      return
+    }
+    lock.lock()
+    let alreadyWaiting = waitingForMoreFiles
+    waitingForMoreFiles = true
+    lock.unlock()
+    if alreadyWaiting { return }
+    onNeedsMoreFiles(played)
+    queue.asyncAfter(deadline: .now() + .milliseconds(400)) { [weak self] in
+      guard let self else { return }
+      self.lock.lock()
+      self.waitingForMoreFiles = false
+      self.lock.unlock()
     }
   }
 
@@ -374,7 +526,7 @@ public final class ReplayDecoder: @unchecked Sendable {
         height: height,
         pixelFormat: format,
         minimumBuffers: 4,
-        maximumBuffers: 8
+        maximumBuffers: 16
       )
     }
     guard let destination = framePool?.makeBuffer() else { return nil }

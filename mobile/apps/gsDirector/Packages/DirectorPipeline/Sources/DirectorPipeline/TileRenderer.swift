@@ -90,14 +90,15 @@ public final class TileRenderer: @unchecked Sendable {
   /// Live frames after replay often share NV12 dimensions with the replay buffers but come from a
   /// different pixel-buffer pool. The cached `CMFormatDescription` then makes
   /// `CMSampleBufferCreateReadyWithImageBuffer` fail, which leaves the small preview frozen while
-  /// the program compositor — a different format — keeps moving.
+  /// the program compositor — a different format — keeps moving. Keep the last replay frame on
+  /// screen until a live sample actually enqueues, so returning to live is not a blank gap.
   public func prepareForLive() {
     lock.lock()
     isPaused = false
     clearFormatCacheLocked()
     lock.unlock()
     for layer in snapshotLayers() {
-      layer.sampleBufferRenderer.flush(removingDisplayedImage: true)
+      layer.sampleBufferRenderer.flush(removingDisplayedImage: false)
     }
   }
 

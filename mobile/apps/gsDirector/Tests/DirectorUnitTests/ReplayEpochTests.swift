@@ -17,6 +17,29 @@ struct ReplayEpochTests {
     #expect(pipe.currentReplayEpoch == 3)
   }
 
+  @Test("Instant replay bumps the generation without leaving live")
+  func instantReplayKeepsLive() {
+    let pipe = makePipeline()
+    #expect(pipe.currentState == .live)
+    pipe.beginInstantReplayGeneration()
+    #expect(pipe.currentReplayEpoch == 1)
+    #expect(pipe.currentState == .live)
+    let epoch = pipe.currentReplayEpoch
+    pipe.beginInstantReplayGeneration()
+    #expect(pipe.currentReplayEpoch == 2)
+    #expect(!pipe.isCurrentReplay(sourceID: pipe.sourceID, epoch: epoch))
+  }
+
+  @Test("Finger-up resumes live until the first archive file is decoded")
+  func scrubResumesLiveForReplay() {
+    let pipe = makePipeline()
+    pipe.beginScrubbing()
+    #expect(pipe.currentState == .scrubbing)
+    pipe.beginInstantReplayGeneration()
+    #expect(pipe.currentState == .live)
+    #expect(pipe.currentReplayEpoch == 2)
+  }
+
   @Test("A captured epoch matches only until the next scrub or return to live")
   func capturedEpochGoesStale() {
     let pipe = makePipeline()
