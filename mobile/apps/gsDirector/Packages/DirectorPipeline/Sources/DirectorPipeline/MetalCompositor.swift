@@ -181,6 +181,7 @@ public final class MetalCompositor: @unchecked Sendable {
 
     commandBuffer.commit()
     commandBuffer.waitUntilCompleted()
+    CVMetalTextureCacheFlush(textureCache, 0)
 
     lock.lock()
     composedFrames += 1

@@ -268,11 +268,13 @@ public final class SourcePipeline: @unchecked Sendable {
   public func beginScrubbing() {
     lock.lock()
     replayEpoch &+= 1
+    let wasReplaying = state == .replaying
     state = .scrubbing
     let replay = self.replay
     self.replay = nil
     lock.unlock()
     replay?.stop()
+    if wasReplaying { telemetry.recordDecodeSessionChange(delta: -1) }
     renderer.setPaused(true)
     telemetry.mutateTile(sourceIndex) { $0.state = .scrubbing }
   }
@@ -322,7 +324,7 @@ public final class SourcePipeline: @unchecked Sendable {
     renderer.setPaused(false)
     renderer.invalidateFormatCache()
     renderer.flush()
-    telemetry.recordDecodeSessionChange(delta: 1)
+    if previous == nil { telemetry.recordDecodeSessionChange(delta: 1) }
     telemetry.mutateTile(sourceIndex) {
       $0.state = .replaying
       $0.offsetSeconds = offsetSeconds

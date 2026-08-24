@@ -184,16 +184,21 @@ function main() {
       } catch {
         continue
       }
-      if (existsSync(local)) parts.push(readFileSync(local))
+      if (existsSync(local)) parts.push({ name, local })
     }
-    if (parts.length < 2) {
+    if (!parts.length) {
       console.log(`${camera.padEnd(26)} no segments retrieved`)
       continue
     }
 
-    // fMP4 plays back as the initialization segment followed by the media segments concatenated.
+    const hasInit = parts.some(part => part.name.startsWith('init'))
     const joined = path.join(dir, 'joined.mp4')
-    writeFileSync(joined, Buffer.concat(parts))
+    if (hasInit) {
+      writeFileSync(joined, Buffer.concat(parts.map(part => readFileSync(part.local))))
+    } else {
+      // Complete MP4 files (one writer per segment) are probed individually.
+      writeFileSync(joined, readFileSync(parts[0].local))
+    }
 
     try {
       const result = probe(joined)

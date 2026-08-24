@@ -64,7 +64,12 @@ public struct SegmentAssembler: Sendable {
     let handle = try FileHandle(forWritingTo: output)
     defer { try? handle.close() }
 
-    try handle.write(contentsOf: Data(contentsOf: base.appendingPathComponent(resolved.initialization.filename)))
+    if let initialization = resolved.initialization {
+      try handle.write(contentsOf: Data(contentsOf: base.appendingPathComponent(initialization.filename)))
+    } else if resolved.media.count == 1 {
+      try handle.write(contentsOf: Data(contentsOf: base.appendingPathComponent(resolved.media[0].filename)))
+      return assembly(url: output, media: resolved.media)
+    }
     let total = max(resolved.media.count, 1)
     for (index, segment) in resolved.media.enumerated() {
       let url = base.appendingPathComponent(segment.filename)
@@ -91,6 +96,13 @@ public struct SegmentAssembler: Sendable {
       .appendingPathComponent("replay-\(sourceID.slug)-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
+    // File-based writers emit complete MP4s. HLS with no init MAP cannot play those, so replay
+    // the last complete file directly.
+    if resolved.initialization == nil, let file = resolved.media.last {
+      let name = try stage(file, from: archive, into: directory)
+      return assembly(url: directory.appendingPathComponent(name), media: [file])
+    }
+
     var lines: [String] = [
       "#EXTM3U",
       "#EXT-X-VERSION:7",
@@ -100,8 +112,10 @@ public struct SegmentAssembler: Sendable {
       "#EXT-X-INDEPENDENT-SEGMENTS"
     ]
 
-    let initName = try stage(resolved.initialization, from: archive, into: directory)
-    lines.append("#EXT-X-MAP:URI=\"\(initName)\"")
+    let initName = try resolved.initialization.map { try stage($0, from: archive, into: directory) }
+    if let initName {
+      lines.append("#EXT-X-MAP:URI=\"\(initName)\"")
+    }
     for segment in resolved.media {
       let name = try stage(segment, from: archive, into: directory)
       lines.append(String(format: "#EXTINF:%.3f,", max(0.001, segment.duration)))
@@ -116,7 +130,7 @@ public struct SegmentAssembler: Sendable {
   }
 
   private struct Resolved {
-    var initialization: SegmentRecord
+    var initialization: SegmentRecord?
     var media: [SegmentRecord]
   }
 
@@ -142,13 +156,17 @@ public struct SegmentAssembler: Sendable {
       segments = Array(segments.prefix(maximumSegments))
     }
 
-    guard let initialization = try index.initializationSegment(
+    let initialization = try index.initializationSegment(
       for: sourceID,
       recordingID: segments[0].recordingID,
       beforeSequence: segments[0].sequence
-    ) else {
-      throw AssemblyError.missingInitialization
+    )
+    if initialization == nil {
+      let media = segments.filter { !$0.isInitialization }
+      guard !media.isEmpty else { throw AssemblyError.noSegments }
+      return Resolved(initialization: nil, media: media)
     }
+    guard let initialization else { throw AssemblyError.missingInitialization }
 
     let nextInit = try index.nextInitializationSequence(
       for: sourceID,

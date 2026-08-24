@@ -2,7 +2,9 @@ import AVFoundation
 import CoreMedia
 import CoreVideo
 import Foundation
+import Darwin
 import DirectorCore
+import DirectorSources
 
 /// Plays an assembled HLS playlist back at wall-clock pace so a scrubbed tile shows moving video.
 ///
@@ -72,6 +74,10 @@ public final class ReplayDecoder: @unchecked Sendable {
   private var running = false
   private var elapsed: TimeInterval = 0
   private var deliveredFrames: UInt64 = 0
+  private var startGeneration: UInt64 = 0
+  /// Replay copies out of `AVPlayer`'s IOSurfaces into this cap. Handing player buffers to the
+  /// display layer, compositor and encoder pins `mediaplaybackd` memory until jetsam.
+  private var framePool: PixelBufferFactory?
 
   public init(
     configuration: Configuration,
@@ -105,19 +111,61 @@ public final class ReplayDecoder: @unchecked Sendable {
   }
 
   public func start() async throws {
-    let server = ReplayHTTPServer(root: configuration.url.deletingLastPathComponent(), port: configuration.port)
-    store(server: server)
-    let playlistURL = try await server.start()
+    let generation = beginStart()
+    var session: Session?
+    do {
+      let server = ReplayHTTPServer(root: configuration.url.deletingLastPathComponent(), port: configuration.port)
+      store(server: server)
+      try throwIfCancelled(generation)
+      let playlistURL = try await server.start()
+      try throwIfCancelled(generation)
+      let created = makeSession(playlistURL: playlistURL)
+      session = created
+      try await waitUntilReady(created.item)
+      try throwIfCancelled(generation)
+      try await seekIfNeeded(player: created.player, item: created.item)
+      try throwIfCancelled(generation)
+      observe(created.item)
+      adopt(player: created.player, output: created.output)
+      try throwIfCancelled(generation)
+      created.player.rate = configuration.rate
+      try await copyFirstFrame(player: created.player, output: created.output)
+      try throwIfCancelled(generation)
+      armTimer()
+    } catch {
+      discardLocalSession(session)
+      stop()
+      throw error
+    }
+  }
 
-    let session = makeSession(playlistURL: playlistURL)
-    try await waitUntilReady(session.item)
-    try await seekIfNeeded(player: session.player, item: session.item)
+  private func beginStart() -> UInt64 {
+    lock.lock()
+    startGeneration &+= 1
+    let generation = startGeneration
+    lock.unlock()
+    return generation
+  }
 
-    observe(session.item)
-    adopt(player: session.player, output: session.output)
-    session.player.rate = configuration.rate
-    try await copyFirstFrame(player: session.player, output: session.output)
-    armTimer()
+  private func throwIfCancelled(_ generation: UInt64) throws {
+    lock.lock()
+    let current = startGeneration
+    lock.unlock()
+    if current != generation {
+      throw ReplayError.startFailed("cancelled")
+    }
+  }
+
+  /// An `AVPlayer` created before `adopt` is not on `self` yet, so `stop()` would miss it.
+  private func discardLocalSession(_ session: Session?) {
+    guard let session else { return }
+    lock.lock()
+    let adopted = player === session.player
+    lock.unlock()
+    if adopted { return }
+    session.item.remove(session.output)
+    session.player.pause()
+    session.player.replaceCurrentItem(with: nil)
   }
 
   private struct Session {
@@ -160,11 +208,13 @@ public final class ReplayDecoder: @unchecked Sendable {
 
   public func stop() {
     lock.lock()
+    startGeneration &+= 1
     running = false
     let timer = self.timer
     self.timer = nil
     let player = self.player
     self.player = nil
+    let output = videoOutput
     videoOutput = nil
     let server = httpServer
     httpServer = nil
@@ -178,9 +228,13 @@ public final class ReplayDecoder: @unchecked Sendable {
     if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
     if let failedObserver { NotificationCenter.default.removeObserver(failedObserver) }
     player?.pause()
+    if let player, let output {
+      player.currentItem?.remove(output)
+    }
     player?.replaceCurrentItem(with: nil)
     server?.stop()
     cleanupStagingDirectory()
+    framePool = nil
   }
 
   private func waitUntilReady(_ item: AVPlayerItem) async throws {
@@ -302,7 +356,65 @@ public final class ReplayDecoder: @unchecked Sendable {
   ) -> CVPixelBuffer? {
     guard force || output.hasNewPixelBuffer(forItemTime: time) else { return nil }
     var displayTime = CMTime.invalid
-    return output.copyPixelBuffer(forItemTime: time, itemTimeForDisplay: &displayTime)
+    guard let source = output.copyPixelBuffer(forItemTime: time, itemTimeForDisplay: &displayTime)
+    else { return nil }
+    return detachedCopy(source)
+  }
+
+  /// `AVPlayerItemVideoOutput` hands out `mediaplaybackd` IOSurfaces. The display layer,
+  /// compositor and program encoder would otherwise hold them across frames and the player's
+  /// pool would grow without bound.
+  private func detachedCopy(_ source: CVPixelBuffer) -> CVPixelBuffer? {
+    let width = CVPixelBufferGetWidth(source)
+    let height = CVPixelBufferGetHeight(source)
+    let format = CVPixelBufferGetPixelFormatType(source)
+    if framePool?.width != width || framePool?.height != height || framePool?.pixelFormat != format {
+      framePool = PixelBufferFactory(
+        width: width,
+        height: height,
+        pixelFormat: format,
+        minimumBuffers: 4,
+        maximumBuffers: 8
+      )
+    }
+    guard let destination = framePool?.makeBuffer() else { return nil }
+    guard Self.copyPlanes(from: source, to: destination) else { return nil }
+    return destination
+  }
+
+  private static func copyPlanes(from source: CVPixelBuffer, to destination: CVPixelBuffer) -> Bool {
+    let planes = max(CVPixelBufferGetPlaneCount(source), 1)
+    guard planes == max(CVPixelBufferGetPlaneCount(destination), 1) else { return false }
+    CVPixelBufferLockBaseAddress(source, .readOnly)
+    CVPixelBufferLockBaseAddress(destination, [])
+    defer {
+      CVPixelBufferUnlockBaseAddress(destination, [])
+      CVPixelBufferUnlockBaseAddress(source, .readOnly)
+    }
+    for plane in 0..<planes {
+      let srcBytes = CVPixelBufferGetPlaneCount(source) == 0
+        ? CVPixelBufferGetBytesPerRow(source)
+        : CVPixelBufferGetBytesPerRowOfPlane(source, plane)
+      let dstBytes = CVPixelBufferGetPlaneCount(destination) == 0
+        ? CVPixelBufferGetBytesPerRow(destination)
+        : CVPixelBufferGetBytesPerRowOfPlane(destination, plane)
+      let height = CVPixelBufferGetPlaneCount(source) == 0
+        ? CVPixelBufferGetHeight(source)
+        : CVPixelBufferGetHeightOfPlane(source, plane)
+      let width = min(srcBytes, dstBytes)
+      guard
+        let src = CVPixelBufferGetPlaneCount(source) == 0
+          ? CVPixelBufferGetBaseAddress(source)
+          : CVPixelBufferGetBaseAddressOfPlane(source, plane),
+        let dst = CVPixelBufferGetPlaneCount(destination) == 0
+          ? CVPixelBufferGetBaseAddress(destination)
+          : CVPixelBufferGetBaseAddressOfPlane(destination, plane)
+      else { return false }
+      for row in 0..<height {
+        memcpy(dst.advanced(by: row * dstBytes), src.advanced(by: row * srcBytes), width)
+      }
+    }
+    return true
   }
 
   private func finishSuccessfully() {
