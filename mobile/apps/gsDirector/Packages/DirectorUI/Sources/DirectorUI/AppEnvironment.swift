@@ -43,6 +43,11 @@ private final class PlayedSeconds: @unchecked Sendable {
   }
 }
 
+/// Holds the running decoder so `onNeedsMoreFiles` can append without a retain cycle.
+private final class ReplayHolder: @unchecked Sendable {
+  weak var decoder: ReplayDecoder?
+}
+
 /// Buys wall-clock time from iOS to finish work that a backgrounded app would otherwise be
 /// suspended in the middle of.
 ///
@@ -1361,47 +1366,75 @@ public final class AppEnvironment {
       return
     }
 
-    // R6 is measured from here — the instant the finger leaves the glass — to the first decoded
-    // frame reaching the tile. Timing anything later would flatter the number by excluding the
-    // segment assembly, which is the slowest part.
+    playFromArchive(
+      sourceIndex: sourceIndex,
+      offsetSeconds: offsetSeconds,
+      rate: rate,
+      playDuration: playDuration
+    )
+  }
+
+  /// Instant-replay hotkey: switch this camera to program and scrub back `seconds`. Playback
+  /// uses the same archive pipeline as finger-up; the hotkey only adds a timed return to live.
+  public func startInstantReplay(sourceIndex: Int, seconds: Double, rate: Float) {
+    guard seconds > 0 else { return }
+    selectProgram(sourceIndex: sourceIndex)
+    guard router.pipeline(at: sourceIndex) != nil else { return }
+    guard availableHistorySeconds(sourceIndex: sourceIndex) > 0 else {
+      statusMessage = isRecording
+        ? "Nothing to scrub yet — still building history"
+        : "Nothing to scrub — start recording first"
+      return
+    }
+    let history = availableHistorySeconds(sourceIndex: sourceIndex)
+    let offset = -min(seconds, max(history, 0))
+    playFromArchive(
+      sourceIndex: sourceIndex,
+      offsetSeconds: offset,
+      rate: rate,
+      playDuration: seconds
+    )
+  }
+
+  /// Shared by finger-up and instant-replay hotkeys. Live video keeps moving until the first
+  /// decoded archive frame reaches the tile. A single producer then keeps a 2–3 second FIFO
+  /// full so display never waits on a file boundary.
+  private func playFromArchive(
+    sourceIndex: Int,
+    offsetSeconds: Double,
+    rate: Float,
+    playDuration: TimeInterval?
+  ) {
+    guard let pipeline = router.pipeline(at: sourceIndex) else { return }
+    pipeline.beginInstantReplayGeneration()
+    applyProgramOverlays()
+    // R6 is measured from here — finger-up or hotkey — to the first decoded frame reaching
+    // the tile. Timing anything later would flatter the number by excluding assembly.
     let releasedAt = DispatchTime.now().uptimeNanoseconds
     let liveEdge = pipeline.liveEdge ?? clock.now
     let target = liveEdge + offsetSeconds
     let sourceID = pipeline.sourceID
     let epoch = pipeline.currentReplayEpoch
-    let assembler = self.assembler
-    // The archive runs at whatever the camera sends, so the replay pump has to follow the source
-    // rather than any setting of ours.
     let frameRate = pipeline.format?.frameRate ?? 30
-
-    // Assembly stages up to 64 segment files, which is real disk work. Doing it inline left
-    // the main actor blocked for the whole of it, so the UI froze at exactly the moment the
-    // operator expected a response and the measured latency included a stalled render loop.
     Task { [weak self] in
-      let assembly: SegmentAssembler.Assembly
-      do {
-        assembly = try await Task.detached(priority: .userInitiated) {
-          try assembler.assemblePlaylist(
-            sourceID: sourceID,
-            from: target,
-            to: liveEdge,
-            maximumSegments: 64
-          )
-        }.value
-      } catch {
+      guard let self else { return }
+      let deadline = ContinuousClock.now + .milliseconds(400)
+      guard let assembly = await self.assemblePlaylistRetrying(
+        sourceID: sourceID,
+        from: target,
+        to: liveEdge,
+        target: target,
+        until: deadline
+      ) else {
         await MainActor.run {
-          guard let self, self.isCurrentReplay(sourceIndex: sourceIndex, sourceID: sourceID, epoch: epoch)
+          guard self.isCurrentReplay(sourceIndex: sourceIndex, sourceID: sourceID, epoch: epoch)
           else { return }
-          // The drag already showed the past via JPEGs. Replay needs closed archive segments,
-          // which do not exist yet in the first few seconds, and never exist at T3. Stay on
-          // the still; Return to live is on the tile.
-          self.statusMessage = "Holding still — archive not ready to replay yet"
+          self.statusMessage = "Replay not ready yet — archive still closing"
           self.applyProgramOverlays()
         }
         return
       }
-
-      await self?.startReplay(
+      await self.startReplay(
         sourceIndex: sourceIndex,
         sourceID: sourceID,
         epoch: epoch,
@@ -1411,27 +1444,43 @@ public final class AppEnvironment {
         frameRate: frameRate,
         rate: rate,
         playDuration: playDuration,
-        releasedAt: releasedAt
+        releasedAt: releasedAt,
+        keepLiveOnFailure: true
       )
     }
   }
 
-  /// Instant-replay hotkey: rewind this many seconds from the live edge, play that duration of
-  /// tape at `rate`, then return this tile to live.
-  public func startInstantReplay(sourceIndex: Int, seconds: Double, rate: Float) {
-    guard seconds > 0 else { return }
-    selectProgram(sourceIndex: sourceIndex)
-    guard beginScrub(sourceIndex: sourceIndex) else { return }
-    let history = availableHistorySeconds(sourceIndex: sourceIndex)
-    let offset = -min(seconds, max(history, 0))
-    updateScrub(sourceIndex: sourceIndex, offsetSeconds: offset)
-    endScrub(
-      sourceIndex: sourceIndex,
-      offsetSeconds: offset,
-      rate: rate,
-      playDuration: seconds
-    )
-    applyProgramOverlays()
+  private func assemblePlaylistRetrying(
+    sourceID: SourceID,
+    from: WallClock,
+    to: WallClock,
+    target: WallClock,
+    until deadline: ContinuousClock.Instant
+  ) async -> SegmentAssembler.Assembly? {
+    let assembler = self.assembler
+    var best: SegmentAssembler.Assembly?
+    while true {
+      let assembled: SegmentAssembler.Assembly? = try? await Task.detached(priority: .userInitiated) {
+        try assembler.assemblePlaylist(
+          sourceID: sourceID,
+          from: from,
+          to: to,
+          maximumSegments: 64
+        )
+      }.value
+      if let assembly = assembled {
+        let startOffset = max(0, target - assembly.startWall)
+        if ScrubMapping.shouldStartReplay(
+          assemblyDuration: assembly.duration,
+          startOffset: startOffset
+        ) {
+          return assembly
+        }
+        best = assembly
+      }
+      if ContinuousClock.now >= deadline { return best }
+      try? await Task.sleep(for: .milliseconds(200))
+    }
   }
 
   private func startReplay(
@@ -1445,7 +1494,8 @@ public final class AppEnvironment {
     rate: Float,
     playDuration: TimeInterval?,
     releasedAt: UInt64,
-    isContinuation: Bool = false
+    isContinuation: Bool = false,
+    keepLiveOnFailure: Bool = false
   ) async {
     guard isCurrentReplay(sourceIndex: sourceIndex, sourceID: sourceID, epoch: epoch) else { return }
     guard let pipeline = router.pipeline(at: sourceIndex) else { return }
@@ -1457,8 +1507,12 @@ public final class AppEnvironment {
       assemblyDuration: assembly.duration,
       startOffset: startOffset
     ) {
-      if isContinuation {
-        returnToLive(sourceIndex: sourceIndex)
+      if isContinuation || keepLiveOnFailure {
+        if isContinuation { returnToLive(sourceIndex: sourceIndex) }
+        else {
+          statusMessage = "Replay not ready yet — archive still closing"
+          applyProgramOverlays()
+        }
         return
       }
       // A playlist that is shorter than the scrub would play for a fraction of a second and
@@ -1472,6 +1526,7 @@ public final class AppEnvironment {
     let reported = FirstFrameStamp()
     let playedBox = PlayedSeconds()
     let remainingDuration = playDuration
+    let holder = ReplayHolder()
     let decoder = ReplayDecoder(
       configuration: .init(
         url: assembly.url,
@@ -1479,7 +1534,9 @@ public final class AppEnvironment {
         frameRate: frameRate,
         port: ReplayDecoder.loopbackPort(forSource: sourceIndex),
         rate: rate,
-        playDuration: remainingDuration
+        playDuration: remainingDuration,
+        fileURLs: assembly.files,
+        fileDurations: assembly.fileDurations
       ),
       onFrame: { [weak pipeline] buffer, time, played in
         playedBox.store(played)
@@ -1513,16 +1570,40 @@ public final class AppEnvironment {
         Task { @MainActor in
           guard let self, self.isCurrentReplay(sourceIndex: sourceIndex, sourceID: sourceID, epoch: epoch)
           else { return }
-          self.statusMessage = "Holding still — replay failed: \(error)"
           self.telemetry.mutate { $0.lastReplayError = "\(error)" }
-          self.router.pipeline(at: sourceIndex)?.revertToScrubbing()
-          self.applyProgramOverlays()
+          if keepLiveOnFailure {
+            self.statusMessage = "Replay failed: \(error)"
+            self.returnToLive(sourceIndex: sourceIndex)
+          } else {
+            self.statusMessage = "Holding still — replay failed: \(error)"
+            self.router.pipeline(at: sourceIndex)?.revertToScrubbing()
+            self.applyProgramOverlays()
+          }
+        }
+      },
+      onNeedsMoreFiles: { [weak self, holder] played in
+        guard let decoder = holder.decoder else { return }
+        Task { @MainActor in
+          await self?.supplyMoreReplayFiles(
+            decoder: decoder,
+            sourceIndex: sourceIndex,
+            sourceID: sourceID,
+            epoch: epoch,
+            target: target,
+            played: played,
+            playDuration: remainingDuration
+          )
         }
       }
     )
+    holder.decoder = decoder
 
     do {
-      try await pipeline.beginReplay(decoder, offsetSeconds: offsetSeconds)
+      try await pipeline.beginReplay(
+        decoder,
+        offsetSeconds: offsetSeconds,
+        stayLiveUntilFirstFrame: keepLiveOnFailure
+      )
       guard isCurrentReplay(sourceIndex: sourceIndex, sourceID: sourceID, epoch: epoch) else { return }
       statusMessage = nil
       telemetry.mutate { $0.lastReplayError = "" }
@@ -1533,14 +1614,51 @@ public final class AppEnvironment {
         returnToLive(sourceIndex: sourceIndex)
         return
       }
-      statusMessage = "Holding still — replay failed: \(error)"
       telemetry.mutate { $0.lastReplayError = "\(error)" }
+      if keepLiveOnFailure {
+        statusMessage = "Replay failed: \(error)"
+        returnToLive(sourceIndex: sourceIndex)
+        return
+      }
+      statusMessage = "Holding still — replay failed: \(error)"
       applyProgramOverlays()
     }
   }
 
-  /// Closed segments lag the open GOP, so a hotkey playlist often ends around −2 s. Extend from
-  /// whatever has since been flushed rather than snapping to live while the countdown is still up.
+  /// Stages archive files that closed after playback started so the decoder can keep going.
+  private func supplyMoreReplayFiles(
+    decoder: ReplayDecoder,
+    sourceIndex: Int,
+    sourceID: SourceID,
+    epoch: UInt64,
+    target: WallClock,
+    played: TimeInterval,
+    playDuration: TimeInterval?
+  ) async {
+    guard isCurrentReplay(sourceIndex: sourceIndex, sourceID: sourceID, epoch: epoch) else { return }
+    guard let pipeline = router.pipeline(at: sourceIndex) else { return }
+    let continueFrom = target + played
+    let liveEdge = pipeline.liveEdge ?? clock.now
+    let assembler = self.assembler
+    let assembled: SegmentAssembler.Assembly?
+    do {
+      assembled = try await Task.detached(priority: .userInitiated) {
+        try assembler.assemblePlaylist(
+          sourceID: sourceID,
+          from: continueFrom,
+          to: liveEdge,
+          maximumSegments: 64
+        )
+      }.value
+    } catch {
+      assembled = nil
+    }
+    guard let assembly = assembled, !assembly.files.isEmpty else { return }
+    decoder.appendFiles(urls: assembly.files, durations: assembly.fileDurations)
+  }
+
+  /// Finger-scrub without a duration keeps going toward live as later files close. A timed
+  /// instant replay is one shot: stop at `playDuration` rather than starting a second decoder.
   private func handleReplayEnded(
     sourceIndex: Int,
     sourceID: SourceID,
@@ -1554,6 +1672,10 @@ public final class AppEnvironment {
     releasedAt: UInt64
   ) {
     guard isCurrentReplay(sourceIndex: sourceIndex, sourceID: sourceID, epoch: epoch) else { return }
+    if playDuration != nil {
+      returnToLive(sourceIndex: sourceIndex)
+      return
+    }
     let currentOffset = offsetSeconds + played
     guard played >= 0.25, ScrubMapping.shouldContinueReplay(currentOffsetSeconds: currentOffset) else {
       returnToLive(sourceIndex: sourceIndex)

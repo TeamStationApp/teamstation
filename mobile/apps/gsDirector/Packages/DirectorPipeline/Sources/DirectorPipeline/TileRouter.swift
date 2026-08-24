@@ -148,6 +148,30 @@ public final class SourcePipeline: @unchecked Sendable {
     return replayEpoch
   }
 
+  /// Bump the generation and keep showing live while the first archive file is opened and
+  /// decoded. Finger-up and hotkeys both use this so the rewind is not revealed until that
+  /// first file has a picture; leftover lookahead is discarded if load fails.
+  public func beginInstantReplayGeneration() {
+    lock.lock()
+    replayEpoch &+= 1
+    let previous = state
+    let replay = self.replay
+    self.replay = nil
+    state = .live
+    lock.unlock()
+    replay?.stop()
+    if previous == .replaying {
+      telemetry.recordDecodeSessionChange(delta: -1)
+    }
+    if previous == .scrubbing || previous == .replaying {
+      renderer.prepareForLive()
+    }
+    telemetry.mutateTile(sourceIndex) {
+      $0.state = .live
+      $0.offsetSeconds = 0
+    }
+  }
+
   /// Whether this pipeline is still the camera and scrub/replay generation that captured `epoch`.
   public func isCurrentReplay(sourceID: SourceID, epoch: UInt64) -> Bool {
     lock.lock()
@@ -293,15 +317,21 @@ public final class SourcePipeline: @unchecked Sendable {
     }
   }
 
-  public func beginReplay(_ decoder: ReplayDecoder, offsetSeconds: Double) async throws {
-    attachReplay(decoder, offsetSeconds: offsetSeconds)
+  public func beginReplay(
+    _ decoder: ReplayDecoder,
+    offsetSeconds: Double,
+    stayLiveUntilFirstFrame: Bool = false
+  ) async throws {
+    attachReplay(decoder, offsetSeconds: offsetSeconds, reveal: !stayLiveUntilFirstFrame)
     do {
       try await decoder.start()
     } catch {
-      // The operator may have returned to live or started a new scrub while start() waited on
-      // the player. Reverting would drag a live tile back onto a still.
       if isAttachedReplay(decoder) {
-        revertToScrubbing()
+        if stayLiveUntilFirstFrame {
+          returnToLive()
+        } else {
+          revertToScrubbing()
+        }
       }
       throw error
     }
@@ -313,21 +343,24 @@ public final class SourcePipeline: @unchecked Sendable {
     return replay === decoder
   }
 
-  private func attachReplay(_ decoder: ReplayDecoder, offsetSeconds: Double) {
+  private func attachReplay(_ decoder: ReplayDecoder, offsetSeconds: Double, reveal: Bool) {
     lock.lock()
     let previous = replay
     replay = decoder
-    state = .replaying
+    if reveal { state = .replaying }
     lock.unlock()
     previous?.stop()
 
     renderer.setPaused(false)
-    renderer.invalidateFormatCache()
-    renderer.flush()
-    if previous == nil { telemetry.recordDecodeSessionChange(delta: 1) }
-    telemetry.mutateTile(sourceIndex) {
-      $0.state = .replaying
-      $0.offsetSeconds = offsetSeconds
+    if reveal {
+      renderer.invalidateFormatCache()
+      if previous == nil { telemetry.recordDecodeSessionChange(delta: 1) }
+      telemetry.mutateTile(sourceIndex) {
+        $0.state = .replaying
+        $0.offsetSeconds = offsetSeconds
+      }
+    } else if previous == nil {
+      telemetry.recordDecodeSessionChange(delta: 1)
     }
   }
 
@@ -352,22 +385,24 @@ public final class SourcePipeline: @unchecked Sendable {
     offsetSeconds: Double
   ) {
     lock.lock()
+    var promote = false
+    if replay != nil, state == .live || state == .scrubbing {
+      state = .replaying
+      promote = true
+    }
     let state = self.state
     let programSink = self.programSink
     lock.unlock()
     guard state == .replaying else { return }
+    if promote { renderer.invalidateFormatCache() }
 
     if renderer.enqueue(pixelBuffer: pixelBuffer, presentationTime: presentationTime) {
       telemetry.recordDisplayedFrame(tile: sourceIndex)
     }
-    // Spec 6.4: the master output carries whatever the program tile is showing, replay
-    // included.
     programSink?(pixelBuffer, presentationTime)
-    // Only while the tile still reports itself replaying. A frame already in flight when the
-    // replay reaches the live edge would otherwise write its offset back over the zero that
-    // `returnToLive` just published, leaving a live tile claiming to be fifteen seconds behind.
     telemetry.mutateTile(sourceIndex) { tile in
-      guard tile.state == .replaying else { return }
+      guard tile.state == .replaying || tile.state == .live else { return }
+      tile.state = .replaying
       tile.offsetSeconds = offsetSeconds
     }
   }
