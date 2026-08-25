@@ -611,10 +611,15 @@ private struct OverlayEditSheet: View {
       Form {
         if session.kind == .web {
           Section("URL") {
-            TextField("URL", text: $url)
-              .textInputAutocapitalization(.never)
-              .autocorrectionDisabled()
-              .accessibilityIdentifier("overlay-edit-url")
+            ClearableTextField(
+              text: $url,
+              clearIdentifier: "overlay-edit-url-clear"
+            ) {
+              TextField("URL", text: $url)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .accessibilityIdentifier("overlay-edit-url")
+            }
           }
         } else {
           Section("Image") {
