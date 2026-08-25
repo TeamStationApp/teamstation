@@ -103,7 +103,7 @@ already playing — it does not seek as if the tape were at the live edge.
 
 Tiles may replay independently. Starting a second tile's replay does **not** return the first
 to live. Instant-replay hotkeys rewind from the live edge, play that duration of tape, then
-return **that tile only** to live.
+return **that tile only** to live. Output does not burn a built-in “INSTANT REPLAY” caption.
 
 | ID | Condition | Pass | Flow |
 |---|---|---|---|
@@ -121,6 +121,7 @@ return **that tile only** to live.
 | D12 | Live tile: release after a real rewind stays in the past | `state=scrubbing` or `replaying` with `off=-`, not an immediate `live off=0.0`. Replay when the archive can; otherwise “Holding still” on the proxy JPEG | `hevc-scrub`, `scrub-and-return` |
 | D13 | Already rewound: another left-swipe continues from the playhead | Stays `replaying`/`scrubbing` with `off=-`; does not jump to live or to the start of the tape | `scrub-incremental` |
 | D14 | Already rewound: a short right-swipe eases toward live | Still `off=-` after a quarter-tile right drag; must not snap to `live off=0.0` | `scrub-incremental` |
+| D15 | Instant Replay has no built-in caption | Output does not draw “INSTANT REPLAY”; only operator content overlays appear | compositor; `content-templates` after Text |
 
 ---
 
