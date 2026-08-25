@@ -15,7 +15,7 @@ public struct DirectorRootView: View {
       .preferredColorScheme(.dark)
       .statusBarHidden()
       .persistentSystemOverlays(.hidden)
-      .sheet(item: $environment.activeSheet) { sheet in
+      .fullScreenCover(item: $environment.activeSheet) { sheet in
         Group {
           switch sheet {
           case .settings: SettingsView()
@@ -25,9 +25,6 @@ public struct DirectorRootView: View {
           }
         }
         .environment(environment)
-        .presentationDetents([.large])
-        .presentationDragIndicator(.visible)
-        .presentationSizing(.page)
         .overlay(alignment: .bottom) {
           StatusToast()
             .environment(environment)

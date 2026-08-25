@@ -45,20 +45,22 @@ public struct RecordingsView: View {
           .accessibilityIdentifier("recordings-select-all")
         }
         ToolbarItem(placement: .confirmationAction) {
-          HStack(spacing: 16) {
-            Button("Delete") {
-              showDeleteConfirm = true
-            }
-            .disabled(markedIDs.isEmpty)
-            .accessibilityIdentifier("recordings-delete")
-
-            Button("Done") {
-              environment.activeSheet = nil
-              dismiss()
-            }
-            .accessibilityIdentifier("recordings-done")
+          Button("Delete") {
+            showDeleteConfirm = true
           }
+          .disabled(markedIDs.isEmpty)
+          .accessibilityIdentifier("recordings-delete")
         }
+      }
+      .safeAreaInset(edge: .bottom) {
+        ModalActionFooter(
+          primaryTitle: "DONE",
+          primaryIdentifier: "recordings-done",
+          action: {
+            environment.activeSheet = nil
+            dismiss()
+          }
+        )
       }
       .onAppear { reload() }
       .onChange(of: selectedID) { _, _ in
