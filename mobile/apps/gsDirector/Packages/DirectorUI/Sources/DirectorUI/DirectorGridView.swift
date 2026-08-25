@@ -76,14 +76,14 @@ public struct DirectorGridView: View {
         .foregroundStyle(.white.opacity(0.9))
 
       if environment.isStreaming {
-        Text(String(format: "%.2f", environment.streamMegabitsPerSecond))
+        Text(String(format: "%.2f Mbps", environment.streamMegabitsPerSecond))
           .font(.system(size: 13, weight: .semibold, design: .rounded))
           .monospacedDigit()
           .foregroundStyle(.white.opacity(0.9))
           .accessibilityIdentifier("header-stream-mbps")
           .accessibilityLabel("\(String(format: "%.2f", environment.streamMegabitsPerSecond)) megabits per second")
 
-        Text("drop \(environment.streamDroppedPackets)")
+        Text("Dropped packets: \(environment.streamDroppedPackets)")
           .font(.system(size: 13, weight: .semibold, design: .rounded))
           .monospacedDigit()
           .foregroundStyle(.white.opacity(0.9))
