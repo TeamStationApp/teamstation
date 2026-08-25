@@ -34,8 +34,7 @@ public final class ProgramStreamer: @unchecked Sendable {
   private var sentVideoConfig = false
   private var sentAudioConfig = false
   private var sentMetadata = false
-  private var baseTime: CMTime?
-  private var audioBase: CMTime?
+  private var clock = StreamEncodeClock()
   private var onFailure: FailureHandler?
   /// VideoToolbox keeps each submitted pixel buffer until the encode callback. Without a cap,
   /// a slow RTMP ingest lets that queue grow without bound at programme frame rate.
@@ -100,10 +99,16 @@ public final class ProgramStreamer: @unchecked Sendable {
     sentVideoConfig = false
     sentAudioConfig = false
     sentMetadata = false
-    baseTime = nil
-    audioBase = nil
+    clock = StreamEncodeClock(frameRate: frameRate, gopSeconds: gopSeconds)
     aac.reset()
     return true
+  }
+
+  /// Next encoded frame must be an IDR. Cuts and replay otherwise feed mid-GOP P-frames to HLS.
+  public func requestKeyframe() {
+    lock.lock()
+    clock.requestKeyframe()
+    lock.unlock()
   }
 
   private func markStarted(_ client: RTMPClient) {
@@ -137,8 +142,16 @@ public final class ProgramStreamer: @unchecked Sendable {
       lock.unlock()
       return
     }
-    if baseTime == nil { baseTime = presentationTime }
-    let base = baseTime ?? presentationTime
+    let now = CFAbsoluteTimeGetCurrent()
+    let time = clock.nextPresentationTime(source: presentationTime, now: now)
+    let forceKey = clock.shouldForceKey(at: time, now: now) || !sentVideoConfig
+    telemetry.recordStreamKeyframeAge(clock.keyframeAgeSeconds(now: now))
+    if pendingEncodes >= Self.maximumPendingEncodes {
+      clock.requestKeyframe()
+      lock.unlock()
+      return
+    }
+    pendingEncodes += 1
     lock.unlock()
 
     let isEncodable =
@@ -148,18 +161,13 @@ public final class ProgramStreamer: @unchecked Sendable {
     let encodable = isEncodable
       ? pixelBuffer
       : converter.convert(pixelBuffer: pixelBuffer, width: width, height: height)
-    guard let encodable else { return }
-
-    var time = CMTimeSubtract(presentationTime, base)
-    if time < .zero { time = .zero }
-    lock.lock()
-    let forceKey = !sentVideoConfig
-    if pendingEncodes >= Self.maximumPendingEncodes {
+    guard let encodable else {
+      lock.lock()
+      pendingEncodes = max(0, pendingEncodes - 1)
       lock.unlock()
       return
     }
-    pendingEncodes += 1
-    lock.unlock()
+
     let properties: CFDictionary? = forceKey
       ? [ kVTEncodeFrameOptionKey_ForceKeyFrame: kCFBooleanTrue ] as CFDictionary
       : nil
@@ -193,13 +201,12 @@ public final class ProgramStreamer: @unchecked Sendable {
     }
     let sentAudio = sentAudioConfig
     if !sentAudioConfig { sentAudioConfig = true }
-    let audioTime: CMTime
-    if let audioBase {
-      audioTime = CMTimeSubtract(frame.sampleBuffer.presentationTimeStamp, audioBase)
-    } else {
-      audioBase = frame.sampleBuffer.presentationTimeStamp
-      audioTime = .zero
+    let now = CFAbsoluteTimeGetCurrent()
+    if clock.startWall == 0 {
+      lock.unlock()
+      return
     }
+    let audioTime = clock.timeNow(now: now)
     lock.unlock()
 
     let timestamp = milliseconds(audioTime)
@@ -256,6 +263,11 @@ public final class ProgramStreamer: @unchecked Sendable {
       key: kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration,
       value: gopSeconds as CFNumber
     )
+    VTSessionSetProperty(
+      session,
+      key: kVTCompressionPropertyKey_MaxKeyFrameInterval,
+      value: clock.maxKeyFrameInterval as CFNumber
+    )
     VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse)
     VTSessionSetProperty(
       session,
@@ -281,9 +293,16 @@ public final class ProgramStreamer: @unchecked Sendable {
     else { return }
     let payload = Data(bytes: pointer, count: length)
     let timestamp = milliseconds(CMSampleBufferGetPresentationTimeStamp(sample))
-    let keyframe = isKeyframe(sample)
+    let keyframe = Self.payloadContainsIDR(payload) || isKeyframe(sample)
+    let now = CFAbsoluteTimeGetCurrent()
 
     lock.lock()
+    if keyframe {
+      clock.noteKeyframe(at: CMSampleBufferGetPresentationTimeStamp(sample), now: now)
+      telemetry.recordStreamKeyframe(ageSeconds: 0)
+    } else {
+      telemetry.recordStreamKeyframeAge(clock.keyframeAgeSeconds(now: now))
+    }
     guard isRunning, let client, client.isLive else {
       lock.unlock()
       return
@@ -333,11 +352,34 @@ public final class ProgramStreamer: @unchecked Sendable {
       let attachments = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: false)
         as? [[CFString: Any]],
       let first = attachments.first
-    else { return true }
+    else { return false }
+    if let notSync = first[kCMSampleAttachmentKey_NotSync] as? Bool, notSync {
+      return false
+    }
     if let depends = first[kCMSampleAttachmentKey_DependsOnOthers] as? Bool {
       return !depends
     }
-    return true
+    return false
+  }
+
+  /// AVCC length-prefixed NAL units. Type 5 is an IDR, which is what ffmpeg splits HLS on.
+  public static func payloadContainsIDR(_ payload: Data) -> Bool {
+    var offset = 0
+    while offset + 4 <= payload.count {
+      let length = payload.withUnsafeBytes { raw -> Int in
+        let base = raw.bindMemory(to: UInt8.self)
+        return Int(base[offset]) << 24
+          | Int(base[offset + 1]) << 16
+          | Int(base[offset + 2]) << 8
+          | Int(base[offset + 3])
+      }
+      offset += 4
+      guard length > 0, offset + length <= payload.count else { return false }
+      let nalType = payload[offset] & 0x1F
+      if nalType == 5 { return true }
+      offset += length
+    }
+    return false
   }
 
   private static func avcRecord(from format: CMFormatDescription) -> Data? {
