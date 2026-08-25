@@ -112,16 +112,40 @@ function parseArgs(argv) {
 
 function nowIso() {
   const date = new Date()
-  const offset = -date.getTimezoneOffset()
-  const sign = offset >= 0 ? '+' : '-'
-  const pad = n => String(Math.abs(n)).padStart(2, '0')
-  const hours = pad(Math.floor(Math.abs(offset) / 60))
-  const minutes = pad(Math.abs(offset) % 60)
-  return `${date.toISOString().replace('Z', '')}${sign}${hours}:${minutes}`
+  const pad = n => String(n).padStart(2, '0')
+  const offsetMin = -date.getTimezoneOffset()
+  const sign = offsetMin >= 0 ? '+' : '-'
+  const abs = Math.abs(offsetMin)
+  const y = date.getFullYear()
+  const mo = pad(date.getMonth() + 1)
+  const d = pad(date.getDate())
+  const h = pad(date.getHours())
+  const mi = pad(date.getMinutes())
+  const s = pad(date.getSeconds())
+  const ms = String(date.getMilliseconds()).padStart(3, '0')
+  return `${y}-${mo}-${d}T${h}:${mi}:${s}.${ms}${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`
 }
 
+let stopRequested = null
+const sleepWaiters = []
+
 function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms))
+  return new Promise(resolve => {
+    const timer = setTimeout(finish, ms)
+    function finish() {
+      const i = sleepWaiters.indexOf(finish)
+      if (i >= 0) sleepWaiters.splice(i, 1)
+      clearTimeout(timer)
+      resolve()
+    }
+    sleepWaiters.push(finish)
+  })
+}
+
+function requestStop(signal) {
+  if (stopRequested) return
+  stopRequested = signal
+  for (const wake of sleepWaiters.slice()) wake()
 }
 
 function normalizeName(value) {
@@ -153,6 +177,30 @@ function matchCameraName(label) {
     }
   }
   return null
+}
+
+async function enforceCameras(host, state, wantedNames, actionLog) {
+  for (const source of state.sources ?? []) {
+    const label = pick(source, 'name', 'displayName')
+    const name = matchCameraName(label)
+    const index = pick(source, 'index')
+    const enabled = pick(source, 'isEnabled', 'enabled') === true
+    if (!name) {
+      if (enabled) {
+        await directorSend(host, `/enable-source?index=${index}&on=false`)
+        append(actionLog, `NOTE disable unnamed index=${index}`)
+      }
+      continue
+    }
+    const wanted = wantedNames.includes(name)
+    if (wanted && !enabled) {
+      await directorSend(host, `/enable-source?index=${index}&on=true`)
+      append(actionLog, `NOTE enable ${name} index=${index}`)
+    } else if (!wanted && enabled) {
+      await directorSend(host, `/enable-source?index=${index}&on=false`)
+      append(actionLog, `NOTE disable ${name} index=${index}`)
+    }
+  }
 }
 
 function cameraMap(state) {
@@ -463,6 +511,9 @@ async function waitFor(label, timeoutMs, fn) {
 }
 
 async function main() {
+  process.on('SIGINT', () => requestStop('SIGINT'))
+  process.on('SIGTERM', () => requestStop('SIGTERM'))
+
   const options = parseArgs(process.argv.slice(2))
   process.env.DIRECTOR_DEVICE_UDID = options.device
 
@@ -512,25 +563,7 @@ async function main() {
     })
   }
 
-  for (const source of state.sources ?? []) {
-    const name = matchCameraName(pick(source, 'name', 'displayName'))
-    const index = pick(source, 'index')
-    const enabled = pick(source, 'isEnabled', 'enabled') === true
-    if (!name) {
-      if (enabled) {
-        await directorSend(host, `/enable-source?index=${index}&on=false`)
-      }
-      continue
-    }
-    const wanted = options.cameras.includes(name)
-    if (wanted && !enabled) {
-      await directorSend(host, `/enable-source?index=${index}&on=true`)
-      append(actionLog, `NOTE enable ${name} index=${index}`)
-    } else if (!wanted && enabled) {
-      await directorSend(host, `/enable-source?index=${index}&on=false`)
-      append(actionLog, `NOTE disable ${name} index=${index}`)
-    }
-  }
+  await enforceCameras(host, state, options.cameras, actionLog)
 
   state = await directorGet(host, '/dump-state')
   map = cameraMap(state)
@@ -585,6 +618,10 @@ async function main() {
 
   try {
     while (Date.now() - t0 < options.seconds * 1000) {
+      if (stopRequested) {
+        append(actionLog, `NOTE stopped by ${stopRequested}`)
+        break
+      }
       const tickStarted = Date.now()
       try {
         state = await directorGet(host, '/dump-state')
@@ -594,6 +631,9 @@ async function main() {
       }
       map = cameraMap(state)
       lastProgram = (state.programSource ?? 0) + 1
+      await enforceCameras(host, state, options.cameras, actionLog)
+      state = await directorGet(host, '/dump-state')
+      map = cameraMap(state)
 
       const health = {
         recording: pick(state.dvr, 'isRecording', 'recording') === true,
@@ -601,12 +641,10 @@ async function main() {
         live: namedLiveCount(map, options.cameras),
         thermal: pick(state, 'thermalState', 'thermal'),
         memoryMB: pick(state, 'availableMemoryMB', 'memoryMB'),
-        // DEBUG-LEAK
         physFootprintMB: pick(state, 'physFootprintMB'),
         decodeSessions: pick(state.sessions, 'decodeSessions'),
         archiveBytes: pick(state.dvr, 'byteCount', 'bytes'),
         archiveSegments: pick(state.dvr, 'segmentCount', 'segments'),
-        // DEBUG-LEAK
         playoutDepth: Array.isArray(state.tiles)
           ? state.tiles.reduce((n, t) => n + (Number(t.playoutDepth) || 0), 0)
           : null,
@@ -701,6 +739,10 @@ async function main() {
       }
 
       const used = Date.now() - tickStarted
+      if (stopRequested) {
+        append(actionLog, `NOTE stopped by ${stopRequested}`)
+        break
+      }
       await sleep(Math.max(0, options.tickMs - used))
     }
   } finally {
