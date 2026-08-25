@@ -161,6 +161,7 @@ This is the operator path that was janky: output moving, small previews frozen.
 |---|---|---|---|
 | G1 | Scorebug URL burns into Output | Loopback test page; `output src=` live and composed frames increment | `program-five-sources` |
 | G2 | Recordings lists a take and offers export | After a real recording, Recordings shows the date row and Export | `recordings-export` |
+| G8 | Recordings Select All and delete | Circle on the listed take; Select All; Delete + confirm removes it and shows empty | `recordings-export` |
 | G3 | Cameras sheet opens over the live grid | Grid → `cameras-button` → picker; enables preserved | `operator-menu-back` |
 | G4 | Opening cameras does not stop a recording | After the picker opens, `rec=1` still holds | `operator-menu-back` (records briefly first) |
 | G5 | — | Degradation ladder removed; archives follow the live wire | — |
@@ -217,6 +218,6 @@ Flows in `scripts/run-maestro.js --device <udid> --suite operator`, in order:
 15. `hevc-scrub` — D5, D7, E8, D12
 16. `scrub-incremental` — D13, D14
 17. `program-five-sources` — B7, F1, F3, G1, G7
-18. `recordings-export` — G2
+18. `recordings-export` — G2, G8
 
 After any code fix, re-run this suite from the top.
