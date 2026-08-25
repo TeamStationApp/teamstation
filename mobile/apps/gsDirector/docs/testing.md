@@ -301,7 +301,7 @@ clear it.
 | `record-and-stop` | Recording starts, segments accumulate, the stop *completes*, program file exists |
 | `scrub-and-return` | Scrub back through history while recording continues, then return to live |
 | `scrub-incremental` | A second swipe continues from the playhead, not from live |
-| `recordings-export` | Recordings lists a stopped take and Export is offered |
+| `recordings-export` | Recordings lists a stopped take, Export is offered, Select All + Delete removes it |
 
 Screenshots and hierarchy dumps land in `maestro/reports/<timestamp>/assets/`.
 

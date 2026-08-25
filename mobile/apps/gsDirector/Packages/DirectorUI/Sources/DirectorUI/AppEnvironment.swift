@@ -2682,8 +2682,19 @@ public final class AppEnvironment {
     }
   }
 
+  /// The take currently being written, if any. Recordings refuses to select or delete it.
+  public var activeRecordingID: Int64? { isRecording ? recordingID : nil }
+
   public func listedRecordings() -> [RecordingSummary] {
     (try? index.recordings()) ?? []
+  }
+
+  public func deleteRecordings(ids: [Int64]) {
+    do {
+      try index.deleteRecordings(ids: ids, skipping: activeRecordingID)
+    } catch {
+      statusMessage = "Delete failed: \(error)"
+    }
   }
 
   public func recordingCameraName(for sourceID: SourceID) -> String {

@@ -45,6 +45,36 @@ public struct RecordingSummary: Sendable, Equatable, Identifiable {
   }
 }
 
+/// Directories holding a recording's segment files, programme master, and proxy chunks.
+/// Tests pass a temp tree; production uses `DirectorPaths`.
+public struct RecordingFileRoots: Sendable {
+  public var archives: URL
+  public var program: URL
+  public var proxies: URL
+
+  public init(archives: URL, program: URL, proxies: URL) {
+    self.archives = archives
+    self.program = program
+    self.proxies = proxies
+  }
+
+  public static var standard: RecordingFileRoots {
+    RecordingFileRoots(
+      archives: DirectorPaths.archives,
+      program: DirectorPaths.program,
+      proxies: DirectorPaths.proxies
+    )
+  }
+
+  public func archiveDirectory(for source: SourceID) -> URL {
+    archives.appendingPathComponent(source.slug, isDirectory: true)
+  }
+
+  public func proxyDirectory(for source: SourceID) -> URL {
+    proxies.appendingPathComponent(source.slug, isDirectory: true)
+  }
+}
+
 public struct ProxyStillRecord: Sendable, Equatable, Codable {
   public var id: Int64
   public var sourceID: SourceID
@@ -160,6 +190,79 @@ public final class ArchiveIndex: @unchecked Sendable {
         programFilename: program,
         sourceIDs: try sourceIDs(in: id)
       )
+    }
+  }
+
+  public func segments(forRecording id: Int64) throws -> [SegmentRecord] {
+    try store.query(
+      """
+      SELECT \(Self.segmentColumns) FROM segments
+      WHERE recording_id = ?
+      ORDER BY start_wall ASC;
+      """,
+      [ .integer(id) ]
+    ).map(Self.segment(from:))
+  }
+
+  /// Unlink this recording's files and drop its index rows. `liveID` is skipped so an in-progress
+  /// take cannot be deleted from Recordings.
+  public func deleteRecordings(
+    ids: [Int64],
+    skipping liveID: Int64? = nil,
+    roots: RecordingFileRoots = .standard,
+    fileManager: FileManager = .default
+  ) throws {
+    for id in ids {
+      if let liveID, id == liveID { continue }
+      try deleteRecording(id, roots: roots, fileManager: fileManager)
+    }
+  }
+
+  public func deleteRecording(
+    _ id: Int64,
+    roots: RecordingFileRoots = .standard,
+    fileManager: FileManager = .default
+  ) throws {
+    let summaries = try recordings()
+    guard let summary = summaries.first(where: { $0.id == id }) else { return }
+    let segments = try segments(forRecording: id)
+    let from = summary.startedAt
+    let to = summary.endedAt ?? segments.map(\.endWall).max() ?? from
+
+    var files: [URL] = []
+    for segment in segments {
+      files.append(
+        roots.archiveDirectory(for: segment.sourceID).appendingPathComponent(segment.filename)
+      )
+    }
+    if let program = summary.programFilename {
+      files.append(roots.program.appendingPathComponent(program))
+    }
+
+    let sources = Set(summary.sourceIDs + segments.map(\.sourceID))
+    for sourceID in sources {
+      let stills = try proxyStills(for: sourceID, from: from, to: to)
+      let chunks = Set(stills.map(\.chunk))
+      try store.execute(
+        "DELETE FROM proxy_stills WHERE source_id = ? AND wall >= ? AND wall <= ?;",
+        [ .text(sourceID.rawValue), .real(from.seconds), .real(to.seconds) ]
+      )
+      for chunk in chunks {
+        let remaining = try store.query(
+          "SELECT COUNT(*) FROM proxy_stills WHERE source_id = ? AND chunk = ?;",
+          [ .text(sourceID.rawValue), .text(chunk) ]
+        ).first?.int(0) ?? 0
+        if remaining == 0 {
+          files.append(roots.proxyDirectory(for: sourceID).appendingPathComponent(chunk))
+        }
+      }
+    }
+
+    try store.execute("DELETE FROM segments WHERE recording_id = ?;", [ .integer(id) ])
+    try store.execute("DELETE FROM recordings WHERE id = ?;", [ .integer(id) ])
+
+    for url in files {
+      try? fileManager.removeItem(at: url)
     }
   }
 
