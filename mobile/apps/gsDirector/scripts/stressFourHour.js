@@ -282,12 +282,22 @@ async function resolveCameramanHost(udid) {
 
 async function cameramanGet(host, target) {
   const port = Number(process.env.CAMERAMAN_CONTROL_PORT ?? 8766)
-  const response = await fetch(`http://${host}:${port}${target}`, {
-    signal: AbortSignal.timeout(8000)
-  })
-  const text = await response.text()
-  if (!response.ok) throw new Error(`cameraman ${target} -> ${response.status} ${text}`)
-  return JSON.parse(text)
+  const url = `http://${host}:${port}${target}`
+  let lastError
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const response = await fetch(url, {
+        signal: AbortSignal.timeout(15000)
+      })
+      const text = await response.text()
+      if (!response.ok) throw new Error(`cameraman ${target} -> ${response.status} ${text}`)
+      return JSON.parse(text)
+    } catch (error) {
+      lastError = error
+      if (attempt < 3) await sleep(1000)
+    }
+  }
+  throw lastError
 }
 
 function processPid(udid, needle) {
@@ -613,6 +623,7 @@ async function main() {
   let ticksOk = 0
   let ticksSkip = 0
   let cameramanZeroStreak = 0
+  let keyframeAgeStreak = 0
   let abortReason = null
   let lastProgram = (state.programSource ?? 0) + 1
 
@@ -651,6 +662,8 @@ async function main() {
         replayError: pick(state, 'lastReplayError', 'replayError'),
         disk: pick(state.dvr, 'freeDiskBytes', 'freeBytes'),
         encodeFailures: pick(state.sessions, 'encodeFailures', 'failures'),
+        streamKeyframeAge: pick(state, 'streamKeyframeAgeSeconds', 'kfage'),
+        streamKeyframeCount: pick(state, 'streamKeyframeCount', 'kfn'),
         program: lastProgram,
         fps: Object.fromEntries(CAMERA_NAMES.map(name => [name, map[name]?.fps ?? null])),
         dropped: Object.fromEntries(CAMERA_NAMES.map(name => [name, map[name]?.dropped ?? null]))
@@ -703,6 +716,16 @@ async function main() {
         }
       } else {
         cameramanZeroStreak = 0
+      }
+      const kfAge = Number(health.streamKeyframeAge)
+      if (options.stream && Number.isFinite(kfAge) && kfAge > 8) {
+        keyframeAgeStreak += 1
+        if (keyframeAgeStreak >= 2) {
+          abortReason = `RTMP keyframe age ${kfAge}s`
+          break
+        }
+      } else {
+        keyframeAgeStreak = 0
       }
       const newCrashes = crashSnapshot().filter(file => !crashesAtStart.has(file))
       if (newCrashes.length) {

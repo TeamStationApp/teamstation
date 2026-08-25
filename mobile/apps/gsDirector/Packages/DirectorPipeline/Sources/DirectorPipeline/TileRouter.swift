@@ -41,6 +41,8 @@ public final class SourcePipeline: @unchecked Sendable {
   private var proxy: ProxySink?
   private var state: TileState = .live
   private var programSink: (@Sendable (CVPixelBuffer, CMTime) -> Void)?
+  /// Fired on a programme cut, replay start, or return to live so RTMP can force an IDR.
+  public var onProgramDiscontinuity: (@Sendable () -> Void)?
   private var audioSink: (@Sendable (AudioFrame) -> Void)?
   private var replay: ReplayDecoder?
   private var lastLiveWall: WallClock?
@@ -394,7 +396,10 @@ public final class SourcePipeline: @unchecked Sendable {
     let programSink = self.programSink
     lock.unlock()
     guard state == .replaying else { return }
-    if promote { renderer.invalidateFormatCache() }
+    if promote {
+      renderer.invalidateFormatCache()
+      onProgramDiscontinuity?()
+    }
 
     if renderer.enqueue(pixelBuffer: pixelBuffer, presentationTime: presentationTime) {
       telemetry.recordDisplayedFrame(tile: sourceIndex)
@@ -418,6 +423,7 @@ public final class SourcePipeline: @unchecked Sendable {
 
     replay?.stop()
     if wasReplaying { telemetry.recordDecodeSessionChange(delta: -1) }
+    if wasReplaying { onProgramDiscontinuity?() }
     renderer.prepareForLive()
     telemetry.mutateTile(sourceIndex) {
       $0.state = .live
@@ -582,6 +588,7 @@ public final class TileRouter: @unchecked Sendable {
   /// when program is changed over the control channel.
   public func selectProgram(sourceIndex: Int?) {
     lock.lock()
+    let previous = programSource
     programSource = sourceIndex
     let all = pipelines
     lock.unlock()
@@ -590,12 +597,19 @@ public final class TileRouter: @unchecked Sendable {
     // operator ticked, mixed together — so cutting the picture leaves the sound alone.
     for (index, pipeline) in all {
       if index == sourceIndex {
+        pipeline.onProgramDiscontinuity = { [weak self] in
+          self?.programStreamer.requestKeyframe()
+        }
         pipeline.setProgramSink { [weak self] buffer, time in
           self?.composeAndEncode(buffer, presentationTime: time)
         }
       } else {
+        pipeline.onProgramDiscontinuity = nil
         pipeline.setProgramSink(nil)
       }
+    }
+    if previous != sourceIndex {
+      programStreamer.requestKeyframe()
     }
     telemetry.mutate { snapshot in
       snapshot.programSource = sourceIndex
