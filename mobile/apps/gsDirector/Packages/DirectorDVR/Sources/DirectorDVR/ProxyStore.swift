@@ -37,6 +37,7 @@ public final class ProxyStore: ProxySink, @unchecked Sendable {
 
   private let lock = NSLock()
   private var lastCaptureSecond: Int64 = .min
+  private var writeInFlight = false
   private var chunkIndex = 0
   private var chunkOffset: Int64 = 0
   private var handle: FileHandle?
@@ -103,13 +104,22 @@ public final class ProxyStore: ProxySink, @unchecked Sendable {
       lock.unlock()
       return
     }
+    if writeInFlight {
+      lock.unlock()
+      return
+    }
     lastCaptureSecond = second
+    writeInFlight = true
     lock.unlock()
 
     let pixelBuffer = frame.pixelBuffer
     let wall = frame.wallClock
     queue.async { [weak self] in
-      self?.write(pixelBuffer: pixelBuffer, wall: wall)
+      guard let self else { return }
+      self.write(pixelBuffer: pixelBuffer, wall: wall)
+      self.lock.lock()
+      self.writeInFlight = false
+      self.lock.unlock()
     }
   }
 

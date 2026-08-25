@@ -25,10 +25,13 @@ public struct PlayoutQueue<Element>: Sendable where Element: Sendable {
   public var isEmpty: Bool { entries.isEmpty }
   public var earliestDue: Double? { entries.first?.due }
 
-  public mutating func enqueue(_ element: Element, due: Double) {
+  public mutating func enqueue(_ element: Element, due: Double, keepingAtMost maximum: Int? = nil) {
     let entry = Entry(due: due, sequence: nextSequence, element: element)
     nextSequence &+= 1
     entries.insert(entry, at: insertionPoint(for: entry))
+    if let maximum, maximum > 0, entries.count > maximum {
+      entries.removeFirst(entries.count - maximum)
+    }
   }
 
   /// Everything due by now, oldest first.

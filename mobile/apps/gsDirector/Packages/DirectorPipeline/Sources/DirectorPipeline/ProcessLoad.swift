@@ -27,6 +27,9 @@ public enum ProcessLoad {
 
     var total: Double = 0
     for index in 0 ..< Int(count) {
+      // `task_threads` returns a send right per thread. Releasing only the array leaks those
+      // rights; at 5 Hz that is how this poll used to grow the process until jetsam.
+      defer { mach_port_deallocate(mach_task_self_, threads[index]) }
       var info = thread_basic_info()
       var size = mach_msg_type_number_t(MemoryLayout<thread_basic_info>.size / MemoryLayout<natural_t>.size)
       let result = withUnsafeMutablePointer(to: &info) { pointer in

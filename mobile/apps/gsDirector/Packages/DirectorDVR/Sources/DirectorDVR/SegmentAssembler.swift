@@ -1,25 +1,21 @@
 import Foundation
 import DirectorCore
 
-/// Turns a range of fMP4 segments back into something a decoder will open.
+/// Turns a range of archive files back into something a decoder will open.
 ///
-/// Segmented `AVAssetWriter` output is an HLS-shaped stream: one initialisation segment
-/// carrying the moov box, then media segments that contain no headers at all. A media segment
-/// on its own is undecodable.
-///
-/// Two consumers need two shapes:
-/// - **Export** concatenates `init + media…` into one file. ffmpeg and QuickTime accept that.
-/// - **Replay** cannot: iOS `AVAssetReader` does not decode `mpeg4AppleHLS` HEVC+AAC concat.
-///   Replay therefore copies the same files into a temp directory and writes an HLS playlist
-///   (`#EXT-X-MAP`) that `AVPlayer` will play.
+/// File-based writers emit complete MP4s. Replay stages every file that covers the requested
+/// range and plays them in order. Legacy fragmented recordings still use an HLS playlist with
+/// `#EXT-X-MAP`, because those media segments have no headers of their own.
 ///
 /// Because every media segment starts on a keyframe, trimming at segment granularity is
 /// GOP-rounded by construction rather than by rounding arithmetic.
 public struct SegmentAssembler: Sendable {
   private let index: ArchiveIndex
+  private let archives: URL
 
-  public init(index: ArchiveIndex) {
+  public init(index: ArchiveIndex, archives: URL = DirectorPaths.archives) {
     self.index = index
+    self.archives = archives
   }
 
   public struct Assembly: Sendable {
@@ -28,6 +24,10 @@ public struct SegmentAssembler: Sendable {
     public var startWall: WallClock
     public var duration: TimeInterval
     public var segmentCount: Int
+    /// Complete MP4s in play order. Empty when `url` is an HLS playlist.
+    public var files: [URL] = []
+    /// Per-file durations matching `files`, used to skip `startOffset` without opening every asset.
+    public var fileDurations: [TimeInterval] = []
   }
 
   public enum AssemblyError: Error, CustomStringConvertible {
@@ -53,7 +53,7 @@ public struct SegmentAssembler: Sendable {
     progress: (@Sendable (Double) -> Void)? = nil
   ) throws -> Assembly {
     let resolved = try resolve(sourceID: sourceID, from: from, to: to, maximumSegments: maximumSegments)
-    let base = DirectorPaths.archiveDirectory(for: sourceID)
+    let base = archiveDirectory(for: sourceID)
     let output = destination ?? FileManager.default.temporaryDirectory
       .appendingPathComponent("replay-\(sourceID.slug)-\(UUID().uuidString).mp4")
 
@@ -64,7 +64,12 @@ public struct SegmentAssembler: Sendable {
     let handle = try FileHandle(forWritingTo: output)
     defer { try? handle.close() }
 
-    try handle.write(contentsOf: Data(contentsOf: base.appendingPathComponent(resolved.initialization.filename)))
+    if let initialization = resolved.initialization {
+      try handle.write(contentsOf: Data(contentsOf: base.appendingPathComponent(initialization.filename)))
+    } else if resolved.media.count == 1 {
+      try handle.write(contentsOf: Data(contentsOf: base.appendingPathComponent(resolved.media[0].filename)))
+      return assembly(url: output, media: resolved.media)
+    }
     let total = max(resolved.media.count, 1)
     for (index, segment) in resolved.media.enumerated() {
       let url = base.appendingPathComponent(segment.filename)
@@ -76,9 +81,8 @@ public struct SegmentAssembler: Sendable {
     return assembly(url: output, media: resolved.media)
   }
 
-  /// HLS playlist covering `from…to`, for on-device replay. `AVPlayer` can decode the
-  /// `mpeg4AppleHLS` fragments this writer produces; a concatenated `.mp4` of the same bytes
-  /// cannot be opened by `AVAssetReader`.
+  /// Playlist covering `from…to` for on-device replay. Complete MP4s are staged in order so
+  /// `AVAssetReader` can play the whole range; fragmented recordings still get an HLS playlist.
   public func assemblePlaylist(
     sourceID: SourceID,
     from: WallClock,
@@ -86,10 +90,14 @@ public struct SegmentAssembler: Sendable {
     maximumSegments: Int = .max
   ) throws -> Assembly {
     let resolved = try resolve(sourceID: sourceID, from: from, to: to, maximumSegments: maximumSegments)
-    let archive = DirectorPaths.archiveDirectory(for: sourceID)
+    let archive = archiveDirectory(for: sourceID)
     let directory = FileManager.default.temporaryDirectory
       .appendingPathComponent("replay-\(sourceID.slug)-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+    if resolved.initialization == nil {
+      return try stageCompleteFiles(resolved.media, from: archive, into: directory)
+    }
 
     var lines: [String] = [
       "#EXTM3U",
@@ -100,8 +108,10 @@ public struct SegmentAssembler: Sendable {
       "#EXT-X-INDEPENDENT-SEGMENTS"
     ]
 
-    let initName = try stage(resolved.initialization, from: archive, into: directory)
-    lines.append("#EXT-X-MAP:URI=\"\(initName)\"")
+    let initName = try resolved.initialization.map { try stage($0, from: archive, into: directory) }
+    if let initName {
+      lines.append("#EXT-X-MAP:URI=\"\(initName)\"")
+    }
     for segment in resolved.media {
       let name = try stage(segment, from: archive, into: directory)
       lines.append(String(format: "#EXTINF:%.3f,", max(0.001, segment.duration)))
@@ -116,7 +126,7 @@ public struct SegmentAssembler: Sendable {
   }
 
   private struct Resolved {
-    var initialization: SegmentRecord
+    var initialization: SegmentRecord?
     var media: [SegmentRecord]
   }
 
@@ -142,13 +152,17 @@ public struct SegmentAssembler: Sendable {
       segments = Array(segments.prefix(maximumSegments))
     }
 
-    guard let initialization = try index.initializationSegment(
+    let initialization = try index.initializationSegment(
       for: sourceID,
       recordingID: segments[0].recordingID,
       beforeSequence: segments[0].sequence
-    ) else {
-      throw AssemblyError.missingInitialization
+    )
+    if initialization == nil {
+      let media = segments.filter { !$0.isInitialization }
+      guard !media.isEmpty else { throw AssemblyError.noSegments }
+      return Resolved(initialization: nil, media: media)
     }
+    guard let initialization else { throw AssemblyError.missingInitialization }
 
     let nextInit = try index.nextInitializationSequence(
       for: sourceID,
@@ -162,6 +176,32 @@ public struct SegmentAssembler: Sendable {
     }
     guard !media.isEmpty else { throw AssemblyError.noSegments }
     return Resolved(initialization: initialization, media: media)
+  }
+
+  private func archiveDirectory(for sourceID: SourceID) -> URL {
+    archives.appendingPathComponent(sourceID.slug, isDirectory: true)
+  }
+
+  private func stageCompleteFiles(
+    _ media: [SegmentRecord],
+    from archive: URL,
+    into directory: URL
+  ) throws -> Assembly {
+    guard !media.isEmpty else { throw AssemblyError.noSegments }
+    var files: [URL] = []
+    files.reserveCapacity(media.count)
+    for file in media {
+      let name = try stage(file, from: archive, into: directory)
+      files.append(directory.appendingPathComponent(name))
+    }
+    return Assembly(
+      url: files[0],
+      startWall: media[0].startWall,
+      duration: media.reduce(0) { $0 + $1.duration },
+      segmentCount: media.count,
+      files: files,
+      fileDurations: media.map(\.duration)
+    )
   }
 
   private func stage(_ segment: SegmentRecord, from archive: URL, into directory: URL) throws -> String {

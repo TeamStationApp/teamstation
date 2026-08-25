@@ -1,5 +1,6 @@
 import AVFoundation
 import CoreMedia
+import Darwin
 import Foundation
 import DirectorCore
 import DirectorPipeline
@@ -124,6 +125,9 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
   /// Only one thread drains at a time; `AVAssetWriterInput.append` is not safe from two.
   private var isDraining = false
   private var sequence = 0
+  /// Destination of the writer currently open. File-based so AVAssetWriter does not accumulate
+  /// fragment `Data` in RAM until `finishWriting`.
+  private var outputFilename: String?
   private var pendingFirstFrameID: UInt64?
   private var droppedFrames: UInt64 = 0
   private var appendedFrames: UInt64 = 0
@@ -259,6 +263,13 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
       await withCheckedContinuation { continuation in
         writer.finishWriting { continuation.resume() }
       }
+      persistClosedFile(
+        filename: pending.filename,
+        sequence: pending.sequence,
+        startWall: pending.startWall,
+        duration: pending.duration,
+        firstFrameID: pending.firstFrameID
+      )
     }
 
     clearWriter()
@@ -272,6 +283,11 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     let videoInput: AVAssetWriterInput?
     let audioInput: AVAssetWriterInput?
     let hasSession: Bool
+    let filename: String?
+    let sequence: Int
+    let startWall: WallClock?
+    let duration: TimeInterval
+    let firstFrameID: UInt64?
   }
 
   private func beginFinish() -> PendingFinish? {
@@ -283,7 +299,12 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
       writer: writer,
       videoInput: videoInput,
       audioInput: audioInput,
-      hasSession: started
+      hasSession: started,
+      filename: outputFilename,
+      sequence: sequence,
+      startWall: baseWallClock,
+      duration: lastVideoTime.seconds,
+      firstFrameID: pendingFirstFrameID
     )
   }
 
@@ -293,6 +314,7 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     writer = nil
     videoInput = nil
     audioInput = nil
+    outputFilename = nil
     started = false
     held = nil
     audioTimeline = ArchiveAudioTimeline()
@@ -455,9 +477,12 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     lock.unlock()
 
     if shouldFlush {
-      // Audio first, so the segment being closed carries the sound that belongs to it.
+      // Audio first, so the file being closed carries the sound that belongs to it.
       drainAudio(limit: .max)
-      writer.flushSegment()
+      recycleWriter()
+      // This keyframe opens the next file so the cut stays on a sync sample.
+      appendVideo(picture, duration: duration)
+      return
     }
 
     guard isReady else {
@@ -506,13 +531,21 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     let audioFormat = self.audioFormat
     lock.unlock()
 
-    let writer = AVAssetWriter(contentType: UTType.mpeg4Movie)
-    writer.outputFileTypeProfile = .mpeg4AppleHLS
-    // Custom segmentation. A positive interval would refuse the audio track outright in
-    // passthrough, and the camera's keyframes are better boundaries than a clock anyway.
-    writer.preferredOutputSegmentInterval = .indefinite
-    writer.shouldOptimizeForNetworkUse = false
-    writer.delegate = self
+    lock.lock()
+    sequence += 1
+    let seq = sequence
+    lock.unlock()
+    let filename = String(format: "seg-%05d.mp4", seq)
+    let url = directory.appendingPathComponent(filename)
+    let writer: AVAssetWriter
+    do {
+      writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
+    } catch {
+      recordStartFailure(.writerFailed(error.localizedDescription))
+      return false
+    }
+    // Moov-at-front so instant replay can open the file without scanning to the end.
+    writer.shouldOptimizeForNetworkUse = true
 
     let videoInput = AVAssetWriterInput(
       mediaType: .video,
@@ -551,6 +584,7 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     self.writer = writer
     self.videoInput = videoInput
     self.audioInput = audioInput
+    self.outputFilename = filename
     started = true
     lock.unlock()
 
@@ -559,6 +593,94 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
       $0.archiveHeight = Int(dimensions.height)
     }
     return true
+  }
+
+  /// Closes the current file-based writer so its compressed samples live on disk, not in RAM.
+  /// The next keyframe opens a fresh writer; sequence numbers continue so index rows stay unique.
+  private func recycleWriter() {
+    lock.lock()
+    guard !finishing, started, let flushed = writer else {
+      lock.unlock()
+      return
+    }
+    let videoInput = self.videoInput
+    let audioInput = self.audioInput
+    let filename = outputFilename
+    let seq = sequence
+    let startWall = baseWallClock
+    let duration = lastVideoTime.isNumeric ? lastVideoTime.seconds : 0
+    let firstFrameID = pendingFirstFrameID
+    self.writer = nil
+    self.videoInput = nil
+    self.audioInput = nil
+    self.outputFilename = nil
+    started = false
+    basePresentationTime = nil
+    baseWallClock = nil
+    lastVideoTime = .negativeInfinity
+    pendingFirstFrameID = nil
+    // Keep `held`. Recycle runs from appendVideo of the keyframe that *opens* the next file,
+    // and `held` is already the picture after that keyframe. Clearing it dropped one frame
+    // at every 3s cut. That frame belongs on the new file's timeline.
+    pendingAudio.removeAll()
+    isDraining = false
+    audioTimeline = ArchiveAudioTimeline()
+    boundary = SegmentBoundary(interval: settings.segmentSeconds)
+    lock.unlock()
+
+    videoInput?.markAsFinished()
+    audioInput?.markAsFinished()
+    flushed.finishWriting { [weak self] in
+      self?.persistClosedFile(
+        filename: filename,
+        sequence: seq,
+        startWall: startWall,
+        duration: duration,
+        firstFrameID: firstFrameID
+      )
+    }
+  }
+
+  private func persistClosedFile(
+    filename: String?,
+    sequence: Int,
+    startWall: WallClock?,
+    duration: TimeInterval,
+    firstFrameID: UInt64?
+  ) {
+    guard let filename else { return }
+    let url = directory.appendingPathComponent(filename)
+    let bytes = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int64) ?? 0
+    do {
+      try index.insertSegment(
+        recordingID: recordingID,
+        sourceID: sourceID,
+        sequence: sequence,
+        filename: "rec-\(recordingID)/\(filename)",
+        isInitialization: false,
+        startWall: startWall ?? clock.now,
+        duration: max(0, duration),
+        byteCount: bytes,
+        firstFrameID: firstFrameID
+      )
+      telemetry.recordSegment(bytes: UInt64(max(0, bytes)))
+    } catch {
+      telemetry.recordError("index write failed for \(filename): \(error)")
+    }
+    Self.dropFileCache(at: url)
+  }
+
+  /// Stops the kernel charging this process for the pages of a file we just closed. Without it,
+  /// `phys_footprint` climbs in lock-step with archive bytes even though the writer has finished.
+  private static func dropFileCache(at url: URL) {
+    url.withUnsafeFileSystemRepresentation { path in
+      guard let path else { return }
+      let fd = open(path, O_RDONLY)
+      guard fd >= 0 else { return }
+      _ = fcntl(fd, F_NOCACHE, 1)
+      _ = fsync(fd)
+      close(fd)
+    }
   }
 
   private func recordStartFailure(_ error: SegmentWriterError) {
@@ -704,73 +826,6 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
         CMSampleBufferGetDuration(buffer)
       ).seconds
       drained += 1
-    }
-  }
-}
-
-// MARK: - AVAssetWriterDelegate
-
-extension SegmentWriter: AVAssetWriterDelegate {
-  public func assetWriter(
-    _ writer: AVAssetWriter,
-    didOutputSegmentData segmentData: Data,
-    segmentType: AVAssetSegmentType,
-    segmentReport: AVAssetSegmentReport?
-  ) {
-    let free = DirectorPaths.freeDiskBytes()
-    if free < settings.minimumFreeDiskBytes {
-      lock.lock()
-      stopError = SegmentWriterError.diskFull(free)
-      lock.unlock()
-      telemetry.recordError("disk headroom exhausted — archiving stopped for \(sourceID)")
-      return
-    }
-
-    lock.lock()
-    let sequenceNumber = sequence
-    sequence += 1
-    let firstFrameID = pendingFirstFrameID
-    pendingFirstFrameID = nil
-    let base = baseWallClock
-    lock.unlock()
-
-    let isInitialization = segmentType == .initialization
-    // Sequence is in the filename so a writer reopened mid-recording cannot overwrite the previous
-    // one's init.mp4 / seg-00001.mp4.
-    let filename = isInitialization
-      ? String(format: "init-%05d.mp4", sequenceNumber)
-      : String(format: "seg-%05d.mp4", sequenceNumber)
-    let url = directory.appendingPathComponent(filename)
-
-    do {
-      try segmentData.write(to: url, options: .atomic)
-    } catch {
-      telemetry.recordError("failed to write \(filename): \(error.localizedDescription)")
-      return
-    }
-
-    let videoReport = segmentReport?.trackReports.first { $0.mediaType == .video }
-    let earliest = videoReport?.earliestPresentationTimeStamp ?? .zero
-    let duration = videoReport?.duration ?? .zero
-    let startWall = (base ?? clock.now) + (earliest.isNumeric ? earliest.seconds : 0)
-
-    do {
-      try index.insertSegment(
-        recordingID: recordingID,
-        sourceID: sourceID,
-        sequence: sequenceNumber,
-        filename: "rec-\(recordingID)/\(filename)",
-        isInitialization: isInitialization,
-        startWall: startWall,
-        duration: duration.isNumeric ? duration.seconds : 0,
-        byteCount: Int64(segmentData.count),
-        firstFrameID: firstFrameID
-      )
-      if !isInitialization {
-        telemetry.recordSegment(bytes: UInt64(segmentData.count))
-      }
-    } catch {
-      telemetry.recordError("index write failed for \(filename): \(error)")
     }
   }
 }
