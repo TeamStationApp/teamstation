@@ -31,9 +31,6 @@ public final class MetalCompositor: @unchecked Sendable {
 
   private let lock = NSLock()
   private var overlayTextures: [PlacedTexture] = []
-  private var captionTexture: MTLTexture?
-  private var captionSize = CGSize.zero
-  private var showInstantReplay = false
   private var composedFrames: UInt64 = 0
 
   public let width: Int
@@ -89,10 +86,6 @@ public final class MetalCompositor: @unchecked Sendable {
     self.outputPool = outputPool
     self.width = width
     self.height = height
-    if let caption = Self.makeCaptionImage() {
-      self.captionTexture = Self.makeTexture(device: device, image: caption.image)
-      self.captionSize = caption.size
-    }
   }
 
   public var frameCount: UInt64 {
@@ -125,12 +118,6 @@ public final class MetalCompositor: @unchecked Sendable {
     lock.unlock()
   }
 
-  public func setInstantReplayVisible(_ visible: Bool) {
-    lock.lock()
-    showInstantReplay = visible
-    lock.unlock()
-  }
-
   /// Composites one NV12 program frame plus the cached overlay. Returns a BGRA buffer.
   public func compose(program: CVPixelBuffer) -> CVPixelBuffer? {
     guard
@@ -157,24 +144,12 @@ public final class MetalCompositor: @unchecked Sendable {
 
     lock.lock()
     let overlays = overlayTextures
-    let caption = showInstantReplay ? captionTexture : nil
-    let captionDrawSize = captionSize
     lock.unlock()
     encoder.setRenderPipelineState(pipelineOverlay)
     for overlay in overlays {
       var rect = overlayRect(origin: overlay.origin, size: overlay.size)
       encoder.setVertexBytes(&rect, length: MemoryLayout<SIMD4<Float>>.size, index: 0)
       encoder.setFragmentTexture(overlay.texture, index: 0)
-      encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
-    }
-    if let caption {
-      let origin = CGPoint(
-        x: OverlayLayout.topLeftInset.x,
-        y: CGFloat(height) - captionDrawSize.height - OverlayLayout.topLeftInset.y
-      )
-      var rect = overlayRect(origin: origin, size: captionDrawSize)
-      encoder.setVertexBytes(&rect, length: MemoryLayout<SIMD4<Float>>.size, index: 0)
-      encoder.setFragmentTexture(caption, index: 0)
       encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
     }
     encoder.endEncoding()
@@ -237,34 +212,6 @@ public final class MetalCompositor: @unchecked Sendable {
       bytesPerRow: bytesPerRow
     )
     return texture
-  }
-
-  /// Drawn once; the compositor just binds it while Output is rewinding.
-  private static func makeCaptionImage() -> (image: CGImage, size: CGSize)? {
-    let text = "INSTANT REPLAY" as NSString
-    let font = UIFont.systemFont(ofSize: 42, weight: .heavy)
-    let attributes: [NSAttributedString.Key: Any] = [
-      .font: font,
-      .foregroundColor: UIColor.white
-    ]
-    let textSize = text.size(withAttributes: attributes)
-    let padding = CGSize(width: 8, height: 6)
-    let size = CGSize(
-      width: ceil(textSize.width + padding.width * 2),
-      height: ceil(textSize.height + padding.height * 2)
-    )
-    let bounds = CGRect(origin: .zero, size: size)
-    let renderer = UIGraphicsImageRenderer(size: size)
-    let image = renderer.image { _ in
-      UIColor.clear.setFill()
-      UIRectFill(bounds)
-      text.draw(
-        at: CGPoint(x: padding.width, y: padding.height),
-        withAttributes: attributes
-      )
-    }
-    guard let cgImage = image.cgImage else { return nil }
-    return (cgImage, size)
   }
 
   private func makeTexture(

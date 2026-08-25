@@ -1748,14 +1748,6 @@ public final class AppEnvironment {
     return UIImage(data: data)?.pngData() ?? data
   }
 
-  /// Instant Replay caption burns into Output whenever that camera is replaying. Scrub uses the
-  /// same off-live path for operator overlays, but not for the caption.
-  private func programSourceIsReplaying() -> Bool {
-    guard let index = router.currentProgramSource else { return false }
-    let state = telemetry.snapshot.tiles.first { $0.index == index }?.state
-    return state == .replaying
-  }
-
   private func programSourceIsOffLive() -> Bool {
     guard let index = router.currentProgramSource else { return false }
     let state = telemetry.snapshot.tiles.first { $0.index == index }?.state
@@ -1763,7 +1755,6 @@ public final class AppEnvironment {
   }
 
   private func applyProgramOverlays() {
-    compositor?.setInstantReplayVisible(programSourceIsReplaying())
     compositor?.setOverlays(composedOverlayItems())
   }
 
