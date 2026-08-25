@@ -2042,9 +2042,40 @@ public final class AppEnvironment {
     overlayStore.removeImage(filename: overlays[index].imageFilename)
     overlays[index].imageFilename = filename
     overlays[index].imageDisplayName = displayName
-    overlays[index].hasLaidOut = false
+    let canvas = overlayCanvas
+    let current = OverlayLayout.pixelRect(overlays[index], canvas: canvas)
+    let oldNative: CGSize
+    if overlays[index].nativeWidth > 0 {
+      oldNative = CGSize(width: overlays[index].nativeWidth, height: overlays[index].nativeHeight)
+    } else if let old = overlayImages[id] {
+      oldNative = CGSize(width: old.width, height: old.height)
+    } else {
+      oldNative = .zero
+    }
+    guard let newImage = UIImage(data: data)?.cgImage else {
+      persistActiveTemplate()
+      loadOverlayImage(overlays[index])
+      applyProgramOverlays()
+      return
+    }
+    let newNative = CGSize(width: newImage.width, height: newImage.height)
+    let rect = OverlayLayout.replacedImageRect(
+      origin: current.origin,
+      currentSize: current.size,
+      oldNative: oldNative,
+      newNative: newNative,
+      canvas: canvas
+    )
+    let normalized = OverlayLayout.normalized(rect, canvas: canvas)
+    overlays[index].originX = normalized.originX
+    overlays[index].originY = normalized.originY
+    overlays[index].width = normalized.width
+    overlays[index].height = normalized.height
+    overlays[index].nativeWidth = Double(newNative.width)
+    overlays[index].nativeHeight = Double(newNative.height)
+    overlays[index].hasLaidOut = true
+    overlayImages[id] = newImage
     persistActiveTemplate()
-    loadOverlayImage(overlays[index])
     applyProgramOverlays()
   }
 
