@@ -6,6 +6,8 @@ public struct RemoteControlEditorView: View {
   @Environment(\.dismiss) private var dismiss
 
   @State private var capturing: RemoteAction?
+  @State private var showingRename = false
+  @State private var renameText = ""
 
   public init() {}
 
@@ -18,9 +20,6 @@ public struct RemoteControlEditorView: View {
       }
       .padding(16)
       .background(Color.black)
-      .navigationTitle(
-        environment.activeRemoteTemplate?.name ?? RemoteControlTemplate.defaultName
-      )
       .navigationBarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .confirmationAction) {
@@ -30,6 +29,36 @@ public struct RemoteControlEditorView: View {
           }
           .accessibilityIdentifier("remote-editor-done")
         }
+        ToolbarItem(placement: .principal) {
+          HStack(spacing: 8) {
+            Text(templateName)
+              .font(.headline)
+            Button {
+              renameText = templateName
+              showingRename = true
+            } label: {
+              Image(systemName: "pencil")
+            }
+            .accessibilityIdentifier("remote-editor-rename")
+            .accessibilityLabel("Rename template")
+          }
+        }
+      }
+      .sheet(isPresented: $showingRename) {
+        TemplateRenameSheet(
+          title: "Rename template",
+          name: $renameText,
+          fieldIdentifier: "remote-editor-rename-field",
+          clearIdentifier: "remote-editor-rename-clear",
+          onCancel: { showingRename = false },
+          onSave: {
+            environment.renameRemoteTemplate(
+              id: environment.editingRemoteTemplateID ?? environment.activeRemoteTemplateID,
+              name: renameText
+            )
+            showingRename = false
+          }
+        )
       }
     }
     .onDisappear {
@@ -37,9 +66,13 @@ public struct RemoteControlEditorView: View {
     }
   }
 
+  private var templateName: String {
+    environment.editingRemoteTemplate?.name ?? RemoteControlTemplate.defaultName
+  }
+
   @ViewBuilder
   private var typePicker: some View {
-    if let template = environment.activeRemoteTemplate {
+    if let template = environment.editingRemoteTemplate {
       Picker("Remote", selection: remoteTypeBinding(template.id, current: template.remoteType)) {
         ForEach(RemoteType.allCases) { type in
           Text(type.displayName).tag(type)
@@ -145,7 +178,7 @@ public struct RemoteControlEditorView: View {
   }
 
   private func fieldControl(for action: RemoteAction) -> ControlID? {
-    guard let template = environment.activeRemoteTemplate else { return nil }
+    guard let template = environment.editingRemoteTemplate else { return nil }
     return RemoteChordRules.fieldControl(for: action, in: template.bindings)
   }
 

@@ -14,6 +14,8 @@ struct ContentEditorView: View {
   @State private var photoItem: PhotosPickerItem?
   @State private var addShowInRewind = false
   @State private var editing: OverlayEditSession?
+  @State private var showingRename = false
+  @State private var renameText = ""
 
   var body: some View {
     NavigationStack {
@@ -62,15 +64,25 @@ struct ContentEditorView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
       }
       .background(Color.deckBackground)
-      .navigationTitle(
-        environment.templates.first { $0.id == environment.activeTemplateID }?.name
-          ?? OverlayTemplate.defaultName
-      )
       .navigationBarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
           Button("Done") { dismiss() }
             .accessibilityIdentifier("content-editor-done")
+        }
+        ToolbarItem(placement: .principal) {
+          HStack(spacing: 8) {
+            Text(templateName)
+              .font(.headline)
+            Button {
+              renameText = templateName
+              showingRename = true
+            } label: {
+              Image(systemName: "pencil")
+            }
+            .accessibilityIdentifier("content-editor-rename")
+            .accessibilityLabel("Rename template")
+          }
         }
         ToolbarItemGroup(placement: .primaryAction) {
           Button("List") { showingList = true }
@@ -123,7 +135,28 @@ struct ContentEditorView: View {
         )
         .id(session.id)
       }
+      .sheet(isPresented: $showingRename) {
+        TemplateRenameSheet(
+          title: "Rename template",
+          name: $renameText,
+          fieldIdentifier: "content-editor-rename-field",
+          clearIdentifier: "content-editor-rename-clear",
+          onCancel: { showingRename = false },
+          onSave: {
+            environment.renameTemplate(
+              id: environment.editingTemplateID ?? environment.activeTemplateID,
+              name: renameText
+            )
+            showingRename = false
+          }
+        )
+      }
     }
+  }
+
+  private var templateName: String {
+    let id = environment.editingTemplateID ?? environment.activeTemplateID
+    return environment.templates.first { $0.id == id }?.name ?? OverlayTemplate.defaultName
   }
 
   private func showInRewindBinding(for session: OverlayEditSession) -> Binding<Bool> {

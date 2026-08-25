@@ -40,6 +40,8 @@ appId: co.gamestation.director
     visible:
       id: 'content-editor-done'
     timeout: 10000
+- assertVisible:
+    id: 'content-editor-rename'
 - tapOn:
     id: 'content-add'
 - tapOn:
@@ -73,6 +75,8 @@ appId: co.gamestation.director
     visible:
       id: 'settings-add-content-template'
     timeout: 10000
+- assertNotVisible:
+    id: 'settings-content-template-rename-1'
 - tapOn:
     id: 'settings-add-content-template'
 - extendedWaitUntil:
@@ -93,6 +97,16 @@ appId: co.gamestation.director
 - assertVisible: 'Saturday JV'
 - tapOn:
     id: 'settings-content-template-select-1'
+- assertNotVisible:
+    id: 'content-editor-done'
+- tapOn:
+    id: 'settings-content-template-2'
+- extendedWaitUntil:
+    visible:
+      id: 'content-editor-done'
+    timeout: 10000
+- tapOn:
+    id: 'content-editor-done'
 - assertNotVisible:
     id: 'content-editor-done'
 - tapOn:

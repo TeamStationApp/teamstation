@@ -9,14 +9,10 @@ public struct SettingsView: View {
   @State private var showingContentEditor = false
   @State private var showingRemoteEditor = false
   @State private var showingClearCameraMemory = false
-  @State private var renaming: OverlayTemplate?
-  @State private var renameText = ""
   @State private var deleting: OverlayTemplate?
   @State private var showingNewTemplate = false
   @State private var newTemplateName = ""
   @State private var copyFromID: UUID?
-  @State private var renamingRemote: RemoteControlTemplate?
-  @State private var renameRemoteText = ""
   @State private var deletingRemote: RemoteControlTemplate?
   @State private var showingNewRemote = false
   @State private var newRemoteName = ""
@@ -37,50 +33,19 @@ public struct SettingsView: View {
 
         Section {
           ForEach(Array(environment.templates.enumerated()), id: \.element.id) { index, template in
-            HStack {
-              Button {
-                environment.selectTemplate(id: template.id)
-              } label: {
-                Image(
-                  systemName: template.id == environment.activeTemplateID
-                    ? "circle.inset.filled"
-                    : "circle"
-                )
-              }
-              .buttonStyle(.borderless)
-              .padding(.trailing, 12)
-              .accessibilityLabel("Select \(template.name)")
-              .accessibilityIdentifier("settings-content-template-select-\(index + 1)")
-
-              Button {
-                environment.selectTemplate(id: template.id)
+            SettingsTemplateRow(
+              name: template.name,
+              isSelected: template.id == environment.activeTemplateID,
+              selectIdentifier: "settings-content-template-select-\(index + 1)",
+              nameIdentifier: "settings-content-template-\(index + 1)",
+              deleteIdentifier: "settings-content-template-delete-\(index + 1)",
+              onSelect: { environment.selectTemplate(id: template.id) },
+              onEdit: {
+                environment.beginEditingTemplate(id: template.id)
                 showingContentEditor = true
-              } label: {
-                Text(template.name)
-                  .frame(maxWidth: .infinity, alignment: .leading)
-              }
-              .buttonStyle(.borderless)
-              .accessibilityIdentifier("settings-content-template-\(index + 1)")
-
-              HStack(spacing: 20) {
-                Button {
-                  renaming = template
-                  renameText = template.name
-                } label: {
-                  Image(systemName: "pencil")
-                }
-                .buttonStyle(.borderless)
-                .accessibilityIdentifier("settings-content-template-rename-\(index + 1)")
-
-                Button(role: .destructive) {
-                  deleting = template
-                } label: {
-                  Image(systemName: "trash")
-                }
-                .buttonStyle(.borderless)
-                .accessibilityIdentifier("settings-content-template-delete-\(index + 1)")
-              }
-            }
+              },
+              onDelete: { deleting = template }
+            )
           }
 
           Button("Add New Template") {
@@ -92,58 +57,24 @@ public struct SettingsView: View {
         } header: {
           Text("Content Templates")
         } footer: {
-          Text(
-            "Radio selects the Output template. Tap the name to place and add content. "
-              + "Pencil renames. Trash deletes."
-          )
+          Text("Radio selects the Output template. Tap the name to edit. Trash deletes.")
         }
 
         Section {
           ForEach(Array(environment.remoteTemplates.enumerated()), id: \.element.id) { index, template in
-            HStack {
-              Button {
-                environment.selectRemoteTemplate(id: template.id)
-              } label: {
-                Image(
-                  systemName: template.id == environment.activeRemoteTemplateID
-                    ? "circle.inset.filled"
-                    : "circle"
-                )
-              }
-              .buttonStyle(.borderless)
-              .padding(.trailing, 12)
-              .accessibilityLabel("Select \(template.name)")
-              .accessibilityIdentifier("settings-remote-template-select-\(index + 1)")
-
-              Button {
-                environment.selectRemoteTemplate(id: template.id)
+            SettingsTemplateRow(
+              name: template.name,
+              isSelected: template.id == environment.activeRemoteTemplateID,
+              selectIdentifier: "settings-remote-template-select-\(index + 1)",
+              nameIdentifier: "settings-remote-template-\(index + 1)",
+              deleteIdentifier: "settings-remote-template-delete-\(index + 1)",
+              onSelect: { environment.selectRemoteTemplate(id: template.id) },
+              onEdit: {
+                environment.beginEditingRemoteTemplate(id: template.id)
                 showingRemoteEditor = true
-              } label: {
-                Text(template.name)
-                  .frame(maxWidth: .infinity, alignment: .leading)
-              }
-              .buttonStyle(.borderless)
-              .accessibilityIdentifier("settings-remote-template-\(index + 1)")
-
-              HStack(spacing: 20) {
-                Button {
-                  renamingRemote = template
-                  renameRemoteText = template.name
-                } label: {
-                  Image(systemName: "pencil")
-                }
-                .buttonStyle(.borderless)
-                .accessibilityIdentifier("settings-remote-template-rename-\(index + 1)")
-
-                Button(role: .destructive) {
-                  deletingRemote = template
-                } label: {
-                  Image(systemName: "trash")
-                }
-                .buttonStyle(.borderless)
-                .accessibilityIdentifier("settings-remote-template-delete-\(index + 1)")
-              }
-            }
+              },
+              onDelete: { deletingRemote = template }
+            )
           }
 
           Button("Add New Template") {
@@ -155,10 +86,7 @@ public struct SettingsView: View {
         } header: {
           Text("Remote Control")
         } footer: {
-          Text(
-            "Radio selects the pad mapping. Tap the name to bind actions to button chords. "
-              + "Pencil renames. Trash deletes."
-          )
+          Text("Radio selects the pad mapping. Tap the name to edit. Trash deletes.")
         }
 
         Section {
@@ -310,7 +238,9 @@ public struct SettingsView: View {
         }
       }
     }
-    .sheet(isPresented: $showingContentEditor) {
+    .sheet(isPresented: $showingContentEditor, onDismiss: {
+      environment.endEditingTemplate()
+    }) {
       ContentEditorView()
         .environment(environment)
         .presentationDetents([.large])
@@ -318,7 +248,9 @@ public struct SettingsView: View {
         .presentationContentInteraction(.scrolls)
         .presentationSizing(.page)
     }
-    .sheet(isPresented: $showingRemoteEditor) {
+    .sheet(isPresented: $showingRemoteEditor, onDismiss: {
+      environment.endEditingRemoteTemplate()
+    }) {
       RemoteControlEditorView()
         .environment(environment)
         .presentationDetents([.large])
@@ -340,7 +272,8 @@ public struct SettingsView: View {
           } else {
             created = environment.createRemoteTemplate(name: newRemoteName)
           }
-          if created != nil {
+          if let created {
+            environment.beginEditingRemoteTemplate(id: created)
             showingNewRemote = false
             showingRemoteEditor = true
           }
@@ -359,30 +292,13 @@ public struct SettingsView: View {
           } else {
             created = environment.createTemplate(name: newTemplateName)
           }
-          if created != nil {
+          if let created {
+            environment.beginEditingTemplate(id: created)
             showingNewTemplate = false
             showingContentEditor = true
           }
         }
       )
-    }
-    .alert(
-      "Rename template",
-      isPresented: Binding(
-        get: { renaming != nil },
-        set: { if !$0 { renaming = nil } }
-      )
-    ) {
-      TextField("Name", text: $renameText)
-        .accessibilityIdentifier("settings-content-template-rename-field")
-      Button("Save") {
-        if let renaming {
-          environment.renameTemplate(id: renaming.id, name: renameText)
-        }
-        renaming = nil
-      }
-      .accessibilityIdentifier("settings-content-template-rename-save")
-      Button("Cancel", role: .cancel) { renaming = nil }
     }
     .alert(
       "Delete template?",
@@ -401,24 +317,6 @@ public struct SettingsView: View {
       Button("Cancel", role: .cancel) { deleting = nil }
     } message: {
       Text("Removes “\(deleting?.name ?? "")” from Output.")
-    }
-    .alert(
-      "Rename remote template",
-      isPresented: Binding(
-        get: { renamingRemote != nil },
-        set: { if !$0 { renamingRemote = nil } }
-      )
-    ) {
-      TextField("Name", text: $renameRemoteText)
-        .accessibilityIdentifier("settings-remote-template-rename-field")
-      Button("Save") {
-        if let renamingRemote {
-          environment.renameRemoteTemplate(id: renamingRemote.id, name: renameRemoteText)
-        }
-        renamingRemote = nil
-      }
-      .accessibilityIdentifier("settings-remote-template-rename-save")
-      Button("Cancel", role: .cancel) { renamingRemote = nil }
     }
     .alert(
       "Delete remote template?",

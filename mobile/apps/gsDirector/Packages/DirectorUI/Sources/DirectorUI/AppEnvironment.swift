@@ -151,8 +151,10 @@ public final class AppEnvironment {
   public private(set) var overlays: [ProgramOverlay] = []
   public private(set) var templates: [OverlayTemplate] = []
   public private(set) var activeTemplateID = UUID()
+  public private(set) var editingTemplateID: UUID?
   public private(set) var remoteTemplates: [RemoteControlTemplate] = []
   public private(set) var activeRemoteTemplateID = UUID()
+  public private(set) var editingRemoteTemplateID: UUID?
   /// Editor capture target. Nil means pad presses fire production actions.
   public var capturingRemoteAction: RemoteAction?
 
@@ -1774,12 +1776,13 @@ public final class AppEnvironment {
 
   private func composedOverlayItems() -> [MetalCompositor.OverlayItem] {
     let canvas = overlayCanvas
+    let source = programOverlays
     let rects = OverlayLayout.displayRects(
-      overlays: overlays,
+      overlays: source,
       canvas: canvas,
       programIsOffLive: programSourceIsOffLive()
     )
-    return overlays.compactMap { overlay in
+    return source.compactMap { overlay in
       let rect = rects[overlay.id] ?? .zero
       guard rect.width > 0.5, rect.height > 0.5 else { return nil }
       let image: CGImage?
@@ -1790,6 +1793,14 @@ public final class AppEnvironment {
       guard let image else { return nil }
       return MetalCompositor.OverlayItem(image: image, origin: rect.origin, size: rect.size)
     }
+  }
+
+  /// Overlays burned into Output. Editing another template must not replace the radio-selected one.
+  private var programOverlays: [ProgramOverlay] {
+    if let editingTemplateID, editingTemplateID != activeTemplateID {
+      return templates.first { $0.id == activeTemplateID }?.overlays ?? []
+    }
+    return overlays
   }
 
   private func reloadOverlayMedia() {
@@ -2130,6 +2141,22 @@ public final class AppEnvironment {
     applyProgramOverlays()
   }
 
+  public func beginEditingTemplate(id: UUID) {
+    persistWorkingTemplate()
+    guard templates.contains(where: { $0.id == id }) else { return }
+    editingTemplateID = id
+    overlays = templates.first(where: { $0.id == id })?.overlays ?? []
+    reloadOverlayMedia()
+  }
+
+  public func endEditingTemplate() {
+    persistWorkingTemplate()
+    editingTemplateID = nil
+    overlays = templates.first(where: { $0.id == activeTemplateID })?.overlays ?? []
+    stopUnusedOverlayMedia()
+    reloadOverlayMedia()
+  }
+
   public func selectTemplate(id: UUID) {
     persistActiveTemplate()
     guard templates.contains(where: { $0.id == id }) else { return }
@@ -2215,8 +2242,9 @@ public final class AppEnvironment {
     overlays = templates.first(where: { $0.id == activeTemplateID })?.overlays ?? []
   }
 
-  private func persistActiveTemplate() {
-    if let index = templates.firstIndex(where: { $0.id == activeTemplateID }) {
+  private func persistWorkingTemplate() {
+    let targetID = editingTemplateID ?? activeTemplateID
+    if let index = templates.firstIndex(where: { $0.id == targetID }) {
       templates[index].overlays = overlays
     } else if templates.isEmpty {
       let fallback = OverlayTemplate(
@@ -2229,6 +2257,10 @@ public final class AppEnvironment {
     overlayStore.save(
       OverlayManifest(templates: templates, activeTemplateID: activeTemplateID)
     )
+  }
+
+  private func persistActiveTemplate() {
+    persistWorkingTemplate()
   }
 
   private func apply(_ manifest: RemoteControlManifest) {
@@ -2244,6 +2276,25 @@ public final class AppEnvironment {
 
   public var activeRemoteTemplate: RemoteControlTemplate? {
     remoteTemplates.first { $0.id == activeRemoteTemplateID }
+  }
+
+  public var editingRemoteTemplate: RemoteControlTemplate? {
+    remoteTemplates.first { $0.id == (editingRemoteTemplateID ?? activeRemoteTemplateID) }
+  }
+
+  public func beginEditingRemoteTemplate(id: UUID) {
+    persistActiveRemoteTemplate()
+    guard remoteTemplates.contains(where: { $0.id == id }) else { return }
+    editingRemoteTemplateID = id
+  }
+
+  public func endEditingRemoteTemplate() {
+    persistActiveRemoteTemplate()
+    editingRemoteTemplateID = nil
+  }
+
+  private var mutatingRemoteTemplateID: UUID {
+    editingRemoteTemplateID ?? activeRemoteTemplateID
   }
 
   public func selectRemoteTemplate(id: UUID) {
@@ -2316,7 +2367,7 @@ public final class AppEnvironment {
 
   public func appendRemoteControl(_ id: ControlID, to action: RemoteAction) {
     persistActiveRemoteTemplate()
-    guard let index = remoteTemplates.firstIndex(where: { $0.id == activeRemoteTemplateID }) else {
+    guard let index = remoteTemplates.firstIndex(where: { $0.id == mutatingRemoteTemplateID }) else {
       return
     }
     RemoteChordRules.capture(id, for: action, in: &remoteTemplates[index].bindings)
@@ -2325,7 +2376,7 @@ public final class AppEnvironment {
 
   public func clearRemoteChord(for action: RemoteAction) {
     persistActiveRemoteTemplate()
-    guard let index = remoteTemplates.firstIndex(where: { $0.id == activeRemoteTemplateID }) else {
+    guard let index = remoteTemplates.firstIndex(where: { $0.id == mutatingRemoteTemplateID }) else {
       return
     }
     RemoteChordRules.clear(action: action, in: &remoteTemplates[index].bindings)
@@ -2334,7 +2385,7 @@ public final class AppEnvironment {
 
   public func bindRemoteAction(_ action: RemoteAction, controls: [ControlID]) {
     persistActiveRemoteTemplate()
-    guard let index = remoteTemplates.firstIndex(where: { $0.id == activeRemoteTemplateID }) else {
+    guard let index = remoteTemplates.firstIndex(where: { $0.id == mutatingRemoteTemplateID }) else {
       return
     }
     RemoteChordRules.bind(action, controls: controls, in: &remoteTemplates[index].bindings)
@@ -2402,7 +2453,12 @@ public final class AppEnvironment {
   }
 
   private func stopUnusedOverlayMedia() {
-    let ids = Set(overlays.map(\.id))
+    var ids = Set(overlays.map(\.id))
+    if let editingTemplateID, editingTemplateID != activeTemplateID {
+      if let active = templates.first(where: { $0.id == activeTemplateID }) {
+        ids.formUnion(active.overlays.map(\.id))
+      }
+    }
     for id in webControllers.keys where !ids.contains(id) {
       webControllers[id]?.stop()
       webControllers[id] = nil
