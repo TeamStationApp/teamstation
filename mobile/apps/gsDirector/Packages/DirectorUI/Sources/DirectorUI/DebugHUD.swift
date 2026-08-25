@@ -48,6 +48,8 @@ public struct DebugHUD: View {
         label("hud-replay-error", "replayerr=\(snapshot.lastReplayError.isEmpty ? "ok" : "fail")")
         label("hud-memory", "mem=\(snapshot.physFootprintMB)")
         label("hud-avail-memory", "avail=\(snapshot.availableMemoryMB)")
+        label("hud-stream-keyframe-age", String(format: "kfage=%.1f", snapshot.streamKeyframeAgeSeconds))
+        label("hud-stream-keyframe-count", "kfn=\(snapshot.streamKeyframeCount)")
       }
       HStack(spacing: 10) {
         label("hud-overlay", "overlay=\(snapshot.overlay.isEmpty ? "off" : snapshot.overlay)")

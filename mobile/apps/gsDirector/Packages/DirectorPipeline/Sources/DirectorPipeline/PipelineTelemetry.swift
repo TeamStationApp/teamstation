@@ -279,6 +279,10 @@ public struct TelemetrySnapshot: Sendable, Codable, Equatable {
   public var programAudioPlaying = false
   /// Programme RTMP publish is currently running. Distinct from `dvr.isRecording`.
   public var isStreaming = false
+  /// IDRs actually emitted on the RTMP encode, not camera keyframes.
+  public var streamKeyframeCount: UInt64 = 0
+  /// Seconds since the last RTMP IDR. HLS stalls when this climbs past `gopSeconds`.
+  public var streamKeyframeAgeSeconds: Double = 0
   /// Recording or streaming, so backgrounding must not suspend the pipeline.
   public var keepAliveInBackground = false
   /// System Picture-in-Picture of the programme output is showing over other apps.
@@ -463,6 +467,19 @@ public final class PipelineTelemetry: @unchecked Sendable {
   public func recordEncodeSessionChange(delta: Int) {
     lock.lock()
     state.sessions.encodeSessions = max(0, state.sessions.encodeSessions + delta)
+    lock.unlock()
+  }
+
+  public func recordStreamKeyframe(ageSeconds: Double) {
+    lock.lock()
+    state.streamKeyframeCount += 1
+    state.streamKeyframeAgeSeconds = ageSeconds
+    lock.unlock()
+  }
+
+  public func recordStreamKeyframeAge(_ seconds: Double) {
+    lock.lock()
+    state.streamKeyframeAgeSeconds = (seconds * 10).rounded() / 10
     lock.unlock()
   }
 
