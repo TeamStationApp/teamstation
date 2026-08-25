@@ -146,23 +146,16 @@ public struct SettingsView: View {
         }
 
         Section {
-          HStack {
+          ClearableTextField(
+            text: $draft.streamURL,
+            clearIdentifier: "settings-stream-url-clear",
+            clearLabel: "Clear stream URL"
+          ) {
             TextField("rtmp://host:1935/live/key", text: $draft.streamURL)
               .keyboardType(.URL)
               .textInputAutocapitalization(.never)
               .autocorrectionDisabled()
               .accessibilityIdentifier("settings-stream-url")
-            if !draft.streamURL.isEmpty {
-              Button {
-                draft.streamURL = ""
-              } label: {
-                Image(systemName: "xmark.circle.fill")
-                  .foregroundStyle(.secondary)
-              }
-              .buttonStyle(.borderless)
-              .accessibilityIdentifier("settings-stream-url-clear")
-              .accessibilityLabel("Clear stream URL")
-            }
           }
         } header: {
           Text("Stream")
@@ -402,8 +395,13 @@ private struct NewTemplateSheet: View {
           }
         }
         Section("Name") {
-          TextField("Name", text: $name)
-            .accessibilityIdentifier("settings-new-template-name")
+          ClearableTextField(
+            text: $name,
+            clearIdentifier: "settings-new-template-name-clear"
+          ) {
+            TextField("Name", text: $name)
+              .accessibilityIdentifier("settings-new-template-name")
+          }
         }
       }
       .navigationTitle("New template")

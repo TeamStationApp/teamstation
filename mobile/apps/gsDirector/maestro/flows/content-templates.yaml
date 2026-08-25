@@ -55,6 +55,11 @@ appId: co.gamestation.director
 - eraseText
 - inputText: 'https://example.com'
 - tapOn:
+    id: 'overlay-edit-url-clear'
+- tapOn:
+    id: 'overlay-edit-url'
+- inputText: 'https://example.com'
+- tapOn:
     id: 'overlay-edit-save'
 
 - tapOn:
@@ -89,6 +94,11 @@ appId: co.gamestation.director
     visible:
       id: 'settings-new-template-name'
     timeout: 10000
+- tapOn:
+    id: 'settings-new-template-name'
+- inputText: 'Saturday JV'
+- tapOn:
+    id: 'settings-new-template-name-clear'
 - tapOn:
     id: 'settings-new-template-name'
 - inputText: 'Saturday JV'

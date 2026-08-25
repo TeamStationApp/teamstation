@@ -119,14 +119,19 @@ public struct SourceSelectionView: View {
 
       VStack(alignment: .leading, spacing: 2) {
         if renamingID == selection.id {
-          TextField("Name", text: $draftName)
-            .textFieldStyle(.plain)
-            .font(.system(size: 16, weight: .semibold, design: .rounded))
-            .foregroundStyle(.white)
-            .focused($isNamingFocused)
-            .accessibilityIdentifier("source-name-field-\(index + 1)")
-            .onSubmit { commitRename(for: selection) }
-            .onAppear { isNamingFocused = true }
+          ClearableTextField(
+            text: $draftName,
+            clearIdentifier: "source-name-field-clear-\(index + 1)"
+          ) {
+            TextField("Name", text: $draftName)
+              .textFieldStyle(.plain)
+              .font(.system(size: 16, weight: .semibold, design: .rounded))
+              .foregroundStyle(.white)
+              .focused($isNamingFocused)
+              .accessibilityIdentifier("source-name-field-\(index + 1)")
+              .onSubmit { commitRename(for: selection) }
+              .onAppear { isNamingFocused = true }
+          }
         } else if let endpoint = environment.endpoint(for: selection.id) {
           nameMenu(index: index, selection: selection, endpoint: endpoint)
         } else {
