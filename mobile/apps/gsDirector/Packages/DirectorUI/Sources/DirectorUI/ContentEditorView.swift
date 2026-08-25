@@ -13,6 +13,7 @@ struct ContentEditorView: View {
   @State private var choosingKind = false
   @State private var photoItem: PhotosPickerItem?
   @State private var addShowInRewind = false
+  @State private var addShowInLive = true
   @State private var editing: OverlayEditSession?
   @State private var showingRename = false
   @State private var renameText = ""
@@ -94,11 +95,13 @@ struct ContentEditorView: View {
       .confirmationDialog("Add content", isPresented: $choosingKind, titleVisibility: .visible) {
         Button("Web") {
           addShowInRewind = false
+          addShowInLive = true
           editing = .add(.web)
         }
         .accessibilityIdentifier("content-add-web")
         Button("Image") {
           addShowInRewind = false
+          addShowInLive = true
           editing = .add(.image)
         }
         .accessibilityIdentifier("content-add-image")
@@ -116,10 +119,15 @@ struct ContentEditorView: View {
           session: session,
           photoItem: $photoItem,
           showInRewind: showInRewindBinding(for: session),
+          showInLive: showInLiveBinding(for: session),
           onSaveURL: { url, showInRewind in
             switch session {
             case .add:
-              environment.addWebOverlay(url: url, showInRewind: showInRewind)
+              environment.addWebOverlay(
+                url: url,
+                showInRewind: showInRewind,
+                showInLive: addShowInLive
+              )
             case .existing(let overlay):
               environment.updateOverlayURL(id: overlay.id, url: url)
               environment.setOverlayShowInRewind(id: overlay.id, showInRewind: showInRewind)
@@ -174,6 +182,21 @@ struct ContentEditorView: View {
     }
   }
 
+  private func showInLiveBinding(for session: OverlayEditSession) -> Binding<Bool> {
+    switch session {
+    case .add:
+      return $addShowInLive
+    case .existing(let overlay):
+      return Binding(
+        get: {
+          environment.overlays.first(where: { $0.id == overlay.id })?.showInLive
+            ?? overlay.showInLive
+        },
+        set: { environment.setOverlayShowInLive(id: overlay.id, showInLive: $0) }
+      )
+    }
+  }
+
   private func fittedCanvas(in size: CGSize) -> CGSize {
     let width = CGFloat(environment.config.programResolution.width)
     let height = CGFloat(environment.config.programResolution.height)
@@ -193,7 +216,12 @@ struct ContentEditorView: View {
       environment.replaceOverlayImage(id: overlay.id, data: data, displayName: name)
       editing = nil
     case .add:
-      environment.addImageOverlay(data: data, displayName: name, showInRewind: addShowInRewind)
+      environment.addImageOverlay(
+        data: data,
+        displayName: name,
+        showInRewind: addShowInRewind,
+        showInLive: addShowInLive
+      )
       editing = nil
     case .none:
       environment.addImageOverlay(data: data, displayName: name)
@@ -252,6 +280,7 @@ private struct OverlayListSheet: View {
               Button("Edit") { editing = .existing(overlay) }
                 .accessibilityIdentifier("content-list-edit-\(index + 1)")
             }
+            .accessibilityIdentifier("content-list-row-\(index + 1)")
             Toggle(
               "Show in rewind",
               isOn: Binding(
@@ -262,8 +291,17 @@ private struct OverlayListSheet: View {
               )
             )
             .accessibilityIdentifier("content-list-rewind-\(index + 1)")
+            Toggle(
+              "Show in live",
+              isOn: Binding(
+                get: {
+                  environment.overlays.first(where: { $0.id == overlay.id })?.showInLive ?? true
+                },
+                set: { environment.setOverlayShowInLive(id: overlay.id, showInLive: $0) }
+              )
+            )
+            .accessibilityIdentifier("content-list-live-\(index + 1)")
           }
-          .accessibilityIdentifier("content-list-row-\(index + 1)")
         }
       }
       .navigationTitle("Content")
@@ -289,6 +327,17 @@ private struct OverlayListSheet: View {
             set: { value in
               if let id = session.overlay?.id {
                 environment.setOverlayShowInRewind(id: id, showInRewind: value)
+              }
+            }
+          ),
+          showInLive: Binding(
+            get: {
+              environment.overlays.first(where: { $0.id == session.overlay?.id })?.showInLive
+                ?? true
+            },
+            set: { value in
+              if let id = session.overlay?.id {
+                environment.setOverlayShowInLive(id: id, showInLive: value)
               }
             }
           ),
@@ -533,6 +582,7 @@ private struct OverlayEditSheet: View {
   let session: OverlayEditSession
   @Binding var photoItem: PhotosPickerItem?
   @Binding var showInRewind: Bool
+  @Binding var showInLive: Bool
   let onSaveURL: (String, Bool) -> Void
   let onDelete: () -> Void
 
@@ -543,12 +593,14 @@ private struct OverlayEditSheet: View {
     session: OverlayEditSession,
     photoItem: Binding<PhotosPickerItem?>,
     showInRewind: Binding<Bool>,
+    showInLive: Binding<Bool>,
     onSaveURL: @escaping (String, Bool) -> Void,
     onDelete: @escaping () -> Void
   ) {
     self.session = session
     _photoItem = photoItem
     _showInRewind = showInRewind
+    _showInLive = showInLive
     self.onSaveURL = onSaveURL
     self.onDelete = onDelete
     _url = State(initialValue: session.overlay?.url ?? "https://")
@@ -580,8 +632,8 @@ private struct OverlayEditSheet: View {
         Section {
           Toggle("Show in rewind", isOn: $showInRewind)
             .accessibilityIdentifier("overlay-edit-rewind")
-        } footer: {
-          Text("Off: live Output only. On: also during scrub and Instant Replay.")
+          Toggle("Show in live", isOn: $showInLive)
+            .accessibilityIdentifier("overlay-edit-live")
         }
         if session.overlay != nil {
           Section {

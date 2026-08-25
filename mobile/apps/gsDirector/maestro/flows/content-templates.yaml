@@ -64,8 +64,14 @@ appId: co.gamestation.director
       id: 'content-list-row-1'
     timeout: 10000
 - assertVisible: 'https://example.com'
+- extendedWaitUntil:
+    visible:
+      id: 'content-list-rewind-1'
+    timeout: 5000
 - tapOn:
     id: 'content-list-rewind-1'
+- assertVisible:
+    id: 'content-list-live-1'
 - tapOn:
     id: 'content-list-done'
 - tapOn:

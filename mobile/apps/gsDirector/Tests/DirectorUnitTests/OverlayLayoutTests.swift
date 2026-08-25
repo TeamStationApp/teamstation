@@ -392,10 +392,48 @@ struct OverlayLayoutTests {
 
   @Test("Live-only overlays collapse off live so attached children move")
   func rewindCollapse() {
-    #expect(!OverlayVisibility.shouldCollapse(showInRewind: false, programIsOffLive: false))
-    #expect(OverlayVisibility.shouldCollapse(showInRewind: false, programIsOffLive: true))
-    #expect(!OverlayVisibility.shouldCollapse(showInRewind: true, programIsOffLive: false))
-    #expect(!OverlayVisibility.shouldCollapse(showInRewind: true, programIsOffLive: true))
+    #expect(
+      !OverlayVisibility.shouldCollapse(
+        showInLive: true,
+        showInRewind: false,
+        programIsOffLive: false
+      )
+    )
+    #expect(
+      OverlayVisibility.shouldCollapse(
+        showInLive: true,
+        showInRewind: false,
+        programIsOffLive: true
+      )
+    )
+    #expect(
+      !OverlayVisibility.shouldCollapse(
+        showInLive: true,
+        showInRewind: true,
+        programIsOffLive: false
+      )
+    )
+    #expect(
+      !OverlayVisibility.shouldCollapse(
+        showInLive: true,
+        showInRewind: true,
+        programIsOffLive: true
+      )
+    )
+    #expect(
+      OverlayVisibility.shouldCollapse(
+        showInLive: false,
+        showInRewind: true,
+        programIsOffLive: false
+      )
+    )
+    #expect(
+      OverlayVisibility.shouldCollapse(
+        showInLive: false,
+        showInRewind: false,
+        programIsOffLive: false
+      )
+    )
 
     let canvas = CGSize(width: 1000, height: 1000)
     let parentID = UUID()
@@ -477,5 +515,25 @@ struct OverlayLayoutTests {
     let data = try JSONSerialization.data(withJSONObject: object ?? [:])
     let decoded = try JSONDecoder().decode(ProgramOverlay.self, from: data)
     #expect(decoded.showInRewind == false)
+    #expect(decoded.showInLive == true)
+  }
+
+  @Test("Missing showInLive decodes as shown on live Output")
+  func showInLiveDefault() throws {
+    let overlay = ProgramOverlay(
+      kind: .web,
+      originX: 0,
+      originY: 0,
+      width: 0.2,
+      height: 0.2,
+      placement: .centerQuarter
+    )
+    var object = try JSONSerialization.jsonObject(
+      with: JSONEncoder().encode(overlay)
+    ) as? [String: Any]
+    object?["showInLive"] = nil
+    let data = try JSONSerialization.data(withJSONObject: object ?? [:])
+    let decoded = try JSONDecoder().decode(ProgramOverlay.self, from: data)
+    #expect(decoded.showInLive == true)
   }
 }

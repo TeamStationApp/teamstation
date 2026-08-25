@@ -49,6 +49,8 @@ public struct ProgramOverlay: Sendable, Codable, Identifiable, Hashable {
   /// When false, the graphic is live Output only and collapses to zero size during scrub and
   /// Instant Replay so attached children move with it. When true, it also burns in off-live.
   public var showInRewind: Bool
+  /// When false, the graphic is hidden on live Output and only appears during scrub / Instant Replay.
+  public var showInLive: Bool
 
   public init(
     id: UUID = UUID(),
@@ -69,7 +71,8 @@ public struct ProgramOverlay: Sendable, Codable, Identifiable, Hashable {
     placement: OverlayPlacement,
     role: String? = nil,
     hasLaidOut: Bool = false,
-    showInRewind: Bool = false
+    showInRewind: Bool = false,
+    showInLive: Bool = true
   ) {
     self.id = id
     self.kind = kind
@@ -90,6 +93,7 @@ public struct ProgramOverlay: Sendable, Codable, Identifiable, Hashable {
     self.role = role
     self.hasLaidOut = hasLaidOut
     self.showInRewind = showInRewind
+    self.showInLive = showInLive
   }
 
   public init(from decoder: Decoder) throws {
@@ -114,6 +118,7 @@ public struct ProgramOverlay: Sendable, Codable, Identifiable, Hashable {
     role = try container.decodeIfPresent(String.self, forKey: .role)
     hasLaidOut = try container.decodeIfPresent(Bool.self, forKey: .hasLaidOut) ?? false
     showInRewind = try container.decodeIfPresent(Bool.self, forKey: .showInRewind) ?? false
+    showInLive = try container.decodeIfPresent(Bool.self, forKey: .showInLive) ?? true
   }
 }
 
@@ -359,6 +364,7 @@ public enum OverlayLayout {
     for overlay in overlays {
       var rect = pixelRect(overlay, canvas: canvas)
       if OverlayVisibility.shouldCollapse(
+        showInLive: overlay.showInLive,
         showInRewind: overlay.showInRewind,
         programIsOffLive: programIsOffLive
       ) {
