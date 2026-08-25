@@ -283,6 +283,16 @@ public struct TelemetrySnapshot: Sendable, Codable, Equatable {
   public var streamKeyframeCount: UInt64 = 0
   /// Seconds since the last RTMP IDR. HLS stalls when this climbs past `gopSeconds`.
   public var streamKeyframeAgeSeconds: Double = 0
+  /// Frames currently in flight in VideoToolbox.
+  public var streamPendingEncodes = 0
+  /// Seconds since the last VideoToolbox output callback. Zero until one has arrived.
+  public var streamEncodeCallbackAgeSeconds: Double = 0
+  /// Seconds since the last real program frame reached the RTMP encoder. Idle IDRs do not count.
+  public var programFrameAgeSeconds: Double = 0
+  /// IDRs the GOP watchdog forced by repeating the last program picture.
+  public var streamIdleKeyframeCount: UInt64 = 0
+  /// Times the RTMP compression session was invalidated because callbacks went silent.
+  public var streamEncoderResetCount: UInt64 = 0
   /// Recording or streaming, so backgrounding must not suspend the pipeline.
   public var keepAliveInBackground = false
   /// System Picture-in-Picture of the programme output is showing over other apps.
@@ -480,6 +490,36 @@ public final class PipelineTelemetry: @unchecked Sendable {
   public func recordStreamKeyframeAge(_ seconds: Double) {
     lock.lock()
     state.streamKeyframeAgeSeconds = (seconds * 10).rounded() / 10
+    lock.unlock()
+  }
+
+  public func recordStreamPendingEncodes(_ count: Int) {
+    lock.lock()
+    state.streamPendingEncodes = max(0, count)
+    lock.unlock()
+  }
+
+  public func recordStreamEncodeCallbackAge(_ seconds: Double) {
+    lock.lock()
+    state.streamEncodeCallbackAgeSeconds = (seconds * 10).rounded() / 10
+    lock.unlock()
+  }
+
+  public func recordProgramFrameAge(_ seconds: Double) {
+    lock.lock()
+    state.programFrameAgeSeconds = (seconds * 10).rounded() / 10
+    lock.unlock()
+  }
+
+  public func recordStreamIdleKeyframe() {
+    lock.lock()
+    state.streamIdleKeyframeCount += 1
+    lock.unlock()
+  }
+
+  public func recordStreamEncoderReset() {
+    lock.lock()
+    state.streamEncoderResetCount += 1
     lock.unlock()
   }
 

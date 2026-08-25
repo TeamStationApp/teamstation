@@ -624,6 +624,9 @@ async function main() {
   let ticksSkip = 0
   let cameramanZeroStreak = 0
   let keyframeAgeStreak = 0
+  let programFrameAgeStreak = 0
+  let encoderResetIncreaseTicks = 0
+  let lastEncoderResetCount = 0
   let abortReason = null
   let lastProgram = (state.programSource ?? 0) + 1
 
@@ -664,6 +667,11 @@ async function main() {
         encodeFailures: pick(state.sessions, 'encodeFailures', 'failures'),
         streamKeyframeAge: pick(state, 'streamKeyframeAgeSeconds', 'kfage'),
         streamKeyframeCount: pick(state, 'streamKeyframeCount', 'kfn'),
+        streamPendingEncodes: pick(state, 'streamPendingEncodes', 'pend'),
+        streamEncodeCallbackAge: pick(state, 'streamEncodeCallbackAgeSeconds', 'cbage'),
+        programFrameAge: pick(state, 'programFrameAgeSeconds', 'pfage'),
+        streamIdleKeyframeCount: pick(state, 'streamIdleKeyframeCount', 'idlekf'),
+        streamEncoderResetCount: pick(state, 'streamEncoderResetCount', 'encreset'),
         program: lastProgram,
         fps: Object.fromEntries(CAMERA_NAMES.map(name => [name, map[name]?.fps ?? null])),
         dropped: Object.fromEntries(CAMERA_NAMES.map(name => [name, map[name]?.dropped ?? null]))
@@ -726,6 +734,29 @@ async function main() {
         }
       } else {
         keyframeAgeStreak = 0
+      }
+      const programAge = Number(health.programFrameAge)
+      if (options.stream && Number.isFinite(programAge) && programAge > 30) {
+        programFrameAgeStreak += 1
+        if (programFrameAgeStreak >= 2) {
+          abortReason = `program frames stopped reaching RTMP (${programAge}s)`
+          break
+        }
+      } else {
+        programFrameAgeStreak = 0
+      }
+      const resetCount = Number(health.streamEncoderResetCount)
+      if (options.stream && Number.isFinite(resetCount)) {
+        if (resetCount > lastEncoderResetCount) {
+          encoderResetIncreaseTicks += 1
+          lastEncoderResetCount = resetCount
+          if (encoderResetIncreaseTicks > 3) {
+            abortReason = `RTMP encoder reset loop (${resetCount})`
+            break
+          }
+        } else {
+          encoderResetIncreaseTicks = 0
+        }
       }
       const newCrashes = crashSnapshot().filter(file => !crashesAtStart.has(file))
       if (newCrashes.length) {
