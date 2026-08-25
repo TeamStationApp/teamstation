@@ -256,6 +256,17 @@ struct PlayoutQueueTests {
     queue.enqueue(3, due: 0.5)
     #expect(queue.release(at: 0.5) == [1, 2, 3])
   }
+
+  @Test("A cap drops the oldest frames first")
+  func dropsOldestWhenCapped() {
+    var queue = PlayoutQueue<Int>()
+    queue.enqueue(1, due: 0.1, keepingAtMost: 3)
+    queue.enqueue(2, due: 0.2, keepingAtMost: 3)
+    queue.enqueue(3, due: 0.3, keepingAtMost: 3)
+    queue.enqueue(4, due: 0.4, keepingAtMost: 3)
+    #expect(queue.count == 3)
+    #expect(queue.release(at: 10) == [2, 3, 4])
+  }
 }
 
 @Suite("Playout coordination")

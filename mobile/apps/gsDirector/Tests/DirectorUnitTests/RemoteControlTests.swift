@@ -276,6 +276,23 @@ struct ControlChannelSourceTests {
     #expect(chord == .remoteChord(controls: [ "a" ]))
   }
 
+  @Test("Parses replay command")
+  func replayCommand() {
+    let full = ControlChannel.command(
+      from: URL(string: "gsdirector://test/replay?source=2&seconds=7.5&speed=full")!
+    )
+    let slow = ControlChannel.command(
+      from: URL(string: "gsdirector://test/replay?source=1&seconds=5&speed=slow")!
+    )
+    #expect(full == .replay(source: 1, seconds: 7.5, speed: "full"))
+    #expect(slow == .replay(source: 0, seconds: 5, speed: "slow"))
+    #expect(
+      ControlChannel.command(
+        from: URL(string: "gsdirector://test/replay?source=1&seconds=5&speed=bogus")!
+      ) == nil
+    )
+  }
+
   @Test("Assign-source uses 1-based index and slot")
   func assignSourceCommand() {
     let command = ControlChannel.command(

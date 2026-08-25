@@ -10,7 +10,7 @@
 const { get, resolveHost } = require('./deviceTarget')
 
 const UDID_PATTERN =
-  /^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$/
+  /^[0-9A-Fa-f]{8}-([0-9A-Fa-f]{16}|[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})$/
 
 async function main() {
   const argv = process.argv.slice(2)

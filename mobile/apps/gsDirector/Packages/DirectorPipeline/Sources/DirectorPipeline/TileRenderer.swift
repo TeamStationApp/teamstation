@@ -90,14 +90,15 @@ public final class TileRenderer: @unchecked Sendable {
   /// Live frames after replay often share NV12 dimensions with the replay buffers but come from a
   /// different pixel-buffer pool. The cached `CMFormatDescription` then makes
   /// `CMSampleBufferCreateReadyWithImageBuffer` fail, which leaves the small preview frozen while
-  /// the program compositor — a different format — keeps moving.
+  /// the program compositor — a different format — keeps moving. Keep the last replay frame on
+  /// screen until a live sample actually enqueues, so returning to live is not a blank gap.
   public func prepareForLive() {
     lock.lock()
     isPaused = false
     clearFormatCacheLocked()
     lock.unlock()
     for layer in snapshotLayers() {
-      layer.sampleBufferRenderer.flush(removingDisplayedImage: true)
+      layer.sampleBufferRenderer.flush(removingDisplayedImage: false)
     }
   }
 
@@ -114,6 +115,12 @@ public final class TileRenderer: @unchecked Sendable {
 
   @discardableResult
   public func enqueue(pixelBuffer: CVPixelBuffer, presentationTime: CMTime) -> Bool {
+    autoreleasepool {
+      enqueueUnpooled(pixelBuffer: pixelBuffer, presentationTime: presentationTime)
+    }
+  }
+
+  private func enqueueUnpooled(pixelBuffer: CVPixelBuffer, presentationTime: CMTime) -> Bool {
     lock.lock()
     guard !isPaused else {
       lock.unlock()
@@ -212,12 +219,10 @@ public final class TileRenderer: @unchecked Sendable {
 
   private func enqueue(_ sampleBuffer: CMSampleBuffer, onto layer: AVSampleBufferDisplayLayer) {
     let renderer = layer.sampleBufferRenderer
-    if renderer.status == .failed {
-      renderer.flush(removingDisplayedImage: false)
-    }
-    if !renderer.isReadyForMoreMediaData {
-      renderer.flush(removingDisplayedImage: false)
-    }
+    // A live monitor only needs the current picture. Enqueueing DisplayImmediately samples
+    // without flushing first lets the layer keep every pixel buffer it has not yet retired,
+    // which is how four 1080p tiles climb hundreds of megabytes a minute.
+    renderer.flush(removingDisplayedImage: false)
     renderer.enqueue(sampleBuffer)
   }
 

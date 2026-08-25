@@ -13,6 +13,8 @@ public enum ControlCommand: Sendable, Equatable {
   case stream(on: Bool)
   case startDirecting
   case selectProgram(source: Int)
+  /// Instant replay on a 0-based source. `speed` is `full` or `slow`.
+  case replay(source: Int, seconds: Double, speed: String)
   case enableSource(index: Int, on: Bool)
   case sourceAudio(index: Int, on: Bool)
   case sourceGain(index: Int, gain: Double)
@@ -74,6 +76,12 @@ public enum ControlChannel {
     case "program":
       guard let source = Self.slot(query) else { return nil }
       return .selectProgram(source: source - 1)
+    case "replay":
+      guard let source = Self.slot(query) else { return nil }
+      guard let seconds = query["seconds"].flatMap({ Double($0) }), seconds > 0 else { return nil }
+      let speed = (query["speed"] ?? "full").lowercased()
+      guard speed == "full" || speed == "slow" else { return nil }
+      return .replay(source: source - 1, seconds: seconds, speed: speed)
     case "assign-source", "assignsource":
       guard let index = query["index"].flatMap({ Int($0) }) else { return nil }
       let slot = query["slot"].flatMap { Int($0) } ?? Self.slot(query)

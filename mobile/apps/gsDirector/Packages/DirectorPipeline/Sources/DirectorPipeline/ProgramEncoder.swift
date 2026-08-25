@@ -107,6 +107,7 @@ public final class ProgramEncoder: @unchecked Sendable {
     try? FileManager.default.removeItem(at: url)
 
     let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
+    writer.movieFragmentInterval = CMTime(seconds: 3, preferredTimescale: 600)
     var compression: [String: Any] = [
       AVVideoAverageBitRateKey: bitrate,
       AVVideoMaxKeyFrameIntervalDurationKey: gopSeconds,

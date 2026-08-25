@@ -108,6 +108,21 @@ struct ReplayHTTPServerTests {
     #expect(url.port == 19_811)
   }
 
+  @Test("stop releases the port so the next replay can bind it immediately")
+  func stopReleasesPort() async throws {
+    let root = try staging(files: ["index.m3u8": Data("#EXTM3U\n".utf8)])
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let first = ReplayHTTPServer(root: root, port: 19_841)
+    _ = try await first.start()
+    first.stop()
+
+    let second = ReplayHTTPServer(root: root, port: 19_841)
+    let url = try await second.start()
+    defer { second.stop() }
+    #expect(url.port == 19_841)
+  }
+
   @Test("two tiles can serve playlists on adjacent loopback ports at once")
   func twoListenersAtOnce() async throws {
     let firstRoot = try staging(files: ["index.m3u8": Data("#EXTM3U\n# first\n".utf8)])

@@ -56,15 +56,17 @@ public final class PixelConverter: @unchecked Sendable {
     lock.unlock()
   }
 
-  /// Returns a frame in `outputFormat`. If the input already matches, the same frame is
-  /// returned untouched — no copy, no session, no pool traffic.
+  /// Returns a frame in `outputFormat` from the capped pool. Live cameras already deliver that
+  /// format, but passing those buffers through lets VideoToolbox grow its output pool while the
+  /// display layer, compositor and program encoder still hold the previous pictures — the process
+  /// then climbs by about one 1080p frame per second until jetsam.
   public func convert(_ frame: PixelFrame) -> PixelFrame? {
-    if CVPixelBufferGetPixelFormatType(frame.pixelBuffer) == outputFormat {
-      lock.lock()
-      statistics.passthroughFrames += 1
-      lock.unlock()
-      return frame
+    autoreleasepool {
+      convertUnpooled(frame)
     }
+  }
+
+  private func convertUnpooled(_ frame: PixelFrame) -> PixelFrame? {
     guard let converted = convert(
       pixelBuffer: frame.pixelBuffer,
       width: frame.width,
