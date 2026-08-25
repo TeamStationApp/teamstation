@@ -122,6 +122,7 @@ return **that tile only** to live. Output does not burn a built-in “INSTANT RE
 | D13 | Already rewound: another left-swipe continues from the playhead | Stays `replaying`/`scrubbing` with `off=-`; does not jump to live or to the start of the tape | `scrub-incremental` |
 | D14 | Already rewound: a short right-swipe eases toward live | Still `off=-` after a quarter-tile right drag; must not snap to `live off=0.0` | `scrub-incremental` |
 | D15 | Instant Replay has no built-in caption | Output does not draw “INSTANT REPLAY”; only operator content overlays appear | compositor; `content-templates` after Text |
+| D16 | Add Text overlay | Add → Text shows the parameter bar above Output and types on the canvas | `content-templates` |
 
 ---
 

@@ -140,6 +140,8 @@ public final class AppEnvironment {
   /// leaves all but the last one unable to present, which made the settings and perf harness
   /// unreachable from the grid.
   public var activeSheet: Sheet?
+  /// Text overlay currently being authored on the content canvas.
+  public var editingTextOverlayID: UUID?
   /// Which discovery this session is running. Settings can change it without a relaunch.
   private var sourceProfile: SourceProfile
 
@@ -1779,7 +1781,7 @@ public final class AppEnvironment {
       let image: CGImage?
       switch overlay.kind {
       case .web: image = webSnapshots[overlay.id]?.0
-      case .image: image = overlayImages[overlay.id]
+      case .image, .text: image = overlayImages[overlay.id]
       }
       guard let image else { return nil }
       return MetalCompositor.OverlayItem(image: image, origin: rect.origin, size: rect.size)
@@ -1801,6 +1803,8 @@ public final class AppEnvironment {
         startWebOverlay(overlay)
       case .image:
         loadOverlayImage(overlay)
+      case .text:
+        rasterizeText(overlay)
       }
     }
     applyProgramOverlays()
@@ -2028,6 +2032,112 @@ public final class AppEnvironment {
     applyProgramOverlays()
   }
 
+  public func addTextOverlay(showInRewind: Bool = false, showInLive: Bool = true) -> UUID {
+    let canvas = overlayCanvas
+    let fontSize = max(0.1 * canvas.height, 12)
+    let seed = CGRect(
+      x: canvas.width / 2,
+      y: canvas.height / 2,
+      width: 1,
+      height: 1
+    )
+    let overlay = ProgramOverlay(
+      kind: .text,
+      originX: Double(seed.origin.x / canvas.width),
+      originY: Double(seed.origin.y / canvas.height),
+      width: 0.05,
+      height: 0.08,
+      placement: .centerQuarter,
+      hasLaidOut: true,
+      showInRewind: showInRewind,
+      showInLive: showInLive,
+      text: "",
+      fontSize: fontSize,
+      textAlign: .center,
+      hugText: true
+    )
+    overlays.append(overlay)
+    if let index = overlays.firstIndex(where: { $0.id == overlay.id }) {
+      layoutAndRasterizeText(at: index)
+    }
+    persistActiveTemplate()
+    return overlay.id
+  }
+
+  public func beginEditingTextOverlay(id: UUID) {
+    guard overlays.contains(where: { $0.id == id && $0.kind == .text }) else { return }
+    editingTextOverlayID = id
+  }
+
+  public func endEditingTextOverlay() {
+    if let id = editingTextOverlayID,
+       let overlay = overlays.first(where: { $0.id == id }),
+       overlay.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      editingTextOverlayID = nil
+      removeOverlay(id: id)
+      return
+    }
+    editingTextOverlayID = nil
+  }
+
+  public func updateTextOverlay(
+    id: UUID,
+    text: String? = nil,
+    fontName: String? = nil,
+    fontSize: Double? = nil,
+    isBold: Bool? = nil,
+    isItalic: Bool? = nil,
+    textAlign: TextOverlayAlign? = nil,
+    hugText: Bool? = nil,
+    textColorHex: String? = nil,
+    dropShadowEnabled: Bool? = nil,
+    dropShadowColorHex: String? = nil
+  ) {
+    guard let index = overlays.firstIndex(where: { $0.id == id }) else { return }
+    if let text { overlays[index].text = text }
+    if let fontName { overlays[index].fontName = fontName }
+    if let fontSize { overlays[index].fontSize = min(max(fontSize, 6), 200) }
+    if let isBold { overlays[index].isBold = isBold }
+    if let isItalic { overlays[index].isItalic = isItalic }
+    if let textAlign { overlays[index].textAlign = textAlign }
+    if let hugText { overlays[index].hugText = hugText }
+    if let textColorHex { overlays[index].textColorHex = textColorHex }
+    if let dropShadowEnabled { overlays[index].dropShadowEnabled = dropShadowEnabled }
+    if let dropShadowColorHex { overlays[index].dropShadowColorHex = dropShadowColorHex }
+    layoutAndRasterizeText(at: index)
+    persistActiveTemplate()
+  }
+
+  private func layoutAndRasterizeText(at index: Int) {
+    guard overlays[index].kind == .text else { return }
+    let canvas = overlayCanvas
+    if overlays[index].hugText {
+      let measured = TextOverlayRenderer.measure(overlay: overlays[index], canvas: canvas)
+      let current = OverlayLayout.pixelRect(overlays[index], canvas: canvas)
+      let rect = OverlayLayout.huggedTextRect(
+        align: overlays[index].textAlign,
+        current: current,
+        textSize: measured,
+        canvas: canvas
+      )
+      let normalized = OverlayLayout.normalized(rect, canvas: canvas)
+      overlays[index].originX = normalized.originX
+      overlays[index].originY = normalized.originY
+      overlays[index].width = normalized.width
+      overlays[index].height = normalized.height
+    }
+    rasterizeText(overlays[index])
+    applyProgramOverlays()
+  }
+
+  private func rasterizeText(_ overlay: ProgramOverlay) {
+    guard overlay.kind == .text else { return }
+    overlayImages[overlay.id] = TextOverlayRenderer.makeImage(
+      overlay: overlay,
+      canvas: overlayCanvas
+    )
+  }
+
   public func replaceOverlayImage(id: UUID, data: Data, displayName: String) {
     guard let index = overlays.firstIndex(where: { $0.id == id }) else { return }
     let filename = "\(UUID().uuidString).png"
@@ -2097,6 +2207,8 @@ public final class AppEnvironment {
       return overlayImages[overlay.id]
     case .web:
       return webSnapshots[overlay.id]?.0
+    case .text:
+      return overlayImages[overlay.id]
     }
   }
 
@@ -2143,11 +2255,17 @@ public final class AppEnvironment {
     overlays[index].width = min(max(width, 0.02), 4)
     overlays[index].height = min(max(height, 0.02), 4)
     overlays[index].hasLaidOut = true
+    if overlays[index].kind == .text, overlays[index].hugText {
+      overlays[index].hugText = false
+    }
     let canvas = overlayCanvas
     if overlays[index].kind == .web, overlays[index].nativeWidth >= 1 {
       overlays[index].scale = (overlays[index].width * canvas.width) / overlays[index].nativeWidth
       syncDisplaySize(at: index, canvas: canvas)
       applyAnchoredChildren(of: id)
+    }
+    if overlays[index].kind == .text {
+      rasterizeText(overlays[index])
     }
     applyProgramOverlays()
   }
@@ -2188,6 +2306,7 @@ public final class AppEnvironment {
   public func endEditingTemplate() {
     persistWorkingTemplate()
     editingTemplateID = nil
+    editingTextOverlayID = nil
     overlays = templates.first(where: { $0.id == activeTemplateID })?.overlays ?? []
     stopUnusedOverlayMedia()
     reloadOverlayMedia()

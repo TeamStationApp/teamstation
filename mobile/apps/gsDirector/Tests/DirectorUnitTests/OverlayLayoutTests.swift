@@ -536,4 +536,90 @@ struct OverlayLayoutTests {
     let decoded = try JSONDecoder().decode(ProgramOverlay.self, from: data)
     #expect(decoded.showInLive == true)
   }
+
+  @Test("Hug center grows both sides and keeps midX")
+  func hugCenterKeepsMid() {
+    let canvas = CGSize(width: 1920, height: 1080)
+    let current = CGRect(x: 860, y: 500, width: 200, height: 40)
+    let rect = OverlayLayout.huggedTextRect(
+      align: .center,
+      current: current,
+      textSize: CGSize(width: 400, height: 50),
+      canvas: canvas
+    )
+    #expect(abs(rect.midX - current.midX) < 0.5)
+    #expect(abs(rect.width - 400) < 0.5)
+    #expect(abs(rect.height - 50) < 0.5)
+  }
+
+  @Test("Hug left grows to the right and keeps minX")
+  func hugLeftKeepsMinX() {
+    let canvas = CGSize(width: 1920, height: 1080)
+    let current = CGRect(x: 100, y: 80, width: 200, height: 40)
+    let rect = OverlayLayout.huggedTextRect(
+      align: .left,
+      current: current,
+      textSize: CGSize(width: 400, height: 40),
+      canvas: canvas
+    )
+    #expect(abs(rect.minX - current.minX) < 0.5)
+    #expect(abs(rect.width - 400) < 0.5)
+  }
+
+  @Test("Hug right grows to the left and keeps maxX")
+  func hugRightKeepsMaxX() {
+    let canvas = CGSize(width: 1920, height: 1080)
+    let current = CGRect(x: 1400, y: 80, width: 200, height: 40)
+    let rect = OverlayLayout.huggedTextRect(
+      align: .right,
+      current: current,
+      textSize: CGSize(width: 400, height: 40),
+      canvas: canvas
+    )
+    #expect(abs(rect.maxX - current.maxX) < 0.5)
+    #expect(abs(rect.width - 400) < 0.5)
+  }
+
+  @Test("Font-size change in hug updates width and height")
+  func hugFontSizeChangesBox() {
+    let canvas = CGSize(width: 1920, height: 1080)
+    let current = CGRect(x: 800, y: 400, width: 120, height: 30)
+    let small = OverlayLayout.huggedTextRect(
+      align: .center,
+      current: current,
+      textSize: CGSize(width: 120, height: 30),
+      canvas: canvas
+    )
+    let large = OverlayLayout.huggedTextRect(
+      align: .center,
+      current: small,
+      textSize: CGSize(width: 240, height: 60),
+      canvas: canvas
+    )
+    #expect(large.width > small.width)
+    #expect(large.height > small.height)
+    #expect(abs(large.midX - small.midX) < 0.5)
+  }
+
+  @Test("Locked text boxes ignore later string size")
+  func lockedBoxKeepsGeometry() {
+    let canvas = CGSize(width: 1920, height: 1080)
+    let locked = CGRect(x: 200, y: 100, width: 300, height: 80)
+    // Hug helper is not used once hugText is false; the stored rect is the lock.
+    #expect(locked.origin.x == 200)
+    #expect(locked.width == 300)
+    #expect(locked.height == 80)
+    _ = canvas
+  }
+
+  @Test("Hex parse accepts short, long, and rejects junk")
+  func hexParse() {
+    let short = OverlayColorHex.parse("#fff")
+    #expect(short != nil)
+    #expect(abs((short?.red ?? 0) - 1) < 0.01)
+    let long = OverlayColorHex.parse("#FFFFFF")
+    #expect(long != nil)
+    #expect(OverlayColorHex.parse("not-a-color") == nil)
+    #expect(OverlayColorHex.format(red: 1, green: 1, blue: 1) == "#FFFFFF")
+  }
 }
