@@ -309,7 +309,10 @@ private struct OverlayListSheet: View {
         .id(session.id)
       }
     }
-    .presentationDetents([.medium, .large])
+    .presentationDetents([.large])
+    .presentationDragIndicator(.hidden)
+    .presentationContentInteraction(.scrolls)
+    .presentationSizing(.page)
   }
 
   private func listTitle(_ overlay: ProgramOverlay) -> String {
@@ -603,8 +606,10 @@ private struct OverlayEditSheet: View {
         }
       }
     }
-    .presentationDetents([.medium])
+    .presentationDetents([.large])
     .presentationDragIndicator(.hidden)
+    .presentationContentInteraction(.scrolls)
+    .presentationSizing(.page)
     .interactiveDismissDisabled()
   }
 }

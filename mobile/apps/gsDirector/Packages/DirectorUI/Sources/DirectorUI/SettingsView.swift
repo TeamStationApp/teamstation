@@ -425,7 +425,10 @@ private struct NewTemplateSheet: View {
         }
       }
     }
-    .presentationDetents([.medium, .large])
+    .presentationDetents([.large])
+    .presentationDragIndicator(.hidden)
+    .presentationContentInteraction(.scrolls)
+    .presentationSizing(.page)
   }
 }
 
