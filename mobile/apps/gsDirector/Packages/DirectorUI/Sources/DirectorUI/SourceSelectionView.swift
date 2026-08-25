@@ -458,19 +458,11 @@ public struct SourceSelectionView: View {
         .foregroundStyle(.white.opacity(0.5))
         .accessibilityIdentifier("enabled-count")
 
-      Button {
-        Task { await environment.enterDirecting() }
-      } label: {
-        Text("DONE")
-          .font(.system(size: 13, weight: .heavy, design: .rounded))
-          .tracking(1)
-          .padding(.horizontal, 20)
-          .padding(.vertical, 11)
-          .background(Color.programGreen, in: RoundedRectangle(cornerRadius: 8))
-          .foregroundStyle(.black)
-      }
-      .buttonStyle(.plain)
-      .accessibilityIdentifier("start-directing")
+      ModalPrimaryButton(
+        title: "DONE",
+        identifier: "start-directing",
+        action: { Task { await environment.enterDirecting() } }
+      )
     }
     .padding(24)
   }

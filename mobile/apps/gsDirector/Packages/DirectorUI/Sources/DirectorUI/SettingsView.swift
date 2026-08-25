@@ -1,20 +1,26 @@
 import DirectorCore
 import SwiftUI
 
+private enum SettingsCover: String, Identifiable {
+  case contentEditor
+  case remoteEditor
+  case newTemplate
+  case newRemote
+
+  var id: String { rawValue }
+}
+
 public struct SettingsView: View {
   @Environment(AppEnvironment.self) private var environment
   @Environment(\.dismiss) private var dismiss
 
   @State private var draft = AppConfig.default
-  @State private var showingContentEditor = false
-  @State private var showingRemoteEditor = false
+  @State private var cover: SettingsCover?
   @State private var showingClearCameraMemory = false
   @State private var deleting: OverlayTemplate?
-  @State private var showingNewTemplate = false
   @State private var newTemplateName = ""
   @State private var copyFromID: UUID?
   @State private var deletingRemote: RemoteControlTemplate?
-  @State private var showingNewRemote = false
   @State private var newRemoteName = ""
   @State private var copyRemoteFromID: UUID?
 
@@ -42,7 +48,7 @@ public struct SettingsView: View {
               onSelect: { environment.selectTemplate(id: template.id) },
               onEdit: {
                 environment.beginEditingTemplate(id: template.id)
-                showingContentEditor = true
+                cover = .contentEditor
               },
               onDelete: { deleting = template }
             )
@@ -51,7 +57,7 @@ public struct SettingsView: View {
           Button("Add New Template") {
             copyFromID = environment.activeTemplateID
             newTemplateName = ""
-            showingNewTemplate = true
+            cover = .newTemplate
           }
           .accessibilityIdentifier("settings-add-content-template")
         } header: {
@@ -71,7 +77,7 @@ public struct SettingsView: View {
               onSelect: { environment.selectRemoteTemplate(id: template.id) },
               onEdit: {
                 environment.beginEditingRemoteTemplate(id: template.id)
-                showingRemoteEditor = true
+                cover = .remoteEditor
               },
               onDelete: { deletingRemote = template }
             )
@@ -80,7 +86,7 @@ public struct SettingsView: View {
           Button("Add New Template") {
             copyRemoteFromID = environment.activeRemoteTemplateID
             newRemoteName = ""
-            showingNewRemote = true
+            cover = .newRemote
           }
           .accessibilityIdentifier("settings-add-remote-template")
         } header: {
@@ -214,84 +220,74 @@ public struct SettingsView: View {
       }
       .navigationTitle("Settings")
       .navigationBarTitleDisplayMode(.inline)
-      .toolbar {
-        ToolbarItem(placement: .cancellationAction) {
-          Button("Cancel") { dismiss() }
-            .accessibilityIdentifier("settings-cancel")
-        }
-        ToolbarItem(placement: .confirmationAction) {
-          Button("Save") {
+      .safeAreaInset(edge: .bottom) {
+        ModalActionFooter(
+          cancelTitle: "CANCEL",
+          cancelIdentifier: "settings-cancel",
+          onCancel: { dismiss() },
+          primaryTitle: "SAVE",
+          primaryIdentifier: "settings-save",
+          action: {
             draft.replaySlowMotionRate = AppConfig.clampedReplaySlowMotionRate(
               draft.replaySlowMotionRate / 100
             )
             environment.update(config: draft)
             dismiss()
           }
-          .accessibilityIdentifier("settings-save")
-        }
+        )
       }
     }
-    .sheet(isPresented: $showingContentEditor, onDismiss: {
+    .fullScreenCover(item: $cover, onDismiss: {
+      guard cover == nil else { return }
       environment.endEditingTemplate()
-    }) {
-      ContentEditorView()
-        .environment(environment)
-        .presentationDetents([.large])
-        .presentationDragIndicator(.hidden)
-        .presentationContentInteraction(.scrolls)
-        .presentationSizing(.page)
-    }
-    .sheet(isPresented: $showingRemoteEditor, onDismiss: {
       environment.endEditingRemoteTemplate()
-    }) {
-      RemoteControlEditorView()
-        .environment(environment)
-        .presentationDetents([.large])
-        .presentationDragIndicator(.hidden)
-        .presentationContentInteraction(.scrolls)
-        .presentationSizing(.page)
-    }
-    .sheet(isPresented: $showingNewRemote) {
-      NewTemplateSheet(
-        templates: environment.remoteTemplates.map {
-          OverlayTemplate(id: $0.id, name: $0.name)
-        },
-        copyFromID: $copyRemoteFromID,
-        name: $newRemoteName,
-        onCreate: { sourceID in
-          let created: UUID?
-          if let sourceID {
-            created = environment.duplicateRemoteTemplate(from: sourceID, name: newRemoteName)
-          } else {
-            created = environment.createRemoteTemplate(name: newRemoteName)
+    }) { item in
+      switch item {
+      case .contentEditor:
+        ContentEditorView()
+          .environment(environment)
+      case .remoteEditor:
+        RemoteControlEditorView()
+          .environment(environment)
+      case .newRemote:
+        NewTemplateSheet(
+          templates: environment.remoteTemplates.map {
+            OverlayTemplate(id: $0.id, name: $0.name)
+          },
+          copyFromID: $copyRemoteFromID,
+          name: $newRemoteName,
+          onCreate: { sourceID in
+            let created: UUID?
+            if let sourceID {
+              created = environment.duplicateRemoteTemplate(from: sourceID, name: newRemoteName)
+            } else {
+              created = environment.createRemoteTemplate(name: newRemoteName)
+            }
+            if let created {
+              environment.beginEditingRemoteTemplate(id: created)
+              cover = .remoteEditor
+            }
           }
-          if let created {
-            environment.beginEditingRemoteTemplate(id: created)
-            showingNewRemote = false
-            showingRemoteEditor = true
+        )
+      case .newTemplate:
+        NewTemplateSheet(
+          templates: environment.templates,
+          copyFromID: $copyFromID,
+          name: $newTemplateName,
+          onCreate: { sourceID in
+            let created: UUID?
+            if let sourceID {
+              created = environment.duplicateTemplate(from: sourceID, name: newTemplateName)
+            } else {
+              created = environment.createTemplate(name: newTemplateName)
+            }
+            if let created {
+              environment.beginEditingTemplate(id: created)
+              cover = .contentEditor
+            }
           }
-        }
-      )
-    }
-    .sheet(isPresented: $showingNewTemplate) {
-      NewTemplateSheet(
-        templates: environment.templates,
-        copyFromID: $copyFromID,
-        name: $newTemplateName,
-        onCreate: { sourceID in
-          let created: UUID?
-          if let sourceID {
-            created = environment.duplicateTemplate(from: sourceID, name: newTemplateName)
-          } else {
-            created = environment.createTemplate(name: newTemplateName)
-          }
-          if let created {
-            environment.beginEditingTemplate(id: created)
-            showingNewTemplate = false
-            showingContentEditor = true
-          }
-        }
-      )
+        )
+      }
     }
     .alert(
       "Delete template?",
@@ -406,27 +402,23 @@ private struct NewTemplateSheet: View {
       }
       .navigationTitle("New template")
       .navigationBarTitleDisplayMode(.inline)
-      .toolbar {
-        ToolbarItem(placement: .cancellationAction) {
-          Button("Cancel") { dismiss() }
-            .accessibilityIdentifier("settings-new-template-cancel")
-        }
-        ToolbarItem(placement: .confirmationAction) {
-          Button("Create") {
-            onCreate(source == .copy ? copyFromID : nil)
-          }
-          .disabled(
-            name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-              || (source == .copy && copyFromID == nil)
-          )
-          .accessibilityIdentifier("settings-new-template-create")
-        }
+      .safeAreaInset(edge: .bottom) {
+        ModalActionFooter(
+          cancelTitle: "CANCEL",
+          cancelIdentifier: "settings-new-template-cancel",
+          onCancel: { dismiss() },
+          primaryTitle: "CREATE",
+          primaryIdentifier: "settings-new-template-create",
+          primaryEnabled: canCreate,
+          action: { onCreate(source == .copy ? copyFromID : nil) }
+        )
       }
     }
-    .presentationDetents([.large])
-    .presentationDragIndicator(.hidden)
-    .presentationContentInteraction(.scrolls)
-    .presentationSizing(.page)
+  }
+
+  private var canCreate: Bool {
+    !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      && (source != .copy || copyFromID != nil)
   }
 }
 

@@ -99,11 +99,12 @@ public struct PerfHarnessView: View {
       }
       .navigationTitle("Performance")
       .navigationBarTitleDisplayMode(.inline)
-      .toolbar {
-        ToolbarItem(placement: .confirmationAction) {
-          Button("Done") { dismiss() }
-            .accessibilityIdentifier("perf-done")
-        }
+      .safeAreaInset(edge: .bottom) {
+        ModalActionFooter(
+          primaryTitle: "DONE",
+          primaryIdentifier: "perf-done",
+          action: { dismiss() }
+        )
       }
     }
   }

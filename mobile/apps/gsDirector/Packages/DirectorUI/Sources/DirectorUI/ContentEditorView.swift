@@ -66,11 +66,14 @@ struct ContentEditorView: View {
       }
       .background(Color.deckBackground)
       .navigationBarTitleDisplayMode(.inline)
+      .safeAreaInset(edge: .bottom) {
+        ModalActionFooter(
+          primaryTitle: "DONE",
+          primaryIdentifier: "content-editor-done",
+          action: { dismiss() }
+        )
+      }
       .toolbar {
-        ToolbarItem(placement: .cancellationAction) {
-          Button("Done") { dismiss() }
-            .accessibilityIdentifier("content-editor-done")
-        }
         ToolbarItem(placement: .principal) {
           HStack(spacing: 8) {
             Text(templateName)
@@ -110,11 +113,11 @@ struct ContentEditorView: View {
       .onChange(of: photoItem) { _, item in
         Task { await importPhoto(item) }
       }
-      .sheet(isPresented: $showingList) {
+      .fullScreenCover(isPresented: $showingList) {
         OverlayListSheet()
           .environment(environment)
       }
-      .sheet(item: $editing) { session in
+      .fullScreenCover(item: $editing) { session in
         OverlayEditSheet(
           session: session,
           photoItem: $photoItem,
@@ -143,7 +146,7 @@ struct ContentEditorView: View {
         )
         .id(session.id)
       }
-      .sheet(isPresented: $showingRename) {
+      .fullScreenCover(isPresented: $showingRename) {
         TemplateRenameSheet(
           title: "Rename template",
           name: $renameText,
@@ -306,16 +309,17 @@ private struct OverlayListSheet: View {
       }
       .navigationTitle("Content")
       .navigationBarTitleDisplayMode(.inline)
-      .toolbar {
-        ToolbarItem(placement: .cancellationAction) {
-          Button("Done") { dismiss() }
-            .accessibilityIdentifier("content-list-done")
-        }
+      .safeAreaInset(edge: .bottom) {
+        ModalActionFooter(
+          primaryTitle: "DONE",
+          primaryIdentifier: "content-list-done",
+          action: { dismiss() }
+        )
       }
       .onChange(of: photoItem) { _, item in
         Task { await importPhoto(item) }
       }
-      .sheet(item: $editing) { session in
+      .fullScreenCover(item: $editing) { session in
         OverlayEditSheet(
           session: session,
           photoItem: $photoItem,
@@ -358,10 +362,6 @@ private struct OverlayListSheet: View {
         .id(session.id)
       }
     }
-    .presentationDetents([.large])
-    .presentationDragIndicator(.hidden)
-    .presentationContentInteraction(.scrolls)
-    .presentationSizing(.page)
   }
 
   private func listTitle(_ overlay: ProgramOverlay) -> String {
@@ -649,24 +649,27 @@ private struct OverlayEditSheet: View {
       }
       .navigationTitle("Edit content")
       .navigationBarTitleDisplayMode(.inline)
-      .toolbar {
-        ToolbarItem(placement: .cancellationAction) {
-          Button("Cancel") { dismiss() }
-        }
+      .safeAreaInset(edge: .bottom) {
         if session.kind == .web {
-          ToolbarItem(placement: .confirmationAction) {
-            Button("Save") {
+          ModalActionFooter(
+            cancelTitle: "CANCEL",
+            cancelIdentifier: "overlay-edit-cancel",
+            onCancel: { dismiss() },
+            primaryTitle: "SAVE",
+            primaryIdentifier: "overlay-edit-save",
+            action: {
               onSaveURL(url.trimmingCharacters(in: .whitespacesAndNewlines), showInRewind)
             }
-            .accessibilityIdentifier("overlay-edit-save")
-          }
+          )
+        } else {
+          ModalActionFooter(
+            primaryTitle: "DONE",
+            primaryIdentifier: "overlay-edit-done",
+            action: { dismiss() }
+          )
         }
       }
     }
-    .presentationDetents([.large])
-    .presentationDragIndicator(.hidden)
-    .presentationContentInteraction(.scrolls)
-    .presentationSizing(.page)
     .interactiveDismissDisabled()
   }
 }

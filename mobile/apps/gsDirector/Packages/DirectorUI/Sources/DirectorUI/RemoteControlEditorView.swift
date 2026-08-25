@@ -21,21 +21,30 @@ public struct RemoteControlEditorView: View {
       .padding(16)
       .background(Color.black)
       .navigationBarTitleDisplayMode(.inline)
-      .toolbar {
-        ToolbarItem(placement: .confirmationAction) {
-          Button("Done") {
+      .safeAreaInset(edge: .bottom) {
+        ModalActionFooter(
+          primaryTitle: "DONE",
+          primaryIdentifier: "remote-editor-done",
+          action: {
             environment.capturingRemoteAction = nil
             dismiss()
           }
-          .accessibilityIdentifier("remote-editor-done")
-        }
+        )
+      }
+      .toolbar {
         ToolbarItem(placement: .principal) {
           HStack(spacing: 8) {
-            Text(templateName)
-              .font(.headline)
             Button {
-              renameText = templateName
-              showingRename = true
+              beginRename()
+            } label: {
+              Text(templateName)
+                .font(.headline)
+                .foregroundStyle(.white)
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("remote-editor-rename-title")
+            Button {
+              beginRename()
             } label: {
               Image(systemName: "pencil")
             }
@@ -44,21 +53,25 @@ public struct RemoteControlEditorView: View {
           }
         }
       }
-      .sheet(isPresented: $showingRename) {
-        TemplateRenameSheet(
-          title: "Rename template",
-          name: $renameText,
-          fieldIdentifier: "remote-editor-rename-field",
-          clearIdentifier: "remote-editor-rename-clear",
-          onCancel: { showingRename = false },
-          onSave: {
-            environment.renameRemoteTemplate(
-              id: environment.editingRemoteTemplateID ?? environment.activeRemoteTemplateID,
-              name: renameText
+      .overlay {
+        if showingRename {
+          CenteredHover(onCancel: { showingRename = false }) {
+            TemplateRenameSheet(
+              title: "Rename template",
+              name: $renameText,
+              fieldIdentifier: "remote-editor-rename-field",
+              clearIdentifier: "remote-editor-rename-clear",
+              onCancel: { showingRename = false },
+              onSave: {
+                environment.renameRemoteTemplate(
+                  id: environment.editingRemoteTemplateID ?? environment.activeRemoteTemplateID,
+                  name: renameText
+                )
+                showingRename = false
+              }
             )
-            showingRename = false
           }
-        )
+        }
       }
     }
     .onDisappear {
@@ -68,6 +81,11 @@ public struct RemoteControlEditorView: View {
 
   private var templateName: String {
     environment.editingRemoteTemplate?.name ?? RemoteControlTemplate.defaultName
+  }
+
+  private func beginRename() {
+    renameText = templateName
+    showingRename = true
   }
 
   @ViewBuilder
@@ -155,10 +173,12 @@ public struct RemoteControlEditorView: View {
         select(action)
       } label: {
         Image(systemName: "xmark.circle.fill")
+          .symbolRenderingMode(.hierarchical)
           .font(.system(size: 22))
-          .foregroundStyle(.white.opacity(0.55))
+          .foregroundStyle(.white.opacity(0.55), Color.white.opacity(0.22))
       }
       .buttonStyle(.plain)
+      .tint(Color.white.opacity(0.55))
       .disabled(control == nil)
       .accessibilityIdentifier(
         isCapturing ? "remote-chord-clear" : "remote-chord-clear-\(action.accessibilitySuffix)"
