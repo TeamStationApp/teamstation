@@ -40,6 +40,14 @@ public final class ProgramStreamer: @unchecked Sendable {
   /// a slow RTMP ingest lets that queue grow without bound at programme frame rate.
   private var pendingEncodes = 0
   private static let maximumPendingEncodes = 3
+  /// One reserved in-flight slot so a GOP-due IDR is not blocked by three dropped P-frames.
+  private static let idleIDRPendingCap = 4
+  private let gopQueue = DispatchQueue(label: "co.gamestation.director.stream.gop")
+  private var gopTimer: DispatchSourceTimer?
+  private var lastEncodable: CVPixelBuffer?
+  private var lastCallbackWall: CFAbsoluteTime = 0
+  private var lastProgramFrameWall: CFAbsoluteTime = 0
+  private var lastResetWall: CFAbsoluteTime = 0
 
   public init(telemetry: PipelineTelemetry, converter: PixelConverter) {
     self.telemetry = telemetry
@@ -101,6 +109,11 @@ public final class ProgramStreamer: @unchecked Sendable {
     sentMetadata = false
     clock = StreamEncodeClock(frameRate: frameRate, gopSeconds: gopSeconds)
     aac.reset()
+    lastEncodable = nil
+    lastCallbackWall = 0
+    lastProgramFrameWall = 0
+    lastResetWall = 0
+    pendingEncodes = 0
     return true
   }
 
@@ -116,18 +129,23 @@ public final class ProgramStreamer: @unchecked Sendable {
     self.client = client
     isRunning = true
     lock.unlock()
+    startGOPWatchdog()
   }
 
   public func stop() {
     lock.lock()
     let running = isRunning
     isRunning = false
+    let timer = gopTimer
+    gopTimer = nil
+    lastEncodable = nil
     let session = self.session
     self.session = nil
     let client = self.client
     self.client = nil
     pendingEncodes = 0
     lock.unlock()
+    timer?.cancel()
     if let session {
       VTCompressionSessionCompleteFrames(session, untilPresentationTimeStamp: .invalid)
       VTCompressionSessionInvalidate(session)
@@ -137,21 +155,57 @@ public final class ProgramStreamer: @unchecked Sendable {
   }
 
   public func append(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime) {
+    encode(pixelBuffer, sourceTime: presentationTime, forceKey: nil, isIdle: false)
+  }
+
+  var pendingEncodesForTesting: Int {
+    lock.lock()
+    defer { lock.unlock() }
+    return pendingEncodes
+  }
+
+  func simulateOutputCallbackForTesting(
+    incrementPending: Bool,
+    sample: CMSampleBuffer?,
+    status: OSStatus,
+    flags: VTEncodeInfoFlags = []
+  ) {
+    if incrementPending {
+      lock.lock()
+      pendingEncodes += 1
+      lock.unlock()
+    }
+    didEncode(sample: sample, status: status, flags: flags)
+  }
+
+  private func encode(
+    _ pixelBuffer: CVPixelBuffer,
+    sourceTime: CMTime,
+    forceKey: Bool?,
+    isIdle: Bool
+  ) {
     lock.lock()
     guard isRunning, let session else {
       lock.unlock()
       return
     }
     let now = CFAbsoluteTimeGetCurrent()
-    let time = clock.nextPresentationTime(source: presentationTime, now: now)
-    let forceKey = clock.shouldForceKey(at: time, now: now) || !sentVideoConfig
+    if !isIdle {
+      lastProgramFrameWall = now
+      telemetry.recordProgramFrameAge(0)
+    }
+    let time = clock.nextPresentationTime(source: sourceTime, now: now)
+    let mustKey = forceKey ?? (clock.shouldForceKey(at: time, now: now) || !sentVideoConfig || isIdle)
     telemetry.recordStreamKeyframeAge(clock.keyframeAgeSeconds(now: now))
-    if pendingEncodes >= Self.maximumPendingEncodes {
+    let cap = mustKey ? Self.idleIDRPendingCap : Self.maximumPendingEncodes
+    if pendingEncodes >= cap {
       clock.requestKeyframe()
+      telemetry.recordStreamPendingEncodes(pendingEncodes)
       lock.unlock()
       return
     }
     pendingEncodes += 1
+    telemetry.recordStreamPendingEncodes(pendingEncodes)
     lock.unlock()
 
     let isEncodable =
@@ -164,11 +218,12 @@ public final class ProgramStreamer: @unchecked Sendable {
     guard let encodable else {
       lock.lock()
       pendingEncodes = max(0, pendingEncodes - 1)
+      telemetry.recordStreamPendingEncodes(pendingEncodes)
       lock.unlock()
       return
     }
 
-    let properties: CFDictionary? = forceKey
+    let properties: CFDictionary? = mustKey
       ? [ kVTEncodeFrameOptionKey_ForceKeyFrame: kCFBooleanTrue ] as CFDictionary
       : nil
     let status = VTCompressionSessionEncodeFrame(
@@ -183,7 +238,108 @@ public final class ProgramStreamer: @unchecked Sendable {
     if status != noErr {
       lock.lock()
       pendingEncodes = max(0, pendingEncodes - 1)
+      telemetry.recordStreamPendingEncodes(pendingEncodes)
+      telemetry.recordEncodeFailure(code: status)
+      clock.requestKeyframe()
       lock.unlock()
+      return
+    }
+
+    let copy = converter.convert(pixelBuffer: encodable, width: width, height: height)
+    lock.lock()
+    if let copy {
+      lastEncodable = copy
+    } else if !isIdle {
+      lastEncodable = encodable
+    }
+    if isIdle {
+      telemetry.recordStreamIdleKeyframe()
+    }
+    lock.unlock()
+  }
+
+  private func startGOPWatchdog() {
+    lock.lock()
+    let existing = gopTimer
+    gopTimer = nil
+    let interval = min(0.25, gopSeconds / 4)
+    lock.unlock()
+    existing?.cancel()
+
+    let timer = DispatchSource.makeTimerSource(queue: gopQueue)
+    timer.schedule(deadline: .now() + interval, repeating: interval)
+    timer.setEventHandler { [weak self] in
+      self?.gopWatchdogTick()
+    }
+    lock.lock()
+    gopTimer = timer
+    lock.unlock()
+    timer.resume()
+  }
+
+  private func gopWatchdogTick() {
+    lock.lock()
+    guard isRunning else {
+      lock.unlock()
+      return
+    }
+    let now = CFAbsoluteTimeGetCurrent()
+    telemetry.recordStreamKeyframeAge(clock.keyframeAgeSeconds(now: now))
+    telemetry.recordStreamPendingEncodes(pendingEncodes)
+    telemetry.recordStreamEncodeCallbackAge(
+      lastCallbackWall > 0 ? max(0, now - lastCallbackWall) : 0
+    )
+    telemetry.recordProgramFrameAge(
+      lastProgramFrameWall > 0 ? max(0, now - lastProgramFrameWall) : 0
+    )
+    let action = StreamStallPolicy(gopSeconds: gopSeconds).action(
+      now: now,
+      lastKeyframeWall: clock.lastKeyframeWall,
+      lastCallbackWall: lastCallbackWall,
+      pendingEncodes: pendingEncodes,
+      hasLastFrame: lastEncodable != nil,
+      lastResetWall: lastResetWall
+    )
+    let idleBuffer = lastEncodable
+    lock.unlock()
+
+    switch action {
+    case .none:
+      break
+    case .resetSession:
+      resetWedgedSession()
+      if let idleBuffer {
+        encode(idleBuffer, sourceTime: .invalid, forceKey: true, isIdle: true)
+      }
+    case .encodeIdleIDR:
+      if let idleBuffer {
+        encode(idleBuffer, sourceTime: .invalid, forceKey: true, isIdle: true)
+      }
+    }
+  }
+
+  private func resetWedgedSession() {
+    lock.lock()
+    guard isRunning else {
+      lock.unlock()
+      return
+    }
+    let old = session
+    session = nil
+    pendingEncodes = 0
+    sentVideoConfig = false
+    clock.requestKeyframe()
+    lastResetWall = CFAbsoluteTimeGetCurrent()
+    telemetry.recordStreamPendingEncodes(0)
+    telemetry.recordStreamEncoderReset()
+    lock.unlock()
+    if let old {
+      VTCompressionSessionInvalidate(old)
+    }
+    do {
+      try openEncoder()
+    } catch {
+      handleFailure(String(describing: error))
     }
   }
 
@@ -232,9 +388,9 @@ public final class ProgramStreamer: @unchecked Sendable {
       imageBufferAttributes: nil,
       compressedDataAllocator: nil,
       outputCallback: { refcon, _, status, flags, sample in
-        guard let refcon, let sample, status == noErr else { return }
+        guard let refcon else { return }
         let streamer = Unmanaged<ProgramStreamer>.fromOpaque(refcon).takeUnretainedValue()
-        streamer.didEncode(sample: sample, flags: flags)
+        streamer.didEncode(sample: sample, status: status, flags: flags)
       },
       refcon: refcon,
       compressionSessionOut: &session
@@ -280,25 +436,39 @@ public final class ProgramStreamer: @unchecked Sendable {
     lock.unlock()
   }
 
-  private func didEncode(sample: CMSampleBuffer, flags: VTEncodeInfoFlags) {
+  private func didEncode(sample: CMSampleBuffer?, status: OSStatus, flags: VTEncodeInfoFlags) {
     lock.lock()
     pendingEncodes = max(0, pendingEncodes - 1)
+    lastCallbackWall = CFAbsoluteTimeGetCurrent()
+    telemetry.recordStreamPendingEncodes(pendingEncodes)
+    telemetry.recordStreamEncodeCallbackAge(0)
+    if status != noErr {
+      telemetry.recordEncodeFailure(code: status)
+      clock.requestKeyframe()
+      lock.unlock()
+      return
+    }
+    if sample == nil || flags.contains(.frameDropped) {
+      clock.requestKeyframe()
+      lock.unlock()
+      return
+    }
+    let encoded = sample
     lock.unlock()
-    if flags.contains(.frameDropped) { return }
-    guard let dataBuffer = CMSampleBufferGetDataBuffer(sample) else { return }
+    guard let encoded, let dataBuffer = CMSampleBufferGetDataBuffer(encoded) else { return }
     var length = 0
     var pointer: UnsafeMutablePointer<Int8>?
     guard CMBlockBufferGetDataPointer(dataBuffer, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &length, dataPointerOut: &pointer) == noErr,
       let pointer, length > 0
     else { return }
     let payload = Data(bytes: pointer, count: length)
-    let timestamp = milliseconds(CMSampleBufferGetPresentationTimeStamp(sample))
-    let keyframe = Self.payloadContainsIDR(payload) || isKeyframe(sample)
+    let timestamp = milliseconds(CMSampleBufferGetPresentationTimeStamp(encoded))
+    let keyframe = Self.payloadContainsIDR(payload) || isKeyframe(encoded)
     let now = CFAbsoluteTimeGetCurrent()
 
     lock.lock()
     if keyframe {
-      clock.noteKeyframe(at: CMSampleBufferGetPresentationTimeStamp(sample), now: now)
+      clock.noteKeyframe(at: CMSampleBufferGetPresentationTimeStamp(encoded), now: now)
       telemetry.recordStreamKeyframe(ageSeconds: 0)
     } else {
       telemetry.recordStreamKeyframeAge(clock.keyframeAgeSeconds(now: now))
@@ -319,7 +489,7 @@ public final class ProgramStreamer: @unchecked Sendable {
     }
     if !sentVideoConfig {
       guard keyframe,
-        let format = CMSampleBufferGetFormatDescription(sample),
+        let format = CMSampleBufferGetFormatDescription(encoded),
         let record = Self.avcRecord(from: format)
       else {
         lock.unlock()

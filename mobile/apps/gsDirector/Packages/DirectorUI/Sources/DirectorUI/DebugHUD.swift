@@ -50,6 +50,11 @@ public struct DebugHUD: View {
         label("hud-avail-memory", "avail=\(snapshot.availableMemoryMB)")
         label("hud-stream-keyframe-age", String(format: "kfage=%.1f", snapshot.streamKeyframeAgeSeconds))
         label("hud-stream-keyframe-count", "kfn=\(snapshot.streamKeyframeCount)")
+        label("hud-stream-pending-encodes", "pend=\(snapshot.streamPendingEncodes)")
+        label("hud-stream-callback-age", String(format: "cbage=%.1f", snapshot.streamEncodeCallbackAgeSeconds))
+        label("hud-program-frame-age", String(format: "pfage=%.1f", snapshot.programFrameAgeSeconds))
+        label("hud-stream-idle-keyframes", "idlekf=\(snapshot.streamIdleKeyframeCount)")
+        label("hud-stream-encoder-resets", "encreset=\(snapshot.streamEncoderResetCount)")
       }
       HStack(spacing: 10) {
         label("hud-overlay", "overlay=\(snapshot.overlay.isEmpty ? "off" : snapshot.overlay)")
