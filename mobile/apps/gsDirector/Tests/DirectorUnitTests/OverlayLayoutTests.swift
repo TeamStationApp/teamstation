@@ -33,6 +33,38 @@ struct OverlayLayoutTests {
     #expect(rect.height == 120)
   }
 
+  @Test("Replacing an image keeps origin and follows the new aspect at the current scale")
+  func replacedImageKeepsOrigin() {
+    let canvas = CGSize(width: 1920, height: 1080)
+    let origin = CGPoint(x: 40, y: 80)
+    let rect = OverlayLayout.replacedImageRect(
+      origin: origin,
+      currentSize: CGSize(width: 400, height: 200),
+      oldNative: CGSize(width: 800, height: 400),
+      newNative: CGSize(width: 400, height: 400),
+      canvas: canvas
+    )
+    #expect(rect.origin == origin)
+    #expect(abs(rect.width - 200) < 0.5)
+    #expect(abs(rect.height - 200) < 0.5)
+  }
+
+  @Test("Replace without an old bitmap keeps width and sets height from the new aspect")
+  func replacedImageMissingOldNative() {
+    let canvas = CGSize(width: 1920, height: 1080)
+    let origin = CGPoint(x: 10, y: 20)
+    let rect = OverlayLayout.replacedImageRect(
+      origin: origin,
+      currentSize: CGSize(width: 300, height: 150),
+      oldNative: .zero,
+      newNative: CGSize(width: 100, height: 200),
+      canvas: canvas
+    )
+    #expect(rect.origin == origin)
+    #expect(abs(rect.width - 300) < 0.5)
+    #expect(abs(rect.height - 600) < 0.5)
+  }
+
   @Test("Web scale keeps the page's natural size instead of a layout box")
   func webScaleFromNative() {
     let canvas = CGSize(width: 1920, height: 1080)

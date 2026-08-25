@@ -148,6 +148,28 @@ public enum OverlayLayout {
     return CGRect(x: topLeftInset.x, y: topLeftInset.y, width: width, height: height)
   }
 
+  /// Keep the top-left and current display scale; size follows the new bitmap's aspect.
+  public static func replacedImageRect(
+    origin: CGPoint,
+    currentSize: CGSize,
+    oldNative: CGSize,
+    newNative: CGSize,
+    canvas: CGSize
+  ) -> CGRect {
+    _ = canvas
+    let newWidthNative = max(newNative.width, 1)
+    let newHeightNative = max(newNative.height, 1)
+    let size: CGSize
+    if oldNative.width > 0 {
+      let scale = currentSize.width / oldNative.width
+      size = CGSize(width: newWidthNative * scale, height: newHeightNative * scale)
+    } else {
+      let width = max(currentSize.width, 1)
+      size = CGSize(width: width, height: width * (newHeightNative / newWidthNative))
+    }
+    return CGRect(origin: origin, size: size)
+  }
+
   public static func scaleFittingQuarter(native: CGSize, canvas: CGSize) -> Double {
     let safeNative = CGSize(width: max(native.width, 1), height: max(native.height, 1))
     return Double(
