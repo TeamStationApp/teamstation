@@ -1982,7 +1982,7 @@ public final class AppEnvironment {
     persistActiveTemplate()
   }
 
-  public func addWebOverlay(url: String, showInRewind: Bool = false) {
+  public func addWebOverlay(url: String, showInRewind: Bool = false, showInLive: Bool = true) {
     let canvas = overlayCanvas
     let rect = OverlayLayout.centerQuarter(native: CGSize(width: 800, height: 450), canvas: canvas)
     let normalized = OverlayLayout.normalized(rect, canvas: canvas)
@@ -1994,7 +1994,8 @@ public final class AppEnvironment {
       width: normalized.width,
       height: normalized.height,
       placement: .centerQuarter,
-      showInRewind: showInRewind
+      showInRewind: showInRewind,
+      showInLive: showInLive
     )
     overlays.append(overlay)
     persistActiveTemplate()
@@ -2002,7 +2003,12 @@ public final class AppEnvironment {
     applyProgramOverlays()
   }
 
-  public func addImageOverlay(data: Data, displayName: String, showInRewind: Bool = false) {
+  public func addImageOverlay(
+    data: Data,
+    displayName: String,
+    showInRewind: Bool = false,
+    showInLive: Bool = true
+  ) {
     let filename = "\(UUID().uuidString).png"
     do {
       try overlayStore.writeImage(Self.pngData(data), filename: filename)
@@ -2022,7 +2028,8 @@ public final class AppEnvironment {
       width: normalized.width,
       height: normalized.height,
       placement: .centerQuarter,
-      showInRewind: showInRewind
+      showInRewind: showInRewind,
+      showInLive: showInLive
     )
     overlays.append(overlay)
     persistActiveTemplate()
@@ -2082,6 +2089,13 @@ public final class AppEnvironment {
   public func setOverlayShowInRewind(id: UUID, showInRewind: Bool) {
     guard let index = overlays.firstIndex(where: { $0.id == id }) else { return }
     overlays[index].showInRewind = showInRewind
+    persistActiveTemplate()
+    applyProgramOverlays()
+  }
+
+  public func setOverlayShowInLive(id: UUID, showInLive: Bool) {
+    guard let index = overlays.firstIndex(where: { $0.id == id }) else { return }
+    overlays[index].showInLive = showInLive
     persistActiveTemplate()
     applyProgramOverlays()
   }
