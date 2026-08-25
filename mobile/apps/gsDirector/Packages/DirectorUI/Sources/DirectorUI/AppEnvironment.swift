@@ -281,7 +281,10 @@ public final class AppEnvironment {
 
   /// Called once from the app's `task` modifier.
   public func bootstrap() async {
-    if launch.isUITest { UIApplication.shared.isIdleTimerDisabled = true }
+    if launch.isUITest {
+      UIApplication.shared.isIdleTimerDisabled = true
+      UIView.setAnimationsEnabled(false)
+    }
     if launch.clearState {
       selectionStore.clear()
       layoutStore.clear()

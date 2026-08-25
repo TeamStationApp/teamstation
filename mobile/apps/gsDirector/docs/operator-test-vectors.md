@@ -86,7 +86,7 @@ The layout is a 3×3 with the top-left four cells merged into Output. Source til
 |---|---|---|---|
 | C1 | Record starts | HUD `rec=1`, record button reads RECORDING | `record-and-stop`, `operator-scrub-cut-return` |
 | C2 | Archives accumulate | `dur=` and/or `seg=` increase while recording | `record-and-stop` |
-| C3 | Stop completes | `rec=0`, `flush=` is a real duration, program file `progbytes=` non-zero | `record-and-stop` |
+| C3 | Stop completes | Slide-to-stop on RECORDING, then `rec=0`, `flush=` is a real duration, program file `progbytes=` non-zero | `record-and-stop` |
 | C4 | Live preview continues after stop | Tiles stay `state=live` with `out=` > 0 | `operator-scrub-cut-return` |
 | C5 | Backgrounding while recording keeps the session alive | HUD/control `rec=1`, `aout=1`, `bgkeep=1`, `pip=1`; mix/segments still advance; hovering programme PiP is visible over another app | `operator-background-record` |
 
