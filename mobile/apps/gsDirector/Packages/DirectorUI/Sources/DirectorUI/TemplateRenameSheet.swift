@@ -70,3 +70,21 @@ struct CenteredHover<Content: View>: View {
     }
   }
 }
+
+/// Light scrim plus a card parked in a corner. The card itself is responsible for dragging.
+struct CornerHover<Content: View>: View {
+  var alignment: Alignment
+  var onCancel: () -> Void
+  @ViewBuilder var content: () -> Content
+
+  var body: some View {
+    ZStack(alignment: alignment) {
+      Color.black.opacity(0.28)
+        .ignoresSafeArea()
+        .onTapGesture(perform: onCancel)
+      content()
+        .padding(16)
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment)
+  }
+}
