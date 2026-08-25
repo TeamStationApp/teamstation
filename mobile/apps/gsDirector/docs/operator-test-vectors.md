@@ -73,7 +73,7 @@ The layout is a 3×3 with the top-left four cells merged into Output. Source til
 | B7 | Output shows the composited picture | `composed=` grows; scorebug, if configured, is in this tile not the source tiles | `program-five-sources` |
 | B8 | Cutting picture does not change the audio mix | `mix=N` stays at the number of AUDIO toggles, not which tile is Output | `operator-audio-mix` |
 | B9 | Disable the on-air camera while the grid is live | Exactly one `onair=1`; disabled slot `state=empty onair=0`; Output still has a source | `operator-program-disable` |
-| B10 | Settings Remote Control templates | Default row, editor lists Source 1–5 live + six Instant Replays, Done returns | `remote-control` |
+| B10 | Settings Remote Control templates | Radio selects; tap name opens editor with `remote-editor-rename`; Settings-row pencil is gone; editor lists Source 1–5 live + six Instant Replays; Done returns | `remote-control` |
 | B11 | Injected pad chord cuts Source 2 live | `/bind-remote?action=live-2&controls=a` then `/remote-chord?controls=a` → `source=2 onair=1` | `remote-control` |
 | B12 | Nameplate is `source N: camera` | `source 1: CAM1`, not `source: 1 CAM1` | `operator-source-layout` |
 | B13 | Source tiles keep a saved screen order | Long-press drag swaps by source number; `order=` survives relaunch even if the camera on Source 1 changes | `operator-source-layout` |
