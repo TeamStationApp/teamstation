@@ -1,4 +1,5 @@
 import CameramanCore
+import Darwin
 import Foundation
 import Network
 import os
@@ -15,6 +16,19 @@ public final class RTSPServer: @unchecked Sendable {
     public var requestedPort: UInt16?
     public var clientCount = 0
     public var lastError: String?
+    /// Frames the send queue dropped across clients because a receiver could not keep up.
+    public var droppedFrames = 0
+    /// Lifetime accepts, including clients that closed immediately.
+    public var acceptedClients = 0
+    /// Lifetime closes. `acceptedClients - closedClients` should match `clientCount`.
+    public var closedClients = 0
+    /// Why the most recent client left: TEARDOWN, eof, nw failed, recv, server stop, cancelled.
+    public var lastDisconnectReason: String?
+    /// Bytes still sitting in client send queues. A climb with `clientCount > 0` is backpressure.
+    public var sendQueuePendingBytes = 0
+    public var sendQueueFlushes = 0
+    /// `ready` / `failed` / `cancelled` / other `NWListener` states, for a soak that lost the bind.
+    public var listenerState: String?
 
     public init() {}
 
@@ -88,25 +102,72 @@ public final class RTSPServer: @unchecked Sendable {
         return (listener, current.path)
       }
       guard let (listener, path) = snapshot else { return }
-      listener.service = Self.bonjourService(identity: identity(), path: path)
+      listener.service = Self.bonjourService(
+        identity: identity(),
+        path: path,
+        ip: Self.lanIPv4(),
+        port: listener.port.map { Int($0.rawValue) }
+      )
     }
   }
 
   /// TXT keys Director reads for Cameraman identity. `uuid` is the CNAME; `name` is the label.
-  public static func bonjourTXT(identity: DeviceIdentity, path: String) -> [String: String] {
-    [
+  /// `ip` / `port` let GS Director bind without resolving the Bonjour UUID hostname, which
+  /// often has no usable A-record from another iOS device.
+  public static func bonjourTXT(
+    identity: DeviceIdentity,
+    path: String,
+    ip: String? = nil,
+    port: Int? = nil
+  ) -> [String: String] {
+    var fields = [
       "uuid": identity.cname,
       "name": identity.name,
       "path": path
     ]
+    if let ip, !ip.isEmpty { fields["ip"] = ip }
+    if let port, port > 0 { fields["port"] = String(port) }
+    return fields
   }
 
-  public static func bonjourService(identity: DeviceIdentity, path: String) -> NWListener.Service {
+  public static func bonjourService(
+    identity: DeviceIdentity,
+    path: String,
+    ip: String? = nil,
+    port: Int? = nil
+  ) -> NWListener.Service {
     NWListener.Service(
       name: identity.name,
       type: bonjourServiceType,
-      txtRecord: NWTXTRecord(bonjourTXT(identity: identity, path: path))
+      txtRecord: NWTXTRecord(bonjourTXT(identity: identity, path: path, ip: ip, port: port))
     )
+  }
+
+  /// Wi-Fi IPv4 (`en0`). Director cannot use the Bonjour UUID hostname as an RTSP URL.
+  public static func lanIPv4() -> String? {
+    var head: UnsafeMutablePointer<ifaddrs>?
+    guard getifaddrs(&head) == 0, let first = head else { return nil }
+    defer { freeifaddrs(head) }
+    for pointer in sequence(first: first, next: { $0.pointee.ifa_next }) {
+      let interface = pointer.pointee
+      guard interface.ifa_addr.pointee.sa_family == UInt8(AF_INET) else { continue }
+      let name = String(cString: interface.ifa_name)
+      guard name == "en0" || name.hasPrefix("bridge") else { continue }
+      var buffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+      let result = getnameinfo(
+        interface.ifa_addr,
+        socklen_t(interface.ifa_addr.pointee.sa_len),
+        &buffer,
+        socklen_t(buffer.count),
+        nil,
+        0,
+        NI_NUMERICHOST
+      )
+      guard result == 0 else { continue }
+      let address = String(cString: buffer)
+      if address != "127.0.0.1", !address.hasPrefix("169.254.") { return address }
+    }
+    return nil
   }
 
   private func bind(port: UInt16, requested: UInt16, path: String, advertise: Bool) -> Bool {
@@ -137,7 +198,12 @@ public final class RTSPServer: @unchecked Sendable {
       $0.path = path
     }
     if advertise {
-      listener.service = Self.bonjourService(identity: identity(), path: path)
+      listener.service = Self.bonjourService(
+        identity: identity(),
+        path: path,
+        ip: Self.lanIPv4(),
+        port: Int(port)
+      )
     }
 
     listener.newConnectionHandler = { [weak self] connection in
@@ -147,25 +213,37 @@ public final class RTSPServer: @unchecked Sendable {
       guard let self else { return }
       switch listenerState {
       case .ready:
+        let bound = listener.port?.rawValue ?? port
         update {
           $0.isListening = true
-          $0.port = listener.port?.rawValue ?? port
+          $0.port = bound
           $0.requestedPort = requested
           $0.lastError = nil
+          $0.listenerState = "ready"
+        }
+        if advertise {
+          listener.service = Self.bonjourService(
+            identity: self.identity(),
+            path: path,
+            ip: Self.lanIPv4(),
+            port: Int(bound)
+          )
         }
       case .failed(let error):
         update {
           $0.isListening = false
           $0.port = nil
           $0.lastError = "listener failed on \(port): \(error.localizedDescription)"
+          $0.listenerState = "failed"
         }
       case .cancelled:
         update {
           $0.isListening = false
           $0.port = nil
+          $0.listenerState = "cancelled"
         }
       default:
-        break
+        update { $0.listenerState = String(describing: listenerState) }
       }
     }
 
@@ -184,12 +262,29 @@ public final class RTSPServer: @unchecked Sendable {
       requestKeyframe: requestKeyframe
     )
     let key = ObjectIdentifier(client)
-    client.onClose = { [weak self] in
-      self?.updateConnections { $0[key] = nil }
+    client.onClose = { [weak self] reason in
+      self?.noteDisconnect(key: key, reason: reason)
     }
 
-    updateConnections { $0[key] = client }
+    let updated = state.withLock { current -> Status in
+      current.connections[key] = client
+      current.status.clientCount = current.connections.count
+      current.status.acceptedClients += 1
+      return current.status
+    }
+    onStatusChange?(updated)
     client.start()
+  }
+
+  private func noteDisconnect(key: ObjectIdentifier, reason: String) {
+    let updated = state.withLock { current -> Status in
+      current.connections[key] = nil
+      current.status.clientCount = current.connections.count
+      current.status.closedClients += 1
+      current.status.lastDisconnectReason = reason
+      return current.status
+    }
+    onStatusChange?(updated)
   }
 
   private func stopLocked() {
@@ -205,22 +300,8 @@ public final class RTSPServer: @unchecked Sendable {
       $0.isListening = false
       $0.port = nil
       $0.clientCount = 0
+      $0.listenerState = "stopped"
     }
-  }
-
-  /// Edits the connection table and republishes the count in one lock acquisition.
-  ///
-  /// `OSAllocatedUnfairLock` is not recursive, so the count must be taken inside the same critical
-  /// section that changed the table rather than by calling back in for it.
-  private func updateConnections(
-    _ change: @Sendable (inout [ObjectIdentifier: RTSPClientConnection]) -> Void
-  ) {
-    let updated = state.withLock { current -> Status in
-      change(&current.connections)
-      current.status.clientCount = current.connections.count
-      return current.status
-    }
-    onStatusChange?(updated)
   }
 
   private func update(_ change: @Sendable (inout Status) -> Void) {

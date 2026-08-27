@@ -32,8 +32,9 @@ final class RTSPClientConnection: @unchecked Sendable {
   private var lastReportTime = Date.distantPast
 
   private(set) var sendQueue = StreamSendQueue()
+  private var closeReason = "cancelled"
 
-  var onClose: (@Sendable () -> Void)?
+  var onClose: (@Sendable (String) -> Void)?
 
   init(
     connection: NWConnection,
@@ -66,7 +67,10 @@ final class RTSPClientConnection: @unchecked Sendable {
   func start() {
     connection.stateUpdateHandler = { [weak self] state in
       switch state {
-      case .failed, .cancelled:
+      case .failed(let error):
+        self?.closeReason = "nw failed: \(error.localizedDescription)"
+        self?.finish()
+      case .cancelled:
         self?.finish()
       default:
         break
@@ -79,14 +83,15 @@ final class RTSPClientConnection: @unchecked Sendable {
     receive()
   }
 
-  func close() {
+  func close(reason: String = "server stop") {
+    closeReason = reason
     connection.cancel()
   }
 
   private func finish() {
     guard let onClose else { return }
     self.onClose = nil
-    onClose()
+    onClose(closeReason)
   }
 
   private func receive() {
@@ -97,7 +102,13 @@ final class RTSPClientConnection: @unchecked Sendable {
         buffer.append(data)
         drainRequests()
       }
-      if isComplete || error != nil {
+      if let error {
+        closeReason = "recv: \(error.localizedDescription)"
+        connection.cancel()
+        return
+      }
+      if isComplete {
+        closeReason = "eof"
         connection.cancel()
         return
       }
@@ -150,6 +161,7 @@ final class RTSPClientConnection: @unchecked Sendable {
         isStreaming = false
       case .close:
         isStreaming = false
+        closeReason = "TEARDOWN"
         // Cancelling before the send completes discards the response, and the client then waits out
         // its TEARDOWN timeout on a connection the server has already forgotten.
         connection.send(content: outcome.response.wireFormat, completion: .contentProcessed {
