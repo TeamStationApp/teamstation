@@ -9,9 +9,11 @@ public struct RecordingsView: View {
 
   @State private var recordings: [RecordingSummary] = []
   @State private var selectedID: Int64?
+  @State private var markedIDs: Set<Int64> = []
   @State private var selectedProgram = true
   @State private var selectedCameras: Set<String> = []
   @State private var showExportProgress = false
+  @State private var showDeleteConfirm = false
 
   public init() {}
 
@@ -28,21 +30,40 @@ public struct RecordingsView: View {
         if showExportProgress || environment.isExporting {
           exportProgress
         }
+        if showDeleteConfirm {
+          deleteConfirm
+        }
       }
       .navigationTitle("Recordings")
       .navigationBarTitleDisplayMode(.inline)
       .toolbar {
+        ToolbarItem(placement: .cancellationAction) {
+          Button(allEligibleMarked ? "Deselect All" : "Select All") {
+            toggleSelectAll()
+          }
+          .disabled(eligibleIDs.isEmpty)
+          .accessibilityIdentifier("recordings-select-all")
+        }
         ToolbarItem(placement: .confirmationAction) {
-          Button("Done") {
+          Button("Delete") {
+            showDeleteConfirm = true
+          }
+          .disabled(markedIDs.isEmpty)
+          .accessibilityIdentifier("recordings-delete")
+        }
+      }
+      .safeAreaInset(edge: .bottom) {
+        ModalActionFooter(
+          primaryTitle: "DONE",
+          primaryIdentifier: "recordings-done",
+          action: {
             environment.activeSheet = nil
             dismiss()
           }
-          .accessibilityIdentifier("recordings-done")
-        }
+        )
       }
-      .onAppear {
-        recordings = environment.listedRecordings()
-        if selectedID == nil { selectedID = recordings.first?.id }
+      .onAppear { reload() }
+      .onChange(of: selectedID) { _, _ in
         selectAll(in: selectedRecording)
       }
       .onChange(of: environment.isSharingRecordings) { _, sharing in
@@ -59,25 +80,40 @@ public struct RecordingsView: View {
 
   private var dateColumn: some View {
     List {
-      ForEach(recordings) { recording in
-        Button {
-          selectedID = recording.id
-        } label: {
-          VStack(alignment: .leading, spacing: 4) {
-            Text(dateLabel(recording.startedAt))
-              .font(.system(size: 15, weight: .semibold, design: .monospaced))
-              .foregroundStyle(.primary)
-            Text(lengthLabel(recording))
-              .font(.system(size: 12, weight: .medium))
-              .foregroundStyle(.secondary)
+      ForEach(Array(recordings.enumerated()), id: \.element.id) { index, recording in
+        let live = recording.id == environment.activeRecordingID
+        HStack(alignment: .center, spacing: 12) {
+          Button {
+            toggleMarked(recording.id)
+          } label: {
+            Image(systemName: markedIDs.contains(recording.id) ? "circle.inset.filled" : "circle")
           }
-          .padding(.vertical, 6)
+          .buttonStyle(.borderless)
+          .disabled(live)
+          .accessibilityLabel("Select \(dateLabel(recording.startedAt))")
+          .accessibilityIdentifier("recordings-select-\(index + 1)")
+          .accessibilityValue(markedIDs.contains(recording.id) ? "selected" : "unselected")
+
+          Button {
+            selectedID = recording.id
+          } label: {
+            VStack(alignment: .leading, spacing: 4) {
+              Text(dateLabel(recording.startedAt))
+                .font(.system(size: 15, weight: .semibold, design: .monospaced))
+                .foregroundStyle(.primary)
+              Text(lengthLabel(recording))
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 6)
+          }
+          .buttonStyle(.plain)
+          .accessibilityIdentifier("recording-row-\(recording.id)")
         }
-        .buttonStyle(.plain)
         .listRowBackground(
           selectedID == recording.id ? Color.white.opacity(0.12) : Color.clear
         )
-        .accessibilityIdentifier("recording-row-\(recording.id)")
       }
     }
     .listStyle(.plain)
@@ -129,6 +165,43 @@ public struct RecordingsView: View {
     }
   }
 
+  private var deleteConfirm: some View {
+    let count = markedIDs.count
+    return ZStack {
+      Color.black.opacity(0.55)
+        .ignoresSafeArea()
+        .onTapGesture { showDeleteConfirm = false }
+      VStack(spacing: 14) {
+        Text(count == 1 ? "Delete 1 recording?" : "Delete \(count) recordings?")
+          .font(.system(size: 17, weight: .bold, design: .rounded))
+          .foregroundStyle(.white)
+        Text("Deleted takes are removed from the list and from disk.")
+          .font(.system(size: 14, weight: .medium))
+          .foregroundStyle(.white.opacity(0.7))
+          .multilineTextAlignment(.center)
+        Button {
+          deleteMarked()
+          showDeleteConfirm = false
+        } label: {
+          Text("Delete")
+            .font(.system(size: 17, weight: .semibold, design: .rounded))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+            .background(Color.recordRed, in: RoundedRectangle(cornerRadius: 10))
+            .foregroundStyle(.white)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("recordings-delete-confirm")
+        Button("Cancel") { showDeleteConfirm = false }
+          .font(.system(size: 15, weight: .semibold, design: .rounded))
+          .foregroundStyle(.white.opacity(0.65))
+      }
+      .padding(28)
+      .frame(width: 320)
+      .background(Color.deckPanel, in: RoundedRectangle(cornerRadius: 16))
+    }
+  }
+
   private var exportProgress: some View {
     ZStack {
       Color.black.opacity(0.72)
@@ -172,6 +245,47 @@ public struct RecordingsView: View {
 
   private var selectedRecording: RecordingSummary? {
     recordings.first { $0.id == selectedID }
+  }
+
+  private var eligibleIDs: [Int64] {
+    recordings.filter { $0.id != environment.activeRecordingID }.map(\.id)
+  }
+
+  private var allEligibleMarked: Bool {
+    !eligibleIDs.isEmpty && Set(eligibleIDs).isSubset(of: markedIDs)
+  }
+
+  private func reload() {
+    recordings = environment.listedRecordings()
+    markedIDs.formIntersection(Set(eligibleIDs))
+    if selectedID == nil || !recordings.contains(where: { $0.id == selectedID }) {
+      selectedID = recordings.first?.id
+    }
+    selectAll(in: selectedRecording)
+  }
+
+  private func toggleSelectAll() {
+    if allEligibleMarked {
+      markedIDs.removeAll()
+    } else {
+      markedIDs = Set(eligibleIDs)
+    }
+  }
+
+  private func toggleMarked(_ id: Int64) {
+    guard id != environment.activeRecordingID else { return }
+    if markedIDs.contains(id) {
+      markedIDs.remove(id)
+    } else {
+      markedIDs.insert(id)
+    }
+  }
+
+  private func deleteMarked() {
+    let ids = Array(markedIDs)
+    environment.deleteRecordings(ids: ids)
+    markedIDs.removeAll()
+    reload()
   }
 
   private func selectAll(in recording: RecordingSummary?) {

@@ -140,6 +140,8 @@ public final class AppEnvironment {
   /// leaves all but the last one unable to present, which made the settings and perf harness
   /// unreachable from the grid.
   public var activeSheet: Sheet?
+  /// Text overlay currently being authored on the content canvas.
+  public var editingTextOverlayID: UUID?
   /// Which discovery this session is running. Settings can change it without a relaunch.
   private var sourceProfile: SourceProfile
 
@@ -151,8 +153,10 @@ public final class AppEnvironment {
   public private(set) var overlays: [ProgramOverlay] = []
   public private(set) var templates: [OverlayTemplate] = []
   public private(set) var activeTemplateID = UUID()
+  public private(set) var editingTemplateID: UUID?
   public private(set) var remoteTemplates: [RemoteControlTemplate] = []
   public private(set) var activeRemoteTemplateID = UUID()
+  public private(set) var editingRemoteTemplateID: UUID?
   /// Editor capture target. Nil means pad presses fire production actions.
   public var capturingRemoteAction: RemoteAction?
 
@@ -281,7 +285,10 @@ public final class AppEnvironment {
 
   /// Called once from the app's `task` modifier.
   public func bootstrap() async {
-    if launch.isUITest { UIApplication.shared.isIdleTimerDisabled = true }
+    if launch.isUITest {
+      UIApplication.shared.isIdleTimerDisabled = true
+      UIView.setAnimationsEnabled(false)
+    }
     if launch.clearState {
       selectionStore.clear()
       layoutStore.clear()
@@ -1743,14 +1750,6 @@ public final class AppEnvironment {
     return UIImage(data: data)?.pngData() ?? data
   }
 
-  /// Instant Replay caption burns into Output whenever that camera is replaying. Scrub uses the
-  /// same off-live path for operator overlays, but not for the caption.
-  private func programSourceIsReplaying() -> Bool {
-    guard let index = router.currentProgramSource else { return false }
-    let state = telemetry.snapshot.tiles.first { $0.index == index }?.state
-    return state == .replaying
-  }
-
   private func programSourceIsOffLive() -> Bool {
     guard let index = router.currentProgramSource else { return false }
     let state = telemetry.snapshot.tiles.first { $0.index == index }?.state
@@ -1758,7 +1757,6 @@ public final class AppEnvironment {
   }
 
   private func applyProgramOverlays() {
-    compositor?.setInstantReplayVisible(programSourceIsReplaying())
     compositor?.setOverlays(composedOverlayItems())
   }
 
@@ -1771,22 +1769,31 @@ public final class AppEnvironment {
 
   private func composedOverlayItems() -> [MetalCompositor.OverlayItem] {
     let canvas = overlayCanvas
+    let source = programOverlays
     let rects = OverlayLayout.displayRects(
-      overlays: overlays,
+      overlays: source,
       canvas: canvas,
       programIsOffLive: programSourceIsOffLive()
     )
-    return overlays.compactMap { overlay in
+    return source.compactMap { overlay in
       let rect = rects[overlay.id] ?? .zero
       guard rect.width > 0.5, rect.height > 0.5 else { return nil }
       let image: CGImage?
       switch overlay.kind {
       case .web: image = webSnapshots[overlay.id]?.0
-      case .image: image = overlayImages[overlay.id]
+      case .image, .text: image = overlayImages[overlay.id]
       }
       guard let image else { return nil }
       return MetalCompositor.OverlayItem(image: image, origin: rect.origin, size: rect.size)
     }
+  }
+
+  /// Overlays burned into Output. Editing another template must not replace the radio-selected one.
+  private var programOverlays: [ProgramOverlay] {
+    if let editingTemplateID, editingTemplateID != activeTemplateID {
+      return templates.first { $0.id == activeTemplateID }?.overlays ?? []
+    }
+    return overlays
   }
 
   private func reloadOverlayMedia() {
@@ -1796,6 +1803,8 @@ public final class AppEnvironment {
         startWebOverlay(overlay)
       case .image:
         loadOverlayImage(overlay)
+      case .text:
+        rasterizeText(overlay)
       }
     }
     applyProgramOverlays()
@@ -1968,7 +1977,7 @@ public final class AppEnvironment {
     persistActiveTemplate()
   }
 
-  public func addWebOverlay(url: String, showInRewind: Bool = false) {
+  public func addWebOverlay(url: String, showInRewind: Bool = false, showInLive: Bool = true) {
     let canvas = overlayCanvas
     let rect = OverlayLayout.centerQuarter(native: CGSize(width: 800, height: 450), canvas: canvas)
     let normalized = OverlayLayout.normalized(rect, canvas: canvas)
@@ -1980,7 +1989,8 @@ public final class AppEnvironment {
       width: normalized.width,
       height: normalized.height,
       placement: .centerQuarter,
-      showInRewind: showInRewind
+      showInRewind: showInRewind,
+      showInLive: showInLive
     )
     overlays.append(overlay)
     persistActiveTemplate()
@@ -1988,7 +1998,12 @@ public final class AppEnvironment {
     applyProgramOverlays()
   }
 
-  public func addImageOverlay(data: Data, displayName: String, showInRewind: Bool = false) {
+  public func addImageOverlay(
+    data: Data,
+    displayName: String,
+    showInRewind: Bool = false,
+    showInLive: Bool = true
+  ) {
     let filename = "\(UUID().uuidString).png"
     do {
       try overlayStore.writeImage(Self.pngData(data), filename: filename)
@@ -2008,12 +2023,119 @@ public final class AppEnvironment {
       width: normalized.width,
       height: normalized.height,
       placement: .centerQuarter,
-      showInRewind: showInRewind
+      showInRewind: showInRewind,
+      showInLive: showInLive
     )
     overlays.append(overlay)
     persistActiveTemplate()
     loadOverlayImage(overlay)
     applyProgramOverlays()
+  }
+
+  public func addTextOverlay(showInRewind: Bool = false, showInLive: Bool = true) -> UUID {
+    let canvas = overlayCanvas
+    let fontSize = max(0.1 * canvas.height, 12)
+    let seed = CGRect(
+      x: canvas.width / 2,
+      y: canvas.height / 2,
+      width: 1,
+      height: 1
+    )
+    let overlay = ProgramOverlay(
+      kind: .text,
+      originX: Double(seed.origin.x / canvas.width),
+      originY: Double(seed.origin.y / canvas.height),
+      width: 0.05,
+      height: 0.08,
+      placement: .centerQuarter,
+      hasLaidOut: true,
+      showInRewind: showInRewind,
+      showInLive: showInLive,
+      text: "",
+      fontSize: fontSize,
+      textAlign: .center,
+      hugText: true
+    )
+    overlays.append(overlay)
+    if let index = overlays.firstIndex(where: { $0.id == overlay.id }) {
+      layoutAndRasterizeText(at: index)
+    }
+    persistActiveTemplate()
+    return overlay.id
+  }
+
+  public func beginEditingTextOverlay(id: UUID) {
+    guard overlays.contains(where: { $0.id == id && $0.kind == .text }) else { return }
+    editingTextOverlayID = id
+  }
+
+  public func endEditingTextOverlay() {
+    if let id = editingTextOverlayID,
+       let overlay = overlays.first(where: { $0.id == id }),
+       overlay.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      editingTextOverlayID = nil
+      removeOverlay(id: id)
+      return
+    }
+    editingTextOverlayID = nil
+  }
+
+  public func updateTextOverlay(
+    id: UUID,
+    text: String? = nil,
+    fontName: String? = nil,
+    fontSize: Double? = nil,
+    isBold: Bool? = nil,
+    isItalic: Bool? = nil,
+    textAlign: TextOverlayAlign? = nil,
+    hugText: Bool? = nil,
+    textColorHex: String? = nil,
+    dropShadowEnabled: Bool? = nil,
+    dropShadowColorHex: String? = nil
+  ) {
+    guard let index = overlays.firstIndex(where: { $0.id == id }) else { return }
+    if let text { overlays[index].text = text }
+    if let fontName { overlays[index].fontName = fontName }
+    if let fontSize { overlays[index].fontSize = min(max(fontSize, 6), 200) }
+    if let isBold { overlays[index].isBold = isBold }
+    if let isItalic { overlays[index].isItalic = isItalic }
+    if let textAlign { overlays[index].textAlign = textAlign }
+    if let hugText { overlays[index].hugText = hugText }
+    if let textColorHex { overlays[index].textColorHex = textColorHex }
+    if let dropShadowEnabled { overlays[index].dropShadowEnabled = dropShadowEnabled }
+    if let dropShadowColorHex { overlays[index].dropShadowColorHex = dropShadowColorHex }
+    layoutAndRasterizeText(at: index)
+    persistActiveTemplate()
+  }
+
+  private func layoutAndRasterizeText(at index: Int) {
+    guard overlays[index].kind == .text else { return }
+    let canvas = overlayCanvas
+    if overlays[index].hugText {
+      let measured = TextOverlayRenderer.measure(overlay: overlays[index], canvas: canvas)
+      let current = OverlayLayout.pixelRect(overlays[index], canvas: canvas)
+      let rect = OverlayLayout.huggedTextRect(
+        align: overlays[index].textAlign,
+        current: current,
+        textSize: measured,
+        canvas: canvas
+      )
+      let normalized = OverlayLayout.normalized(rect, canvas: canvas)
+      overlays[index].originX = normalized.originX
+      overlays[index].originY = normalized.originY
+      overlays[index].width = normalized.width
+      overlays[index].height = normalized.height
+    }
+    rasterizeText(overlays[index])
+    applyProgramOverlays()
+  }
+
+  private func rasterizeText(_ overlay: ProgramOverlay) {
+    guard overlay.kind == .text else { return }
+    overlayImages[overlay.id] = TextOverlayRenderer.makeImage(
+      overlay: overlay,
+      canvas: overlayCanvas
+    )
   }
 
   public func replaceOverlayImage(id: UUID, data: Data, displayName: String) {
@@ -2028,9 +2150,40 @@ public final class AppEnvironment {
     overlayStore.removeImage(filename: overlays[index].imageFilename)
     overlays[index].imageFilename = filename
     overlays[index].imageDisplayName = displayName
-    overlays[index].hasLaidOut = false
+    let canvas = overlayCanvas
+    let current = OverlayLayout.pixelRect(overlays[index], canvas: canvas)
+    let oldNative: CGSize
+    if overlays[index].nativeWidth > 0 {
+      oldNative = CGSize(width: overlays[index].nativeWidth, height: overlays[index].nativeHeight)
+    } else if let old = overlayImages[id] {
+      oldNative = CGSize(width: old.width, height: old.height)
+    } else {
+      oldNative = .zero
+    }
+    guard let newImage = UIImage(data: data)?.cgImage else {
+      persistActiveTemplate()
+      loadOverlayImage(overlays[index])
+      applyProgramOverlays()
+      return
+    }
+    let newNative = CGSize(width: newImage.width, height: newImage.height)
+    let rect = OverlayLayout.replacedImageRect(
+      origin: current.origin,
+      currentSize: current.size,
+      oldNative: oldNative,
+      newNative: newNative,
+      canvas: canvas
+    )
+    let normalized = OverlayLayout.normalized(rect, canvas: canvas)
+    overlays[index].originX = normalized.originX
+    overlays[index].originY = normalized.originY
+    overlays[index].width = normalized.width
+    overlays[index].height = normalized.height
+    overlays[index].nativeWidth = Double(newNative.width)
+    overlays[index].nativeHeight = Double(newNative.height)
+    overlays[index].hasLaidOut = true
+    overlayImages[id] = newImage
     persistActiveTemplate()
-    loadOverlayImage(overlays[index])
     applyProgramOverlays()
   }
 
@@ -2041,12 +2194,21 @@ public final class AppEnvironment {
     applyProgramOverlays()
   }
 
+  public func setOverlayShowInLive(id: UUID, showInLive: Bool) {
+    guard let index = overlays.firstIndex(where: { $0.id == id }) else { return }
+    overlays[index].showInLive = showInLive
+    persistActiveTemplate()
+    applyProgramOverlays()
+  }
+
   public func overlayPreviewImage(for overlay: ProgramOverlay) -> CGImage? {
     switch overlay.kind {
     case .image:
       return overlayImages[overlay.id]
     case .web:
       return webSnapshots[overlay.id]?.0
+    case .text:
+      return overlayImages[overlay.id]
     }
   }
 
@@ -2093,11 +2255,17 @@ public final class AppEnvironment {
     overlays[index].width = min(max(width, 0.02), 4)
     overlays[index].height = min(max(height, 0.02), 4)
     overlays[index].hasLaidOut = true
+    if overlays[index].kind == .text, overlays[index].hugText {
+      overlays[index].hugText = false
+    }
     let canvas = overlayCanvas
     if overlays[index].kind == .web, overlays[index].nativeWidth >= 1 {
       overlays[index].scale = (overlays[index].width * canvas.width) / overlays[index].nativeWidth
       syncDisplaySize(at: index, canvas: canvas)
       applyAnchoredChildren(of: id)
+    }
+    if overlays[index].kind == .text {
+      rasterizeText(overlays[index])
     }
     applyProgramOverlays()
   }
@@ -2125,6 +2293,23 @@ public final class AppEnvironment {
       overlayStore.removeImage(filename: overlay.imageFilename)
     }
     applyProgramOverlays()
+  }
+
+  public func beginEditingTemplate(id: UUID) {
+    persistWorkingTemplate()
+    guard templates.contains(where: { $0.id == id }) else { return }
+    editingTemplateID = id
+    overlays = templates.first(where: { $0.id == id })?.overlays ?? []
+    reloadOverlayMedia()
+  }
+
+  public func endEditingTemplate() {
+    persistWorkingTemplate()
+    editingTemplateID = nil
+    editingTextOverlayID = nil
+    overlays = templates.first(where: { $0.id == activeTemplateID })?.overlays ?? []
+    stopUnusedOverlayMedia()
+    reloadOverlayMedia()
   }
 
   public func selectTemplate(id: UUID) {
@@ -2212,8 +2397,9 @@ public final class AppEnvironment {
     overlays = templates.first(where: { $0.id == activeTemplateID })?.overlays ?? []
   }
 
-  private func persistActiveTemplate() {
-    if let index = templates.firstIndex(where: { $0.id == activeTemplateID }) {
+  private func persistWorkingTemplate() {
+    let targetID = editingTemplateID ?? activeTemplateID
+    if let index = templates.firstIndex(where: { $0.id == targetID }) {
       templates[index].overlays = overlays
     } else if templates.isEmpty {
       let fallback = OverlayTemplate(
@@ -2226,6 +2412,10 @@ public final class AppEnvironment {
     overlayStore.save(
       OverlayManifest(templates: templates, activeTemplateID: activeTemplateID)
     )
+  }
+
+  private func persistActiveTemplate() {
+    persistWorkingTemplate()
   }
 
   private func apply(_ manifest: RemoteControlManifest) {
@@ -2241,6 +2431,25 @@ public final class AppEnvironment {
 
   public var activeRemoteTemplate: RemoteControlTemplate? {
     remoteTemplates.first { $0.id == activeRemoteTemplateID }
+  }
+
+  public var editingRemoteTemplate: RemoteControlTemplate? {
+    remoteTemplates.first { $0.id == (editingRemoteTemplateID ?? activeRemoteTemplateID) }
+  }
+
+  public func beginEditingRemoteTemplate(id: UUID) {
+    persistActiveRemoteTemplate()
+    guard remoteTemplates.contains(where: { $0.id == id }) else { return }
+    editingRemoteTemplateID = id
+  }
+
+  public func endEditingRemoteTemplate() {
+    persistActiveRemoteTemplate()
+    editingRemoteTemplateID = nil
+  }
+
+  private var mutatingRemoteTemplateID: UUID {
+    editingRemoteTemplateID ?? activeRemoteTemplateID
   }
 
   public func selectRemoteTemplate(id: UUID) {
@@ -2313,7 +2522,7 @@ public final class AppEnvironment {
 
   public func appendRemoteControl(_ id: ControlID, to action: RemoteAction) {
     persistActiveRemoteTemplate()
-    guard let index = remoteTemplates.firstIndex(where: { $0.id == activeRemoteTemplateID }) else {
+    guard let index = remoteTemplates.firstIndex(where: { $0.id == mutatingRemoteTemplateID }) else {
       return
     }
     RemoteChordRules.capture(id, for: action, in: &remoteTemplates[index].bindings)
@@ -2322,7 +2531,7 @@ public final class AppEnvironment {
 
   public func clearRemoteChord(for action: RemoteAction) {
     persistActiveRemoteTemplate()
-    guard let index = remoteTemplates.firstIndex(where: { $0.id == activeRemoteTemplateID }) else {
+    guard let index = remoteTemplates.firstIndex(where: { $0.id == mutatingRemoteTemplateID }) else {
       return
     }
     RemoteChordRules.clear(action: action, in: &remoteTemplates[index].bindings)
@@ -2331,7 +2540,7 @@ public final class AppEnvironment {
 
   public func bindRemoteAction(_ action: RemoteAction, controls: [ControlID]) {
     persistActiveRemoteTemplate()
-    guard let index = remoteTemplates.firstIndex(where: { $0.id == activeRemoteTemplateID }) else {
+    guard let index = remoteTemplates.firstIndex(where: { $0.id == mutatingRemoteTemplateID }) else {
       return
     }
     RemoteChordRules.bind(action, controls: controls, in: &remoteTemplates[index].bindings)
@@ -2399,7 +2608,12 @@ public final class AppEnvironment {
   }
 
   private func stopUnusedOverlayMedia() {
-    let ids = Set(overlays.map(\.id))
+    var ids = Set(overlays.map(\.id))
+    if let editingTemplateID, editingTemplateID != activeTemplateID {
+      if let active = templates.first(where: { $0.id == activeTemplateID }) {
+        ids.formUnion(active.overlays.map(\.id))
+      }
+    }
     for id in webControllers.keys where !ids.contains(id) {
       webControllers[id]?.stop()
       webControllers[id] = nil
@@ -2587,8 +2801,19 @@ public final class AppEnvironment {
     }
   }
 
+  /// The take currently being written, if any. Recordings refuses to select or delete it.
+  public var activeRecordingID: Int64? { isRecording ? recordingID : nil }
+
   public func listedRecordings() -> [RecordingSummary] {
     (try? index.recordings()) ?? []
+  }
+
+  public func deleteRecordings(ids: [Int64]) {
+    do {
+      try index.deleteRecordings(ids: ids, skipping: activeRecordingID)
+    } catch {
+      statusMessage = "Delete failed: \(error)"
+    }
   }
 
   public func recordingCameraName(for sourceID: SourceID) -> String {

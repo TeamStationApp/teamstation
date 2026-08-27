@@ -2,12 +2,16 @@ import DirectorCore
 import SwiftUI
 
 public struct RemoteControlEditorView: View {
+  var onClose: () -> Void
   @Environment(AppEnvironment.self) private var environment
-  @Environment(\.dismiss) private var dismiss
 
   @State private var capturing: RemoteAction?
+  @State private var showingRename = false
+  @State private var renameText = ""
 
-  public init() {}
+  public init(onClose: @escaping () -> Void) {
+    self.onClose = onClose
+  }
 
   public var body: some View {
     NavigationStack {
@@ -18,17 +22,57 @@ public struct RemoteControlEditorView: View {
       }
       .padding(16)
       .background(Color.black)
-      .navigationTitle(
-        environment.activeRemoteTemplate?.name ?? RemoteControlTemplate.defaultName
-      )
       .navigationBarTitleDisplayMode(.inline)
-      .toolbar {
-        ToolbarItem(placement: .confirmationAction) {
-          Button("Done") {
+      .safeAreaInset(edge: .bottom) {
+        ModalActionFooter(
+          primaryTitle: "DONE",
+          primaryIdentifier: "remote-editor-done",
+          action: {
             environment.capturingRemoteAction = nil
-            dismiss()
+            onClose()
           }
-          .accessibilityIdentifier("remote-editor-done")
+        )
+      }
+      .toolbar {
+        ToolbarItem(placement: .principal) {
+          HStack(spacing: 8) {
+            Button {
+              beginRename()
+            } label: {
+              Text(templateName)
+                .font(.headline)
+                .foregroundStyle(.white)
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("remote-editor-rename-title")
+            Button {
+              beginRename()
+            } label: {
+              Image(systemName: "pencil")
+            }
+            .accessibilityIdentifier("remote-editor-rename")
+            .accessibilityLabel("Rename template")
+          }
+        }
+      }
+      .overlay {
+        if showingRename {
+          CenteredHover(onCancel: { showingRename = false }) {
+            TemplateRenameSheet(
+              title: "Rename template",
+              name: $renameText,
+              fieldIdentifier: "remote-editor-rename-field",
+              clearIdentifier: "remote-editor-rename-clear",
+              onCancel: { showingRename = false },
+              onSave: {
+                environment.renameRemoteTemplate(
+                  id: environment.editingRemoteTemplateID ?? environment.activeRemoteTemplateID,
+                  name: renameText
+                )
+                showingRename = false
+              }
+            )
+          }
         }
       }
     }
@@ -37,9 +81,18 @@ public struct RemoteControlEditorView: View {
     }
   }
 
+  private var templateName: String {
+    environment.editingRemoteTemplate?.name ?? RemoteControlTemplate.defaultName
+  }
+
+  private func beginRename() {
+    renameText = templateName
+    showingRename = true
+  }
+
   @ViewBuilder
   private var typePicker: some View {
-    if let template = environment.activeRemoteTemplate {
+    if let template = environment.editingRemoteTemplate {
       Picker("Remote", selection: remoteTypeBinding(template.id, current: template.remoteType)) {
         ForEach(RemoteType.allCases) { type in
           Text(type.displayName).tag(type)
@@ -122,10 +175,12 @@ public struct RemoteControlEditorView: View {
         select(action)
       } label: {
         Image(systemName: "xmark.circle.fill")
+          .symbolRenderingMode(.hierarchical)
           .font(.system(size: 22))
-          .foregroundStyle(.white.opacity(0.55))
+          .foregroundStyle(.white.opacity(0.55), Color.white.opacity(0.22))
       }
       .buttonStyle(.plain)
+      .tint(Color.white.opacity(0.55))
       .disabled(control == nil)
       .accessibilityIdentifier(
         isCapturing ? "remote-chord-clear" : "remote-chord-clear-\(action.accessibilitySuffix)"
@@ -145,7 +200,7 @@ public struct RemoteControlEditorView: View {
   }
 
   private func fieldControl(for action: RemoteAction) -> ControlID? {
-    guard let template = environment.activeRemoteTemplate else { return nil }
+    guard let template = environment.editingRemoteTemplate else { return nil }
     return RemoteChordRules.fieldControl(for: action, in: template.bindings)
   }
 

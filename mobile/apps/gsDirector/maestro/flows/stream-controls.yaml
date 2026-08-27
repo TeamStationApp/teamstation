@@ -1,4 +1,5 @@
 # Stream URL in Settings, clear X, empty-URL toast, Stream left of Record, RECORDING not STOP.
+# While STREAMING, header-stream-mbps is "N.NN Mbps" and header-stream-drops is "Dropped packets: N".
 appId: co.gamestation.director
 ---
 - launchApp:
@@ -20,7 +21,7 @@ appId: co.gamestation.director
     id: 'start-directing'
 
 - extendedWaitUntil:
-    visible: 'tile=1 state=live.*'
+    visible: 'source=1 state=live.*'
     timeout: 15000
 
 - assertVisible:
@@ -64,6 +65,7 @@ appId: co.gamestation.director
 - assertVisible: 'RECORDING'
 - tapOn:
     id: 'record-button'
+- runFlow: shared/slide-to-stop.yaml
 - extendedWaitUntil:
     visible: 'rec=0'
     timeout: 60000

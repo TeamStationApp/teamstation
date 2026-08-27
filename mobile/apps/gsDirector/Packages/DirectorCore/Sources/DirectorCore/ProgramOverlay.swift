@@ -4,6 +4,40 @@ import Foundation
 public enum ProgramOverlayKind: String, Sendable, Codable, Hashable {
   case web
   case image
+  case text
+}
+
+public enum TextOverlayAlign: String, Sendable, Codable, Hashable, CaseIterable, Identifiable {
+  case left
+  case center
+  case right
+
+  public var id: String { rawValue }
+}
+
+/// `#RGB` / `#RRGGBB` fill values used by text overlays and the color picker.
+public enum OverlayColorHex {
+  public static func parse(_ hex: String) -> (red: Double, green: Double, blue: Double)? {
+    var value = hex.trimmingCharacters(in: .whitespacesAndNewlines)
+    if value.hasPrefix("#") { value.removeFirst() }
+    value = value.uppercased()
+    if value.count == 3 {
+      value = value.map { "\($0)\($0)" }.joined()
+    }
+    guard value.count == 6, let packed = UInt32(value, radix: 16) else { return nil }
+    return (
+      Double((packed >> 16) & 0xFF) / 255,
+      Double((packed >> 8) & 0xFF) / 255,
+      Double(packed & 0xFF) / 255
+    )
+  }
+
+  public static func format(red: Double, green: Double, blue: Double) -> String {
+    func byte(_ component: Double) -> Int {
+      Int((min(max(component, 0), 1) * 255).rounded())
+    }
+    return String(format: "#%02X%02X%02X", byte(red), byte(green), byte(blue))
+  }
 }
 
 public enum OverlayAnchorEdge: String, Sendable, Codable, Hashable {
@@ -49,6 +83,19 @@ public struct ProgramOverlay: Sendable, Codable, Identifiable, Hashable {
   /// When false, the graphic is live Output only and collapses to zero size during scrub and
   /// Instant Replay so attached children move with it. When true, it also burns in off-live.
   public var showInRewind: Bool
+  /// When false, the graphic is hidden on live Output and only appears during scrub / Instant Replay.
+  public var showInLive: Bool
+  public var text: String
+  public var fontName: String
+  public var fontSize: Double
+  public var isBold: Bool
+  public var isItalic: Bool
+  public var textAlign: TextOverlayAlign
+  /// When true, the box width/height follow the glyphs. The first corner-drag turns this off.
+  public var hugText: Bool
+  public var textColorHex: String
+  public var dropShadowEnabled: Bool
+  public var dropShadowColorHex: String
 
   public init(
     id: UUID = UUID(),
@@ -69,7 +116,18 @@ public struct ProgramOverlay: Sendable, Codable, Identifiable, Hashable {
     placement: OverlayPlacement,
     role: String? = nil,
     hasLaidOut: Bool = false,
-    showInRewind: Bool = false
+    showInRewind: Bool = false,
+    showInLive: Bool = true,
+    text: String = "",
+    fontName: String = "",
+    fontSize: Double = 0,
+    isBold: Bool = false,
+    isItalic: Bool = false,
+    textAlign: TextOverlayAlign = .center,
+    hugText: Bool = true,
+    textColorHex: String = "#FFFFFF",
+    dropShadowEnabled: Bool = false,
+    dropShadowColorHex: String = "#000000"
   ) {
     self.id = id
     self.kind = kind
@@ -90,6 +148,17 @@ public struct ProgramOverlay: Sendable, Codable, Identifiable, Hashable {
     self.role = role
     self.hasLaidOut = hasLaidOut
     self.showInRewind = showInRewind
+    self.showInLive = showInLive
+    self.text = text
+    self.fontName = fontName
+    self.fontSize = fontSize
+    self.isBold = isBold
+    self.isItalic = isItalic
+    self.textAlign = textAlign
+    self.hugText = hugText
+    self.textColorHex = textColorHex
+    self.dropShadowEnabled = dropShadowEnabled
+    self.dropShadowColorHex = dropShadowColorHex
   }
 
   public init(from decoder: Decoder) throws {
@@ -114,6 +183,18 @@ public struct ProgramOverlay: Sendable, Codable, Identifiable, Hashable {
     role = try container.decodeIfPresent(String.self, forKey: .role)
     hasLaidOut = try container.decodeIfPresent(Bool.self, forKey: .hasLaidOut) ?? false
     showInRewind = try container.decodeIfPresent(Bool.self, forKey: .showInRewind) ?? false
+    showInLive = try container.decodeIfPresent(Bool.self, forKey: .showInLive) ?? true
+    text = try container.decodeIfPresent(String.self, forKey: .text) ?? ""
+    fontName = try container.decodeIfPresent(String.self, forKey: .fontName) ?? ""
+    fontSize = try container.decodeIfPresent(Double.self, forKey: .fontSize) ?? 0
+    isBold = try container.decodeIfPresent(Bool.self, forKey: .isBold) ?? false
+    isItalic = try container.decodeIfPresent(Bool.self, forKey: .isItalic) ?? false
+    textAlign = try container.decodeIfPresent(TextOverlayAlign.self, forKey: .textAlign) ?? .center
+    hugText = try container.decodeIfPresent(Bool.self, forKey: .hugText) ?? true
+    textColorHex = try container.decodeIfPresent(String.self, forKey: .textColorHex) ?? "#FFFFFF"
+    dropShadowEnabled = try container.decodeIfPresent(Bool.self, forKey: .dropShadowEnabled) ?? false
+    dropShadowColorHex = try container.decodeIfPresent(String.self, forKey: .dropShadowColorHex)
+      ?? "#000000"
   }
 }
 
@@ -146,6 +227,28 @@ public enum OverlayLayout {
     let width = min(max(native.width, 1), canvas.width - topLeftInset.x)
     let height = min(max(native.height, 1), canvas.height - topLeftInset.y)
     return CGRect(x: topLeftInset.x, y: topLeftInset.y, width: width, height: height)
+  }
+
+  /// Keep the top-left and current display scale; size follows the new bitmap's aspect.
+  public static func replacedImageRect(
+    origin: CGPoint,
+    currentSize: CGSize,
+    oldNative: CGSize,
+    newNative: CGSize,
+    canvas: CGSize
+  ) -> CGRect {
+    _ = canvas
+    let newWidthNative = max(newNative.width, 1)
+    let newHeightNative = max(newNative.height, 1)
+    let size: CGSize
+    if oldNative.width > 0 {
+      let scale = currentSize.width / oldNative.width
+      size = CGSize(width: newWidthNative * scale, height: newHeightNative * scale)
+    } else {
+      let width = max(currentSize.width, 1)
+      size = CGSize(width: width, height: width * (newHeightNative / newWidthNative))
+    }
+    return CGRect(origin: origin, size: size)
   }
 
   public static func scaleFittingQuarter(native: CGSize, canvas: CGSize) -> Double {
@@ -337,6 +440,7 @@ public enum OverlayLayout {
     for overlay in overlays {
       var rect = pixelRect(overlay, canvas: canvas)
       if OverlayVisibility.shouldCollapse(
+        showInLive: overlay.showInLive,
         showInRewind: overlay.showInRewind,
         programIsOffLive: programIsOffLive
       ) {
@@ -479,6 +583,67 @@ public enum OverlayLayout {
       let x = (max(parent.minX, child.minX) + min(parent.maxX, child.maxX)) / 2
       return (CGPoint(x: x, y: parent.maxY), CGPoint(x: x, y: child.minY))
     }
+  }
+
+  /// Hug-mode box for a text overlay. Width/height follow `textSize`; the alignment edge stays put.
+  public static func huggedTextRect(
+    align: TextOverlayAlign,
+    current: CGRect,
+    textSize: CGSize,
+    canvas: CGSize
+  ) -> CGRect {
+    let width = min(max(textSize.width, 8), canvas.width)
+    let height = min(max(textSize.height, 8), canvas.height)
+    var x: CGFloat
+    switch align {
+    case .left:
+      x = current.minX
+    case .center:
+      x = current.midX - width / 2
+    case .right:
+      x = current.maxX - width
+    }
+    var y = current.minY
+    x = min(max(x, 0), max(canvas.width - width, 0))
+    y = min(max(y, 0), max(canvas.height - height, 0))
+    return CGRect(x: x, y: y, width: width, height: height)
+  }
+
+  /// Free-form resize (text locked boxes). Width and height both follow the dragged corner.
+  public static func resizedFree(
+    _ rect: CGRect,
+    corner: Corner,
+    translation: CGSize,
+    canvas: CGSize,
+    minimum: CGFloat = 40
+  ) -> CGRect {
+    var minX = rect.minX
+    var minY = rect.minY
+    var maxX = rect.maxX
+    var maxY = rect.maxY
+    switch corner {
+    case .topLeft:
+      minX += translation.width
+      minY += translation.height
+    case .topRight:
+      maxX += translation.width
+      minY += translation.height
+    case .bottomLeft:
+      minX += translation.width
+      maxY += translation.height
+    case .bottomRight:
+      maxX += translation.width
+      maxY += translation.height
+    }
+    var width = max(maxX - minX, minimum)
+    var height = max(maxY - minY, minimum)
+    if minX + width > canvas.width { width = canvas.width - minX }
+    if minY + height > canvas.height { height = canvas.height - minY }
+    minX = min(max(minX, 0), max(canvas.width - width, 0))
+    minY = min(max(minY, 0), max(canvas.height - height, 0))
+    width = min(width, canvas.width)
+    height = min(height, canvas.height)
+    return CGRect(x: minX, y: minY, width: width, height: height)
   }
 
   /// Top-left square of a content-sized web snapshot, side min(width, height).

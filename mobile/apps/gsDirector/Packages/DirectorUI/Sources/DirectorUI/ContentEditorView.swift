@@ -6,29 +6,62 @@ import UIKit
 
 /// Live Output plus every overlay, so graphics can be placed on the picture they will burn into.
 struct ContentEditorView: View {
+  var onClose: () -> Void
   @Environment(AppEnvironment.self) private var environment
-  @Environment(\.dismiss) private var dismiss
 
   @State private var showingList = false
   @State private var choosingKind = false
   @State private var photoItem: PhotosPickerItem?
   @State private var addShowInRewind = false
+  @State private var addShowInLive = true
   @State private var editing: OverlayEditSession?
+  @State private var showingRename = false
+  @State private var renameText = ""
+  @State private var pickingFill = false
+  @State private var pickingShadow = false
+  @State private var keyboardHeight: CGFloat = 0
+  @State private var fontSizeFocused = false
+  @State private var overlayFieldBlurred = false
 
   var body: some View {
     NavigationStack {
-      GeometryReader { geometry in
-        let canvas = fittedCanvas(in: geometry.size)
+      VStack(spacing: 0) {
+        if let overlay = editingTextOverlay {
+          TextOverlayEditorBar(
+            overlay: overlay,
+            pickingFill: $pickingFill,
+            pickingShadow: $pickingShadow,
+            sizeFieldFocused: $fontSizeFocused
+          )
+          .zIndex(2)
+        }
+        GeometryReader { geometry in
+        let slot = editorSlot(from: geometry.size)
+        let canvas = fittedCanvas(in: slot)
         ZStack {
           Color.black
+            .contentShape(Rectangle())
+            .onTapGesture { blurTextOverlayField() }
           ZStack(alignment: .topLeading) {
             CameraPreviewView(renderer: environment.router.programRenderer)
               .frame(width: canvas.width, height: canvas.height)
+              .overlay {
+                Color.clear
+                  .contentShape(Rectangle())
+                  .onTapGesture { blurTextOverlayField() }
+              }
             OverlayAnchorLines(overlays: environment.overlays, canvas: canvas)
             ForEach(environment.overlays) { overlay in
               OverlayHandle(
                 overlay: overlay,
                 canvas: canvas,
+                isEditingText: overlay.id == environment.editingTextOverlayID,
+                text: overlay.kind == .text ? textBinding(for: overlay.id) : nil,
+                displayScale: canvas.height
+                  / max(CGFloat(environment.config.programResolution.height), 1),
+                claimsFocus: overlay.id == environment.editingTextOverlayID
+                  && !fontSizeFocused && !pickingFill && !pickingShadow && !overlayFieldBlurred,
+                showsAccessory: softwareKeyboardVisible && !fontSizeFocused && !overlayFieldBlurred,
                 onMove: { origin in
                   environment.moveOverlay(
                     id: overlay.id,
@@ -52,7 +85,16 @@ struct ContentEditorView: View {
                 onResizeEnd: {
                   environment.commitOverlayResize(id: overlay.id, displayCanvas: canvas)
                 },
-                onEdit: { editing = .existing(overlay) }
+                onEdit: {
+                  if overlay.kind == .text {
+                    overlayFieldBlurred = false
+                    environment.beginEditingTextOverlay(id: overlay.id)
+                  } else {
+                    environment.endEditingTextOverlay()
+                    editing = .existing(overlay)
+                  }
+                },
+                onEndTextEdit: { endTextEdit() }
               )
             }
           }
@@ -60,17 +102,57 @@ struct ContentEditorView: View {
           .frame(width: canvas.width, height: canvas.height)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .offset(y: canvasOffset(overlayCanvas: canvas, containerHeight: geometry.size.height))
+      }
+      .ignoresSafeArea(.keyboard)
       }
       .background(Color.deckBackground)
-      .navigationTitle(
-        environment.templates.first { $0.id == environment.activeTemplateID }?.name
-          ?? OverlayTemplate.defaultName
-      )
+      .ignoresSafeArea(.keyboard)
       .navigationBarTitleDisplayMode(.inline)
+      .toolbar(isEditingText ? .hidden : .visible, for: .navigationBar)
+      .safeAreaInset(edge: .bottom) {
+        if !isEditingText {
+          ModalActionFooter(
+            primaryTitle: "DONE",
+            primaryIdentifier: "content-editor-done",
+            action: {
+              endTextEdit()
+              onClose()
+            }
+          )
+        }
+      }
+      .overlay(alignment: .bottomTrailing) {
+        if isEditingText && (!softwareKeyboardVisible || fontSizeFocused) {
+          ModalPrimaryButton(
+            title: "DONE",
+            identifier: "text-overlay-done",
+            action: { endTextEdit() }
+          )
+          .padding(.horizontal, 16)
+          .padding(.bottom, 8)
+        }
+      }
       .toolbar {
-        ToolbarItem(placement: .cancellationAction) {
-          Button("Done") { dismiss() }
-            .accessibilityIdentifier("content-editor-done")
+        ToolbarItem(placement: .principal) {
+          HStack(spacing: 8) {
+            Button {
+              beginRename()
+            } label: {
+              Text(templateName)
+                .font(.headline)
+                .foregroundStyle(.white)
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("content-editor-rename-title")
+            Button {
+              beginRename()
+            } label: {
+              Image(systemName: "pencil")
+            }
+            .accessibilityIdentifier("content-editor-rename")
+            .accessibilityLabel("Rename template")
+          }
         }
         ToolbarItemGroup(placement: .primaryAction) {
           Button("List") { showingList = true }
@@ -79,38 +161,82 @@ struct ContentEditorView: View {
             .accessibilityIdentifier("content-add")
         }
       }
-      .confirmationDialog("Add content", isPresented: $choosingKind, titleVisibility: .visible) {
-        Button("Web") {
-          addShowInRewind = false
-          editing = .add(.web)
+      .overlay {
+        if choosingKind {
+          addKindChooser
         }
-        .accessibilityIdentifier("content-add-web")
-        Button("Image") {
-          addShowInRewind = false
-          editing = .add(.image)
+        if showingRename {
+          CenteredHover(onCancel: { showingRename = false }) {
+            TemplateRenameSheet(
+              title: "Rename template",
+              name: $renameText,
+              fieldIdentifier: "content-editor-rename-field",
+              clearIdentifier: "content-editor-rename-clear",
+              onCancel: { showingRename = false },
+              onSave: {
+                environment.renameTemplate(
+                  id: environment.editingTemplateID ?? environment.activeTemplateID,
+                  name: renameText
+                )
+                showingRename = false
+              }
+            )
+          }
         }
-        .accessibilityIdentifier("content-add-image")
-        Button("Cancel", role: .cancel) {}
+        if pickingFill, let overlay = editingTextOverlay {
+          CornerHover(alignment: .topLeading, onCancel: { pickingFill = false }) {
+            DirectorColorPicker(
+              hex: Binding(
+                get: { overlay.textColorHex },
+                set: { environment.updateTextOverlay(id: overlay.id, textColorHex: $0) }
+              ),
+              onDismiss: { pickingFill = false }
+            )
+          }
+        }
+        if pickingShadow, let overlay = editingTextOverlay {
+          CornerHover(alignment: .topTrailing, onCancel: { pickingShadow = false }) {
+            DirectorColorPicker(
+              hex: Binding(
+                get: { overlay.dropShadowColorHex },
+                set: { environment.updateTextOverlay(id: overlay.id, dropShadowColorHex: $0) }
+              ),
+              shadowEnabled: Binding(
+                get: { overlay.dropShadowEnabled },
+                set: { environment.updateTextOverlay(id: overlay.id, dropShadowEnabled: $0) }
+              ),
+              onDismiss: { pickingShadow = false }
+            )
+          }
+        }
       }
       .onChange(of: photoItem) { _, item in
         Task { await importPhoto(item) }
       }
-      .sheet(isPresented: $showingList) {
+      .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) {
+        keyboardHeight = Self.overlap(from: $0)
+      }
+      .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidChangeFrameNotification)) {
+        keyboardHeight = Self.overlap(from: $0)
+      }
+      .fullScreenCover(isPresented: $showingList) {
         OverlayListSheet()
           .environment(environment)
       }
-      .sheet(item: $editing) { session in
+      .fullScreenCover(item: $editing) { session in
         OverlayEditSheet(
           session: session,
           photoItem: $photoItem,
-          showInRewind: showInRewindBinding(for: session),
-          onSaveURL: { url, showInRewind in
+          onSaveURL: { url in
             switch session {
             case .add:
-              environment.addWebOverlay(url: url, showInRewind: showInRewind)
+              environment.addWebOverlay(
+                url: url,
+                showInRewind: addShowInRewind,
+                showInLive: addShowInLive
+              )
             case .existing(let overlay):
               environment.updateOverlayURL(id: overlay.id, url: url)
-              environment.setOverlayShowInRewind(id: overlay.id, showInRewind: showInRewind)
             }
             editing = nil
           },
@@ -126,19 +252,180 @@ struct ContentEditorView: View {
     }
   }
 
-  private func showInRewindBinding(for session: OverlayEditSession) -> Binding<Bool> {
-    switch session {
-    case .add:
-      return $addShowInRewind
-    case .existing(let overlay):
-      return Binding(
-        get: {
-          environment.overlays.first(where: { $0.id == overlay.id })?.showInRewind
-            ?? overlay.showInRewind
-        },
-        set: { environment.setOverlayShowInRewind(id: overlay.id, showInRewind: $0) }
-      )
+  private var templateName: String {
+    let id = environment.editingTemplateID ?? environment.activeTemplateID
+    return environment.templates.first { $0.id == id }?.name ?? OverlayTemplate.defaultName
+  }
+
+  private var addKindChooser: some View {
+    ZStack {
+      Color.black.opacity(0.55)
+        .ignoresSafeArea()
+        .onTapGesture { choosingKind = false }
+      VStack(spacing: 12) {
+        Text("Add content")
+          .font(.system(size: 15, weight: .heavy, design: .rounded))
+          .tracking(1)
+          .foregroundStyle(.white.opacity(0.7))
+        addKindButton("Web", identifier: "content-add-web") {
+          addShowInRewind = false
+          addShowInLive = true
+          choosingKind = false
+          editing = .add(.web)
+        }
+        addKindButton("Image", identifier: "content-add-image") {
+          addShowInRewind = false
+          addShowInLive = true
+          choosingKind = false
+          editing = .add(.image)
+        }
+        addKindButton("Text", identifier: "content-add-text") {
+          environment.endEditingTextOverlay()
+          addShowInRewind = false
+          addShowInLive = true
+          choosingKind = false
+          let id = environment.addTextOverlay(
+            showInRewind: addShowInRewind,
+            showInLive: addShowInLive
+          )
+          overlayFieldBlurred = false
+          environment.beginEditingTextOverlay(id: id)
+        }
+        Button("Cancel") { choosingKind = false }
+          .font(.system(size: 15, weight: .semibold, design: .rounded))
+          .foregroundStyle(.white.opacity(0.65))
+          .padding(.top, 4)
+      }
+      .padding(28)
+      .frame(width: 280)
+      .background(Color.deckPanel, in: RoundedRectangle(cornerRadius: 16))
     }
+  }
+
+  private func addKindButton(_ title: String, identifier: String, action: @escaping () -> Void) -> some View {
+    Button(action: action) {
+      Text(title)
+        .font(.system(size: 17, weight: .semibold, design: .rounded))
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 12)
+        .background(Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+        .foregroundStyle(.white)
+    }
+    .buttonStyle(.plain)
+    .accessibilityIdentifier(identifier)
+  }
+
+  private var isEditingText: Bool {
+    environment.editingTextOverlayID != nil
+  }
+
+  private var softwareKeyboardVisible: Bool {
+    isEditingText && !overlayFieldBlurred && !fontSizeFocused
+  }
+
+  /// Docked software-keyboard thickness. Notifications on this simulator often miss the strip, so
+  /// while the overlay field is first responder we fall back to a landscape iPad estimate.
+  private var effectiveKeyboardHeight: CGFloat {
+    if keyboardHeight >= 80 { return keyboardHeight }
+    guard softwareKeyboardVisible else { return 0 }
+    let shortEdge = min(UIScreen.main.bounds.width, UIScreen.main.bounds.height)
+    return shortEdge * 0.42
+  }
+
+  private func editorSlot(from geometry: CGSize) -> CGSize {
+    let screen = UIScreen.main.bounds.size
+    let landscape = CGSize(
+      width: max(screen.width, screen.height),
+      height: min(screen.width, screen.height)
+    )
+    let bar: CGFloat = isEditingText ? 56 : 0
+    let host = CGSize(width: landscape.width, height: max(landscape.height - bar, 200))
+    if geometry.width >= host.width * 0.85 && geometry.height >= host.height * 0.75 {
+      return geometry
+    }
+    return host
+  }
+
+  private func endTextEdit() {
+    fontSizeFocused = false
+    overlayFieldBlurred = false
+    pickingFill = false
+    pickingShadow = false
+    environment.endEditingTextOverlay()
+  }
+
+  private func blurTextOverlayField() {
+    guard isEditingText else { return }
+    fontSizeFocused = false
+    overlayFieldBlurred = true
+    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+  }
+
+  private func beginRename() {
+    renameText = templateName
+    showingRename = true
+  }
+
+  private func canvasOffset(overlayCanvas: CGSize, containerHeight: CGFloat) -> CGFloat {
+    guard let overlay = editingTextOverlay, softwareKeyboardVisible else { return 0 }
+    let rect = OverlayLayout.pixelRect(overlay, canvas: overlayCanvas)
+    let canvasTop = (containerHeight - overlayCanvas.height) / 2
+    let overlayBottom = canvasTop + rect.maxY
+    let accessory: CGFloat =
+      (!fontSizeFocused && !overlayFieldBlurred) ? 44 : 0
+    let lift = keyboardOverlap(in: containerHeight) + accessory
+    let visibleBottom = containerHeight - lift - 20
+    guard overlayBottom > visibleBottom else { return 0 }
+    return visibleBottom - overlayBottom
+  }
+
+  /// Keyboard strip covering the bottom of the editor canvas, in the GeometryReader's space.
+  private func keyboardOverlap(in containerHeight: CGFloat) -> CGFloat {
+    let h = effectiveKeyboardHeight
+    if h < 80 { return 0 }
+    // GeometryReader already lost the keyboard strip; don't subtract it twice.
+    if h >= containerHeight * 0.8 { return 0 }
+    return min(h, containerHeight - 80)
+  }
+
+  private static func overlap(from notification: Notification) -> CGFloat {
+    guard
+      let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect
+    else { return 0 }
+    let screen = UIScreen.main.bounds
+    let scale = max(UIScreen.main.scale, 1)
+    let inPoints = CGRect(
+      x: frame.origin.x / scale,
+      y: frame.origin.y / scale,
+      width: frame.size.width / scale,
+      height: frame.size.height / scale
+    )
+    let swapped = CGRect(x: 0, y: 0, width: screen.height, height: screen.width)
+    return [
+      intersectionThickness(frame, screen),
+      intersectionThickness(frame, swapped),
+      intersectionThickness(inPoints, screen),
+      intersectionThickness(inPoints, swapped)
+    ].max() ?? 0
+  }
+
+  private static func intersectionThickness(_ frame: CGRect, _ bounds: CGRect) -> CGFloat {
+    let hit = bounds.intersection(frame)
+    if hit.isNull || hit.isEmpty { return 0 }
+    let thickness = min(hit.width, hit.height)
+    return thickness >= 80 ? thickness : 0
+  }
+
+  private var editingTextOverlay: ProgramOverlay? {
+    guard let id = environment.editingTextOverlayID else { return nil }
+    return environment.overlays.first { $0.id == id }
+  }
+
+  private func textBinding(for id: UUID) -> Binding<String> {
+    Binding(
+      get: { environment.overlays.first(where: { $0.id == id })?.text ?? "" },
+      set: { environment.updateTextOverlay(id: id, text: $0) }
+    )
   }
 
   private func fittedCanvas(in size: CGSize) -> CGSize {
@@ -160,7 +447,12 @@ struct ContentEditorView: View {
       environment.replaceOverlayImage(id: overlay.id, data: data, displayName: name)
       editing = nil
     case .add:
-      environment.addImageOverlay(data: data, displayName: name, showInRewind: addShowInRewind)
+      environment.addImageOverlay(
+        data: data,
+        displayName: name,
+        showInRewind: addShowInRewind,
+        showInLive: addShowInLive
+      )
       editing = nil
     case .none:
       environment.addImageOverlay(data: data, displayName: name)
@@ -200,69 +492,107 @@ private struct OverlayListSheet: View {
 
   var body: some View {
     NavigationStack {
-      List {
-        if environment.overlays.isEmpty {
-          Text("No content yet. Tap Add.")
-            .foregroundStyle(.secondary)
-            .accessibilityIdentifier("content-list-empty")
-        }
-        ForEach(Array(environment.overlays.enumerated()), id: \.element.id) { index, overlay in
-          VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .center, spacing: 12) {
-              OverlayListThumb(
-                overlay: overlay,
-                image: environment.overlayPreviewUIImage(for: overlay)
-              )
-              Text(listTitle(overlay))
-                .lineLimit(2)
-              Spacer()
-              Button("Edit") { editing = .existing(overlay) }
-                .accessibilityIdentifier("content-list-edit-\(index + 1)")
+      ScrollView {
+        LazyVStack(spacing: 0, pinnedViews: .sectionHeaders) {
+          Section {
+            if environment.overlays.isEmpty {
+              Text("No content yet. Tap Add.")
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(16)
+                .accessibilityIdentifier("content-list-empty")
             }
-            Toggle(
-              "Show in rewind",
-              isOn: Binding(
-                get: {
-                  environment.overlays.first(where: { $0.id == overlay.id })?.showInRewind ?? false
-                },
-                set: { environment.setOverlayShowInRewind(id: overlay.id, showInRewind: $0) }
-              )
-            )
-            .accessibilityIdentifier("content-list-rewind-\(index + 1)")
+            ForEach(Array(environment.overlays.enumerated()), id: \.element.id) { index, overlay in
+              HStack(alignment: .center, spacing: 12) {
+                OverlayListThumb(
+                  overlay: overlay,
+                  image: environment.overlayPreviewUIImage(for: overlay)
+                )
+                Text(listTitle(overlay))
+                  .lineLimit(2)
+                  .frame(maxWidth: .infinity, alignment: .leading)
+                Toggle(
+                  "Show in Live",
+                  isOn: Binding(
+                    get: {
+                      environment.overlays.first(where: { $0.id == overlay.id })?.showInLive ?? true
+                    },
+                    set: { environment.setOverlayShowInLive(id: overlay.id, showInLive: $0) }
+                  )
+                )
+                .labelsHidden()
+                .frame(width: 94)
+                .accessibilityIdentifier("content-list-live-\(index + 1)")
+                Toggle(
+                  "Show in Rewind",
+                  isOn: Binding(
+                    get: {
+                      environment.overlays.first(where: { $0.id == overlay.id })?.showInRewind ?? false
+                    },
+                    set: { environment.setOverlayShowInRewind(id: overlay.id, showInRewind: $0) }
+                  )
+                )
+                .labelsHidden()
+                .frame(width: 110)
+                .accessibilityIdentifier("content-list-rewind-\(index + 1)")
+                Button("Edit") {
+                  if overlay.kind == .text {
+                    environment.beginEditingTextOverlay(id: overlay.id)
+                    dismiss()
+                  } else {
+                    editing = .existing(overlay)
+                  }
+                }
+                .frame(width: 52, alignment: .trailing)
+                .accessibilityIdentifier("content-list-edit-\(index + 1)")
+              }
+              .padding(.horizontal, 16)
+              .padding(.vertical, 8)
+              .accessibilityIdentifier("content-list-row-\(index + 1)")
+            }
+          } header: {
+            HStack(alignment: .center, spacing: 12) {
+              Text("Preview")
+                .frame(width: 48, alignment: .leading)
+              Text("Name")
+                .frame(maxWidth: .infinity, alignment: .leading)
+              Text("Show in Live")
+                .frame(width: 94, alignment: .center)
+                .multilineTextAlignment(.center)
+              Text("Show in Rewind")
+                .frame(width: 110, alignment: .center)
+                .multilineTextAlignment(.center)
+              Text("Edit")
+                .frame(width: 52, alignment: .trailing)
+            }
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(Color.deckBackground)
           }
-          .accessibilityIdentifier("content-list-row-\(index + 1)")
         }
       }
+      .background(Color.deckBackground)
       .navigationTitle("Content")
       .navigationBarTitleDisplayMode(.inline)
-      .toolbar {
-        ToolbarItem(placement: .cancellationAction) {
-          Button("Done") { dismiss() }
-            .accessibilityIdentifier("content-list-done")
-        }
+      .safeAreaInset(edge: .bottom) {
+        ModalActionFooter(
+          primaryTitle: "DONE",
+          primaryIdentifier: "content-list-done",
+          action: { dismiss() }
+        )
       }
       .onChange(of: photoItem) { _, item in
         Task { await importPhoto(item) }
       }
-      .sheet(item: $editing) { session in
+      .fullScreenCover(item: $editing) { session in
         OverlayEditSheet(
           session: session,
           photoItem: $photoItem,
-          showInRewind: Binding(
-            get: {
-              environment.overlays.first(where: { $0.id == session.overlay?.id })?.showInRewind
-                ?? false
-            },
-            set: { value in
-              if let id = session.overlay?.id {
-                environment.setOverlayShowInRewind(id: id, showInRewind: value)
-              }
-            }
-          ),
-          onSaveURL: { url, showInRewind in
+          onSaveURL: { url in
             if let overlay = session.overlay {
               environment.updateOverlayURL(id: overlay.id, url: url)
-              environment.setOverlayShowInRewind(id: overlay.id, showInRewind: showInRewind)
             }
             editing = nil
           },
@@ -276,7 +606,6 @@ private struct OverlayListSheet: View {
         .id(session.id)
       }
     }
-    .presentationDetents([.medium, .large])
   }
 
   private func listTitle(_ overlay: ProgramOverlay) -> String {
@@ -285,6 +614,8 @@ private struct OverlayListSheet: View {
       overlay.url
     case .image:
       overlay.imageDisplayName.isEmpty ? overlay.imageFilename : overlay.imageDisplayName
+    case .text:
+      overlay.text.isEmpty ? "Text" : overlay.text
     }
   }
 
@@ -312,9 +643,9 @@ private struct OverlayListThumb: View {
       if let image {
         Image(uiImage: image)
           .resizable()
-          .aspectRatio(contentMode: overlay.kind == .image ? .fit : .fill)
+          .aspectRatio(contentMode: overlay.kind == .web ? .fill : .fit)
       } else {
-        Image(systemName: overlay.kind == .web ? "globe" : "photo")
+        Image(systemName: overlay.kind == .web ? "globe" : overlay.kind == .text ? "textformat" : "photo")
           .foregroundStyle(.secondary)
       }
     }
@@ -355,16 +686,27 @@ private struct OverlayAnchorLines: View {
 private struct OverlayHandle: View {
   let overlay: ProgramOverlay
   let canvas: CGSize
+  var isEditingText: Bool = false
+  var text: Binding<String>?
+  var displayScale: CGFloat = 1
+  var claimsFocus: Bool = true
+  var showsAccessory: Bool = true
   let onMove: (CGPoint) -> Void
   let onMoveEnd: () -> Void
   let onResize: (CGRect) -> Void
   let onResizeEnd: () -> Void
   let onEdit: () -> Void
+  let onEndTextEdit: () -> Void
+
+  /// UIKit insertion-point blink (~0.53s on, 0.53s off). Reset when the caret moves.
+  private static let caretBlinkPeriod: TimeInterval = 0.53
 
   @State private var dragOrigin: CGPoint?
   @State private var dragStartLocation: CGPoint?
   @State private var resizeStart: CGRect?
   @State private var resizeStartLocation: CGPoint?
+  @State private var caretUTF16 = 0
+  @State private var caretBlinkEpoch = Date()
 
   var body: some View {
     let rect = OverlayLayout.pixelRect(overlay, canvas: canvas)
@@ -376,11 +718,26 @@ private struct OverlayHandle: View {
         .strokeBorder(Color.programGreen, lineWidth: 2)
         .background(Color.white.opacity(0.04))
         .overlay {
-          Text(label)
-            .font(.system(size: 11, weight: .bold, design: .rounded))
-            .foregroundStyle(.white)
-            .shadow(color: .black, radius: 2)
-            .padding(4)
+          if isEditingText, let text {
+            OverlayTextField(
+              text: text,
+              font: TextOverlayRenderer.font(for: overlay, displayScale: displayScale),
+              alignment: nsAlignment(overlay.textAlign),
+              showsAccessory: showsAccessory,
+              claimsFocus: claimsFocus,
+              onDone: onEndTextEdit,
+              onCaretOffset: { caretUTF16 = $0 }
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .opacity(0.02)
+            .allowsHitTesting(claimsFocus)
+          } else {
+            Text(label)
+              .font(.system(size: 11, weight: .bold, design: .rounded))
+              .foregroundStyle(.white)
+              .shadow(color: .black, radius: 2)
+              .padding(4)
+          }
         }
         .padding(inset)
         .gesture(
@@ -415,10 +772,36 @@ private struct OverlayHandle: View {
       ForEach(OverlayLayout.Corner.allCases) { corner in
         cornerHandle(corner, overlayRect: rect, outer: outer, inset: inset)
       }
+      if isEditingText && claimsFocus {
+        let font = TextOverlayRenderer.font(for: overlay, displayScale: displayScale)
+        let caret = TextOverlayRenderer.caretRect(
+          text: overlay.text,
+          font: font,
+          align: overlay.textAlign,
+          in: rect.size,
+          utf16Offset: caretUTF16
+        )
+        TimelineView(.periodic(from: caretBlinkEpoch, by: Self.caretBlinkPeriod)) { context in
+          let phase = context.date.timeIntervalSince(caretBlinkEpoch)
+          let on = Int(phase / Self.caretBlinkPeriod) % 2 == 0
+          Rectangle()
+            .fill(Color.white)
+            .opacity(on ? 1 : 0)
+            .frame(width: caret.width, height: caret.height)
+            .offset(x: inset + caret.minX, y: inset + caret.minY)
+            .allowsHitTesting(false)
+        }
+      }
     }
     .frame(width: outer.width, height: outer.height)
     .position(x: rect.midX, y: rect.midY)
-    .accessibilityIdentifier("overlay-handle-\(overlay.id.uuidString)")
+    .onChange(of: caretUTF16) { _, _ in caretBlinkEpoch = Date() }
+    .onChange(of: overlay.text) { _, _ in caretBlinkEpoch = Date() }
+    .onChange(of: claimsFocus) { _, focused in
+      if focused { caretBlinkEpoch = Date() }
+    }
+    .accessibilityElement(children: .contain)
+    .accessibilityIdentifier(isEditingText ? "text-overlay-field" : "overlay-handle-\(overlay.id.uuidString)")
   }
 
   private func cornerHandle(
@@ -453,12 +836,19 @@ private struct OverlayHandle: View {
             onResize(
               overlay.kind == .web
                 ? OverlayLayout.scaledFromOrigin(start, translation: translation)
-                : OverlayLayout.resized(
-                  start,
-                  corner: corner,
-                  translation: translation,
-                  canvas: canvas
-                )
+                : overlay.kind == .text
+                  ? OverlayLayout.resizedFree(
+                    start,
+                    corner: corner,
+                    translation: translation,
+                    canvas: canvas
+                  )
+                  : OverlayLayout.resized(
+                    start,
+                    corner: corner,
+                    translation: translation,
+                    canvas: canvas
+                  )
             )
           }
           .onEnded { _ in
@@ -489,6 +879,16 @@ private struct OverlayHandle: View {
       "Web"
     case .image:
       overlay.imageDisplayName.isEmpty ? "Image" : overlay.imageDisplayName
+    case .text:
+      overlay.text.isEmpty ? "Text" : overlay.text
+    }
+  }
+
+  private func nsAlignment(_ align: TextOverlayAlign) -> NSTextAlignment {
+    switch align {
+    case .left: .left
+    case .center: .center
+    case .right: .right
     }
   }
 }
@@ -496,8 +896,7 @@ private struct OverlayHandle: View {
 private struct OverlayEditSheet: View {
   let session: OverlayEditSession
   @Binding var photoItem: PhotosPickerItem?
-  @Binding var showInRewind: Bool
-  let onSaveURL: (String, Bool) -> Void
+  let onSaveURL: (String) -> Void
   let onDelete: () -> Void
 
   @State private var url: String
@@ -506,13 +905,11 @@ private struct OverlayEditSheet: View {
   init(
     session: OverlayEditSession,
     photoItem: Binding<PhotosPickerItem?>,
-    showInRewind: Binding<Bool>,
-    onSaveURL: @escaping (String, Bool) -> Void,
+    onSaveURL: @escaping (String) -> Void,
     onDelete: @escaping () -> Void
   ) {
     self.session = session
     _photoItem = photoItem
-    _showInRewind = showInRewind
     self.onSaveURL = onSaveURL
     self.onDelete = onDelete
     _url = State(initialValue: session.overlay?.url ?? "https://")
@@ -523,10 +920,15 @@ private struct OverlayEditSheet: View {
       Form {
         if session.kind == .web {
           Section("URL") {
-            TextField("URL", text: $url)
-              .textInputAutocapitalization(.never)
-              .autocorrectionDisabled()
-              .accessibilityIdentifier("overlay-edit-url")
+            ClearableTextField(
+              text: $url,
+              clearIdentifier: "overlay-edit-url-clear"
+            ) {
+              TextField("URL", text: $url)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .accessibilityIdentifier("overlay-edit-url")
+            }
           }
         } else {
           Section("Image") {
@@ -541,12 +943,6 @@ private struct OverlayEditSheet: View {
             .accessibilityIdentifier("overlay-edit-image")
           }
         }
-        Section {
-          Toggle("Show in rewind", isOn: $showInRewind)
-            .accessibilityIdentifier("overlay-edit-rewind")
-        } footer: {
-          Text("Off: live Output only. On: also during scrub and Instant Replay.")
-        }
         if session.overlay != nil {
           Section {
             Button("Remove", role: .destructive, action: onDelete)
@@ -556,22 +952,27 @@ private struct OverlayEditSheet: View {
       }
       .navigationTitle("Edit content")
       .navigationBarTitleDisplayMode(.inline)
-      .toolbar {
-        ToolbarItem(placement: .cancellationAction) {
-          Button("Cancel") { dismiss() }
-        }
+      .safeAreaInset(edge: .bottom) {
         if session.kind == .web {
-          ToolbarItem(placement: .confirmationAction) {
-            Button("Save") {
-              onSaveURL(url.trimmingCharacters(in: .whitespacesAndNewlines), showInRewind)
+          ModalActionFooter(
+            cancelTitle: "CANCEL",
+            cancelIdentifier: "overlay-edit-cancel",
+            onCancel: { dismiss() },
+            primaryTitle: "SAVE",
+            primaryIdentifier: "overlay-edit-save",
+            action: {
+              onSaveURL(url.trimmingCharacters(in: .whitespacesAndNewlines))
             }
-            .accessibilityIdentifier("overlay-edit-save")
-          }
+          )
+        } else {
+          ModalActionFooter(
+            primaryTitle: "DONE",
+            primaryIdentifier: "overlay-edit-done",
+            action: { dismiss() }
+          )
         }
       }
     }
-    .presentationDetents([.medium])
-    .presentationDragIndicator(.hidden)
     .interactiveDismissDisabled()
   }
 }

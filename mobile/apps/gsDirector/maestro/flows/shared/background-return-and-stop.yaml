@@ -10,6 +10,7 @@ appId: co.gamestation.director
     timeout: 15000
 - tapOn:
     id: 'record-button'
+- runFlow: slide-to-stop.yaml
 - extendedWaitUntil:
     visible: 'rec=0'
     timeout: 60000
