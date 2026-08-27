@@ -59,6 +59,10 @@ appId: co.gamestation.director
 - assertVisible: 'modifier'
 - tapOn:
     id: 'remote-editor-done'
+- extendedWaitUntil:
+    notVisible:
+      id: 'remote-editor-done'
+    timeout: 10000
 - assertNotVisible:
     id: 'settings-remote-template-rename-1'
 

@@ -27,6 +27,83 @@ public struct SettingsView: View {
   public init() {}
 
   public var body: some View {
+    ZStack {
+      Color.black.ignoresSafeArea()
+
+      settingsForm
+        .stackedBehind(depth: cover == nil ? 0 : 1)
+        .accessibilityHidden(cover != nil)
+        .allowsHitTesting(cover == nil)
+
+      if let cover {
+        StackedSceneLayer(onDismiss: dismissCover) {
+          settingsCover(cover)
+        }
+        .id(cover.id)
+      }
+    }
+    .animation(StackedScene.animation, value: cover)
+    .alert(
+      "Delete template?",
+      isPresented: Binding(
+        get: { deleting != nil },
+        set: { if !$0 { deleting = nil } }
+      )
+    ) {
+      Button("Delete", role: .destructive) {
+        if let deleting {
+          environment.deleteTemplate(id: deleting.id)
+        }
+        deleting = nil
+      }
+      .accessibilityIdentifier("settings-content-template-delete-confirm")
+      Button("Cancel", role: .cancel) { deleting = nil }
+    } message: {
+      Text("Removes “\(deleting?.name ?? "")” from Output.")
+    }
+    .alert(
+      "Delete remote template?",
+      isPresented: Binding(
+        get: { deletingRemote != nil },
+        set: { if !$0 { deletingRemote = nil } }
+      )
+    ) {
+      Button("Delete", role: .destructive) {
+        if let deletingRemote {
+          environment.deleteRemoteTemplate(id: deletingRemote.id)
+        }
+        deletingRemote = nil
+      }
+      .accessibilityIdentifier("settings-remote-template-delete-confirm")
+      Button("Cancel", role: .cancel) { deletingRemote = nil }
+    } message: {
+      Text("Removes “\(deletingRemote?.name ?? "")” from Remote Control.")
+    }
+    .confirmationDialog(
+      "Clear camera memory?",
+      isPresented: $showingClearCameraMemory,
+      titleVisibility: .visible
+    ) {
+      Button("Clear camera memory", role: .destructive) {
+        environment.clearCameraMemory()
+      }
+      .accessibilityIdentifier("settings-clear-camera-memory-confirm")
+      Button("Cancel", role: .cancel) {}
+    } message: {
+      Text(
+        "Removes every saved camera name and mapping. Cameras without a NearStream serial/MAC "
+          + "or an RTSP identifier will not be remembered."
+      )
+    }
+    .onAppear {
+      draft = environment.persistedConfig
+      draft.replaySlowMotionRate = environment.persistedConfig.replaySlowMotionRate * 100
+      draft.useSimulatedCameras = environment.isUsingSimulatedCameras
+      draft.showDebugHUD = environment.config.showDebugHUD
+    }
+  }
+
+  private var settingsForm: some View {
     NavigationStack {
       Form {
         Section {
@@ -237,115 +314,64 @@ public struct SettingsView: View {
         )
       }
     }
-    .fullScreenCover(item: $cover, onDismiss: {
-      guard cover == nil else { return }
-      environment.endEditingTemplate()
-      environment.endEditingRemoteTemplate()
-    }) { item in
-      switch item {
-      case .contentEditor:
-        ContentEditorView()
-          .environment(environment)
-      case .remoteEditor:
-        RemoteControlEditorView()
-          .environment(environment)
-      case .newRemote:
-        NewTemplateSheet(
-          templates: environment.remoteTemplates.map {
-            OverlayTemplate(id: $0.id, name: $0.name)
-          },
-          copyFromID: $copyRemoteFromID,
-          name: $newRemoteName,
-          onCreate: { sourceID in
-            let created: UUID?
-            if let sourceID {
-              created = environment.duplicateRemoteTemplate(from: sourceID, name: newRemoteName)
-            } else {
-              created = environment.createRemoteTemplate(name: newRemoteName)
-            }
-            if let created {
-              environment.beginEditingRemoteTemplate(id: created)
-              cover = .remoteEditor
-            }
+    .background(Color.deckBackground)
+  }
+
+  private func dismissCover() {
+    cover = nil
+    environment.endEditingTemplate()
+    environment.endEditingRemoteTemplate()
+  }
+
+  @ViewBuilder
+  private func settingsCover(_ item: SettingsCover) -> some View {
+    switch item {
+    case .contentEditor:
+      ContentEditorView(onClose: dismissCover)
+        .environment(environment)
+    case .remoteEditor:
+      RemoteControlEditorView(onClose: dismissCover)
+        .environment(environment)
+    case .newRemote:
+      NewTemplateSheet(
+        templates: environment.remoteTemplates.map {
+          OverlayTemplate(id: $0.id, name: $0.name)
+        },
+        copyFromID: $copyRemoteFromID,
+        name: $newRemoteName,
+        onClose: dismissCover,
+        onCreate: { sourceID in
+          let created: UUID?
+          if let sourceID {
+            created = environment.duplicateRemoteTemplate(from: sourceID, name: newRemoteName)
+          } else {
+            created = environment.createRemoteTemplate(name: newRemoteName)
           }
-        )
-      case .newTemplate:
-        NewTemplateSheet(
-          templates: environment.templates,
-          copyFromID: $copyFromID,
-          name: $newTemplateName,
-          onCreate: { sourceID in
-            let created: UUID?
-            if let sourceID {
-              created = environment.duplicateTemplate(from: sourceID, name: newTemplateName)
-            } else {
-              created = environment.createTemplate(name: newTemplateName)
-            }
-            if let created {
-              environment.beginEditingTemplate(id: created)
-              cover = .contentEditor
-            }
+          if let created {
+            environment.beginEditingRemoteTemplate(id: created)
+            cover = .remoteEditor
           }
-        )
-      }
-    }
-    .alert(
-      "Delete template?",
-      isPresented: Binding(
-        get: { deleting != nil },
-        set: { if !$0 { deleting = nil } }
-      )
-    ) {
-      Button("Delete", role: .destructive) {
-        if let deleting {
-          environment.deleteTemplate(id: deleting.id)
         }
-        deleting = nil
-      }
-      .accessibilityIdentifier("settings-content-template-delete-confirm")
-      Button("Cancel", role: .cancel) { deleting = nil }
-    } message: {
-      Text("Removes “\(deleting?.name ?? "")” from Output.")
-    }
-    .alert(
-      "Delete remote template?",
-      isPresented: Binding(
-        get: { deletingRemote != nil },
-        set: { if !$0 { deletingRemote = nil } }
       )
-    ) {
-      Button("Delete", role: .destructive) {
-        if let deletingRemote {
-          environment.deleteRemoteTemplate(id: deletingRemote.id)
+    case .newTemplate:
+      NewTemplateSheet(
+        templates: environment.templates,
+        copyFromID: $copyFromID,
+        name: $newTemplateName,
+        onClose: dismissCover,
+        onCreate: { sourceID in
+          let created: UUID?
+          if let sourceID {
+            created = environment.duplicateTemplate(from: sourceID, name: newTemplateName)
+          } else {
+            created = environment.createTemplate(name: newTemplateName)
+          }
+          if let created {
+            environment.beginEditingTemplate(id: created)
+            cover = .contentEditor
+          }
         }
-        deletingRemote = nil
-      }
-      .accessibilityIdentifier("settings-remote-template-delete-confirm")
-      Button("Cancel", role: .cancel) { deletingRemote = nil }
-    } message: {
-      Text("Removes “\(deletingRemote?.name ?? "")” from Remote Control.")
-    }
-    .confirmationDialog(
-      "Clear camera memory?",
-      isPresented: $showingClearCameraMemory,
-      titleVisibility: .visible
-    ) {
-      Button("Clear camera memory", role: .destructive) {
-        environment.clearCameraMemory()
-      }
-      .accessibilityIdentifier("settings-clear-camera-memory-confirm")
-      Button("Cancel", role: .cancel) {}
-    } message: {
-      Text(
-        "Removes every saved camera name and mapping. Cameras without a NearStream serial/MAC "
-          + "or an RTSP identifier will not be remembered."
       )
-    }
-    .onAppear {
-      draft = environment.persistedConfig
-      draft.replaySlowMotionRate = environment.persistedConfig.replaySlowMotionRate * 100
-      draft.useSimulatedCameras = environment.isUsingSimulatedCameras
-      draft.showDebugHUD = environment.config.showDebugHUD
     }
   }
 
@@ -363,8 +389,8 @@ private struct NewTemplateSheet: View {
   let templates: [OverlayTemplate]
   @Binding var copyFromID: UUID?
   @Binding var name: String
+  let onClose: () -> Void
   let onCreate: (UUID?) -> Void
-  @Environment(\.dismiss) private var dismiss
   @State private var source: Source = .copy
 
   var body: some View {
@@ -406,7 +432,7 @@ private struct NewTemplateSheet: View {
         ModalActionFooter(
           cancelTitle: "CANCEL",
           cancelIdentifier: "settings-new-template-cancel",
-          onCancel: { dismiss() },
+          onCancel: onClose,
           primaryTitle: "CREATE",
           primaryIdentifier: "settings-new-template-create",
           primaryEnabled: canCreate,

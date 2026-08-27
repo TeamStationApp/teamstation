@@ -65,6 +65,10 @@ appId: co.gamestation.director
 - inputText: 'https://app.gamestation.co/scoreboard/npll'
 - tapOn:
     id: 'overlay-edit-save'
+- extendedWaitUntil:
+    notVisible:
+      id: 'overlay-edit-save'
+    timeout: 10000
 
 - tapOn:
     id: 'content-list'
@@ -83,8 +87,16 @@ appId: co.gamestation.director
     id: 'content-list-live-1'
 - tapOn:
     id: 'content-list-done'
+- extendedWaitUntil:
+    notVisible:
+      id: 'content-list-done'
+    timeout: 10000
 - tapOn:
     id: 'content-editor-done'
+- extendedWaitUntil:
+    notVisible:
+      id: 'content-editor-done'
+    timeout: 10000
 
 - extendedWaitUntil:
     visible:
@@ -114,6 +126,10 @@ appId: co.gamestation.director
     timeout: 10000
 - tapOn:
     id: 'content-editor-done'
+- extendedWaitUntil:
+    notVisible:
+      id: 'content-editor-done'
+    timeout: 10000
 - assertVisible: 'Saturday JV'
 - tapOn:
     id: 'settings-content-template-select-1'
@@ -127,8 +143,10 @@ appId: co.gamestation.director
     timeout: 10000
 - tapOn:
     id: 'content-editor-done'
-- assertNotVisible:
-    id: 'content-editor-done'
+- extendedWaitUntil:
+    notVisible:
+      id: 'content-editor-done'
+    timeout: 10000
 - tapOn:
     id: 'settings-add-content-template'
 - extendedWaitUntil:
@@ -147,6 +165,10 @@ appId: co.gamestation.director
     timeout: 10000
 - tapOn:
     id: 'content-editor-done'
+- extendedWaitUntil:
+    notVisible:
+      id: 'content-editor-done'
+    timeout: 10000
 - assertVisible: 'Empty Game'
 - tapOn:
     id: 'settings-content-template-delete-2'

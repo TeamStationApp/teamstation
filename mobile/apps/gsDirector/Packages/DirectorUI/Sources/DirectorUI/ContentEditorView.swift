@@ -6,8 +6,8 @@ import UIKit
 
 /// Live Output plus every overlay, so graphics can be placed on the picture they will burn into.
 struct ContentEditorView: View {
+  var onClose: () -> Void
   @Environment(AppEnvironment.self) private var environment
-  @Environment(\.dismiss) private var dismiss
 
   @State private var showingList = false
   @State private var choosingKind = false
@@ -117,7 +117,7 @@ struct ContentEditorView: View {
             primaryIdentifier: "content-editor-done",
             action: {
               endTextEdit()
-              dismiss()
+              onClose()
             }
           )
         }
