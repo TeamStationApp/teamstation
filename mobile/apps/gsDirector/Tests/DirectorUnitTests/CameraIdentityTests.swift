@@ -538,6 +538,26 @@ struct CameraIdentityTests {
     #expect(advertisement.endpoint == CameraEndpoint(host: "10.10.7.50", port: 8554, path: "/live/mainstream"))
   }
 
+  @Test("Cameraman TXT ip= and port are used when SRV resolve never yields a LAN address")
+  func cameramanTXTIPAndPort() {
+    let fields = [
+      "uuid": "c94df9ca-d7c2-468f-8529-97d01fba14e7",
+      "name": "Hand held",
+      "path": "/live/mainstream",
+      "ip": "10.10.7.219",
+      "port": "554"
+    ]
+    #expect(CameraAdvertisement.resolvedHost(txtFields: fields) == "10.10.7.219")
+    let advertisement = CameraAdvertisement.parseTXT(
+      fields,
+      instanceName: "Hand held",
+      host: "10.10.7.219"
+    )
+    #expect(advertisement.port == 554)
+    #expect(advertisement.uuid == "c94df9ca-d7c2-468f-8529-97d01fba14e7")
+    #expect(advertisement.endpoint == CameraEndpoint(host: "10.10.7.219", port: 554, path: "/live/mainstream"))
+  }
+
   @Test("Cameraman TXT name wins over a stale Bonjour instance string")
   func cameramanTXTNameBeatsInstanceName() {
     let advertisement = CameraAdvertisement.parseTXT(

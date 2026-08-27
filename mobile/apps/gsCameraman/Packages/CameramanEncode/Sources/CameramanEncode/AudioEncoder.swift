@@ -24,13 +24,21 @@ public final class AudioEncoder: @unchecked Sendable {
   private var converter: AudioConverterRef?
   private var sourceFormat = AudioStreamBasicDescription()
   private var destinationFormat = AudioStreamBasicDescription()
-  private var pending = Data()
+  private var pcmPending = PCMPendingBuffer()
   private var pendingTime: Double = 0
   private var bytesPerSourceFrame = 0
+
+  /// Eight AAC frames is 170 ms of PCM. Anything more is the converter falling behind.
+  private static let maxBufferedFrames = 8
 
   /// The `AudioSpecificConfig` for the SDP's `config=`. Known before the first packet, because it
   /// depends only on the negotiated format.
   public private(set) var audioSpecificConfig: Data?
+
+  /// Bytes of PCM still waiting for a 1024-sample AAC frame. Soak telemetry reads this.
+  public var pendingBytes: Int {
+    queue.sync { pcmPending.readableCount }
+  }
 
   public var onFrame: (@Sendable (EncodedAudioFrame) -> Void)?
   public var onFailure: (@Sendable (Failure) -> Void)?
@@ -88,25 +96,29 @@ public final class AudioEncoder: @unchecked Sendable {
   }
 
   public func encode(_ sample: SampleBufferRef) {
+    // Copy PCM here so the audio queue does not retain `CMSampleBuffer`s if drain falls behind.
+    guard let block = CMSampleBufferGetDataBuffer(sample.buffer) else { return }
+    var length = 0
+    var pointer: UnsafeMutablePointer<Int8>?
+    guard CMBlockBufferGetDataPointer(
+      block,
+      atOffset: 0,
+      lengthAtOffsetOut: nil,
+      totalLengthOut: &length,
+      dataPointerOut: &pointer
+    ) == noErr, let pointer, length > 0 else { return }
+
+    let pcm = Data(bytes: pointer, count: length)
+    let pts = CMSampleBufferGetPresentationTimeStamp(sample.buffer).seconds
     queue.async { [self] in
       guard converter != nil else { return }
-      guard let block = CMSampleBufferGetDataBuffer(sample.buffer) else { return }
-
-      var length = 0
-      var pointer: UnsafeMutablePointer<Int8>?
-      guard CMBlockBufferGetDataPointer(
-        block,
-        atOffset: 0,
-        lengthAtOffsetOut: nil,
-        totalLengthOut: &length,
-        dataPointerOut: &pointer
-      ) == noErr, let pointer else { return }
-
-      if pending.isEmpty {
-        pendingTime = CMSampleBufferGetPresentationTimeStamp(sample.buffer).seconds
+      if pcmPending.readableCount == 0 {
+        pendingTime = pts
       }
-      pending.append(Data(bytes: pointer, count: length))
+      pcmPending.append(pcm)
+      dropIfBackedUp()
       drain()
+      pcmPending.compactIfNeeded()
     }
   }
 
@@ -121,10 +133,7 @@ public final class AudioEncoder: @unchecked Sendable {
     guard let converter, bytesPerSourceFrame > 0 else { return }
     let bytesPerFrame = Self.samplesPerFrame * bytesPerSourceFrame
 
-    while pending.count >= bytesPerFrame {
-      let chunk = pending.prefix(bytesPerFrame)
-      pending.removeFirst(bytesPerFrame)
-
+    while let chunk = pcmPending.take(bytesPerFrame) {
       var output = Data(count: 2048)
       var packetCount: UInt32 = 1
       var packetDescription = AudioStreamPacketDescription()
@@ -179,8 +188,24 @@ public final class AudioEncoder: @unchecked Sendable {
   private func teardownLocked() {
     if let converter { AudioConverterDispose(converter) }
     converter = nil
-    pending.removeAll(keepingCapacity: true)
+    pcmPending.reset()
+    pendingTime = 0
     audioSpecificConfig = nil
+  }
+
+  /// Eight AAC frames is 170 ms of PCM. Anything more is the converter falling behind, which is
+  /// how this buffer used to grow at the microphone's byte rate until jetsam.
+  private func dropIfBackedUp() {
+    guard bytesPerSourceFrame > 0 else { return }
+    let bytesPerFrame = Self.samplesPerFrame * bytesPerSourceFrame
+    let maxBytes = bytesPerFrame * Self.maxBufferedFrames
+    let extra = pcmPending.readableCount - maxBytes
+    guard extra > 0 else { return }
+    let drop = extra - (extra % bytesPerFrame)
+    guard drop > 0 else { return }
+    pcmPending.skip(drop)
+    pendingTime += Double(drop / bytesPerSourceFrame) / destinationFormat.mSampleRate
+    pcmPending.compactIfNeeded()
   }
 }
 

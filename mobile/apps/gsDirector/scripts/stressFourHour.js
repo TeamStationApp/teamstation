@@ -7,6 +7,11 @@
 // access. This script enables first/third/mound/handheld, starts directing, turns RECORD
 // and STREAM on (ingest URL from Settings), then every 30s cuts or instant-replays over
 // the control channel. A PeerTube frame is grabbed about every 3 minutes.
+// Every 4 minutes the floor and peak physFootprintMB in that window are kept for both
+// Director and Cameraman. If two consecutive floors are 30% above the matching window
+// from an hour earlier, the run aborts as a sustained leak. Replay spikes lift the peak
+// only, so they do not trip the abort. Cameraman dump-state is fetched in parallel with
+// every Director dump-state (twice per tick).
 //
 //   node scripts/stressFourHour.js --device <director-udid> --cameraman-device <iphone-udid>
 //   node scripts/stressFourHour.js --device <udid> --cameraman-device <udid> --seconds 120
@@ -16,6 +21,7 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const deviceTarget = require('./deviceTarget')
+const { MemoryPeakGuard } = require('./memoryPeakGuard')
 
 function exported(name) {
   if (typeof deviceTarget[name] === 'function' || deviceTarget[name] !== undefined) {
@@ -222,18 +228,48 @@ function cameraMap(state) {
       live: String(pick(tile, 'state', 'status') ?? '').toLowerCase() === 'live',
       archiving: pick(tile, 'isArchiving', 'isArchiving') === true,
       fps: pick(tile, 'framesPerSecond', 'framesPerSecond'),
-      dropped: pick(tile, 'droppedFrames', 'droppedFrames')
+      out: pick(tile, 'displayedFramesPerSecond', 'displayedFramesPerSecond'),
+      displayedFrames: pick(tile, 'displayedFrames', 'displayedFrames'),
+      dropped: pick(tile, 'droppedFrames', 'droppedFrames'),
+      enqueueFails: tile.enqueueFails ?? null,
+      state: pick(tile, 'state', 'status')
     }
   }
   return map
 }
 
+function tileStateName(tile) {
+  return String(tile?.state ?? '').toLowerCase()
+}
+
 function namedLiveCount(map, names = CAMERA_NAMES) {
-  return names.filter(name => map[name]?.live).length
+  return names.filter(name => tileStateName(map[name]) === 'live').length
+}
+
+function namedReplayingCount(map, names = CAMERA_NAMES) {
+  return names.filter(name => tileStateName(map[name]) === 'replaying').length
+}
+
+/// Live plus instant-replay. Overlapping replays can make `live` 0 while every
+/// named camera is still accounted for as `replaying`.
+function namedAccountedCount(map, names = CAMERA_NAMES) {
+  return names.filter(name => {
+    const state = tileStateName(map[name])
+    return state === 'live' || state === 'replaying'
+  }).length
 }
 
 async function directorGet(host, target) {
-  return JSON.parse(await get(host, target))
+  let lastError
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      return JSON.parse(await get(host, target, 20000))
+    } catch (error) {
+      lastError = error
+      if (attempt < 3) await sleep(1000)
+    }
+  }
+  throw lastError
 }
 
 async function directorSend(host, target) {
@@ -287,7 +323,7 @@ async function cameramanGet(host, target) {
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
       const response = await fetch(url, {
-        signal: AbortSignal.timeout(15000)
+        signal: AbortSignal.timeout(20000)
       })
       const text = await response.text()
       if (!response.ok) throw new Error(`cameraman ${target} -> ${response.status} ${text}`)
@@ -298,6 +334,71 @@ async function cameramanGet(host, target) {
     }
   }
   throw lastError
+}
+
+async function dumpDirectorAndCameraman(directorHost, cameramanHost) {
+  const [directorResult, cameramanResult] = await Promise.allSettled([
+    directorGet(directorHost, '/dump-state'),
+    cameramanGet(cameramanHost, '/dump-state')
+  ])
+  if (directorResult.status !== 'fulfilled') {
+    const message = directorResult.reason?.message ?? String(directorResult.reason)
+    throw new Error(`director dump-state failed: ${message}`)
+  }
+  if (cameramanResult.status !== 'fulfilled') {
+    const message = cameramanResult.reason?.message ?? String(cameramanResult.reason)
+    throw new Error(`cameraman dump-state failed: ${message}`)
+  }
+  return { director: directorResult.value, cameraman: cameramanResult.value }
+}
+
+function readCameramanHealth(dump) {
+  const server = dump.server && typeof dump.server === 'object' ? dump.server : {}
+  return {
+    running: dump.isRunning === true,
+    clients: server.clientCount ?? dump.clientCount ?? 0,
+    captured: dump.capturedFrames ?? null,
+    encoded: dump.encodedFrames ?? null,
+    encodeFailure: dump.encodeFailure ?? null,
+    dropped: dump.droppedFrames ?? server.droppedFrames ?? null,
+    physFootprintMB: dump.physFootprintMB ?? null,
+    availableMemoryMB: dump.availableMemoryMB ?? null,
+    cpuPercent: dump.cpuPercent ?? null,
+    thermal: dump.thermalState ?? null,
+    cpuCores: dump.cpuCores ?? null,
+    isListening: server.isListening === true,
+    lastError: server.lastError ?? null,
+    lastDisconnectReason: server.lastDisconnectReason ?? null,
+    acceptedClients: server.acceptedClients ?? null,
+    closedClients: server.closedClients ?? null,
+    sendQueuePendingBytes: server.sendQueuePendingBytes ?? null,
+    sendQueueFlushes: server.sendQueueFlushes ?? null,
+    listenerState: server.listenerState ?? null,
+    cameraFailure: dump.cameraFailure ?? null,
+    interrupted: dump.interrupted === true,
+    interruptionReason: dump.interruptionReason ?? null,
+    audioPendingBytes: dump.audioPendingBytes ?? null
+  }
+}
+
+function applyCameramanHealth(health, dump) {
+  const cam = readCameramanHealth(dump)
+  health.cameraman = cam
+  health.cameramanRunning = cam.running
+  health.cameramanClients = cam.clients
+  health.cameramanCaptured = cam.captured
+  health.cameramanEncoded = cam.encoded
+  health.cameramanEncodeFailure = cam.encodeFailure
+  health.cameramanDropped = cam.dropped
+  health.cameramanPhysFootprintMB = cam.physFootprintMB
+  health.cameramanAvailableMemoryMB = cam.availableMemoryMB
+  health.cameramanCpuPercent = cam.cpuPercent
+  health.cameramanThermal = cam.thermal
+  health.cameramanListening = cam.isListening
+  health.cameramanLastDisconnect = cam.lastDisconnectReason
+  health.cameramanInterrupted = cam.interrupted
+  health.cameramanAudioPendingBytes = cam.audioPendingBytes
+  return cam
 }
 
 function processPid(udid, needle) {
@@ -585,9 +686,6 @@ async function main() {
   append(actionLog, `NOTE free-disk=${freeDisk ?? 'unknown'}`)
 
   const wanted = options.cameras.length
-  // One camera: require it live. Four cameras: two overlapping replays can drop
-  // live to 2, which is still a healthy session.
-  const minLive = wanted === 1 ? 1 : 2
   if (namedLiveCount(map, options.cameras) < wanted) {
     await directorSend(host, '/start')
   }
@@ -623,9 +721,21 @@ async function main() {
   let ticksOk = 0
   let ticksSkip = 0
   let cameramanZeroStreak = 0
+  let cameramanListenStreak = 0
+  let cameramanStoppedStreak = 0
+  let cameramanInterruptedStreak = 0
   let keyframeAgeStreak = 0
+  let programFrameAgeStreak = 0
+  let displayStallStreak = 0
+  let cameramanEncodeStreak = 0
+  let lastCameramanEncoded = null
+  let lastCameramanCaptured = null
+  let encoderResetIncreaseTicks = 0
+  let lastEncoderResetCount = 0
   let abortReason = null
   let lastProgram = (state.programSource ?? 0) + 1
+  const memoryGuard = new MemoryPeakGuard()
+  const cameramanMemoryGuard = new MemoryPeakGuard()
 
   try {
     while (Date.now() - t0 < options.seconds * 1000) {
@@ -634,22 +744,35 @@ async function main() {
         break
       }
       const tickStarted = Date.now()
+      let dumps
       try {
-        state = await directorGet(host, '/dump-state')
+        dumps = await dumpDirectorAndCameraman(host, cameramanHost)
       } catch (error) {
-        abortReason = `director dump-state failed: ${error.message}`
+        abortReason = error.message
+        append(healthLog, `ABORT ${abortReason}`)
         break
       }
+      state = dumps.director
       map = cameraMap(state)
       lastProgram = (state.programSource ?? 0) + 1
       await enforceCameras(host, state, options.cameras, actionLog)
-      state = await directorGet(host, '/dump-state')
+      try {
+        dumps = await dumpDirectorAndCameraman(host, cameramanHost)
+      } catch (error) {
+        abortReason = error.message
+        append(healthLog, `ABORT ${abortReason}`)
+        break
+      }
+      state = dumps.director
+      const cameraman = dumps.cameraman
       map = cameraMap(state)
 
       const health = {
         recording: pick(state.dvr, 'isRecording', 'recording') === true,
         streaming: pick(state, 'isStreaming', 'streaming') === true,
         live: namedLiveCount(map, options.cameras),
+        replaying: namedReplayingCount(map, options.cameras),
+        accounted: namedAccountedCount(map, options.cameras),
         thermal: pick(state, 'thermalState', 'thermal'),
         memoryMB: pick(state, 'availableMemoryMB', 'memoryMB'),
         physFootprintMB: pick(state, 'physFootprintMB'),
@@ -664,22 +787,26 @@ async function main() {
         encodeFailures: pick(state.sessions, 'encodeFailures', 'failures'),
         streamKeyframeAge: pick(state, 'streamKeyframeAgeSeconds', 'kfage'),
         streamKeyframeCount: pick(state, 'streamKeyframeCount', 'kfn'),
+        streamPendingEncodes: pick(state, 'streamPendingEncodes', 'pend'),
+        streamEncodeCallbackAge: pick(state, 'streamEncodeCallbackAgeSeconds', 'cbage'),
+        programFrameAge: pick(state, 'programFrameAgeSeconds', 'pfage'),
+        streamIdleKeyframeCount: pick(state, 'streamIdleKeyframeCount', 'idlekf'),
+        streamEncoderResetCount: pick(state, 'streamEncoderResetCount', 'encreset'),
         program: lastProgram,
+        composedFrames: pick(state, 'composedFrames'),
         fps: Object.fromEntries(CAMERA_NAMES.map(name => [name, map[name]?.fps ?? null])),
-        dropped: Object.fromEntries(CAMERA_NAMES.map(name => [name, map[name]?.dropped ?? null]))
+        out: Object.fromEntries(CAMERA_NAMES.map(name => [name, map[name]?.out ?? null])),
+        displayedFrames: Object.fromEntries(
+          CAMERA_NAMES.map(name => [name, map[name]?.displayedFrames ?? null])
+        ),
+        dropped: Object.fromEntries(CAMERA_NAMES.map(name => [name, map[name]?.dropped ?? null])),
+        enqueueFails: Object.fromEntries(
+          CAMERA_NAMES.map(name => [name, map[name]?.enqueueFails ?? null])
+        ),
+        tileState: Object.fromEntries(CAMERA_NAMES.map(name => [name, map[name]?.state ?? null]))
       }
 
-      let cameraman
-      try {
-        cameraman = await cameramanGet(cameramanHost, '/dump-state')
-      } catch (error) {
-        abortReason = `cameraman dump-state failed: ${error.message}`
-        append(healthLog, `ABORT ${abortReason}`)
-        break
-      }
-      const clients = cameraman.server?.clientCount ?? cameraman.clientCount ?? 0
-      health.cameramanRunning = cameraman.isRunning === true
-      health.cameramanClients = clients
+      const cam = applyCameramanHealth(health, cameraman)
       append(healthLog, JSON.stringify(health))
 
       if (directorPid) {
@@ -704,19 +831,109 @@ async function main() {
         abortReason = 'streaming dropped to off'
         break
       }
-      if (health.live < minLive) {
-        abortReason = `only ${health.live} named cameras live`
+      if (health.accounted < wanted) {
+        abortReason =
+          `only ${health.accounted} named cameras live or replaying` +
+          ` (live=${health.live} replaying=${health.replaying})`
         break
       }
-      if (options.cameras.includes('handheld') && clients < 1) {
+      if (cam.cameraFailure) {
+        abortReason = `cameraman capture failure ${cam.cameraFailure}`
+        break
+      }
+      if (cam.interrupted) {
+        cameramanInterruptedStreak += 1
+        if (cameramanInterruptedStreak >= 2) {
+          abortReason = `cameraman capture interrupted (${cam.interruptionReason ?? 'unknown'})`
+          break
+        }
+      } else {
+        cameramanInterruptedStreak = 0
+      }
+      if (!cam.isListening) {
+        cameramanListenStreak += 1
+        if (cameramanListenStreak >= 2) {
+          abortReason =
+            `cameraman listener down (${cam.listenerState ?? 'unknown'}: ${cam.lastError ?? 'no lastError'})`
+          break
+        }
+      } else {
+        cameramanListenStreak = 0
+      }
+      if (!cam.running) {
+        cameramanStoppedStreak += 1
+        if (cameramanStoppedStreak >= 2) {
+          abortReason = 'cameraman isRunning stayed false'
+          break
+        }
+      } else {
+        cameramanStoppedStreak = 0
+      }
+      if (options.cameras.includes('handheld') && cam.clients < 1) {
         cameramanZeroStreak += 1
         if (cameramanZeroStreak >= 2) {
-          abortReason = 'cameraman clients stayed 0 (lost handheld)'
+          const encodedAdvancing =
+            lastCameramanEncoded != null &&
+            Number.isFinite(Number(cam.encoded)) &&
+            Number(cam.encoded) > lastCameramanEncoded
+          abortReason =
+            `cameraman clients stayed 0 (lost handheld)` +
+            ` listening=${cam.isListening}` +
+            ` running=${cam.running}` +
+            ` encodedAdvancing=${encodedAdvancing}` +
+            ` lastDisconnect=${cam.lastDisconnectReason ?? 'none'}` +
+            ` mem=${cam.physFootprintMB ?? '?'}MB`
           break
         }
       } else {
         cameramanZeroStreak = 0
       }
+      const frozenDisplay = options.cameras.filter(name => {
+        const tile = map[name]
+        return tile?.live && Number(tile.fps) > 20 && Number(tile.out) === 0
+      })
+      if (frozenDisplay.length > 0) {
+        displayStallStreak += 1
+        if (displayStallStreak >= 2) {
+          abortReason = `display stalled (${frozenDisplay.join(',')}) fps>20 out=0`
+          break
+        }
+      } else {
+        displayStallStreak = 0
+      }
+      if (cameraman.encodeFailure) {
+        abortReason = `cameraman encodeFailure ${cameraman.encodeFailure}`
+        break
+      }
+      const encoded = Number(cameraman.encodedFrames)
+      const captured = Number(cameraman.capturedFrames)
+      const handheldFps = Number(map.handheld?.fps)
+      if (
+        options.cameras.includes('handheld') &&
+        Number.isFinite(handheldFps) &&
+        handheldFps > 20 &&
+        Number.isFinite(encoded)
+      ) {
+        const encodeFrozen =
+          lastCameramanEncoded != null && encoded === lastCameramanEncoded
+        const captureFrozen =
+          lastCameramanCaptured != null && captured === lastCameramanCaptured
+        if (encodeFrozen || captureFrozen) {
+          cameramanEncodeStreak += 1
+          if (cameramanEncodeStreak >= 2) {
+            abortReason = encodeFrozen
+              ? `cameraman encodedFrames frozen at ${encoded}`
+              : `cameraman capturedFrames frozen at ${captured}`
+            break
+          }
+        } else {
+          cameramanEncodeStreak = 0
+        }
+      } else {
+        cameramanEncodeStreak = 0
+      }
+      lastCameramanEncoded = Number.isFinite(encoded) ? encoded : lastCameramanEncoded
+      lastCameramanCaptured = Number.isFinite(captured) ? captured : lastCameramanCaptured
       const kfAge = Number(health.streamKeyframeAge)
       if (options.stream && Number.isFinite(kfAge) && kfAge > 8) {
         keyframeAgeStreak += 1
@@ -727,9 +944,42 @@ async function main() {
       } else {
         keyframeAgeStreak = 0
       }
+      const programAge = Number(health.programFrameAge)
+      if (options.stream && Number.isFinite(programAge) && programAge > 30) {
+        programFrameAgeStreak += 1
+        if (programFrameAgeStreak >= 2) {
+          abortReason = `program frames stopped reaching RTMP (${programAge}s)`
+          break
+        }
+      } else {
+        programFrameAgeStreak = 0
+      }
+      const resetCount = Number(health.streamEncoderResetCount)
+      if (options.stream && Number.isFinite(resetCount)) {
+        if (resetCount > lastEncoderResetCount) {
+          encoderResetIncreaseTicks += 1
+          lastEncoderResetCount = resetCount
+          if (encoderResetIncreaseTicks > 3) {
+            abortReason = `RTMP encoder reset loop (${resetCount})`
+            break
+          }
+        } else {
+          encoderResetIncreaseTicks = 0
+        }
+      }
       const newCrashes = crashSnapshot().filter(file => !crashesAtStart.has(file))
       if (newCrashes.length) {
         abortReason = `crash report ${newCrashes[0]}`
+        break
+      }
+      const leak = memoryGuard.sample(Date.now(), health.physFootprintMB)
+      if (leak) {
+        abortReason = leak
+        break
+      }
+      const cameramanLeak = cameramanMemoryGuard.sample(Date.now(), cam.physFootprintMB)
+      if (cameramanLeak) {
+        abortReason = `cameraman ${cameramanLeak}`
         break
       }
 

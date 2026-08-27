@@ -94,13 +94,14 @@ public struct CameraAdvertisement: Hashable, Sendable {
   ) -> CameraAdvertisement {
     let lookup = Self.lookup(fields)
     let busy = lookup["busy"]?.lowercased() == "yes"
+    let portFromTXT = lookup["port"].flatMap(Int.init).flatMap { $0 > 0 ? $0 : nil }
     return CameraAdvertisement(
       host: host,
       advertisedName: trimmed(lookup["name"]) ?? instanceName,
       modelName: lookup["modelname"],
       wlanMAC: lookup["wlanmac"],
       isBusy: busy,
-      port: port,
+      port: portFromTXT ?? port,
       path: lookup["path"] ?? "/live/mainstream",
       uuid: lookup["uuid"]
     )

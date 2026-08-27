@@ -31,6 +31,8 @@ public final class CameraSession: @unchecked Sendable {
     public var availableFormats: [CaptureFormatDescriptor] = []
     public var isRunning = false
     public var failure: String?
+    public var isInterrupted = false
+    public var interruptionReason: String?
     /// 0° or 180° last applied to the capture connection. The preview layer uses the same value so
     /// the operator frames what the encoder sends, including after a front-camera flip.
     public var captureRotationAngle: Double = 180
@@ -57,6 +59,7 @@ public final class CameraSession: @unchecked Sendable {
   /// Last 0°/180° applied to the capture connection. Portrait angles from the coordinator at launch
   /// would swap 1920×1080 into portrait; those are ignored and this is used instead.
   private var lastLandscapeCaptureAngle: CGFloat = 180
+  private var sessionObservers: [any NSObjectProtocol] = []
 
   /// Delivered on the main queue, because every consumer is UI.
   public var onStateChange: (@MainActor @Sendable (State) -> Void)?
@@ -72,7 +75,13 @@ public final class CameraSession: @unchecked Sendable {
     set { outputDelegate.onAudio = newValue }
   }
 
-  public init() {}
+  public init() {
+    observeSessionLifecycle()
+  }
+
+  deinit {
+    sessionObservers.forEach { NotificationCenter.default.removeObserver($0) }
+  }
 
   /// Handed to the preview layer. Safe to read from the main thread: `AVCaptureVideoPreviewLayer`
   /// is designed to be attached on the main thread to a session running on another queue.
@@ -303,6 +312,100 @@ public final class CameraSession: @unchecked Sendable {
     let snapshot = state
     guard let onStateChange else { return }
     Task { @MainActor in onStateChange(snapshot) }
+  }
+
+  // MARK: - Session lifecycle
+
+  /// Capture can die without `stop()` being called: backgrounding, another app taking the camera,
+  /// or a runtime error. The soak has to see those as first-class faults, not as a silent `isRunning`.
+  private func observeSessionLifecycle() {
+    let center = NotificationCenter.default
+    sessionObservers.append(center.addObserver(
+      forName: AVCaptureSession.wasInterruptedNotification,
+      object: session,
+      queue: nil
+    ) { [weak self] notification in
+      let reason = CameraSession.interruptionReason(from: notification)
+      self?.queue.async {
+        guard let self else { return }
+        self.state.isInterrupted = true
+        self.state.interruptionReason = reason
+        self.state.isRunning = self.session.isRunning
+        self.publish()
+      }
+    })
+    sessionObservers.append(center.addObserver(
+      forName: AVCaptureSession.interruptionEndedNotification,
+      object: session,
+      queue: nil
+    ) { [weak self] _ in
+      self?.queue.async {
+        guard let self else { return }
+        self.state.isInterrupted = false
+        self.state.interruptionReason = nil
+        self.state.isRunning = self.session.isRunning
+        self.publish()
+      }
+    })
+    sessionObservers.append(center.addObserver(
+      forName: AVCaptureSession.runtimeErrorNotification,
+      object: session,
+      queue: nil
+    ) { [weak self] notification in
+      let error = notification.userInfo?[AVCaptureSessionErrorKey] as? NSError
+      let failure = error.map {
+        "runtimeError \($0.domain) \($0.code): \($0.localizedDescription)"
+      } ?? "runtimeError"
+      self?.queue.async {
+        guard let self else { return }
+        self.state.failure = failure
+        self.state.isRunning = self.session.isRunning
+        self.publish()
+      }
+    })
+    sessionObservers.append(center.addObserver(
+      forName: AVCaptureSession.didStartRunningNotification,
+      object: session,
+      queue: nil
+    ) { [weak self] _ in
+      self?.queue.async { self?.syncRunningFlag() }
+    })
+    sessionObservers.append(center.addObserver(
+      forName: AVCaptureSession.didStopRunningNotification,
+      object: session,
+      queue: nil
+    ) { [weak self] _ in
+      self?.queue.async { self?.syncRunningFlag() }
+    })
+  }
+
+  private func syncRunningFlag() {
+    let running = session.isRunning
+    guard state.isRunning != running else { return }
+    state.isRunning = running
+    publish()
+  }
+
+  /// Named for dump-state rather than the AVFoundation enum, so a soak log stays readable.
+  public static func interruptionReasonName(_ reason: AVCaptureSession.InterruptionReason) -> String {
+    switch reason {
+    case .videoDeviceNotAvailableInBackground: "background"
+    case .audioDeviceInUseByAnotherClient: "audioInUse"
+    case .videoDeviceInUseByAnotherClient: "videoInUse"
+    case .videoDeviceNotAvailableWithMultipleForegroundApps: "splitView"
+    case .videoDeviceNotAvailableDueToSystemPressure: "systemPressure"
+    @unknown default: "unknown"
+    }
+  }
+
+  public static func interruptionReason(from notification: Notification) -> String {
+    guard
+      let boxed = notification.userInfo?[AVCaptureSessionInterruptionReasonKey] as? NSNumber,
+      let reason = AVCaptureSession.InterruptionReason(rawValue: boxed.intValue)
+    else {
+      return "interrupted"
+    }
+    return interruptionReasonName(reason)
   }
 
   // MARK: - Device selection

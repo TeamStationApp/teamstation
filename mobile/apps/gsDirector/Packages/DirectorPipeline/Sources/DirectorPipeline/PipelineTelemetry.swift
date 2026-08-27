@@ -9,6 +9,18 @@ public enum TileState: String, Sendable, Codable {
   case replaying
 }
 
+/// Per-tile reasons `TileRenderer.enqueue` returned false. Dumped in `/dump-state`.
+public struct TileEnqueueFails: Sendable, Codable, Equatable {
+  public var paused: UInt64 = 0
+  public var noLayer: UInt64 = 0
+  public var formatDesc: UInt64 = 0
+  public var sampleBuffer: UInt64 = 0
+  public var rendererFailed: UInt64 = 0
+  public var lastSampleBufferStatus: Int32 = 0
+
+  public init() {}
+}
+
 /// A discovered source as the selection list sees it, so a control-channel index can be tied back
 /// to a physical camera.
 public struct SourceSummary: Sendable, Codable, Equatable {
@@ -72,6 +84,9 @@ public struct TileTelemetry: Sendable, Codable, Equatable {
   /// even while the tile is paused on a still, so it cannot tell a frozen preview from a live one.
   public var displayedFrames: UInt64 = 0
   public var displayedFramesPerSecond: Double = 0
+  /// Why `enqueue` returned false. Counters, not per-frame logs — a frozen tile with `out=0`
+  /// is diagnosed from which of these climbed while `framesPerSecond` stayed healthy.
+  public var enqueueFails = TileEnqueueFails()
   /// What the source says it is sending, as opposed to what actually arrives. The gap between
   /// `sourceFrameRate` and the measured rate is the first thing to look at when a camera looks
   /// slow, because it separates a network problem from a pipeline one.
@@ -283,6 +298,16 @@ public struct TelemetrySnapshot: Sendable, Codable, Equatable {
   public var streamKeyframeCount: UInt64 = 0
   /// Seconds since the last RTMP IDR. HLS stalls when this climbs past `gopSeconds`.
   public var streamKeyframeAgeSeconds: Double = 0
+  /// Frames currently in flight in VideoToolbox.
+  public var streamPendingEncodes = 0
+  /// Seconds since the last VideoToolbox output callback. Zero until one has arrived.
+  public var streamEncodeCallbackAgeSeconds: Double = 0
+  /// Seconds since the last real program frame reached the RTMP encoder. Idle IDRs do not count.
+  public var programFrameAgeSeconds: Double = 0
+  /// IDRs the GOP watchdog forced by repeating the last program picture.
+  public var streamIdleKeyframeCount: UInt64 = 0
+  /// Times the RTMP compression session was invalidated because callbacks went silent.
+  public var streamEncoderResetCount: UInt64 = 0
   /// Recording or streaming, so backgrounding must not suspend the pipeline.
   public var keepAliveInBackground = false
   /// System Picture-in-Picture of the programme output is showing over other apps.
@@ -480,6 +505,36 @@ public final class PipelineTelemetry: @unchecked Sendable {
   public func recordStreamKeyframeAge(_ seconds: Double) {
     lock.lock()
     state.streamKeyframeAgeSeconds = (seconds * 10).rounded() / 10
+    lock.unlock()
+  }
+
+  public func recordStreamPendingEncodes(_ count: Int) {
+    lock.lock()
+    state.streamPendingEncodes = max(0, count)
+    lock.unlock()
+  }
+
+  public func recordStreamEncodeCallbackAge(_ seconds: Double) {
+    lock.lock()
+    state.streamEncodeCallbackAgeSeconds = (seconds * 10).rounded() / 10
+    lock.unlock()
+  }
+
+  public func recordProgramFrameAge(_ seconds: Double) {
+    lock.lock()
+    state.programFrameAgeSeconds = (seconds * 10).rounded() / 10
+    lock.unlock()
+  }
+
+  public func recordStreamIdleKeyframe() {
+    lock.lock()
+    state.streamIdleKeyframeCount += 1
+    lock.unlock()
+  }
+
+  public func recordStreamEncoderReset() {
+    lock.lock()
+    state.streamEncoderResetCount += 1
     lock.unlock()
   }
 

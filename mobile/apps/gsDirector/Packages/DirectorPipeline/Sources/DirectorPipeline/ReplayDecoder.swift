@@ -92,6 +92,8 @@ public final class ReplayDecoder: @unchecked Sendable {
   private var fileReader: ReplayFileReader?
   private var filePumpTick: UInt64 = 0
   private var waitingForMoreFiles = false
+  private var lastDeliveredAt: CFAbsoluteTime = 0
+  private let stallPolicy = ReplayStallPolicy()
 
   public init(
     configuration: Configuration,
@@ -300,6 +302,7 @@ public final class ReplayDecoder: @unchecked Sendable {
     let files = fileReader
     fileReader = nil
     waitingForMoreFiles = false
+    lastDeliveredAt = 0
     lock.unlock()
 
     timer?.cancel()
@@ -430,7 +433,10 @@ public final class ReplayDecoder: @unchecked Sendable {
     guard let player, let output else { return }
 
     let time = player.currentTime()
-    guard let pixelBuffer = copyPixelBuffer(from: output, at: time) else { return }
+    guard let pixelBuffer = copyPixelBuffer(from: output, at: time) else {
+      finishIfStalled()
+      return
+    }
     let played = max(0, time.seconds - configuration.startOffset)
     deliver(pixelBuffer: pixelBuffer, time: time, played: played)
     if ScrubMapping.hasPlayedRequestedDuration(played: played, requested: configuration.playDuration) {
@@ -456,6 +462,8 @@ public final class ReplayDecoder: @unchecked Sendable {
     if tick % UInt64(ticksPerFrame) != 0 { return }
     guard let frame = reader.pop() else {
       if reader.isExhausted {
+        finishSuccessfully()
+      } else if stalled() {
         finishSuccessfully()
       } else {
         requestMoreFiles(played: shown)
@@ -497,8 +505,20 @@ public final class ReplayDecoder: @unchecked Sendable {
     lock.lock()
     elapsed = played
     deliveredFrames += 1
+    lastDeliveredAt = CFAbsoluteTimeGetCurrent()
     lock.unlock()
     onFrame(pixelBuffer, time, played)
+  }
+
+  private func stalled() -> Bool {
+    lock.lock()
+    let last = lastDeliveredAt
+    lock.unlock()
+    return stallPolicy.shouldFinish(now: CFAbsoluteTimeGetCurrent(), lastDeliveredAt: last)
+  }
+
+  private func finishIfStalled() {
+    if stalled() { finishSuccessfully() }
   }
 
   private func copyPixelBuffer(
