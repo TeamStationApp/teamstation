@@ -92,6 +92,8 @@ targets:
         product: CameramanEncode
       - package: CameramanRTSP
         product: CameramanRTSP
+      - package: CameramanUI
+        product: CameramanUI
       - package: CameramanTestHarness
         product: CameramanTestHarness
       - package: DirectorRTSP
