@@ -202,8 +202,8 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
 
     // Manual hosts and Bonjour-resolved cameras are merged in before confirmation so they go
     // through the same check as scanned ones — a mistyped address should not become a permanently
-    // broken tile. GS Cameraman is found on `_rtsp._tcp`, not the subnet scan: iOS does not answer
-    // unsolicited TCP to :554 the way a NearStream box does, and it may be on 8554.
+    // broken tile. GS Cameraman is found on `_rtsp._tcp` TXT (`ip=`, `port=`, `uuid`), not the
+    // subnet scan: iOS does not answer unsolicited TCP to :554 the way a NearStream box does.
     let rawAds = advertisementBrowser.advertisements
     var seen = Set<CameraEndpoint>()
     var candidates: [CameraEndpoint] = []
@@ -282,6 +282,7 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
       "rtsp=\(rtspAds.count)",
       rtspHosts.isEmpty ? nil : "rtsphost=\(rtspHosts)",
       "awxbrowse=\(advertisementBrowser.browseState)",
+      "browsecnt=\(advertisementBrowser.browseResultCount)",
       scan?.diagnostic
     ]
       .compactMap { $0 }
