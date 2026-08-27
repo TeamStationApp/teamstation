@@ -186,6 +186,10 @@ public final class AppEnvironment {
   private var proxies: [SourceID: ProxyStore] = [:]
   private var recordingID: Int64?
   private var pollTimer: Timer?
+  /// SwiftUI is fed a snapshot at most once a second, plus immediately on chrome changes
+  /// (live/replay, program cut, record/stream). The 5 Hz poll still writes `telemetry` so
+  /// `/dump-state` stays fresh without rebuilding the grid DisplayList 5 times a second.
+  private var lastPublishedUIAt: TimeInterval = 0
   /// Width of one small source tile, used so Output scrub (if added) shares the 60s-per-width rate.
   public var smallTileWidth: Double = 300
   /// Visual order of Source 1…5. Independent of which camera occupies a source.
@@ -3028,13 +3032,33 @@ public final class AppEnvironment {
     }
     if !isRecording { announcedCameraStatus.removeAll() }
     telemetry.recordLiveDecodeSessions(liveDecodeSessions)
-    if isStreaming {
-      let stream = programStreamer.metrics
-      streamMegabitsPerSecond = stream.megabitsPerSecond
-      streamDroppedPackets = stream.droppedPackets
+    let next = telemetry.snapshot
+    if shouldPublishSnapshotToUI(next) {
+      snapshot = next
+      lastPublishedUIAt = clock.now.seconds
+      if isStreaming {
+        let stream = programStreamer.metrics
+        streamMegabitsPerSecond = stream.megabitsPerSecond
+        streamDroppedPackets = stream.droppedPackets
+      }
     }
-    snapshot = telemetry.snapshot
     applyProgramOverlays()
+  }
+
+  /// HUD numbers can wait a second. Tile *state* (live vs replay, who is on air) cannot, or
+  /// Maestro waits and the operator watches a stale nameplate.
+  private func shouldPublishSnapshotToUI(_ next: TelemetrySnapshot) -> Bool {
+    if clock.now.seconds - lastPublishedUIAt >= 1 {
+      return true
+    }
+    if snapshot.dvr.isRecording != next.dvr.isRecording { return true }
+    if snapshot.isStreaming != next.isStreaming { return true }
+    if snapshot.programSource != next.programSource { return true }
+    if snapshot.statusMessage != next.statusMessage { return true }
+    if snapshot.tiles.map(\.state) != next.tiles.map(\.state) { return true }
+    if snapshot.tiles.map(\.displayName) != next.tiles.map(\.displayName) { return true }
+    if snapshot.tiles.map(\.isProgram) != next.tiles.map(\.isProgram) { return true }
+    return false
   }
 
   // MARK: - Control channel
@@ -3121,7 +3145,7 @@ public final class AppEnvironment {
       runWriterProbe(options: options)
     case .dumpState:
       pollTelemetry()
-      stateDumper.dump(snapshot)
+      stateDumper.dump(telemetry.snapshot)
     case .reset:
       telemetry.reset()
       testClock?.reset()
@@ -3138,7 +3162,7 @@ public final class AppEnvironment {
     guard handle(url: url) else { return nil }
     let encoder = JSONEncoder()
     encoder.outputFormatting = [ .prettyPrinted, .sortedKeys ]
-    if ControlChannel.command(from: url) == .dumpState, let data = try? encoder.encode(snapshot) {
+    if ControlChannel.command(from: url) == .dumpState, let data = try? encoder.encode(telemetry.snapshot) {
       return data
     }
     return Data(#"{"ok":true}"#.utf8)
