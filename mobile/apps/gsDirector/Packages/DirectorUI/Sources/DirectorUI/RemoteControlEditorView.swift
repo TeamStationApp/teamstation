@@ -2,14 +2,16 @@ import DirectorCore
 import SwiftUI
 
 public struct RemoteControlEditorView: View {
+  var onClose: () -> Void
   @Environment(AppEnvironment.self) private var environment
-  @Environment(\.dismiss) private var dismiss
 
   @State private var capturing: RemoteAction?
   @State private var showingRename = false
   @State private var renameText = ""
 
-  public init() {}
+  public init(onClose: @escaping () -> Void) {
+    self.onClose = onClose
+  }
 
   public var body: some View {
     NavigationStack {
@@ -27,7 +29,7 @@ public struct RemoteControlEditorView: View {
           primaryIdentifier: "remote-editor-done",
           action: {
             environment.capturingRemoteAction = nil
-            dismiss()
+            onClose()
           }
         )
       }
