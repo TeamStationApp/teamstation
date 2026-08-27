@@ -254,9 +254,7 @@ public final class SourcePipeline: @unchecked Sendable {
     // The small tile shows stills while the finger is down. Output stays on live until the
     // scrub is released, so the operator can preview rewind without cutting the programme.
     if state == .live {
-      if renderer.enqueue(converted) {
-        telemetry.recordDisplayedFrame(tile: sourceIndex)
-      }
+      presentOnRenderer(converted)
     }
     if state != .replaying {
       programSink?(converted.pixelBuffer, converted.presentationTime)
@@ -309,9 +307,7 @@ public final class SourcePipeline: @unchecked Sendable {
   /// display layer as live video, so there is no second view to keep in sync.
   public func showScrubStill(_ pixelBuffer: CVPixelBuffer, offsetSeconds: Double) {
     renderer.setPaused(false)
-    if renderer.enqueue(pixelBuffer: pixelBuffer, presentationTime: .invalid) {
-      telemetry.recordDisplayedFrame(tile: sourceIndex)
-    }
+    presentOnRenderer(pixelBuffer: pixelBuffer, presentationTime: .invalid)
     renderer.setPaused(true)
     telemetry.mutateTile(sourceIndex) {
       $0.state = .scrubbing
@@ -401,9 +397,7 @@ public final class SourcePipeline: @unchecked Sendable {
       onProgramDiscontinuity?()
     }
 
-    if renderer.enqueue(pixelBuffer: pixelBuffer, presentationTime: presentationTime) {
-      telemetry.recordDisplayedFrame(tile: sourceIndex)
-    }
+    presentOnRenderer(pixelBuffer: pixelBuffer, presentationTime: presentationTime)
     programSink?(pixelBuffer, presentationTime)
     telemetry.mutateTile(sourceIndex) { tile in
       guard tile.state == .replaying || tile.state == .live else { return }
@@ -428,6 +422,18 @@ public final class SourcePipeline: @unchecked Sendable {
     telemetry.mutateTile(sourceIndex) {
       $0.state = .live
       $0.offsetSeconds = 0
+    }
+  }
+
+  private func presentOnRenderer(_ frame: PixelFrame) {
+    presentOnRenderer(pixelBuffer: frame.pixelBuffer, presentationTime: frame.presentationTime)
+  }
+
+  private func presentOnRenderer(pixelBuffer: CVPixelBuffer, presentationTime: CMTime) {
+    let ok = renderer.enqueue(pixelBuffer: pixelBuffer, presentationTime: presentationTime)
+    telemetry.mutateTile(sourceIndex) { $0.enqueueFails = renderer.failCounts }
+    if ok {
+      telemetry.recordDisplayedFrame(tile: sourceIndex)
     }
   }
 }

@@ -129,5 +129,19 @@ struct RTSPServerMessageTests {
       "name": "handheld",
       "path": "/live/mainstream"
     ])
+    #expect(
+      RTSPServer.bonjourTXT(
+        identity: identity,
+        path: "/live/mainstream",
+        ip: "192.168.7.219",
+        port: 554
+      ) == [
+        "uuid": "c94df9ca-d7c2-468f-8529-97d01fba14e7",
+        "name": "handheld",
+        "path": "/live/mainstream",
+        "ip": "192.168.7.219",
+        "port": "554"
+      ]
+    )
   }
 }

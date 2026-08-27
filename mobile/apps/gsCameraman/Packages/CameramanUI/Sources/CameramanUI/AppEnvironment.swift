@@ -26,10 +26,27 @@ public final class AppEnvironment {
   public private(set) var status = "starting"
   public private(set) var encodeFailure: String?
   public private(set) var serverStatus = RTSPServer.Status()
-  /// Frames in and frames out. Separately, because "the camera is not delivering" and "the encoder
-  /// is not producing" look identical from the outside and have nothing in common as faults.
-  public private(set) var capturedFrames = 0
-  public private(set) var encodedFrames = 0
+  /// Frames in and frames out. Held off Observation and off the main actor so a 30 fps bump does
+  /// not publish. dump-state reads these; the UI does not.
+  @ObservationIgnored
+  nonisolated private let frameCounts = OSAllocatedUnfairLock(initialState: FrameCounts())
+
+  private struct FrameCounts: Sendable {
+    var captured = 0
+    var encoded = 0
+  }
+
+  public var capturedFrames: Int { frameCounts.withLock { $0.captured } }
+  public var encodedFrames: Int { frameCounts.withLock { $0.encoded } }
+
+  /// Capture and encode queues call these. They must not hop to the main actor.
+  nonisolated func noteCapturedFrame() {
+    frameCounts.withLock { $0.captured += 1 }
+  }
+
+  nonisolated func noteEncodedFrame() {
+    frameCounts.withLock { $0.encoded += 1 }
+  }
 
   private let identityProvider: DeviceIdentityProvider
   private var recorder: ElementaryStreamRecorder?
@@ -222,7 +239,7 @@ public final class AppEnvironment {
     videoEncoder.onFrame = { [weak self, weak server] frame in
       if !frame.parameterSets.isEmpty { sets.withLock { $0 = frame.parameterSets } }
       server?.send(video: frame, codec: settingsLock.withLock { $0.codec })
-      Task { @MainActor in self?.encodedFrames += 1 }
+      self?.noteEncodedFrame()
     }
     audioEncoder.onFrame = { [weak server] frame in
       server?.send(audio: frame)
@@ -256,7 +273,7 @@ public final class AppEnvironment {
     }
     camera.onVideoFrame = { [weak self, videoEncoder] sample in
       videoEncoder.encode(SampleBufferRef(sample.buffer))
-      Task { @MainActor in self?.capturedFrames += 1 }
+      self?.noteCapturedFrame()
     }
     camera.onAudioFrame = { [audioEncoder] sample in
       audioEncoder.encode(SampleBufferRef(sample.buffer))
@@ -283,7 +300,7 @@ public final class AppEnvironment {
     let synthetic = SyntheticCamera(configuration: SyntheticCamera.Configuration(settings))
     synthetic.onVideoFrame = { [weak self, videoEncoder] buffer in
       videoEncoder.encode(SampleBufferRef(buffer))
-      Task { @MainActor in self?.capturedFrames += 1 }
+      self?.noteCapturedFrame()
     }
     synthetic.start()
     self.synthetic = synthetic
@@ -326,6 +343,16 @@ public final class AppEnvironment {
     public var capturedFrames: Int
     public var encodedFrames: Int
     public var encodeFailure: String?
+    public var droppedFrames: Int
+    public var physFootprintMB: Int
+    public var availableMemoryMB: Int
+    public var cpuPercent: Double
+    public var thermalState: String
+    public var cpuCores: Int
+    public var cameraFailure: String?
+    public var interrupted: Bool
+    public var interruptionReason: String?
+    public var audioPendingBytes: Int
     public var server: RTSPServer.Status
     public var addresses: [String]
   }
@@ -351,9 +378,32 @@ public final class AppEnvironment {
       capturedFrames: capturedFrames,
       encodedFrames: encodedFrames,
       encodeFailure: encodeFailure,
-      server: serverStatus,
+      droppedFrames: sendQueueDroppedFrames,
+      physFootprintMB: ProcessLoad.physFootprintMB(),
+      availableMemoryMB: ProcessLoad.availableMemoryMB(),
+      cpuPercent: (ProcessLoad.cpuPercent() * 10).rounded() / 10,
+      thermalState: ProcessLoad.thermalStateName(),
+      cpuCores: ProcessLoad.coreCount,
+      cameraFailure: cameraState.failure,
+      interrupted: cameraState.isInterrupted,
+      interruptionReason: cameraState.interruptionReason,
+      audioPendingBytes: audioEncoder.pendingBytes,
+      server: dumpServerStatus,
       addresses: ControlServer.localAddresses()
     )
+  }
+
+  private var sendQueueDroppedFrames: Int {
+    server?.sendQueueSummaries().reduce(0) { $0 + $1.droppedFrames } ?? 0
+  }
+
+  private var dumpServerStatus: RTSPServer.Status {
+    var snapshot = server?.status ?? serverStatus
+    let summaries = server?.sendQueueSummaries() ?? []
+    snapshot.droppedFrames = summaries.reduce(0) { $0 + $1.droppedFrames }
+    snapshot.sendQueuePendingBytes = summaries.reduce(0) { $0 + $1.pendingBytes }
+    snapshot.sendQueueFlushes = summaries.reduce(0) { $0 + $1.flushes }
+    return snapshot
   }
 
   private func startControlServer() {

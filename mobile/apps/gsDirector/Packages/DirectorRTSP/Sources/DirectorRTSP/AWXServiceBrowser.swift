@@ -7,12 +7,15 @@ public protocol CameraAdvertisementBrowsing: AnyObject, Sendable {
   var advertisements: [CameraAdvertisement] { get }
   /// Compact NWBrowser state for the HUD (`ready`, `waiting`, `failed`).
   var browseState: String { get }
+  /// Last `_bonjour` result set size. Zero means the browser is up but has not seen an instance.
+  var browseResultCount: Int { get }
   func start()
   func stop()
 }
 
 extension CameraAdvertisementBrowsing {
   public var browseState: String { "idle" }
+  public var browseResultCount: Int { 0 }
 }
 
 /// Test double. Production uses `CompositeAdvertisementBrowser` of AWX and `_rtsp._tcp`.
@@ -43,6 +46,10 @@ public final class CompositeAdvertisementBrowser: CameraAdvertisementBrowsing, @
     browsers.map(\.browseState).joined(separator: ",")
   }
 
+  public var browseResultCount: Int {
+    browsers.reduce(0) { $0 + $1.browseResultCount }
+  }
+
   public func start() {
     for browser in browsers { browser.start() }
   }
@@ -61,6 +68,7 @@ public final class AWXServiceBrowser: CameraAdvertisementBrowsing, @unchecked Se
   private var browser: NWBrowser?
   private var resolvers: [String: NWConnection] = [:]
   private var browseStateStorage = "idle"
+  private var browseResultCountStorage = 0
 
   public init() {}
 
@@ -74,6 +82,12 @@ public final class AWXServiceBrowser: CameraAdvertisementBrowsing, @unchecked Se
     lock.lock()
     defer { lock.unlock() }
     return browseStateStorage
+  }
+
+  public var browseResultCount: Int {
+    lock.lock()
+    defer { lock.unlock() }
+    return browseResultCountStorage
   }
 
   public func start() {
@@ -117,6 +131,9 @@ public final class AWXServiceBrowser: CameraAdvertisementBrowsing, @unchecked Se
   private func apply(_ results: Set<NWBrowser.Result>) {
     // An empty update is a Bonjour glitch, not "every camera vanished". Wiping the cache here
     // would leave identity with nothing to match until UDP resolve finishes again.
+    lock.lock()
+    browseResultCountStorage = results.count
+    lock.unlock()
     guard !results.isEmpty else { return }
 
     var seen: Set<String> = []

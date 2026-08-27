@@ -43,11 +43,11 @@ public struct SourceSelectionView: View {
 
       if environment.config.showDebugHUD {
         VStack {
-          Spacer()
           HStack {
             DebugHUD(snapshot: environment.snapshot)
             Spacer()
           }
+          Spacer()
         }
         .padding(14)
         .allowsHitTesting(false)

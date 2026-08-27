@@ -50,7 +50,7 @@ function hostnamesFor(device) {
 async function get(host, target, timeoutMs) {
   const response = await fetch(`http://${host}:${PORT}${target}`, {
     signal: AbortSignal.timeout(
-      timeoutMs ?? Number(process.env.DIRECTOR_CONTROL_TIMEOUT_MS ?? 10000)
+      timeoutMs ?? Number(process.env.DIRECTOR_CONTROL_TIMEOUT_MS ?? 20000)
     )
   })
   const text = await response.text()

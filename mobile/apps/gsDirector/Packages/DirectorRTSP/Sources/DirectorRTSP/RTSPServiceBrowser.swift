@@ -17,6 +17,7 @@ public final class RTSPServiceBrowser: CameraAdvertisementBrowsing, @unchecked S
   private var browser: NWBrowser?
   private var resolvers: [String: NWConnection] = [:]
   private var browseStateStorage = "idle"
+  private var browseResultCountStorage = 0
 
   public init() {}
 
@@ -30,6 +31,12 @@ public final class RTSPServiceBrowser: CameraAdvertisementBrowsing, @unchecked S
     lock.lock()
     defer { lock.unlock() }
     return browseStateStorage
+  }
+
+  public var browseResultCount: Int {
+    lock.lock()
+    defer { lock.unlock() }
+    return browseResultCountStorage
   }
 
   public func start() {
@@ -71,6 +78,9 @@ public final class RTSPServiceBrowser: CameraAdvertisementBrowsing, @unchecked S
   }
 
   private func apply(_ results: Set<NWBrowser.Result>) {
+    lock.lock()
+    browseResultCountStorage = results.count
+    lock.unlock()
     guard !results.isEmpty else { return }
 
     var seen: Set<String> = []
@@ -79,6 +89,19 @@ public final class RTSPServiceBrowser: CameraAdvertisementBrowsing, @unchecked S
       let fields = txtFields(from: result)
       let key = Self.cacheKey(instanceName: name, fields: fields)
       seen.insert(key)
+
+      // TXT `ip=` is enough — same path NearStream uses. Connecting TCP to a Cameraman
+      // Bonjour UUID hostname often never yields a LAN IPv4 from another iOS device.
+      if let host = CameraAdvertisement.resolvedHost(txtFields: fields) {
+        lock.lock()
+        cached[key] = CameraAdvertisement.parseTXT(
+          fields,
+          instanceName: name,
+          host: host
+        )
+        lock.unlock()
+        continue
+      }
 
       lock.lock()
       if let existing = cached[key] {
@@ -129,16 +152,17 @@ public final class RTSPServiceBrowser: CameraAdvertisementBrowsing, @unchecked S
     let finish: @Sendable (NWConnection, Bool) -> Void = { [weak self] connection, force in
       guard let self else { return }
       let media = Self.usableMediaHost(from: connection.currentPath?.remoteEndpoint)
-      if media == nil, !force { return }
+      let txtHost = CameraAdvertisement.resolvedHost(txtFields: fields)
+      if media == nil, txtHost == nil, !force { return }
       connection.cancel()
       self.lock.lock()
       self.resolvers[cacheKey] = nil
-      if let media {
+      if let host = media?.host ?? txtHost {
         self.cached[cacheKey] = CameraAdvertisement.parseTXT(
           fields,
           instanceName: instanceName,
-          host: media.host,
-          port: Int(media.port)
+          host: host,
+          port: media.map { Int($0.port) } ?? 554
         )
       }
       self.lock.unlock()
