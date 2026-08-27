@@ -1,30 +1,109 @@
 import DirectorCore
 import SwiftUI
 
+private enum SettingsCover: String, Identifiable {
+  case contentEditor
+  case remoteEditor
+  case newTemplate
+  case newRemote
+
+  var id: String { rawValue }
+}
+
 public struct SettingsView: View {
   @Environment(AppEnvironment.self) private var environment
   @Environment(\.dismiss) private var dismiss
 
   @State private var draft = AppConfig.default
-  @State private var showingContentEditor = false
-  @State private var showingRemoteEditor = false
+  @State private var cover: SettingsCover?
   @State private var showingClearCameraMemory = false
-  @State private var renaming: OverlayTemplate?
-  @State private var renameText = ""
   @State private var deleting: OverlayTemplate?
-  @State private var showingNewTemplate = false
   @State private var newTemplateName = ""
   @State private var copyFromID: UUID?
-  @State private var renamingRemote: RemoteControlTemplate?
-  @State private var renameRemoteText = ""
   @State private var deletingRemote: RemoteControlTemplate?
-  @State private var showingNewRemote = false
   @State private var newRemoteName = ""
   @State private var copyRemoteFromID: UUID?
 
   public init() {}
 
   public var body: some View {
+    ZStack {
+      Color.black.ignoresSafeArea()
+
+      settingsForm
+        .stackedBehind(depth: cover == nil ? 0 : 1)
+        .accessibilityHidden(cover != nil)
+        .allowsHitTesting(cover == nil)
+
+      if let cover {
+        StackedSceneLayer(onDismiss: dismissCover) {
+          settingsCover(cover)
+        }
+        .id(cover.id)
+      }
+    }
+    .animation(StackedScene.animation, value: cover)
+    .alert(
+      "Delete template?",
+      isPresented: Binding(
+        get: { deleting != nil },
+        set: { if !$0 { deleting = nil } }
+      )
+    ) {
+      Button("Delete", role: .destructive) {
+        if let deleting {
+          environment.deleteTemplate(id: deleting.id)
+        }
+        deleting = nil
+      }
+      .accessibilityIdentifier("settings-content-template-delete-confirm")
+      Button("Cancel", role: .cancel) { deleting = nil }
+    } message: {
+      Text("Removes “\(deleting?.name ?? "")” from Output.")
+    }
+    .alert(
+      "Delete remote template?",
+      isPresented: Binding(
+        get: { deletingRemote != nil },
+        set: { if !$0 { deletingRemote = nil } }
+      )
+    ) {
+      Button("Delete", role: .destructive) {
+        if let deletingRemote {
+          environment.deleteRemoteTemplate(id: deletingRemote.id)
+        }
+        deletingRemote = nil
+      }
+      .accessibilityIdentifier("settings-remote-template-delete-confirm")
+      Button("Cancel", role: .cancel) { deletingRemote = nil }
+    } message: {
+      Text("Removes “\(deletingRemote?.name ?? "")” from Remote Control.")
+    }
+    .confirmationDialog(
+      "Clear camera memory?",
+      isPresented: $showingClearCameraMemory,
+      titleVisibility: .visible
+    ) {
+      Button("Clear camera memory", role: .destructive) {
+        environment.clearCameraMemory()
+      }
+      .accessibilityIdentifier("settings-clear-camera-memory-confirm")
+      Button("Cancel", role: .cancel) {}
+    } message: {
+      Text(
+        "Removes every saved camera name and mapping. Cameras without a NearStream serial/MAC "
+          + "or an RTSP identifier will not be remembered."
+      )
+    }
+    .onAppear {
+      draft = environment.persistedConfig
+      draft.replaySlowMotionRate = environment.persistedConfig.replaySlowMotionRate * 100
+      draft.useSimulatedCameras = environment.isUsingSimulatedCameras
+      draft.showDebugHUD = environment.config.showDebugHUD
+    }
+  }
+
+  private var settingsForm: some View {
     NavigationStack {
       Form {
         Section {
@@ -37,128 +116,60 @@ public struct SettingsView: View {
 
         Section {
           ForEach(Array(environment.templates.enumerated()), id: \.element.id) { index, template in
-            HStack {
-              Button {
-                environment.selectTemplate(id: template.id)
-              } label: {
-                Image(
-                  systemName: template.id == environment.activeTemplateID
-                    ? "circle.inset.filled"
-                    : "circle"
-                )
-              }
-              .buttonStyle(.borderless)
-              .padding(.trailing, 12)
-              .accessibilityLabel("Select \(template.name)")
-              .accessibilityIdentifier("settings-content-template-select-\(index + 1)")
-
-              Button {
-                environment.selectTemplate(id: template.id)
-                showingContentEditor = true
-              } label: {
-                Text(template.name)
-                  .frame(maxWidth: .infinity, alignment: .leading)
-              }
-              .buttonStyle(.borderless)
-              .accessibilityIdentifier("settings-content-template-\(index + 1)")
-
-              HStack(spacing: 20) {
-                Button {
-                  renaming = template
-                  renameText = template.name
-                } label: {
-                  Image(systemName: "pencil")
-                }
-                .buttonStyle(.borderless)
-                .accessibilityIdentifier("settings-content-template-rename-\(index + 1)")
-
-                Button(role: .destructive) {
-                  deleting = template
-                } label: {
-                  Image(systemName: "trash")
-                }
-                .buttonStyle(.borderless)
-                .accessibilityIdentifier("settings-content-template-delete-\(index + 1)")
-              }
-            }
+            SettingsTemplateRow(
+              name: template.name,
+              isSelected: template.id == environment.activeTemplateID,
+              selectIdentifier: "settings-content-template-select-\(index + 1)",
+              nameIdentifier: "settings-content-template-\(index + 1)",
+              deleteIdentifier: "settings-content-template-delete-\(index + 1)",
+              onSelect: { environment.selectTemplate(id: template.id) },
+              onEdit: {
+                environment.beginEditingTemplate(id: template.id)
+                cover = .contentEditor
+              },
+              onDelete: { deleting = template }
+            )
           }
 
           Button("Add New Template") {
             copyFromID = environment.activeTemplateID
             newTemplateName = ""
-            showingNewTemplate = true
+            cover = .newTemplate
           }
           .accessibilityIdentifier("settings-add-content-template")
         } header: {
           Text("Content Templates")
         } footer: {
-          Text(
-            "Radio selects the Output template. Tap the name to place and add content. "
-              + "Pencil renames. Trash deletes."
-          )
+          Text("Radio selects the Output template. Tap the name to edit. Trash deletes.")
         }
 
         Section {
           ForEach(Array(environment.remoteTemplates.enumerated()), id: \.element.id) { index, template in
-            HStack {
-              Button {
-                environment.selectRemoteTemplate(id: template.id)
-              } label: {
-                Image(
-                  systemName: template.id == environment.activeRemoteTemplateID
-                    ? "circle.inset.filled"
-                    : "circle"
-                )
-              }
-              .buttonStyle(.borderless)
-              .padding(.trailing, 12)
-              .accessibilityLabel("Select \(template.name)")
-              .accessibilityIdentifier("settings-remote-template-select-\(index + 1)")
-
-              Button {
-                environment.selectRemoteTemplate(id: template.id)
-                showingRemoteEditor = true
-              } label: {
-                Text(template.name)
-                  .frame(maxWidth: .infinity, alignment: .leading)
-              }
-              .buttonStyle(.borderless)
-              .accessibilityIdentifier("settings-remote-template-\(index + 1)")
-
-              HStack(spacing: 20) {
-                Button {
-                  renamingRemote = template
-                  renameRemoteText = template.name
-                } label: {
-                  Image(systemName: "pencil")
-                }
-                .buttonStyle(.borderless)
-                .accessibilityIdentifier("settings-remote-template-rename-\(index + 1)")
-
-                Button(role: .destructive) {
-                  deletingRemote = template
-                } label: {
-                  Image(systemName: "trash")
-                }
-                .buttonStyle(.borderless)
-                .accessibilityIdentifier("settings-remote-template-delete-\(index + 1)")
-              }
-            }
+            SettingsTemplateRow(
+              name: template.name,
+              isSelected: template.id == environment.activeRemoteTemplateID,
+              selectIdentifier: "settings-remote-template-select-\(index + 1)",
+              nameIdentifier: "settings-remote-template-\(index + 1)",
+              deleteIdentifier: "settings-remote-template-delete-\(index + 1)",
+              onSelect: { environment.selectRemoteTemplate(id: template.id) },
+              onEdit: {
+                environment.beginEditingRemoteTemplate(id: template.id)
+                cover = .remoteEditor
+              },
+              onDelete: { deletingRemote = template }
+            )
           }
 
           Button("Add New Template") {
             copyRemoteFromID = environment.activeRemoteTemplateID
             newRemoteName = ""
-            showingNewRemote = true
+            cover = .newRemote
           }
           .accessibilityIdentifier("settings-add-remote-template")
         } header: {
           Text("Remote Control")
         } footer: {
-          Text(
-            "Radio selects the pad mapping. Tap the name to bind actions to button chords. "
-              + "Pencil renames. Trash deletes."
-          )
+          Text("Radio selects the pad mapping. Tap the name to edit. Trash deletes.")
         }
 
         Section {
@@ -218,23 +229,16 @@ public struct SettingsView: View {
         }
 
         Section {
-          HStack {
+          ClearableTextField(
+            text: $draft.streamURL,
+            clearIdentifier: "settings-stream-url-clear",
+            clearLabel: "Clear stream URL"
+          ) {
             TextField("rtmp://host:1935/live/key", text: $draft.streamURL)
               .keyboardType(.URL)
               .textInputAutocapitalization(.never)
               .autocorrectionDisabled()
               .accessibilityIdentifier("settings-stream-url")
-            if !draft.streamURL.isEmpty {
-              Button {
-                draft.streamURL = ""
-              } label: {
-                Image(systemName: "xmark.circle.fill")
-                  .foregroundStyle(.secondary)
-              }
-              .buttonStyle(.borderless)
-              .accessibilityIdentifier("settings-stream-url-clear")
-              .accessibilityLabel("Clear stream URL")
-            }
           }
         } header: {
           Text("Stream")
@@ -293,46 +297,49 @@ public struct SettingsView: View {
       }
       .navigationTitle("Settings")
       .navigationBarTitleDisplayMode(.inline)
-      .toolbar {
-        ToolbarItem(placement: .cancellationAction) {
-          Button("Cancel") { dismiss() }
-            .accessibilityIdentifier("settings-cancel")
-        }
-        ToolbarItem(placement: .confirmationAction) {
-          Button("Save") {
+      .safeAreaInset(edge: .bottom) {
+        ModalActionFooter(
+          cancelTitle: "CANCEL",
+          cancelIdentifier: "settings-cancel",
+          onCancel: { dismiss() },
+          primaryTitle: "SAVE",
+          primaryIdentifier: "settings-save",
+          action: {
             draft.replaySlowMotionRate = AppConfig.clampedReplaySlowMotionRate(
               draft.replaySlowMotionRate / 100
             )
             environment.update(config: draft)
             dismiss()
           }
-          .accessibilityIdentifier("settings-save")
-        }
+        )
       }
     }
-    .sheet(isPresented: $showingContentEditor) {
-      ContentEditorView()
+    .background(Color.deckBackground)
+  }
+
+  private func dismissCover() {
+    cover = nil
+    environment.endEditingTemplate()
+    environment.endEditingRemoteTemplate()
+  }
+
+  @ViewBuilder
+  private func settingsCover(_ item: SettingsCover) -> some View {
+    switch item {
+    case .contentEditor:
+      ContentEditorView(onClose: dismissCover)
         .environment(environment)
-        .presentationDetents([.large])
-        .presentationDragIndicator(.hidden)
-        .presentationContentInteraction(.scrolls)
-        .presentationSizing(.page)
-    }
-    .sheet(isPresented: $showingRemoteEditor) {
-      RemoteControlEditorView()
+    case .remoteEditor:
+      RemoteControlEditorView(onClose: dismissCover)
         .environment(environment)
-        .presentationDetents([.large])
-        .presentationDragIndicator(.hidden)
-        .presentationContentInteraction(.scrolls)
-        .presentationSizing(.page)
-    }
-    .sheet(isPresented: $showingNewRemote) {
+    case .newRemote:
       NewTemplateSheet(
         templates: environment.remoteTemplates.map {
           OverlayTemplate(id: $0.id, name: $0.name)
         },
         copyFromID: $copyRemoteFromID,
         name: $newRemoteName,
+        onClose: dismissCover,
         onCreate: { sourceID in
           let created: UUID?
           if let sourceID {
@@ -340,18 +347,18 @@ public struct SettingsView: View {
           } else {
             created = environment.createRemoteTemplate(name: newRemoteName)
           }
-          if created != nil {
-            showingNewRemote = false
-            showingRemoteEditor = true
+          if let created {
+            environment.beginEditingRemoteTemplate(id: created)
+            cover = .remoteEditor
           }
         }
       )
-    }
-    .sheet(isPresented: $showingNewTemplate) {
+    case .newTemplate:
       NewTemplateSheet(
         templates: environment.templates,
         copyFromID: $copyFromID,
         name: $newTemplateName,
+        onClose: dismissCover,
         onCreate: { sourceID in
           let created: UUID?
           if let sourceID {
@@ -359,106 +366,12 @@ public struct SettingsView: View {
           } else {
             created = environment.createTemplate(name: newTemplateName)
           }
-          if created != nil {
-            showingNewTemplate = false
-            showingContentEditor = true
+          if let created {
+            environment.beginEditingTemplate(id: created)
+            cover = .contentEditor
           }
         }
       )
-    }
-    .alert(
-      "Rename template",
-      isPresented: Binding(
-        get: { renaming != nil },
-        set: { if !$0 { renaming = nil } }
-      )
-    ) {
-      TextField("Name", text: $renameText)
-        .accessibilityIdentifier("settings-content-template-rename-field")
-      Button("Save") {
-        if let renaming {
-          environment.renameTemplate(id: renaming.id, name: renameText)
-        }
-        renaming = nil
-      }
-      .accessibilityIdentifier("settings-content-template-rename-save")
-      Button("Cancel", role: .cancel) { renaming = nil }
-    }
-    .alert(
-      "Delete template?",
-      isPresented: Binding(
-        get: { deleting != nil },
-        set: { if !$0 { deleting = nil } }
-      )
-    ) {
-      Button("Delete", role: .destructive) {
-        if let deleting {
-          environment.deleteTemplate(id: deleting.id)
-        }
-        deleting = nil
-      }
-      .accessibilityIdentifier("settings-content-template-delete-confirm")
-      Button("Cancel", role: .cancel) { deleting = nil }
-    } message: {
-      Text("Removes “\(deleting?.name ?? "")” from Output.")
-    }
-    .alert(
-      "Rename remote template",
-      isPresented: Binding(
-        get: { renamingRemote != nil },
-        set: { if !$0 { renamingRemote = nil } }
-      )
-    ) {
-      TextField("Name", text: $renameRemoteText)
-        .accessibilityIdentifier("settings-remote-template-rename-field")
-      Button("Save") {
-        if let renamingRemote {
-          environment.renameRemoteTemplate(id: renamingRemote.id, name: renameRemoteText)
-        }
-        renamingRemote = nil
-      }
-      .accessibilityIdentifier("settings-remote-template-rename-save")
-      Button("Cancel", role: .cancel) { renamingRemote = nil }
-    }
-    .alert(
-      "Delete remote template?",
-      isPresented: Binding(
-        get: { deletingRemote != nil },
-        set: { if !$0 { deletingRemote = nil } }
-      )
-    ) {
-      Button("Delete", role: .destructive) {
-        if let deletingRemote {
-          environment.deleteRemoteTemplate(id: deletingRemote.id)
-        }
-        deletingRemote = nil
-      }
-      .accessibilityIdentifier("settings-remote-template-delete-confirm")
-      Button("Cancel", role: .cancel) { deletingRemote = nil }
-    } message: {
-      Text("Removes “\(deletingRemote?.name ?? "")” from Remote Control.")
-    }
-    .confirmationDialog(
-      "Clear camera memory?",
-      isPresented: $showingClearCameraMemory,
-      titleVisibility: .visible
-    ) {
-      Button("Clear camera memory", role: .destructive) {
-        environment.clearCameraMemory()
-      }
-      .accessibilityIdentifier("settings-clear-camera-memory-confirm")
-      Button("Cancel", role: .cancel) {}
-    } message: {
-      Text(
-        "Removes every saved camera name and mapping. Cameras without a NearStream serial/MAC "
-          + "or an RTSP identifier will not be remembered."
-      )
-    }
-    .onAppear {
-      draft = environment.persistedConfig
-      draft.replaySlowMotionRate = environment.persistedConfig.replaySlowMotionRate * 100
-      draft.useSimulatedCameras = environment.isUsingSimulatedCameras
-      draft.showDebugHUD = environment.config.showDebugHUD
     }
   }
 
@@ -476,8 +389,8 @@ private struct NewTemplateSheet: View {
   let templates: [OverlayTemplate]
   @Binding var copyFromID: UUID?
   @Binding var name: String
+  let onClose: () -> Void
   let onCreate: (UUID?) -> Void
-  @Environment(\.dismiss) private var dismiss
   @State private var source: Source = .copy
 
   var body: some View {
@@ -504,30 +417,34 @@ private struct NewTemplateSheet: View {
           }
         }
         Section("Name") {
-          TextField("Name", text: $name)
-            .accessibilityIdentifier("settings-new-template-name")
+          ClearableTextField(
+            text: $name,
+            clearIdentifier: "settings-new-template-name-clear"
+          ) {
+            TextField("Name", text: $name)
+              .accessibilityIdentifier("settings-new-template-name")
+          }
         }
       }
       .navigationTitle("New template")
       .navigationBarTitleDisplayMode(.inline)
-      .toolbar {
-        ToolbarItem(placement: .cancellationAction) {
-          Button("Cancel") { dismiss() }
-            .accessibilityIdentifier("settings-new-template-cancel")
-        }
-        ToolbarItem(placement: .confirmationAction) {
-          Button("Create") {
-            onCreate(source == .copy ? copyFromID : nil)
-          }
-          .disabled(
-            name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-              || (source == .copy && copyFromID == nil)
-          )
-          .accessibilityIdentifier("settings-new-template-create")
-        }
+      .safeAreaInset(edge: .bottom) {
+        ModalActionFooter(
+          cancelTitle: "CANCEL",
+          cancelIdentifier: "settings-new-template-cancel",
+          onCancel: onClose,
+          primaryTitle: "CREATE",
+          primaryIdentifier: "settings-new-template-create",
+          primaryEnabled: canCreate,
+          action: { onCreate(source == .copy ? copyFromID : nil) }
+        )
       }
     }
-    .presentationDetents([.medium, .large])
+  }
+
+  private var canCreate: Bool {
+    !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      && (source != .copy || copyFromID != nil)
   }
 }
 

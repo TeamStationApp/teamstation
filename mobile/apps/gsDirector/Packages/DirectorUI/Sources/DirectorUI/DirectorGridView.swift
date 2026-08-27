@@ -9,6 +9,7 @@ public struct DirectorGridView: View {
   @State private var draggingSource: Int?
   @State private var dragLocation: CGPoint = .zero
   @State private var dragGrabOffset = CGSize.zero
+  @State private var slideToStop: SlideToStopTarget?
 
   public init() {}
 
@@ -33,6 +34,23 @@ public struct DirectorGridView: View {
     }
     .overlay(alignment: .bottom) {
       StatusToast()
+    }
+    .overlay {
+      if let slideToStop {
+        SlideToStopOverlay(
+          target: slideToStop,
+          onStop: {
+            self.slideToStop = nil
+            switch slideToStop {
+            case .stream:
+              Task { await environment.stopStreaming() }
+            case .record:
+              Task { await environment.stopRecording() }
+            }
+          },
+          onCancel: { self.slideToStop = nil }
+        )
+      }
     }
   }
 
@@ -76,14 +94,14 @@ public struct DirectorGridView: View {
         .foregroundStyle(.white.opacity(0.9))
 
       if environment.isStreaming {
-        Text(String(format: "%.2f", environment.streamMegabitsPerSecond))
+        Text(String(format: "%.2f Mbps", environment.streamMegabitsPerSecond))
           .font(.system(size: 13, weight: .semibold, design: .rounded))
           .monospacedDigit()
           .foregroundStyle(.white.opacity(0.9))
           .accessibilityIdentifier("header-stream-mbps")
           .accessibilityLabel("\(String(format: "%.2f", environment.streamMegabitsPerSecond)) megabits per second")
 
-        Text("drop \(environment.streamDroppedPackets)")
+        Text("Dropped packets: \(environment.streamDroppedPackets)")
           .font(.system(size: 13, weight: .semibold, design: .rounded))
           .monospacedDigit()
           .foregroundStyle(.white.opacity(0.9))
@@ -135,7 +153,11 @@ public struct DirectorGridView: View {
         identifier: "stream-button",
         accessibilityValue: environment.isStreaming ? "streaming" : "stopped"
       ) {
-        environment.toggleStreaming()
+        if environment.isStreaming {
+          slideToStop = .stream
+        } else {
+          environment.toggleStreaming()
+        }
       }
       programTransportButton(
         isActive: environment.isRecording,
@@ -144,7 +166,11 @@ public struct DirectorGridView: View {
         identifier: "record-button",
         accessibilityValue: environment.isRecording ? "recording" : "stopped"
       ) {
-        environment.toggleRecording()
+        if environment.isRecording {
+          slideToStop = .record
+        } else {
+          environment.toggleRecording()
+        }
       }
     }
   }
@@ -331,6 +357,7 @@ private struct PulsingTransportLabel: View {
   let isActive: Bool
   let idleLabel: String
   let activeLabel: String
+  @Environment(AppEnvironment.self) private var environment
   @State private var pulseBright = false
 
   private static let darkerRed = Color(red: 0.78, green: 0.16, blue: 0.18)
@@ -353,17 +380,15 @@ private struct PulsingTransportLabel: View {
     .foregroundStyle(isActive ? Color.white : Color.recordRed)
     .onChange(of: isActive) { _, active in
       pulseBright = false
-      if active {
-        withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) {
-          pulseBright = true
-        }
+      guard active, !environment.launch.isUITest else { return }
+      withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) {
+        pulseBright = true
       }
     }
     .onAppear {
-      if isActive {
-        withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) {
-          pulseBright = true
-        }
+      guard isActive, !environment.launch.isUITest else { return }
+      withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) {
+        pulseBright = true
       }
     }
   }

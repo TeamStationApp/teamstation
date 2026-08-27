@@ -38,10 +38,13 @@ public struct OverlayManifest: Sendable, Codable, Hashable {
 }
 
 public enum OverlayVisibility {
-  /// Live Output never collapses. Off-live (scrub or Instant Replay) shrinks live-only overlays
-  /// to zero size so attached children move with the collapsed parent.
-  public static func shouldCollapse(showInRewind: Bool, programIsOffLive: Bool) -> Bool {
-    programIsOffLive && !showInRewind
+  /// Collapse when the current Output mode is one this overlay is not shown in.
+  public static func shouldCollapse(
+    showInLive: Bool,
+    showInRewind: Bool,
+    programIsOffLive: Bool
+  ) -> Bool {
+    programIsOffLive ? !showInRewind : !showInLive
   }
 }
 

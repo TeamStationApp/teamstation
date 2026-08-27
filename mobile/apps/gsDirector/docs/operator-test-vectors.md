@@ -73,7 +73,7 @@ The layout is a 3×3 with the top-left four cells merged into Output. Source til
 | B7 | Output shows the composited picture | `composed=` grows; scorebug, if configured, is in this tile not the source tiles | `program-five-sources` |
 | B8 | Cutting picture does not change the audio mix | `mix=N` stays at the number of AUDIO toggles, not which tile is Output | `operator-audio-mix` |
 | B9 | Disable the on-air camera while the grid is live | Exactly one `onair=1`; disabled slot `state=empty onair=0`; Output still has a source | `operator-program-disable` |
-| B10 | Settings Remote Control templates | Default row, editor lists Source 1–5 live + six Instant Replays, Done returns | `remote-control` |
+| B10 | Settings Remote Control templates | Radio selects; tap name opens editor with `remote-editor-rename`; Settings-row pencil is gone; editor lists Source 1–5 live + six Instant Replays; Done returns | `remote-control` |
 | B11 | Injected pad chord cuts Source 2 live | `/bind-remote?action=live-2&controls=a` then `/remote-chord?controls=a` → `source=2 onair=1` | `remote-control` |
 | B12 | Nameplate is `source N: camera` | `source 1: CAM1`, not `source: 1 CAM1` | `operator-source-layout` |
 | B13 | Source tiles keep a saved screen order | Long-press drag swaps by source number; `order=` survives relaunch even if the camera on Source 1 changes | `operator-source-layout` |
@@ -86,7 +86,7 @@ The layout is a 3×3 with the top-left four cells merged into Output. Source til
 |---|---|---|---|
 | C1 | Record starts | HUD `rec=1`, record button reads RECORDING | `record-and-stop`, `operator-scrub-cut-return` |
 | C2 | Archives accumulate | `dur=` and/or `seg=` increase while recording | `record-and-stop` |
-| C3 | Stop completes | `rec=0`, `flush=` is a real duration, program file `progbytes=` non-zero | `record-and-stop` |
+| C3 | Stop completes | Slide-to-stop on RECORDING, then `rec=0`, `flush=` is a real duration, program file `progbytes=` non-zero | `record-and-stop` |
 | C4 | Live preview continues after stop | Tiles stay `state=live` with `out=` > 0 | `operator-scrub-cut-return` |
 | C5 | Backgrounding while recording keeps the session alive | HUD/control `rec=1`, `aout=1`, `bgkeep=1`, `pip=1`; mix/segments still advance; hovering programme PiP is visible over another app | `operator-background-record` |
 
@@ -103,7 +103,7 @@ already playing — it does not seek as if the tape were at the live edge.
 
 Tiles may replay independently. Starting a second tile's replay does **not** return the first
 to live. Instant-replay hotkeys rewind from the live edge, play that duration of tape, then
-return **that tile only** to live.
+return **that tile only** to live. Output does not burn a built-in “INSTANT REPLAY” caption.
 
 | ID | Condition | Pass | Flow |
 |---|---|---|---|
@@ -121,6 +121,8 @@ return **that tile only** to live.
 | D12 | Live tile: release after a real rewind stays in the past | `state=scrubbing` or `replaying` with `off=-`, not an immediate `live off=0.0`. Replay when the archive can; otherwise “Holding still” on the proxy JPEG | `hevc-scrub`, `scrub-and-return` |
 | D13 | Already rewound: another left-swipe continues from the playhead | Stays `replaying`/`scrubbing` with `off=-`; does not jump to live or to the start of the tape | `scrub-incremental` |
 | D14 | Already rewound: a short right-swipe eases toward live | Still `off=-` after a quarter-tile right drag; must not snap to `live off=0.0` | `scrub-incremental` |
+| D15 | Instant Replay has no built-in caption | Output does not draw “INSTANT REPLAY”; only operator content overlays appear | compositor; `content-templates` after Text |
+| D16 | Add Text overlay | Add → Text shows the parameter bar above Output and types on the canvas | `content-templates` |
 
 ---
 
@@ -160,6 +162,7 @@ This is the operator path that was janky: output moving, small previews frozen.
 |---|---|---|---|
 | G1 | Scorebug URL burns into Output | Loopback test page; `output src=` live and composed frames increment | `program-five-sources` |
 | G2 | Recordings lists a take and offers export | After a real recording, Recordings shows the date row and Export | `recordings-export` |
+| G8 | Recordings Select All and delete | Circle on the listed take; Select All; Delete + confirm removes it and shows empty | `recordings-export` |
 | G3 | Cameras sheet opens over the live grid | Grid → `cameras-button` → picker; enables preserved | `operator-menu-back` |
 | G4 | Opening cameras does not stop a recording | After the picker opens, `rec=1` still holds | `operator-menu-back` (records briefly first) |
 | G5 | — | Degradation ladder removed; archives follow the live wire | — |
@@ -216,6 +219,6 @@ Flows in `scripts/run-maestro.js --device <udid> --suite operator`, in order:
 15. `hevc-scrub` — D5, D7, E8, D12
 16. `scrub-incremental` — D13, D14
 17. `program-five-sources` — B7, F1, F3, G1, G7
-18. `recordings-export` — G2
+18. `recordings-export` — G2, G8
 
 After any code fix, re-run this suite from the top.

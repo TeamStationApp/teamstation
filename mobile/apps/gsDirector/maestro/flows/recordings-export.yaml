@@ -30,6 +30,7 @@ appId: co.gamestation.director
     timeout: 60000
 - tapOn:
     id: 'record-button'
+- runFlow: shared/slide-to-stop.yaml
 - extendedWaitUntil:
     visible: 'rec=0'
     timeout: 60000
@@ -44,6 +45,27 @@ appId: co.gamestation.director
     visible:
       id: 'recordings-export'
     timeout: 15000
-- tapOn:
-    id: 'recordings-export'
+- extendedWaitUntil:
+    visible:
+      id: 'recordings-select-all'
+    timeout: 5000
+- extendedWaitUntil:
+    visible:
+      id: 'recordings-select-1'
+    timeout: 5000
 - takeScreenshot: recordings-export
+- tapOn:
+    id: 'recordings-select-all'
+- tapOn:
+    id: 'recordings-delete'
+- extendedWaitUntil:
+    visible:
+      id: 'recordings-delete-confirm'
+    timeout: 5000
+- tapOn:
+    id: 'recordings-delete-confirm'
+- extendedWaitUntil:
+    visible:
+      id: 'recordings-empty'
+    timeout: 10000
+- takeScreenshot: recordings-deleted
