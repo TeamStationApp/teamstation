@@ -9,6 +9,18 @@ public enum TileState: String, Sendable, Codable {
   case replaying
 }
 
+/// Per-tile reasons `TileRenderer.enqueue` returned false. Dumped in `/dump-state`.
+public struct TileEnqueueFails: Sendable, Codable, Equatable {
+  public var paused: UInt64 = 0
+  public var noLayer: UInt64 = 0
+  public var formatDesc: UInt64 = 0
+  public var sampleBuffer: UInt64 = 0
+  public var rendererFailed: UInt64 = 0
+  public var lastSampleBufferStatus: Int32 = 0
+
+  public init() {}
+}
+
 /// A discovered source as the selection list sees it, so a control-channel index can be tied back
 /// to a physical camera.
 public struct SourceSummary: Sendable, Codable, Equatable {
@@ -72,6 +84,9 @@ public struct TileTelemetry: Sendable, Codable, Equatable {
   /// even while the tile is paused on a still, so it cannot tell a frozen preview from a live one.
   public var displayedFrames: UInt64 = 0
   public var displayedFramesPerSecond: Double = 0
+  /// Why `enqueue` returned false. Counters, not per-frame logs — a frozen tile with `out=0`
+  /// is diagnosed from which of these climbed while `framesPerSecond` stayed healthy.
+  public var enqueueFails = TileEnqueueFails()
   /// What the source says it is sending, as opposed to what actually arrives. The gap between
   /// `sourceFrameRate` and the measured rate is the first thing to look at when a camera looks
   /// slow, because it separates a network problem from a pipeline one.

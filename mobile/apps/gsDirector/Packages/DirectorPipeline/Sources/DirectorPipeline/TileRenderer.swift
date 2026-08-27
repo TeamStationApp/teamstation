@@ -20,6 +20,13 @@ public final class TileRenderer: @unchecked Sendable {
   private var lastPixelFormat: OSType = 0
   private var lastDimensions = CMVideoDimensions(width: 0, height: 0)
   private var isPaused = false
+  private var failCountsStorage = TileEnqueueFails()
+
+  public var failCounts: TileEnqueueFails {
+    lock.lock()
+    defer { lock.unlock() }
+    return failCountsStorage
+  }
 
   public init() {}
 
@@ -123,12 +130,14 @@ public final class TileRenderer: @unchecked Sendable {
   private func enqueueUnpooled(pixelBuffer: CVPixelBuffer, presentationTime: CMTime) -> Bool {
     lock.lock()
     guard !isPaused else {
+      failCountsStorage.paused += 1
       lock.unlock()
       return false
     }
     let layers = displayLayersLocked()
     let pipLayer = pictureInPictureLayer
     guard !layers.isEmpty || pipLayer != nil else {
+      failCountsStorage.noLayer += 1
       lock.unlock()
       return false
     }
@@ -142,7 +151,7 @@ public final class TileRenderer: @unchecked Sendable {
       || pixelFormat != lastPixelFormat
       || dimensions.width != lastDimensions.width
       || dimensions.height != lastDimensions.height {
-      guard let created = makeFormatDescription(for: pixelBuffer) else {
+      guard let created = makeFormatDescriptionLocked(for: pixelBuffer) else {
         lock.unlock()
         return false
       }
@@ -162,7 +171,7 @@ public final class TileRenderer: @unchecked Sendable {
     )
     if sampleBuffer == nil {
       lock.lock()
-      guard let rebuilt = makeFormatDescription(for: pixelBuffer) else {
+      guard let rebuilt = makeFormatDescriptionLocked(for: pixelBuffer) else {
         lock.unlock()
         return false
       }
@@ -224,6 +233,11 @@ public final class TileRenderer: @unchecked Sendable {
     // which is how four 1080p tiles climb hundreds of megabytes a minute.
     renderer.flush(removingDisplayedImage: false)
     renderer.enqueue(sampleBuffer)
+    if renderer.status == .failed || renderer.requiresFlushToResumeDecoding {
+      lock.lock()
+      failCountsStorage.rendererFailed += 1
+      lock.unlock()
+    }
   }
 
   private func snapshotLayers() -> [AVSampleBufferDisplayLayer] {
@@ -247,14 +261,18 @@ public final class TileRenderer: @unchecked Sendable {
     lastDimensions = CMVideoDimensions(width: 0, height: 0)
   }
 
-  private func makeFormatDescription(for pixelBuffer: CVPixelBuffer) -> CMFormatDescription? {
+  private func makeFormatDescriptionLocked(for pixelBuffer: CVPixelBuffer) -> CMFormatDescription? {
     var created: CMFormatDescription?
     let status = CMVideoFormatDescriptionCreateForImageBuffer(
       allocator: kCFAllocatorDefault,
       imageBuffer: pixelBuffer,
       formatDescriptionOut: &created
     )
-    guard status == noErr else { return nil }
+    guard status == noErr else {
+      failCountsStorage.formatDesc += 1
+      failCountsStorage.lastSampleBufferStatus = status
+      return nil
+    }
     return created
   }
 
@@ -277,7 +295,13 @@ public final class TileRenderer: @unchecked Sendable {
       sampleTiming: &timing,
       sampleBufferOut: &sampleBuffer
     )
-    guard status == noErr else { return nil }
+    guard status == noErr else {
+      lock.lock()
+      failCountsStorage.sampleBuffer += 1
+      failCountsStorage.lastSampleBufferStatus = status
+      lock.unlock()
+      return nil
+    }
     return sampleBuffer
   }
 }
