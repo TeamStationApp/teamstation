@@ -35,15 +35,13 @@ packages:
     path: Packages/CameramanUI
   CameramanTestHarness:
     path: Packages/CameramanTestHarness
-  # Test target only. Our packetizers are round-tripped through GS Director's own depacketizers, so
-  # interop is proven by construction rather than by inspection. This compiles that package's
-  # sources; it never builds or launches the Director app.
+  # Test target only. Packetizers are round-tripped through the shared DirectorRTSP depacketizers
+  # in mobile/apps/common. This compiles that package; it never builds or launches the Director app.
   DirectorRTSP:
-    path: ../gsDirector/Packages/DirectorRTSP
-  # Same reason: the camera-identity rules Director will use to adopt our advertised name are pure
-  # value logic, so they are verified here rather than left uncompiled until the end-to-end phase.
+    path: ../common/DirectorRTSP
+  # Same reason: the camera-identity rules that adopt our advertised name are pure value logic.
   DirectorSources:
-    path: ../gsDirector/Packages/DirectorSources
+    path: ../common/DirectorSources
 
 targets:
   Cameraman:
