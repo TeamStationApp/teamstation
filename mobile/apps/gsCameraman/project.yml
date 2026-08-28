@@ -54,6 +54,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: co.gamestation.cameraman
         PRODUCT_NAME: GS Cameraman
         INFOPLIST_FILE: App/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CURRENT_PROJECT_VERSION: "1"
         MARKETING_VERSION: "1.0"
         SUPPORTS_MACCATALYST: NO

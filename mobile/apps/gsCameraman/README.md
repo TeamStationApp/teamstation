@@ -21,7 +21,7 @@ committed. Re-run `bootstrap` after adding a file.
 ## Layout
 
 ```
-App/                      app target: entry point and Info.plist
+App/                      app target: entry point, Info.plist, and App Icon
 Packages/
   CameramanCore/          pure value types: zoom mapping, identity, settings, encoded frames
   CameramanCapture/       AVFoundation: lens control, format selection, capability measurement
