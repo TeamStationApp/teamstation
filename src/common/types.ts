@@ -32,7 +32,8 @@ export const asScoreState = asObject({
   awayTeam: asString,
   homeScore: asNumber,
   awayScore: asNumber,
-  pitchSpeed: asNumber
+  pitchSpeed: asNumber,
+  exitVelocity: asNumber
 })
 
 export type ScoreState = ReturnType<typeof asScoreState>
@@ -40,7 +41,8 @@ export type ScoreState = ReturnType<typeof asScoreState>
 /**
  * Partial update to ScoreState sent by engines. Each engine may contribute a
  * subset of fields (for example, the on-device Tag One parser only sets
- * pitchSpeed). The server merges defined fields into the canonical autoState.
+ * pitchSpeed and exitVelocity). The server merges defined fields into
+ * the canonical autoState.
  */
 export const asScoreStateUpdate = asObject({
   inGame: asOptional(asBoolean),
@@ -62,7 +64,8 @@ export const asScoreStateUpdate = asObject({
   awayTeam: asOptional(asString),
   homeScore: asOptional(asNumber),
   awayScore: asOptional(asNumber),
-  pitchSpeed: asOptional(asNumber)
+  pitchSpeed: asOptional(asNumber),
+  exitVelocity: asOptional(asNumber)
 })
 
 export type ScoreStateUpdate = Partial<ScoreState>

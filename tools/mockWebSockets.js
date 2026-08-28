@@ -5,7 +5,8 @@
  * The web client (Scoreboard, Dashboard, Radar) connects to:
  *   ws://localhost:8008/sockets/api/v1/scoreboard/<eventId>
  *   ws://localhost:8008/sockets/api/v1/dashboard/<eventId>
- * Radar reuses the scoreboard socket (same ScoreState, including pitchSpeed).
+ * Radar reuses the scoreboard socket (same ScoreState, including
+ * pitchSpeed and exitVelocity).
  *
  * We push a single deterministic payload on connect for each so the
  * baseline + post-upgrade screenshots can be diffed pixel-for-pixel.
@@ -35,7 +36,8 @@ const FIXED_SCORE_STATE = {
   awayTeam: 'North Park Hawks',
   homeScore: 9,
   awayScore: 23,
-  pitchSpeed: 51
+  pitchSpeed: 51,
+  exitVelocity: 74
 }
 
 const FIXED_OVERRIDES = {
