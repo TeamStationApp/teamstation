@@ -24,15 +24,15 @@ settings:
 
 packages:
   DirectorCore:
-    path: Packages/DirectorCore
+    path: ../common/DirectorCore
   DirectorSources:
-    path: Packages/DirectorSources
+    path: ../common/DirectorSources
   DirectorPipeline:
     path: Packages/DirectorPipeline
   DirectorDVR:
     path: Packages/DirectorDVR
   DirectorRTSP:
-    path: Packages/DirectorRTSP
+    path: ../common/DirectorRTSP
   DirectorRTMP:
     path: Packages/DirectorRTMP
   DirectorUI:

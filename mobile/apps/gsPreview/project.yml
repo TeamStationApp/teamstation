@@ -1,0 +1,108 @@
+name: Preview
+
+options:
+  bundleIdPrefix: co.gamestation
+  createIntermediateGroups: true
+  deploymentTarget:
+    iOS: "18.0"
+  groupSortPosition: top
+  minimumXcodeGenVersion: "2.40.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "18.0"
+    TARGETED_DEVICE_FAMILY: "1"
+    DEVELOPMENT_TEAM: G5LQ7MERPK
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    SWIFT_TREAT_WARNINGS_AS_ERRORS: NO
+    GCC_TREAT_WARNINGS_AS_ERRORS: NO
+    ALWAYS_SEARCH_USER_PATHS: NO
+    ENABLE_MODULE_VERIFIER: NO
+
+packages:
+  PreviewCore:
+    path: Packages/PreviewCore
+  PreviewUI:
+    path: Packages/PreviewUI
+  PreviewTestHarness:
+    path: Packages/PreviewTestHarness
+  DirectorCore:
+    path: ../common/DirectorCore
+  DirectorSources:
+    path: ../common/DirectorSources
+  DirectorRTSP:
+    path: ../common/DirectorRTSP
+
+targets:
+  Preview:
+    type: application
+    platform: iOS
+    sources:
+      - path: App
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: co.gamestation.preview
+        PRODUCT_NAME: GS Preview
+        INFOPLIST_FILE: App/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        CURRENT_PROJECT_VERSION: "1"
+        MARKETING_VERSION: "1.0"
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD: NO
+        LD_RUNPATH_SEARCH_PATHS: $(inherited) @executable_path/Frameworks
+    dependencies:
+      - package: PreviewCore
+        product: PreviewCore
+      - package: PreviewUI
+        product: PreviewUI
+      - package: PreviewTestHarness
+        product: PreviewTestHarness
+      - package: DirectorCore
+        product: DirectorCore
+      - package: DirectorSources
+        product: DirectorSources
+      - package: DirectorRTSP
+        product: DirectorRTSP
+
+  PreviewUnitTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests/PreviewUnitTests
+    dependencies:
+      - target: Preview
+      - package: PreviewCore
+        product: PreviewCore
+      - package: PreviewTestHarness
+        product: PreviewTestHarness
+      - package: DirectorSources
+        product: DirectorSources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: co.gamestation.preview.unittests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/GS Preview.app/GS Preview
+        BUNDLE_LOADER: $(TEST_HOST)
+
+schemes:
+  Preview:
+    build:
+      targets:
+        Preview: all
+        PreviewUnitTests: [ test ]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      gatherCoverageData: false
+      targets:
+        - PreviewUnitTests
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release
