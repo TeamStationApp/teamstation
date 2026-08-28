@@ -40,8 +40,8 @@ async function server(): Promise<void> {
     res.sendFile(path.resolve(__dirname, '../../dist/bundle.js.LICENSE.txt'))
   })
 
-  // SPA routes - serve index.html for dashboard, scoreboard, links, and split routes
-  app.get(/^\/(dashboard|scoreboard|links|split).*/, (req, res) => {
+  // SPA routes - serve index.html for dashboard, scoreboard, radar, links, and split
+  app.get(/^\/(dashboard|scoreboard|radar|links|split).*/, (req, res) => {
     res.sendFile(path.resolve(__dirname, '../../dist/index.html'))
   })
 

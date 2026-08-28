@@ -8,6 +8,7 @@ OBS or other streaming apps to overlay a score on video streams.
 - `/` - register a new event.
 - `/dashboard/{eventId}` - manual overrides and engine status.
 - `/scoreboard/{eventId}` - the live scoreboard widget (use this in OBS).
+- `/radar/{eventId}` - portrait pitch-speed readout (last MPH for that event).
 - `/split/{eventId}` - RTMP splitter UI: configure up to four
   destination URLs and stream once into the splitter; it pass-through
   forwards to every configured destination (no transcoding).

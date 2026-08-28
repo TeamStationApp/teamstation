@@ -2,10 +2,10 @@
  * Tiny mock of the gamestation server's WebSocket endpoints, used by the
  * visual-regression screenshot harness in tools/screenshotWeb.js.
  *
- * The web client (src/client/Scoreboard.tsx and src/client/Dashboard.tsx)
- * connects to:
+ * The web client (Scoreboard, Dashboard, Radar) connects to:
  *   ws://localhost:8008/sockets/api/v1/scoreboard/<eventId>
  *   ws://localhost:8008/sockets/api/v1/dashboard/<eventId>
+ * Radar reuses the scoreboard socket (same ScoreState, including pitchSpeed).
  *
  * We push a single deterministic payload on connect for each so the
  * baseline + post-upgrade screenshots can be diffed pixel-for-pixel.
