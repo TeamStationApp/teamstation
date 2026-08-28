@@ -8,8 +8,8 @@ let package = Package(
     .library(name: "DirectorUI", targets: [ "DirectorUI" ])
   ],
   dependencies: [
-    .package(path: "../DirectorCore"),
-    .package(path: "../DirectorSources"),
+    .package(path: "../../common/DirectorCore"),
+    .package(path: "../../common/DirectorSources"),
     .package(path: "../DirectorPipeline"),
     .package(path: "../DirectorDVR"),
     .package(path: "../DirectorRTMP"),

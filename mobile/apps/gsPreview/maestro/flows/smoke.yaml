@@ -1,0 +1,10 @@
+appId: co.gamestation.preview
+---
+- launchApp:
+    clearState: true
+    arguments:
+      uiTest: true
+      syntheticCameras: "00D9D 3rd,00D9D 1st"
+- runFlow: shared/allow-local-network.yaml
+- assertVisible:
+    id: preview-scroll
