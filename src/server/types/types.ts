@@ -98,7 +98,8 @@ export const asScoreState = asObject({
   awayTeam: asString,
   homeScore: asNumber,
   awayScore: asNumber,
-  pitchSpeed: asNumber
+  pitchSpeed: asNumber,
+  exitVelocity: asNumber
 })
 
 export type ScoreState = ReturnType<typeof asScoreState>

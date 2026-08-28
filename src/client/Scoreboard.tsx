@@ -38,7 +38,8 @@ const Scoreboard: React.FC = () => {
     awayTeam: 'Away Team',
     homeScore: 10,
     awayScore: 0,
-    pitchSpeed: 0
+    pitchSpeed: 0,
+    exitVelocity: 0
   })
 
   // Set transparent background for scoreboard (for OBS chroma key)

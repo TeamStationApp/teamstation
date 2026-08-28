@@ -13,12 +13,15 @@ import type { Theme } from './types'
  */
 const DIGIT_EM = 0.62
 const MPH_SIZE_RATIO = 0.15
+const EXIT_SIZE_RATIO = 0.38
+const EXIT_LABEL_SIZE_RATIO = 0.11
 
 const Radar: React.FC = () => {
   const { eventId } = useParams<{ eventId: string }>()
   const theme = useTheme()
   const styles = getStyles(theme)
   const [pitchSpeed, setPitchSpeed] = useState(0)
+  const [exitVelocity, setExitVelocity] = useState(0)
   const [readoutWidth, setReadoutWidth] = useState(0)
 
   useEffect(() => {
@@ -53,6 +56,7 @@ const Radar: React.FC = () => {
           const rawData = JSON.parse(event.data)
           const newScoreState = asScoreState(rawData)
           setPitchSpeed(newScoreState.pitchSpeed)
+          setExitVelocity(newScoreState.exitVelocity)
         } catch (error) {
           console.error('Error parsing or validating WebSocket message:', error)
         }
@@ -83,11 +87,12 @@ const Radar: React.FC = () => {
     }
   }, [eventId])
 
-  const visible = pitchSpeed > 0
-  const digits = String(visible ? pitchSpeed : 88).length
+  const digits = String(pitchSpeed > 0 ? pitchSpeed : 88).length
   const fontSize =
     readoutWidth > 0 ? readoutWidth / Math.max(digits, 1) / DIGIT_EM : 0
   const mphSize = fontSize * MPH_SIZE_RATIO
+  const exitSize = fontSize * EXIT_SIZE_RATIO
+  const exitLabelSize = fontSize * EXIT_LABEL_SIZE_RATIO
 
   return (
     <View style={styles.container}>
@@ -97,32 +102,95 @@ const Radar: React.FC = () => {
           setReadoutWidth(event.nativeEvent.layout.width)
         }}
       >
-        <Text
-          style={[
-            styles.speed,
-            {
-              fontSize,
-              lineHeight: fontSize * 1.05,
-              opacity: visible ? 1 : 0
-            }
-          ]}
-          numberOfLines={1}
-        >
-          {visible ? pitchSpeed : 88}
-        </Text>
+        <MetricNumber
+          value={pitchSpeed}
+          fontSize={fontSize}
+          color={theme.primaryTextColor}
+          fontFamily={theme.secondaryTextFont}
+          slotRatio={0.92}
+        />
         <Text
           style={[
             styles.mph,
             {
               fontSize: mphSize,
-              lineHeight: mphSize * 1.2,
-              opacity: visible ? 1 : 0
+              lineHeight: mphSize,
+              // Half the leftover line-box gap under the pitch digits.
+              marginTop: -fontSize * 0.04
             }
           ]}
         >
           MPH
         </Text>
+        <View style={{ marginTop: fontSize * 0.22, width: '100%' }}>
+          <MetricNumber
+            value={exitVelocity}
+            fontSize={exitSize}
+            color={theme.primaryTextColor}
+            fontFamily={theme.secondaryTextFont}
+          />
+        </View>
+        <Text
+          style={[
+            styles.exitLabel,
+            {
+              fontSize: exitLabelSize,
+              lineHeight: exitLabelSize * 1.2
+            }
+          ]}
+        >
+          Exit Velocity
+        </Text>
       </View>
+    </View>
+  )
+}
+
+const MetricNumber: React.FC<{
+  value: number
+  fontSize: number
+  color: string
+  fontFamily: string
+  slotRatio?: number
+}> = ({ value, fontSize, color, fontFamily, slotRatio = 1.05 }) => {
+  if (fontSize <= 0) {
+    return <View />
+  }
+  const slotHeight = fontSize * slotRatio
+  if (value > 0) {
+    return (
+      <Text
+        style={{
+          color,
+          fontWeight: '700',
+          fontFamily,
+          textAlign: 'center',
+          fontSize,
+          lineHeight: slotHeight
+        }}
+        numberOfLines={1}
+      >
+        {value}
+      </Text>
+    )
+  }
+  return (
+    <View
+      style={{
+        height: slotHeight,
+        width: '100%',
+        alignItems: 'center',
+        justifyContent: 'center'
+      }}
+    >
+      <View
+        style={{
+          width: fontSize * 1.15,
+          height: Math.max(4, fontSize * 0.07),
+          backgroundColor: color,
+          borderRadius: 2
+        }}
+      />
     </View>
   )
 }
@@ -141,18 +209,19 @@ const getStyles = cacheStyles((theme: Theme) => ({
     alignItems: 'center',
     justifyContent: 'center'
   },
-  speed: {
-    color: theme.primaryTextColor,
-    fontWeight: '700',
-    fontFamily: theme.secondaryTextFont,
-    textAlign: 'center'
-  },
   mph: {
     color: theme.primaryTextColor,
     fontWeight: '700',
     fontFamily: theme.secondaryTextFont,
     textAlign: 'center',
-    marginTop: theme.rem(0.25)
+    marginTop: 0
+  },
+  exitLabel: {
+    color: theme.primaryTextColor,
+    fontWeight: '700',
+    fontFamily: theme.secondaryTextFont,
+    textAlign: 'center',
+    marginTop: 0
   }
 }))
 

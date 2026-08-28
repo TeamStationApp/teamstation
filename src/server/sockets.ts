@@ -57,7 +57,8 @@ function createDefaultAutoState(): ScoreState {
     awayTeam: 'Away Team',
     homeScore: 0,
     awayScore: 0,
-    pitchSpeed: 0
+    pitchSpeed: 0,
+    exitVelocity: 0
   }
 }
 
@@ -66,7 +67,7 @@ function createDefaultAutoState(): ScoreState {
  * present (not undefined) in the update override the corresponding fields.
  * This is the shared write path for every engine that sends an update, each
  * of which may contribute its own subset of ScoreState (a Tag One reader
- * sends just `pitchSpeed`).
+ * sends just `pitchSpeed` and `exitVelocity`).
  */
 function mergeScoreStateUpdate(
   current: ScoreState,
