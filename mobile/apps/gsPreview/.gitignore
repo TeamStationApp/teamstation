@@ -1,0 +1,28 @@
+# Generated Xcode project (source of truth is project.yml)
+*.xcodeproj/
+*.xcworkspace/
+!*.xcworkspace/contents.xcworkspacedata
+
+# Build products
+DerivedData/
+build/
+.build/
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Test + measurement output
+reports/
+maestro/snippets/
+maestro/config.env
+
+# Captured run output
+artifacts/
+
+# Node
+node_modules/
+
+# macOS
+.DS_Store
+xcuserdata/
+*.xcuserstate

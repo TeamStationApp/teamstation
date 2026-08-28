@@ -8,8 +8,8 @@ let package = Package(
     .library(name: "DirectorTestHarness", targets: [ "DirectorTestHarness" ])
   ],
   dependencies: [
-    .package(path: "../DirectorCore"),
-    .package(path: "../DirectorSources")
+    .package(path: "../../common/DirectorCore"),
+    .package(path: "../../common/DirectorSources")
   ],
   targets: [
     .target(
