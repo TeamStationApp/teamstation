@@ -27,7 +27,12 @@ const ROUTES = [
   { slug: 'home', path: '/' },
   { slug: 'links', path: '/links/visualtest' },
   { slug: 'dashboard', path: '/dashboard/visualtest' },
-  { slug: 'scoreboard', path: '/scoreboard/visualtest' }
+  { slug: 'scoreboard', path: '/scoreboard/visualtest' },
+  {
+    slug: 'radar',
+    path: '/radar/visualtest',
+    viewport: { width: 390, height: 844 }
+  }
 ]
 
 function parseArgs() {
@@ -77,7 +82,8 @@ function startWebpackDevServer() {
 
 async function captureRoute(browser, route, outDir) {
   const page = await browser.newPage()
-  await page.setViewport({ width: 1280, height: 800, deviceScaleFactor: 2 })
+  const viewport = route.viewport ?? { width: 1280, height: 800 }
+  await page.setViewport({ ...viewport, deviceScaleFactor: 2 })
   await page.emulateMediaFeatures([
     { name: 'prefers-color-scheme', value: 'dark' }
   ])

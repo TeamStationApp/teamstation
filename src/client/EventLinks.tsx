@@ -10,15 +10,17 @@ const EventLinks: React.FC = () => {
   const { eventId } = useParams<{ eventId: string }>()
   const [copiedDashboard, setCopiedDashboard] = useState(false)
   const [copiedScoreboard, setCopiedScoreboard] = useState(false)
+  const [copiedRadar, setCopiedRadar] = useState(false)
   const theme = useTheme()
   const styles = getStyles(theme)
 
   const dashboardLink = `${window.location.origin}/dashboard/${eventId ?? ''}`
   const scoreboardLink = `${window.location.origin}/scoreboard/${eventId ?? ''}`
+  const radarLink = `${window.location.origin}/radar/${eventId ?? ''}`
 
   const copyToClipboard = async (
     text: string,
-    type: 'dashboard' | 'scoreboard'
+    type: 'dashboard' | 'scoreboard' | 'radar'
   ): Promise<void> => {
     try {
       await navigator.clipboard.writeText(text)
@@ -27,10 +29,15 @@ const EventLinks: React.FC = () => {
         setTimeout(() => {
           setCopiedDashboard(false)
         }, 2000)
-      } else {
+      } else if (type === 'scoreboard') {
         setCopiedScoreboard(true)
         setTimeout(() => {
           setCopiedScoreboard(false)
+        }, 2000)
+      } else {
+        setCopiedRadar(true)
+        setTimeout(() => {
+          setCopiedRadar(false)
         }, 2000)
       }
     } catch (err) {
@@ -103,6 +110,30 @@ const EventLinks: React.FC = () => {
           </View>
         </View>
 
+        <View style={styles.linkSection}>
+          <Text style={styles.linkLabel}>Radar Link:</Text>
+          <View style={styles.linkRow}>
+            <TextInput
+              style={styles.linkInput}
+              value={radarLink}
+              editable={false}
+              selectTextOnFocus
+            />
+            <Pressable
+              style={styles.copyButton}
+              onPress={() => {
+                copyToClipboard(radarLink, 'radar').catch((err: unknown) => {
+                  console.error('Failed to copy:', err)
+                })
+              }}
+            >
+              <Text style={styles.copyButtonText}>
+                {copiedRadar ? '✓' : 'Copy'}
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+
         <View style={styles.buttonRow}>
           <Pressable
             style={[styles.navButton, styles.dashboardButton]}
@@ -120,6 +151,15 @@ const EventLinks: React.FC = () => {
             }}
           >
             <Text style={styles.navButtonText}>Go to Scoreboard</Text>
+          </Pressable>
+
+          <Pressable
+            style={[styles.navButton, styles.radarButton]}
+            onPress={() => {
+              window.location.href = radarLink
+            }}
+          >
+            <Text style={styles.navButtonText}>Go to Radar</Text>
           </Pressable>
         </View>
       </View>
@@ -231,6 +271,9 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   scoreboardButton: {
     backgroundColor: theme.secondaryButtonColor
+  },
+  radarButton: {
+    backgroundColor: theme.primaryButtonColor
   },
   navButtonText: {
     color: theme.buttonTextColor,
