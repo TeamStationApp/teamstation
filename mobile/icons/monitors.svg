@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none">
+  <!-- Overlapping monitors (copy-icon stack): three screens + short stands. -->
+  <g stroke="#1F2418" stroke-width="4" stroke-linejoin="round" stroke-linecap="round">
+    <!-- Rear monitor, offset up-left -->
+    <rect x="8" y="8" width="50" height="32" rx="2"/>
+    <line x1="33" y1="40" x2="33" y2="48"/>
+    <line x1="22" y1="48" x2="44" y2="48"/>
+    <!-- Middle monitor -->
+    <rect x="26" y="24" width="50" height="32" rx="2"/>
+    <!-- Front monitor, offset down-right -->
+    <rect x="44" y="40" width="50" height="32" rx="2"/>
+    <line x1="69" y1="72" x2="69" y2="88"/>
+    <line x1="56" y1="88" x2="82" y2="88"/>
+  </g>
+</svg>

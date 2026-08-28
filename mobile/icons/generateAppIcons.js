@@ -1,10 +1,9 @@
 #!/usr/bin/env node
 /**
- * Compose GS Director and GS Cameraman iOS App Icons from the canonical
- * GameStation logo plus a per-app wireframe glyph.
+ * Compose GS Director, GS Cameraman and GS Preview app icons
+ * from the canonical GameStation logo plus a per-app wireframe glyph.
  *
- * Source of truth for the G: `src/client/assets/images/gs_logo.png`
- * (the same file GS Watcher's Android launcher generator uses).
+ * Source of truth for the G: `src/client/assets/images/gs_logo.png`.
  *
  * Layout: cream canvas (sampled from the logo), G scaled to 75% and
  * placed upper-left, outline glyph lower-right with a cream understroke
@@ -49,6 +48,14 @@ const APPS = [
     out: path.join(
       repoRoot,
       'mobile/apps/gsCameraman/App/Assets.xcassets/AppIcon.appiconset/AppIcon.png'
+    )
+  },
+  {
+    name: 'preview',
+    svg: path.join(iconsDir, 'monitors.svg'),
+    out: path.join(
+      repoRoot,
+      'mobile/apps/gsPreview/App/Assets.xcassets/AppIcon.appiconset/AppIcon.png'
     )
   }
 ]
@@ -176,6 +183,54 @@ function composeIcon({ paddedLogo, cream, glyph, dest }) {
   )
 }
 
+const ANDROID_DENSITIES = [
+  { dir: 'mipmap-mdpi', scale: 1 },
+  { dir: 'mipmap-hdpi', scale: 1.5 },
+  { dir: 'mipmap-xhdpi', scale: 2 },
+  { dir: 'mipmap-xxhdpi', scale: 3 },
+  { dir: 'mipmap-xxxhdpi', scale: 4 }
+]
+const ADAPTIVE_DP = 108
+const ADAPTIVE_SAFE_DP = 66
+const LEGACY_DP = 48
+
+function writeAndroidMipmaps(composedPng, resDir) {
+  for (const { dir, scale } of ANDROID_DENSITIES) {
+    const outDir = path.join(resDir, dir)
+    fs.mkdirSync(outDir, { recursive: true })
+    const adaptiveCanvasPx = Math.round(ADAPTIVE_DP * scale)
+    const adaptiveSafePx = Math.round(ADAPTIVE_SAFE_DP * scale)
+    const legacyPx = Math.round(LEGACY_DP * scale)
+    magick(composedPng, '-resize', `${legacyPx}x${legacyPx}`, '-depth', '8', path.join(outDir, 'ic_launcher.png'))
+    magick(
+      composedPng,
+      '-resize',
+      `${legacyPx}x${legacyPx}`,
+      '-depth',
+      '8',
+      path.join(outDir, 'ic_launcher_round.png')
+    )
+    magick(
+      composedPng,
+      '-background',
+      'none',
+      '-resize',
+      `${adaptiveSafePx}x${adaptiveSafePx}`,
+      '-gravity',
+      'center',
+      '-extent',
+      `${adaptiveCanvasPx}x${adaptiveCanvasPx}`,
+      '-alpha',
+      'set',
+      path.join(outDir, 'ic_launcher_foreground.png')
+    )
+    console.log(
+      `[icons] watcher ${dir}: ic_launcher ${legacyPx}px, ` +
+        `foreground ${adaptiveCanvasPx}px (safe ${adaptiveSafePx}px)`
+    )
+  }
+}
+
 function main() {
   if (!fs.existsSync(SRC_LOGO)) {
     throw new Error(`Source logo not found: ${SRC_LOGO}`)
@@ -206,6 +261,9 @@ function main() {
           `(canvas ${CANVAS}, G ${Math.round(CANVAS * G_SCALE)} at +${G_INSET}+${G_INSET}, ` +
           `glyph ${GLYPH_SIZE} SE inset ${GLYPH_INSET}, cream ${cream})`
       )
+      if (app.androidRes) {
+        writeAndroidMipmaps(app.out, app.androidRes)
+      }
     }
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true })
