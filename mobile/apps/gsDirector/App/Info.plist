@@ -70,7 +70,9 @@
     <string>LaunchBackground</string>
   </dict>
   <key>UIStatusBarHidden</key>
-  <true/>
+  <false/>
+  <key>UIStatusBarStyle</key>
+  <string>UIStatusBarStyleLightContent</string>
   <key>UIUserInterfaceStyle</key>
   <string>Dark</string>
   <!-- iPadOS 26 puts apps that opt out of multitasking with UIRequiresFullScreen into a scaled
