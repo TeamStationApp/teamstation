@@ -28,6 +28,10 @@ appId: co.gamestation.director
     id: 'stream-button'
 - assertVisible:
     id: 'record-button'
+- assertVisible:
+    id: 'header-thermal'
+- assertVisible:
+    id: 'recordings-button'
 - assertNotVisible:
     id: 'header-rec'
 - assertNotVisible:
