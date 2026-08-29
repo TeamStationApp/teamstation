@@ -10,6 +10,7 @@ public struct DirectorGridView: View {
   @State private var dragLocation: CGPoint = .zero
   @State private var dragGrabOffset = CGSize.zero
   @State private var slideToStop: SlideToStopTarget?
+  @State private var toolbarHeight: CGFloat = 36
 
   public init() {}
 
@@ -19,11 +20,17 @@ public struct DirectorGridView: View {
 
       VStack(spacing: 10) {
         toolbar
+          .background {
+            GeometryReader { geometry in
+              Color.clear.preference(key: ToolbarHeightKey.self, value: geometry.size.height)
+            }
+          }
         grid
       }
       // Status bar is hidden, so padding from the top of the display keeps toolbar hits
       // out of the Control Center hot corner.
       .padding(EdgeInsets(top: 28, leading: 12, bottom: 12, trailing: 12))
+      .onPreferenceChange(ToolbarHeightKey.self) { toolbarHeight = $0 }
 
       if environment.config.showDebugHUD {
         DebugHUD(snapshot: environment.snapshot)
@@ -37,19 +44,28 @@ public struct DirectorGridView: View {
     }
     .overlay {
       if let slideToStop {
-        SlideToStopOverlay(
-          target: slideToStop,
-          onStop: {
-            self.slideToStop = nil
-            switch slideToStop {
-            case .stream:
-              Task { await environment.stopStreaming() }
-            case .record:
-              Task { await environment.stopRecording() }
+        ZStack(alignment: .topTrailing) {
+          Color.black.opacity(0.55)
+            .ignoresSafeArea()
+            .accessibilityIdentifier("slide-to-stop-cancel")
+            .accessibilityLabel("Cancel")
+            .accessibilityAddTraits(.isButton)
+            .onTapGesture { self.slideToStop = nil }
+          SlideToStopOverlay(
+            target: slideToStop,
+            onStop: {
+              self.slideToStop = nil
+              switch slideToStop {
+              case .stream:
+                Task { await environment.stopStreaming() }
+              case .record:
+                Task { await environment.stopRecording() }
+              }
             }
-          },
-          onCancel: { self.slideToStop = nil }
-        )
+          )
+          .padding(.top, 28 + toolbarHeight + 8)
+          .padding(.trailing, 12)
+        }
       }
     }
   }
@@ -401,5 +417,13 @@ private struct PulsingTransportLabel: View {
   private var fill: Color {
     if !isActive { return Color.recordRed.opacity(0.18) }
     return pulseBright ? Self.brighterRed : Self.darkerRed
+  }
+}
+
+private struct ToolbarHeightKey: PreferenceKey {
+  static let defaultValue: CGFloat = 36
+
+  static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+    value = nextValue()
   }
 }
