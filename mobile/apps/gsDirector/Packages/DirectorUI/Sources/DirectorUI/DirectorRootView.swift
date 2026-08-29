@@ -13,8 +13,6 @@ public struct DirectorRootView: View {
     DirectorGridView()
       .environment(environment)
       .preferredColorScheme(.dark)
-      .statusBarHidden()
-      .persistentSystemOverlays(.hidden)
       .fullScreenCover(item: $environment.activeSheet) { sheet in
         Group {
           switch sheet {
