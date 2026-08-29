@@ -1,0 +1,61 @@
+# G9: header thermal pill left of Recordings. Settings Test Thermal Visuals forces
+# Cool / Fair / Warm / Hot for 10 seconds, then the pill returns to the live level.
+appId: co.gamestation.director
+---
+- launchApp:
+    appId: co.gamestation.director
+    arguments:
+      clearState: true
+      uiTest: true
+      debugHUD: true
+      sourceProfile: synthetic4
+
+- extendedWaitUntil:
+    visible:
+      id: 'source-row-1'
+    timeout: 15000
+- runFlow: shared/settle-source-list.yaml
+- tapOn:
+    id: 'source-toggle-1'
+- tapOn:
+    id: 'start-directing'
+
+- extendedWaitUntil:
+    visible: 'source=1 state=live.*'
+    timeout: 15000
+
+- assertVisible:
+    id: 'header-thermal'
+- assertVisible:
+    id: 'recordings-button'
+
+- runFlow: shared/open-test-thermal.yaml
+- tapOn: 'Cool'
+- extendedWaitUntil:
+    visible: 'cool'
+    timeout: 8000
+- assertVisible:
+    id: 'header-thermal'
+
+- runFlow: shared/open-test-thermal.yaml
+- tapOn: 'Fair'
+- extendedWaitUntil:
+    visible: 'fair'
+    timeout: 8000
+
+- runFlow: shared/open-test-thermal.yaml
+- tapOn: 'Warm'
+- extendedWaitUntil:
+    visible: 'warm'
+    timeout: 8000
+
+- runFlow: shared/open-test-thermal.yaml
+- tapOn: 'Hot'
+- extendedWaitUntil:
+    visible: '🔥'
+    timeout: 8000
+- assertVisible: 'hot'
+
+- extendedWaitUntil:
+    notVisible: '🔥'
+    timeout: 15000

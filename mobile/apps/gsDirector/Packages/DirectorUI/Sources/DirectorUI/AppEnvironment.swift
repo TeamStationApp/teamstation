@@ -127,6 +127,28 @@ public final class AppEnvironment {
     statusMessage = nil
   }
 
+  /// Force the header pill to `state` for `duration`, then return to the live thermal reading.
+  public func previewThermal(
+    _ state: ProcessInfo.ThermalState,
+    duration: Duration = .seconds(10)
+  ) {
+    thermalPreviewTask?.cancel()
+    thermalPreview = state
+    thermalPreviewTask = Task { @MainActor in
+      try? await Task.sleep(for: duration)
+      guard !Task.isCancelled else { return }
+      thermalPreview = nil
+    }
+  }
+
+  /// What the header pill shows: a Settings preview if one is running, otherwise telemetry.
+  public var displayedThermalLevel: ThermalBadgeLevel {
+    if let thermalPreview {
+      return ThermalBadgeLevel(process: thermalPreview)
+    }
+    return ThermalBadgeLevel(telemetryName: snapshot.thermalState)
+  }
+
   public private(set) var lastExport: ExportService.Result?
   public private(set) var lastRecordingShare: [URL] = []
   public var isSharingRecordings = false
@@ -140,6 +162,9 @@ public final class AppEnvironment {
   /// leaves all but the last one unable to present, which made the settings and perf harness
   /// unreachable from the grid.
   public var activeSheet: Sheet?
+  /// Settings Test Thermal Visuals. Header-only; HUD `thermal=` stays the real ProcessInfo name.
+  public private(set) var thermalPreview: ProcessInfo.ThermalState?
+  private var thermalPreviewTask: Task<Void, Never>?
   /// Text overlay currently being authored on the content canvas.
   public var editingTextOverlayID: UUID?
   /// Which discovery this session is running. Settings can change it without a relaunch.

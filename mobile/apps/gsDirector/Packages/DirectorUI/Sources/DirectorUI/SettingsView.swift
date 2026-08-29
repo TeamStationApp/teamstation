@@ -17,6 +17,7 @@ public struct SettingsView: View {
   @State private var draft = AppConfig.default
   @State private var cover: SettingsCover?
   @State private var showingClearCameraMemory = false
+  @State private var showingTestThermal = false
   @State private var deleting: OverlayTemplate?
   @State private var newTemplateName = ""
   @State private var copyFromID: UUID?
@@ -94,6 +95,33 @@ public struct SettingsView: View {
         "Removes every saved camera name and mapping. Cameras without a NearStream serial/MAC "
           + "or an RTSP identifier will not be remembered."
       )
+    }
+    .confirmationDialog(
+      "Test Thermal Visuals",
+      isPresented: $showingTestThermal,
+      titleVisibility: .visible
+    ) {
+      Button("Cool") {
+        environment.previewThermal(.nominal)
+        dismiss()
+      }
+      .accessibilityIdentifier("settings-test-thermal-cool")
+      Button("Fair") {
+        environment.previewThermal(.fair)
+        dismiss()
+      }
+      .accessibilityIdentifier("settings-test-thermal-fair")
+      Button("Warm") {
+        environment.previewThermal(.serious)
+        dismiss()
+      }
+      .accessibilityIdentifier("settings-test-thermal-warm")
+      Button("Hot") {
+        environment.previewThermal(.critical)
+        dismiss()
+      }
+      .accessibilityIdentifier("settings-test-thermal-hot")
+      Button("Cancel", role: .cancel) {}
     }
     .onAppear {
       draft = environment.persistedConfig
@@ -290,9 +318,22 @@ public struct SettingsView: View {
           )
         }
 
-        Section("Diagnostics") {
+        Section {
           Toggle("Telemetry overlay", isOn: $draft.showDebugHUD)
             .accessibilityIdentifier("settings-debug-hud")
+
+          Button("Test Thermal Visuals") {
+            showingTestThermal = true
+          }
+          .accessibilityIdentifier("settings-test-thermal")
+        } header: {
+          Text("Diagnostics")
+        } footer: {
+          Text(
+            "Test Thermal Visuals shows Cool, Fair, Warm, or Hot on the header for ten seconds, "
+              + "then returns to the device thermal level. Does not Save these Settings."
+          )
+          Color.clear.frame(height: 72)
         }
       }
       .navigationTitle("Settings")

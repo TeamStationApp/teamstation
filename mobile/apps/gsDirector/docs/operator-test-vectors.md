@@ -168,6 +168,7 @@ This is the operator path that was janky: output moving, small previews frozen.
 | G5 | — | Degradation ladder removed; archives follow the live wire | — |
 | G6 | Encode-session budget / thermal | HUD `enc=`, `thermal=`; Peltier-on numbers are a separate series | `docs/risks.md` |
 | G7 | Five-source grid fills | `5/5 enabled`, five live tiles plus Output | `program-five-sources` |
+| G9 | Header thermal pill | Left of Recordings; Cool / Fair / Warm / Hot; Test Thermal Visuals forces a level for 10 s then reverts | `thermal-visuals` |
 
 ---
 
@@ -211,14 +212,15 @@ Flows in `scripts/run-maestro.js --device <udid> --suite operator`, in order:
 7. `operator-empty-tiles` — B5, B6
 8. `operator-source-layout` — B12, B13
 9. `operator-menu-back` — G3, G4
-10. `stream-controls` — stream URL field and clear X; empty-URL toast; Stream left of Record; RECORDING not STOP; no REC pill
-11. `scrub-without-history` — D1
-12. `scrub-before-first-segment` — D2
-13. `operator-scrub-cut-return` — D3, D4, E1–E7, C1, C4
-14. `scrub-and-return` — D6, D9, E3
-15. `hevc-scrub` — D5, D7, E8, D12
-16. `scrub-incremental` — D13, D14
-17. `program-five-sources` — B7, F1, F3, G1, G7
-18. `recordings-export` — G2, G8
+10. `stream-controls` — stream URL field and clear X; empty-URL toast; Stream left of Record; RECORDING not STOP; no REC pill; thermal pill left of Recordings
+11. `thermal-visuals` — G9
+12. `scrub-without-history` — D1
+13. `scrub-before-first-segment` — D2
+14. `operator-scrub-cut-return` — D3, D4, E1–E7, C1, C4
+15. `scrub-and-return` — D6, D9, E3
+16. `hevc-scrub` — D5, D7, E8, D12
+17. `scrub-incremental` — D13, D14
+18. `program-five-sources` — B7, F1, F3, G1, G7
+19. `recordings-export` — G2, G8
 
 After any code fix, re-run this suite from the top.
