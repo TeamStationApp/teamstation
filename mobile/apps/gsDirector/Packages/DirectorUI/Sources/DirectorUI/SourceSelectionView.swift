@@ -16,12 +16,14 @@ public struct SourceSelectionView: View {
 
   public var body: some View {
     ZStack {
-      Color.deckBackground.ignoresSafeArea()
+      Color.deckBackground.ignoresSafeArea(.container)
 
       VStack(alignment: .leading, spacing: 0) {
         header
         Divider().overlay(Color.white.opacity(0.08))
         list
+      }
+      .safeAreaInset(edge: .bottom) {
         footer
       }
 
@@ -81,17 +83,33 @@ public struct SourceSelectionView: View {
   }
 
   private var list: some View {
-    ScrollView {
-      LazyVStack(spacing: 8) {
-        ForEach(Array(environment.selections.enumerated()), id: \.element.id) { index, selection in
-          row(index: index, selection: selection)
+    ScrollViewReader { proxy in
+      ScrollView {
+        VStack(spacing: 8) {
+          ForEach(Array(environment.selections.enumerated()), id: \.element.id) { index, selection in
+            row(index: index, selection: selection)
+              .id(selection.id)
+          }
+          if environment.selections.isEmpty {
+            emptyState
+          }
         }
-        if environment.selections.isEmpty {
-          emptyState
+        .padding(.horizontal, 24)
+        .padding(.vertical, 12)
+      }
+      .scrollDismissesKeyboard(.interactively)
+      .onChange(of: renamingID) { _, id in
+        guard let id else {
+          isNamingFocused = false
+          return
+        }
+        Task { @MainActor in
+          try? await Task.sleep(for: .milliseconds(50))
+          withAnimation(.easeInOut(duration: 0.22)) {
+            proxy.scrollTo(id, anchor: .center)
+          }
         }
       }
-      .padding(.horizontal, 24)
-      .padding(.vertical, 12)
     }
   }
 
@@ -130,7 +148,14 @@ public struct SourceSelectionView: View {
               .focused($isNamingFocused)
               .accessibilityIdentifier("source-name-field-\(index + 1)")
               .onSubmit { commitRename(for: selection) }
-              .onAppear { isNamingFocused = true }
+              .onAppear {
+                // Menu dismiss and keyboard avoidance both steal first responder if focus is
+                // claimed in the same turn the field appears — especially on the last row.
+                Task { @MainActor in
+                  try? await Task.sleep(for: .milliseconds(350))
+                  isNamingFocused = true
+                }
+              }
           }
         } else if let endpoint = environment.endpoint(for: selection.id) {
           nameMenu(index: index, selection: selection, endpoint: endpoint)

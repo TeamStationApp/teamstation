@@ -9,7 +9,6 @@ enum SlideToStopTarget {
 struct SlideToStopOverlay: View {
   var target: SlideToStopTarget
   var onStop: () -> Void
-  var onCancel: () -> Void
 
   private var phrase: String {
     switch target {
@@ -27,24 +26,21 @@ struct SlideToStopOverlay: View {
 
   private static let knobSize: CGFloat = 52
   private static let trackHeight: CGFloat = 58
-  private static let trackWidth: CGFloat = 340
+  /// 20% narrower than the original 340pt track so it sits under STREAM + RECORD.
+  private static let trackWidth: CGFloat = 272
+  /// Matches `PulsingTransportLabel` so the track overlays those rounded-square buttons.
+  private static let cornerRadius: CGFloat = 8
   private static let commitFraction: CGFloat = 0.8
   private static let darkerRed = Color(red: 0.62, green: 0.08, blue: 0.10)
   private static let brighterRed = Color(red: 0.92, green: 0.18, blue: 0.20)
   private static let trackRed = Color(red: 0.78, green: 0.22, blue: 0.26)
 
-  var body: some View {
-    ZStack {
-      Color.black.opacity(0.55)
-        .ignoresSafeArea()
-        .accessibilityIdentifier("slide-to-stop-cancel")
-        .accessibilityLabel("Cancel")
-        .accessibilityAddTraits(.isButton)
-        .onTapGesture(perform: onCancel)
+  private var trackShape: RoundedRectangle {
+    RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
+  }
 
-      track
-        .padding(.horizontal, 28)
-    }
+  var body: some View {
+    track
   }
 
   private var track: some View {
@@ -52,16 +48,22 @@ struct SlideToStopOverlay: View {
       let travel = max(geometry.size.width - Self.knobSize - 6, 1)
       let progress = min(max(dragOffset / travel, 0), 1)
       ZStack(alignment: .leading) {
-        Capsule()
+        trackShape
           .fill(Self.trackRed.opacity(0.72))
         shimmerLabel
-          .padding(.leading, Self.knobSize + 10)
-          .padding(.trailing, 16)
-          .frame(maxWidth: .infinity, alignment: .leading)
+          // Center in the rest gap to the right of the knob, not under the knob itself.
+          .padding(.leading, 3 + Self.knobSize)
+          .padding(.trailing, 3)
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
         knob
           .offset(x: 3 + dragOffset)
+        Color.clear
+          .frame(width: 1, height: 1)
+          .accessibilityIdentifier("slide-to-stop-end")
+          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+          .allowsHitTesting(false)
       }
-      .contentShape(Capsule())
+      .contentShape(trackShape)
       .gesture(drag(travel: travel))
       .accessibilityIdentifier("slide-to-stop-track")
       .accessibilityValue(String(format: "%.0f percent", progress * 100))
@@ -72,7 +74,7 @@ struct SlideToStopOverlay: View {
 
   private var knob: some View {
     ZStack {
-      RoundedRectangle(cornerRadius: 12, style: .continuous)
+      RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
         .fill(pulseBright ? Self.brighterRed : Self.darkerRed)
       RoundedRectangle(cornerRadius: 2, style: .continuous)
         .fill(Color.white)
@@ -87,10 +89,12 @@ struct SlideToStopOverlay: View {
   private var shimmerLabel: some View {
     Text(phrase)
       .font(.system(size: 17, weight: .semibold, design: .rounded))
+      .multilineTextAlignment(.center)
       .foregroundStyle(Color.white.opacity(0.38))
       .overlay {
         Text(phrase)
           .font(.system(size: 17, weight: .semibold, design: .rounded))
+          .multilineTextAlignment(.center)
           .foregroundStyle(.white)
           .mask {
             Rectangle()
@@ -101,9 +105,10 @@ struct SlideToStopOverlay: View {
                   endPoint: .trailing
                 )
               )
-              .offset(x: shimmerPhase * 160)
+              .offset(x: shimmerPhase * 130)
           }
       }
+      .frame(maxWidth: .infinity)
       .clipped()
       .accessibilityIdentifier("slide-to-stop-label")
       .onAppear {
