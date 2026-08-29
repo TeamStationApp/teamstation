@@ -41,6 +41,7 @@ const OPERATOR_SUITE = [
   'operator-source-layout',
   'operator-menu-back',
   'stream-controls',
+  'thermal-visuals',
   'scrub-without-history',
   'scrub-before-first-segment',
   'operator-scrub-cut-return',

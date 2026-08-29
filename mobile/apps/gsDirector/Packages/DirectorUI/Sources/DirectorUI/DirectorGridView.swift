@@ -111,6 +111,11 @@ public struct DirectorGridView: View {
 
       Spacer()
 
+      ThermalBadge(
+        level: environment.displayedThermalLevel,
+        animate: !environment.launch.isUITest
+      )
+
       Button {
         environment.activeSheet = .recordings
       } label: {
