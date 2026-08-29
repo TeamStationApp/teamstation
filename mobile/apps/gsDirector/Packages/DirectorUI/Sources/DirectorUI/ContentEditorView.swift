@@ -36,8 +36,7 @@ struct ContentEditorView: View {
           .zIndex(2)
         }
         GeometryReader { geometry in
-        let slot = editorSlot(from: geometry.size)
-        let canvas = fittedCanvas(in: slot)
+        let canvas = fittedCanvas(in: geometry.size)
         ZStack {
           Color.black
             .contentShape(Rectangle())
@@ -332,20 +331,6 @@ struct ContentEditorView: View {
     return shortEdge * 0.42
   }
 
-  private func editorSlot(from geometry: CGSize) -> CGSize {
-    let screen = UIScreen.main.bounds.size
-    let landscape = CGSize(
-      width: max(screen.width, screen.height),
-      height: min(screen.width, screen.height)
-    )
-    let bar: CGFloat = isEditingText ? 56 : 0
-    let host = CGSize(width: landscape.width, height: max(landscape.height - bar, 200))
-    if geometry.width >= host.width * 0.85 && geometry.height >= host.height * 0.75 {
-      return geometry
-    }
-    return host
-  }
-
   private func endTextEdit() {
     fontSizeFocused = false
     overlayFieldBlurred = false
@@ -428,10 +413,13 @@ struct ContentEditorView: View {
     )
   }
 
+  /// Aspect-fit the programme picture into the visible editor. Height-limited slots shrink the
+  /// width evenly so the full frame stays on screen instead of cropping the top and bottom.
   private func fittedCanvas(in size: CGSize) -> CGSize {
     let width = CGFloat(environment.config.programResolution.width)
     let height = CGFloat(environment.config.programResolution.height)
-    let scale = min(size.width / width, size.height / height)
+    let slot = CGSize(width: max(size.width, 1), height: max(size.height, 1))
+    let scale = min(slot.width / max(width, 1), slot.height / max(height, 1))
     return CGSize(width: width * scale, height: height * scale)
   }
 
