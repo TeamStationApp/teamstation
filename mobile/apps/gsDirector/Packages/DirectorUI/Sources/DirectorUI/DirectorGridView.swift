@@ -27,8 +27,8 @@ public struct DirectorGridView: View {
           }
         grid
       }
-      // Status bar is hidden, so padding from the top of the display keeps toolbar hits
-      // out of the Control Center hot corner.
+      // The status bar draws in this top inset over the deck. Do not add a second safe-area
+      // gap — the toolbar is already below the system time / Wi-Fi / battery.
       .padding(EdgeInsets(top: 28, leading: 12, bottom: 12, trailing: 12))
       .onPreferenceChange(ToolbarHeightKey.self) { toolbarHeight = $0 }
 
@@ -68,6 +68,7 @@ public struct DirectorGridView: View {
         }
       }
     }
+    .ignoresSafeArea(.container, edges: .top)
   }
 
   private var toolbar: some View {
