@@ -214,7 +214,14 @@ public final class AppEnvironment {
   /// SwiftUI is fed a snapshot at most once a second, plus immediately on chrome changes
   /// (live/replay, program cut, record/stream). The 5 Hz poll still writes `telemetry` so
   /// `/dump-state` stays fresh without rebuilding the grid DisplayList 5 times a second.
+  /// While a tile is replaying or scrubbing, both the poll and the UI copy run at 20 Hz so
+  /// the yellow offset pill can tick in tenths — the 5 Hz poll alone skipped ~0.2 s.
   private var lastPublishedUIAt: TimeInterval = 0
+  private var pollInterval: TimeInterval = 0
+  private static let livePollInterval: TimeInterval = 0.2
+  private static let replayPollInterval: TimeInterval = 0.05
+  private static let liveUIPublishInterval: TimeInterval = 1
+  private static let replayUIPublishInterval: TimeInterval = 0.05
   /// Width of one small source tile, used so Output scrub (if added) shares the 60s-per-width rate.
   public var smallTileWidth: Double = 300
   /// Visual order of Source 1…5. Independent of which camera occupies a source.
@@ -2957,8 +2964,15 @@ public final class AppEnvironment {
   // MARK: - Telemetry polling
 
   private func startPolling() {
+    pollInterval = 0
+    schedulePollTimer(Self.livePollInterval)
+  }
+
+  private func schedulePollTimer(_ interval: TimeInterval) {
+    guard interval != pollInterval else { return }
+    pollInterval = interval
     pollTimer?.invalidate()
-    pollTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
+    pollTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
       Task { @MainActor in self?.pollTelemetry() }
     }
   }
@@ -3058,6 +3072,8 @@ public final class AppEnvironment {
     if !isRecording { announcedCameraStatus.removeAll() }
     telemetry.recordLiveDecodeSessions(liveDecodeSessions)
     let next = telemetry.snapshot
+    let replaying = showsReplayOffset(snapshot) || showsReplayOffset(next)
+    schedulePollTimer(replaying ? Self.replayPollInterval : Self.livePollInterval)
     if shouldPublishSnapshotToUI(next) {
       snapshot = next
       lastPublishedUIAt = clock.now.seconds
@@ -3070,10 +3086,14 @@ public final class AppEnvironment {
     applyProgramOverlays()
   }
 
-  /// HUD numbers can wait a second. Tile *state* (live vs replay, who is on air) cannot, or
-  /// Maestro waits and the operator watches a stale nameplate.
+  /// HUD numbers can wait a second. The yellow replay-offset pill cannot — it should tick about
+  /// every twentieth of a second while any tile is replaying or scrubbing. Tile *state* (live vs
+  /// replay, who is on air) still publishes immediately, or Maestro waits on a stale nameplate.
   private func shouldPublishSnapshotToUI(_ next: TelemetrySnapshot) -> Bool {
-    if clock.now.seconds - lastPublishedUIAt >= 1 {
+    let interval = showsReplayOffset(snapshot) || showsReplayOffset(next)
+      ? Self.replayUIPublishInterval
+      : Self.liveUIPublishInterval
+    if clock.now.seconds - lastPublishedUIAt >= interval {
       return true
     }
     if snapshot.dvr.isRecording != next.dvr.isRecording { return true }
@@ -3084,6 +3104,10 @@ public final class AppEnvironment {
     if snapshot.tiles.map(\.displayName) != next.tiles.map(\.displayName) { return true }
     if snapshot.tiles.map(\.isProgram) != next.tiles.map(\.isProgram) { return true }
     return false
+  }
+
+  private func showsReplayOffset(_ snap: TelemetrySnapshot) -> Bool {
+    snap.tiles.contains { $0.state == .replaying || $0.state == .scrubbing }
   }
 
   // MARK: - Control channel
