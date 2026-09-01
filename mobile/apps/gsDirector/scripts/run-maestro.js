@@ -192,6 +192,9 @@ function main() {
     '--output',
     REPORT_DIR
   ]
+  if (process.env.LAN_HOSTS) {
+    runnerArgs.push('-e', `LAN_HOSTS=${process.env.LAN_HOSTS}`)
+  }
 
   let status = 0
   let batch = []
