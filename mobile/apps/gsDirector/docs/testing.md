@@ -310,6 +310,46 @@ text: 'rec=0'}` therefore passes the instant the label exists, whatever it says 
 number of assertions here vacuous until it was caught with `maestro/flows/matcher-check.yaml`.
 Any assertion about a *value* must use a text-only selector.
 
+## Archive wall clock (equal-length takes)
+
+Recording wall clock is the timeline. Every exported MOV for a take — each angle and the program —
+lasts `ended_at - started_at`. A camera that pauses, drops audio, or changes 720→1080 is filled with
+**black video and silent audio** so four movies started together stay in sync. Live pictures stay a
+bitstream copy; filler is a small encoder at the size locked on that camera's first keyframe.
+
+Live lavfi farm (pause / drop-audio / set-size / reset-tcp), not the looped stopwatch fixtures:
+
+```bash
+node scripts/fakeRtspCameras.js --local --scenario bad-cameras
+node scripts/fakeRtspCameras.js --scenario bad-cameras --self-test
+```
+
+`--local` binds `0.0.0.0:18554–18557` so the M4 (or simulator) can reach the farm at the Mac's
+LAN IP. `http://127.0.0.1:18550` is `/fault` and `/clock` on the Mac. Keep `--fixtures` for a
+non-faulting regression. `sudo -E node scripts/fakeRtspCameras.js` is the Bonjour+alias path
+when a flow needs four distinct :554 addresses instead of host:port.
+
+`testArchiveTimeline.js` passes those four `host:port` values as a **semicolon**-separated
+`LAN_HOSTS` list. Maestro `-e KEY=a,b` keeps only `a`, which is why a comma list showed one
+camera row (`manual=1`) on the M4. LaunchConfiguration accepts `;` or `,`.
+
+M4 integration (does **not** `clearState`; do **not** run this, or `recordings-export.yaml`,
+on the rec-18 iPad):
+
+```bash
+DIRECTOR_DEVICE_UDID=11111111-1111111111111111 bash scripts/build-device.sh
+DIRECTOR_DEVICE_UDID=11111111-1111111111111111 node scripts/testArchiveTimeline.js --device 11111111-1111111111111111
+```
+
+Simulator:
+
+```bash
+DIRECTOR_SIMULATOR_UDID=<udid> bash scripts/build-sim.sh
+DIRECTOR_SIMULATOR_UDID=<udid> node scripts/testArchiveTimeline.js --sim --device <udid>
+```
+
+`archive-timeline.yaml` is not in `--suite operator`.
+
 ## Fixtures
 
 `scripts/make-fixtures.js` generates H.264 and HEVC clips with the frame number burned into the
@@ -320,8 +360,12 @@ markers back is how encode fidelity is checked without comparing pixels.
 
 ```bash
 xcrun devicectl device info files --device <udid> \
-  --domain-type appDataContainer --domain-identifier co.gamestation.director
+  --domain-type appDataContainer --domain-identifier co.gamestation.director \
+  --subdirectory "Library/Application Support/GSDirector/Archives" \
+  --json-output /tmp/archives.json
 ```
+
+Listing the whole container can fail (`CoreDevice StreamingAction`) when Archives holds thousands of files. Pull one `rec-<n>` tree, plus `index.sqlite` and its `-wal`/`-shm`, then `PRAGMA wal_checkpoint(FULL)` before reading spans. Equal-length is `MAX(start_wall+duration)-MIN(start_wall)` versus `ended_at-started_at`, not a naive ffmpeg concat of fMP4 segments.
 
 Archives live under `Library/Application Support/GSDirector/Archives/<source>/rec-<n>/`, as an
 `init.mp4` plus numbered segments. Segments are fMP4 and are not playable alone — `SegmentAssembler`

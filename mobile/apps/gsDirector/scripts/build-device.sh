@@ -24,7 +24,11 @@ mkdir -p "$DIRECTOR_DERIVED_DATA"
 # grepping that listing never matches. Ask about the device directly instead: this fails when it is
 # absent, locked or mid-pairing, which is exactly the set of cases that cannot be installed to.
 DEVICE_READY=1
-if ! timeout 30 xcrun devicectl device info details --device "$DIRECTOR_DEVICE_UDID" >/dev/null 2>&1; then
+if command -v timeout >/dev/null 2>&1; then
+  if ! timeout 30 xcrun devicectl device info details --device "$DIRECTOR_DEVICE_UDID" >/dev/null 2>&1; then
+    DEVICE_READY=0
+  fi
+elif ! xcrun devicectl device info details --device "$DIRECTOR_DEVICE_UDID" >/dev/null 2>&1; then
   DEVICE_READY=0
 fi
 
