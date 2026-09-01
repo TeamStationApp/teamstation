@@ -38,11 +38,15 @@ function resolveDevice() {
 
 function hostnamesFor(device) {
   const hosts = new Set()
+  const tunnel = device.connectionProperties.tunnelIPAddress
+  if (tunnel) hosts.add(tunnel.includes(':') ? `[${tunnel}]` : tunnel)
   const slug = (device.deviceProperties.name ?? '')
     .replace(/[^A-Za-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
   if (slug) hosts.add(`${slug}.local`)
   for (const host of device.connectionProperties.potentialHostnames ?? [])
+    hosts.add(host)
+  for (const host of device.connectionProperties.localHostnames ?? [])
     hosts.add(host)
   return [...hosts]
 }

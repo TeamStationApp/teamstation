@@ -13,6 +13,7 @@
     "rtsp:farm": "node scripts/fakeRtspCameras.js",
     "rtsp:farm:self-test": "node scripts/fakeRtspCameras.js --scenario bad-cameras --self-test",
     "test:archive-timeline": "node scripts/testArchiveTimeline.js",
+    "test:program-writer-death": "node scripts/testProgramWriterDeath.js",
     "test:ui": "node scripts/run-maestro.js",
     "verify:archives": "node scripts/verifyArchives.js",
     "profile:load": "node scripts/loadProfile.js"
