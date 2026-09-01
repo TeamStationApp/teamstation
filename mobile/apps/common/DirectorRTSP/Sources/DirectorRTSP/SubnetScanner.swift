@@ -141,6 +141,7 @@ public final class SubnetScanner: @unchecked Sendable {
 
     return await withCheckedContinuation { continuation in
       let parameters = NWParameters.tcp
+      parameters.includePeerToPeer = true
       if let options = parameters.defaultProtocolStack.transportProtocol as? NWProtocolTCP.Options {
         options.connectionTimeout = Int(timeout.rounded(.up))
       }
@@ -169,10 +170,9 @@ public final class SubnetScanner: @unchecked Sendable {
           finish(true)
         case .failed, .cancelled:
           finish(false)
-        case .waiting:
-          // On a LAN this is a closed port or an absent host, not a slow one.
-          finish(false)
         default:
+          // `.waiting` is how an iPhone RTSP listener starts. Treating it as closed is why a
+          // subnet scan found NearStream boxes and never GS Cameraman.
           break
         }
       }

@@ -44,10 +44,12 @@
   <string>GS Cameraman serves an RTSP stream to GS Producer on your local network.</string>
   <!-- Measured 2026-08-19: without this, advertising _rtsp._tcp fails with -65555
        kDNSServiceErr_NoAuth and takes the whole NWListener down with it. The usage description
-       above is not sufficient on its own. -->
+       above is not sufficient on its own. `_awx_service._tcp` is the type NearStream uses and
+       GS Director actually browses across a split 2.4/5 GHz LAN. -->
   <key>NSBonjourServices</key>
   <array>
     <string>_rtsp._tcp</string>
+    <string>_awx_service._tcp</string>
   </array>
 
   <key>UIApplicationSceneManifest</key>

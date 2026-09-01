@@ -273,6 +273,27 @@ struct RTSPDiscoveryTests {
     #expect(discovery.diagnostic.contains("awx=0"))
   }
 
+  @Test("A Cameraman TXT uuid is listed even when DESCRIBE never becomes ready")
+  func cameramanAdvertisementIsListedWithoutDescribe() async {
+    let advertisement = CameraAdvertisement(
+      host: "10.10.7.50",
+      advertisedName: "handheld",
+      port: 554,
+      path: "/live/mainstream",
+      uuid: "c94df9ca-d7c2-468f-8529-97d01fba14e7"
+    )
+    let discovery = RTSPDiscovery(
+      configuration: RTSPDiscovery.Configuration(isScanEnabled: false),
+      advertisementBrowser: StaticAdvertisementBrowser([ advertisement ]),
+      confirmHost: { _ in false }
+    )
+
+    await discovery.sweepNow()
+
+    #expect(discovery.currentEndpoints == [ CameraEndpoint(host: "10.10.7.50", port: 554) ])
+    #expect(discovery.currentSources.first?.advertisedName == "handheld")
+  }
+
   @Test("Cameras that advertised a unique id are listed before unidentified RTSP hosts")
   func identifiedCamerasSortFirst() async {
     let advertisement = CameraAdvertisement(
