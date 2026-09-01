@@ -39,6 +39,42 @@ struct RTSPDiscoveryTests {
     #expect(discovery.currentSources.first?.kind == .rtsp)
   }
 
+  @Test("A manual host:port uses that port instead of 554")
+  func manualHostPort() async {
+    let discovery = discovery(
+      hosts: [ "127.0.0.1:18554" ],
+      confirmed: [ "127.0.0.1" ]
+    )
+    await discovery.sweepNow()
+    #expect(discovery.currentEndpoints.map(\.port) == [ 18554 ])
+    #expect(discovery.currentSources.first?.address == "rtsp://127.0.0.1:18554/live/mainstream")
+    #expect(discovery.currentSources.first?.id == SourceID("camera-127.0.0.1-18554"))
+  }
+
+  @Test("Four farm ports on one IP stay four sources")
+  func fourHostPortsOnOneIP() async {
+    let discovery = discovery(
+      hosts: [
+        "192.168.7.40:18554",
+        "192.168.7.40:18555",
+        "192.168.7.40:18556",
+        "192.168.7.40:18557"
+      ],
+      confirmed: [ "192.168.7.40" ]
+    )
+    await discovery.sweepNow()
+    #expect(discovery.currentSources.count == 4)
+    #expect(Set(discovery.currentEndpoints.map(\.port)) == [ 18554, 18555, 18556, 18557 ])
+    #expect(
+      Set(discovery.currentSources.map(\.id)) == [
+        SourceID("camera-192.168.7.40-18554"),
+        SourceID("camera-192.168.7.40-18555"),
+        SourceID("camera-192.168.7.40-18556"),
+        SourceID("camera-192.168.7.40-18557")
+      ]
+    )
+  }
+
   @Test("Without an identity layer a source is keyed by address, so tiles still work unnamed")
   func addressKeyedFallback() async {
     let discovery = discovery(hosts: [ "192.168.7.148" ], confirmed: [ "192.168.7.148" ])

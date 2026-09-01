@@ -103,8 +103,10 @@ public struct LaunchConfiguration: Sendable, Equatable {
       configuration.rtspTransport = transport
     }
     if let hosts = values["rtspHosts"] {
+      // Semicolon as well as comma: Maestro `-e KEY=a,b` keeps only `a`, which left the
+      // M4 farm looking like a single camera when LAN_HOSTS listed four host:port pairs.
       configuration.rtspHosts = hosts
-        .split(separator: ",")
+        .split { $0 == "," || $0 == ";" }
         .map { $0.trimmingCharacters(in: .whitespaces) }
         .filter { !$0.isEmpty }
     }
