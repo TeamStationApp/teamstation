@@ -144,4 +144,26 @@ struct RTSPServerMessageTests {
       ]
     )
   }
+
+  @Test func preferredLANIPv4SkipsLinkLocalAndPrefersWiFi() {
+    #expect(
+      RTSPServer.preferredLANIPv4(addresses: [
+        (interface: "en2", ip: "169.254.1.1"),
+        (interface: "en0", ip: "192.168.7.219"),
+        (interface: "lo0", ip: "127.0.0.1")
+      ]) == "192.168.7.219"
+    )
+    #expect(
+      RTSPServer.preferredLANIPv4(addresses: [
+        (interface: "en2", ip: "192.168.8.4"),
+        (interface: "utun0", ip: "10.0.0.2")
+      ]) == "192.168.8.4"
+    )
+    #expect(
+      RTSPServer.preferredLANIPv4(addresses: [
+        (interface: "en0", ip: "169.254.12.4"),
+        (interface: "lo0", ip: "127.0.0.1")
+      ]) == nil
+    )
+  }
 }

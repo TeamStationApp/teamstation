@@ -40,6 +40,9 @@ public final class RTSPServer: @unchecked Sendable {
 
   /// Must also appear under `NSBonjourServices` in `Info.plist`, or advertising fails with -65555.
   public static let bonjourServiceType = "_rtsp._tcp"
+  /// Same type NearStream uses. Director's AWX browse is what actually finds cameras on a split
+  /// 2.4/5 GHz LAN; `_rtsp._tcp` from an iPhone often never appears there.
+  public static let awxServiceType = "_awx_service._tcp."
 
   private let queue = DispatchQueue(label: "co.gamestation.cameraman.rtsp")
   private let state = OSAllocatedUnfairLock(initialState: MutableState())
@@ -59,6 +62,13 @@ public final class RTSPServer: @unchecked Sendable {
     var advertise = false
     var path = "/live/mainstream"
   }
+
+  /// Second Bonjour type, published beside the NWListener's `_rtsp._tcp` service. One listener can
+  /// only advertise one type; Director finds NearStream on this one.
+  private var awxAdvertisement: NetService?
+  private var pathMonitor: NWPathMonitor?
+  /// Browsing is how iOS keeps AWDL and Local Network permission warm. Advertising alone is not.
+  private var localNetworkBrowser: NWBrowser?
 
   public var onStatusChange: (@Sendable (Status) -> Void)?
 
@@ -102,12 +112,17 @@ public final class RTSPServer: @unchecked Sendable {
         return (listener, current.path)
       }
       guard let (listener, path) = snapshot else { return }
+      let ip = Self.lanIPv4()
+      let port = listener.port.map { Int($0.rawValue) }
       listener.service = Self.bonjourService(
         identity: identity(),
         path: path,
-        ip: Self.lanIPv4(),
-        port: listener.port.map { Int($0.rawValue) }
+        ip: ip,
+        port: port
       )
+      if let port {
+        publishAWX(identity: identity(), path: path, ip: ip, port: port)
+      }
     }
   }
 
@@ -143,16 +158,17 @@ public final class RTSPServer: @unchecked Sendable {
     )
   }
 
-  /// Wi-Fi IPv4 (`en0`). Director cannot use the Bonjour UUID hostname as an RTSP URL.
+  /// Wi-Fi IPv4, then any other infrastructure address. USB link-local and loopback are skipped so
+  /// Director on another device is not handed an address it cannot reach.
   public static func lanIPv4() -> String? {
     var head: UnsafeMutablePointer<ifaddrs>?
     guard getifaddrs(&head) == 0, let first = head else { return nil }
     defer { freeifaddrs(head) }
+    var addresses: [(interface: String, ip: String)] = []
     for pointer in sequence(first: first, next: { $0.pointee.ifa_next }) {
       let interface = pointer.pointee
       guard interface.ifa_addr.pointee.sa_family == UInt8(AF_INET) else { continue }
       let name = String(cString: interface.ifa_name)
-      guard name == "en0" || name.hasPrefix("bridge") else { continue }
       var buffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
       let result = getnameinfo(
         interface.ifa_addr,
@@ -164,10 +180,26 @@ public final class RTSPServer: @unchecked Sendable {
         NI_NUMERICHOST
       )
       guard result == 0 else { continue }
-      let address = String(cString: buffer)
-      if address != "127.0.0.1", !address.hasPrefix("169.254.") { return address }
+      addresses.append((name, String(cString: buffer)))
     }
-    return nil
+    return preferredLANIPv4(addresses: addresses)
+  }
+
+  /// Picks the IPv4 Director should dial. `en0` (Wi-Fi) wins; 169.254 and loopback never do.
+  public static func preferredLANIPv4(addresses: [(interface: String, ip: String)]) -> String? {
+    func rank(_ interface: String) -> Int {
+      if interface == "en0" { return 0 }
+      if interface.hasPrefix("en") { return 1 }
+      if interface.hasPrefix("bridge") { return 2 }
+      if interface.hasPrefix("awdl") || interface.hasPrefix("llw") { return 5 }
+      if interface.hasPrefix("utun") || interface.hasPrefix("ipsec") { return 6 }
+      return 4
+    }
+
+    return addresses
+      .filter { _, ip in ip != "127.0.0.1" && !ip.hasPrefix("169.254.") }
+      .min { rank($0.interface) < rank($1.interface) }?
+      .ip
   }
 
   private func bind(port: UInt16, requested: UInt16, path: String, advertise: Bool) -> Bool {
@@ -198,12 +230,15 @@ public final class RTSPServer: @unchecked Sendable {
       $0.path = path
     }
     if advertise {
+      let ip = Self.lanIPv4()
       listener.service = Self.bonjourService(
         identity: identity(),
         path: path,
-        ip: Self.lanIPv4(),
+        ip: ip,
         port: Int(port)
       )
+      startLocalNetworkKeepAlive()
+      startPathMonitor()
     }
 
     listener.newConnectionHandler = { [weak self] connection in
@@ -222,12 +257,14 @@ public final class RTSPServer: @unchecked Sendable {
           $0.listenerState = "ready"
         }
         if advertise {
+          let ip = Self.lanIPv4()
           listener.service = Self.bonjourService(
             identity: self.identity(),
             path: path,
-            ip: Self.lanIPv4(),
+            ip: ip,
             port: Int(bound)
           )
+          self.publishAWX(identity: self.identity(), path: path, ip: ip, port: Int(bound))
         }
       case .failed(let error):
         update {
@@ -296,12 +333,71 @@ public final class RTSPServer: @unchecked Sendable {
     }
     listener?.cancel()
     for connection in connections { connection.close() }
+    pathMonitor?.cancel()
+    pathMonitor = nil
+    localNetworkBrowser?.cancel()
+    localNetworkBrowser = nil
+    let awx = awxAdvertisement
+    awxAdvertisement = nil
+    DispatchQueue.main.async { awx?.stop() }
     update {
       $0.isListening = false
       $0.port = nil
       $0.clientCount = 0
       $0.listenerState = "stopped"
     }
+  }
+
+  private func startPathMonitor() {
+    guard pathMonitor == nil else { return }
+    let monitor = NWPathMonitor()
+    monitor.pathUpdateHandler = { [weak self] _ in
+      self?.refreshAdvertisement()
+    }
+    monitor.start(queue: queue)
+    pathMonitor = monitor
+  }
+
+  private func startLocalNetworkKeepAlive() {
+    guard localNetworkBrowser == nil else { return }
+    let parameters = NWParameters()
+    parameters.includePeerToPeer = true
+    let browser = NWBrowser(
+      for: .bonjourWithTXTRecord(type: "_awx_service._tcp", domain: "local."),
+      using: parameters
+    )
+    localNetworkBrowser = browser
+    browser.start(queue: queue)
+  }
+
+  private func publishAWX(identity: DeviceIdentity, path: String, ip: String?, port: Int) {
+    let data = Self.txtRecordData(
+      Self.bonjourTXT(identity: identity, path: path, ip: ip, port: port)
+    )
+    if let existing = awxAdvertisement {
+      if existing.port == port, existing.name == identity.name {
+        existing.setTXTRecord(data)
+        return
+      }
+      awxAdvertisement = nil
+      DispatchQueue.main.async { existing.stop() }
+    }
+
+    let service = NetService(
+      domain: "local.",
+      type: Self.awxServiceType,
+      name: identity.name,
+      port: Int32(port)
+    )
+    service.includesPeerToPeer = true
+    service.setTXTRecord(data)
+    awxAdvertisement = service
+    DispatchQueue.main.async { service.publish() }
+  }
+
+  private static func txtRecordData(_ fields: [String: String]) -> Data {
+    let record = Dictionary(uniqueKeysWithValues: fields.map { ($0.key, Data($0.value.utf8)) })
+    return NetService.data(fromTXTRecord: record)
   }
 
   private func update(_ change: @Sendable (inout Status) -> Void) {
