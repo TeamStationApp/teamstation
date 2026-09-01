@@ -350,6 +350,27 @@ DIRECTOR_SIMULATOR_UDID=<udid> node scripts/testArchiveTimeline.js --sim --devic
 
 `archive-timeline.yaml` is not in `--suite operator`.
 
+## Program writer death (continuation files)
+
+If the program `AVAssetWriter` fails mid-take, recording continues. A second file
+`program-YYYYMMDD-HHMMSS-2.mp4` is opened, the dead interval is black + silence, and export
+of the primary output lasts `D = ended_at - started_at`. Rec-88 on disk is the historical
+single short file; do not export, delete, or `clearState` that take to “fix” it.
+
+UITest-only (`-uiTest true`): `gsdirector://test/kill-program-writer` poisons the live writer.
+There is no operator control for this. `probeWriter` is a separate lab writer.
+
+M4 (Pauls iPad Pro (2) — iPad Pro 11-inch (M4)); does **not** `clearState`; do **not** run
+this on the rec-88 iPad:
+
+```bash
+DIRECTOR_DEVICE_UDID=00008132-0000193801B9001C ./scripts/build-device.sh
+DIRECTOR_DEVICE_UDID=00008132-0000193801B9001C \
+  node scripts/testProgramWriterDeath.js --device 00008132-0000193801B9001C
+```
+
+Not in `--suite operator`.
+
 ## Fixtures
 
 `scripts/make-fixtures.js` generates H.264 and HEVC clips with the frame number burned into the
