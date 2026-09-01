@@ -14,6 +14,8 @@ public struct RecordingsView: View {
   @State private var selectedCameras: Set<String> = []
   @State private var showExportProgress = false
   @State private var showDeleteConfirm = false
+  @State private var showReuseConfirm = false
+  @State private var pendingReuse: (recording: RecordingSummary, cameras: [(SourceID, String)], includeProgram: Bool)?
 
   public init() {}
 
@@ -32,6 +34,9 @@ public struct RecordingsView: View {
         }
         if showDeleteConfirm {
           deleteConfirm
+        }
+        if showReuseConfirm {
+          reuseConfirm
         }
       }
       .navigationTitle("Recordings")
@@ -202,6 +207,57 @@ public struct RecordingsView: View {
     }
   }
 
+  private var reuseConfirm: some View {
+    ZStack {
+      Color.black.opacity(0.55)
+        .ignoresSafeArea()
+        .onTapGesture { cancelReuse() }
+      VStack(spacing: 14) {
+        Text("Processed files already exist")
+          .font(.system(size: 17, weight: .bold, design: .rounded))
+          .foregroundStyle(.white)
+          .multilineTextAlignment(.center)
+        Text("Export the existing movies, or remux from the originals again.")
+          .font(.system(size: 14, weight: .medium))
+          .foregroundStyle(.white.opacity(0.7))
+          .multilineTextAlignment(.center)
+        Button {
+          finishReuse(reprocess: false)
+        } label: {
+          Text("Export")
+            .font(.system(size: 17, weight: .semibold, design: .rounded))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+            .background(Color.programGreen, in: RoundedRectangle(cornerRadius: 10))
+            .foregroundStyle(.black)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("recordings-export-existing")
+        Button {
+          finishReuse(reprocess: true)
+        } label: {
+          Text("Reprocess")
+            .font(.system(size: 17, weight: .semibold, design: .rounded))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+            .background(Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+            .foregroundStyle(.white)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("recordings-export-reprocess")
+        Button("Cancel") { cancelReuse() }
+          .font(.system(size: 15, weight: .semibold, design: .rounded))
+          .foregroundStyle(.white.opacity(0.65))
+          .accessibilityIdentifier("recordings-export-reuse-cancel")
+      }
+      .padding(28)
+      .frame(width: 320)
+      .background(Color.deckPanel, in: RoundedRectangle(cornerRadius: 16))
+    }
+    .accessibilityElement(children: .contain)
+    .accessibilityIdentifier("recordings-export-reuse")
+  }
+
   private var exportProgress: some View {
     ZStack {
       Color.black.opacity(0.72)
@@ -311,10 +367,32 @@ public struct RecordingsView: View {
     let cameras = recording.sourceIDs
       .filter { selectedCameras.contains($0.rawValue) }
       .map { ($0, environment.recordingCameraName(for: $0)) }
+    let includeProgram = selectedProgram && recording.programFilename != nil
+    if environment.hasPreparedExport(recording, cameras: cameras, includeProgram: includeProgram) {
+      pendingReuse = (recording, cameras, includeProgram)
+      showReuseConfirm = true
+      return
+    }
     environment.shareRecording(
       recording,
       cameras: cameras,
-      includeProgram: selectedProgram && recording.programFilename != nil
+      includeProgram: includeProgram
+    )
+  }
+
+  private func cancelReuse() {
+    pendingReuse = nil
+    showReuseConfirm = false
+  }
+
+  private func finishReuse(reprocess: Bool) {
+    guard let pending = pendingReuse else { return }
+    cancelReuse()
+    environment.shareRecording(
+      pending.recording,
+      cameras: pending.cameras,
+      includeProgram: pending.includeProgram,
+      reprocess: reprocess
     )
   }
 

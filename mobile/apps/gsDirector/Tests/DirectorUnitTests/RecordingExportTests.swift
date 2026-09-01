@@ -25,4 +25,111 @@ struct RecordingExportTests {
     )
     #expect(name.hasSuffix("-Third_Base.mov"))
   }
+
+  @Test("Programme continuations after a failed writer are exported with the original")
+  func programSourceFilesIncludeContinuations() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("program-export-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try Data("one".utf8).write(to: root.appendingPathComponent("program-20260829-083556.mp4"))
+    try Data("two".utf8).write(to: root.appendingPathComponent("program-20260829-083556-2.mp4"))
+    try Data("other".utf8).write(to: root.appendingPathComponent("program-20260829-090000.mp4"))
+
+    let files = RecordingExport.programSourceFiles(
+      named: "program-20260829-083556.mp4",
+      in: root
+    )
+    #expect(files.map(\.lastPathComponent) == [
+      "program-20260829-083556.mp4",
+      "program-20260829-083556-2.mp4"
+    ])
+  }
+
+  @Test("Prepared movies live in a folder named for the recording")
+  func preparedDirectoryUsesRecordingID() {
+    let root = URL(fileURLWithPath: "/tmp/prepared")
+    let url = RecordingExport.preparedDirectory(recordingID: 89, in: root)
+    #expect(url.lastPathComponent == "rec-89")
+  }
+
+  @Test("Existing prepared files are reused unless reprocess is requested")
+  func reusesPreparedFiles() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("export-reuse-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let archives = root.appendingPathComponent("Archives", isDirectory: true)
+    let program = root.appendingPathComponent("Program", isDirectory: true)
+    let prepared = root.appendingPathComponent("Prepared", isDirectory: true)
+    try FileManager.default.createDirectory(at: archives, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: program, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: prepared, withIntermediateDirectories: true)
+
+    let source = SourceID("cam-0")
+    let index = try ArchiveIndex(url: root.appendingPathComponent("index.sqlite"))
+    let recordingID = try index.beginRecording(at: WallClock(seconds: 1_000))
+    try index.endRecording(recordingID, at: WallClock(seconds: 1_010))
+    try index.insertSegment(
+      recordingID: recordingID,
+      sourceID: source,
+      sequence: 1,
+      filename: "seg-00001.mp4",
+      isInitialization: false,
+      startWall: WallClock(seconds: 1_000),
+      duration: 10,
+      byteCount: 4,
+      firstFrameID: 1
+    )
+
+    let recording = try #require(try index.recordings().first)
+    let exporter = ExportService(
+      index: index,
+      archives: archives,
+      programDirectory: program
+    )
+    let cameras = [(sourceID: source, name: "First Base")]
+    #expect(
+      !exporter.hasPreparedExport(
+        recording,
+        cameras: cameras,
+        includeProgram: false,
+        programDirectory: program,
+        preparedRoot: prepared
+      )
+    )
+
+    let destination = RecordingExport.preparedDirectory(recordingID: recordingID, in: prepared)
+      .appendingPathComponent(
+        RecordingExport.cameraFilename(startedAt: recording.startedAt, cameraName: "First Base")
+      )
+    try FileManager.default.createDirectory(
+      at: destination.deletingLastPathComponent(),
+      withIntermediateDirectories: true
+    )
+    try Data("already-prepared".utf8).write(to: destination)
+
+    #expect(
+      exporter.hasPreparedExport(
+        recording,
+        cameras: cameras,
+        includeProgram: false,
+        programDirectory: program,
+        preparedRoot: prepared
+      )
+    )
+
+    let urls = try await exporter.exportRecording(
+      recording,
+      cameras: cameras,
+      includeProgram: false,
+      programDirectory: program,
+      preparedRoot: prepared,
+      reprocess: false
+    )
+    #expect(urls == [destination])
+    #expect(try String(contentsOf: destination, encoding: .utf8) == "already-prepared")
+  }
 }

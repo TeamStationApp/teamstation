@@ -42,6 +42,7 @@ function directorPaths(container) {
     indexDatabase: path.join(applicationSupport, 'index.sqlite'),
     program: path.join(documents, 'Program'),
     exports: path.join(documents, 'Exports'),
+    prepared: path.join(applicationSupport, 'Prepared'),
     telemetryDump: path.join(documents, 'telemetry.json')
   }
 }

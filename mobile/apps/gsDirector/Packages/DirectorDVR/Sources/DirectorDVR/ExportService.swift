@@ -84,36 +84,43 @@ public struct ExportService: Sendable {
   }
 
   /// Assembles the chosen cameras and/or programme of one recording into shareable `.mov` files.
+  ///
+  /// Results live in `Prepared/rec-{id}/` next to the archive, not a throwaway Exports dump, so a
+  /// later share can skip remux. `reprocess` rebuilds those files from the originals.
   public func exportRecording(
     _ recording: RecordingSummary,
     cameras: [(sourceID: SourceID, name: String)],
     includeProgram: Bool,
-    destinationDirectory: URL = DirectorPaths.exports,
+    programDirectory: URL? = nil,
+    preparedRoot: URL = DirectorPaths.prepared,
+    reprocess: Bool = false,
     progress: (@Sendable (ItemProgress) -> Void)? = nil
   ) async throws -> [URL] {
-    try FileManager.default.createDirectory(at: destinationDirectory, withIntermediateDirectories: true)
+    let programDir = programDirectory ?? self.programDirectory
+    let directory = RecordingExport.preparedDirectory(recordingID: recording.id, in: preparedRoot)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     var urls: [URL] = []
     let duration = recording.endedAt.map { $0 - recording.startedAt }
 
     if includeProgram, let filename = recording.programFilename {
-      let parts = filename.split(separator: ",").map(String.init).filter { !$0.isEmpty }
-      let sources = parts.map { programDirectory.appendingPathComponent($0) }.filter {
-        FileManager.default.fileExists(atPath: $0.path)
-      }
+      let sources = RecordingExport.programSourceFiles(named: filename, in: programDir)
       if !sources.isEmpty {
-        let destination = destinationDirectory.appendingPathComponent(
+        let destination = directory.appendingPathComponent(
           RecordingExport.programFilename(startedAt: recording.startedAt)
         )
-        try? FileManager.default.removeItem(at: destination)
-        if sources.count == 1, duration == nil {
-          try FileManager.default.copyItem(at: sources[0], to: destination)
-        } else {
-          try await ArchiveRemux.concatenate(
-            files: sources,
-            fileDurations: sources.map { _ in 0 },
-            targetDuration: duration,
-            destination: destination
-          )
+        progress?(ItemProgress(id: "program", name: "Primary output", fraction: 0))
+        if reprocess || !Self.isUsableFile(destination) {
+          try? FileManager.default.removeItem(at: destination)
+          if sources.count == 1, duration == nil {
+            try FileManager.default.copyItem(at: sources[0], to: destination)
+          } else {
+            try await ArchiveRemux.concatenate(
+              files: sources,
+              fileDurations: sources.map { _ in 0 },
+              targetDuration: duration,
+              destination: destination
+            )
+          }
         }
         urls.append(destination)
         progress?(ItemProgress(id: "program", name: "Primary output", fraction: 1))
@@ -132,27 +139,82 @@ public struct ExportService: Sendable {
       } else {
         continue
       }
-      let destination = destinationDirectory.appendingPathComponent(
+      let destination = directory.appendingPathComponent(
         RecordingExport.cameraFilename(startedAt: recording.startedAt, cameraName: name)
       )
-      try? FileManager.default.removeItem(at: destination)
       progress?(ItemProgress(id: sourceID.rawValue, name: name, fraction: 0))
-      let assembly = try assembler.mediaFiles(
-        sourceID: sourceID,
-        from: from,
-        to: to
-      )
-      try await ArchiveRemux.concatenate(
-        files: assembly.files,
-        fileDurations: assembly.fileDurations,
-        targetDuration: max(0, to - from),
-        destination: destination
-      )
+      if reprocess || !Self.isUsableFile(destination) {
+        try? FileManager.default.removeItem(at: destination)
+        let assembly = try assembler.mediaFiles(
+          sourceID: sourceID,
+          from: from,
+          to: to
+        )
+        try await ArchiveRemux.concatenate(
+          files: assembly.files,
+          fileDurations: assembly.fileDurations,
+          targetDuration: max(0, to - from),
+          destination: destination
+        )
+      }
       progress?(ItemProgress(id: sourceID.rawValue, name: name, fraction: 1))
       urls.append(destination)
     }
 
     return urls
+  }
+
+  /// True when every selected output already has a non-empty remux on disk.
+  public func hasPreparedExport(
+    _ recording: RecordingSummary,
+    cameras: [(sourceID: SourceID, name: String)],
+    includeProgram: Bool,
+    programDirectory: URL? = nil,
+    preparedRoot: URL = DirectorPaths.prepared
+  ) -> Bool {
+    let planned = plannedDestinations(
+      recording,
+      cameras: cameras,
+      includeProgram: includeProgram,
+      programDirectory: programDirectory ?? self.programDirectory,
+      preparedRoot: preparedRoot
+    )
+    guard !planned.isEmpty else { return false }
+    return planned.allSatisfy(Self.isUsableFile)
+  }
+
+  private func plannedDestinations(
+    _ recording: RecordingSummary,
+    cameras: [(sourceID: SourceID, name: String)],
+    includeProgram: Bool,
+    programDirectory: URL,
+    preparedRoot: URL
+  ) -> [URL] {
+    let directory = RecordingExport.preparedDirectory(recordingID: recording.id, in: preparedRoot)
+    var urls: [URL] = []
+    if includeProgram, let filename = recording.programFilename {
+      if !RecordingExport.programSourceFiles(named: filename, in: programDirectory).isEmpty {
+        urls.append(
+          directory.appendingPathComponent(
+            RecordingExport.programFilename(startedAt: recording.startedAt)
+          )
+        )
+      }
+    }
+    for camera in cameras {
+      urls.append(
+        directory.appendingPathComponent(
+          RecordingExport.cameraFilename(startedAt: recording.startedAt, cameraName: camera.name)
+        )
+      )
+    }
+    return urls
+  }
+
+  private static func isUsableFile(_ url: URL) -> Bool {
+    guard let size = try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber
+    else { return false }
+    return size.int64Value > 0
   }
 
   public func availableRange(for sourceID: SourceID) throws -> (start: WallClock, end: WallClock)? {
