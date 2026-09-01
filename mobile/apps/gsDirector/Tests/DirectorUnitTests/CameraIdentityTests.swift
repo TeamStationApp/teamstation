@@ -370,20 +370,30 @@ struct CameraIdentityTests {
     #expect(CameraIdentityRules.sourceID(for: bindings[0]).rawValue == records[0].id.uuidString)
   }
 
-  @Test("An unnamed camera gets a provisional key that cannot collide with a real one")
+  @Test("An unnamed camera gets a session key that is not the address")
   func unboundSourceIDIsProvisional() {
-    let binding = CameraBinding(endpoint: endpoint("192.168.7.99"))
+    var sessionIDs: [CameraEndpoint: SourceID] = [:]
+    let endpoint = endpoint("192.168.7.99")
+    let binding = CameraBinding(endpoint: endpoint)
+    let id = CameraIdentityRules.sourceID(for: binding, sessionIDs: &sessionIDs)
 
-    #expect(CameraIdentityRules.sourceID(for: binding).rawValue == "camera-192.168.7.99")
+    #expect(CameraIdentityRules.isSessionIdentity(id))
+    #expect(!id.rawValue.contains("192.168.7.99"))
+    #expect(CameraIdentityRules.sourceID(for: binding, sessionIDs: &sessionIDs) == id)
   }
 
-  @Test("Two farm ports on one host get distinct provisional keys")
+  @Test("Two farm ports on one host get distinct session keys")
   func unboundSourceIDIncludesNonDefaultPort() {
+    var sessionIDs: [CameraEndpoint: SourceID] = [:]
     let first = CameraBinding(endpoint: CameraEndpoint(host: "192.168.7.1", port: 18554))
     let second = CameraBinding(endpoint: CameraEndpoint(host: "192.168.7.1", port: 18555))
-    #expect(CameraIdentityRules.sourceID(for: first).rawValue == "camera-192.168.7.1-18554")
-    #expect(CameraIdentityRules.sourceID(for: second).rawValue == "camera-192.168.7.1-18555")
-    #expect(CameraIdentityRules.sourceID(for: first) != CameraIdentityRules.sourceID(for: second))
+    let firstID = CameraIdentityRules.sourceID(for: first, sessionIDs: &sessionIDs)
+    let secondID = CameraIdentityRules.sourceID(for: second, sessionIDs: &sessionIDs)
+    #expect(CameraIdentityRules.isSessionIdentity(firstID))
+    #expect(CameraIdentityRules.isSessionIdentity(secondID))
+    #expect(firstID != secondID)
+    #expect(!firstID.rawValue.contains("192.168.7.1"))
+    #expect(!secondID.rawValue.contains("18554"))
   }
 
   @Test("A camera keeps its key across an address change, so the archive stays continuous")
@@ -413,8 +423,8 @@ struct CameraIdentityTests {
 
   // MARK: - Recovering a camera that moved
 
-  @Test("A camera that changed address mid-game recovers onto the only free endpoint")
-  func reresolveTakesTheOnlyCandidate() {
+  @Test("A leftover address is not a candidate for a camera that stopped answering")
+  func reresolveDoesNotGuessByAddress() {
     var records = [ record("Third Base", host: "192.168.7.148") ]
     var bindings = [ CameraBinding(endpoint: endpoint("192.168.7.201")) ]
 
@@ -422,21 +432,77 @@ struct CameraIdentityTests {
       records[0].id, in: &bindings, records: &records, now: epoch
     )
 
+    #expect(outcome == .noCandidate)
+    #expect(bindings[0].cameraID == nil)
+    #expect(records[0].lastKnownHost == "192.168.7.148")
+  }
+
+  @Test("A camera that moved recovers when the new address advertises the same unique id")
+  func reresolveRebindsByUniqueID() {
+    var records = [
+      CameraRecord(
+        name: "Third Base",
+        lastKnownHost: "192.168.7.148",
+        lastSeenAt: epoch,
+        hardwareID: "model:VM33_00001"
+      )
+    ]
+    var bindings = [ CameraBinding(endpoint: endpoint("192.168.7.201")) ]
+    let advertisements = [
+      "192.168.7.201": CameraAdvertisement(
+        host: "192.168.7.201",
+        advertisedName: "00001 3rd",
+        modelName: "VM33_00001"
+      )
+    ]
+
+    let outcome = CameraIdentityRules.reresolve(
+      records[0].id,
+      in: &bindings,
+      records: &records,
+      advertisements: advertisements,
+      now: epoch
+    )
+
     #expect(outcome == .rebound(endpoint("192.168.7.201")))
     #expect(bindings[0].cameraID == records[0].id)
     #expect(records[0].lastKnownHost == "192.168.7.201")
   }
 
-  @Test("With two free endpoints it asks rather than risking the wrong camera on air")
+  @Test("Two sockets claiming the same unique id are not guessed between")
   func reresolveRefusesToGuess() {
-    var records = [ record("Third Base", host: "192.168.7.148") ]
+    var records = [
+      CameraRecord(
+        name: "Third Base",
+        lastKnownHost: "192.168.7.148",
+        lastSeenAt: epoch,
+        hardwareID: "model:VM33_00001"
+      )
+    ]
     var bindings = [
       CameraBinding(endpoint: endpoint("192.168.7.201")),
       CameraBinding(endpoint: endpoint("192.168.7.202"))
     ]
+    let advertisement = CameraAdvertisement(
+      host: "192.168.7.201",
+      advertisedName: "00001 3rd",
+      modelName: "VM33_00001"
+    )
+    let advertisements = [
+      "192.168.7.201": advertisement,
+      "192.168.7.202": CameraAdvertisement(
+        host: "192.168.7.202",
+        advertisedName: "00001 3rd",
+        modelName: "VM33_00001"
+      )
+    ]
 
     let outcome = CameraIdentityRules.reresolve(
-      records[0].id, in: &bindings, records: &records, now: epoch
+      records[0].id,
+      in: &bindings,
+      records: &records,
+      advertisements: advertisements,
+      now: epoch
     )
 
     #expect(outcome == .ambiguous(candidates: [ endpoint("192.168.7.201"), endpoint("192.168.7.202") ]))

@@ -626,9 +626,11 @@ public final class AppEnvironment {
     let identities = cameras.resolve(endpoints: endpoints, advertisements: discovery.advertisements)
     let republished = endpoints.map { endpoint in
       DiscoveredSource(
-        id: identities[endpoint]?.id ?? SourceID("camera-\(endpoint.host)"),
+        id: identities[endpoint]?.id ?? SourceID(
+          "\(CameraIdentityRules.sessionIDPrefix)\(UUID().uuidString.lowercased())"
+        ),
         kind: discovery.kind,
-        advertisedName: identities[endpoint]?.name ?? endpoint.host,
+        advertisedName: identities[endpoint]?.name ?? CameraIdentityRules.unnamedFallback,
         address: endpoint.url
       )
     }

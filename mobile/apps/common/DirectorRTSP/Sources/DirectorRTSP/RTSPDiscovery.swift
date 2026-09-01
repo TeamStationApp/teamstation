@@ -52,8 +52,8 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
   /// network.
   public typealias HostConfirmation = @Sendable (CameraEndpoint) async -> Bool
 
-  /// Asks the identity layer to move a camera that has stopped answering onto whatever unclaimed
-  /// address the latest search turned up.
+  /// Asks the identity layer to move a camera that has stopped answering onto a socket that
+  /// advertises the same unique id or CNAME.
   public typealias RelocationRequest = @Sendable (SourceID) -> Void
 
   public let kind = SourceKind.rtsp
@@ -80,6 +80,8 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
   /// that is mid-session is both wasted work and a request it may refuse.
   private var handedOut: [CameraEndpoint: WeakSource] = [:]
   private var relocationRequests: [SourceID: Date] = [:]
+  /// Fallback keys when no identity layer is wired. Address is never part of the key.
+  private var sessionIDs: [CameraEndpoint: SourceID] = [:]
 
   public init(
     configuration: Configuration = Configuration(),
@@ -257,16 +259,11 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
     }
 
     let identities = resolveIdentity?(confirmed, ads) ?? [:]
-    let discovered = confirmed.map { endpoint in
-      let identity = identities[endpoint]
-      let advertised = ads.first { $0.host == endpoint.host }?.advertisedName
-      return DiscoveredSource(
-        id: identity?.id ?? CameraIdentityRules.anonymousID(for: endpoint),
-        kind: .rtsp,
-        advertisedName: identity?.name ?? advertised ?? endpoint.host,
-        address: endpoint.url
-      )
-    }
+    let discovered = sessionKeyedSources(
+      endpoints: confirmed,
+      identities: identities,
+      advertisements: ads
+    )
 
     let awxCount = ads.filter { $0.modelName != nil || $0.wlanMAC != nil }.count
     let rtspAds = ads.filter { $0.uuid != nil }
@@ -322,6 +319,33 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
     lock.unlock()
 
     handler?(sources)
+  }
+
+  /// Session keys live here so `sweep` does not take the lock across a suspension point.
+  private func sessionKeyedSources(
+    endpoints: [CameraEndpoint],
+    identities: [CameraEndpoint: (id: SourceID, name: String)],
+    advertisements: [CameraAdvertisement]
+  ) -> [DiscoveredSource] {
+    lock.lock()
+    defer { lock.unlock() }
+    var discovered: [DiscoveredSource] = []
+    discovered.reserveCapacity(endpoints.count)
+    for endpoint in endpoints {
+      let identity = identities[endpoint]
+      let advertised = advertisements.first { $0.host == endpoint.host }?.advertisedName
+      let trimmedAdvertised = advertised.flatMap { value -> String? in
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+      }
+      discovered.append(DiscoveredSource(
+        id: identity?.id ?? CameraIdentityRules.sessionID(for: endpoint, in: &sessionIDs),
+        kind: .rtsp,
+        advertisedName: identity?.name ?? trimmedAdvertised ?? CameraIdentityRules.unnamedFallback,
+        address: endpoint.url
+      ))
+    }
+    return discovered
   }
 
   /// A camera that keeps failing at a known-good address has probably been given another one.
