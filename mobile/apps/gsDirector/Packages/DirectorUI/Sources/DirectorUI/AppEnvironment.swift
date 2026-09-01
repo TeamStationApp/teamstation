@@ -208,6 +208,8 @@ public final class AppEnvironment {
 
   private var discovery: SourceDiscovery?
   private var writers: [SourceID: SegmentWriter] = [:]
+  /// Format-change and late-audio reopens of one camera, so two packets do not stack writers.
+  private var reopeningArchives: Set<SourceID> = []
   private var proxies: [SourceID: ProxyStore] = [:]
   private var recordingID: Int64?
   private var recordingStartedAt: WallClock?
@@ -1167,11 +1169,19 @@ public final class AppEnvironment {
     }
   }
 
-  /// Gives one camera a writer for the open recording, replacing any it already had.
+  /// Gives one camera a writer for the open recording. Callers finish any previous writer first
+  /// so the next `AVAssetWriter` can take an audio track.
   ///
   /// Size changes no longer need a new writer: the archive locks the first keyframe's dimensions
   /// and transcodes later pictures. This path remains for a writer that actually failed.
-  private func attachArchive(to pipeline: SourcePipeline, recordingID: Int64) {
+  private func attachArchive(
+    to pipeline: SourcePipeline,
+    recordingID: Int64,
+    previousIncludesAudio: Bool = false
+  ) {
+    // A camera that has never sent audio must not be given an audio track: the writer waits
+    // for audio it will never receive and stops accepting video. Once audio has been seen —
+    // this session or on the writer we just closed — the replacement keeps the track.
     let settings = SegmentWriterSettings.from(
       config: config,
       // A camera that sends no audio must not be given an audio track: the segmented writer waits
@@ -1193,13 +1203,8 @@ public final class AppEnvironment {
     )
     do {
       try writer.prepare()
-      let existing = writers[pipeline.sourceID]
       writers[pipeline.sourceID] = writer
       pipeline.setArchive(writer)
-      if let existing {
-        existing.supersede()
-        Task { await existing.finish() }
-      }
     } catch {
       statusMessage = "\(pipeline.displayName): \(error)"
     }
@@ -1207,7 +1212,28 @@ public final class AppEnvironment {
 
   private func reopenArchive(for sourceID: SourceID) {
     guard isRecording, let recordingID, let pipeline = router.pipeline(for: sourceID) else { return }
-    attachArchive(to: pipeline, recordingID: recordingID)
+    guard reopeningArchives.insert(sourceID).inserted else { return }
+    let previousIncludesAudio = writers[sourceID]?.settings.includesAudio ?? false
+    Task { @MainActor in
+      defer { reopeningArchives.remove(sourceID) }
+      await self.detachAndFinishArchive(for: sourceID)
+      guard self.isRecording, let recordingID = self.recordingID else { return }
+      self.attachArchive(
+        to: pipeline,
+        recordingID: recordingID,
+        previousIncludesAudio: previousIncludesAudio
+      )
+    }
+  }
+
+  private func detachAndFinishArchive(for sourceID: SourceID) async {
+    guard let existing = writers[sourceID] else { return }
+    existing.supersede()
+    if let pipeline = router.pipeline(for: sourceID) {
+      pipeline.setArchive(nil)
+    }
+    writers[sourceID] = nil
+    await existing.finish()
   }
 
   public func stopRecording() async {
