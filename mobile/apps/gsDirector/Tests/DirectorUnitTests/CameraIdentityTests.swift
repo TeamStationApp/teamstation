@@ -377,6 +377,15 @@ struct CameraIdentityTests {
     #expect(CameraIdentityRules.sourceID(for: binding).rawValue == "camera-10.10.7.99")
   }
 
+  @Test("Two farm ports on one host get distinct provisional keys")
+  func unboundSourceIDIncludesNonDefaultPort() {
+    let first = CameraBinding(endpoint: CameraEndpoint(host: "10.10.7.1", port: 18554))
+    let second = CameraBinding(endpoint: CameraEndpoint(host: "10.10.7.1", port: 18555))
+    #expect(CameraIdentityRules.sourceID(for: first).rawValue == "camera-10.10.7.1-18554")
+    #expect(CameraIdentityRules.sourceID(for: second).rawValue == "camera-10.10.7.1-18555")
+    #expect(CameraIdentityRules.sourceID(for: first) != CameraIdentityRules.sourceID(for: second))
+  }
+
   @Test("A camera keeps its key across an address change, so the archive stays continuous")
   func sourceIDSurvivesAnAddressChange() {
     var records = [ record("Third Base", host: "10.10.7.148") ]

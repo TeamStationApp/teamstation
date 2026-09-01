@@ -261,7 +261,7 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
       let identity = identities[endpoint]
       let advertised = ads.first { $0.host == endpoint.host }?.advertisedName
       return DiscoveredSource(
-        id: identity?.id ?? SourceID("camera-\(endpoint.host)"),
+        id: identity?.id ?? CameraIdentityRules.anonymousID(for: endpoint),
         kind: .rtsp,
         advertisedName: identity?.name ?? advertised ?? endpoint.host,
         address: endpoint.url
@@ -296,6 +296,17 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
   private func endpoint(for host: String, advertisements: [CameraAdvertisement]) -> CameraEndpoint {
     if let advertisement = advertisements.first(where: { $0.host == host }) {
       return advertisement.endpoint
+    }
+    if let colon = host.lastIndex(of: ":"),
+      let port = Int(host[host.index(after: colon)...]),
+      port > 0,
+      !host.contains("/")
+    {
+      return CameraEndpoint(
+        host: String(host[..<colon]),
+        port: port,
+        path: configuration.path
+      )
     }
     return CameraEndpoint(host: host, port: configuration.port, path: configuration.path)
   }

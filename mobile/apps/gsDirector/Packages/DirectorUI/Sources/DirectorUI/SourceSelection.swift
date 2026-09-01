@@ -353,7 +353,9 @@ public struct SourceSelectionStore: Sendable {
   }
 
   public func load() -> [SourceSelection] {
-    store.codableValue([SourceSelection].self, forKey: Self.key) ?? []
+    let loaded = store.codableValue([SourceSelection].self, forKey: Self.key) ?? []
+    var seen: Set<SourceID> = []
+    return loaded.filter { seen.insert($0.id).inserted }
   }
 
   public func save(_ selections: [SourceSelection]) {

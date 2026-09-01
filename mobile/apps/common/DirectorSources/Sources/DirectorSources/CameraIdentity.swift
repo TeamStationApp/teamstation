@@ -198,8 +198,17 @@ public enum CameraIdentityRules {
   /// from the record rather than the address is what lets an archive survive a DHCP change and an
   /// app restart.
   public static func sourceID(for binding: CameraBinding) -> SourceID {
-    guard let cameraID = binding.cameraID else { return SourceID("camera-\(binding.endpoint.host)") }
+    guard let cameraID = binding.cameraID else { return anonymousID(for: binding.endpoint) }
     return SourceID(cameraID.uuidString)
+  }
+
+  /// Unidentified cameras are keyed by where they answer. The port is part of the key so four
+  /// farm processes on one Mac IP (18554–18557) do not collapse into one row.
+  public static func anonymousID(for endpoint: CameraEndpoint) -> SourceID {
+    if endpoint.port == 554 {
+      return SourceID("camera-\(endpoint.host)")
+    }
+    return SourceID("camera-\(endpoint.host)-\(endpoint.port)")
   }
 
   // MARK: - Automatic binding
