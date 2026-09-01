@@ -306,8 +306,8 @@ public struct SourceSelectionView: View {
     return Menu {
       Button(bound == nil ? "Name…" : "Rename…") {
         renamingID = selection.id
-        // Empty for an unnamed camera: its "name" today is an IP address, and nobody wants to edit
-        // one into "Third Base".
+        // Empty for an unnamed camera: the address is already the caption, and nobody wants to
+        // edit an IP into "Third Base".
         draftName = bound?.name ?? ""
       }
       .accessibilityIdentifier("camera-rename-\(index + 1)")
@@ -378,14 +378,11 @@ public struct SourceSelectionView: View {
     return "\(record.name) · last seen \(record.lastKnownHost)"
   }
 
-  /// Why this camera is on this row. `ID` and `IP` are both automatic but are not equally
-  /// trustworthy: an identifier match is the camera saying who it is, an address match is a guess
-  /// that two cameras swapping leases will get wrong, and that difference is what the operator
-  /// needs when a tile shows the wrong field.
+  /// Why this camera is on this row. `ID` is automatic matching on NearStream TXT or RTSP CNAME.
+  /// Address is never a match, so there is no IP badge — the socket is already the caption.
   private func originBadge(for selection: SourceSelection) -> String? {
     switch environment.bindingOrigin(for: selection.id) {
     case .autoByIdentity, .autoByCNAME: "ID"
-    case .autoByHost: "IP"
     case .manual: "MANUAL"
     case .unbound: nil
     }

@@ -98,6 +98,18 @@ struct CameraRegistryTests {
     #expect(CameraRegistry(store: store).records.isEmpty)
   }
 
+  @Test("An unidentified socket is named Unnamed and keyed by a session id, not the IP")
+  func unidentifiedSocketIsNotAddressKeyed() {
+    let cameras = registry()
+    let endpoint = CameraEndpoint(host: "10.10.7.99")
+    let identities = cameras.resolve(endpoints: [ endpoint ])
+
+    #expect(identities[endpoint]?.name == CameraIdentityRules.unnamedFallback)
+    #expect(identities[endpoint].map { CameraIdentityRules.isSessionIdentity($0.id) } == true)
+    #expect(identities[endpoint]?.id.rawValue.contains("10.10.7.99") != true)
+    #expect(cameras.resolve(endpoints: [ endpoint ])[endpoint]?.id == identities[endpoint]?.id)
+  }
+
   @Test("Clearing the registry empties the store")
   func clearEmptiesTheStore() {
     let suite = "co.gamestation.director.tests.\(UUID().uuidString)"

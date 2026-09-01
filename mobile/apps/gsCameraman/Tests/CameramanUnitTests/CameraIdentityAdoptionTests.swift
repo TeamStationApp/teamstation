@@ -166,7 +166,7 @@ struct CameraIdentityAdoptionTests {
 
     let moved = CameraEndpoint(host: "10.0.0.9")
     let bindings = CameraIdentityRules.reconcile(
-      bindings: [ CameraBinding(endpoint: CameraEndpoint(host: "10.0.0.4"), cameraID: id, origin: .autoByHost) ],
+      bindings: [ CameraBinding(endpoint: CameraEndpoint(host: "10.0.0.4"), cameraID: id, origin: .autoByCNAME) ],
       endpoints: [ moved ],
       records: records,
       streamAdvertisements: [ moved: StreamAdvertisement(cname: cname, name: "Third Base") ]
