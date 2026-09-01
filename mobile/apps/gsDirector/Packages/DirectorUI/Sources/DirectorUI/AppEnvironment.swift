@@ -210,6 +210,7 @@ public final class AppEnvironment {
   private var writers: [SourceID: SegmentWriter] = [:]
   private var proxies: [SourceID: ProxyStore] = [:]
   private var recordingID: Int64?
+  private var recordingStartedAt: WallClock?
   private var pollTimer: Timer?
   /// SwiftUI is fed a snapshot at most once a second, plus immediately on chrome changes
   /// (live/replay, program cut, record/stream). The 5 Hz poll still writes `telemetry` so
@@ -997,7 +998,7 @@ public final class AppEnvironment {
   }
 
   private func applyInputGains() {
-    let gains = Dictionary(uniqueKeysWithValues: selections.map { ($0.id, $0.inputGain) })
+    let gains = Dictionary(selections.map { ($0.id, $0.inputGain) }, uniquingKeysWith: { _, latest in latest })
     router.setInputGains(gains)
   }
 
@@ -1055,6 +1056,7 @@ public final class AppEnvironment {
       return
     }
     self.recordingID = recordingID
+    self.recordingStartedAt = now
 
     do {
       for pipeline in router.activePipelines {
@@ -1167,16 +1169,12 @@ public final class AppEnvironment {
 
   /// Gives one camera a writer for the open recording, replacing any it already had.
   ///
-  /// Also the recovery path for a camera that changes format mid-recording: one fMP4 track cannot
-  /// hold two formats, so the writer asks to be replaced and the archive continues in a new
-  /// segment. Segments are independent, and the sequence numbering carries on, so the recording
-  /// reads back as one timeline.
+  /// Size changes no longer need a new writer: the archive locks the first keyframe's dimensions
+  /// and transcodes later pictures. This path remains for a writer that actually failed.
   private func attachArchive(to pipeline: SourcePipeline, recordingID: Int64) {
-    // A camera that sends no audio must not be given an audio track: the segmented writer waits
-    // for audio it will never receive and stops accepting video a few seconds in.
     let settings = SegmentWriterSettings.from(
       config: config,
-      includesAudio: pipeline.hasDeliveredAudio && launch.archiveAudio
+      includesAudio: launch.archiveAudio
     )
     let writer = SegmentWriter(
       sourceID: pipeline.sourceID,
@@ -1186,6 +1184,7 @@ public final class AppEnvironment {
       telemetry: telemetry,
       settings: settings,
       clock: clock,
+      recordingStartedAt: recordingStartedAt,
       onFormatChange: { [weak self] sourceID in
         Task { @MainActor in self?.reopenArchive(for: sourceID) }
       }
@@ -1211,6 +1210,7 @@ public final class AppEnvironment {
 
   public func stopRecording() async {
     guard isRecording else { return }
+    let endedAt = clock.now
     isRecording = false
     retentionTimer?.invalidate()
     retentionTimer = nil
@@ -1225,7 +1225,7 @@ public final class AppEnvironment {
     // hang from the operator's point of view.
     setRecordingStage("finishing archives")
     let flushes = writers.map { sourceID, writer in
-      (label: sourceID.rawValue, task: Task { await writer.finish() })
+      (label: sourceID.rawValue, task: Task { await writer.finish(until: endedAt) })
     }
     // Wait on all of them under one deadline. Awaiting each in turn gave every camera its own
     // 20 seconds, so three cameras could take a minute to stop even though the flushes themselves
@@ -1256,7 +1256,9 @@ public final class AppEnvironment {
     setRecordingStage("finishing program")
     let programEncoder = self.programEncoder
     let programURL = ProgramURL()
-    await finishWithDeadline("program") { await programURL.set(programEncoder.finish()) }
+    await finishWithDeadline("program", seconds: 45) {
+      await programURL.set(programEncoder.finish(until: endedAt))
+    }
     if let url = await programURL.value {
       let bytes = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? nil
       programOutput = url
@@ -1265,9 +1267,14 @@ public final class AppEnvironment {
 
     setRecordingStage("closing index")
     if let recordingID {
-      try? index.endRecording(recordingID, at: clock.now)
+      let names = programEncoder.outputURLs.map(\.lastPathComponent).filter { !$0.isEmpty }
+      if !names.isEmpty {
+        try? index.setProgramFilename(names.joined(separator: ","), for: recordingID)
+      }
+      try? index.endRecording(recordingID, at: endedAt)
     }
     recordingID = nil
+    recordingStartedAt = nil
     telemetry.mutate { $0.dvr.isRecording = false }
     setRecordingStage("idle")
     syncLiveSessionPresentation()
@@ -2840,16 +2847,26 @@ public final class AppEnvironment {
   public func export(sourceIndex: Int, lastSeconds: Double) {
     guard let pipeline = router.pipeline(at: sourceIndex) else { return }
     let end = pipeline.liveEdge ?? clock.now
-    do {
-      lastExport = try exporter.export(
-        sourceID: pipeline.sourceID,
-        displayName: pipeline.displayName,
-        from: end - lastSeconds,
-        to: end
-      )
-      statusMessage = "Exported \(lastExport?.url.lastPathComponent ?? "")"
-    } catch {
-      statusMessage = "Export failed: \(error)"
+    let sourceID = pipeline.sourceID
+    let displayName = pipeline.displayName
+    let exporter = self.exporter
+    Task {
+      do {
+        let result = try await exporter.export(
+          sourceID: sourceID,
+          displayName: displayName,
+          from: end - lastSeconds,
+          to: end
+        )
+        await MainActor.run {
+          self.lastExport = result
+          self.statusMessage = "Exported \(result.url.lastPathComponent)"
+        }
+      } catch {
+        await MainActor.run {
+          self.statusMessage = "Export failed: \(error)"
+        }
+      }
     }
   }
 
@@ -2899,7 +2916,7 @@ public final class AppEnvironment {
     Task { [weak self] in
       do {
         let urls = try await Task.detached(priority: .userInitiated) {
-          try exporter.exportRecording(
+          try await exporter.exportRecording(
             recording,
             cameras: cameraList,
             includeProgram: includeProgram,
