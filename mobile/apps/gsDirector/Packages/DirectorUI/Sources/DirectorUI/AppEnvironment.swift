@@ -2900,7 +2900,8 @@ public final class AppEnvironment {
   public func shareRecording(
     _ recording: RecordingSummary,
     cameras: [(SourceID, String)],
-    includeProgram: Bool
+    includeProgram: Bool,
+    reprocess: Bool = false
   ) {
     guard !isExporting else { return }
     var items: [ExportService.ItemProgress] = []
@@ -2922,6 +2923,7 @@ public final class AppEnvironment {
             recording,
             cameras: cameraList,
             includeProgram: includeProgram,
+            reprocess: reprocess,
             progress: { item in
               Task { @MainActor in
                 guard let self else { return }
@@ -2951,6 +2953,18 @@ public final class AppEnvironment {
         }
       }
     }
+  }
+
+  public func hasPreparedExport(
+    _ recording: RecordingSummary,
+    cameras: [(SourceID, String)],
+    includeProgram: Bool
+  ) -> Bool {
+    exporter.hasPreparedExport(
+      recording,
+      cameras: cameras.map { (sourceID: $0.0, name: $0.1) },
+      includeProgram: includeProgram
+    )
   }
 
   public func runEncodeProbe(

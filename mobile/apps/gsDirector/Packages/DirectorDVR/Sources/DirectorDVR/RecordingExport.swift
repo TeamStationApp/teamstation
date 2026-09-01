@@ -22,6 +22,37 @@ public enum RecordingExport {
     "\(timestamp(from: startedAt))-\(sanitise(cameraName)).mov"
   }
 
+  public static func preparedDirectory(recordingID: Int64, in preparedRoot: URL) -> URL {
+    preparedRoot.appendingPathComponent("rec-\(recordingID)", isDirectory: true)
+  }
+
+  /// The programme master plus any continuation files opened after a writer failure
+  /// (`program-…mp4`, `program-…-2.mp4`, …).
+  public static func programSourceFiles(named filename: String, in directory: URL) -> [URL] {
+    let stem = URL(fileURLWithPath: filename).deletingPathExtension().lastPathComponent
+    guard let entries = try? FileManager.default.contentsOfDirectory(
+      at: directory,
+      includingPropertiesForKeys: nil,
+      options: [.skipsHiddenFiles]
+    ) else {
+      let primary = directory.appendingPathComponent(filename)
+      return FileManager.default.fileExists(atPath: primary.path) ? [primary] : []
+    }
+    return entries.filter { url in
+      let name = url.lastPathComponent
+      let ext = url.pathExtension.lowercased()
+      guard ext == "mp4" || ext == "mov" else { return false }
+      return name == filename || name.hasPrefix(stem + "-")
+    }
+    .sorted { lhs, rhs in
+      let left = lhs.lastPathComponent
+      let right = rhs.lastPathComponent
+      if left == filename { return true }
+      if right == filename { return false }
+      return left.localizedStandardCompare(right) == .orderedAscending
+    }
+  }
+
   /// Spaces and every character illegal in a filename become underscores. Adjacent
   /// underscores collapse so `Cam  1/2` does not become `Cam__1_2` with a hole.
   public static func sanitise(_ name: String) -> String {
