@@ -81,6 +81,29 @@ public struct SegmentAssembler: Sendable {
     return assembly(url: output, media: resolved.media)
   }
 
+  /// Complete MP4s covering `from…to` in play order, without concatenating their bytes.
+  public func mediaFiles(
+    sourceID: SourceID,
+    from: WallClock,
+    to: WallClock,
+    maximumSegments: Int = .max
+  ) throws -> Assembly {
+    let resolved = try resolve(sourceID: sourceID, from: from, to: to, maximumSegments: maximumSegments)
+    let archive = archiveDirectory(for: sourceID)
+    let files = resolved.media.map { archive.appendingPathComponent($0.filename) }
+    guard !files.isEmpty else { throw AssemblyError.noSegments }
+    let wallDuration = max(0, to - from)
+    let summed = resolved.media.reduce(0) { $0 + $1.duration }
+    return Assembly(
+      url: files[0],
+      startWall: resolved.media[0].startWall,
+      duration: max(wallDuration, summed),
+      segmentCount: resolved.media.count,
+      files: files,
+      fileDurations: resolved.media.map(\.duration)
+    )
+  }
+
   /// Playlist covering `from…to` for on-device replay. Complete MP4s are staged in order so
   /// `AVAssetReader` can play the whole range; fragmented recordings still get an HLS playlist.
   public func assemblePlaylist(
