@@ -3251,6 +3251,8 @@ public final class AppEnvironment {
       statusMessage = nil
     case let .sourceLayout(order):
       setSourceLayout(SourceLayout(order: order))
+    case .killProgramWriter:
+      programEncoder.poisonWriter()
     }
     return true
   }

@@ -37,6 +37,8 @@ public enum ControlCommand: Sendable, Equatable {
   case reset
   /// Visual-slot order of the five sources, 0-based. Source numbers stay put; only tiles move.
   case sourceLayout(order: [Int])
+  /// UITest-only: fail the live program `AVAssetWriter` mid-take.
+  case killProgramWriter
 }
 
 public enum ControlChannel {
@@ -142,6 +144,8 @@ public enum ControlChannel {
     case "source-layout", "sourcelayout":
       guard let order = Self.layoutOrder(query) else { return nil }
       return .sourceLayout(order: order)
+    case "kill-program-writer", "killprogramwriter":
+      return .killProgramWriter
     default:
       return nil
     }

@@ -173,6 +173,75 @@ struct ArchiveTimelineTests {
     let bytes = try FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int
     #expect((bytes ?? 0) > 0)
   }
+
+  @Test("A poisoned program writer recovers without the test calling recoverAfterFailure")
+  func programWriterFailureRecoversWithoutSkippingWall() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("program-poison-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let telemetry = PipelineTelemetry()
+    let encoder = ProgramEncoder(
+      telemetry: telemetry,
+      converter: PixelConverter(),
+      config: AppConfig(
+        programCodec: .h264,
+        programResolution: ProgramResolution(width: 160, height: 120),
+        programBitrate: 1_000_000
+      ),
+      directory: root
+    )
+    let origin = WallClock(seconds: 3_000)
+    try encoder.start(at: origin)
+    let factory = try #require(
+      PixelBufferFactory(width: 160, height: 120, pixelFormat: kCVPixelFormatType_32BGRA)
+    )
+    let buffer = try #require(factory.makeBuffer())
+    let format = try #require(
+      AudioSampleBuilder.makeFormatDescription(
+        AudioSampleBuilder.interleavedInt16Description(
+          sampleRate: AudioMixer.sampleRate,
+          channels: UInt32(AudioMixer.channelCount)
+        )
+      )
+    )
+    let silence = [Int16](repeating: 0, count: 1_024 * AudioMixer.channelCount)
+    for index in 0..<60 {
+      let time = CMTime(value: CMTimeValue(index), timescale: 30)
+      encoder.append(buffer, presentationTime: time)
+      if let sample = AudioSampleBuilder.makeSampleBuffer(
+        samples: silence,
+        formatDescription: format,
+        presentationTime: time
+      ) {
+        encoder.append(
+          audio: AudioFrame(sourceID: SourceID("program"), sampleBuffer: sample, wallClock: origin)
+        )
+      }
+      try await Task.sleep(nanoseconds: 20_000_000)
+    }
+    encoder.poisonWriter()
+    for index in 210..<270 {
+      encoder.append(buffer, presentationTime: CMTime(value: CMTimeValue(index), timescale: 30))
+      try await Task.sleep(nanoseconds: 20_000_000)
+    }
+    _ = await encoder.finish(until: WallClock(seconds: 3_009))
+    #expect(encoder.outputURLs.count == 2)
+    let snapshot = telemetry.snapshot
+    #expect(snapshot.sessions.encodeFailures > 0)
+    #expect(snapshot.dvr.lastError?.contains("program writer") == true)
+
+    let destination = root.appendingPathComponent("out.mp4")
+    try await ArchiveRemux.concatenate(
+      files: encoder.outputURLs,
+      fileDurations: encoder.outputURLs.map { _ in 0 },
+      targetDuration: 9,
+      destination: destination
+    )
+    let duration = try await AVURLAsset(url: destination).load(.duration)
+    #expect(abs(duration.seconds - 9) < 0.6)
+  }
 }
 
 final class FixedClock: DirectorClock, @unchecked Sendable {

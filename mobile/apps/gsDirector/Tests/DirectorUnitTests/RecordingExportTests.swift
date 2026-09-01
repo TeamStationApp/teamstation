@@ -45,6 +45,15 @@ struct RecordingExportTests {
       "program-20260829-083556.mp4",
       "program-20260829-083556-2.mp4"
     ])
+
+    let joined = RecordingExport.programSourceFiles(
+      named: "program-20260829-083556.mp4,program-20260829-083556-2.mp4",
+      in: root
+    )
+    #expect(joined.map(\.lastPathComponent) == [
+      "program-20260829-083556.mp4",
+      "program-20260829-083556-2.mp4"
+    ])
   }
 
   @Test("Prepared movies live in a folder named for the recording")

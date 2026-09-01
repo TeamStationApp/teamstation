@@ -29,26 +29,30 @@ public enum RecordingExport {
   /// The programme master plus any continuation files opened after a writer failure
   /// (`program-…mp4`, `program-…-2.mp4`, …).
   public static func programSourceFiles(named filename: String, in directory: URL) -> [URL] {
-    let stem = URL(fileURLWithPath: filename).deletingPathExtension().lastPathComponent
+    let primary = filename
+      .split(separator: ",")
+      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+      .first { !$0.isEmpty } ?? filename
+    let stem = URL(fileURLWithPath: primary).deletingPathExtension().lastPathComponent
     guard let entries = try? FileManager.default.contentsOfDirectory(
       at: directory,
       includingPropertiesForKeys: nil,
       options: [.skipsHiddenFiles]
     ) else {
-      let primary = directory.appendingPathComponent(filename)
-      return FileManager.default.fileExists(atPath: primary.path) ? [primary] : []
+      let primaryURL = directory.appendingPathComponent(primary)
+      return FileManager.default.fileExists(atPath: primaryURL.path) ? [primaryURL] : []
     }
     return entries.filter { url in
       let name = url.lastPathComponent
       let ext = url.pathExtension.lowercased()
       guard ext == "mp4" || ext == "mov" else { return false }
-      return name == filename || name.hasPrefix(stem + "-")
+      return name == primary || name.hasPrefix(stem + "-")
     }
     .sorted { lhs, rhs in
       let left = lhs.lastPathComponent
       let right = rhs.lastPathComponent
-      if left == filename { return true }
-      if right == filename { return false }
+      if left == primary { return true }
+      if right == primary { return false }
       return left.localizedStandardCompare(right) == .orderedAscending
     }
   }
