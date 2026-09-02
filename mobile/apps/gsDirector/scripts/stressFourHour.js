@@ -658,7 +658,7 @@ async function main() {
   append(actionLog, `NOTE peertube ${options.peertubeUrl}`)
 
   const host = await resolveHost(true)
-  const cameramanHost = await resolveCameramanHost(options.cameramanDevice)
+  let cameramanHost = await resolveCameramanHost(options.cameramanDevice)
   append(actionLog, `NOTE director-host=${host} cameraman-host=${cameramanHost}`)
 
   const directorPid = processPid(options.device, 'GS Director.app/GS Director')
