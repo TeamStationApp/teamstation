@@ -337,29 +337,35 @@ async function cameramanGet(host, target) {
 }
 
 async function dumpDirectorAndCameraman(directorHost, cameramanHost, cameramanUdid) {
+  let dirHost = directorHost
+  let camHost = cameramanHost
   const [directorResult, cameramanResult] = await Promise.allSettled([
-    directorGet(directorHost, '/dump-state'),
-    cameramanGet(cameramanHost, '/dump-state')
+    directorGet(dirHost, '/dump-state'),
+    cameramanGet(camHost, '/dump-state')
   ])
-  if (directorResult.status !== 'fulfilled') {
-    const message = directorResult.reason?.message ?? String(directorResult.reason)
-    throw new Error(`director dump-state failed: ${message}`)
+  let director = directorResult.status === 'fulfilled' ? directorResult.value : null
+  if (!director) {
+    try {
+      dirHost = await resolveHost(true)
+    } catch {
+      /* keep the last known host */
+    }
+    director = await directorGet(dirHost, '/dump-state')
   }
-  if (cameramanResult.status === 'fulfilled') {
-    return { director: directorResult.value, cameraman: cameramanResult.value, cameramanHost }
+  let cameraman = cameramanResult.status === 'fulfilled' ? cameramanResult.value : null
+  if (!cameraman) {
+    try {
+      camHost = await resolveCameramanHost(cameramanUdid)
+    } catch {
+      /* keep the last known host */
+    }
+    cameraman = await cameramanGet(camHost, '/dump-state')
   }
-  let host = cameramanHost
-  try {
-    host = await resolveCameramanHost(cameramanUdid)
-  } catch {
-    /* keep the last known host and try it once more */
-  }
-  try {
-    const cam = await cameramanGet(host, '/dump-state')
-    return { director: directorResult.value, cameraman: cam, cameramanHost: host }
-  } catch (error) {
-    const message = error.message ?? String(error)
-    throw new Error(`cameraman dump-state failed: ${message}`)
+  return {
+    director,
+    cameraman,
+    directorHost: dirHost,
+    cameramanHost: camHost
   }
 }
 
@@ -657,7 +663,7 @@ async function main() {
   )
   append(actionLog, `NOTE peertube ${options.peertubeUrl}`)
 
-  const host = await resolveHost(true)
+  let host = await resolveHost(true)
   let cameramanHost = await resolveCameramanHost(options.cameramanDevice)
   append(actionLog, `NOTE director-host=${host} cameraman-host=${cameramanHost}`)
 
@@ -758,6 +764,7 @@ async function main() {
       let dumps
       try {
         dumps = await dumpDirectorAndCameraman(host, cameramanHost, options.cameramanDevice)
+        if (dumps.directorHost) host = dumps.directorHost
         if (dumps.cameramanHost) cameramanHost = dumps.cameramanHost
       } catch (error) {
         abortReason = error.message
@@ -770,6 +777,7 @@ async function main() {
       await enforceCameras(host, state, options.cameras, actionLog)
       try {
         dumps = await dumpDirectorAndCameraman(host, cameramanHost, options.cameramanDevice)
+        if (dumps.directorHost) host = dumps.directorHost
         if (dumps.cameramanHost) cameramanHost = dumps.cameramanHost
       } catch (error) {
         abortReason = error.message

@@ -37,18 +37,24 @@ function resolveDevice() {
 }
 
 function hostnamesFor(device) {
-  const hosts = new Set()
-  const tunnel = device.connectionProperties.tunnelIPAddress
-  if (tunnel) hosts.add(tunnel.includes(':') ? `[${tunnel}]` : tunnel)
+  const hosts = []
+  const seen = new Set()
+  const add = host => {
+    if (!host || seen.has(host)) return
+    seen.add(host)
+    hosts.push(host)
+  }
   const slug = (device.deviceProperties.name ?? '')
     .replace(/[^A-Za-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
-  if (slug) hosts.add(`${slug}.local`)
-  for (const host of device.connectionProperties.potentialHostnames ?? [])
-    hosts.add(host)
-  for (const host of device.connectionProperties.localHostnames ?? [])
-    hosts.add(host)
-  return [...hosts]
+  // Bonjour `.local` stays reachable over USB. The CoreDevice IPv6 tunnel can answer
+  // `/health` once and then drop, which is what aborted the soak on `fd40:…`.
+  if (slug) add(`${slug}.local`)
+  for (const host of device.connectionProperties.localHostnames ?? []) add(host)
+  for (const host of device.connectionProperties.potentialHostnames ?? []) add(host)
+  const tunnel = device.connectionProperties.tunnelIPAddress
+  if (tunnel) add(tunnel.includes(':') ? `[${tunnel}]` : tunnel)
+  return hosts
 }
 
 async function get(host, target, timeoutMs) {
