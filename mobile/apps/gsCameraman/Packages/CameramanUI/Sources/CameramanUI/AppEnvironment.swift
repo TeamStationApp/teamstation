@@ -331,10 +331,12 @@ public final class AppEnvironment {
       videoEncoder.requestKeyframe()
     }
     camera.onVideoFrame = { [weak self, videoEncoder] sample in
-      videoEncoder.encode(SampleBufferRef(sample.buffer))
+      let blank = !(self?.publishedSettings.withLock { $0.videoEnabled } ?? true)
+      videoEncoder.encode(SampleBufferRef(sample.buffer), blank: blank)
       self?.noteCapturedFrame()
     }
-    camera.onAudioFrame = { [audioEncoder] sample in
+    camera.onAudioFrame = { [audioEncoder, settingsLock = publishedSettings] sample in
+      guard settingsLock.withLock({ $0.audioEnabled }) else { return }
       audioEncoder.encode(SampleBufferRef(sample.buffer))
     }
   }
@@ -401,6 +403,7 @@ public final class AppEnvironment {
     public var frameRate: Double
     public var bitrateMbps: Double
     public var audioEnabled: Bool
+    public var videoEnabled: Bool
     public var position: String
     public var deviceType: String
     public var displayedZoom: Double
@@ -438,6 +441,7 @@ public final class AppEnvironment {
       frameRate: settings.frameRate,
       bitrateMbps: Double(settings.bitrate) / 1_000_000,
       audioEnabled: settings.audioEnabled,
+      videoEnabled: settings.videoEnabled,
       position: cameraState.position.rawValue,
       deviceType: cameraState.deviceType,
       displayedZoom: cameraState.displayedZoom,
@@ -567,6 +571,12 @@ public final class AppEnvironment {
       settings.disabledLensIDs = Set(disabled)
       noteSettingsApplied()
       camera.configure(position: cameraState.position, settings: settings)
+      return ok()
+
+    case let .setVideo(on):
+      settings.videoEnabled = on
+      noteSettingsApplied()
+      videoEncoder.requestKeyframe()
       return ok()
 
     case .reset:

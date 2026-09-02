@@ -327,4 +327,12 @@ struct ControlChannelSourceTests {
     )
     #expect(command == .killProgramWriter)
   }
+
+  @Test("Parses export-recording")
+  func exportRecordingCommand() {
+    let command = ControlChannel.command(
+      from: URL(string: "gsdirector://test/export-recording")!
+    )
+    #expect(command == .exportRecording)
+  }
 }
