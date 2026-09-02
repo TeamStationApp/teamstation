@@ -617,7 +617,8 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
       lock.lock()
       audioFrames.enqueue(
         AudioFrame(sourceID: sourceID, sampleBuffer: sampleBuffer, wallClock: dueWall),
-        due: due
+        due: due,
+        keepingAtMost: 120
       )
       lock.unlock()
     }
@@ -688,7 +689,14 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     lock.unlock()
 
     session?.stop()
-    decoder?.invalidate()
+    // Invalidate off this source's drain queue. `VTDecompressionSessionInvalidate` waits for
+    // in-flight frames, and while it does the session queue keeps enqueueing audio. That wait
+    // on the drain queue is how a stalled camera grew the process into gigabytes.
+    if let decoder {
+      DispatchQueue.global(qos: .utility).async {
+        decoder.invalidate()
+      }
+    }
     queue.asyncAfter(deadline: .now() + delay, execute: item)
 
     // Repeated failure at a known-good address usually means the camera is answering somewhere

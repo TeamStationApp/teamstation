@@ -74,4 +74,9 @@ describe('MemoryPeakGuard', () => {
   it('lookback is one hour of 4-minute windows', () => {
     assert.equal(HOUR / WINDOW, LOOKBACK_WINDOWS)
   })
+
+  it('aborts immediately when a sample exceeds the hard cap', () => {
+    const guard = new MemoryPeakGuard({ hardCapMB: 1200 })
+    assert.match(guard.sample(0, 1500), /hard cap/)
+  })
 })

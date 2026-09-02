@@ -23,11 +23,18 @@ class MemoryPeakGuard {
     this.windowPeak = 0
     this.windowFloor = 0
     this.streak = 0
+    this.hardCapMB = options.hardCapMB ?? 0
   }
 
   sample(nowMs, megabytes) {
     const value = Number(megabytes)
     if (!Number.isFinite(value) || value < 0) return null
+    if (this.hardCapMB > 0 && value >= this.hardCapMB) {
+      return (
+        `memory leak: ${Math.round(value)}MB exceeds ${this.hardCapMB}MB hard cap ` +
+        `(peak ${Math.max(this.windowPeak, value)}MB)`
+      )
+    }
     if (this.windowStart == null) {
       this.windowStart = nowMs
       this.windowPeak = value

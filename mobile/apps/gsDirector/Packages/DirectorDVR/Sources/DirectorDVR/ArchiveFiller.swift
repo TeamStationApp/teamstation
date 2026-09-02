@@ -306,6 +306,9 @@ public final class ArchiveFiller: @unchecked Sendable {
         isKeyframe: keyframe
       )
     )
+    if pending.count > 2 {
+      pending.removeFirst(pending.count - 2)
+    }
     lock.unlock()
   }
 

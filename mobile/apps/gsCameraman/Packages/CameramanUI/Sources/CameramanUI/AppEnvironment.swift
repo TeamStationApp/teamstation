@@ -418,6 +418,7 @@ public final class AppEnvironment {
     public var encodeFailure: String?
     public var droppedFrames: Int
     public var physFootprintMB: Int
+    public var residentSizeMB: Int
     public var availableMemoryMB: Int
     public var cpuPercent: Double
     public var thermalState: String
@@ -465,6 +466,7 @@ public final class AppEnvironment {
       encodeFailure: encodeFailure,
       droppedFrames: sendQueueDroppedFrames,
       physFootprintMB: ProcessLoad.physFootprintMB(),
+      residentSizeMB: ProcessLoad.residentSizeMB(),
       availableMemoryMB: ProcessLoad.availableMemoryMB(),
       cpuPercent: (ProcessLoad.cpuPercent() * 10).rounded() / 10,
       thermalState: ProcessLoad.thermalStateName(),

@@ -32,6 +32,7 @@ struct DebugHUDLinesTests {
       "hud-recording",
       "hud-dvr-duration",
       "hud-memory",
+      "hud-resident",
       "hud-source-1-state"
     ] {
       #expect(ids.contains(id))
