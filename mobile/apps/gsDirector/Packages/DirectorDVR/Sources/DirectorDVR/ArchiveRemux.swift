@@ -41,12 +41,15 @@ public enum ArchiveRemux {
       if index < fileDurations.count, fileDurations[index] > 0 {
         duration = CMTime(seconds: fileDurations[index], preferredTimescale: 600)
       } else {
-        duration = try await asset.load(.duration)
+        duration = try await playableDuration(of: asset)
       }
+      guard duration.seconds > 0.05 else { continue }
       let range = CMTimeRange(start: .zero, duration: duration)
       try await composition.insertTimeRange(range, of: asset, at: cursor)
       cursor = CMTimeAdd(cursor, duration)
     }
+
+    guard cursor.seconds > 0.05 else { throw Error.empty }
     if let targetDuration, targetDuration - cursor.seconds > 0.05 {
       let pad = CMTime(seconds: targetDuration - cursor.seconds, preferredTimescale: 600)
       composition.insertEmptyTimeRange(CMTimeRange(start: cursor, duration: pad))
@@ -65,5 +68,29 @@ public enum ArchiveRemux {
     guard session.status == .completed else {
       throw Error.exportFailed(session.error?.localizedDescription ?? "\(session.status)")
     }
+  }
+
+  /// A take lasts hours, not days. Video tracks stamped on a compositor/boot clock report
+  /// multi-day durations; the longest track inside this window is the programme.
+  public static let maximumSaneDuration: TimeInterval = 20_000
+
+  public static func playableDuration(of asset: AVURLAsset) async throws -> CMTime {
+    var best: TimeInterval = 0
+    for type in [AVMediaType.audio, .video] {
+      for track in try await asset.loadTracks(withMediaType: type) {
+        let seconds = try await track.load(.timeRange).duration.seconds
+        if seconds > 0.05, seconds < maximumSaneDuration {
+          best = max(best, seconds)
+        }
+      }
+    }
+    if best > 0 {
+      return CMTime(seconds: best, preferredTimescale: 600)
+    }
+    let loaded = try await asset.load(.duration)
+    if loaded.seconds.isFinite, loaded.seconds > 0.05, loaded.seconds < maximumSaneDuration {
+      return loaded
+    }
+    return .zero
   }
 }

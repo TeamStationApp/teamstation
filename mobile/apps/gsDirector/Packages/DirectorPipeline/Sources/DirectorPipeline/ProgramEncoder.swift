@@ -249,10 +249,16 @@ public final class ProgramEncoder: @unchecked Sendable {
         lock.unlock()
         return
       }
+      // Always remap this source time onto the file timeline. fillHold used to set
+      // `baseTime = .zero` and return on a tiny gap, so the next live sample kept
+      // compositor PTS (boot-time, ~days) in the continuation file.
+      let origin: CMTime
       if lastTime.isNumeric, lastTime >= .zero {
-        let next = CMTimeAdd(lastTime, CMTime(value: 1, timescale: CMTimeScale(max(frameRate, 1))))
-        baseTime = CMTimeSubtract(presentationTime, next)
+        origin = CMTimeAdd(lastTime, CMTime(value: 1, timescale: CMTimeScale(max(frameRate, 1))))
+      } else {
+        origin = .zero
       }
+      baseTime = CMTimeSubtract(presentationTime, origin)
     }
     if baseTime == nil {
       baseTime = presentationTime
@@ -627,7 +633,8 @@ public final class ProgramEncoder: @unchecked Sendable {
       ? "program writer cancelled: \(Self.describe(failed.error))"
       : "program writer failed: \(Self.describe(failed.error))"
     if lastTime.isNumeric, lastTime >= .zero {
-      previousPartsDuration += lastTime.seconds
+      let elapsed = startedAt.map { Date().timeIntervalSince($0.date) } ?? lastTime.seconds
+      previousPartsDuration += min(max(0, lastTime.seconds), max(0, elapsed) + 1)
     }
     videoInput?.markAsFinished()
     audioInput?.markAsFinished()
@@ -691,7 +698,6 @@ public final class ProgramEncoder: @unchecked Sendable {
       writer.startSession(atSourceTime: .zero)
       sessionStarted = true
     }
-    if baseTime == nil { baseTime = .zero }
     let start = (lastTime.isNumeric && lastTime >= .zero) ? lastTime.seconds + step : 0
     lock.unlock()
     guard end - start > 0.0005 else { return }

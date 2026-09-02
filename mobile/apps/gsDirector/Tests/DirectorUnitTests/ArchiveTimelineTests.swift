@@ -36,6 +36,29 @@ struct ArchiveTimelineTests {
     #expect(live > 80)
   }
 
+  @Test("An 8s audio hole is filled so the audio track lasts the video")
+  func audioGapFillHoldsWallClock() async throws {
+    let env = try TimelineHarness()
+    defer { env.tearDown() }
+
+    let origin = 4_000.0
+    env.clock.set(origin)
+    let writer = env.makeWriter(startedAt: origin, width: 160, height: 120)
+    try writer.prepare()
+
+    try env.appendSolid(writer, from: origin, seconds: 2, luma: 180)
+    try env.appendVideo(writer, from: origin + 2, seconds: 8, luma: 180)
+    try env.appendSolid(writer, from: origin + 10, seconds: 1, luma: 180)
+    env.clock.set(origin + 11)
+    await writer.fillAndWait(to: WallClock(seconds: origin + 11))
+    await writer.finish()
+
+    let movie = try await env.remuxedMovie()
+    let tracks = try await AVURLAsset(url: movie).loadTracks(withMediaType: .audio)
+    let duration = try await tracks[0].load(.timeRange).duration
+    #expect(duration.seconds > 9)
+  }
+
   @Test("A 720 then 1080 take locks the first size for the whole file")
   func formatChangeLocksFirstSize() async throws {
     let env = try TimelineHarness()
@@ -149,7 +172,43 @@ struct ArchiveTimelineTests {
     #expect(abs(duration.seconds - 9) < 0.6)
   }
 
-  @Test("A program file with no compositor frames still lasts the recording")
+  @Test("Recovering with no compositor gap keeps continuation PTS on the file timeline")
+  func programRecoverTinyGapStaysOnFileTimeline() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("program-tiny-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let encoder = ProgramEncoder(
+      telemetry: PipelineTelemetry(),
+      converter: PixelConverter(),
+      config: AppConfig(
+        programCodec: .h264,
+        programResolution: ProgramResolution(width: 160, height: 120),
+        programBitrate: 1_000_000
+      ),
+      directory: root
+    )
+    try encoder.start(at: WallClock(seconds: 5_000))
+    let factory = try #require(
+      PixelBufferFactory(width: 160, height: 120, pixelFormat: kCVPixelFormatType_32BGRA)
+    )
+    let buffer = try #require(factory.makeBuffer())
+    for index in 0..<30 {
+      encoder.append(buffer, presentationTime: CMTime(value: CMTimeValue(index), timescale: 30))
+      try await Task.sleep(nanoseconds: 20_000_000)
+    }
+    encoder.recoverAfterFailure()
+    for index in 30..<60 {
+      encoder.append(buffer, presentationTime: CMTime(value: CMTimeValue(index), timescale: 30))
+      try await Task.sleep(nanoseconds: 20_000_000)
+    }
+    _ = await encoder.finish()
+    #expect(encoder.outputURLs.count == 2)
+    let part2 = try await AVURLAsset(url: encoder.outputURLs[1]).load(.duration)
+    #expect(part2.seconds > 0.4)
+    #expect(part2.seconds < 20)
+  }
   func programFinishWithoutFramesHoldsWallClock() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent("program-empty-\(UUID().uuidString)", isDirectory: true)
@@ -314,6 +373,49 @@ private final class TimelineHarness {
     height: Int = 120,
     fps: Int = 30
   ) throws {
+    try appendFrames(
+      writer,
+      from: start,
+      seconds: seconds,
+      luma: luma,
+      width: width,
+      height: height,
+      fps: fps,
+      includeAudio: true
+    )
+  }
+
+  func appendVideo(
+    _ writer: SegmentWriter,
+    from start: Double,
+    seconds: Double,
+    luma: UInt8,
+    width: Int = 160,
+    height: Int = 120,
+    fps: Int = 30
+  ) throws {
+    try appendFrames(
+      writer,
+      from: start,
+      seconds: seconds,
+      luma: luma,
+      width: width,
+      height: height,
+      fps: fps,
+      includeAudio: false
+    )
+  }
+
+  private func appendFrames(
+    _ writer: SegmentWriter,
+    from start: Double,
+    seconds: Double,
+    luma: UInt8,
+    width: Int,
+    height: Int,
+    fps: Int,
+    includeAudio: Bool
+  ) throws {
     let key = "\(width)x\(height)"
     let filler = fillers[key] ?? ArchiveFiller(width: width, height: height, codec: .h264, frameRate: fps)
     fillers[key] = filler
@@ -335,11 +437,13 @@ private final class TimelineHarness {
         )
       else { continue }
       writer.append(coded)
-      if let silence = filler.encodeSilence(
-        sourceID: source,
-        presentationTime: time,
-        wallClock: WallClock(seconds: wall)
-      ) {
+      if includeAudio,
+        let silence = filler.encodeSilence(
+          sourceID: source,
+          presentationTime: time,
+          wallClock: WallClock(seconds: wall)
+        )
+      {
         writer.append(audio: silence)
       }
     }

@@ -30,6 +30,9 @@ public final class VideoEncoder: @unchecked Sendable {
   /// Consumed by the next `encode` call. `kVTEncodeFrameOptionKey_ForceKeyFrame` is a per-frame
   /// option, not a session property, so it has to travel with `VTCompressionSessionEncodeFrame`.
   private var forceNextKeyframe = false
+  /// Last `blank:` seen on this queue. A control-channel `requestKeyframe` can lose the race
+  /// with an already-queued encode, so the transition itself has to force the IDR.
+  private var wasBlank = false
 
   /// Elementary-stream frames, delivered on the encoder queue.
   public var onFrame: (@Sendable (EncodedVideoFrame) -> Void)?
@@ -75,7 +78,8 @@ public final class VideoEncoder: @unchecked Sendable {
         toEncode = imageBuffer
       }
       var frameProperties: CFDictionary?
-      let requestedKeyframe = forceNextKeyframe
+      let requestedKeyframe = forceNextKeyframe || Self.shouldForceKeyframe(blank: blank, wasBlank: wasBlank)
+      wasBlank = blank
       if requestedKeyframe {
         forceNextKeyframe = false
         frameProperties = [kVTEncodeFrameOptionKey_ForceKeyFrame: kCFBooleanTrue] as CFDictionary
@@ -185,7 +189,15 @@ public final class VideoEncoder: @unchecked Sendable {
     self.session = nil
     parameterSets = []
     forceNextKeyframe = false
+    wasBlank = false
     blackPixelBuffer = nil
+  }
+
+  /// True when video is entering or leaving a blank stretch. P-frames of black still
+  /// reference the last live IDR, so the decoder keeps showing the last picture until
+  /// this frame is forced to a keyframe on the same encoder-queue hop as `blank:`.
+  public static func shouldForceKeyframe(blank: Bool, wasBlank: Bool) -> Bool {
+    blank != wasBlank
   }
 
   private func blackBuffer(matching imageBuffer: CVPixelBuffer) -> CVPixelBuffer? {
