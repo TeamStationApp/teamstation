@@ -212,6 +212,11 @@ public struct DVRTelemetry: Sendable, Codable, Equatable {
   public var indexWrites: UInt64 = 0
   public var freeDiskBytes: Int64 = 0
   public var lastError: String?
+  /// UITest export of a stopped take into Prepared/. Distinct from recording so a harness can poll.
+  public var isExporting = false
+  public var lastExportRecordingID: Int64?
+  public var lastExportFiles: [String] = []
+  public var lastExportError: String?
 
   public init() {}
 }

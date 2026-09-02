@@ -2967,6 +2967,55 @@ public final class AppEnvironment {
     )
   }
 
+  /// Remux the most recent stopped take into Prepared/. Does not present the share sheet.
+  private func beginPreparedExport() {
+    guard !isExporting else { return }
+    guard let recording = listedRecordings().first(where: { $0.endedAt != nil }) else {
+      telemetry.mutate { $0.dvr.lastExportError = "no stopped recording" }
+      return
+    }
+    isExporting = true
+    telemetry.mutate {
+      $0.dvr.isExporting = true
+      $0.dvr.lastExportRecordingID = recording.id
+      $0.dvr.lastExportFiles = []
+      $0.dvr.lastExportError = nil
+    }
+    let cameras = recording.sourceIDs.map { ($0, recordingCameraName(for: $0)) }
+    let includeProgram = recording.programFilename != nil
+    let exporter = self.exporter
+    Task { [weak self] in
+      do {
+        let urls = try await Task.detached(priority: .userInitiated) {
+          try await exporter.exportRecording(
+            recording,
+            cameras: cameras.map { (sourceID: $0.0, name: $0.1) },
+            includeProgram: includeProgram
+          )
+        }.value
+        await MainActor.run {
+          guard let self else { return }
+          self.isExporting = false
+          self.lastRecordingShare = urls
+          self.telemetry.mutate {
+            $0.dvr.isExporting = false
+            $0.dvr.lastExportFiles = urls.map(\.lastPathComponent)
+            $0.dvr.lastExportError = urls.isEmpty ? "nothing to export" : nil
+          }
+        }
+      } catch {
+        await MainActor.run {
+          guard let self else { return }
+          self.isExporting = false
+          self.telemetry.mutate {
+            $0.dvr.isExporting = false
+            $0.dvr.lastExportError = String(describing: error)
+          }
+        }
+      }
+    }
+  }
+
   public func runEncodeProbe(
     upTo maximum: Int = 8,
     framesPerSession: Int = 1,
@@ -3253,6 +3302,8 @@ public final class AppEnvironment {
       setSourceLayout(SourceLayout(order: order))
     case .killProgramWriter:
       programEncoder.poisonWriter()
+    case .exportRecording:
+      beginPreparedExport()
     }
     return true
   }

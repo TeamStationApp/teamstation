@@ -37,6 +37,9 @@ public struct StreamSettings: Sendable, Codable, Equatable {
   public var port: Int
   public var path: String
   public var audioEnabled: Bool
+  /// When false the encoder still runs, but every picture is black so Director keeps a continuous
+  /// video clock (and live audio) instead of treating a hole as a missing camera.
+  public var videoEnabled: Bool
   public var audioSampleRate: Int
   /// Unique IDs of lenses the operator turned off. Empty means every detected lens is eligible,
   /// including ones that appear on a later handset.
@@ -51,6 +54,7 @@ public struct StreamSettings: Sendable, Codable, Equatable {
     port: Int = StreamSettings.defaultPort,
     path: String = StreamSettings.canonicalPath,
     audioEnabled: Bool = true,
+    videoEnabled: Bool = true,
     audioSampleRate: Int = 48_000,
     disabledLensIDs: Set<String> = []
   ) {
@@ -62,6 +66,7 @@ public struct StreamSettings: Sendable, Codable, Equatable {
     self.port = port
     self.path = path
     self.audioEnabled = audioEnabled
+    self.videoEnabled = videoEnabled
     self.audioSampleRate = audioSampleRate
     self.disabledLensIDs = disabledLensIDs
   }

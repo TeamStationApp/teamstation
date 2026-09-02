@@ -39,6 +39,8 @@ public enum ControlCommand: Sendable, Equatable {
   case sourceLayout(order: [Int])
   /// UITest-only: fail the live program `AVAssetWriter` mid-take.
   case killProgramWriter
+  /// UITest-only: remux the latest stopped take into Prepared/ without opening the share sheet.
+  case exportRecording
 }
 
 public enum ControlChannel {
@@ -146,6 +148,8 @@ public enum ControlChannel {
       return .sourceLayout(order: order)
     case "kill-program-writer", "killprogramwriter":
       return .killProgramWriter
+    case "export-recording", "exportrecording":
+      return .exportRecording
     default:
       return nil
     }
