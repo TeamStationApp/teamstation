@@ -271,8 +271,10 @@ public struct TelemetrySnapshot: Sendable, Codable, Equatable {
   public var cpuCores = 0
   /// What iPadOS will still let this process allocate, which is far below physical RAM.
   public var availableMemoryMB = 0
-  /// Resident set, including surfaces lent to the display and encoder daemons.
+  /// Jetsam bill, including surfaces lent to the display and encoder daemons.
   public var physFootprintMB = 0
+  /// Anonymous resident pages. A soak that only watches `physFootprintMB` can miss a malloc climb.
+  public var residentSizeMB = 0
   public var programSource: Int?
   /// Whether this session is on real cameras rather than generated or file-backed ones.
   public var sourceAvailable = false

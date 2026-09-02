@@ -7,6 +7,7 @@ struct ProcessLoadTests {
   @Test("physFootprintMB is a non-negative reading from this process")
   func footprintIsReadable() {
     #expect(ProcessLoad.physFootprintMB() >= 0)
+    #expect(ProcessLoad.residentSizeMB() >= 0)
     #expect(ProcessLoad.availableMemoryMB() >= 0)
     #expect(ProcessLoad.coreCount > 0)
   }

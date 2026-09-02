@@ -3108,6 +3108,7 @@ public final class AppEnvironment {
       $0.cpuCores = ProcessLoad.coreCount
       $0.availableMemoryMB = ProcessLoad.availableMemoryMB()
       $0.physFootprintMB = ProcessLoad.physFootprintMB()
+      $0.residentSizeMB = ProcessLoad.residentSizeMB()
       $0.discoveryStatus = discoveryStatus
       $0.displayLatencyMilliseconds = displayLatency
       $0.programAudioPlaying = self.router.audioPlayer.isRunning

@@ -7,10 +7,11 @@
 // access. This script enables first/third/mound/handheld, starts directing, turns RECORD
 // and STREAM on (ingest URL from Settings), then every 30s cuts or instant-replays over
 // the control channel. A PeerTube frame is grabbed about every 3 minutes.
-// Every 4 minutes the floor and peak physFootprintMB in that window are kept for both
+// Every 4 minutes the floor and peak of max(physFootprintMB, residentSizeMB) are kept for both
 // Director and Cameraman. If two consecutive floors are 30% above the matching window
-// from an hour earlier, the run aborts as a sustained leak. Replay spikes lift the peak
-// only, so they do not trip the abort. Cameraman dump-state is fetched in parallel with
+// from an hour earlier, the run aborts as a sustained leak. A sample at or above 1200 MB
+// (Director) or 800 MB (Cameraman) aborts immediately. Replay spikes lift the peak
+// only, so they do not trip the hour-ago abort. Cameraman dump-state is fetched in parallel with
 // every Director dump-state (twice per tick).
 //
 // `--hour-blocks` records four one-hour takes. After each hour it stops, exports the take,
@@ -398,6 +399,7 @@ function readCameramanHealth(dump) {
     encodeFailure: dump.encodeFailure ?? null,
     dropped: dump.droppedFrames ?? server.droppedFrames ?? null,
     physFootprintMB: dump.physFootprintMB ?? null,
+    residentSizeMB: dump.residentSizeMB ?? null,
     availableMemoryMB: dump.availableMemoryMB ?? null,
     cpuPercent: dump.cpuPercent ?? null,
     thermal: dump.thermalState ?? null,
@@ -427,6 +429,7 @@ function applyCameramanHealth(health, dump) {
   health.cameramanEncodeFailure = cam.encodeFailure
   health.cameramanDropped = cam.dropped
   health.cameramanPhysFootprintMB = cam.physFootprintMB
+  health.cameramanResidentSizeMB = cam.residentSizeMB
   health.cameramanAvailableMemoryMB = cam.availableMemoryMB
   health.cameramanCpuPercent = cam.cpuPercent
   health.cameramanThermal = cam.thermal
@@ -1085,8 +1088,8 @@ async function main() {
   let lastEncoderResetCount = 0
   let abortReason = null
   let lastProgram = (state.programSource ?? 0) + 1
-  const memoryGuard = new MemoryPeakGuard()
-  const cameramanMemoryGuard = new MemoryPeakGuard()
+  const memoryGuard = new MemoryPeakGuard({ hardCapMB: 1200 })
+  const cameramanMemoryGuard = new MemoryPeakGuard({ hardCapMB: 800 })
   const hourResults = []
   const exportDir = path.join(logDir, `${stamp}-stressFourHour-exports`)
   fs.mkdirSync(exportDir, { recursive: true })
@@ -1151,6 +1154,7 @@ async function main() {
         thermal: pick(state, 'thermalState', 'thermal'),
         memoryMB: pick(state, 'availableMemoryMB', 'memoryMB'),
         physFootprintMB: pick(state, 'physFootprintMB'),
+        residentSizeMB: pick(state, 'residentSizeMB'),
         decodeSessions: pick(state.sessions, 'decodeSessions'),
         archiveBytes: pick(state.dvr, 'byteCount', 'bytes'),
         archiveSegments: pick(state.dvr, 'segmentCount', 'segments'),
@@ -1347,12 +1351,18 @@ async function main() {
         abortReason = `crash report ${newCrashes[0]}`
         break
       }
-      const leak = memoryGuard.sample(Date.now(), health.physFootprintMB)
+      const leak = memoryGuard.sample(
+        Date.now(),
+        Math.max(Number(health.physFootprintMB) || 0, Number(health.residentSizeMB) || 0)
+      )
       if (leak) {
         abortReason = leak
         break
       }
-      const cameramanLeak = cameramanMemoryGuard.sample(Date.now(), cam.physFootprintMB)
+      const cameramanLeak = cameramanMemoryGuard.sample(
+        Date.now(),
+        Math.max(Number(cam.physFootprintMB) || 0, Number(cam.residentSizeMB) || 0)
+      )
       if (cameramanLeak) {
         abortReason = `cameraman ${cameramanLeak}`
         break
