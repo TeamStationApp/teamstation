@@ -540,7 +540,9 @@ public final class AppEnvironment {
 
     case let .setCodec(name):
       guard let codec = StreamCodec(rawValue: name) else { return nil }
-      settings.codec = codec
+      // `setCodec` rather than assigning the field, so this carries the new codec's default rate the
+      // way the Settings picker does. Leaving HEVC's rate on an H.264 stream is now a saved mistake.
+      settings.setCodec(codec)
       noteSettingsApplied()
       videoEncoder.configure(settings: settings)
       return ok()
