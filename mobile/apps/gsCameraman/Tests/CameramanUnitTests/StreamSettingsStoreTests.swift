@@ -145,6 +145,24 @@ struct StreamSettingsMergeTests {
     #expect(merged.videoEnabled)
   }
 
+  @Test("Changing codec carries that codec's default rate across")
+  func codecChangeCarriesItsDefaultRate() {
+    var settings = StreamSettings()
+    #expect(settings.bitrate == StreamCodec.hevc.defaultBitrate)
+    settings.setCodec(.h264)
+    #expect(settings.bitrate == StreamCodec.h264.defaultBitrate)
+    settings.setCodec(.hevc)
+    #expect(settings.bitrate == StreamCodec.hevc.defaultBitrate)
+  }
+
+  @Test("A rate the operator chose themselves is left alone across a codec change")
+  func chosenRateSurvivesACodecChange() {
+    var settings = StreamSettings()
+    settings.bitrate = 9_000_000
+    settings.setCodec(.h264)
+    #expect(settings.bitrate == 9_000_000)
+  }
+
   @Test("Every persisted field has a launch-argument name")
   func fieldNamesMatchLaunchArguments() {
     #expect(
