@@ -1,5 +1,15 @@
 import Foundation
 
+public extension VideoCodec {
+  /// What the operator's camera list calls this codec.
+  var displayName: String {
+    switch self {
+    case .h264: "H.264"
+    case .hevc: "HEVC"
+    }
+  }
+}
+
 public enum VideoCodec: String, Sendable, Equatable {
   case h264
   case hevc

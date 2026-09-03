@@ -180,12 +180,23 @@ public struct SourceFormat: Hashable, Sendable {
   public var height: Int
   public var frameRate: Double
   public var pixelFormat: OSType
+  /// How the wire carries the picture — "H.264", "HEVC" — for the operator's camera list. A plain
+  /// label rather than the transport's own codec type, because a generated or file-backed source has
+  /// no wire codec and this type sits below the one that defines them.
+  public var codecName: String
 
-  public init(width: Int, height: Int, frameRate: Double, pixelFormat: OSType) {
+  public init(
+    width: Int,
+    height: Int,
+    frameRate: Double,
+    pixelFormat: OSType,
+    codecName: String = ""
+  ) {
     self.width = width
     self.height = height
     self.frameRate = frameRate
     self.pixelFormat = pixelFormat
+    self.codecName = codecName
   }
 
   /// `kCVPixelFormatType_422YpCbCr8` reads as "2vuy" in a HUD line or a JSON dump.

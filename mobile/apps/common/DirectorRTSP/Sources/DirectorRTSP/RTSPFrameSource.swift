@@ -349,6 +349,15 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     failedAttempts = 0
     lastFailure = nil
     lastAccessUnitAt = Date()
+    // The codec is known from the SDP, before any picture has been decoded, so the operator's camera
+    // list can name it the moment the camera is switched on. Size arrives with the first frame.
+    resolvedFormat = SourceFormat(
+      width: resolvedFormat?.width ?? 0,
+      height: resolvedFormat?.height ?? 0,
+      frameRate: resolvedFormat?.frameRate ?? 30,
+      pixelFormat: VideoToolboxDecoder.outputPixelFormat,
+      codecName: codec.displayName
+    )
     if let start = pendingWaitStart {
       stats.waitingSeconds += Double(DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1_000_000_000
       pendingWaitStart = nil
@@ -526,7 +535,8 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
       width: CVPixelBufferGetWidth(pixelBuffer),
       height: CVPixelBufferGetHeight(pixelBuffer),
       frameRate: resolvedFormat?.frameRate ?? 30,
-      pixelFormat: CVPixelBufferGetPixelFormatType(pixelBuffer)
+      pixelFormat: CVPixelBufferGetPixelFormatType(pixelBuffer),
+      codecName: resolvedFormat?.codecName ?? videoCodec?.displayName ?? ""
     )
     decodedFrames.enqueue(
       PixelFrame(
