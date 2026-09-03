@@ -25,7 +25,7 @@ const DEVICE_UDID = process.env.CAMERAMAN_DEVICE_UDID ?? '00008110-0006098A02FA8
 
 // Flows that need a real lens. Named so --sim can refuse them with a reason rather than letting
 // them fail somewhere confusing.
-const DEVICE_ONLY = new Set(['camera-zoom', 'client-connect'])
+const DEVICE_ONLY = new Set(['camera-zoom', 'client-connect', 'settings-lenses'])
 
 function availableFlows () {
   return fs

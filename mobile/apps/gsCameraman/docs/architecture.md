@@ -66,9 +66,11 @@ side: renaming a camera must not make it a new one.
 
 ## Zoom and lenses
 
-The triple camera is one `AVCaptureDevice` that switches between its constituents by itself as the
-zoom factor crosses hardware thresholds. The app does not choose lenses; it sets a zoom factor and
-reads back which lens the hardware picked.
+The triple camera is one `AVCaptureDevice` that switches between its constituents as the zoom
+factor crosses hardware thresholds. Settings lists every detected lens — physical constituents
+plus native crops such as the 48 mm 2x — with a toggle. Disabling a lens picks the virtual or
+physical device that covers only what remains, and turns off fallback switching so focus cannot
+hop onto a camera the operator turned off (the clip-on-telephoto case).
 
 Two zoom scales exist and confusing them is the main hazard: **device zoom** is the raw sensor
 factor the API takes, and **displayed zoom** is the 0.5x/1x/3x an operator reads. `ZoomMapping`

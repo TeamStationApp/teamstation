@@ -1,5 +1,6 @@
 import AVFoundation
 import CameramanCapture
+import CameramanCore
 import SwiftUI
 import UIKit
 

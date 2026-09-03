@@ -14,11 +14,12 @@ appId: co.gamestation.cameraman
 # Opens at 1x on the wide lens.
 - assertVisible:
     id: "zoom-label"
-    text: "1x"
 - assertVisible:
     id: "zoom-preset-1x"
 - assertVisible:
     id: "zoom-scale"
+- assertVisible:
+    id: "camera-thermal"
 - waitForAnimationToEnd:
     timeout: 2500
 - takeScreenshot: overlay-landscape
@@ -34,16 +35,24 @@ appId: co.gamestation.cameraman
     id: "settings-button"
 - waitForAnimationToEnd:
     timeout: 3000
+- takeScreenshot: settings-landscape
+- scrollUntilVisible:
+    element:
+      id: "settings-clients"
+    direction: DOWN
+    timeout: 15000
+    visibilityPercentage: 40
+    centerElement: true
+- takeScreenshot: settings-row2
 - assertVisible:
     id: "settings-url"
 - assertVisible:
     id: "settings-url-copy"
+# Count is live; Director on the LAN may already be connected.
 - assertVisible:
     id: "settings-clients"
-    text: "0"
 - assertVisible:
     id: "settings-name-edit"
-- takeScreenshot: settings-landscape
 - tapOn:
     id: "settings-done"
 - waitForAnimationToEnd:

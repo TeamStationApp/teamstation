@@ -48,19 +48,31 @@ public struct CameraView: View {
       .padding(24)
       .allowsHitTesting(true)
 
-      HStack {
+      // Thermal pill in the upper right. The zoom rail fills the height below it so the first
+      // and last stops keep the same vertical span when lenses are disabled.
+      HStack(alignment: .top) {
         Spacer()
-        ZoomScaleView(
-          mapping: environment.cameraState.mapping,
-          displayedZoom: environment.cameraState.displayedZoom,
-          onSelect: { environment.camera.setDisplayedZoom($0) },
-          onSegmentLength: { length in
-            if abs(pointsPerSegment - length) > 0.5 { pointsPerSegment = length }
-          }
-        )
-        .padding(.vertical, 24)
+        VStack(alignment: .trailing, spacing: 8) {
+          ThermalBadge(
+            level: environment.displayedThermalLevel,
+            animate: !environment.launch.isUITest
+          )
+          ZoomScaleView(
+            mapping: environment.cameraState.mapping,
+            displayedZoom: environment.cameraState.displayedZoom,
+            onSelect: { environment.camera.setDisplayedZoom($0) },
+            onSegmentLength: { length in
+              if abs(pointsPerSegment - length) > 0.5 { pointsPerSegment = length }
+            }
+          )
+          .frame(maxHeight: .infinity)
+        }
+        .padding(.top, 24)
+        .padding(.bottom, 24)
         .padding(.trailing, 16)
+        .frame(maxHeight: .infinity)
       }
+      .frame(maxHeight: .infinity)
     }
     .background(.black)
     .contentShape(Rectangle())
