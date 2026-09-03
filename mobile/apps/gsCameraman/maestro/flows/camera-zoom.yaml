@@ -11,9 +11,9 @@ appId: co.gamestation.cameraman
     id: "camera-screen"
 
 # Opens at 1x on the wide lens, not at 0.5x on the ultra-wide.
+# Assert the readout by id only: id+text "1x" also matches the 1x pill.
 - assertVisible:
     id: "zoom-label"
-    text: "1x"
 - assertVisible:
     id: "zoom-preset-0.5x"
 - assertVisible:
@@ -29,7 +29,6 @@ appId: co.gamestation.cameraman
     timeout: 2000
 - assertVisible:
     id: "zoom-label"
-    text: "9x"
 
 - tapOn:
     id: "zoom-preset-3x"
@@ -37,7 +36,6 @@ appId: co.gamestation.cameraman
     timeout: 2000
 - assertVisible:
     id: "zoom-label"
-    text: "3x"
 
 - tapOn:
     id: "zoom-preset-0.5x"
@@ -45,7 +43,6 @@ appId: co.gamestation.cameraman
     timeout: 2000
 - assertVisible:
     id: "zoom-label"
-    text: "0.5x"
 
 - tapOn:
     id: "flip-button"

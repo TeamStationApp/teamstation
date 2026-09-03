@@ -12,6 +12,11 @@ appId: co.gamestation.cameraman
 - waitForAnimationToEnd:
     timeout: 3000
 
+- scrollUntilVisible:
+    element:
+      id: "settings-cname"
+    direction: DOWN
+    timeout: 10000
 - copyTextFrom:
     id: "settings-cname"
 - evalScript: ${output.cname = maestro.copiedText}
@@ -37,6 +42,11 @@ appId: co.gamestation.cameraman
     id: "settings-button"
 - waitForAnimationToEnd:
     timeout: 3000
+- scrollUntilVisible:
+    element:
+      id: "settings-cname"
+    direction: DOWN
+    timeout: 10000
 - assertVisible:
     id: "settings-cname"
     text: ".*${output.cname}"

@@ -24,7 +24,8 @@ public struct LaunchConfiguration: Sendable, Equatable {
     "measureCapabilities",
     "recordSeconds",
     "selfTest",
-    "advertise"
+    "advertise",
+    "disabledLenses"
   ]
 
   public var isUITest = false
@@ -97,6 +98,11 @@ public struct LaunchConfiguration: Sendable, Equatable {
     if let height = values["height"].flatMap(Int.init) { settings.height = height }
     if let frameRate = values["frameRate"].flatMap(Double.init) { settings.frameRate = frameRate }
     if let audio = Self.bool(values["audioEnabled"]) { settings.audioEnabled = audio }
+    if let disabled = values["disabledLenses"] {
+      settings.disabledLensIDs = Set(
+        disabled.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+      )
+    }
   }
 
   static func bool(_ value: String?) -> Bool? {

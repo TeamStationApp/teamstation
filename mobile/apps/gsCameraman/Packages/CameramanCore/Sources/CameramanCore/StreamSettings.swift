@@ -38,6 +38,9 @@ public struct StreamSettings: Sendable, Codable, Equatable {
   public var path: String
   public var audioEnabled: Bool
   public var audioSampleRate: Int
+  /// Unique IDs of lenses the operator turned off. Empty means every detected lens is eligible,
+  /// including ones that appear on a later handset.
+  public var disabledLensIDs: Set<String>
 
   public init(
     width: Int = 1920,
@@ -48,7 +51,8 @@ public struct StreamSettings: Sendable, Codable, Equatable {
     port: Int = StreamSettings.defaultPort,
     path: String = StreamSettings.canonicalPath,
     audioEnabled: Bool = true,
-    audioSampleRate: Int = 48_000
+    audioSampleRate: Int = 48_000,
+    disabledLensIDs: Set<String> = []
   ) {
     self.width = width
     self.height = height
@@ -59,6 +63,7 @@ public struct StreamSettings: Sendable, Codable, Equatable {
     self.path = path
     self.audioEnabled = audioEnabled
     self.audioSampleRate = audioSampleRate
+    self.disabledLensIDs = disabledLensIDs
   }
 
   public static let `default` = StreamSettings()

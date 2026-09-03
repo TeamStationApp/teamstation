@@ -77,7 +77,7 @@ struct LaunchConfigurationTests {
     #expect(settings.bitrate == 9_000_000)
   }
 
-  @Test("A pinned identity and name come through for flows that assert an exact CNAME")
+  @Test("A pinned identity and name come through for a flow that asserts an exact CNAME")
   func identityOverrides() {
     let configuration = LaunchConfiguration(arguments: [
       "-identityUUID", "3f2504e0-4f89-41d3-9a0c-0305e82c33ab",
@@ -99,5 +99,11 @@ struct LaunchConfigurationTests {
     #expect(LaunchConfiguration(arguments: [ "-uiTest" ]).showDebugHUD)
     #expect(LaunchConfiguration(arguments: []).showDebugHUD == false)
     #expect(LaunchConfiguration(arguments: [ "-uiTest", "-debugHUD", "false" ]).showDebugHUD == false)
+  }
+
+  @Test("Lens disable lists are comma-separated IDs")
+  func disabledLenses() {
+    let configuration = LaunchConfiguration(arguments: [ "-disabledLenses", "uw,tele" ])
+    #expect(configuration.settings.disabledLensIDs == Set(["uw", "tele"]))
   }
 }

@@ -20,6 +20,15 @@ public final class AppEnvironment {
   public private(set) var identity: DeviceIdentity
   public var settings: StreamSettings
   public private(set) var cameraState = CameraSession.State()
+  /// Live `ProcessInfo` name (`nominal` / `fair` / `serious` / `critical`). The overlay pill maps
+  /// these to Cool / Fair / Warm / Hot the same way GS Director does.
+  public private(set) var thermalState = ProcessLoad.thermalStateName()
+  /// Settings Test Thermal Visuals. Overlay-only; dump-state `thermalState` stays the real name.
+  public private(set) var thermalPreview: ProcessInfo.ThermalState?
+  @ObservationIgnored
+  private var thermalPreviewTask: Task<Void, Never>?
+  @ObservationIgnored
+  private var thermalObserver: (any NSObjectProtocol)?
   public private(set) var capability: CameraCapabilityReport?
   public private(set) var cameraAuthorized = false
   public private(set) var microphoneAuthorized = false
@@ -90,6 +99,42 @@ public final class AppEnvironment {
     self.publishedIdentity = OSAllocatedUnfairLock(initialState: loaded)
     self.publishedSettings = OSAllocatedUnfairLock(initialState: launch.settings)
     self.appliedSettings = launch.settings
+    observeThermalState()
+  }
+
+  /// Force the overlay pill to `state` for `duration`, then return to the live thermal reading.
+  public func previewThermal(
+    _ state: ProcessInfo.ThermalState,
+    duration: Duration = .seconds(10)
+  ) {
+    thermalPreviewTask?.cancel()
+    thermalPreview = state
+    thermalPreviewTask = Task { @MainActor in
+      try? await Task.sleep(for: duration)
+      guard !Task.isCancelled else { return }
+      thermalPreview = nil
+    }
+  }
+
+  /// What the overlay pill shows: a Settings preview if one is running, otherwise telemetry.
+  public var displayedThermalLevel: ThermalBadgeLevel {
+    if let thermalPreview {
+      return ThermalBadgeLevel(process: thermalPreview)
+    }
+    return ThermalBadgeLevel(telemetryName: thermalState)
+  }
+
+  private func observeThermalState() {
+    thermalState = ProcessLoad.thermalStateName()
+    thermalObserver = NotificationCenter.default.addObserver(
+      forName: ProcessInfo.thermalStateDidChangeNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      Task { @MainActor in
+        self?.thermalState = ProcessLoad.thermalStateName()
+      }
+    }
   }
 
   public func rename(to name: String) {
@@ -128,6 +173,8 @@ public final class AppEnvironment {
       || next.bitrate != previous.bitrate
       || next.audioEnabled != previous.audioEnabled
       || next.audioSampleRate != previous.audioSampleRate
+      || next.disabledLensIDs != previous.disabledLensIDs
+    persistDisabledLenses(next.disabledLensIDs)
     guard pipelineChanged else { return }
     appliedSettings = next
     videoEncoder.configure(settings: next)
@@ -157,6 +204,13 @@ public final class AppEnvironment {
       guard cameraAuthorized else {
         status = "camera permission denied"
         return
+      }
+
+      if !launch.isUITest, launch.settings.disabledLensIDs.isEmpty {
+        let stored = Self.loadDisabledLenses()
+        settings.disabledLensIDs = stored
+        appliedSettings.disabledLensIDs = stored
+        publishedSettings.withLock { $0.disabledLensIDs = stored }
       }
 
       camera.onStateChange = { [weak self] state in
@@ -321,6 +375,15 @@ public final class AppEnvironment {
 
   // MARK: - The control channel
 
+  public struct LensDump: Encodable, Sendable {
+    public var id: String
+    public var title: String
+    public var position: String
+    public var displayedZoom: Double
+    public var focalLengthMM: Int?
+    public var enabled: Bool
+  }
+
   /// What a flow can assert on without reading pixels. Everything here is a decision the app made,
   /// not a rendering of it, so a failing assertion names the decision that was wrong.
   public struct StateDump: Encodable, Sendable {
@@ -339,6 +402,8 @@ public final class AppEnvironment {
     public var deviceZoom: Double
     public var lensIndex: Int
     public var zoomPresets: [Double]
+    public var disabledLensIDs: [String]
+    public var lenses: [LensDump]
     public var isRunning: Bool
     public var capturedFrames: Int
     public var encodedFrames: Int
@@ -374,6 +439,17 @@ public final class AppEnvironment {
       deviceZoom: cameraState.deviceZoom,
       lensIndex: cameraState.lensIndex,
       zoomPresets: cameraState.mapping.presetDisplayedZooms,
+      disabledLensIDs: settings.disabledLensIDs.sorted(),
+      lenses: cameraState.availableLenses.map { lens in
+        LensDump(
+          id: lens.id,
+          title: lens.title,
+          position: lens.position.rawValue,
+          displayedZoom: lens.displayedZoom,
+          focalLengthMM: lens.focalLengthMM,
+          enabled: !settings.disabledLensIDs.contains(lens.id)
+        )
+      },
       isRunning: cameraState.isRunning,
       capturedFrames: capturedFrames,
       encodedFrames: encodedFrames,
@@ -480,6 +556,13 @@ public final class AppEnvironment {
       if on { audioEncoder.configure(sampleRate: settings.audioSampleRate, channelCount: 1) }
       return ok()
 
+    case let .setLenses(disabled):
+      settings.disabledLensIDs = Set(disabled)
+      persistDisabledLenses(settings.disabledLensIDs)
+      noteSettingsApplied()
+      camera.configure(position: cameraState.position, settings: settings)
+      return ok()
+
     case .reset:
       settings = launch.settings
       noteSettingsApplied()
@@ -493,6 +576,21 @@ public final class AppEnvironment {
     let next = settings
     appliedSettings = next
     publishedSettings.withLock { $0 = next }
+  }
+
+  private func persistDisabledLenses(_ ids: Set<String>) {
+    guard !launch.isUITest else { return }
+    Self.saveDisabledLenses(ids)
+  }
+
+  private static let disabledLensesKey = "co.gamestation.cameraman.disabledLensIDs"
+
+  private static func loadDisabledLenses() -> Set<String> {
+    Set(UserDefaults.standard.stringArray(forKey: disabledLensesKey) ?? [])
+  }
+
+  private static func saveDisabledLenses(_ ids: Set<String>) {
+    UserDefaults.standard.set(Array(ids).sorted(), forKey: disabledLensesKey)
   }
 
   private func ok() -> Data { Data(#"{"ok":true}"#.utf8) }
