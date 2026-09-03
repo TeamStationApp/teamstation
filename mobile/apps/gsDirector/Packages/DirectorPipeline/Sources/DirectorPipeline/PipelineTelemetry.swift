@@ -285,6 +285,10 @@ public struct TelemetrySnapshot: Sendable, Codable, Equatable {
   public var statusMessage = ""
   /// Last replay failure, kept even when the banner is later overwritten by another message.
   public var lastReplayError = ""
+  /// What the last replay was actually given to play: how much history was available, how far back it
+  /// was asked to go, and how many archive files that turned into. A replay that ends early ran out
+  /// of one of these, and without them the difference is invisible.
+  public var lastReplayAssembly = ""
   /// The last lifecycle step the recording path completed. A recording that will not stop is
   /// otherwise indistinguishable from one that stopped without saying so.
   public var recordingStage = "idle"
