@@ -1548,6 +1548,20 @@ public final class AppEnvironment {
     // File-relative: the first assembled sample is t=0 for the decoder, even though fragment
     // PTS is counted from the start of the recording.
     let startOffset = max(0, target - assembly.startWall)
+    // Read outside the mutation: `availableHistorySeconds` reads the snapshot, and the telemetry lock
+    // is not recursive, so calling it inside `mutate` deadlocks the main thread while holding the lock
+    // every other thread needs.
+    let history = availableHistorySeconds(sourceIndex: sourceIndex)
+    let summary = "files=\(assembly.files.count)"
+      + " segs=\(assembly.segmentCount)"
+      + " dur=\(String(format: "%.2f", assembly.duration))"
+      + " startOffset=\(String(format: "%.2f", startOffset))"
+      + " offset=\(String(format: "%.2f", offsetSeconds))"
+      + " play=\(playDuration.map { String(format: "%.2f", $0) } ?? "nil")"
+      + " history=\(String(format: "%.1f", history))"
+      + " rate=\(rate)"
+      + " cont=\(isContinuation ? 1 : 0)"
+    telemetry.mutate { $0.lastReplayAssembly = summary }
     if !ScrubMapping.shouldStartReplay(
       assemblyDuration: assembly.duration,
       startOffset: startOffset
