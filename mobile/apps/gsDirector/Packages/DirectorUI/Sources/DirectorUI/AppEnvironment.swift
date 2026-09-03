@@ -3153,6 +3153,7 @@ public final class AppEnvironment {
         tile.sourceWidth = format?.width ?? 0
         tile.sourceHeight = format?.height ?? 0
         tile.sourceFrameRate = format?.frameRate ?? 0
+        tile.sourceCodec = format?.codecName ?? ""
         tile.sourcePixelFormat = format.map { SourceFormat.fourCharacterCode($0.pixelFormat) } ?? ""
         tile.connections = connections
         tile.capturedFrames = receive.captured

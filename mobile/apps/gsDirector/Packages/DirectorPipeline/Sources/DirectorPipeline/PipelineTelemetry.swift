@@ -131,6 +131,9 @@ public struct TileTelemetry: Sendable, Codable, Equatable {
   /// Frames that arrived after they were due, each of which was a visible stall.
   public var playoutLateFrames: UInt64 = 0
   public var playoutDepth = 0
+  /// Wire codec this camera negotiated, for the operator's camera list. Known from the SDP, so it is
+  /// there before the first picture is decoded.
+  public var sourceCodec = ""
   /// Decoded frames dropped for a timestamp that did not advance. Climbing at the frame rate means
   /// this tile is frozen because its source timeline stopped, not because the scene is still.
   public var outOfOrderFrames: UInt64 = 0
