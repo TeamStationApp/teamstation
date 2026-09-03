@@ -73,10 +73,22 @@ public final class AppEnvironment {
   /// The settings last pushed into the encoder and capture session. Compared on apply so Done after
   /// a no-op visit to Settings does not restart anything.
   private var appliedSettings: StreamSettings
+  private let settingsStore: StreamSettingsStore
 
-  public init(launch: LaunchConfiguration = LaunchConfiguration(), store: IdentityStore? = nil) {
+  public init(
+    launch: LaunchConfiguration = LaunchConfiguration(),
+    store: IdentityStore? = nil,
+    settingsStore: StreamSettingsStore = StreamSettingsStore()
+  ) {
     self.launch = launch
-    self.settings = launch.settings
+    self.settingsStore = settingsStore
+
+    // What the operator last chose comes back, except where this launch named a value outright.
+    var initial = launch.settings
+    if launch.persistSettings, let saved = settingsStore.load() {
+      initial = launch.settings.merging(saved: saved, keeping: launch.providedSettingFields)
+    }
+    self.settings = initial
 
     // A pinned UUID lets a flow assert an exact CNAME. Otherwise the Keychain copy is authoritative
     // so the identity survives a delete-and-reinstall.
@@ -97,8 +109,8 @@ public final class AppEnvironment {
     }
     self.identity = loaded
     self.publishedIdentity = OSAllocatedUnfairLock(initialState: loaded)
-    self.publishedSettings = OSAllocatedUnfairLock(initialState: launch.settings)
-    self.appliedSettings = launch.settings
+    self.publishedSettings = OSAllocatedUnfairLock(initialState: initial)
+    self.appliedSettings = initial
     observeThermalState()
   }
 
@@ -174,7 +186,7 @@ public final class AppEnvironment {
       || next.audioEnabled != previous.audioEnabled
       || next.audioSampleRate != previous.audioSampleRate
       || next.disabledLensIDs != previous.disabledLensIDs
-    persistDisabledLenses(next.disabledLensIDs)
+    persistSettings(next)
     guard pipelineChanged else { return }
     appliedSettings = next
     videoEncoder.configure(settings: next)
@@ -204,13 +216,6 @@ public final class AppEnvironment {
       guard cameraAuthorized else {
         status = "camera permission denied"
         return
-      }
-
-      if !launch.isUITest, launch.settings.disabledLensIDs.isEmpty {
-        let stored = Self.loadDisabledLenses()
-        settings.disabledLensIDs = stored
-        appliedSettings.disabledLensIDs = stored
-        publishedSettings.withLock { $0.disabledLensIDs = stored }
       }
 
       camera.onStateChange = { [weak self] state in
@@ -558,7 +563,6 @@ public final class AppEnvironment {
 
     case let .setLenses(disabled):
       settings.disabledLensIDs = Set(disabled)
-      persistDisabledLenses(settings.disabledLensIDs)
       noteSettingsApplied()
       camera.configure(position: cameraState.position, settings: settings)
       return ok()
@@ -576,21 +580,14 @@ public final class AppEnvironment {
     let next = settings
     appliedSettings = next
     publishedSettings.withLock { $0 = next }
+    persistSettings(next)
   }
 
-  private func persistDisabledLenses(_ ids: Set<String>) {
-    guard !launch.isUITest else { return }
-    Self.saveDisabledLenses(ids)
-  }
-
-  private static let disabledLensesKey = "co.gamestation.cameraman.disabledLensIDs"
-
-  private static func loadDisabledLenses() -> Set<String> {
-    Set(UserDefaults.standard.stringArray(forKey: disabledLensesKey) ?? [])
-  }
-
-  private static func saveDisabledLenses(_ ids: Set<String>) {
-    UserDefaults.standard.set(Array(ids).sorted(), forKey: disabledLensesKey)
+  /// Written on every change rather than on the way out: the app is routinely killed by the operator
+  /// or by iOS while backgrounded, and neither gives a chance to save then.
+  private func persistSettings(_ settings: StreamSettings) {
+    guard launch.persistSettings else { return }
+    settingsStore.save(settings)
   }
 
   private func ok() -> Data { Data(#"{"ok":true}"#.utf8) }
