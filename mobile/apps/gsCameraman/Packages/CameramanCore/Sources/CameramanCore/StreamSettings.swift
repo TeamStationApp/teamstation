@@ -46,8 +46,8 @@ public struct StreamSettings: Sendable, Codable, Equatable {
     width: Int = 1920,
     height: Int = 1080,
     frameRate: Double = 30,
-    codec: StreamCodec = .h264,
-    bitrate: Int = 6_000_000,
+    codec: StreamCodec = .hevc,
+    bitrate: Int = StreamCodec.hevc.defaultBitrate,
     port: Int = StreamSettings.defaultPort,
     path: String = StreamSettings.canonicalPath,
     audioEnabled: Bool = true,
@@ -75,6 +75,41 @@ public struct StreamSettings: Sendable, Codable, Equatable {
   public mutating func setCodec(_ newCodec: StreamCodec) {
     if bitrate == codec.defaultBitrate { bitrate = newCodec.defaultBitrate }
     codec = newCodec
+  }
+
+  /// The launch-argument names for each persisted field, which is how an explicit argument is told
+  /// apart from a value the operator last chose on the device.
+  public enum Field: String, Sendable, CaseIterable {
+    case codec
+    case bitrateMbps
+    case width
+    case height
+    case frameRate
+    case audioEnabled
+    case rtspPort
+    case rtspPath
+    case disabledLenses
+  }
+
+  /// What was saved on the device, laid over these launch defaults.
+  ///
+  /// Anything named in `explicit` is left alone: a flow that pins `-codec h264` has to get H.264
+  /// whatever the operator last chose, or a UI test would depend on the state of the handset.
+  ///
+  /// `videoEnabled` is deliberately not carried across. It is the blanking control, not a
+  /// preference, and a camera left blank by a fault injection must come back showing a picture.
+  public func merging(saved: StreamSettings, keeping explicit: Set<Field>) -> StreamSettings {
+    var merged = self
+    if !explicit.contains(.codec) { merged.codec = saved.codec }
+    if !explicit.contains(.bitrateMbps) { merged.bitrate = saved.bitrate }
+    if !explicit.contains(.width) { merged.width = saved.width }
+    if !explicit.contains(.height) { merged.height = saved.height }
+    if !explicit.contains(.frameRate) { merged.frameRate = saved.frameRate }
+    if !explicit.contains(.audioEnabled) { merged.audioEnabled = saved.audioEnabled }
+    if !explicit.contains(.rtspPort) { merged.port = saved.port }
+    if !explicit.contains(.rtspPath) { merged.path = saved.path }
+    if !explicit.contains(.disabledLenses) { merged.disabledLensIDs = saved.disabledLensIDs }
+    return merged
   }
 }
 
