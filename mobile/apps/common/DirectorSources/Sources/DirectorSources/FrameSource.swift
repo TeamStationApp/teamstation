@@ -262,6 +262,10 @@ public struct ReceiveStats: Sendable, Equatable {
   /// Decoders this source currently holds. Only network sources decode anything; a generated or
   /// file-backed source reports zero.
   public var decodeSessions = 0
+  /// Decoded frames discarded because their timestamp did not advance. A handful means the camera
+  /// reordered; a count that climbs at the frame rate means the source timeline has stopped moving
+  /// and the tile is frozen, which is otherwise indistinguishable from a camera holding still.
+  public var outOfOrderFrames: UInt64 = 0
   /// Why delivery last stopped, in the words of whatever noticed — a socket error, or a session that
   /// went quiet without one. Empty while healthy, and the difference between a tile that is black for
   /// a knowable reason and one that is simply black.
