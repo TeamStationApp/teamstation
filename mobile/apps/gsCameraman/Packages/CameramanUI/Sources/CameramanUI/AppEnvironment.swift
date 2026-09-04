@@ -220,10 +220,14 @@ public final class AppEnvironment {
 
       camera.onStateChange = { [weak self] state in
         self?.cameraState = state
+        self?.persistFramingIfChanged(state)
       }
       startEncoding(fromCamera: true)
-      camera.configure(position: .back, settings: settings)
+      camera.configure(position: settings.cameraPosition, settings: settings)
       camera.start()
+      // After `start`, so the device is configured and the requested zoom is clamped to what this
+      // lens actually supports rather than silently rejected.
+      if settings.displayedZoom != 1 { camera.setDisplayedZoom(settings.displayedZoom) }
     }
 
     if launch.isUITest { startControlServer() }
@@ -613,6 +617,18 @@ public final class AppEnvironment {
       camera.configure(position: .back, settings: settings)
       return ok()
     }
+  }
+
+  /// Saves the lens and zoom the operator settled on, and only when one of them actually moved.
+  ///
+  /// `onStateChange` fires for focus, exposure and interruption too, so writing unconditionally
+  /// would put a `UserDefaults` write on a camera callback several times a second.
+  private func persistFramingIfChanged(_ state: CameraSession.State) {
+    guard settings.cameraPosition != state.position || settings.displayedZoom != state.displayedZoom
+    else { return }
+    settings.cameraPosition = state.position
+    settings.displayedZoom = state.displayedZoom
+    noteSettingsApplied()
   }
 
   private func noteSettingsApplied() {

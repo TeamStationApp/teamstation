@@ -44,6 +44,11 @@ public struct StreamSettings: Sendable, Codable, Equatable {
   /// Unique IDs of lenses the operator turned off. Empty means every detected lens is eligible,
   /// including ones that appear on a later handset.
   public var disabledLensIDs: Set<String>
+  /// Which camera the operator last framed with, and at what zoom. Persisted because a camera on a
+  /// tripod is aimed once: coming back on the wrong lens at 1x after a restart silently changes the
+  /// shot, and on a fixed rig nobody is standing there to notice.
+  public var cameraPosition: CameraPosition
+  public var displayedZoom: Double
 
   public init(
     width: Int = 1920,
@@ -56,7 +61,9 @@ public struct StreamSettings: Sendable, Codable, Equatable {
     audioEnabled: Bool = true,
     videoEnabled: Bool = true,
     audioSampleRate: Int = 48_000,
-    disabledLensIDs: Set<String> = []
+    disabledLensIDs: Set<String> = [],
+    cameraPosition: CameraPosition = .back,
+    displayedZoom: Double = 1
   ) {
     self.width = width
     self.height = height
@@ -68,7 +75,32 @@ public struct StreamSettings: Sendable, Codable, Equatable {
     self.audioEnabled = audioEnabled
     self.videoEnabled = videoEnabled
     self.audioSampleRate = audioSampleRate
+    self.cameraPosition = cameraPosition
+    self.displayedZoom = displayedZoom
     self.disabledLensIDs = disabledLensIDs
+  }
+
+  /// Decoded field by field with defaults for anything absent.
+  ///
+  /// `StreamSettingsStore.load()` treats a decode failure as "never configured" and falls back to
+  /// defaults, so with the synthesised decoder every future field added here would silently reset
+  /// every operator setting on upgrade. Tolerating missing keys makes that impossible.
+  public init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    let d = StreamSettings()
+    width = try c.decodeIfPresent(Int.self, forKey: .width) ?? d.width
+    height = try c.decodeIfPresent(Int.self, forKey: .height) ?? d.height
+    frameRate = try c.decodeIfPresent(Double.self, forKey: .frameRate) ?? d.frameRate
+    codec = try c.decodeIfPresent(StreamCodec.self, forKey: .codec) ?? d.codec
+    bitrate = try c.decodeIfPresent(Int.self, forKey: .bitrate) ?? d.bitrate
+    port = try c.decodeIfPresent(Int.self, forKey: .port) ?? d.port
+    path = try c.decodeIfPresent(String.self, forKey: .path) ?? d.path
+    audioEnabled = try c.decodeIfPresent(Bool.self, forKey: .audioEnabled) ?? d.audioEnabled
+    videoEnabled = try c.decodeIfPresent(Bool.self, forKey: .videoEnabled) ?? d.videoEnabled
+    audioSampleRate = try c.decodeIfPresent(Int.self, forKey: .audioSampleRate) ?? d.audioSampleRate
+    disabledLensIDs = try c.decodeIfPresent(Set<String>.self, forKey: .disabledLensIDs) ?? d.disabledLensIDs
+    cameraPosition = try c.decodeIfPresent(CameraPosition.self, forKey: .cameraPosition) ?? d.cameraPosition
+    displayedZoom = try c.decodeIfPresent(Double.self, forKey: .displayedZoom) ?? d.displayedZoom
   }
 
   public static let `default` = StreamSettings()
