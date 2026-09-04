@@ -100,7 +100,7 @@ public final class AudioEncoder: @unchecked Sendable {
     }
   }
 
-  public func encode(_ sample: SampleBufferRef) {
+  public func encode(_ sample: SampleBufferRef, silent: Bool = false) {
     // Copy PCM here so the audio queue does not retain `CMSampleBuffer`s if drain falls behind.
     guard let block = CMSampleBufferGetDataBuffer(sample.buffer) else { return }
     var length = 0
@@ -113,7 +113,7 @@ public final class AudioEncoder: @unchecked Sendable {
       dataPointerOut: &pointer
     ) == noErr, let pointer, length > 0 else { return }
 
-    let pcm = Data(bytes: pointer, count: length)
+    let pcm = silent ? Data(count: length) : Data(bytes: pointer, count: length)
     let pts = CMSampleBufferGetPresentationTimeStamp(sample.buffer).seconds
     queue.async { [self] in
       guard converter != nil else { return }

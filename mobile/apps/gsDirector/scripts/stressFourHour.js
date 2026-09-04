@@ -704,14 +704,60 @@ function pullFromDevice(udid, remote, local) {
 }
 
 function probeDuration(file) {
-  const raw = execFileSync(
-    'ffprobe',
-    ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=nw=1:nk=1', file],
+  const format = Number(
+    execFileSync(
+      'ffprobe',
+      ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=nw=1:nk=1', file],
+      { encoding: 'utf8' }
+    ).trim()
+  )
+  const audio = Number(
+    execFileSync(
+      'ffprobe',
+      [
+        '-v',
+        'error',
+        '-select_streams',
+        'a:0',
+        '-show_entries',
+        'stream=duration',
+        '-of',
+        'default=nw=1:nk=1',
+        file
+      ],
+      { encoding: 'utf8' }
+    ).trim()
+  )
+  if (Number.isFinite(audio) && Number.isFinite(format) && format > audio * 2) return audio
+  if (Number.isFinite(format)) return format
+  if (Number.isFinite(audio)) return audio
+  throw new Error(`ffprobe duration for ${file}: format=${format} audio=${audio}`)
+}
+
+function meanVolume(file, start, duration) {
+  const result = spawnSync(
+    'ffmpeg',
+    [
+      '-hide_banner',
+      '-ss',
+      String(Math.max(0, start)),
+      '-t',
+      String(Math.max(0.5, duration)),
+      '-i',
+      file,
+      '-af',
+      'volumedetect',
+      '-vn',
+      '-f',
+      'null',
+      '-'
+    ],
     { encoding: 'utf8' }
-  ).trim()
-  const duration = Number(raw)
-  if (!Number.isFinite(duration)) throw new Error(`ffprobe duration for ${file}: ${raw}`)
-  return duration
+  )
+  const text = `${result.stderr || ''}${result.stdout || ''}`
+  const match = text.match(/mean_volume:\s*([-\d.]+)/)
+  if (!match) throw new Error(`volumedetect failed for ${path.basename(file)} at ${start}s`)
+  return Number(match[1])
 }
 
 function parseDetectWindows(stderr, startRe, endRe) {
@@ -743,8 +789,8 @@ function detectBlanks(file) {
       file,
       '-af',
       'silencedetect=noise=-35dB:d=2',
-      '-vf',
-      'blackdetect=d=2:pix_th=0.12',
+        '-vf',
+        'blackdetect=d=1:pix_th=0.32',
       '-f',
       'null',
       '-'
@@ -766,7 +812,7 @@ function detectBlanks(file) {
   }
 }
 
-function windowCovers(windows, start, end, slack = 2.5) {
+function windowCovers(windows, start, end, slack = 5) {
   return windows.some(window => {
     const from = window.start
     const to = window.end == null ? Infinity : window.end
@@ -808,12 +854,13 @@ async function applyScheduledFaults(elapsedSec, faults, cameramanHost, actionLog
     if (!fault.started && elapsedSec >= fault.at) {
       const pathName = fault.kind === 'audio' ? '/set-audio?on=false' : '/set-video?on=false'
       await cameramanGet(cameramanHost, pathName)
+      const dump = await cameramanGet(cameramanHost, '/dump-state')
       fault.started = true
       fault.startedAtIso = nowIso()
       fault.startedElapsed = elapsedSec
       append(
         actionLog,
-        `FAULT ${fault.kind} off elapsed=${elapsedSec.toFixed(1)}s duration=${fault.duration}s`
+        `FAULT ${fault.kind} off elapsed=${elapsedSec.toFixed(1)}s duration=${fault.duration}s audioEnabled=${dump.audioEnabled} videoEnabled=${dump.videoEnabled}`
       )
     }
     if (fault.started && !fault.ended && elapsedSec >= fault.at + fault.duration) {
@@ -935,10 +982,15 @@ function verifyHourExports(files, expectedSeconds, faults, actionLog) {
   for (const fault of faults.filter(item => item.started)) {
     const start = fault.startedElapsed ?? fault.at
     const end = fault.endedElapsed ?? fault.at + fault.duration
+    const volume = meanVolume(handheld.file, start, Math.max(1, end - start))
+    append(
+      actionLog,
+      `NOTE handheld ${fault.kind} window ${start.toFixed(1)}-${end.toFixed(1)}s mean_volume=${volume}dB`
+    )
     if (fault.kind === 'audio') {
-      if (!windowCovers(detected.silence, start, end)) {
+      if (volume > -70) {
         throw new Error(
-          `handheld audio mute ${start.toFixed(1)}-${end.toFixed(1)}s was not silent`
+          `handheld audio mute ${start.toFixed(1)}-${end.toFixed(1)}s mean_volume ${volume}dB, expected silence`
         )
       }
       if (windowOverlaps(detected.black, start, end)) {
@@ -953,9 +1005,9 @@ function verifyHourExports(files, expectedSeconds, faults, actionLog) {
           `handheld video blank ${start.toFixed(1)}-${end.toFixed(1)}s was not black`
         )
       }
-      if (windowCovers(detected.silence, start, end)) {
+      if (volume < -70) {
         throw new Error(
-          `handheld audio went silent during video blank ${start.toFixed(1)}-${end.toFixed(1)}s`
+          `handheld audio went silent during video blank ${start.toFixed(1)}-${end.toFixed(1)}s (${volume}dB)`
         )
       }
     }

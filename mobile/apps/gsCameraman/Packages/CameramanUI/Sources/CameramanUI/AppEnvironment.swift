@@ -336,8 +336,8 @@ public final class AppEnvironment {
       self?.noteCapturedFrame()
     }
     camera.onAudioFrame = { [audioEncoder, settingsLock = publishedSettings] sample in
-      guard settingsLock.withLock({ $0.audioEnabled }) else { return }
-      audioEncoder.encode(SampleBufferRef(sample.buffer))
+      let silent = !settingsLock.withLock { $0.audioEnabled }
+      audioEncoder.encode(SampleBufferRef(sample.buffer), silent: silent)
     }
   }
 
