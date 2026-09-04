@@ -172,9 +172,18 @@ public final class PixelConverter: @unchecked Sendable {
     return created
   }
 
+  private static let maxIdleSessions = 8
+
   private func checkIn(_ session: VTPixelTransferSession, scalingMode: CFString) {
     lock.lock()
-    idleSessions[scalingMode, default: []].append(session)
+    var available = idleSessions[scalingMode] ?? []
+    if available.count >= Self.maxIdleSessions {
+      lock.unlock()
+      VTPixelTransferSessionInvalidate(session)
+      return
+    }
+    available.append(session)
+    idleSessions[scalingMode] = available
     lock.unlock()
   }
 }

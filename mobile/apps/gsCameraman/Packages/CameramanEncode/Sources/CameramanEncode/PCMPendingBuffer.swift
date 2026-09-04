@@ -35,6 +35,15 @@ public struct PCMPendingBuffer: Sendable {
     readOffset += min(byteCount, readableCount)
   }
 
+  /// Turns leftover live PCM into zeros without dropping the sample count, so mute keeps
+  /// the AAC cadence and the first silent frame is not a mix of the previous take.
+  public mutating func replaceReadableWithZeros() {
+    let count = readableCount
+    guard count > 0 else { return }
+    storage = Data(count: count)
+    readOffset = 0
+  }
+
   public mutating func reset(keepingCapacity: Bool = false) {
     storage.removeAll(keepingCapacity: keepingCapacity)
     readOffset = 0

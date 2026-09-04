@@ -78,8 +78,8 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
   private var audioConfig: (cookie: Data, sampleRate: Double, channels: Int)?
 
   private var frameID: UInt64 = 0
-  private var baseVideoTimestamp: UInt32?
-  private var baseAudioTimestamp: UInt32?
+  private var videoTimeline = RTPTimestampUnwrapper()
+  private var audioTimeline = RTPTimestampUnwrapper()
   private var lastPresentationTime: CMTime?
   private var lastAccessUnitAt: Date?
   private var sessionStartedAt: Date?
@@ -262,8 +262,8 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     pendingFrameIDs.removeAll()
     videoTracker = RTPSequenceTracker()
     audioTracker = RTPSequenceTracker()
-    baseVideoTimestamp = nil
-    baseAudioTimestamp = nil
+    videoTimeline.reset()
+    audioTimeline.reset()
     lastPresentationTime = nil
     jitter = JitterWindow()
     // A new session restarts the timeline, so every frame held against the old one is stale and
@@ -372,16 +372,15 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     let arrivedAt = DispatchTime.now()
     let now = Self.seconds(arrivedAt)
     lock.lock()
-    if baseVideoTimestamp == nil { baseVideoTimestamp = unit.rtpTimestamp }
-    let base = baseVideoTimestamp ?? unit.rtpTimestamp
     stats.captured &+= 1
     lastAccessUnitAt = Date()
     jitter.noteArrival(at: arrivedAt, isKeyframe: unit.isKeyframe)
 
-    // 90 kHz is the RTP video clock rate these cameras advertise; the delta form keeps the
-    // timeline starting at zero however large the camera's own timestamps are.
-    let elapsed = Int64(Int32(bitPattern: unit.rtpTimestamp &- base))
-    let presentationTime = CMTime(value: CMTimeValue(max(0, elapsed)), timescale: 90_000)
+    // 90 kHz is the RTP video clock rate these cameras advertise. Unwrapped rather than measured
+    // from the session's first timestamp: the 32-bit field wraps every 13 hours, and half that is
+    // long enough to reach in one game.
+    let elapsed = videoTimeline.unwrap(unit.rtpTimestamp)
+    let presentationTime = CMTime(value: CMTimeValue(elapsed), timescale: 90_000)
     jitter.noteLateness(now - presentationTime.seconds, at: arrivedAt)
 
     // The picture waits here instead of being decoded on the spot. Releasing it against its own
@@ -513,7 +512,10 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     lock.lock()
     // Decode order is presentation order for these cameras, but a stream with reordering would
     // otherwise hand the archive writer a timestamp that moves backwards, which stalls the track.
+    // Counted, because dropping silently is how a stalled source timeline once looked like a
+    // camera that had simply stopped moving.
     if let last = lastPresentationTime, presentationTime <= last {
+      stats.outOfOrderFrames &+= 1
       lock.unlock()
       return
     }
@@ -592,11 +594,9 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
         )
       }
       let formatDescription = audioFormatDescription
-      if baseAudioTimestamp == nil { baseAudioTimestamp = packet.timestamp }
-      let base = baseAudioTimestamp ?? packet.timestamp
       let rate = config?.sampleRate ?? output.sampleRate
-      let elapsed = Int64(Int32(bitPattern: rtpTimestamp &- base))
-      let presentationSeconds = rate > 0 ? Double(max(0, elapsed)) / rate : 0
+      let elapsed = audioTimeline.unwrap(rtpTimestamp)
+      let presentationSeconds = rate > 0 ? Double(elapsed) / rate : 0
       let nowUptime = Self.seconds(.now())
       let due = playout.scheduleTime(presentationSeconds: presentationSeconds, nowUptime: nowUptime)
       let dueWall = clock.now + (due - nowUptime)
@@ -617,7 +617,8 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
       lock.lock()
       audioFrames.enqueue(
         AudioFrame(sourceID: sourceID, sampleBuffer: sampleBuffer, wallClock: dueWall),
-        due: due
+        due: due,
+        keepingAtMost: 120
       )
       lock.unlock()
     }
@@ -688,7 +689,14 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     lock.unlock()
 
     session?.stop()
-    decoder?.invalidate()
+    // Invalidate off this source's drain queue. `VTDecompressionSessionInvalidate` waits for
+    // in-flight frames, and while it does the session queue keeps enqueueing audio. That wait
+    // on the drain queue is how a stalled camera grew the process into gigabytes.
+    if let decoder {
+      DispatchQueue.global(qos: .utility).async {
+        decoder.invalidate()
+      }
+    }
     queue.asyncAfter(deadline: .now() + delay, execute: item)
 
     // Repeated failure at a known-good address usually means the camera is answering somewhere

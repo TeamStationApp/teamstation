@@ -208,8 +208,11 @@ public final class AppEnvironment {
 
   private var discovery: SourceDiscovery?
   private var writers: [SourceID: SegmentWriter] = [:]
+  /// Format-change and late-audio reopens of one camera, so two packets do not stack writers.
+  private var reopeningArchives: Set<SourceID> = []
   private var proxies: [SourceID: ProxyStore] = [:]
   private var recordingID: Int64?
+  private var recordingStartedAt: WallClock?
   private var pollTimer: Timer?
   /// SwiftUI is fed a snapshot at most once a second, plus immediately on chrome changes
   /// (live/replay, program cut, record/stream). The 5 Hz poll still writes `telemetry` so
@@ -997,7 +1000,7 @@ public final class AppEnvironment {
   }
 
   private func applyInputGains() {
-    let gains = Dictionary(uniqueKeysWithValues: selections.map { ($0.id, $0.inputGain) })
+    let gains = Dictionary(selections.map { ($0.id, $0.inputGain) }, uniquingKeysWith: { _, latest in latest })
     router.setInputGains(gains)
   }
 
@@ -1055,6 +1058,7 @@ public final class AppEnvironment {
       return
     }
     self.recordingID = recordingID
+    self.recordingStartedAt = now
 
     do {
       for pipeline in router.activePipelines {
@@ -1165,17 +1169,24 @@ public final class AppEnvironment {
     }
   }
 
-  /// Gives one camera a writer for the open recording, replacing any it already had.
+  /// Gives one camera a writer for the open recording. Callers finish any previous writer first
+  /// so the next `AVAssetWriter` can take an audio track.
   ///
-  /// Also the recovery path for a camera that changes format mid-recording: one fMP4 track cannot
-  /// hold two formats, so the writer asks to be replaced and the archive continues in a new
-  /// segment. Segments are independent, and the sequence numbering carries on, so the recording
-  /// reads back as one timeline.
-  private func attachArchive(to pipeline: SourcePipeline, recordingID: Int64) {
-    // A camera that sends no audio must not be given an audio track: the segmented writer waits
-    // for audio it will never receive and stops accepting video a few seconds in.
+  /// Size changes no longer need a new writer: the archive locks the first keyframe's dimensions
+  /// and transcodes later pictures. This path remains for a writer that actually failed.
+  private func attachArchive(
+    to pipeline: SourcePipeline,
+    recordingID: Int64,
+    previousIncludesAudio: Bool = false
+  ) {
+    // A camera that has never sent audio must not be given an audio track: the writer waits
+    // for audio it will never receive and stops accepting video. Once audio has been seen —
+    // this session or on the writer we just closed — the replacement keeps the track.
     let settings = SegmentWriterSettings.from(
       config: config,
+      // A camera that sends no audio must not be given an audio track: the segmented writer waits
+      // for audio it will never receive and stops accepting video a few seconds in, which the hold
+      // filler then bridges with black. That is the burst-then-stall instant replay shows.
       includesAudio: pipeline.hasDeliveredAudio && launch.archiveAudio
     )
     let writer = SegmentWriter(
@@ -1192,13 +1203,8 @@ public final class AppEnvironment {
     )
     do {
       try writer.prepare()
-      let existing = writers[pipeline.sourceID]
       writers[pipeline.sourceID] = writer
       pipeline.setArchive(writer)
-      if let existing {
-        existing.supersede()
-        Task { await existing.finish() }
-      }
     } catch {
       statusMessage = "\(pipeline.displayName): \(error)"
     }
@@ -1206,11 +1212,33 @@ public final class AppEnvironment {
 
   private func reopenArchive(for sourceID: SourceID) {
     guard isRecording, let recordingID, let pipeline = router.pipeline(for: sourceID) else { return }
-    attachArchive(to: pipeline, recordingID: recordingID)
+    guard reopeningArchives.insert(sourceID).inserted else { return }
+    let previousIncludesAudio = writers[sourceID]?.settings.includesAudio ?? false
+    Task { @MainActor in
+      defer { reopeningArchives.remove(sourceID) }
+      await self.detachAndFinishArchive(for: sourceID)
+      guard self.isRecording, let recordingID = self.recordingID else { return }
+      self.attachArchive(
+        to: pipeline,
+        recordingID: recordingID,
+        previousIncludesAudio: previousIncludesAudio
+      )
+    }
+  }
+
+  private func detachAndFinishArchive(for sourceID: SourceID) async {
+    guard let existing = writers[sourceID] else { return }
+    existing.supersede()
+    if let pipeline = router.pipeline(for: sourceID) {
+      pipeline.setArchive(nil)
+    }
+    writers[sourceID] = nil
+    await existing.finish()
   }
 
   public func stopRecording() async {
     guard isRecording else { return }
+    let endedAt = clock.now
     isRecording = false
     retentionTimer?.invalidate()
     retentionTimer = nil
@@ -1256,7 +1284,9 @@ public final class AppEnvironment {
     setRecordingStage("finishing program")
     let programEncoder = self.programEncoder
     let programURL = ProgramURL()
-    await finishWithDeadline("program") { await programURL.set(programEncoder.finish()) }
+    await finishWithDeadline("program", seconds: 45) {
+      await programURL.set(programEncoder.finish(until: endedAt))
+    }
     if let url = await programURL.value {
       let bytes = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? nil
       programOutput = url
@@ -1265,9 +1295,14 @@ public final class AppEnvironment {
 
     setRecordingStage("closing index")
     if let recordingID {
-      try? index.endRecording(recordingID, at: clock.now)
+      let names = programEncoder.outputURLs.map(\.lastPathComponent).filter { !$0.isEmpty }
+      if !names.isEmpty {
+        try? index.setProgramFilename(names.joined(separator: ","), for: recordingID)
+      }
+      try? index.endRecording(recordingID, at: endedAt)
     }
     recordingID = nil
+    recordingStartedAt = nil
     telemetry.mutate { $0.dvr.isRecording = false }
     setRecordingStage("idle")
     syncLiveSessionPresentation()
@@ -1548,6 +1583,20 @@ public final class AppEnvironment {
     // File-relative: the first assembled sample is t=0 for the decoder, even though fragment
     // PTS is counted from the start of the recording.
     let startOffset = max(0, target - assembly.startWall)
+    // Read outside the mutation: `availableHistorySeconds` reads the snapshot, and the telemetry lock
+    // is not recursive, so calling it inside `mutate` deadlocks the main thread while holding the lock
+    // every other thread needs.
+    let history = availableHistorySeconds(sourceIndex: sourceIndex)
+    let summary = "files=\(assembly.files.count)"
+      + " segs=\(assembly.segmentCount)"
+      + " dur=\(String(format: "%.2f", assembly.duration))"
+      + " startOffset=\(String(format: "%.2f", startOffset))"
+      + " offset=\(String(format: "%.2f", offsetSeconds))"
+      + " play=\(playDuration.map { String(format: "%.2f", $0) } ?? "nil")"
+      + " history=\(String(format: "%.1f", history))"
+      + " rate=\(rate)"
+      + " cont=\(isContinuation ? 1 : 0)"
+    telemetry.mutate { $0.lastReplayAssembly = summary }
     if !ScrubMapping.shouldStartReplay(
       assemblyDuration: assembly.duration,
       startOffset: startOffset
@@ -2826,16 +2875,26 @@ public final class AppEnvironment {
   public func export(sourceIndex: Int, lastSeconds: Double) {
     guard let pipeline = router.pipeline(at: sourceIndex) else { return }
     let end = pipeline.liveEdge ?? clock.now
-    do {
-      lastExport = try exporter.export(
-        sourceID: pipeline.sourceID,
-        displayName: pipeline.displayName,
-        from: end - lastSeconds,
-        to: end
-      )
-      statusMessage = "Exported \(lastExport?.url.lastPathComponent ?? "")"
-    } catch {
-      statusMessage = "Export failed: \(error)"
+    let sourceID = pipeline.sourceID
+    let displayName = pipeline.displayName
+    let exporter = self.exporter
+    Task {
+      do {
+        let result = try await exporter.export(
+          sourceID: sourceID,
+          displayName: displayName,
+          from: end - lastSeconds,
+          to: end
+        )
+        await MainActor.run {
+          self.lastExport = result
+          self.statusMessage = "Exported \(result.url.lastPathComponent)"
+        }
+      } catch {
+        await MainActor.run {
+          self.statusMessage = "Export failed: \(error)"
+        }
+      }
     }
   }
 
@@ -2867,7 +2926,8 @@ public final class AppEnvironment {
   public func shareRecording(
     _ recording: RecordingSummary,
     cameras: [(SourceID, String)],
-    includeProgram: Bool
+    includeProgram: Bool,
+    reprocess: Bool = false
   ) {
     guard !isExporting else { return }
     var items: [ExportService.ItemProgress] = []
@@ -2885,10 +2945,11 @@ public final class AppEnvironment {
     Task { [weak self] in
       do {
         let urls = try await Task.detached(priority: .userInitiated) {
-          try exporter.exportRecording(
+          try await exporter.exportRecording(
             recording,
             cameras: cameraList,
             includeProgram: includeProgram,
+            reprocess: reprocess,
             progress: { item in
               Task { @MainActor in
                 guard let self else { return }
@@ -2915,6 +2976,67 @@ public final class AppEnvironment {
         await MainActor.run {
           self?.isExporting = false
           self?.statusMessage = "Export failed: \(error)"
+        }
+      }
+    }
+  }
+
+  public func hasPreparedExport(
+    _ recording: RecordingSummary,
+    cameras: [(SourceID, String)],
+    includeProgram: Bool
+  ) -> Bool {
+    exporter.hasPreparedExport(
+      recording,
+      cameras: cameras.map { (sourceID: $0.0, name: $0.1) },
+      includeProgram: includeProgram
+    )
+  }
+
+  /// Remux the most recent stopped take into Prepared/. Does not present the share sheet.
+  private func beginPreparedExport() {
+    guard !isExporting else { return }
+    guard let recording = listedRecordings().first(where: { $0.endedAt != nil }) else {
+      telemetry.mutate { $0.dvr.lastExportError = "no stopped recording" }
+      return
+    }
+    isExporting = true
+    telemetry.mutate {
+      $0.dvr.isExporting = true
+      $0.dvr.lastExportRecordingID = recording.id
+      $0.dvr.lastExportFiles = []
+      $0.dvr.lastExportError = nil
+    }
+    let cameras = recording.sourceIDs.map { ($0, recordingCameraName(for: $0)) }
+    let includeProgram = recording.programFilename != nil
+    let exporter = self.exporter
+    Task { [weak self] in
+      do {
+        let urls = try await Task.detached(priority: .userInitiated) {
+          try await exporter.exportRecording(
+            recording,
+            cameras: cameras.map { (sourceID: $0.0, name: $0.1) },
+            includeProgram: includeProgram
+          )
+        }.value
+        await MainActor.run {
+          guard let self else { return }
+          self.isExporting = false
+          self.lastRecordingShare = urls
+          self.telemetry.mutate {
+            $0.dvr.isExporting = false
+            $0.dvr.lastExportFiles = urls.map(\.lastPathComponent)
+            $0.dvr.lastExportError = urls.isEmpty ? "nothing to export" : nil
+          }
+        }
+      } catch {
+        await MainActor.run {
+          guard let self else { return }
+          self.isExporting = false
+          self.telemetry.mutate {
+            $0.dvr.isExporting = false
+            $0.dvr.lastExportError = String(describing: error)
+          }
         }
       }
     }
@@ -3012,6 +3134,7 @@ public final class AppEnvironment {
       $0.cpuCores = ProcessLoad.coreCount
       $0.availableMemoryMB = ProcessLoad.availableMemoryMB()
       $0.physFootprintMB = ProcessLoad.physFootprintMB()
+      $0.residentSizeMB = ProcessLoad.residentSizeMB()
       $0.discoveryStatus = discoveryStatus
       $0.displayLatencyMilliseconds = displayLatency
       $0.programAudioPlaying = self.router.audioPlayer.isRunning
@@ -3050,6 +3173,7 @@ public final class AppEnvironment {
         tile.playoutMilliseconds = receive.playoutMilliseconds
         tile.playoutLateFrames = receive.playoutLateFrames
         tile.playoutDepth = receive.playoutDepth
+        tile.outOfOrderFrames = receive.outOfOrderFrames
       }
       // Remembered against the camera, not the tile, so a camera that needs an unusually large
       // buffer starts there next time instead of stuttering its way back to it.
@@ -3203,6 +3327,10 @@ public final class AppEnvironment {
       statusMessage = nil
     case let .sourceLayout(order):
       setSourceLayout(SourceLayout(order: order))
+    case .killProgramWriter:
+      programEncoder.poisonWriter()
+    case .exportRecording:
+      beginPreparedExport()
     }
     return true
   }

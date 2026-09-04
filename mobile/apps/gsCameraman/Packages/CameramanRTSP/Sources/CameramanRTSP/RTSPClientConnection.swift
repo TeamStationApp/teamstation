@@ -28,7 +28,7 @@ final class RTSPClientConnection: @unchecked Sendable {
   private var videoOctetCount: UInt32 = 0
   private var audioFrameIndex = 0
   private var firstVideoPresentationTime: Double?
-  private var lastSentVideoTimestamp: UInt32?
+  private var videoTimestamps = RTPTimestampSequencer()
   private var lastReportTime = Date.distantPast
 
   private(set) var sendQueue = StreamSendQueue()
@@ -141,7 +141,7 @@ final class RTSPClientConnection: @unchecked Sendable {
         // Each client gets its own SSRC and its own timeline, so a client that joins an hour in still
         // starts at zero and RTP-Info can promise that.
         firstVideoPresentationTime = nil
-        lastSentVideoTimestamp = nil
+        videoTimestamps.reset()
         audioFrameIndex = 0
 
         var response = outcome.response
@@ -225,15 +225,13 @@ final class RTSPClientConnection: @unchecked Sendable {
 
       if firstVideoPresentationTime == nil { firstVideoPresentationTime = frame.presentationTime }
       let elapsed = frame.presentationTime - (firstVideoPresentationTime ?? frame.presentationTime)
-      var timestamp = UInt32(truncatingIfNeeded: Int64(elapsed * Double(H264Packetizer.clockRate)))
+      let natural = UInt32(truncatingIfNeeded: Int64(elapsed * Double(H264Packetizer.clockRate)))
 
       // A receiver treats a timestamp change as the end of a picture, so two frames sharing one are
       // merged into a single malformed access unit. The capture clock does occasionally repeat a
-      // presentation time, so the sent timestamp is forced to advance.
-      if let last = lastSentVideoTimestamp, timestamp <= last {
-        timestamp = last &+ 1
-      }
-      lastSentVideoTimestamp = timestamp
+      // presentation time, so the sent timestamp is forced to advance — measured on the 32-bit
+      // circle, because the field's own rollover is a forward step and not a repeat.
+      let timestamp = videoTimestamps.next(natural: natural)
 
       let writer = RTPPacketWriter(payloadType: SDPBuilder.videoPayloadType, ssrc: videoSSRC)
       var batch = Data()

@@ -39,6 +39,15 @@ final class ReplayFileReader: @unchecked Sendable {
   private static let lowWatermark: TimeInterval = 2
   private static let fillQuantum: TimeInterval = 1
 
+  static let preloadAheadFiles = FileCursor.preloadAhead
+  static var preparedAssetCount: Int { FileCursor.preparedCount }
+  static func preloadAssets(urls: [URL], from index: Int) {
+    FileCursor.preload(urls: urls, from: index)
+  }
+  static func clearPreparedAssets() {
+    FileCursor.clearPreparedAssets()
+  }
+
   init(
     urls: [URL],
     durations: [TimeInterval] = [],
@@ -390,6 +399,16 @@ private final class FileCursor: @unchecked Sendable {
 
   private static let assetLock = NSLock()
   nonisolated(unsafe) private static var preparedAssets: [String: AVURLAsset] = [:]
+  nonisolated(unsafe) private static var prepareGeneration: UInt64 = 0
+  /// Instant replay only needs the file it is in and the next one. Preloading every remaining
+  /// hour of a live archive loads every sample table, and a cancelled replay's leftover preload
+  /// used to refill the cache after `clearPreparedAssets`.
+  static let preloadAhead = 2
+  static var preparedCount: Int {
+    assetLock.lock()
+    defer { assetLock.unlock() }
+    return preparedAssets.count
+  }
 
   private var reader: AVAssetReader?
   private var output: AVAssetReaderTrackOutput?
@@ -562,6 +581,7 @@ private final class FileCursor: @unchecked Sendable {
 
   private static func preparedAsset(url: URL) -> AVURLAsset {
     assetLock.lock()
+    let generation = prepareGeneration
     if let cached = preparedAssets[url.path] {
       let asset = cached
       assetLock.unlock()
@@ -574,8 +594,12 @@ private final class FileCursor: @unchecked Sendable {
       _ = group.wait(timeout: .now() + 0.4)
       return asset
     }
+    assetLock.unlock()
     let asset = AVURLAsset(url: url)
-    preparedAssets[url.path] = asset
+    assetLock.lock()
+    if generation == prepareGeneration {
+      preparedAssets[url.path] = asset
+    }
     assetLock.unlock()
     let keys = [ "tracks", "duration" ]
     let group = DispatchGroup()
@@ -586,10 +610,18 @@ private final class FileCursor: @unchecked Sendable {
   }
 
   static func preload(urls: [URL], from index: Int) {
-    guard index < urls.count else { return }
-    let slice = Array(urls[index...])
+    let end = min(urls.count, index + preloadAhead)
+    guard index < end else { return }
+    let slice = Array(urls[index..<end])
+    assetLock.lock()
+    let generation = prepareGeneration
+    assetLock.unlock()
     DispatchQueue.global(qos: .userInitiated).async {
       for url in slice {
+        assetLock.lock()
+        let cancelled = generation != prepareGeneration
+        assetLock.unlock()
+        if cancelled { return }
         _ = preparedAsset(url: url)
       }
     }
@@ -597,6 +629,7 @@ private final class FileCursor: @unchecked Sendable {
 
   static func clearPreparedAssets() {
     assetLock.lock()
+    prepareGeneration &+= 1
     preparedAssets = [:]
     assetLock.unlock()
   }

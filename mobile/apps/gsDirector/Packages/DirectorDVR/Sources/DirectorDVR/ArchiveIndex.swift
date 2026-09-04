@@ -51,19 +51,26 @@ public struct RecordingFileRoots: Sendable {
   public var archives: URL
   public var program: URL
   public var proxies: URL
+  public var prepared: URL
 
-  public init(archives: URL, program: URL, proxies: URL) {
+  public init(archives: URL, program: URL, proxies: URL, prepared: URL) {
     self.archives = archives
     self.program = program
     self.proxies = proxies
+    self.prepared = prepared
   }
 
   public static var standard: RecordingFileRoots {
     RecordingFileRoots(
       archives: DirectorPaths.archives,
       program: DirectorPaths.program,
-      proxies: DirectorPaths.proxies
+      proxies: DirectorPaths.proxies,
+      prepared: DirectorPaths.prepared
     )
+  }
+
+  public func preparedDirectory(for recordingID: Int64) -> URL {
+    prepared.appendingPathComponent("rec-\(recordingID)", isDirectory: true)
   }
 
   public func archiveDirectory(for source: SourceID) -> URL {
@@ -236,8 +243,9 @@ public final class ArchiveIndex: @unchecked Sendable {
       )
     }
     if let program = summary.programFilename {
-      files.append(roots.program.appendingPathComponent(program))
+      files.append(contentsOf: RecordingExport.programSourceFiles(named: program, in: roots.program))
     }
+    files.append(roots.preparedDirectory(for: id))
 
     let sources = Set(summary.sourceIDs + segments.map(\.sourceID))
     for sourceID in sources {

@@ -12,6 +12,7 @@ struct StateDumpTests {
     let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
     #expect(json != nil)
     #expect(json?["physFootprintMB"] != nil)
+    #expect(json?["residentSizeMB"] != nil)
     #expect(json?["availableMemoryMB"] != nil)
     #expect(json?["cpuPercent"] != nil)
     #expect(json?["thermalState"] != nil)

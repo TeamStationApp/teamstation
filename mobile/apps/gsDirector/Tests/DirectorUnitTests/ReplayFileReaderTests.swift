@@ -131,6 +131,21 @@ struct ReplayFileReaderTests {
     #expect(elapsed < 2.4)
     #expect(decoder.playedSeconds >= 1.0)
   }
+
+  @Test("Preload only pulls the next two files and a cancel drops the cache")
+  func preloadDoesNotRetainTheWholeArchive() async {
+    let urls = (0..<20).map { URL(fileURLWithPath: "/tmp/replay-preload-\($0).mp4") }
+    ReplayFileReader.clearPreparedAssets()
+    ReplayFileReader.preloadAssets(urls: urls, from: 0)
+    let deadline = Date().addingTimeInterval(2)
+    while Date() < deadline, ReplayFileReader.preparedAssetCount < 1 {
+      try? await Task.sleep(nanoseconds: 20_000_000)
+    }
+    #expect(ReplayFileReader.preparedAssetCount <= ReplayFileReader.preloadAheadFiles)
+    ReplayFileReader.clearPreparedAssets()
+    try? await Task.sleep(nanoseconds: 300_000_000)
+    #expect(ReplayFileReader.preparedAssetCount == 0)
+  }
 }
 
 private final class Expectation: @unchecked Sendable {

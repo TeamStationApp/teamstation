@@ -16,6 +16,7 @@ public enum ControlCommand: Sendable, Equatable {
   case setName(String)
   case setAudio(on: Bool)
   case setLenses(disabled: [String])
+  case setVideo(on: Bool)
   case forceKeyframe
   case clients
   case reset
@@ -82,6 +83,10 @@ public enum ControlChannel {
         .map { $0.trimmingCharacters(in: .whitespaces) }
         .filter { !$0.isEmpty }
       return .setLenses(disabled: disabled)
+
+    case "set-video":
+      guard let on = query["on"].map(isTruthy) else { return nil }
+      return .setVideo(on: on)
 
     default:
       return nil

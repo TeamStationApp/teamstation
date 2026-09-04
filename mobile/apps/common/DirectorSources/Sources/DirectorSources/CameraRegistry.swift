@@ -28,6 +28,10 @@ public final class CameraRegistry: @unchecked Sendable {
   /// Below this a re-measured buffer is the same buffer, and writing it out would mean a store
   /// write every second for the whole game.
   private static let playoutSaveThreshold: Double = 25
+  /// UserDefaults is synchronous. Saving from the 5 Hz telemetry poll on the main thread is what
+  /// left FrontBoard waiting five seconds to kill a wedged soak.
+  private static let playoutSaveInterval: TimeInterval = 10
+  private var lastPlayoutSaveAt: [UUID: Date] = [:]
 
   public init(store: CameraRecordStore = CameraRecordStore()) {
     self.store = store
@@ -48,11 +52,14 @@ public final class CameraRegistry: @unchecked Sendable {
       return
     }
     cachedRecords[position].playoutMilliseconds = milliseconds
-    let records = cachedRecords
+    let id = cachedRecords[position].id
+    let skipSave = lastPlayoutSaveAt[id].map { Date().timeIntervalSince($0) < Self.playoutSaveInterval } ?? false
+    if !skipSave { lastPlayoutSaveAt[id] = Date() }
+    let records = skipSave ? nil : cachedRecords
     lock.unlock()
 
     playout.seed(milliseconds, for: sourceID)
-    store.save(records)
+    if let records { store.save(records) }
   }
 
   public var records: [CameraRecord] {
@@ -319,6 +326,7 @@ public final class CameraRegistry: @unchecked Sendable {
     lastAdvertisements = []
     advertised = [:]
     sessionIDs = [:]
+    lastPlayoutSaveAt = [:]
     lock.unlock()
 
     store.clear()

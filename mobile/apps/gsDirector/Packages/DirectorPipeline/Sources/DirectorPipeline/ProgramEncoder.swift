@@ -1,6 +1,7 @@
 import AVFoundation
 import CoreMedia
 import CoreVideo
+import Darwin
 import Foundation
 import DirectorCore
 import DirectorSources
@@ -21,6 +22,7 @@ public final class ProgramEncoder: @unchecked Sendable {
   private let frameRate: Int
   private let gopSeconds: Double
   private let codec: ProgramCodec
+  private let directory: URL
 
   private let lock = NSLock()
   private var writer: AVAssetWriter?
@@ -46,6 +48,33 @@ public final class ProgramEncoder: @unchecked Sendable {
   /// safe, and several threads reach the drain here.
   private var isDraining = false
   private var writtenFrames: UInt64 = 0
+  private var part = 1
+  public private(set) var outputURLs: [URL] = []
+  /// Incoming compositor time of the last successful video sample, kept across a writer recover
+  /// so the continuation file can hold the dead interval as black + silence.
+  private var lastSourceTime: CMTime?
+  private var pendingRecoveryFill = false
+  /// Host time of the first sample of this part, so the bound below is cumulative rather than
+  /// per-frame. Instant replay delivers on the host clock while live delivers on the compositor
+  /// timebase; a single such sample wrote a jump of days into the programme file, and export
+  /// then scored the file unplayable and refused the whole recording with "no files to remux".
+  private var partStartHost: Double?
+  /// How far past real time the programme clock may run before a sample is treated as carrying a
+  /// foreign timestamp. Loose enough to absorb scheduling jitter and a late frame burst.
+  private static let timelineAdvanceSlack: Double = 2
+  /// Serialises recover so a failed writer noticed on video and audio at once does not
+  /// open two continuation files.
+  private var isRecovering = false
+  /// Poison is finishing the live writer on the control thread; ingest must not append.
+  private var poisonFinishing = false
+  private var sessionStarted = false
+  private var blackPixelBuffer: CVPixelBuffer?
+  /// Wall clock of `start(at:)`, used to fill the program file out to recording end when the
+  /// compositor never delivered a frame (otherwise `finishWriting` hangs on an unstarted session).
+  private var startedAt: WallClock?
+  /// Duration already committed to earlier continuation files, so `finish(until:)` fills
+  /// the current part out to wall clock rather than writing a second full take.
+  private var previousPartsDuration: Double = 0
 
   /// Roughly two seconds of audio at the buffer sizes cameras send.
   private static let maximumPendingAudio = 200
@@ -67,7 +96,8 @@ public final class ProgramEncoder: @unchecked Sendable {
   public init(
     telemetry: PipelineTelemetry,
     converter: PixelConverter,
-    config: AppConfig
+    config: AppConfig,
+    directory: URL = DirectorPaths.program
   ) {
     self.telemetry = telemetry
     self.converter = converter
@@ -77,6 +107,7 @@ public final class ProgramEncoder: @unchecked Sendable {
     self.frameRate = config.programFrameRate
     self.gopSeconds = config.gopSeconds
     self.codec = config.programCodec
+    self.directory = directory
   }
 
   public var frameCount: UInt64 {
@@ -97,13 +128,28 @@ public final class ProgramEncoder: @unchecked Sendable {
       lock.unlock()
       return
     }
+    let continuing = pendingRecoveryFill
+    if !continuing {
+      part = 1
+      outputURLs = []
+      lastSourceTime = nil
+      pendingRecoveryFill = false
+      previousPartsDuration = 0
+      startedAt = wall
+    }
+    sessionStarted = false
     lock.unlock()
 
-    try FileManager.default.createDirectory(at: DirectorPaths.program, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     let formatter = DateFormatter()
     formatter.dateFormat = "yyyyMMdd-HHmmss"
-    let url = DirectorPaths.program
-      .appendingPathComponent("program-\(formatter.string(from: wall.date)).mp4")
+    let suffix = part == 1 ? "" : "-\(part)"
+    // Continuations keep the original take's timestamp so export can stem-match
+    // `program-…mp4` and `program-…-2.mp4`.
+    let stamp = (continuing ? startedAt : nil)?.date ?? wall.date
+    let url = directory.appendingPathComponent(
+      "program-\(formatter.string(from: stamp))\(suffix).mp4"
+    )
     try? FileManager.default.removeItem(at: url)
 
     let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
@@ -160,12 +206,18 @@ public final class ProgramEncoder: @unchecked Sendable {
     self.audioInput = audioInput
     self.adaptor = adaptor
     self.baseTime = nil
+    self.partStartHost = nil
     self.baseAudioTime = nil
     self.nextAudioTime = nil
     self.lastTime = .negativeInfinity
     self.writtenFrames = 0
+    self.audioSourceEpoch = nil
+    self.audioTimelineAnchor = nil
+    self.audioClockUnusable = false
+    self.pendingAudio.removeAll()
     self.isRunning = true
     self.outputURL = url
+    self.outputURLs.append(url)
     lock.unlock()
 
     telemetry.recordEncodeSessionChange(delta: 1)
@@ -174,28 +226,71 @@ public final class ProgramEncoder: @unchecked Sendable {
   /// `pixelBuffer` may be BGRA straight out of the compositor; it is converted once here.
   public func append(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime) {
     lock.lock()
+    if poisonFinishing {
+      lock.unlock()
+      return
+    }
     guard isRunning, let writer, let adaptor, let videoInput else {
       lock.unlock()
       return
     }
-    if writer.status == .failed {
+    if Self.isTerminal(writer.status) {
       lock.unlock()
-      telemetry.recordError("program writer failed: \(Self.describe(writer.error))")
+      recoverDeadWriter()
       return
+    }
+    if pendingRecoveryFill {
+      pendingRecoveryFill = false
+      let gap = lastSourceTime.map { max(0, CMTimeSubtract(presentationTime, $0).seconds) } ?? 0
+      lock.unlock()
+      fillHold(seconds: gap)
+      lock.lock()
+      guard isRunning, !Self.isTerminal(writer.status) else {
+        lock.unlock()
+        return
+      }
+      // Always remap this source time onto the file timeline. fillHold used to set
+      // `baseTime = .zero` and return on a tiny gap, so the next live sample kept
+      // compositor PTS (boot-time, ~days) in the continuation file.
+      let origin: CMTime
+      if lastTime.isNumeric, lastTime >= .zero {
+        origin = CMTimeAdd(lastTime, CMTime(value: 1, timescale: CMTimeScale(max(frameRate, 1))))
+      } else {
+        origin = .zero
+      }
+      baseTime = CMTimeSubtract(presentationTime, origin)
     }
     if baseTime == nil {
       baseTime = presentationTime
-      writer.startSession(atSourceTime: .zero)
+      if !sessionStarted {
+        writer.startSession(atSourceTime: .zero)
+        sessionStarted = true
+      }
     }
     guard let base = baseTime else {
       lock.unlock()
       return
     }
     var time = CMTimeSubtract(presentationTime, base)
+    let oneFrame = CMTime(value: 1, timescale: CMTimeScale(max(frameRate, 1)))
+    // The programme clock may not outrun real time. A stalled compositor spends wall clock too,
+    // so a genuine gap still holds and the file keeps recording wall clock; a sample arriving on
+    // another source's timebase does not, and is re-based onto the next frame.
+    let nowHost = CFAbsoluteTimeGetCurrent()
+    if partStartHost == nil { partStartHost = nowHost }
+    if let partStart = partStartHost, lastTime.isNumeric, lastTime >= .zero {
+      let realElapsed = max(0, nowHost - partStart)
+      if !time.isNumeric || time.seconds < -0.5
+        || time.seconds > realElapsed + Self.timelineAdvanceSlack {
+        time = CMTimeAdd(lastTime, oneFrame)
+        baseTime = CMTimeSubtract(presentationTime, time)
+      }
+    }
     if time <= lastTime {
-      time = CMTimeAdd(lastTime, CMTime(value: 1, timescale: CMTimeScale(max(frameRate, 1))))
+      time = CMTimeAdd(lastTime, oneFrame)
     }
     lastTime = time
+    lastSourceTime = presentationTime
     let ready = videoInput.isReadyForMoreMediaData
     lock.unlock()
 
@@ -227,6 +322,15 @@ public final class ProgramEncoder: @unchecked Sendable {
     let duration = Self.audioDuration(of: frame.sampleBuffer)
 
     lock.lock()
+    if poisonFinishing {
+      lock.unlock()
+      return
+    }
+    if let writer, Self.isTerminal(writer.status) {
+      lock.unlock()
+      recoverDeadWriter()
+      return
+    }
     guard isRunning, audioInput != nil, baseTime != nil else {
       lock.unlock()
       return
@@ -299,6 +403,18 @@ public final class ProgramEncoder: @unchecked Sendable {
     return pendingAudio.count
   }
 
+  private func writerIsDead() -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return writer.map { Self.isTerminal($0.status) } ?? false
+  }
+
+  private func previousPartsSeconds() -> Double {
+    lock.lock()
+    defer { lock.unlock() }
+    return previousPartsDuration
+  }
+
   /// Hands queued audio to the writer, at most `limit` buffers per call.
   ///
   /// Both bounds matter, and the program encoder is where it shows. Its video arrives from the
@@ -324,6 +440,16 @@ public final class ProgramEncoder: @unchecked Sendable {
     var drained = 0
     while drained < limit {
       lock.lock()
+      if poisonFinishing {
+        lock.unlock()
+        return
+      }
+      if let writer, Self.isTerminal(writer.status) {
+        isDraining = false
+        lock.unlock()
+        recoverDeadWriter()
+        return
+      }
       guard
         isRunning,
         let audioInput,
@@ -340,7 +466,7 @@ public final class ProgramEncoder: @unchecked Sendable {
     }
   }
 
-  public func finish() async -> URL? {
+  public func finish(until wall: WallClock? = nil) async -> URL? {
     // Before the writer is taken away, or the tail of the audio track is discarded. Waiting matters
     // here: a writer that is not accepting audio at this instant usually is a moment later, and
     // giving up on the first refusal truncates the track. See `SegmentWriter.finish`.
@@ -349,6 +475,14 @@ public final class ProgramEncoder: @unchecked Sendable {
       drainAudio(limit: .max)
       if pendingAudioCount() == 0 || Date() >= deadline { break }
       try? await Task.sleep(nanoseconds: 20_000_000)
+    }
+
+    if writerIsDead() {
+      recoverDeadWriter()
+    }
+
+    if let wall, let origin = startedAt {
+      fillHold(until: max(0, wall.seconds - origin.seconds - previousPartsSeconds()))
     }
 
     guard let pending = takeWriterForFinish() else { return nil }
@@ -379,6 +513,8 @@ public final class ProgramEncoder: @unchecked Sendable {
     defer { lock.unlock() }
     guard isRunning, let writer else { return nil }
     isRunning = false
+    pendingRecoveryFill = false
+    lastSourceTime = nil
     return PendingFinish(writer: writer, videoInput: videoInput, audioInput: audioInput, url: outputURL)
   }
 
@@ -393,6 +529,273 @@ public final class ProgramEncoder: @unchecked Sendable {
     audioTimelineAnchor = nil
     audioClockUnusable = false
     pendingAudio.removeAll()
+  }
+
+  /// Opens a continuation file. The next video sample holds the dead interval as black + silence
+  /// so concatenating parts does not skip wall clock. Tests call this to inject a writer death.
+  public func recoverAfterFailure() {
+    recoverWriter(force: true)
+  }
+
+  /// Fails the live program writer the way a muxer error would. Unit tests and the UITest
+  /// `kill-program-writer` command call this; production cameras never do.
+  public func poisonWriter() {
+    lock.lock()
+    guard isRunning, let writer else {
+      lock.unlock()
+      return
+    }
+    let input = audioInput
+    let started = sessionStarted
+    lock.unlock()
+
+    if started, let input, let poison = Self.zeroDurationSilence() {
+      _ = input.append(poison)
+    }
+    lock.lock()
+    if Self.isTerminal(writer.status) {
+      lock.unlock()
+      return
+    }
+    // Completing the file keeps already-written samples. cancelWriting discards them
+    // and leaves a 0-byte part, which is how rec-88 looked after a failed recover.
+    poisonFinishing = true
+    lock.unlock()
+    let finished = DispatchSemaphore(value: 0)
+    writer.finishWriting { finished.signal() }
+    _ = finished.wait(timeout: .now() + 5)
+    lock.lock()
+    poisonFinishing = false
+    lock.unlock()
+  }
+
+  private static func isTerminal(_ status: AVAssetWriter.Status) -> Bool {
+    status == .failed || status == .cancelled || status == .completed
+  }
+
+  private static func zeroDurationSilence() -> CMSampleBuffer? {
+    let frames = 1
+    let channels = AudioMixer.channelCount
+    let rate = AudioMixer.sampleRate
+    guard
+      let format = AudioSampleBuilder.makeFormatDescription(
+        AudioSampleBuilder.interleavedInt16Description(
+          sampleRate: rate,
+          channels: UInt32(channels)
+        )
+      )
+    else { return nil }
+    let zeros = [Int16](repeating: 0, count: frames * channels)
+    guard
+      let buffer = AudioSampleBuilder.makeSampleBuffer(
+        samples: zeros,
+        formatDescription: format,
+        presentationTime: .zero
+      )
+    else { return nil }
+    var timing = CMSampleTimingInfo(
+      duration: .zero,
+      presentationTimeStamp: .zero,
+      decodeTimeStamp: .invalid
+    )
+    var retimed: CMSampleBuffer?
+    guard CMSampleBufferCreateCopyWithNewTiming(
+      allocator: kCFAllocatorDefault,
+      sampleBuffer: buffer,
+      sampleTimingEntryCount: 1,
+      sampleTimingArray: &timing,
+      sampleBufferOut: &retimed
+    ) == noErr else { return nil }
+    return retimed
+  }
+
+  private func recoverDeadWriter() {
+    recoverWriter(force: false)
+  }
+
+  private func recoverWriter(force: Bool) {
+    lock.lock()
+    guard !isRecovering else {
+      lock.unlock()
+      return
+    }
+    guard let failed = writer else {
+      lock.unlock()
+      return
+    }
+    if !force, !Self.isTerminal(failed.status) {
+      lock.unlock()
+      return
+    }
+    isRecovering = true
+    let code = (failed.error as NSError?)?.code ?? Int(failed.status.rawValue)
+    let detail = failed.status == .cancelled
+      ? "program writer cancelled: \(Self.describe(failed.error))"
+      : "program writer failed: \(Self.describe(failed.error))"
+    if lastTime.isNumeric, lastTime >= .zero {
+      let elapsed = startedAt.map { Date().timeIntervalSince($0.date) } ?? lastTime.seconds
+      previousPartsDuration += min(max(0, lastTime.seconds), max(0, elapsed) + 1)
+    }
+    videoInput?.markAsFinished()
+    audioInput?.markAsFinished()
+    writer = nil
+    videoInput = nil
+    audioInput = nil
+    adaptor = nil
+    isRunning = false
+    sessionStarted = false
+    part += 1
+    pendingRecoveryFill = true
+    pendingAudio.removeAll()
+    audioSourceEpoch = nil
+    audioTimelineAnchor = nil
+    audioClockUnusable = false
+    nextAudioTime = nil
+    lock.unlock()
+
+    telemetry.recordEncodeSessionChange(delta: -1)
+    if Self.isTerminal(failed.status) {
+      telemetry.recordError(detail)
+      telemetry.recordEncodeFailure(code: Int32(clamping: code))
+    }
+
+    if failed.status == .failed || failed.status == .writing {
+      let finished = DispatchSemaphore(value: 0)
+      failed.finishWriting { finished.signal() }
+      _ = finished.wait(timeout: .now() + 2)
+    } else if failed.status == .unknown {
+      failed.cancelWriting()
+    }
+    let wall = WallClock(date: Date())
+    do {
+      try start(at: wall)
+    } catch {
+      telemetry.recordError("program writer recover failed: \(error)")
+      try? start(at: wall)
+    }
+    lock.lock()
+    isRecovering = false
+    lock.unlock()
+  }
+
+  /// Black video and silent audio covering `seconds` at the start of the current file.
+  private func fillHold(seconds: Double) {
+    fillHold(until: seconds)
+  }
+
+  /// Black + silence from the last written program time (or zero) up to `end` seconds.
+  ///
+  /// 10 fps is enough for a hold: duration is the last PTS, and a 45s empty program must
+  /// finish inside the stop-path deadline rather than encode hundreds of duplicate frames.
+  private func fillHold(until end: Double) {
+    let step = 0.1
+    lock.lock()
+    guard isRunning, let writer else {
+      lock.unlock()
+      return
+    }
+    if !sessionStarted {
+      writer.startSession(atSourceTime: .zero)
+      sessionStarted = true
+    }
+    let start = (lastTime.isNumeric && lastTime >= .zero) ? lastTime.seconds + step : 0
+    lock.unlock()
+    guard end - start > 0.0005 else { return }
+
+    guard let black = programBlackBuffer() else { return }
+    var cursor = start
+    while cursor + 0.0005 < end {
+      let time = CMTime(seconds: cursor, preferredTimescale: 600)
+      appendHoldFrame(black, at: time)
+      cursor += step
+    }
+    appendHoldSilence(until: CMTime(seconds: max(0, end), preferredTimescale: 600))
+  }
+
+  private func appendHoldFrame(_ pixelBuffer: CVPixelBuffer, at time: CMTime) {
+    for _ in 0..<80 {
+      lock.lock()
+      let ready = isRunning && (videoInput?.isReadyForMoreMediaData ?? false)
+      lock.unlock()
+      if ready { break }
+      usleep(5_000)
+    }
+    lock.lock()
+    guard isRunning, let adaptor, let videoInput, videoInput.isReadyForMoreMediaData else {
+      lock.unlock()
+      return
+    }
+    lastTime = time
+    lock.unlock()
+    if adaptor.append(pixelBuffer, withPresentationTime: time) {
+      lock.lock()
+      writtenFrames += 1
+      lock.unlock()
+    }
+  }
+
+  private func appendHoldSilence(until end: CMTime) {
+    guard end.isNumeric, end > .zero else { return }
+    let frames = 1_024
+    let channels = AudioMixer.channelCount
+    let rate = AudioMixer.sampleRate
+    let chunk = CMTime(value: CMTimeValue(frames), timescale: CMTimeScale(rate))
+    guard
+      let format = AudioSampleBuilder.makeFormatDescription(
+        AudioSampleBuilder.interleavedInt16Description(
+          sampleRate: rate,
+          channels: UInt32(channels)
+        )
+      )
+    else { return }
+    lock.lock()
+    let existing = nextAudioTime
+    lock.unlock()
+    var cursor: CMTime = .zero
+    if let existing, existing.isNumeric, existing > .zero {
+      cursor = existing
+    }
+    guard cursor < end else { return }
+    let zeros = [Int16](repeating: 0, count: frames * channels)
+    while cursor < end {
+      guard
+        let buffer = AudioSampleBuilder.makeSampleBuffer(
+          samples: zeros,
+          formatDescription: format,
+          presentationTime: cursor
+        )
+      else { break }
+      lock.lock()
+      pendingAudio.append(buffer)
+      nextAudioTime = CMTimeAdd(cursor, chunk)
+      lock.unlock()
+      cursor = CMTimeAdd(cursor, chunk)
+    }
+    drainAudio(limit: .max)
+  }
+
+  private func programBlackBuffer() -> CVPixelBuffer? {
+    if let blackPixelBuffer { return blackPixelBuffer }
+    var buffer: CVPixelBuffer?
+    let status = CVPixelBufferCreate(
+      kCFAllocatorDefault,
+      width,
+      height,
+      kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+      [ kCVPixelBufferIOSurfacePropertiesKey: [:] as [String: Any] ] as CFDictionary,
+      &buffer
+    )
+    guard status == kCVReturnSuccess, let buffer else { return nil }
+    CVPixelBufferLockBaseAddress(buffer, [])
+    if let y = CVPixelBufferGetBaseAddressOfPlane(buffer, 0) {
+      memset(y, 0, CVPixelBufferGetBytesPerRowOfPlane(buffer, 0) * height)
+    }
+    if let uv = CVPixelBufferGetBaseAddressOfPlane(buffer, 1) {
+      memset(uv, 128, CVPixelBufferGetBytesPerRowOfPlane(buffer, 1) * (height / 2))
+    }
+    CVPixelBufferUnlockBaseAddress(buffer, [])
+    blackPixelBuffer = buffer
+    return buffer
   }
 
   /// AVFoundation's `localizedDescription` for a writer failure is often just "Cannot Encode",

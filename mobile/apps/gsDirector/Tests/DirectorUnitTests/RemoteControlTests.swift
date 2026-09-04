@@ -319,4 +319,20 @@ struct ControlChannelSourceTests {
     )
     #expect(command == .sourceGain(index: 1, gain: 0.75))
   }
+
+  @Test("Parses kill-program-writer")
+  func killProgramWriterCommand() {
+    let command = ControlChannel.command(
+      from: URL(string: "gsdirector://test/kill-program-writer")!
+    )
+    #expect(command == .killProgramWriter)
+  }
+
+  @Test("Parses export-recording")
+  func exportRecordingCommand() {
+    let command = ControlChannel.command(
+      from: URL(string: "gsdirector://test/export-recording")!
+    )
+    #expect(command == .exportRecording)
+  }
 }
