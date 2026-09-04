@@ -80,6 +80,31 @@ struct RTPClockAudit: Sendable {
   /// How many observations the filtered value rests on. One sample is not a filter.
   var offsetSampleCount: Int { offsetSamples.count }
 
+  /// The most recent (wall clock, RTP tick) pair from the busiest stream.
+  ///
+  /// This is the whole point of a sender report: one instant where a camera says what its media
+  /// clock read and what time it was. Every frame's capture time is that anchor plus the tick
+  /// difference, so the arbitrary origin of the RTP counter cancels out.
+  var anchor: (ntpSeconds: Double, rtpTimestamp: UInt32)? {
+    guard let track = dominantTrack else { return nil }
+    return (track.lastNTPSeconds, track.lastRTPTimestamp)
+  }
+
+  /// When a frame carrying `rtpTimestamp` was captured, on **our** clock.
+  ///
+  /// The anchor puts it on the camera's wall clock; subtracting the filtered offset moves it onto
+  /// ours. Correcting onto our own clock rather than trusting the camera's is what makes cameras
+  /// that disagree with each other by seconds — measured: a 2.15 s spread — line up anyway.
+  ///
+  /// The tick difference is taken as a signed 32-bit quantity so a frame slightly older than the
+  /// anchor reads as negative rather than as most of a rollover.
+  func captureTimeOnLocalClock(rtpTimestamp: UInt32) -> Double? {
+    guard let anchor else { return nil }
+    let ticks = Int32(bitPattern: rtpTimestamp &- anchor.rtpTimestamp)
+    let cameraWall = anchor.ntpSeconds + Double(ticks) / 90_000
+    return cameraWall - filteredOffsetSeconds
+  }
+
   /// Mean seconds between sender reports.
   var meanIntervalSeconds: Double {
     intervalSamples > 0 ? intervalTotal / Double(intervalSamples) : 0

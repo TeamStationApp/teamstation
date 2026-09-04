@@ -3184,7 +3184,11 @@ public final class AppEnvironment {
         tile.cameraClockOffsetSeconds = receive.cameraClockOffsetSeconds
         tile.cameraClockOffsetFilteredSeconds = receive.cameraClockOffsetFilteredSeconds
         tile.cameraClockOffsetSamples = receive.cameraClockOffsetSamples
+        tile.correctedCaptureTime = receive.correctedCaptureTime
+        tile.correctedCaptureAgeMilliseconds = receive.correctedCaptureAgeMilliseconds
       }
+
+
       // Remembered against the camera, not the tile, so a camera that needs an unusually large
       // buffer starts there next time instead of stuttering its way back to it.
       if receive.playoutMilliseconds > 0 {
@@ -3206,6 +3210,26 @@ public final class AppEnvironment {
       }
     }
     if !isRecording { announcedCameraStatus.removeAll() }
+
+    // The acceptance number, computed once every camera's tile has been written this pass.
+    //
+    // Individual per-camera delays can all look dreadful while the output is perfectly aligned —
+    // that is the design working — so this is what an alarm belongs on. Cameras still inside their
+    // sender-report grace window carry no corrected time and are left out rather than contributing
+    // a zero, which would read as a spread of the whole epoch.
+    telemetry.mutate {
+      let corrected = $0.tiles.filter { $0.state == .live && $0.correctedCaptureTime > 0 }
+      guard corrected.count >= 2 else {
+        $0.captureSpreadMilliseconds = 0
+        $0.captureSpreadWorstCamera = ""
+        return
+      }
+      let times = corrected.map { $0.correctedCaptureTime }
+      $0.captureSpreadMilliseconds = (((times.max() ?? 0) - (times.min() ?? 0)) * 1000).rounded()
+      $0.captureSpreadWorstCamera = corrected
+        .min(by: { $0.correctedCaptureTime < $1.correctedCaptureTime })?
+        .displayName ?? ""
+    }
     telemetry.recordLiveDecodeSessions(liveDecodeSessions)
     let next = telemetry.snapshot
     let replaying = showsReplayOffset(snapshot) || showsReplayOffset(next)
