@@ -138,6 +138,10 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     let presentationTime: CMTime
     let isKeyframe: Bool
     let frameID: UInt64
+    /// When the camera took this picture, on the Director's clock. Nil until its sender reports
+    /// have established an anchor. Only the first picture of a segment uses it, to record where
+    /// that segment starts.
+    let captureWallClock: WallClock?
   }
 
   public init(
@@ -395,7 +399,8 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
       data: frame.data,
       presentationTime: frame.presentationTime,
       isKeyframe: frame.isKeyframe,
-      frameID: frame.frameID
+      frameID: frame.frameID,
+      captureWallClock: frame.captureWallClock
     )
     guard let previous else {
       lock.unlock()
@@ -438,7 +443,11 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
 
     if basePresentationTime == nil {
       basePresentationTime = picture.presentationTime
-      baseWallClock = clock.now
+      // Capture time when the camera has given us one, arrival time until it does. Seek maps a
+      // scrub target through this value, so taking it from arrival makes the same request land on a
+      // different moment on every camera — each start carrying that camera's delivery delay on top
+      // of its own keyframe phase.
+      baseWallClock = picture.captureWallClock ?? clock.now
     }
     guard let base = basePresentationTime else {
       lock.unlock()
