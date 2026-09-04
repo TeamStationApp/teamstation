@@ -282,10 +282,6 @@ public struct PlayoutController: Sendable {
 /// the one that needs the most sets the delay for all of them. Without this, a cut from a 250 ms
 /// tile to a 600 ms tile would jump a third of a second backwards in time.
 public final class PlayoutCoordinator: @unchecked Sendable {
-  /// One delay for every camera, replacing the per-camera buffers. Held here because the whole
-  /// point is that each source reads the same number rather than converging on its own.
-  public let sharedDelay = SharedDelayController()
-
   private let lock = NSLock()
   private var reported: [SourceID: Double] = [:]
   private var seeds: [SourceID: Double] = [:]
