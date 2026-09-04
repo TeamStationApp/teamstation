@@ -222,6 +222,16 @@ public struct DVRTelemetry: Sendable, Codable, Equatable {
   public var retentionReclaimedBytes: UInt64 = 0
   public var recordingStartedAt: Double?
   public var segmentCount: UInt64 = 0
+  /// Silent-fill activity in the archive writers. `SegmentWriter` fills audio only when a video gap
+  /// longer than two seconds is corroborated by capture time, so on a healthy recording every one of
+  /// these must stay zero. They did not: a 90 s take with continuous 30 fps video still wrote fill
+  /// packets, which is how the fill was found running with no gap to fill. `archiveGapSeconds` was
+  /// already accumulated inside the writer and had no reader, so nothing could see it.
+  public var archiveFillEvents: UInt64 = 0
+  public var archiveFillPackets: UInt64 = 0
+  public var archiveGapSeconds: Double = 0
+  public var archiveFillLastGapSeconds: Double = 0
+  public var archiveFillLastCaptureGap: Double = 0
   public var byteCount: UInt64 = 0
   public var proxyStills: UInt64 = 0
   public var indexWrites: UInt64 = 0
