@@ -80,6 +80,14 @@ public struct CompressedFrame: @unchecked Sendable {
   public let presentationTime: CMTime
   public let decodeTime: CMTime
   public let wallClock: WallClock
+  /// When this picture was taken, on the Director's clock — as distinct from `wallClock`, which is
+  /// when it arrived. Nil until the camera's sender reports have established an anchor.
+  ///
+  /// A segment's start is recorded from this. Taking it from arrival instead is why two cameras
+  /// rewound to the same moment land in different places: each segment's start carries that
+  /// camera's delivery delay and its own keyframe phase, so segment N spans a different piece of
+  /// wall clock on every camera.
+  public let captureWallClock: WallClock?
   public let frameID: UInt64
 
   public init(
@@ -91,6 +99,7 @@ public struct CompressedFrame: @unchecked Sendable {
     presentationTime: CMTime,
     decodeTime: CMTime,
     wallClock: WallClock,
+    captureWallClock: WallClock? = nil,
     frameID: UInt64
   ) {
     self.sourceID = sourceID
@@ -101,6 +110,7 @@ public struct CompressedFrame: @unchecked Sendable {
     self.presentationTime = presentationTime
     self.decodeTime = decodeTime
     self.wallClock = wallClock
+    self.captureWallClock = captureWallClock
     self.frameID = frameID
   }
 }

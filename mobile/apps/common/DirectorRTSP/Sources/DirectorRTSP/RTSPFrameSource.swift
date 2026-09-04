@@ -475,6 +475,9 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
         presentationTime: presentationTime,
         decodeTime: presentationTime,
         wallClock: clock.now,
+        captureWallClock: lastCorrectedCapture > 0
+          ? WallClock(seconds: lastCorrectedCapture)
+          : nil,
         frameID: id
       )
     )
