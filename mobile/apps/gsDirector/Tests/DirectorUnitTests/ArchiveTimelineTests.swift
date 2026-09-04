@@ -10,80 +10,17 @@ import Testing
 
 @Suite("Archive wall-clock timeline")
 struct ArchiveTimelineTests {
-  @Test("A 5s camera hole is held as black, so the file lasts the recording")
-  func gapSkipHoldsWallClock() async throws {
-    let env = try TimelineHarness()
-    defer { env.tearDown() }
-
-    let origin = 1_000.0
-    env.clock.set(origin)
-    let writer = env.makeWriter(startedAt: origin, width: 160, height: 120)
-    try writer.prepare()
-
-    try env.appendSolid(writer, from: origin, seconds: 2, luma: 180)
-    try env.appendSolid(writer, from: origin + 7, seconds: 2, luma: 180)
-    env.clock.set(origin + 9)
-    await writer.fillAndWait(to: WallClock(seconds: origin + 9))
-    await writer.finish()
-
-    let movie = try await env.remuxedMovie()
-    let duration = try await AVURLAsset(url: movie).load(.duration)
-    #expect(abs(duration.seconds - 9) < 0.35)
-
-    let hole = try await env.meanLuma(url: movie, at: 4.5)
-    let live = try await env.meanLuma(url: movie, at: 1.0)
-    #expect(hole < 20)
-    #expect(live > 80)
-  }
-
-  @Test("An 8s audio hole is filled so the audio track lasts the video")
-  func audioGapFillHoldsWallClock() async throws {
-    let env = try TimelineHarness()
-    defer { env.tearDown() }
-
-    let origin = 4_000.0
-    env.clock.set(origin)
-    let writer = env.makeWriter(startedAt: origin, width: 160, height: 120)
-    try writer.prepare()
-
-    try env.appendSolid(writer, from: origin, seconds: 2, luma: 180)
-    try env.appendVideo(writer, from: origin + 2, seconds: 8, luma: 180)
-    try env.appendSolid(writer, from: origin + 10, seconds: 1, luma: 180)
-    env.clock.set(origin + 11)
-    await writer.fillAndWait(to: WallClock(seconds: origin + 11))
-    await writer.finish()
-
-    let movie = try await env.remuxedMovie()
-    let tracks = try await AVURLAsset(url: movie).loadTracks(withMediaType: .audio)
-    let duration = try await tracks[0].load(.timeRange).duration
-    #expect(duration.seconds > 9)
-  }
-
-  @Test("A 720 then 1080 take locks the first size for the whole file")
-  func formatChangeLocksFirstSize() async throws {
-    let env = try TimelineHarness()
-    defer { env.tearDown() }
-
-    let origin = 2_000.0
-    env.clock.set(origin)
-    let writer = env.makeWriter(startedAt: origin, width: 160, height: 120)
-    try writer.prepare()
-
-    try env.appendSolid(writer, from: origin, seconds: 1, luma: 160, width: 160, height: 120)
-    try env.appendSolid(writer, from: origin + 2, seconds: 1, luma: 160, width: 320, height: 240)
-    env.clock.set(origin + 3)
-    await writer.fillAndWait(to: WallClock(seconds: origin + 3))
-    await writer.finish()
-
-    let movie = try await env.remuxedMovie()
-    let asset = AVURLAsset(url: movie)
-    let tracks = try await asset.loadTracks(withMediaType: .video)
-    let size = try await tracks[0].load(.naturalSize)
-    #expect(Int(size.width.rounded()) == 160)
-    #expect(Int(size.height.rounded()) == 120)
-    let duration = try await asset.load(.duration)
-    #expect(duration.seconds > 2.5)
-  }
+  // Three tests stood here: a 5 s camera hole held as black, an 8 s audio hole filled, and a
+  // 720-then-1080 take locking the first size. All three drove `SegmentWriter.fillAndWait`, which
+  // no longer exists — `37f667e` removed the hold-to-wall-clock filler because the black IDRs it
+  // injected mid-GOP made every following P-frame reference black, and the archive decoded 92.6%
+  // black while instant replay froze.
+  //
+  // They are removed rather than disabled because they assert the opposite of what the code should
+  // now do: the intent was right and the mechanism was wrong. Gap filling returns in Phase 5 of
+  // /Users/scotty/.cursor/plans/202609041148-fixCameraSync.md as P-skip frames, which duplicate the
+  // previous picture without touching the reference chain. **That phase owes this file three
+  // replacements** — a video hole, an audio hole, and duration equal to the recording's wall clock.
 
   @Test("Export duration follows recording wall clock, not the sum of segments")
   func exportDurationMatchesRecording() async throws {
@@ -359,8 +296,7 @@ private final class TimelineHarness {
       telemetry: telemetry,
       settings: SegmentWriterSettings(segmentSeconds: 3, includesAudio: true),
       clock: clock,
-      directory: directory,
-      recordingStartedAt: WallClock(seconds: startedAt)
+      directory: directory
     )
   }
 
