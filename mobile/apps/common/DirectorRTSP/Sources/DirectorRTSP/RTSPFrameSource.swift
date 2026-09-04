@@ -79,6 +79,9 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
 
   private var frameID: UInt64 = 0
   private var videoTimeline = RTPTimestampUnwrapper()
+  /// What the camera's own sender reports say about its clock. Measurement only: nothing here
+  /// feeds playout yet.
+  private var clockAudit = RTPClockAudit()
   private var audioTimeline = RTPTimestampUnwrapper()
   private var lastPresentationTime: CMTime?
   private var lastAccessUnitAt: Date?
@@ -179,6 +182,15 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     snapshot.playoutMilliseconds = (playout.bufferMilliseconds * 10).rounded() / 10
     snapshot.playoutLateFrames = playout.lateFrames
     snapshot.playoutDepth = pictures.count + decodedFrames.count
+    snapshot.senderReports = clockAudit.reportCount
+    snapshot.senderReportIntervalSeconds = (clockAudit.meanIntervalSeconds * 100).rounded() / 100
+    snapshot.senderReportAgeSeconds = clockAudit.lastReportUptime > 0
+      ? ((Self.seconds(DispatchTime.now()) - clockAudit.lastReportUptime) * 10).rounded() / 10
+      : 0
+    snapshot.mediaTicksPerSecond = (clockAudit.ticksPerSecond * 100).rounded() / 100
+    snapshot.mediaClockSpanSeconds = (clockAudit.measuredSpanSeconds * 10).rounded() / 10
+    snapshot.cameraClockOffsetSeconds = (clockAudit.ntpOffsetSeconds * 1000).rounded() / 1000
+    snapshot.senderReportStreams = clockAudit.streamCount
     if let decoder {
       let decoderStats = decoder.currentStatistics
       snapshot.formatMisses &+= decoderStats.failures &+ decoderStats.droppedCorrupt
@@ -263,6 +275,7 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     videoTracker = RTPSequenceTracker()
     audioTracker = RTPSequenceTracker()
     videoTimeline.reset()
+    clockAudit.reset()
     audioTimeline.reset()
     lastPresentationTime = nil
     jitter = JitterWindow()
@@ -290,6 +303,13 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
 
     case let .rtcp(report):
       publishAdvertisement(cname: report.cname, name: report.name)
+      lock.lock()
+      clockAudit.note(
+        report: report,
+        arrivalUptime: Self.seconds(DispatchTime.now()),
+        wallClockNow: Date()
+      )
+      lock.unlock()
 
     case let .failed(reason):
       scheduleReconnect(reason: reason)

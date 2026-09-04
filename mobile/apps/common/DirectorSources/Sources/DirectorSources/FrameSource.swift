@@ -270,6 +270,21 @@ public struct ReceiveStats: Sendable, Equatable {
   /// up", which is the first question to ask when a tile looks slow. Always zero for
   /// sources that generate their frames locally.
   public var packetsLost: UInt64 = 0
+  /// What this camera's own RTCP sender reports say about its clock (RFC 3550 §6.4). The playout
+  /// path does not use any of this yet; it is here to decide whether it could.
+  ///
+  /// `senderReports` at zero after a minute of video means the camera sends none, so an absolute
+  /// timeline is not available from it. `mediaTicksPerSecond` away from the nominal rate — 90000 for
+  /// video — is drift the delay line currently reads as lateness and chases forever.
+  /// `cameraClockOffsetSeconds` is the sender's wall clock minus ours; comparing it between cameras
+  /// says whether they agree well enough to be aligned on one timeline.
+  public var senderReports: UInt64 = 0
+  public var senderReportIntervalSeconds: Double = 0
+  public var senderReportAgeSeconds: Double = 0
+  public var senderReportStreams: Int = 0
+  public var mediaTicksPerSecond: Double = 0
+  public var mediaClockSpanSeconds: Double = 0
+  public var cameraClockOffsetSeconds: Double = 0
   /// Decoders this source currently holds. Only network sources decode anything; a generated or
   /// file-backed source reports zero.
   public var decodeSessions = 0

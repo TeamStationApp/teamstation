@@ -128,6 +128,14 @@ public struct TileTelemetry: Sendable, Codable, Equatable {
   public var releaseGapMaxMilliseconds: Double = 0
   /// How much video the delay line is holding, in milliseconds — the monitor latency being paid.
   public var playoutMilliseconds: Double = 0
+  /// The camera's RTCP sender-report clock audit. Measurement only — see `ReceiveStats`.
+  public var senderReports: UInt64 = 0
+  public var senderReportIntervalSeconds: Double = 0
+  public var senderReportAgeSeconds: Double = 0
+  public var senderReportStreams: Int = 0
+  public var mediaTicksPerSecond: Double = 0
+  public var mediaClockSpanSeconds: Double = 0
+  public var cameraClockOffsetSeconds: Double = 0
   /// Frames that arrived after they were due, each of which was a visible stall.
   public var playoutLateFrames: UInt64 = 0
   public var playoutDepth = 0

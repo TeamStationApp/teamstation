@@ -1,0 +1,137 @@
+import Foundation
+
+/// Measures what a camera's RTCP sender reports say about its clock.
+///
+/// The playout path times frames as `iPad uptime - unwrapped RTP ticks / 90000`. Those two counters
+/// share no origin and are driven by different crystals, so that difference is not a delay: it is an
+/// arbitrary constant plus whatever the two oscillators disagree about. A sender report is the only
+/// thing on the wire that fixes this — it pairs the sender's own NTP wall clock with the RTP
+/// timestamp at that same instant (RFC 3550 §6.4).
+///
+/// This type does not change playout. It answers three questions that decide whether it could:
+///
+/// 1. Do the cameras send sender reports at all, and how often?
+/// 2. Does each camera's media clock run at its nominal rate against real time? `ticksPerSecond`
+///    away from 90000 by a part in ten thousand is 8.6 seconds of drift a day, which the delay line
+///    would chase for as long as the session lasts.
+/// 3. Do the cameras agree with each other about what time it is? Aligning tiles on an absolute
+///    timeline only works if they do; comparing each camera's `ntpOffsetSeconds` says whether they
+///    could be trusted to.
+///
+/// Rates are accumulated across reports rather than measured from the first one, so a session that
+/// outlives the 32-bit RTP field keeps counting.
+struct RTPClockAudit: Sendable {
+  /// Per-SSRC running totals. A compound report carries one of these per stream, so video and audio
+  /// are tracked apart without needing to know which channel carried them: video moves far more
+  /// bytes, which is what picks it out below.
+  private struct Track {
+    var lastRTPTimestamp: UInt32
+    var lastNTPSeconds: Double
+    var accumulatedTicks: UInt64 = 0
+    var accumulatedSeconds: Double = 0
+    var octetCount: UInt32
+    var reports: UInt64 = 1
+  }
+
+  /// Half the 32-bit circle. A step shorter than this is the clock advancing; anything longer is a
+  /// repeat or a reorder, not a jump of four billion ticks.
+  private static let half = UInt64(1) << 31
+
+  private var tracks: [UInt32: Track] = [:]
+  private var lastArrivalUptime: Double?
+  private var intervalTotal: Double = 0
+  private var intervalSamples: UInt64 = 0
+
+  /// Sender reports seen on this connection. Zero after a minute of video means this camera sends
+  /// none, and an absolute timeline is not available from it.
+  private(set) var reportCount: UInt64 = 0
+  /// The sender's wall clock minus ours, at the moment its last report arrived. Includes one-way
+  /// transit, which is milliseconds; anything larger is genuine disagreement between the clocks.
+  private(set) var ntpOffsetSeconds: Double = 0
+  /// Uptime when the last report landed, so staleness can be reported rather than inferred.
+  private(set) var lastReportUptime: Double = 0
+
+  /// Mean seconds between sender reports.
+  var meanIntervalSeconds: Double {
+    intervalSamples > 0 ? intervalTotal / Double(intervalSamples) : 0
+  }
+
+  /// The busiest stream's measured media-clock rate, in ticks per real second. Video should sit at
+  /// 90000 and audio at its sample rate; the distance from nominal is the drift the delay line is
+  /// currently mistaking for lateness.
+  var ticksPerSecond: Double {
+    guard let track = dominantTrack, track.accumulatedSeconds > 0 else { return 0 }
+    return Double(track.accumulatedTicks) / track.accumulatedSeconds
+  }
+
+  /// Real seconds spanned by the rate measurement, so a ratio taken over two reports is not read
+  /// with the same confidence as one taken over ten minutes.
+  var measuredSpanSeconds: Double { dominantTrack?.accumulatedSeconds ?? 0 }
+
+  /// Distinct streams reporting. Two means video and audio are both timestamped and could be put on
+  /// one timeline against each other.
+  var streamCount: Int { tracks.count }
+
+  private var dominantTrack: Track? {
+    tracks.values.max { $0.octetCount < $1.octetCount }
+  }
+
+  /// Folds one compound report in. `arrivalUptime` is the same monotonic clock the playout path
+  /// uses; `wallClockNow` is our own notion of the time, for the offset comparison.
+  mutating func note(report: RTCPReport, arrivalUptime: Double, wallClockNow: Date) {
+    guard !report.senderReports.isEmpty else { return }
+    reportCount &+= 1
+
+    if let previous = lastArrivalUptime {
+      intervalTotal += max(0, arrivalUptime - previous)
+      intervalSamples &+= 1
+    }
+    lastArrivalUptime = arrivalUptime
+    lastReportUptime = arrivalUptime
+
+    // Every sender in one compound packet shares an arrival, so the offset is taken from the
+    // busiest stream in this report rather than from whichever happened to be parsed last.
+    if let primary = report.senderReports.max(by: { $0.octetCount < $1.octetCount }) {
+      ntpOffsetSeconds = primary.ntpDate.timeIntervalSince1970 - wallClockNow.timeIntervalSince1970
+    }
+
+    for sender in report.senderReports {
+      let ntpSeconds = sender.ntpDate.timeIntervalSince1970
+
+      guard var track = tracks[sender.ssrc] else {
+        tracks[sender.ssrc] = Track(
+          lastRTPTimestamp: sender.rtpTimestamp,
+          lastNTPSeconds: ntpSeconds,
+          octetCount: sender.octetCount
+        )
+        continue
+      }
+
+      // Unsigned wrap-around difference, then rejected if it is the long way round: a camera that
+      // repeats or reorders a timestamp must not read as having jumped half a circle forward.
+      let step = UInt64(sender.rtpTimestamp &- track.lastRTPTimestamp)
+      let elapsed = ntpSeconds - track.lastNTPSeconds
+      if step < Self.half, elapsed > 0 {
+        track.accumulatedTicks &+= step
+        track.accumulatedSeconds += elapsed
+      }
+      track.lastRTPTimestamp = sender.rtpTimestamp
+      track.lastNTPSeconds = ntpSeconds
+      track.octetCount = sender.octetCount
+      track.reports &+= 1
+      tracks[sender.ssrc] = track
+    }
+  }
+
+  /// A reconnect gives the camera a new timeline and possibly a new SSRC, so nothing measured
+  /// against the old one carries over.
+  mutating func reset() {
+    tracks.removeAll()
+    lastArrivalUptime = nil
+    intervalTotal = 0
+    intervalSamples = 0
+    reportCount = 0
+    ntpOffsetSeconds = 0
+    lastReportUptime = 0
+  }
+}
