@@ -140,6 +140,9 @@ public struct TileTelemetry: Sendable, Codable, Equatable {
   public var cameraClockOffsetSamples: Int = 0
   public var correctedCaptureTime: Double = 0
   public var correctedCaptureAgeMilliseconds: Double = 0
+  /// The one delay every camera is scheduled against. Zero means this camera is still on the
+  /// per-camera fallback because it has no corrected capture time yet.
+  public var sharedDelayMilliseconds: Double = 0
   /// Frames that arrived after they were due, each of which was a visible stall.
   public var playoutLateFrames: UInt64 = 0
   public var playoutDepth = 0
