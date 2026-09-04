@@ -3175,6 +3175,13 @@ public final class AppEnvironment {
         tile.playoutLateFrames = receive.playoutLateFrames
         tile.playoutDepth = receive.playoutDepth
         tile.outOfOrderFrames = receive.outOfOrderFrames
+        tile.senderReports = receive.senderReports
+        tile.senderReportIntervalSeconds = receive.senderReportIntervalSeconds
+        tile.senderReportAgeSeconds = receive.senderReportAgeSeconds
+        tile.senderReportStreams = receive.senderReportStreams
+        tile.mediaTicksPerSecond = receive.mediaTicksPerSecond
+        tile.mediaClockSpanSeconds = receive.mediaClockSpanSeconds
+        tile.cameraClockOffsetSeconds = receive.cameraClockOffsetSeconds
       }
       // Remembered against the camera, not the tile, so a camera that needs an unusually large
       // buffer starts there next time instead of stuttering its way back to it.
