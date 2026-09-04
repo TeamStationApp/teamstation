@@ -85,6 +85,9 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
   /// Most recent frame's capture time on our clock, and how far behind now that is. The age is
   /// excess over this camera's own best case rather than absolute delay — see `ReceiveStats`.
   private var lastCorrectedCapture: Double = 0
+  /// SSRC of the stream this source's pictures come from, so the clock anchor is taken from the
+  /// same stream rather than whichever has moved the most bytes so far.
+  private var videoSSRC: UInt32?
   private var correctedCaptureAgeSeconds: Double = 0
   private var audioTimeline = RTPTimestampUnwrapper()
   private var lastPresentationTime: CMTime?
@@ -409,6 +412,7 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     let arrivedAt = DispatchTime.now()
     let now = Self.seconds(arrivedAt)
     lock.lock()
+    videoSSRC = packet.ssrc
     stats.captured &+= 1
     lastAccessUnitAt = Date()
     jitter.noteArrival(at: arrivedAt, isKeyframe: unit.isKeyframe)
@@ -423,7 +427,11 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     // Carried alongside the existing arrival stamp and read by nothing yet: this phase proves the
     // number is right before anything depends on it. Already inside the lock taken above — `lock`
     // is a plain NSLock and taking it again here deadlocks the receive thread on the first packet.
-    if let correctedCapture = clockAudit.captureTimeOnLocalClock(rtpTimestamp: unit.rtpTimestamp) {
+    if let videoSSRC,
+       let correctedCapture = clockAudit.captureTimeOnLocalClock(
+         rtpTimestamp: unit.rtpTimestamp,
+         ssrc: videoSSRC
+       ) {
       lastCorrectedCapture = correctedCapture
       correctedCaptureAgeSeconds = Date().timeIntervalSince1970 - correctedCapture
     }

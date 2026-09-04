@@ -80,13 +80,18 @@ struct RTPClockAudit: Sendable {
   /// How many observations the filtered value rests on. One sample is not a filter.
   var offsetSampleCount: Int { offsetSamples.count }
 
-  /// The most recent (wall clock, RTP tick) pair from the busiest stream.
+  /// The most recent (wall clock, RTP tick) pair for one specific stream.
   ///
   /// This is the whole point of a sender report: one instant where a camera says what its media
   /// clock read and what time it was. Every frame's capture time is that anchor plus the tick
   /// difference, so the arbitrary origin of the RTP counter cancels out.
-  var anchor: (ntpSeconds: Double, rtpTimestamp: UInt32)? {
-    guard let track = dominantTrack else { return nil }
+  ///
+  /// The SSRC must be the caller's own stream. Picking the busiest one instead works only once
+  /// enough bytes have flowed to tell video from audio, and before that it silently pairs a video
+  /// frame with the audio stream's anchor — different clock rate, so the tick arithmetic produces a
+  /// capture time hours out. Measured: 5.5 hours, which is the signed tick range over 90 kHz.
+  func anchor(forSSRC ssrc: UInt32) -> (ntpSeconds: Double, rtpTimestamp: UInt32)? {
+    guard let track = tracks[ssrc] else { return nil }
     return (track.lastNTPSeconds, track.lastRTPTimestamp)
   }
 
@@ -98,8 +103,8 @@ struct RTPClockAudit: Sendable {
   ///
   /// The tick difference is taken as a signed 32-bit quantity so a frame slightly older than the
   /// anchor reads as negative rather than as most of a rollover.
-  func captureTimeOnLocalClock(rtpTimestamp: UInt32) -> Double? {
-    guard let anchor else { return nil }
+  func captureTimeOnLocalClock(rtpTimestamp: UInt32, ssrc: UInt32) -> Double? {
+    guard let anchor = anchor(forSSRC: ssrc) else { return nil }
     let ticks = Int32(bitPattern: rtpTimestamp &- anchor.rtpTimestamp)
     let cameraWall = anchor.ntpSeconds + Double(ticks) / 90_000
     return cameraWall - filteredOffsetSeconds

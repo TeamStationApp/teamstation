@@ -3218,7 +3218,14 @@ public final class AppEnvironment {
     // sender-report grace window carry no corrected time and are left out rather than contributing
     // a zero, which would read as a spread of the whole epoch.
     telemetry.mutate {
-      let corrected = $0.tiles.filter { $0.state == .live && $0.correctedCaptureTime > 0 }
+      // Within a few seconds of now, not merely positive. A camera whose anchor is stale or not yet
+      // established produces a capture time that is arbitrarily wrong rather than absent, and one
+      // of those admitted into the set reports a spread of hours — which is worse than reporting
+      // nothing, because it looks like a measurement.
+      let now = Date().timeIntervalSince1970
+      let corrected = $0.tiles.filter {
+        $0.state == .live && abs(now - $0.correctedCaptureTime) < 10
+      }
       guard corrected.count >= 2 else {
         $0.captureSpreadMilliseconds = 0
         $0.captureSpreadWorstCamera = ""
