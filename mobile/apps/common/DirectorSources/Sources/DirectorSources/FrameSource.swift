@@ -299,9 +299,6 @@ public struct ReceiveStats: Sendable, Equatable {
   /// which needs the absolute delay these filtered values deliberately discard.
   public var correctedCaptureTime: Double = 0
   public var correctedCaptureAgeMilliseconds: Double = 0
-  /// The one delay every camera is scheduled against. Zero means this camera is still on the
-  /// per-camera fallback because it has no corrected capture time yet.
-  public var sharedDelayMilliseconds: Double = 0
   /// Decoders this source currently holds. Only network sources decode anything; a generated or
   /// file-backed source reports zero.
   public var decodeSessions = 0

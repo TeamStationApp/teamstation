@@ -88,9 +88,6 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
   /// SSRC of the stream this source's pictures come from, so the clock anchor is taken from the
   /// same stream rather than whichever has moved the most bytes so far.
   private var videoSSRC: UInt32?
-  /// The shared delay this source last scheduled against, for telemetry. Zero means it is still on
-  /// the per-camera fallback.
-  private var sharedDelaySeconds: Double = 0
   private var correctedCaptureAgeSeconds: Double = 0
   private var audioTimeline = RTPTimestampUnwrapper()
   private var lastPresentationTime: CMTime?
@@ -204,7 +201,6 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     snapshot.cameraClockOffsetSamples = clockAudit.offsetSampleCount
     snapshot.correctedCaptureTime = lastCorrectedCapture
     snapshot.correctedCaptureAgeMilliseconds = (correctedCaptureAgeSeconds * 1000).rounded()
-    snapshot.sharedDelayMilliseconds = (sharedDelaySeconds * 1000).rounded()
     snapshot.senderReportStreams = clockAudit.streamCount
     if let decoder {
       let decoderStats = decoder.currentStatistics
@@ -431,28 +427,13 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     // Carried alongside the existing arrival stamp and read by nothing yet: this phase proves the
     // number is right before anything depends on it. Already inside the lock taken above — `lock`
     // is a plain NSLock and taking it again here deadlocks the receive thread on the first packet.
-    var sharedDue: Double?
     if let videoSSRC,
        let correctedCapture = clockAudit.captureTimeOnLocalClock(
          rtpTimestamp: unit.rtpTimestamp,
          ssrc: videoSSRC
        ) {
-      let wallNow = Date().timeIntervalSince1970
       lastCorrectedCapture = correctedCapture
-      correctedCaptureAgeSeconds = wallNow - correctedCapture
-
-      // Show it when the wall clock reaches capture + the shared delay, expressed against the
-      // uptime clock the queue is drained on. Both clocks are read at the same instant so the
-      // conversion carries no error of its own.
-      if let coordinator {
-        let delay = coordinator.sharedDelay.report(
-          requiredSeconds: correctedCaptureAgeSeconds,
-          for: sourceID,
-          at: now
-        )
-        sharedDue = now + (correctedCapture + delay - wallNow)
-        sharedDelaySeconds = delay
-      }
+      correctedCaptureAgeSeconds = Date().timeIntervalSince1970 - correctedCapture
     }
 
     // The picture waits here instead of being decoded on the spot. Releasing it against its own
@@ -460,10 +441,7 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     playout.note(lateness: now - presentationTime.seconds, at: now)
     pictures.enqueue(
       PendingPicture(unit: unit, presentationTime: presentationTime),
-      // The shared schedule when this camera has a corrected capture time, and the old per-camera
-      // one until it does — a camera inside its sender-report grace window still has to show a
-      // picture rather than nothing.
-      due: sharedDue ?? playout.dueTime(presentationSeconds: presentationTime.seconds),
+      due: playout.dueTime(presentationSeconds: presentationTime.seconds),
       keepingAtMost: 90
     )
 
