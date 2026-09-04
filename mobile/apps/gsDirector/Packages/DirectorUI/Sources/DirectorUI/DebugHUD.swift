@@ -55,6 +55,7 @@ public enum DebugHUDLines {
       .init(id: "hud-replay-latency", text: "replayms=\(replayLatency(snapshot))"),
       .init(id: "hud-replay-error", text: "replayerr=\(snapshot.lastReplayError.isEmpty ? "ok" : "fail")"),
       .init(id: "hud-memory", text: "mem=\(snapshot.physFootprintMB)"),
+      .init(id: "hud-resident", text: "rss=\(snapshot.residentSizeMB)"),
       .init(id: "hud-avail-memory", text: "avail=\(snapshot.availableMemoryMB)"),
       .init(
         id: "hud-stream-keyframe-age",

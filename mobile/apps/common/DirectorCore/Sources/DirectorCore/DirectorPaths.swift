@@ -21,8 +21,17 @@ public enum DirectorPaths {
   /// Master program output files.
   public static var program: URL { documents.appendingPathComponent("Program", isDirectory: true) }
 
-  /// Export destination, in Documents so it is reachable over Files / iTunes sharing.
+  /// Share-sheet staging, in Documents so it is reachable over Files / iTunes sharing.
   public static var exports: URL { documents.appendingPathComponent("Exports", isDirectory: true) }
+
+  /// Remuxed movies kept with the recording so a later export does not assemble them again.
+  public static var prepared: URL {
+    applicationSupport.appendingPathComponent("Prepared", isDirectory: true)
+  }
+
+  public static func preparedDirectory(for recordingID: Int64) -> URL {
+    prepared.appendingPathComponent("rec-\(recordingID)", isDirectory: true)
+  }
 
   /// Operator-placed Output overlays (images and the saved layout).
   public static var overlays: URL { applicationSupport.appendingPathComponent("Overlays", isDirectory: true) }
@@ -50,7 +59,9 @@ public enum DirectorPaths {
 
   public static func createAll() throws {
     let manager = FileManager.default
-    for url in [ applicationSupport, archives, proxies, program, exports, overlays, remoteControl ] {
+    for url in [
+      applicationSupport, archives, proxies, program, exports, prepared, overlays, remoteControl
+    ] {
       try manager.createDirectory(at: url, withIntermediateDirectories: true)
     }
   }

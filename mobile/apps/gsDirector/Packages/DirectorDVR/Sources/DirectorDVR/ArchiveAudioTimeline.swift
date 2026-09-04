@@ -32,9 +32,13 @@ struct ArchiveAudioTimeline {
   private(set) var clockUnusable = false
   private var epoch: CMTime?
   private var anchor: CMTime?
-  /// End of the last buffer placed. Every candidate is clamped forward to this, which makes the
-  /// track monotonic by construction no matter what the source clock does — a sample that starts
-  /// before the previous one ended stalls the muxer, and the muxer then stops accepting video too.
+  /// End of the last buffer placed. `SegmentWriter` fills `[endTime, nextStart)` with coded
+  /// silence when the source clock jumps, so a mute that dropped packets is still a hole of
+  /// silence rather than a squeeze of the later live audio.
+  var endTime: CMTime? { next }
+  /// Every candidate is clamped forward to this, which makes the track monotonic by construction
+  /// no matter what the source clock does — a sample that starts before the previous one ended
+  /// stalls the muxer, and the muxer then stops accepting video too.
   private var next: CMTime?
 
   mutating func place(sourceTime: CMTime, duration: CMTime, videoTime: CMTime) -> Placement? {

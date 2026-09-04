@@ -1,0 +1,96 @@
+import AVFoundation
+import Foundation
+import DirectorCore
+
+/// Concatenates complete MP4s into one movie, preserving each file's duration.
+///
+/// Byte-appending complete MP4s is not a valid movie. Replay stages files separately; export
+/// needs a single file whose duration is the sum of the pieces (and of any empty intervals
+/// the caller inserts by supplying a longer `targetDuration`).
+public enum ArchiveRemux {
+  public enum Error: Swift.Error, CustomStringConvertible {
+    case empty
+    case exportFailed(String)
+
+    public var description: String {
+      switch self {
+      case .empty: "no files to remux"
+      case let .exportFailed(reason): "remux failed: \(reason)"
+      }
+    }
+  }
+
+  public static func concatenate(
+    files: [URL],
+    fileDurations: [TimeInterval],
+    targetDuration: TimeInterval? = nil,
+    destination: URL
+  ) async throws {
+    guard !files.isEmpty else { throw Error.empty }
+    try? FileManager.default.removeItem(at: destination)
+    if files.count == 1, targetDuration == nil {
+      try FileManager.default.copyItem(at: files[0], to: destination)
+      return
+    }
+
+    let composition = AVMutableComposition()
+    var cursor = CMTime.zero
+    for (index, file) in files.enumerated() {
+      let asset = AVURLAsset(url: file)
+      let duration: CMTime
+      if index < fileDurations.count, fileDurations[index] > 0 {
+        duration = CMTime(seconds: fileDurations[index], preferredTimescale: 600)
+      } else {
+        duration = try await playableDuration(of: asset)
+      }
+      guard duration.seconds > 0.05 else { continue }
+      let range = CMTimeRange(start: .zero, duration: duration)
+      try await composition.insertTimeRange(range, of: asset, at: cursor)
+      cursor = CMTimeAdd(cursor, duration)
+    }
+
+    guard cursor.seconds > 0.05 else { throw Error.empty }
+    if let targetDuration, targetDuration - cursor.seconds > 0.05 {
+      let pad = CMTime(seconds: targetDuration - cursor.seconds, preferredTimescale: 600)
+      composition.insertEmptyTimeRange(CMTimeRange(start: cursor, duration: pad))
+    }
+
+    guard let session = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetPassthrough)
+      ?? AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetHighestQuality)
+    else {
+      throw Error.exportFailed("no export session")
+    }
+    session.outputURL = destination
+    session.outputFileType = .mp4
+    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+      session.exportAsynchronously { continuation.resume() }
+    }
+    guard session.status == .completed else {
+      throw Error.exportFailed(session.error?.localizedDescription ?? "\(session.status)")
+    }
+  }
+
+  /// A take lasts hours, not days. Video tracks stamped on a compositor/boot clock report
+  /// multi-day durations; the longest track inside this window is the programme.
+  public static let maximumSaneDuration: TimeInterval = 20_000
+
+  public static func playableDuration(of asset: AVURLAsset) async throws -> CMTime {
+    var best: TimeInterval = 0
+    for type in [AVMediaType.audio, .video] {
+      for track in try await asset.loadTracks(withMediaType: type) {
+        let seconds = try await track.load(.timeRange).duration.seconds
+        if seconds > 0.05, seconds < maximumSaneDuration {
+          best = max(best, seconds)
+        }
+      }
+    }
+    if best > 0 {
+      return CMTime(seconds: best, preferredTimescale: 600)
+    }
+    let loaded = try await asset.load(.duration)
+    if loaded.seconds.isFinite, loaded.seconds > 0.05, loaded.seconds < maximumSaneDuration {
+      return loaded
+    }
+    return .zero
+  }
+}

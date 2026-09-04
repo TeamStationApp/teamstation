@@ -52,9 +52,20 @@ public enum ProcessLoad {
     Int(os_proc_available_memory() / (1024 * 1024))
   }
 
-  /// Physical memory this process is actually holding. `availableMemoryMB` shrinks for other
-  /// reasons too, so this is the number that tells a leak from the system being busy.
+  /// Jetsam's bill for this process. `availableMemoryMB` shrinks for other reasons too, so this
+  /// is the number that tells a leak from the system being busy.
   public static func physFootprintMB() -> Int {
+    guard let info = taskVMInfo() else { return 0 }
+    return Int(info.phys_footprint / (1024 * 1024))
+  }
+
+  /// Anonymous resident pages. Soak telemetry watches this alongside `physFootprintMB`.
+  public static func residentSizeMB() -> Int {
+    guard let info = taskVMInfo() else { return 0 }
+    return Int(info.resident_size / (1024 * 1024))
+  }
+
+  private static func taskVMInfo() -> task_vm_info_data_t? {
     var info = task_vm_info_data_t()
     var count = mach_msg_type_number_t(
       MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size
@@ -64,8 +75,8 @@ public enum ProcessLoad {
         task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
       }
     }
-    guard result == KERN_SUCCESS else { return 0 }
-    return Int(info.phys_footprint / (1024 * 1024))
+    guard result == KERN_SUCCESS else { return nil }
+    return info
   }
 
   public static func thermalStateName(

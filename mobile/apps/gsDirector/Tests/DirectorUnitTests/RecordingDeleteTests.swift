@@ -12,9 +12,11 @@ struct RecordingDeleteTests {
     let archives = root.appendingPathComponent("Archives", isDirectory: true)
     let program = root.appendingPathComponent("Program", isDirectory: true)
     let proxies = root.appendingPathComponent("Proxies", isDirectory: true)
+    let prepared = root.appendingPathComponent("Prepared", isDirectory: true)
     try FileManager.default.createDirectory(at: archives, withIntermediateDirectories: true)
     try FileManager.default.createDirectory(at: program, withIntermediateDirectories: true)
     try FileManager.default.createDirectory(at: proxies, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: prepared, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
 
     let index = try ArchiveIndex(url: root.appendingPathComponent("index.sqlite"))
@@ -23,7 +25,12 @@ struct RecordingDeleteTests {
     let proxyDir = proxies.appendingPathComponent(source.slug, isDirectory: true)
     try FileManager.default.createDirectory(at: camDir, withIntermediateDirectories: true)
     try FileManager.default.createDirectory(at: proxyDir, withIntermediateDirectories: true)
-    let roots = RecordingFileRoots(archives: archives, program: program, proxies: proxies)
+    let roots = RecordingFileRoots(
+      archives: archives,
+      program: program,
+      proxies: proxies,
+      prepared: prepared
+    )
 
     let keep = try seed(
       index: index,
@@ -46,6 +53,13 @@ struct RecordingDeleteTests {
       chunk: "drop.bin"
     )
 
+    let dropPrepared = prepared.appendingPathComponent("rec-\(drop)", isDirectory: true)
+    let keepPrepared = prepared.appendingPathComponent("rec-\(keep)", isDirectory: true)
+    try FileManager.default.createDirectory(at: dropPrepared, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: keepPrepared, withIntermediateDirectories: true)
+    try Data("prepared-drop".utf8).write(to: dropPrepared.appendingPathComponent("drop.mov"))
+    try Data("prepared-keep".utf8).write(to: keepPrepared.appendingPathComponent("keep.mov"))
+
     try index.deleteRecordings(ids: [drop], roots: roots)
 
     let remaining = try index.recordings()
@@ -57,9 +71,11 @@ struct RecordingDeleteTests {
     #expect(FileManager.default.fileExists(atPath: camDir.appendingPathComponent("keep.mp4").path))
     #expect(FileManager.default.fileExists(atPath: program.appendingPathComponent("keep.mov").path))
     #expect(FileManager.default.fileExists(atPath: proxyDir.appendingPathComponent("keep.bin").path))
+    #expect(FileManager.default.fileExists(atPath: keepPrepared.appendingPathComponent("keep.mov").path))
     #expect(!FileManager.default.fileExists(atPath: camDir.appendingPathComponent("drop.mp4").path))
     #expect(!FileManager.default.fileExists(atPath: program.appendingPathComponent("drop.mov").path))
     #expect(!FileManager.default.fileExists(atPath: proxyDir.appendingPathComponent("drop.bin").path))
+    #expect(!FileManager.default.fileExists(atPath: dropPrepared.path))
   }
 
   @Test("The live recording id is not deleted")

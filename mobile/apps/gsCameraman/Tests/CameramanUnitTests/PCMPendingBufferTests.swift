@@ -37,6 +37,16 @@ struct PCMPendingBufferTests {
     #expect(buffer.storedCount == buffer.readableCount)
   }
 
+  @Test("replaceReadableWithZeros keeps the sample count and clears leftover live PCM")
+  func replaceReadableWithZerosKeepsCadence() {
+    var buffer = PCMPendingBuffer()
+    buffer.append(Data(repeating: 7, count: 100))
+    _ = buffer.take(20)
+    buffer.replaceReadableWithZeros()
+    #expect(buffer.readableCount == 80)
+    #expect(buffer.take(80) == Data(count: 80))
+  }
+
   @Test("append and take at 48 kHz for a simulated minute stays bounded")
   func simulatedMinuteStaysBounded() {
     var buffer = PCMPendingBuffer()

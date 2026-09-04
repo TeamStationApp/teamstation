@@ -1,22 +1,28 @@
 #!/usr/bin/env node
 'use strict'
 
-// Four-hour Director + Cameraman stress loop.
+// Four-hour Director + Cameraman stress loop, optionally split into hour-long recordings.
 //
 // Maestro (`rtsp-four-cameras`) must already have launched Director with local-network
 // access. This script enables first/third/mound/handheld, starts directing, turns RECORD
 // and STREAM on (ingest URL from Settings), then every 30s cuts or instant-replays over
 // the control channel. A PeerTube frame is grabbed about every 3 minutes.
-// Every 4 minutes the floor and peak physFootprintMB in that window are kept for both
+// Every 4 minutes the floor and peak of max(physFootprintMB, residentSizeMB) are kept for both
 // Director and Cameraman. If two consecutive floors are 30% above the matching window
-// from an hour earlier, the run aborts as a sustained leak. Replay spikes lift the peak
-// only, so they do not trip the abort. Cameraman dump-state is fetched in parallel with
+// from an hour earlier, the run aborts as a sustained leak. A sample at or above 1200 MB
+// (Director) or 800 MB (Cameraman) aborts immediately. Replay spikes lift the peak
+// only, so they do not trip the hour-ago abort. Cameraman dump-state is fetched in parallel with
 // every Director dump-state (twice per tick).
+//
+// `--hour-blocks` records four one-hour takes. After each hour it stops, exports the take,
+// checks that every movie lasts the hour, and checks that Cameraman audio/video blanks
+// landed only on the handheld file.
 //
 //   node scripts/stressFourHour.js --device <director-udid> --cameraman-device <iphone-udid>
 //   node scripts/stressFourHour.js --device <udid> --cameraman-device <udid> --seconds 120
+//   node scripts/stressFourHour.js --device <udid> --cameraman-device <udid> --hour-blocks
 
-const { execFileSync, spawn } = require('node:child_process')
+const { execFileSync, spawn, spawnSync } = require('node:child_process')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
@@ -64,6 +70,9 @@ function parseArgs(argv) {
     stream: true,
     replay: true,
     verify: true,
+    blockSeconds: 0,
+    audioFaultSeconds: 8,
+    videoFaultSeconds: 25,
     cameras: [...CAMERA_NAMES]
   }
   for (let i = 0; i < argv.length; i += 1) {
@@ -89,6 +98,17 @@ function parseArgs(argv) {
       i += 1
     } else if (value === '--cameras' && next) {
       options.cameras = next.split(',').map(name => name.trim()).filter(Boolean)
+      i += 1
+    } else if (value === '--hour-blocks') {
+      options.blockSeconds = 3600
+    } else if (value === '--block-seconds' && next) {
+      options.blockSeconds = Number(next)
+      i += 1
+    } else if (value === '--audio-fault-seconds' && next) {
+      options.audioFaultSeconds = Number(next)
+      i += 1
+    } else if (value === '--video-fault-seconds' && next) {
+      options.videoFaultSeconds = Number(next)
       i += 1
     } else if (value === '--no-record') {
       options.record = false
@@ -379,6 +399,7 @@ function readCameramanHealth(dump) {
     encodeFailure: dump.encodeFailure ?? null,
     dropped: dump.droppedFrames ?? server.droppedFrames ?? null,
     physFootprintMB: dump.physFootprintMB ?? null,
+    residentSizeMB: dump.residentSizeMB ?? null,
     availableMemoryMB: dump.availableMemoryMB ?? null,
     cpuPercent: dump.cpuPercent ?? null,
     thermal: dump.thermalState ?? null,
@@ -408,6 +429,7 @@ function applyCameramanHealth(health, dump) {
   health.cameramanEncodeFailure = cam.encodeFailure
   health.cameramanDropped = cam.dropped
   health.cameramanPhysFootprintMB = cam.physFootprintMB
+  health.cameramanResidentSizeMB = cam.residentSizeMB
   health.cameramanAvailableMemoryMB = cam.availableMemoryMB
   health.cameramanCpuPercent = cam.cpuPercent
   health.cameramanThermal = cam.thermal
@@ -629,6 +651,318 @@ function append(file, line) {
   fs.appendFileSync(file, `${nowIso()} ${line}\n`)
 }
 
+const DIRECTOR_BUNDLE = 'co.gamestation.director'
+const PREPARED_ROOT = 'Library/Application Support/GSDirector/Prepared'
+const HOUR_DURATION_SLACK = 30
+const FILE_DURATION_SLACK = 3
+
+function listDeviceFiles(udid, subdirectory) {
+  const jsonPath = path.join(os.tmpdir(), `gs-director-files-${process.pid}.json`)
+  const args = [
+    'devicectl',
+    'device',
+    'info',
+    'files',
+    '--device',
+    udid,
+    '--domain-type',
+    'appDataContainer',
+    '--domain-identifier',
+    DIRECTOR_BUNDLE,
+    '--json-output',
+    jsonPath
+  ]
+  if (subdirectory) args.push('--subdirectory', subdirectory)
+  execFileSync('xcrun', args, { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 })
+  const data = JSON.parse(fs.readFileSync(jsonPath, 'utf8'))
+  fs.rmSync(jsonPath, { force: true })
+  return data.result?.files ?? []
+}
+
+function pullFromDevice(udid, remote, local) {
+  fs.mkdirSync(path.dirname(local), { recursive: true })
+  execFileSync(
+    'xcrun',
+    [
+      'devicectl',
+      'device',
+      'copy',
+      'from',
+      '--device',
+      udid,
+      '--domain-type',
+      'appDataContainer',
+      '--domain-identifier',
+      DIRECTOR_BUNDLE,
+      '--source',
+      remote,
+      '--destination',
+      local
+    ],
+    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
+  )
+}
+
+function probeDuration(file) {
+  const raw = execFileSync(
+    'ffprobe',
+    ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=nw=1:nk=1', file],
+    { encoding: 'utf8' }
+  ).trim()
+  const duration = Number(raw)
+  if (!Number.isFinite(duration)) throw new Error(`ffprobe duration for ${file}: ${raw}`)
+  return duration
+}
+
+function parseDetectWindows(stderr, startRe, endRe) {
+  const windows = []
+  let open = null
+  for (const line of stderr.split('\n')) {
+    const start = line.match(startRe)
+    if (start) {
+      open = { start: Number(start[1]), end: null }
+      continue
+    }
+    const end = line.match(endRe)
+    if (end && open) {
+      open.end = Number(end[1])
+      windows.push(open)
+      open = null
+    }
+  }
+  if (open) windows.push(open)
+  return windows
+}
+
+function detectBlanks(file) {
+  const result = spawnSync(
+    'ffmpeg',
+    [
+      '-hide_banner',
+      '-i',
+      file,
+      '-af',
+      'silencedetect=noise=-35dB:d=2',
+      '-vf',
+      'blackdetect=d=2:pix_th=0.12',
+      '-f',
+      'null',
+      '-'
+    ],
+    { encoding: 'utf8' }
+  )
+  const stderr = `${result.stderr || ''}${result.stdout || ''}`
+  return {
+    silence: parseDetectWindows(
+      stderr,
+      /silence_start:\s*([0-9.]+)/,
+      /silence_end:\s*([0-9.]+)/
+    ),
+    black: parseDetectWindows(
+      stderr,
+      /black_start:([0-9.]+)/,
+      /black_end:([0-9.]+)/
+    )
+  }
+}
+
+function windowCovers(windows, start, end, slack = 2.5) {
+  return windows.some(window => {
+    const from = window.start
+    const to = window.end == null ? Infinity : window.end
+    return from <= start + slack && to >= end - slack
+  })
+}
+
+function windowOverlaps(windows, start, end) {
+  return windows.some(window => {
+    const from = window.start
+    const to = window.end == null ? Infinity : window.end
+    return from < end && to > start
+  })
+}
+
+function planFaults(blockSeconds, options) {
+  const audioAt = Math.min(90, Math.max(20, Math.floor(blockSeconds / 8)))
+  const videoAt = Math.min(180, Math.max(audioAt + options.audioFaultSeconds + 20, Math.floor(blockSeconds / 4)))
+  return [
+    {
+      kind: 'audio',
+      at: audioAt,
+      duration: options.audioFaultSeconds,
+      started: false,
+      ended: false
+    },
+    {
+      kind: 'video',
+      at: videoAt,
+      duration: options.videoFaultSeconds,
+      started: false,
+      ended: false
+    }
+  ]
+}
+
+async function applyScheduledFaults(elapsedSec, faults, cameramanHost, actionLog) {
+  for (const fault of faults) {
+    if (!fault.started && elapsedSec >= fault.at) {
+      const pathName = fault.kind === 'audio' ? '/set-audio?on=false' : '/set-video?on=false'
+      await cameramanGet(cameramanHost, pathName)
+      fault.started = true
+      fault.startedAtIso = nowIso()
+      fault.startedElapsed = elapsedSec
+      append(
+        actionLog,
+        `FAULT ${fault.kind} off elapsed=${elapsedSec.toFixed(1)}s duration=${fault.duration}s`
+      )
+    }
+    if (fault.started && !fault.ended && elapsedSec >= fault.at + fault.duration) {
+      const pathName = fault.kind === 'audio' ? '/set-audio?on=true' : '/set-video?on=true'
+      await cameramanGet(cameramanHost, pathName)
+      fault.ended = true
+      fault.endedAtIso = nowIso()
+      fault.endedElapsed = elapsedSec
+      append(actionLog, `FAULT ${fault.kind} on elapsed=${elapsedSec.toFixed(1)}s`)
+    }
+  }
+}
+
+async function restoreFaults(faults, cameramanHost, actionLog) {
+  for (const fault of faults) {
+    if (fault.started && !fault.ended) {
+      const pathName = fault.kind === 'audio' ? '/set-audio?on=true' : '/set-video?on=true'
+      try {
+        await cameramanGet(cameramanHost, pathName)
+        fault.ended = true
+        fault.endedAtIso = nowIso()
+        append(actionLog, `FAULT ${fault.kind} restored at block end`)
+      } catch (error) {
+        append(actionLog, `NOTE restore ${fault.kind} failed: ${error.message}`)
+      }
+    }
+  }
+}
+
+async function waitUntilIdle(host, actionLog) {
+  let last = ''
+  await waitFor('recording idle', 180000, async () => {
+    const state = await directorGet(host, '/dump-state')
+    const recording = pick(state.dvr, 'isRecording', 'recording') === true
+    const stage = String(state.recordingStage || '')
+    if (stage !== last) {
+      append(actionLog, `NOTE recordingStage=${stage || '?'} recording=${recording ? 1 : 0}`)
+      last = stage
+    }
+    return !recording && (stage === 'idle' || stage === '')
+  })
+}
+
+async function exportLatestRecording(host, actionLog) {
+  const before = await directorGet(host, '/dump-state')
+  const previousID = before.dvr?.lastExportRecordingID ?? null
+  await directorSend(host, '/export-recording')
+  append(actionLog, 'NOTE export-recording started')
+  await waitFor('export to finish', 30 * 60 * 1000, async () => {
+    const state = await directorGet(host, '/dump-state')
+    const dvr = state.dvr || {}
+    if (dvr.lastExportError) throw new Error(`export failed: ${dvr.lastExportError}`)
+    if (dvr.isExporting === true) return false
+    const id = dvr.lastExportRecordingID
+    if (id == null || id === previousID) return false
+    return Array.isArray(dvr.lastExportFiles) && dvr.lastExportFiles.length > 0
+  })
+  const state = await directorGet(host, '/dump-state')
+  const dvr = state.dvr || {}
+  append(
+    actionLog,
+    `NOTE exported rec-${dvr.lastExportRecordingID} files=${(dvr.lastExportFiles || []).join(',')}`
+  )
+  return {
+    recordingID: dvr.lastExportRecordingID,
+    files: dvr.lastExportFiles || []
+  }
+}
+
+function pullPreparedRecording(udid, recordingID, destDir) {
+  fs.rmSync(destDir, { recursive: true, force: true })
+  fs.mkdirSync(destDir, { recursive: true })
+  const remoteDir = `${PREPARED_ROOT}/rec-${recordingID}`
+  const files = listDeviceFiles(udid, remoteDir)
+  const pulled = []
+  for (const file of files) {
+    const name = file.name || path.basename(file.relativePath || '')
+    if (!name || file.resources?.isDirectory) continue
+    if (!/\.(mov|mp4)$/i.test(name)) continue
+    const local = path.join(destDir, name)
+    pullFromDevice(udid, `${remoteDir}/${name}`, local)
+    pulled.push(local)
+  }
+  if (pulled.length === 0) throw new Error(`no prepared movies for rec-${recordingID}`)
+  return pulled
+}
+
+function verifyHourExports(files, expectedSeconds, faults, actionLog) {
+  const durations = files.map(file => ({
+    file,
+    name: path.basename(file),
+    duration: probeDuration(file)
+  }))
+  for (const row of durations) {
+    append(actionLog, `NOTE duration ${row.name}=${row.duration.toFixed(3)}s`)
+    if (Math.abs(row.duration - expectedSeconds) > HOUR_DURATION_SLACK) {
+      throw new Error(
+        `${row.name} lasted ${row.duration.toFixed(3)}s, expected ~${expectedSeconds}s`
+      )
+    }
+  }
+  const values = durations.map(row => row.duration)
+  const spread = Math.max(...values) - Math.min(...values)
+  append(actionLog, `NOTE duration-spread=${spread.toFixed(3)}s`)
+  if (spread > FILE_DURATION_SLACK) {
+    throw new Error(`export durations differ by ${spread.toFixed(3)}s`)
+  }
+
+  const handheld = durations.find(row => /hand/i.test(row.name))
+  if (!handheld) {
+    append(actionLog, 'NOTE no handheld export to analyse for blanks')
+    return { durations, spread }
+  }
+  const detected = detectBlanks(handheld.file)
+  append(
+    actionLog,
+    `NOTE handheld black=${JSON.stringify(detected.black)} silence=${JSON.stringify(detected.silence)}`
+  )
+  for (const fault of faults.filter(item => item.started)) {
+    const start = fault.startedElapsed ?? fault.at
+    const end = fault.endedElapsed ?? fault.at + fault.duration
+    if (fault.kind === 'audio') {
+      if (!windowCovers(detected.silence, start, end)) {
+        throw new Error(
+          `handheld audio mute ${start.toFixed(1)}-${end.toFixed(1)}s was not silent`
+        )
+      }
+      if (windowOverlaps(detected.black, start, end)) {
+        throw new Error(
+          `handheld video went black during audio mute ${start.toFixed(1)}-${end.toFixed(1)}s`
+        )
+      }
+    }
+    if (fault.kind === 'video') {
+      if (!windowCovers(detected.black, start, end)) {
+        throw new Error(
+          `handheld video blank ${start.toFixed(1)}-${end.toFixed(1)}s was not black`
+        )
+      }
+      if (windowCovers(detected.silence, start, end)) {
+        throw new Error(
+          `handheld audio went silent during video blank ${start.toFixed(1)}-${end.toFixed(1)}s`
+        )
+      }
+    }
+  }
+  return { durations, spread, detected }
+}
+
 async function waitFor(label, timeoutMs, fn) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
@@ -659,7 +993,7 @@ async function main() {
 
   append(
     actionLog,
-    `START device=${options.device} cameraman=${options.cameramanDevice} seconds=${options.seconds} record=${options.record} stream=${options.stream} replay=${options.replay} cameras=${options.cameras.join(',')}`
+    `START device=${options.device} cameraman=${options.cameramanDevice} seconds=${options.seconds} blockSeconds=${options.blockSeconds || options.seconds} record=${options.record} stream=${options.stream} replay=${options.replay} cameras=${options.cameras.join(',')}`
   )
   append(actionLog, `NOTE peertube ${options.peertubeUrl}`)
 
@@ -712,25 +1046,28 @@ async function main() {
     return namedLiveCount(map, options.cameras) === wanted
   })
 
-  if (options.record) await directorSend(host, '/record?on=true')
-  else await directorSend(host, '/record?on=false')
   if (options.stream) await directorSend(host, '/stream?on=true')
   else await directorSend(host, '/stream?on=false')
-  await waitFor('record/stream mode', 30000, async () => {
+  await waitFor('stream mode', 30000, async () => {
     state = await directorGet(host, '/dump-state')
-    map = cameraMap(state)
-    const recording = pick(state.dvr, 'isRecording', 'recording') === true
     const streaming = pick(state, 'isStreaming', 'streaming') === true
-    if (options.record && !recording) return false
-    if (!options.record && recording) return false
     if (options.stream && !streaming) return false
     if (!options.stream && streaming) return false
-    if (options.record && !options.cameras.every(name => map[name]?.archiving)) return false
     return true
   })
   append(
     actionLog,
-    `NOTE record=${options.record} stream=${options.stream} cameras=${options.cameras.join(',')}`
+    `NOTE stream=${options.stream} cameras=${options.cameras.join(',')}`
+  )
+
+  const blockSeconds = options.blockSeconds > 0 ? options.blockSeconds : options.seconds
+  const blockCount =
+    options.blockSeconds > 0
+      ? Math.max(1, Math.round(options.seconds / options.blockSeconds))
+      : 1
+  append(
+    actionLog,
+    `NOTE blocks=${blockCount} blockSeconds=${blockSeconds} audioFault=${options.audioFaultSeconds}s videoFault=${options.videoFaultSeconds}s`
   )
 
   const t0 = Date.now()
@@ -751,11 +1088,31 @@ async function main() {
   let lastEncoderResetCount = 0
   let abortReason = null
   let lastProgram = (state.programSource ?? 0) + 1
-  const memoryGuard = new MemoryPeakGuard()
-  const cameramanMemoryGuard = new MemoryPeakGuard()
+  const memoryGuard = new MemoryPeakGuard({ hardCapMB: 1200 })
+  const cameramanMemoryGuard = new MemoryPeakGuard({ hardCapMB: 800 })
+  const hourResults = []
+  const exportDir = path.join(logDir, `${stamp}-stressFourHour-exports`)
+  fs.mkdirSync(exportDir, { recursive: true })
 
   try {
-    while (Date.now() - t0 < options.seconds * 1000) {
+    for (let block = 1; block <= blockCount; block += 1) {
+      if (stopRequested || abortReason) break
+      append(actionLog, `NOTE block ${block}/${blockCount} start`)
+      const faults = planFaults(blockSeconds, options)
+      if (options.record) await directorSend(host, '/record?on=true')
+      else await directorSend(host, '/record?on=false')
+      await waitFor('record mode', 30000, async () => {
+        state = await directorGet(host, '/dump-state')
+        map = cameraMap(state)
+        const recording = pick(state.dvr, 'isRecording', 'recording') === true
+        if (options.record && !recording) return false
+        if (!options.record && recording) return false
+        if (options.record && !options.cameras.every(name => map[name]?.archiving)) return false
+        return true
+      })
+      const blockT0 = Date.now()
+      while (Date.now() - blockT0 < blockSeconds * 1000) {
+      if (Date.now() - t0 >= options.seconds * 1000) break
       if (stopRequested) {
         append(actionLog, `NOTE stopped by ${stopRequested}`)
         break
@@ -797,6 +1154,7 @@ async function main() {
         thermal: pick(state, 'thermalState', 'thermal'),
         memoryMB: pick(state, 'availableMemoryMB', 'memoryMB'),
         physFootprintMB: pick(state, 'physFootprintMB'),
+        residentSizeMB: pick(state, 'residentSizeMB'),
         decodeSessions: pick(state.sessions, 'decodeSessions'),
         archiveBytes: pick(state.dvr, 'byteCount', 'bytes'),
         archiveSegments: pick(state.dvr, 'segmentCount', 'segments'),
@@ -993,12 +1351,18 @@ async function main() {
         abortReason = `crash report ${newCrashes[0]}`
         break
       }
-      const leak = memoryGuard.sample(Date.now(), health.physFootprintMB)
+      const leak = memoryGuard.sample(
+        Date.now(),
+        Math.max(Number(health.physFootprintMB) || 0, Number(health.residentSizeMB) || 0)
+      )
       if (leak) {
         abortReason = leak
         break
       }
-      const cameramanLeak = cameramanMemoryGuard.sample(Date.now(), cam.physFootprintMB)
+      const cameramanLeak = cameramanMemoryGuard.sample(
+        Date.now(),
+        Math.max(Number(cam.physFootprintMB) || 0, Number(cam.residentSizeMB) || 0)
+      )
       if (cameramanLeak) {
         abortReason = `cameraman ${cameramanLeak}`
         break
@@ -1014,6 +1378,13 @@ async function main() {
         }
         lastShot = Date.now()
       }
+
+      await applyScheduledFaults(
+        (Date.now() - blockT0) / 1000,
+        faults,
+        cameramanHost,
+        actionLog
+      )
 
       const action = options.replay
         ? pickAction(map, lastProgram, options.cameras, true)
@@ -1038,6 +1409,49 @@ async function main() {
         break
       }
       await sleep(Math.max(0, options.tickMs - used))
+      }
+
+      await restoreFaults(faults, cameramanHost, actionLog)
+      const recordedSeconds = (Date.now() - blockT0) / 1000
+      try {
+        await directorSend(host, '/record?on=false')
+        append(actionLog, `NOTE block ${block} record off after ${recordedSeconds.toFixed(1)}s`)
+      } catch (error) {
+        append(actionLog, `NOTE record off failed: ${error.message}`)
+      }
+      if (abortReason || stopRequested) break
+      if (options.record) {
+        try {
+          await waitUntilIdle(host, actionLog)
+          const exported = await exportLatestRecording(host, actionLog)
+          const dest = path.join(exportDir, `block-${block}-rec-${exported.recordingID}`)
+          const files = pullPreparedRecording(options.device, exported.recordingID, dest)
+          const verified = verifyHourExports(files, recordedSeconds, faults, actionLog)
+          hourResults.push({
+            block,
+            recordingID: exported.recordingID,
+            dest,
+            files: files.map(name => path.basename(name)),
+            durations: verified.durations.map(row => ({
+              name: row.name,
+              duration: Number(row.duration.toFixed(3))
+            })),
+            spread: verified.spread,
+            faults: faults.map(fault => ({
+              kind: fault.kind,
+              at: fault.at,
+              duration: fault.duration,
+              startedElapsed: fault.startedElapsed ?? null,
+              endedElapsed: fault.endedElapsed ?? null
+            }))
+          })
+          append(actionLog, `NOTE block ${block} verified`)
+        } catch (error) {
+          abortReason = `block ${block} export/verify: ${error.message}`
+          append(actionLog, `ABORT ${abortReason}`)
+          break
+        }
+      }
     }
   } finally {
     append(actionLog, abortReason ? `ABORT ${abortReason}` : 'NOTE loop finished')
@@ -1074,6 +1488,8 @@ async function main() {
     healthLog,
     unifiedLog,
     shotDir,
+    exportDir,
+    hourResults,
     directorPid,
     cameramanPid
   }

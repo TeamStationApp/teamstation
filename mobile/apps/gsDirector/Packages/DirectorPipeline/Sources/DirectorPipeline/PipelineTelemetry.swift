@@ -131,6 +131,9 @@ public struct TileTelemetry: Sendable, Codable, Equatable {
   /// Frames that arrived after they were due, each of which was a visible stall.
   public var playoutLateFrames: UInt64 = 0
   public var playoutDepth = 0
+  /// Decoded frames dropped for a timestamp that did not advance. Climbing at the frame rate means
+  /// this tile is frozen because its source timeline stopped, not because the scene is still.
+  public var outOfOrderFrames: UInt64 = 0
   /// How often the archive had to re-anchor audio to video, and by how much it had drifted. A
   /// non-zero count means this camera's audio clock does not advance at the same rate as its video
   /// clock, which is what stalls the muxer if left alone.
@@ -209,6 +212,11 @@ public struct DVRTelemetry: Sendable, Codable, Equatable {
   public var indexWrites: UInt64 = 0
   public var freeDiskBytes: Int64 = 0
   public var lastError: String?
+  /// UITest export of a stopped take into Prepared/. Distinct from recording so a harness can poll.
+  public var isExporting = false
+  public var lastExportRecordingID: Int64?
+  public var lastExportFiles: [String] = []
+  public var lastExportError: String?
 
   public init() {}
 }
@@ -263,8 +271,10 @@ public struct TelemetrySnapshot: Sendable, Codable, Equatable {
   public var cpuCores = 0
   /// What iPadOS will still let this process allocate, which is far below physical RAM.
   public var availableMemoryMB = 0
-  /// Resident set, including surfaces lent to the display and encoder daemons.
+  /// Jetsam bill, including surfaces lent to the display and encoder daemons.
   public var physFootprintMB = 0
+  /// Anonymous resident pages. A soak that only watches `physFootprintMB` can miss a malloc climb.
+  public var residentSizeMB = 0
   public var programSource: Int?
   /// Whether this session is on real cameras rather than generated or file-backed ones.
   public var sourceAvailable = false
@@ -282,6 +292,10 @@ public struct TelemetrySnapshot: Sendable, Codable, Equatable {
   public var statusMessage = ""
   /// Last replay failure, kept even when the banner is later overwritten by another message.
   public var lastReplayError = ""
+  /// What the last replay was actually given to play: how much history was available, how far back it
+  /// was asked to go, and how many archive files that turned into. A replay that ends early ran out
+  /// of one of these, and without them the difference is invisible.
+  public var lastReplayAssembly = ""
   /// The last lifecycle step the recording path completed. A recording that will not stop is
   /// otherwise indistinguishable from one that stopped without saying so.
   public var recordingStage = "idle"

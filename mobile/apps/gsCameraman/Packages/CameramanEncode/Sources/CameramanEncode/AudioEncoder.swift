@@ -27,6 +27,10 @@ public final class AudioEncoder: @unchecked Sendable {
   private var pcmPending = PCMPendingBuffer()
   private var pendingTime: Double = 0
   private var bytesPerSourceFrame = 0
+  private var wasSilent = false
+  /// Last non-empty silent access unit. The converter can return a 0-byte packet for zeros
+  /// (DTX); the archive still needs one AU per 1024 samples or the mute becomes a squeeze.
+  private var silentAU: Data?
 
   /// Eight AAC frames is 170 ms of PCM. Anything more is the converter falling behind.
   private static let maxBufferedFrames = 8
@@ -92,6 +96,7 @@ public final class AudioEncoder: @unchecked Sendable {
       }
       converter = created
       audioSpecificConfig = config
+      silentAU = encodeAccessUnit(Data(count: Self.samplesPerFrame * bytesPerSourceFrame))
     }
   }
 
@@ -112,12 +117,17 @@ public final class AudioEncoder: @unchecked Sendable {
     let pts = CMSampleBufferGetPresentationTimeStamp(sample.buffer).seconds
     queue.async { [self] in
       guard converter != nil else { return }
+      if silent && !wasSilent {
+        pcmPending.replaceReadableWithZeros()
+        if let converter { AudioConverterReset(converter) }
+      }
+      wasSilent = silent
       if pcmPending.readableCount == 0 {
         pendingTime = pts
       }
       pcmPending.append(pcm)
       dropIfBackedUp()
-      drain()
+      drain(silent: silent)
       pcmPending.compactIfNeeded()
     }
   }
@@ -129,54 +139,23 @@ public final class AudioEncoder: @unchecked Sendable {
   /// The converter needs whole 1024-sample frames, and a capture callback delivers whatever the
   /// hardware felt like. Anything short of a frame is held over rather than padded with silence,
   /// which would put a click into the stream every buffer boundary.
-  private func drain() {
-    guard let converter, bytesPerSourceFrame > 0 else { return }
+  private func drain(silent: Bool) {
+    guard bytesPerSourceFrame > 0 else { return }
     let bytesPerFrame = Self.samplesPerFrame * bytesPerSourceFrame
 
     while let chunk = pcmPending.take(bytesPerFrame) {
-      var output = Data(count: 2048)
-      var packetCount: UInt32 = 1
-      var packetDescription = AudioStreamPacketDescription()
-
-      let encoded: OSStatus = chunk.withUnsafeBytes { input in
-        var source = InputProxy(
-          bytes: input.baseAddress,
-          byteCount: UInt32(bytesPerFrame),
-          bytesPerFrame: UInt32(bytesPerSourceFrame),
-          consumed: false
-        )
-        return output.withUnsafeMutableBytes { outputBytes in
-          var bufferList = AudioBufferList(
-            mNumberBuffers: 1,
-            mBuffers: AudioBuffer(
-              mNumberChannels: destinationFormat.mChannelsPerFrame,
-              mDataByteSize: UInt32(outputBytes.count),
-              mData: outputBytes.baseAddress
-            )
-          )
-          return withUnsafeMutablePointer(to: &source) { proxy in
-            AudioConverterFillComplexBuffer(
-              converter,
-              inputCallback,
-              proxy,
-              &packetCount,
-              &bufferList,
-              &packetDescription
-            )
-          }
-        }
+      var encoded = encodeAccessUnit(chunk)
+      if silent {
+        if let encoded, !encoded.isEmpty { silentAU = encoded }
+        if encoded == nil || encoded?.isEmpty == true { encoded = silentAU }
       }
-
-      guard encoded == noErr || encoded == kNoMoreDataError, packetCount > 0 else {
-        if encoded != noErr { onFailure?(.converter(encoded)) }
-        return
+      guard let encoded, !encoded.isEmpty else {
+        if !silent { return }
+        continue
       }
-
-      let size = Int(packetDescription.mDataByteSize)
-      guard size > 0, size <= output.count else { return }
 
       onFrame?(EncodedAudioFrame(
-        data: output.prefix(size),
+        data: encoded,
         presentationTime: pendingTime,
         sampleRate: Int(destinationFormat.mSampleRate),
         channelCount: Int(destinationFormat.mChannelsPerFrame)
@@ -185,12 +164,62 @@ public final class AudioEncoder: @unchecked Sendable {
     }
   }
 
+  private func encodeAccessUnit(_ pcm: Data) -> Data? {
+    guard let converter, bytesPerSourceFrame > 0 else { return nil }
+    let bytesPerFrame = Self.samplesPerFrame * bytesPerSourceFrame
+    guard pcm.count == bytesPerFrame else { return nil }
+
+    var output = Data(count: 2048)
+    var packetCount: UInt32 = 1
+    var packetDescription = AudioStreamPacketDescription()
+
+    let status: OSStatus = pcm.withUnsafeBytes { input in
+      var source = InputProxy(
+        bytes: input.baseAddress,
+        byteCount: UInt32(bytesPerFrame),
+        bytesPerFrame: UInt32(bytesPerSourceFrame),
+        consumed: false
+      )
+      return output.withUnsafeMutableBytes { outputBytes in
+        var bufferList = AudioBufferList(
+          mNumberBuffers: 1,
+          mBuffers: AudioBuffer(
+            mNumberChannels: destinationFormat.mChannelsPerFrame,
+            mDataByteSize: UInt32(outputBytes.count),
+            mData: outputBytes.baseAddress
+          )
+        )
+        return withUnsafeMutablePointer(to: &source) { proxy in
+          AudioConverterFillComplexBuffer(
+            converter,
+            inputCallback,
+            proxy,
+            &packetCount,
+            &bufferList,
+            &packetDescription
+          )
+        }
+      }
+    }
+
+    guard status == noErr || status == kNoMoreDataError, packetCount > 0 else {
+      if status != noErr, status != kNoMoreDataError { onFailure?(.converter(status)) }
+      return nil
+    }
+
+    let size = Int(packetDescription.mDataByteSize)
+    guard size > 0, size <= output.count else { return nil }
+    return Data(output.prefix(size))
+  }
+
   private func teardownLocked() {
     if let converter { AudioConverterDispose(converter) }
     converter = nil
     pcmPending.reset()
     pendingTime = 0
     audioSpecificConfig = nil
+    wasSilent = false
+    silentAU = nil
   }
 
   /// Eight AAC frames is 170 ms of PCM. Anything more is the converter falling behind, which is
