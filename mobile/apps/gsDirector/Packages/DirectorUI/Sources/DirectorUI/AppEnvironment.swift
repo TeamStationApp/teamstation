@@ -3186,6 +3186,7 @@ public final class AppEnvironment {
         tile.cameraClockOffsetSamples = receive.cameraClockOffsetSamples
         tile.correctedCaptureTime = receive.correctedCaptureTime
         tile.correctedCaptureAgeMilliseconds = receive.correctedCaptureAgeMilliseconds
+        tile.sharedDelayMilliseconds = receive.sharedDelayMilliseconds
       }
 
 
