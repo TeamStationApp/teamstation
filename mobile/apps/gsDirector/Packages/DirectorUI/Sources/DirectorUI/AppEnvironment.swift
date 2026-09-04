@@ -1174,7 +1174,10 @@ public final class AppEnvironment {
   private func attachArchive(to pipeline: SourcePipeline, recordingID: Int64) {
     let settings = SegmentWriterSettings.from(
       config: config,
-      includesAudio: launch.archiveAudio
+      // A camera that sends no audio must not be given an audio track: the segmented writer waits
+      // for audio it will never receive and stops accepting video a few seconds in, which the hold
+      // filler then bridges with black. That is the burst-then-stall instant replay shows.
+      includesAudio: pipeline.hasDeliveredAudio && launch.archiveAudio
     )
     let writer = SegmentWriter(
       sourceID: pipeline.sourceID,
@@ -1184,7 +1187,6 @@ public final class AppEnvironment {
       telemetry: telemetry,
       settings: settings,
       clock: clock,
-      recordingStartedAt: recordingStartedAt,
       onFormatChange: { [weak self] sourceID in
         Task { @MainActor in self?.reopenArchive(for: sourceID) }
       }
@@ -1225,7 +1227,7 @@ public final class AppEnvironment {
     // hang from the operator's point of view.
     setRecordingStage("finishing archives")
     let flushes = writers.map { sourceID, writer in
-      (label: sourceID.rawValue, task: Task { await writer.finish(until: endedAt) })
+      (label: sourceID.rawValue, task: Task { await writer.finish() })
     }
     // Wait on all of them under one deadline. Awaiting each in turn gave every camera its own
     // 20 seconds, so three cameras could take a minute to stop even though the flushes themselves
