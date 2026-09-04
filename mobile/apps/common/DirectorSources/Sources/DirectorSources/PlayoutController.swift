@@ -141,7 +141,10 @@ public struct PlayoutController: Sendable {
     refreshExtremes()
 
     guard let current = offset else {
-      offset = lateness + seedMilliseconds / 1000
+      // Clamped like every other assignment. The seed is the one path that used to set the offset
+      // without a bound, so a first frame arriving with a wild lateness — or a value inherited
+      // through `reset()` — installed it unchecked and nothing afterwards could pull it back.
+      offset = clamp(lateness + seedMilliseconds / 1000, at: now)
       lastAdvanceAt = now
       return false
     }
@@ -183,6 +186,19 @@ public struct PlayoutController: Sendable {
       return
     }
 
+    // Enforcement first, and unconditionally.
+    //
+    // The ceiling used to reach `offset` only through `desired`, and `desired` is only assigned
+    // when growing or when settled — so an offset already above the cap stayed there for as long as
+    // late frames kept arriving. With a camera producing them continuously that is forever, which
+    // is how a value the code caps at two seconds was measured at 107 seconds. Settling governs
+    // giving delay back voluntarily; it must not govern whether a hard limit applies.
+    let ceiling = absoluteCeiling(at: now)
+    if current > ceiling {
+      offset = ceiling
+      return
+    }
+
     // Give delay back only after the stream has been quiet for a while. Shrinking straight after a
     // late frame is how a buffer ends up oscillating around the size that has just been shown not
     // to work.
@@ -194,8 +210,13 @@ public struct PlayoutController: Sendable {
   /// A reconnect gives the camera a new timeline, so every measurement taken against the old one is
   /// meaningless — but what it converged on is the best available guess for the new session.
   public func reset() -> PlayoutController {
-    PlayoutController(
-      seedMilliseconds: samples.isEmpty ? seedMilliseconds : bufferMilliseconds,
+    // What a camera converged on is the best guess for its next session — but only if it was ever
+    // a sane value. Carrying it over unchecked is why a runaway survived reconnecting the camera,
+    // so an out-of-range buffer is discarded in favour of the plain seed instead.
+    let converged = samples.isEmpty ? seedMilliseconds : bufferMilliseconds
+    let usable = converged.isFinite && converged >= 0 && converged <= limits.maximumMilliseconds
+    return PlayoutController(
+      seedMilliseconds: usable ? converged : seedMilliseconds,
       limits: limits
     )
   }
@@ -211,6 +232,24 @@ public struct PlayoutController: Sendable {
   /// Measured from the fastest frame, so the part of the offset that is only the camera's clock
   /// sitting behind ours — which costs nothing and cannot be removed — is not counted against the
   /// limits.
+  /// The highest offset allowed.
+  ///
+  /// This is still measured from `fastest`, exactly as `clamp` is — an earlier version of this
+  /// comment claimed otherwise and was wrong. What changed is not the formula but where it is
+  /// applied: `advance` now enforces it before the settle rule can return early, so an offset
+  /// already above the ceiling is brought down instead of persisting for as long as late frames
+  /// keep arriving.
+  ///
+  /// A bound that does not derive from any measured quantity is still worth having, because
+  /// `fastest` collapses when the clock lateness is measured against stops — a sleeping device
+  /// takes the baseline, and therefore the bound, with it. That is not what this function does.
+  private func absoluteCeiling(at now: Double) -> Double {
+    let base = fastest ?? offset ?? 0
+    let cap = ceilingSeconds ?? (limits.maximumMilliseconds / 1000)
+    let floor = max(limits.minimumMilliseconds / 1000, floorSeconds)
+    return base + max(cap, floor)
+  }
+
   private func clamp(_ proposed: Double, at now: Double) -> Double {
     let base = fastest ?? proposed
     let floor = max(limits.minimumMilliseconds / 1000, floorSeconds)
@@ -306,8 +345,14 @@ public final class PlayoutCoordinator: @unchecked Sendable {
     lock.unlock()
   }
 
+  /// Bounds the value handed to every camera as its floor.
+  ///
+  /// This is the maximum across cameras, so one camera's runaway becomes everyone else's floor —
+  /// capping each controller individually leaves that path open. The engine maximum applies even
+  /// when the operator has set no explicit cap, because "unbounded" was never a useful state here.
   private func capped(_ milliseconds: Double) -> Double {
-    if let capMilliseconds { return min(milliseconds, capMilliseconds) }
-    return milliseconds
+    let ceiling = capMilliseconds ?? PlayoutController.Limits().maximumMilliseconds
+    guard milliseconds.isFinite, milliseconds > 0 else { return 0 }
+    return min(milliseconds, ceiling)
   }
 }
