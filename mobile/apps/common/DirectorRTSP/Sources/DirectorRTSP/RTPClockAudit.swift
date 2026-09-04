@@ -37,10 +37,21 @@ struct RTPClockAudit: Sendable {
   /// repeat or a reorder, not a jump of four billion ticks.
   private static let half = UInt64(1) << 31
 
+  /// One offset observation: what the camera said, less our own clock, and how long the report
+  /// spent in flight as far as we can tell.
+  private struct OffsetSample {
+    let atUptime: Double
+    let offset: Double
+  }
+
   private var tracks: [UInt32: Track] = [:]
   private var lastArrivalUptime: Double?
   private var intervalTotal: Double = 0
   private var intervalSamples: UInt64 = 0
+  /// Rolling window of offset observations, kept so the estimate can be the minimum rather than the
+  /// latest. See `filteredOffsetSeconds`.
+  private var offsetSamples: [OffsetSample] = []
+  private static let offsetWindowSeconds: Double = 600
 
   /// Sender reports seen on this connection. Zero after a minute of video means this camera sends
   /// none, and an absolute timeline is not available from it.
@@ -50,6 +61,24 @@ struct RTPClockAudit: Sendable {
   private(set) var ntpOffsetSeconds: Double = 0
   /// Uptime when the last report landed, so staleness can be reported rather than inferred.
   private(set) var lastReportUptime: Double = 0
+
+  /// The offset to actually correct with: the **largest** observation in the window.
+  ///
+  /// A report's observed offset is the camera's clock less ours, *plus* however long the report
+  /// spent in flight — and flight time only ever makes the value smaller. The least-delayed report
+  /// in the window is therefore the one closest to the true clock difference, and taking the
+  /// maximum is minimum-delay filtering expressed in this sign convention.
+  ///
+  /// This is what stops a congested spell from being mistaken for a clock change. Without it the
+  /// estimate follows the delay, silently cancelling the lateness it was supposed to reveal: a
+  /// 500 ms send-side hold moved the unfiltered value 0.45 s, which would have made injected
+  /// lateness invisible to the very tests meant to catch it.
+  var filteredOffsetSeconds: Double {
+    offsetSamples.map(\.offset).max() ?? ntpOffsetSeconds
+  }
+
+  /// How many observations the filtered value rests on. One sample is not a filter.
+  var offsetSampleCount: Int { offsetSamples.count }
 
   /// Mean seconds between sender reports.
   var meanIntervalSeconds: Double {
@@ -92,7 +121,11 @@ struct RTPClockAudit: Sendable {
     // Every sender in one compound packet shares an arrival, so the offset is taken from the
     // busiest stream in this report rather than from whichever happened to be parsed last.
     if let primary = report.senderReports.max(by: { $0.octetCount < $1.octetCount }) {
-      ntpOffsetSeconds = primary.ntpDate.timeIntervalSince1970 - wallClockNow.timeIntervalSince1970
+      let observed = primary.ntpDate.timeIntervalSince1970 - wallClockNow.timeIntervalSince1970
+      ntpOffsetSeconds = observed
+      offsetSamples.append(OffsetSample(atUptime: arrivalUptime, offset: observed))
+      let cutoff = arrivalUptime - Self.offsetWindowSeconds
+      offsetSamples.removeAll { $0.atUptime < cutoff }
     }
 
     for sender in report.senderReports {
@@ -127,6 +160,7 @@ struct RTPClockAudit: Sendable {
   /// against the old one carries over.
   mutating func reset() {
     tracks.removeAll()
+    offsetSamples.removeAll()
     lastArrivalUptime = nil
     intervalTotal = 0
     intervalSamples = 0

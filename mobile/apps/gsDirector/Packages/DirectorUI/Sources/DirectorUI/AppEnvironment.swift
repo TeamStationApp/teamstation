@@ -3182,6 +3182,8 @@ public final class AppEnvironment {
         tile.mediaTicksPerSecond = receive.mediaTicksPerSecond
         tile.mediaClockSpanSeconds = receive.mediaClockSpanSeconds
         tile.cameraClockOffsetSeconds = receive.cameraClockOffsetSeconds
+        tile.cameraClockOffsetFilteredSeconds = receive.cameraClockOffsetFilteredSeconds
+        tile.cameraClockOffsetSamples = receive.cameraClockOffsetSamples
       }
       // Remembered against the camera, not the tile, so a camera that needs an unusually large
       // buffer starts there next time instead of stuttering its way back to it.
