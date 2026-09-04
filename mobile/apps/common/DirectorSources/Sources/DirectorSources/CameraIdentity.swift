@@ -166,8 +166,6 @@ public struct CameraBinding: Hashable, Sendable {
     case autoByIdentity
     /// Matched on the identifier the camera presented in SDP/RTCP. Survives a lease change.
     case autoByCNAME
-    /// Session-only: the operator paired this address. Not restored from disk.
-    case autoByHost
     /// The operator chose this pairing, so automatic matching must not override it.
     case manual
     case unbound
@@ -191,15 +189,67 @@ public struct CameraBinding: Hashable, Sendable {
 public enum CameraIdentityRules {
   /// Name given to a camera the operator puts on a tile without naming it first.
   public static let defaultNamePrefix = "Camera"
+  /// Shown when a live socket has no NearStream name, no CNAME name, and no operator name.
+  public static let unnamedFallback = "Unnamed"
+  /// Prefix for session-only SourceIDs. Address is never part of the key.
+  public static let sessionIDPrefix = "session-"
 
   // MARK: - Deriving the pipeline key
 
   /// `SourceID` is the key the DVR, proxy store, archive index and telemetry all use. Deriving it
   /// from the record rather than the address is what lets an archive survive a DHCP change and an
-  /// app restart.
+  /// app restart. Unidentified sockets get a session UUID so four farm ports stay four rows without
+  /// treating the IP as who the camera is.
+  public static func sourceID(
+    for binding: CameraBinding,
+    sessionIDs: inout [CameraEndpoint: SourceID]
+  ) -> SourceID {
+    if let cameraID = binding.cameraID {
+      return SourceID(cameraID.uuidString)
+    }
+    return sessionID(for: binding.endpoint, in: &sessionIDs)
+  }
+
+  /// Bound cameras resolve without minting. Unbound cameras need a session entry already assigned.
+  public static func sourceID(
+    for binding: CameraBinding,
+    sessionIDs: [CameraEndpoint: SourceID]
+  ) -> SourceID? {
+    if let cameraID = binding.cameraID {
+      return SourceID(cameraID.uuidString)
+    }
+    return sessionIDs[binding.endpoint]
+  }
+
+  /// Bound-camera convenience. Unbound sockets should use the session map so the key stays stable.
   public static func sourceID(for binding: CameraBinding) -> SourceID {
-    guard let cameraID = binding.cameraID else { return SourceID("camera-\(binding.endpoint.host)") }
-    return SourceID(cameraID.uuidString)
+    var empty: [CameraEndpoint: SourceID] = [:]
+    return sourceID(for: binding, sessionIDs: &empty)
+  }
+
+  /// Stable for this process and this socket only. Never written to disk, never derived from host.
+  public static func sessionID(
+    for endpoint: CameraEndpoint,
+    in identities: inout [CameraEndpoint: SourceID]
+  ) -> SourceID {
+    if let existing = identities[endpoint] { return existing }
+    let id = SourceID("\(sessionIDPrefix)\(UUID().uuidString.lowercased())")
+    identities[endpoint] = id
+    return id
+  }
+
+  public static func isSessionIdentity(_ id: SourceID) -> Bool {
+    id.rawValue.hasPrefix(sessionIDPrefix)
+  }
+
+  /// CameraRecord UUID — NearStream TXT or Cameraman CNAME produced a persistable record.
+  public static func isHardenedSourceID(_ id: SourceID) -> Bool {
+    UUID(uuidString: id.rawValue) != nil
+  }
+
+  /// Legacy `camera-<host>` keys that treated the address as identity.
+  public static func isAddressKeyedSourceID(_ id: SourceID) -> Bool {
+    id.rawValue.hasPrefix("camera-")
   }
 
   // MARK: - Automatic binding
@@ -300,8 +350,8 @@ public enum CameraIdentityRules {
 
   /// Folds a fresh discovery result into the bindings this session already has.
   ///
-  /// Operator choices outrank address matching, so a `.manual` binding survives a rediscovery even
-  /// when the addresses would now suggest otherwise. Endpoints that stopped answering are dropped;
+  /// Operator choices outrank automatic matching, so a `.manual` binding survives a rediscovery even
+  /// when TXT or CNAME would now suggest otherwise. Endpoints that stopped answering are dropped;
   /// their records stay in the cache so the camera can come back on a different address.
   public static func reconcile(
     bindings: [CameraBinding],
@@ -589,29 +639,48 @@ public enum CameraIdentityRules {
   // MARK: - Recovering a camera that moved
 
   public enum Reresolution: Equatable {
-    /// Exactly one endpoint was free, so the camera was moved onto it without asking.
+    /// The new socket advertised the same unique id or CNAME, so the camera moved with it.
     case rebound(CameraEndpoint)
-    /// Several endpoints were free; guessing here could put the wrong camera on a tile mid-game.
+    /// Several sockets claimed the same unique id; guessing here could put the wrong camera on air.
     case ambiguous(candidates: [CameraEndpoint])
     case noCandidate
   }
 
   /// Moves a camera whose address stopped answering onto a newly discovered one.
   ///
-  /// Automatic only when the choice is forced. With two unclaimed endpoints there is no evidence
-  /// for either, and silently picking one is how the wrong camera ends up on air.
+  /// Only TXT unique id or SDP/RTCP CNAME is evidence. A leftover IP is never a candidate: DHCP
+  /// would otherwise put the wrong camera on the tile.
   public static func reresolve(
     _ cameraID: UUID,
     in bindings: inout [CameraBinding],
     records: inout [CameraRecord],
+    advertisements: [String: CameraAdvertisement] = [:],
+    streamAdvertisements: [CameraEndpoint: StreamAdvertisement] = [:],
     now: Date
   ) -> Reresolution {
-    let free = bindings.filter { !$0.isBound }.map(\.endpoint)
-    guard free.count == 1, let endpoint = free.first else {
-      return free.isEmpty ? .noCandidate : .ambiguous(candidates: sorted(free))
+    guard let record = records.first(where: { $0.id == cameraID }) else { return .noCandidate }
+    let free = bindings.filter { !$0.isBound }
+
+    var matches: [CameraEndpoint] = []
+    if let hardwareID = record.hardwareID, !hardwareID.isEmpty {
+      matches = free.compactMap { binding in
+        advertisements[binding.endpoint.host]?.uniqueID == hardwareID ? binding.endpoint : nil
+      }
     }
-    bind(endpoint: endpoint, to: cameraID, in: &bindings, records: &records, now: now)
-    return .rebound(endpoint)
+    if matches.isEmpty, let cname = record.lastKnownCNAME, !cname.isEmpty {
+      matches = free.compactMap { binding in
+        streamAdvertisements[binding.endpoint]?.cname == cname ? binding.endpoint : nil
+      }
+    }
+
+    if matches.count == 1, let endpoint = matches.first {
+      bind(endpoint: endpoint, to: cameraID, in: &bindings, records: &records, now: now)
+      return .rebound(endpoint)
+    }
+    if matches.count > 1 {
+      return .ambiguous(candidates: sorted(matches))
+    }
+    return .noCandidate
   }
 
   // MARK: - Helpers

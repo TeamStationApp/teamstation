@@ -65,6 +65,8 @@ node scripts/run-maestro.js --list
 | `smoke` | app opens, camera runs, server listening on the port it says | |
 | `camera-zoom` | preset pills switch lenses, flip changes the preset row | yes |
 | `settings-codec-bitrate` | codec and bitrate survive leaving the sheet | |
+| `settings-lenses` | detected lenses appear as toggles; disabling ultra-wide removes the 0.5x preset | yes |
+| `thermal-visuals` | overlay thermal pill; Test Thermal Visuals Hot leaves the zoom presets tappable | |
 | `rename-camera` | rename takes effect, identity does not move, empty falls back | |
 | `client-connect` | the on-screen client count rises and falls with a real client | yes |
 

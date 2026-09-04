@@ -3,8 +3,10 @@ import SwiftUI
 
 /// Vertical zoom column: widest at the bottom, tightest at the top, horizontal ticks between pills.
 ///
-/// Spacing is derived from the available height so the stack always fits. Adjacent pill centers are
-/// reported so a full-screen drag can use the same points-per-segment as the drawn scale.
+/// The rail fills the height below the thermal pill. First and last stops sit on that span
+/// whether there are two presets or five; ticks stretch to fill the gaps. The live zoom
+/// readout sits to the left of the pills. Adjacent pill centers are reported so a full-screen
+/// drag can use the same points-per-segment as the drawn scale.
 struct ZoomScaleView: View {
   let mapping: ZoomMapping
   let displayedZoom: Double
@@ -15,75 +17,97 @@ struct ZoomScaleView: View {
     let presets = mapping.presetDisplayedZooms
     let highlight = mapping.scaleHighlight(forDisplayed: displayedZoom)
 
-    VStack(spacing: 8) {
-      GeometryReader { geo in
-        let layout = Layout(height: geo.size.height, presetCount: presets.count)
-        VStack(spacing: 0) {
-          ForEach(Array(presets.enumerated().reversed()), id: \.offset) { index, preset in
-            presetButton(preset, highlight: highlight)
-              .background {
-                GeometryReader { buttonGeo in
-                  Color.clear.preference(
-                    key: PillCenterKey.self,
-                    value: [index: buttonGeo.frame(in: .named("zoom-column")).midY]
-                  )
-                }
-              }
-            if index > 0 {
-              tickStack(segment: index - 1, highlight: highlight, spacing: layout.spacing)
-            }
-          }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+    HStack(alignment: .center, spacing: Metrics.labelGap) {
+      Text(ZoomMapping.label(forDisplayed: displayedZoom))
+        .font(.system(.caption2, design: .monospaced).weight(.semibold))
+        .foregroundStyle(.white)
+        .frame(minWidth: 28, alignment: .trailing)
+        .accessibilityIdentifier("zoom-label")
+
+      rail(presets: presets, highlight: highlight)
+        .frame(width: Metrics.buttonSize)
         .coordinateSpace(name: "zoom-column")
         .onPreferenceChange(PillCenterKey.self) { centers in
           let length = Self.segmentLength(from: centers)
           guard length > 0 else { return }
           DispatchQueue.main.async { onSegmentLength(length) }
         }
-      }
-
-      Text(ZoomMapping.label(forDisplayed: displayedZoom))
-        .font(.system(.subheadline, design: .monospaced).weight(.semibold))
-        .foregroundStyle(.white)
-        .accessibilityIdentifier("zoom-label")
     }
-    .frame(width: 46)
+    .fixedSize(horizontal: true, vertical: false)
+    .frame(maxHeight: .infinity)
     .accessibilityElement(children: .contain)
     .accessibilityIdentifier("zoom-scale")
     .accessibilityValue(accessibilityValue(highlight))
   }
 
-  private func presetButton(_ preset: Double, highlight: ZoomMapping.ScaleHighlight) -> some View {
+  @ViewBuilder
+  private func rail(presets: [Double], highlight: ZoomMapping.ScaleHighlight) -> some View {
+    if presets.count <= 1 {
+      VStack(spacing: 0) {
+        Spacer(minLength: 0)
+        if let preset = presets.first {
+          presetButton(preset, highlight: highlight, index: 0)
+        }
+        Spacer(minLength: 0)
+      }
+    } else {
+      VStack(spacing: 0) {
+        ForEach(Array(presets.enumerated().reversed()), id: \.offset) { index, preset in
+          presetButton(preset, highlight: highlight, index: index)
+          if index > 0 {
+            tickStack(segment: index - 1, highlight: highlight)
+          }
+        }
+      }
+    }
+  }
+
+  private func presetButton(
+    _ preset: Double,
+    highlight: ZoomMapping.ScaleHighlight,
+    index: Int
+  ) -> some View {
     let isActive = highlight == .preset(preset)
     return Button {
       onSelect(preset)
     } label: {
       Text(ZoomMapping.label(forDisplayed: preset))
-        .font(.system(.subheadline, design: .rounded).weight(.semibold))
-        .frame(width: 46, height: 46)
+        .font(.system(.caption2, design: .rounded).weight(.semibold))
+        .frame(width: Metrics.buttonSize, height: Metrics.buttonSize)
         .background(isActive ? .white.opacity(0.9) : .black.opacity(0.45), in: .circle)
         .foregroundStyle(isActive ? .black : .white)
     }
     .buttonStyle(.plain)
     .accessibilityIdentifier("zoom-preset-\(ZoomMapping.label(forDisplayed: preset))")
     .accessibilityAddTraits(isActive ? .isSelected : [])
-  }
-
-  private func tickStack(segment: Int, highlight: ZoomMapping.ScaleHighlight, spacing: CGFloat) -> some View {
-    VStack(spacing: spacing) {
-      ForEach((0..<ZoomMapping.scaleTicksPerSegment).reversed(), id: \.self) { tickIndex in
-        tick(segment: segment, index: tickIndex, highlight: highlight)
+    .background {
+      GeometryReader { buttonGeo in
+        Color.clear.preference(
+          key: PillCenterKey.self,
+          value: [index: buttonGeo.frame(in: .named("zoom-column")).midY]
+        )
       }
     }
-    .padding(.vertical, spacing)
+  }
+
+  /// Ticks share leftover height equally, so two stops and five stops pin first/last to the same
+  /// edges of the rail.
+  private func tickStack(segment: Int, highlight: ZoomMapping.ScaleHighlight) -> some View {
+    VStack(spacing: 0) {
+      Spacer(minLength: Metrics.minSpacing)
+      ForEach((0..<ZoomMapping.scaleTicksPerSegment).reversed(), id: \.self) { tickIndex in
+        tick(segment: segment, index: tickIndex, highlight: highlight)
+        Spacer(minLength: Metrics.minSpacing)
+      }
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 
   private func tick(segment: Int, index: Int, highlight: ZoomMapping.ScaleHighlight) -> some View {
     let isActive = highlight == .tick(segment: segment, index: index)
     return Capsule()
       .fill(isActive ? Color.white : Color.white.opacity(0.38))
-      .frame(width: isActive ? 22 : 16, height: 3)
+      .frame(width: isActive ? 14 : 10, height: Metrics.tickThickness)
       .accessibilityIdentifier("zoom-tick-\(segment)-\(index)")
       .accessibilityAddTraits(isActive ? .isSelected : [])
   }
@@ -107,22 +131,11 @@ struct ZoomScaleView: View {
     return total / CGFloat(ordered.count - 1)
   }
 
-  /// Fits n pills and the ticks between them into `height`. Spacing matches the old 10pt gap when
-  /// there is room and shrinks uniformly when there is not.
-  fileprivate struct Layout {
-    let spacing: CGFloat
-
-    init(height: CGFloat, presetCount: Int) {
-      let buttons = max(presetCount, 1)
-      let segments = max(buttons - 1, 1)
-      let buttonSize: CGFloat = 46
-      let tickThickness: CGFloat = 3
-      let ticks = CGFloat(ZoomMapping.scaleTicksPerSegment)
-      let leftover = height - CGFloat(buttons) * buttonSize - CGFloat(segments) * ticks * tickThickness
-      let gaps = CGFloat(segments * (ZoomMapping.scaleTicksPerSegment + 1))
-      let raw = gaps > 0 ? leftover / gaps : 10
-      spacing = min(10, max(2, raw))
-    }
+  private enum Metrics {
+    static let buttonSize: CGFloat = 32
+    static let tickThickness: CGFloat = 1.5
+    static let minSpacing: CGFloat = 1
+    static let labelGap: CGFloat = 6
   }
 }
 

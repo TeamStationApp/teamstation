@@ -18,7 +18,11 @@ mkdir -p "$CAMERAMAN_DERIVED_DATA"
 # stop a compile check that needs no device at all. `devicectl list devices` prints CoreDevice
 # UUIDs rather than the hardware UDID used here, so ask about the device directly instead.
 DEVICE_READY=1
-if ! timeout 30 xcrun devicectl device info details --device "$CAMERAMAN_DEVICE_UDID" >/dev/null 2>&1; then
+if command -v timeout >/dev/null 2>&1; then
+  if ! timeout 30 xcrun devicectl device info details --device "$CAMERAMAN_DEVICE_UDID" >/dev/null 2>&1; then
+    DEVICE_READY=0
+  fi
+elif ! xcrun devicectl device info details --device "$CAMERAMAN_DEVICE_UDID" >/dev/null 2>&1; then
   DEVICE_READY=0
 fi
 

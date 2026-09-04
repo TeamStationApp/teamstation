@@ -18,13 +18,24 @@ appId: co.gamestation.cameraman
     text: ".*6.0 Mbps"
 
 # The identifier is shown but not editable. Worth asserting, because a camera whose identity changed
-# when its settings did would be a new camera to Producer every time.
+# when its settings did would be a new camera to Producer every time. Name and stream sit on the
+# second settings row, below video and lenses.
+- scrollUntilVisible:
+    element:
+      id: "settings-cname"
+    direction: DOWN
+    timeout: 10000
 - assertVisible:
     id: "settings-cname"
 - copyTextFrom:
     id: "settings-cname"
 - evalScript: ${output.cname = maestro.copiedText}
 
+- scrollUntilVisible:
+    element:
+      id: "settings-codec"
+    direction: UP
+    timeout: 10000
 - tapOn:
     id: "settings-codec"
 - tapOn: "HEVC"
@@ -52,6 +63,11 @@ appId: co.gamestation.cameraman
 - assertVisible:
     id: "settings-codec"
     text: ".*HEVC"
+- scrollUntilVisible:
+    element:
+      id: "settings-cname"
+    direction: DOWN
+    timeout: 10000
 - assertVisible:
     id: "settings-cname"
     text: ".*${output.cname}"

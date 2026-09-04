@@ -39,15 +39,52 @@ struct RTSPDiscoveryTests {
     #expect(discovery.currentSources.first?.kind == .rtsp)
   }
 
-  @Test("Without an identity layer a source is keyed by address, so tiles still work unnamed")
-  func addressKeyedFallback() async {
+  @Test("A manual host:port uses that port instead of 554")
+  func manualHostPort() async {
+    let discovery = discovery(
+      hosts: [ "127.0.0.1:18554" ],
+      confirmed: [ "127.0.0.1" ]
+    )
+    await discovery.sweepNow()
+    #expect(discovery.currentEndpoints.map(\.port) == [ 18554 ])
+    #expect(discovery.currentSources.first?.address == "rtsp://127.0.0.1:18554/live/mainstream")
+    #expect(CameraIdentityRules.isSessionIdentity(discovery.currentSources.first!.id))
+    #expect(!discovery.currentSources.first!.id.rawValue.contains("127.0.0.1"))
+  }
+
+  @Test("Four farm ports on one IP stay four sources")
+  func fourHostPortsOnOneIP() async {
+    let discovery = discovery(
+      hosts: [
+        "192.168.7.40:18554",
+        "192.168.7.40:18555",
+        "192.168.7.40:18556",
+        "192.168.7.40:18557"
+      ],
+      confirmed: [ "192.168.7.40" ]
+    )
+    await discovery.sweepNow()
+    #expect(discovery.currentSources.count == 4)
+    #expect(Set(discovery.currentEndpoints.map(\.port)) == [ 18554, 18555, 18556, 18557 ])
+    let ids = discovery.currentSources.map(\.id)
+    #expect(Set(ids).count == 4)
+    #expect(ids.allSatisfy { CameraIdentityRules.isSessionIdentity($0) })
+    #expect(ids.allSatisfy { !$0.rawValue.contains("192.168.7.40") })
+  }
+
+  @Test("Without an identity layer a source is session-keyed, not address-keyed")
+  func sessionKeyedFallback() async {
     let discovery = discovery(hosts: [ "192.168.7.148" ], confirmed: [ "192.168.7.148" ])
 
     await discovery.sweepNow()
 
     let source = discovery.currentSources.first
-    #expect(source?.id == SourceID("camera-192.168.7.148"))
-    #expect(source?.advertisedName == "192.168.7.148")
+    #expect(source.map { CameraIdentityRules.isSessionIdentity($0.id) } == true)
+    #expect(source?.id.rawValue.contains("192.168.7.148") != true)
+    #expect(source?.advertisedName == CameraIdentityRules.unnamedFallback)
+
+    await discovery.sweepNow()
+    #expect(discovery.currentSources.first?.id == source?.id)
   }
 
   @Test("The identity layer supplies the SourceID and the name")
@@ -235,6 +272,27 @@ struct RTSPDiscoveryTests {
     #expect(discovery.currentSources.first?.address == "rtsp://192.168.7.50:8554/live/mainstream")
     #expect(discovery.diagnostic.contains("rtsp=1"))
     #expect(discovery.diagnostic.contains("awx=0"))
+  }
+
+  @Test("A Cameraman TXT uuid is listed even when DESCRIBE never becomes ready")
+  func cameramanAdvertisementIsListedWithoutDescribe() async {
+    let advertisement = CameraAdvertisement(
+      host: "192.168.7.50",
+      advertisedName: "handheld",
+      port: 554,
+      path: "/live/mainstream",
+      uuid: "c94df9ca-d7c2-468f-8529-97d01fba14e7"
+    )
+    let discovery = RTSPDiscovery(
+      configuration: RTSPDiscovery.Configuration(isScanEnabled: false),
+      advertisementBrowser: StaticAdvertisementBrowser([ advertisement ]),
+      confirmHost: { _ in false }
+    )
+
+    await discovery.sweepNow()
+
+    #expect(discovery.currentEndpoints == [ CameraEndpoint(host: "192.168.7.50", port: 554) ])
+    #expect(discovery.currentSources.first?.advertisedName == "handheld")
   }
 
   @Test("Cameras that advertised a unique id are listed before unidentified RTSP hosts")

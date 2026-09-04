@@ -34,7 +34,7 @@ xcodebuild test \
   -destination "platform=iOS Simulator,id=$SIM_UDID" \
   -derivedDataPath "$CAMERAMAN_DERIVED_DATA" \
   -resultBundlePath "$CAMERAMAN_DERIVED_DATA/TestResults.xcresult" \
-  "${ARGS[@]}" \
+  ${ARGS[@]+"${ARGS[@]}"} \
   > "$LOG" 2>&1
 STATUS=$?
 set -e

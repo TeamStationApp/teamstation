@@ -100,8 +100,8 @@ public enum SourceSelectionRules {
 
   /// Folds a fresh discovery result into the existing list: new sources are appended, known
   /// ones keep their rename and enabled state. Enabled (or operator-renamed) cameras that vanish
-  /// stay as absent rows. Unidentified ghosts are dropped so an IP and a Bonjour uuid for the
-  /// same camera cannot both occupy the list.
+  /// stay as absent rows. Address-keyed ghosts are dropped so an IP cannot occupy the list after
+  /// identity bound the same camera to a real record.
   public static func merge(
     existing: [SourceSelection],
     discovered: [DiscoveredSource]
@@ -124,14 +124,25 @@ public enum SourceSelectionRules {
       }
     }
 
-    // Named cameras on a tile stay when they drop off the network. An unidentified IP or UUID
-    // hostname that identity later bound to a real camera must not remain as a grey duplicate.
+    // Named cameras on a tile stay when they drop off the network. An address-keyed row that
+    // identity later bound to a real camera must not remain as a grey duplicate.
     for var absent in existing where !seen.contains(absent.id) {
+      guard !CameraIdentityRules.isAddressKeyedSourceID(absent.id) else { continue }
       guard absent.isEnabled || !(absent.customName?.isEmpty ?? true) else { continue }
       absent.isPresent = false
       result.append(absent)
     }
     return result
+  }
+
+  /// Synthetic and file rows persist. RTSP only persists when the SourceID is a CameraRecord UUID.
+  public static func isPersistable(_ selection: SourceSelection) -> Bool {
+    switch selection.kind {
+    case .synthetic, .file:
+      return true
+    case .rtsp:
+      return CameraIdentityRules.isHardenedSourceID(selection.id)
+    }
   }
 
   /// Launch arguments and Settings can switch synthetic ↔ live. Rows of the other kind must not
@@ -353,11 +364,16 @@ public struct SourceSelectionStore: Sendable {
   }
 
   public func load() -> [SourceSelection] {
-    store.codableValue([SourceSelection].self, forKey: Self.key) ?? []
+    let loaded = store.codableValue([SourceSelection].self, forKey: Self.key) ?? []
+    var seen: Set<SourceID> = []
+    return loaded.filter { SourceSelectionRules.isPersistable($0) && seen.insert($0.id).inserted }
   }
 
   public func save(_ selections: [SourceSelection]) {
-    store.setCodableValue(selections, forKey: Self.key)
+    store.setCodableValue(
+      selections.filter { SourceSelectionRules.isPersistable($0) },
+      forKey: Self.key
+    )
   }
 
   public func clear() {

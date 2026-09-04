@@ -320,7 +320,7 @@ async function cameramanGet(host, target) {
   const port = Number(process.env.CAMERAMAN_CONTROL_PORT ?? 8766)
   const url = `http://${host}:${port}${target}`
   let lastError
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
     try {
       const response = await fetch(url, {
         signal: AbortSignal.timeout(20000)
@@ -330,26 +330,43 @@ async function cameramanGet(host, target) {
       return JSON.parse(text)
     } catch (error) {
       lastError = error
-      if (attempt < 3) await sleep(1000)
+      if (attempt < 5) await sleep(2000)
     }
   }
   throw lastError
 }
 
-async function dumpDirectorAndCameraman(directorHost, cameramanHost) {
+async function dumpDirectorAndCameraman(directorHost, cameramanHost, cameramanUdid) {
+  let dirHost = directorHost
+  let camHost = cameramanHost
   const [directorResult, cameramanResult] = await Promise.allSettled([
-    directorGet(directorHost, '/dump-state'),
-    cameramanGet(cameramanHost, '/dump-state')
+    directorGet(dirHost, '/dump-state'),
+    cameramanGet(camHost, '/dump-state')
   ])
-  if (directorResult.status !== 'fulfilled') {
-    const message = directorResult.reason?.message ?? String(directorResult.reason)
-    throw new Error(`director dump-state failed: ${message}`)
+  let director = directorResult.status === 'fulfilled' ? directorResult.value : null
+  if (!director) {
+    try {
+      dirHost = await resolveHost(true)
+    } catch {
+      /* keep the last known host */
+    }
+    director = await directorGet(dirHost, '/dump-state')
   }
-  if (cameramanResult.status !== 'fulfilled') {
-    const message = cameramanResult.reason?.message ?? String(cameramanResult.reason)
-    throw new Error(`cameraman dump-state failed: ${message}`)
+  let cameraman = cameramanResult.status === 'fulfilled' ? cameramanResult.value : null
+  if (!cameraman) {
+    try {
+      camHost = await resolveCameramanHost(cameramanUdid)
+    } catch {
+      /* keep the last known host */
+    }
+    cameraman = await cameramanGet(camHost, '/dump-state')
   }
-  return { director: directorResult.value, cameraman: cameramanResult.value }
+  return {
+    director,
+    cameraman,
+    directorHost: dirHost,
+    cameramanHost: camHost
+  }
 }
 
 function readCameramanHealth(dump) {
@@ -646,8 +663,8 @@ async function main() {
   )
   append(actionLog, `NOTE peertube ${options.peertubeUrl}`)
 
-  const host = await resolveHost(true)
-  const cameramanHost = await resolveCameramanHost(options.cameramanDevice)
+  let host = await resolveHost(true)
+  let cameramanHost = await resolveCameramanHost(options.cameramanDevice)
   append(actionLog, `NOTE director-host=${host} cameraman-host=${cameramanHost}`)
 
   const directorPid = processPid(options.device, 'GS Director.app/GS Director')
@@ -746,7 +763,9 @@ async function main() {
       const tickStarted = Date.now()
       let dumps
       try {
-        dumps = await dumpDirectorAndCameraman(host, cameramanHost)
+        dumps = await dumpDirectorAndCameraman(host, cameramanHost, options.cameramanDevice)
+        if (dumps.directorHost) host = dumps.directorHost
+        if (dumps.cameramanHost) cameramanHost = dumps.cameramanHost
       } catch (error) {
         abortReason = error.message
         append(healthLog, `ABORT ${abortReason}`)
@@ -757,7 +776,9 @@ async function main() {
       lastProgram = (state.programSource ?? 0) + 1
       await enforceCameras(host, state, options.cameras, actionLog)
       try {
-        dumps = await dumpDirectorAndCameraman(host, cameramanHost)
+        dumps = await dumpDirectorAndCameraman(host, cameramanHost, options.cameramanDevice)
+        if (dumps.directorHost) host = dumps.directorHost
+        if (dumps.cameramanHost) cameramanHost = dumps.cameramanHost
       } catch (error) {
         abortReason = error.message
         append(healthLog, `ABORT ${abortReason}`)

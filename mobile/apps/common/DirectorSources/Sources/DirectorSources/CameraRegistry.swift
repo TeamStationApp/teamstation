@@ -17,6 +17,8 @@ public final class CameraRegistry: @unchecked Sendable {
   /// What each endpoint last said about itself on SDP/RTCP. Session-only: an advertisement is a
   /// live claim, and a stale one would let a camera that has gone away keep its hold on a record.
   private var advertised: [CameraEndpoint: StreamAdvertisement] = [:]
+  /// Unidentified sockets keep a process-local SourceID so tiles do not reshuffle. Never persisted.
+  private var sessionIDs: [CameraEndpoint: SourceID] = [:]
 
   /// Shared by every camera's delay line: it holds them all to one delay and hands each the size it
   /// learned last time. It lives here because this is what already knows which camera is which
@@ -122,18 +124,25 @@ public final class CameraRegistry: @unchecked Sendable {
 
     let records = cachedRecords
     let bindings = cachedBindings
-    lock.unlock()
-    store.save(records)
-
+    let rememberedAds = lastAdvertisements
+    var sessionIDs = self.sessionIDs
     var result: [CameraEndpoint: (id: SourceID, name: String)] = [:]
     for binding in bindings {
       let name = binding.cameraID
         .flatMap { id in records.first { $0.id == id }?.name }
+      let advertised = rememberedAds.first { $0.host == binding.endpoint.host }?.advertisedName
+      let trimmedAdvertised = advertised.flatMap { value -> String? in
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+      }
       result[binding.endpoint] = (
-        id: CameraIdentityRules.sourceID(for: binding),
-        name: name ?? binding.endpoint.host
+        id: CameraIdentityRules.sourceID(for: binding, sessionIDs: &sessionIDs),
+        name: name ?? trimmedAdvertised ?? CameraIdentityRules.unnamedFallback
       )
     }
+    self.sessionIDs = sessionIDs
+    lock.unlock()
+    store.save(records)
     return result
   }
 
@@ -265,14 +274,21 @@ public final class CameraRegistry: @unchecked Sendable {
     store.save(records)
   }
 
-  /// Moves a camera whose address stopped answering onto a newly discovered one.
+  /// Moves a camera whose address stopped answering onto a newly discovered one that advertises
+  /// the same unique id or CNAME. A leftover IP is never a match.
   @discardableResult
   public func reresolve(_ cameraID: UUID, now: Date = Date()) -> CameraIdentityRules.Reresolution {
     lock.lock()
+    let byHost = Dictionary(
+      lastAdvertisements.map { ($0.host, $0) },
+      uniquingKeysWith: { _, latest in latest }
+    )
     let outcome = CameraIdentityRules.reresolve(
       cameraID,
       in: &cachedBindings,
       records: &cachedRecords,
+      advertisements: byHost,
+      streamAdvertisements: advertised,
       now: now
     )
     let records = cachedRecords
@@ -288,7 +304,7 @@ public final class CameraRegistry: @unchecked Sendable {
   public func reresolve(sourceID: SourceID, now: Date = Date()) -> CameraIdentityRules.Reresolution {
     lock.lock()
     let cameraID = cachedBindings
-      .first { CameraIdentityRules.sourceID(for: $0) == sourceID }?
+      .first { CameraIdentityRules.sourceID(for: $0, sessionIDs: sessionIDs) == sourceID }?
       .cameraID
     lock.unlock()
 
@@ -302,6 +318,7 @@ public final class CameraRegistry: @unchecked Sendable {
     cachedBindings = []
     lastAdvertisements = []
     advertised = [:]
+    sessionIDs = [:]
     lock.unlock()
 
     store.clear()
