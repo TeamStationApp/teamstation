@@ -190,6 +190,8 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     snapshot.mediaTicksPerSecond = (clockAudit.ticksPerSecond * 100).rounded() / 100
     snapshot.mediaClockSpanSeconds = (clockAudit.measuredSpanSeconds * 10).rounded() / 10
     snapshot.cameraClockOffsetSeconds = (clockAudit.ntpOffsetSeconds * 1000).rounded() / 1000
+    snapshot.cameraClockOffsetFilteredSeconds = (clockAudit.filteredOffsetSeconds * 1000).rounded() / 1000
+    snapshot.cameraClockOffsetSamples = clockAudit.offsetSampleCount
     snapshot.senderReportStreams = clockAudit.streamCount
     if let decoder {
       let decoderStats = decoder.currentStatistics

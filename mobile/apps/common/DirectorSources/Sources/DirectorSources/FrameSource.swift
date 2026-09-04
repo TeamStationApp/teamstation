@@ -285,6 +285,11 @@ public struct ReceiveStats: Sendable, Equatable {
   public var mediaTicksPerSecond: Double = 0
   public var mediaClockSpanSeconds: Double = 0
   public var cameraClockOffsetSeconds: Double = 0
+  /// The offset after minimum-delay filtering, and how many observations it rests on. The raw value
+  /// above follows transit delay; this one does not, which is what makes injected lateness visible
+  /// instead of silently absorbed.
+  public var cameraClockOffsetFilteredSeconds: Double = 0
+  public var cameraClockOffsetSamples: Int = 0
   /// Decoders this source currently holds. Only network sources decode anything; a generated or
   /// file-backed source reports zero.
   public var decodeSessions = 0

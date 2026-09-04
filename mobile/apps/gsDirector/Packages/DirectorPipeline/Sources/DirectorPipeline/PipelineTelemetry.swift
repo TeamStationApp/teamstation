@@ -136,6 +136,8 @@ public struct TileTelemetry: Sendable, Codable, Equatable {
   public var mediaTicksPerSecond: Double = 0
   public var mediaClockSpanSeconds: Double = 0
   public var cameraClockOffsetSeconds: Double = 0
+  public var cameraClockOffsetFilteredSeconds: Double = 0
+  public var cameraClockOffsetSamples: Int = 0
   /// Frames that arrived after they were due, each of which was a visible stall.
   public var playoutLateFrames: UInt64 = 0
   public var playoutDepth = 0
@@ -262,6 +264,11 @@ public struct TelemetrySnapshot: Sendable, Codable, Equatable {
   public var sessions = SessionTelemetry()
   public var converter = ConverterTelemetry()
   public var thermalState: String = "nominal"
+  /// Seconds the device has spent asleep this session. Frame lateness is measured against a clock
+  /// that stops during sleep, so a sleep drops the trailing minimum of `lateness` by its whole
+  /// duration — the only mechanism that can put a playout offset far beyond its own cap. Nonzero
+  /// here is that evidence; zero over a long session rules it out.
+  public var sleptSeconds: Double = 0
   /// Share of the whole machine's CPU this process is using. Separates "the network is not
   /// delivering frames" from "we have run out of CPU to decode them", which frame counters alone
   /// cannot distinguish.
@@ -374,6 +381,7 @@ public final class PipelineTelemetry: @unchecked Sendable {
     copy.generatedAt = Date().timeIntervalSince1970
     copy.clockSeconds = clock.now.seconds
     copy.thermalState = Self.thermalStateName(ProcessInfo.processInfo.thermalState)
+    copy.sleptSeconds = Self.sleptSeconds()
     copy.dvr.freeDiskBytes = DirectorPaths.freeDiskBytes()
     let now = CFAbsoluteTimeGetCurrent()
     for index in copy.tiles.indices {
@@ -602,6 +610,28 @@ public final class PipelineTelemetry: @unchecked Sendable {
     frameTimestamps.removeAll()
     displayedTimestamps.removeAll()
     lock.unlock()
+  }
+
+  /// Seconds this process has spent with the device asleep.
+  ///
+  /// `CLOCK_MONOTONIC_RAW` counts through sleep; `CLOCK_UPTIME_RAW` stops. Both advance together
+  /// while awake, so the gap that opens between them is exactly the time slept. Measured against a
+  /// baseline taken at first call, because a process launched after a sleep would otherwise inherit
+  /// the device's entire prior uptime as its own.
+  ///
+  /// Frame lateness is measured against the uptime clock, so a sleep drops the trailing minimum of
+  /// `lateness` by its whole duration — the only mechanism that can put a playout offset far beyond
+  /// its own cap. Nonzero here is that evidence; zero over a long session rules it out.
+  private static let clockBaseline: (continuous: UInt64, uptime: UInt64) = (
+    clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW),
+    clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+  )
+
+  private static func sleptSeconds() -> Double {
+    let continuousDelta = clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW) &- clockBaseline.continuous
+    let uptimeDelta = clock_gettime_nsec_np(CLOCK_UPTIME_RAW) &- clockBaseline.uptime
+    guard continuousDelta > uptimeDelta else { return 0 }
+    return Double(continuousDelta - uptimeDelta) / 1_000_000_000
   }
 
   public static func thermalStateName(_ thermalState: ProcessInfo.ThermalState) -> String {
