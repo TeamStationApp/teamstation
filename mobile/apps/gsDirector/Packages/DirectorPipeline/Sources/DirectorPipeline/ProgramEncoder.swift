@@ -54,6 +54,14 @@ public final class ProgramEncoder: @unchecked Sendable {
   /// so the continuation file can hold the dead interval as black + silence.
   private var lastSourceTime: CMTime?
   private var pendingRecoveryFill = false
+  /// Host time of the first sample of this part, so the bound below is cumulative rather than
+  /// per-frame. Instant replay delivers on the host clock while live delivers on the compositor
+  /// timebase; a single such sample wrote a jump of days into the programme file, and export
+  /// then scored the file unplayable and refused the whole recording with "no files to remux".
+  private var partStartHost: Double?
+  /// How far past real time the programme clock may run before a sample is treated as carrying a
+  /// foreign timestamp. Loose enough to absorb scheduling jitter and a late frame burst.
+  private static let timelineAdvanceSlack: Double = 2
   private var sessionStarted = false
   private var blackPixelBuffer: CVPixelBuffer?
   /// Wall clock of `start(at:)`, used to fill the program file out to recording end when the
@@ -186,6 +194,7 @@ public final class ProgramEncoder: @unchecked Sendable {
     self.audioInput = audioInput
     self.adaptor = adaptor
     self.baseTime = nil
+    self.partStartHost = nil
     self.baseAudioTime = nil
     self.nextAudioTime = nil
     self.lastTime = .negativeInfinity
@@ -242,8 +251,22 @@ public final class ProgramEncoder: @unchecked Sendable {
       return
     }
     var time = CMTimeSubtract(presentationTime, base)
+    let oneFrame = CMTime(value: 1, timescale: CMTimeScale(max(frameRate, 1)))
+    // The programme clock may not outrun real time. A stalled compositor spends wall clock too,
+    // so a genuine gap still holds and the file keeps recording wall clock; a sample arriving on
+    // another source's timebase does not, and is re-based onto the next frame.
+    let nowHost = CFAbsoluteTimeGetCurrent()
+    if partStartHost == nil { partStartHost = nowHost }
+    if let partStart = partStartHost, lastTime.isNumeric, lastTime >= .zero {
+      let realElapsed = max(0, nowHost - partStart)
+      if !time.isNumeric || time.seconds < -0.5
+        || time.seconds > realElapsed + Self.timelineAdvanceSlack {
+        time = CMTimeAdd(lastTime, oneFrame)
+        baseTime = CMTimeSubtract(presentationTime, time)
+      }
+    }
     if time <= lastTime {
-      time = CMTimeAdd(lastTime, CMTime(value: 1, timescale: CMTimeScale(max(frameRate, 1))))
+      time = CMTimeAdd(lastTime, oneFrame)
     }
     lastTime = time
     lastSourceTime = presentationTime

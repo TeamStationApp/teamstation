@@ -2,7 +2,6 @@ import AVFoundation
 import CoreMedia
 import Darwin
 import Foundation
-import VideoToolbox
 import DirectorCore
 import DirectorPipeline
 import DirectorSources
@@ -54,14 +53,13 @@ public enum SegmentWriterError: Error, CustomStringConvertible {
   }
 }
 
-/// One camera's archive: the bytes it sent, muxed into segmented fMP4, with black and silence
-/// holding the recording wall clock when the camera is missing or changes format.
+/// One camera's archive: the bytes it sent, muxed into segmented fMP4 and nothing else.
 ///
-/// Live pictures are still a bitstream copy — there is no second encode of the camera while it
-/// is healthy. A small filler encoder writes black (and silent AAC) into holes, and transcodes
-/// a size change down to the size locked on the first keyframe of the take. Stretching one
-/// sample across a 50 s hole is refused (`maximumFrameDuration`); the hole is many legal frames
-/// instead.
+/// There is no encoder here and no scaling. A camera's own H.264 or H.265 access units and its own
+/// AAC go into the file as they came off the socket, so the recording is the camera's full quality
+/// by construction and costs no encode session at all. The only encode left in the app is the
+/// single programme master, which has to be encoded because it is a composite that exists nowhere
+/// on the wire.
 ///
 /// Two AVFoundation constraints shape the implementation, both established by measurement rather
 /// than documentation:
@@ -71,8 +69,9 @@ public enum SegmentWriterError: Error, CustomStringConvertible {
 ///   `.indefinite` plus `flushSegment()` before a sync sample — accepts both, so that is how
 ///   segments are cut, on the camera's own keyframes.
 /// - In fragmented MP4 the per-sample durations *are* the timeline, and a sample with no duration
-///   is refused (`-16364`). Sample timestamps follow recording wall clock, not the camera's RTP
-///   clock, so a reboot that resets PTS still lands at `now - T0`.
+///   is refused (`-16364`). RTP gives timestamps, not durations, so each picture is held until its
+///   successor arrives and then written with the exact gap between them. The archive therefore runs
+///   one frame behind the socket, which is 33 ms of a recording nobody is watching live.
 public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
   /// Called when the camera's format changed under an open recording, which needs a fresh writer.
   public typealias FormatChangeHandler = @Sendable (SourceID) -> Void
@@ -93,8 +92,6 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
   private let telemetry: PipelineTelemetry
   private let clock: DirectorClock
   private let onFormatChange: FormatChangeHandler?
-  /// Recording wall origin. Late cameras fill black from this instant so every file lasts `D`.
-  private let recordingStartedAt: WallClock?
   /// Appends are serialised here so that they leave the camera's receive thread: a file write must
   /// never be what delays reading the next packet.
   private let queue: DispatchQueue
@@ -135,17 +132,10 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
   private var droppedFrames: UInt64 = 0
   private var appendedFrames: UInt64 = 0
   private var stopError: Error?
-  private var filler: ArchiveFiller?
-  private var lockedWidth = 0
-  private var lockedHeight = 0
-  private var fileOriginWall: WallClock?
-  private var holdTimer: DispatchSourceTimer?
-  private var fillerFrameID: UInt64 = 1_000_000_000
 
   private struct HeldPicture {
     let data: Data
     let presentationTime: CMTime
-    let wallClock: WallClock
     let isKeyframe: Bool
     let frameID: UInt64
   }
@@ -159,7 +149,6 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     settings: SegmentWriterSettings,
     clock: DirectorClock,
     directory: URL? = nil,
-    recordingStartedAt: WallClock? = nil,
     onFormatChange: FormatChangeHandler? = nil
   ) {
     self.sourceID = sourceID
@@ -169,7 +158,6 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     self.telemetry = telemetry
     self.settings = settings
     self.clock = clock
-    self.recordingStartedAt = recordingStartedAt
     self.onFormatChange = onFormatChange
     self.directory = directory ?? DirectorPaths.archiveDirectory(for: sourceID)
       .appendingPathComponent("rec-\(recordingID)", isDirectory: true)
@@ -242,15 +230,10 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     }
   }
 
-  public func finish(until wall: WallClock? = nil) async {
+  public func finish() async {
     // The held picture is a real frame of the recording; without this the last one is lost every
     // time, and with a one-second keyframe interval that is visible at the cut.
-    let end = wall ?? clock.now
-    await onQueue {
-      self.fillOnQueue(to: end)
-      self.flushHeld()
-      self.stopHoldTimer()
-    }
+    await onQueue { self.flushHeld() }
 
     // Before `beginFinish` sets the flag that stops the drain, or the tail of the audio track is
     // simply thrown away and the last segment ends with video the audio never reaches.
@@ -334,7 +317,6 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     outputFilename = nil
     started = false
     held = nil
-    fileOriginWall = nil
     audioTimeline = ArchiveAudioTimeline()
     pendingAudio.removeAll()
   }
@@ -370,87 +352,59 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
       return
     }
 
-    guard let format = CompressedSample.videoFormatDescription(
-      codec: frame.codec,
-      parameterSets: frame.parameterSets
-    ) else {
-      lock.unlock()
-      return
-    }
-    let incoming = ArchiveFiller.dimensions(of: format)
-    let hadLock = lockedWidth > 0
-    if !hadLock {
-      if !frame.isKeyframe {
+    // The camera repeats its parameter sets before every keyframe, so this is almost always a
+    // no-op. When they genuinely change the track cannot continue and a new writer is needed.
+    if videoParameterSets != frame.parameterSets {
+      let hadFormat = videoFormat != nil
+      guard let format = CompressedSample.videoFormatDescription(
+        codec: frame.codec,
+        parameterSets: frame.parameterSets
+      ) else {
         lock.unlock()
         return
       }
-      lockedWidth = incoming.width
-      lockedHeight = incoming.height
-      filler = ArchiveFiller(
-        width: incoming.width,
-        height: incoming.height,
-        codec: frame.codec == .hevc ? .hevc : .h264
-      )
+      if hadFormat, let existing = videoFormat, !CMFormatDescriptionEqual(existing, otherFormatDescription: format) {
+        stopError = SegmentWriterError.formatChanged
+        lock.unlock()
+        telemetry.recordError("\(sourceID.rawValue) changed format mid-recording; reopening archive")
+        onFormatChange?(sourceID)
+        return
+      }
       videoParameterSets = frame.parameterSets
       videoFormat = format
     }
-    lock.unlock()
 
-    fillOnQueue(to: frame.wallClock)
-
-    var coded = frame
-    var codedFormat = format
-    if hadLock, (incoming.width != lockedWidth || incoming.height != lockedHeight) {
-      lock.lock()
-      let filler = self.filler
-      let origin = fileOrigin()
+    guard videoFormat != nil else {
       lock.unlock()
-      let pts = mediaTime(for: frame.wallClock, origin: origin)
-      if let transcoded = filler?.transcode(frame, presentationTime: pts),
-        let lockedFormat = CompressedSample.videoFormatDescription(
-          codec: transcoded.codec,
-          parameterSets: transcoded.parameterSets
-        )
-      {
-        coded = transcoded
-        codedFormat = lockedFormat
-      } else if let black = filler?.encodeBlack(
-        sourceID: sourceID,
-        presentationTime: pts,
-        wallClock: frame.wallClock,
-        frameID: frame.frameID
-      ) {
-        coded = black
-        if let lockedFormat = CompressedSample.videoFormatDescription(
-          codec: black.codec,
-          parameterSets: black.parameterSets
-        ) {
-          codedFormat = lockedFormat
-        }
-      } else {
-        return
-      }
-    } else if !hadLock {
-      lock.lock()
-      videoFormat = codedFormat
-      videoParameterSets = coded.parameterSets
+      return
+    }
+    // Nothing can be written before the camera's audio has described itself, or the file would get
+    // a video track and never an audio one. Audio arrives every 32 ms, so this costs a frame or two.
+    if !started, settings.includesAudio, audioFormat == nil {
       lock.unlock()
+      return
+    }
+    // A recording has to open on a keyframe: a segment starting mid-GOP is not decodable.
+    if !started, held == nil, !frame.isKeyframe {
+      lock.unlock()
+      return
     }
 
-    lock.lock()
-    videoFormat = videoFormat ?? codedFormat
-    lock.unlock()
-    let duration = filler?.frameDuration ?? CMTime(value: 1, timescale: 30)
-    appendVideo(
-      HeldPicture(
-        data: coded.data,
-        presentationTime: coded.presentationTime,
-        wallClock: coded.wallClock,
-        isKeyframe: coded.isKeyframe,
-        frameID: coded.frameID
-      ),
-      duration: duration
+    let previous = held
+    held = HeldPicture(
+      data: frame.data,
+      presentationTime: frame.presentationTime,
+      isKeyframe: frame.isKeyframe,
+      frameID: frame.frameID
     )
+    guard let previous else {
+      lock.unlock()
+      return
+    }
+    let gap = CMTimeSubtract(frame.presentationTime, previous.presentationTime)
+    lock.unlock()
+
+    appendVideo(previous, duration: gap)
   }
 
   /// Writes out the picture still being held, at the last known frame duration since there is no
@@ -465,7 +419,7 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     appendVideo(previous, duration: duration)
   }
 
-  private func appendVideo(_ picture: HeldPicture, duration: CMTime, filling: Bool = true) {
+  private func appendVideo(_ picture: HeldPicture, duration: CMTime) {
     lock.lock()
     guard !finishing, stopError == nil, let format = videoFormat else {
       lock.unlock()
@@ -474,38 +428,24 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
 
     if !started {
       lock.unlock()
-      ensureAudioFormat()
       guard startWriting(videoFormat: format) else { return }
-      startHoldTimer()
       lock.lock()
-    }
-    if filling {
-      lock.unlock()
-      fillOnQueue(to: picture.wallClock)
-      lock.lock()
-      guard !finishing, stopError == nil, videoFormat != nil else {
-        lock.unlock()
-        return
-      }
     }
     guard let writer, let videoInput else {
       lock.unlock()
       return
     }
 
-    if fileOriginWall == nil {
-      fileOriginWall = recordingStartedAt ?? picture.wallClock
+    if basePresentationTime == nil {
+      basePresentationTime = picture.presentationTime
+      baseWallClock = clock.now
     }
-    if baseWallClock == nil {
-      baseWallClock = fileOriginWall
-      basePresentationTime = .zero
-    }
-    guard let origin = fileOriginWall else {
+    guard let base = basePresentationTime else {
       lock.unlock()
       return
     }
 
-    let presentationTime = mediaTime(for: picture.wallClock, origin: origin)
+    let presentationTime = CMTimeSubtract(picture.presentationTime, base)
     guard presentationTime.isNumeric, presentationTime >= .zero else {
       droppedFrames &+= 1
       lock.unlock()
@@ -541,7 +481,7 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
       drainAudio(limit: .max)
       recycleWriter()
       // This keyframe opens the next file so the cut stays on a sync sample.
-      appendVideo(picture, duration: duration, filling: false)
+      appendVideo(picture, duration: duration)
       return
     }
 
@@ -583,161 +523,6 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
 
     // Small budget: audio's own arrival does the bulk, and this runs between video appends.
     drainAudio(limit: 2)
-  }
-
-  public func fill(to wall: WallClock) {
-    queue.async { [weak self] in self?.fillOnQueue(to: wall) }
-  }
-
-  public func fillAndWait(to wall: WallClock) async {
-    await onQueue { self.fillOnQueue(to: wall) }
-  }
-
-  private func fileOrigin() -> WallClock {
-    if let fileOriginWall { return fileOriginWall }
-    let origin = recordingStartedAt ?? clock.now
-    fileOriginWall = origin
-    if baseWallClock == nil { baseWallClock = origin }
-    return origin
-  }
-
-  private func mediaTime(for wall: WallClock, origin: WallClock) -> CMTime {
-    CMTime(seconds: max(0, wall - origin), preferredTimescale: 90_000)
-  }
-
-  private func ensureAudioFormat() {
-    lock.lock()
-    defer { lock.unlock() }
-    guard settings.includesAudio, audioFormat == nil, let filler else { return }
-    audioFormat = CompressedSample.aacFormatDescription(
-      magicCookie: filler.magicCookie,
-      sampleRate: filler.audioSampleRate,
-      channelCount: filler.audioChannels
-    )
-  }
-
-  private func startHoldTimer() {
-    lock.lock()
-    guard holdTimer == nil else {
-      lock.unlock()
-      return
-    }
-    lock.unlock()
-    let timer = DispatchSource.makeTimerSource(queue: queue)
-    timer.schedule(deadline: .now() + .milliseconds(50), repeating: .milliseconds(50))
-    timer.setEventHandler { [weak self] in
-      guard let self else { return }
-      self.fillOnQueue(to: self.clock.now)
-    }
-    timer.resume()
-    lock.lock()
-    holdTimer = timer
-    lock.unlock()
-  }
-
-  private func stopHoldTimer() {
-    lock.lock()
-    holdTimer?.cancel()
-    holdTimer = nil
-    lock.unlock()
-  }
-
-  private func fillOnQueue(to wall: WallClock) {
-    lock.lock()
-    guard !finishing, stopError == nil, filler != nil else {
-      lock.unlock()
-      return
-    }
-    let origin = fileOrigin()
-    let step = filler?.frameDuration ?? CMTime(value: 1, timescale: 30)
-    let frameRate = filler?.frameRate ?? 30
-    lock.unlock()
-
-    let target = mediaTime(for: wall, origin: origin)
-    lock.lock()
-    let last = lastVideoTime
-    lock.unlock()
-    let lastSeconds = last.isNumeric ? last.seconds : 0
-    let cappedSeconds = min(target.seconds, lastSeconds + 120)
-    let capped = CMTime(seconds: max(0, cappedSeconds), preferredTimescale: 90_000)
-    var frames = 0
-    let maximumFrames = Int((120 * Double(max(frameRate, 1))).rounded(.up)) + 2
-    while frames < maximumFrames {
-      lock.lock()
-      let cursorTime = lastVideoTime
-      lock.unlock()
-      let cursor = cursorTime.isNumeric ? cursorTime : CMTime(value: -step.value, timescale: step.timescale)
-      let next = CMTimeAdd(cursor, step)
-      guard next.isNumeric, next.seconds + 0.001 < capped.seconds else { break }
-      let sampleWall = origin + next.seconds
-      appendFiller(at: next, wall: sampleWall)
-      lock.lock()
-      let advanced = lastVideoTime
-      lock.unlock()
-      // A failed encode must not spin: lastVideoTime would stay put and this loop would never end.
-      guard advanced.isNumeric, advanced.seconds + 0.0001 >= next.seconds else { break }
-      frames += 1
-    }
-  }
-
-  private func appendFiller(at presentationTime: CMTime, wall: WallClock) {
-    lock.lock()
-    let filler = self.filler
-    fillerFrameID &+= 1
-    let frameID = fillerFrameID
-    lock.unlock()
-    guard let filler else { return }
-    guard
-      let coded = filler.encodeBlack(
-        sourceID: sourceID,
-        presentationTime: presentationTime,
-        wallClock: wall,
-        frameID: frameID
-      )
-    else { return }
-    appendVideo(
-      HeldPicture(
-        data: coded.data,
-        presentationTime: presentationTime,
-        wallClock: wall,
-        isKeyframe: true,
-        frameID: frameID
-      ),
-      duration: filler.frameDuration,
-      filling: false
-    )
-    if settings.includesAudio,
-      let silence = filler.encodeSilence(
-        sourceID: sourceID,
-        presentationTime: presentationTime,
-        wallClock: wall
-      )
-    {
-      appendSilence(silence, at: presentationTime)
-    }
-  }
-
-  private func appendSilence(_ frame: CompressedAudioFrame, at time: CMTime) {
-    ensureAudioFormat()
-    lock.lock()
-    let format = audioFormat
-    lock.unlock()
-    guard settings.includesAudio, let format else { return }
-    guard
-      let sampleBuffer = CompressedSample.audioSampleBuffer(
-        data: frame.data,
-        formatDescription: format,
-        presentationTime: time,
-        duration: frame.duration
-      )
-    else { return }
-    lock.lock()
-    pendingAudio.append(sampleBuffer)
-    if pendingAudio.count > Self.maximumPendingAudio {
-      pendingAudio.removeFirst(pendingAudio.count - Self.maximumPendingAudio)
-    }
-    lock.unlock()
-    drainAudio(limit: 8)
   }
 
   /// Builds the writer around the camera's formats. Called once, at the first keyframe.
@@ -825,17 +610,13 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     let startWall = baseWallClock
     let duration = lastVideoTime.isNumeric ? lastVideoTime.seconds : 0
     let firstFrameID = pendingFirstFrameID
-    let nextOrigin = startWall.map { $0 + max(0, duration) }
     self.writer = nil
     self.videoInput = nil
     self.audioInput = nil
     self.outputFilename = nil
     started = false
     basePresentationTime = nil
-    // Each file is 0-based for concat. The next file's origin is this file's end wall, not
-    // recording T0, or fill would write the whole take into every later segment.
-    baseWallClock = nextOrigin
-    fileOriginWall = nextOrigin
+    baseWallClock = nil
     lastVideoTime = .negativeInfinity
     pendingFirstFrameID = nil
     // Keep `held`. Recycle runs from appendVideo of the keyframe that *opens* the next file,
