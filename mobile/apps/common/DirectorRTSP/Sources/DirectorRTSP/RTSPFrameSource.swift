@@ -82,6 +82,10 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
   /// What the camera's own sender reports say about its clock. Measurement only: nothing here
   /// feeds playout yet.
   private var clockAudit = RTPClockAudit()
+  /// Most recent frame's capture time on our clock, and how far behind now that is. The age is
+  /// excess over this camera's own best case rather than absolute delay — see `ReceiveStats`.
+  private var lastCorrectedCapture: Double = 0
+  private var correctedCaptureAgeSeconds: Double = 0
   private var audioTimeline = RTPTimestampUnwrapper()
   private var lastPresentationTime: CMTime?
   private var lastAccessUnitAt: Date?
@@ -192,6 +196,8 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     snapshot.cameraClockOffsetSeconds = (clockAudit.ntpOffsetSeconds * 1000).rounded() / 1000
     snapshot.cameraClockOffsetFilteredSeconds = (clockAudit.filteredOffsetSeconds * 1000).rounded() / 1000
     snapshot.cameraClockOffsetSamples = clockAudit.offsetSampleCount
+    snapshot.correctedCaptureTime = lastCorrectedCapture
+    snapshot.correctedCaptureAgeMilliseconds = (correctedCaptureAgeSeconds * 1000).rounded()
     snapshot.senderReportStreams = clockAudit.streamCount
     if let decoder {
       let decoderStats = decoder.currentStatistics
@@ -413,6 +419,14 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     let elapsed = videoTimeline.unwrap(unit.rtpTimestamp)
     let presentationTime = CMTime(value: CMTimeValue(elapsed), timescale: 90_000)
     jitter.noteLateness(now - presentationTime.seconds, at: arrivedAt)
+
+    // Carried alongside the existing arrival stamp and read by nothing yet: this phase proves the
+    // number is right before anything depends on it. Already inside the lock taken above — `lock`
+    // is a plain NSLock and taking it again here deadlocks the receive thread on the first packet.
+    if let correctedCapture = clockAudit.captureTimeOnLocalClock(rtpTimestamp: unit.rtpTimestamp) {
+      lastCorrectedCapture = correctedCapture
+      correctedCaptureAgeSeconds = Date().timeIntervalSince1970 - correctedCapture
+    }
 
     // The picture waits here instead of being decoded on the spot. Releasing it against its own
     // timestamp is what turns the camera's burst-and-wait delivery back into even motion.

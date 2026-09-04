@@ -138,6 +138,8 @@ public struct TileTelemetry: Sendable, Codable, Equatable {
   public var cameraClockOffsetSeconds: Double = 0
   public var cameraClockOffsetFilteredSeconds: Double = 0
   public var cameraClockOffsetSamples: Int = 0
+  public var correctedCaptureTime: Double = 0
+  public var correctedCaptureAgeMilliseconds: Double = 0
   /// Frames that arrived after they were due, each of which was a visible stall.
   public var playoutLateFrames: UInt64 = 0
   public var playoutDepth = 0
@@ -269,6 +271,20 @@ public struct TelemetrySnapshot: Sendable, Codable, Equatable {
   /// duration — the only mechanism that can put a playout offset far beyond its own cap. Nonzero
   /// here is that evidence; zero over a long session rules it out.
   public var sleptSeconds: Double = 0
+  /// Spread of corrected capture times across the **newest received** frame of each live camera.
+  ///
+  /// **Not an acceptance measure, and it must not be read as one.** It samples what has arrived,
+  /// not what is being composited, so it stays small while the screen is wrong: it read 29 ms
+  /// during a run where a stopwatch in front of the tiles showed 2.81 s. Useful for spotting one
+  /// camera whose delivery has diverged; useless for judging alignment.
+  ///
+  /// Alignment is judged by pointing every camera at a millisecond timecode display and reading
+  /// the recorded frames — the plan's §8.1. A composited-frame spread would be the right telemetry
+  /// and does not exist yet.
+  public var captureSpreadMilliseconds: Double = 0
+  /// Which camera is furthest behind the rest, so the spread points at something actionable.
+  public var captureSpreadWorstCamera: String = ""
+
   /// Share of the whole machine's CPU this process is using. Separates "the network is not
   /// delivering frames" from "we have run out of CPU to decode them", which frame counters alone
   /// cannot distinguish.

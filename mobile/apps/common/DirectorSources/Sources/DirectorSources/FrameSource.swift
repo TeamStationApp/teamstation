@@ -290,6 +290,15 @@ public struct ReceiveStats: Sendable, Equatable {
   /// instead of silently absorbed.
   public var cameraClockOffsetFilteredSeconds: Double = 0
   public var cameraClockOffsetSamples: Int = 0
+  /// The latest frame's capture time on the Director's clock, and how far behind now that is.
+  ///
+  /// The age is **excess over this camera's own best case**, not absolute end-to-end delay: the
+  /// offset it is corrected by comes from minimum-delay filtering, which removes the constant part
+  /// of transit along with the clock difference. The spread of these ages across cameras is
+  /// therefore the misalignment the design is judged on — but **this number cannot size `D_global`**,
+  /// which needs the absolute delay these filtered values deliberately discard.
+  public var correctedCaptureTime: Double = 0
+  public var correctedCaptureAgeMilliseconds: Double = 0
   /// Decoders this source currently holds. Only network sources decode anything; a generated or
   /// file-backed source reports zero.
   public var decodeSessions = 0
