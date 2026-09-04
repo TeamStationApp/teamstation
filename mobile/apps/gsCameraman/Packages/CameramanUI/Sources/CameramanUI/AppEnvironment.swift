@@ -429,6 +429,14 @@ public final class AppEnvironment {
     public var audioPendingBytes: Int
     public var server: RTSPServer.Status
     public var addresses: [String]
+    /// Injected late-delivery state. `sendDelayHeldTotal` climbing is the only proof the fault
+    /// harness is actually holding frames rather than merely being configured — a run reporting
+    /// zero here while a delay is set has injected nothing, and must not be read as a pass.
+    public var sendDelayMilliseconds: Double
+    public var sendDelayJitterMilliseconds: Double
+    public var sendDelayBurstMilliseconds: Double
+    public var sendDelayHeldNow: Int
+    public var sendDelayHeldTotal: UInt64
   }
 
   public var stateDump: StateDump {
@@ -476,12 +484,21 @@ public final class AppEnvironment {
       interruptionReason: cameraState.interruptionReason,
       audioPendingBytes: audioEncoder.pendingBytes,
       server: dumpServerStatus,
-      addresses: ControlServer.localAddresses()
+      addresses: ControlServer.localAddresses(),
+      sendDelayMilliseconds: sendDelaySummary.delayMilliseconds,
+      sendDelayJitterMilliseconds: sendDelaySummary.jitterMilliseconds,
+      sendDelayBurstMilliseconds: sendDelaySummary.burstMilliseconds,
+      sendDelayHeldNow: sendDelaySummary.held,
+      sendDelayHeldTotal: sendDelaySummary.totalHeld
     )
   }
 
   private var sendQueueDroppedFrames: Int {
     server?.sendQueueSummaries().reduce(0) { $0 + $1.droppedFrames } ?? 0
+  }
+
+  private var sendDelaySummary: (delayMilliseconds: Double, jitterMilliseconds: Double, burstMilliseconds: Double, held: Int, totalHeld: UInt64) {
+    server?.sendDelay.summary ?? (0, 0, 0, 0, 0)
   }
 
   private var dumpServerStatus: RTSPServer.Status {
@@ -579,6 +596,14 @@ public final class AppEnvironment {
       settings.videoEnabled = on
       noteSettingsApplied()
       videoEncoder.requestKeyframe()
+      return ok()
+
+    case let .setSendDelay(milliseconds, jitter, burst):
+      server?.sendDelay.configure(
+        delayMilliseconds: milliseconds,
+        jitterMilliseconds: jitter,
+        burstMilliseconds: burst
+      )
       return ok()
 
     case .reset:
