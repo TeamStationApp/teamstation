@@ -180,6 +180,16 @@ public struct SourceSelectionView: View {
             .foregroundStyle(.white.opacity(0.35))
             .lineLimit(1)
         }
+
+        // What the camera is actually sending. Read from the telemetry snapshot rather than the
+        // source, so it follows the camera changing format mid-session instead of being sampled once.
+        if let format = formatLabel(for: selection) {
+          Text(format)
+            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+            .foregroundStyle(Color.sourceBlue.opacity(0.95))
+            .lineLimit(1)
+            .accessibilityIdentifier("source-format-\(index + 1)")
+        }
       }
 
       Spacer()
@@ -280,6 +290,7 @@ public struct SourceSelectionView: View {
     .accessibilityValue(
       "name=\(rowName(for: selection)) on=\(selection.isEnabled ? 1 : 0) "
         + "audio=\(selection.usesAudio ? 1 : 0) "
+        + "format=\(formatLabel(for: selection) ?? "") "
         + "gain=\(SourceWaveformThumb.percent(selection.inputGain)) "
         + "host=\(environment.endpoint(for: selection.id)?.host ?? "") "
         + "origin=\(environment.bindingOrigin(for: selection.id).rawValue) "
@@ -288,6 +299,16 @@ public struct SourceSelectionView: View {
         + "advertised=\(environment.boundCamera(for: selection.id)?.advertisedName ?? "") "
         + "nameOrigin=\(environment.boundCamera(for: selection.id)?.nameOrigin.rawValue ?? "")"
     )
+  }
+
+  /// Codec, size and rate for an enabled camera, or nil while it has none of them yet.
+  ///
+  /// A disabled camera has no session and therefore nothing to report: the codec is in the SDP, which
+  /// is only fetched once the toggle is on.
+  private func formatLabel(for selection: SourceSelection) -> String? {
+    guard selection.isEnabled, let slot = selection.sourceIndex else { return nil }
+    guard let tile = environment.snapshot.tiles.first(where: { $0.index == slot }) else { return nil }
+    return SourceFormatLabel.text(for: tile)
   }
 
   /// What the row is called on screen. A live camera with no record is "Unnamed" rather than its
