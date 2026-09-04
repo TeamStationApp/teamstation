@@ -29,6 +29,8 @@ public final class CameraSession: @unchecked Sendable {
     /// than assumed, because the front and back cameras offer different sets and neither matches
     /// what a hardcoded list would say.
     public var availableFormats: [CaptureFormatDescriptor] = []
+    /// Optical cameras measured on this handset, including native crops. Empty on a simulator.
+    public var availableLenses: [CameraLens] = []
     public var isRunning = false
     public var failure: String?
     public var isInterrupted = false
@@ -114,7 +116,13 @@ public final class CameraSession: @unchecked Sendable {
 
   public func flip() {
     queue.async { [self] in
-      applyDevice(position: state.position == .back ? .front : .back)
+      let catalog = state.availableLenses
+      let selection = LensSelection(disabledIDs: settings.disabledLensIDs)
+      let target: CameraPosition = state.position == .back ? .front : .back
+      // An empty catalog is a simulator (or a probe that has not run yet); flipping still has to
+      // work there. On a handset, a position with every lens toggled off is not a camera.
+      if !catalog.isEmpty, !selection.hasEnabledLens(at: target, in: catalog) { return }
+      applyDevice(position: target)
     }
   }
 
@@ -144,8 +152,23 @@ public final class CameraSession: @unchecked Sendable {
 
   // MARK: - Configuration
 
-  private func applyDevice(position: CameraPosition) {
-    guard let selected = Self.preferredDevice(for: position) else {
+  private func applyDevice(position requested: CameraPosition) {
+    let catalog = LensDiscovery.discover()
+    state.availableLenses = catalog
+    let selection = LensSelection(disabledIDs: settings.disabledLensIDs)
+
+    var position = requested
+    if !catalog.isEmpty, !selection.hasEnabledLens(at: position, in: catalog) {
+      let other: CameraPosition = position == .back ? .front : .back
+      if selection.hasEnabledLens(at: other, in: catalog) {
+        position = other
+      }
+    }
+
+    guard let selected = Self.preferredDevice(
+      for: position,
+      types: selection.preferredDeviceTypes(for: position, in: catalog)
+    ) else {
       state.failure = "no camera available for \(position.rawValue)"
       publish()
       return
@@ -175,13 +198,23 @@ public final class CameraSession: @unchecked Sendable {
     attachRotationCoordinator(for: selected)
 
     applyFormat(to: selected)
+    applySwitching(to: selected, selection: selection, catalog: catalog)
     state.deviceType = selected.deviceType.rawValue
     state.availableFormats = Self.descriptors(of: selected)
-    state.mapping = Self.mapping(for: selected)
+    state.mapping = Self.mapping(for: selected, selection: selection, catalog: catalog, position: position)
     state.failure = nil
     // Start at the wide lens rather than the ultra-wide: 1x is what an operator pointing a phone at a
-    // field expects to see, and 0.5x on a triple camera is a noticeably distorted framing.
-    applyZoom(state.mapping.deviceZoom(forDisplayed: 1))
+    // field expects to see, and 0.5x on a triple camera is a noticeably distorted framing. When 1x
+    // is not among the remaining lenses, sit on the widest one that is still on.
+    if let locked = selection.lockedDisplayedZoom(for: position, in: catalog) {
+      applyZoom(state.mapping.deviceZoom(forDisplayed: locked))
+    } else if state.mapping.presetDisplayedZooms.contains(where: {
+      ZoomMapping.label(forDisplayed: $0) == ZoomMapping.label(forDisplayed: 1)
+    }) {
+      applyZoom(state.mapping.deviceZoom(forDisplayed: 1))
+    } else {
+      applyZoom(state.mapping.minimumDeviceZoom)
+    }
   }
 
   private func attachOutputs() {
@@ -412,22 +445,58 @@ public final class CameraSession: @unchecked Sendable {
 
   /// Widest virtual device first, so the app gets every lens the handset has and degrades to fewer.
   static func preferredDevice(for position: CameraPosition) -> AVCaptureDevice? {
-    let types: [AVCaptureDevice.DeviceType] = switch position {
-    case .back: [ .builtInTripleCamera, .builtInDualWideCamera, .builtInDualCamera, .builtInWideAngleCamera ]
-    case .front: [ .builtInWideAngleCamera ]
-    }
+    preferredDevice(
+      for: position,
+      types: position == .back ? LensSelection.backDefaultPreference : LensSelection.frontDefaultPreference
+    )
+  }
+
+  static func preferredDevice(for position: CameraPosition, types: [String]) -> AVCaptureDevice? {
+    guard !types.isEmpty else { return nil }
     let discovery = AVCaptureDevice.DiscoverySession(
-      deviceTypes: types,
+      deviceTypes: [
+        .builtInTripleCamera,
+        .builtInDualWideCamera,
+        .builtInDualCamera,
+        .builtInWideAngleCamera,
+        .builtInUltraWideCamera,
+        .builtInTelephotoCamera
+      ],
       mediaType: .video,
       position: position == .back ? .back : .front
     )
     for type in types {
-      if let match = discovery.devices.first(where: { $0.deviceType == type }) { return match }
+      if let match = discovery.devices.first(where: { $0.deviceType.rawValue == type }) { return match }
     }
     return discovery.devices.first
   }
 
-  static func mapping(for device: AVCaptureDevice) -> ZoomMapping {
+  static func mapping(
+    for device: AVCaptureDevice,
+    selection: LensSelection = LensSelection(),
+    catalog: [CameraLens] = [],
+    position: CameraPosition = .back
+  ) -> ZoomMapping {
+    if let locked = selection.lockedDisplayedZoom(for: position, in: catalog) {
+      let deviceZoom = locked / max(device.displayVideoZoomFactorMultiplier, 0.01)
+      return ZoomMapping(
+        minimumDeviceZoom: deviceZoom,
+        maximumDeviceZoom: deviceZoom,
+        displayMultiplier: device.displayVideoZoomFactorMultiplier,
+        switchOverDeviceZooms: []
+      )
+    }
+
+    var switchOvers = device.virtualDeviceSwitchOverVideoZoomFactors.map(\.doubleValue)
+    let multiplier = device.displayVideoZoomFactorMultiplier
+    for lens in catalog where lens.position == position && lens.isSecondaryNative && selection.isEnabled(lens) {
+      let deviceZoom = lens.displayedZoom / max(multiplier, 0.01)
+      if !switchOvers.contains(where: { abs($0 - deviceZoom) < 0.05 }) {
+        switchOvers.append(deviceZoom)
+      }
+    }
+    switchOvers.sort()
+
     let recommended = device.activeFormat.systemRecommendedVideoZoomRange.map { Double($0.upperBound) }
     return ZoomMapping(
       minimumDeviceZoom: device.minAvailableVideoZoomFactor,
@@ -435,9 +504,52 @@ public final class CameraSession: @unchecked Sendable {
         recommended: recommended,
         available: device.maxAvailableVideoZoomFactor
       ),
-      displayMultiplier: device.displayVideoZoomFactorMultiplier,
-      switchOverDeviceZooms: device.virtualDeviceSwitchOverVideoZoomFactors.map(\.doubleValue)
+      displayMultiplier: multiplier,
+      switchOverDeviceZooms: switchOvers
     )
+  }
+
+  /// Stops the virtual device falling back to a lens the operator turned off. Auto switching for
+  /// focus is what an external glass on one camera loses when the phone silently hops to another.
+  private func applySwitching(
+    to device: AVCaptureDevice,
+    selection: LensSelection,
+    catalog: [CameraLens]
+  ) {
+    guard device.isVirtualDevice,
+          device.primaryConstituentDeviceSwitchingBehavior != .unsupported
+    else { return }
+
+    let enabledIDs = Set(
+      selection.enabled(in: catalog).filter { !$0.isSecondaryNative }.map(\.uniqueDeviceID)
+    )
+    let fallback = device.supportedFallbackPrimaryConstituentDevices.filter {
+      enabledIDs.contains($0.uniqueID)
+    }
+    let enabledConstituents = device.constituentDevices.filter { enabledIDs.contains($0.uniqueID) }
+    do {
+      try device.lockForConfiguration()
+      defer { device.unlockForConfiguration() }
+      device.fallbackPrimaryConstituentDevices = fallback
+      if enabledConstituents.count <= 1 {
+        device.setPrimaryConstituentDeviceSwitchingBehavior(
+          .locked,
+          restrictedSwitchingBehaviorConditions: []
+        )
+      } else if enabledConstituents.count < device.constituentDevices.count {
+        device.setPrimaryConstituentDeviceSwitchingBehavior(
+          .restricted,
+          restrictedSwitchingBehaviorConditions: []
+        )
+      } else {
+        device.setPrimaryConstituentDeviceSwitchingBehavior(
+          .auto,
+          restrictedSwitchingBehaviorConditions: []
+        )
+      }
+    } catch {
+      return
+    }
   }
 
   /// `keepsMultiLensSwitching` is a property of the device, not of the format.
@@ -461,11 +573,6 @@ public final class CameraSession: @unchecked Sendable {
       isBinned: format.isVideoBinned
     )
   }
-}
-
-public enum CameraPosition: String, Sendable, Codable, Equatable {
-  case back
-  case front
 }
 
 /// Split out so the session itself does not have to inherit from `NSObject`.

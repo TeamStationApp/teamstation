@@ -66,9 +66,11 @@ side: renaming a camera must not make it a new one.
 
 ## Zoom and lenses
 
-The triple camera is one `AVCaptureDevice` that switches between its constituents by itself as the
-zoom factor crosses hardware thresholds. The app does not choose lenses; it sets a zoom factor and
-reads back which lens the hardware picked.
+The triple camera is one `AVCaptureDevice` that switches between its constituents as the zoom
+factor crosses hardware thresholds. Settings lists every detected lens — physical constituents
+plus native crops such as the 48 mm 2x — with a toggle. Disabling a lens picks the virtual or
+physical device that covers only what remains, and turns off fallback switching so focus cannot
+hop onto a camera the operator turned off (the clip-on-telephoto case).
 
 Two zoom scales exist and confusing them is the main hazard: **device zoom** is the raw sensor
 factor the API takes, and **displayed zoom** is the 0.5x/1x/3x an operator reads. `ZoomMapping`
@@ -80,8 +82,11 @@ The ceiling comes from `systemRecommendedVideoZoomRange`, not `maxAvailableVideo
 
 ## Discovery
 
-The server advertises `_rtsp._tcp` over Bonjour, so a client finds the phone without being told an
-address that changes with the lease. `NSBonjourServices` must list the type or advertising fails
+The server advertises `_rtsp._tcp` and `_awx_service._tcp` over Bonjour. Director finds NearStream
+on `_awx_service._tcp` (TXT `ip=`), and that browse is what still works when the phone is on 2.4 GHz
+and the iPad is on 5 GHz. `_rtsp._tcp` alone is not enough: iOS does not answer a subnet TCP scan
+the way a VM33 does, so without that advertisement the phone never appears. TXT carries `uuid`,
+`name`, `path`, `ip` and `port`. `NSBonjourServices` must list both types or advertising fails
 with `-65555` and takes the listener down with it.
 
 Port 554 by default, falling back to 8554 if something already holds it. Both the bound port and the

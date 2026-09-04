@@ -65,6 +65,11 @@ struct ControlChannelTests {
     #expect(command("/") == nil)
   }
 
+  @Test func lensDisableListsAreParsed() {
+    #expect(command("/set-lenses") == .setLenses(disabled: []))
+    #expect(command("/set-lenses?disabled=uw,tele") == .setLenses(disabled: [ "uw", "tele" ]))
+  }
+
   @Test func anotherAppsSchemeIsNotOurs() {
     let producer = URL(string: "gsproducer://test/dump-state")!
     // Both apps run during the end-to-end phase and both listen; taking each other's commands

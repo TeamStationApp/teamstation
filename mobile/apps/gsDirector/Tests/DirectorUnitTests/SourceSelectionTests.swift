@@ -49,6 +49,59 @@ struct SourceSelectionTests {
     #expect(merged[0].isPresent)
   }
 
+  @Test("An enabled address-keyed row is dropped so an IP cannot remain as a camera")
+  func enabledAddressKeyedRowsAreDropped() {
+    let existing = [
+      SourceSelection(
+        id: .init("camera-10.10.7.40-18554"),
+        kind: .rtsp,
+        advertisedName: "10.10.7.40",
+        isEnabled: true,
+        isPresent: true
+      )
+    ]
+    let merged = SourceSelectionRules.merge(existing: existing, discovered: [])
+    #expect(merged.isEmpty)
+  }
+
+  @Test("The selection store keeps CameraRecord UUIDs and drops IP keys")
+  func selectionStoreDropsAddressKeyedRTSP() {
+    let suite = "co.gamestation.director.tests.sources.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suite)!
+    defaults.removePersistentDomain(forName: suite)
+    let store = SourceSelectionStore(store: ConfigStore(defaults: defaults))
+    let cameraID = UUID()
+    store.save([
+      SourceSelection(
+        id: .init(cameraID.uuidString),
+        kind: .rtsp,
+        advertisedName: "Third Base",
+        isEnabled: true
+      ),
+      SourceSelection(
+        id: .init("camera-10.10.7.40-18554"),
+        kind: .rtsp,
+        advertisedName: "10.10.7.40",
+        isEnabled: true
+      ),
+      SourceSelection(
+        id: .init("session-\(UUID().uuidString)"),
+        kind: .rtsp,
+        advertisedName: "Unnamed",
+        isEnabled: true
+      ),
+      SourceSelection(
+        id: .init("CAM1"),
+        kind: .synthetic,
+        advertisedName: "CAM1",
+        isEnabled: true
+      )
+    ])
+    let loaded = store.load()
+    #expect(Set(loaded.map(\.id.rawValue)) == [ cameraID.uuidString, "CAM1" ])
+    store.clear()
+  }
+
   @Test("Switching profile drops rows of the other kind so they cannot look like live cameras")
   func retainingKindDropsTheOther() {
     let mixed = [

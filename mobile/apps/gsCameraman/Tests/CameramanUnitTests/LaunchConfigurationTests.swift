@@ -14,10 +14,43 @@ struct LaunchConfigurationTests {
     #expect(configuration.settings.width == 1920)
     #expect(configuration.settings.height == 1080)
     #expect(configuration.settings.frameRate == 30)
-    #expect(configuration.settings.bitrate == 6_000_000)
-    #expect(configuration.settings.codec == .h264)
+    #expect(configuration.settings.bitrate == 4_000_000)
+    #expect(configuration.settings.codec == .hevc)
     #expect(configuration.settings.port == 554)
     #expect(configuration.settings.audioEnabled)
+    #expect(configuration.providedSettingFields.isEmpty)
+    #expect(configuration.persistSettings)
+  }
+
+  @Test("Saved settings are off under uiTest and can be switched back on")
+  func persistenceFollowsUITestUnlessAsked() {
+    #expect(LaunchConfiguration(arguments: [ "-uiTest" ]).persistSettings == false)
+    #expect(LaunchConfiguration(arguments: []).persistSettings)
+    #expect(
+      LaunchConfiguration(arguments: [ "-uiTest", "-persistSettings", "true" ]).persistSettings
+    )
+    #expect(
+      LaunchConfiguration(arguments: [ "-persistSettings", "false" ]).persistSettings == false
+    )
+  }
+
+  @Test("Only the settings this launch named are reported as provided")
+  func providedFieldsAreTracked() {
+    let configuration = LaunchConfiguration(arguments: [
+      "-codec", "h264", "-width", "1280", "-height", "720"
+    ])
+
+    #expect(configuration.providedSettingFields == Set([ .codec, .width, .height ]))
+  }
+
+  @Test("A key with an unparseable value still counts as provided")
+  func unparseableValueStillCountsAsProvided() {
+    // Otherwise a typo in the value hands the decision back to whatever the operator last saved,
+    // which is the opposite of what pinning a value in a flow is for.
+    let configuration = LaunchConfiguration(arguments: [ "-codec", "av1" ])
+
+    #expect(configuration.providedSettingFields == Set([ .codec ]))
+    #expect(configuration.settings.codec == StreamSettings.default.codec)
   }
 
   @Test("Flags and values are both read")
@@ -77,7 +110,7 @@ struct LaunchConfigurationTests {
     #expect(settings.bitrate == 9_000_000)
   }
 
-  @Test("A pinned identity and name come through for flows that assert an exact CNAME")
+  @Test("A pinned identity and name come through for a flow that asserts an exact CNAME")
   func identityOverrides() {
     let configuration = LaunchConfiguration(arguments: [
       "-identityUUID", "3f2504e0-4f89-41d3-9a0c-0305e82c33ab",
@@ -99,5 +132,11 @@ struct LaunchConfigurationTests {
     #expect(LaunchConfiguration(arguments: [ "-uiTest" ]).showDebugHUD)
     #expect(LaunchConfiguration(arguments: []).showDebugHUD == false)
     #expect(LaunchConfiguration(arguments: [ "-uiTest", "-debugHUD", "false" ]).showDebugHUD == false)
+  }
+
+  @Test("Lens disable lists are comma-separated IDs")
+  func disabledLenses() {
+    let configuration = LaunchConfiguration(arguments: [ "-disabledLenses", "uw,tele" ])
+    #expect(configuration.settings.disabledLensIDs == Set(["uw", "tele"]))
   }
 }

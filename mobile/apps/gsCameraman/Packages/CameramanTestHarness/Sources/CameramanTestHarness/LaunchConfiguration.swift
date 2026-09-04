@@ -21,10 +21,12 @@ public struct LaunchConfiguration: Sendable, Equatable {
     "cameraName",
     "identityUUID",
     "debugHUD",
+    "persistSettings",
     "measureCapabilities",
     "recordSeconds",
     "selfTest",
-    "advertise"
+    "advertise",
+    "disabledLenses"
   ]
 
   public var isUITest = false
@@ -41,6 +43,14 @@ public struct LaunchConfiguration: Sendable, Equatable {
   /// Bonjour advertising, on by default. Off isolates the listener from the advertisement.
   public var advertise = true
   public var settings = StreamSettings.default
+  /// Which stream settings this launch named outright. Those must not be replaced by what the
+  /// operator last saved on the device, or a flow that pins a format would depend on the handset.
+  public var providedSettingFields: Set<StreamSettings.Field> = []
+  /// Whether this launch takes part in saved settings, reading them at start-up and writing them on
+  /// every change. Off under `uiTest` so a flow neither inherits nor leaves behind a preference —
+  /// but settable, because the operator runs with `uiTest` on to get the control server and still
+  /// expects the camera to come back the way it was left.
+  public var persistSettings = true
   public var cameraName: String?
   /// Pins the identity so a flow can assert an exact CNAME instead of whatever the Keychain holds.
   public var identityUUID: String?
@@ -84,6 +94,7 @@ public struct LaunchConfiguration: Sendable, Equatable {
     selfTest = Self.bool(values["selfTest"]) ?? false
     advertise = Self.bool(values["advertise"]) ?? true
     showDebugHUD = Self.bool(values["debugHUD"]) ?? isUITest
+    persistSettings = Self.bool(values["persistSettings"]) ?? !isUITest
     cameraName = values["cameraName"]
     identityUUID = values["identityUUID"]
 
@@ -97,6 +108,16 @@ public struct LaunchConfiguration: Sendable, Equatable {
     if let height = values["height"].flatMap(Int.init) { settings.height = height }
     if let frameRate = values["frameRate"].flatMap(Double.init) { settings.frameRate = frameRate }
     if let audio = Self.bool(values["audioEnabled"]) { settings.audioEnabled = audio }
+    if let disabled = values["disabledLenses"] {
+      settings.disabledLensIDs = Set(
+        disabled.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+      )
+    }
+
+    // Recorded after parsing rather than inside each branch: a field counts as provided when the key
+    // was present, even if the value failed to parse, because a typo should not hand the decision
+    // back to whatever is on disk.
+    providedSettingFields = Set(StreamSettings.Field.allCases.filter { values[$0.rawValue] != nil })
   }
 
   static func bool(_ value: String?) -> Bool? {

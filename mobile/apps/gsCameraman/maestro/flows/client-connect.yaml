@@ -18,6 +18,13 @@ appId: co.gamestation.cameraman
 - waitForAnimationToEnd:
     timeout: 3000
 
+- scrollUntilVisible:
+    element:
+      id: "settings-clients"
+    direction: DOWN
+    timeout: 15000
+    visibilityPercentage: 40
+    centerElement: true
 - assertVisible:
     id: "settings-clients"
     text: "0"
