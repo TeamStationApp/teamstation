@@ -57,9 +57,13 @@ public final class ArchiveFiller: @unchecked Sendable {
     self.frameRate = max(1, frameRate)
     self.audioSampleRate = audioSampleRate
     self.audioChannels = audioChannels
-    // AAC-LC AudioSpecificConfig: 48 kHz stereo is 0x11 0x90; other rates still work as a cookie
-    // the muxer can describe, and the converter below matches this description.
-    self.magicCookie = Data([ 0x11, 0x90 ])
+    // AAC-LC AudioSpecificConfig, built from this camera's real rate and channel count. A fixed
+    // 0x11 0x90 says "48 kHz stereo", which is wrong for a mono camera and for the 32 kHz cameras,
+    // so the packet handed to the muxer disagreed with the track it was joining.
+    self.magicCookie = Self.audioSpecificConfig(
+      sampleRate: audioSampleRate,
+      channels: audioChannels
+    )
     blackBuffer = Self.makeBlackBuffer(width: width, height: height)
     openEncoder()
     silentAAC = encodeSilencePacket()
@@ -355,7 +359,11 @@ public final class ArchiveFiller: @unchecked Sendable {
     )
     var inputCount: UInt32 = 1024
     let status = zeros.withUnsafeMutableBufferPointer { pointer in
-      var userData = SilenceInput(samples: pointer.baseAddress, remaining: inputCount)
+      var userData = SilenceInput(
+        samples: pointer.baseAddress,
+        remaining: inputCount,
+        channels: audioChannels
+      )
       return AudioConverterFillComplexBuffer(
         converter,
         { _, ioNumberDataPackets, ioData, _, userData in
@@ -364,8 +372,12 @@ public final class ArchiveFiller: @unchecked Sendable {
           let packets = min(ioNumberDataPackets.pointee, input.pointee.remaining)
           ioNumberDataPackets.pointee = packets
           ioData.pointee.mNumberBuffers = 1
-          ioData.pointee.mBuffers.mNumberChannels = 2
-          ioData.pointee.mBuffers.mDataByteSize = packets * 4
+          // Described from the real channel count. Hardcoding stereo made the converter read twice
+          // the mono buffer's length — 2 KB past the end of `zeros` — and encode whatever followed
+          // it, so the "silent" packet carried audible rubbish at a fixed -24.9 dB.
+          let channels = UInt32(max(1, input.pointee.channels))
+          ioData.pointee.mBuffers.mNumberChannels = channels
+          ioData.pointee.mBuffers.mDataByteSize = packets * 2 * channels
           ioData.pointee.mBuffers.mData = UnsafeMutableRawPointer(mutating: input.pointee.samples)
           input.pointee.remaining = 0
           return noErr
@@ -386,6 +398,19 @@ public final class ArchiveFiller: @unchecked Sendable {
   private struct SilenceInput {
     var samples: UnsafeMutablePointer<Int16>?
     var remaining: UInt32
+    var channels: Int
+  }
+
+  /// AAC-LC AudioSpecificConfig: 5 bits object type, 4 bits sample-rate index, 4 bits channel
+  /// configuration, then padding.
+  public static func audioSpecificConfig(sampleRate: Double, channels: Int) -> Data {
+    let rates: [Double] = [
+      96_000, 88_200, 64_000, 48_000, 44_100, 32_000,
+      24_000, 22_050, 16_000, 12_000, 11_025, 8_000, 7_350
+    ]
+    let index = rates.firstIndex(of: sampleRate) ?? 3
+    let config = (2 << 11) | (index << 7) | (max(1, min(channels, 6)) << 3)
+    return Data([ UInt8((config >> 8) & 0xFF), UInt8(config & 0xFF) ])
   }
 
   public static func dimensions(of format: CMVideoFormatDescription) -> (width: Int, height: Int) {
