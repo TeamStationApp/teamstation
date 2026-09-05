@@ -110,6 +110,7 @@ function parseArgs(argv) {
       i += 1
     } else if (value === '--video-fault-seconds' && next) {
       options.videoFaultSeconds = Number(next)
+      i += 1
     } else if (value === '--delay-fault-seconds' && next) {
       options.delayFaultSeconds = Number(next)
       i += 1
