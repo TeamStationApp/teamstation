@@ -33,6 +33,8 @@ public enum ControlCommand: Sendable, Equatable {
   case forgetCamera(index: Int)
   /// Searches the network now, without waiting for the next periodic sweep.
   case searchCameras
+  /// Opens or closes the Cameraman control screen on a 0-based source.
+  case cameraControl(source: Int, open: Bool)
   case advanceClock(seconds: TimeInterval)
   case probeEncoders(maximum: Int, framesPerSession: Int, width: Int, height: Int)
   case probeThroughput(sessions: Int, seconds: Double, height: Int, hevc: Bool)
@@ -144,6 +146,9 @@ public enum ControlChannel {
       return .forgetCamera(index: index - 1)
     case "search-cameras", "searchcameras":
       return .searchCameras
+    case "camera-control", "cameracontrol":
+      guard let source = Self.slot(query) else { return nil }
+      return .cameraControl(source: source - 1, open: LaunchConfiguration.boolean(query["open"]) ?? true)
     case "advance-clock", "advanceclock":
       guard let seconds = query["seconds"].flatMap({ Double($0) }) else { return nil }
       return .advanceClock(seconds: seconds)
