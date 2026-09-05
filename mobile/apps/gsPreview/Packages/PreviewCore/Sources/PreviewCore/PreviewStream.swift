@@ -2,8 +2,12 @@ import CoreGraphics
 import Foundation
 import DirectorSources
 
-/// NearStream's low-res RTSP path. `/live/substream` 404s; this is the one that
-/// can PLAY next to Director's `/live/mainstream`.
+/// Which RTSP path to pull from each kind of camera.
+///
+/// NearStream has a low-res `/live/substream2` that can PLAY beside Director's `/live/mainstream`
+/// (`/live/substream` 404s). GS Cameraman has one stream and serves any number of clients from one
+/// encode, so Preview pulls its advertised path — mainstream — at the cost of the phone's upload
+/// bandwidth and nothing else.
 public enum PreviewStream: Sendable {
   public static let nearStreamPath = "/live/substream2"
   public static let userAgent = "GS Preview/1.0"
@@ -12,16 +16,29 @@ public enum PreviewStream: Sendable {
     CameraEndpoint(host: host, port: port, path: nearStreamPath)
   }
 
-  /// TXT `path` defaults to mainstream. Preview never uses that.
+  /// NearStream: `substream2`, whatever TXT `path` says. Cameraman: the path it advertised.
   public static func endpoint(from advertisement: CameraAdvertisement) -> CameraEndpoint {
-    CameraEndpoint(host: advertisement.host, port: advertisement.port, path: nearStreamPath)
+    if PreviewCameraRules.isCameraman(advertisement) {
+      return advertisement.endpoint
+    }
+    return CameraEndpoint(host: advertisement.host, port: advertisement.port, path: nearStreamPath)
   }
 }
 
 public enum PreviewCameraRules: Sendable {
-  /// VM33 `modelname` (e.g. `VM33_00001`). GS Cameraman has no secondary path.
+  /// VM33 `modelname` (e.g. `VM33_00001`).
   public static func isNearStream(_ advertisement: CameraAdvertisement) -> Bool {
     advertisement.modelName?.hasPrefix("VM33") == true
+  }
+
+  /// GS Cameraman puts its UUID in TXT `uuid`.
+  public static func isCameraman(_ advertisement: CameraAdvertisement) -> Bool {
+    advertisement.uuid != nil
+  }
+
+  /// Everything Preview lists.
+  public static func isShown(_ advertisement: CameraAdvertisement) -> Bool {
+    isNearStream(advertisement) || isCameraman(advertisement)
   }
 
   /// Same identity Director uses: sticker serial (`modelname`), else the media host.

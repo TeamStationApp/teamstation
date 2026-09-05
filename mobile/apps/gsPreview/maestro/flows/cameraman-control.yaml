@@ -1,0 +1,73 @@
+# A Cameraman in the list, portrait: the three-dot button opens the phone's own screen, Settings
+# is one column, Done and close return to the list.
+#
+# Runs against the Node fake phone on the Mac's LAN, with the real GS Cameraman closed (it shares
+# the iPhone):
+#   node ../gsDirector/scripts/fakeRtspCameras.js --cameraman "Phone 1" --only-cameraman
+# -syntheticCameras cannot carry control, so this flow does not use it.
+appId: co.gamestation.preview
+---
+- launchApp:
+    clearState: true
+    arguments:
+      uiTest: true
+- runFlow: shared/allow-local-network.yaml
+- extendedWaitUntil:
+    visible:
+      id: preview-tile-name-1
+      text: "Phone 1"
+    timeout: 60000
+- extendedWaitUntil:
+    visible:
+      id: preview-tile-menu-1
+    timeout: 15000
+- takeScreenshot: preview-cameraman-tile
+
+- tapOn:
+    id: preview-tile-menu-1
+- extendedWaitUntil:
+    visible:
+      id: camera-screen
+    timeout: 10000
+- extendedWaitUntil:
+    visible:
+      id: zoom-preset-3x
+    timeout: 10000
+- assertVisible:
+    id: camera-thermal
+- assertVisible:
+    id: camera-battery
+- assertVisible:
+    id: camera-close
+- takeScreenshot: preview-cameraman-screen
+
+- tapOn:
+    id: zoom-preset-3x
+- waitForAnimationToEnd:
+    timeout: 2000
+- runScript:
+    file: ../../../gsDirector/scripts/assertCameraControl.js
+    env:
+      EXPECT_ZOOM: '3'
+
+# Portrait Settings: one column, so the codec row is visible without scrolling past Video.
+- tapOn:
+    id: settings-button
+- extendedWaitUntil:
+    visible:
+      id: settings-codec
+    timeout: 8000
+- assertVisible:
+    id: settings-layout-portrait
+- takeScreenshot: preview-cameraman-settings-portrait
+- tapOn:
+    id: settings-done
+- waitForAnimationToEnd:
+    timeout: 3000
+
+- tapOn:
+    id: camera-close
+- extendedWaitUntil:
+    visible:
+      id: preview-tile-menu-1
+    timeout: 8000
