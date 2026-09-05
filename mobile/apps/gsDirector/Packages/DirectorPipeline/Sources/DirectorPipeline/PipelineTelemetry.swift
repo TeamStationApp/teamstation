@@ -165,6 +165,15 @@ public struct TileTelemetry: Sendable, Codable, Equatable {
   /// Audio thrown away because the writer stopped consuming for long enough to overrun the queue.
   /// Any non-zero value means the archive is already compromised.
   public var audioBuffersDiscarded: UInt64 = 0
+  /// Where each archive audio buffer went. After a two-minute reconnect the segment opened on the
+  /// resume keyframe had video and no audio track at all, and every exit from the audio path was
+  /// silent, so nothing could say which one swallowed it.
+  public var audioReceived: UInt64 = 0
+  public var audioRejectedNotStarted: UInt64 = 0
+  public var audioRejectedPlacement: UInt64 = 0
+  public var audioAppended: UInt64 = 0
+  public var audioDrainNotReady: UInt64 = 0
+  public var audioAppendFailed: UInt64 = 0
   /// Why this camera's archive stopped, if it did. Kept per tile so one camera's failure is not
   /// overwritten by another's.
   public var lastError: String?

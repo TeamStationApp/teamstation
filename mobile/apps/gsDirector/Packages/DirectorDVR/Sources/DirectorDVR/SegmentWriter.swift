@@ -77,11 +77,11 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
   public typealias FormatChangeHandler = @Sendable (SourceID) -> Void
 
   /// Roughly two seconds of audio at the buffer sizes cameras send.
-  /// Above the silent-fill cap (4 000 packets, ~85 s) with room for live audio queued behind it.
+  /// Above the silent-fill cap (30 000 packets, ~640 s) with room for live audio queued behind it.
   /// At 200 a fill for a 38 s outage — 1 775 packets written in one burst — overflowed this and
   /// 1 575 of them were discarded, so the audio track ended 33 s short of the video sample it was
   /// written to cover and finalisation hung on the very divergence the fill exists to prevent.
-  private static let maximumPendingAudio = 5_000
+  private static let maximumPendingAudio = 32_000
   /// A gap longer than this is a clock glitch rather than lost frames, and giving one sample a
   /// duration that long would stretch the whole timeline.
   private static let maximumFrameDuration: Double = 2
@@ -510,7 +510,12 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     // A long gap is capped rather than abandoned. Returning nothing above a threshold left the
     // audio track short exactly when the gap was largest, which is the case that hangs
     // finalisation — the opposite of what this exists to do.
-    let maximum = 4_000
+    // Ten and a half minutes at 48 kHz. The previous cap of 4 000 packets (85 s) was crossed by
+    // the first real outage Paul recorded — a camera gone for two minutes — and everything past
+    // it was clamped out of the recording, so the file ran 35 s short and the camera appeared
+    // never to have come back. A frame here is a shared `Data` plus a timestamp; 30 000 of them
+    // is a few megabytes, and a longer gap is still clamped to match rather than left to hang.
+    let maximum = 30_000
     if count > maximum {
       count = maximum
       silenceResidualSeconds = 0
@@ -885,6 +890,7 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
   }
 
   private func write(audio frame: CompressedAudioFrame) {
+    telemetry.mutateTile(sourceIndex) { $0.audioReceived &+= 1 }
     lock.lock()
     guard !finishing, settings.includesAudio, stopError == nil else {
       lock.unlock()
@@ -908,6 +914,7 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     // the whole recording — and a segmented writer with one empty track never rotates a segment.
     guard started, let format = audioFormat, audioInput != nil, lastVideoTime.isNumeric else {
       lock.unlock()
+      telemetry.mutateTile(sourceIndex) { $0.audioRejectedNotStarted &+= 1 }
       return
     }
 
@@ -918,7 +925,10 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     )
     lock.unlock()
 
-    guard let placement, placement.start.isNumeric, placement.start >= .zero else { return }
+    guard let placement, placement.start.isNumeric, placement.start >= .zero else {
+      telemetry.mutateTile(sourceIndex) { $0.audioRejectedPlacement &+= 1 }
+      return
+    }
     report(placement)
 
     guard let sampleBuffer = CompressedSample.audioSampleBuffer(
@@ -1006,17 +1016,25 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
         audioInput.isReadyForMoreMediaData,
         !pendingAudio.isEmpty
       else {
+        let starved = !finishing && !pendingAudio.isEmpty && self.audioInput != nil
         lock.unlock()
+        if starved { telemetry.mutateTile(sourceIndex) { $0.audioDrainNotReady &+= 1 } }
         return
       }
       let buffer = pendingAudio.removeFirst()
       lock.unlock()
 
-      audioInput.append(buffer)
-      written = CMTimeAdd(
-        buffer.presentationTimeStamp,
-        CMSampleBufferGetDuration(buffer)
-      ).seconds
+      // The result was discarded here. A refused append loses the buffer while `written` still
+      // advances, so the telemetry reported audio that never reached the file.
+      if audioInput.append(buffer) {
+        telemetry.mutateTile(sourceIndex) { $0.audioAppended &+= 1 }
+        written = CMTimeAdd(
+          buffer.presentationTimeStamp,
+          CMSampleBufferGetDuration(buffer)
+        ).seconds
+      } else {
+        telemetry.mutateTile(sourceIndex) { $0.audioAppendFailed &+= 1 }
+      }
       drained += 1
     }
   }
