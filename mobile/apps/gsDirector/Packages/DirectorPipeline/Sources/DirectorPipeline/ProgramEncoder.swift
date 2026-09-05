@@ -314,11 +314,19 @@ public final class ProgramEncoder: @unchecked Sendable {
     // false. That was the crash on stop after a camera reconnected: signal 6, no crash report.
     // Holding the lock across the append means `takeWriterForFinish` waits for it to land.
     lock.lock()
-    guard isRunning, !poisonFinishing, let liveAdaptor = self.adaptor, let liveInput = self.videoInput,
-      liveInput.isReadyForMoreMediaData
+    guard isRunning, !poisonFinishing, let liveWriter = self.writer, let liveAdaptor = self.adaptor,
+      let liveInput = self.videoInput, liveInput.isReadyForMoreMediaData
     else {
       lock.unlock()
       return
+    }
+    // A continuation writer opened by recovery comes up running with no session, and nothing
+    // resets `baseTime`, so the session start above never fires for it. Appending to it throws
+    // "Must start a session" — the second stop crash after a two-minute reconnect. Start it here,
+    // under the lock, the way `fillHold` does.
+    if !sessionStarted {
+      liveWriter.startSession(atSourceTime: .zero)
+      sessionStarted = true
     }
     if liveAdaptor.append(encodable, withPresentationTime: time) {
       writtenFrames += 1
@@ -733,10 +741,15 @@ public final class ProgramEncoder: @unchecked Sendable {
       usleep(5_000)
     }
     lock.lock()
-    guard isRunning, !poisonFinishing, let adaptor, let videoInput, videoInput.isReadyForMoreMediaData
+    guard isRunning, !poisonFinishing, let writer, let adaptor, let videoInput,
+      videoInput.isReadyForMoreMediaData
     else {
       lock.unlock()
       return
+    }
+    if !sessionStarted {
+      writer.startSession(atSourceTime: .zero)
+      sessionStarted = true
     }
     lastTime = time
     // Appended under the lock for the same reason as the live path: released between the check
