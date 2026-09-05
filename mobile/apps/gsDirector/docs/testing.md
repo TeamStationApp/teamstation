@@ -296,6 +296,7 @@ clear it.
 | `smoke` | Toolchain and UI automation work at all |
 | `rtsp-three-cameras` | All three real cameras found by search, decoded, live, nothing lost |
 | `rtsp-camera-naming` | A named camera is recognised again by unique id at the next launch |
+| `cameraman-control` | A Cameraman tile's three-dot button opens the phone's own screen; zoom, flip and Settings reach the phone (simulator, against `fakeRtspCameras.js --cameraman "Phone 1" --only-cameraman`) |
 | `rtsp-camera-rebind` | A wrong auto-match can be corrected from the cache in one tap |
 | `operator-*` | Product vectors in [operator-test-vectors.md](operator-test-vectors.md) |
 | `record-and-stop` | Recording starts, segments accumulate, the stop *completes*, program file exists |

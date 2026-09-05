@@ -32,6 +32,13 @@ public struct SourceSummary: Sendable, Codable, Equatable {
   public var inputGain: Double
   public var isPresent: Bool
   public var sourceIndex: Int?
+  /// The address this row is bound to, and the address the Bonjour record was resolved to. They
+  /// are the same for every camera that works; when they differ, that is why a Cameraman shows
+  /// no controls, and guessing at it from the outside is impossible.
+  public var endpointHost: String?
+  public var advertisedHost: String?
+  /// Bonjour TXT `control` for this row's camera, empty for a NearStream or an older Cameraman.
+  public var controlVersion: String?
 
   public init(
     index: Int,
@@ -40,7 +47,10 @@ public struct SourceSummary: Sendable, Codable, Equatable {
     usesAudio: Bool,
     inputGain: Double,
     isPresent: Bool,
-    sourceIndex: Int?
+    sourceIndex: Int?,
+    endpointHost: String? = nil,
+    advertisedHost: String? = nil,
+    controlVersion: String? = nil
   ) {
     self.index = index
     self.name = name
@@ -49,6 +59,9 @@ public struct SourceSummary: Sendable, Codable, Equatable {
     self.inputGain = inputGain
     self.isPresent = isPresent
     self.sourceIndex = sourceIndex
+    self.endpointHost = endpointHost
+    self.advertisedHost = advertisedHost
+    self.controlVersion = controlVersion
   }
 }
 
@@ -83,6 +96,14 @@ public struct TileTelemetry: Sendable, Codable, Equatable {
   /// Frames that actually reached this tile's display layer. `framesPerSecond` counts arrivals
   /// even while the tile is paused on a still, so it cannot tell a frozen preview from a live one.
   public var displayedFrames: UInt64 = 0
+  /// The camera on this tile is a GS Cameraman that answers the parameter verbs, so the tile shows
+  /// the three-dot button and the phone's own thermal and battery pills.
+  public var hasCameraControl = false
+  /// The phone's `system.thermal` (`nominal` / `fair` / `serious` / `critical`), polled slowly.
+  public var cameraThermal: String?
+  /// The phone's `system.battery`, percent. Nil until the first poll, or when the phone cannot read it.
+  public var cameraBatteryPercent: Int?
+  public var cameraBatteryCharging = false
   public var displayedFramesPerSecond: Double = 0
   /// Why `enqueue` returned false. Counters, not per-frame logs — a frozen tile with `out=0`
   /// is diagnosed from which of these climbed while `framesPerSecond` stayed healthy.
@@ -277,6 +298,26 @@ public struct ConverterTelemetry: Sendable, Codable, Equatable {
   public init() {}
 }
 
+/// What the open Cameraman control screen is showing, for dump-state.
+public struct CameraControlTelemetry: Sendable, Codable, Equatable {
+  public var open = false
+  public var sourceIndex: Int?
+  public var responding = false
+  public var zoom: Double = 0
+  public var position = ""
+  public var thermal = ""
+  public var batteryPercent: Int?
+  /// What the phone says its encoder is set to, so a Settings change can be asserted on the
+  /// camera's own answer rather than on the picker still showing what was tapped.
+  public var codec = ""
+  public var bitrateKbps = 0
+  public var lastError = ""
+  public var polls = 0
+  public var writes = 0
+
+  public init() {}
+}
+
 /// Everything the HUD, the accessibility values and the JSON dump read. One snapshot type, one
 /// director — a Maestro assertion therefore observes production state rather than a test-only
 /// shadow copy.
@@ -344,6 +385,8 @@ public struct TelemetrySnapshot: Sendable, Codable, Equatable {
   public var sources: [SourceSummary] = []
   /// Port and reachable addresses of the UI-test control server, empty when it is not running.
   public var controlServer = ""
+  /// The Cameraman control screen, when one is open.
+  public var cameraControl = CameraControlTelemetry()
   /// The message shown to the operator. Mirrored here so automation can read the same sentence
   /// the user sees rather than an approximation of it.
   public var statusMessage = ""

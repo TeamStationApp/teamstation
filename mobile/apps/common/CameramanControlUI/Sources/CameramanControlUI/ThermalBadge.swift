@@ -1,84 +1,46 @@
+import CameramanCore
 import SwiftUI
 
-/// Overlay thermal pill. Maps `ProcessInfo.ThermalState` to the operator-facing word, hue, and
-/// motion — not dump-state's `nominal` / `fair` / `serious` / `critical` names. Copied from
-/// GS Director so both apps show the same Cool / Fair / Warm / Hot chrome.
-public enum ThermalBadgeLevel: String, CaseIterable, Sendable {
-  case cool
-  case fair
-  case warm
-  case hot
-
-  public enum Shimmer: Sendable, Equatable {
-    case pulse
-    case up
-  }
-
-  public init(process: ProcessInfo.ThermalState) {
-    switch process {
-    case .nominal: self = .cool
-    case .fair: self = .fair
-    case .serious: self = .warm
-    case .critical: self = .hot
-    @unknown default: self = .cool
-    }
-  }
-
-  public init(telemetryName: String) {
-    switch telemetryName {
-    case "fair": self = .fair
-    case "serious": self = .warm
-    case "critical": self = .hot
-    default: self = .cool
-    }
-  }
-
-  public var processState: ProcessInfo.ThermalState {
-    switch self {
-    case .cool: .nominal
-    case .fair: .fair
-    case .warm: .serious
-    case .hot: .critical
-    }
-  }
-
-  /// RECORD/STREAM-style caps. Accessibility value stays the lowercase `rawValue`.
-  public var label: String { rawValue.uppercased() }
-
-  public var showsFlames: Bool { self == .hot }
-
-  public var shimmer: Shimmer {
-    switch self {
-    case .cool, .fair, .warm: .pulse
-    case .hot: .up
-    }
-  }
-
-  /// Seconds for one cycle: fill pulse, or enter-to-exit travel for hot.
-  public var cycleSeconds: Double {
-    switch self {
-    case .cool, .fair: 3
-    case .warm: 2
-    case .hot: 1
-    }
-  }
-
-  public var hue: Color {
-    switch self {
-    case .cool: Color(red: 0.18, green: 0.48, blue: 0.95)
-    case .fair: Color(red: 0.98, green: 0.84, blue: 0.18)
-    case .warm: Color(red: 0.98, green: 0.52, blue: 0.12)
-    case .hot: Color(red: 0.95, green: 0.24, blue: 0.28)
-    }
-  }
+extension ThermalBadgeLevel {
+  /// The pill colour. `Color` is SwiftUI, so the pure enum carries components and this makes them
+  /// drawable.
+  public var color: Color { Color(hue) }
 }
 
-/// Untappable chrome pill. Hits pass through so a zoom drag still reaches the preview.
-struct ThermalBadge: View {
-  let level: ThermalBadgeLevel
-  var animate: Bool
+/// Untappable chrome pill showing Cool / Fair / Warm / Hot with the same motion in every app.
+///
+/// Cameraman lets hits pass through so a zoom drag still reaches the preview underneath; Director
+/// swallows them so a tap on the header pill does not fall through to Recordings. The identifier
+/// differs per host (`camera-thermal` on the operating screen, `header-thermal` in Director's
+/// toolbar) so each app's existing flows keep finding it. `.compact` is the tile size in
+/// Director, the footprint of its `OUT` badge, for a Cameraman source's own thermal state.
+public struct ThermalBadge: View {
+  public enum Style: Sendable {
+    case pill
+    case compact
+  }
 
-  var body: some View {
+  private let level: ThermalBadgeLevel
+  private let animate: Bool
+  private let identifier: String
+  private let passesTouches: Bool
+  private let style: Style
+
+  public init(
+    level: ThermalBadgeLevel,
+    animate: Bool,
+    identifier: String = "camera-thermal",
+    passesTouches: Bool = true,
+    style: Style = .pill
+  ) {
+    self.level = level
+    self.animate = animate
+    self.identifier = identifier
+    self.passesTouches = passesTouches
+    self.style = style
+  }
+
+  public var body: some View {
     Group {
       if animate {
         TimelineView(.animation(minimumInterval: 1 / 30, paused: false)) { context in
@@ -89,11 +51,11 @@ struct ThermalBadge: View {
       }
     }
     .accessibilityElement(children: .ignore)
-    .accessibilityIdentifier("camera-thermal")
+    .accessibilityIdentifier(identifier)
     .accessibilityLabel("Thermal")
     .accessibilityValue(level.rawValue)
     .accessibilityAddTraits(.isStaticText)
-    .allowsHitTesting(false)
+    .allowsHitTesting(!passesTouches)
   }
 
   private func phase(at date: Date) -> Double {
@@ -109,16 +71,22 @@ struct ThermalBadge: View {
         Text("🔥")
       }
       Text(level.label)
-        .font(.system(size: 13, weight: .heavy, design: .rounded))
-        .tracking(1)
+        .font(.system(size: style == .pill ? 13 : 10, weight: .heavy, design: .rounded))
+        .tracking(style == .pill ? 1 : 0)
       if level.showsFlames {
         Text("🔥")
       }
     }
-    .padding(.horizontal, 16)
-    .padding(.vertical, 8)
+    .font(.system(size: style == .pill ? 13 : 10))
+    .padding(.horizontal, style == .pill ? 16 : 5)
+    .padding(.vertical, style == .pill ? 8 : 2)
     .background {
-      ThermalShimmerBackground(color: level.hue, shimmer: level.shimmer, phase: phase)
+      ThermalShimmerBackground(
+        color: level.color,
+        shimmer: level.shimmer,
+        phase: phase,
+        cornerRadius: style == .pill ? 8 : 3
+      )
     }
     .foregroundStyle(Color.white)
   }
@@ -130,6 +98,7 @@ private struct ThermalShimmerBackground: View {
   let color: Color
   let shimmer: ThermalBadgeLevel.Shimmer
   let phase: Double
+  var cornerRadius: CGFloat = 8
 
   private static let fillOpacity = 0.18
   private static let bandOpacity = 0.38
@@ -138,7 +107,7 @@ private struct ThermalShimmerBackground: View {
   private static let fadePillFraction = 0.20
 
   var body: some View {
-    RoundedRectangle(cornerRadius: 8)
+    RoundedRectangle(cornerRadius: cornerRadius)
       .fill(color.opacity(fillOpacity))
       .overlay {
         if shimmer != .pulse {
@@ -149,7 +118,7 @@ private struct ThermalShimmerBackground: View {
               .frame(width: geo.size.width)
               .offset(y: bandTop(pillHeight: pillHeight, bandHeight: bandHeight))
           }
-          .clipShape(RoundedRectangle(cornerRadius: 8))
+          .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
         }
       }
   }

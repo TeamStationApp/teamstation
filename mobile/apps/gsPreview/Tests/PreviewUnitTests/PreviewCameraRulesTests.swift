@@ -14,6 +14,32 @@ struct PreviewStreamTests {
     #expect(endpoint.port == 554)
   }
 
+  @Test("A Cameraman is listed and pulled at the path it advertised")
+  func cameramanAtMainstream() {
+    let phone = CameraAdvertisement(
+      host: "192.168.7.219",
+      advertisedName: "Hand held",
+      port: 8554,
+      path: "/live/mainstream",
+      uuid: "c94df9ca-d7c2-468f-8529-97d01fba14e7",
+      controlVersion: "params/1"
+    )
+    #expect(PreviewCameraRules.isCameraman(phone))
+    #expect(!PreviewCameraRules.isNearStream(phone))
+    #expect(PreviewCameraRules.isShown(phone))
+    let endpoint = PreviewStream.endpoint(from: phone)
+    #expect(endpoint.path == "/live/mainstream")
+    #expect(endpoint.port == 8554)
+    #expect(PreviewCameraRules.tileID(for: phone) == "uuid:c94df9ca-d7c2-468f-8529-97d01fba14e7")
+
+    let box = CameraAdvertisement(host: "192.168.7.244", advertisedName: "00001 3rd", modelName: "VM33_00001")
+    #expect(PreviewCameraRules.isShown(box))
+    #expect(PreviewStream.endpoint(from: box).path == "/live/substream2", "NearStream still uses substream2")
+
+    let unknown = CameraAdvertisement(host: "192.168.7.9", advertisedName: "mystery")
+    #expect(!PreviewCameraRules.isShown(unknown))
+  }
+
   @Test("Advertised TXT path is ignored")
   func ignoresAdvertisedMainstream() {
     let advertisement = CameraAdvertisement(

@@ -1,4 +1,6 @@
 import AVFoundation
+import CameramanControlUI
+import CameramanCore
 import DirectorCore
 import DirectorPipeline
 import SwiftUI
@@ -132,6 +134,10 @@ public struct TileView: View {
           }
           nameplate
           Spacer()
+          if telemetry.hasCameraControl {
+            cameraStatusPills
+            cameraMenuButton
+          }
         }
         Spacer()
           .allowsHitTesting(false)
@@ -265,6 +271,48 @@ public struct TileView: View {
     .padding(.horizontal, 8)
     .padding(.vertical, 5)
     .background(.black.opacity(0.45), in: Capsule())
+  }
+
+  /// The phone's own thermal and battery, the size of the OUT badge, in the corner where the phone
+  /// draws them. Untappable; a tap here still cuts the tile to programme.
+  @ViewBuilder
+  private var cameraStatusPills: some View {
+    if let thermal = telemetry.cameraThermal {
+      ThermalBadge(
+        level: ThermalBadgeLevel(telemetryName: thermal),
+        animate: false,
+        identifier: "source-\(sourceIndex + 1)-camera-thermal",
+        passesTouches: false,
+        style: .compact
+      )
+    }
+    if let percent = telemetry.cameraBatteryPercent {
+      BatteryBadge(
+        status: BatteryStatus(percent: percent, isCharging: telemetry.cameraBatteryCharging),
+        style: .compact,
+        identifier: "source-\(sourceIndex + 1)-camera-battery"
+      )
+    }
+  }
+
+  /// Three vertical dots. Swallows its tap so it neither cuts the tile to programme nor starts
+  /// a scrub.
+  private var cameraMenuButton: some View {
+    Image(systemName: "ellipsis")
+      .rotationEffect(.degrees(90))
+      .font(.system(size: 16, weight: .bold))
+      .foregroundStyle(.white)
+      .frame(width: 36, height: 36)
+      .background(.black.opacity(0.45), in: Capsule())
+      .contentShape(Capsule())
+      .highPriorityGesture(
+        TapGesture().onEnded {
+          environment.openCameraControl(sourceIndex: sourceIndex)
+        }
+      )
+      .accessibilityAddTraits(.isButton)
+      .accessibilityIdentifier("source-\(sourceIndex + 1)-camera-menu")
+      .accessibilityLabel("Camera controls")
   }
 
   private var offsetBadge: some View {

@@ -7,6 +7,8 @@ public final class PreviewCamera: Identifiable {
   public let id: String
   public var advertisedName: String
   public var endpoint: CameraEndpoint
+  /// A GS Cameraman advertising `control=params/1`: the tile gets the three-dot button.
+  public var hasCameraControl = false
   public let renderer = PreviewRenderer()
 
   var source: (any FrameSource)?
