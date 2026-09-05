@@ -342,13 +342,22 @@ public final class ArchiveFiller: @unchecked Sendable {
     var converter: AudioConverterRef?
     guard AudioConverterNew(&input, &output, &converter) == noErr, let converter else { return nil }
     audioConverter = converter
-    var bitrate: UInt32 = 64_000
-    AudioConverterSetProperty(converter, kAudioConverterEncodeBitRate, 4, &bitrate)
+    // Deliberately no forced bit rate. Pinning the encoder to 64 kbps CBR makes it fill every
+    // frame to size whatever the input, so a frame of zeros came out 180 bytes of padding noise
+    // that decoded to a click at -34.6 dB. Left to choose, the encoder spends almost nothing on
+    // silence — the camera's own muted frames are 4 bytes — and that decodes to true silence.
 
-    var zeros = [Int16](repeating: 0, count: 1024 * audioChannels)
-    var packet = [UInt8](repeating: 0, count: 2048)
-    var ioPackets: UInt32 = 1
-    var packetDesc = AudioStreamPacketDescription()
+    // An AAC encoder's first packets carry its priming rather than steady state, so the packet
+    // taken from a freshly created converter is not silence even when every input sample is zero.
+    // Ask for a run of packets over zeros and keep the last, which is the one that repeats cleanly.
+    let rounds = 8
+    var zeros = [Int16](repeating: 0, count: 1024 * audioChannels * rounds)
+    var packet = [UInt8](repeating: 0, count: 2048 * rounds)
+    var descriptions = [AudioStreamPacketDescription](
+      repeating: AudioStreamPacketDescription(),
+      count: rounds
+    )
+    var ioPackets = UInt32(rounds)
     var buffer = AudioBufferList(
       mNumberBuffers: 1,
       mBuffers: AudioBuffer(
@@ -357,42 +366,45 @@ public final class ArchiveFiller: @unchecked Sendable {
         mData: &packet
       )
     )
-    var inputCount: UInt32 = 1024
+    let inputCount = UInt32(1024 * rounds)
     let status = zeros.withUnsafeMutableBufferPointer { pointer in
       var userData = SilenceInput(
         samples: pointer.baseAddress,
         remaining: inputCount,
         channels: audioChannels
       )
-      return AudioConverterFillComplexBuffer(
-        converter,
-        { _, ioNumberDataPackets, ioData, _, userData in
-          guard let userData else { return 1 }
-          let input = userData.assumingMemoryBound(to: SilenceInput.self)
-          let packets = min(ioNumberDataPackets.pointee, input.pointee.remaining)
-          ioNumberDataPackets.pointee = packets
-          ioData.pointee.mNumberBuffers = 1
-          // Described from the real channel count. Hardcoding stereo made the converter read twice
-          // the mono buffer's length — 2 KB past the end of `zeros` — and encode whatever followed
-          // it, so the "silent" packet carried audible rubbish at a fixed -24.9 dB.
-          let channels = UInt32(max(1, input.pointee.channels))
-          ioData.pointee.mBuffers.mNumberChannels = channels
-          ioData.pointee.mBuffers.mDataByteSize = packets * 2 * channels
-          ioData.pointee.mBuffers.mData = UnsafeMutableRawPointer(mutating: input.pointee.samples)
-          input.pointee.remaining = 0
-          return noErr
-        },
-        &userData,
-        &ioPackets,
-        &buffer,
-        &packetDesc
-      )
+      return descriptions.withUnsafeMutableBufferPointer { descs in
+        AudioConverterFillComplexBuffer(
+          converter,
+          { _, ioNumberDataPackets, ioData, _, userData in
+            guard let userData else { return 1 }
+            let input = userData.assumingMemoryBound(to: SilenceInput.self)
+            let packets = min(ioNumberDataPackets.pointee, input.pointee.remaining)
+            ioNumberDataPackets.pointee = packets
+            ioData.pointee.mNumberBuffers = 1
+            // Described from the real channel count. Hardcoding stereo made the converter read
+            // twice the mono buffer's length — 2 KB past the end of `zeros` — and encode whatever
+            // followed it, so the "silent" packet carried audible rubbish at a fixed -24.9 dB.
+            let channels = UInt32(max(1, input.pointee.channels))
+            ioData.pointee.mBuffers.mNumberChannels = channels
+            ioData.pointee.mBuffers.mDataByteSize = packets * 2 * channels
+            ioData.pointee.mBuffers.mData = UnsafeMutableRawPointer(mutating: input.pointee.samples)
+            input.pointee.remaining -= packets
+            return noErr
+          },
+          &userData,
+          &ioPackets,
+          &buffer,
+          descs.baseAddress
+        )
+      }
     }
     guard status == noErr, ioPackets > 0 else { return nil }
-    let size = packetDesc.mDataByteSize > 0
-      ? Int(packetDesc.mDataByteSize)
-      : Int(buffer.mBuffers.mDataByteSize)
-    return Data(packet.prefix(size))
+    let last = descriptions[Int(ioPackets) - 1]
+    let offset = Int(last.mStartOffset)
+    let size = Int(last.mDataByteSize)
+    guard size > 0, offset + size <= packet.count else { return nil }
+    return Data(packet[offset ..< (offset + size)])
   }
 
   private struct SilenceInput {
