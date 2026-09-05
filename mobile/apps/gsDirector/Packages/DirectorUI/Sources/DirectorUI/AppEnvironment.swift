@@ -3175,7 +3175,20 @@ public final class AppEnvironment {
         tile.playoutLateFrames = receive.playoutLateFrames
         tile.playoutDepth = receive.playoutDepth
         tile.outOfOrderFrames = receive.outOfOrderFrames
+        tile.senderReports = receive.senderReports
+        tile.senderReportIntervalSeconds = receive.senderReportIntervalSeconds
+        tile.senderReportAgeSeconds = receive.senderReportAgeSeconds
+        tile.senderReportStreams = receive.senderReportStreams
+        tile.mediaTicksPerSecond = receive.mediaTicksPerSecond
+        tile.mediaClockSpanSeconds = receive.mediaClockSpanSeconds
+        tile.cameraClockOffsetSeconds = receive.cameraClockOffsetSeconds
+        tile.cameraClockOffsetFilteredSeconds = receive.cameraClockOffsetFilteredSeconds
+        tile.cameraClockOffsetSamples = receive.cameraClockOffsetSamples
+        tile.correctedCaptureTime = receive.correctedCaptureTime
+        tile.correctedCaptureAgeMilliseconds = receive.correctedCaptureAgeMilliseconds
       }
+
+
       // Remembered against the camera, not the tile, so a camera that needs an unusually large
       // buffer starts there next time instead of stuttering its way back to it.
       if receive.playoutMilliseconds > 0 {
@@ -3197,6 +3210,33 @@ public final class AppEnvironment {
       }
     }
     if !isRecording { announcedCameraStatus.removeAll() }
+
+    // The acceptance number, computed once every camera's tile has been written this pass.
+    //
+    // Individual per-camera delays can all look dreadful while the output is perfectly aligned —
+    // that is the design working — so this is what an alarm belongs on. Cameras still inside their
+    // sender-report grace window carry no corrected time and are left out rather than contributing
+    // a zero, which would read as a spread of the whole epoch.
+    telemetry.mutate {
+      // Within a few seconds of now, not merely positive. A camera whose anchor is stale or not yet
+      // established produces a capture time that is arbitrarily wrong rather than absent, and one
+      // of those admitted into the set reports a spread of hours — which is worse than reporting
+      // nothing, because it looks like a measurement.
+      let now = Date().timeIntervalSince1970
+      let corrected = $0.tiles.filter {
+        $0.state == .live && abs(now - $0.correctedCaptureTime) < 10
+      }
+      guard corrected.count >= 2 else {
+        $0.captureSpreadMilliseconds = 0
+        $0.captureSpreadWorstCamera = ""
+        return
+      }
+      let times = corrected.map { $0.correctedCaptureTime }
+      $0.captureSpreadMilliseconds = (((times.max() ?? 0) - (times.min() ?? 0)) * 1000).rounded()
+      $0.captureSpreadWorstCamera = corrected
+        .min(by: { $0.correctedCaptureTime < $1.correctedCaptureTime })?
+        .displayName ?? ""
+    }
     telemetry.recordLiveDecodeSessions(liveDecodeSessions)
     let next = telemetry.snapshot
     let replaying = showsReplayOffset(snapshot) || showsReplayOffset(next)
@@ -3257,6 +3297,12 @@ public final class AppEnvironment {
       } else {
         startDiscovery()
       }
+    case let .setSlowMotionRate(percent):
+      // Session only. Writing this through `update(config:)` saved a test's rate over whatever the
+      // operator had chosen, which is exactly what the launch-configuration comment warns against:
+      // a flow should neither inherit nor leave behind a preference.
+      config.replaySlowMotionRate = AppConfig.clampedReplaySlowMotionRate(percent / 100)
+
     case let .scrub(source, offset):
       beginScrub(sourceIndex: source)
       updateScrub(sourceIndex: source, offsetSeconds: offset)

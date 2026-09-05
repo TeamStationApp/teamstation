@@ -17,6 +17,9 @@ public enum ControlCommand: Sendable, Equatable {
   case setAudio(on: Bool)
   case setLenses(disabled: [String])
   case setVideo(on: Bool)
+  /// Hold outgoing frames back to imitate a congested link. All three in milliseconds; all zero
+  /// restores immediate delivery.
+  case setSendDelay(milliseconds: Double, jitter: Double, burst: Double)
   case forceKeyframe
   case clients
   case reset
@@ -87,6 +90,13 @@ public enum ControlChannel {
     case "set-video":
       guard let on = query["on"].map(isTruthy) else { return nil }
       return .setVideo(on: on)
+
+    case "set-send-delay", "setsenddelay":
+      // Every field optional so a flow can set only what it is exercising; omitted means zero.
+      let ms = query["ms"].flatMap(Double.init) ?? 0
+      let jitter = query["jitter"].flatMap(Double.init) ?? 0
+      let burst = query["burst"].flatMap(Double.init) ?? 0
+      return .setSendDelay(milliseconds: ms, jitter: jitter, burst: burst)
 
     default:
       return nil

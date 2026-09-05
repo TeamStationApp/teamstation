@@ -80,6 +80,14 @@ public struct CompressedFrame: @unchecked Sendable {
   public let presentationTime: CMTime
   public let decodeTime: CMTime
   public let wallClock: WallClock
+  /// When this picture was taken, on the Director's clock — as distinct from `wallClock`, which is
+  /// when it arrived. Nil until the camera's sender reports have established an anchor.
+  ///
+  /// A segment's start is recorded from this. Taking it from arrival instead is why two cameras
+  /// rewound to the same moment land in different places: each segment's start carries that
+  /// camera's delivery delay and its own keyframe phase, so segment N spans a different piece of
+  /// wall clock on every camera.
+  public let captureWallClock: WallClock?
   public let frameID: UInt64
 
   public init(
@@ -91,6 +99,7 @@ public struct CompressedFrame: @unchecked Sendable {
     presentationTime: CMTime,
     decodeTime: CMTime,
     wallClock: WallClock,
+    captureWallClock: WallClock? = nil,
     frameID: UInt64
   ) {
     self.sourceID = sourceID
@@ -101,6 +110,7 @@ public struct CompressedFrame: @unchecked Sendable {
     self.presentationTime = presentationTime
     self.decodeTime = decodeTime
     self.wallClock = wallClock
+    self.captureWallClock = captureWallClock
     self.frameID = frameID
   }
 }
@@ -270,6 +280,35 @@ public struct ReceiveStats: Sendable, Equatable {
   /// up", which is the first question to ask when a tile looks slow. Always zero for
   /// sources that generate their frames locally.
   public var packetsLost: UInt64 = 0
+  /// What this camera's own RTCP sender reports say about its clock (RFC 3550 §6.4). The playout
+  /// path does not use any of this yet; it is here to decide whether it could.
+  ///
+  /// `senderReports` at zero after a minute of video means the camera sends none, so an absolute
+  /// timeline is not available from it. `mediaTicksPerSecond` away from the nominal rate — 90000 for
+  /// video — is drift the delay line currently reads as lateness and chases forever.
+  /// `cameraClockOffsetSeconds` is the sender's wall clock minus ours; comparing it between cameras
+  /// says whether they agree well enough to be aligned on one timeline.
+  public var senderReports: UInt64 = 0
+  public var senderReportIntervalSeconds: Double = 0
+  public var senderReportAgeSeconds: Double = 0
+  public var senderReportStreams: Int = 0
+  public var mediaTicksPerSecond: Double = 0
+  public var mediaClockSpanSeconds: Double = 0
+  public var cameraClockOffsetSeconds: Double = 0
+  /// The offset after minimum-delay filtering, and how many observations it rests on. The raw value
+  /// above follows transit delay; this one does not, which is what makes injected lateness visible
+  /// instead of silently absorbed.
+  public var cameraClockOffsetFilteredSeconds: Double = 0
+  public var cameraClockOffsetSamples: Int = 0
+  /// The latest frame's capture time on the Director's clock, and how far behind now that is.
+  ///
+  /// The age is **excess over this camera's own best case**, not absolute end-to-end delay: the
+  /// offset it is corrected by comes from minimum-delay filtering, which removes the constant part
+  /// of transit along with the clock difference. The spread of these ages across cameras is
+  /// therefore the misalignment the design is judged on — but **this number cannot size `D_global`**,
+  /// which needs the absolute delay these filtered values deliberately discard.
+  public var correctedCaptureTime: Double = 0
+  public var correctedCaptureAgeMilliseconds: Double = 0
   /// Decoders this source currently holds. Only network sources decode anything; a generated or
   /// file-backed source reports zero.
   public var decodeSessions = 0

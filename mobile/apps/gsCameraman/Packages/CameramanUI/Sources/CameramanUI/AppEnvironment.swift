@@ -220,10 +220,14 @@ public final class AppEnvironment {
 
       camera.onStateChange = { [weak self] state in
         self?.cameraState = state
+        self?.persistFramingIfChanged(state)
       }
       startEncoding(fromCamera: true)
-      camera.configure(position: .back, settings: settings)
+      camera.configure(position: settings.cameraPosition, settings: settings)
       camera.start()
+      // After `start`, so the device is configured and the requested zoom is clamped to what this
+      // lens actually supports rather than silently rejected.
+      if settings.displayedZoom != 1 { camera.setDisplayedZoom(settings.displayedZoom) }
     }
 
     if launch.isUITest { startControlServer() }
@@ -429,6 +433,14 @@ public final class AppEnvironment {
     public var audioPendingBytes: Int
     public var server: RTSPServer.Status
     public var addresses: [String]
+    /// Injected late-delivery state. `sendDelayHeldTotal` climbing is the only proof the fault
+    /// harness is actually holding frames rather than merely being configured — a run reporting
+    /// zero here while a delay is set has injected nothing, and must not be read as a pass.
+    public var sendDelayMilliseconds: Double
+    public var sendDelayJitterMilliseconds: Double
+    public var sendDelayBurstMilliseconds: Double
+    public var sendDelayHeldNow: Int
+    public var sendDelayHeldTotal: UInt64
   }
 
   public var stateDump: StateDump {
@@ -476,12 +488,21 @@ public final class AppEnvironment {
       interruptionReason: cameraState.interruptionReason,
       audioPendingBytes: audioEncoder.pendingBytes,
       server: dumpServerStatus,
-      addresses: ControlServer.localAddresses()
+      addresses: ControlServer.localAddresses(),
+      sendDelayMilliseconds: sendDelaySummary.delayMilliseconds,
+      sendDelayJitterMilliseconds: sendDelaySummary.jitterMilliseconds,
+      sendDelayBurstMilliseconds: sendDelaySummary.burstMilliseconds,
+      sendDelayHeldNow: sendDelaySummary.held,
+      sendDelayHeldTotal: sendDelaySummary.totalHeld
     )
   }
 
   private var sendQueueDroppedFrames: Int {
     server?.sendQueueSummaries().reduce(0) { $0 + $1.droppedFrames } ?? 0
+  }
+
+  private var sendDelaySummary: (delayMilliseconds: Double, jitterMilliseconds: Double, burstMilliseconds: Double, held: Int, totalHeld: UInt64) {
+    server?.sendDelay.summary ?? (0, 0, 0, 0, 0)
   }
 
   private var dumpServerStatus: RTSPServer.Status {
@@ -581,6 +602,14 @@ public final class AppEnvironment {
       videoEncoder.requestKeyframe()
       return ok()
 
+    case let .setSendDelay(milliseconds, jitter, burst):
+      server?.sendDelay.configure(
+        delayMilliseconds: milliseconds,
+        jitterMilliseconds: jitter,
+        burstMilliseconds: burst
+      )
+      return ok()
+
     case .reset:
       settings = launch.settings
       noteSettingsApplied()
@@ -588,6 +617,18 @@ public final class AppEnvironment {
       camera.configure(position: .back, settings: settings)
       return ok()
     }
+  }
+
+  /// Saves the lens and zoom the operator settled on, and only when one of them actually moved.
+  ///
+  /// `onStateChange` fires for focus, exposure and interruption too, so writing unconditionally
+  /// would put a `UserDefaults` write on a camera callback several times a second.
+  private func persistFramingIfChanged(_ state: CameraSession.State) {
+    guard settings.cameraPosition != state.position || settings.displayedZoom != state.displayedZoom
+    else { return }
+    settings.cameraPosition = state.position
+    settings.displayedZoom = state.displayedZoom
+    noteSettingsApplied()
   }
 
   private func noteSettingsApplied() {

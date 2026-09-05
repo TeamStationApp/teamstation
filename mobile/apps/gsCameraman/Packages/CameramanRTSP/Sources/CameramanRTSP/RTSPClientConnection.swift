@@ -1,4 +1,5 @@
 import CameramanCore
+import CoreMedia
 import Foundation
 import Network
 
@@ -253,7 +254,7 @@ final class RTSPClientConnection: @unchecked Sendable {
       }
 
       sendMedia(batch)
-      sendReportIfDue(setup: setup, rtpTimestamp: timestamp)
+      sendReportIfDue(setup: setup, rtpTimestamp: timestamp, captureTime: frame.presentationTime)
     }
   }
 
@@ -296,14 +297,33 @@ final class RTSPClientConnection: @unchecked Sendable {
 
   /// A sender report about once a second, which is what RFC 3550 §6.2 recommends and what clients use
   /// to derive a wall clock and to learn the CNAME.
-  private func sendReportIfDue(setup: RTSPResponder.Setup, rtpTimestamp: UInt32) {
+  /// Wall clock minus the capture clock, sampled once per connection.
+  ///
+  /// `EncodedVideoFrame.presentationTime` is on the host time clock; NTP is wall clock. Sampling the
+  /// difference once and reusing it keeps successive reports on a single mapping, so a receiver
+  /// regressing RTP against NTP sees the camera's own rate rather than this app's clock reads.
+  private lazy var captureToWallOffset: Double = {
+    Date().timeIntervalSince1970 - CMClockGetTime(CMClockGetHostTimeClock()).seconds
+  }()
+
+  private func sendReportIfDue(setup: RTSPResponder.Setup, rtpTimestamp: UInt32, captureTime: Double) {
     let now = Date()
     guard now.timeIntervalSince(lastReportTime) >= 1 else { return }
     lastReportTime = now
 
+    // Stamped from the frame's capture time, not from `Date()` here.
+    //
+    // The RTP timestamp in this report is derived from capture; pairing it with the wall clock at
+    // *send* makes the pair wrong by however long encode and the send queue took, and that is
+    // variable — the queue backs up under contention — so it lands in the receiver's offset
+    // estimate as noise it cannot filter out. It also makes any send-side test delay invisible:
+    // hold the frames and the report slides with them, so the receiver's correction absorbs the
+    // fault and the injection silently passes.
+    let captureWall = Date(timeIntervalSince1970: captureTime + captureToWallOffset)
+
     let writer = RTCPWriter(ssrc: videoSSRC, identity: identity())
     let report = writer.compoundPacket(
-      ntpTime: RTCPWriter.ntpTime(from: now),
+      ntpTime: RTCPWriter.ntpTime(from: captureWall),
       rtpTimestamp: rtpTimestamp,
       packetCount: videoPacketCount,
       octetCount: videoOctetCount

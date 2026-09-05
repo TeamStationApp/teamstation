@@ -77,7 +77,11 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
   public typealias FormatChangeHandler = @Sendable (SourceID) -> Void
 
   /// Roughly two seconds of audio at the buffer sizes cameras send.
-  private static let maximumPendingAudio = 200
+  /// Above the silent-fill cap (30 000 packets, ~640 s) with room for live audio queued behind it.
+  /// At 200 a fill for a 38 s outage — 1 775 packets written in one burst — overflowed this and
+  /// 1 575 of them were discarded, so the audio track ended 33 s short of the video sample it was
+  /// written to cover and finalisation hung on the very divergence the fill exists to prevent.
+  private static let maximumPendingAudio = 32_000
   /// A gap longer than this is a clock glitch rather than lost frames, and giving one sample a
   /// duration that long would stretch the whole timeline.
   private static let maximumFrameDuration: Double = 2
@@ -113,6 +117,26 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
   private var baseWallClock: WallClock?
   private var lastVideoTime: CMTime = .negativeInfinity
   private var lastVideoDuration = CMTime(value: 3000, timescale: 90_000)
+  /// Added to every incoming presentation time so the file's timeline survives the camera's clock
+  /// restarting. A reconnect resets the RTP unwrapper, and every frame after it arrived stamped
+  /// earlier than the frame before the outage; the writer read that as "does not advance" and
+  /// dropped every one of them for the rest of the recording — 755 frames on a 55 s outage — and
+  /// then could not finalise a file whose video stopped where its audio did not.
+  private var timelineOffset: CMTime = .zero
+  /// Seconds of wall clock this archive covers with a held picture rather than a delivered frame.
+  /// Nonzero means the camera lost time and the file kept it rather than closing over it.
+  private var archiveGapSeconds: Double = 0
+  /// Generates silent AAC matching this camera's audio format, built once the first real audio
+  /// frame reveals what that format is.
+  ///
+  /// Video held across a gap without audio to match is what hangs finalisation: a segmented writer
+  /// will not finish until every track reaches the boundary, so a video track running six seconds
+  /// past its audio never completes and the app is killed for not responding.
+  private var silence: ArchiveFiller?
+  /// Sub-packet remainder carried between gaps so the audio track does not drift short of video.
+  private var silenceResidualSeconds: Double = 0
+  private var silenceSampleRate: Double = 0
+  private var silenceChannels: Int = 0
   private var boundary = SegmentBoundary(interval: 6)
   private var audioTimeline = ArchiveAudioTimeline()
   /// Audio waiting for the writer to accept it.
@@ -138,6 +162,13 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     let presentationTime: CMTime
     let isKeyframe: Bool
     let frameID: UInt64
+    /// When the camera took this picture, on the Director's clock. Nil until its sender reports
+    /// have established an anchor. Only the first picture of a segment uses it, to record where
+    /// that segment starts.
+    let captureWallClock: WallClock?
+    /// When this picture reached the Director. Always present, and unlike capture time it survives a
+    /// reconnect, so it is what corroborates a gap when the camera's clock anchor has been lost.
+    let wallClock: WallClock
   }
 
   public init(
@@ -391,24 +422,119 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     }
 
     let previous = held
+    var adjusted = CMTimeAdd(frame.presentationTime, timelineOffset)
+    if let previous {
+      let rawGap = CMTimeSubtract(adjusted, previous.presentationTime)
+      let elapsed = frame.wallClock.seconds - previous.wallClock.seconds
+      // The media clock is only trusted while it agrees with the time that actually passed. Going
+      // backwards means the camera's clock restarted; a long jump that real elapsed time cannot
+      // corroborate means it glitched. Either way the frame is placed where the wall clock says it
+      // belongs — one frame on from the last if no time passed — so the file's timeline keeps
+      // moving forward and a reconnect becomes an ordinary gap for the hold-and-fill path.
+      let untrusted = !rawGap.isNumeric
+        || rawGap < .zero
+        || (rawGap.seconds > Self.maximumFrameDuration && abs(rawGap.seconds - elapsed) > 0.5)
+      if untrusted {
+        let step = max(elapsed, lastVideoDuration.isNumeric ? lastVideoDuration.seconds : 1.0 / 30)
+        let desired = CMTimeAdd(
+          previous.presentationTime,
+          CMTime(seconds: step, preferredTimescale: 90_000)
+        )
+        timelineOffset = CMTimeAdd(timelineOffset, CMTimeSubtract(desired, adjusted))
+        adjusted = desired
+        telemetry.mutate { snapshot in
+          snapshot.dvr.archiveClockRebases &+= 1
+          snapshot.dvr.archiveLastRebaseElapsedSeconds = elapsed
+        }
+      }
+    }
     held = HeldPicture(
       data: frame.data,
-      presentationTime: frame.presentationTime,
+      presentationTime: adjusted,
       isKeyframe: frame.isKeyframe,
-      frameID: frame.frameID
+      frameID: frame.frameID,
+      captureWallClock: frame.captureWallClock,
+      wallClock: frame.wallClock
     )
     guard let previous else {
       lock.unlock()
       return
     }
-    let gap = CMTimeSubtract(frame.presentationTime, previous.presentationTime)
+    let gap = CMTimeSubtract(adjusted, previous.presentationTime)
+    // The same interval measured on capture time, when both frames carry one. A real dropout moves
+    // both clocks together; a glitched timestamp moves only the media clock.
+    let captureGap: Double? = {
+      guard let a = previous.captureWallClock, let b = frame.captureWallClock else { return nil }
+      return b.seconds - a.seconds
+    }()
+    // The same interval measured on arrival. A dropout keeps the Director's clock running while
+    // nothing comes in, so arrival moves with the media clock; a glitched timestamp moves the media
+    // clock while frames keep arriving on time. This is the only corroboration available across a
+    // reconnect, which is precisely when a real outage has just happened.
+    let arrivalGap = frame.wallClock.seconds - previous.wallClock.seconds
     lock.unlock()
 
-    appendVideo(previous, duration: gap)
+    appendVideo(previous, duration: gap, captureGap: captureGap, arrivalGap: arrivalGap)
   }
 
   /// Writes out the picture still being held, at the last known frame duration since there is no
   /// successor to measure against.
+  /// Enough silent packets to cover `duration`, timed to run from `start`.
+  ///
+  /// Returns nothing until the camera has sent real audio, because the silence has to carry the
+  /// same sample rate, channel count and magic cookie as the track it is joining — a packet that
+  /// disagrees is worse than no packet.
+  private func silenceFrames(
+    covering duration: CMTime,
+    startingAt start: CMTime,
+    sourceID: SourceID
+  ) -> (frames: [CompressedAudioFrame], covered: Double) {
+    guard settings.includesAudio, silenceSampleRate > 0, silenceChannels > 0 else { return ([], 0) }
+    if silence == nil {
+      silence = ArchiveFiller(
+        width: 2, height: 2,
+        audioSampleRate: silenceSampleRate,
+        audioChannels: silenceChannels
+      )
+    }
+    guard let silence else { return ([], 0) }
+    let step = silence.audioDuration
+    guard step.isNumeric, step > .zero, duration.isNumeric, duration > .zero else { return ([], 0) }
+    // The remainder that does not fill a whole packet is carried to the next gap rather than
+    // dropped. A packet is 21.3 ms; discarding it each time leaves audio short of video by a little
+    // every gap, and those accumulate over a long recording.
+    let wanted = duration.seconds + silenceResidualSeconds
+    var count = Int(wanted / step.seconds)
+    silenceResidualSeconds = wanted - Double(count) * step.seconds
+    guard count > 0 else { return ([], 0) }
+    // A long gap is capped rather than abandoned. Returning nothing above a threshold left the
+    // audio track short exactly when the gap was largest, which is the case that hangs
+    // finalisation — the opposite of what this exists to do.
+    // Ten and a half minutes at 48 kHz. The previous cap of 4 000 packets (85 s) was crossed by
+    // the first real outage Paul recorded — a camera gone for two minutes — and everything past
+    // it was clamped out of the recording, so the file ran 35 s short and the camera appeared
+    // never to have come back. A frame here is a shared `Data` plus a timestamp; 30 000 of them
+    // is a few megabytes, and a longer gap is still clamped to match rather than left to hang.
+    let maximum = 30_000
+    if count > maximum {
+      count = maximum
+      silenceResidualSeconds = 0
+    }
+    var frames: [CompressedAudioFrame] = []
+    frames.reserveCapacity(count)
+    var at = start
+    for _ in 0 ..< count {
+      guard let frame = silence.encodeSilence(
+        sourceID: sourceID,
+        presentationTime: at,
+        wallClock: clock.now
+      ) else { break }
+      frames.append(frame)
+      at = CMTimeAdd(at, step)
+    }
+    return (frames, Double(frames.count) * step.seconds)
+  }
+
   private func flushHeld() {
     lock.lock()
     let previous = held
@@ -419,7 +545,12 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     appendVideo(previous, duration: duration)
   }
 
-  private func appendVideo(_ picture: HeldPicture, duration: CMTime) {
+  private func appendVideo(
+    _ picture: HeldPicture,
+    duration: CMTime,
+    captureGap: Double? = nil,
+    arrivalGap: Double? = nil
+  ) {
     lock.lock()
     guard !finishing, stopError == nil, let format = videoFormat else {
       lock.unlock()
@@ -438,7 +569,11 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
 
     if basePresentationTime == nil {
       basePresentationTime = picture.presentationTime
-      baseWallClock = clock.now
+      // Capture time when the camera has given us one, arrival time until it does. Seek maps a
+      // scrub target through this value, so taking it from arrival makes the same request land on a
+      // different moment on every camera — each start carrying that camera's delivery delay on top
+      // of its own keyframe phase.
+      baseWallClock = picture.captureWallClock ?? clock.now
     }
     guard let base = basePresentationTime else {
       lock.unlock()
@@ -461,10 +596,60 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
       return
     }
 
+    // A long gap is either a real dropout or a glitched timestamp, and collapsing both to one
+    // frame is what shortens a recording: the missing time is simply discarded, so everything
+    // after the hole sits that much early and every later seek is wrong. A camera that lost five
+    // seconds used to contribute thirty-three milliseconds.
+    //
+    // Capture time settles which it is. A dropout advances the camera's wall clock by the same
+    // interval as its media clock, because both kept running while nothing arrived. A glitched
+    // timestamp moves only the media clock. So a gap corroborated by capture time is kept at its
+    // full length, and only an uncorroborated one is clamped.
     var sampleDuration = duration
-    if !sampleDuration.isNumeric || sampleDuration <= .zero
-      || sampleDuration.seconds > Self.maximumFrameDuration {
+    // Capture time is the better witness when it exists. When it does not — the anchor is gone
+    // after a reconnect — arrival time answers the same question, and refusing to ask it is what
+    // made every real dropout read as a glitch and take the discard path.
+    let corroborated = captureGap.map { abs($0 - duration.seconds) < 0.5 }
+      ?? arrivalGap.map { abs($0 - duration.seconds) < 0.5 }
+      ?? false
+    let tooLong = sampleDuration.seconds > Self.maximumFrameDuration
+    if !sampleDuration.isNumeric || sampleDuration <= .zero || (tooLong && !corroborated) {
       sampleDuration = lastVideoDuration
+      if tooLong { telemetry.recordDroppedFrame(tile: sourceIndex) }
+    }
+    var silenceToWrite: [CompressedAudioFrame] = []
+    if tooLong, corroborated {
+      // Held at its true length so the file still spans the wall clock it covers. The picture
+      // freezes for the duration of the hole, which is what a viewer should see: the alternative
+      // is a recording that silently runs short.
+      let fill = silenceFrames(
+        covering: sampleDuration,
+        startingAt: picture.presentationTime,
+        sourceID: sourceID
+      )
+      silenceToWrite = fill.frames
+      // The fill is capped, so above the cap the audio stops short. The video sample must stop with
+      // it: a segmented writer will not finalise until every track reaches the boundary, so a video
+      // sample that outruns its audio by the uncovered remainder hangs `finishWriting` and the app
+      // is killed for not responding. Losing the tail of a very long gap is the lesser evil, and it
+      // is recorded here rather than hidden.
+      if fill.covered > 0, fill.covered < sampleDuration.seconds - 0.001 {
+        sampleDuration = CMTime(seconds: fill.covered, preferredTimescale: 90_000)
+      }
+      archiveGapSeconds += sampleDuration.seconds
+      // Reported so this branch can be seen from outside. It is supposed to be unreachable on a
+      // healthy recording, and it is not: fill packets appear in takes whose video runs an unbroken
+      // 30 fps. Without these counters the only evidence was the audible click in the exported file.
+      let filled = silenceToWrite.count
+      let gapSeconds = sampleDuration.seconds
+      let observedCapture = captureGap ?? 0
+      telemetry.mutate { snapshot in
+        snapshot.dvr.archiveFillEvents &+= 1
+        snapshot.dvr.archiveFillPackets &+= UInt64(filled)
+        snapshot.dvr.archiveGapSeconds += gapSeconds
+        snapshot.dvr.archiveFillLastGapSeconds = gapSeconds
+        snapshot.dvr.archiveFillLastCaptureGap = observedCapture
+      }
     }
     lastVideoDuration = sampleDuration
     lastVideoTime = presentationTime
@@ -475,6 +660,13 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
       && boundary.shouldFlush(at: presentationTime.seconds, isKeyframe: true)
     let isReady = videoInput.isReadyForMoreMediaData
     lock.unlock()
+
+    // Written straight after the picture it covers, so the audio track never trails the video by
+    // more than the gap itself and finalisation is not left waiting on a track that stopped early.
+    for frame in silenceToWrite { write(audio: frame) }
+    // Push the whole burst through now rather than eight packets per call; a fill this size waits
+    // for the input, and the queue only exists to survive a briefly unready one.
+    if !silenceToWrite.isEmpty { drainAudio(limit: .max) }
 
     if shouldFlush {
       // Audio first, so the file being closed carries the sound that belongs to it.
@@ -698,10 +890,16 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
   }
 
   private func write(audio frame: CompressedAudioFrame) {
+    telemetry.mutateTile(sourceIndex) { $0.audioReceived &+= 1 }
     lock.lock()
     guard !finishing, settings.includesAudio, stopError == nil else {
       lock.unlock()
       return
+    }
+    if silenceSampleRate != frame.sampleRate || silenceChannels != frame.channelCount {
+      silenceSampleRate = frame.sampleRate
+      silenceChannels = frame.channelCount
+      silence = nil
     }
     if audioFormat == nil {
       audioFormat = CompressedSample.aacFormatDescription(
@@ -716,6 +914,7 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     // the whole recording — and a segmented writer with one empty track never rotates a segment.
     guard started, let format = audioFormat, audioInput != nil, lastVideoTime.isNumeric else {
       lock.unlock()
+      telemetry.mutateTile(sourceIndex) { $0.audioRejectedNotStarted &+= 1 }
       return
     }
 
@@ -726,7 +925,10 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     )
     lock.unlock()
 
-    guard let placement, placement.start.isNumeric, placement.start >= .zero else { return }
+    guard let placement, placement.start.isNumeric, placement.start >= .zero else {
+      telemetry.mutateTile(sourceIndex) { $0.audioRejectedPlacement &+= 1 }
+      return
+    }
     report(placement)
 
     guard let sampleBuffer = CompressedSample.audioSampleBuffer(
@@ -814,17 +1016,25 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
         audioInput.isReadyForMoreMediaData,
         !pendingAudio.isEmpty
       else {
+        let starved = !finishing && !pendingAudio.isEmpty && self.audioInput != nil
         lock.unlock()
+        if starved { telemetry.mutateTile(sourceIndex) { $0.audioDrainNotReady &+= 1 } }
         return
       }
       let buffer = pendingAudio.removeFirst()
       lock.unlock()
 
-      audioInput.append(buffer)
-      written = CMTimeAdd(
-        buffer.presentationTimeStamp,
-        CMSampleBufferGetDuration(buffer)
-      ).seconds
+      // The result was discarded here. A refused append loses the buffer while `written` still
+      // advances, so the telemetry reported audio that never reached the file.
+      if audioInput.append(buffer) {
+        telemetry.mutateTile(sourceIndex) { $0.audioAppended &+= 1 }
+        written = CMTimeAdd(
+          buffer.presentationTimeStamp,
+          CMSampleBufferGetDuration(buffer)
+        ).seconds
+      } else {
+        telemetry.mutateTile(sourceIndex) { $0.audioAppendFailed &+= 1 }
+      }
       drained += 1
     }
   }
