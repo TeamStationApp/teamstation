@@ -232,6 +232,10 @@ public struct DVRTelemetry: Sendable, Codable, Equatable {
   public var archiveGapSeconds: Double = 0
   public var archiveFillLastGapSeconds: Double = 0
   public var archiveFillLastCaptureGap: Double = 0
+  /// Times the writer re-based its timeline because a camera's media clock went backwards or
+  /// jumped somewhere real elapsed time could not corroborate — a reconnect, in practice.
+  public var archiveClockRebases: UInt64 = 0
+  public var archiveLastRebaseElapsedSeconds: Double = 0
   public var byteCount: UInt64 = 0
   public var proxyStills: UInt64 = 0
   public var indexWrites: UInt64 = 0
