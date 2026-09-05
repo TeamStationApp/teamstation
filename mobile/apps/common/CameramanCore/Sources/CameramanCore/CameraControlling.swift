@@ -26,6 +26,8 @@ public protocol CameraControlling: AnyObject, Observable {
   var formatOptions: [FormatCatalogue.Option] { get }
   var settings: StreamSettings { get }
   var thermalLevel: ThermalBadgeLevel { get }
+  /// The phone's battery. Nil when it cannot be read, in which case no pill is drawn.
+  var battery: BatteryStatus? { get }
   /// `rtsp://<ip>:<port><path>`, the string Settings copies.
   var streamURL: String { get }
   /// Sessions currently playing the stream.
