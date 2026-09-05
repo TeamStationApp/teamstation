@@ -20,15 +20,23 @@ public enum ArchiveRemux {
     }
   }
 
+  /// `headTrim` drops that much from the front of the first file.
+  ///
+  /// Segments begin on their camera's own keyframes, so the first one for a given window usually
+  /// starts a little before the window does — and by a different amount on every camera. Inserting
+  /// each file from its own start therefore produces files that disagree about when they begin,
+  /// which is what leaves cameras cut together sitting frames apart. Skipping the head lets every
+  /// camera's export start at the same instant.
   public static func concatenate(
     files: [URL],
     fileDurations: [TimeInterval],
     targetDuration: TimeInterval? = nil,
+    headTrim: TimeInterval = 0,
     destination: URL
   ) async throws {
     guard !files.isEmpty else { throw Error.empty }
     try? FileManager.default.removeItem(at: destination)
-    if files.count == 1, targetDuration == nil {
+    if files.count == 1, targetDuration == nil, headTrim <= 0.001 {
       try FileManager.default.copyItem(at: files[0], to: destination)
       return
     }
@@ -44,9 +52,14 @@ public enum ArchiveRemux {
         duration = try await playableDuration(of: asset)
       }
       guard duration.seconds > 0.05 else { continue }
-      let range = CMTimeRange(start: .zero, duration: duration)
+      // Only the first file is trimmed, and never past its own length.
+      let trim = index == 0 ? min(max(0, headTrim), max(0, duration.seconds - 0.05)) : 0
+      let start = CMTime(seconds: trim, preferredTimescale: 600)
+      let kept = CMTimeSubtract(duration, start)
+      guard kept.seconds > 0.05 else { continue }
+      let range = CMTimeRange(start: start, duration: kept)
       try await composition.insertTimeRange(range, of: asset, at: cursor)
-      cursor = CMTimeAdd(cursor, duration)
+      cursor = CMTimeAdd(cursor, kept)
     }
 
     guard cursor.seconds > 0.05 else { throw Error.empty }
