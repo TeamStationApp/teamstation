@@ -20,25 +20,43 @@ struct SettingsView<Model: CameraControlling>: View {
 
   var body: some View {
     NavigationStack {
-      // One shared scroll, two rows: video/audio + lenses, then name + stream.
-      ScrollView {
-        VStack(alignment: .leading, spacing: 16) {
-          HStack(alignment: .top, spacing: 12) {
-            VStack(spacing: 16) {
+      // One shared scroll. Landscape: two rows of two (video/audio + lenses, then name + stream),
+      // which is the phone's layout. Portrait, on a rotating client: the five cards stacked. The
+      // draft lives above this switch, so rotating mid-edit keeps every edited value.
+      GeometryReader { geo in
+        let columns = SettingsLayout.columns(for: geo.size)
+        ScrollView {
+          VStack(alignment: .leading, spacing: 16) {
+            if columns == 2 {
+              HStack(alignment: .top, spacing: 12) {
+                VStack(spacing: 16) {
+                  videoSection
+                  audioSection
+                }
+                .frame(maxWidth: .infinity, alignment: .top)
+                lensesSection
+                  .frame(maxWidth: .infinity, alignment: .top)
+              }
+              HStack(alignment: .top, spacing: 12) {
+                nameSection
+                serverSection
+              }
+            } else {
               videoSection
               audioSection
+              lensesSection
+              nameSection
+              serverSection
             }
-            .frame(maxWidth: .infinity, alignment: .top)
-            lensesSection
-              .frame(maxWidth: .infinity, alignment: .top)
+            // A flow reads which layout is up. A marker rather than an identifier on the
+            // container, which would hide every control inside it.
+            Color.clear
+              .frame(width: 1, height: 1)
+              .accessibilityIdentifier(columns == 2 ? "settings-layout-landscape" : "settings-layout-portrait")
           }
-          HStack(alignment: .top, spacing: 12) {
-            nameSection
-            serverSection
-          }
+          .padding(.horizontal, 12)
+          .padding(.bottom, 80)
         }
-        .padding(.horizontal, 12)
-        .padding(.bottom, 80)
       }
       .background(Color(uiColor: .systemGroupedBackground))
       .navigationTitle("Camera")

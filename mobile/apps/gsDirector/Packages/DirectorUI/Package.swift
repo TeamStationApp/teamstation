@@ -10,6 +10,7 @@ let package = Package(
   dependencies: [
     .package(path: "../../common/DirectorCore"),
     .package(path: "../../common/DirectorSources"),
+    .package(path: "../../common/DirectorRTSP"),
     .package(path: "../../common/CameramanCore"),
     .package(path: "../../common/CameramanControlUI"),
     .package(path: "../../common/CameramanRemote"),
@@ -24,6 +25,7 @@ let package = Package(
       dependencies: [
         "DirectorCore",
         "DirectorSources",
+        "DirectorRTSP",
         "CameramanCore",
         "CameramanControlUI",
         "CameramanRemote",

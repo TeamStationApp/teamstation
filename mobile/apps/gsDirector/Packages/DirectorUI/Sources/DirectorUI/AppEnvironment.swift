@@ -3,6 +3,8 @@ import Foundation
 import Observation
 // Only the level enum: CameramanCore also has a `ProcessLoad`, which would collide with DirectorPipeline's.
 import enum CameramanCore.ThermalBadgeLevel
+import CameramanRemote
+import DirectorRTSP
 import DirectorCore
 import DirectorDVR
 import DirectorPipeline
@@ -91,10 +93,20 @@ public final class AppEnvironment {
     case directing
   }
 
-  public enum Sheet: String, Identifiable, Sendable {
+  public enum Sheet: Identifiable, Sendable, Equatable {
     case settings, perfHarness, cameras, recordings
+    /// Cameraman's own operating screen for the phone on a tile, full screen over the grid.
+    case cameraControl(sourceIndex: Int)
 
-    public var id: String { rawValue }
+    public var id: String {
+      switch self {
+      case .settings: "settings"
+      case .perfHarness: "perfHarness"
+      case .cameras: "cameras"
+      case .recordings: "recordings"
+      case let .cameraControl(sourceIndex): "cameraControl-\(sourceIndex)"
+      }
+    }
   }
 
   // MARK: - Observable state
@@ -164,6 +176,13 @@ public final class AppEnvironment {
   /// leaves all but the last one unable to present, which made the settings and perf harness
   /// unreachable from the grid.
   public var activeSheet: Sheet?
+  /// The model behind the open Cameraman control screen. Created when the screen opens, stopped
+  /// when it closes; nothing is retained across opens.
+  public private(set) var activeCameraControl: RemoteCameraControl?
+  @ObservationIgnored private var activeCameraControlIndex: Int?
+  /// One slow poller per controllable Cameraman on the grid, feeding the tile's thermal and
+  /// battery pills. Keyed by identity so a layout swap keeps the right phone on the right tile.
+  @ObservationIgnored private var cameraTelemetryPollers: [SourceID: CameraTelemetryPoller] = [:]
   /// Settings Test Thermal Visuals. Header-only; HUD `thermal=` stays the real ProcessInfo name.
   public private(set) var thermalPreview: ProcessInfo.ThermalState?
   private var thermalPreviewTask: Task<Void, Never>?
@@ -657,6 +676,111 @@ public final class AppEnvironment {
       }
       telemetry.mutateTile(pipeline.sourceIndex) { $0.displayName = name }
     }
+    syncCameraTelemetry()
+  }
+
+  // MARK: - Cameraman control
+
+  /// The Bonjour record for the camera on a row, when discovery has one.
+  public func cameraAdvertisement(for id: SourceID) -> CameraAdvertisement? {
+    guard let endpoint = endpoint(for: id) else { return nil }
+    return discovery?.advertisements.first { $0.host == endpoint.host }
+  }
+
+  /// A GS Cameraman that advertises `control=params/1`, so the tile gets its controls. An older
+  /// build without the verbs, or a NearStream, gets nothing rather than a screen that cannot connect.
+  public func isCameramanControllable(sourceIndex: Int) -> Bool {
+    guard let pipeline = router.pipeline(at: sourceIndex) else { return false }
+    return cameraAdvertisement(for: pipeline.sourceID)?.isControllable == true
+  }
+
+  /// Opens the phone's own operating screen for the camera on a tile.
+  public func openCameraControl(sourceIndex: Int) {
+    guard activeSheet == nil, let pipeline = router.pipeline(at: sourceIndex),
+          let endpoint = endpoint(for: pipeline.sourceID),
+          cameraAdvertisement(for: pipeline.sourceID)?.isControllable == true
+    else { return }
+    stopCameraControl()
+    let session = RTSPParameterSession(
+      host: endpoint.host,
+      port: endpoint.port,
+      path: endpoint.path,
+      userAgent: "GS Director/1.0"
+    )
+    let model = RemoteCameraControl(transport: session, animatesChrome: !launch.isUITest)
+    model.start()
+    activeCameraControl = model
+    activeCameraControlIndex = sourceIndex
+    activeSheet = .cameraControl(sourceIndex: sourceIndex)
+  }
+
+  public func closeCameraControl() {
+    if case .cameraControl = activeSheet { activeSheet = nil }
+    stopCameraControl()
+  }
+
+  /// Tears the model down. Idempotent, because the cover's disappearance and the close button can
+  /// both arrive.
+  public func stopCameraControl() {
+    activeCameraControl?.stop()
+    activeCameraControl = nil
+    activeCameraControlIndex = nil
+    telemetry.mutate { $0.cameraControl = CameraControlTelemetry() }
+  }
+
+  /// Starts a poller for every controllable Cameraman on the grid and stops the ones that left.
+  private func syncCameraTelemetry() {
+    var wanted: [SourceID: CameraEndpoint] = [:]
+    for pipeline in router.activePipelines {
+      guard let endpoint = endpoint(for: pipeline.sourceID),
+            cameraAdvertisement(for: pipeline.sourceID)?.isControllable == true
+      else {
+        telemetry.mutateTile(pipeline.sourceIndex) {
+          $0.hasCameraControl = false
+          $0.cameraThermal = nil
+          $0.cameraBatteryPercent = nil
+          $0.cameraBatteryCharging = false
+        }
+        continue
+      }
+      wanted[pipeline.sourceID] = endpoint
+      telemetry.mutateTile(pipeline.sourceIndex) { $0.hasCameraControl = true }
+    }
+    for (id, poller) in cameraTelemetryPollers where wanted[id] != poller.endpoint {
+      poller.stop()
+      cameraTelemetryPollers[id] = nil
+    }
+    for (id, endpoint) in wanted where cameraTelemetryPollers[id] == nil {
+      let poller = CameraTelemetryPoller(endpoint: endpoint) { [weak self] reading in
+        guard let self, let index = router.activePipelines.first(where: { $0.sourceID == id })?.sourceIndex else { return }
+        telemetry.mutateTile(index) {
+          $0.cameraThermal = reading.thermal
+          $0.cameraBatteryPercent = reading.batteryPercent
+          $0.cameraBatteryCharging = reading.batteryCharging
+        }
+      }
+      poller.start()
+      cameraTelemetryPollers[id] = poller
+    }
+  }
+
+  private func recordCameraControlTelemetry() {
+    guard let model = activeCameraControl else { return }
+    let index = activeCameraControlIndex
+    var record = CameraControlTelemetry()
+    record.open = true
+    record.sourceIndex = index
+    record.responding = model.isResponding
+    record.zoom = model.displayedZoom
+    record.position = model.position.rawValue
+    record.thermal = model.thermalLevel.rawValue
+    record.batteryPercent = model.battery?.percent
+    record.codec = model.settings.codec.sdpEncodingName
+    record.bitrateKbps = model.settings.bitrate / 1000
+    record.lastError = model.lastError ?? ""
+    record.polls = model.polls
+    record.writes = model.writes
+    telemetry.mutate { $0.cameraControl = record }
   }
 
   /// Keeps the last sweep's order — identified cameras first — so a rename does not bury a VM33
@@ -3104,6 +3228,8 @@ public final class AppEnvironment {
   }
 
   private func pollTelemetry() {
+    syncCameraTelemetry()
+    recordCameraControlTelemetry()
     telemetry.recordConverter(converter.currentStatistics)
     let status = statusMessage ?? ""
     let cpu = ProcessLoad.cpuPercent()
@@ -3115,7 +3241,10 @@ public final class AppEnvironment {
         usesAudio: selection.usesAudio,
         inputGain: selection.inputGain,
         isPresent: selection.isPresent,
-        sourceIndex: selection.sourceIndex
+        sourceIndex: selection.sourceIndex,
+        endpointHost: endpoint(for: selection.id)?.host,
+        advertisedHost: cameraAdvertisement(for: selection.id)?.host,
+        controlVersion: cameraAdvertisement(for: selection.id)?.controlVersion
       )
     }
     let mix = router.audioMixer.currentStatistics
@@ -3332,6 +3461,13 @@ public final class AppEnvironment {
     case let .bindRemote(actionID, names):
       guard let action = RemoteAction.parseControl(actionID) else { return false }
       bindRemoteAction(action, controls: names.compactMap { ControlID(rawValue: $0) })
+    case let .cameraControl(source, open):
+      if open {
+        guard isCameramanControllable(sourceIndex: source) else { return false }
+        openCameraControl(sourceIndex: source)
+      } else {
+        closeCameraControl()
+      }
     case let .enableSource(index, on):
       guard index >= 0, index < selections.count else { return false }
       setEnabled(on, for: selections[index].id)

@@ -20,6 +20,7 @@ public struct DirectorRootView: View {
           case .perfHarness: PerfHarnessView()
           case .cameras: SourceSelectionView()
           case .recordings: RecordingsView()
+          case let .cameraControl(sourceIndex): CameraControlCover(sourceIndex: sourceIndex)
           }
         }
         .environment(environment)

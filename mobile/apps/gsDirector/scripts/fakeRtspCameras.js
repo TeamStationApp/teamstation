@@ -16,6 +16,7 @@
 
 const { spawn, spawnSync } = require('node:child_process')
 const fs = require('node:fs')
+const http = require('node:http')
 const os = require('node:os')
 const path = require('node:path')
 const { createCameraServer, LoopSource, selfTest } = require('./rtspLoopServer')
@@ -36,6 +37,8 @@ function usage() {
                    advertised on _awx_service._tcp, so Director and Preview control flows run
                    on a simulator with no phone attached
   --only-cameraman Serve just that phone on this Mac's own LAN address: no aliases, no root
+  --status-port N  Loopback HTTP that reports the fake phone's parameters as JSON (default 8768),
+                   so a Maestro runScript can assert on the phone's state; 0 disables it
   --stop           Tear down a previous farm from ${STATE_PATH}
   --self-test      Packetization checks, then exit
 `
@@ -51,7 +54,8 @@ function parseArgs(argv) {
     stop: false,
     selfTest: false,
     cameraman: null,
-    onlyCameraman: false
+    onlyCameraman: false,
+    statusPort: 8768
   }
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]
@@ -83,6 +87,11 @@ function parseArgs(argv) {
     }
     if (arg === '--fixtures') {
       options.fixtures = argv[index + 1]
+      index += 1
+      continue
+    }
+    if (arg === '--status-port') {
+      options.statusPort = Number(argv[index + 1])
       index += 1
       continue
     }
@@ -472,6 +481,18 @@ async function main() {
       process.stdout.write(
         `${camera.displayName}  ${camera.bonjour.serviceType}  rtsp://${host}:${port}/live/mainstream\n`
       )
+    }
+
+    const phone = cameras.find(camera => camera.model)
+    if (phone && options.statusPort > 0) {
+      const status = http.createServer((request, response) => {
+        const params = Object.fromEntries(phone.model.encode())
+        response.setHeader('Content-Type', 'application/json')
+        response.end(JSON.stringify(params))
+      })
+      status.listen(options.statusPort, '127.0.0.1')
+      servers.push({ close: () => new Promise(resolve => status.close(resolve)) })
+      process.stdout.write(`Phone status: http://127.0.0.1:${options.statusPort}/\n`)
     }
 
     writeState({
