@@ -358,13 +358,20 @@ function createCameraServer(options) {
     path = '/live/mainstream',
     sdp,
     serverHeader,
-    source
+    source,
+    // Optional: ({ method: 'GET' | 'SET', body }) => { status, reason, body }. A GS Cameraman
+    // answers its parameter vocabulary here; NearStream has none.
+    parameters = null,
+    publicMethods: publicOverride = null,
+    // Bind address when it differs from the advertised host. macOS lets an unprivileged process
+    // bind :554 on the wildcard but not on a specific address.
+    listenHost = host
   } = options
   const normalizedPath = path.replace(/\/+$/, '') || '/'
-  const publicMethods =
+  const publicMethods = publicOverride || (
     serverHeader.startsWith('Hamedal')
       ? 'OPTIONS, DESCRIBE, SETUP, TEARDOWN, PLAY, PAUSE, ANNOUNCE, RECORD, SET_PARAMETER, GET_PARAMETER'
-      : 'OPTIONS, DESCRIBE, SETUP, PLAY, PAUSE, TEARDOWN, GET_PARAMETER'
+      : 'OPTIONS, DESCRIBE, SETUP, PLAY, PAUSE, TEARDOWN, GET_PARAMETER')
 
   const sessions = new Map()
   const sockets = new Set()
@@ -473,6 +480,15 @@ function createCameraServer(options) {
     }
 
     if (method === 'GET_PARAMETER' || method === 'SET_PARAMETER') {
+      const body = (request.body || Buffer.alloc(0)).toString('utf8')
+      // An empty body is the keepalive every client sends; a body is a parameter request.
+      if (parameters && body.trim().length > 0) {
+        const answer = parameters({ method: method === 'GET_PARAMETER' ? 'GET' : 'SET', body })
+        const extra = state.session ? { Session: state.session.id } : {}
+        if (answer.body) extra['Content-Type'] = 'text/parameters'
+        reply(socket, request, answer.status, answer.reason, extra, answer.body || '')
+        return
+      }
       reply(socket, request, 200, 'OK', state.session ? { Session: state.session.id } : {})
       return
     }
@@ -520,7 +536,7 @@ function createCameraServer(options) {
     listen() {
       return new Promise((resolve, reject) => {
         server.once('error', reject)
-        server.listen(port, host, () => {
+        server.listen(port, listenHost, () => {
           server.off('error', reject)
           resolve()
         })
