@@ -156,6 +156,9 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     /// have established an anchor. Only the first picture of a segment uses it, to record where
     /// that segment starts.
     let captureWallClock: WallClock?
+    /// When this picture reached the Director. Always present, and unlike capture time it survives a
+    /// reconnect, so it is what corroborates a gap when the camera's clock anchor has been lost.
+    let wallClock: WallClock
   }
 
   public init(
@@ -414,7 +417,8 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
       presentationTime: frame.presentationTime,
       isKeyframe: frame.isKeyframe,
       frameID: frame.frameID,
-      captureWallClock: frame.captureWallClock
+      captureWallClock: frame.captureWallClock,
+      wallClock: frame.wallClock
     )
     guard let previous else {
       lock.unlock()
@@ -427,9 +431,14 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
       guard let a = previous.captureWallClock, let b = frame.captureWallClock else { return nil }
       return b.seconds - a.seconds
     }()
+    // The same interval measured on arrival. A dropout keeps the Director's clock running while
+    // nothing comes in, so arrival moves with the media clock; a glitched timestamp moves the media
+    // clock while frames keep arriving on time. This is the only corroboration available across a
+    // reconnect, which is precisely when a real outage has just happened.
+    let arrivalGap = frame.wallClock.seconds - previous.wallClock.seconds
     lock.unlock()
 
-    appendVideo(previous, duration: gap, captureGap: captureGap)
+    appendVideo(previous, duration: gap, captureGap: captureGap, arrivalGap: arrivalGap)
   }
 
   /// Writes out the picture still being held, at the last known frame duration since there is no
@@ -495,7 +504,12 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     appendVideo(previous, duration: duration)
   }
 
-  private func appendVideo(_ picture: HeldPicture, duration: CMTime, captureGap: Double? = nil) {
+  private func appendVideo(
+    _ picture: HeldPicture,
+    duration: CMTime,
+    captureGap: Double? = nil,
+    arrivalGap: Double? = nil
+  ) {
     lock.lock()
     guard !finishing, stopError == nil, let format = videoFormat else {
       lock.unlock()
@@ -551,7 +565,12 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     // timestamp moves only the media clock. So a gap corroborated by capture time is kept at its
     // full length, and only an uncorroborated one is clamped.
     var sampleDuration = duration
-    let corroborated = captureGap.map { abs($0 - duration.seconds) < 0.5 } ?? false
+    // Capture time is the better witness when it exists. When it does not — the anchor is gone
+    // after a reconnect — arrival time answers the same question, and refusing to ask it is what
+    // made every real dropout read as a glitch and take the discard path.
+    let corroborated = captureGap.map { abs($0 - duration.seconds) < 0.5 }
+      ?? arrivalGap.map { abs($0 - duration.seconds) < 0.5 }
+      ?? false
     let tooLong = sampleDuration.seconds > Self.maximumFrameDuration
     if !sampleDuration.isNumeric || sampleDuration <= .zero || (tooLong && !corroborated) {
       sampleDuration = lastVideoDuration
