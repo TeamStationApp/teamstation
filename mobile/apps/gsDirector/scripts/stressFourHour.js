@@ -743,6 +743,7 @@ function meanVolume(file, start, duration) {
     'ffmpeg',
     [
       '-hide_banner',
+      '-accurate_seek',
       '-ss',
       String(Math.max(0, start)),
       '-t',
