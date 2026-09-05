@@ -124,10 +124,12 @@ struct RTSPServerMessageTests {
 
   @Test func bonjourTXTCarriesTheLiveNameAndUUID() {
     let identity = DeviceIdentity(uuid: "c94df9ca-d7c2-468f-8529-97d01fba14e7", name: "handheld")
+    // `control` tells a browsing client this build answers the parameter verbs.
     #expect(RTSPServer.bonjourTXT(identity: identity, path: "/live/mainstream") == [
       "uuid": "c94df9ca-d7c2-468f-8529-97d01fba14e7",
       "name": "handheld",
-      "path": "/live/mainstream"
+      "path": "/live/mainstream",
+      "control": "params/1"
     ])
     #expect(
       RTSPServer.bonjourTXT(
@@ -139,6 +141,7 @@ struct RTSPServerMessageTests {
         "uuid": "c94df9ca-d7c2-468f-8529-97d01fba14e7",
         "name": "handheld",
         "path": "/live/mainstream",
+        "control": "params/1",
         "ip": "10.10.7.219",
         "port": "554"
       ]

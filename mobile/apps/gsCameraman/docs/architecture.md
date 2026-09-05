@@ -82,6 +82,19 @@ the back camera and a single 1x on the front without anything being hardcoded.
 The ceiling comes from `systemRecommendedVideoZoomRange`, not `maxAvailableVideoZoomFactor` — see
 `docs/risks.md` for why the latter is unusable.
 
+## Remote control
+
+GS Director and GS Preview drive the phone over the RTSP port it already serves, with RFC 2326
+`GET_PARAMETER` / `SET_PARAMETER` and `text/parameters` bodies (the vocabulary is in
+`rtsp-interop.md`). The client opens a second, control-only connection so zoom writes never queue
+behind RTP, polls the whole set once a second, and writes zoom, flip, name and Settings. On the
+phone the server hands each request to `AppEnvironment.handleParameters`, which applies it through
+the same `CameraControlling` methods the phone's own screen uses — so a remote zoom moves the
+phone's rail, a remote codec change shows in its Settings, and remote framing is persisted by the
+same `persistFramingIfChanged` path as a local pinch. Only playing sessions count as clients; a
+connection that merely polls parameters is not a viewer. The Bonjour TXT record carries
+`control=params/1` so a client knows before connecting that this build answers the verbs.
+
 ## Discovery
 
 The server advertises `_rtsp._tcp` and `_awx_service._tcp` over Bonjour. Director finds NearStream
