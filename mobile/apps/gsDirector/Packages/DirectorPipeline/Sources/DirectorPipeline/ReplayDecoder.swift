@@ -91,6 +91,11 @@ public final class ReplayDecoder: @unchecked Sendable {
   private var framePool: PixelBufferFactory?
   private var fileReader: ReplayFileReader?
   private var filePumpTick: UInt64 = 0
+  /// Where playback was anchored, and what has been shown. Position is derived from these and the
+  /// wall clock rather than accumulated per tick, so a dropped or late tick does not shift the rate.
+  private var replayAnchorWall: Double?
+  private var replayAnchorMedia: Double = 0
+  private var lastShownMedia: Double?
   private var waitingForMoreFiles = false
   private var lastDeliveredAt: CFAbsoluteTime = 0
   private let stallPolicy = ReplayStallPolicy()
@@ -458,14 +463,46 @@ public final class ReplayDecoder: @unchecked Sendable {
     if reader.shouldPrefetchMore {
       requestMoreFiles(played: shown)
     }
-    let ticksPerFrame = max(1, Int((1 / Double(max(configuration.rate, 0.05))).rounded()))
-    if tick % UInt64(ticksPerFrame) != 0 { return }
-    guard let frame = reader.pop() else {
+    // Which frame belongs on screen now, asked of a clock rather than counted in ticks.
+    //
+    // Counting ticks quantises the rate to 1/n: a 40% setting became round(1/0.4) = 2 ticks per
+    // frame, which is 50%, and 33% and 25% collapsed together too. Playback position as a function
+    // of wall time has no such steps, and it is also the shape a shared clock needs — every tile
+    // asking one clock for the same instant, rather than each counting its own ticks and drifting.
+    let now = CMClockGetTime(CMClockGetHostTimeClock()).seconds
+    lock.lock()
+    if replayAnchorWall == nil { replayAnchorWall = now }
+    let anchorWall = replayAnchorWall ?? now
+    let anchorMedia = replayAnchorMedia
+    lock.unlock()
+    let target = anchorMedia + Double(max(configuration.rate, 0.05)) * (now - anchorWall)
+
+    // Frames are consumed until the next one would be in the future, so a rate below one holds the
+    // same picture across several ticks and a rate above one skips — both falling out of the clock
+    // instead of being special-cased.
+    var chosen: (pixel: CVPixelBuffer, time: CMTime, media: TimeInterval)?
+    while true {
+      lock.lock()
+      let last = lastShownMedia
+      lock.unlock()
+      if let last, last >= target { break }
+      guard let next = reader.pop() else { break }
+      chosen = next
+      lock.lock()
+      lastShownMedia = next.media
+      if replayAnchorMedia == 0 { replayAnchorMedia = next.media }
+      lock.unlock()
+    }
+    guard let frame = chosen else {
       if reader.isExhausted {
         finishSuccessfully()
       } else if stalled() {
+        // A stall ends the replay whether or not anything has been shown yet. Requiring that
+        // nothing had been shown meant an underrun part-way through left the tile frozen on its
+        // last picture with no path back to live, which is worse than ending early.
         finishSuccessfully()
       } else {
+        // Not stalled and nothing due: at a slow rate this is the normal case. Keep the reader fed.
         requestMoreFiles(played: shown)
       }
       return
