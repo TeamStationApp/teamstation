@@ -55,6 +55,14 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
   /// release by as much, which is a visible hitch of its own. Decoding early and holding the pixel
   /// buffer for the remainder costs two frames of memory and takes the decode off the clock.
   private static let decodeLead: TimeInterval = 0.06
+  /// How much video the compressed delay line may hold, in seconds.
+  ///
+  /// `PlayoutQueue` bounds a count rather than a duration, so this is turned into frames against
+  /// the measured rate. It has to be: a fixed cap was three seconds at 30 fps and only a second
+  /// and a half at 60, which is less than the two seconds `PlayoutController.Limits` allows the
+  /// buffer to grow to. Overflowing costs more than it sounds — the queue is ordered by due time
+  /// and trims from the front, so the pictures it discards are the ones about to be shown.
+  private static let pictureQueueSeconds: Double = 3
   /// The rate assumed for the dozen frames before `frameRateEstimator` has an answer, and after a
   /// reconnect if this camera has never reported a format. The faster of the two rates in the
   /// population, because both consumers fail worse when the guess is low: the delay line drops
@@ -466,7 +474,7 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     pictures.enqueue(
       PendingPicture(unit: unit, presentationTime: presentationTime),
       due: playout.dueTime(presentationSeconds: presentationTime.seconds),
-      keepingAtMost: 90
+      keepingAtMost: pictureQueueCapacityLocked()
     )
 
     let id = frameID
@@ -506,6 +514,13 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
   }
 
   // MARK: - The delay line
+
+  /// How many coded pictures the delay line may hold, at the rate this camera is sending. Called
+  /// with `lock` held.
+  private func pictureQueueCapacityLocked() -> Int {
+    let rate = frameRateEstimator.frameRate ?? Self.assumedFrameRate
+    return Int((rate * Self.pictureQueueSeconds).rounded(.up))
+  }
 
   /// Releases whatever has come due, decodes it and publishes it.
   ///
