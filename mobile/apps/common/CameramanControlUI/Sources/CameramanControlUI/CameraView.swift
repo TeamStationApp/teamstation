@@ -63,9 +63,9 @@ public struct CameraView<Model: CameraControlling, Picture: View>: View {
       .allowsHitTesting(true)
       .opacity(model.isResponding ? 1 : Metrics.dimmedOpacity)
 
-      // Thermal pill in the upper right, with the close control to its left when there is one. The
-      // zoom rail fills the height below it so the first and last stops keep the same vertical
-      // span when lenses are disabled.
+      // Battery pill in the upper-right corner, thermal pill to its left, and the close control
+      // left of both when there is one. The zoom rail fills the height below them so the first
+      // and last stops keep the same vertical span when lenses are disabled.
       HStack(alignment: .top) {
         Spacer()
         VStack(alignment: .trailing, spacing: 8) {
@@ -74,6 +74,9 @@ public struct CameraView<Model: CameraControlling, Picture: View>: View {
               closeButton
             }
             ThermalBadge(level: model.thermalLevel, animate: model.animatesChrome)
+            if let battery = model.battery {
+              BatteryBadge(status: battery)
+            }
           }
           ZoomScaleView(
             mapping: model.mapping,

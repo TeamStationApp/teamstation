@@ -20,7 +20,7 @@ the same screen for a phone they control over the network:
 | Package | Holds | Needs a device? |
 |---|---|---|
 | `common/CameramanCore` | identity, stream settings, zoom mapping, lenses, format catalogue, thermal level, frame types, the `CameraControlling` seam | no |
-| `common/CameramanControlUI` | the operating screen, Settings, zoom rail and thermal pill, generic over `CameraControlling` | no |
+| `common/CameramanControlUI` | the operating screen, Settings, zoom rail, thermal and battery pills, generic over `CameraControlling` | no |
 | `CameramanCapture` | `AVCaptureSession`, lens selection, format selection | yes |
 | `CameramanEncode` | VideoToolbox H.264/HEVC, AAC, NAL and parameter-set handling | partly |
 | `CameramanRTSP` | RTSP server, packetizers, SDP, RTCP, interleaved framing | no |

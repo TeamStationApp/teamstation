@@ -4,9 +4,7 @@ import SwiftUI
 extension ThermalBadgeLevel {
   /// The pill colour. `Color` is SwiftUI, so the pure enum carries components and this makes them
   /// drawable.
-  public var color: Color {
-    Color(red: hue.red, green: hue.green, blue: hue.blue)
-  }
+  public var color: Color { Color(hue) }
 }
 
 /// Untappable chrome pill showing Cool / Fair / Warm / Hot with the same motion in every app.
@@ -14,23 +12,32 @@ extension ThermalBadgeLevel {
 /// Cameraman lets hits pass through so a zoom drag still reaches the preview underneath; Director
 /// swallows them so a tap on the header pill does not fall through to Recordings. The identifier
 /// differs per host (`camera-thermal` on the operating screen, `header-thermal` in Director's
-/// toolbar) so each app's existing flows keep finding it.
+/// toolbar) so each app's existing flows keep finding it. `.compact` is the tile size in
+/// Director, the footprint of its `OUT` badge, for a Cameraman source's own thermal state.
 public struct ThermalBadge: View {
+  public enum Style: Sendable {
+    case pill
+    case compact
+  }
+
   private let level: ThermalBadgeLevel
   private let animate: Bool
   private let identifier: String
   private let passesTouches: Bool
+  private let style: Style
 
   public init(
     level: ThermalBadgeLevel,
     animate: Bool,
     identifier: String = "camera-thermal",
-    passesTouches: Bool = true
+    passesTouches: Bool = true,
+    style: Style = .pill
   ) {
     self.level = level
     self.animate = animate
     self.identifier = identifier
     self.passesTouches = passesTouches
+    self.style = style
   }
 
   public var body: some View {
@@ -64,16 +71,22 @@ public struct ThermalBadge: View {
         Text("🔥")
       }
       Text(level.label)
-        .font(.system(size: 13, weight: .heavy, design: .rounded))
-        .tracking(1)
+        .font(.system(size: style == .pill ? 13 : 10, weight: .heavy, design: .rounded))
+        .tracking(style == .pill ? 1 : 0)
       if level.showsFlames {
         Text("🔥")
       }
     }
-    .padding(.horizontal, 16)
-    .padding(.vertical, 8)
+    .font(.system(size: style == .pill ? 13 : 10))
+    .padding(.horizontal, style == .pill ? 16 : 5)
+    .padding(.vertical, style == .pill ? 8 : 2)
     .background {
-      ThermalShimmerBackground(color: level.color, shimmer: level.shimmer, phase: phase)
+      ThermalShimmerBackground(
+        color: level.color,
+        shimmer: level.shimmer,
+        phase: phase,
+        cornerRadius: style == .pill ? 8 : 3
+      )
     }
     .foregroundStyle(Color.white)
   }
@@ -85,6 +98,7 @@ private struct ThermalShimmerBackground: View {
   let color: Color
   let shimmer: ThermalBadgeLevel.Shimmer
   let phase: Double
+  var cornerRadius: CGFloat = 8
 
   private static let fillOpacity = 0.18
   private static let bandOpacity = 0.38
@@ -93,7 +107,7 @@ private struct ThermalShimmerBackground: View {
   private static let fadePillFraction = 0.20
 
   var body: some View {
-    RoundedRectangle(cornerRadius: 8)
+    RoundedRectangle(cornerRadius: cornerRadius)
       .fill(color.opacity(fillOpacity))
       .overlay {
         if shimmer != .pulse {
@@ -104,7 +118,7 @@ private struct ThermalShimmerBackground: View {
               .frame(width: geo.size.width)
               .offset(y: bandTop(pillHeight: pillHeight, bandHeight: bandHeight))
           }
-          .clipShape(RoundedRectangle(cornerRadius: 8))
+          .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
         }
       }
   }
