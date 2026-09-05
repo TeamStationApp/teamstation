@@ -121,18 +121,54 @@ struct SegmentWriterGapTests {
     #expect(dvr.archiveFillEvents == 1)
 
     let covered = Double(dvr.archiveFillPackets) * 1024 / 48_000
-    // The invariant is that the tracks end together, not that the whole gap survives. The fill is
-    // capped at 4 000 packets (85.33 s), and above that the video sample is clamped to match, so a
-    // longer gap is deliberately shortened rather than left to hang finalisation.
+    // A two-minute outage is an ordinary one — a phone that crashed and was reopened — and it must
+    // survive whole. The first real recording with one lost 35 s to a cap of 85 s.
+    #expect(abs(covered - 120) < 0.5, "audio covered \(covered) s of a 120 s outage")
+    #expect(abs(dvr.archiveFillLastGapSeconds - 120) < 0.5, "video held \(dvr.archiveFillLastGapSeconds) s of a 120 s outage")
+  }
+
+  /// The 120 s device run: all four exports the same length, the app survives the stop — and the
+  /// reconnected camera's audio track ends exactly where the fill ends, with nothing archived after
+  /// it came back. At 59 s the tracks agreed to within 40 ms. This drives the same shape in-process.
+  @Test("After a two-minute reconnect gap, live audio keeps landing alongside the video", .timeLimit(.minutes(2)))
+  func longReconnectGapKeepsArchivingAudio() async throws {
+    let harness = try GapHarness()
+    defer { harness.tearDown() }
+
+    let writer = harness.makeWriter()
+    try writer.prepare()
+    try harness.feed(writer, from: 1_000, seconds: 2)
+    try harness.feed(writer, from: 1_122, media: 5, seconds: 8, capture: false)
+    await writer.finish()
+
+    let tile = harness.telemetry.snapshot.tiles[0]
+    #expect(writer.droppedFrameCount == 0)
+    #expect(tile.audioBuffersDiscarded == 0)
     #expect(
-      covered >= dvr.archiveFillLastGapSeconds - 0.25,
-      "audio covered \(covered) s while the video sample kept \(dvr.archiveFillLastGapSeconds) s; the tracks end apart and stop hangs"
+      abs(tile.archiveAudioSeconds - tile.archiveVideoSeconds) < 0.5,
+      "audio last placed at \(tile.archiveAudioSeconds) s, video at \(tile.archiveVideoSeconds) s"
     )
-    // And the shortening is real: say so here so a green test is not read as "no time lost".
-    #expect(
-      dvr.archiveFillLastGapSeconds <= 85.34,
-      "a 120 s gap should be clamped to the fill cap, not kept whole"
-    )
+  }
+
+  /// Beyond the cap the tracks are clamped together rather than left apart; a green test here
+  /// must not be read as "no time lost" — above ~640 s the recording is deliberately shortened.
+  @Test("Beyond the fill cap the video sample is clamped to the audio, and the tracks still end together", .timeLimit(.minutes(2)))
+  func beyondCapClampsTogether() async throws {
+    let harness = try GapHarness()
+    defer { harness.tearDown() }
+
+    let writer = harness.makeWriter()
+    try writer.prepare()
+    try harness.feed(writer, from: 1_000, seconds: 1)
+    try harness.feed(writer, from: 1_701, seconds: 1)
+    await writer.finish()
+
+    let dvr = harness.telemetry.snapshot.dvr
+    let covered = Double(dvr.archiveFillPackets) * 1024 / 48_000
+    #expect(covered >= dvr.archiveFillLastGapSeconds - 0.25, "audio \(covered) s vs video hold \(dvr.archiveFillLastGapSeconds) s")
+    #expect(dvr.archiveFillLastGapSeconds < 700, "a 700 s gap should be clamped to the cap, not kept whole")
+    let tile = harness.telemetry.snapshot.tiles[0]
+    #expect(tile.audioBuffersDiscarded == 0)
   }
 }
 
