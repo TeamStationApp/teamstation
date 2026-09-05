@@ -55,6 +55,11 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
   /// release by as much, which is a visible hitch of its own. Decoding early and holding the pixel
   /// buffer for the remainder costs two frames of memory and takes the decode off the clock.
   private static let decodeLead: TimeInterval = 0.06
+  /// The rate assumed for the dozen frames before `frameRateEstimator` has an answer, and after a
+  /// reconnect if this camera has never reported a format. The faster of the two rates in the
+  /// population, because both consumers fail worse when the guess is low: the delay line drops
+  /// frames it was about to show, and replay runs at half speed.
+  private static let assumedFrameRate: Double = 60
 
   private let lock = NSLock()
   private let queue: DispatchQueue
@@ -94,6 +99,9 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
   private var lastAccessUnitAt: Date?
   private var sessionStartedAt: Date?
   private var resolvedFormat: SourceFormat?
+  /// What this camera is actually sending, measured from its own RTP timestamps. Nothing in RTSP
+  /// states it, and replay pacing depends on it.
+  private var frameRateEstimator = FrameRateEstimator()
   private var connectionCount = 0
   private var stats = ReceiveStats()
   private var failedAttempts = 0
@@ -296,6 +304,7 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     correctedCaptureAgeSeconds = 0
     videoSSRC = nil
     jitter = JitterWindow()
+    frameRateEstimator.reset()
     // A new session restarts the timeline, so every frame held against the old one is stale and
     // every measurement taken against it is meaningless. What the camera converged on is not: it
     // carries over as the starting size.
@@ -391,7 +400,9 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     resolvedFormat = SourceFormat(
       width: resolvedFormat?.width ?? 0,
       height: resolvedFormat?.height ?? 0,
-      frameRate: resolvedFormat?.frameRate ?? 30,
+      frameRate: frameRateEstimator.frameRate
+        ?? resolvedFormat?.frameRate
+        ?? Self.assumedFrameRate,
       pixelFormat: VideoToolboxDecoder.outputPixelFormat,
       codecName: codec.displayName
     )
@@ -429,6 +440,7 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     let elapsed = videoTimeline.unwrap(unit.rtpTimestamp)
     let presentationTime = CMTime(value: CMTimeValue(elapsed), timescale: 90_000)
     jitter.noteLateness(now - presentationTime.seconds, at: arrivedAt)
+    frameRateEstimator.note(timestamp: unit.rtpTimestamp)
 
     // Carried alongside the existing arrival stamp and read by nothing yet: this phase proves the
     // number is right before anything depends on it. Already inside the lock taken above — `lock`
@@ -591,7 +603,9 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     resolvedFormat = SourceFormat(
       width: CVPixelBufferGetWidth(pixelBuffer),
       height: CVPixelBufferGetHeight(pixelBuffer),
-      frameRate: resolvedFormat?.frameRate ?? 30,
+      frameRate: frameRateEstimator.frameRate
+        ?? resolvedFormat?.frameRate
+        ?? Self.assumedFrameRate,
       pixelFormat: CVPixelBufferGetPixelFormatType(pixelBuffer),
       codecName: resolvedFormat?.codecName ?? videoCodec?.displayName ?? ""
     )
