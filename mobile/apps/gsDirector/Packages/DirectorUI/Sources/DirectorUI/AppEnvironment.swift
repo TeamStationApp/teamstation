@@ -1,6 +1,8 @@
 import AVFoundation
 import Foundation
 import Observation
+// Only the level enum: CameramanCore also has a `ProcessLoad`, which would collide with DirectorPipeline's.
+import enum CameramanCore.ThermalBadgeLevel
 import DirectorCore
 import DirectorDVR
 import DirectorPipeline

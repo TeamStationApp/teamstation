@@ -1,4 +1,3 @@
-import CameramanCapture
 import CameramanCore
 import Foundation
 import Testing

@@ -33,6 +33,12 @@ packages:
     path: Packages/DirectorDVR
   DirectorRTSP:
     path: ../common/DirectorRTSP
+  # Cameraman's pure types and its operating screen, shared so Director can show the thermal pill
+  # and, for a Cameraman source, the phone's own control screen.
+  CameramanCore:
+    path: ../common/CameramanCore
+  CameramanControlUI:
+    path: ../common/CameramanControlUI
   DirectorRTMP:
     path: Packages/DirectorRTMP
   DirectorUI:
@@ -69,6 +75,10 @@ targets:
         product: DirectorDVR
       - package: DirectorRTSP
         product: DirectorRTSP
+      - package: CameramanCore
+        product: CameramanCore
+      - package: CameramanControlUI
+        product: CameramanControlUI
       - package: DirectorRTMP
         product: DirectorRTMP
       - package: DirectorUI
@@ -97,6 +107,10 @@ targets:
         product: DirectorDVR
       - package: DirectorRTSP
         product: DirectorRTSP
+      - package: CameramanCore
+        product: CameramanCore
+      - package: CameramanControlUI
+        product: CameramanControlUI
       - package: DirectorRTMP
         product: DirectorRTMP
       - package: DirectorTestHarness

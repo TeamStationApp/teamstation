@@ -8,7 +8,7 @@ let package = Package(
     .library(name: "CameramanRTSP", targets: [ "CameramanRTSP" ])
   ],
   dependencies: [
-    .package(path: "../CameramanCore"),
+    .package(path: "../../common/CameramanCore"),
     .package(path: "../CameramanEncode")
   ],
   targets: [

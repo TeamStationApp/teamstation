@@ -1,3 +1,4 @@
+import CameramanControlUI
 import DirectorCore
 import DirectorPipeline
 import SwiftUI
@@ -128,9 +129,12 @@ public struct DirectorGridView: View {
 
       Spacer()
 
+      // Swallows its taps so a press on the pill does not fall through to Recordings.
       ThermalBadge(
         level: environment.displayedThermalLevel,
-        animate: !environment.launch.isUITest
+        animate: !environment.launch.isUITest,
+        identifier: "header-thermal",
+        passesTouches: false
       )
 
       Button {

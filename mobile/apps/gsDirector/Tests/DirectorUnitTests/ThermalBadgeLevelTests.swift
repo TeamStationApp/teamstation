@@ -1,5 +1,5 @@
+import CameramanCore
 import Foundation
-import DirectorUI
 import Testing
 
 @Suite("Thermal badge level")

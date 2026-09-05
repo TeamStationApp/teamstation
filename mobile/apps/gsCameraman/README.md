@@ -22,12 +22,15 @@ committed. Re-run `bootstrap` after adding a file.
 
 ```
 App/                      app target: entry point, Info.plist, and App Icon
+../common/
+  CameramanCore/          pure value types: zoom mapping, identity, settings, format catalogue,
+                          thermal level, the CameraControlling seam (shared with Director/Preview)
+  CameramanControlUI/     the operating screen, Settings, zoom rail, thermal pill (shared)
 Packages/
-  CameramanCore/          pure value types: zoom mapping, identity, settings, encoded frames
   CameramanCapture/       AVFoundation: lens control, format selection, capability measurement
   CameramanEncode/        VideoToolbox H.264/HEVC and AAC, NAL layout conversion
   CameramanRTSP/          SDP, RTP packetization, RTCP, interleaved framing, the server
-  CameramanUI/            SwiftUI preview, zoom gesture, settings
+  CameramanUI/            AppEnvironment wiring, the preview layer, the root and diagnostic views
   CameramanTestHarness/   launch arguments, control server, synthetic camera
 Tests/CameramanUnitTests/ everything that can be tested without hardware
 docs/                     measured capability set and risk log
@@ -41,6 +44,11 @@ scripts/                  build, test and measurement scripts
 identity rules are testable on a simulator with no camera. `CameramanEncode` and `CameramanRTSP` are
 siblings rather than a chain, which is what lets every packetizer test run on plain bytes with no
 VideoToolbox present.
+
+`CameramanCore` and `CameramanControlUI` live in `mobile/apps/common` because GS Director and
+GS Preview draw the same operating screen for a phone they control remotely. The screens compile
+against the `CameraControlling` protocol rather than against this app's `AppEnvironment`, which
+conforms to it; nothing on the phone changed when they moved.
 
 ## Interop is proven, not asserted
 
