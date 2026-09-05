@@ -77,7 +77,11 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
   public typealias FormatChangeHandler = @Sendable (SourceID) -> Void
 
   /// Roughly two seconds of audio at the buffer sizes cameras send.
-  private static let maximumPendingAudio = 200
+  /// Above the silent-fill cap (4 000 packets, ~85 s) with room for live audio queued behind it.
+  /// At 200 a fill for a 38 s outage — 1 775 packets written in one burst — overflowed this and
+  /// 1 575 of them were discarded, so the audio track ended 33 s short of the video sample it was
+  /// written to cover and finalisation hung on the very divergence the fill exists to prevent.
+  private static let maximumPendingAudio = 5_000
   /// A gap longer than this is a clock glitch rather than lost frames, and giving one sample a
   /// duration that long would stretch the whole timeline.
   private static let maximumFrameDuration: Double = 2
@@ -113,6 +117,12 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
   private var baseWallClock: WallClock?
   private var lastVideoTime: CMTime = .negativeInfinity
   private var lastVideoDuration = CMTime(value: 3000, timescale: 90_000)
+  /// Added to every incoming presentation time so the file's timeline survives the camera's clock
+  /// restarting. A reconnect resets the RTP unwrapper, and every frame after it arrived stamped
+  /// earlier than the frame before the outage; the writer read that as "does not advance" and
+  /// dropped every one of them for the rest of the recording — 755 frames on a 55 s outage — and
+  /// then could not finalise a file whose video stopped where its audio did not.
+  private var timelineOffset: CMTime = .zero
   /// Seconds of wall clock this archive covers with a held picture rather than a delivered frame.
   /// Nonzero means the camera lost time and the file kept it rather than closing over it.
   private var archiveGapSeconds: Double = 0
@@ -412,9 +422,35 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     }
 
     let previous = held
+    var adjusted = CMTimeAdd(frame.presentationTime, timelineOffset)
+    if let previous {
+      let rawGap = CMTimeSubtract(adjusted, previous.presentationTime)
+      let elapsed = frame.wallClock.seconds - previous.wallClock.seconds
+      // The media clock is only trusted while it agrees with the time that actually passed. Going
+      // backwards means the camera's clock restarted; a long jump that real elapsed time cannot
+      // corroborate means it glitched. Either way the frame is placed where the wall clock says it
+      // belongs — one frame on from the last if no time passed — so the file's timeline keeps
+      // moving forward and a reconnect becomes an ordinary gap for the hold-and-fill path.
+      let untrusted = !rawGap.isNumeric
+        || rawGap < .zero
+        || (rawGap.seconds > Self.maximumFrameDuration && abs(rawGap.seconds - elapsed) > 0.5)
+      if untrusted {
+        let step = max(elapsed, lastVideoDuration.isNumeric ? lastVideoDuration.seconds : 1.0 / 30)
+        let desired = CMTimeAdd(
+          previous.presentationTime,
+          CMTime(seconds: step, preferredTimescale: 90_000)
+        )
+        timelineOffset = CMTimeAdd(timelineOffset, CMTimeSubtract(desired, adjusted))
+        adjusted = desired
+        telemetry.mutate { snapshot in
+          snapshot.dvr.archiveClockRebases &+= 1
+          snapshot.dvr.archiveLastRebaseElapsedSeconds = elapsed
+        }
+      }
+    }
     held = HeldPicture(
       data: frame.data,
-      presentationTime: frame.presentationTime,
+      presentationTime: adjusted,
       isKeyframe: frame.isKeyframe,
       frameID: frame.frameID,
       captureWallClock: frame.captureWallClock,
@@ -424,7 +460,7 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
       lock.unlock()
       return
     }
-    let gap = CMTimeSubtract(frame.presentationTime, previous.presentationTime)
+    let gap = CMTimeSubtract(adjusted, previous.presentationTime)
     // The same interval measured on capture time, when both frames carry one. A real dropout moves
     // both clocks together; a glitched timestamp moves only the media clock.
     let captureGap: Double? = {
@@ -623,6 +659,9 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     // Written straight after the picture it covers, so the audio track never trails the video by
     // more than the gap itself and finalisation is not left waiting on a track that stopped early.
     for frame in silenceToWrite { write(audio: frame) }
+    // Push the whole burst through now rather than eight packets per call; a fill this size waits
+    // for the input, and the queue only exists to survive a briefly unready one.
+    if !silenceToWrite.isEmpty { drainAudio(limit: .max) }
 
     if shouldFlush {
       // Audio first, so the file being closed carries the sound that belongs to it.

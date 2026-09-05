@@ -63,6 +63,42 @@ struct SegmentWriterGapTests {
     #expect(snap.dvr.archiveFillEvents == 0)
   }
 
+  /// The failure reproduced on the device: kill the Cameraman, let it reconnect, stop. The RTP
+  /// unwrapper restarts on reconnect, so every later frame arrives stamped earlier than the frame
+  /// before the outage. The writer read that as a clock that "does not advance" and dropped every
+  /// one — 755 frames on a 55 s outage — then hung finalisation on a video track that stopped where
+  /// the audio did not. After a reconnect there is also no capture-clock anchor yet, so the only
+  /// corroboration available is arrival time.
+  @Test("A clock that restarts after a reconnect is re-based, filled, and keeps archiving", .timeLimit(.minutes(1)))
+  func reconnectRestartsClockAndKeepsArchiving() async throws {
+    let harness = try GapHarness()
+    defer { harness.tearDown() }
+
+    let writer = harness.makeWriter()
+    try writer.prepare()
+    try harness.feed(writer, from: 1_000, seconds: 1)
+    // 59 s later on the wall, the camera is back: its media clock restarted at 5 s and it has no
+    // capture time until a new sender report anchors it.
+    try harness.feed(writer, from: 1_060, media: 5, seconds: 1, capture: false)
+    await writer.finish()
+
+    let dvr = harness.telemetry.snapshot.dvr
+    #expect(writer.appendedFrameCount >= 58, "appended \(writer.appendedFrameCount) of 60 frames")
+    #expect(writer.droppedFrameCount == 0, "dropped \(writer.droppedFrameCount) frames after the reconnect")
+    #expect(dvr.archiveClockRebases == 1)
+    #expect(dvr.archiveFillEvents == 1)
+    let covered = Double(dvr.archiveFillPackets) * 1024 / 48_000
+    #expect(abs(covered - 59) < 0.5, "audio covered \(covered) s of a 59 s outage")
+    // Generating the fill is not writing it. The invariant that keeps finalisation alive is that
+    // the audio track reaches where the video track ends, and that nothing queued was thrown away.
+    let tile = harness.telemetry.snapshot.tiles[0]
+    #expect(tile.audioBuffersDiscarded == 0, "\(tile.audioBuffersDiscarded) audio buffers discarded")
+    #expect(
+      abs(tile.archiveAudioSeconds - tile.archiveVideoSeconds) < 0.5,
+      "audio ends at \(tile.archiveAudioSeconds) s, video at \(tile.archiveVideoSeconds) s"
+    )
+  }
+
   /// The fill is capped at 4 000 packets — about 85 s — while the video sample keeps its full
   /// corroborated duration. A segmented writer will not finalise until every track reaches the
   /// boundary, so above the cap the tracks diverge by the remainder and stop hangs. That is the
@@ -144,8 +180,10 @@ private final class GapHarness {
   func feed(
     _ writer: SegmentWriter,
     from start: Double,
+    media mediaStart: Double? = nil,
     seconds: Double,
-    captureOffset: Double = 0
+    captureOffset: Double = 0,
+    capture: Bool = true
   ) throws {
     guard let buffer = Self.buffer(width: 160, height: 120) else {
       throw CocoaError(.fileWriteUnknown)
@@ -154,7 +192,9 @@ private final class GapHarness {
     let frames = max(Int((seconds * Double(fps)).rounded(.down)), 1)
     for step in 0..<frames {
       let wall = start + Double(step) / Double(fps)
-      let time = CMTime(seconds: wall, preferredTimescale: 90_000)
+      // Media time normally tracks wall time. A reconnect restarts it, which is what `media` models.
+      let mediaSeconds = (mediaStart ?? start) + Double(step) / Double(fps)
+      let time = CMTime(seconds: mediaSeconds, preferredTimescale: 90_000)
       clock.set(wall)
       frameID += 1
       // Audio first: a writer with no audio format yet refuses video, because a file that gets a
@@ -186,7 +226,7 @@ private final class GapHarness {
           presentationTime: coded.presentationTime,
           decodeTime: coded.decodeTime,
           wallClock: coded.wallClock,
-          captureWallClock: WallClock(seconds: wall + captureOffset),
+          captureWallClock: capture ? WallClock(seconds: wall + captureOffset) : nil,
           frameID: coded.frameID
         )
       )
