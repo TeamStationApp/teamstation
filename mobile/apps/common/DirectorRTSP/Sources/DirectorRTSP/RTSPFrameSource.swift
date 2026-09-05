@@ -289,6 +289,12 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     clockAudit.reset()
     audioTimeline.reset()
     lastPresentationTime = nil
+    // A new session means a new anchor, so a corrected capture time from the old one describes a
+    // clock that no longer applies. Leaving it set stamped every frame after a reconnect with a
+    // pre-outage moment.
+    lastCorrectedCapture = 0
+    correctedCaptureAgeSeconds = 0
+    videoSSRC = nil
     jitter = JitterWindow()
     // A new session restarts the timeline, so every frame held against the old one is stale and
     // every measurement taken against it is meaningless. What the camera converged on is not: it
@@ -427,6 +433,11 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     // Carried alongside the existing arrival stamp and read by nothing yet: this phase proves the
     // number is right before anything depends on it. Already inside the lock taken above — `lock`
     // is a plain NSLock and taking it again here deadlocks the receive thread on the first packet.
+    // Held per frame rather than read back from `lastCorrectedCapture`. The cached value belongs to
+    // whichever frame last had an anchor, and stamping this frame with it is how a reconnect — which
+    // clears the anchor but not the cache — made a real outage look like no elapsed capture time at
+    // all, and so like a glitched timestamp rather than the dropout it was.
+    var frameCapture: Double?
     if let videoSSRC,
        let correctedCapture = clockAudit.captureTimeOnLocalClock(
          rtpTimestamp: unit.rtpTimestamp,
@@ -434,6 +445,7 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
        ) {
       lastCorrectedCapture = correctedCapture
       correctedCaptureAgeSeconds = Date().timeIntervalSince1970 - correctedCapture
+      frameCapture = correctedCapture
     }
 
     // The picture waits here instead of being decoded on the spot. Releasing it against its own
@@ -475,9 +487,7 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
         presentationTime: presentationTime,
         decodeTime: presentationTime,
         wallClock: clock.now,
-        captureWallClock: lastCorrectedCapture > 0
-          ? WallClock(seconds: lastCorrectedCapture)
-          : nil,
+        captureWallClock: frameCapture.map { WallClock(seconds: $0) },
         frameID: id
       )
     )
