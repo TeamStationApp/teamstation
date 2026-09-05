@@ -14,6 +14,8 @@ public final class RTSPServer: @unchecked Sendable {
     public var port: UInt16?
     /// The port actually bound, which may be the fallback rather than the one asked for.
     public var requestedPort: UInt16?
+    /// Sessions currently playing. A connection that only polls parameters is not a viewer and is
+    /// not counted here; `acceptedClients` still counts it.
     public var clientCount = 0
     public var lastError: String?
     /// Frames the send queue dropped across clients because a receiver could not keep up.
@@ -54,6 +56,8 @@ public final class RTSPServer: @unchecked Sendable {
   /// Called when a client starts playing, so it gets a picture immediately instead of waiting out
   /// the keyframe interval on frames whose references it never received.
   private let requestKeyframe: @Sendable () -> Void
+  /// Answers `GET_PARAMETER` / `SET_PARAMETER` bodies. Nil offers no parameters.
+  private let parameters: RTSPResponder.ParameterHandler?
 
   private struct MutableState {
     var listener: NWListener?
@@ -80,12 +84,14 @@ public final class RTSPServer: @unchecked Sendable {
     describe: @escaping @Sendable (UInt32, UInt32) -> String,
     hasAudio: @escaping @Sendable () -> Bool,
     identity: @escaping @Sendable () -> DeviceIdentity,
-    requestKeyframe: @escaping @Sendable () -> Void
+    requestKeyframe: @escaping @Sendable () -> Void,
+    parameters: RTSPResponder.ParameterHandler? = nil
   ) {
     self.describe = describe
     self.hasAudio = hasAudio
     self.identity = identity
     self.requestKeyframe = requestKeyframe
+    self.parameters = parameters
   }
 
   /// Binds `port`, falling back to `fallbackPort` if it is taken. A bind failure is a visible status
@@ -126,9 +132,15 @@ public final class RTSPServer: @unchecked Sendable {
     }
   }
 
+  /// Advertised so a client knows this build answers `GET_PARAMETER` / `SET_PARAMETER` before it
+  /// offers a control screen. An older build without it shows no controls instead of a screen
+  /// that cannot connect.
+  public static let controlVersion = CameraParameters.controlVersion
+
   /// TXT keys Director reads for Cameraman identity. `uuid` is the CNAME; `name` is the label.
   /// `ip` / `port` let GS Director bind without resolving the Bonjour UUID hostname, which
-  /// often has no usable A-record from another iOS device.
+  /// often has no usable A-record from another iOS device. `control` says the parameter verbs
+  /// are answered.
   public static func bonjourTXT(
     identity: DeviceIdentity,
     path: String,
@@ -138,7 +150,8 @@ public final class RTSPServer: @unchecked Sendable {
     var fields = [
       "uuid": identity.cname,
       "name": identity.name,
-      "path": path
+      "path": path,
+      "control": controlVersion
     ]
     if let ip, !ip.isEmpty { fields["ip"] = ip }
     if let port, port > 0 { fields["port"] = String(port) }
@@ -296,16 +309,20 @@ public final class RTSPServer: @unchecked Sendable {
       sdp: describe,
       hasAudio: hasAudio(),
       identity: identity,
-      requestKeyframe: requestKeyframe
+      requestKeyframe: requestKeyframe,
+      parameters: parameters
     )
     let key = ObjectIdentifier(client)
     client.onClose = { [weak self] reason in
       self?.noteDisconnect(key: key, reason: reason)
     }
+    client.onStreamingChange = { [weak self] in
+      self?.recountClients()
+    }
 
     let updated = state.withLock { current -> Status in
       current.connections[key] = client
-      current.status.clientCount = current.connections.count
+      current.status.clientCount = Self.playingCount(current.connections)
       current.status.acceptedClients += 1
       return current.status
     }
@@ -316,12 +333,26 @@ public final class RTSPServer: @unchecked Sendable {
   private func noteDisconnect(key: ObjectIdentifier, reason: String) {
     let updated = state.withLock { current -> Status in
       current.connections[key] = nil
-      current.status.clientCount = current.connections.count
+      current.status.clientCount = Self.playingCount(current.connections)
       current.status.closedClients += 1
       current.status.lastDisconnectReason = reason
       return current.status
     }
     onStatusChange?(updated)
+  }
+
+  private func recountClients() {
+    let updated: Status? = state.withLock { current -> Status? in
+      let playing = Self.playingCount(current.connections)
+      guard playing != current.status.clientCount else { return nil }
+      current.status.clientCount = playing
+      return current.status
+    }
+    if let updated { onStatusChange?(updated) }
+  }
+
+  private static func playingCount(_ connections: [ObjectIdentifier: RTSPClientConnection]) -> Int {
+    connections.values.filter(\.isStreaming).count
   }
 
   private func stopLocked() {

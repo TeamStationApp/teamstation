@@ -17,6 +17,9 @@ public struct CameraAdvertisement: Hashable, Sendable {
   public var path: String
   /// GS Cameraman TXT `uuid` — the same string as the SDP/RTCP CNAME.
   public var uuid: String?
+  /// GS Cameraman TXT `control`: `params/1` when the phone answers RTSP `GET_PARAMETER` /
+  /// `SET_PARAMETER` with the camera vocabulary. Absent on older builds and on NearStream.
+  public var controlVersion: String?
 
   public init(
     host: String,
@@ -26,7 +29,8 @@ public struct CameraAdvertisement: Hashable, Sendable {
     isBusy: Bool = false,
     port: Int = 554,
     path: String = "/live/mainstream",
-    uuid: String? = nil
+    uuid: String? = nil,
+    controlVersion: String? = nil
   ) {
     self.host = host
     self.advertisedName = advertisedName
@@ -36,6 +40,15 @@ public struct CameraAdvertisement: Hashable, Sendable {
     self.port = port
     self.path = Self.normalizedPath(path)
     self.uuid = Self.trimmed(uuid)
+    self.controlVersion = Self.trimmed(controlVersion)
+  }
+
+  /// The version this client speaks. A camera advertising anything else gets no control screen.
+  public static let supportedControlVersion = "params/1"
+
+  /// A GS Cameraman whose parameters this client can drive: it has a UUID and speaks our version.
+  public var isControllable: Bool {
+    uuid != nil && controlVersion == Self.supportedControlVersion
   }
 
   /// `modelname` first, then TXT `wlanmac`, then Cameraman `uuid`. Prefixes keep the namespaces apart.
@@ -103,7 +116,8 @@ public struct CameraAdvertisement: Hashable, Sendable {
       isBusy: busy,
       port: portFromTXT ?? port,
       path: lookup["path"] ?? "/live/mainstream",
-      uuid: lookup["uuid"]
+      uuid: lookup["uuid"],
+      controlVersion: lookup["control"]
     )
   }
 

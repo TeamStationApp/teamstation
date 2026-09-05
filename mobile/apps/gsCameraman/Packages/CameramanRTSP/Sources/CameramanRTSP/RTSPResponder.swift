@@ -42,7 +42,43 @@ public struct RTSPResponder: Sendable {
     public var effect: Effect
   }
 
-  public static let supportedMethods = "OPTIONS, DESCRIBE, SETUP, PLAY, PAUSE, TEARDOWN, GET_PARAMETER"
+  /// A `GET_PARAMETER` with a body, or a `SET_PARAMETER`. The body is `text/parameters`; what the
+  /// names mean is `CameraParameters`' business, not this state machine's.
+  public struct ParameterRequest: Sendable, Equatable {
+    public enum Method: Sendable, Equatable {
+      case get
+      case set
+    }
+
+    public var method: Method
+    public var body: String
+
+    public init(method: Method, body: String) {
+      self.method = method
+      self.body = body
+    }
+  }
+
+  public struct ParameterResponse: Sendable, Equatable {
+    public var statusCode: Int
+    public var reasonPhrase: String
+    /// `text/parameters`; empty means no body.
+    public var body: String
+
+    public init(statusCode: Int = 200, reasonPhrase: String = "OK", body: String = "") {
+      self.statusCode = statusCode
+      self.reasonPhrase = reasonPhrase
+      self.body = body
+    }
+  }
+
+  /// Answers parameter requests. Synchronous, because the connection needs the reply before it
+  /// can read the next request on the socket; the phone hops to the main actor inside it.
+  public typealias ParameterHandler = @Sendable (ParameterRequest) -> ParameterResponse
+
+  public static let supportedMethods =
+    "OPTIONS, DESCRIBE, SETUP, PLAY, PAUSE, TEARDOWN, GET_PARAMETER, SET_PARAMETER"
+  public static let parametersContentType = "text/parameters"
 
   /// RFC 2326 §12.37. A client that sends no keepalive is dropped after this, which is what stops a
   /// phone that walked out of range from holding the stream open forever.
@@ -51,15 +87,24 @@ public struct RTSPResponder: Sendable {
   public let sessionIdentifier: String
   public let sdp: String
   public let hasAudio: Bool
+  /// Nil means the server has no parameters to offer: a named `GET` is then `451` and a `SET` is
+  /// `501`, which is what this server answered before it had any.
+  public let parameters: ParameterHandler?
 
   public private(set) var state: State = .initial
   public private(set) var videoSetup: Setup?
   public private(set) var audioSetup: Setup?
 
-  public init(sessionIdentifier: String, sdp: String, hasAudio: Bool) {
+  public init(
+    sessionIdentifier: String,
+    sdp: String,
+    hasAudio: Bool,
+    parameters: ParameterHandler? = nil
+  ) {
     self.sessionIdentifier = sessionIdentifier
     self.sdp = sdp
     self.hasAudio = hasAudio
+    self.parameters = parameters
   }
 
   public mutating func respond(to request: RTSPServerRequest) -> Outcome {
@@ -94,14 +139,52 @@ public struct RTSPResponder: Sendable {
         effect: .close
       )
     case "GET_PARAMETER":
-      // Empty body means "keepalive", which is how every client holds a session open.
-      return Outcome(
-        response: RTSPServerResponse(headers: base(cseq: cseq, includeSession: state != .initial)),
-        effect: .none
-      )
+      // Empty body means "keepalive", which is how every client holds a session open. A body names
+      // parameters; `*` is all of them. Neither needs a session: these are server-level values.
+      guard !request.body.isEmpty else {
+        return Outcome(
+          response: RTSPServerResponse(headers: base(cseq: cseq, includeSession: state != .initial)),
+          effect: .none
+        )
+      }
+      return Outcome(response: parameters(.get, request, cseq: cseq), effect: .none)
+    case "SET_PARAMETER":
+      guard parameters != nil else {
+        return Outcome(response: .status(501, "Not Implemented", cseq: cseq), effect: .none)
+      }
+      // RFC 2326 §10.9 allows an empty `SET_PARAMETER` as a keepalive too.
+      guard !request.body.isEmpty else {
+        return Outcome(
+          response: RTSPServerResponse(headers: base(cseq: cseq, includeSession: state != .initial)),
+          effect: .none
+        )
+      }
+      return Outcome(response: parameters(.set, request, cseq: cseq), effect: .none)
     default:
       return Outcome(response: .status(501, "Not Implemented", cseq: cseq), effect: .none)
     }
+  }
+
+  private func parameters(
+    _ method: ParameterRequest.Method,
+    _ request: RTSPServerRequest,
+    cseq: String?
+  ) -> RTSPServerResponse {
+    guard let parameters else {
+      return .status(451, "Parameter Not Understood", cseq: cseq)
+    }
+    let body = String(decoding: request.body, as: UTF8.self)
+    let answer = parameters(ParameterRequest(method: method, body: body))
+    var headers = base(cseq: cseq, includeSession: state != .initial)
+    if !answer.body.isEmpty {
+      headers.append((name: "Content-Type", value: Self.parametersContentType))
+    }
+    return RTSPServerResponse(
+      statusCode: answer.statusCode,
+      reasonPhrase: answer.reasonPhrase,
+      headers: headers,
+      body: Data(answer.body.utf8)
+    )
   }
 
   private func options(cseq: String?) -> RTSPServerResponse {

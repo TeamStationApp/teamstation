@@ -633,6 +633,43 @@ struct CameraIdentityTests {
     #expect(advertisement.endpoint == CameraEndpoint(host: "192.168.7.219", port: 554, path: "/live/mainstream"))
   }
 
+  @Test("Cameraman TXT control=params/1 marks a phone this client can drive")
+  func cameramanControlVersion() {
+    let controllable = CameraAdvertisement.parseTXT(
+      [ "uuid": "c94df9ca-d7c2-468f-8529-97d01fba14e7", "name": "Hand held", "control": "params/1" ],
+      instanceName: "Hand held",
+      host: "192.168.7.219"
+    )
+    #expect(controllable.controlVersion == "params/1")
+    #expect(controllable.isControllable)
+
+    // An older Cameraman build advertises no `control`: it gets no control screen rather than one
+    // that cannot connect.
+    let older = CameraAdvertisement.parseTXT(
+      [ "uuid": "c94df9ca-d7c2-468f-8529-97d01fba14e7", "name": "Hand held" ],
+      instanceName: "Hand held",
+      host: "192.168.7.219"
+    )
+    #expect(older.controlVersion == nil)
+    #expect(!older.isControllable)
+
+    // A NearStream has no uuid, so a stray `control` key would not make it controllable either.
+    let nearStream = CameraAdvertisement.parseTXT(
+      [ "modelname": "VM33_00001", "control": "params/1" ],
+      instanceName: "00001 3rd",
+      host: "192.168.7.148"
+    )
+    #expect(!nearStream.isControllable)
+
+    // A future version is not ours.
+    let newer = CameraAdvertisement.parseTXT(
+      [ "uuid": "c94df9ca-d7c2-468f-8529-97d01fba14e7", "control": "params/2" ],
+      instanceName: "x",
+      host: "192.168.7.219"
+    )
+    #expect(!newer.isControllable)
+  }
+
   @Test("Cameraman TXT name wins over a stale Bonjour instance string")
   func cameramanTXTNameBeatsInstanceName() {
     let advertisement = CameraAdvertisement.parseTXT(
