@@ -1,0 +1,54 @@
+# The same screen rotated: chrome pinned to the edges and Settings in Cameraman's two columns.
+#
+# Same fake phone as cameraman-control. The device is rotated with setOrientation, so the layout
+# switch is exercised live rather than at launch.
+appId: co.gamestation.preview
+---
+- launchApp:
+    clearState: true
+    arguments:
+      uiTest: true
+- runFlow: shared/allow-local-network.yaml
+- extendedWaitUntil:
+    visible:
+      id: preview-tile-name-1
+      text: "Phone 1"
+    timeout: 60000
+- tapOn:
+    id: preview-tile-menu-1
+- extendedWaitUntil:
+    visible:
+      id: camera-screen
+    timeout: 10000
+- setOrientation: LANDSCAPE_LEFT
+- waitForAnimationToEnd:
+    timeout: 3000
+- assertVisible:
+    id: zoom-scale
+- assertVisible:
+    id: camera-battery
+- takeScreenshot: preview-cameraman-landscape
+
+- tapOn:
+    id: settings-button
+- extendedWaitUntil:
+    visible:
+      id: settings-codec
+    timeout: 8000
+- assertVisible:
+    id: settings-layout-landscape
+- takeScreenshot: preview-cameraman-settings-landscape
+
+# Rotate mid-edit: the columns switch and nothing is lost.
+- setOrientation: PORTRAIT
+- waitForAnimationToEnd:
+    timeout: 3000
+- assertVisible:
+    id: settings-layout-portrait
+- tapOn:
+    id: settings-done
+- waitForAnimationToEnd:
+    timeout: 3000
+- tapOn:
+    id: camera-close
+- setOrientation: PORTRAIT

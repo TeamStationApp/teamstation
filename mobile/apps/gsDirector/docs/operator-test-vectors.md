@@ -169,6 +169,7 @@ This is the operator path that was janky: output moving, small previews frozen.
 | G6 | Encode-session budget / thermal | HUD `enc=`, `thermal=`; Peltier-on numbers are a separate series | `docs/risks.md` |
 | G7 | Five-source grid fills | `5/5 enabled`, five live tiles plus Output | `program-five-sources` |
 | G9 | Header thermal pill | Left of Recordings; Cool / Fair / Warm / Hot; Test Thermal Visuals forces a level for 10 s then reverts | `thermal-visuals` |
+| G10 | Cameraman control from a tile | A GS Cameraman tile shows the phone's thermal and battery pills and a three-dot button top-right; NearStream tiles show none. Tap → the phone's own screen full screen over the live grid; a zoom preset moves the phone's rail; flip swaps to the front lens set; codec + Done reaches the phone as one change; close returns to the grid with nothing cut | `cameraman-control` (simulator, against `fakeRtspCameras.js --cameraman`) |
 
 ---
 
@@ -222,5 +223,9 @@ Flows in `scripts/run-maestro.js --device <udid> --suite operator`, in order:
 17. `scrub-incremental` — D13, D14
 18. `program-five-sources` — B7, F1, F3, G1, G7
 19. `recordings-export` — G2, G8
+
+`cameraman-control` (G10) runs in the simulator against the Node fake phone rather than in the
+suite: `node scripts/fakeRtspCameras.js --cameraman "Phone 1" --only-cameraman`, then
+`node scripts/run-maestro.js --sim --device <udid> cameraman-control`.
 
 After any code fix, re-run this suite from the top.

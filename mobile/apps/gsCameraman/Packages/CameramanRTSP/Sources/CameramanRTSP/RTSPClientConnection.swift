@@ -13,10 +13,15 @@ final class RTSPClientConnection: @unchecked Sendable {
   private let sdp: @Sendable (UInt32, UInt32) -> String
   private let identity: @Sendable () -> DeviceIdentity
   private let requestKeyframe: @Sendable () -> Void
+  private let parameters: RTSPResponder.ParameterHandler?
   private var responder: RTSPResponder
 
   private var buffer = Data()
-  private var isStreaming = false
+  /// True between PLAY and PAUSE/TEARDOWN. The server counts only these as clients, so a
+  /// control-only connection polling parameters is not shown to the operator as a viewer.
+  private(set) var isStreaming = false {
+    didSet { if isStreaming != oldValue { onStreamingChange?() } }
+  }
   private var isAwaitingKeyframe = false
   private var videoSetup: RTSPResponder.Setup?
   private var audioSetup: RTSPResponder.Setup?
@@ -36,6 +41,8 @@ final class RTSPClientConnection: @unchecked Sendable {
   private var closeReason = "cancelled"
 
   var onClose: (@Sendable (String) -> Void)?
+  /// Fired on the server queue whenever `isStreaming` flips, so the client count can be recounted.
+  var onStreamingChange: (@Sendable () -> Void)?
 
   init(
     connection: NWConnection,
@@ -43,13 +50,15 @@ final class RTSPClientConnection: @unchecked Sendable {
     sdp: @escaping @Sendable (UInt32, UInt32) -> String,
     hasAudio: Bool,
     identity: @escaping @Sendable () -> DeviceIdentity,
-    requestKeyframe: @escaping @Sendable () -> Void
+    requestKeyframe: @escaping @Sendable () -> Void,
+    parameters: RTSPResponder.ParameterHandler? = nil
   ) {
     self.connection = connection
     self.queue = queue
     self.sdp = sdp
     self.identity = identity
     self.requestKeyframe = requestKeyframe
+    self.parameters = parameters
 
     // Distinct per connection, so two clients watching at once are separable in a capture. Held as
     // locals first because no property can be read until all of them are initialized.
@@ -61,7 +70,8 @@ final class RTSPClientConnection: @unchecked Sendable {
     responder = RTSPResponder(
       sessionIdentifier: RTSPResponder.generateSessionIdentifier(),
       sdp: sdp(video, audio),
-      hasAudio: hasAudio
+      hasAudio: hasAudio,
+      parameters: parameters
     )
   }
 
@@ -129,7 +139,8 @@ final class RTSPClientConnection: @unchecked Sendable {
         responder = RTSPResponder(
           sessionIdentifier: responder.sessionIdentifier,
           sdp: sdp(videoSSRC, audioSSRC),
-          hasAudio: responder.hasAudio
+          hasAudio: responder.hasAudio,
+          parameters: parameters
         )
       }
 

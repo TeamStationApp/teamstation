@@ -29,6 +29,11 @@ public final class AppEnvironment {
   private var thermalPreviewTask: Task<Void, Never>?
   @ObservationIgnored
   private var thermalObserver: (any NSObjectProtocol)?
+  /// The phone's battery, for the overlay pill and the wire. Nil on a simulator, which reports
+  /// no level.
+  public private(set) var battery: BatteryStatus?
+  @ObservationIgnored
+  private var batteryObservers: [any NSObjectProtocol] = []
   public private(set) var capability: CameraCapabilityReport?
   public private(set) var cameraAuthorized = false
   public private(set) var microphoneAuthorized = false
@@ -112,13 +117,11 @@ public final class AppEnvironment {
     self.publishedSettings = OSAllocatedUnfairLock(initialState: initial)
     self.appliedSettings = initial
     observeThermalState()
+    observeBattery()
   }
 
   /// Force the overlay pill to `state` for `duration`, then return to the live thermal reading.
-  public func previewThermal(
-    _ state: ProcessInfo.ThermalState,
-    duration: Duration = .seconds(10)
-  ) {
+  public func previewThermal(_ state: ProcessInfo.ThermalState, duration: Duration) {
     thermalPreviewTask?.cancel()
     thermalPreview = state
     thermalPreviewTask = Task { @MainActor in
@@ -129,11 +132,33 @@ public final class AppEnvironment {
   }
 
   /// What the overlay pill shows: a Settings preview if one is running, otherwise telemetry.
-  public var displayedThermalLevel: ThermalBadgeLevel {
+  public var thermalLevel: ThermalBadgeLevel {
     if let thermalPreview {
       return ThermalBadgeLevel(process: thermalPreview)
     }
     return ThermalBadgeLevel(telemetryName: thermalState)
+  }
+
+  private func observeBattery() {
+    UIDevice.current.isBatteryMonitoringEnabled = true
+    readBattery()
+    for name in [ UIDevice.batteryLevelDidChangeNotification, UIDevice.batteryStateDidChangeNotification ] {
+      batteryObservers.append(NotificationCenter.default.addObserver(
+        forName: name,
+        object: nil,
+        queue: .main
+      ) { [weak self] _ in
+        Task { @MainActor in self?.readBattery() }
+      })
+    }
+  }
+
+  private func readBattery() {
+    let device = UIDevice.current
+    battery = BatteryStatus(
+      level: Double(device.batteryLevel),
+      isCharging: device.batteryState == .charging || device.batteryState == .full
+    )
   }
 
   private func observeThermalState() {
@@ -288,7 +313,17 @@ public final class AppEnvironment {
         settingsLock.withLock { $0.audioEnabled } && audioEncoder.audioSpecificConfig != nil
       },
       identity: { identityLock.withLock { $0 } },
-      requestKeyframe: { [videoEncoder] in videoEncoder.requestKeyframe() }
+      requestKeyframe: { [videoEncoder] in videoEncoder.requestKeyframe() },
+      parameters: { [weak self] request in
+        // Same hop the test control server makes: the connection's queue is not the actor this
+        // state lives on, and the reply has to describe the state after the write.
+        DispatchQueue.main.sync {
+          MainActor.assumeIsolated {
+            self?.handleParameters(request)
+              ?? RTSPResponder.ParameterResponse(statusCode: 503, reasonPhrase: "Service Unavailable")
+          }
+        }
+      }
     )
     server.onStatusChange = { [weak self] status in
       Task { @MainActor in
@@ -384,6 +419,59 @@ public final class AppEnvironment {
     )
   }
 
+  // MARK: - Remote control
+
+  /// The phone's state as `GET_PARAMETER *` reports it.
+  public var cameraSnapshot: CameraSnapshot {
+    CameraSnapshot(
+      name: identity.name,
+      cname: identity.cname,
+      model: CameraCapabilityProbe.modelIdentifier(),
+      thermalName: thermalState,
+      status: status,
+      battery: battery,
+      position: cameraState.position,
+      deviceType: cameraState.deviceType,
+      mapping: cameraState.mapping,
+      deviceZoom: cameraState.deviceZoom,
+      settings: settings,
+      formats: formatOptions,
+      lenses: cameraState.availableLenses,
+      streamURL: streamURL,
+      clientCount: serverStatus.clientCount
+    )
+  }
+
+  /// Answers a `GET_PARAMETER` / `SET_PARAMETER` body. A write goes through the same
+  /// `CameraControlling` methods the phone's own screen uses, so the rail and Settings on the
+  /// phone show it at once, and the reply echoes the values as they will land: settings merged,
+  /// zoom clamped to the mapping, position and name replaced.
+  public func handleParameters(_ request: RTSPResponder.ParameterRequest) -> RTSPResponder.ParameterResponse {
+    let current = cameraSnapshot
+    switch request.method {
+    case .get:
+      switch CameraParameters.respondToGet(body: request.body, snapshot: current) {
+      case .success(let set):
+        return RTSPResponder.ParameterResponse(body: set.encoded)
+      case .failure(let error):
+        return RTSPResponder.ParameterResponse(statusCode: error.statusCode, reasonPhrase: error.reasonPhrase, body: error.body)
+      }
+    case .set:
+      switch CameraParameters.parseSet(body: request.body, snapshot: current) {
+      case .success(let write):
+        if let name = write.name { rename(to: name) }
+        if let position = write.position, position != cameraState.position { flip() }
+        if let zoom = write.displayedZoom { setDisplayedZoom(zoom) }
+        // One `applySettings()` for every encoder field in the request, exactly like Done.
+        if write.touchesSettings { apply(CameraParameters.settings(applying: write, to: settings)) }
+        let applied = CameraParameters.snapshot(applying: write, to: current)
+        return RTSPResponder.ParameterResponse(body: CameraParameters.echo(write, applied: applied).encoded)
+      case .failure(let error):
+        return RTSPResponder.ParameterResponse(statusCode: error.statusCode, reasonPhrase: error.reasonPhrase, body: error.body)
+      }
+    }
+  }
+
   // MARK: - The control channel
 
   public struct LensDump: Encodable, Sendable {
@@ -426,6 +514,9 @@ public final class AppEnvironment {
     public var availableMemoryMB: Int
     public var cpuPercent: Double
     public var thermalState: String
+    /// Nil on a simulator, which reports no battery.
+    public var batteryPercent: Int?
+    public var batteryCharging: Bool
     public var cpuCores: Int
     public var cameraFailure: String?
     public var interrupted: Bool
@@ -482,6 +573,8 @@ public final class AppEnvironment {
       availableMemoryMB: ProcessLoad.availableMemoryMB(),
       cpuPercent: (ProcessLoad.cpuPercent() * 10).rounded() / 10,
       thermalState: ProcessLoad.thermalStateName(),
+      batteryPercent: battery?.percent,
+      batteryCharging: battery?.isCharging ?? false,
       cpuCores: ProcessLoad.coreCount,
       cameraFailure: cameraState.failure,
       interrupted: cameraState.isInterrupted,
@@ -543,11 +636,11 @@ public final class AppEnvironment {
       return json(serverStatus)
 
     case .flipCamera:
-      camera.flip()
+      flip()
       return ok()
 
     case let .setZoom(displayed):
-      camera.setDisplayedZoom(displayed)
+      setDisplayedZoom(displayed)
       return ok()
 
     case let .setName(name):
@@ -700,5 +793,50 @@ public final class AppEnvironment {
     print("CAMERAMAN_CAPABILITIES_END")
 
     status = "measured"
+  }
+}
+
+// MARK: - CameraControlling
+
+/// The phone's own screen drives the phone through the same seam a remote screen uses. Almost all
+/// of this is forwarding; `apply` is the Done-button pair that already existed.
+///
+/// The harness `set-bitrate` / `set-codec` / `set-format` cases deliberately do not go through
+/// `apply`: they reconfigure only the encoder so a flow can change the rate mid-run without the
+/// capture device being reopened and the zoom reset, which `applySettings()` does on purpose for
+/// the operator's Done.
+extension AppEnvironment: CameraControlling {
+  public var name: String { identity.name }
+  public var cname: String { identity.cname }
+  public var position: CameraPosition { cameraState.position }
+  public var mapping: ZoomMapping { cameraState.mapping }
+  public var displayedZoom: Double { cameraState.displayedZoom }
+  public var deviceZoom: Double { cameraState.deviceZoom }
+  public var availableLenses: [CameraLens] { cameraState.availableLenses }
+  public var clientCount: Int { serverStatus.clientCount }
+  /// Off under `-uiTest` so a flow sees a still pill rather than a frame mid-shimmer.
+  public var animatesChrome: Bool { !launch.isUITest }
+  /// A camera in the hand is always answering.
+  public var isResponding: Bool { true }
+
+  public func setDisplayedZoom(_ displayed: Double) {
+    camera.setDisplayedZoom(displayed)
+  }
+
+  public func setDeviceZoom(_ device: Double) {
+    camera.setDeviceZoom(device)
+  }
+
+  public func flip() {
+    camera.flip()
+  }
+
+  public func apply(_ settings: StreamSettings) {
+    self.settings = settings
+    applySettings()
+  }
+
+  public func previewThermal(_ state: ProcessInfo.ThermalState) {
+    previewThermal(state, duration: .seconds(10))
   }
 }

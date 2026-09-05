@@ -171,7 +171,7 @@ public struct CameraCapabilityProbe {
     }
   }
 
-  static func modelIdentifier() -> String {
+  public static func modelIdentifier() -> String {
     var systemInfo = utsname()
     uname(&systemInfo)
     let identifier = withUnsafeBytes(of: &systemInfo.machine) { buffer in

@@ -23,8 +23,11 @@ settings:
     ENABLE_MODULE_VERIFIER: NO
 
 packages:
+  # Shared with GS Director and GS Preview, which draw the same operating screen for a remote phone.
   CameramanCore:
-    path: Packages/CameramanCore
+    path: ../common/CameramanCore
+  CameramanControlUI:
+    path: ../common/CameramanControlUI
   CameramanCapture:
     path: Packages/CameramanCapture
   CameramanEncode:
@@ -63,6 +66,8 @@ targets:
     dependencies:
       - package: CameramanCore
         product: CameramanCore
+      - package: CameramanControlUI
+        product: CameramanControlUI
       - package: CameramanCapture
         product: CameramanCapture
       - package: CameramanEncode
@@ -85,6 +90,8 @@ targets:
       - target: Cameraman
       - package: CameramanCore
         product: CameramanCore
+      - package: CameramanControlUI
+        product: CameramanControlUI
       - package: CameramanCapture
         product: CameramanCapture
       - package: CameramanEncode

@@ -34,6 +34,13 @@ packages:
     path: ../common/DirectorSources
   DirectorRTSP:
     path: ../common/DirectorRTSP
+  # Cameraman's operating screen and the remote model that drives a phone over RTSP parameters.
+  CameramanCore:
+    path: ../common/CameramanCore
+  CameramanControlUI:
+    path: ../common/CameramanControlUI
+  CameramanRemote:
+    path: ../common/CameramanRemote
 
 targets:
   Preview:
@@ -66,6 +73,12 @@ targets:
         product: DirectorSources
       - package: DirectorRTSP
         product: DirectorRTSP
+      - package: CameramanCore
+        product: CameramanCore
+      - package: CameramanControlUI
+        product: CameramanControlUI
+      - package: CameramanRemote
+        product: CameramanRemote
 
   PreviewUnitTests:
     type: bundle.unit-test
@@ -80,6 +93,8 @@ targets:
         product: PreviewTestHarness
       - package: DirectorSources
         product: DirectorSources
+      - package: CameramanCore
+        product: CameramanCore
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: co.gamestation.preview.unittests

@@ -12,7 +12,10 @@ let package = Package(
     .package(path: "../PreviewTestHarness"),
     .package(path: "../../common/DirectorCore"),
     .package(path: "../../common/DirectorSources"),
-    .package(path: "../../common/DirectorRTSP")
+    .package(path: "../../common/DirectorRTSP"),
+    .package(path: "../../common/CameramanCore"),
+    .package(path: "../../common/CameramanControlUI"),
+    .package(path: "../../common/CameramanRemote")
   ],
   targets: [
     .target(
@@ -22,7 +25,10 @@ let package = Package(
         "PreviewTestHarness",
         "DirectorCore",
         "DirectorSources",
-        "DirectorRTSP"
+        "DirectorRTSP",
+        "CameramanCore",
+        "CameramanControlUI",
+        "CameramanRemote"
       ],
       swiftSettings: [ .swiftLanguageMode(.v6) ]
     )

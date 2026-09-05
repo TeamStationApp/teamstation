@@ -1,3 +1,4 @@
+import CameramanControlUI
 import CameramanCore
 import SwiftUI
 
@@ -17,7 +18,14 @@ public struct RootView: View {
       if environment.launch.measureCapabilities || !environment.cameraAuthorized {
         DiagnosticView(environment: environment)
       } else {
-        CameraView(environment: environment)
+        // The phone draws its own preview layer where a remote screen draws a decoded stream.
+        CameraView(model: environment) {
+          CameraPreview(
+            session: environment.camera.captureSession,
+            position: environment.cameraState.position,
+            captureRotation: environment.cameraState.captureRotationAngle
+          )
+        }
       }
     }
     .task { await environment.start() }

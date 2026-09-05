@@ -59,6 +59,21 @@ node scripts/run-maestro.js --device <udid> --sim rtsp-three-cameras  # camera f
 The simulator inherits the Mac's network, so the camera flows can run there against the real
 cameras. Thermals and sustained encode cannot: those need the iPad.
 
+## Cameraman control
+
+A tile whose camera is a GS Cameraman (Bonjour TXT `uuid` and `control=params/1`) shows the
+phone's own thermal and battery pills and a three-dot button in its top-right corner. The button
+opens the phone's operating screen full screen over the live grid — picture, thermal and battery
+pills, zoom rail, flip, gear — driven over RTSP `GET_PARAMETER` / `SET_PARAMETER` on a second,
+control-only connection to the phone. Zoom, flip and name are live; Settings apply on Done as one
+change, exactly as on the phone. The grid, archive and programme keep flowing underneath. If the
+phone stops answering the screen dims and says so rather than closing. To try it without a phone:
+
+```bash
+node scripts/fakeRtspCameras.js --cameraman "Phone 1" --only-cameraman
+node scripts/run-maestro.js --sim --device <udid> cameraman-control
+```
+
 English conditions for every operator action: [docs/operator-test-vectors.md](docs/operator-test-vectors.md).
 
 ## Layout

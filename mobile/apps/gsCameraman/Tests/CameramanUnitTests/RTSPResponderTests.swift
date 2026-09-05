@@ -36,7 +36,7 @@ struct RTSPResponderTests {
     #expect(parsed.statusCode == 200)
     let publicHeader = try #require(parsed.header("public"))
     // A client picks its keepalive method from this list, so anything advertised must be handled.
-    for method in [ "OPTIONS", "DESCRIBE", "SETUP", "PLAY", "TEARDOWN", "GET_PARAMETER" ] {
+    for method in [ "OPTIONS", "DESCRIBE", "SETUP", "PLAY", "TEARDOWN", "GET_PARAMETER", "SET_PARAMETER" ] {
       #expect(publicHeader.contains(method), "\(method) is advertised but not handled")
     }
   }
@@ -242,6 +242,85 @@ struct RTSPResponderTests {
 
     #expect(try parse(outcome.response).statusCode == 200)
     #expect(outcome.effect == .none)
+  }
+
+  private func parameterRequest(
+    _ method: String,
+    body: String,
+    session: String? = nil
+  ) -> RTSPServerRequest {
+    var headers = [ "cseq": "9", "content-type": "text/parameters" ]
+    if let session { headers["session"] = session }
+    return RTSPServerRequest(method: method, uri: "rtsp://10.0.0.1/live", headers: headers, body: Data(body.utf8))
+  }
+
+  private func responderWithParameters() -> RTSPResponder {
+    RTSPResponder(sessionIdentifier: "ABCD1234EF", sdp: sdp, hasAudio: true) { request in
+      switch (request.method, request.body) {
+      case (.get, "ptz.zoom\r\n"): .init(body: "ptz.zoom: 3\r\n")
+      case (.set, "ptz.zoom: 5\r\n"): .init(body: "ptz.zoom: 5\r\n")
+      case (.set, "device.cname: x\r\n"): .init(statusCode: 458, reasonPhrase: "Parameter Is Read-Only", body: "device.cname\r\n")
+      default: .init(statusCode: 451, reasonPhrase: "Parameter Not Understood", body: request.body)
+      }
+    }
+  }
+
+  @Test func getParameterWithABodyAnswersWithParameters() throws {
+    var responder = responderWithParameters()
+    let outcome = responder.respond(to: parameterRequest("GET_PARAMETER", body: "ptz.zoom\r\n"))
+    let parsed = try parse(outcome.response)
+
+    #expect(parsed.statusCode == 200)
+    #expect(parsed.cseq == 9)
+    #expect(parsed.header("content-type") == "text/parameters")
+    #expect(parsed.bodyText == "ptz.zoom: 3\r\n")
+    #expect(outcome.effect == .none)
+  }
+
+  @Test func getParameterWithABodyIsNotUnderstoodWithoutAHandler() throws {
+    var responder = responder()
+    let outcome = responder.respond(to: parameterRequest("GET_PARAMETER", body: "ptz.zoom\r\n"))
+    #expect(try parse(outcome.response).statusCode == 451)
+  }
+
+  @Test func setParameterNeedsNoSession() throws {
+    var responder = responderWithParameters()
+    let outcome = responder.respond(to: parameterRequest("SET_PARAMETER", body: "ptz.zoom: 5\r\n"))
+    let parsed = try parse(outcome.response)
+
+    #expect(parsed.statusCode == 200)
+    #expect(parsed.bodyText == "ptz.zoom: 5\r\n")
+    #expect(parsed.session == nil, "server-level parameters carry no session")
+    #expect(responder.state == .initial, "a parameter write must not create or move a session")
+  }
+
+  @Test func setParameterErrorsKeepTheirStatusAndBody() throws {
+    var responder = responderWithParameters()
+    let readOnly = try parse(responder.respond(to: parameterRequest("SET_PARAMETER", body: "device.cname: x\r\n")).response)
+    #expect(readOnly.statusCode == 458)
+    #expect(readOnly.reasonPhrase == "Parameter Is Read-Only")
+    #expect(readOnly.bodyText == "device.cname\r\n")
+
+    let unknown = try parse(responder.respond(to: parameterRequest("SET_PARAMETER", body: "nope: 1\r\n")).response)
+    #expect(unknown.statusCode == 451)
+  }
+
+  @Test func setParameterIsNotImplementedWithoutAHandler() throws {
+    var responder = responder()
+    let outcome = responder.respond(to: parameterRequest("SET_PARAMETER", body: "ptz.zoom: 5\r\n"))
+    #expect(try parse(outcome.response).statusCode == 501)
+  }
+
+  @Test func anEmptySetParameterIsAKeepalive() throws {
+    var responder = responderWithParameters()
+    let outcome = responder.respond(to: parameterRequest("SET_PARAMETER", body: ""))
+    #expect(try parse(outcome.response).statusCode == 200)
+  }
+
+  @Test func aWrongSessionStillRefusesParameters() throws {
+    var responder = responderWithParameters()
+    let outcome = responder.respond(to: parameterRequest("GET_PARAMETER", body: "ptz.zoom\r\n", session: "OTHER"))
+    #expect(try parse(outcome.response).statusCode == 454)
   }
 
   @Test func setupIsRejectedWhileAlreadyPlaying() throws {

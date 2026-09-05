@@ -13,16 +13,18 @@ can stand in for a fixed camera on the field without any intermediate server.
        microphone       (AAC-LC)
 ```
 
-Six packages, split so the parts that can be tested without hardware are not tangled with the parts
-that cannot:
+Seven packages, split so the parts that can be tested without hardware are not tangled with the
+parts that cannot. Two of them live in `mobile/apps/common` because GS Director and GS Preview draw
+the same screen for a phone they control over the network:
 
 | Package | Holds | Needs a device? |
 |---|---|---|
-| `CameramanCore` | identity, stream settings, zoom mapping, frame types | no |
-| `CameramanCapture` | `AVCaptureSession`, lens selection, format catalogue | yes |
+| `common/CameramanCore` | identity, stream settings, zoom mapping, lenses, format catalogue, thermal level, frame types, the `CameraControlling` seam | no |
+| `common/CameramanControlUI` | the operating screen, Settings, zoom rail, thermal and battery pills, generic over `CameraControlling` | no |
+| `CameramanCapture` | `AVCaptureSession`, lens selection, format selection | yes |
 | `CameramanEncode` | VideoToolbox H.264/HEVC, AAC, NAL and parameter-set handling | partly |
 | `CameramanRTSP` | RTSP server, packetizers, SDP, RTCP, interleaved framing | no |
-| `CameramanUI` | SwiftUI screens and the wiring that owns everything | no |
+| `CameramanUI` | `AppEnvironment` (which conforms to `CameraControlling`), the preview layer, root and diagnostic views | no |
 | `CameramanTestHarness` | launch arguments, control channel, synthetic camera, recorders | no |
 
 The encoder emits plain elementary NAL units rather than `CMSampleBuffer`s, which is what lets every
@@ -79,6 +81,19 @@ the back camera and a single 1x on the front without anything being hardcoded.
 
 The ceiling comes from `systemRecommendedVideoZoomRange`, not `maxAvailableVideoZoomFactor` — see
 `docs/risks.md` for why the latter is unusable.
+
+## Remote control
+
+GS Director and GS Preview drive the phone over the RTSP port it already serves, with RFC 2326
+`GET_PARAMETER` / `SET_PARAMETER` and `text/parameters` bodies (the vocabulary is in
+`rtsp-interop.md`). The client opens a second, control-only connection so zoom writes never queue
+behind RTP, polls the whole set once a second, and writes zoom, flip, name and Settings. On the
+phone the server hands each request to `AppEnvironment.handleParameters`, which applies it through
+the same `CameraControlling` methods the phone's own screen uses — so a remote zoom moves the
+phone's rail, a remote codec change shows in its Settings, and remote framing is persisted by the
+same `persistFramingIfChanged` path as a local pinch. Only playing sessions count as clients; a
+connection that merely polls parameters is not a viewer. The Bonjour TXT record carries
+`control=params/1` so a client knows before connecting that this build answers the verbs.
 
 ## Discovery
 

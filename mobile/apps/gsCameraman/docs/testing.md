@@ -19,6 +19,9 @@ itself:
 | `RTCPInteropTests` | our RTCP read by **Director's** `RTCPReport` |
 | `CameraIdentityAdoptionTests` | **Director's** naming and binding rules, compiled here |
 | `RTSPResponderTests` | the method state machine, including what it refuses |
+| `CameraParametersTests` | the `GET_PARAMETER` / `SET_PARAMETER` vocabulary: encode, decode, clamping, kbps↔bps, all-or-nothing |
+| `RTSPParameterInteropTests` | a parameter request built by **Director's** `RTSPRequestBuilder`, parsed here, answered, and read back by **Director's** `RTSPResponse` |
+| `RTSPServerStatusTests` | a control-only connection is not a viewer; a parameter reply is not held by a media send delay |
 | `StreamSendQueueTests` | backpressure drops to the next keyframe rather than growing |
 | `ZoomMappingTests` | device/displayed conversion at each switchover, from real fixtures |
 
@@ -51,6 +54,20 @@ For a third-party check with nothing of ours in the path:
 ```bash
 ffmpeg -rtsp_transport tcp -i rtsp://<phone>:554/live/mainstream -t 6 -c copy out.mp4
 ```
+
+## The parameter channel
+
+The RTSP port itself. `scripts/rtspParams.js` is the Mac-side reader and writer, with nothing of
+Director in the path, the way `rtspClient.js` is for media:
+
+```bash
+node scripts/rtspParams.js --host 10.10.7.118                       # GET_PARAMETER *
+node scripts/rtspParams.js --host 10.10.7.118 ptz.zoom system.thermal
+node scripts/rtspParams.js --host 10.10.7.118 'ptz.zoom: 3'         # the rail moves to 3x
+```
+
+Unlike the control channel below it needs no launch argument: it is the production interface
+GS Director and GS Preview drive. The table of names is in `docs/rtsp-interop.md`.
 
 ## Maestro flows
 

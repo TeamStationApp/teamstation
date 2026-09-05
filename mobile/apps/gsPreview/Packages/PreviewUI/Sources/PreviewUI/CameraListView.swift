@@ -1,5 +1,8 @@
-import SwiftUI
+import CameramanControlUI
+import CameramanRemote
+import DirectorRTSP
 import PreviewCore
+import SwiftUI
 
 public struct CameraListView: View {
   @Bindable var environment: AppEnvironment
@@ -7,6 +10,8 @@ public struct CameraListView: View {
   @State private var focusProgress: CGFloat = 0
   @State private var isScrubbing = false
   @State private var dragStartProgress: CGFloat = 0
+  /// The Cameraman whose control screen is open, if any.
+  @State private var controlledCamera: PreviewCamera?
 
   public init(environment: AppEnvironment) {
     self.environment = environment
@@ -44,6 +49,11 @@ public struct CameraListView: View {
       if let focusedID, ids.contains(focusedID) { return }
       focusedID = ids.first
       focusProgress = 0
+    }
+    .fullScreenCover(item: $controlledCamera) { camera in
+      CameraControlCover(camera: camera, animatesChrome: !environment.isUITest) {
+        controlledCamera = nil
+      }
     }
   }
 
@@ -233,6 +243,26 @@ public struct CameraListView: View {
             .background(.black.opacity(0.45), in: RoundedRectangle(cornerRadius: 6))
             .padding(8)
             .accessibilityIdentifier("preview-tile-name-\(index + 1)")
+        }
+      }
+      // The three-dot button, only on a Cameraman and only where the tile is big enough to
+      // carry it: the landscape thumbnails (72–160 pt) hide it and the main stage shows it.
+      .overlay(alignment: .topTrailing) {
+        if showName, camera.hasCameraControl {
+          Button {
+            controlledCamera = camera
+          } label: {
+            Image(systemName: "ellipsis")
+              .rotationEffect(.degrees(90))
+              .font(.system(size: 16, weight: .bold))
+              .foregroundStyle(.white)
+              .frame(width: 36, height: 36)
+              .background(.black.opacity(0.45), in: Capsule())
+          }
+          .buttonStyle(.plain)
+          .padding(8)
+          .accessibilityIdentifier("preview-tile-menu-\(index + 1)")
+          .accessibilityLabel("Camera controls")
         }
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)

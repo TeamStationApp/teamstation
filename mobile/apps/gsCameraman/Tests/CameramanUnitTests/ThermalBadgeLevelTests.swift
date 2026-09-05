@@ -1,4 +1,4 @@
-import CameramanUI
+import CameramanCore
 import Foundation
 import Testing
 
