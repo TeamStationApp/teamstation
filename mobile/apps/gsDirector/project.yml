@@ -39,6 +39,8 @@ packages:
     path: ../common/CameramanCore
   CameramanControlUI:
     path: ../common/CameramanControlUI
+  CameramanRemote:
+    path: ../common/CameramanRemote
   DirectorRTMP:
     path: Packages/DirectorRTMP
   DirectorUI:
@@ -79,6 +81,8 @@ targets:
         product: CameramanCore
       - package: CameramanControlUI
         product: CameramanControlUI
+      - package: CameramanRemote
+        product: CameramanRemote
       - package: DirectorRTMP
         product: DirectorRTMP
       - package: DirectorUI
@@ -111,6 +115,8 @@ targets:
         product: CameramanCore
       - package: CameramanControlUI
         product: CameramanControlUI
+      - package: CameramanRemote
+        product: CameramanRemote
       - package: DirectorRTMP
         product: DirectorRTMP
       - package: DirectorTestHarness

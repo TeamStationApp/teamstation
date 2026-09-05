@@ -19,6 +19,7 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const { createCameraServer, LoopSource, selfTest } = require('./rtspLoopServer')
+const { FakeCameramanModel } = require('./fakeCameramanModel')
 
 const DEFAULT_FIXTURE_DIR = '/Users/paul/recordings/gsDirector-rtsp-fixtures/20260820-stopwatch'
 const STATE_PATH = '/tmp/gs-director-rtsp-farm.json'
@@ -31,6 +32,10 @@ function usage() {
   --no-advertise   Do not publish mDNS (RTSP only)
   --no-alias       Do not add LAN aliases (bind the chosen hosts as they are)
   --hosts a,b,c,d  Four IPv4s, in cameras.json order
+  --cameraman NAME Add a GS Cameraman that answers GET_PARAMETER / SET_PARAMETER (control=params/1),
+                   advertised on _awx_service._tcp, so Director and Preview control flows run
+                   on a simulator with no phone attached
+  --only-cameraman Serve just that phone on this Mac's own LAN address: no aliases, no root
   --stop           Tear down a previous farm from ${STATE_PATH}
   --self-test      Packetization checks, then exit
 `
@@ -44,7 +49,9 @@ function parseArgs(argv) {
     alias: true,
     hosts: null,
     stop: false,
-    selfTest: false
+    selfTest: false,
+    cameraman: null,
+    onlyCameraman: false
   }
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]
@@ -76,6 +83,17 @@ function parseArgs(argv) {
     }
     if (arg === '--fixtures') {
       options.fixtures = argv[index + 1]
+      index += 1
+      continue
+    }
+    if (arg === '--only-cameraman') {
+      options.onlyCameraman = true
+      options.alias = false
+      continue
+    }
+    if (arg === '--cameraman') {
+      options.cameraman = argv[index + 1]
+      if (!options.cameraman) throw new Error('--cameraman needs a name')
       index += 1
       continue
     }
@@ -335,11 +353,35 @@ async function main() {
     return
   }
 
-  const cameras = loadInventory(options.fixtures)
+  let cameras = loadInventory(options.fixtures)
+  if (options.onlyCameraman && !options.cameraman) throw new Error('--only-cameraman needs --cameraman NAME')
+  // The controllable phone reuses the captured Cameraman's media under its own identity.
+  if (options.cameraman) {
+    const template = cameras.find(camera => camera.kind === 'gs-cameraman') || cameras[cameras.length - 1]
+    const uuid = 'c0ffee00-0000-4000-8000-000000000001'
+    cameras.push({
+      ...template,
+      slug: 'gsCameraman-fake-control',
+      kind: 'gs-cameraman-control',
+      displayName: options.cameraman,
+      bonjour: {
+        serviceType: '_awx_service._tcp',
+        instance: options.cameraman,
+        hostname: `${uuid}.local.`,
+        srvPort: 554,
+        txt: { uuid, name: options.cameraman, path: '/live/mainstream', control: 'params/1' }
+      },
+      rtsp: { ...template.rtsp, server: 'GS Cameraman/1.0' },
+      controlUUID: uuid
+    })
+  }
+  if (options.onlyCameraman) cameras = cameras.filter(camera => camera.controlUUID)
   const nic = options.local ? null : lanInterface()
   const hosts = options.local
     ? cameras.map(() => '127.0.0.1')
-    : chooseHosts(cameras.length, nic, options.hosts)
+    : options.onlyCameraman
+      ? [nic.address]
+      : chooseHosts(cameras.length, nic, options.hosts)
   const addedAliases = []
   const servers = []
   const advertisers = []
@@ -399,13 +441,28 @@ async function main() {
       })
       source.on('log', message => process.stderr.write(`${camera.slug}: ${message}`))
       source.on('error', error => process.stderr.write(`${camera.slug}: ${error.message}\n`))
+      let parameters = null
+      let publicMethods = null
+      if (camera.controlUUID) {
+        const model = new FakeCameramanModel({
+          name: camera.displayName,
+          uuid: camera.controlUUID,
+          streamURL: `rtsp://${host}:${port}/live/mainstream`
+        })
+        parameters = request => model.handle(request)
+        publicMethods = 'OPTIONS, DESCRIBE, SETUP, PLAY, PAUSE, TEARDOWN, GET_PARAMETER, SET_PARAMETER'
+        camera.model = model
+      }
       const server = createCameraServer({
         host,
         port,
         path: '/live/mainstream',
         sdp: camera.sdp,
         serverHeader: camera.rtsp.server,
-        source
+        source,
+        parameters,
+        publicMethods,
+        listenHost: options.onlyCameraman ? '0.0.0.0' : host
       })
       await server.listen()
       source.start()
@@ -426,7 +483,7 @@ async function main() {
 
     process.stdout.write(
       options.advertise
-        ? 'Advertising _awx_service._tcp (3) and _rtsp._tcp (1). No _ndi._tcp.\n'
+        ? `Advertising _awx_service._tcp (${cameras.filter(c => c.bonjour.serviceType === '_awx_service._tcp').length}) and _rtsp._tcp (${cameras.filter(c => c.bonjour.serviceType === '_rtsp._tcp').length}). No _ndi._tcp.\n`
         : 'RTSP only; Bonjour off.\n'
     )
     process.stdout.write('Ctrl-C to stop.\n')
