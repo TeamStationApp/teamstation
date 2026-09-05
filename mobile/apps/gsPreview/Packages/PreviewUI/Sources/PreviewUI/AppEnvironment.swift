@@ -13,6 +13,8 @@ public final class AppEnvironment {
   public private(set) var browseState = "idle"
 
   private let launch: LaunchConfiguration
+  /// Off under `-uiTest`, so the shared chrome holds still for a flow.
+  public var isUITest: Bool { launch.isUITest }
   private let browser: any CameraAdvertisementBrowsing
   private let probe: RTSPEndpointProbe
   private var controlServer: ControlServer?
@@ -68,7 +70,8 @@ public final class AppEnvironment {
         "index": String(index + 1),
         "name": camera.advertisedName,
         "host": camera.endpoint.host,
-        "path": camera.endpoint.path
+        "path": camera.endpoint.path,
+        "control": camera.hasCameraControl ? "params/1" : ""
       ]
     }
     let payload: [String: Any] = [
@@ -102,7 +105,7 @@ public final class AppEnvironment {
       next.append(camera)
     }
     cameras = next
-    statusMessage = next.isEmpty ? "No NearStream cameras on this network" : ""
+    statusMessage = next.isEmpty ? "No cameras on this network" : ""
     browseState = "synthetic"
   }
 
@@ -113,7 +116,7 @@ public final class AppEnvironment {
       incoming: browser.advertisements
     )
     let seen = rememberedAds.filter {
-      $0.hasUsableMediaHost && PreviewCameraRules.isNearStream($0)
+      $0.hasUsableMediaHost && PreviewCameraRules.isShown($0)
     }
     let arriving = PreviewCameraRules.arrivingIDs(seen)
     let retaining = Set(
@@ -141,6 +144,7 @@ public final class AppEnvironment {
         existing.lastSeen = now
         if let advertisement = byID[id] {
           existing.advertisedName = advertisement.advertisedName
+          existing.hasCameraControl = advertisement.isControllable
           let endpoint = PreviewStream.endpoint(from: advertisement)
           if existing.endpoint != endpoint {
             existing.source?.stop()
@@ -161,6 +165,7 @@ public final class AppEnvironment {
         advertisedName: advertisement.advertisedName,
         endpoint: PreviewStream.endpoint(from: advertisement)
       )
+      camera.hasCameraControl = advertisement.isControllable
       next.append(camera)
       connect(camera)
     }
@@ -174,7 +179,7 @@ public final class AppEnvironment {
     if cameras.isEmpty {
       statusMessage = arriving.isEmpty
         ? (browseState == "ready" || browseState == "idle"
-          ? "No NearStream cameras on this network"
+          ? "No cameras on this network"
           : "Looking for cameras…")
         : "Looking for cameras…"
     } else {
@@ -196,7 +201,9 @@ public final class AppEnvironment {
       guard let self, let camera else { return }
       connecting.remove(id)
       guard confirmed != nil else { return }
-      guard endpoint.path == PreviewStream.nearStreamPath else { return }
+      // The path the rules chose for this camera: substream2 for NearStream, the advertised
+      // mainstream for a Cameraman. Nothing else is ever played from here.
+      guard endpoint == camera.endpoint else { return }
       let source = RTSPFrameSource(
         sourceID: SourceID(id),
         displayName: name,
