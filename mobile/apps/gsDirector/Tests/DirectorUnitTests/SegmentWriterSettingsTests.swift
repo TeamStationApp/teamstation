@@ -2,44 +2,24 @@ import Foundation
 import DirectorDVR
 import Testing
 
+// This suite tested `SegmentWriterSettings.shouldIncludeAudio` and `.sequenceBeforeNextFile`,
+// neither of which exists any more: `37f667e` reverted the wall-clock archive writer and took both
+// statics with it.
+//
+// The audio decision itself survives, but inlined at the call site as
+// `includesAudio: pipeline.hasDeliveredAudio && launch.archiveAudio` in `DirectorUI.AppEnvironment`
+// — a camera that never sends audio must not be given an audio track, because a segmented writer
+// will not rotate a segment until every track reaches the boundary and the video input then goes
+// permanently unready.
+//
+// That rule deserves a home and a test rather than a line in a view model, and Phase 5 of
+// /Users/scotty/.cursor/plans/202609041148-fixCameraSync.md has to touch it anyway: it only covers
+// the never-had-audio case, and a camera whose audio starts and then gaps is still unhandled.
+// **Phase 5 owes this file a restored helper and its cases.**
 @Suite("Segment writer settings")
 struct SegmentWriterSettingsTests {
-  @Test("Audio stays on after a reopen once it has been seen")
-  func includesAudioAfterReopen() {
-    #expect(
-      SegmentWriterSettings.shouldIncludeAudio(
-        archiveAudioEnabled: true,
-        hasDeliveredAudio: false,
-        previousWriterIncludesAudio: true
-      )
-    )
-    #expect(
-      SegmentWriterSettings.shouldIncludeAudio(
-        archiveAudioEnabled: true,
-        hasDeliveredAudio: true,
-        previousWriterIncludesAudio: false
-      )
-    )
-    #expect(
-      !SegmentWriterSettings.shouldIncludeAudio(
-        archiveAudioEnabled: true,
-        hasDeliveredAudio: false,
-        previousWriterIncludesAudio: false
-      )
-    )
-    #expect(
-      !SegmentWriterSettings.shouldIncludeAudio(
-        archiveAudioEnabled: false,
-        hasDeliveredAudio: true,
-        previousWriterIncludesAudio: true
-      )
-    )
-  }
-
-  @Test("A replacement writer uses the last sequence, not max plus one")
-  func sequenceDoesNotSkipOnReopen() {
-    #expect(SegmentWriterSettings.sequenceBeforeNextFile(maxExisting: -1) == 0)
-    #expect(SegmentWriterSettings.sequenceBeforeNextFile(maxExisting: 0) == 0)
-    #expect(SegmentWriterSettings.sequenceBeforeNextFile(maxExisting: 196) == 196)
+  @Test("Placeholder until Phase 5 restores the audio-inclusion helper")
+  func pending() {
+    #expect(SegmentWriterSettings(segmentSeconds: 3, includesAudio: true).includesAudio)
   }
 }

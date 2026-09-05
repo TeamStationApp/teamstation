@@ -307,11 +307,31 @@ public final class ProgramEncoder: @unchecked Sendable {
       : converter.convert(pixelBuffer: pixelBuffer, width: width, height: height)
     guard let encodable else { return }
 
-    if adaptor.append(encodable, withPresentationTime: time) {
-      lock.lock()
-      writtenFrames += 1
+    // Re-checked under the lock and appended while holding it. Readiness read above was released
+    // before the conversion, and `finish()` takes the writer under this same lock and then marks
+    // the input finished — so a frame in flight here could reach the adaptor after that, and the
+    // adaptor throws an uncaught `NSInternalInconsistencyException` for it rather than returning
+    // false. That was the crash on stop after a camera reconnected: signal 6, no crash report.
+    // Holding the lock across the append means `takeWriterForFinish` waits for it to land.
+    lock.lock()
+    guard isRunning, !poisonFinishing, let liveWriter = self.writer, let liveAdaptor = self.adaptor,
+      let liveInput = self.videoInput, liveInput.isReadyForMoreMediaData
+    else {
       lock.unlock()
+      return
     }
+    // A continuation writer opened by recovery comes up running with no session, and nothing
+    // resets `baseTime`, so the session start above never fires for it. Appending to it throws
+    // "Must start a session" — the second stop crash after a two-minute reconnect. Start it here,
+    // under the lock, the way `fillHold` does.
+    if !sessionStarted {
+      liveWriter.startSession(atSourceTime: .zero)
+      sessionStarted = true
+    }
+    if liveAdaptor.append(encodable, withPresentationTime: time) {
+      writtenFrames += 1
+    }
+    lock.unlock()
 
     // A small budget: this runs on a tile's frame-delivery thread, and audio has its own callback
     // to do the bulk of the work. This is only here so a briefly unready input still gets flushed.
@@ -721,17 +741,23 @@ public final class ProgramEncoder: @unchecked Sendable {
       usleep(5_000)
     }
     lock.lock()
-    guard isRunning, let adaptor, let videoInput, videoInput.isReadyForMoreMediaData else {
+    guard isRunning, !poisonFinishing, let writer, let adaptor, let videoInput,
+      videoInput.isReadyForMoreMediaData
+    else {
       lock.unlock()
       return
     }
-    lastTime = time
-    lock.unlock()
-    if adaptor.append(pixelBuffer, withPresentationTime: time) {
-      lock.lock()
-      writtenFrames += 1
-      lock.unlock()
+    if !sessionStarted {
+      writer.startSession(atSourceTime: .zero)
+      sessionStarted = true
     }
+    lastTime = time
+    // Appended under the lock for the same reason as the live path: released between the check
+    // and the append, `finish()` can mark the input finished in the gap and the adaptor throws.
+    if adaptor.append(pixelBuffer, withPresentationTime: time) {
+      writtenFrames += 1
+    }
+    lock.unlock()
   }
 
   private func appendHoldSilence(until end: CMTime) {

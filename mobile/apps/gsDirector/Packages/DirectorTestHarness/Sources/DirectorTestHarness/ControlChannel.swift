@@ -15,6 +15,10 @@ public enum ControlCommand: Sendable, Equatable {
   case selectProgram(source: Int)
   /// Instant replay on a 0-based source. `speed` is `full` or `slow`.
   case replay(source: Int, seconds: Double, speed: String)
+  /// Slow-motion playback rate as a percentage. Exists so a flow can exercise a rate that is not
+  /// one over a whole number — the setting a person changes lives in Settings, which a test cannot
+  /// reach, and 50% happens to be the one value that hides a rounding bug.
+  case setSlowMotionRate(percent: Double)
   case enableSource(index: Int, on: Bool)
   case sourceAudio(index: Int, on: Bool)
   case sourceGain(index: Int, gain: Double)
@@ -86,6 +90,10 @@ public enum ControlChannel {
       let speed = (query["speed"] ?? "full").lowercased()
       guard speed == "full" || speed == "slow" else { return nil }
       return .replay(source: source - 1, seconds: seconds, speed: speed)
+    case "set-slowmo", "setslowmo":
+      guard let percent = query["percent"].flatMap(Double.init), percent > 0 else { return nil }
+      return .setSlowMotionRate(percent: percent)
+
     case "assign-source", "assignsource":
       guard let index = query["index"].flatMap({ Int($0) }) else { return nil }
       let slot = query["slot"].flatMap { Int($0) } ?? Self.slot(query)

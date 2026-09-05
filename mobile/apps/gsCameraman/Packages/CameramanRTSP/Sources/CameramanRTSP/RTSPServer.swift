@@ -410,14 +410,23 @@ public final class RTSPServer: @unchecked Sendable {
 
   // MARK: - Media
 
+  /// Test-only late-delivery injection. Idle by default and a straight pass-through when idle.
+  public let sendDelay = SendDelayLine()
+
   public func send(video frame: EncodedVideoFrame, codec: StreamCodec) {
-    let clients = state.withLock { Array($0.connections.values) }
-    for client in clients { client.send(video: frame, codec: codec) }
+    sendDelay.submit { [weak self] in
+      guard let self else { return }
+      let clients = self.state.withLock { Array($0.connections.values) }
+      for client in clients { client.send(video: frame, codec: codec) }
+    }
   }
 
   public func send(audio frame: EncodedAudioFrame) {
-    let clients = state.withLock { Array($0.connections.values) }
-    for client in clients { client.send(audio: frame) }
+    sendDelay.submit { [weak self] in
+      guard let self else { return }
+      let clients = self.state.withLock { Array($0.connections.values) }
+      for client in clients { client.send(audio: frame) }
+    }
   }
 
   /// Aggregate backpressure across clients, for the HUD. A single slow client is worth seeing before

@@ -73,6 +73,7 @@ function parseArgs(argv) {
     blockSeconds: 0,
     audioFaultSeconds: 8,
     videoFaultSeconds: 25,
+    delayFaultSeconds: 30,
     cameras: [...CAMERA_NAMES]
   }
   for (let i = 0; i < argv.length; i += 1) {
@@ -109,6 +110,9 @@ function parseArgs(argv) {
       i += 1
     } else if (value === '--video-fault-seconds' && next) {
       options.videoFaultSeconds = Number(next)
+      i += 1
+    } else if (value === '--delay-fault-seconds' && next) {
+      options.delayFaultSeconds = Number(next)
       i += 1
     } else if (value === '--no-record') {
       options.record = false
@@ -739,6 +743,7 @@ function meanVolume(file, start, duration) {
     'ffmpeg',
     [
       '-hide_banner',
+      '-accurate_seek',
       '-ss',
       String(Math.max(0, start)),
       '-t',
@@ -845,17 +850,61 @@ function planFaults(blockSeconds, options) {
       duration: options.videoFaultSeconds,
       started: false,
       ended: false
+    },
+    {
+      kind: 'delay',
+      at: Math.round((audioAt + videoAt) / 2),
+      duration: options.delayFaultSeconds,
+      started: false,
+      ended: false
     }
   ]
 }
 
-async function applyScheduledFaults(elapsedSec, faults, cameramanHost, actionLog) {
+// Which control-channel call injects or clears a fault of each kind.
+//
+// Blanking a source — what audio and video faults do — leaves the encoder running and every picture
+// arriving on time, just black. That exercises nothing about timing, and a receiver whose whole job
+// is absorbing late delivery will pass it without ever being asked the question. It is very likely
+// why an export that ran short under real loss survived every earlier soak.
+//
+// The delay fault holds frames back on the sender instead, so they arrive late carrying the capture
+// time they were stamped with. The burst is 600 ms because that is the measured ceiling: beyond it
+// the phone's own send queue backs up and starts shedding frames, at which point the run is
+// measuring the harness rather than the system. At 1000 ms it dropped 136 frames, at 2000 ms it
+// dropped 171 and flushed its queue ten times.
+const DELAY_FAULT_BURST_MS = 600
+
+function faultPath(kind, restore) {
+  if (kind === 'audio') return restore ? '/set-audio?on=true' : '/set-audio?on=false'
+  if (kind === 'delay') {
+    const burst = restore ? 0 : DELAY_FAULT_BURST_MS
+    return `/set-send-delay?ms=0&jitter=0&burst=${burst}`
+  }
+  return restore ? '/set-video?on=true' : '/set-video?on=false'
+}
+
+async function applyScheduledFaults(elapsedSec, faults, cameramanHost, actionLog, directorHost) {
+  // Frames the faulted camera has written to its archive, so a delay fault can be checked on what
+  // it must not cost. Blanking checks say nothing about a fault that only makes frames late.
+  const archivedFrames = async () => {
+    if (!directorHost) return null
+    try {
+      const dump = await directorGet(directorHost, '/dump-state')
+      const tile = (dump.tiles || []).find(t => t.displayName === 'Hand held')
+      return tile ? tile.archivedFrames : null
+    } catch {
+      return null
+    }
+  }
+
   for (const fault of faults) {
     if (!fault.started && elapsedSec >= fault.at) {
-      const pathName = fault.kind === 'audio' ? '/set-audio?on=false' : '/set-video?on=false'
+      const pathName = faultPath(fault.kind, false)
       await cameramanGet(cameramanHost, pathName)
       const dump = await cameramanGet(cameramanHost, '/dump-state')
       fault.started = true
+      if (fault.kind === 'delay') fault.framesAtStart = await archivedFrames()
       fault.startedAtIso = nowIso()
       fault.startedElapsed = elapsedSec
       append(
@@ -864,9 +913,14 @@ async function applyScheduledFaults(elapsedSec, faults, cameramanHost, actionLog
       )
     }
     if (fault.started && !fault.ended && elapsedSec >= fault.at + fault.duration) {
-      const pathName = fault.kind === 'audio' ? '/set-audio?on=true' : '/set-video?on=true'
+      const pathName = faultPath(fault.kind, true)
       await cameramanGet(cameramanHost, pathName)
       fault.ended = true
+      if (fault.kind === 'delay') {
+        const end = await archivedFrames()
+        fault.framesDuringFault =
+          end !== null && fault.framesAtStart != null ? end - fault.framesAtStart : null
+      }
       fault.endedAtIso = nowIso()
       fault.endedElapsed = elapsedSec
       append(actionLog, `FAULT ${fault.kind} on elapsed=${elapsedSec.toFixed(1)}s`)
@@ -877,7 +931,7 @@ async function applyScheduledFaults(elapsedSec, faults, cameramanHost, actionLog
 async function restoreFaults(faults, cameramanHost, actionLog) {
   for (const fault of faults) {
     if (fault.started && !fault.ended) {
-      const pathName = fault.kind === 'audio' ? '/set-audio?on=true' : '/set-video?on=true'
+      const pathName = faultPath(fault.kind, true)
       try {
         await cameramanGet(cameramanHost, pathName)
         fault.ended = true
@@ -1011,6 +1065,19 @@ function verifyHourExports(files, expectedSeconds, faults, actionLog) {
         )
       }
     }
+    if (fault.kind === 'delay') {
+      // A held burst arrives late with an honest timestamp; it never blanks a picture and never
+      // shortens the take, so the blank and duration checks above say nothing about it. What it
+      // must not do is cost frames: the archive should still cover the fault window.
+      const expected = fault.duration * 30
+      const covered = fault.framesDuringFault ?? null
+      fault.verified = covered === null ? 'unmeasured' : covered >= expected * 0.9 ? 'pass' : 'fail'
+      append(
+        actionLog,
+        `FAULT delay verify expected>=${Math.round(expected * 0.9)} covered=${covered} -> ${fault.verified}`
+      )
+    }
+
   }
   return { durations, spread, detected }
 }
@@ -1435,7 +1502,8 @@ async function main() {
         (Date.now() - blockT0) / 1000,
         faults,
         cameramanHost,
-        actionLog
+        actionLog,
+        host
       )
 
       const action = options.replay

@@ -128,6 +128,18 @@ public struct TileTelemetry: Sendable, Codable, Equatable {
   public var releaseGapMaxMilliseconds: Double = 0
   /// How much video the delay line is holding, in milliseconds — the monitor latency being paid.
   public var playoutMilliseconds: Double = 0
+  /// The camera's RTCP sender-report clock audit. Measurement only — see `ReceiveStats`.
+  public var senderReports: UInt64 = 0
+  public var senderReportIntervalSeconds: Double = 0
+  public var senderReportAgeSeconds: Double = 0
+  public var senderReportStreams: Int = 0
+  public var mediaTicksPerSecond: Double = 0
+  public var mediaClockSpanSeconds: Double = 0
+  public var cameraClockOffsetSeconds: Double = 0
+  public var cameraClockOffsetFilteredSeconds: Double = 0
+  public var cameraClockOffsetSamples: Int = 0
+  public var correctedCaptureTime: Double = 0
+  public var correctedCaptureAgeMilliseconds: Double = 0
   /// Frames that arrived after they were due, each of which was a visible stall.
   public var playoutLateFrames: UInt64 = 0
   public var playoutDepth = 0
@@ -153,6 +165,15 @@ public struct TileTelemetry: Sendable, Codable, Equatable {
   /// Audio thrown away because the writer stopped consuming for long enough to overrun the queue.
   /// Any non-zero value means the archive is already compromised.
   public var audioBuffersDiscarded: UInt64 = 0
+  /// Where each archive audio buffer went. After a two-minute reconnect the segment opened on the
+  /// resume keyframe had video and no audio track at all, and every exit from the audio path was
+  /// silent, so nothing could say which one swallowed it.
+  public var audioReceived: UInt64 = 0
+  public var audioRejectedNotStarted: UInt64 = 0
+  public var audioRejectedPlacement: UInt64 = 0
+  public var audioAppended: UInt64 = 0
+  public var audioDrainNotReady: UInt64 = 0
+  public var audioAppendFailed: UInt64 = 0
   /// Why this camera's archive stopped, if it did. Kept per tile so one camera's failure is not
   /// overwritten by another's.
   public var lastError: String?
@@ -210,6 +231,20 @@ public struct DVRTelemetry: Sendable, Codable, Equatable {
   public var retentionReclaimedBytes: UInt64 = 0
   public var recordingStartedAt: Double?
   public var segmentCount: UInt64 = 0
+  /// Silent-fill activity in the archive writers. `SegmentWriter` fills audio only when a video gap
+  /// longer than two seconds is corroborated by capture time, so on a healthy recording every one of
+  /// these must stay zero. They did not: a 90 s take with continuous 30 fps video still wrote fill
+  /// packets, which is how the fill was found running with no gap to fill. `archiveGapSeconds` was
+  /// already accumulated inside the writer and had no reader, so nothing could see it.
+  public var archiveFillEvents: UInt64 = 0
+  public var archiveFillPackets: UInt64 = 0
+  public var archiveGapSeconds: Double = 0
+  public var archiveFillLastGapSeconds: Double = 0
+  public var archiveFillLastCaptureGap: Double = 0
+  /// Times the writer re-based its timeline because a camera's media clock went backwards or
+  /// jumped somewhere real elapsed time could not corroborate — a reconnect, in practice.
+  public var archiveClockRebases: UInt64 = 0
+  public var archiveLastRebaseElapsedSeconds: Double = 0
   public var byteCount: UInt64 = 0
   public var proxyStills: UInt64 = 0
   public var indexWrites: UInt64 = 0
@@ -254,6 +289,25 @@ public struct TelemetrySnapshot: Sendable, Codable, Equatable {
   public var sessions = SessionTelemetry()
   public var converter = ConverterTelemetry()
   public var thermalState: String = "nominal"
+  /// Seconds the device has spent asleep this session. Frame lateness is measured against a clock
+  /// that stops during sleep, so a sleep drops the trailing minimum of `lateness` by its whole
+  /// duration — the only mechanism that can put a playout offset far beyond its own cap. Nonzero
+  /// here is that evidence; zero over a long session rules it out.
+  public var sleptSeconds: Double = 0
+  /// Spread of corrected capture times across the **newest received** frame of each live camera.
+  ///
+  /// **Not an acceptance measure, and it must not be read as one.** It samples what has arrived,
+  /// not what is being composited, so it stays small while the screen is wrong: it read 29 ms
+  /// during a run where a stopwatch in front of the tiles showed 2.81 s. Useful for spotting one
+  /// camera whose delivery has diverged; useless for judging alignment.
+  ///
+  /// Alignment is judged by pointing every camera at a millisecond timecode display and reading
+  /// the recorded frames — the plan's §8.1. A composited-frame spread would be the right telemetry
+  /// and does not exist yet.
+  public var captureSpreadMilliseconds: Double = 0
+  /// Which camera is furthest behind the rest, so the spread points at something actionable.
+  public var captureSpreadWorstCamera: String = ""
+
   /// Share of the whole machine's CPU this process is using. Separates "the network is not
   /// delivering frames" from "we have run out of CPU to decode them", which frame counters alone
   /// cannot distinguish.
@@ -366,6 +420,7 @@ public final class PipelineTelemetry: @unchecked Sendable {
     copy.generatedAt = Date().timeIntervalSince1970
     copy.clockSeconds = clock.now.seconds
     copy.thermalState = Self.thermalStateName(ProcessInfo.processInfo.thermalState)
+    copy.sleptSeconds = Self.sleptSeconds()
     copy.dvr.freeDiskBytes = DirectorPaths.freeDiskBytes()
     let now = CFAbsoluteTimeGetCurrent()
     for index in copy.tiles.indices {
@@ -594,6 +649,28 @@ public final class PipelineTelemetry: @unchecked Sendable {
     frameTimestamps.removeAll()
     displayedTimestamps.removeAll()
     lock.unlock()
+  }
+
+  /// Seconds this process has spent with the device asleep.
+  ///
+  /// `CLOCK_MONOTONIC_RAW` counts through sleep; `CLOCK_UPTIME_RAW` stops. Both advance together
+  /// while awake, so the gap that opens between them is exactly the time slept. Measured against a
+  /// baseline taken at first call, because a process launched after a sleep would otherwise inherit
+  /// the device's entire prior uptime as its own.
+  ///
+  /// Frame lateness is measured against the uptime clock, so a sleep drops the trailing minimum of
+  /// `lateness` by its whole duration — the only mechanism that can put a playout offset far beyond
+  /// its own cap. Nonzero here is that evidence; zero over a long session rules it out.
+  private static let clockBaseline: (continuous: UInt64, uptime: UInt64) = (
+    clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW),
+    clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+  )
+
+  private static func sleptSeconds() -> Double {
+    let continuousDelta = clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW) &- clockBaseline.continuous
+    let uptimeDelta = clock_gettime_nsec_np(CLOCK_UPTIME_RAW) &- clockBaseline.uptime
+    guard continuousDelta > uptimeDelta else { return 0 }
+    return Double(continuousDelta - uptimeDelta) / 1_000_000_000
   }
 
   public static func thermalStateName(_ thermalState: ProcessInfo.ThermalState) -> String {

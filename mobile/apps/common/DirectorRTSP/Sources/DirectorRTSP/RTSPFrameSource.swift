@@ -79,6 +79,16 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
 
   private var frameID: UInt64 = 0
   private var videoTimeline = RTPTimestampUnwrapper()
+  /// What the camera's own sender reports say about its clock. Measurement only: nothing here
+  /// feeds playout yet.
+  private var clockAudit = RTPClockAudit()
+  /// Most recent frame's capture time on our clock, and how far behind now that is. The age is
+  /// excess over this camera's own best case rather than absolute delay — see `ReceiveStats`.
+  private var lastCorrectedCapture: Double = 0
+  /// SSRC of the stream this source's pictures come from, so the clock anchor is taken from the
+  /// same stream rather than whichever has moved the most bytes so far.
+  private var videoSSRC: UInt32?
+  private var correctedCaptureAgeSeconds: Double = 0
   private var audioTimeline = RTPTimestampUnwrapper()
   private var lastPresentationTime: CMTime?
   private var lastAccessUnitAt: Date?
@@ -179,6 +189,19 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     snapshot.playoutMilliseconds = (playout.bufferMilliseconds * 10).rounded() / 10
     snapshot.playoutLateFrames = playout.lateFrames
     snapshot.playoutDepth = pictures.count + decodedFrames.count
+    snapshot.senderReports = clockAudit.reportCount
+    snapshot.senderReportIntervalSeconds = (clockAudit.meanIntervalSeconds * 100).rounded() / 100
+    snapshot.senderReportAgeSeconds = clockAudit.lastReportUptime > 0
+      ? ((Self.seconds(DispatchTime.now()) - clockAudit.lastReportUptime) * 10).rounded() / 10
+      : 0
+    snapshot.mediaTicksPerSecond = (clockAudit.ticksPerSecond * 100).rounded() / 100
+    snapshot.mediaClockSpanSeconds = (clockAudit.measuredSpanSeconds * 10).rounded() / 10
+    snapshot.cameraClockOffsetSeconds = (clockAudit.ntpOffsetSeconds * 1000).rounded() / 1000
+    snapshot.cameraClockOffsetFilteredSeconds = (clockAudit.filteredOffsetSeconds * 1000).rounded() / 1000
+    snapshot.cameraClockOffsetSamples = clockAudit.offsetSampleCount
+    snapshot.correctedCaptureTime = lastCorrectedCapture
+    snapshot.correctedCaptureAgeMilliseconds = (correctedCaptureAgeSeconds * 1000).rounded()
+    snapshot.senderReportStreams = clockAudit.streamCount
     if let decoder {
       let decoderStats = decoder.currentStatistics
       snapshot.formatMisses &+= decoderStats.failures &+ decoderStats.droppedCorrupt
@@ -263,8 +286,15 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     videoTracker = RTPSequenceTracker()
     audioTracker = RTPSequenceTracker()
     videoTimeline.reset()
+    clockAudit.reset()
     audioTimeline.reset()
     lastPresentationTime = nil
+    // A new session means a new anchor, so a corrected capture time from the old one describes a
+    // clock that no longer applies. Leaving it set stamped every frame after a reconnect with a
+    // pre-outage moment.
+    lastCorrectedCapture = 0
+    correctedCaptureAgeSeconds = 0
+    videoSSRC = nil
     jitter = JitterWindow()
     // A new session restarts the timeline, so every frame held against the old one is stale and
     // every measurement taken against it is meaningless. What the camera converged on is not: it
@@ -290,6 +320,13 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
 
     case let .rtcp(report):
       publishAdvertisement(cname: report.cname, name: report.name)
+      lock.lock()
+      clockAudit.note(
+        report: report,
+        arrivalUptime: Self.seconds(DispatchTime.now()),
+        wallClockNow: Date()
+      )
+      lock.unlock()
 
     case let .failed(reason):
       scheduleReconnect(reason: reason)
@@ -381,6 +418,7 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     let arrivedAt = DispatchTime.now()
     let now = Self.seconds(arrivedAt)
     lock.lock()
+    videoSSRC = packet.ssrc
     stats.captured &+= 1
     lastAccessUnitAt = Date()
     jitter.noteArrival(at: arrivedAt, isKeyframe: unit.isKeyframe)
@@ -391,6 +429,24 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     let elapsed = videoTimeline.unwrap(unit.rtpTimestamp)
     let presentationTime = CMTime(value: CMTimeValue(elapsed), timescale: 90_000)
     jitter.noteLateness(now - presentationTime.seconds, at: arrivedAt)
+
+    // Carried alongside the existing arrival stamp and read by nothing yet: this phase proves the
+    // number is right before anything depends on it. Already inside the lock taken above — `lock`
+    // is a plain NSLock and taking it again here deadlocks the receive thread on the first packet.
+    // Held per frame rather than read back from `lastCorrectedCapture`. The cached value belongs to
+    // whichever frame last had an anchor, and stamping this frame with it is how a reconnect — which
+    // clears the anchor but not the cache — made a real outage look like no elapsed capture time at
+    // all, and so like a glitched timestamp rather than the dropout it was.
+    var frameCapture: Double?
+    if let videoSSRC,
+       let correctedCapture = clockAudit.captureTimeOnLocalClock(
+         rtpTimestamp: unit.rtpTimestamp,
+         ssrc: videoSSRC
+       ) {
+      lastCorrectedCapture = correctedCapture
+      correctedCaptureAgeSeconds = Date().timeIntervalSince1970 - correctedCapture
+      frameCapture = correctedCapture
+    }
 
     // The picture waits here instead of being decoded on the spot. Releasing it against its own
     // timestamp is what turns the camera's burst-and-wait delivery back into even motion.
@@ -431,6 +487,7 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
         presentationTime: presentationTime,
         decodeTime: presentationTime,
         wallClock: clock.now,
+        captureWallClock: frameCapture.map { WallClock(seconds: $0) },
         frameID: id
       )
     )
