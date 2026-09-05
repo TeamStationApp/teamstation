@@ -3297,6 +3297,12 @@ public final class AppEnvironment {
       } else {
         startDiscovery()
       }
+    case let .setSlowMotionRate(percent):
+      // Session only. Writing this through `update(config:)` saved a test's rate over whatever the
+      // operator had chosen, which is exactly what the launch-configuration comment warns against:
+      // a flow should neither inherit nor leave behind a preference.
+      config.replaySlowMotionRate = AppConfig.clampedReplaySlowMotionRate(percent / 100)
+
     case let .scrub(source, offset):
       beginScrub(sourceIndex: source)
       updateScrub(sourceIndex: source, offsetSeconds: offset)
