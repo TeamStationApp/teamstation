@@ -1,4 +1,3 @@
-import CameramanCapture
 import CameramanCore
 import SwiftUI
 import UIKit
@@ -6,8 +5,11 @@ import UIKit
 /// Name, codec, format and bitrate. Opening this sheet must not touch the pipeline; only Done
 /// applies, and only when something actually changed. A reconfigure that fires because the operator
 /// wanted to read the URL would look like the camera glitching.
-struct SettingsView: View {
-  @Bindable var environment: AppEnvironment
+///
+/// Generic over the model for the same reason `CameraView` is: on a remote screen "Done" becomes
+/// one `SET_PARAMETER` rather than an encoder reconfigure, and the sheet does not need to know.
+struct SettingsView<Model: CameraControlling>: View {
+  let model: Model
   @Environment(\.dismiss) private var dismiss
 
   @State private var draftName: String = ""
@@ -59,22 +61,22 @@ struct SettingsView: View {
         titleVisibility: .visible
       ) {
         Button("Cool") {
-          environment.previewThermal(.nominal)
+          model.previewThermal(.nominal)
           dismiss()
         }
         .accessibilityIdentifier("settings-test-thermal-cool")
         Button("Fair") {
-          environment.previewThermal(.fair)
+          model.previewThermal(.fair)
           dismiss()
         }
         .accessibilityIdentifier("settings-test-thermal-fair")
         Button("Warm") {
-          environment.previewThermal(.serious)
+          model.previewThermal(.serious)
           dismiss()
         }
         .accessibilityIdentifier("settings-test-thermal-warm")
         Button("Hot") {
-          environment.previewThermal(.critical)
+          model.previewThermal(.critical)
           dismiss()
         }
         .accessibilityIdentifier("settings-test-thermal-hot")
@@ -82,8 +84,8 @@ struct SettingsView: View {
       }
     }
     .onAppear {
-      draftName = environment.identity.name
-      draftSettings = environment.settings
+      draftName = model.name
+      draftSettings = model.settings
       didCopyURL = false
     }
   }
@@ -155,7 +157,7 @@ struct SettingsView: View {
       }
       Divider().padding(.leading, 16)
       cardRow {
-        LabeledContent("Identifier", value: environment.identity.cname)
+        LabeledContent("Identifier", value: model.cname)
           .font(.system(.footnote, design: .monospaced))
           .accessibilityIdentifier("settings-cname")
       }
@@ -215,7 +217,7 @@ struct SettingsView: View {
   /// One row per detected lens. Millimetre labels come from field of view, so a 15 Pro and a 13
   /// Pro each list the cameras they actually have.
   private var lensesSection: some View {
-    let lenses = environment.cameraState.availableLenses
+    let lenses = model.availableLenses
     return Group {
       if !lenses.isEmpty {
         settingsCard(
@@ -261,7 +263,7 @@ struct SettingsView: View {
           VStack(alignment: .leading, spacing: 2) {
             Text("Address")
               .foregroundStyle(.secondary)
-            Text(environment.streamURL)
+            Text(model.streamURL)
               .font(.system(.footnote, design: .monospaced))
               .foregroundStyle(.primary)
               .multilineTextAlignment(.leading)
@@ -275,7 +277,7 @@ struct SettingsView: View {
       .buttonStyle(.plain)
       .accessibilityIdentifier("settings-url")
       .accessibilityLabel("Copy stream address")
-      .accessibilityValue(environment.streamURL)
+      .accessibilityValue(model.streamURL)
       .padding(.horizontal, 16)
       .padding(.vertical, 10)
 
@@ -283,7 +285,7 @@ struct SettingsView: View {
 
       cardRow {
         LabeledContent("Clients") {
-          Text("\(environment.serverStatus.clientCount)")
+          Text("\(model.clientCount)")
             .accessibilityIdentifier("settings-clients")
         }
       }
@@ -296,7 +298,7 @@ struct SettingsView: View {
   /// cannot show what is currently selected. Falling back to the current settings keeps the row
   /// honest on a simulator and before the first frame.
   private var formatOptions: [FormatCatalogue.Option] {
-    let options = environment.formatOptions
+    let options = model.formatOptions
     guard options.isEmpty else { return options }
     return [ FormatCatalogue.Option(
       width: draftSettings.width,
@@ -347,7 +349,7 @@ struct SettingsView: View {
   }
 
   private func copyURL() {
-    UIPasteboard.general.string = environment.streamURL
+    UIPasteboard.general.string = model.streamURL
     didCopyURL = true
   }
 
@@ -358,11 +360,8 @@ struct SettingsView: View {
   /// restart the encoder.
   private func commit() {
     let trimmed = draftName.trimmingCharacters(in: .whitespacesAndNewlines)
-    if trimmed != environment.identity.name { environment.rename(to: trimmed) }
-    if draftSettings != environment.settings {
-      environment.settings = draftSettings
-      environment.applySettings()
-    }
+    if trimmed != model.name { model.rename(to: trimmed) }
+    if draftSettings != model.settings { model.apply(draftSettings) }
     dismiss()
   }
 }

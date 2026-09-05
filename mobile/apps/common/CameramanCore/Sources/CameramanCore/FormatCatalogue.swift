@@ -1,4 +1,3 @@
-import CameramanCore
 import Foundation
 
 /// Turns the device's raw format list into the short menu an operator should see, and picks the

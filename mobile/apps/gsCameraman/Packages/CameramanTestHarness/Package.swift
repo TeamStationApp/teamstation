@@ -8,7 +8,7 @@ let package = Package(
     .library(name: "CameramanTestHarness", targets: [ "CameramanTestHarness" ])
   ],
   dependencies: [
-    .package(path: "../CameramanCore"),
+    .package(path: "../../common/CameramanCore"),
     .package(path: "../CameramanEncode")
   ],
   targets: [

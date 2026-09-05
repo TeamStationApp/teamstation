@@ -13,16 +13,18 @@ can stand in for a fixed camera on the field without any intermediate server.
        microphone       (AAC-LC)
 ```
 
-Six packages, split so the parts that can be tested without hardware are not tangled with the parts
-that cannot:
+Seven packages, split so the parts that can be tested without hardware are not tangled with the
+parts that cannot. Two of them live in `mobile/apps/common` because GS Director and GS Preview draw
+the same screen for a phone they control over the network:
 
 | Package | Holds | Needs a device? |
 |---|---|---|
-| `CameramanCore` | identity, stream settings, zoom mapping, frame types | no |
-| `CameramanCapture` | `AVCaptureSession`, lens selection, format catalogue | yes |
+| `common/CameramanCore` | identity, stream settings, zoom mapping, lenses, format catalogue, thermal level, frame types, the `CameraControlling` seam | no |
+| `common/CameramanControlUI` | the operating screen, Settings, zoom rail and thermal pill, generic over `CameraControlling` | no |
+| `CameramanCapture` | `AVCaptureSession`, lens selection, format selection | yes |
 | `CameramanEncode` | VideoToolbox H.264/HEVC, AAC, NAL and parameter-set handling | partly |
 | `CameramanRTSP` | RTSP server, packetizers, SDP, RTCP, interleaved framing | no |
-| `CameramanUI` | SwiftUI screens and the wiring that owns everything | no |
+| `CameramanUI` | `AppEnvironment` (which conforms to `CameraControlling`), the preview layer, root and diagnostic views | no |
 | `CameramanTestHarness` | launch arguments, control channel, synthetic camera, recorders | no |
 
 The encoder emits plain elementary NAL units rather than `CMSampleBuffer`s, which is what lets every

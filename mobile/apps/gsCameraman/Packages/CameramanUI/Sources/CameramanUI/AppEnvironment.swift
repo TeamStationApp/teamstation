@@ -115,10 +115,7 @@ public final class AppEnvironment {
   }
 
   /// Force the overlay pill to `state` for `duration`, then return to the live thermal reading.
-  public func previewThermal(
-    _ state: ProcessInfo.ThermalState,
-    duration: Duration = .seconds(10)
-  ) {
+  public func previewThermal(_ state: ProcessInfo.ThermalState, duration: Duration) {
     thermalPreviewTask?.cancel()
     thermalPreview = state
     thermalPreviewTask = Task { @MainActor in
@@ -129,7 +126,7 @@ public final class AppEnvironment {
   }
 
   /// What the overlay pill shows: a Settings preview if one is running, otherwise telemetry.
-  public var displayedThermalLevel: ThermalBadgeLevel {
+  public var thermalLevel: ThermalBadgeLevel {
     if let thermalPreview {
       return ThermalBadgeLevel(process: thermalPreview)
     }
@@ -543,11 +540,11 @@ public final class AppEnvironment {
       return json(serverStatus)
 
     case .flipCamera:
-      camera.flip()
+      flip()
       return ok()
 
     case let .setZoom(displayed):
-      camera.setDisplayedZoom(displayed)
+      setDisplayedZoom(displayed)
       return ok()
 
     case let .setName(name):
@@ -700,5 +697,50 @@ public final class AppEnvironment {
     print("CAMERAMAN_CAPABILITIES_END")
 
     status = "measured"
+  }
+}
+
+// MARK: - CameraControlling
+
+/// The phone's own screen drives the phone through the same seam a remote screen uses. Almost all
+/// of this is forwarding; `apply` is the Done-button pair that already existed.
+///
+/// The harness `set-bitrate` / `set-codec` / `set-format` cases deliberately do not go through
+/// `apply`: they reconfigure only the encoder so a flow can change the rate mid-run without the
+/// capture device being reopened and the zoom reset, which `applySettings()` does on purpose for
+/// the operator's Done.
+extension AppEnvironment: CameraControlling {
+  public var name: String { identity.name }
+  public var cname: String { identity.cname }
+  public var position: CameraPosition { cameraState.position }
+  public var mapping: ZoomMapping { cameraState.mapping }
+  public var displayedZoom: Double { cameraState.displayedZoom }
+  public var deviceZoom: Double { cameraState.deviceZoom }
+  public var availableLenses: [CameraLens] { cameraState.availableLenses }
+  public var clientCount: Int { serverStatus.clientCount }
+  /// Off under `-uiTest` so a flow sees a still pill rather than a frame mid-shimmer.
+  public var animatesChrome: Bool { !launch.isUITest }
+  /// A camera in the hand is always answering.
+  public var isResponding: Bool { true }
+
+  public func setDisplayedZoom(_ displayed: Double) {
+    camera.setDisplayedZoom(displayed)
+  }
+
+  public func setDeviceZoom(_ device: Double) {
+    camera.setDeviceZoom(device)
+  }
+
+  public func flip() {
+    camera.flip()
+  }
+
+  public func apply(_ settings: StreamSettings) {
+    self.settings = settings
+    applySettings()
+  }
+
+  public func previewThermal(_ state: ProcessInfo.ThermalState) {
+    previewThermal(state, duration: .seconds(10))
   }
 }
