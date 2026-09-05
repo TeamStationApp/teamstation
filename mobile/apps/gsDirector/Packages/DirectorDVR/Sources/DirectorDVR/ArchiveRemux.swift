@@ -57,9 +57,21 @@ public enum ArchiveRemux {
       let start = CMTime(seconds: trim, preferredTimescale: 600)
       let kept = CMTimeSubtract(duration, start)
       guard kept.seconds > 0.05 else { continue }
-      let range = CMTimeRange(start: start, duration: kept)
+      // Trimmed at the tail as well, for the same reason as the head: the last segment runs to its
+      // camera's next keyframe, which is past where the window ends and by a different amount on
+      // every camera. Without this the files still disagree by about a frame.
+      var use = kept
+      if let targetDuration {
+        let remaining = targetDuration - cursor.seconds
+        if remaining <= 0.001 { break }
+        if kept.seconds > remaining {
+          use = CMTime(seconds: remaining, preferredTimescale: 600)
+        }
+      }
+      guard use.seconds > 0.001 else { continue }
+      let range = CMTimeRange(start: start, duration: use)
       try await composition.insertTimeRange(range, of: asset, at: cursor)
-      cursor = CMTimeAdd(cursor, kept)
+      cursor = CMTimeAdd(cursor, use)
     }
 
     guard cursor.seconds > 0.05 else { throw Error.empty }
