@@ -49,7 +49,8 @@ public enum EncodeSessionProbe {
     width: Int = 1920,
     height: Int = 1080,
     codec: CMVideoCodecType = kCMVideoCodecType_H264,
-    framesPerSession: Int = 1
+    framesPerSession: Int = 1,
+    frameRate: Int = 30
   ) -> Result {
     let started = CFAbsoluteTimeGetCurrent()
     var sessions: [VTCompressionSession] = []
@@ -77,6 +78,11 @@ public enum EncodeSessionProbe {
         break
       }
       VTSessionSetProperty(session, key: kVTCompressionPropertyKey_RealTime, value: kCFBooleanTrue)
+      VTSessionSetProperty(
+        session,
+        key: kVTCompressionPropertyKey_ExpectedFrameRate,
+        value: NSNumber(value: frameRate)
+      )
       // Creation alone can succeed lazily; preparing forces the encoder to actually claim
       // hardware resources, which is where the ceiling shows up.
       let prepared = VTCompressionSessionPrepareToEncodeFrames(session)
@@ -99,8 +105,11 @@ public enum EncodeSessionProbe {
           let status = VTCompressionSessionEncodeFrame(
             session,
             imageBuffer: frame,
-            presentationTimeStamp: CMTime(value: CMTimeValue(index), timescale: 30),
-            duration: CMTime(value: 1, timescale: 30),
+            presentationTimeStamp: CMTime(
+              value: CMTimeValue(index),
+              timescale: CMTimeScale(max(frameRate, 1))
+            ),
+            duration: CMTime(value: 1, timescale: CMTimeScale(max(frameRate, 1))),
             frameProperties: nil,
             infoFlagsOut: nil
           ) { status, _, sample in
@@ -136,22 +145,26 @@ public enum EncodeSessionProbe {
     )
   }
 
-  /// Total sustained encode throughput, expressed as 1080p30-stream equivalents.
+  /// Total sustained encode throughput, expressed as whole-stream equivalents at a stated rate.
   public struct Throughput: Sendable, Codable, Equatable {
     public var sessions: Int
     public var seconds: Double
     public var emitted: Int
     public var codec: String
     public var height: Int
+    /// The rate the streams being counted run at. Carried in the result rather than assumed,
+    /// because it halves the answer: the same device that sustains four 30 fps streams sustains
+    /// two at 60, and a headroom figure that does not say which it means is not usable.
+    public var frameRate: Int = 30
 
     public var framesPerSecond: Double { seconds > 0 ? Double(emitted) / seconds : 0 }
-    /// How many 30 fps streams of this size the device sustained.
-    public var streams: Double { framesPerSecond / 30 }
+    /// How many streams of this size and rate the device sustained.
+    public var streams: Double { framesPerSecond / Double(max(frameRate, 1)) }
 
     public var summary: String {
       String(
-        format: "%d x %@ %dp sessions sustained %.1f fps total over %.0fs = %.2f streams at 30 fps",
-        sessions, codec, height, framesPerSecond, seconds, streams
+        format: "%d x %@ %dp sessions sustained %.1f fps total over %.0fs = %.2f streams at %d fps",
+        sessions, codec, height, framesPerSecond, seconds, streams, frameRate
       )
     }
   }
@@ -168,7 +181,8 @@ public enum EncodeSessionProbe {
     seconds: Double,
     width: Int = 1920,
     height: Int = 1080,
-    codec: CMVideoCodecType = kCMVideoCodecType_H264
+    codec: CMVideoCodecType = kCMVideoCodecType_H264,
+    frameRate: Int = 30
   ) -> Throughput {
     var sessions: [VTCompressionSession] = []
     for _ in 0 ..< sessionCount {
@@ -194,6 +208,13 @@ public enum EncodeSessionProbe {
         key: kVTCompressionPropertyKey_AverageBitRate,
         value: NSNumber(value: 8_000_000)
       )
+      // Rate control spends its bitrate per second, so an encoder told 30 while being fed 60
+      // gives every frame half the bits and flatters the measurement.
+      VTSessionSetProperty(
+        session,
+        key: kVTCompressionPropertyKey_ExpectedFrameRate,
+        value: NSNumber(value: frameRate)
+      )
       VTCompressionSessionPrepareToEncodeFrames(session)
       sessions.append(session)
     }
@@ -208,7 +229,8 @@ public enum EncodeSessionProbe {
         seconds: 0,
         emitted: 0,
         codec: codec == kCMVideoCodecType_HEVC ? "HEVC" : "H.264",
-        height: height
+        height: height,
+        frameRate: frameRate
       )
     }
 
@@ -229,8 +251,11 @@ public enum EncodeSessionProbe {
         let status = VTCompressionSessionEncodeFrame(
           session,
           imageBuffer: frames[index % frames.count],
-          presentationTimeStamp: CMTime(value: CMTimeValue(index), timescale: 30),
-          duration: CMTime(value: 1, timescale: 30),
+          presentationTimeStamp: CMTime(
+            value: CMTimeValue(index),
+            timescale: CMTimeScale(max(frameRate, 1))
+          ),
+          duration: CMTime(value: 1, timescale: CMTimeScale(max(frameRate, 1))),
           frameProperties: nil,
           infoFlagsOut: nil
         ) { status, _, sample in
@@ -252,7 +277,8 @@ public enum EncodeSessionProbe {
       seconds: elapsed.rounded(toPlaces: 2),
       emitted: counter.value,
       codec: codec == kCMVideoCodecType_HEVC ? "HEVC" : "H.264",
-      height: height
+      height: height,
+      frameRate: frameRate
     )
   }
 
