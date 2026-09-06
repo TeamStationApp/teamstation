@@ -12,7 +12,6 @@ public struct RecordingsView: View {
   @State private var markedIDs: Set<Int64> = []
   @State private var selectedProgram = true
   @State private var selectedCameras: Set<String> = []
-  @State private var showExportProgress = false
   @State private var showDeleteConfirm = false
   @State private var showReuseConfirm = false
   @State private var pendingReuse: (recording: RecordingSummary, cameras: [(SourceID, String)], includeProgram: Bool)?
@@ -20,6 +19,7 @@ public struct RecordingsView: View {
   public init() {}
 
   public var body: some View {
+    @Bindable var environment = environment
     NavigationStack {
       ZStack {
         HStack(spacing: 0) {
@@ -29,7 +29,7 @@ public struct RecordingsView: View {
         }
         .background(Color.deckBackground)
 
-        if showExportProgress || environment.isExporting {
+        if environment.isExporting {
           exportProgress
         }
         if showDeleteConfirm {
@@ -71,15 +71,11 @@ public struct RecordingsView: View {
       .onChange(of: selectedID) { _, _ in
         selectAll(in: selectedRecording)
       }
-      .onChange(of: environment.isSharingRecordings) { _, sharing in
-        if sharing { showExportProgress = false }
-      }
-      .onChange(of: environment.isExporting) { _, exporting in
-        if exporting { showExportProgress = true }
-        if !exporting && environment.lastRecordingShare.isEmpty {
-          showExportProgress = false
-        }
-      }
+    }
+    // AirDrop has to be presented from inside this full-screen cover. A share sheet asked for
+    // on the root view queues behind the cover and only appears once DONE dismisses it.
+    .sheet(isPresented: $environment.isSharingRecordings) {
+      ShareSheet(urls: environment.lastRecordingShare)
     }
   }
 
@@ -145,7 +141,6 @@ public struct RecordingsView: View {
         .id(recording.id)
 
         Button {
-          showExportProgress = true
           export(recording)
         } label: {
           Text("EXPORT")
