@@ -22,6 +22,16 @@
   <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
   <!-- Encoding and serving must survive the screen going off on a phone on a tripod. -->
   <uses-permission android:name="android.permission.WAKE_LOCK" />
+  <!-- A wake lock keeps the CPU scheduled and says nothing about the radio. Without a WifiLock
+       Android parks Wi-Fi in power-save between beacons, and a camera whose packets are held for a
+       second is a camera the Director reports as offline. iOS keeps the radio hot for a foreground
+       capture app with no equivalent knob; here it has to be asked for. Needs ACCESS_WIFI_STATE,
+       already declared above. -->
+  <!-- Doze and Adaptive Battery are the difference between working for ten minutes and working for
+       a whole game. A typed foreground service is exempt from most of it, but on a Pixel left alone
+       for hours the app still has to be off the battery optimisation list to be safe; this
+       permission is what lets it ask. -->
+  <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
   <uses-feature android:name="android.hardware.camera" android:required="true" />
   <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
@@ -61,9 +71,13 @@
       </intent-filter>
     </activity>
 
+    <!-- `stopWithTask=false` is the platform default, but stated because it is load-bearing here:
+         an operator who swipes the app off Recents while the phone is on a tripod must not take
+         the stream down with it. Paired with START_STICKY in the service. -->
     <service
         android:name=".service.CameramanService"
         android:exported="false"
+        android:stopWithTask="false"
         android:foregroundServiceType="camera|microphone" />
 
   </application>
