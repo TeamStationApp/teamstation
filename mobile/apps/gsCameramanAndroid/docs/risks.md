@@ -40,6 +40,22 @@ picture. That is the iOS build's behaviour too — it ignores portrait angles an
 landscape one — so it is a shared product decision rather than a port defect. It is worth knowing
 before mounting a rig.
 
+## Compose reports gesture deltas where SwiftUI reports totals
+
+`MagnifyGesture.magnification` and `DragGesture.translation` are cumulative from the moment the
+gesture began. Compose's `detectTransformGestures` and `detectDragGestures` hand back only what
+changed since the last event. The zoom arithmetic in `ZoomMapping` is written for the former — it is
+shared with the iOS build — so `CameraScreen` accumulates the deltas before calling it.
+
+Getting that wrong does not look like an arithmetic bug. It looks like the hardware: the picture
+jerks a few pixels and springs back, and because the pills still work it reads as a zoom that is
+clamped to the lens stops. Worth knowing before the next gesture is added.
+
+A second trap in the same place: anything a `pointerInput` block closes over is frozen at the moment
+that block last started, so live state has to come through `rememberUpdatedState`. A drag that seeds
+itself from a stale zoom starts from the wrong place and is very hard to tell from a drag that is
+merely imprecise.
+
 ## A disabled lens is a zoom clamp, and the clamp is approximate
 
 Turning off the telephoto stops the range one hundredth of a stop below its derived switchover. That

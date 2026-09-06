@@ -100,6 +100,11 @@ Two decisions worth knowing:
 - **A compact type scale.** The stock scale is drawn for a phone in portrait. This app is
   landscape-only, so its window is 411dp *tall*, and the defaults overflowed the settings screen
   badly enough that the microphone toggle and the camera's identifier were off the bottom.
+- **One margin for all the chrome.** `CameramanTokens.chromeMargin` is the gap at every edge of the
+  overlay and between the badges and the zoom rail, and every chrome pill shares one height so the
+  camera name on the left and the badges on the right sit on the same line. The chrome is four
+  islands floating on live video with nothing to align to but the screen, and an operator reads
+  inconsistent gaps as a layout that is broken rather than as one that is deliberate.
 
 ### Lens selection is a zoom clamp, not a different device
 
