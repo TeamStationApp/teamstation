@@ -366,6 +366,11 @@ public final class AppEnvironment {
     if let result = try? index.reconcile(), result.removed > 0 {
       statusMessage = "Recovered index: dropped \(result.removed) missing segment(s)"
     }
+    // After reconcile, so an interrupted take is closed at the end of media that survives on
+    // disk rather than at a segment row whose file was never written.
+    if let closed = try? index.closeInterruptedRecordings(), closed > 0 {
+      statusMessage = "Closed \(closed) interrupted recording(s)"
+    }
 
     let manifest = overlayStore.loadManifest()
     apply(manifest)
@@ -1261,6 +1266,10 @@ public final class AppEnvironment {
     programStreamer.stop()
     streamMegabitsPerSecond = 0
     streamDroppedPackets = 0
+    // The poll only records transport health while streaming, so without this the last depth
+    // before the stream ended stays in `dump-state` for the rest of the session and reads as a
+    // permanent backlog. Measured after a stall: 1013696 bytes, hours after the socket closed.
+    telemetry.recordStreamTransport(droppedPackets: 0, queuedBytes: 0)
     streamErrorGate.reset()
   }
 
@@ -2971,6 +2980,8 @@ public final class AppEnvironment {
     if let codec = launch.programCodec { config.programCodec = codec }
     if let hud = launch.debugHUD { config.showDebugHUD = hud }
     if let url = launch.streamURL { config.streamURL = url }
+    if let bitrate = launch.programBitrate { config.programBitrate = bitrate }
+    if let rate = launch.programFrameRate { config.programFrameRate = rate }
     return config
   }
 
@@ -3388,6 +3399,12 @@ public final class AppEnvironment {
         let stream = programStreamer.metrics
         streamMegabitsPerSecond = stream.megabitsPerSecond
         streamDroppedPackets = stream.droppedPackets
+        // Into telemetry as well as the HUD, so `dump-state` and the soak scripts can see a
+        // stalled uplink. A stall that shows zero drops is the shape of the 2026-09-05 crash.
+        telemetry.recordStreamTransport(
+          droppedPackets: stream.droppedPackets,
+          queuedBytes: stream.queuedBytes
+        )
       }
     }
     applyProgramOverlays()
@@ -3431,6 +3448,12 @@ public final class AppEnvironment {
     switch command {
     case let .configure(values):
       launch.apply(queryItems: values)
+      // Overlay the encoder settings on the running session without touching Settings on disk,
+      // so a soak can change bitrate between blocks. `ProgramStreamer` reads these when it
+      // starts, so the stream has to be stopped and started for a change to take effect.
+      if let bitrate = launch.programBitrate { config.programBitrate = bitrate }
+      if let rate = launch.programFrameRate { config.programFrameRate = rate }
+      if let url = launch.streamURL { config.streamURL = url }
       if launch.useTestClock, testClock == nil { statusMessage = "Test clock requires relaunch" }
       if let profile = launch.sourceProfile {
         Task { await applySourceProfile(profile) }

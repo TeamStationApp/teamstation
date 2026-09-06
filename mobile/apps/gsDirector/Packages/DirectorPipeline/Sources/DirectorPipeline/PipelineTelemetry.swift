@@ -422,6 +422,11 @@ public struct TelemetrySnapshot: Sendable, Codable, Equatable {
   public var streamIdleKeyframeCount: UInt64 = 0
   /// Times the RTMP compression session was invalidated because callbacks went silent.
   public var streamEncoderResetCount: UInt64 = 0
+  /// Media tags the RTMP client shed because the socket was behind. Climbing means the uplink
+  /// cannot carry the configured bitrate; a stall that reports zero here is the 2026-09-05 bug.
+  public var streamDroppedPackets: UInt64 = 0
+  /// Bytes waiting between the encoder and the socket. Pinned near the budget is a stalled peer.
+  public var streamQueuedBytes = 0
   /// Recording or streaming, so backgrounding must not suspend the pipeline.
   public var keepAliveInBackground = false
   /// System Picture-in-Picture of the programme output is showing over other apps.
@@ -650,6 +655,14 @@ public final class PipelineTelemetry: @unchecked Sendable {
   public func recordStreamEncoderReset() {
     lock.lock()
     state.streamEncoderResetCount += 1
+    lock.unlock()
+  }
+
+  /// RTMP transport health, polled from the client rather than pushed per tag.
+  public func recordStreamTransport(droppedPackets: UInt64, queuedBytes: Int) {
+    lock.lock()
+    state.streamDroppedPackets = droppedPackets
+    state.streamQueuedBytes = max(0, queuedBytes)
     lock.unlock()
   }
 
