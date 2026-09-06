@@ -2971,6 +2971,8 @@ public final class AppEnvironment {
     if let codec = launch.programCodec { config.programCodec = codec }
     if let hud = launch.debugHUD { config.showDebugHUD = hud }
     if let url = launch.streamURL { config.streamURL = url }
+    if let bitrate = launch.programBitrate { config.programBitrate = bitrate }
+    if let rate = launch.programFrameRate { config.programFrameRate = rate }
     return config
   }
 
@@ -3388,6 +3390,12 @@ public final class AppEnvironment {
         let stream = programStreamer.metrics
         streamMegabitsPerSecond = stream.megabitsPerSecond
         streamDroppedPackets = stream.droppedPackets
+        // Into telemetry as well as the HUD, so `dump-state` and the soak scripts can see a
+        // stalled uplink. A stall that shows zero drops is the shape of the 2026-09-05 crash.
+        telemetry.recordStreamTransport(
+          droppedPackets: stream.droppedPackets,
+          queuedBytes: stream.queuedBytes
+        )
       }
     }
     applyProgramOverlays()
@@ -3431,6 +3439,12 @@ public final class AppEnvironment {
     switch command {
     case let .configure(values):
       launch.apply(queryItems: values)
+      // Overlay the encoder settings on the running session without touching Settings on disk,
+      // so a soak can change bitrate between blocks. `ProgramStreamer` reads these when it
+      // starts, so the stream has to be stopped and started for a change to take effect.
+      if let bitrate = launch.programBitrate { config.programBitrate = bitrate }
+      if let rate = launch.programFrameRate { config.programFrameRate = rate }
+      if let url = launch.streamURL { config.streamURL = url }
       if launch.useTestClock, testClock == nil { statusMessage = "Test clock requires relaunch" }
       if let profile = launch.sourceProfile {
         Task { await applySourceProfile(profile) }
