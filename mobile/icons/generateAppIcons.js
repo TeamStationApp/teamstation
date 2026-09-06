@@ -48,6 +48,12 @@ const APPS = [
     out: path.join(
       repoRoot,
       'mobile/apps/gsCameraman/App/Assets.xcassets/AppIcon.appiconset/AppIcon.png'
+    ),
+    // The Android build wears the same mark. Two apps that stream from the same operator's pocket
+    // should not be told apart by their icons.
+    androidRes: path.join(
+      repoRoot,
+      'mobile/apps/gsCameramanAndroid/app/src/main/res'
     )
   },
   {
@@ -194,7 +200,7 @@ const ADAPTIVE_DP = 108
 const ADAPTIVE_SAFE_DP = 66
 const LEGACY_DP = 48
 
-function writeAndroidMipmaps(composedPng, resDir) {
+function writeAndroidMipmaps(name, composedPng, resDir) {
   for (const { dir, scale } of ANDROID_DENSITIES) {
     const outDir = path.join(resDir, dir)
     fs.mkdirSync(outDir, { recursive: true })
@@ -225,7 +231,7 @@ function writeAndroidMipmaps(composedPng, resDir) {
       path.join(outDir, 'ic_launcher_foreground.png')
     )
     console.log(
-      `[icons] watcher ${dir}: ic_launcher ${legacyPx}px, ` +
+      `[icons] ${name} ${dir}: ic_launcher ${legacyPx}px, ` +
         `foreground ${adaptiveCanvasPx}px (safe ${adaptiveSafePx}px)`
     )
   }
@@ -262,7 +268,7 @@ function main() {
           `glyph ${GLYPH_SIZE} SE inset ${GLYPH_INSET}, cream ${cream})`
       )
       if (app.androidRes) {
-        writeAndroidMipmaps(app.out, app.androidRes)
+        writeAndroidMipmaps(app.name, app.out, app.androidRes)
       }
     }
   } finally {

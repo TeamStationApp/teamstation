@@ -1,0 +1,432 @@
+package co.gamestation.cameraman
+
+import co.gamestation.cameraman.core.CaptureFormatDescriptor
+import co.gamestation.cameraman.core.DeviceIdentity
+import co.gamestation.cameraman.core.DeviceIdentityProvider
+import co.gamestation.cameraman.core.InMemoryIdentityStore
+import co.gamestation.cameraman.core.StreamCodec
+import co.gamestation.cameraman.core.StreamSettings
+import co.gamestation.cameraman.capture.CameraSession
+import co.gamestation.cameraman.capture.FormatCatalogue
+import co.gamestation.cameraman.harness.ControlChannel
+import co.gamestation.cameraman.harness.ControlCommand
+import co.gamestation.cameraman.harness.ControlServer
+import co.gamestation.cameraman.harness.LaunchConfiguration
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class DeviceIdentityTest {
+
+    @Test
+    fun `a new install generates a UUID and keeps it`() {
+        val store = InMemoryIdentityStore()
+        val provider = DeviceIdentityProvider(store)
+        val first = provider.load()
+        assertTrue(DeviceIdentityProvider.isWellFormed(first.uuid))
+        assertEquals(first.uuid, provider.load().uuid)
+    }
+
+    @Test
+    fun `the default name is derived from the UUID so two phones cannot collide`() {
+        assertEquals(
+            "Camera 14E7",
+            DeviceIdentity.defaultName("c94df9ca-d7c2-468f-8529-97d01fba14e7")
+        )
+    }
+
+    @Test
+    fun `renaming does not move the identity`() {
+        // The whole point: renaming a camera must not make it a new one in GS Director.
+        val provider = DeviceIdentityProvider(InMemoryIdentityStore())
+        val before = provider.load()
+        val after = provider.save("Third Base")
+        assertEquals(before.uuid, after.uuid)
+        assertEquals("Third Base", after.name)
+        assertEquals("Third Base", provider.load().name)
+    }
+
+    @Test
+    fun `an empty name falls back rather than emitting an empty SDP session name`() {
+        // RFC 4566 forbids an empty `s=`.
+        val provider = DeviceIdentityProvider(InMemoryIdentityStore())
+        val identity = provider.save("   ")
+        assertEquals(DeviceIdentity.defaultName(identity.uuid), identity.name)
+    }
+
+    @Test
+    fun `newlines in a name are folded, not carried into the SDP`() {
+        // A CR or LF would terminate the SDP line early and split one field into two.
+        val uuid = "c94df9ca-d7c2-468f-8529-97d01fba14e7"
+        assertEquals("Third Base", DeviceIdentity.normalized("Third\r\nBase", uuid))
+        assertEquals("Third Base", DeviceIdentity.normalized("Third\nBase", uuid))
+        assertEquals("a b", DeviceIdentity.normalized("a\n\n\nb", uuid))
+    }
+
+    @Test
+    fun `a malformed stored UUID is replaced rather than used`() {
+        // A malformed CNAME would make GS Producer bind two different phones to one record.
+        for (bad in listOf("", "not-a-uuid", "C94DF9CA-D7C2-468F-8529-97D01FBA14E7", "1-1-1-1-1")) {
+            val store = InMemoryIdentityStore(mapOf(DeviceIdentityProvider.uuidKey to bad))
+            val loaded = DeviceIdentityProvider(store).load()
+            assertTrue("rejected $bad", DeviceIdentityProvider.isWellFormed(loaded.uuid))
+            assertFalse(loaded.uuid == bad)
+        }
+    }
+
+    @Test
+    fun `a well-formed lower-case UUID is accepted`() {
+        assertTrue(DeviceIdentityProvider.isWellFormed("c94df9ca-d7c2-468f-8529-97d01fba14e7"))
+    }
+
+    @Test
+    fun `the cname and the uuid are the same string`() {
+        // RFC 5576 requires the SDP cname and the RTCP SDES CNAME to be identical.
+        val identity = DeviceIdentity("c94df9ca-d7c2-468f-8529-97d01fba14e7", "x")
+        assertEquals(identity.uuid, identity.cname)
+    }
+}
+
+class FormatCatalogueTest {
+    private val formats = listOf(
+        CaptureFormatDescriptor(1920, 1080, 1.0, 30.0, supportsMultiLensSwitching = true),
+        CaptureFormatDescriptor(1920, 1080, 1.0, 60.0, supportsMultiLensSwitching = true),
+        CaptureFormatDescriptor(3840, 2160, 1.0, 30.0, supportsMultiLensSwitching = true),
+        CaptureFormatDescriptor(1280, 720, 60.0, 240.0, supportsMultiLensSwitching = false),
+        CaptureFormatDescriptor(1280, 720, 1.0, 30.0, supportsMultiLensSwitching = true)
+    )
+    private val catalogue = FormatCatalogue(formats)
+
+    @Test
+    fun `options are one per size and rate, sorted by pixels then rate`() {
+        val labels = catalogue.options.map { it.label }
+        assertEquals("1280x720 @ 24", labels.first())
+        assertTrue(labels.indexOf("1280x720 @ 30") < labels.indexOf("1920x1080 @ 30"))
+        assertTrue(labels.indexOf("1920x1080 @ 30") < labels.indexOf("3840x2160 @ 30"))
+    }
+
+    @Test
+    fun `only the curated frame rates appear, not every integer in a range`() {
+        // A device advertises continuous ranges; without a curated list the menu would run 1 to 240.
+        assertTrue(catalogue.options.all { it.frameRate in FormatCatalogue.candidateFrameRates })
+    }
+
+    @Test
+    fun `a size that keeps lens switching in one variant is reported as keeping it`() {
+        val option = catalogue.options.first { it.width == 1280 && it.frameRate == 30.0 }
+        assertTrue(option.supportsMultiLensSwitching)
+        assertNull(option.annotation)
+    }
+
+    @Test
+    fun `a size that only exists as a single-lens mode says so`() {
+        // Losing lens switching should be a visible trade-off rather than a silent one.
+        val option = catalogue.options.first { it.width == 1280 && it.frameRate == 240.0 }
+        assertFalse(option.supportsMultiLensSwitching)
+        assertEquals("single lens only", option.annotation)
+    }
+
+    @Test
+    fun `selection prefers exact dimensions`() {
+        val chosen = catalogue.selection(1920, 1080, 30.0)
+        assertEquals(1920, chosen?.width)
+        assertEquals(1080, chosen?.height)
+    }
+
+    @Test
+    fun `selection prefers the tightest range that still contains the request`() {
+        // A 240 fps format run at 30 wastes power and often drops lens switching; the 30 fps format
+        // does neither.
+        val chosen = catalogue.selection(1280, 720, 30.0)
+        assertEquals(30.0, chosen?.maximumFrameRate)
+        assertTrue(chosen!!.supportsMultiLensSwitching)
+    }
+
+    @Test
+    fun `the documented default is 1080p30 keeping lens switching`() {
+        val chosen = catalogue.defaultSelection
+        assertEquals(1920, chosen?.width)
+        assertEquals(30.0, chosen?.maximumFrameRate)
+        assertTrue(chosen!!.supportsMultiLensSwitching)
+    }
+
+    @Test
+    fun `an empty catalogue selects nothing rather than inventing a format`() {
+        assertNull(FormatCatalogue(emptyList()).selection(1920, 1080, 30.0))
+        assertNull(FormatCatalogue(emptyList()).defaultSelection)
+    }
+
+    @Test
+    fun `the maximum is the largest whether or not it keeps switching`() {
+        assertEquals(3840, catalogue.maximumSelection?.width)
+    }
+}
+
+class LaunchConfigurationTest {
+
+    @Test
+    fun `defaults are the documented stream settings`() {
+        val launch = LaunchConfiguration.from(emptyMap())
+        assertEquals(1920, launch.settings.width)
+        assertEquals(1080, launch.settings.height)
+        assertEquals(30.0, launch.settings.frameRate, 1e-9)
+        // HEVC by default: the same picture at two thirds the rate, which on a match-day Wi-Fi is
+        // the difference between four cameras fitting and three.
+        assertEquals(StreamCodec.HEVC, launch.settings.codec)
+        assertEquals(StreamCodec.HEVC.defaultBitrate, launch.settings.bitrate)
+        assertEquals(StreamSettings.defaultPort, launch.settings.port)
+        assertTrue(launch.settings.audioEnabled)
+        assertTrue(launch.advertise)
+        assertFalse(launch.isUITest)
+    }
+
+    @Test
+    fun `every documented key is read`() {
+        val launch = LaunchConfiguration.from(
+            mapOf(
+                "uiTest" to "true",
+                "syntheticCamera" to "yes",
+                "rtspPort" to "8554",
+                "rtspPath" to "/live/alt",
+                "codec" to "hevc",
+                "bitrateMbps" to "12.5",
+                "width" to "1280",
+                "height" to "720",
+                "frameRate" to "60",
+                "audioEnabled" to "0",
+                "cameraName" to "Third Base",
+                "identityUUID" to "c94df9ca-d7c2-468f-8529-97d01fba14e7",
+                "measureCapabilities" to "1",
+                "recordSeconds" to "8",
+                "selfTest" to "true",
+                "advertise" to "false"
+            )
+        )
+        assertTrue(launch.isUITest)
+        assertTrue(launch.useSyntheticCamera)
+        assertEquals(8554, launch.settings.port)
+        assertEquals("/live/alt", launch.settings.path)
+        assertEquals(StreamCodec.HEVC, launch.settings.codec)
+        assertEquals(12_500_000, launch.settings.bitrate)
+        assertEquals(1280, launch.settings.width)
+        assertEquals(60.0, launch.settings.frameRate, 1e-9)
+        assertFalse(launch.settings.audioEnabled)
+        assertEquals("Third Base", launch.cameraName)
+        assertTrue(launch.measureCapabilities)
+        assertEquals(8.0, launch.recordSeconds, 1e-9)
+        assertTrue(launch.selfTest)
+        assertFalse(launch.advertise)
+        assertTrue(launch.unknownKeys.isEmpty())
+    }
+
+    @Test
+    fun `an unrecognised key is reported rather than ignored`() {
+        // A silently ignored launch argument produces a green run that proved nothing.
+        val launch = LaunchConfiguration.from(mapOf("codecc" to "hevc", "zoom" to "2"))
+        assertEquals(listOf("codecc", "zoom"), launch.unknownKeys)
+        assertEquals(StreamCodec.HEVC, launch.settings.codec)
+    }
+
+    @Test
+    fun `an explicit codec carries its default bitrate across`() {
+        val launch = LaunchConfiguration.from(mapOf("codec" to "h264"))
+        assertEquals(StreamCodec.H264.defaultBitrate, launch.settings.bitrate)
+    }
+
+    @Test
+    fun `a named field is recorded so saved settings cannot override it`() {
+        val launch = LaunchConfiguration.from(mapOf("codec" to "h264", "width" to "1280"))
+        assertEquals(
+            setOf(StreamSettings.Field.CODEC, StreamSettings.Field.WIDTH),
+            launch.providedSettingFields
+        )
+    }
+
+    @Test
+    fun `a typo still counts as naming the field`() {
+        // Otherwise a mistyped value would hand the decision back to whatever is on the handset,
+        // which is the one thing a pinned launch argument exists to prevent.
+        val launch = LaunchConfiguration.from(mapOf("codec" to "h2064"))
+        assertTrue(launch.providedSettingFields.contains(StreamSettings.Field.CODEC))
+    }
+
+    @Test
+    fun `persistence follows uiTest unless it is set explicitly`() {
+        // A flow should neither inherit nor leave behind a preference — but the operator runs with
+        // uiTest on to get the control server and still expects the camera to come back as left.
+        assertTrue(LaunchConfiguration.from(emptyMap()).persistSettings)
+        assertFalse(LaunchConfiguration.from(mapOf("uiTest" to "true")).persistSettings)
+        assertTrue(
+            LaunchConfiguration.from(
+                mapOf("uiTest" to "true", "persistSettings" to "true")
+            ).persistSettings
+        )
+    }
+
+    @Test
+    fun `disabled lenses arrive as a comma-separated list`() {
+        val launch = LaunchConfiguration.from(mapOf("disabledLenses" to "uw, t ,"))
+        assertEquals(setOf("uw", "t"), launch.settings.disabledLensIDs)
+    }
+
+    @Test
+    fun `an explicit bitrate survives a codec change`() {
+        val settings = StreamSettings.default.copy(bitrate = 20_000_000)
+        settings.selectCodec(StreamCodec.HEVC)
+        assertEquals(20_000_000, settings.bitrate)
+    }
+
+    @Test
+    fun `the debug HUD follows uiTest unless it is set explicitly`() {
+        assertTrue(LaunchConfiguration.from(mapOf("uiTest" to "true")).showDebugHUD)
+        assertFalse(
+            LaunchConfiguration.from(mapOf("uiTest" to "true", "debugHUD" to "false")).showDebugHUD
+        )
+    }
+
+    @Test
+    fun `booleans accept the spellings that appear in hand-written flows`() {
+        for (truthy in listOf("1", "true", "TRUE", "yes")) {
+            assertEquals(true, LaunchConfiguration.bool(truthy))
+        }
+        for (falsy in listOf("0", "false", "no")) {
+            assertEquals(false, LaunchConfiguration.bool(falsy))
+        }
+        assertNull(LaunchConfiguration.bool("maybe"))
+        assertNull(LaunchConfiguration.bool(null))
+    }
+}
+
+class ControlChannelTest {
+    private fun command(path: String) = ControlChannel.command("gscameraman://test$path")
+
+    @Test
+    fun `the argument-free commands parse`() {
+        assertEquals(ControlCommand.DumpState, command("/dump-state"))
+        assertEquals(ControlCommand.FlipCamera, command("/flip-camera"))
+        assertEquals(ControlCommand.ForceKeyframe, command("/force-keyframe"))
+        assertEquals(ControlCommand.Clients, command("/clients"))
+        assertEquals(ControlCommand.Reset, command("/reset"))
+    }
+
+    @Test
+    fun `set-zoom takes a displayed value`() {
+        assertEquals(ControlCommand.SetZoom(2.5), command("/set-zoom?displayed=2.5"))
+        // A typo fails where it was typed instead of three assertions later.
+        assertNull(command("/set-zoom?displayd=2.5"))
+        assertNull(command("/set-zoom"))
+    }
+
+    @Test
+    fun `set-format defaults the rate a size normally runs at`() {
+        assertEquals(
+            ControlCommand.SetFormat(1920, 1080, 30),
+            command("/set-format?width=1920&height=1080")
+        )
+        assertEquals(
+            ControlCommand.SetFormat(1280, 720, 60),
+            command("/set-format?width=1280&height=720&fps=60")
+        )
+        assertNull(command("/set-format?width=1920"))
+    }
+
+    @Test
+    fun `set-codec lower-cases and set-bitrate parses a decimal`() {
+        assertEquals(ControlCommand.SetCodec("hevc"), command("/set-codec?codec=HEVC"))
+        assertNull(command("/set-codec?codec="))
+        assertEquals(ControlCommand.SetBitrate(12.5), command("/set-bitrate?mbps=12.5"))
+        assertNull(command("/set-bitrate?mbps=fast"))
+    }
+
+    @Test
+    fun `an empty name is a real request, because it checks the fallback appears`() {
+        assertEquals(ControlCommand.SetName(""), command("/set-name?name="))
+        assertEquals(ControlCommand.SetName("Third Base"), command("/set-name?name=Third%20Base"))
+    }
+
+    @Test
+    fun `set-audio reads the spellings flows actually contain`() {
+        assertEquals(ControlCommand.SetAudio(true), command("/set-audio?on=yes"))
+        assertEquals(ControlCommand.SetAudio(true), command("/set-audio?on=1"))
+        assertEquals(ControlCommand.SetAudio(false), command("/set-audio?on=no"))
+        assertNull(command("/set-audio"))
+    }
+
+    @Test
+    fun `set-rotation clears its override when given no value`() {
+        assertEquals(ControlCommand.SetRotation(90), command("/set-rotation?degrees=90"))
+        assertEquals(ControlCommand.SetRotation(null), command("/set-rotation"))
+    }
+
+    @Test
+    fun `a foreign scheme or an unknown action is refused`() {
+        assertNull(ControlChannel.command("https://example.com/dump-state"))
+        assertNull(command("/definitely-not-a-command"))
+    }
+
+    @Test
+    fun `the request line is reduced to its target`() {
+        assertEquals(
+            "/set-zoom?displayed=2",
+            ControlServer.requestTarget("GET /set-zoom?displayed=2 HTTP/1.1\r\nHost: x\r\n")
+        )
+        assertEquals("/", ControlServer.requestTarget("nonsense"))
+    }
+}
+
+/**
+ * The capture rotation is a derived rule with one measured anchor, so it is pinned here: a change
+ * that puts the stream back on its side should fail in a suite rather than on a field.
+ */
+class CaptureRotationTest {
+
+    @Test
+    fun `a Pixel 10 in landscape needs a quarter turn`() {
+        // MEASURED 2026-09-05 on a Pixel 10: sensor 90, window ROTATION_90, and the encoded frame
+        // needed a further 90 degrees. See docs/capabilities.md.
+        assertEquals(
+            90,
+            CameraSession.captureRotation(
+                sensorOrientation = 90,
+                displayRotation = 90,
+                isFront = false
+            )
+        )
+    }
+
+    @Test
+    fun `the other landscape hold is 180 degrees away`() {
+        // The two holds must differ by exactly a half turn, or flipping the phone on the tripod
+        // would produce something other than an upside-down picture.
+        val one = CameraSession.captureRotation(90, 90, isFront = false)
+        val other = CameraSession.captureRotation(90, 270, isFront = false)
+        assertEquals(180, ((other - one) + 360) % 360)
+    }
+
+    @Test
+    fun `the front camera takes the same angle as the back in the same hold`() {
+        // MEASURED 2026-09-05: flipping to the front camera produced an upright picture at the same
+        // 90 degrees. The 180 between a front sensor's 270 and a back sensor's 90 is cancelled by
+        // the sign flip in the formula, so what actually separates the two cameras is the mirror,
+        // not the rotation — and mirroring is not a rotation, so it is not modelled as one.
+        val back = CameraSession.captureRotation(90, 90, isFront = false)
+        val front = CameraSession.captureRotation(270, 90, isFront = true)
+        assertEquals(back, front)
+        assertEquals(90, front)
+    }
+
+    @Test
+    fun `the result is always a legal quarter turn`() {
+        for (sensor in listOf(0, 90, 180, 270)) {
+            for (display in listOf(0, 90, 180, 270)) {
+                for (front in listOf(false, true)) {
+                    val angle = CameraSession.captureRotation(sensor, display, front)
+                    assertTrue("$sensor/$display/$front -> $angle", angle in listOf(0, 90, 180, 270))
+                }
+            }
+        }
+    }
+}

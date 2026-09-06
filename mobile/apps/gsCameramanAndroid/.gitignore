@@ -1,0 +1,11 @@
+.gradle/
+.kotlin/
+build/
+local.properties
+*.iml
+.idea/
+DerivedData/
+
+# Maestro run output. Each run writes screenshots and a view hierarchy per step, which is exactly
+# what you want while debugging a flow and never what you want in the history.
+reports/

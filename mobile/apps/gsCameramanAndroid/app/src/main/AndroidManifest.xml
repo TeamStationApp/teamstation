@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+  <uses-permission android:name="android.permission.CAMERA" />
+  <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+  <uses-permission android:name="android.permission.INTERNET" />
+  <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+  <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+
+  <!-- The whole reason this build exists on Android rather than being a straight port: capture and
+       serving continue while the app is backgrounded or the screen is off. That is only legal from
+       a typed foreground service, and each type needs its own permission from API 34 on. Without
+       FOREGROUND_SERVICE_CAMERA the service start throws SecurityException; without the camera
+       type at runtime the CameraDevice is closed the moment the activity stops. -->
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+  <!-- A foreground service must post a notification, and since API 33 posting one is a runtime
+       permission. Denying it does not stop the service, but it does hide the only affordance an
+       operator has for getting back into a backgrounded camera. -->
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+  <!-- Encoding and serving must survive the screen going off on a phone on a tripod. -->
+  <uses-permission android:name="android.permission.WAKE_LOCK" />
+  <!-- A wake lock keeps the CPU scheduled and says nothing about the radio. Without a WifiLock
+       Android parks Wi-Fi in power-save between beacons, and a camera whose packets are held for a
+       second is a camera the Director reports as offline. iOS keeps the radio hot for a foreground
+       capture app with no equivalent knob; here it has to be asked for. Needs ACCESS_WIFI_STATE,
+       already declared above. -->
+  <!-- Doze and Adaptive Battery are the difference between working for ten minutes and working for
+       a whole game. A typed foreground service is exempt from most of it, but on a Pixel left alone
+       for hours the app still has to be off the battery optimisation list to be safe; this
+       permission is what lets it ask. -->
+  <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+  <uses-feature android:name="android.hardware.camera" android:required="true" />
+  <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
+  <uses-feature android:name="android.hardware.microphone" android:required="false" />
+
+  <application
+      android:name=".CameramanApplication"
+      android:allowBackup="false"
+      android:icon="@mipmap/ic_launcher"
+      android:roundIcon="@mipmap/ic_launcher"
+      android:label="@string/app_name"
+      android:supportsRtl="true"
+      android:usesCleartextTraffic="true"
+      android:theme="@style/Theme.Cameraman">
+
+    <activity
+        android:name=".MainActivity"
+        android:exported="true"
+        android:label="@string/app_name"
+        android:launchMode="singleTask"
+        android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density"
+        android:screenOrientation="sensorLandscape"
+        android:showWhenLocked="true"
+        android:turnScreenOn="true"
+        android:theme="@style/Theme.Cameraman">
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN" />
+        <category android:name="android.intent.category.LAUNCHER" />
+      </intent-filter>
+      <!-- Test control channel, mirroring the iOS build's `gscameraman://` scheme. Commands are
+           ignored unless the app was launched with uiTest, exactly as on iOS. -->
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+        <data android:scheme="gscameraman" />
+      </intent-filter>
+    </activity>
+
+    <!-- `stopWithTask=false` is the platform default, but stated because it is load-bearing here:
+         an operator who swipes the app off Recents while the phone is on a tripod must not take
+         the stream down with it. Paired with START_STICKY in the service. -->
+    <service
+        android:name=".service.CameramanService"
+        android:exported="false"
+        android:stopWithTask="false"
+        android:foregroundServiceType="camera|microphone" />
+
+  </application>
+</manifest>

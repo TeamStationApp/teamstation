@@ -1,0 +1,38 @@
+# The app opens, the camera runs, and the server is listening on the port it says it is.
+#
+# Permissions are granted by scripts/install.sh with `pm grant` rather than tapped: the system
+# dialogs belong to the system UI, not to this app, so Maestro cannot see them at all.
+appId: co.gamestation.cameraman
+---
+- launchApp:
+    appId: co.gamestation.cameraman
+    clearState: false
+    arguments:
+      uiTest: true
+
+# The camera screen, not the diagnostic one — which is what a denied camera permission would show.
+- assertVisible:
+    id: "camera-screen"
+- assertVisible:
+    id: "camera-name"
+- assertVisible:
+    id: "zoom-scale"
+- assertVisible:
+    id: "settings-button"
+- assertVisible:
+    id: "flip-button"
+
+- tapOn:
+    id: "settings-button"
+# The address is read off the app rather than assumed. On Android this is always the fallback port,
+# because 554 is privileged, and the note explaining that has to be there.
+- assertVisible:
+    id: "settings-url"
+- assertVisible:
+    id: "settings-port-note"
+- assertVisible:
+    id: "settings-advertising"
+- tapOn:
+    id: "settings-done"
+- assertVisible:
+    id: "camera-screen"
