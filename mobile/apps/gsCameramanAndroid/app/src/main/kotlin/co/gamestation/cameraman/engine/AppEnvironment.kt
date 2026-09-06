@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.net.wifi.WifiManager
 import android.os.BatteryManager
+import android.os.Build
 import android.os.PowerManager
 import android.util.Log
 import android.view.Surface
@@ -15,13 +16,16 @@ import co.gamestation.cameraman.capture.MicrophoneSource
 import co.gamestation.cameraman.capture.SilenceSource
 import co.gamestation.cameraman.core.BatteryStatus
 import co.gamestation.cameraman.core.CameraLens
+import co.gamestation.cameraman.core.CameraParameters
 import co.gamestation.cameraman.core.CameraPosition
+import co.gamestation.cameraman.core.CameraSnapshot
 import co.gamestation.cameraman.core.CaptureFormatDescriptor
 import co.gamestation.cameraman.core.DeviceIdentity
 import co.gamestation.cameraman.core.DeviceIdentityProvider
 import co.gamestation.cameraman.core.IdentityStore
 import co.gamestation.cameraman.core.InMemoryIdentityStore
 import co.gamestation.cameraman.core.LensSelection
+import co.gamestation.cameraman.core.ParameterOutcome
 import co.gamestation.cameraman.core.PreferencesIdentityStore
 import co.gamestation.cameraman.core.PreferencesSettingsStore
 import co.gamestation.cameraman.core.SettingsStore
@@ -39,6 +43,7 @@ import co.gamestation.cameraman.harness.ControlServer
 import co.gamestation.cameraman.harness.ElementaryStreamRecorder
 import co.gamestation.cameraman.harness.LaunchConfiguration
 import co.gamestation.cameraman.harness.SyntheticCamera
+import co.gamestation.cameraman.rtsp.RTSPResponder
 import co.gamestation.cameraman.rtsp.RTSPServer
 import co.gamestation.cameraman.rtsp.SDPBuilder
 import co.gamestation.cameraman.rtsp.SendDelayLine
@@ -98,6 +103,13 @@ class AppEnvironment(
     private var thermalPreviewJob: kotlinx.coroutines.Job? = null
 
     private val stateLock = ReentrantLock()
+
+    /**
+     * One remote write at a time. Each RTSP connection answers on its own thread, and two
+     * `SET_PARAMETER`s racing through `applySettings` would reconfigure the encoder twice from
+     * two half-merged settings. Reads take no lock: a poll must never wait out a reconfigure.
+     */
+    private val parameterWriteLock = ReentrantLock()
 
     /**
      * The parameter sets arrive with the first keyframe, and a client may DESCRIBE before then, so
@@ -591,7 +603,8 @@ class AppEnvironment(
                     audioEncoder.audioSpecificConfig != null
             },
             identity = { stateLock.withLock { publishedIdentity } },
-            requestKeyframe = { videoEncoder.requestKeyframe() }
+            requestKeyframe = { videoEncoder.requestKeyframe() },
+            parameters = { request -> handleParameters(request) }
         )
         server.onStatusChange = { status ->
             serverStatusState.value = status
@@ -632,6 +645,80 @@ class AppEnvironment(
             )
         )
     }
+
+    // MARK: - Remote control
+
+    /** The phone's state as `GET_PARAMETER *` reports it. */
+    val cameraSnapshot: CameraSnapshot
+        get() {
+            val cameraState = cameraStateFlow.value
+            val identity = identityState.value
+            return CameraSnapshot(
+                name = identity.name,
+                cname = identity.cname,
+                model = Build.MODEL ?: "",
+                thermalName = thermalStateName(),
+                status = statusState.value,
+                battery = batteryState.value,
+                position = cameraState.position,
+                deviceType = cameraState.deviceType,
+                mapping = cameraState.mapping,
+                deviceZoom = cameraState.deviceZoom,
+                settings = settingsState.value.copy(),
+                formats = formatOptions,
+                lenses = lensCatalogState.value,
+                streamURL = streamURL,
+                clientCount = serverStatusState.value.clientCount
+            )
+        }
+
+    /**
+     * Answers a `GET_PARAMETER` / `SET_PARAMETER` body. A write goes through the same methods the
+     * phone's own screen uses — `rename`, `CameraSession.flip`, `setDisplayedZoom`, and one
+     * `applySettings` for every encoder field in the request, exactly like Done — so the rail and
+     * Settings on the phone show it at once, and the reply echoes the values as they will land:
+     * settings merged, zoom clamped to the mapping, position and name replaced.
+     *
+     * Called on the RTSP connection's own thread, which is the same footing the control channel
+     * already drives these methods from.
+     */
+    fun handleParameters(request: RTSPResponder.ParameterRequest): RTSPResponder.ParameterResponse =
+        when (request.method) {
+            RTSPResponder.ParameterRequest.Method.GET ->
+                when (val outcome = CameraParameters.respondToGet(request.body, cameraSnapshot)) {
+                    is ParameterOutcome.Success ->
+                        RTSPResponder.ParameterResponse(body = outcome.value.encoded)
+                    is ParameterOutcome.Failure -> refusal(outcome)
+                }
+
+            RTSPResponder.ParameterRequest.Method.SET -> parameterWriteLock.withLock {
+                val current = cameraSnapshot
+                when (val outcome = CameraParameters.parseSet(request.body, current)) {
+                    is ParameterOutcome.Success -> {
+                        val write = outcome.value
+                        write.name?.let { rename(it) }
+                        write.position?.let { if (it != current.position) camera.flip() }
+                        write.displayedZoom?.let { camera.setDisplayedZoom(it) }
+                        if (write.touchesSettings) {
+                            updateSettings(CameraParameters.settings(write, settingsState.value))
+                            applySettings()
+                        }
+                        val applied = CameraParameters.snapshot(write, current)
+                        RTSPResponder.ParameterResponse(
+                            body = CameraParameters.echo(write, applied).encoded
+                        )
+                    }
+                    is ParameterOutcome.Failure -> refusal(outcome)
+                }
+            }
+        }
+
+    private fun refusal(outcome: ParameterOutcome.Failure): RTSPResponder.ParameterResponse =
+        RTSPResponder.ParameterResponse(
+            statusCode = outcome.error.statusCode,
+            reasonPhrase = outcome.error.reasonPhrase,
+            body = outcome.error.body
+        )
 
     // MARK: - The control channel
 

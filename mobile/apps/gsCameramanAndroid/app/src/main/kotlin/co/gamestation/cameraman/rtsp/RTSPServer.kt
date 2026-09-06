@@ -7,6 +7,7 @@ import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
+import co.gamestation.cameraman.core.CameraParameters
 import co.gamestation.cameraman.core.DeviceIdentity
 import co.gamestation.cameraman.core.EncodedAudioFrame
 import co.gamestation.cameraman.core.EncodedVideoFrame
@@ -38,13 +39,19 @@ class RTSPServer(
      * Called when a client starts playing, so it gets a picture immediately instead of waiting out
      * the keyframe interval on frames whose references it never received.
      */
-    private val requestKeyframe: () -> Unit
+    private val requestKeyframe: () -> Unit,
+    /** Answers `GET_PARAMETER` / `SET_PARAMETER` bodies. Null offers no parameters. */
+    private val parameters: RTSPParameterHandler? = null
 ) {
     data class Status(
         val isListening: Boolean = false,
         val port: Int? = null,
         /** The port actually bound, which may be the fallback rather than the one asked for. */
         val requestedPort: Int? = null,
+        /**
+         * Sessions currently playing. A connection that only polls parameters is not a viewer and
+         * is not counted here; [acceptedClients] still counts it.
+         */
         val clientCount: Int = 0,
         val lastError: String? = null,
         /** Frames the send queue dropped across clients because a receiver could not keep up. */
@@ -222,14 +229,16 @@ class RTSPServer(
             sdp = describe,
             hasAudio = hasAudio(),
             identity = identity,
-            requestKeyframe = requestKeyframe
+            requestKeyframe = requestKeyframe,
+            parameters = parameters
         )
         client.onClose = { reason -> noteDisconnect(client, reason) }
+        client.onStreamingChange = { recountClients() }
 
         val updated = lock.withLock {
             connections[client] = Unit
             status = status.copy(
-                clientCount = connections.size,
+                clientCount = playingCount(connections.keys),
                 acceptedClients = status.acceptedClients + 1
             )
             status
@@ -242,12 +251,23 @@ class RTSPServer(
         val updated = lock.withLock {
             connections.remove(client)
             status = status.copy(
-                clientCount = connections.size,
+                clientCount = playingCount(connections.keys),
                 closedClients = status.closedClients + 1,
                 lastDisconnectReason = reason
             )
             status
         }
+        onStatusChange?.invoke(updated)
+    }
+
+    /** A connection started or stopped playing; the viewer count follows it. */
+    private fun recountClients() {
+        val updated = lock.withLock {
+            val playing = playingCount(connections.keys)
+            if (playing == status.clientCount) return@withLock null
+            status = status.copy(clientCount = playing)
+            status
+        } ?: return
         onStatusChange?.invoke(updated)
     }
 
@@ -415,6 +435,16 @@ class RTSPServer(
         const val bonjourServiceType = "_rtsp._tcp"
 
         /**
+         * Advertised so a client knows this build answers `GET_PARAMETER` / `SET_PARAMETER` before
+         * it offers a control screen. An older build without it shows no controls instead of a
+         * screen that cannot connect.
+         */
+        const val controlVersion = CameraParameters.controlVersion
+
+        private fun playingCount(connections: Collection<RTSPClientConnection>): Int =
+            connections.count { it.isStreaming }
+
+        /**
          * The type NearStream uses, and the one Director's browse actually finds on a split
          * 2.4/5 GHz LAN.
          */
@@ -423,7 +453,8 @@ class RTSPServer(
         /**
          * TXT keys Director reads for Cameraman identity. `uuid` is the CNAME; `name` is the label.
          * `ip` / `port` let GS Director bind without resolving the advertised hostname, which often
-         * has no usable A-record from another handset.
+         * has no usable A-record from another handset. `control` says the parameter verbs are
+         * answered.
          */
         fun bonjourTXT(
             identity: DeviceIdentity,
@@ -434,7 +465,8 @@ class RTSPServer(
             val fields = linkedMapOf(
                 "uuid" to identity.cname,
                 "name" to identity.name,
-                "path" to path
+                "path" to path,
+                "control" to controlVersion
             )
             if (!ip.isNullOrEmpty()) fields["ip"] = ip
             if (port != null && port > 0) fields["port"] = port.toString()
