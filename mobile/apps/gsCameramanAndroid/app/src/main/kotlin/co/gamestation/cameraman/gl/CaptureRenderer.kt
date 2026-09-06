@@ -36,6 +36,15 @@ internal class CaptureRenderer(
 
     private var encoderSurface: EGLSurface? = null
     private var previewSurface: EGLSurface? = null
+    /**
+     * The window the preview EGL surface is built on, kept so it can be rebuilt.
+     *
+     * A destination can be lost for a moment — the settings screen replaces the preview, the encoder
+     * is reconfigured — and dropping the EGL surface is the right response. Dropping the *window*
+     * with it is not: `surfaceChanged` will not fire again for a `SurfaceView` that never went away,
+     * so the picture would freeze at the last frame drawn and never come back.
+     */
+    private var previewWindow: Surface? = null
     private var previewWidth = 0
     private var previewHeight = 0
 
@@ -65,6 +74,28 @@ internal class CaptureRenderer(
      */
     @Volatile
     var mirrorHorizontally: Boolean = false
+
+    /**
+     * Blanks what the *encoder* is given, leaving the preview live.
+     *
+     * The encoder keeps running and keeps producing pictures, so Director sees a continuous video
+     * clock and continuous audio rather than a hole it has to read as a missing camera. The operator
+     * still sees the scene, which is what makes it obvious the camera is aimed correctly while it is
+     * deliberately off air.
+     */
+    @Volatile
+    var blankEncoder: Boolean = false
+
+    /**
+     * Fired on the render thread the moment blanking turns on or off.
+     *
+     * Black P-frames still reference the last live keyframe, so a decoder goes on showing the last
+     * picture until an IDR arrives. The transition itself has to ask for one; waiting for the next
+     * scheduled keyframe would leave up to a second of stale video on screen.
+     */
+    var onBlankChanged: (() -> Unit)? = null
+
+    private var wasBlank = false
 
     /**
      * The surface the camera writes into. Created on the render thread, so this blocks until it
@@ -108,14 +139,21 @@ internal class CaptureRenderer(
     fun attachPreview(surface: Surface?, viewWidth: Int, viewHeight: Int) {
         handler.post {
             previewSurface?.let { egl.releaseSurface(it) }
-            previewSurface = if (surface != null && surface.isValid) {
-                runCatching { egl.createWindowSurface(surface) }.getOrNull()
-            } else {
-                null
-            }
+            previewSurface = null
+            previewWindow = surface?.takeIf { it.isValid }
             previewWidth = viewWidth
             previewHeight = viewHeight
         }
+    }
+
+    /** Builds the preview EGL surface if there is a window for it and it is not already built. */
+    private fun ensurePreviewSurface(): EGLSurface? {
+        previewSurface?.let { return it }
+        val window = previewWindow ?: return null
+        if (!window.isValid) return null
+        val created = runCatching { egl.createWindowSurface(window) }.getOrNull()
+        previewSurface = created
+        return created
     }
 
     /**
@@ -137,12 +175,16 @@ internal class CaptureRenderer(
         }
     }
 
+    /** The first destination that can be made current, so a frame is never dropped for lack of one. */
+    private fun currentTarget(): EGLSurface? = encoderSurface ?: ensurePreviewSurface()
+
     fun release() {
         handler.post {
             encoderSurface?.let { egl.releaseSurface(it) }
             previewSurface?.let { egl.releaseSurface(it) }
             encoderSurface = null
             previewSurface = null
+            previewWindow = null
             surfaceTexture?.release()
             surfaceTexture = null
             program.release()
@@ -164,7 +206,7 @@ internal class CaptureRenderer(
         val texture = surfaceTexture ?: return
         // The context has to be current on *some* surface before `updateTexImage`, and the encoder
         // is the one that always exists while capture is running.
-        val target = encoderSurface ?: previewSurface
+        val target = currentTarget()
         if (target == null) {
             // Nowhere to draw, but the buffer still has to be consumed or the camera stalls on a
             // full queue and the whole session goes quiet.
@@ -192,6 +234,12 @@ internal class CaptureRenderer(
         didMeasureTransform = true
         logTransformOnce()
 
+        val blank = blankEncoder
+        if (blank != wasBlank) {
+            wasBlank = blank
+            onBlankChanged?.invoke()
+        }
+
         encoderSurface?.let { surface ->
             if (!egl.makeCurrent(surface)) {
                 egl.releaseSurface(surface)
@@ -199,6 +247,16 @@ internal class CaptureRenderer(
                 return@let
             }
             GLES20.glViewport(0, 0, width, height)
+            if (blank) {
+                // Cleared rather than drawn: a black frame from the same encoder at the same rate,
+                // so the only thing that changes is the picture.
+                GLES20.glClearColor(0f, 0f, 0f, 1f)
+                GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+                egl.setPresentationTime(surface, timestamp)
+                egl.swapBuffers(surface)
+                onFrameRendered()
+                return@let
+            }
             // The encoder surface is exactly the encoded size, so at 0 or 180 nothing needs scaling.
             // At 90 or 270 the source turns portrait against a landscape destination, and a bare
             // rotation of the quad would squash it, so the same aspect-fill the preview uses applies.
@@ -210,10 +268,11 @@ internal class CaptureRenderer(
             onFrameRendered()
         }
 
-        previewSurface?.let { surface ->
+        ensurePreviewSurface()?.let { surface ->
             if (!egl.makeCurrent(surface)) {
-                // Expected every time the settings screen replaces the preview. Dropping it here
-                // costs nothing: `attachPreview` makes a fresh one when the view comes back.
+                // Expected while the settings screen is over the preview. The EGL surface goes; the
+                // window it was built on is kept, so the next frame rebuilds it and the picture
+                // comes back rather than freezing on whatever was drawn last.
                 egl.releaseSurface(surface)
                 previewSurface = null
                 return@let

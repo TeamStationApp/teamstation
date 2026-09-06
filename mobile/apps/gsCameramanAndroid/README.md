@@ -2,8 +2,8 @@
 
 Turns an Android handset into an RTSP camera source that GS Producer can ingest like any other camera
 on the field, **and keeps streaming while it is backgrounded or the screen is off**. Launch it and it
-serves `rtsp://<phone-ip>:8554/live/mainstream` — unauthenticated, H.264 1080p30 at 6 Mbps by
-default, with AAC audio from the device microphone.
+serves `rtsp://<phone-ip>:8554/live/mainstream` — unauthenticated, HEVC 1080p30 at 4 Mbps by default,
+with AAC audio from the device microphone.
 
 Landscape only, like the iOS build.
 
@@ -12,7 +12,7 @@ Landscape only, like the iOS build.
 ```bash
 npm run device:install       # build, install, grant the runtime permissions
 npm run device:launch        # launch it
-npm run test:unit            # 157 JVM tests, no device needed
+npm run test:unit            # 201 JVM tests, no device needed
 npm run verify:stream        # build, launch, pull with an independent client, decode every frame
 npm run verify:background    # the same pull foregrounded, backgrounded, and with the screen off
 ```
@@ -101,6 +101,19 @@ Two decisions worth knowing:
   landscape-only, so its window is 411dp *tall*, and the defaults overflowed the settings screen
   badly enough that the microphone toggle and the camera's identifier were off the bottom.
 
+### Lens selection is a zoom clamp, not a different device
+
+The settings screen lists one toggle per physical lens, with millimetre labels derived from each
+lens's own focal length and sensor size. Turning one off has to be honoured differently here.
+
+On iOS a selection picks a different `AVCaptureDevice` — drop the ultra-wide and the app opens Dual
+Wide instead of Triple. Android has no such family of virtual devices, and on a Pixel the physical
+cameras are not in `cameraIdList` at all, so they cannot be opened on their own. What *is* available
+is the logical camera's zoom range, and which lens it uses is a function of exactly that. So a
+disabled lens becomes a clamp: turn off the ultra-wide and the range starts at 1x, turn off the
+telephoto and it stops just below its switchover. The operator gets what they asked for — that lens
+is never selected — by the only mechanism the platform offers.
+
 ### Kotlin, Compose and Camera2 — not React Native
 
 Nothing in this app is shared with JavaScript, and a JS bridge between a camera and a socket would be
@@ -119,7 +132,7 @@ app/src/main/kotlin/co/gamestation/cameraman/
   harness/    launch arguments, control channel, synthetic camera, recorders
   service/    the foreground service that owns all of it
   engine/     AppEnvironment — the wiring
-app/src/test/kotlin/   157 JVM tests
+app/src/test/kotlin/   201 JVM tests
 docs/                  measured capability set, testing, interop
 scripts/               build, install, launch, verify
 maestro/flows/         on-device UI flows
@@ -129,11 +142,42 @@ maestro/flows/         on-device UI flows
 
 Exactly as on iOS: `core` and `rtsp` hold no Android dependencies beyond the standard library, so the
 zoom arithmetic, the identity rules and every packetizer are testable on the JVM with no device. That
-is what lets 157 tests run in three seconds with no emulator.
+is what lets 201 tests run in three seconds with no emulator.
 
 `encode` and `rtsp` are siblings rather than a chain. The encoder emits plain elementary NAL units
 rather than codec buffers, which is what lets every packetizer be tested on bytes with no MediaCodec
 involved.
+
+## What the operator can change, and what sticks
+
+Settings are written on every change and read back at launch, because a camera on a tripod is aimed
+once: coming back on the wrong lens or the wrong zoom after a restart silently changes the shot and
+nobody is standing there to notice. That covers the codec, the format, the bitrate, the microphone,
+the lens selection, and which camera was framed with at what zoom.
+
+Two things deliberately do not stick:
+
+- **A launch argument always wins.** A flow that pins `codec h264` gets H.264 whatever the operator
+  last chose, or a UI test would depend on the state of the handset.
+- **Blanking never survives a launch.** It is a fault-injection control, not a preference, and a
+  camera left blank must come back showing a picture.
+
+`persistSettings` is off under `uiTest` so a flow neither inherits nor leaves behind a preference —
+but it is settable, because an operator runs with `uiTest` on to get the control channel and still
+expects the camera to come back the way they left it.
+
+## Off air without going away
+
+Two controls exist so a camera can be taken off air without Director reading it as a camera that
+died:
+
+- **Blanking** (`set-video?on=false`) keeps the encoder running at the same rate and sends black.
+  Measured: 30 fps held, bitrate falls from 4 Mbps to 21 kbps, audio keeps flowing. The preview stays
+  live, so the operator can still see the shot is framed. The transition forces a keyframe, because
+  black P-frames still reference the last live picture and a decoder would otherwise go on showing
+  it.
+- **Muting** removes the audio section from the SDP entirely rather than announcing a track and
+  sending nothing, which is what leaves a client waiting for packets that never come.
 
 ## Measured, not assumed
 

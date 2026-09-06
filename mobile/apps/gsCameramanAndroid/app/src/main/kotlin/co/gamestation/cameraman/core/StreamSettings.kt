@@ -45,12 +45,29 @@ data class StreamSettings(
     var width: Int = 1920,
     var height: Int = 1080,
     var frameRate: Double = 30.0,
-    var codec: StreamCodec = StreamCodec.H264,
-    var bitrate: Int = 6_000_000,
+    var codec: StreamCodec = StreamCodec.HEVC,
+    var bitrate: Int = StreamCodec.HEVC.defaultBitrate,
     var port: Int = defaultPort,
     var path: String = canonicalPath,
     var audioEnabled: Boolean = true,
-    var audioSampleRate: Int = 48_000
+    /**
+     * When false the encoder still runs, but every picture is black, so Director keeps a continuous
+     * video clock — and live audio — instead of treating a hole as a missing camera.
+     */
+    var videoEnabled: Boolean = true,
+    var audioSampleRate: Int = 48_000,
+    /**
+     * IDs of lenses the operator turned off. Empty means every detected lens is eligible, including
+     * ones that appear on a later handset.
+     */
+    var disabledLensIDs: Set<String> = emptySet(),
+    /**
+     * Which camera the operator last framed with, and at what zoom. Persisted because a camera on a
+     * tripod is aimed once: coming back on the wrong lens at 1x after a restart silently changes the
+     * shot, and on a fixed rig nobody is standing there to notice.
+     */
+    var cameraPosition: CameraPosition = CameraPosition.BACK,
+    var displayedZoom: Double = 1.0
 ) {
     val dimensionsLabel: String get() = "${width}x$height"
 
@@ -65,6 +82,48 @@ data class StreamSettings(
     fun selectCodec(newCodec: StreamCodec) {
         if (bitrate == codec.defaultBitrate) bitrate = newCodec.defaultBitrate
         codec = newCodec
+    }
+
+    /**
+     * The launch-argument names for each persisted field, which is how an explicit argument is told
+     * apart from a value the operator last chose on the device.
+     */
+    enum class Field(val key: String) {
+        CODEC("codec"),
+        BITRATE_MBPS("bitrateMbps"),
+        WIDTH("width"),
+        HEIGHT("height"),
+        FRAME_RATE("frameRate"),
+        AUDIO_ENABLED("audioEnabled"),
+        RTSP_PORT("rtspPort"),
+        RTSP_PATH("rtspPath"),
+        DISABLED_LENSES("disabledLenses")
+    }
+
+    /**
+     * What was saved on the device, laid over these launch defaults.
+     *
+     * Anything named in [explicit] is left alone: a flow that pins `codec h264` has to get H.264
+     * whatever the operator last chose, or a UI test would depend on the state of the handset.
+     *
+     * [videoEnabled] is deliberately not carried across. It is the blanking control, not a
+     * preference, and a camera left blank by a fault injection must come back showing a picture.
+     */
+    fun merging(saved: StreamSettings, explicit: Set<Field>): StreamSettings {
+        val merged = copy()
+        if (Field.CODEC !in explicit) merged.codec = saved.codec
+        if (Field.BITRATE_MBPS !in explicit) merged.bitrate = saved.bitrate
+        if (Field.WIDTH !in explicit) merged.width = saved.width
+        if (Field.HEIGHT !in explicit) merged.height = saved.height
+        if (Field.FRAME_RATE !in explicit) merged.frameRate = saved.frameRate
+        if (Field.AUDIO_ENABLED !in explicit) merged.audioEnabled = saved.audioEnabled
+        if (Field.RTSP_PORT !in explicit) merged.port = saved.port
+        if (Field.RTSP_PATH !in explicit) merged.path = saved.path
+        if (Field.DISABLED_LENSES !in explicit) merged.disabledLensIDs = saved.disabledLensIDs
+        // Not launch arguments at all — the operator's last framing, which a flow never pins.
+        merged.cameraPosition = saved.cameraPosition
+        merged.displayedZoom = saved.displayedZoom
+        return merged
     }
 
     companion object {

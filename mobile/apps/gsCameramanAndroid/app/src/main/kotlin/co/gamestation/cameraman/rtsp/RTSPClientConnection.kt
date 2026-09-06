@@ -55,8 +55,20 @@ internal class RTSPClientConnection(
     private var videoOctetCount = 0L
     private var audioFrameIndex = 0
     private var firstVideoPresentationTime: Double? = null
-    private var lastSentVideoTimestamp: Long? = null
+    private val videoTimestamps = RTPTimestampSequencer()
     private var lastReportMillis = 0L
+
+    /**
+     * Wall clock minus the capture clock, sampled once per connection.
+     *
+     * `EncodedVideoFrame.presentationTime` is on a monotonic capture clock; NTP is wall clock.
+     * Sampling the difference once and reusing it keeps successive reports on a single mapping, so a
+     * receiver regressing RTP against NTP sees the camera's own rate rather than this app's clock
+     * reads.
+     */
+    private val captureToWallOffsetMillis: Long by lazy {
+        System.currentTimeMillis() - (System.nanoTime() / 1_000_000)
+    }
 
     val sendQueue = StreamSendQueue()
     private var closeReason = "cancelled"
@@ -188,7 +200,7 @@ internal class RTSPClientConnection(
                 // Each client gets its own SSRC and its own timeline, so a client that joins an hour
                 // in still starts at zero and RTP-Info can promise that.
                 firstVideoPresentationTime = null
-                lastSentVideoTimestamp = null
+                videoTimestamps.reset()
                 audioFrameIndex = 0
 
                 val response = outcome.response.adding(
@@ -309,16 +321,13 @@ internal class RTSPClientConnection(
 
             if (firstVideoPresentationTime == null) firstVideoPresentationTime = frame.presentationTime
             val elapsed = frame.presentationTime - (firstVideoPresentationTime ?: frame.presentationTime)
-            var timestamp = (elapsed * H264Packetizer.clockRate).toLong() and 0xFFFFFFFFL
+            val natural = (elapsed * H264Packetizer.clockRate).toLong() and 0xFFFFFFFFL
 
             // A receiver treats a timestamp change as the end of a picture, so two frames sharing one
             // are merged into a single malformed access unit. The capture clock does occasionally
-            // repeat a presentation time, so the sent timestamp is forced to advance.
-            val last = lastSentVideoTimestamp
-            if (last != null && timestamp <= last) {
-                timestamp = (last + 1) and 0xFFFFFFFFL
-            }
-            lastSentVideoTimestamp = timestamp
+            // repeat a presentation time, so the sent timestamp is forced to advance — measured on
+            // the 32-bit circle, because the field's own rollover is a forward step, not a repeat.
+            val timestamp = videoTimestamps.next(natural)
 
             val writer = RTPPacketWriter(SDPBuilder.videoPayloadType, videoSSRC)
             val batch = ByteBuilder(bytes + payloads.size * 16)
@@ -338,7 +347,7 @@ internal class RTSPClientConnection(
             }
 
             sendMedia(batch.build())
-            sendReportIfDue(setup, timestamp)
+            sendReportIfDue(setup, timestamp, frame.presentationTime)
         }
     }
 
@@ -382,14 +391,28 @@ internal class RTSPClientConnection(
      * A sender report about once a second, which is what RFC 3550 §6.2 recommends and what clients
      * use to derive a wall clock and to learn the CNAME.
      */
-    private fun sendReportIfDue(setup: RTSPResponder.Setup, rtpTimestamp: Long) {
+    private fun sendReportIfDue(
+        setup: RTSPResponder.Setup,
+        rtpTimestamp: Long,
+        captureTime: Double
+    ) {
         val now = System.currentTimeMillis()
         if (now - lastReportMillis < 1000) return
         lastReportMillis = now
 
+        // Stamped from the frame's capture time, not from the clock at send.
+        //
+        // The RTP timestamp in this report is derived from capture; pairing it with the wall clock
+        // *here* makes the pair wrong by however long encode and the send queue took, and that is
+        // variable — the queue backs up under contention — so it lands in the receiver's offset
+        // estimate as noise it cannot filter out. It also makes any send-side delay invisible: hold
+        // the frames and the report slides with them, so the receiver absorbs the fault and the
+        // injection silently passes.
+        val captureWallMillis = (captureTime * 1000).toLong() + captureToWallOffsetMillis
+
         val writer = RTCPWriter(videoSSRC, identity())
         val report = writer.compoundPacket(
-            ntpTime = RTCPWriter.ntpTime(now),
+            ntpTime = RTCPWriter.ntpTime(captureWallMillis),
             rtpTimestamp = rtpTimestamp,
             packetCount = videoPacketCount,
             octetCount = videoOctetCount

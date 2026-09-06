@@ -50,6 +50,8 @@ import kotlin.math.abs
 fun CameraScreen(environment: AppEnvironment, onOpenSettings: () -> Unit) {
     val cameraState by environment.cameraState.collectAsStateWithLifecycle()
     val identity by environment.identity.collectAsStateWithLifecycle()
+    val thermalLevel by environment.thermalLevel.collectAsStateWithLifecycle()
+    val battery by environment.battery.collectAsStateWithLifecycle()
 
     // The zoom the pinch started from. Pinch is multiplicative against this rather than against the
     // live value, which is what makes it track the fingers instead of drifting.
@@ -128,18 +130,35 @@ fun CameraScreen(environment: AppEnvironment, onOpenSettings: () -> Unit) {
                 }
             }
 
-            ZoomScale(
-                mapping = cameraState.mapping,
-                displayedZoom = cameraState.displayedZoom,
-                onSelect = { environment.camera.setDisplayedZoom(it) },
-                onSegmentLength = { length ->
-                    if (abs(pointsPerSegment - length) > 0.5f) pointsPerSegment = length
-                },
+            // Battery pill in the upper-right corner with the thermal pill to its left, and the
+            // zoom rail filling the height below them — so the first and last stops keep the same
+            // vertical span whether the camera offers two lenses or five.
+            Column(
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier
-                    .align(Alignment.CenterEnd)
+                    .align(Alignment.TopEnd)
                     .fillMaxHeight()
                     .padding(vertical = 20.dp, horizontal = 14.dp)
-            )
+            ) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    ThermalBadge(level = thermalLevel, animate = environment.animatesChrome)
+                    battery?.let { BatteryBadge(status = it) }
+                }
+
+                ZoomScale(
+                    mapping = cameraState.mapping,
+                    displayedZoom = cameraState.displayedZoom,
+                    onSelect = { environment.camera.setDisplayedZoom(it) },
+                    onSegmentLength = { length ->
+                        if (abs(pointsPerSegment - length) > 0.5f) pointsPerSegment = length
+                    },
+                    modifier = Modifier.weight(1f)
+                )
+            }
         }
     }
 }

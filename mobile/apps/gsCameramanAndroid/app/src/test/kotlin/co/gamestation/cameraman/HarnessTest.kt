@@ -173,8 +173,10 @@ class LaunchConfigurationTest {
         assertEquals(1920, launch.settings.width)
         assertEquals(1080, launch.settings.height)
         assertEquals(30.0, launch.settings.frameRate, 1e-9)
-        assertEquals(StreamCodec.H264, launch.settings.codec)
-        assertEquals(6_000_000, launch.settings.bitrate)
+        // HEVC by default: the same picture at two thirds the rate, which on a match-day Wi-Fi is
+        // the difference between four cameras fitting and three.
+        assertEquals(StreamCodec.HEVC, launch.settings.codec)
+        assertEquals(StreamCodec.HEVC.defaultBitrate, launch.settings.bitrate)
         assertEquals(StreamSettings.defaultPort, launch.settings.port)
         assertTrue(launch.settings.audioEnabled)
         assertTrue(launch.advertise)
@@ -225,13 +227,49 @@ class LaunchConfigurationTest {
         // A silently ignored launch argument produces a green run that proved nothing.
         val launch = LaunchConfiguration.from(mapOf("codecc" to "hevc", "zoom" to "2"))
         assertEquals(listOf("codecc", "zoom"), launch.unknownKeys)
-        assertEquals(StreamCodec.H264, launch.settings.codec)
+        assertEquals(StreamCodec.HEVC, launch.settings.codec)
     }
 
     @Test
     fun `an explicit codec carries its default bitrate across`() {
-        val launch = LaunchConfiguration.from(mapOf("codec" to "hevc"))
-        assertEquals(4_000_000, launch.settings.bitrate)
+        val launch = LaunchConfiguration.from(mapOf("codec" to "h264"))
+        assertEquals(StreamCodec.H264.defaultBitrate, launch.settings.bitrate)
+    }
+
+    @Test
+    fun `a named field is recorded so saved settings cannot override it`() {
+        val launch = LaunchConfiguration.from(mapOf("codec" to "h264", "width" to "1280"))
+        assertEquals(
+            setOf(StreamSettings.Field.CODEC, StreamSettings.Field.WIDTH),
+            launch.providedSettingFields
+        )
+    }
+
+    @Test
+    fun `a typo still counts as naming the field`() {
+        // Otherwise a mistyped value would hand the decision back to whatever is on the handset,
+        // which is the one thing a pinned launch argument exists to prevent.
+        val launch = LaunchConfiguration.from(mapOf("codec" to "h2064"))
+        assertTrue(launch.providedSettingFields.contains(StreamSettings.Field.CODEC))
+    }
+
+    @Test
+    fun `persistence follows uiTest unless it is set explicitly`() {
+        // A flow should neither inherit nor leave behind a preference — but the operator runs with
+        // uiTest on to get the control server and still expects the camera to come back as left.
+        assertTrue(LaunchConfiguration.from(emptyMap()).persistSettings)
+        assertFalse(LaunchConfiguration.from(mapOf("uiTest" to "true")).persistSettings)
+        assertTrue(
+            LaunchConfiguration.from(
+                mapOf("uiTest" to "true", "persistSettings" to "true")
+            ).persistSettings
+        )
+    }
+
+    @Test
+    fun `disabled lenses arrive as a comma-separated list`() {
+        val launch = LaunchConfiguration.from(mapOf("disabledLenses" to "uw, t ,"))
+        assertEquals(setOf("uw", "t"), launch.settings.disabledLensIDs)
     }
 
     @Test

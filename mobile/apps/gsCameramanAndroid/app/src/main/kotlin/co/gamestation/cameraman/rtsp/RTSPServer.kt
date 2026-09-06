@@ -1,6 +1,10 @@
 package co.gamestation.cameraman.rtsp
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import co.gamestation.cameraman.core.DeviceIdentity
@@ -69,6 +73,15 @@ class RTSPServer(
     private val connections = LinkedHashMap<RTSPClientConnection, Unit>()
     private var status = Status()
     private var registration: NsdManager.RegistrationListener? = null
+    /**
+     * A second advertisement of the same listener, under the type NearStream uses.
+     *
+     * Director's AWX browse is what actually finds cameras on a split 2.4/5 GHz LAN; `_rtsp._tcp`
+     * from a phone often never appears there. Publishing both costs one more registration and means
+     * Director finds this camera by whichever route works on the night.
+     */
+    private var awxRegistration: NsdManager.RegistrationListener? = null
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var wantsAdvertisement = false
     private var advertisedPath = "/live/mainstream"
 
@@ -101,6 +114,7 @@ class RTSPServer(
     }
 
     fun stop() {
+        stopNetworkMonitor()
         val (socket, clients) = lock.withLock {
             val result = listener to connections.keys.toList()
             listener = null
@@ -170,7 +184,10 @@ class RTSPServer(
             )
         }
 
-        if (advertise) registerAdvertisement(bound, path)
+        if (advertise) {
+            registerAdvertisement(bound, path)
+            startNetworkMonitor()
+        }
 
         acceptThread = Thread({ acceptLoop(socket) }, "rtsp-accept").apply {
             isDaemon = true
@@ -255,6 +272,35 @@ class RTSPServer(
      * separately from [Status.isListening] rather than being assumed from it.
      */
     private fun registerAdvertisement(port: Int, path: String) {
+        registerRTSP(port, path)
+        registerAWX(port, path)
+    }
+
+    private fun registerAWX(port: Int, path: String) {
+        val manager = nsdManager ?: return
+        val identity = identity()
+        val info = NsdServiceInfo().apply {
+            serviceName = identity.name
+            serviceType = awxServiceType
+            setPort(port)
+        }
+        for ((key, value) in bonjourTXT(identity, path, lanIPv4(), port)) {
+            info.setAttribute(key, value)
+        }
+        // Its own listener, and its failures are not reported as the app's advertising state: the
+        // RTSP type is the contract, and this one is the belt to its braces.
+        val listener = object : NsdManager.RegistrationListener {
+            override fun onServiceRegistered(info: NsdServiceInfo) = Unit
+            override fun onRegistrationFailed(info: NsdServiceInfo, errorCode: Int) = Unit
+            override fun onServiceUnregistered(info: NsdServiceInfo) = Unit
+            override fun onUnregistrationFailed(info: NsdServiceInfo, errorCode: Int) = Unit
+        }
+        awxRegistration = listener
+        runCatching { manager.registerService(info, NsdManager.PROTOCOL_DNS_SD, listener) }
+            .onFailure { awxRegistration = null }
+    }
+
+    private fun registerRTSP(port: Int, path: String) {
         val manager = nsdManager ?: return
         val identity = identity()
         val info = NsdServiceInfo().apply {
@@ -301,10 +347,49 @@ class RTSPServer(
     }
 
     private fun unregisterAdvertisement() {
-        val listener = registration ?: return
-        registration = null
         // Unregistering a listener that never registered throws, and there is no state to ask.
-        runCatching { nsdManager?.unregisterService(listener) }
+        registration?.let { listener ->
+            registration = null
+            runCatching { nsdManager?.unregisterService(listener) }
+        }
+        awxRegistration?.let { listener ->
+            awxRegistration = null
+            runCatching { nsdManager?.unregisterService(listener) }
+        }
+    }
+
+    /**
+     * Re-advertises when the network path changes.
+     *
+     * The TXT record carries the address Director dials, and that address changes with the lease —
+     * roaming between access points, or a Wi-Fi drop and rejoin. Without this the advertisement
+     * keeps naming an address nothing answers on, which looks exactly like a camera that died.
+     */
+    private fun startNetworkMonitor() {
+        if (networkCallback != null) return
+        val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            ?: return
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) = refreshAdvertisement()
+            override fun onLost(network: Network) = refreshAdvertisement()
+            override fun onCapabilitiesChanged(
+                network: Network,
+                capabilities: NetworkCapabilities
+            ) = refreshAdvertisement()
+        }
+        val request = NetworkRequest.Builder()
+            .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+            .addTransportType(NetworkCapabilities.TRANSPORT_ETHERNET)
+            .build()
+        runCatching { manager.registerNetworkCallback(request, callback) }
+            .onSuccess { networkCallback = callback }
+    }
+
+    private fun stopNetworkMonitor() {
+        val callback = networkCallback ?: return
+        networkCallback = null
+        val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+        runCatching { manager?.unregisterNetworkCallback(callback) }
     }
 
     // MARK: - Media
@@ -328,6 +413,12 @@ class RTSPServer(
 
     companion object {
         const val bonjourServiceType = "_rtsp._tcp"
+
+        /**
+         * The type NearStream uses, and the one Director's browse actually finds on a split
+         * 2.4/5 GHz LAN.
+         */
+        const val awxServiceType = "_awx_service._tcp"
 
         /**
          * TXT keys Director reads for Cameraman identity. `uuid` is the CNAME; `name` is the label.
@@ -362,21 +453,42 @@ class RTSPServer(
                 NetworkInterface.getNetworkInterfaces()?.toList().orEmpty()
             }.getOrDefault(emptyList())
 
-            // Wi-Fi first, then anything else that is up and routable, so a phone on Ethernet over
-            // USB-C still reports something usable.
-            val ordered = interfaces.sortedBy { if (it.name.startsWith("wlan")) 0 else 1 }
-            for (candidate in ordered) {
+            val addresses = ArrayList<Pair<String, String>>()
+            for (candidate in interfaces) {
                 if (!runCatching { candidate.isUp }.getOrDefault(false)) continue
                 if (runCatching { candidate.isLoopback }.getOrDefault(true)) continue
                 for (address in candidate.inetAddresses) {
                     if (address !is java.net.Inet4Address) continue
                     val text = address.hostAddress ?: continue
-                    if (text == "127.0.0.1") continue
-                    if (address.isLinkLocalAddress) continue
-                    return text
+                    addresses.add(candidate.name to text)
                 }
             }
-            return null
+            return preferredLANIPv4(addresses)
+        }
+
+        /**
+         * Picks the IPv4 Director should dial.
+         *
+         * Wi-Fi wins, then anything else infrastructure. USB tethering and Wi-Fi Direct rank below
+         * both and loopback and link-local never rank at all, because handing Director an address it
+         * cannot reach is worse than handing it none — it looks like a camera that is up and
+         * refusing connections rather than one that has not found the network yet.
+         */
+        fun preferredLANIPv4(addresses: List<Pair<String, String>>): String? {
+            fun rank(interfaceName: String): Int = when {
+                interfaceName.startsWith("wlan") -> 0
+                interfaceName.startsWith("eth") -> 1
+                interfaceName.startsWith("rndis") || interfaceName.startsWith("usb") -> 3
+                // Wi-Fi Direct and tethering hotspots: reachable, but not the match-day network.
+                interfaceName.startsWith("p2p") || interfaceName.startsWith("ap") -> 5
+                interfaceName.startsWith("tun") || interfaceName.startsWith("ipsec") -> 6
+                else -> 4
+            }
+
+            return addresses
+                .filter { (_, ip) -> ip != "127.0.0.1" && !ip.startsWith("169.254.") }
+                .minByOrNull { (name, _) -> rank(name) }
+                ?.second
         }
 
         /** Every IPv4 this device answers on, for the state dump. */

@@ -59,6 +59,16 @@ adb -s "$DEVICE" shell input keyevent KEYCODE_HOME
 sleep 2
 pull background
 
+# The ongoing notification is what the platform requires in exchange for background camera access,
+# and the only way back into a Cameraman whose activity has been swiped away. Read from dumpsys
+# rather than the shade, so a handset that has locked itself does not fail the check.
+if adb -s "$DEVICE" shell dumpsys notification --noredact 2>/dev/null \
+  | grep -q "$CAMERAMAN_PACKAGE"; then
+  log "notification posted"
+else
+  fail "backgrounded with no ongoing notification — the service is not properly foregrounded"
+fi
+
 log "Phase 3: screen off"
 adb -s "$DEVICE" shell input keyevent KEYCODE_SLEEP
 sleep 3

@@ -16,7 +16,10 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.util.Range
 import android.view.Surface
+import co.gamestation.cameraman.core.CameraLens
+import co.gamestation.cameraman.core.CameraPosition
 import co.gamestation.cameraman.core.CaptureFormatDescriptor
+import co.gamestation.cameraman.core.LensSelection
 import co.gamestation.cameraman.core.StreamSettings
 import co.gamestation.cameraman.core.ZoomMapping
 import co.gamestation.cameraman.gl.CaptureRenderer
@@ -24,11 +27,6 @@ import java.util.concurrent.Executor
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
-
-enum class CameraPosition(val rawValue: String) {
-    BACK("back"),
-    FRONT("front")
-}
 
 /**
  * Owns the `CameraDevice` and everything that has to be configured on it.
@@ -76,7 +74,7 @@ class CameraSession(private val context: Context) {
     private val thread = HandlerThread("cameraman-capture").apply { start() }
     private val handler = Handler(thread.looper)
     private val executor = Executor { runnable -> handler.post(runnable) }
-    private val manager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+    val manager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
 
     private var device: CameraDevice? = null
     private var session: CameraCaptureSession? = null
@@ -97,6 +95,16 @@ class CameraSession(private val context: Context) {
      * that disagrees can be measured rather than argued about.
      */
     private var rotationOverride: Int? = null
+    private var lensCatalog: List<CameraLens> = emptyList()
+    private var lensSelection = LensSelection()
+    /**
+     * The hardware's own zoom range, before any lens selection narrowed it.
+     *
+     * Kept separately because the published mapping *is* the narrowed one, and deriving the next
+     * clamp from it would make every change narrower than the last — turning a lens back on could
+     * then never widen the range again.
+     */
+    private var hardwareMapping: ZoomMapping? = null
 
     /** Delivered on the main thread, because every consumer is UI. */
     var onStateChange: ((State) -> Unit)? = null
@@ -109,6 +117,17 @@ class CameraSession(private val context: Context) {
 
     /** One rendered frame reached the encoder's surface. */
     var onVideoFrame: (() -> Unit)? = null
+
+    /** Blanking turned on or off, so the encoder can force the keyframe the transition needs. */
+    var onBlankChanged: (() -> Unit)? = null
+
+    /**
+     * Blanks the encoded picture without stopping capture. The preview stays live: the operator can
+     * still see that the camera is aimed correctly while it is deliberately off air.
+     */
+    fun setVideoEnabled(enabled: Boolean) {
+        handler.post { renderer?.blankEncoder = !enabled }
+    }
 
     fun currentState(): State = state
 
@@ -130,7 +149,21 @@ class CameraSession(private val context: Context) {
     fun configure(position: CameraPosition, settings: StreamSettings) {
         handler.post {
             this.settings = settings
+            lensSelection = LensSelection(settings.disabledLensIDs)
             applyDevice(position)
+        }
+    }
+
+    /**
+     * The lenses this handset has, for the settings list. Empty until a camera has been configured.
+     */
+    fun lensCatalog(): List<CameraLens> = lensCatalog
+
+    /** Applies a new lens selection without otherwise reconfiguring capture. */
+    fun setLensSelection(selection: LensSelection) {
+        handler.post {
+            lensSelection = selection
+            applyLensBounds()
         }
     }
 
@@ -262,8 +295,12 @@ class CameraSession(private val context: Context) {
         val catalogue = FormatCatalogue(descriptors)
         val wanted = catalogue.selection(settings.width, settings.height, settings.frameRate)
         val mapping = mapping(manager, characteristics)
+        hardwareMapping = mapping
 
         cameraId = id
+        if (lensCatalog.isEmpty()) {
+            lensCatalog = runCatching { LensDiscovery.discover(manager) }.getOrDefault(emptyList())
+        }
         publish(
             state.copy(
                 position = position,
@@ -275,15 +312,20 @@ class CameraSession(private val context: Context) {
                 // Start at the wide lens rather than the ultra-wide: 1x is what an operator
                 // pointing a phone at a field expects to see, and 0.5x on a multi-lens camera is a
                 // noticeably distorted framing.
-                deviceZoom = mapping.clampDeviceZoom(mapping.deviceZoom(1.0))
+                deviceZoom = mapping.clampDeviceZoom(mapping.deviceZoom(settings.displayedZoom))
             )
         )
+        applyLensBounds()
 
         applyCaptureRotation()
 
         if (renderer == null) {
             renderer = try {
                 CaptureRenderer(settings.width, settings.height) { onVideoFrame?.invoke() }
+                    .also { created ->
+                        created.blankEncoder = !settings.videoEnabled
+                        created.onBlankChanged = { onBlankChanged?.invoke() }
+                    }
             } catch (error: Exception) {
                 publish(state.copy(failure = "could not start the renderer: ${error.message}"))
                 return
@@ -392,6 +434,32 @@ class CameraSession(private val context: Context) {
         } catch (error: Exception) {
             publish(state.copy(failure = "could not start capture: ${error.message}"))
         }
+    }
+
+    /**
+     * Narrows the zoom range to the lenses the operator left on.
+     *
+     * A logical camera picks its lens from the zoom ratio, so clamping the range is how a disabled
+     * lens is actually kept out of shot — see `LensSelection` for why this is the only mechanism
+     * Camera2 offers. The current zoom is pulled inside the new bounds, because leaving it outside
+     * would keep using the lens that was just turned off.
+     */
+    private fun applyLensBounds() {
+        val bounds = lensSelection.zoomBounds(state.position, lensCatalog) ?: return
+        val base = hardwareMapping ?: state.mapping
+        val minimum = bounds.minimumDisplayedZoom?.let { base.deviceZoom(it) }
+            ?: base.minimumDeviceZoom
+        val maximum = bounds.maximumDisplayedZoom?.let { base.deviceZoom(it) }
+            ?: base.maximumDeviceZoom
+
+        val narrowed = ZoomMapping(
+            minimumDeviceZoom = minimum,
+            maximumDeviceZoom = maxOf(maximum, minimum),
+            displayMultiplier = base.displayMultiplier,
+            switchOverDeviceZooms = base.switchOverDeviceZooms
+        )
+        publish(state.copy(mapping = narrowed))
+        applyZoom(narrowed.clampDeviceZoom(state.deviceZoom))
     }
 
     private fun applyZoom(value: Double) {

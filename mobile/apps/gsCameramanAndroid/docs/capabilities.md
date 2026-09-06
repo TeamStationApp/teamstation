@@ -87,6 +87,43 @@ is the **mirror**, and mirroring is not a rotation, so it is not modelled as one
 Measured: before the flag, the front camera streamed upright but with `APEXEL` and `LG` reading
 backwards. After it, both read correctly and the back camera was unchanged.
 
+## Lenses
+
+Read from the device on 2026-09-05. The millimetre labels are computed from each lens's focal length
+and physical sensor size — `f = 18 / tan(fov/2)` after converting the two into a field of view — not
+from a per-model table.
+
+| Row | Position | Derived focal length | Switchover |
+|---|---|---|---|
+| 1 | Back | 14 mm | 0.6x (range minimum) |
+| 2 | Back | 25 mm | 1x |
+| 3 | Back | 105 mm | 4.1x |
+| 4 | Front | 21 mm | 0.9x (range minimum) |
+| 5 | Front | 24 mm | 1x |
+
+105 / 25 is 4.2, which agrees with the 4.14x switchover derived independently from the same optics —
+two routes to the same number, which is the check that the derivation is reading the hardware rather
+than inventing it. It still disagrees with the 5x on the box; see the note above.
+
+There are no native-crop rows. `secondaryNativeResolutionZoomFactors` has no Camera2 counterpart, so
+where a 15 Pro lists a 48 mm 2x crop as a fourth back lens, this handset lists three. Inventing one
+from a zoom ratio would be a lens that does not exist.
+
+### Disabling a lens, measured
+
+Turning lenses off narrows the zoom range rather than opening a different device — see the README for
+why that is the only mechanism available. Measured through the control channel:
+
+| Disabled | Preset row |
+|---|---|
+| none | 0.56x / 1x / 4.14x / 16.5x |
+| ultra-wide and telephoto | 1x / 4.13x |
+| none again | 0.56x / 1x / 4.14x / 16.5x |
+
+The third row is the one worth having: the first implementation narrowed from the *previous* mapping
+rather than from the hardware's, so every change was narrower than the last and turning a lens back
+on could never widen the range again.
+
 ## Ports
 
 | Port | Outcome |
