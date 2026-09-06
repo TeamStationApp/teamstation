@@ -274,9 +274,13 @@ public struct TileView: View {
           .background(Color.programGreen, in: RoundedRectangle(cornerRadius: 3))
           .foregroundStyle(.black)
       }
+      // The status pills to the right of this hold their width now, so on a narrow tile the
+      // squeeze lands here instead. Truncate the name rather than wrap the header onto two lines.
       Text("source \(sourceIndex + 1): \(telemetry.displayName ?? "—")")
         .font(.system(size: 13, weight: .semibold, design: .rounded))
         .foregroundStyle(.white)
+        .lineLimit(1)
+        .truncationMode(.tail)
         .accessibilityIdentifier("source-\(sourceIndex + 1)-nameplate")
       if telemetry.isArchiving {
         Circle()

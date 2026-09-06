@@ -7,6 +7,13 @@ import SwiftUI
 /// `.pill` is the operating-screen size, matched to the thermal pill beside it. `.compact` is the
 /// tile size in GS Director, the same footprint as its `OUT` badge. Untappable in both: on the phone
 /// a zoom drag has to reach the preview underneath, and on a tile a tap has to cut to programme.
+///
+/// Both sizes are laid out against the widest state the pill can ever show — the bolt beside
+/// `100%` — rather than against whatever is on screen right now. The rows it sits in are tight
+/// (Cameraman's chrome column, Director's tile header next to a source name), and a pill sized to
+/// its current contents gets squeezed there: the label wraps onto a second line and the slab grows
+/// tall instead of wide. Reserving the worst case keeps it one line always, and stops the pill
+/// resizing as the percentage counts down or the charger comes and goes.
 public struct BatteryBadge: View {
   public enum Style: Sendable {
     case pill
@@ -17,6 +24,10 @@ public struct BatteryBadge: View {
   private let style: Style
   private let identifier: String
 
+  /// The widest the label ever gets. Read off `BatteryStatus` so the reservation cannot drift from
+  /// the format the pill actually draws.
+  private static let widestLabel = BatteryStatus(percent: 100).label
+
   public init(status: BatteryStatus, style: Style = .pill, identifier: String = "camera-battery") {
     self.status = status
     self.style = style
@@ -24,16 +35,12 @@ public struct BatteryBadge: View {
   }
 
   public var body: some View {
-    HStack(spacing: style == .pill ? 4 : 2) {
-      if status.isCharging {
-        Image(systemName: "bolt.fill")
-          .font(.system(size: style == .pill ? 10 : 7, weight: .heavy))
-      }
-      Text(status.label)
-        .font(.system(size: style == .pill ? 13 : 10, weight: .heavy, design: .rounded))
-        .tracking(style == .pill ? 1 : 0)
-        .monospacedDigit()
+    ZStack {
+      contents(label: Self.widestLabel, isCharging: true).hidden()
+      contents(label: status.label, isCharging: status.isCharging)
     }
+    // The reservation is only worth having if the pill refuses to be compressed below it.
+    .fixedSize()
     .foregroundStyle(Color.white)
     .padding(.horizontal, style == .pill ? 14 : 5)
     .padding(.vertical, style == .pill ? 8 : 2)
@@ -49,6 +56,22 @@ public struct BatteryBadge: View {
     .accessibilityValue(status.label)
     .accessibilityAddTraits(.isStaticText)
     .allowsHitTesting(false)
+  }
+
+  /// The bolt and the percentage. Drawn twice: once hidden at its widest to fix the pill's size,
+  /// once for real. Monospaced digits make `100%` the widest label rather than merely the longest.
+  private func contents(label: String, isCharging: Bool) -> some View {
+    HStack(spacing: style == .pill ? 4 : 2) {
+      if isCharging {
+        Image(systemName: "bolt.fill")
+          .font(.system(size: style == .pill ? 10 : 7, weight: .heavy))
+      }
+      Text(label)
+        .font(.system(size: style == .pill ? 13 : 10, weight: .heavy, design: .rounded))
+        .tracking(style == .pill ? 1 : 0)
+        .monospacedDigit()
+        .lineLimit(1)
+    }
   }
 
   private var nubWidth: CGFloat { style == .pill ? 4 : 2.5 }
