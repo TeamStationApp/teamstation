@@ -5,7 +5,8 @@ than against a reading of the source.
 
 **It is the same wire format as the iOS build.** That is the point of the port: GS Producer should
 not be able to tell which platform a camera is running on, and nothing in this document differs from
-`mobile/apps/gsCameraman/docs/rtsp-interop.md` except the port and the measurements at the end.
+`mobile/apps/gsCameraman/docs/rtsp-interop.md` except the port, a handful of read-only parameter
+descriptors that Camera2 cannot fill the same way, and the measurements at the end.
 
 ## Methods
 
@@ -17,9 +18,10 @@ not be able to tell which platform a camera is running on, and nothing in this d
 | `PLAY` | `Range: npt=now-`, `RTP-Info` with `seq` and `rtptime` per track |
 | `PAUSE` | stops sending, keeps the session |
 | `TEARDOWN` | responds, then closes |
-| `GET_PARAMETER` | empty body, used as a keepalive |
+| `GET_PARAMETER` | empty body is a keepalive; a `text/parameters` body reads parameters (below) |
+| `SET_PARAMETER` | `text/parameters` body writes parameters; empty body is a keepalive |
 
-`ANNOUNCE`, `RECORD` and `SET_PARAMETER` are not implemented and return `501`.
+`ANNOUNCE` and `RECORD` are not implemented and return `501`.
 
 No authentication. The app is for a closed match-day network; adding a password that every operator
 would have to type into every client, on a device sitting on a tripod, would cost more than it
@@ -119,6 +121,94 @@ a separate device on a separate clock from the camera, where AVFoundation gives 
 session, so RTCP is the only thing aligning them.
 
 Receiver reports from the client are read and discarded — the sender does not adapt to them.
+
+## Parameters
+
+The phone is controlled over the RTSP port it already serves, with RFC 2326 §10.8–10.9
+`GET_PARAMETER` / `SET_PARAMETER` and `Content-Type: text/parameters` bodies. No new port, listener
+or permission. This is how GS Director and GS Preview drive a camera from its tile, and it is the
+iOS build's vocabulary name for name: `core/CameraParameters.kt` is a port of
+`CameramanCore/CameraParameters.swift`, and `CameraParametersTest` runs the iOS suite's fixture with
+the iOS suite's expected values.
+
+A client that wants to control the camera opens a **second, control-only** TCP connection
+(`OPTIONS`, then parameters; never `SETUP`/`PLAY`) so a burst of zoom writes cannot delay RTP on the
+media session. Parameters are server-level and need no `Session` header.
+
+```
+GET_PARAMETER rtsp://10.10.7.130:8554/live/mainstream RTSP/1.0
+CSeq: 4
+Content-Type: text/parameters
+Content-Length: 3
+
+*
+```
+
+A `GET` body lists names one per line; `*` returns the whole set. A `SET` body carries
+`name: value` lines. Responses echo the values **as applied** (after clamping, after the codec's
+default bitrate carried across), so the client learns what the phone actually did. A request mixing
+good and bad lines applies nothing and reports the first offending name on the first line of the
+body.
+
+| Code | When |
+|---|---|
+| `200 OK` | applied; body echoes applied values |
+| `400 Bad Request` | a value did not parse or is out of range (bitrate outside 1000–50000, unknown codec, a format the camera does not offer, disabling the last lens at a position) |
+| `451 Parameter Not Understood` | unknown name (RFC 2326 §11.3.11) |
+| `458 Parameter Is Read-Only` | a `SET` on a read-only name (RFC 7826 §17.4.20) |
+
+Names follow ONVIF Media2 / PTZ configuration names so anyone who knows ONVIF reads them at sight;
+the SOAP stack itself is not implemented. Lenses have no ONVIF standard. `rw` = settable.
+
+| Name | Type | Notes |
+|---|---|---|
+| `device.name` | rw string | the operator name; SDP `s=`, NSD instance, RTCP NAME |
+| `device.cname` | string | the UUID; same as SDP/RTCP CNAME |
+| `device.model` | string | `Build.MODEL`, e.g. `Pixel 10` |
+| `system.thermal` | string | `nominal` / `fair` / `serious` / `critical`, the same collapse dump-state prints |
+| `system.status` | string | `running`, `recording`, … |
+| `system.battery` | int | percent 0–100; empty when the handset cannot read it (an emulator) |
+| `system.battery.charging` | bool | |
+| `videoSource.position` | rw `back` / `front` | a change is a flip |
+| `videoSource.deviceType` | string | `builtInTripleCamera (0)`: the constituent count and the Camera2 id, as dump-state names it |
+| `videoSource.zoom.minimumDevice`, `.maximumDevice`, `.displayMultiplier`, `.switchOverDevice` | number / comma list | the four fields of `ZoomMapping`, so a client rebuilds the rail exactly as the phone draws it. `displayMultiplier` is always `1` here: `CONTROL_ZOOM_RATIO` is already what the operator reads |
+| `ptz.zoom` | rw number | **displayed** zoom (0.5, 1, 5 …), clamped to the mapping — which is the range the lens selection left on |
+| `ptz.zoom.device` | number | raw `CONTROL_ZOOM_RATIO` |
+| `videoEncoder.encoding` | rw `H264` / `H265` | applied like the Settings picker, so the codec's default bitrate carries unless a rate is sent in the same request |
+| `videoEncoder.resolution.width`, `.height` | rw int | with the rate, must name one offered format |
+| `videoEncoder.rateControl.frameRateLimit` | rw number | fps |
+| `videoEncoder.rateControl.bitrateLimit` | rw int | **kbps**, 1000–50000 |
+| `videoEncoder.formats` | int | count; then `format.<i>.width`, `.height`, `.frameRate`, `.multiLens` |
+| `audioEncoder.enabled` | rw bool | microphone on/off |
+| `audioEncoder.sampleRate` | int | 48000 |
+| `lens.count` | int | then `lens.<i>.id`, `.position`, `.deviceType`, `.title`, `.displayedZoom`, `.focalLengthMM`, `.native` |
+| `lens.disabled` | rw comma list of ids | a `SET` that would disable the last lens at a position is a `400`; honoured as a zoom clamp, see the README |
+| `stream.url` | string | `rtsp://<ip>:<port><path>`, the string Settings copies — the bound port, so `8554` |
+| `stream.clients` | int | playing sessions only; a control-only connection is not a viewer |
+
+Three descriptors are filled differently from the iOS build, because Camera2 publishes different
+facts. Each is read-only, and a client that only reads what the table says it means is unaffected:
+
+- `lens.<i>.deviceType` is the Camera2 **physical camera id** (`0`, `2`, `3`) rather than an
+  `AVCaptureDeviceType` name. Camera2 has no device-type vocabulary; the physical id is what it
+  knows a lens by, and it is the same string the iOS build carries in `uniqueDeviceID`.
+- `lens.<i>.native` is always `false`. There is no `secondaryNativeResolutionZoomFactors`, so no
+  Android lens row is a native sensor crop.
+- `videoSource.zoom.displayMultiplier` is always `1`, for the reason in `ZoomMapping`.
+
+All video-encoder writes in one `SET_PARAMETER` are applied as one reconfigure, exactly like Done
+on the phone. Zoom, flip and name are live. Writes are serialised on the phone; reads are not, so a
+Director poll is never held behind a reconfigure.
+
+The NSD TXT record (both `_rtsp._tcp` and `_awx_service._tcp`) carries `control=params/1`, so a
+client knows before connecting that this build answers the verbs. From the Mac, with the iOS
+build's script and the Android port:
+
+```bash
+npm run params -- --host <phone>                      # everything
+npm run params -- --host <phone> 'ptz.zoom: 3'        # the phone's rail moves to 3x
+npm run params -- --host <phone> 'videoSource.position: front'
+```
 
 ## Checking it
 

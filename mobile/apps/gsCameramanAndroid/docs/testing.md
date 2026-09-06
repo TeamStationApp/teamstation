@@ -8,7 +8,7 @@ Four layers, each answering something the others cannot.
 npm run test:unit
 ```
 
-201 tests on the JVM, in about three seconds. They run there rather than on a device because `core`
+231 tests on the JVM, in about three seconds. They run there rather than on a device because `core`
 and `rtsp` have no Android dependencies, which is a deliberate property of the layout and not a
 coincidence.
 
@@ -31,6 +31,10 @@ coincidence.
 | `StreamSettingsPersistenceTest` | a stored set missing a field keeps defaults instead of resetting everything |
 | `BatteryStatusTest` / `ThermalBadgeLevelTest` | the overlay pills, ported from the iOS suites so both platforms turn colour at the same threshold |
 | `PreferredAddressTest` | the address Director is handed is one it can actually reach |
+| `CameraParametersTest` | the `GET_PARAMETER` / `SET_PARAMETER` vocabulary: encode, decode, clamping, kbps↔bps, all-or-nothing — the iOS suite's fixture and expected values |
+| `RTSPResponderParameterTest` | a body is answered, a missing handler is `451` / `501`, errors keep their status, a write creates no session |
+| `RTSPParameterInteropTest` | a request shaped exactly as **Director's** `RTSPRequestBuilder` writes it, parsed here, answered, and read back |
+| `RTSPServerLoopbackTest` | over a real socket: a control-only connection is not a viewer; PLAY and TEARDOWN move the count |
 
 Two things these deliberately do *not* mock: there is no fake camera and no fake socket. Anything
 that would need one is covered by the layers below, on real hardware, because a test against a mock
@@ -72,6 +76,21 @@ running, the socket keeps accepting, and the frames simply stop.
 **A held frame rate is not sufficient evidence.** A frozen stream holds its rate too. The stopwatch on
 the bench is what settles it: the reading in the decoded frames has to have advanced by the elapsed
 wall time. `docs/capabilities.md` records the pair that did.
+
+## The parameter channel
+
+The RTSP port itself. The iOS build's `scripts/rtspParams.js` is the Mac-side reader and writer,
+with nothing of Director in the path, the way `rtspClient.js` is for media; `npm run params` points
+it at this build's port:
+
+```bash
+npm run params -- --host 10.10.7.130                       # GET_PARAMETER *
+npm run params -- --host 10.10.7.130 ptz.zoom system.thermal
+npm run params -- --host 10.10.7.130 'ptz.zoom: 3'         # the rail moves to 3x
+```
+
+Unlike the control channel below it needs no launch argument: it is the production interface
+GS Director and GS Preview drive. The table of names is in `docs/rtsp-interop.md`.
 
 ## The control channel
 

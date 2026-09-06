@@ -129,11 +129,25 @@ than being assumed from it.
 Port 554 by default, falling back to 8554 — which on Android is always what happens, because 554 is
 privileged. Both the bound port and the request are visible on screen.
 
+## Remote control
+
+GS Director and GS Preview drive the phone over the RTSP port it already serves, with RFC 2326
+`GET_PARAMETER` / `SET_PARAMETER` and `text/parameters` bodies (the vocabulary is in
+`rtsp-interop.md`, and it is the iOS build's name for name). The client opens a second, control-only
+connection so zoom writes never queue behind RTP, polls the whole set once a second, and writes zoom,
+flip, name and Settings. On the phone the server hands each request to
+`AppEnvironment.handleParameters`, which applies it through the same methods the phone's own screen
+uses — `rename`, `CameraSession.flip`, `setDisplayedZoom`, and one `applySettings` per request — so a
+remote zoom moves the phone's rail, a remote codec change shows in its Settings, and remote framing is
+persisted by the same `onStateChange` path as a local pinch. Only playing sessions count as clients;
+a connection that merely polls parameters is not a viewer. The NSD TXT record carries
+`control=params/1` so a client knows before connecting that this build answers the verbs.
+
 ## Running it
 
 ```bash
 npm run device:install       # build, install, grant permissions
-npm run test:unit            # 157 JVM tests
+npm run test:unit            # 231 JVM tests
 npm run verify:stream        # end-to-end: build, launch, pull, decode
 npm run verify:background    # the same, foregrounded / backgrounded / screen off
 ```
