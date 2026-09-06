@@ -80,6 +80,9 @@ public final class ProgramStreamer: @unchecked Sendable {
 
     try openEncoder()
     let client = RTMPClient()
+    // How far behind the socket may fall before the client sheds media, in the encoder's own
+    // terms: about a second of what this session is actually producing.
+    client.configure(sendBudgetBytes: RTMPClient.sendBudget(forBitrate: config.programBitrate))
     client.onFailure { [weak self] error in
       self?.handleFailure(error.description)
     }
@@ -501,10 +504,18 @@ public final class ProgramStreamer: @unchecked Sendable {
     } else {
       lock.unlock()
     }
-    client.sendVideo(
+    let outcome = client.sendVideo(
       timestampMs: timestamp,
       tag: FLVTag.video(keyframe: keyframe, packetType: 1, payload: payload)
     )
+    // Only when the client is waiting for a keyframe to resume on. Asking on every over-budget
+    // drop would force an IDR per frame while the link is still saturated, which is the opposite
+    // of shedding load.
+    if outcome == .droppedAwaitingKeyframe {
+      lock.lock()
+      clock.requestKeyframe()
+      lock.unlock()
+    }
   }
 
   private func handleFailure(_ message: String) {
