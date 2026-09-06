@@ -366,6 +366,11 @@ public final class AppEnvironment {
     if let result = try? index.reconcile(), result.removed > 0 {
       statusMessage = "Recovered index: dropped \(result.removed) missing segment(s)"
     }
+    // After reconcile, so an interrupted take is closed at the end of media that survives on
+    // disk rather than at a segment row whose file was never written.
+    if let closed = try? index.closeInterruptedRecordings(), closed > 0 {
+      statusMessage = "Closed \(closed) interrupted recording(s)"
+    }
 
     let manifest = overlayStore.loadManifest()
     apply(manifest)
