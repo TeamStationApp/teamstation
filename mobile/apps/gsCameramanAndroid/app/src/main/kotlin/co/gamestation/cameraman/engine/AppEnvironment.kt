@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.net.wifi.WifiManager
 import android.os.BatteryManager
 import android.os.PowerManager
 import android.util.Log
@@ -83,6 +84,7 @@ class AppEnvironment(
     private var recorder: ElementaryStreamRecorder? = null
     private var audioRecorder: AudioStreamRecorder? = null
     private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
 
     /**
      * Test-only congestion injection. Idle unless a flow configures it, in which case it holds
@@ -326,6 +328,7 @@ class AppEnvironment(
 
     fun start() {
         acquireWakeLock()
+        acquireWifiLock()
         observeThermalState()
         observeBattery()
         statusState.value = "starting"
@@ -394,6 +397,7 @@ class AppEnvironment(
         controlServer?.stop()
         controlServer = null
         releaseWakeLock()
+        releaseWifiLock()
         statusState.value = "stopped"
     }
 
@@ -418,6 +422,47 @@ class AppEnvironment(
     private fun releaseWakeLock() {
         runCatching { wakeLock?.release() }
         wakeLock = null
+    }
+
+    /**
+     * A Wi-Fi lock, for the same reason as the wake lock and with the same asymmetry against iOS.
+     *
+     * `PARTIAL_WAKE_LOCK` keeps the CPU scheduled but says nothing about the radio: Android is free
+     * to park Wi-Fi in power-save between beacons, and a camera whose packets are held for a second
+     * or more is a camera the Director reports as offline. iOS has no equivalent knob because the
+     * system keeps the radio hot for a foreground capture app; here it has to be asked for.
+     *
+     * Measured on a Pixel 10 on 2026-09-05: the handset's round-trip times were the steadiest of
+     * the three cameras on the rig — 1.4% of pings above 50 ms against 41% for the worst iPhone —
+     * and yet it produced a single 3.8 s stall. Rare but very long is the shape power-save makes,
+     * and it is the shape the operator sees as "it dropped out and came back".
+     *
+     * `WIFI_MODE_FULL_HIGH_PERF` is deprecated from API 29 in favour of `WIFI_MODE_FULL_LOW_LATENCY`,
+     * which additionally asks the firmware to cut latency and is only honoured while the screen is
+     * on. This build has to survive the screen being off, so it takes the low-latency mode when it
+     * can and falls back to high-performance, which is still honoured with the screen off.
+     */
+    private fun acquireWifiLock() {
+        if (wifiLock != null) return
+        val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            ?: return
+        val mode = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+        } else {
+            @Suppress("DEPRECATION")
+            WifiManager.WIFI_MODE_FULL_HIGH_PERF
+        }
+        wifiLock = runCatching {
+            wifi.createWifiLock(mode, "cameraman:streaming").apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+        }.getOrNull()
+    }
+
+    private fun releaseWifiLock() {
+        runCatching { wifiLock?.release() }
+        wifiLock = null
     }
 
     /**
@@ -798,7 +843,19 @@ class AppEnvironment(
             put("server", serverStatusJSON(server?.currentStatus() ?: serverStatusState.value))
             put("addresses", JSONArray(ControlServer.localAddresses()))
             put("streamURL", streamURL)
+            // Whether the three things that keep a backgrounded camera alive are actually in force.
+            // Reported rather than assumed: a lock that silently failed to acquire looks exactly
+            // like one that is held, right up until the stream drops an hour into a game.
+            put("wakeLockHeld", wakeLock?.isHeld == true)
+            put("wifiLockHeld", wifiLock?.isHeld == true)
+            put("ignoringBatteryOptimizations", isIgnoringBatteryOptimizations())
         }
+    }
+
+    private fun isIgnoringBatteryOptimizations(): Boolean {
+        val power = context.getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return false
+        return runCatching { power.isIgnoringBatteryOptimizations(context.packageName) }
+            .getOrDefault(false)
     }
 
     private fun thermalStateName(): String {

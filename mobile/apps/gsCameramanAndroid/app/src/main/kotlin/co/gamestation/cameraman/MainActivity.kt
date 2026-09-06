@@ -6,7 +6,10 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
 import android.os.IBinder
 import android.view.Surface
 import android.view.WindowManager
@@ -77,9 +80,34 @@ class MainActivity : ComponentActivity() {
         startAndBind()
     }
 
+    /**
+     * Ask to be left off the battery optimisation list, once, if we are not already off it.
+     *
+     * A typed foreground service survives most of Doze, which is why a ten-minute test always
+     * passes. Hours is a different question: Adaptive Battery on a Pixel will still throttle an
+     * app it considers idle, and the operator has no way to tell that from a camera that simply
+     * stopped. `isIgnoringBatteryOptimizations` is checked first so a phone that is already
+     * exempt never sees a dialog, which matters because this runs at every launch.
+     *
+     * There is no iOS equivalent: an app in an audio/capture session is not throttled this way.
+     */
+    private fun requestBatteryOptimisationExemption() {
+        val power = getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return
+        if (power.isIgnoringBatteryOptimizations(packageName)) return
+        runCatching {
+            startActivity(
+                Intent(
+                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Uri.parse("package:$packageName")
+                )
+            )
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
+        requestBatteryOptimisationExemption()
         // The iOS build sets `isIdleTimerDisabled` for the same reason: a screen lock is what makes
         // an unattended device run end early. The service's wake lock covers the rest.
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
