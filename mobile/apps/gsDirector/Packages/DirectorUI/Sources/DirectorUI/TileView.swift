@@ -126,18 +126,26 @@ public struct TileView: View {
           .allowsHitTesting(false)
       }
 
-      VStack(spacing: 0) {
+      VStack(alignment: .leading, spacing: 0) {
         HStack(alignment: .center, spacing: 6) {
           if isRewinding {
             returnToLiveButton
-            offsetBadge
+            if !stacksRewindChrome {
+              offsetBadge
+            }
           }
-          nameplate
+          if !isRewinding || !stacksRewindChrome {
+            nameplate
+          }
           Spacer()
           if telemetry.hasCameraControl {
             cameraStatusPills
             cameraMenuButton
           }
+        }
+        if isRewinding, stacksRewindChrome {
+          offsetBadge
+            .padding(.top, 6)
         }
         Spacer()
           .allowsHitTesting(false)
@@ -184,6 +192,14 @@ public struct TileView: View {
 
   private var isRewinding: Bool {
     telemetry.state == .replaying || telemetry.state == .scrubbing
+  }
+
+  /// A Cameraman tile already spends the right-hand end of its top row on thermal, battery and the
+  /// menu. Adding Return to Live, the offset and the nameplate to the left of that overruns the
+  /// tile and the row collapses into itself. On those tiles the nameplate gives way to Return to
+  /// Live and the offset moves onto its own line underneath, both left-justified.
+  private var stacksRewindChrome: Bool {
+    telemetry.hasCameraControl
   }
 
   /// One small-tile width is 60 seconds at a constant rate. Extra travel keeps that rate;
@@ -329,7 +345,7 @@ public struct TileView: View {
     Button {
       environment.returnToLive(sourceIndex: sourceIndex)
     } label: {
-      Label("Return to live", systemImage: "forward.end.fill")
+      Label("Return to Live", systemImage: "forward.end.fill")
         .font(.system(size: 12, weight: .bold, design: .rounded))
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
