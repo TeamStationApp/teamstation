@@ -15,6 +15,8 @@ public final class ProgramStreamer: @unchecked Sendable {
   public struct Metrics: Sendable, Equatable {
     public var megabitsPerSecond: Double = 0
     public var droppedPackets: UInt64 = 0
+    /// Bytes queued between this encoder and the socket.
+    public var queuedBytes = 0
   }
 
   public typealias FailureHandler = @Sendable (String) -> Void
@@ -65,7 +67,11 @@ public final class ProgramStreamer: @unchecked Sendable {
     let client = self.client
     lock.unlock()
     let raw = client?.metrics ?? .init()
-    return Metrics(megabitsPerSecond: raw.megabitsPerSecond, droppedPackets: raw.droppedPackets)
+    return Metrics(
+      megabitsPerSecond: raw.megabitsPerSecond,
+      droppedPackets: raw.droppedPackets,
+      queuedBytes: raw.queuedBytes
+    )
   }
 
   public func start(urlString: String, config: AppConfig, onFailure: FailureHandler?) async throws {

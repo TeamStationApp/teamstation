@@ -750,7 +750,12 @@ public final class RTMPClient: @unchecked Sendable {
   /// Writes every byte of one chunk, advancing an offset rather than reallocating the tail after
   /// each partial write. Returns the error to fail with, or nil once the chunk is gone.
   private func send(_ data: Data, over fd: Int32) -> RTMPClientError? {
-    data.withUnsafeBytes { raw -> RTMPClientError? in
+    // Naming the ingest in the error is what makes the next incident attributable: the index
+    // does not record which server a take was streaming to.
+    lock.lock()
+    let peerLabel = url.map { "\($0.host):\($0.port)" } ?? "stream server"
+    lock.unlock()
+    return data.withUnsafeBytes { raw -> RTMPClientError? in
       guard let base = raw.baseAddress else { return nil }
       var offset = 0
       while offset < raw.count {
@@ -760,7 +765,7 @@ public final class RTMPClient: @unchecked Sendable {
           // `SO_SNDTIMEO` expires as EAGAIN. A peer that accepts the connection and then stops
           // reading is exactly the case that used to grow the heap until malloc failed.
           if errno == EAGAIN || errno == EWOULDBLOCK {
-            return .disconnected("stream server stopped accepting data")
+            return .disconnected("\(peerLabel) stopped accepting data")
           }
           return .disconnected("socket write failed (\(errno))")
         }
