@@ -52,6 +52,25 @@ public struct LaunchConfiguration: Sendable, Equatable {
   public var rtspPath = "/live/mainstream"
   /// False turns the subnet scan off, leaving only `rtspHosts`.
   public var rtspScan = true
+  /// NDI sources to restrict the list to, by full `MACHINE (Stream)` name or by stream name.
+  /// Empty means everything the finder sees, which is what a venue run wants and what a flow
+  /// asserting on a known set does not.
+  public var ndiSources: [String] = []
+  /// Addresses the NDI finder queries directly, for a camera on another subnet or a network that
+  /// drops mDNS between segments.
+  public var ndiExtraIPs: [String] = []
+  /// `highest` or `lowest`. The SDK's low-bandwidth mode is a proxy-quality stream; a flow uses it
+  /// to prove the app follows the setting, not because a game would.
+  public var ndiBandwidth = "highest"
+  /// Whether the NDI finder reports senders on this machine. On by default because on a simulator
+  /// the whole test rig is a generator on the same host.
+  public var ndiLocalSources = true
+  /// Codec for archives the app has to encode itself. Overrides the stored setting for the
+  /// session, the way `programCodec` does for the master.
+  public var sourceEncodeCodec: ProgramCodec?
+  /// Bitrate for those archives. Worth setting from a flow: it is what an NDI camera's archive
+  /// size and encode cost are actually decided by.
+  public var sourceEncodeBitrate: Int?
   /// RTMP publish URL overlay for a flow. Session-only; never written back to Settings.
   public var streamURL: String?
   /// Programme encoder overlays, so a soak can change bitrate mid-run over `/configure` instead
@@ -107,17 +126,30 @@ public struct LaunchConfiguration: Sendable, Equatable {
       configuration.rtspTransport = transport
     }
     if let hosts = values["rtspHosts"] {
-      // Semicolon as well as comma: Maestro `-e KEY=a,b` keeps only `a`, which left the
-      // M4 farm looking like a single camera when LAN_HOSTS listed four host:port pairs.
-      configuration.rtspHosts = hosts
-        .split { $0 == "," || $0 == ";" }
-        .map { $0.trimmingCharacters(in: .whitespaces) }
-        .filter { !$0.isEmpty }
+      configuration.rtspHosts = splitList(hosts)
     }
     if let path = values["rtspPath"], !path.isEmpty {
       configuration.rtspPath = path
     }
     configuration.rtspScan = boolean(values["rtspScan"]) ?? true
+    // Semicolon as well as comma, for the same reason `rtspHosts` accepts both: Maestro
+    // `-e KEY=a,b` keeps only `a`.
+    if let names = values["ndiSources"] {
+      configuration.ndiSources = splitList(names)
+    }
+    if let ips = values["ndiExtraIPs"] {
+      configuration.ndiExtraIPs = splitList(ips)
+    }
+    if let bandwidth = values["ndiBandwidth"]?.lowercased(), !bandwidth.isEmpty {
+      configuration.ndiBandwidth = bandwidth
+    }
+    configuration.ndiLocalSources = boolean(values["ndiLocalSources"]) ?? true
+    if let raw = values["sourceEncodeCodec"]?.lowercased(), let codec = ProgramCodec(rawValue: raw) {
+      configuration.sourceEncodeCodec = codec
+    }
+    if let value = values["sourceEncodeBitrate"], let rate = Int(value), rate > 0 {
+      configuration.sourceEncodeBitrate = rate
+    }
     configuration.streamURL = values["streamURL"]
     if let value = values["programBitrate"], let rate = Int(value), rate > 0 {
       configuration.programBitrate = rate
@@ -169,8 +201,19 @@ public struct LaunchConfiguration: Sendable, Equatable {
     // A key missing from this array is silently ignored, which has already cost this project
     // debugging time; every argument above must appear here.
     "rtspTransport", "rtspHosts", "rtspPath", "rtspScan", "streamURL",
-    "programBitrate", "programFrameRate"
+    "programBitrate", "programFrameRate",
+    "ndiSources", "ndiExtraIPs", "ndiBandwidth", "ndiLocalSources",
+    "sourceEncodeCodec", "sourceEncodeBitrate"
   ]
+
+  /// Semicolon as well as comma: Maestro `-e KEY=a,b` keeps only `a`, which left the M4 farm
+  /// looking like a single camera when LAN_HOSTS listed four host:port pairs.
+  static func splitList(_ value: String) -> [String] {
+    value
+      .split { $0 == "," || $0 == ";" }
+      .map { $0.trimmingCharacters(in: .whitespaces) }
+      .filter { !$0.isEmpty }
+  }
 
   static func parse(
     arguments: [String],
