@@ -12,7 +12,7 @@ Landscape only, like the iOS build.
 ```bash
 npm run device:install       # build, install, grant the runtime permissions
 npm run device:launch        # launch it
-npm run test:unit            # 201 JVM tests, no device needed
+npm run test:unit            # 231 JVM tests, no device needed
 npm run verify:stream        # build, launch, pull with an independent client, decode every frame
 npm run verify:background    # the same pull foregrounded, backgrounded, and with the screen off
 ```
@@ -137,7 +137,7 @@ app/src/main/kotlin/co/gamestation/cameraman/
   harness/    launch arguments, control channel, synthetic camera, recorders
   service/    the foreground service that owns all of it
   engine/     AppEnvironment — the wiring
-app/src/test/kotlin/   201 JVM tests
+app/src/test/kotlin/   231 JVM tests
 docs/                  measured capability set, testing, interop
 scripts/               build, install, launch, verify
 maestro/flows/         on-device UI flows

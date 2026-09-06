@@ -30,7 +30,8 @@ internal class RTSPClientConnection(
     private val sdp: (Long, Long) -> String,
     hasAudio: Boolean,
     private val identity: () -> DeviceIdentity,
-    private val requestKeyframe: () -> Unit
+    private val requestKeyframe: () -> Unit,
+    private val parameters: RTSPParameterHandler? = null
 ) {
     private val queue: ExecutorService =
         Executors.newSingleThreadExecutor { runnable -> Thread(runnable, "rtsp-conn") }
@@ -42,7 +43,18 @@ internal class RTSPClientConnection(
     private var responder: RTSPResponder
 
     private var buffer = ByteArray(0)
-    private var isStreaming = false
+
+    /**
+     * True between PLAY and PAUSE/TEARDOWN. The server counts only these as clients, so a
+     * control-only connection polling parameters is not shown to the operator as a viewer.
+     */
+    @Volatile
+    var isStreaming = false
+        private set(value) {
+            val changed = field != value
+            field = value
+            if (changed) onStreamingChange?.invoke()
+        }
     private var isAwaitingKeyframe = false
     private var videoSetup: RTSPResponder.Setup? = null
     private var audioSetup: RTSPResponder.Setup? = null
@@ -76,12 +88,16 @@ internal class RTSPClientConnection(
 
     var onClose: ((String) -> Unit)? = null
 
+    /** Fired on this connection's executor whenever [isStreaming] flips, so the server can recount. */
+    var onStreamingChange: (() -> Unit)? = null
+
     init {
         // Distinct SSRCs per connection, so two clients watching at once are separable in a capture.
         responder = RTSPResponder(
             sessionIdentifier = RTSPResponder.generateSessionIdentifier(),
             sdp = sdp(videoSSRC, audioSSRC),
-            hasAudio = hasAudio
+            hasAudio = hasAudio,
+            parameters = parameters
         )
     }
 
@@ -187,7 +203,8 @@ internal class RTSPClientConnection(
             responder = RTSPResponder(
                 sessionIdentifier = responder.sessionIdentifier,
                 sdp = sdp(videoSSRC, audioSSRC),
-                hasAudio = responder.hasAudio
+                hasAudio = responder.hasAudio,
+                parameters = parameters
             )
         }
 

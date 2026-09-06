@@ -3,6 +3,12 @@ package co.gamestation.cameraman.rtsp
 import kotlin.random.Random
 
 /**
+ * Answers `GET_PARAMETER` / `SET_PARAMETER` bodies. Synchronous, because the connection needs the
+ * reply before it can read the next request on the socket.
+ */
+typealias RTSPParameterHandler = (RTSPResponder.ParameterRequest) -> RTSPResponder.ParameterResponse
+
+/**
  * Turns one client's requests into responses.
  *
  * Pure and synchronous on purpose: the whole RTSP method sequence, including the error paths a real
@@ -11,7 +17,12 @@ import kotlin.random.Random
 class RTSPResponder(
     val sessionIdentifier: String,
     val sdp: String,
-    val hasAudio: Boolean
+    val hasAudio: Boolean,
+    /**
+     * Null means the server has no parameters to offer: a named `GET` is then `451` and a `SET` is
+     * `501`, which is what this server answered before it had any.
+     */
+    val parameters: RTSPParameterHandler? = null
 ) {
     data class Setup(val track: Track, val dataChannel: Int, val controlChannel: Int) {
         enum class Track { VIDEO, AUDIO }
@@ -28,6 +39,21 @@ class RTSPResponder(
     }
 
     data class Outcome(val response: RTSPServerResponse, val effect: Effect)
+
+    /**
+     * A `GET_PARAMETER` with a body, or a `SET_PARAMETER`. The body is `text/parameters`; what the
+     * names mean is `CameraParameters`' business, not this state machine's.
+     */
+    data class ParameterRequest(val method: Method, val body: String) {
+        enum class Method { GET, SET }
+    }
+
+    data class ParameterResponse(
+        val statusCode: Int = 200,
+        val reasonPhrase: String = "OK",
+        /** `text/parameters`; empty means no body. */
+        val body: String = ""
+    )
 
     var state: State = State.INITIAL
         private set
@@ -64,13 +90,49 @@ class RTSPResponder(
                     Effect.Close
                 )
             }
-            // Empty body means "keepalive", which is how every client holds a session open.
-            "GET_PARAMETER" -> Outcome(
-                RTSPServerResponse(headers = base(cseq, includeSession = state != State.INITIAL)),
-                Effect.None
-            )
+            // Empty body means "keepalive", which is how every client holds a session open. A body
+            // names parameters; `*` is all of them. Neither needs a session: these are server-level
+            // values.
+            "GET_PARAMETER" -> if (request.body.isEmpty()) {
+                keepalive(cseq)
+            } else {
+                Outcome(parameters(ParameterRequest.Method.GET, request, cseq), Effect.None)
+            }
+            "SET_PARAMETER" -> when {
+                parameters == null ->
+                    Outcome(RTSPServerResponse.status(501, "Not Implemented", cseq), Effect.None)
+                // RFC 2326 §10.9 allows an empty `SET_PARAMETER` as a keepalive too.
+                request.body.isEmpty() -> keepalive(cseq)
+                else -> Outcome(parameters(ParameterRequest.Method.SET, request, cseq), Effect.None)
+            }
             else -> Outcome(RTSPServerResponse.status(501, "Not Implemented", cseq), Effect.None)
         }
+    }
+
+    private fun keepalive(cseq: String?): Outcome = Outcome(
+        RTSPServerResponse(headers = base(cseq, includeSession = state != State.INITIAL)),
+        Effect.None
+    )
+
+    private fun parameters(
+        method: ParameterRequest.Method,
+        request: RTSPServerRequest,
+        cseq: String?
+    ): RTSPServerResponse {
+        val handler = parameters
+            ?: return RTSPServerResponse.status(451, "Parameter Not Understood", cseq)
+        val body = String(request.body, Charsets.UTF_8)
+        val answer = handler(ParameterRequest(method, body))
+        val headers = base(cseq, includeSession = state != State.INITIAL).toMutableList()
+        if (answer.body.isNotEmpty()) {
+            headers.add("Content-Type" to parametersContentType)
+        }
+        return RTSPServerResponse(
+            statusCode = answer.statusCode,
+            reasonPhrase = answer.reasonPhrase,
+            headers = headers,
+            body = answer.body.toByteArray(Charsets.UTF_8)
+        )
     }
 
     private fun options(cseq: String?): RTSPServerResponse {
@@ -179,7 +241,8 @@ class RTSPResponder(
 
     companion object {
         const val supportedMethods =
-            "OPTIONS, DESCRIBE, SETUP, PLAY, PAUSE, TEARDOWN, GET_PARAMETER"
+            "OPTIONS, DESCRIBE, SETUP, PLAY, PAUSE, TEARDOWN, GET_PARAMETER, SET_PARAMETER"
+        const val parametersContentType = "text/parameters"
 
         /**
          * RFC 2326 §12.37. A client that sends no keepalive is dropped after this, which is what
