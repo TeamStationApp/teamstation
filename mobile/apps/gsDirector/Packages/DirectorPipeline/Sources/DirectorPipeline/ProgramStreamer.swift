@@ -15,6 +15,8 @@ public final class ProgramStreamer: @unchecked Sendable {
   public struct Metrics: Sendable, Equatable {
     public var megabitsPerSecond: Double = 0
     public var droppedPackets: UInt64 = 0
+    /// Bytes queued between this encoder and the socket.
+    public var queuedBytes = 0
   }
 
   public typealias FailureHandler = @Sendable (String) -> Void
@@ -65,7 +67,11 @@ public final class ProgramStreamer: @unchecked Sendable {
     let client = self.client
     lock.unlock()
     let raw = client?.metrics ?? .init()
-    return Metrics(megabitsPerSecond: raw.megabitsPerSecond, droppedPackets: raw.droppedPackets)
+    return Metrics(
+      megabitsPerSecond: raw.megabitsPerSecond,
+      droppedPackets: raw.droppedPackets,
+      queuedBytes: raw.queuedBytes
+    )
   }
 
   public func start(urlString: String, config: AppConfig, onFailure: FailureHandler?) async throws {
@@ -80,6 +86,9 @@ public final class ProgramStreamer: @unchecked Sendable {
 
     try openEncoder()
     let client = RTMPClient()
+    // How far behind the socket may fall before the client sheds media, in the encoder's own
+    // terms: about a second of what this session is actually producing.
+    client.configure(sendBudgetBytes: RTMPClient.sendBudget(forBitrate: config.programBitrate))
     client.onFailure { [weak self] error in
       self?.handleFailure(error.description)
     }
@@ -501,10 +510,18 @@ public final class ProgramStreamer: @unchecked Sendable {
     } else {
       lock.unlock()
     }
-    client.sendVideo(
+    let outcome = client.sendVideo(
       timestampMs: timestamp,
       tag: FLVTag.video(keyframe: keyframe, packetType: 1, payload: payload)
     )
+    // Only when the client is waiting for a keyframe to resume on. Asking on every over-budget
+    // drop would force an IDR per frame while the link is still saturated, which is the opposite
+    // of shedding load.
+    if outcome == .droppedAwaitingKeyframe {
+      lock.lock()
+      clock.requestKeyframe()
+      lock.unlock()
+    }
   }
 
   private func handleFailure(_ message: String) {

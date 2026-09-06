@@ -54,6 +54,10 @@ public struct LaunchConfiguration: Sendable, Equatable {
   public var rtspScan = true
   /// RTMP publish URL overlay for a flow. Session-only; never written back to Settings.
   public var streamURL: String?
+  /// Programme encoder overlays, so a soak can change bitrate mid-run over `/configure` instead
+  /// of driving the Settings stepper. Session-only, like `streamURL`.
+  public var programBitrate: Int?
+  public var programFrameRate: Int?
 
   public init() {}
 
@@ -115,6 +119,12 @@ public struct LaunchConfiguration: Sendable, Equatable {
     }
     configuration.rtspScan = boolean(values["rtspScan"]) ?? true
     configuration.streamURL = values["streamURL"]
+    if let value = values["programBitrate"], let rate = Int(value), rate > 0 {
+      configuration.programBitrate = rate
+    }
+    if let value = values["programFrameRate"], let rate = Int(value), rate > 0 {
+      configuration.programFrameRate = rate
+    }
 
     // `-key value` is registered in UserDefaults by the system before `main` runs, and it stays
     // there after the process exits. The next tap of the icon would then still be running last
@@ -142,6 +152,12 @@ public struct LaunchConfiguration: Sendable, Equatable {
       segmentSeconds = seconds
     }
     if let value = queryItems["streamURL"] { streamURL = value }
+    if let value = queryItems["programBitrate"], let rate = Int(value), rate > 0 {
+      programBitrate = rate
+    }
+    if let value = queryItems["programFrameRate"], let rate = Int(value), rate > 0 {
+      programFrameRate = rate
+    }
   }
 
   /// Names of every key understood here, surfaced in the HUD so a failing flow shows what the
@@ -152,7 +168,8 @@ public struct LaunchConfiguration: Sendable, Equatable {
     "syntheticEntropy", "archiveAudio", "programCodec", "cameraCodec", "debugHUD", "sourceCount",
     // A key missing from this array is silently ignored, which has already cost this project
     // debugging time; every argument above must appear here.
-    "rtspTransport", "rtspHosts", "rtspPath", "rtspScan", "streamURL"
+    "rtspTransport", "rtspHosts", "rtspPath", "rtspScan", "streamURL",
+    "programBitrate", "programFrameRate"
   ]
 
   static func parse(
