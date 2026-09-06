@@ -49,8 +49,8 @@ public final class SyntheticFrameSource: FrameSource, @unchecked Sendable {
   private var running = false
   /// Only created when something downstream wants the wire form, because encoding costs a session
   /// and the preview does not need one.
-  private var videoEncoder: SyntheticWireEncoder?
-  private var audioEncoder: SyntheticAudioEncoder?
+  private var videoEncoder: WireVideoEncoder?
+  private var audioEncoder: WireAudioEncoder?
   /// Frame identity across the encode, so an archived picture can still be traced to the generated
   /// one it came from. Keyed by presentation time, the only thing the encoder carries through.
   private var pendingFrameIDs: [CMTimeValue: UInt64] = [:]
@@ -115,7 +115,7 @@ public final class SyntheticFrameSource: FrameSource, @unchecked Sendable {
       AudioSampleBuilder.interleavedInt16Description()
     )
     if sinks.compressed != nil {
-      videoEncoder = SyntheticWireEncoder(
+      videoEncoder = WireVideoEncoder(
         width: width,
         height: height,
         frameRate: frameRate,
@@ -126,7 +126,7 @@ public final class SyntheticFrameSource: FrameSource, @unchecked Sendable {
       }
     }
     if sinks.compressedAudio != nil {
-      audioEncoder = SyntheticAudioEncoder(channelCount: 1)
+      audioEncoder = WireAudioEncoder(channelCount: 1)
     }
     running = true
 
@@ -237,7 +237,7 @@ public final class SyntheticFrameSource: FrameSource, @unchecked Sendable {
     }
   }
 
-  private func publish(_ unit: SyntheticWireEncoder.Unit, to sinks: FrameSinks) {
+  private func publish(_ unit: WireVideoEncoder.Unit, to sinks: FrameSinks) {
     guard let handler = sinks.compressed else { return }
     lock.lock()
     let id = pendingFrameIDs.removeValue(forKey: unit.presentationTime.value)
