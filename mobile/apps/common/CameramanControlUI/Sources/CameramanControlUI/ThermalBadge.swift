@@ -73,11 +73,15 @@ public struct ThermalBadge: View {
       Text(level.label)
         .font(.system(size: style == .pill ? 13 : 10, weight: .heavy, design: .rounded))
         .tracking(style == .pill ? 1 : 0)
+        .lineLimit(1)
       if level.showsFlames {
         Text("🔥")
       }
     }
     .font(.system(size: style == .pill ? 13 : 10))
+    // Same reason as the battery pill it sits beside: the rows these live in run short of width,
+    // and a pill that gives way there wraps its label and grows tall instead of wide.
+    .fixedSize()
     .padding(.horizontal, style == .pill ? 16 : 5)
     .padding(.vertical, style == .pill ? 8 : 2)
     .background {
