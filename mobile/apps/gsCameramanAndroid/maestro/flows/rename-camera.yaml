@@ -1,0 +1,51 @@
+# Renaming takes effect and does not move the identity.
+#
+# The point of the flow: renaming a camera must not make it a new camera in GS Director. The
+# identifier shown next to the name field is the RTCP CNAME, and it has to be the same string before
+# and after.
+appId: co.gamestation.cameraman
+---
+- launchApp:
+    appId: co.gamestation.cameraman
+    arguments:
+      uiTest: true
+      identityUUID: "c94df9ca-d7c2-468f-8529-97d01fba14e7"
+
+- tapOn:
+    id: "settings-button"
+- assertVisible:
+    id: "settings-cname"
+- assertVisible:
+    text: "c94df9ca-d7c2-468f-8529-97d01fba14e7"
+
+- tapOn:
+    id: "settings-name-field"
+- eraseText
+- inputText: "Third Base"
+# The soft keyboard covers Done on a landscape screen, so it has to be dismissed rather than tapped
+# through — the tap lands on the keyboard and the flow times out on an element that is plainly there.
+- hideKeyboard
+- tapOn:
+    id: "settings-done"
+
+- assertVisible:
+    id: "camera-name"
+- assertVisible:
+    text: "Third Base"
+
+- tapOn:
+    id: "settings-button"
+# Unchanged: a rename moves the label and nothing else.
+- assertVisible:
+    text: "c94df9ca-d7c2-468f-8529-97d01fba14e7"
+
+# An empty name falls back to the default rather than emitting an empty SDP session name, which
+# RFC 4566 forbids.
+- tapOn:
+    id: "settings-name-field"
+- eraseText
+- hideKeyboard
+- tapOn:
+    id: "settings-done"
+- assertVisible:
+    text: "Camera 14E7"
