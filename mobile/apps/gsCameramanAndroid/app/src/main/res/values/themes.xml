@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <!-- Dark, full-bleed and no action bar: the app is a viewfinder, and UIUserInterfaceStyle=Dark
+       plus UIStatusBarHidden is what the iOS build declares. -->
+  <style name="Theme.Cameraman" parent="android:Theme.Material.NoActionBar.Fullscreen">
+    <item name="android:windowBackground">@android:color/black</item>
+    <item name="android:statusBarColor">@android:color/transparent</item>
+    <item name="android:navigationBarColor">@android:color/transparent</item>
+    <item name="android:windowLightStatusBar">false</item>
+  </style>
+</resources>

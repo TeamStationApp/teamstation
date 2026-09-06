@@ -1,0 +1,32 @@
+# The app keeps serving after it is backgrounded.
+#
+# Maestro can only get so far here: it can show that the service is still up and the notification is
+# still posted, which is what the platform requires in exchange for background camera access. It
+# cannot show that frames are still arriving — for that, run scripts/verifyBackground.sh, which pulls
+# the stream in all three phases and checks the frame rate and the decode.
+appId: co.gamestation.cameraman
+---
+- launchApp:
+    appId: co.gamestation.cameraman
+    arguments:
+      uiTest: true
+
+- assertVisible:
+    id: "camera-screen"
+
+- pressKey: Home
+
+# The ongoing notification is the only way back into a Cameraman whose activity has been swiped away,
+# so its absence is a real fault and not cosmetic.
+# The title is the camera's name, not the app's — an operator with three phones on a field needs to
+# know which one the shade is talking about.
+- openNotifications
+- assertVisible:
+    text: ".*Camera.*"
+- pressKey: Back
+
+- launchApp:
+    appId: co.gamestation.cameraman
+    clearState: false
+- assertVisible:
+    id: "camera-screen"
