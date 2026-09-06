@@ -1,13 +1,20 @@
 package co.gamestation.cameraman
 
+import co.gamestation.cameraman.core.CameraParameterSet
+import co.gamestation.cameraman.core.CameraParameters
+import co.gamestation.cameraman.core.CameraSnapshot
 import co.gamestation.cameraman.core.DeviceIdentity
+import co.gamestation.cameraman.core.ParameterOutcome
 import co.gamestation.cameraman.core.StreamCodec
 import co.gamestation.cameraman.rtsp.RTCPWriter
 import co.gamestation.cameraman.rtsp.RTSPResponder
+import co.gamestation.cameraman.rtsp.RTSPServer
 import co.gamestation.cameraman.rtsp.RTSPServerRequest
 import co.gamestation.cameraman.rtsp.RTSPServerResponse
 import co.gamestation.cameraman.rtsp.SDPBuilder
 import co.gamestation.cameraman.rtsp.TransportHeader
+import java.io.EOFException
+import java.net.Socket
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -609,5 +616,399 @@ class RTCPWriterTest {
             offset += 2 + length
         }
         return items
+    }
+}
+
+/**
+ * A parsed RTSP response, for the tests that read the wire form back. Kept deliberately small and
+ * separate from the server's own types so a bug in `RTSPServerResponse.wireFormat` cannot cancel
+ * itself out here.
+ */
+data class WireReply(val statusCode: Int, val reasonPhrase: String, val headers: Map<String, String>, val body: String) {
+    fun header(name: String): String? = headers[name.lowercase()]
+
+    companion object {
+        /** One response from the front of [data], or null if it is not all there yet. */
+        fun parse(data: ByteArray): Pair<WireReply, Int>? {
+            val text = String(data, Charsets.ISO_8859_1)
+            val end = text.indexOf("\r\n\r\n")
+            if (end < 0) return null
+            val head = text.substring(0, end).split("\r\n")
+            val status = head[0].split(" ", limit = 3)
+            val headers = HashMap<String, String>()
+            for (line in head.drop(1)) {
+                val colon = line.indexOf(':')
+                if (colon > 0) headers[line.substring(0, colon).trim().lowercase()] = line.substring(colon + 1).trim()
+            }
+            val length = headers["content-length"]?.toIntOrNull() ?: 0
+            val bodyStart = end + 4
+            if (data.size < bodyStart + length) return null
+            val body = String(data, bodyStart, length, Charsets.UTF_8)
+            return WireReply(status[1].toInt(), status.getOrElse(2) { "" }, headers, body) to bodyStart + length
+        }
+
+        fun parse(response: RTSPServerResponse): WireReply = parse(response.wireFormat)!!.first
+    }
+}
+
+class RTSPResponderParameterTest {
+    private val sdp = "v=0\r\n"
+
+    private fun responder() = RTSPResponder(sessionIdentifier = "ABCD1234EF", sdp = sdp, hasAudio = true)
+
+    private fun parameterRequest(method: String, body: String, session: String? = null): RTSPServerRequest {
+        val headers = hashMapOf("cseq" to "9", "content-type" to "text/parameters")
+        if (session != null) headers["session"] = session
+        return RTSPServerRequest(method, "rtsp://10.0.0.1/live", headers, body.toByteArray(Charsets.UTF_8))
+    }
+
+    private fun responderWithParameters() = RTSPResponder(
+        sessionIdentifier = "ABCD1234EF",
+        sdp = sdp,
+        hasAudio = true
+    ) { request ->
+        when (request.method to request.body) {
+            RTSPResponder.ParameterRequest.Method.GET to "ptz.zoom\r\n" ->
+                RTSPResponder.ParameterResponse(body = "ptz.zoom: 3\r\n")
+            RTSPResponder.ParameterRequest.Method.SET to "ptz.zoom: 5\r\n" ->
+                RTSPResponder.ParameterResponse(body = "ptz.zoom: 5\r\n")
+            RTSPResponder.ParameterRequest.Method.SET to "device.cname: x\r\n" ->
+                RTSPResponder.ParameterResponse(458, "Parameter Is Read-Only", "device.cname\r\n")
+            else -> RTSPResponder.ParameterResponse(451, "Parameter Not Understood", request.body)
+        }
+    }
+
+    @Test
+    fun `OPTIONS advertises SET_PARAMETER, which is what Director probes for`() {
+        val outcome = responder().respond(RTSPServerRequest("OPTIONS", "rtsp://10.0.0.1/live", mapOf("cseq" to "1")))
+        val public = WireReply.parse(outcome.response).header("public") ?: ""
+        for (method in listOf("OPTIONS", "DESCRIBE", "SETUP", "PLAY", "TEARDOWN", "GET_PARAMETER", "SET_PARAMETER")) {
+            assertTrue("$method is advertised but not handled", public.contains(method))
+        }
+    }
+
+    @Test
+    fun `GET_PARAMETER with a body answers with parameters`() {
+        val outcome = responderWithParameters().respond(parameterRequest("GET_PARAMETER", "ptz.zoom\r\n"))
+        val parsed = WireReply.parse(outcome.response)
+
+        assertEquals(200, parsed.statusCode)
+        assertEquals("9", parsed.header("cseq"))
+        assertEquals("text/parameters", parsed.header("content-type"))
+        assertEquals("ptz.zoom: 3\r\n", parsed.body)
+        assertEquals(RTSPResponder.Effect.None, outcome.effect)
+    }
+
+    @Test
+    fun `GET_PARAMETER with a body is not understood without a handler`() {
+        val outcome = responder().respond(parameterRequest("GET_PARAMETER", "ptz.zoom\r\n"))
+        assertEquals(451, WireReply.parse(outcome.response).statusCode)
+    }
+
+    @Test
+    fun `SET_PARAMETER needs no session`() {
+        val responder = responderWithParameters()
+        val outcome = responder.respond(parameterRequest("SET_PARAMETER", "ptz.zoom: 5\r\n"))
+        val parsed = WireReply.parse(outcome.response)
+
+        assertEquals(200, parsed.statusCode)
+        assertEquals("ptz.zoom: 5\r\n", parsed.body)
+        // Server-level parameters carry no session.
+        assertNull(parsed.header("session"))
+        // A parameter write must not create or move a session.
+        assertEquals(RTSPResponder.State.INITIAL, responder.state)
+    }
+
+    @Test
+    fun `SET_PARAMETER errors keep their status and body`() {
+        val responder = responderWithParameters()
+        val readOnly = WireReply.parse(responder.respond(parameterRequest("SET_PARAMETER", "device.cname: x\r\n")).response)
+        assertEquals(458, readOnly.statusCode)
+        assertEquals("Parameter Is Read-Only", readOnly.reasonPhrase)
+        assertEquals("device.cname\r\n", readOnly.body)
+
+        val unknown = WireReply.parse(responder.respond(parameterRequest("SET_PARAMETER", "nope: 1\r\n")).response)
+        assertEquals(451, unknown.statusCode)
+    }
+
+    @Test
+    fun `SET_PARAMETER is not implemented without a handler`() {
+        val outcome = responder().respond(parameterRequest("SET_PARAMETER", "ptz.zoom: 5\r\n"))
+        assertEquals(501, WireReply.parse(outcome.response).statusCode)
+    }
+
+    @Test
+    fun `an empty SET_PARAMETER is a keepalive`() {
+        val outcome = responderWithParameters().respond(parameterRequest("SET_PARAMETER", ""))
+        val parsed = WireReply.parse(outcome.response)
+        assertEquals(200, parsed.statusCode)
+        assertEquals("", parsed.body)
+        assertNull(parsed.header("content-type"))
+    }
+
+    @Test
+    fun `a wrong session still refuses parameters`() {
+        val outcome = responderWithParameters().respond(parameterRequest("GET_PARAMETER", "ptz.zoom\r\n", session = "OTHER"))
+        assertEquals(454, WireReply.parse(outcome.response).statusCode)
+    }
+}
+
+/**
+ * A parameter exchange shaped exactly as GS Director's `RTSPRequestBuilder` puts it on the wire —
+ * request line, `CSeq`, `User-Agent`, `Content-Type`, `Content-Length`, CRLF throughout — parsed by
+ * this server's request parser, answered from the vocabulary, and read back the way Director's
+ * `RTSPResponse` reads it. The iOS suite runs the same exchange with Director's real code on both
+ * ends; the request bytes here are what that builder emits.
+ */
+class RTSPParameterInteropTest {
+    private val uri = "rtsp://192.168.7.118:8554/live/mainstream"
+    private var cseq = 1
+
+    /** A responder whose parameters come from a mutable snapshot, the way the phone's do. */
+    private class Phone(var snapshot: CameraSnapshot) {
+        val responder = RTSPResponder(sessionIdentifier = "S1", sdp = "v=0\r\n", hasAudio = true) { request ->
+            val current = snapshot
+            when (request.method) {
+                RTSPResponder.ParameterRequest.Method.GET ->
+                    when (val outcome = CameraParameters.respondToGet(request.body, current)) {
+                        is ParameterOutcome.Success -> RTSPResponder.ParameterResponse(body = outcome.value.encoded)
+                        is ParameterOutcome.Failure -> refusal(outcome)
+                    }
+                RTSPResponder.ParameterRequest.Method.SET ->
+                    when (val outcome = CameraParameters.parseSet(request.body, current)) {
+                        is ParameterOutcome.Success -> {
+                            val applied = CameraParameters.snapshot(outcome.value, current)
+                            snapshot = applied
+                            RTSPResponder.ParameterResponse(body = CameraParameters.echo(outcome.value, applied).encoded)
+                        }
+                        is ParameterOutcome.Failure -> refusal(outcome)
+                    }
+            }
+        }
+
+        private fun refusal(outcome: ParameterOutcome.Failure) = RTSPResponder.ParameterResponse(
+            outcome.error.statusCode, outcome.error.reasonPhrase, outcome.error.body
+        )
+    }
+
+    /** The bytes Director's builder writes for one request. */
+    private fun directorRequest(method: String, body: String? = null, contentType: Boolean = true): ByteArray {
+        val text = StringBuilder()
+        text.append("$method $uri RTSP/1.0\r\n")
+        text.append("CSeq: ${cseq++}\r\n")
+        text.append("User-Agent: GS Director/1.0\r\n")
+        if (body != null) {
+            if (contentType) text.append("Content-Type: text/parameters\r\n")
+            text.append("Content-Length: ${body.toByteArray(Charsets.UTF_8).size}\r\n")
+        }
+        text.append("\r\n")
+        return text.toString().toByteArray(Charsets.UTF_8) + (body?.toByteArray(Charsets.UTF_8) ?: ByteArray(0))
+    }
+
+    private fun exchange(phone: Phone, request: ByteArray): WireReply {
+        val parsed = RTSPServerRequest.parse(request)
+        assertNotNull(parsed)
+        assertEquals(request.size, parsed!!.consumed)
+        return WireReply.parse(phone.responder.respond(parsed.request).response)
+    }
+
+    private fun decode(body: String): CameraParameterSet = CameraParameterSet.decode(body).getOrNull()!!
+
+    @Test
+    fun `Director asks for everything and rebuilds the phone's state`() {
+        val phone = Phone(CameraParametersTest.snapshot())
+        val reply = exchange(phone, directorRequest("GET_PARAMETER", "*\r\n"))
+
+        assertEquals(200, reply.statusCode)
+        assertEquals("1", reply.header("cseq"))
+        assertEquals("text/parameters", reply.header("content-type"))
+        val snapshot = CameraParameters.decodeSnapshot(decode(reply.body))
+        assertNotNull(snapshot)
+        assertEquals(listOf(0.5, 1.0, 3.0, 9.0), snapshot!!.mapping.presetDisplayedZooms)
+        assertEquals("Third Base", snapshot.name)
+    }
+
+    @Test
+    fun `Director writes a zoom and reads the clamped value back`() {
+        val phone = Phone(CameraParametersTest.snapshot())
+        val reply = exchange(phone, directorRequest("SET_PARAMETER", "ptz.zoom: 12\r\n"))
+
+        assertEquals(200, reply.statusCode)
+        val set = decode(reply.body)
+        assertEquals(listOf("ptz.zoom"), set.names)
+        assertEquals("9", set["ptz.zoom"])
+
+        // The next read sees the write.
+        val readBack = exchange(phone, directorRequest("GET_PARAMETER", "ptz.zoom\r\n", contentType = false))
+        assertEquals("9", decode(readBack.body)["ptz.zoom"])
+    }
+
+    @Test
+    fun `a codec change carries its default bitrate, applied as one settings change`() {
+        val phone = Phone(CameraParametersTest.snapshot())
+        assertEquals(200, exchange(phone, directorRequest("SET_PARAMETER", "videoEncoder.encoding: H264\r\n")).statusCode)
+
+        val read = exchange(
+            phone,
+            directorRequest("GET_PARAMETER", "videoEncoder.encoding\r\nvideoEncoder.rateControl.bitrateLimit\r\n")
+        )
+        val set = decode(read.body)
+        assertEquals("H264", set["videoEncoder.encoding"])
+        assertEquals("6000", set["videoEncoder.rateControl.bitrateLimit"])
+    }
+
+    @Test
+    fun `errors reach Director with their RTSP status and the offending name`() {
+        val phone = Phone(CameraParametersTest.snapshot())
+
+        val readOnly = exchange(phone, directorRequest("SET_PARAMETER", "device.cname: x\r\n"))
+        assertEquals(458, readOnly.statusCode)
+        assertTrue(readOnly.body.startsWith("device.cname\r\n"))
+
+        val unknown = exchange(phone, directorRequest("GET_PARAMETER", "ptz.tilt\r\n"))
+        assertEquals(451, unknown.statusCode)
+
+        val bad = exchange(phone, directorRequest("SET_PARAMETER", "ptz.zoom: 3\r\nvideoEncoder.encoding: AV1\r\n"))
+        assertEquals(400, bad.statusCode)
+        assertTrue(bad.body.startsWith("videoEncoder.encoding\r\n"))
+
+        // Nothing from the mixed request took.
+        val zoom = exchange(phone, directorRequest("GET_PARAMETER", "ptz.zoom\r\n"))
+        assertEquals("1", decode(zoom.body)["ptz.zoom"])
+    }
+
+    @Test
+    fun `an empty GET_PARAMETER is still the keepalive it always was`() {
+        val phone = Phone(CameraParametersTest.snapshot())
+        val reply = exchange(phone, directorRequest("GET_PARAMETER"))
+        assertEquals(200, reply.statusCode)
+        assertEquals("", reply.body)
+        assertNull(reply.header("content-type"))
+    }
+}
+
+/**
+ * The server over a real loopback socket, with no encoder behind it. What the responder tests
+ * cannot settle: that a connection which only polls parameters is not shown as a viewer, and that
+ * playing and tearing down move the count.
+ *
+ * The `Context` is a bare wrapper: with `advertise = false` the server never touches it, and NSD is
+ * the one part of this file that needs a device.
+ */
+class RTSPServerLoopbackTest {
+    private val identity = DeviceIdentity("c94df9ca-d7c2-468f-8529-97d01fba14e7", "Loopback")
+
+    private fun startServer(): RTSPServer {
+        val server = RTSPServer(
+            context = android.content.ContextWrapper(null),
+            describe = { _, _ -> "v=0\r\n" },
+            hasAudio = { false },
+            identity = { identity },
+            requestKeyframe = {}
+        ) { request ->
+            when (request.method) {
+                RTSPResponder.ParameterRequest.Method.GET -> RTSPResponder.ParameterResponse(body = "ptz.zoom: 1\r\n")
+                RTSPResponder.ParameterRequest.Method.SET -> RTSPResponder.ParameterResponse(body = request.body)
+            }
+        }
+        server.start(port = 0, fallbackPort = 0, path = "/live/mainstream", advertise = false)
+        assertNotNull("the listener never became ready", server.currentStatus().port)
+        return server
+    }
+
+    private fun waitUntil(seconds: Double = 2.0, condition: () -> Boolean): Boolean {
+        val deadline = System.currentTimeMillis() + (seconds * 1000).toLong()
+        while (System.currentTimeMillis() < deadline) {
+            if (condition()) return true
+            Thread.sleep(25)
+        }
+        return condition()
+    }
+
+    /** The least client that can hold a socket open and read one response per request. */
+    private class LoopbackClient(port: Int) : AutoCloseable {
+        private val socket = Socket("127.0.0.1", port).apply {
+            soTimeout = 3_000
+            tcpNoDelay = true
+        }
+        private val input = socket.getInputStream()
+        private var buffer = ByteArray(0)
+
+        fun exchange(text: String): WireReply {
+            socket.getOutputStream().apply {
+                write(text.toByteArray(Charsets.UTF_8))
+                flush()
+            }
+            val chunk = ByteArray(64 * 1024)
+            while (true) {
+                WireReply.parse(buffer)?.let { (reply, consumed) ->
+                    buffer = buffer.copyOfRange(consumed, buffer.size)
+                    return reply
+                }
+                val read = input.read(chunk)
+                if (read < 0) throw EOFException("the server closed the connection")
+                buffer += chunk.copyOf(read)
+            }
+        }
+
+        override fun close() = socket.close()
+    }
+
+    @Test
+    fun `a control-only connection is accepted but is not a viewer`() {
+        val server = startServer()
+        try {
+            val port = server.currentStatus().port!!
+            LoopbackClient(port).use { client ->
+                val options = client.exchange("OPTIONS rtsp://127.0.0.1/live/mainstream RTSP/1.0\r\nCSeq: 1\r\n\r\n")
+                assertEquals(200, options.statusCode)
+                assertTrue(options.header("public")?.contains("SET_PARAMETER") == true)
+
+                val answer = client.exchange(
+                    "GET_PARAMETER rtsp://127.0.0.1/live/mainstream RTSP/1.0\r\nCSeq: 2\r\n" +
+                        "Content-Type: text/parameters\r\nContent-Length: 10\r\n\r\nptz.zoom\r\n"
+                )
+                assertEquals(200, answer.statusCode)
+                assertEquals("ptz.zoom: 1\r\n", answer.body)
+
+                assertTrue(waitUntil { server.currentStatus().acceptedClients == 1 })
+                // Polling parameters is not watching the stream.
+                assertEquals(0, server.currentStatus().clientCount)
+            }
+        } finally {
+            server.stop()
+        }
+    }
+
+    @Test
+    fun `a playing session is a viewer until it tears down`() {
+        val server = startServer()
+        try {
+            val port = server.currentStatus().port!!
+            LoopbackClient(port).use { client ->
+                val setup = client.exchange(
+                    "SETUP rtsp://127.0.0.1/live/mainstream/${SDPBuilder.videoTrackControl} RTSP/1.0\r\nCSeq: 1\r\n" +
+                        "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n"
+                )
+                assertEquals(200, setup.statusCode)
+                val session = setup.header("session")!!.substringBefore(";")
+                assertEquals(0, server.currentStatus().clientCount)
+
+                val play = client.exchange(
+                    "PLAY rtsp://127.0.0.1/live/mainstream RTSP/1.0\r\nCSeq: 2\r\nSession: $session\r\n\r\n"
+                )
+                assertEquals(200, play.statusCode)
+                assertTrue("PLAY did not register a viewer", waitUntil { server.currentStatus().clientCount == 1 })
+
+                val teardown = client.exchange(
+                    "TEARDOWN rtsp://127.0.0.1/live/mainstream RTSP/1.0\r\nCSeq: 3\r\nSession: $session\r\n\r\n"
+                )
+                assertEquals(200, teardown.statusCode)
+                assertTrue("TEARDOWN left the viewer counted", waitUntil { server.currentStatus().clientCount == 0 })
+                assertTrue(waitUntil { server.currentStatus().closedClients == 1 })
+            }
+        } finally {
+            server.stop()
+        }
     }
 }
