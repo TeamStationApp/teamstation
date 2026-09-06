@@ -106,7 +106,7 @@ public struct RecordingsView: View {
               Text(dateLabel(recording.startedAt))
                 .font(.system(size: 15, weight: .semibold, design: .monospaced))
                 .foregroundStyle(.primary)
-              Text(lengthLabel(recording))
+              Text(lengthLabel(recording, live: live))
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.secondary)
             }
@@ -402,8 +402,13 @@ public struct RecordingsView: View {
     return formatter.string(from: wall.date)
   }
 
-  private func lengthLabel(_ recording: RecordingSummary) -> String {
-    let seconds = max(0, recording.duration)
+  /// Only the take that is actually rolling counts up. A take the app never closed has a real
+  /// length, taken from the segments it wrote; giving it a running clock is how a 74-minute
+  /// recording came to read as six hours in this list.
+  private func lengthLabel(_ recording: RecordingSummary, live: Bool) -> String {
+    let seconds = live
+      ? max(0, Date().timeIntervalSince1970 - recording.startedAt.seconds)
+      : max(0, recording.duration)
     let minutes = Int(seconds) / 60
     let remainder = Int(seconds) % 60
     if minutes >= 60 {

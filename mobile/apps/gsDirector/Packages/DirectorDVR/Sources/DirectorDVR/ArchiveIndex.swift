@@ -25,23 +25,37 @@ public struct RecordingSummary: Sendable, Equatable, Identifiable {
   public var endedAt: WallClock?
   public var programFilename: String?
   public var sourceIDs: [SourceID]
+  /// End of the last media segment written for this recording. Stands in for `endedAt` on a take
+  /// the app never got to close.
+  public var lastSegmentEnd: WallClock?
 
+  /// How long the take is, from what was actually written.
+  ///
+  /// This used to fall back to *now* when `endedAt` was nil, which is right for the take that is
+  /// rolling and wrong for every take a crash left open: the row counted up one second per second
+  /// forever, so a 74-minute recording read as six hours. A live take's running length is the
+  /// view's business, since only the view knows which recording is live.
   public var duration: TimeInterval {
-    (endedAt ?? WallClock(seconds: Date().timeIntervalSince1970)) - startedAt
+    ((endedAt ?? lastSegmentEnd) ?? startedAt) - startedAt
   }
+
+  /// The app died before `endRecording` ran, so the take was closed from its segments.
+  public var wasInterrupted: Bool { endedAt == nil }
 
   public init(
     id: Int64,
     startedAt: WallClock,
     endedAt: WallClock?,
     programFilename: String?,
-    sourceIDs: [SourceID]
+    sourceIDs: [SourceID],
+    lastSegmentEnd: WallClock? = nil
   ) {
     self.id = id
     self.startedAt = startedAt
     self.endedAt = endedAt
     self.programFilename = programFilename
     self.sourceIDs = sourceIDs
+    self.lastSegmentEnd = lastSegmentEnd
   }
 }
 
@@ -180,9 +194,11 @@ public final class ArchiveIndex: @unchecked Sendable {
   public func recordings() throws -> [RecordingSummary] {
     let rows = try store.query(
       """
-      SELECT id, started_at, ended_at, program_filename
-      FROM recordings
-      ORDER BY started_at DESC;
+      SELECT r.id, r.started_at, r.ended_at, r.program_filename,
+        (SELECT MAX(s.start_wall + s.duration) FROM segments s
+          WHERE s.recording_id = r.id AND s.is_initialization = 0)
+      FROM recordings r
+      ORDER BY r.started_at DESC;
       """
     )
     return try rows.map { row in
@@ -190,12 +206,14 @@ public final class ArchiveIndex: @unchecked Sendable {
       let started = WallClock(seconds: row.double(1))
       let ended: WallClock? = row.values[2] == .null ? nil : WallClock(seconds: row.double(2))
       let program = row.values[3] == .null || row.string(3).isEmpty ? nil : row.string(3)
+      let lastSegment: WallClock? = row.values[4] == .null ? nil : WallClock(seconds: row.double(4))
       return RecordingSummary(
         id: id,
         startedAt: started,
         endedAt: ended,
         programFilename: program,
-        sourceIDs: try sourceIDs(in: id)
+        sourceIDs: try sourceIDs(in: id),
+        lastSegmentEnd: lastSegment
       )
     }
   }
@@ -437,6 +455,48 @@ public final class ArchiveIndex: @unchecked Sendable {
   }
 
   /// Drops index rows whose files are gone and reports files that exist but are unindexed.
+  /// Closes recordings the app never got to close, at the end of the media it actually wrote.
+  ///
+  /// A take left open is not merely cosmetic: its length counts up in the Recordings list
+  /// forever, and the export path skips any recording without an end, so the footage cannot be
+  /// got at. Runs at launch, before anything reads the timeline and before a new take can begin,
+  /// so the only row it can touch is one no longer being written.
+  @discardableResult
+  public func closeInterruptedRecordings() throws -> Int {
+    let rows = try store.query(
+      """
+      SELECT r.id,
+        (SELECT MAX(s.start_wall + s.duration) FROM segments s
+          WHERE s.recording_id = r.id AND s.is_initialization = 0)
+      FROM recordings r
+      WHERE r.ended_at IS NULL;
+      """
+    )
+    var closed = 0
+    for row in rows {
+      let id = row.int(0)
+      // A take with no segments never wrote anything, so it ends where it started rather than
+      // being given a length invented from the clock.
+      let endedAt: Double
+      if row.values[1] == .null {
+        let started = try store.query(
+          "SELECT started_at FROM recordings WHERE id = ?;",
+          [ .integer(id) ]
+        )
+        guard let first = started.first else { continue }
+        endedAt = first.double(0)
+      } else {
+        endedAt = row.double(1)
+      }
+      try store.execute(
+        "UPDATE recordings SET ended_at = ? WHERE id = ? AND ended_at IS NULL;",
+        [ .real(endedAt), .integer(id) ]
+      )
+      closed += 1
+    }
+    return closed
+  }
+
   /// Run at launch so a mid-segment kill cannot leave the index describing a fiction.
   @discardableResult
   public func reconcile(with fileManager: FileManager = .default) throws -> (removed: Int, orphans: [URL]) {
