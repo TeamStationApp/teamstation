@@ -42,7 +42,19 @@ data class LaunchConfiguration(
     val cameraName: String? = null,
     /** Pins the identity so a flow can assert an exact CNAME instead of whatever is stored. */
     val identityUUID: String? = null,
-    val unknownKeys: List<String> = emptyList()
+    val unknownKeys: List<String> = emptyList(),
+    /**
+     * Which stream settings this launch named outright. Those must not be replaced by what the
+     * operator last saved on the device, or a flow that pins a format would depend on the handset.
+     */
+    val providedSettingFields: Set<StreamSettings.Field> = emptySet(),
+    /**
+     * Whether this launch takes part in saved settings, reading them at start-up and writing them on
+     * every change. Off under `uiTest` so a flow neither inherits nor leaves behind a preference —
+     * but settable, because the operator runs with `uiTest` on to get the control server and still
+     * expects the camera to come back the way it was left.
+     */
+    val persistSettings: Boolean = true
 ) {
     companion object {
         val knownKeys = listOf(
@@ -62,7 +74,9 @@ data class LaunchConfiguration(
             "measureCapabilities",
             "recordSeconds",
             "selfTest",
-            "advertise"
+            "advertise",
+            "persistSettings",
+            "disabledLenses"
         )
 
         fun from(intent: Intent?): LaunchConfiguration {
@@ -92,6 +106,12 @@ data class LaunchConfiguration(
             values["height"]?.toIntOrNull()?.let { settings.height = it }
             values["frameRate"]?.toDoubleOrNull()?.let { settings.frameRate = it }
             bool(values["audioEnabled"])?.let { settings.audioEnabled = it }
+            values["disabledLenses"]?.let { list ->
+                settings.disabledLensIDs = list.split(",")
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() }
+                    .toSet()
+            }
 
             val isUITest = bool(values["uiTest"]) ?: false
             return LaunchConfiguration(
@@ -105,7 +125,14 @@ data class LaunchConfiguration(
                 settings = settings,
                 cameraName = values["cameraName"],
                 identityUUID = values["identityUUID"],
-                unknownKeys = unknown
+                unknownKeys = unknown,
+                // Recorded from the keys present rather than inside each branch: a field counts as
+                // provided when the key was there, even if the value failed to parse, because a typo
+                // should not hand the decision back to whatever is on disk.
+                providedSettingFields = StreamSettings.Field.entries
+                    .filter { values.containsKey(it.key) }
+                    .toSet(),
+                persistSettings = bool(values["persistSettings"]) ?: !isUITest
             )
         }
 

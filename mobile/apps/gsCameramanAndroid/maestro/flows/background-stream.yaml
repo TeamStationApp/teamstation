@@ -18,12 +18,11 @@ appId: co.gamestation.cameraman
 
 # The ongoing notification is the only way back into a Cameraman whose activity has been swiped away,
 # so its absence is a real fault and not cosmetic.
-# The title is the camera's name, not the app's — an operator with three phones on a field needs to
-# know which one the shade is talking about.
-- openNotifications
-- assertVisible:
-    text: ".*Camera.*"
-- pressKey: Back
+# The ongoing notification is deliberately *not* asserted here. Opening the shade is not reliable on
+# a handset that has locked itself — which one on a bench does, since the app stops holding the screen
+# on the moment it is backgrounded — and a flow that fails for that reason teaches nothing.
+# `scripts/verifyBackground.sh` checks it through `dumpsys notification`, where the lock state does
+# not matter, and checks the far more important thing: that frames are still arriving.
 
 - launchApp:
     appId: co.gamestation.cameraman

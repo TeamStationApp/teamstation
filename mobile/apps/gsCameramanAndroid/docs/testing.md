@@ -8,7 +8,7 @@ Four layers, each answering something the others cannot.
 npm run test:unit
 ```
 
-157 tests on the JVM, in about three seconds. They run there rather than on a device because `core`
+201 tests on the JVM, in about three seconds. They run there rather than on a device because `core`
 and `rtsp` have no Android dependencies, which is a deliberate property of the layout and not a
 coincidence.
 
@@ -26,6 +26,11 @@ coincidence.
 | `DeviceIdentityTest` | renaming does not move the identity; a malformed UUID is replaced |
 | `CaptureRotationTest` | the measured rotation rule, so a regression fails here rather than on a field |
 | `NALUnitConversionTest` | Annex-B **and** AVCC, because Producer's decoder consumes the latter |
+| `RTPTimestampSequencerTest` | the 32-bit rollover is a forward step, not a repeat — a bug that only appears 13.3 hours in |
+| `LensSelectionTest` | a disabled lens clamps the zoom range, and the last one cannot be turned off |
+| `StreamSettingsPersistenceTest` | a stored set missing a field keeps defaults instead of resetting everything |
+| `BatteryStatusTest` / `ThermalBadgeLevelTest` | the overlay pills, ported from the iOS suites so both platforms turn colour at the same threshold |
+| `PreferredAddressTest` | the address Director is handed is one it can actually reach |
 
 Two things these deliberately do *not* mock: there is no fake camera and no fake socket. Anything
 that would need one is covered by the layers below, on real hardware, because a test against a mock
@@ -83,7 +88,15 @@ Forwarded over `adb` rather than Wi-Fi, so it works on a bench with no route to 
 is a real difference from the iOS build, where the same channel needs an IP address.
 
 `dump-state`, `clients`, `flip-camera`, `force-keyframe`, `reset`, `set-zoom`, `set-format`,
-`set-bitrate`, `set-codec`, `set-name`, `set-audio`, `set-rotation`.
+`set-bitrate`, `set-codec`, `set-name`, `set-audio`, `set-video`, `set-lenses`, `set-rotation`,
+`set-send-delay`.
+
+`set-send-delay` holds outgoing frames back to imitate a congested link, in three shapes because they
+fail differently: a constant `ms` is the weak case that any correct receiver absorbs, `jitter` spreads
+arrivals either side of it, and `burst` clumps them the way Wi-Fi does under contention. The capture
+times the frames carry are untouched, so a receiver sees late delivery with an honest timestamp —
+which only works because the RTCP sender report is stamped from capture time too. A report stamped at
+send would slide with the delay and hide the very fault being injected.
 
 It exists so a state assertion does not depend on gesture precision: a flow that pinches and then
 asserts a zoom conflates "the app got the zoom wrong" with "the tap landed eight points off". A
@@ -111,7 +124,10 @@ maestro test maestro/flows/smoke.yaml
 | `camera-zoom` | preset pills switch lenses, flip changes the preset row |
 | `settings-codec-bitrate` | codec and bitrate survive leaving the settings screen |
 | `rename-camera` | rename takes effect, identity does not move, empty falls back |
-| `background-stream` | the notification survives HOME and the stream keeps serving |
+| `background-stream` | the app backgrounds and comes back |
+| `settings-lenses` | a lens toggled off loses its pill on the zoom rail |
+| `thermal-visuals` | the thermal pill shows each level on demand |
+| `settings-persist` | a codec chosen before a relaunch is still chosen after it |
 
 ### Two things that will waste an afternoon
 

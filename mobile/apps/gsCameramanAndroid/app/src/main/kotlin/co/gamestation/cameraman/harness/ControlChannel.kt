@@ -27,6 +27,22 @@ sealed interface ControlCommand {
      * gets measured instead of argued about.
      */
     data class SetRotation(val degrees: Int?) : ControlCommand
+
+    /** The lenses to turn off, by id. An empty list turns them all back on. */
+    data class SetLenses(val disabled: List<String>) : ControlCommand
+
+    /** Blanks the encoded picture without stopping capture. */
+    data class SetVideo(val on: Boolean) : ControlCommand
+
+    /**
+     * Holds outgoing frames back to imitate a congested link. All three in milliseconds; all zero
+     * restores immediate delivery.
+     */
+    data class SetSendDelay(
+        val milliseconds: Double,
+        val jitter: Double,
+        val burst: Double
+    ) : ControlCommand
     data object ForceKeyframe : ControlCommand
     data object Clients : ControlCommand
     data object Reset : ControlCommand
@@ -86,6 +102,22 @@ object ControlChannel {
 
             // An empty or absent value clears the override and puts the derived rule back in charge.
             "set-rotation" -> ControlCommand.SetRotation(query["degrees"]?.toIntOrNull())
+
+            "set-lenses" -> ControlCommand.SetLenses(
+                (query["disabled"] ?: "")
+                    .split(",")
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() }
+            )
+
+            "set-video" -> query["on"]?.let { ControlCommand.SetVideo(isTruthy(it)) }
+
+            // Every field optional so a flow can set only what it is exercising; omitted means zero.
+            "set-send-delay" -> ControlCommand.SetSendDelay(
+                milliseconds = query["ms"]?.toDoubleOrNull() ?: 0.0,
+                jitter = query["jitter"]?.toDoubleOrNull() ?: 0.0,
+                burst = query["burst"]?.toDoubleOrNull() ?: 0.0
+            )
 
             else -> null
         }

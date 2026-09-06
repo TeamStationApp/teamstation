@@ -5,6 +5,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -56,6 +57,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import co.gamestation.cameraman.capture.FormatCatalogue
+import co.gamestation.cameraman.core.CameraLens
+import co.gamestation.cameraman.core.LensSelection
+import co.gamestation.cameraman.core.ThermalBadgeLevel
 import co.gamestation.cameraman.core.StreamCodec
 import co.gamestation.cameraman.engine.AppEnvironment
 import co.gamestation.cameraman.ui.theme.MonospaceLabel
@@ -79,6 +83,7 @@ fun SettingsScreen(environment: AppEnvironment, onDone: () -> Unit) {
     val context = LocalContext.current
     val identity by environment.identity.collectAsStateWithLifecycle()
     val serverStatus by environment.serverStatus.collectAsStateWithLifecycle()
+    val lensCatalog by environment.lensCatalog.collectAsStateWithLifecycle()
 
     var draftName by remember { mutableStateOf(identity.name) }
     var draft by remember { mutableStateOf(environment.settings.value.copy()) }
@@ -127,9 +132,52 @@ fun SettingsScreen(environment: AppEnvironment, onDone: () -> Unit) {
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(horizontal = 16.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                .padding(horizontal = 14.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
+            // Three columns, not two. A landscape window is 923dp wide and 411dp tall, so width is
+            // the resource there is plenty of and height is the one that runs out — and a settings
+            // screen whose settings have to be scrolled for is one whose settings do not get found.
+            // Five lens rows earn a column of their own.
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                VideoCard(
+                    draft = draft,
+                    options = options,
+                    selected = selected,
+                    onDraftChange = { draft = it }
+                )
+                AudioCard(
+                    audioEnabled = draft.audioEnabled,
+                    onAudioChange = { draft = draft.copy(audioEnabled = it) }
+                )
+            }
+
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                LensesCard(
+                    catalog = lensCatalog,
+                    selection = LensSelection(draft.disabledLensIDs),
+                    onToggle = { lens, enabled ->
+                        val next = LensSelection(draft.disabledLensIDs)
+                            .toggling(lens, enabled, lensCatalog)
+                        draft = draft.copy(disabledLensIDs = next.disabledIDs)
+                    }
+                )
+
+                if (environment.launch.isUITest) {
+                    ThermalTestCard { environment.previewThermal(it) }
+                }
+            }
+
             Column(
                 modifier = Modifier
                     .weight(1f)
@@ -147,24 +195,6 @@ fun SettingsScreen(environment: AppEnvironment, onDone: () -> Unit) {
                     draftName = draftName,
                     onNameChange = { draftName = it },
                     identifier = identity.cname
-                )
-            }
-
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                VideoCard(
-                    draft = draft,
-                    options = options,
-                    selected = selected,
-                    onDraftChange = { draft = it }
-                )
-                AudioCard(
-                    audioEnabled = draft.audioEnabled,
-                    onAudioChange = { draft = draft.copy(audioEnabled = it) }
                 )
             }
         }
@@ -278,7 +308,7 @@ private fun NameCard(draftName: String, onNameChange: (String) -> Unit, identifi
                 .padding(horizontal = 16.dp)
                 .testTag("settings-name-field")
         )
-        ValueRow("Identifier", identifier, "settings-cname")
+        StackedValue("Identifier", identifier, "settings-cname")
     }
 }
 
@@ -396,6 +426,80 @@ private fun VideoCard(
     }
 }
 
+/**
+ * One row per detected lens. Millimetre labels come from the optics, so each handset lists the
+ * cameras it actually has rather than a table someone typed in.
+ */
+@Composable
+private fun LensesCard(
+    catalog: List<CameraLens>,
+    selection: LensSelection,
+    onToggle: (CameraLens, Boolean) -> Unit
+) {
+    if (catalog.isEmpty()) return
+    SettingsCard("Lenses") {
+        for (lens in catalog) {
+            val enabled = selection.isEnabled(lens)
+            // The last lens at a position cannot be turned off: capture would have nothing to open.
+            // The row stays visible and stops responding rather than disappearing, so it is obvious
+            // why it will not move.
+            val canChange = enabled && selection.canDisable(lens, catalog) || !enabled
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 2.dp)
+            ) {
+                Text(
+                    lens.settingsLabel,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (canChange) {
+                        MaterialTheme.colorScheme.onSurface
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    modifier = Modifier.weight(1f)
+                )
+                Switch(
+                    checked = enabled,
+                    onCheckedChange = { onToggle(lens, it) },
+                    enabled = canChange,
+                    modifier = Modifier.testTag(lens.testTag)
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Forces the thermal pill to each level for a few seconds.
+ *
+ * Only under `uiTest`. A pill that only appears when a phone is genuinely hot cannot be checked
+ * before a match, and "wait for it to overheat" is not a test step.
+ */
+@Composable
+private fun ThermalTestCard(onPreview: (ThermalBadgeLevel) -> Unit) {
+    // A bare row rather than a card: this is test chrome, and the height a card's title would cost
+    // is height the lens list needs.
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("settings-test-thermal")
+    ) {
+        for (level in ThermalBadgeLevel.entries) {
+            TextButton(
+                onClick = { onPreview(level) },
+                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                modifier = Modifier.testTag("settings-test-thermal-${level.rawValue}")
+            ) {
+                Text(level.label, style = MaterialTheme.typography.labelSmall)
+            }
+        }
+    }
+}
+
 @Composable
 private fun AudioCard(audioEnabled: Boolean, onAudioChange: (Boolean) -> Unit) {
     SettingsCard("Audio") {
@@ -416,6 +520,35 @@ private fun AudioCard(audioEnabled: Boolean, onAudioChange: (Boolean) -> Unit) {
                 modifier = Modifier.testTag("settings-audio")
             )
         }
+    }
+}
+
+/**
+ * A label above its value.
+ *
+ * For anything too long to sit beside its label in a narrow column — the RTSP address, the camera's
+ * identifier. Both are read character by character against a second device, so ellipsising them is
+ * not an option and squeezing the label until it wraps one letter per line is worse.
+ */
+@Composable
+private fun StackedValue(label: String, value: String, testTag: String) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp)
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            value,
+            style = MonospaceLabel,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.testTag(testTag)
+        )
     }
 }
 

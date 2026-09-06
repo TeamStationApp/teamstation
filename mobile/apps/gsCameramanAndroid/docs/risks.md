@@ -40,6 +40,23 @@ picture. That is the iOS build's behaviour too — it ignores portrait angles an
 landscape one — so it is a shared product decision rather than a port defect. It is worth knowing
 before mounting a rig.
 
+## A disabled lens is a zoom clamp, and the clamp is approximate
+
+Turning off the telephoto stops the range one hundredth of a stop below its derived switchover. That
+switchover is itself derived from focal lengths rather than published, so on a handset whose real
+handover sits slightly lower than the derivation says, a zoom near the ceiling could still land on
+the lens the operator turned off. Measuring the true handover — by watching
+`LOGICAL_MULTI_CAMERA_ACTIVE_PHYSICAL_ID` across a sweep — would settle both this and the 4.1x/5x
+disagreement at once, and is not yet written.
+
+## Silence is for the archive, not the wire
+
+`SilenceSource` keeps one AAC access unit per 1024 samples during a recording, so a mute does not
+come back as a shortened take. It is deliberately not in the live path: a muted camera has no audio
+section in its SDP at all, which is the documented contract on both platforms. If Director ever wants
+a continuous audio clock from a muted camera, that is a change to the contract and to both builds,
+not something to switch on here alone.
+
 ## Audio and video are on separate clocks
 
 `AudioRecord` is a separate device from the camera with its own clock, where AVFoundation gives both

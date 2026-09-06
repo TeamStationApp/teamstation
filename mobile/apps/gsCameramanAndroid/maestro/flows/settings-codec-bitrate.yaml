@@ -12,14 +12,16 @@ appId: co.gamestation.cameraman
 
 - tapOn:
     id: "settings-button"
-- assertVisible:
-    id: "settings-codec-h264"
-
-- tapOn:
-    id: "settings-codec-hevc"
-# Switching codec carries the matching default rate across: 6 Mbps for H.264, 4 for HEVC.
+# HEVC is the default: the same picture at two thirds the rate, which is what lets four cameras
+# share a match-day Wi-Fi.
 - assertVisible:
     text: "Bitrate  4.0 Mbps"
+
+- tapOn:
+    id: "settings-codec-h264"
+# Switching codec carries the matching default rate across: 6 Mbps for H.264, 4 for HEVC.
+- assertVisible:
+    text: "Bitrate  6.0 Mbps"
 
 - tapOn:
     id: "settings-done"
@@ -30,10 +32,10 @@ appId: co.gamestation.cameraman
 - tapOn:
     id: "settings-button"
 - assertVisible:
-    text: "Bitrate  4.0 Mbps"
-- tapOn:
-    id: "settings-codec-h264"
-- assertVisible:
     text: "Bitrate  6.0 Mbps"
+- tapOn:
+    id: "settings-codec-hevc"
+- assertVisible:
+    text: "Bitrate  4.0 Mbps"
 - tapOn:
     id: "settings-done"

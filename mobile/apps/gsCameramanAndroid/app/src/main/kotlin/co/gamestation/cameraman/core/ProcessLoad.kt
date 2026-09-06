@@ -83,10 +83,21 @@ object ProcessLoad {
      * a heap reading would stay flat through exactly the leak this is here to catch. It costs a
      * few milliseconds, which is why nothing polls it faster than the state dump does.
      */
-    fun physFootprintMB(): Int {
+    fun physFootprintMB(): Int = memoryInfo().totalPss / 1024
+
+    /**
+     * Private dirty pages — memory this process alone is holding.
+     *
+     * Soak telemetry watches it alongside [physFootprintMB]: PSS includes a share of everything the
+     * process maps in common with others, so a rise in PSS can be someone else's doing, while a rise
+     * here cannot.
+     */
+    fun residentSizeMB(): Int = memoryInfo().totalPrivateDirty / 1024
+
+    private fun memoryInfo(): Debug.MemoryInfo {
         val info = Debug.MemoryInfo()
         Debug.getMemoryInfo(info)
-        return info.totalPss / 1024
+        return info
     }
 
     /**
