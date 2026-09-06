@@ -219,7 +219,7 @@ public final class AppEnvironment {
   private let compositor: MetalCompositor?
   /// Builds the live-camera discovery. Injected because the transport lives in its own module and
   /// this one is written against `SourceDiscovery` alone.
-  private let discoveryFactory: (@Sendable () -> SourceDiscovery?)?
+  private let discoveryFactory: (@Sendable (SourceKind) -> SourceDiscovery?)?
   private let selectionStore: SourceSelectionStore
   /// The named-camera cache, shared with discovery so both agree on which camera is which.
   public let cameras: CameraRegistry
@@ -275,7 +275,7 @@ public final class AppEnvironment {
   public init(
     launch: LaunchConfiguration = .resolve(),
     cameras: CameraRegistry? = nil,
-    discoveryFactory: (@Sendable () -> SourceDiscovery?)? = nil
+    discoveryFactory: (@Sendable (SourceKind) -> SourceDiscovery?)? = nil
   ) {
     self.launch = launch
     self.discoveryFactory = discoveryFactory
@@ -435,6 +435,7 @@ public final class AppEnvironment {
     case .synthetic4: .synthetic
     case .file4: .file
     case .rtsp: .rtsp
+    case .ndi: .ndi
     }
   }
 
@@ -456,9 +457,10 @@ public final class AppEnvironment {
       )
     case .file4:
       SourceProfileFactory.fileDiscovery(fixtures: fixtureURLs(), clock: clock)
-    case .rtsp:
-      // Injected by the app target, so this module still never imports a transport.
-      discoveryFactory?()
+    case .rtsp, .ndi:
+      // Injected by the app target, so this module still never imports a transport. The kind is
+      // passed through because there is now more than one live transport to choose between.
+      discoveryFactory?(kind)
     }
 
     guard let discovery else {

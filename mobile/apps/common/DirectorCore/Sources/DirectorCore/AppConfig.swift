@@ -30,12 +30,20 @@ public struct ProgramResolution: Hashable, Sendable, Codable {
 /// Everything the operator can change, persisted in `UserDefaults` and readable from any
 /// thread as an immutable value.
 ///
-/// Note what is *not* here: the quality of a camera's own recording. Per-camera archives are a copy
-/// of what the camera sent, so their codec, resolution and frame rate are the camera's to choose
-/// and there is nothing to configure. The codec and canvas settings below describe the programme
-/// master, which is a composite and therefore has to be encoded.
+/// An RTSP camera's archive is a copy of what it sent, so its codec, resolution and frame rate are
+/// the camera's to choose and there is nothing here to configure. NDI is the exception:
+/// the free SDK decodes before a receiver ever sees a frame, so an NDI camera's archive is a
+/// re-encode and `sourceEncodeCodec` is what it is encoded with. The programme settings below
+/// describe the master, which is a composite and has to be encoded whatever the cameras are.
 public struct AppConfig: Hashable, Sendable, Codable {
   public var programCodec: ProgramCodec
+  /// Codec for any source the app has to encode to archive — today, NDI cameras.
+  ///
+  /// HEVC by default because the encode budget decides how many cameras can be recorded at once:
+  /// the same hardware sustains 118 fps of 1080p H.264 and 296 fps of 1080p HEVC, which at 60 fps
+  /// per camera is the difference between two cameras and four. H.264 is offered for a player that
+  /// cannot open HEVC.
+  public var sourceEncodeCodec: ProgramCodec
   public var programResolution: ProgramResolution
   public var programFrameRate: Int
   public var gopSeconds: Double
@@ -70,6 +78,7 @@ public struct AppConfig: Hashable, Sendable, Codable {
 
   public init(
     programCodec: ProgramCodec = .hevc,
+    sourceEncodeCodec: ProgramCodec = .hevc,
     programResolution: ProgramResolution = .hd1080,
     programFrameRate: Int = 30,
     gopSeconds: Double = 2,
@@ -85,6 +94,7 @@ public struct AppConfig: Hashable, Sendable, Codable {
     streamURL: String = ""
   ) {
     self.programCodec = programCodec
+    self.sourceEncodeCodec = sourceEncodeCodec
     self.programResolution = programResolution
     self.programFrameRate = programFrameRate
     self.gopSeconds = gopSeconds
@@ -122,6 +132,10 @@ public struct AppConfig: Hashable, Sendable, Codable {
     self.init(
       programCodec: try container.decodeIfPresent(ProgramCodec.self, forKey: .programCodec)
         ?? fallback.programCodec,
+      sourceEncodeCodec: try container.decodeIfPresent(
+        ProgramCodec.self,
+        forKey: .sourceEncodeCodec
+      ) ?? fallback.sourceEncodeCodec,
       programResolution: try container.decodeIfPresent(
         ProgramResolution.self,
         forKey: .programResolution

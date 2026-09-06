@@ -136,9 +136,11 @@ public enum SourceSelectionRules {
   }
 
   /// Synthetic and file rows persist. RTSP only persists when the SourceID is a CameraRecord UUID.
+  /// An NDI row always persists: its SourceID is derived from the camera's own NDI name rather
+  /// than from an address, so it survives the camera moving and is meaningful again next launch.
   public static func isPersistable(_ selection: SourceSelection) -> Bool {
     switch selection.kind {
-    case .synthetic, .file:
+    case .synthetic, .file, .ndi:
       return true
     case .rtsp:
       return CameraIdentityRules.isHardenedSourceID(selection.id)
