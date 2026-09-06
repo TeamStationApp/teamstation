@@ -74,12 +74,19 @@ public enum NDIFrameValidator {
   ///
   /// The receiver asks for `NDIlib_recv_color_format_fastest`, so UYVY is what almost every camera
   /// produces; the 4:2:0 layouts appear from NDI|HX senders, and BGRA/RGBA from software senders
-  /// such as a screen capture. The 16-bit and alpha formats (P216, PA16, UYVA) are deliberately
-  /// out: this pipeline is 8-bit 4:2:0 end to end and converting down would cost a pass per frame
-  /// to throw the extra precision away.
+  /// such as a screen capture.
+  ///
+  /// UYVA is accepted and its alpha plane ignored. `fastest` hands back UYVA rather than UYVY
+  /// whenever the *sender* declares an alpha channel — which a graphics feed routinely does — and
+  /// the colour plane in front of that alpha is ordinary UYVY. Refusing it would show a black tile
+  /// for a stream that reads perfectly well.
+  ///
+  /// The 16-bit formats (P216, PA16) stay out: this pipeline is 8-bit 4:2:0 end to end, so
+  /// converting them would cost a pass per frame to throw the extra precision away.
   public static func isSupported(_ fourCC: NDIlib_FourCC_video_type_e) -> Bool {
     switch fourCC {
     case NDIlib_FourCC_video_type_UYVY,
+         NDIlib_FourCC_video_type_UYVA,
          NDIlib_FourCC_video_type_NV12,
          NDIlib_FourCC_video_type_I420,
          NDIlib_FourCC_video_type_YV12,
@@ -97,7 +104,7 @@ public enum NDIFrameValidator {
   /// row, which is why the plane maths below all key off `xres`.
   static func minimumStride(for fourCC: NDIlib_FourCC_video_type_e, width: Int) -> Int {
     switch fourCC {
-    case NDIlib_FourCC_video_type_UYVY: width * 2
+    case NDIlib_FourCC_video_type_UYVY, NDIlib_FourCC_video_type_UYVA: width * 2
     case NDIlib_FourCC_video_type_NV12,
          NDIlib_FourCC_video_type_I420,
          NDIlib_FourCC_video_type_YV12: width
