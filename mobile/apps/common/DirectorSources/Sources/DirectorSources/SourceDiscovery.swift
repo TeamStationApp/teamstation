@@ -5,6 +5,7 @@ public enum SourceKind: String, Sendable, Codable, CaseIterable {
   case synthetic
   case file
   case rtsp
+  case ndi
 
   /// Whether this kind represents real cameras on the network. Drives the HUD's availability
   /// readout and tells the operator that an empty source list means a network problem rather
@@ -12,7 +13,20 @@ public enum SourceKind: String, Sendable, Codable, CaseIterable {
   public var isLive: Bool {
     switch self {
     case .synthetic, .file: false
-    case .rtsp: true
+    case .rtsp, .ndi: true
+    }
+  }
+
+  /// Whether the app has to encode this kind's pictures to archive them.
+  ///
+  /// RTSP cameras hand us their own access units and the archive is a copy, which costs no encode
+  /// session at all. The free NDI SDK decodes before we ever see a frame, so an NDI camera's
+  /// archive is a re-encode and costs one session per camera — and encode sessions, not CPU, are
+  /// what this app runs out of.
+  public var needsEncodeToArchive: Bool {
+    switch self {
+    case .rtsp, .file: false
+    case .synthetic, .ndi: true
     }
   }
 }
@@ -75,6 +89,8 @@ public enum SourceProfile: String, Sendable, CaseIterable {
   case file4
   /// Real cameras, found on the network and received over RTSP.
   case rtsp
+  /// Real cameras, found and received over NDI.
+  case ndi
 
   /// What the operator's "Simulated cameras" switch selects. An app opened from the home screen
   /// passes no launch argument, so this is also what a normal run uses — which is why off has to

@@ -4,17 +4,18 @@ import CoreVideo
 import Foundation
 import VideoToolbox
 
-/// Encodes generated frames once, so a simulated camera hands the pipeline what a real one does:
-/// coded access units, their parameter sets, and AAC.
+/// Encodes decoded pixels into what a camera would have put on the wire: coded access units, their
+/// parameter sets, and AAC.
 ///
-/// This exists because archives are copies of what arrived rather than re-encodes of it. A source
-/// that only produced pixels could be previewed and cut but never recorded, which would leave the
-/// archive, scrub and export paths with no simulator coverage at all — they would only ever be
-/// exercised on a bench with three cameras on it.
+/// The archive is a passthrough muxer — a camera's own bytes reach the file unaltered — so any
+/// source that hands the pipeline pixels rather than a bitstream has nothing to write with. Two do:
+/// the simulated cameras, and NDI cameras, whose bitstream the free NDI SDK decodes before a
+/// receiver ever sees it.
 ///
 /// The encode is deliberately camera-like: no frame reordering, and a keyframe about once a second,
-/// which is what the VM33s send.
-public final class SyntheticWireEncoder: @unchecked Sendable {
+/// which is both what the VM33s send and what keeps a 3-second segment 3 seconds long — the writer
+/// cuts on sync samples, so a longer GOP silently produces longer chunks.
+public final class WireVideoEncoder: @unchecked Sendable {
   /// One coded picture, ready to be published as a `CompressedFrame`.
   public struct Unit: @unchecked Sendable {
     public let data: Data
@@ -52,7 +53,7 @@ public final class SyntheticWireEncoder: @unchecked Sendable {
       compressedDataAllocator: nil,
       outputCallback: { context, _, status, _, sampleBuffer in
         guard let context, status == noErr, let sampleBuffer else { return }
-        Unmanaged<SyntheticWireEncoder>.fromOpaque(context)
+        Unmanaged<WireVideoEncoder>.fromOpaque(context)
           .takeUnretainedValue()
           .publish(sampleBuffer)
       },
@@ -202,10 +203,9 @@ public final class SyntheticWireEncoder: @unchecked Sendable {
   }
 }
 
-/// Encodes the generated tone to AAC-LC, for the same reason the video is encoded: a simulated
-/// camera's archive has to be the same shape as a real one's, and a passthrough writer has nothing
-/// to write from PCM.
-public final class SyntheticAudioEncoder: @unchecked Sendable {
+/// Encodes PCM to AAC-LC, for the same reason the video is encoded: the archive has to be the same
+/// shape whatever the source was, and a passthrough writer has nothing to write from PCM.
+public final class WireAudioEncoder: @unchecked Sendable {
   public struct Packet: Sendable {
     public let data: Data
     /// Sample index of the packet's first frame, on the source's own audio clock.
@@ -321,7 +321,7 @@ public final class SyntheticAudioEncoder: @unchecked Sendable {
         converter,
         { _, packetCount, bufferList, packetDescriptions, context in
           guard let context else { return kAudio_ParamError }
-          return Unmanaged<SyntheticAudioEncoder>.fromOpaque(context)
+          return Unmanaged<WireAudioEncoder>.fromOpaque(context)
             .takeUnretainedValue()
             .provideInput(
               packetCount: packetCount,
