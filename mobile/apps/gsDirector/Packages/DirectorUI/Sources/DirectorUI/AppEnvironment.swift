@@ -3172,13 +3172,15 @@ public final class AppEnvironment {
     upTo maximum: Int = 8,
     framesPerSession: Int = 1,
     width: Int = 1920,
-    height: Int = 1080
+    height: Int = 1080,
+    frameRate: Int = 30
   ) {
     let result = EncodeSessionProbe.probe(
       upTo: maximum,
       width: width,
       height: height,
-      framesPerSession: framesPerSession
+      framesPerSession: framesPerSession,
+      frameRate: frameRate
     )
     probeResult = result
     statusMessage = result.summary
@@ -3186,7 +3188,13 @@ public final class AppEnvironment {
   }
 
   /// Off the main actor: this one deliberately runs for tens of seconds.
-  public func runThroughputProbe(sessions: Int, seconds: Double, height: Int, hevc: Bool) {
+  public func runThroughputProbe(
+    sessions: Int,
+    seconds: Double,
+    height: Int,
+    hevc: Bool,
+    frameRate: Int = 30
+  ) {
     statusMessage = "Measuring sustained encode throughput…"
     telemetry.mutate { $0.encodeProbe = "throughput probe running…" }
     Task.detached(priority: .userInitiated) { [telemetry] in
@@ -3195,7 +3203,8 @@ public final class AppEnvironment {
         seconds: seconds,
         width: height * 16 / 9,
         height: height,
-        codec: hevc ? kCMVideoCodecType_HEVC : kCMVideoCodecType_H264
+        codec: hevc ? kCMVideoCodecType_HEVC : kCMVideoCodecType_H264,
+        frameRate: frameRate
       )
       telemetry.mutate { $0.encodeProbe = result.summary }
     }
@@ -3497,10 +3506,22 @@ public final class AppEnvironment {
     case let .advanceClock(seconds):
       testClock?.advance(by: seconds)
       sweepRetention()
-    case let .probeEncoders(maximum, framesPerSession, width, height):
-      runEncodeProbe(upTo: maximum, framesPerSession: framesPerSession, width: width, height: height)
-    case let .probeThroughput(sessions, seconds, height, hevc):
-      runThroughputProbe(sessions: sessions, seconds: seconds, height: height, hevc: hevc)
+    case let .probeEncoders(maximum, framesPerSession, width, height, fps):
+      runEncodeProbe(
+        upTo: maximum,
+        framesPerSession: framesPerSession,
+        width: width,
+        height: height,
+        frameRate: fps
+      )
+    case let .probeThroughput(sessions, seconds, height, hevc, fps):
+      runThroughputProbe(
+        sessions: sessions,
+        seconds: seconds,
+        height: height,
+        hevc: hevc,
+        frameRate: fps
+      )
     case let .probeWriter(options):
       runWriterProbe(options: options)
     case .dumpState:

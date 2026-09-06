@@ -36,8 +36,8 @@ public enum ControlCommand: Sendable, Equatable {
   /// Opens or closes the Cameraman control screen on a 0-based source.
   case cameraControl(source: Int, open: Bool)
   case advanceClock(seconds: TimeInterval)
-  case probeEncoders(maximum: Int, framesPerSession: Int, width: Int, height: Int)
-  case probeThroughput(sessions: Int, seconds: Double, height: Int, hevc: Bool)
+  case probeEncoders(maximum: Int, framesPerSession: Int, width: Int, height: Int, fps: Int)
+  case probeThroughput(sessions: Int, seconds: Double, height: Int, hevc: Bool, fps: Int)
   case probeWriter(options: [String: String])
   case dumpState
   case reset
@@ -111,14 +111,16 @@ public enum ControlChannel {
         maximum: query["max"].flatMap { Int($0) } ?? 8,
         framesPerSession: query["frames"].flatMap { Int($0) } ?? 1,
         width: query["width"].flatMap { Int($0) } ?? 1920,
-        height: query["height"].flatMap { Int($0) } ?? 1080
+        height: query["height"].flatMap { Int($0) } ?? 1080,
+        fps: query["fps"].flatMap { Int($0) } ?? 30
       )
     case "probe-throughput", "probethroughput":
       return .probeThroughput(
         sessions: query["sessions"].flatMap { Int($0) } ?? 4,
         seconds: query["seconds"].flatMap { Double($0) } ?? 20,
         height: query["height"].flatMap { Int($0) } ?? 1080,
-        hevc: LaunchConfiguration.boolean(query["hevc"]) ?? false
+        hevc: LaunchConfiguration.boolean(query["hevc"]) ?? false,
+        fps: query["fps"].flatMap { Int($0) } ?? 30
       )
     case "probe-writer", "probewriter":
       return .probeWriter(options: query)
