@@ -1,0 +1,5 @@
+# Produced by gsDirector/scripts/bootstrapNdi.sh. The library is ~380 MB and the headers are
+# the SDK's, so neither belongs in the repository.
+Vendor/
+Sources/CNDI/include/Processing.NDI.*.h
+.build/
