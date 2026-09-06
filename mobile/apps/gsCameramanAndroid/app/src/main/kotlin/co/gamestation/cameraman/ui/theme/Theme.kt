@@ -9,6 +9,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 /**
@@ -134,4 +135,36 @@ object CameramanTokens {
 
     /** A lighter scrim for surfaces that sit over video but carry no text of their own. */
     const val subtleScrimAlpha = 0.35f
+
+    /**
+     * The one margin every piece of chrome uses.
+     *
+     * Top, left, right and bottom of the overlay, and the gap between the badges and the zoom rail
+     * below them. A single value rather than a number per edge because the chrome is four islands
+     * floating on live video with nothing to align to but the screen, and an operator reads
+     * inconsistent gaps as a layout that is broken rather than as one that is deliberate.
+     */
+    val chromeMargin = 28.dp
+
+    /** The size of a round chrome button. */
+    val chromeButtonSize = 52.dp
+
+    /**
+     * The height every chrome pill shares — the camera name, the thermal badge, the battery badge.
+     *
+     * Fixed rather than derived from each one's text, so the badges on the right sit on exactly the
+     * line the name does on the left. Two pills that differ by three points read as a mistake even
+     * when nobody can say which one is wrong.
+     */
+    val chromePillHeight = 36.dp
+
+    /**
+     * How far the badge row sits below the top margin.
+     *
+     * The buttons opposite are taller than the pills beside them and centre their row, so a pill on
+     * the right has to drop by half that difference to land on the same line. Expressed as the
+     * offset rather than by padding the whole row out to the button height, so the gap from the
+     * badges down to the zoom rail stays exactly [chromeMargin] instead of that plus the leftover.
+     */
+    val badgeTopOffset = (chromeButtonSize - chromePillHeight) / 2
 }

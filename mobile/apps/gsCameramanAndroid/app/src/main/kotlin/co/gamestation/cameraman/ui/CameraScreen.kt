@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -24,9 +25,11 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -53,12 +56,22 @@ fun CameraScreen(environment: AppEnvironment, onOpenSettings: () -> Unit) {
     val thermalLevel by environment.thermalLevel.collectAsStateWithLifecycle()
     val battery by environment.battery.collectAsStateWithLifecycle()
 
-    // The zoom the pinch started from. Pinch is multiplicative against this rather than against the
-    // live value, which is what makes it track the fingers instead of drifting.
+    // The gesture handlers below live inside `pointerInput`, whose block is only restarted when its
+    // keys change — so anything they close over is frozen at that moment. The live camera state has
+    // to be read through this or a drag would seed itself from whatever the zoom was when the
+    // pointer input was last set up.
+    val liveState by rememberUpdatedState(cameraState)
+
+    // The zoom the gesture started from. Both gestures are relative to this rather than to the live
+    // value, which is what makes them track the fingers instead of drifting.
     var zoomAtGestureStart by remember { mutableStateOf<Double?>(null) }
-    // Displayed zoom when a vertical scrub began. Relative to this, not to the live value, so the
-    // finger does not fight the highlight.
     var scrubAtGestureStart by remember { mutableStateOf<Double?>(null) }
+    // Compose reports a *delta* per event where SwiftUI reports the total since the gesture began,
+    // so the total has to be accumulated here. Feeding one event's delta to arithmetic that expects
+    // the whole gesture recomputes the zoom from the start point every frame, and the picture jerks
+    // a few pixels and springs back rather than following the finger.
+    var scrubbedPoints by remember { mutableFloatStateOf(0f) }
+    var pinchedScale by remember { mutableDoubleStateOf(1.0) }
     // Centre-to-centre gap between adjacent pills, measured from the drawn column.
     var pointsPerSegment by remember { mutableFloatStateOf(72f) }
 
@@ -73,29 +86,41 @@ fun CameraScreen(environment: AppEnvironment, onOpenSettings: () -> Unit) {
                 camera = environment.camera,
                 modifier = Modifier
                     .fillMaxSize()
-                    .pointerInput(cameraState.mapping) {
+                    .pointerInput(Unit) {
                         detectTransformGestures { _, _, zoom, _ ->
-                            val start = zoomAtGestureStart ?: cameraState.deviceZoom
+                            val start = zoomAtGestureStart ?: liveState.deviceZoom.also {
+                                pinchedScale = 1.0
+                            }
                             zoomAtGestureStart = start
+                            // Multiplied, not assigned: each event carries only what changed since
+                            // the last one.
+                            pinchedScale *= zoom.toDouble()
                             environment.camera.setDeviceZoom(
-                                cameraState.mapping.pinchedDeviceZoom(start, zoom.toDouble())
+                                liveState.mapping.pinchedDeviceZoom(start, pinchedScale)
                             )
                         }
                         zoomAtGestureStart = null
+                        pinchedScale = 1.0
                     }
                     // Vertical drag anywhere. Up zooms in. A drag as long as one pill-to-pill gap
                     // walks one segment.
-                    .pointerInput(cameraState.mapping, pointsPerSegment) {
+                    .pointerInput(Unit) {
                         detectDragGestures(
+                            onDragStart = {
+                                scrubAtGestureStart = liveState.displayedZoom
+                                scrubbedPoints = 0f
+                            },
                             onDragEnd = { scrubAtGestureStart = null },
                             onDragCancel = { scrubAtGestureStart = null }
-                        ) { _, dragAmount ->
-                            val start = scrubAtGestureStart ?: cameraState.displayedZoom
+                        ) { change, dragAmount ->
+                            change.consume()
+                            scrubbedPoints -= dragAmount.y
+                            val start = scrubAtGestureStart ?: liveState.displayedZoom
                             scrubAtGestureStart = start
                             environment.camera.setDisplayedZoom(
-                                cameraState.mapping.displayedZoomByDragging(
+                                liveState.mapping.displayedZoomByDragging(
                                     start = start,
-                                    draggedPoints = -dragAmount.y.toDouble(),
+                                    draggedPoints = scrubbedPoints.toDouble(),
                                     pointsPerSegment = pointsPerSegment.toDouble()
                                 )
                             )
@@ -106,10 +131,13 @@ fun CameraScreen(environment: AppEnvironment, onOpenSettings: () -> Unit) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(20.dp),
+                    .padding(CameramanTokens.chromeMargin),
                 verticalArrangement = Arrangement.SpaceBetween
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.height(CameramanTokens.chromeButtonSize)
+                ) {
                     ChromeIconButton(
                         icon = Icons.Filled.Settings,
                         description = "Camera settings",
@@ -135,15 +163,22 @@ fun CameraScreen(environment: AppEnvironment, onOpenSettings: () -> Unit) {
             // vertical span whether the camera offers two lenses or five.
             Column(
                 horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                // The same margin below the badges as around the whole overlay, so the rail is not
+                // crowded against the pill above it.
+                verticalArrangement = Arrangement.spacedBy(CameramanTokens.chromeMargin),
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .fillMaxHeight()
-                    .padding(vertical = 20.dp, horizontal = 14.dp)
+                    .padding(CameramanTokens.chromeMargin)
             ) {
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
+                    // Dropped onto the same line as the camera name opposite, which sits lower than
+                    // the margin because its row is as tall as the button beside it. Offsetting
+                    // rather than matching that height keeps the gap down to the rail at exactly one
+                    // margin.
+                    modifier = Modifier.padding(top = CameramanTokens.badgeTopOffset)
                 ) {
                     ThermalBadge(level = thermalLevel, animate = environment.animatesChrome)
                     battery?.let { BatteryBadge(status = it) }
@@ -174,13 +209,18 @@ private fun NameBadge(name: String) {
         color = MaterialTheme.colorScheme.scrim.copy(alpha = CameramanTokens.chromeScrimAlpha),
         contentColor = MaterialTheme.colorScheme.onSurface
     ) {
-        Text(
-            text = name,
-            style = MaterialTheme.typography.titleMedium,
-            modifier = Modifier
-                .padding(horizontal = 14.dp, vertical = 9.dp)
-                .testTag("camera-name")
-        )
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier.height(CameramanTokens.chromePillHeight)
+        ) {
+            Text(
+                text = name,
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier
+                    .padding(horizontal = 14.dp)
+                    .testTag("camera-name")
+            )
+        }
     }
 }
 
@@ -208,7 +248,7 @@ private fun ChromeIconButton(
             contentColor = MaterialTheme.colorScheme.onSurface
         ),
         modifier = Modifier
-            .size(52.dp)
+            .size(CameramanTokens.chromeButtonSize)
             .testTag(testTag)
     ) {
         Icon(icon, contentDescription = description)

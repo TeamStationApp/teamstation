@@ -2,6 +2,7 @@ package co.gamestation.cameraman.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bolt
@@ -23,6 +24,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import co.gamestation.cameraman.core.BatteryStatus
+import co.gamestation.cameraman.ui.theme.CameramanTokens
 
 /**
  * The battery pill: a green slab with a nub on the right so it reads as a battery at a glance,
@@ -45,11 +47,13 @@ fun BatteryBadge(status: BatteryStatus, modifier: Modifier = Modifier) {
         horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalAlignment = Alignment.CenterVertically,
         modifier = modifier
+            // The height every chrome pill shares, so this lands on the same line as the camera name.
+            .height(CameramanTokens.chromePillHeight)
             // The nub's width is reserved on the trailing edge so a neighbouring pill cannot
             // overlap it.
             .padding(end = nubWidth + 1.dp)
             .drawBehind { drawBattery(colour) }
-            .padding(horizontal = 14.dp, vertical = 8.dp)
+            .padding(horizontal = 14.dp)
             .semantics { contentDescription = "Battery ${status.label}" }
             .testTag("camera-battery")
     ) {
