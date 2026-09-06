@@ -14,6 +14,13 @@ require_device_udid >/dev/null
 require_device_udid
 
 CONFIGURATION="${CONFIGURATION:-Debug}"
+
+# Swift 6.3.3 aborts with a DESERIALIZATION FAILURE optimising CameramanControlUI against
+# CameramanCore whenever cross-module optimisation is on, which Release turns on by default. It is
+# a compiler crash, so the log carries a stack dump and no `error:` line and reads as an empty
+# failure. `SWIFT_ENABLE_DEFAULT_CMO=NO` does not reach Swift package targets; the raw frontend
+# flag does. Two separate sessions have now lost time to this.
+CMO_FLAGS="OTHER_SWIFT_FLAGS=\$(inherited) -disable-cmo"
 LOG="$DIRECTOR_DERIVED_DATA/build-device.log"
 mkdir -p "$DIRECTOR_DERIVED_DATA"
 
@@ -49,6 +56,7 @@ xcodebuild build \
   -derivedDataPath "$DIRECTOR_DERIVED_DATA" \
   -allowProvisioningUpdates \
   DEVELOPMENT_TEAM="$DIRECTOR_TEAM_ID" \
+  "$CMO_FLAGS" \
   > "$LOG" 2>&1
 STATUS=$?
 set -e

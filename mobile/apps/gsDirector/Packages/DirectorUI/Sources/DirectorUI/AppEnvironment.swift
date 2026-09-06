@@ -1266,6 +1266,10 @@ public final class AppEnvironment {
     programStreamer.stop()
     streamMegabitsPerSecond = 0
     streamDroppedPackets = 0
+    // The poll only records transport health while streaming, so without this the last depth
+    // before the stream ended stays in `dump-state` for the rest of the session and reads as a
+    // permanent backlog. Measured after a stall: 1013696 bytes, hours after the socket closed.
+    telemetry.recordStreamTransport(droppedPackets: 0, queuedBytes: 0)
     streamErrorGate.reset()
   }
 
