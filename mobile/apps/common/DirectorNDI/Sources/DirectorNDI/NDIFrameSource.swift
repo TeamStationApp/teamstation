@@ -515,11 +515,14 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
       width: width,
       height: height,
       frameRate: rate,
-      pixelFormat: NDIVideoFrameConverter.outputPixelFormat,
-      // What the *wire* carried, which under NDI is a pixel layout rather than a codec: the SDK
-      // decoded whatever the camera actually compressed with. The archive's codec is ours and is
-      // reported separately.
-      codecName: "NDI \(SourceFormat.fourCharacterCode(OSType(bitPattern: Int32(fourCC.rawValue))))"
+      pixelFormat: NDIVideoFrameConverter.pixelFormat(for: fourCC) ?? 0,
+      // What the *wire* carried, which under NDI is a pixel layout rather than a codec: libndi
+      // decoded whatever the camera actually compressed with before we saw a frame. The archive's
+      // codec is ours, and is reported separately.
+      //
+      // NDI stores its FourCCs little-endian, so the raw value reads backwards ("YVYU" for UYVY)
+      // unless it is swapped first.
+      codecName: "NDI \(SourceFormat.fourCharacterCode(OSType(bitPattern: Int32(fourCC.rawValue)).byteSwapped))"
     )
     if currentFormat != format { currentFormat = format }
     stats.status = nil

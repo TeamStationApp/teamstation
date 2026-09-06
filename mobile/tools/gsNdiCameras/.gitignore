@@ -1,0 +1,4 @@
+# Staged by scripts/bootstrapNdiTools.sh from the NDI SDK installer.
+Vendor/
+Sources/CNDIMac/include/Processing.NDI.*.h
+.build/
