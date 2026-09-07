@@ -3319,6 +3319,12 @@ public final class AppEnvironment {
         tile.deliveryMilliseconds = receive.captured > 0
           ? (receive.deliverySeconds / Double(receive.captured)) * 1000
           : 0
+        tile.copyMilliseconds = receive.copyMilliseconds
+        tile.publishMilliseconds = receive.publishMilliseconds
+        tile.archiveEncoded = receive.archiveEncoded
+        tile.archiveDropped = receive.archiveDropped
+        tile.archiveBacklog = receive.archiveBacklog
+        tile.archiveStride = receive.archiveStride
         tile.arrivalGapMaxMilliseconds = receive.arrivalGapMaxMilliseconds
         tile.arrivalGapWasKeyframe = receive.arrivalGapWasKeyframe
         tile.deliverMaxMilliseconds = receive.deliverMaxMilliseconds

@@ -777,3 +777,38 @@ already reads segments through `SegmentAssembler`, which does not care how they 
 
 Under NDI this required an Advanced SDK licence and a commercial agreement, which is why it was
 previously filed under licensing. It now needs nothing but the code.
+
+## NDI: the archive is a re-encode, and the simulator cannot do it
+
+Measured 2026-09-06 on an M4 iPad Air simulator (iOS 26.5) against four 1080p cameras from
+`gsNdiCameras` on the same Mac. **Device figures are still outstanding.**
+
+| Condition | Result |
+|---|---|
+| 4 x 1080p30, preview only | 29.7–30.5 fps per tile, nothing dropped by the SDK, 94% of each receive thread idle, 51% CPU |
+| 4 x 1080p30, recording, HEVC | preview falls to 5–7 fps, archives decimate to stride 4, 862% CPU |
+| 2 x 1080p30, recording, HEVC (`-sourceEncodeLimit 2`) | the two archiving cameras hold their archives; the two past the cap stay live and archive nothing |
+| Archive on disk | HEVC 1920x1080 plus AAC 48 kHz mono, segments 3.37 s |
+
+The recording figures are a **software** encoder: a simulator has no video encode hardware, and
+four 1080p HEVC streams saturate the Mac. They say nothing about the iPad and must not be quoted as
+capacity. What the simulator does establish is that the transport, the filter, the timing, the
+format handling and the archive's shape are right.
+
+The device question this leaves open is the only one that matters for a game: **how many NDI
+cameras can an M4 iPad archive at once, at 30 and at 60 fps, in HEVC and in H.264?**
+`NDIArchiveBudget.defaultCapacity` is 4 on the strength of the programme master's own measured
+figures (118 fps of 1080p H.264 against 296 fps of HEVC), not on a measurement of four
+simultaneous source encodes. Until that run happens the number is an estimate.
+
+Three things were found on the way and are worth not rediscovering:
+
+- Converting pixel format on the receive thread ran the fleet at 2.3 fps. `PixelConverter` already
+  does that conversion once per frame in hardware; the NDI copy is now format-preserving.
+- `TileRouter` wires the compressed sink for every source and leaves it wired, so treating it as a
+  request to encode meant four idle preview tiles held four encode sessions. `FrameSource
+  .setArchiving(_:)` is the seam that fixed it.
+- The generator, not the app, was the bottleneck twice: the kernel's timer coalescing paced a
+  declared 30 fps stream at 12, and synchronous sending capped four cameras at 54 of 60.
+  `gsNdiCameras --self-test` now fails on either.
+

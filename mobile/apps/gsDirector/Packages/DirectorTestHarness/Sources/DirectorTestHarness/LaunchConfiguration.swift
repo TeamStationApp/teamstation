@@ -68,6 +68,9 @@ public struct LaunchConfiguration: Sendable, Equatable {
   /// Codec for archives the app has to encode itself. Overrides the stored setting for the
   /// session, the way `programCodec` does for the master.
   public var sourceEncodeCodec: ProgramCodec?
+  /// How many cameras may encode their own archive at once. A flow sets it to 1 to prove that the
+  /// cameras past the cap stay live and say why, rather than taking the board down with them.
+  public var sourceEncodeLimit: Int?
   /// Bitrate for those archives. Worth setting from a flow: it is what an NDI camera's archive
   /// size and encode cost are actually decided by.
   public var sourceEncodeBitrate: Int?
@@ -150,6 +153,9 @@ public struct LaunchConfiguration: Sendable, Equatable {
     if let value = values["sourceEncodeBitrate"], let rate = Int(value), rate > 0 {
       configuration.sourceEncodeBitrate = rate
     }
+    if let value = values["sourceEncodeLimit"], let limit = Int(value), limit > 0 {
+      configuration.sourceEncodeLimit = limit
+    }
     configuration.streamURL = values["streamURL"]
     if let value = values["programBitrate"], let rate = Int(value), rate > 0 {
       configuration.programBitrate = rate
@@ -203,7 +209,7 @@ public struct LaunchConfiguration: Sendable, Equatable {
     "rtspTransport", "rtspHosts", "rtspPath", "rtspScan", "streamURL",
     "programBitrate", "programFrameRate",
     "ndiSources", "ndiExtraIPs", "ndiBandwidth", "ndiLocalSources",
-    "sourceEncodeCodec", "sourceEncodeBitrate"
+    "sourceEncodeCodec", "sourceEncodeBitrate", "sourceEncodeLimit"
   ]
 
   /// Semicolon as well as comma: Maestro `-e KEY=a,b` keeps only `a`, which left the M4 farm

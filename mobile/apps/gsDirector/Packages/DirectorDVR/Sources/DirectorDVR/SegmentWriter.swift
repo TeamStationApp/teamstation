@@ -894,6 +894,7 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     lock.lock()
     guard !finishing, settings.includesAudio, stopError == nil else {
       lock.unlock()
+      telemetry.mutateTile(sourceIndex) { $0.audioRejectedClosed &+= 1 }
       return
     }
     if silenceSampleRate != frame.sampleRate || silenceChannels != frame.channelCount {
@@ -936,7 +937,10 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
       formatDescription: format,
       presentationTime: placement.start,
       duration: frame.duration
-    ) else { return }
+    ) else {
+      telemetry.mutateTile(sourceIndex) { $0.audioRejectedBuild &+= 1 }
+      return
+    }
 
     lock.lock()
     pendingAudio.append(sampleBuffer)

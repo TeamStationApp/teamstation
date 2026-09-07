@@ -247,6 +247,27 @@ public struct ReceiveStats: Sendable, Equatable {
   /// Seconds spent downstream of capture, on the receive thread, which is time the loop cannot
   /// spend collecting the next frame.
   public var deliverySeconds: Double = 0
+  /// That delivery time split in two, in milliseconds, because they have different owners and
+  /// different fixes: `copy` is the source's own move of the frame into a pixel buffer, `publish`
+  /// is everything the pipeline then does with it on the same thread — convert, playout, tile,
+  /// compositor. A source that looks slow is almost always one of these two and never both, and
+  /// without the split the answer is a guess.
+  public var copyMilliseconds: Double = 0
+  public var publishMilliseconds: Double = 0
+  /// Frames a source encoded for its own archive, and frames it refused to encode because the
+  /// encoder was already too far behind.
+  ///
+  /// Only sources that make their own coded form report these. A climbing `archiveDropped` is the
+  /// archive degrading on purpose so the picture does not: the alternative is an encode that backs
+  /// up onto the receive thread and takes the live tile down with it.
+  public var archiveEncoded: UInt64 = 0
+  public var archiveDropped: UInt64 = 0
+  /// How many frames are waiting to be encoded right now.
+  public var archiveBacklog: Int = 0
+  /// One frame in this many reaches the archive. Above 1, the source is deliberately recording at
+  /// a fraction of its live rate because the encoder could not sustain the full one — a continuous
+  /// half-rate angle rather than a full-rate one full of holes.
+  public var archiveStride: Int = 1
   /// The widest gap between two arriving frames during the last complete second, in milliseconds,
   /// and whether that gap ended on a keyframe.
   ///
@@ -346,11 +367,26 @@ public protocol FrameSource: AnyObject, Sendable {
 
   func start(sinks: FrameSinks) throws
   func stop()
+
+  /// Whether anything downstream currently wants the coded form of this source's frames.
+  ///
+  /// The router wires all four sinks for every source and leaves them wired, which is right for a
+  /// camera whose coded frames arrive whether we want them or not — an RTSP camera's `compressed`
+  /// sink costs nothing, because those bytes came off the socket already.
+  ///
+  /// It is not right for a source that has to *make* the coded form. The free NDI SDK hands over
+  /// decoded pixels, so an NDI camera's archive is a re-encode, and treating a wired sink as a
+  /// request to encode means four idle preview tiles hold four 1080p encode sessions for output
+  /// nobody reads. Encode sessions, not CPU, are what this app runs out of.
+  ///
+  /// Default is a no-op, so only sources that encode need to care.
+  func setArchiving(_ isArchiving: Bool)
 }
 
 public extension FrameSource {
   var connections: Int { isRunning ? 1 : 0 }
   var receiveStats: ReceiveStats { ReceiveStats() }
+  func setArchiving(_ isArchiving: Bool) {}
 
   func start(onPixelFrame: @escaping PixelFrameHandler) throws {
     try start(sinks: FrameSinks(pixel: onPixelFrame))

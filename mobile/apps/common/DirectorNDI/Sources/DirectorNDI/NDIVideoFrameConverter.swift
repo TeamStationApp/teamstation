@@ -1,3 +1,4 @@
+import Accelerate
 import CNDI
 import CoreVideo
 import Foundation
@@ -52,8 +53,11 @@ public final class NDIVideoFrameConverter: @unchecked Sendable {
     // never read.
     case NDIlib_FourCC_video_type_BGRA, NDIlib_FourCC_video_type_BGRX:
       kCVPixelFormatType_32BGRA
+    // Not `kCVPixelFormatType_32RGBA`: CoreVideo will not back a pool with it here, so the copy
+    // returned nothing at all. The bytes are permuted into BGRA instead, which is the format the
+    // rest of the platform actually wants.
     case NDIlib_FourCC_video_type_RGBA, NDIlib_FourCC_video_type_RGBX:
-      kCVPixelFormatType_32RGBA
+      kCVPixelFormatType_32BGRA
     default:
       nil
     }
@@ -77,8 +81,7 @@ public final class NDIVideoFrameConverter: @unchecked Sendable {
 
     switch frame.FourCC {
     case NDIlib_FourCC_video_type_UYVY, NDIlib_FourCC_video_type_UYVA,
-         NDIlib_FourCC_video_type_BGRA, NDIlib_FourCC_video_type_BGRX,
-         NDIlib_FourCC_video_type_RGBA, NDIlib_FourCC_video_type_RGBX:
+         NDIlib_FourCC_video_type_BGRA, NDIlib_FourCC_video_type_BGRX:
       guard let base = CVPixelBufferGetBaseAddress(destination) else { return nil }
       copyPlane(
         from: source, stride: stride,
@@ -86,6 +89,16 @@ public final class NDIVideoFrameConverter: @unchecked Sendable {
         rowBytes: NDIFrameValidator.minimumStride(for: frame.FourCC, width: width),
         rows: height
       )
+
+    case NDIlib_FourCC_video_type_RGBA, NDIlib_FourCC_video_type_RGBX:
+      guard
+        let base = CVPixelBufferGetBaseAddress(destination),
+        permuteToBGRA(
+          from: source, stride: stride,
+          to: base, toStride: CVPixelBufferGetBytesPerRow(destination),
+          width: width, height: height
+        )
+      else { return nil }
 
     case NDIlib_FourCC_video_type_NV12:
       guard
@@ -152,6 +165,31 @@ public final class NDIVideoFrameConverter: @unchecked Sendable {
       factoryFormat = format
     }
     return factory?.makeBuffer()
+  }
+
+  /// R,G,B,A in memory to B,G,R,A. A channel swap rather than a colour conversion, so vImage does
+  /// it in one pass with a constant permute map and nothing here touches an individual pixel.
+  private func permuteToBGRA(
+    from source: UnsafeRawPointer, stride: Int,
+    to destination: UnsafeMutableRawPointer, toStride: Int,
+    width: Int, height: Int
+  ) -> Bool {
+    var input = vImage_Buffer(
+      data: UnsafeMutableRawPointer(mutating: source),
+      height: vImagePixelCount(height),
+      width: vImagePixelCount(width),
+      rowBytes: stride
+    )
+    var output = vImage_Buffer(
+      data: destination,
+      height: vImagePixelCount(height),
+      width: vImagePixelCount(width),
+      rowBytes: toStride
+    )
+    let map: [UInt8] = [ 2, 1, 0, 3 ]
+    return vImagePermuteChannels_ARGB8888(
+      &input, &output, map, vImage_Flags(kvImageDoNotTile)
+    ) == kvImageNoError
   }
 
   /// One `memcpy` when the strides agree, one per row when they do not. Never a loop over pixels.

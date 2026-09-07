@@ -25,6 +25,16 @@ public final class WireVideoEncoder: @unchecked Sendable {
   }
 
   public let codec: CompressedFrame.Codec
+  /// Whether this encoder accepted a hard data-rate ceiling. Not every encoder supports one, and
+  /// the difference is worth knowing rather than guessing: without it `AverageBitRate` is only a
+  /// hint and the output can be several times the requested rate.
+  public private(set) var dataRateLimitStatus: OSStatus = noErr
+  /// The frame rate the session currently believes it is encoding.
+  private var expectedFrameRate: Double = 0
+  /// Presentation time of the last frame this encoder was told to make a keyframe.
+  private var lastForcedKeyframe: CMTime = .invalid
+  /// How often a keyframe is demanded, in seconds of presentation time.
+  private let keyframeInterval: Double = 1
 
   /// Optional only because `VTCompressionSessionCreate` needs a pointer to `self` as its callback
   /// context, which is not available until every stored property has a value.
@@ -77,6 +87,20 @@ public final class WireVideoEncoder: @unchecked Sendable {
       key: kVTCompressionPropertyKey_AverageBitRate,
       value: NSNumber(value: bitrate)
     )
+    // A hard ceiling as well as an average, because `AverageBitRate` on its own is a hint that
+    // VideoToolbox overshoots badly on hard content. Measured on 1080p noise: an 8 Mbps request
+    // produced 22.7 Mbps in HEVC and 26.0 in H.264 at 60 fps, and asking for 4 against 16 changed
+    // the output by less than half an octave. A recording three times its budget fills the disk
+    // three times as fast and pushes an export past what the operator was told to expect.
+    //
+    // The window is one second and the allowance 1.25x, which leaves room for the keyframe this
+    // encoder emits every second — a tighter cap makes the frame after each keyframe collapse.
+    let ceilingBytes = Double(bitrate) / 8 * 1.25
+    dataRateLimitStatus = VTSessionSetProperty(
+      session,
+      key: kVTCompressionPropertyKey_DataRateLimits,
+      value: [ NSNumber(value: ceilingBytes), NSNumber(value: 1.0) ] as CFArray
+    )
     VTSessionSetProperty(
       session,
       key: kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration,
@@ -87,11 +111,35 @@ public final class WireVideoEncoder: @unchecked Sendable {
       key: kVTCompressionPropertyKey_ExpectedFrameRate,
       value: NSNumber(value: frameRate)
     )
+    expectedFrameRate = frameRate
     VTCompressionSessionPrepareToEncodeFrames(session)
   }
 
   deinit {
     if let session { VTCompressionSessionInvalidate(session) }
+  }
+
+  /// Tells the session the rate it is *actually* being fed, which is not always the rate the
+  /// source runs at.
+  ///
+  /// This matters for segment length, not for quality. `MaxKeyFrameIntervalDuration` is one second,
+  /// but VideoToolbox reckons that against `ExpectedFrameRate` — so an encoder told 30 fps and then
+  /// fed 7.5 emits a keyframe every four seconds of real time. `SegmentWriter` cuts on sync
+  /// samples, so segments stretched to 7.9 s when a 1080p HEVC archive decimated, against the three
+  /// seconds every other source produces. Measured on a simulator, where the software encoder makes
+  /// decimation certain; on a thermally throttled iPad it would be the same shape.
+  public func setExpectedFrameRate(_ frameRate: Double) {
+    lock.lock()
+    let session = self.session
+    let unchanged = abs(frameRate - expectedFrameRate) < 0.01
+    if !unchanged { expectedFrameRate = frameRate }
+    lock.unlock()
+    guard !unchanged, let session, frameRate > 0 else { return }
+    VTSessionSetProperty(
+      session,
+      key: kVTCompressionPropertyKey_ExpectedFrameRate,
+      value: NSNumber(value: frameRate)
+    )
   }
 
   public func setHandler(_ handler: ((Unit) -> Void)?) {
@@ -102,12 +150,33 @@ public final class WireVideoEncoder: @unchecked Sendable {
 
   public func encode(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime, duration: CMTime) {
     guard let session else { return }
+
+    // The keyframe cadence is demanded here rather than left to the encoder's own interval.
+    //
+    // `MaxKeyFrameIntervalDuration` is set to one second, but VideoToolbox reckons it against the
+    // frame rate it was told, and a source that decimates its archive under encoder pressure feeds
+    // a fraction of that. Measured: a stride-4 1080p HEVC archive emitted a keyframe every four
+    // seconds, and since `SegmentWriter` cuts on sync samples its segments came out at 7.8 s
+    // against the three seconds every other source produces — which is the whole basis of scrub,
+    // replay and export behaving the same way for every camera. Updating `ExpectedFrameRate` on the
+    // live session did not move it; asking for the keyframe outright does, and does not depend on
+    // the encoder agreeing with us about the rate.
+    lock.lock()
+    let due = !lastForcedKeyframe.isNumeric
+      || CMTimeGetSeconds(CMTimeSubtract(presentationTime, lastForcedKeyframe)) >= keyframeInterval
+    if due { lastForcedKeyframe = presentationTime }
+    lock.unlock()
+
+    let properties: CFDictionary? = due
+      ? [ kVTEncodeFrameOptionKey_ForceKeyFrame: kCFBooleanTrue ] as CFDictionary
+      : nil
+
     VTCompressionSessionEncodeFrame(
       session,
       imageBuffer: pixelBuffer,
       presentationTimeStamp: presentationTime,
       duration: duration,
-      frameProperties: nil,
+      frameProperties: properties,
       sourceFrameRefcon: nil,
       infoFlagsOut: nil
     )

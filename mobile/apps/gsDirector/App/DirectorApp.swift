@@ -58,6 +58,9 @@ struct DirectorApp: App {
       ? .h264
       : .hevc
     let bitrate = launch.sourceEncodeBitrate ?? stored.programBitrate
+    if let limit = launch.sourceEncodeLimit {
+      NDIArchiveBudget.shared.setCapacity(limit)
+    }
 
     return NDIDiscovery(
       configuration: NDIDiscovery.Configuration(
