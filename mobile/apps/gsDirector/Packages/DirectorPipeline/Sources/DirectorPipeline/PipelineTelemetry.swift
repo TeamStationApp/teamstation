@@ -135,6 +135,20 @@ public struct TileTelemetry: Sendable, Codable, Equatable {
   public var receiveWaitFraction: Double = 0
   /// Mean milliseconds spent downstream of capture per frame, on the receive thread.
   public var deliveryMilliseconds: Double = 0
+  /// That time split between the source's own copy of the frame and everything the pipeline does
+  /// with it on the same thread. They have different owners and different fixes, and a source that
+  /// looks slow is nearly always one of the two.
+  public var copyMilliseconds: Double = 0
+  public var publishMilliseconds: Double = 0
+  /// For a source that encodes its own archive: frames encoded, frames refused because the encoder
+  /// was already too far behind, and how many are waiting now. A climbing `archiveDropped` is the
+  /// archive degrading deliberately so the live picture does not.
+  public var archiveEncoded: UInt64 = 0
+  public var archiveDropped: UInt64 = 0
+  public var archiveBacklog = 0
+  /// One frame in this many reaches the archive. Above 1 the camera is recording at a fraction of
+  /// its live rate on purpose, because its encoder could not sustain the full one.
+  public var archiveStride = 1
   /// The last complete second's worst frame timing: how late the latest frame was, whether that late
   /// frame was a keyframe, and the longest one frame spent in our own decode-and-deliver work. A
   /// stutter the operator can see is one of these two numbers, and which one says whose fault it is.
@@ -191,6 +205,12 @@ public struct TileTelemetry: Sendable, Codable, Equatable {
   /// silent, so nothing could say which one swallowed it.
   public var audioReceived: UInt64 = 0
   public var audioRejectedNotStarted: UInt64 = 0
+  /// Audio the writer refused before it could be placed — because the recording was closing or
+  /// carries no audio track — and audio that could not be made into a sample buffer at all. Both
+  /// used to return silently, which left "audio arrived and none was written" with no counter
+  /// between the two ends to say where it went.
+  public var audioRejectedClosed: UInt64 = 0
+  public var audioRejectedBuild: UInt64 = 0
   public var audioRejectedPlacement: UInt64 = 0
   public var audioAppended: UInt64 = 0
   public var audioDrainNotReady: UInt64 = 0

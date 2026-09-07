@@ -128,11 +128,15 @@ public final class SourcePipeline: @unchecked Sendable {
     lock.lock()
     let previous = source
     source = replacement
+    let isRecording = archive != nil
     lock.unlock()
 
     previous.stop()
     telemetry.mutateTile(sourceIndex) { $0.displayName = replacement.displayName }
     try replacement.start(sinks: frameSinks)
+    // A source that has to make its own coded form only does so when told to. The one it replaces
+    // was told at record start; this one arrived mid-recording and would otherwise never encode.
+    replacement.setArchiving(isRecording)
   }
 
   private var frameSinks: FrameSinks {
@@ -202,7 +206,11 @@ public final class SourcePipeline: @unchecked Sendable {
   public func setArchive(_ sink: ArchiveSink?) {
     lock.lock()
     archive = sink
+    let source = self.source
     lock.unlock()
+    // Tells a source that has to encode its own archive whether anyone is reading it. A source
+    // that gets its coded frames for free ignores this.
+    source.setArchiving(sink != nil)
   }
 
   public func setProxy(_ sink: ProxySink?) {
@@ -264,6 +272,12 @@ public final class SourcePipeline: @unchecked Sendable {
   private func handle(audio frame: AudioFrame) {
     lock.lock()
     let audioSink = self.audioSink
+    // Decoded audio proves the source has audio just as well as coded audio does, and it proves it
+    // *earlier*. A source that only produces its coded form once an archive is reading — which is
+    // what an NDI camera does, since encoding costs it a session — would otherwise never set this
+    // before the writer is built, and would be given an archive with no audio track for the whole
+    // recording.
+    sawAudio = true
     lock.unlock()
     telemetry.mutateTile(sourceIndex) { $0.audioFrames &+= 1 }
     audioSink?(frame)

@@ -16,11 +16,13 @@ public struct NDISourceName: Hashable, Sendable {
   public init(full: String) {
     self.full = full
 
-    // Split on the *last* opening parenthesis: a stream may legitimately contain them
-    // ("Cam 1 (wide)") while the machine name is whatever precedes the final group.
+    // Split on the *first* opening parenthesis. The machine name is a host name and cannot
+    // contain one; a stream name can — "Cam 1 (wide)" is an ordinary thing to call a camera — so
+    // splitting on the last one would cut that name in half and give two cameras with the same
+    // wide/tight suffix the same machine.
     guard
       full.hasSuffix(")"),
-      let open = full.lastIndex(of: "(")
+      let open = full.firstIndex(of: "(")
     else {
       machine = ""
       stream = full
