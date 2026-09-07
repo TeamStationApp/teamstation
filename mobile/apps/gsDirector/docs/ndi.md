@@ -191,9 +191,6 @@ All on `http://127.0.0.1:8770`, shaped like `fakeRtspCameras.js`'s fault port.
 | `/fault?cam=1&fps=30` | a frame-rate change mid-recording |
 | `/fault?cam=1&size=1280x720` | a resolution change mid-recording: a fresh writer, `arch=720` after |
 | `/fault?cam=1&size=3840x2160` | 4K **refused**: counter moves, no encode session taken, app alive |
-| `/fault?cam=1&fourcc=PA16` | `formatMisses` moves, nothing reaches the writer |
-| `/fault?cam=1&badstride=1` | refused on the header, before any read past the row |
-| `/fault?cam=1&badrate=1` | refused; no divide by zero |
 | `/fault?cam=1&timecode=back` | `outOfOrderFrames` climbs, presentation times stay monotonic |
 | `/fault?cam=1&metadata=malformed` | logged and ignored; capture continues |
 | `/fault?cam=1&audio=off` | video-only archive |
@@ -202,7 +199,27 @@ All on `http://127.0.0.1:8770`, shaped like `fakeRtspCameras.js`'s fault port.
 | `/fault?cam=1&rename=NEW` | a new identity, offered as a rebind |
 | `/clock` | what the generator itself sent — what makes any claim about receipt falsifiable |
 
-Network-level impairment is separate, because it works *below* NDI's own retransmission and is the
+### A sender cannot emit a malformed frame
+
+The faults that produce a structurally invalid *header* — `fourcc`, `badstride`, `badrate` — are
+still in the generator, and they do not reach a receiver. The SDK reads the sender's header,
+converts to its own wire format, and builds a fresh header on the receiving side from the colour
+format that receiver asked for. Measured here: `fourcc=PA16` arrived as ordinary UYVY and moved no
+counter at all, and `badstride=1` killed the *generator* rather than producing a bad frame
+anywhere.
+
+So the filter's rules cannot be proved end to end, and `ndiFaultRun.js` deliberately does not try:
+a case that passes because nothing happened is worse than no case. They are proved instead by
+`NDIFrameValidatorTests`, against hand-built headers, which is the only place a receiver can be
+handed one.
+
+This is a property of the transport rather than a gap. What actually reaches a receiver on a bad
+network is loss, delay and reordering — all of which the sweep does cover — plus whatever a
+misbehaving Advanced-SDK sender might do, which the `nullData` rule catches.
+
+### Network impairment
+
+Separate from the sender's faults, because it works *below* NDI's own retransmission and is the
 only way to make the SDK's congestion control actually run:
 
 ```bash
@@ -225,6 +242,25 @@ alternating buffers moved it off, and the send now costs 1.8 ms instead of 8.
 `--self-test` checks the markers, the render cost and the pacing, and fails on any of them, because
 a farm that cannot hold a schedule makes every measurement taken against it wrong in the same
 direction.
+
+### The sweep
+
+```bash
+node scripts/ndiFaultRun.js --device <udid> --sim
+node scripts/ndiFaultRun.js --device <udid> --sim --only tooLarge,stall
+```
+
+Thirteen cases, and each asserts three things, because any one alone can look like a pass: the app
+still answers, the *named* counter moved, and the three tiles that were not the target are
+unaffected. A fault that moves the right counter while taking the board down is not a pass.
+
+Two of them are measured against the generator's own counters rather than against a nominal rate.
+`drop` asserts both that the sender really threw frames away *and* that the app received all of
+what was actually sent — either half alone passes for the wrong reason. `stall` is sampled during
+the stall, not after it, because a camera that has already recovered passes a test of whether it
+stalled.
+
+Last full run on the iPad Air 13-inch (M4) simulator, 2026-09-06: **13/13**.
 
 ## Capacity, and what a simulator does not tell you
 

@@ -111,6 +111,19 @@ function readState() {
   }
 }
 
+async function waitForPort(port, seconds) {
+  const deadline = Date.now() + seconds * 1000
+  while (Date.now() < deadline) {
+    try {
+      await request(port, '/clock')
+      return true
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 250))
+    }
+  }
+  return false
+}
+
 function stopFarm() {
   const state = readState()
   if (!state) {
@@ -170,6 +183,13 @@ async function main() {
     STATE_PATH,
     JSON.stringify({ pid: child.pid, controlPort: options.controlPort, ...options }, null, 2)
   )
+  // Waiting for the port matters: the previous farm's socket can still be in TIME_WAIT when this
+  // one binds, and returning before the port answers makes the next command in a script fail with
+  // a connection refused that looks like the app's fault.
+  if (!(await waitForPort(options.controlPort, 15))) {
+    process.stderr.write(`farm started but port ${options.controlPort} never answered\n`)
+    process.exit(1)
+  }
   process.stdout.write(
     `farm pid ${child.pid}, faults on http://127.0.0.1:${options.controlPort}, log ${LOG_PATH}\n`
   )
