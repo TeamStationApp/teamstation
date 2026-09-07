@@ -30,6 +30,14 @@ final class ControlServer: @unchecked Sendable {
     listener.newConnectionHandler = { [weak self] connection in
       self?.handle(connection)
     }
+    // A listener that fails after `start` reports it here and nowhere else. Without this the farm
+    // prints that fault control is up, the port is refused, and every flow that drives it fails
+    // with something that looks like the app's fault.
+    listener.stateUpdateHandler = { (state: NWListener.State) in
+      if case let .failed(error) = state {
+        FileHandle.standardError.write(Data("control server failed: \(error)\n".utf8))
+      }
+    }
     listener.start(queue: queue)
     self.listener = listener
   }
