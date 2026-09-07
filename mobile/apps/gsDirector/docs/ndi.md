@@ -29,6 +29,45 @@ Three consequences:
 The programme master is encoded either way, because it is a composite that exists nowhere on the
 wire.
 
+## Which flavour a camera sends, and why it decides everything
+
+"NDI" is two quite different things on the wire, and a camera's bitrate tells you which one you
+have.
+
+| At 1080p60 | Codec | Max bandwidth | Decoded by |
+|---|---|---|---|
+| NDI High Bandwidth | SpeedHQ2 | **132.14 Mbps** | `libndi`, on the CPU |
+| NDI\|HX3 | H.265 | 50.00 Mbps | VideoToolbox |
+| NDI\|HX2 | H.264 | 15.99 Mbps | VideoToolbox |
+
+SpeedHQ is NDI's own codec: intraframe only, DCT-based, every frame independently decodable. That
+buys sub-frame latency and a cut that lands instantly, and costs bandwidth — the figures above are
+per camera. It is also the reason a full-bandwidth NDI camera costs CPU on receive.
+
+Nothing here is our choice. The receiver asks for `NDIlib_recv_bandwidth_highest`, which means
+"whatever the sender is sending" — not "send me SpeedHQ". A camera configured at 8 Mbit at 1080p60
+is an NDI|HX camera by arithmetic: that is below even HX2's ceiling and an eighth of SpeedHQ.
+
+Measured here for reference: `gsNdiCameras` uses the free SDK's sender, which produces high
+bandwidth NDI, and one 1080p60 camera put **58.4 Mbps** on loopback. That is below the 132 Mbps
+maximum because the test pattern is far more compressible than a camera picture, and it is well
+above any H.264 ceiling — so every measurement in this document was taken on the **SpeedHQ path**,
+which is the expensive one. An HX camera will be cheaper on receive than anything measured here.
+
+### If the cameras are NDI|HX, the Advanced SDK is worth a hard look
+
+An HX camera sends H.264 or H.265. With the free SDK we decode that — in hardware, cheaply — and
+then **re-encode it to H.264 or H.265** for the archive. That is a full transcode generation to
+arrive back at the codec family we started with, and it costs one encode session per camera.
+
+The Advanced SDK offers `NDIlib_recv_color_format_compressed`, a compressed pass-through. With it
+an HX camera's archive becomes a byte copy handed straight to `SegmentWriter`, exactly as an RTSP
+camera's is: no encode session, no generation loss, and the recording is the camera's own quality
+by construction. That would remove the single biggest cost this feature adds.
+
+It buys nothing for a full-bandwidth SpeedHQ camera, whose bitstream no `AVAssetWriter` can mux.
+So the decision follows entirely from what the cameras actually send.
+
 ## Choosing the codec
 
 `Settings → sourceEncodeCodec`, or `-sourceEncodeCodec h264|hevc` for a session. HEVC is the
@@ -117,6 +156,29 @@ Accepted pixel layouts: UYVY, UYVA (alpha plane ignored), NV12, I420, YV12, BGRA
 RGBX. UYVA matters more than it looks — `fastest` returns it instead of UYVY whenever the *sender*
 declares an alpha channel, which a graphics feed routinely does, and refusing it would show a black
 tile for a stream that reads perfectly well.
+
+## What is hardware, and what is not
+
+Half of this path runs on Apple's video hardware and half does not, and which half depends on the
+camera rather than on us.
+
+| | Runs on | Established by |
+|---|---|---|
+| Full-bandwidth NDI decode (SpeedHQ) | **CPU**, NEON | no SpeedHQ object in `libndi` references a VideoToolbox symbol; the codec ships `SHQ_*_NEON.o`, `_SSE.o` and `_avx2.o` variants |
+| NDI\|HX decode (H.264/H.265) | **VideoToolbox** | `video_codec_interface.o` is the only object referencing `VTDecompressionSessionCreate`; the SDK's `<ndi_video_codec type="hardware">` metadata is documented as applying to "H.264 and H.265 NDI video streams" |
+| Our archive re-encode | **VideoToolbox** | `WireVideoEncoder` is a `VTCompressionSession` |
+| Our pixel format conversion | **VideoToolbox** | `PixelConverter` uses `VTPixelTransferSession` |
+
+The consequence is worth stating plainly, because it is the second way NDI differs from RTSP on
+cost and the less obvious one. An RTSP camera is decoded by VideoToolbox in hardware; a
+full-bandwidth NDI camera is decoded by `libndi` on the CPU. So an NDI camera can cost more than an
+RTSP one **on the receive side as well as the encode side**, before any archive exists. The 51% CPU
+measured for four 1080p30 cameras in preview is largely that decode.
+
+An NDI|HX camera is the cheaper case on receive and the SDK picks hardware for it by its own
+heuristics, which the documentation says should generally be left alone.
+
+Neither figure has been taken on the iPad yet. See `risks.md`.
 
 ## Timing
 
