@@ -513,6 +513,16 @@ public final class ProgramEncoder: @unchecked Sendable {
     await withCheckedContinuation { continuation in
       pending.writer.finishWriting { continuation.resume() }
     }
+    // `finishWriting` reports through the writer, not through its callback. A finalise that did
+    // not complete leaves the movie header unwritten, so every sample past the last movie
+    // fragment stays in the file but unreadable. Going quiet here is what let a broken master sit
+    // undetected until an export an hour later called it damaged media; the operator finds out at
+    // stop instead, while the camera archives for the same take are still on disk.
+    if pending.writer.status != .completed {
+      let detail = Self.describe(pending.writer.error)
+      telemetry.recordError("program master did not finalise: \(detail)")
+      telemetry.mutate { $0.dvr.lastError = "program master did not finalise: \(detail)" }
+    }
 
     clearWriter()
     telemetry.recordEncodeSessionChange(delta: -1)
