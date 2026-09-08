@@ -292,6 +292,60 @@ public final class ArchiveIndex: @unchecked Sendable {
     }
   }
 
+  /// Drops one recording's rolling camera archive — its segments and scrubbing proxies — and
+  /// leaves the recording itself listed.
+  ///
+  /// Retention reclaims the archive only. The programme master and anything already prepared for
+  /// export are the operator's deliverables, so they go when the operator deletes the recording
+  /// and not before; a sweep that quietly took the master would be the same mistake as the
+  /// clock-based window, just more expensive.
+  @discardableResult
+  public func deleteArchive(
+    forRecording id: Int64,
+    roots: RecordingFileRoots = .standard,
+    fileManager: FileManager = .default
+  ) throws -> (segments: Int, stills: Int, bytes: Int64) {
+    let segments = try allSegments(forRecording: id)
+    guard !segments.isEmpty else { return (0, 0, 0) }
+    let from = segments.map(\.startWall).min() ?? segments[0].startWall
+    let to = segments.map(\.endWall).max() ?? from
+
+    var files: [URL] = []
+    var bytes: Int64 = 0
+    for segment in segments {
+      files.append(
+        roots.archiveDirectory(for: segment.sourceID).appendingPathComponent(segment.filename)
+      )
+      bytes += segment.byteCount
+    }
+
+    var stills = 0
+    for sourceID in Set(segments.map(\.sourceID)) {
+      let existing = try proxyStills(for: sourceID, from: from, to: to)
+      stills += existing.count
+      let chunks = Set(existing.map(\.chunk))
+      try store.execute(
+        "DELETE FROM proxy_stills WHERE source_id = ? AND wall >= ? AND wall <= ?;",
+        [ .text(sourceID.rawValue), .real(from.seconds), .real(to.seconds) ]
+      )
+      for chunk in chunks {
+        let remaining = try store.query(
+          "SELECT COUNT(*) FROM proxy_stills WHERE source_id = ? AND chunk = ?;",
+          [ .text(sourceID.rawValue), .text(chunk) ]
+        ).first?.int(0) ?? 0
+        if remaining == 0 {
+          files.append(roots.proxyDirectory(for: sourceID).appendingPathComponent(chunk))
+        }
+      }
+    }
+
+    // Files before rows: a crash mid-sweep leaves rows describing missing files, which
+    // `reconcile` clears at launch, rather than files nothing knows about, which leak forever.
+    for url in files { try? fileManager.removeItem(at: url) }
+    try store.execute("DELETE FROM segments WHERE recording_id = ?;", [ .integer(id) ])
+    return (segments.count, stills, bytes)
+  }
+
   public func sourceIDs(in recordingID: Int64) throws -> [SourceID] {
     try store.query(
       """
@@ -628,14 +682,35 @@ public final class ArchiveIndex: @unchecked Sendable {
 
   /// Returns the segments and proxy rows that fall entirely before `cutoff`, oldest first, so
   /// the caller can delete files before dropping the rows.
-  public func expiredSegments(before cutoff: WallClock) throws -> [SegmentRecord] {
+  /// The recording whose media starts earliest, and the wall-clock window it covers.
+  ///
+  /// Retention drops whole recordings rather than the leading segments of one, so a take that
+  /// survives a sweep is still a take: an operator exporting a game gets all of it or none of it,
+  /// never a game missing its first twenty minutes.
+  public func oldestRecordingWithSegments() throws -> (id: Int64, start: WallClock, end: WallClock)? {
+    let rows = try store.query(
+      """
+      SELECT recording_id, MIN(start_wall), MAX(start_wall + duration) FROM segments
+      WHERE is_initialization = 0
+      GROUP BY recording_id
+      ORDER BY MIN(start_wall) ASC
+      LIMIT 1;
+      """
+    )
+    guard let row = rows.first else { return nil }
+    return (row.int(0), WallClock(seconds: row.double(1)), WallClock(seconds: row.double(2)))
+  }
+
+  /// Every segment belonging to one recording, initialisation segments included, so a caller
+  /// deleting the recording can unlink all of its files.
+  public func allSegments(forRecording id: Int64) throws -> [SegmentRecord] {
     try store.query(
       """
       SELECT \(Self.segmentColumns) FROM segments
-      WHERE is_initialization = 0 AND start_wall + duration < ?
+      WHERE recording_id = ?
       ORDER BY start_wall ASC;
       """,
-      [ .real(cutoff.seconds) ]
+      [ .integer(id) ]
     ).map(Self.segment(from:))
   }
 

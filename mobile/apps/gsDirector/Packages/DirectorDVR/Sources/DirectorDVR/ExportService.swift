@@ -265,64 +265,99 @@ public struct ExportService: Sendable {
 
 /// Roll-off of old archive material.
 ///
-/// Ordering matters: files are unlinked before their index rows are dropped, so a crash
-/// mid-sweep leaves rows pointing at missing files — which `ArchiveIndex.reconcile` cleans up
-/// at launch — rather than files nothing knows about, which would leak disk forever.
+/// Sized, not timed. Whole recordings go, oldest first, and only once the archive is over its
+/// ceiling or the volume is under its floor. A clock-based window discarded a 109-minute game
+/// the morning after it was shot — six hours had passed, which said nothing about whether the
+/// device needed the space.
+///
+/// Only the rolling camera archive is reclaimed. The programme master and anything already
+/// prepared for export are the operator's deliverables; those go when the operator deletes the
+/// recording, never on a sweep.
 public struct RetentionPolicy: Sendable {
   public struct Sweep: Sendable, Equatable {
+    public var removedRecordings: Int
     public var removedSegments: Int
     public var removedProxyStills: Int
     public var reclaimedBytes: Int64
     public var triggeredByDiskPressure: Bool
+    /// True when the archive is still over budget with nothing left that may be swept, so the
+    /// caller can say so rather than let the device quietly run out.
+    public var exhausted: Bool
   }
 
   private let index: ArchiveIndex
-  private let clock: DirectorClock
+  private let roots: RecordingFileRoots
 
-  public init(index: ArchiveIndex, clock: DirectorClock) {
+  public init(index: ArchiveIndex, roots: RecordingFileRoots = .standard) {
     self.index = index
-    self.clock = clock
+    self.roots = roots
   }
 
+  /// `protecting` is the take being written right now. It is never swept, however far over
+  /// budget the archive has run: dropping the recording out from under the writer would take the
+  /// operator's live game away to make room for itself.
   @discardableResult
   public func sweep(
-    retentionHours: Double,
-    minimumFreeDiskBytes: Int64,
+    maximumArchiveBytes: Int64,
+    freeDiskFloorBytes: Int64,
+    protecting liveRecordingID: Int64? = nil,
     fileManager: FileManager = .default
   ) throws -> Sweep {
-    let free = DirectorPaths.freeDiskBytes()
-    let underPressure = free < minimumFreeDiskBytes
-    // Disk pressure halves the window rather than deleting everything: the operator keeps as
-    // much recent timeline as the device can actually hold.
-    let effectiveHours = underPressure ? max(0.25, retentionHours / 2) : retentionHours
-    let cutoff = clock.now - effectiveHours * 3600
+    var archived = try index.totalBytes()
+    var free = DirectorPaths.freeDiskBytes()
+    let startedUnderPressure = free < freeDiskFloorBytes
 
+    var removedRecordings = 0
+    var removedSegments = 0
+    var removedStills = 0
     var reclaimed: Int64 = 0
-    var removed = 0
-    for segment in try index.expiredSegments(before: cutoff) {
-      let url = DirectorPaths.archiveDirectory(for: segment.sourceID)
-        .appendingPathComponent(segment.filename)
-      try? fileManager.removeItem(at: url)
-      try index.deleteSegment(segment.id)
-      reclaimed += segment.byteCount
-      removed += 1
+    var exhausted = false
+
+    while archived > maximumArchiveBytes || free < freeDiskFloorBytes {
+      guard let oldest = try index.oldestRecordingWithSegments() else {
+        exhausted = true
+        break
+      }
+      // The live take is the only exemption, and if it is all that is left there is nothing
+      // more to reclaim — stop rather than spin.
+      if oldest.id == liveRecordingID {
+        exhausted = true
+        break
+      }
+      let removed = try index.deleteArchive(
+        forRecording: oldest.id,
+        roots: roots,
+        fileManager: fileManager
+      )
+      guard removed.segments > 0 else {
+        exhausted = true
+        break
+      }
+      removedRecordings += 1
+      removedSegments += removed.segments
+      removedStills += removed.stills
+      reclaimed += removed.bytes
+      archived -= removed.bytes
+      // Re-read rather than assuming the unlink landed: exports and the programme writer are
+      // moving the same volume underneath this loop.
+      free = DirectorPaths.freeDiskBytes()
     }
 
     for orphan in try index.orphanedInitializationSegments() {
-      let url = DirectorPaths.archiveDirectory(for: orphan.sourceID)
+      let url = roots.archiveDirectory(for: orphan.sourceID)
         .appendingPathComponent(orphan.filename)
       try? fileManager.removeItem(at: url)
       try index.deleteSegment(orphan.id)
       reclaimed += orphan.byteCount
     }
 
-    let removedStills = try index.deleteProxyStills(before: cutoff)
-
     return Sweep(
-      removedSegments: removed,
+      removedRecordings: removedRecordings,
+      removedSegments: removedSegments,
       removedProxyStills: removedStills,
       reclaimedBytes: reclaimed,
-      triggeredByDiskPressure: underPressure
+      triggeredByDiskPressure: startedUnderPressure,
+      exhausted: exhausted
     )
   }
 }
