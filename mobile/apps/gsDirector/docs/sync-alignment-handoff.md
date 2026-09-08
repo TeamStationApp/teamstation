@@ -17,12 +17,16 @@ It contains fixes this plan depends on. If it is not on your machine, fetch it:
 
 ```bash
 git fetch origin paul/directorExportDamagedMedia
-git worktree add /Users/paul/git-worktrees/gamestation-directorExportDamagedMedia \
+git worktree add ~/git-worktrees/gamestation_directorExportDamagedMedia \
   paul/directorExportDamagedMedia
 ```
 
-Worktree convention in this repo: `/Users/paul/git-worktrees/gamestation-<topicName>`, branch
-`paul/<topicName>`, based on `master`.
+Worktree convention: `~/git-worktrees/<repo>_<topicName>`, branch `paul/<topicName>`, based on
+`master`. One underscore joins repo to branch; the branch keeps its camelCase. Older worktrees in
+this repo use a hyphen and predate the convention — leave them alone.
+
+If that `worktree add` lands in `~/git-worktrees/gamestation` and fails because the path exists,
+see trap 9.
 
 ### 0.2 Bootstrap — the Xcode project is generated, not committed
 
@@ -33,12 +37,20 @@ bash scripts/bootstrap.sh          # xcodegen + package resolve; ~1 min
 
 Without this, `build-sim.sh` fails with "run 'socket npm run bootstrap' first".
 
-### 0.3 Device rule
+### 0.3 Testing is simulator-only
+
+**Standing constraint, 2026-09-08: do not touch a real device.** Every work item except W8 runs on
+a simulator, so this costs almost nothing — but it does mean **W8 is blocked on device access**,
+since S7 and S8 are measurements of real cameras over a real network. Build W8's frame-selection
+and hold-on-missing logic under unit test if you get that far, and leave the acceptance run for
+when the rig is available. The rest of this section still applies for whenever that happens.
+
+### 0.4 Device rule
 
 Per the repo's `AGENTS.md`: **never hard-code a UDID.** Pass
 `DIRECTOR_DEVICE_UDID` or `--device <udid>`. Flows must not name a device.
 
-### 0.4 STOP — check retention before you launch the app on any iPad holding footage
+### 0.5 STOP — check retention before you launch the app on any iPad holding footage
 
 Default retention **was 6 hours** and swept the camera archive on app launch. Launching the app
 on an iPad with an unrecovered take silently deleted 3,617 segments of a 109-minute game. This
@@ -49,12 +61,22 @@ has that change before launching it against real footage.** If in doubt, pull th
 
 ## 1. The two requirements
 
-- **R1 — live.** No tile and no programme output is behind wall clock by more than the accepted
-  playout latency, 2 s. Cameras differ from each other only by what the network cost them.
+- **R1 — live.** No tile and no programme output is behind wall clock by more than the
+  **configured display latency**. Each camera is judged against the Director's wall clock,
+  corrected for that camera's own clock offset — not against the other cameras. A frame that has
+  not arrived by its deadline is not waited for: the last frame is held.
 - **R2 — files.** Every exported camera file is wall-clock exact. Play them together and nothing
-  is discernibly early or late.
+  is discernibly early or late. Concretely: a take that starts at 3:00 pm with an event at
+  3:31:30 shows that event 31:30 into every file, including a single-camera take.
 
 Both are violated today.
+
+**Operator decisions, 2026-09-08, already folded into the work items below.** Gaps freeze the last
+frame rather than going black, and black appears only at the head of a file. The programme does
+the same. Both latencies — display and save-to-disk — become configuration with a Settings slider
+each. Cameras are not required to agree with each other; they are required to agree with the
+clock, which makes them agree with each other for free. W8 changed shape as a result, and W9 and
+W10 are new.
 
 ---
 
@@ -139,7 +161,17 @@ being discarded.
 
 - Add `startWalls: [WallClock]` to `SegmentAssembler.Assembly` (`SegmentAssembler.swift:21`).
 - Give `concatenate` a placement mode: insert each file at `startWall − windowStart` rather than
-  at `cursor`. Real gaps become empty ranges — black and silent, which is what happened.
+  at `cursor`, so a real gap keeps its true span instead of being closed up.
+- **A gap holds the last frame; it is not black.** Black belongs only at the head of a file,
+  before that camera has delivered anything, where there is nothing to hold. Audio is silent
+  through the gap either way.
+- **Settle the freeze mechanism first — it decides the shape of this work item.** An empty
+  composition range is black for free; a freeze is not. Either stretch the last sample's duration
+  over the gap (`scaleTimeRange`, which a passthrough export may not honour — check this before
+  committing to it) or write a real sample into the archive at gap time. `SegmentWriter` already
+  does the latter for gaps *inside* a segment; these are the gaps *between* segment files, where
+  the camera was gone and no sample exists. **Never inject a synthetic IDR** — a black IDR mid-GOP
+  once made 92.6 % of an archive black. A P-skip frame is the safe form.
 - In `ExportService.exportRecording` (`ExportService.swift:90`), give every camera the **same**
   window: `recording.startedAt … endedAt`. Delete the overlap trim at
   `ExportService.swift:118-129` — it exists to paper over a ~620 ms head disagreement that
@@ -176,7 +208,8 @@ the take, non-linearly, accumulating at each stall.
 
 Use the mechanism the encoder already has for writer recovery: `fillHold`
 (`ProgramEncoder.swift:712/720`) writes black + silence up to a target. On resume after a gap,
-hold the gap instead of closing it.
+hold the gap instead of closing it — and **hold the last composited frame rather than black**,
+which is what `fillHold` writes today. Same answer the cameras get in W3.
 
 **This must not change what goes out live.** It is about what is *written*; the live composite and
 the RTMP stream keep going as they do now.
@@ -215,21 +248,78 @@ Syntax: `--scenario 1:stall:12@120,2:drop-frames:30,3:clock-jump:5@300`.
 
 **Acceptance:** S5, S6, S9, S11.
 
-### W8 — shared playout offset (the R1 fix, device only)
+### W8 — one configured display latency, and freeze on late (the R1 fix, device only)
 
 `PlayoutController` (`PlayoutController.swift:92`) computes `offsetSeconds` **per camera,
-independently**, clamped to `maximumMilliseconds = 2_000` (`PlayoutController.swift:42`). Each
-camera honours the 2 s cap alone while saying nothing about the others: one camera at the cap and
-another at 100 ms are both "within 2 s of wall clock" and 1.9 s apart from each other.
+independently**, adapting to that camera's own jitter, under `maximumMilliseconds = 2_000`
+(`PlayoutController.swift:42`). So there is no single instant that "now" means on screen: each
+tile runs on its own schedule, and a frame is late against a deadline only that camera has.
 
-- Adopt one programme offset: `min(maximumMilliseconds, max(per-camera offsetSeconds))`, applied
-  to every tile and the compositor.
-- A camera that would push the shared offset past the cap is dropped from the composite rather
-  than abandoning sync. **Confirm this with Paul before building it** — it is a product decision.
-- Expose per-source `off=` and a new `offspread=` (max − min) in the HUD so a flow can assert.
-- Consider special-casing a single-camera show, which gains nothing and pays the shared logic.
+- Present every tile and the compositor against one display latency `D`, read from configuration
+  (W9): show the frame whose corrected capture time is nearest `now − D`.
+- A source with nothing to show at that instant **holds its last frame**. It is not dropped from
+  the composite, and the composite does not wait for it. This is what makes a single-camera take
+  wall-clock exact too, so do not treat it as a multi-camera feature.
+- Expose per-source `off=` and `offspread=` (max − min) in the HUD so a flow can assert. Note the
+  change in status: `offspread` is now a *diagnostic that should read near zero*, not a target —
+  the cameras agree because each agrees with the clock, not because anything reconciles them.
+- The trade is real and worth stating in the commit: the adaptive per-camera offset exists to
+  absorb jitter, and a fixed `D` gives that up. A camera whose jitter exceeds `D` freezes visibly
+  instead of being smoothed. Measured arrival gaps on the rig are 118–270 ms.
 
-**Acceptance:** S7, S8. `offspread` ≤ 250 ms; no source > 2 s.
+**Acceptance:** S7, S8. No source later than `D`; a degraded source freezes and stays in the
+composite. **Blocked while testing is simulator-only (§0.3)** — the logic can be unit-tested, the
+acceptance measurement cannot.
+
+### W9 — both latencies become configuration, with a slider each
+
+There are two deadlines and only one is reachable. The display one is
+`AppConfig.displayLatencyCapEnabled` / `displayLatencyCapMilliseconds` (default 500 ms, clamped
+10–2 000), wired at `AppEnvironment.swift:301` into `registry.playout.setCap` — but it **defaults
+to off**, and it can only tighten the engine's sizing, never raise it, so with the cap off the
+real ceiling is the `PlayoutController.Limits.maximumMilliseconds = 2_000` default literal. The
+save-to-disk one is `SegmentWriter.maximumFrameDuration: Double = 2`, a `private static let` with
+no config entry, no launch key and no UI.
+
+They are deliberately different values: the recording can wait longer than the monitor, because
+nobody watches the file in real time. That is the whole point of having two, and it is lost while
+one of them is a literal.
+
+- Move `maximumFrameDuration` into `AppConfig` beside `segmentSeconds`, persisted and decodable,
+  with the clamp-on-decode treatment the display cap already has.
+- Delete the `Limits.maximumMilliseconds` default literal so config is the only source of truth.
+- **Add a Latency section to Settings with both sliders.** The display slider exists but lives in
+  `PerfHarnessView` (reached via `.perfHarness` in `DirectorRootView`), not Settings; move or
+  mirror it down. Settings currently has Instant replay, Content Templates, Remote Control, Camera
+  archives, Programme master, Stream, Retention, Storage, Sources and Diagnostics.
+
+Mind what `maximumFrameDuration` gates — it is subtler than a timeout. A gap longer than it is
+presumed a *clock glitch* rather than lost frames, unless capture or arrival time corroborates it
+within 0.5 s (`SegmentWriter.swift:436`, `:615`). Corroborated, the frame is held at true length
+with silence to match. Uncorroborated, the sample collapses to one frame's duration — the "file
+runs short" failure itself. Raising the value widens the window in which a real dropout is
+believed.
+
+**Acceptance:** S21, S22.
+
+### W10 — apply the camera clock offset that is already measured
+
+R1 corrects each camera for its own clock offset. That correction is computed and thrown away.
+`RTPClockAudit` derives `ntpOffsetSeconds` and a filtered version from RTCP sender reports; both
+are written to a telemetry snapshot at `RTSPFrameSource.swift:215-216` and shown on the tile HUD.
+Every reference to `cameraClockOffsetSeconds` / `cameraClockOffsetFilteredSeconds` is telemetry
+plumbing — `FrameSource`, `PipelineTelemetry`, `AppEnvironment`. Nothing consumes them.
+
+The Cameraman phones survive this because they run their own time sync and stamp sender reports
+from capture time. The NearStream VM33 does not — stock firmware, no NTP client — so its
+`captureWallClock` is wrong by an unknown constant, and W3 would faithfully place its segments at
+that wrong wall clock. An angle confidently in the wrong place is worse than one obviously broken.
+
+- Apply the filtered offset to `captureWallClock` at ingest.
+- Gate it on a minimum sample count so a cold start cannot swing the timeline.
+- Record the applied offset per segment, so an export can be re-derived if it later proves wrong.
+
+**Acceptance:** S23.
 
 ---
 
@@ -310,13 +400,24 @@ Hard-won. Each of these cost real time.
    end — *no* fragments. A trailing `wide` + `mdat` with size field 0 means `finishWriting` never
    completed.
 
+9. **`~/bin/git` rewrites every `git worktree add` destination**, and it drops the branch suffix:
+   `git-layout-rewrite.js` computes `path.join(WORKTREE_ROOT, repoName)`, so every worktree is
+   aimed at `~/git-worktrees/gamestation` regardless of what you asked for. That path is already
+   an unrelated worktree, so the add fails with *"already exists"*. The shim honours a
+   `GIT_LAYOUT_BYPASS` environment variable; setting it produces the path the layout convention
+   actually asks for. Fixing the shim to build `<repo>_<branch>` is the better answer and is not
+   this branch's job.
+
 ---
 
 ## 6. Done means
 
-- `verifySync.js` passes S1–S18 at ≤ 40 ms on a take with every fault injected at once.
+- `verifySync.js` passes S1–S23 at ≤ 40 ms on a take with every fault injected at once.
 - A camera with a 30 s dropout exports the same length as one without.
+- A gap decodes as a held frame, not black; black appears only before a camera's first frame.
 - Programme file length equals take length.
+- Settings carries a display latency slider and a save-to-disk latency slider, and moving each
+  changes what the archive and the monitor keep.
 - Exported MP4 and MOV both pass identically.
 - Unit test count went up and the only failures are the two known ones.
 - `--suite operator` still passes.
