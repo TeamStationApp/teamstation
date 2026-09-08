@@ -94,13 +94,21 @@ function probe(file) {
   ])
   const json = JSON.parse(raw)
   const stream = json.streams[0] || {}
-  const seconds = Number(json.format.duration || stream.duration || 0)
+  // The *video track's* own duration, not the container's. The container reports the longest
+  // track, so when a sender misdeclares its frame rate the video timeline can run at half real
+  // speed while the audio track is correct — and dividing the frame count by the container
+  // duration then yields a plausible frame rate that hides it completely. Measured on a real
+  // NDI|HX converter declaring 120/1 while sending 60: video track 3.000s for 360 frames against
+  // a 5.887s audio track, reported here as a healthy 59.4 fps until this preferred the stream.
+  const seconds = Number(stream.duration || json.format.duration || 0)
+  const containerSeconds = Number(json.format.duration || 0)
   const frames = Number(stream.nb_read_frames || 0)
   return {
     codec: stream.codec_name,
     size: `${stream.width}x${stream.height}`,
     frames,
     seconds,
+    containerSeconds,
     fps: seconds > 0 ? frames / seconds : 0,
     audio: probeAudio(file)
   }
@@ -226,11 +234,22 @@ function main() {
 
     try {
       const result = probe(joined)
+      const drift = result.audio ? result.audio.seconds - result.seconds : 0
       const audio = result.audio
         ? `  audio ${result.audio.codec} ${result.audio.rate}Hz x${result.audio.channels} ` +
           `${result.audio.seconds.toFixed(1)}s ` +
-          `drift=${(result.audio.seconds - result.seconds).toFixed(2)}s`
+          `drift=${drift.toFixed(2)}s`
         : '  audio none'
+      // A video track materially shorter or longer than the audio beside it is not a rounding
+      // artefact: it is the whole file playing at the wrong speed, and it has to be shouted about
+      // rather than left for someone to notice in a frame-rate column.
+      if (Math.abs(drift) > 0.5) {
+        console.log(
+          `${''.padEnd(26)} ** VIDEO/AUDIO TIMELINE MISMATCH: video ${result.seconds.toFixed(3)}s ` +
+            `vs audio ${result.audio.seconds.toFixed(3)}s — video plays ` +
+            `${(result.audio.seconds / result.seconds).toFixed(2)}x wrong speed **`
+        )
+      }
       console.log(
         `${camera.padEnd(26)} ${result.codec} ${result.size}  ` +
           `${result.frames} frames in ${result.seconds.toFixed(1)}s = ${result.fps.toFixed(1)} fps` +

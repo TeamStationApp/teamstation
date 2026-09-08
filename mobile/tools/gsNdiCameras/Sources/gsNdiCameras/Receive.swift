@@ -85,6 +85,17 @@ func runReceive(nameFragment: String, seconds: Double, lowest: Bool = false, tal
   var metadata = 0
   var nothing = 0
   var described = false
+  // The sender's own clock. Counting arrivals cannot tell a sender emitting 60 fps from one
+  // emitting 120 of which half are lost on the way, but the gap between consecutive sender
+  // timestamps can: it is written before the frame leaves, so it is unaffected by anything the
+  // network or this receiver does.
+  var timestampGaps: [Double] = []
+  var timecodeGaps: [Double] = []
+  var previousTimestamp: Int64 = 0
+  var previousTimecode: Int64 = 0
+  var firstTimestamp: Int64 = 0
+  var lastTimestamp: Int64 = 0
+  let ticksPerSecond = 10_000_000.0
   let deadline = Date().addingTimeInterval(seconds)
   while Date() < deadline {
     var videoFrame = NDIlib_video_frame_v2_t()
@@ -104,6 +115,21 @@ func runReceive(nameFragment: String, seconds: Double, lowest: Bool = false, tal
             + "stride=\(videoFrame.line_stride_in_bytes) format=\(videoFrame.frame_format_type.rawValue)"
         )
       }
+      if videoFrame.timestamp != NDIlib_recv_timestamp_undefined, videoFrame.timestamp > 0 {
+        if previousTimestamp != 0 {
+          timestampGaps.append(Double(videoFrame.timestamp - previousTimestamp) / ticksPerSecond)
+        } else {
+          firstTimestamp = videoFrame.timestamp
+        }
+        previousTimestamp = videoFrame.timestamp
+        lastTimestamp = videoFrame.timestamp
+      }
+      if videoFrame.timecode != NDIlib_send_timecode_synthesize, videoFrame.timecode > 0 {
+        if previousTimecode != 0 {
+          timecodeGaps.append(Double(videoFrame.timecode - previousTimecode) / ticksPerSecond)
+        }
+        previousTimecode = videoFrame.timecode
+      }
       NDIlib_recv_free_video_v2(receiver, &videoFrame)
     case NDIlib_frame_type_audio:
       audio += 1
@@ -120,6 +146,44 @@ func runReceive(nameFragment: String, seconds: Double, lowest: Bool = false, tal
       nothing += 1
     }
   }
+
+  func describe(_ label: String, _ gaps: [Double]) {
+    guard !gaps.isEmpty else {
+      print("\(label): none reported by the sender")
+      return
+    }
+    let sorted = gaps.sorted()
+    let median = sorted[sorted.count / 2]
+    print(
+      "\(label): n=\(gaps.count) median=\(String(format: "%.5f", median))s "
+        + "(= \(String(format: "%.2f", 1 / median)) fps) "
+        + "min=\(String(format: "%.5f", sorted.first!)) max=\(String(format: "%.5f", sorted.last!))"
+    )
+  }
+  describe("sender timestamp gap", timestampGaps)
+  describe("sender timecode gap", timecodeGaps)
+  if firstTimestamp != 0, lastTimestamp > firstTimestamp {
+    let span = Double(lastTimestamp - firstTimestamp) / ticksPerSecond
+    print(
+      "sender span: \(String(format: "%.3f", span))s for \(video) frames "
+        + "= \(String(format: "%.2f", Double(video - 1) / span)) fps by the sender's own clock"
+    )
+  }
+
+  // The only instrument that separates "the sender emits 60" from "the sender emits 120 and half
+  // are lost": timestamp gaps look identical in both cases, because a receiver that loses every
+  // other frame of a 120 fps stream sees exactly the 1/60 spacing a 60 fps stream would give.
+  // The SDK counts what it discarded, so it can answer directly.
+  var total = NDIlib_recv_performance_t()
+  var dropped = NDIlib_recv_performance_t()
+  NDIlib_recv_get_performance(receiver, &total, &dropped)
+  print(
+    "SDK performance: video total=\(total.video_frames) dropped=\(dropped.video_frames), "
+      + "audio total=\(total.audio_frames) dropped=\(dropped.audio_frames)"
+  )
+  var queue = NDIlib_recv_queue_t()
+  NDIlib_recv_get_queue(receiver, &queue)
+  print("SDK queue at exit: video=\(queue.video_frames) audio=\(queue.audio_frames)")
 
   let connections = NDIlib_recv_get_no_connections(receiver)
   print(
