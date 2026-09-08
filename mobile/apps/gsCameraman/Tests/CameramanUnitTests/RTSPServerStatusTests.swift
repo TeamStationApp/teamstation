@@ -75,6 +75,112 @@ struct RTSPServerStatusTests {
     return condition()
   }
 
+  // MARK: - Listener lifecycle
+
+  /// A bare server with no encoder and no parameter handler.
+  private static func makeServer() -> RTSPServer {
+    RTSPServer(
+      describe: { _, _ in "v=0\r\n" },
+      hasAudio: { false },
+      identity: { identity },
+      requestKeyframe: {}
+    )
+  }
+
+  /// A server on a port it will return to after a rebind. Binding zero gets a fresh ephemeral port
+  /// every time, which cannot show that recovery comes back where clients were told to look — so a
+  /// throwaway server discovers a free port and the real one then asks for it by number.
+  private static func startServerOnAFixedPort() async throws -> (server: RTSPServer, port: UInt16) {
+    let discovery = makeServer()
+    discovery.start(port: 0, fallbackPort: 0, path: "/live/mainstream", advertise: false)
+    #expect(await waitUntil({ discovery.status.port != nil }, seconds: 5), "no ephemeral port")
+    let port = try #require(discovery.status.port)
+    discovery.stop()
+    #expect(await waitUntil { !discovery.status.isListening })
+
+    let server = makeServer()
+    server.start(port: port, fallbackPort: 0, path: "/live/mainstream", advertise: false)
+    #expect(await waitUntil({ server.status.isListening }, seconds: 5), "the listener never bound")
+    #expect(server.status.port == port, "the discovered port was not free")
+    return (server, port)
+  }
+
+  @Test("A listener taken away the way backgrounding takes it comes back on its own")
+  func listenerRecoversFromAnUnrequestedCancel() async throws {
+    let (server, port) = try await Self.startServerOnAFixedPort()
+    defer { server.stop() }
+
+    server.simulateListenerLoss()
+    #expect(await Self.waitUntil { !server.status.isListening }, "the loss was never observed")
+
+    #expect(
+      await Self.waitUntil({ server.status.isListening }, seconds: 5),
+      "the listener stayed down; a backgrounded app would return to a preview nobody can connect to"
+    )
+    #expect(server.status.port == port, "recovery must come back on the port clients were told")
+  }
+
+  @Test("A recovered listener still answers, rather than only reporting itself up")
+  func recoveredListenerAcceptsClients() async throws {
+    let (server, port) = try await Self.startServerOnAFixedPort()
+    defer { server.stop() }
+
+    server.simulateListenerLoss()
+    #expect(await Self.waitUntil { !server.status.isListening })
+    #expect(await Self.waitUntil({ server.status.isListening }, seconds: 5))
+
+    let client = try await LoopbackRTSPClient(port: port)
+    defer { client.close() }
+    let options = try await client.exchange(
+      "OPTIONS rtsp://127.0.0.1/live/mainstream RTSP/1.0\r\nCSeq: 1\r\n\r\n"
+    )
+    #expect(options.statusCode == 200)
+  }
+
+  @Test("Becoming active puts a lost listener back without waiting out the backoff")
+  func ensureListeningRebindsAfterALoss() async throws {
+    let (server, port) = try await Self.startServerOnAFixedPort()
+    defer { server.stop() }
+
+    server.simulateListenerLoss()
+    #expect(await Self.waitUntil { !server.status.isListening })
+
+    server.ensureListening()
+    #expect(await Self.waitUntil({ server.status.isListening }, seconds: 5))
+    #expect(server.status.port == port)
+  }
+
+  @Test("Becoming active while serving does not cut the listener out from under a client")
+  func ensureListeningWhileUpIsANoOp() async throws {
+    let (server, port) = try await Self.startServerOnAFixedPort()
+    defer { server.stop() }
+
+    let client = try await LoopbackRTSPClient(port: port)
+    defer { client.close() }
+    _ = try await client.exchange("OPTIONS rtsp://127.0.0.1/live/mainstream RTSP/1.0\r\nCSeq: 1\r\n\r\n")
+    #expect(await Self.waitUntil { server.status.acceptedClients == 1 })
+
+    server.ensureListening()
+    try await Task.sleep(for: .milliseconds(300))
+
+    #expect(server.status.isListening)
+    #expect(server.status.port == port)
+    #expect(server.status.acceptedClients == 1, "the connected client was dropped by a needless rebind")
+  }
+
+  @Test("A server that was deliberately stopped is not resurrected by becoming active")
+  func ensureListeningDoesNotUndoStop() async throws {
+    let (server, _) = try await Self.startServerOnAFixedPort()
+
+    server.stop()
+    #expect(await Self.waitUntil { !server.status.isListening })
+
+    server.ensureListening()
+    try await Task.sleep(for: .milliseconds(500))
+    #expect(!server.status.isListening, "stop is a decision, not a fault to recover from")
+    #expect(server.status.port == nil)
+  }
+
   @Test("A control-only connection is accepted but is not a viewer")
   func controlOnlyConnectionIsNotCounted() async throws {
     let server = try await Self.startServer()
