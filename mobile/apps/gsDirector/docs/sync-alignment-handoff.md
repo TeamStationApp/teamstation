@@ -35,7 +35,7 @@ Without this, `build-sim.sh` fails with "run 'socket npm run bootstrap' first".
 
 ### 0.3 Device rule
 
-Per `.cursor/rules/gs-director-m4-testing.mdc`: **never hard-code a UDID.** Pass
+Per the repo's `AGENTS.md`: **never hard-code a UDID.** Pass
 `DIRECTOR_DEVICE_UDID` or `--device <udid>`. Flows must not name a device.
 
 ### 0.4 STOP — check retention before you launch the app on any iPad holding footage

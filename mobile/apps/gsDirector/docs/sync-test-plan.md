@@ -209,8 +209,8 @@ Written as conditions, in the style of `operator-test-vectors.md`.
 7. T2 fault injection, then S5, S6, S9, S11.
 8. C2 shared offset, then S7, S8 — needs the device, not the simulator.
 
-Steps 1–7 run on a simulator. Step 8 needs the M4, per the device rule in
-`.cursor/rules/gs-director-m4-testing.mdc`.
+Steps 1–7 run on a simulator. Step 8 needs the M4, per the device rule in the repo's
+`AGENTS.md`.
 
 ## 7. Open questions
 
