@@ -202,6 +202,14 @@ public final class AppEnvironment {
     }
   }
 
+  /// Called when the scene becomes active. iOS takes the RTSP listener and its Bonjour record down
+  /// when the app leaves the foreground and puts neither back, and capture is independent of both,
+  /// so returning to the foreground otherwise gives a live preview that Director cannot see. Coming
+  /// back is the only moment the app gets to notice.
+  public func handleForeground() {
+    server?.ensureListening()
+  }
+
   public func rename(to name: String) {
     let next = identityProvider.save(name: name)
     identity = next
