@@ -352,7 +352,7 @@ public final class AppEnvironment {
     self.proxyReader = ProxyReader(index: index)
     self.assembler = SegmentAssembler(index: index)
     self.exporter = ExportService(index: index)
-    self.retention = RetentionPolicy(index: index, clock: clock)
+    self.retention = RetentionPolicy(index: index)
 
     telemetry.mutate { [sourceProfile] snapshot in
       snapshot.sourceProfile = sourceProfile.rawValue
@@ -1653,15 +1653,23 @@ public final class AppEnvironment {
 
   public func sweepRetention() {
     guard let sweep = try? retention.sweep(
-      retentionHours: config.retentionHours,
-      minimumFreeDiskBytes: config.minimumFreeDiskBytes
+      maximumArchiveBytes: config.maximumArchiveBytes,
+      freeDiskFloorBytes: config.freeDiskFloorBytes,
+      protecting: recordingID
     ) else { return }
     telemetry.mutate {
       $0.dvr.retentionSwept += UInt64(sweep.removedSegments)
       $0.dvr.retentionReclaimedBytes += UInt64(max(0, sweep.reclaimedBytes))
     }
-    if sweep.triggeredByDiskPressure {
-      statusMessage = "Low storage — retention window halved"
+    if sweep.exhausted {
+      // Worth saying out loud: the archive is over budget and the sweeper has nothing left it is
+      // allowed to take, so the next thing to run out is the device.
+      statusMessage = "Storage low — nothing left to sweep; export and delete old recordings"
+    } else if sweep.removedRecordings > 0 {
+      let gb = Double(sweep.reclaimedBytes) / 1_073_741_824
+      statusMessage = sweep.triggeredByDiskPressure
+        ? String(format: "Low storage — freed %.1f GB from %d recording(s)", gb, sweep.removedRecordings)
+        : String(format: "Archive full — freed %.1f GB from %d recording(s)", gb, sweep.removedRecordings)
     }
   }
 

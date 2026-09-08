@@ -274,17 +274,39 @@ public struct SettingsView: View {
           Text("RTMP URL the Stream button publishes the programme output to.")
         }
 
-        Section("Retention") {
+        Section {
           Stepper(
-            "Keep \(String(format: "%.1f", draft.retentionHours)) hours",
-            value: $draft.retentionHours,
-            in: 0.5 ... 24,
-            step: 0.5
+            "Keep up to \(Self.gigabytes(draft.maximumArchiveBytes)) of camera archive",
+            value: Binding(
+              get: { Double(draft.maximumArchiveBytes) / Double(AppConfig.gigabyte) },
+              set: { draft.maximumArchiveBytes = Int64($0.rounded()) * AppConfig.gigabyte }
+            ),
+            in: 10 ... 900,
+            step: 10
           )
           .accessibilityIdentifier("settings-retention")
 
+          Stepper(
+            "Sweep when free space drops under \(Self.gigabytes(draft.freeDiskFloorBytes))",
+            value: Binding(
+              get: { Double(draft.freeDiskFloorBytes) / Double(AppConfig.gigabyte) },
+              set: { draft.freeDiskFloorBytes = Int64($0.rounded()) * AppConfig.gigabyte }
+            ),
+            in: 10 ... 500,
+            step: 10
+          )
+          .accessibilityIdentifier("settings-retention-floor")
+
           LabeledContent("Free space", value: Self.gigabytes(DirectorPaths.freeDiskBytes()))
             .accessibilityIdentifier("settings-free-space")
+        } header: {
+          Text("Retention")
+        } footer: {
+          Text("""
+          Oldest recordings lose their camera archive first, whole takes at a time. The \
+          programme master and anything already exported are never swept — delete those \
+          yourself from Recordings.
+          """)
         }
 
         Section {

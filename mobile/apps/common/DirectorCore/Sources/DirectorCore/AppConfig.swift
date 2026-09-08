@@ -48,9 +48,17 @@ public struct AppConfig: Hashable, Sendable, Codable {
   public var programFrameRate: Int
   public var gopSeconds: Double
   public var segmentSeconds: Double
-  public var retentionHours: Double
+  /// Ceiling on the archive. Once the segments on disk exceed this, the oldest recordings are
+  /// dropped whole until they fit again. Sized in bytes rather than hours because an hour of
+  /// archive is worth wildly different amounts of disk depending on camera count and bitrate,
+  /// and a six-hour window silently discarded a 109-minute game the morning after it was shot.
+  public var maximumArchiveBytes: Int64
   public var programBitrate: Int
+  /// Hard headroom for the *writer*: archiving stops rather than filling the device.
   public var minimumFreeDiskBytes: Int64
+  /// Free space the *sweeper* keeps available. When the volume falls below this, the oldest
+  /// recordings are dropped until it is clear again, even if the archive is under its ceiling.
+  public var freeDiskFloorBytes: Int64
   /// Whether the telemetry overlay is drawn over the director grid. A normal setting, not a
   /// test-only flag: the operator turns it on from Settings and it has to still be on tomorrow.
   public var showDebugHUD: Bool
@@ -99,9 +107,10 @@ public struct AppConfig: Hashable, Sendable, Codable {
     programFrameRate: Int = 30,
     gopSeconds: Double = 2,
     segmentSeconds: Double = 3,
-    retentionHours: Double = 6,
+    maximumArchiveBytes: Int64 = AppConfig.maximumArchiveBytesDefault,
     programBitrate: Int = 12_000_000,
     minimumFreeDiskBytes: Int64 = 4 * 1024 * 1024 * 1024,
+    freeDiskFloorBytes: Int64 = AppConfig.freeDiskFloorBytesDefault,
     showDebugHUD: Bool = false,
     useSimulatedCameras: Bool = false,
     displayLatencyCapEnabled: Bool = false,
@@ -117,9 +126,10 @@ public struct AppConfig: Hashable, Sendable, Codable {
     self.programFrameRate = programFrameRate
     self.gopSeconds = gopSeconds
     self.segmentSeconds = segmentSeconds
-    self.retentionHours = retentionHours
+    self.maximumArchiveBytes = max(0, maximumArchiveBytes)
     self.programBitrate = programBitrate
     self.minimumFreeDiskBytes = minimumFreeDiskBytes
+    self.freeDiskFloorBytes = max(0, freeDiskFloorBytes)
     self.showDebugHUD = showDebugHUD
     self.useSimulatedCameras = useSimulatedCameras
     self.displayLatencyCapEnabled = displayLatencyCapEnabled
@@ -173,12 +183,14 @@ public struct AppConfig: Hashable, Sendable, Codable {
         ?? fallback.gopSeconds,
       segmentSeconds: try container.decodeIfPresent(Double.self, forKey: .segmentSeconds)
         ?? fallback.segmentSeconds,
-      retentionHours: try container.decodeIfPresent(Double.self, forKey: .retentionHours)
-        ?? fallback.retentionHours,
+      maximumArchiveBytes: try container.decodeIfPresent(Int64.self, forKey: .maximumArchiveBytes)
+        ?? fallback.maximumArchiveBytes,
       programBitrate: try container.decodeIfPresent(Int.self, forKey: .programBitrate)
         ?? fallback.programBitrate,
       minimumFreeDiskBytes: try container.decodeIfPresent(Int64.self, forKey: .minimumFreeDiskBytes)
         ?? fallback.minimumFreeDiskBytes,
+      freeDiskFloorBytes: try container.decodeIfPresent(Int64.self, forKey: .freeDiskFloorBytes)
+        ?? fallback.freeDiskFloorBytes,
       showDebugHUD: try container.decodeIfPresent(Bool.self, forKey: .showDebugHUD)
         ?? fallback.showDebugHUD,
       useSimulatedCameras: try container.decodeIfPresent(Bool.self, forKey: .useSimulatedCameras)
@@ -207,6 +219,12 @@ public struct AppConfig: Hashable, Sendable, Codable {
         ?? fallback.streamURL
     )
   }
+
+  public static let gigabyte: Int64 = 1024 * 1024 * 1024
+  /// 250 GB of archive on a 1 TB iPad: several full games, and still most of the device free.
+  public static let maximumArchiveBytesDefault: Int64 = 250 * AppConfig.gigabyte
+  /// Sweeping starts if free space falls under 100 GB, whatever the archive size.
+  public static let freeDiskFloorBytesDefault: Int64 = 100 * AppConfig.gigabyte
 
   public static let `default` = AppConfig()
 }
