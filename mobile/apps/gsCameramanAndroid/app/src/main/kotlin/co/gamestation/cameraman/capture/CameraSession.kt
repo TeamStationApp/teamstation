@@ -317,8 +317,6 @@ class CameraSession(private val context: Context) {
         )
         applyLensBounds()
 
-        applyCaptureRotation()
-
         if (renderer == null) {
             renderer = try {
                 CaptureRenderer(settings.width, settings.height) { onVideoFrame?.invoke() }
@@ -331,6 +329,12 @@ class CameraSession(private val context: Context) {
                 return
             }
         }
+
+        // After the renderer exists, not before: a rotation applied to a null renderer is published
+        // to the state dump and dropped on the floor, so the dump reads correct while the buffers
+        // keep the default. The activity's bind used to hide this by re-applying moments later —
+        // but the service is meant to run without an activity at all.
+        applyCaptureRotation()
 
         try {
             manager.openCamera(id, executor, deviceCallback)
