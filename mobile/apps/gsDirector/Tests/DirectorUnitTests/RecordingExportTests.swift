@@ -56,6 +56,32 @@ struct RecordingExportTests {
     ])
   }
 
+  @Test("Programme parts with no movie header are named rather than thrown from AVFoundation")
+  func unreadableProgramPartsAreReported() async throws {
+    // A continuation writer that dies seconds after opening leaves a part with no movie header.
+    // Loading one throws "Cannot Open" inside AVFoundation, which used to abort the whole export
+    // — including the readable master alongside it. Two unreadable parts leave nothing to remux,
+    // so this still fails, but it fails naming them.
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("remux-unreadable-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let first = root.appendingPathComponent("program-20260906-080531-2.mp4")
+    let second = root.appendingPathComponent("program-20260906-080531-3.mp4")
+    // Big enough to pass a size check, and with no `moov` — exactly the stub rec-253 carried.
+    try Data(repeating: 0, count: 4096).write(to: first)
+    try Data(repeating: 0, count: 4096).write(to: second)
+
+    await #expect(throws: ArchiveRemux.Error.self) {
+      try await ArchiveRemux.concatenate(
+        files: [first, second],
+        fileDurations: [0, 0],
+        destination: root.appendingPathComponent("out.mp4")
+      )
+    }
+  }
+
   @Test("Prepared movies live in a folder named for the recording")
   func preparedDirectoryUsesRecordingID() {
     let root = URL(fileURLWithPath: "/tmp/prepared")

@@ -43,35 +43,50 @@ public enum ArchiveRemux {
 
     let composition = AVMutableComposition()
     var cursor = CMTime.zero
+    var skipped: [String] = []
     for (index, file) in files.enumerated() {
       let asset = AVURLAsset(url: file)
-      let duration: CMTime
-      if index < fileDurations.count, fileDurations[index] > 0 {
-        duration = CMTime(seconds: fileDurations[index], preferredTimescale: 600)
-      } else {
-        duration = try await playableDuration(of: asset)
-      }
-      guard duration.seconds > 0.05 else { continue }
-      // Only the first file is trimmed, and never past its own length.
-      let trim = index == 0 ? min(max(0, headTrim), max(0, duration.seconds - 0.05)) : 0
-      let start = CMTime(seconds: trim, preferredTimescale: 600)
-      let kept = CMTimeSubtract(duration, start)
-      guard kept.seconds > 0.05 else { continue }
-      // Trimmed at the tail as well, for the same reason as the head: the last segment runs to its
-      // camera's next keyframe, which is past where the window ends and by a different amount on
-      // every camera. Without this the files still disagree by about a frame.
-      var use = kept
-      if let targetDuration {
-        let remaining = targetDuration - cursor.seconds
-        if remaining <= 0.001 { break }
-        if kept.seconds > remaining {
-          use = CMTime(seconds: remaining, preferredTimescale: 600)
+      // A part the writer never finalised has no movie header, so loading it throws. Letting that
+      // escape aborted the whole export with AVFoundation's damaged-media error: rec-253's
+      // programme was a readable 1h46m master plus a 5 MB continuation stub, left behind when a
+      // recovery writer died two seconds after opening it, and the stub failed the export for all
+      // of it. An unreadable piece is skipped so the readable ones still come out.
+      do {
+        let duration: CMTime
+        if index < fileDurations.count, fileDurations[index] > 0 {
+          duration = CMTime(seconds: fileDurations[index], preferredTimescale: 600)
+        } else {
+          duration = try await playableDuration(of: asset)
         }
+        guard duration.seconds > 0.05 else { continue }
+        // Only the first file is trimmed, and never past its own length.
+        let trim = index == 0 ? min(max(0, headTrim), max(0, duration.seconds - 0.05)) : 0
+        let start = CMTime(seconds: trim, preferredTimescale: 600)
+        let kept = CMTimeSubtract(duration, start)
+        guard kept.seconds > 0.05 else { continue }
+        // Trimmed at the tail as well, for the same reason as the head: the last segment runs to
+        // its camera's next keyframe, which is past where the window ends and by a different
+        // amount on every camera. Without this the files still disagree by about a frame.
+        var use = kept
+        if let targetDuration {
+          let remaining = targetDuration - cursor.seconds
+          if remaining <= 0.001 { break }
+          if kept.seconds > remaining {
+            use = CMTime(seconds: remaining, preferredTimescale: 600)
+          }
+        }
+        guard use.seconds > 0.001 else { continue }
+        let range = CMTimeRange(start: start, duration: use)
+        try await composition.insertTimeRange(range, of: asset, at: cursor)
+        cursor = CMTimeAdd(cursor, use)
+      } catch {
+        skipped.append(file.lastPathComponent)
+        continue
       }
-      guard use.seconds > 0.001 else { continue }
-      let range = CMTimeRange(start: start, duration: use)
-      try await composition.insertTimeRange(range, of: asset, at: cursor)
-      cursor = CMTimeAdd(cursor, use)
+    }
+    if !skipped.isEmpty, cursor.seconds <= 0.05 {
+      // Nothing readable at all is still a failure, and naming the pieces beats "no files".
+      throw Error.exportFailed("unreadable: \(skipped.joined(separator: ", "))")
     }
 
     guard cursor.seconds > 0.05 else { throw Error.empty }
