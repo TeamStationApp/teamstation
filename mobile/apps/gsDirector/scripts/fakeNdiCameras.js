@@ -129,7 +129,37 @@ async function waitForPort(port, seconds) {
   return false
 }
 
-function stopFarm() {
+/// The opposite wait, and the one that makes the readiness check above mean anything.
+///
+/// A farm that is shutting down still answers `/clock` for a moment, so waiting for the port to
+/// *answer* cannot tell a new farm from the corpse of the old one: the previous farm satisfied the
+/// check, the new farm lost the bind with EADDRINUSE, and then the old listener went away leaving
+/// nothing on the port. The generator reported the failure on stderr and kept publishing, so the
+/// cameras looked healthy while every fault command failed with a connection error that reads as
+/// the app's fault. Requiring the port to be free *first* is what removes the ambiguity.
+async function waitForPortClosed(port, seconds) {
+  const deadline = Date.now() + seconds * 1000
+  while (Date.now() < deadline) {
+    try {
+      await request(port, '/clock')
+      await new Promise((resolve) => setTimeout(resolve, 250))
+    } catch {
+      return true
+    }
+  }
+  return false
+}
+
+const isRunning = (pid) => {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function stopFarm() {
   const state = readState()
   if (!state) {
     process.stdout.write('no farm recorded\n')
@@ -140,17 +170,36 @@ function stopFarm() {
     // discovery promptly, and a killed process leaves them advertised until they time out — which
     // looks exactly like the reconnect bug the tests are trying to find.
     process.kill(state.pid, 'SIGTERM')
-    process.stdout.write(`stopped farm pid ${state.pid}\n`)
   } catch {
     process.stdout.write('farm was not running\n')
+    fs.rmSync(STATE_PATH, { force: true })
+    return
   }
+  // Returning before the process is gone is what let the next farm start into an occupied port.
+  const deadline = Date.now() + 15_000
+  while (isRunning(state.pid) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+  const exited = !isRunning(state.pid)
+  const released = await waitForPortClosed(state.controlPort ?? DEFAULT_CONTROL_PORT, 10)
   fs.rmSync(STATE_PATH, { force: true })
+  if (!exited) {
+    process.stderr.write(`farm pid ${state.pid} did not exit after SIGTERM\n`)
+    process.exit(1)
+  }
+  if (!released) {
+    process.stderr.write(
+      `farm pid ${state.pid} exited but port ${state.controlPort ?? DEFAULT_CONTROL_PORT} is still held\n`
+    )
+    process.exit(1)
+  }
+  process.stdout.write(`stopped farm pid ${state.pid}\n`)
 }
 
 async function main() {
   const options = parseArgs(process.argv.slice(2))
 
-  if (options.stop) return stopFarm()
+  if (options.stop) return await stopFarm()
 
   if (options.clock || options.fault) {
     const state = readState()
@@ -180,6 +229,15 @@ async function main() {
     '--control-port', String(options.controlPort)
   ]
   if (options.quality !== null) args.push('--quality', String(options.quality))
+  // A farm already on the port would win the bind and leave this one mute, so refuse to start
+  // rather than publish cameras with no fault control.
+  if (!(await waitForPortClosed(options.controlPort, 15))) {
+    process.stderr.write(
+      `port ${options.controlPort} is already in use — stop the running farm first ` +
+        `(node scripts/fakeNdiCameras.js --stop)\n`
+    )
+    process.exit(1)
+  }
   // The child's output goes to a file rather than being inherited: inheriting keeps this process's
   // stdout pipe open, so a caller waiting on this command never sees it return.
   const log = fs.openSync(LOG_PATH, 'a')
