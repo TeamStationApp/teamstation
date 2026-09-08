@@ -16,6 +16,11 @@ const { get, resolveHost } = require('./deviceTarget')
 const FARM = path.join(__dirname, 'fakeNdiCameras.js')
 const FAULT_PORT = 8770
 
+/// How much in-flight video a stall is allowed to deliver after the fault is applied: one
+/// generator loop plus the SDK's receive queue. Measured at 0.1 s, which is 3 frames at 30 fps
+/// and 6 at 60.
+const IN_FLIGHT_SECONDS = 0.1
+
 function parseArgs(argv) {
   const options = { device: null, sim: false, only: null, settle: 12 }
   for (let index = 0; index < argv.length; index += 1) {
@@ -107,14 +112,21 @@ const CASES = [
     // reads a camera that has already recovered, which passes for the wrong reason.
     settle: 6,
     // Not exactly zero. The fault takes effect on the generator's next loop iteration and the
-    // SDK keeps a short receive queue, so a frame or two already in flight lands after the fault
-    // is applied. Demanding zero fails on that race about one run in three and says nothing about
-    // the app; what matters is that a twelve-second stall does not keep delivering.
+    // SDK keeps a short receive queue, so frames already in flight land after the fault is
+    // applied. Demanding zero fails on that race and says nothing about the app; what matters is
+    // that a twelve-second stall does not keep delivering.
+    //
+    // The allowance is a *duration* of in-flight video, not a frame count, because the same
+    // physical pipeline holds twice as many frames at 60 fps as at 30. A flat `<= 3` passed 3/3 at
+    // 1080p30 and failed 2 runs in 3 at 1080p60 with exactly +4 — the transport behaving
+    // identically, read as a regression.
     expect: (before, after, sent) => {
       const arrived = after.tiles[0].capturedFrames - before.tiles[0].capturedFrames
-      return arrived <= 3
+      const frameRate = before.tiles[0].sourceFrameRate || 30
+      const allowed = Math.ceil(frameRate * IN_FLIGHT_SECONDS)
+      return arrived <= allowed
         ? null
-        : `frames still arriving during a stall (+${arrived})`
+        : `frames still arriving during a stall (+${arrived}, allowed ${allowed} at ${frameRate} fps)`
     }
   },
   {
