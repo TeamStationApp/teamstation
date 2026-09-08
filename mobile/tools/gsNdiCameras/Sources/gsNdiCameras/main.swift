@@ -18,6 +18,10 @@ struct Options {
   var namePrefix = "GS NDI"
   var controlPort: UInt16 = 8770
   var selfTest = false
+  /// Receive one source instead of sending, to separate a sender's stream from the app's handling.
+  var receive: String?
+  var receiveLowest = false
+  var receiveTally = false
   var seconds: Double?
   /// SpeedHQ bitrate as a percentage of the codec's default, written into an NDI config file
   /// before the library starts. 100 is the default.
@@ -88,6 +92,9 @@ func parseOptions(_ argv: [String]) -> Options {
     case "--control-port": options.controlPort = value().flatMap(UInt16.init) ?? options.controlPort
     case "--seconds": options.seconds = value().flatMap(Double.init)
     case "--self-test": options.selfTest = true
+    case "--receive": options.receive = value()
+    case "--receive-lowest": options.receiveLowest = true
+    case "--receive-tally": options.receiveTally = true
     case "--quality": options.quality = value().flatMap(Int.init)
     default:
       FileHandle.standardError.write(Data("unknown argument: \(argument)\n".utf8))
@@ -215,6 +222,15 @@ func applyQuality(_ quality: Int) {
 }
 
 if let quality = options.quality { applyQuality(quality) }
+
+if let fragment = options.receive {
+  exit(runReceive(
+    nameFragment: fragment,
+    seconds: options.seconds ?? 10,
+    lowest: options.receiveLowest,
+    tally: options.receiveTally
+  ))
+}
 
 if options.selfTest {
   exit(runSelfTest(options))
