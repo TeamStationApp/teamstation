@@ -33,6 +33,9 @@ public struct ProgramTileView: View {
           }
           nameplate
           Spacer()
+          if !isRewinding {
+            statsPills
+          }
         }
         Spacer()
           .allowsHitTesting(false)
@@ -71,8 +74,7 @@ public struct ProgramTileView: View {
   }
 
   private var programTelemetry: TileTelemetry? {
-    guard let index = snapshot.programSource else { return nil }
-    return snapshot.tiles.first { $0.index == index }
+    snapshot.programTile
   }
 
   private var sourceName: String? {
@@ -99,6 +101,16 @@ public struct ProgramTileView: View {
     .padding(.horizontal, 8)
     .padding(.vertical, 5)
     .background(.black.opacity(0.45), in: Capsule())
+  }
+
+  /// Recording clock, output rate, the on-air camera's loss and delay — see `OutputStats` for
+  /// why these four. Hidden in rewind, where the header holds Return to Live and the offset.
+  private var statsPills: some View {
+    HStack(spacing: 6) {
+      ForEach(OutputStats.pills(snapshot), id: \.id) { pill in
+        StatPill(text: pill.text, identifier: pill.id)
+      }
+    }
   }
 
   private var offsetBadge: some View {
@@ -132,6 +144,7 @@ public struct ProgramTileView: View {
   private var accessibilityValue: String {
     let source = sourceName ?? "none"
     return "output src=\(source) mix=\(snapshot.audioMixContributors) "
-      + "mixs=\(Int(snapshot.audioMixSeconds)) composed=\(snapshot.composedFrames)"
+      + "mixs=\(Int(snapshot.audioMixSeconds)) composed=\(snapshot.composedFrames) "
+      + OutputStats.accessibilityValue(snapshot)
   }
 }

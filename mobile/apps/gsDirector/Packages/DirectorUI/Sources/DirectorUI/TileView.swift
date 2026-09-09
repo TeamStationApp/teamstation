@@ -138,6 +138,9 @@ public struct TileView: View {
             nameplate
           }
           Spacer()
+          if pipeline != nil, !isRewinding {
+            lossPill
+          }
           if telemetry.hasCameraControl {
             cameraStatusPills
             cameraMenuButton
@@ -287,6 +290,22 @@ public struct TileView: View {
     .padding(.horizontal, 8)
     .padding(.vertical, 5)
     .background(.black.opacity(0.45), in: Capsule())
+  }
+
+  /// What the link lost in the last second, as a bare number on the nameplate's grey. Shown even
+  /// at zero, because a zero that is there says the link is measured and clean, where a pill that
+  /// hid at zero would leave "clean" and "not shown" looking the same. A tile that is not
+  /// delivering shows an em dash instead — see `TileTelemetry.lossPerSecondLabel` for why a dead
+  /// link would otherwise read zero like a clean one. Hidden in rewind so that chrome — which
+  /// already overruns a Cameraman tile — keeps the room. On an NDI tile the number is the SDK's
+  /// dropped frames; see `TileTelemetry.packetsLostPerSecond`.
+  private var lossPill: some View {
+    StatPill(
+      text: telemetry.lossPerSecondLabel,
+      identifier: "source-\(sourceIndex + 1)-loss",
+      label: "Lost per second",
+      value: telemetry.lossPerSecondLabel
+    )
   }
 
   /// The phone's own thermal and battery, one header row tall, in the corner where the phone
