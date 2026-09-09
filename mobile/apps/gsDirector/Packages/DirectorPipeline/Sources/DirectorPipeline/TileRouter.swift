@@ -50,7 +50,11 @@ public final class SourcePipeline: @unchecked Sendable {
   /// Bumped when the operator starts a new scrub or returns to live, so a continuation that was
   /// assembling a playlist cannot restart tape after that session has already ended.
   private var replayEpoch: UInt64 = 0
-
+  /// How old a picture may be and still be worth showing, and still be worth keeping. Two caps
+  /// because the two consumers want different answers: the monitor is worthless showing action
+  /// that has already happened, while the recording is watched afterwards, where a late picture is
+  /// simply a picture and dropping it leaves a hole in the tape.
+  private var latency = FrameLatencyGate()
   public init(
     sourceID: SourceID,
     sourceIndex: Int,
@@ -63,6 +67,12 @@ public final class SourcePipeline: @unchecked Sendable {
     self.source = source
     self.converter = converter
     self.telemetry = telemetry
+  }
+
+  public func setLatencyCaps(_ caps: FrameLatencyGate.Caps) {
+    lock.lock()
+    latency.setCaps(caps)
+    lock.unlock()
   }
 
   /// Moves this pipeline to another grid slot. Callers must also rekey `TileRouter` and telemetry.
@@ -251,7 +261,18 @@ public final class SourcePipeline: @unchecked Sendable {
     let proxy = self.proxy
     let state = self.state
     let programSink = self.programSink
+    // Judged on how old the picture was when it *arrived*: capture to arrival, not capture to
+    // now. The time between the two is the delay line deliberately holding the frame to pace it,
+    // which has a ceiling of its own — and judging at release counted that hold as staleness, so a
+    // camera whose clock anchor is honest (NDI, age ≈ 1 ms on arrival) was refused five frames a
+    // second the moment its hold reached the cap, while the phones beside it, whose RTCP anchor
+    // under-reports by a few hundred milliseconds, sailed through the same gate.
+    let arrived = converted.wallClock
+    let showable = latency.admitsForDisplay(captured: converted.captureWallClock, now: arrived)
+    let age = FrameLatencyGate.age(captured: converted.captureWallClock, now: arrived)
     lock.unlock()
+
+    if let age { telemetry.recordFrameAge(tile: sourceIndex, milliseconds: age * 1_000) }
 
     telemetry.recordReceivedFrame(tile: sourceIndex, frameID: converted.frameID)
 
@@ -262,7 +283,13 @@ public final class SourcePipeline: @unchecked Sendable {
     // The small tile shows stills while the finger is down. Output stays on live until the
     // scrub is released, so the operator can preview rewind without cutting the programme.
     if state == .live {
-      presentOnRenderer(converted)
+      if showable {
+        presentOnRenderer(converted)
+      } else {
+        // Held rather than shown. The last good picture stays up, which is the honest thing for a
+        // monitor to do with action that has already happened.
+        telemetry.recordDisplayRefusedLate(tile: sourceIndex)
+      }
     }
     if state != .replaying {
       programSink?(converted.pixelBuffer, converted.presentationTime)
@@ -289,7 +316,15 @@ public final class SourcePipeline: @unchecked Sendable {
   private func handle(compressed frame: CompressedFrame) {
     lock.lock()
     let archive = self.archive
+    let keepable = latency.admitsForDisk(
+      captured: frame.captureWallClock,
+      now: frame.wallClock
+    )
     lock.unlock()
+    guard keepable else {
+      telemetry.recordDiskRefusedLate(tile: sourceIndex)
+      return
+    }
     archive?.append(frame)
   }
 
@@ -473,6 +508,9 @@ public final class TileRouter: @unchecked Sendable {
   /// Cameras whose PCM is summed into the programme mix. Every live pipeline still taps audio so
   /// the waveform can draw when AUDIO is off.
   private var mixContributorIDs: Set<SourceID> = []
+  /// Held so a camera enabled later inherits the caps rather than starting ungated.
+  private var latencyCaps = FrameLatencyGate.Caps()
+  public let clock: DirectorClock
 
   public init(
     telemetry: PipelineTelemetry,
@@ -484,6 +522,7 @@ public final class TileRouter: @unchecked Sendable {
   ) {
     self.telemetry = telemetry
     self.converter = converter
+    self.clock = clock
     self.compositor = compositor
     self.programEncoder = programEncoder
     self.programStreamer = programStreamer
@@ -547,11 +586,22 @@ public final class TileRouter: @unchecked Sendable {
     try pipeline.replaceSource(replacement)
   }
 
+  /// The display and disk latency caps, applied to every camera and remembered for the next one.
+  public func setLatencyCaps(_ caps: FrameLatencyGate.Caps) {
+    lock.lock()
+    latencyCaps = caps
+    let all = Array(pipelines.values)
+    lock.unlock()
+    for pipeline in all { pipeline.setLatencyCaps(caps) }
+  }
+
   public func add(_ pipeline: SourcePipeline) {
     lock.lock()
     pipelines[pipeline.sourceIndex] = pipeline
     let selected = programSource
+    let caps = latencyCaps
     lock.unlock()
+    pipeline.setLatencyCaps(caps)
     // Output can be chosen before this camera's pipeline exists (the first enable, or a
     // persisted cut restored at launch). Rebind so frames actually reach the programme tile.
     if selected == pipeline.sourceIndex {

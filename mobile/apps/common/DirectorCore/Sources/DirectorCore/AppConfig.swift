@@ -63,6 +63,17 @@ public struct AppConfig: Hashable, Sendable, Codable {
   public var displayLatencyCapEnabled: Bool
   /// Operator ceiling for monitor latency, in milliseconds. Ignored until the cap is on.
   public var displayLatencyCapMilliseconds: Double
+  /// Whether a picture too old to show is also too old to keep.
+  ///
+  /// Separate from the display cap because the two answer different questions. The monitor is
+  /// worthless showing action that has already happened, so a late picture is better skipped; the
+  /// recording is watched afterwards, where a late picture is simply a picture and dropping it
+  /// leaves a hole in the tape. The disk cap is therefore the more generous of the two, and exists
+  /// only to stop a source that has fallen minutes behind from writing history into the middle of
+  /// a recording.
+  public var diskLatencyCapEnabled: Bool
+  /// Operator ceiling for how old a picture may be and still be archived, in milliseconds.
+  public var diskLatencyCapMilliseconds: Double
   /// Playback rate for every slow-motion instant-replay button. One setting for the whole board.
   public var replaySlowMotionRate: Double
   /// RTMP publish URL for the programme output. Empty means streaming is off until the operator
@@ -72,6 +83,11 @@ public struct AppConfig: Hashable, Sendable, Codable {
   public static let displayLatencyCapDefaultMilliseconds: Double = 500
   public static let displayLatencyCapMinimumMilliseconds: Double = 10
   public static let displayLatencyCapMaximumMilliseconds: Double = 2_000
+  /// Ten seconds by default: far beyond any delivery hiccup worth keeping, and short enough that a
+  /// source which has fallen badly behind stops writing stale pictures into the recording.
+  public static let diskLatencyCapDefaultMilliseconds: Double = 10_000
+  public static let diskLatencyCapMinimumMilliseconds: Double = 100
+  public static let diskLatencyCapMaximumMilliseconds: Double = 60_000
   public static let replaySlowMotionRateDefault: Double = 0.5
   public static let replaySlowMotionRateMinimum: Double = 0
   public static let replaySlowMotionRateMaximum: Double = 1.0
@@ -90,6 +106,8 @@ public struct AppConfig: Hashable, Sendable, Codable {
     useSimulatedCameras: Bool = false,
     displayLatencyCapEnabled: Bool = false,
     displayLatencyCapMilliseconds: Double = AppConfig.displayLatencyCapDefaultMilliseconds,
+    diskLatencyCapEnabled: Bool = false,
+    diskLatencyCapMilliseconds: Double = AppConfig.diskLatencyCapDefaultMilliseconds,
     replaySlowMotionRate: Double = AppConfig.replaySlowMotionRateDefault,
     streamURL: String = ""
   ) {
@@ -106,6 +124,8 @@ public struct AppConfig: Hashable, Sendable, Codable {
     self.useSimulatedCameras = useSimulatedCameras
     self.displayLatencyCapEnabled = displayLatencyCapEnabled
     self.displayLatencyCapMilliseconds = Self.clampedDisplayLatencyCap(displayLatencyCapMilliseconds)
+    self.diskLatencyCapEnabled = diskLatencyCapEnabled
+    self.diskLatencyCapMilliseconds = Self.clampedDiskLatencyCap(diskLatencyCapMilliseconds)
     self.replaySlowMotionRate = Self.clampedReplaySlowMotionRate(replaySlowMotionRate)
     self.streamURL = streamURL
   }
@@ -114,6 +134,13 @@ public struct AppConfig: Hashable, Sendable, Codable {
     min(
       max(milliseconds, displayLatencyCapMinimumMilliseconds),
       displayLatencyCapMaximumMilliseconds
+    )
+  }
+
+  public static func clampedDiskLatencyCap(_ milliseconds: Double) -> Double {
+    min(
+      max(milliseconds, diskLatencyCapMinimumMilliseconds),
+      diskLatencyCapMaximumMilliseconds
     )
   }
 
@@ -164,6 +191,14 @@ public struct AppConfig: Hashable, Sendable, Codable {
         Double.self,
         forKey: .displayLatencyCapMilliseconds
       ) ?? fallback.displayLatencyCapMilliseconds,
+      diskLatencyCapEnabled: try container.decodeIfPresent(
+        Bool.self,
+        forKey: .diskLatencyCapEnabled
+      ) ?? fallback.diskLatencyCapEnabled,
+      diskLatencyCapMilliseconds: try container.decodeIfPresent(
+        Double.self,
+        forKey: .diskLatencyCapMilliseconds
+      ) ?? fallback.diskLatencyCapMilliseconds,
       replaySlowMotionRate: try container.decodeIfPresent(
         Double.self,
         forKey: .replaySlowMotionRate

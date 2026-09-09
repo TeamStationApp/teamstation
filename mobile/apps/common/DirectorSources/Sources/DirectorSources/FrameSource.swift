@@ -18,6 +18,10 @@ public struct PixelFrame: @unchecked Sendable {
   public let presentationTime: CMTime
   /// When the frame was received, used to place it on the DVR wall-clock timeline.
   public let wallClock: WallClock
+  /// When the camera took the picture, on the Director's clock. Nil while a source has no clock
+  /// anchor yet. Carried here as well as on the coded frame because how old a picture is decides
+  /// whether it is still worth showing, and that question is asked of the decoded one.
+  public let captureWallClock: WallClock?
   /// Monotonic per-source counter starting at 0. The unit of R4's "every frame appears once".
   public let frameID: UInt64
   /// Frame number burned into the picture by the fixture generator or the synthetic renderer,
@@ -29,6 +33,7 @@ public struct PixelFrame: @unchecked Sendable {
     pixelBuffer: CVPixelBuffer,
     presentationTime: CMTime,
     wallClock: WallClock,
+    captureWallClock: WallClock? = nil,
     frameID: UInt64,
     markerValue: Int? = nil
   ) {
@@ -36,6 +41,7 @@ public struct PixelFrame: @unchecked Sendable {
     self.pixelBuffer = pixelBuffer
     self.presentationTime = presentationTime
     self.wallClock = wallClock
+    self.captureWallClock = captureWallClock
     self.frameID = frameID
     self.markerValue = markerValue
   }

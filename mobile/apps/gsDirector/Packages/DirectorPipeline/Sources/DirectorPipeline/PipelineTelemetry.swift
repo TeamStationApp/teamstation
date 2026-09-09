@@ -194,6 +194,20 @@ public struct TileTelemetry: Sendable, Codable, Equatable {
   /// times is explained by this, and a count that climbs steadily is an unstable sender rather
   /// than one that was power-cycled once.
   public var senderClockRestarts: UInt64 = 0
+  /// Pictures not shown because they were older than the display cap. The monitor is worthless
+  /// showing action that has already happened, so these are skipped and the last good picture
+  /// stays up — and counted, because a bounded latency that reports nothing is indistinguishable
+  /// from a frozen tile.
+  public var displayRefusedLate: UInt64 = 0
+  /// How old the newest picture was when the display gate judged it, in milliseconds — capture to
+  /// presentation, including this app's own queueing. The whole feature exists because a tile was
+  /// seen running two seconds behind the room, and this is the field that says so out loud.
+  public var frameAgeMilliseconds: Double = 0
+  /// Pictures not archived because they were older than the disk cap. Expected to stay at zero in
+  /// ordinary use: the recording is watched afterwards, where a late picture is simply a picture,
+  /// so this cap is the generous one and only stops a source minutes behind from writing history
+  /// into the middle of a recording.
+  public var diskRefusedLate: UInt64 = 0
   /// Seconds this camera has been silent past the stall timeout, or zero while it is delivering.
   ///
   /// Every other counter here describes a frame that arrived, so none of them can say that none
@@ -440,6 +454,11 @@ public struct TelemetrySnapshot: Sendable, Codable, Equatable {
   /// Delay the live preview is currently holding, in milliseconds — the engine's choice, already
   /// clamped by the operator cap when one is on.
   public var displayLatencyMilliseconds: Double = 0
+  /// The two staleness caps as the pipeline currently has them, zero meaning off. Reported because
+  /// a refusal counter reading zero is otherwise ambiguous between a cap that is not firing and a
+  /// cap that never arrived.
+  public var displayLatencyCapMilliseconds: Double = 0
+  public var diskLatencyCapMilliseconds: Double = 0
   /// Programme mix is actually playing through the system audio route.
   public var programAudioPlaying = false
   /// Programme RTMP publish is currently running. Distinct from `dvr.isRecording`.
@@ -607,6 +626,30 @@ public final class PipelineTelemetry: @unchecked Sendable {
       tracker = (count: 0, since: now, last: now)
     }
     displayedTimestamps[tile] = tracker
+    lock.unlock()
+  }
+
+  public func recordFrameAge(tile: Int, milliseconds: Double) {
+    lock.lock()
+    if let position = state.tiles.firstIndex(where: { $0.index == tile }) {
+      state.tiles[position].frameAgeMilliseconds = milliseconds
+    }
+    lock.unlock()
+  }
+
+  public func recordDisplayRefusedLate(tile: Int) {
+    lock.lock()
+    if let position = state.tiles.firstIndex(where: { $0.index == tile }) {
+      state.tiles[position].displayRefusedLate &+= 1
+    }
+    lock.unlock()
+  }
+
+  public func recordDiskRefusedLate(tile: Int) {
+    lock.lock()
+    if let position = state.tiles.firstIndex(where: { $0.index == tile }) {
+      state.tiles[position].diskRefusedLate &+= 1
+    }
     lock.unlock()
   }
 

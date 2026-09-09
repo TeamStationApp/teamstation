@@ -436,6 +436,7 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
       pixelBuffer: pixelBuffer,
       presentationTime: timing.presentationTime,
       wallClock: clock.now,
+      captureWallClock: timing.captureWallClock,
       frameID: timing.frameID
     ))
     let publishElapsed = Date().timeIntervalSince(publishStarted) * 1_000
