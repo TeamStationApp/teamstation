@@ -331,7 +331,9 @@ public final class NDIDiscovery: SourceDiscovery, @unchecked Sendable {
     let unchanged = discovered == sources
     sources = discovered
     byID = index
-    status = "ndi=on found=\(discovered.count) seen=\(everSeen)"
+    // The transport note rides along: a crash at three cameras and a workaround that failed to
+    // apply are otherwise indistinguishable from the outside.
+    status = "ndi=on found=\(discovered.count) seen=\(everSeen) \(NDIRuntime.shared.transportNote)"
       + (configuration.extraIPs.isEmpty ? "" : " extra=\(configuration.extraIPs.count)")
       + (periodicSearch ? "" : " periodic=off")
     let handler = self.handler
