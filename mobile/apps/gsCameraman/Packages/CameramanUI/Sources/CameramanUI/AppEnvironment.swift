@@ -16,6 +16,8 @@ public final class AppEnvironment {
   public let camera = CameraSession()
   public let videoEncoder = VideoEncoder()
   public let audioEncoder = AudioEncoder()
+  /// The external display, fed from the same frames the encoder gets.
+  public let cleanFeed = CleanFeedController()
 
   public private(set) var identity: DeviceIdentity
   public var settings: StreamSettings
@@ -116,6 +118,9 @@ public final class AppEnvironment {
     self.publishedIdentity = OSAllocatedUnfairLock(initialState: loaded)
     self.publishedSettings = OSAllocatedUnfairLock(initialState: initial)
     self.appliedSettings = initial
+    cleanFeed.setEnabled(initial.cleanHDMIEnabled)
+    cleanFeed.setStreamSize(width: initial.width, height: initial.height)
+    CleanFeedController.active = cleanFeed
     observeThermalState()
     observeBattery()
   }
@@ -212,6 +217,7 @@ public final class AppEnvironment {
       || next.audioSampleRate != previous.audioSampleRate
       || next.disabledLensIDs != previous.disabledLensIDs
     persistSettings(next)
+    syncCleanFeed(next)
     guard pipelineChanged else { return }
     appliedSettings = next
     videoEncoder.configure(settings: next)
@@ -369,9 +375,11 @@ public final class AppEnvironment {
     camera.onCaptureRotationChange = { [videoEncoder] in
       videoEncoder.requestKeyframe()
     }
-    camera.onVideoFrame = { [weak self, videoEncoder] sample in
+    camera.onVideoFrame = { [weak self, videoEncoder, cleanFeed] sample in
       let blank = !(self?.publishedSettings.withLock { $0.videoEnabled } ?? true)
-      videoEncoder.encode(SampleBufferRef(sample.buffer), blank: blank)
+      let frame = SampleBufferRef(sample.buffer)
+      videoEncoder.encode(frame, blank: blank)
+      cleanFeed.enqueue(frame, blank: blank)
       self?.noteCapturedFrame()
     }
     camera.onAudioFrame = { [audioEncoder, settingsLock = publishedSettings] sample in
@@ -398,8 +406,13 @@ public final class AppEnvironment {
 
   private func startSynthetic() {
     let synthetic = SyntheticCamera(configuration: SyntheticCamera.Configuration(settings))
-    synthetic.onVideoFrame = { [weak self, videoEncoder] buffer in
-      videoEncoder.encode(SampleBufferRef(buffer))
+    // The same fan-out as the camera path, so a simulator with a virtual external display draws
+    // the pattern on it and dump-state's `framesEnqueued` climbs.
+    synthetic.onVideoFrame = { [weak self, videoEncoder, cleanFeed] buffer in
+      let blank = !(self?.publishedSettings.withLock { $0.videoEnabled } ?? true)
+      let frame = SampleBufferRef(buffer)
+      videoEncoder.encode(frame, blank: blank)
+      cleanFeed.enqueue(frame, blank: blank)
       self?.noteCapturedFrame()
     }
     synthetic.start()
@@ -604,7 +617,8 @@ public final class AppEnvironment {
   }
 
   private var externalDisplayDump: ExternalDisplayDump {
-    ExternalDisplayDump(connected: false, mode: nil, framesEnqueued: 0)
+    let status = cleanFeed.status
+    return ExternalDisplayDump(connected: status.connected, mode: status.mode, framesEnqueued: status.framesEnqueued)
   }
 
   private var sendQueueDroppedFrames: Int {
@@ -751,6 +765,13 @@ public final class AppEnvironment {
     appliedSettings = next
     publishedSettings.withLock { $0 = next }
     persistSettings(next)
+    syncCleanFeed(next)
+  }
+
+  /// Both are no-ops when nothing changed, so this can follow every settings write.
+  private func syncCleanFeed(_ settings: StreamSettings) {
+    cleanFeed.setEnabled(settings.cleanHDMIEnabled)
+    cleanFeed.setStreamSize(width: settings.width, height: settings.height)
   }
 
   /// Written on every change rather than on the way out: the app is routinely killed by the operator
