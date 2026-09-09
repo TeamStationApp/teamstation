@@ -96,13 +96,13 @@ final class Probe: @unchecked Sendable {
   /// container, so this needs no device-wide setting and no environment variable.
   private func writeConfiguration() {
     guard disableRUDP else { return }
-    // Into Documents, and pointed at with `NDI_CONFIG_DIR`. The documented location is
+    // Into Application Support, and pointed at with `NDI_CONFIG_DIR`. The documented location is
     // `$HOME/.ndi/`, which on iOS is the root of the app container and is not writable — creating
     // it fails with "Operation not permitted", silently leaving the SDK on its defaults. The
     // documentation says the environment variable is honoured on every platform if it is set
     // before the library is initialized, which is the only way in from inside a sandbox.
-    let directory = URL(fileURLWithPath: NSHomeDirectory())
-      .appendingPathComponent("Documents")
+    let directory = (FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+      ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support"))
       .appendingPathComponent("ndi")
     let file = directory.appendingPathComponent("ndi-config.v1.json")
     do {

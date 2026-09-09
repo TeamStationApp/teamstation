@@ -38,6 +38,20 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
   /// How long a source may deliver nothing before it is reported as silent. Matches the RTSP
   /// path's timeout so an operator reads one number for both transports.
   private static let stallTimeout: TimeInterval = 5
+  /// 1, 2, 4, then 8 seconds between rebuilds, held at 8 — the same schedule as RTSP, for the same
+  /// reason: a camera that is switched off must not fill the log, and one that comes back should
+  /// be found within a play of it doing so.
+  private static let backoffSeconds: [TimeInterval] = [ 1, 2, 4, 8 ]
+  /// The delay line, mirroring RTSP's numbers exactly so both transports hold the same way.
+  private static let drainInterval: TimeInterval = 0.004
+  private static let reportInterval: TimeInterval = 1
+  /// The delay line's ceiling is two seconds; holding more than that is a queue growing with
+  /// nowhere to release to.
+  private static let pictureQueueSeconds: Double = 2
+  /// How much of the pool the delay line leaves free for arrivals to bunch up in. The line's
+  /// ceiling is set that far below the pool, so a burst lands in the headroom instead of evicting.
+  private static let poolHeadroomSeconds: Double = 0.25
+  public static let defaultSeedMilliseconds: Double = 300
   private let wantsLowBandwidth: Bool
 
   /// The archive encode runs here, never on the receive thread.
@@ -64,9 +78,35 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
   /// healthy for ever rather than silent from the outset.
   private var lastVideoAt: Date?
   private var startedAt: Date?
-  private var videoThread: Thread?
-  private var audioThread: Thread?
+  /// Entered for each capture thread as it starts and left as its loop returns, so a receiver is
+  /// destroyed only once nothing can still be inside `NDIlib_recv_capture_v3` on it. A fixed sleep
+  /// used to stand in for this, and the margin over a 100 ms capture timeout was whatever the
+  /// scheduler left — nothing, on an iPad throttled under three 1080p60 receivers.
+  private let captureThreads = DispatchGroup()
+  private static let captureThreadExitTimeout: TimeInterval = 1
   private var running = false
+  /// Silence supervision, mirroring `RTSPFrameSource`. The SDK does not reconnect a receiver whose
+  /// sender rebooted underneath it: a Cosmo C2 restarted and streamed 58 fps to another machine for
+  /// fifteen minutes while this receiver sat at `connections=1` receiving nothing, and only
+  /// throwing the receiver away and making a new one brought the tile back.
+  /// Frames wait here and are released against their own timestamps, which is what turns the
+  /// transport's burst-and-wait delivery back into even motion. RTSP has always had this; NDI
+  /// drew every frame on arrival with `playout 0 ms, depth 0`, and on the multi-TCP fallback —
+  /// bursty, measured at 17–58 fps against a sender pacing an exact 60 — that unevenness went
+  /// straight to the screen while the phones beside it, buffered half a second, looked smooth.
+  private let coordinator: PlayoutCoordinator?
+  private var playout: PlayoutController
+  /// The longest hold the pixel pool can honour, from the last frame's rate and pool size. `nil`
+  /// until the first frame has sized the pool.
+  private var poolHoldMilliseconds: Double?
+  private var pictures = PlayoutQueue<PixelFrame>()
+  private var drainTimer: DispatchSourceTimer?
+  private var lastReportAt: Double = 0
+  private let playoutQueue: DispatchQueue
+  private var stallTimer: DispatchSourceTimer?
+  private var reconnectItem: DispatchWorkItem?
+  private var failedAttempts = 0
+  private let supervisionQueue = DispatchQueue(label: "co.gamestation.director.ndi.supervise")
   private var sinks = FrameSinks()
 
   /// Nothing is encoded until the router says an archive is reading. Four idle preview tiles
@@ -123,8 +163,17 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     encodeCodec: CompressedFrame.Codec = .hevc,
     encodeBitrate: Int = 12_000_000,
     lowBandwidth: Bool = false,
+    coordinator: PlayoutCoordinator? = nil,
     clock: DirectorClock = SystemClock()
   ) {
+    self.coordinator = coordinator
+    self.playout = PlayoutController(
+      seedMilliseconds: coordinator?.seedMilliseconds(for: sourceID) ?? Self.defaultSeedMilliseconds
+    )
+    self.playoutQueue = DispatchQueue(
+      label: "co.gamestation.director.ndi.playout.\(sourceID.slug)",
+      qos: .userInitiated
+    )
     self.sourceID = sourceID
     self.displayName = displayName
     self.ndiName = ndiName
@@ -177,6 +226,9 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
       )
       : 0
     snapshot.decodeSessions = videoEncoder == nil ? 0 : 1
+    snapshot.playoutMilliseconds = (playout.bufferMilliseconds * 10).rounded() / 10
+    snapshot.playoutLateFrames = playout.lateFrames
+    snapshot.playoutDepth = pictures.count
     return snapshot
   }
 
@@ -201,6 +253,35 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
       )
     }
 
+    self.sinks = sinks
+    running = true
+    failedAttempts = 0
+    receiveClock.reset()
+    audioConverter.reset()
+    audioSampleIndex = 0
+    audioFormat = AudioSampleBuilder.makeFormatDescription(
+      AudioSampleBuilder.interleavedInt16Description()
+    )
+    lock.unlock()
+
+    do {
+      try openReceiver()
+    } catch {
+      lock.lock()
+      running = false
+      self.sinks = FrameSinks()
+      lock.unlock()
+      NDIRuntime.shared.release()
+      throw error
+    }
+    startDrain()
+    startStallWatchdog()
+  }
+
+  /// Makes the receiver and starts its two capture threads. Called once from `start`, and again
+  /// by the watchdog every time a receiver has to be replaced; everything about the source that
+  /// is not the receiver — sinks, encoder, archive, clocks — is left alone.
+  private func openReceiver() throws {
     let created: NDIlib_recv_instance_t? = ndiName.withCString { name in
       ndiURL.withCString { address in
       "GS Director".withCString { receiverName in
@@ -229,22 +310,22 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     }
 
     guard let created else {
-      NDIRuntime.shared.release()
-      lock.unlock()
       throw FrameSourceError.failedToStart("could not create an NDI receiver for \(ndiName)")
     }
+
+    lock.lock()
+    // Creating took time, and `stop` may have run meanwhile — a cancelled reconnect item that was
+    // already executing carries on regardless. Installing this receiver now would leave it alive
+    // and unowned: a phantom connection on the camera for the life of the process.
+    guard running, receiver == nil else {
+      lock.unlock()
+      NDIlib_recv_destroy(created)
+      return
+    }
     receiver = created
-    self.sinks = sinks
-    running = true
-    receiveClock.reset()
     startedAt = Date()
     lastVideoAt = nil
-    audioConverter.reset()
-    audioSampleIndex = 0
-    audioFormat = AudioSampleBuilder.makeFormatDescription(
-      AudioSampleBuilder.interleavedInt16Description()
-    )
-
+    upstreamConnections = 0
     // Tell the sender who we are. Not decoration: it is what appears in a camera's own connection
     // list, and an unidentified receiver is indistinguishable from an intruder when someone is
     // working out why a camera has three connections.
@@ -263,21 +344,162 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     // Threads rather than Tasks: both bodies park in a blocking SDK call for up to a tenth of a
     // second at a time, and parking a cooperative pool thread is how an app stops scheduling
     // everything else.
-    let video = Thread { [weak self] in self?.receiveVideo() }
+    // The closure leaves the group, not the loop body: a thread that starts after the source has
+    // already been released would find `self` nil and skip the loop, and a group disposed with an
+    // outstanding `enter` is an abort, not a leak.
+    let group = captureThreads
+    let video = Thread { [weak self] in
+      defer { group.leave() }
+      self?.receiveVideo()
+    }
     video.name = "co.gamestation.director.ndi.video.\(sourceID.slug)"
     video.qualityOfService = .userInitiated
 
-    let audio = Thread { [weak self] in self?.receiveAudio() }
+    let audio = Thread { [weak self] in
+      defer { group.leave() }
+      self?.receiveAudio()
+    }
     audio.name = "co.gamestation.director.ndi.audio.\(sourceID.slug)"
     audio.qualityOfService = .userInitiated
 
-    lock.lock()
-    videoThread = video
-    audioThread = audio
-    lock.unlock()
-
+    captureThreads.enter()
+    captureThreads.enter()
     video.start()
     audio.start()
+  }
+
+  /// Waits for both capture threads to leave the receiver, bounded so a wedged SDK call cannot
+  /// hang the caller. On timeout the instance is still destroyed: a leaked receiver is preferable
+  /// to a stalled stop, and a thread still inside the SDK past a full second is the SDK's problem.
+  private func waitForCaptureThreads() {
+    _ = captureThreads.wait(timeout: .now() + Self.captureThreadExitTimeout)
+  }
+
+  // MARK: - Playout
+
+  /// Releases whatever has come due and publishes it, on this source's own queue so the SDK's
+  /// capture thread is never the one waiting on a renderer.
+  private func drain() {
+    let now = Self.seconds(.now())
+    lock.lock()
+    if let coordinator { playout.setFloor(milliseconds: coordinator.programMilliseconds) }
+    // The pool bounds the hold, not only the queue. A ceiling the pool cannot honour would have the
+    // line evicting its earliest-due picture on every arrival — nothing ever comes due, the tile
+    // freezes and the archive keeps recording. Below the pool, the operator's cap wins.
+    if let poolHoldMilliseconds {
+      playout.setCeiling(milliseconds: min(
+        coordinator?.latencyCapMilliseconds ?? poolHoldMilliseconds,
+        poolHoldMilliseconds
+      ))
+    } else if let coordinator {
+      playout.setCeiling(milliseconds: coordinator.latencyCapMilliseconds)
+    }
+    playout.advance(to: now)
+    let due = pictures.release(at: now)
+    let handler = sinks.pixel
+    let buffer = playout.bufferMilliseconds
+    let shouldReport = now - lastReportAt >= Self.reportInterval
+    if shouldReport { lastReportAt = now }
+    lock.unlock()
+
+    if shouldReport, let coordinator { coordinator.report(buffer, for: sourceID) }
+    for picture in due { handler?(picture) }
+  }
+
+  private func startDrain() {
+    let timer = DispatchSource.makeTimerSource(queue: playoutQueue)
+    timer.schedule(
+      deadline: .now() + Self.drainInterval,
+      repeating: Self.drainInterval,
+      leeway: .milliseconds(1)
+    )
+    timer.setEventHandler { [weak self] in self?.drain() }
+    lock.lock()
+    drainTimer?.cancel()
+    drainTimer = timer
+    lock.unlock()
+    timer.resume()
+  }
+
+  /// The delay line runs on uptime, as RTSP's does, so a wall-clock step cannot move every frame's
+  /// due time at once.
+  private static func seconds(_ time: DispatchTime) -> Double {
+    Double(time.uptimeNanoseconds) / 1_000_000_000
+  }
+
+  // MARK: - Supervision
+
+  /// Watches for a receiver that is connected and silent, which the SDK never reports.
+  private func startStallWatchdog() {
+    let timer = DispatchSource.makeTimerSource(queue: supervisionQueue)
+    timer.schedule(deadline: .now() + 1, repeating: 1)
+    timer.setEventHandler { [weak self] in
+      guard let self else { return }
+      lock.lock()
+      let last = lastVideoAt
+      let started = startedAt
+      let isRunning = running
+      let hasReceiver = receiver != nil
+      let waiting = reconnectItem != nil
+      lock.unlock()
+      guard isRunning, hasReceiver, !waiting else { return }
+      guard StallWatchdog.shouldReconnect(
+        now: Date(),
+        lastAccessUnitAt: last,
+        sessionStartedAt: started,
+        timeout: Self.stallTimeout
+      ) else { return }
+      scheduleReconnect(reason: "no frames for \(Int(Self.stallTimeout))s")
+    }
+    lock.lock()
+    stallTimer?.cancel()
+    stallTimer = timer
+    lock.unlock()
+    timer.resume()
+  }
+
+  /// Throws the receiver away and makes another after a backoff. The capture threads exit on
+  /// their next wake once `receiver` is nil, which their 100 ms capture timeout bounds; the old
+  /// instance is destroyed only after that, as `stop` does, so nothing frees it under them.
+  private func scheduleReconnect(reason: String) {
+    lock.lock()
+    guard running, reconnectItem == nil else {
+      lock.unlock()
+      return
+    }
+    let old = receiver
+    receiver = nil
+    startedAt = nil
+    lastVideoAt = nil
+    upstreamConnections = 0
+    failedAttempts += 1
+    let attempt = failedAttempts
+    playout = playout.reset()
+    pictures.removeAll()
+    stats.status = reason
+    stats.reconnects &+= 1
+    let delay = Self.backoffSeconds[min(attempt - 1, Self.backoffSeconds.count - 1)]
+    let item = DispatchWorkItem { [weak self] in
+      guard let self else { return }
+      lock.lock()
+      reconnectItem = nil
+      let stillRunning = running
+      lock.unlock()
+      guard stillRunning else { return }
+      do {
+        try openReceiver()
+      } catch {
+        scheduleReconnect(reason: "could not make a receiver: \(error)")
+      }
+    }
+    reconnectItem = item
+    lock.unlock()
+
+    if let old {
+      waitForCaptureThreads()
+      NDIlib_recv_destroy(old)
+    }
+    supervisionQueue.asyncAfter(deadline: .now() + delay, execute: item)
   }
 
   public func setArchiving(_ isArchiving: Bool) {
@@ -328,27 +550,37 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
       return
     }
     running = false
+    let wasArchiving = isArchiving
     isArchiving = false
+    archiveRefused = false
+    encoderUnavailable = false
     let receiver = self.receiver
     let encoder = videoEncoder
     self.receiver = nil
+    stallTimer?.cancel()
+    stallTimer = nil
+    reconnectItem?.cancel()
+    reconnectItem = nil
+    drainTimer?.cancel()
+    drainTimer = nil
+    pictures.removeAll()
     startedAt = nil
     lastVideoAt = nil
     videoEncoder = nil
     audioEncoder = nil
-    videoThread = nil
-    audioThread = nil
     pendingFrames.removeAll()
     sinks = FrameSinks()
     upstreamConnections = 0
     lock.unlock()
 
-    // The capture loops are inside `NDIlib_recv_capture_v3` with a 100 ms timeout, so they see
-    // `running == false` within that. Destroying the receiver under them would free the instance
-    // they are still holding.
-    encoder?.finish()
+    // The slot is a count of encode sessions; a stop that kept it would cost a later camera its
+    // archive with nothing in telemetry to say why.
+    if wasArchiving { NDIArchiveBudget.shared.release(sourceID.rawValue) }
+    // The capture loops see `running == false` on their next wake, which the 100 ms capture
+    // timeout bounds; the receiver is destroyed only once both have actually left it.
+    if let encoder { encodeQueue.async { encoder.finish() } }
     if let receiver {
-      Thread.sleep(forTimeInterval: 0.2)
+      waitForCaptureThreads()
       NDIlib_recv_destroy(receiver)
     }
     NDIRuntime.shared.release()
@@ -408,6 +640,7 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
 
     lock.lock()
     lastVideoAt = Date()
+    failedAttempts = 0
     lock.unlock()
 
     guard let timing = receiveClock.timing(for: frame) else { return }
@@ -431,14 +664,31 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     let copyElapsed = Date().timeIntervalSince(copyStarted) * 1_000
 
     let publishStarted = Date()
-    sinks.pixel?(PixelFrame(
+    let picture = PixelFrame(
       sourceID: sourceID,
       pixelBuffer: pixelBuffer,
       presentationTime: timing.presentationTime,
       wallClock: clock.now,
       captureWallClock: timing.captureWallClock,
       frameID: timing.frameID
-    ))
+    )
+    // Held rather than published: the drain releases it when it is due. The archive encode below
+    // is not held — it takes the pixels straight from here, so what reaches disk is unaffected.
+    let presentationSeconds = timing.presentationTime.seconds
+    let arrived = Self.seconds(.now())
+    // Never more than the pool can lend, less a few for the renderer, compositor and encoder to be
+    // holding; a line longer than the pool starves itself into `poolMisses`. Read here, on the
+    // thread that owns the converter, and handed to the drain as the hold it may not exceed.
+    let poolFrames = max(8, videoConverter.maximumBuffers - 8)
+    lock.lock()
+    poolHoldMilliseconds = max(0, Double(poolFrames) / rate - Self.poolHeadroomSeconds) * 1000
+    _ = playout.note(lateness: arrived - presentationSeconds, at: arrived)
+    pictures.enqueue(
+      picture,
+      due: playout.dueTime(presentationSeconds: presentationSeconds),
+      keepingAtMost: min(Int((rate * Self.pictureQueueSeconds).rounded(.up)), poolFrames)
+    )
+    lock.unlock()
     let publishElapsed = Date().timeIntervalSince(publishStarted) * 1_000
 
     lock.lock()
@@ -751,12 +1001,12 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     lock.unlock()
   }
 
-  /// The SDK's own answer to "did we lose anything, and was it us?".
+  /// The SDK's own answer to "did we lose anything?".
   ///
   /// `recv_get_performance` counts frames the receiver could not dequeue fast enough — our
-  /// slowness, not the network's — while `recv_get_queue` says how much is waiting right now. They
-  /// are reported separately from `packetsLost` for that reason: mixing them would put our own
-  /// backlog in the column an operator reads as a network fault.
+  /// slowness rather than the network's, but a frame the operator did not get either way, so it
+  /// lands in `packetsLost`. The SDK's queue depth is deliberately not read: `playoutDepth` is the
+  /// delay line's, and the two were overwriting each other.
   private func pollPerformance() {
     lock.lock()
     let receiver = self.receiver
@@ -767,9 +1017,6 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     var dropped = NDIlib_recv_performance_t()
     NDIlib_recv_get_performance(receiver, &total, &dropped)
 
-    var queue = NDIlib_recv_queue_t()
-    NDIlib_recv_get_queue(receiver, &queue)
-
     lock.lock()
     // Deltas, not the raw value: the SDK's counters reset when a receiver reconnects, and taking
     // them absolutely would make a reconnect look like the drop count going backwards.
@@ -778,7 +1025,6 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
       stats.packetsLost += UInt64(droppedNow - lastPerformanceDropped)
     }
     lastPerformanceDropped = droppedNow
-    stats.playoutDepth = Int(queue.video_frames)
     lock.unlock()
   }
 }

@@ -3422,6 +3422,7 @@ public final class AppEnvironment {
         tile.decodeFailures = receive.decodeFailures
         tile.decoderRebuilds = receive.decoderRebuilds
         tile.decodeStatus = receive.decodeStatus
+        tile.reconnects = receive.reconnects
         tile.archiveDropped = receive.archiveDropped
         tile.archiveBacklog = receive.archiveBacklog
         tile.archiveStride = receive.archiveStride

@@ -282,6 +282,9 @@ public struct ReceiveStats: Sendable, Equatable {
   public var decodeFailures: UInt64 = 0
   public var decoderRebuilds: UInt64 = 0
   public var decodeStatus: Int = 0
+  /// Receivers thrown away and rebuilt because they went silent. A sender that rebooted leaves the
+  /// old connection open and empty, and nothing but a new receiver ever hears from it again.
+  public var reconnects: UInt64 = 0
   public var archiveDropped: UInt64 = 0
   /// How many frames are waiting to be encoded right now.
   public var archiveBacklog: Int = 0

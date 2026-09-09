@@ -831,4 +831,10 @@ Three things were found on the way and are worth not rediscovering:
 - The generator, not the app, was the bottleneck twice: the kernel's timer coalescing paced a
   declared 30 fps stream at 12, and synchronous sending capped four cameras at 54 of 60.
   `gsNdiCameras --self-test` now fails on either.
-
+- An NDI camera's delay line holds decoded pixels, because the free SDK hands over nothing else:
+  about 4 MB a frame at 1080p. The pool is budgeted at 256 MB per source, which is roughly a second
+  of 1080p60, and the line's ceiling is set from the pool, a quarter-second under it: a display
+  latency cap above that holds as much as the pool allows rather than as much as was asked for. The
+  ceiling has to bound the *hold*, not only the queue — a queue cap alone evicts the earliest-due
+  picture on every arrival once the hold exceeds it, and the tile freezes while the archive keeps
+  recording. Three NDI cameras is ~750 MB of pictures.
