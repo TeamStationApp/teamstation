@@ -86,9 +86,16 @@ public struct SourceSelectionView: View {
     ScrollViewReader { proxy in
       ScrollView {
         VStack(spacing: 8) {
-          ForEach(Array(environment.selections.enumerated()), id: \.element.id) { index, selection in
-            row(index: index, selection: selection)
-              .id(selection.id)
+          // Display order: a linked phone sits directly under the row it controls. Row numbers in
+          // identifiers count this order, which is the one the operator sees.
+          ForEach(Array(displayRows.enumerated()), id: \.element.id) { index, selection in
+            if environment.isLinkedControl(selection.id) {
+              linkedControlRow(index: index, selection: selection)
+                .id(selection.id)
+            } else {
+              row(index: index, selection: selection)
+                .id(selection.id)
+            }
           }
           if environment.selections.isEmpty {
             emptyState
@@ -121,6 +128,15 @@ public struct SourceSelectionView: View {
     }
   }
 
+  private var displayRows: [SourceSelection] {
+    SourceSelectionRules.displayOrder(environment.selections)
+  }
+
+  /// One-based row number of `id` as displayed, for identifiers and the `link=` value.
+  private func displayNumber(of id: SourceID) -> Int? {
+    displayRows.firstIndex { $0.id == id }.map { $0 + 1 }
+  }
+
   private func row(index: Int, selection: SourceSelection) -> some View {
     HStack(spacing: 14) {
       if selection.isEnabled, let pipeline = environment.router.pipeline(for: selection.id) {
@@ -145,29 +161,7 @@ public struct SourceSelectionView: View {
 
       VStack(alignment: .leading, spacing: 2) {
         if renamingID == selection.id {
-          ClearableTextField(
-            text: $draftName,
-            clearIdentifier: "source-name-field-clear-\(index + 1)"
-          ) {
-            TextField("Name", text: $draftName)
-              .textFieldStyle(.plain)
-              .font(.system(size: 16, weight: .semibold, design: .rounded))
-              .foregroundStyle(.white)
-              .focused($isNamingFocused)
-              // "Done" on the keyboard, because a return key on a one-line name field reads as
-              // "new line" to an operator who is not thinking about text fields.
-              .submitLabel(.done)
-              .accessibilityIdentifier("source-name-field-\(index + 1)")
-              .onSubmit { commitRename(for: selection) }
-              .onAppear {
-                // Keyboard avoidance steals first responder if focus is claimed in the same turn
-                // the field appears — especially on the last row.
-                Task { @MainActor in
-                  try? await Task.sleep(for: .milliseconds(350))
-                  isNamingFocused = true
-                }
-              }
-          }
+          renameField(index: index, selection: selection)
         } else {
           nameButton(index: index, selection: selection)
         }
@@ -247,6 +241,8 @@ public struct SourceSelectionView: View {
         .accessibilityValue("source=\(slot + 1)")
       }
 
+      linkMenu(index: index, selection: selection)
+
       // Two independent decisions, so two switches: whether the camera gets a tile, and whether its
       // microphone is in the programme mix. Labelled, because an unlabelled pair of toggles is a
       // coin flip under pressure.
@@ -289,7 +285,126 @@ public struct SourceSelectionView: View {
         // Both, because a flow asserting on a rename has to tell "the camera renamed itself and we
         // followed" apart from "the operator renamed it and the camera's name is being ignored".
         + "advertised=\(environment.boundCamera(for: selection.id)?.advertisedName ?? "") "
-        + "nameOrigin=\(environment.boundCamera(for: selection.id)?.nameOrigin.rawValue ?? "")"
+        + "nameOrigin=\(environment.boundCamera(for: selection.id)?.nameOrigin.rawValue ?? "") "
+        + "link=\(SourceLinkLabel.accessibilityLink(video: selection.linkedControlID.flatMap(displayNumber)))"
+    )
+  }
+
+  /// A phone that is another row's control: no picture, no slot, no place in the mix. What is left
+  /// is its name and address, so the operator can tell which phone this is, and one way out.
+  private func linkedControlRow(index: Int, selection: SourceSelection) -> some View {
+    let video = environment.linkedVideo(forControl: selection.id)
+
+    return HStack(spacing: 14) {
+      LinkIndentMark()
+        .frame(width: 128, height: 72)
+        .accessibilityIdentifier("source-link-mark-\(index + 1)")
+
+      Circle()
+        .fill(selection.isPresent ? Color.programGreen : Color.white.opacity(0.18))
+        .frame(width: 8, height: 8)
+
+      VStack(alignment: .leading, spacing: 2) {
+        if renamingID == selection.id {
+          renameField(index: index, selection: selection)
+        } else {
+          nameButton(index: index, selection: selection)
+        }
+        if let endpoint = environment.endpoint(for: selection.id) {
+          Text("\(endpoint.host):\(endpoint.port)")
+            .font(.system(size: 11, weight: .regular, design: .monospaced))
+            .foregroundStyle(.white.opacity(0.35))
+            .lineLimit(1)
+            .accessibilityIdentifier("source-endpoint-\(index + 1)")
+        } else {
+          Text(selection.id.rawValue)
+            .font(.system(size: 11, weight: .regular, design: .monospaced))
+            .foregroundStyle(.white.opacity(0.35))
+            .lineLimit(1)
+        }
+      }
+
+      Spacer()
+
+      Text(SourceLinkLabel.linkedForControl)
+        .font(.system(size: 12, weight: .semibold, design: .rounded))
+        .foregroundStyle(.white.opacity(0.7))
+        .accessibilityIdentifier("source-link-status-\(index + 1)")
+
+      Button {
+        environment.unlinkSource(control: selection.id)
+      } label: {
+        Image(systemName: "xmark.circle.fill")
+          .font(.system(size: 22, weight: .semibold))
+          .frame(width: 34, height: 30)
+          .foregroundStyle(Color.recordRed)
+      }
+      .buttonStyle(.plain)
+      .accessibilityIdentifier("source-unlink-\(index + 1)")
+      .accessibilityLabel("Unlink \(rowName(for: selection))")
+    }
+    .padding(.horizontal, 16)
+    .padding(.vertical, 12)
+    .frame(minHeight: 84)
+    .background(Color.deckPanel.opacity(0.7), in: RoundedRectangle(cornerRadius: 10))
+    .accessibilityElement(children: .contain)
+    .accessibilityIdentifier("source-row-\(index + 1)")
+    .accessibilityValue(
+      "name=\(rowName(for: selection)) on=0 audio=0 format= "
+        + "gain=\(SourceWaveformThumb.percent(selection.inputGain)) "
+        + "host=\(environment.endpoint(for: selection.id)?.host ?? "") "
+        + "origin=\(environment.bindingOrigin(for: selection.id).rawValue) "
+        + "advertised=\(environment.boundCamera(for: selection.id)?.advertisedName ?? "") "
+        + "nameOrigin=\(environment.boundCamera(for: selection.id)?.nameOrigin.rawValue ?? "") "
+        + "link=\(SourceLinkLabel.accessibilityLink(control: video.flatMap { displayNumber(of: $0.id) }))"
+    )
+  }
+
+  /// The chain: broken while the row has no link, whole once it has one. Tapping either opens the
+  /// picker, which lists every Cameraman that could take the job.
+  private func linkMenu(index: Int, selection: SourceSelection) -> some View {
+    let candidates = environment.linkCandidates(for: selection.id)
+    let linked = environment.linkedControl(for: selection.id)
+
+    return Menu {
+      Section(SourceLinkLabel.pickerTitle) {
+        if candidates.isEmpty {
+          Text(SourceLinkLabel.noCandidates)
+        }
+        ForEach(candidates) { candidate in
+          Button {
+            environment.linkSource(video: selection.id, control: candidate.id)
+          } label: {
+            if candidate.id == linked?.id {
+              Label(linkChoiceLabel(for: candidate), systemImage: "checkmark")
+            } else {
+              Text(linkChoiceLabel(for: candidate))
+            }
+          }
+          .accessibilityIdentifier("link-choice-\(displayNumber(of: candidate.id) ?? 0)")
+        }
+      }
+      if let linked {
+        Divider()
+        Button("Unlink \(rowName(for: linked))", role: .destructive) {
+          environment.unlinkSource(video: selection.id)
+        }
+        .accessibilityIdentifier("link-remove-\(index + 1)")
+      }
+    } label: {
+      Image(systemName: linked == nil ? "link.slash" : "link")
+        .font(.system(size: 14, weight: .semibold))
+        .frame(width: 34, height: 30)
+        .foregroundStyle(linked == nil ? Color.white.opacity(0.75) : Color.sourceBlue)
+    }
+    .accessibilityIdentifier("source-link-\(index + 1)")
+    .accessibilityLabel(linked.map { "Linked to \(rowName(for: $0))" } ?? "Link a camera for remote control")
+  }
+
+  private func linkChoiceLabel(for candidate: SourceSelection) -> String {
+    SourceLinkLabel.candidate(
+      name: rowName(for: candidate),
+      host: environment.endpoint(for: candidate.id)?.host
     )
   }
 
@@ -308,6 +423,32 @@ public struct SourceSelectionView: View {
   private func rowName(for selection: SourceSelection) -> String {
     guard environment.endpoint(for: selection.id) != nil else { return selection.displayName }
     return environment.boundCamera(for: selection.id)?.name ?? "Unnamed"
+  }
+
+  private func renameField(index: Int, selection: SourceSelection) -> some View {
+    ClearableTextField(
+      text: $draftName,
+      clearIdentifier: "source-name-field-clear-\(index + 1)"
+    ) {
+      TextField("Name", text: $draftName)
+        .textFieldStyle(.plain)
+        .font(.system(size: 16, weight: .semibold, design: .rounded))
+        .foregroundStyle(.white)
+        .focused($isNamingFocused)
+        // "Done" on the keyboard, because a return key on a one-line name field reads as
+        // "new line" to an operator who is not thinking about text fields.
+        .submitLabel(.done)
+        .accessibilityIdentifier("source-name-field-\(index + 1)")
+        .onSubmit { commitRename(for: selection) }
+        .onAppear {
+          // Keyboard avoidance steals first responder if focus is claimed in the same turn
+          // the field appears — especially on the last row.
+          Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(350))
+            isNamingFocused = true
+          }
+        }
+    }
   }
 
   /// The name is the rename control: one tap opens the inline editor. Blue, because blue is what
