@@ -153,33 +153,38 @@ file's size.
 
 ### C5 — both latencies become configuration, with a slider each
 
-Two different deadlines exist, and only one of them is exposed:
+**Largely landed with NDI (`661ffa0e`), and one claim here was wrong.** An earlier draft named
+`SegmentWriter.maximumFrameDuration = 2` as the save-to-disk deadline. It is not: it is a
+gap-plausibility threshold — is this a clock glitch or a real dropout — and master is explicit that
+there was no disk cap at all. There are now two real caps:
 
-| | What it decides | Where it lives today | Operator control |
+| | Config | Default | Range |
 |---|---|---|---|
-| **Display latency** | how late a frame may be and still be shown live | `AppConfig.displayLatencyCapEnabled` / `displayLatencyCapMilliseconds`, default 500 ms, **off by default**; ceiling `PlayoutController.Limits.maximumMilliseconds = 2_000` | slider exists, but on the **Perf Harness** screen, not Settings |
-| **Save-to-disk latency** | how late a frame may be and still be written to the archive | `SegmentWriter.maximumFrameDuration: Double = 2`, a `private static let` | **none — the slider was never built** |
+| **Display latency** | `displayLatencyCapEnabled` / `displayLatencyCapMilliseconds` | 500 ms | 10–2 000 ms |
+| **Save-to-disk latency** | `diskLatencyCapEnabled` / `diskLatencyCapMilliseconds` | 10 s | 100 ms–60 s |
 
-The two are deliberately different: the recording can afford to wait longer than the monitor,
-because nobody is watching the file in real time, and a frame worth discarding for the live cut is
-still worth keeping on disk. That is the entire reason there are two numbers, and it is lost while
-one of them is a literal with no way to reach it.
+`FrameLatencyGate` asks both questions of every source whatever transport carried it, at the two
+points where a frame becomes someone's problem: decoded on its way to the screen, coded on its way
+to the file. Frames are judged on capture-to-**arrival** age, so the delay line's own hold does not
+read as staleness, and a source that cannot say when it captured is always admitted. A picture too
+old to show is **held, not blanked**, and still goes to disk — which is the freeze answer and the
+two-deadline split, both already shipped. Launch overrides `-displayLatencyCap` / `-diskLatencyCap`
+exist so a flow can exercise a cap without dragging a slider.
 
-- `maximumFrameDuration` moves into `AppConfig` as a persisted, decodable value beside
-  `segmentSeconds`, with the clamp-on-decode treatment the display cap already gets.
-- Delete the `PlayoutController.Limits.maximumMilliseconds` default literal, so configuration is
-  the only source of truth for the display ceiling.
-- **Settings gains a Latency section carrying both sliders**, with the display one moved down
-  from the Perf Harness screen. Settings today has Instant replay, Content Templates, Remote
-  Control, Camera archives, Programme master, Stream, Retention, Storage, Sources and
-  Diagnostics — and no latency section at all.
+What is left:
 
-Note what `maximumFrameDuration` actually gates, because it is subtler than a timeout: a gap
-longer than it is presumed a *clock glitch* rather than lost frames, unless capture time or
-arrival time corroborates it within 0.5 s. Corroborated, the frame is held at its true length and
-silence is written to match. Uncorroborated, the sample collapses to one frame's duration — which
-is precisely the "file runs short" failure R2 exists to prevent. Raising the value widens the
-window in which a real dropout is believed rather than explained away.
+- **Neither slider is in Settings.** Both live on `PerfHarnessView`; `SettingsView` still has no
+  latency section. Settings has Instant replay, Content Templates, Remote Control, Camera archives,
+  Programme master, Stream, Retention, Storage, Sources and Diagnostics.
+- **Both caps ship `enabled = false`**, so out of the box nothing refuses a stale picture and the
+  gate is inert. Whether either should default on is an operator decision, not a code detail.
+- **Delete the `PlayoutController.Limits.maximumMilliseconds = 2_000` default literal** so
+  configuration is the only source of truth for the display ceiling. Still present.
+
+`maximumFrameDuration` keeps its own separate job and should not be conflated with the disk cap:
+a gap longer than it is presumed a clock glitch unless capture or arrival time corroborates it
+within 0.5 s. Corroborated, the frame is held at true length with silence to match; uncorroborated,
+the sample collapses to one frame's duration — the "file runs short" failure R2 exists to prevent.
 
 ### C6 — apply the camera clock offset that is already measured
 
@@ -201,6 +206,99 @@ confidently in the wrong place, which is worse than one that is obviously broken
 Apply the filtered offset to `captureWallClock` at ingest, gate it on a minimum sample count so a
 cold start cannot swing the timeline, and record the applied value per segment so an export can be
 re-derived if the offset later proves wrong.
+
+---
+
+## 3a. What NDI added, and the alignment work it created
+
+NDI landed on master on 2026-09-09 (`d092773`). It settles some of §3 — see C5 and C6 — and it
+introduces failure modes that did not exist when this plan was written. The root of all of them is
+one sentence from `NDIArchiveBudget`: *an RTSP camera's archive is a copy of bytes that already
+arrived, so ten of them cost nothing; an NDI camera's archive is a re-encode.* Encode sessions, not
+CPU, are what the app runs out of, and that now applies per camera rather than once for the master.
+
+### C7 — a camera can be recorded and have no archive at all
+
+Past `NDIArchiveBudget` capacity (default 4, sized as four 1080p archives plus the programme
+master), a camera previews and cuts to programme but **does not archive**. Its tile says so at the
+time. The index does not: no segment rows are written, so at export that camera is
+indistinguishable from one that was never selected, and the operator finds out after the game
+rather than before it.
+
+Record the intent per source per recording, so an export can say *this angle was not recorded, by
+budget* instead of silently omitting it, and warn at record start rather than at export.
+
+### C8 — decimation makes a flat 40 ms tolerance unreachable
+
+A camera inside the cap whose encoder cannot keep up **halves its archive frame rate** rather than
+dropping frames at random, and climbs back when it recovers. A continuous 15 fps angle is usable
+where the same camera dropping two frames in three is not — the behaviour is right.
+
+But it breaks the acceptance arithmetic. At 15 fps a sample covers 66 ms, so the frame covering an
+arbitrary instant `T` can honestly have been captured 66 ms before it, and no amount of correct
+placement makes that read within 40 ms. **The file tolerance has to be
+`max(40 ms, one frame interval at that segment's actual rate)`**, which means the actual rate has
+to be recorded — see C10. Note this is a *sampling* limit, not drift: the frame is where it belongs,
+there is simply a coarser grid.
+
+### C9 — two transports, two clock derivations, one take
+
+`21560129` made both live transports always on, because the rig is a mix. So a single recording now
+holds segments whose wall clocks were derived two different ways:
+
+- **NDI** stamps every frame with UTC from the sending SDK, roughly microsecond-accurate, and
+  `NDIReceiveClock` **applies** a filtered offset (600 s window, sampled 1/s, maximum-of-window
+  since transit only shrinks an observation, 3 600 s skew guard).
+- **RTSP** reconstructs capture time from RTCP sender reports arriving every few seconds, and
+  applies no offset at all — it only reports one.
+
+C1 places both families by `start_wall`. A systematic bias between the families therefore becomes a
+systematic offset between angles that no amount of export correctness can fix. This is what turns
+C6 from an improvement into a prerequisite: **measure the bias first** (one NDI and one RTSP camera
+on the same burned-in clock), then apply the RTSP offset, then measure again.
+
+### C10 — segments do not record how they were made
+
+`segments` carries `source_id`, `sequence`, `start_wall`, `duration` and `is_initialization`.
+Nothing says which transport wrote the row, what clock offset was applied to it, or whether the
+archive was running decimated. Without that:
+
+- a misplaced angle cannot be attributed to its transport after the fact,
+- an export cannot be re-derived when an offset later proves wrong,
+- and C8's tolerance cannot be computed, because nothing knows the rate.
+
+Add `transport`, `applied_clock_offset` and `archive_rate` to `segments`. This subsumes C6's
+"record the applied value per segment".
+
+### C11 — the freeze now has two possible mechanisms
+
+RTSP archives are a passthrough bitstream copy; NDI archives are encoded by the app
+(`sourceEncodeCodec`, HEVC by default because the same hardware sustains 118 fps of 1080p H.264
+against 296 fps of HEVC). Manufacturing a held frame is easy where the app owns the encoder and
+awkward where it does not.
+
+So C1's open question — where the freeze is made — is now a choice between *one* mechanism at
+remux, which treats both transports alike, and *two* at record time, which is cheaper per frame and
+has to be written twice. Decide once, for both.
+
+### C12 — a gate refusal is a third kind of hole
+
+`FrameLatencyGate`'s disk cap refuses a frame that arrived too late. Under C1 that refusal becomes a
+freeze span in the export, which is correct — but the verifier's "no fill outside the ledger" check
+would read it as the system inventing gaps. The fault ledger has to include gate refusals, which
+means the gate has to report them per source and per span rather than as a running count.
+
+Both caps currently ship disabled, so this is latent until one is turned on.
+
+### C13 — a declared frame rate mis-times the frames inside a segment
+
+`NDIReceiveClock` steps the timeline at the *measured* rate, using the declaration only until the
+estimator's window fills. A Hollyland Cosmo C2 declares 120/1 while sending 60, which once wrote a
+3.000 s video track beside a 5.887 s audio track.
+
+Wall-clock placement fixes where a segment *starts*; it says nothing about how frames are spaced
+inside it. The first segment of a take from a mis-declaring camera is therefore the exposed case,
+because it is the one written while the estimator is still converging.
 
 ---
 
@@ -293,6 +391,34 @@ Written as conditions, in the style of `operator-test-vectors.md`.
 | S21 | Save-to-disk latency set above display latency | a frame later than `D` but inside the disk deadline is absent from the live tile and present in the archive |
 | S22 | Both sliders present and effective | Settings shows display and save-to-disk latency; moving each changes the behaviour S21 asserts |
 | S23 | Camera with a clock offset (VM33, or an injected constant) | corrected placement ≤ 40 ms; the applied offset is recorded per segment |
+| S24 | More NDI cameras recorded than the encode cap allows | the un-archived angle is named at record start and reported at export, never silently absent |
+| S25 | A camera decimated to half rate mid-take | placement still correct; samples within one frame interval at that segment's recorded rate |
+| S26 | One NDI and one RTSP camera on the same burned-in clock | cross-transport pair agree ≤ 40 ms at every sample |
+| S27 | Every segment row | carries transport, applied clock offset and archive rate |
+| S28 | Disk latency cap enabled, one camera held late past it | refused span appears in the ledger; export freezes there; no fill flagged outside the ledger |
+| S29 | First segment from a camera declaring the wrong frame rate | video track duration matches audio within 0.5 s; samples ≤ tolerance while the estimator converges |
+| S30 | Mixed NDI + RTSP take, every fault at once | ≥ 20 random samples within tolerance across both transports |
+
+Network-shaped, on real hardware (`pi-conditioner`). Latencies are **one-way**; RTT rises by about
+double. Caps are given as display / disk and must be set explicitly, since both ship disabled.
+
+| ID | Condition | Pass |
+|---|---|---|
+| S31 | Pixel +300 ms, caps 500 ms / 10 s | nothing refused; capture-to-display age rises by ~300 ms and no more |
+| S32 | Pixel latency stepped 100→900 ms | refusals begin as age crosses the display cap, not before; tile holds its last frame |
+| S33 | S32's take exported | the throttled camera's file is full length and wall-clock exact throughout, including across the refused span |
+| S34 | Pixel +150 ms with ±100 ms jitter | no display refusals — the gate judges age, not variance; delay line absorbs it |
+| S35 | Pixel +700 ms, disk cap lowered to 1 s | display refuses, disk does not; archive frame count keeps climbing |
+| S36 | Pixel +1500 ms, disk cap 1 s | both refuse; archive stands still while encode counters keep moving |
+| S37 | S36's take exported | the refused span is a freeze at its true wall clock; the file is *not* shortened by it |
+| S38 | Pixel capped to 1.5 Mbit | frames arrive late with honest timestamps; counters separate late from lost |
+| S39 | Pixel capped to 0.5 Mbit | a genuine archive gap appears; gap filling runs; export holds the last frame across it |
+| S40 | Pixel at 2/5/10 % loss over TCP RTSP | loss surfaces as retransmit delay, not missing frames; documented as such |
+| S41 | Director shaped +300 ms (Lane B) | NDI and RTSP frames refuse at the same *age*, whatever their transport |
+| S42 | Director capped to 20 Mbit (Lane B) | the NDI path starves first; SDK-side drops appear as real gaps, not as lateness |
+| S43 | Any shaped phase, unshaped again | counters return to baseline and the tile recovers without a relaunch |
+| S44 | Every shaped take | webcam frame read at each phase boundary agrees with what telemetry claimed |
+| S45 | Shaping left applied after a killed run | the trap cleared it; `GET /v1/shape` is empty |
 
 ## 6. Order of work
 
@@ -304,11 +430,17 @@ Written as conditions, in the style of `operator-test-vectors.md`.
 5. C3a programme gap-holding, then S15–S18.
 6. C4 duration sanity (small, independent).
 7. T2 fault injection, then S5, S6, S9, S11.
-8. C5 the two latency values and their sliders — cheap, and S21/S22 depend on it.
-9. C6 apply the measured clock offset, then S23.
-10. C2 one display latency and freeze-on-late, then S7, S8 — needs the device, not the simulator.
+8. C10 segment provenance — transport, applied offset, archive rate. Small, and C8's tolerance and
+   C9's attribution both depend on it.
+9. C9 measure the cross-transport bias, then C6 apply the RTSP offset, then measure again — S23,
+   S26. C6 is no longer optional: mixed takes are the normal case.
+10. C7 and C8, the encode-budget consequences — S24, S25.
+11. C5's remainder: the two Settings sliders and the default-off decision — S21, S22.
+12. C12 gate refusals into the ledger, C13 the converging-estimator case — S28, S29.
+13. C2 one display latency applied to every tile, then S7, S8 — needs the device, not the
+    simulator. The freeze-on-late half of this already shipped with `FrameLatencyGate`.
 
-Steps 1–9 run on a simulator. Step 10 needs the M4, per the device rule in the repo's
+Steps 1–12 run on a simulator. Step 13 needs the M4, per the device rule in the repo's
 `AGENTS.md`.
 
 **Standing constraint, 2026-09-08: testing is simulator-only.** No real device is to be touched.

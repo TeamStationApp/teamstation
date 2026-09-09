@@ -71,6 +71,13 @@ has that change before launching it against real footage.** If in doubt, pull th
 
 Both are violated today.
 
+**NDI landed on master 2026-09-09 (`d092773`), and this branch is rebased on top of it.** That
+closed part of W9 and all of the live-side freeze, changed what W1 and W7 should be built on, and
+created new work that did not exist when this plan was written — W11 to W15. Each item below says
+what master now covers. The R2 export path is untouched by NDI: `ArchiveRemux` still inserts at a
+running cursor, `ExportService` still trims to the overlap, `ProgramEncoder` still clamps to one
+frame, and there are still no programme anchors.
+
 **Operator decisions, 2026-09-08, already folded into the work items below.** Gaps freeze the last
 frame rather than going black, and black appears only at the head of a file. The programme does
 the same. Both latencies — display and save-to-disk — become configuration with a Settings slider
@@ -116,9 +123,23 @@ marks only row 1 — the take it just recorded — and asserts the list survives
 
 Ordered. Each is independently landable.
 
-### W1 — timecode burn-in (`scripts/fakeRtspCameras.js`)
+### W1 — timecode burn-in
 
 Nothing here is measurable until the simulated cameras carry machine-readable time.
+
+**Do not build this from scratch — most of it exists.** `FrameMarker` (on master, in
+`DirectorSources`) already paints a value as a strip of black/white cells with a sentinel at each
+end, cells sized so inter-frame compression cannot smear a bit, and it ships a reader as well as a
+painter. `SyntheticFrameSource`, `FileFrameSource` and `make-fixtures.js` all use it. It encodes a
+20-bit **frame ID**, not a wall clock, so the work is widening it or mapping ID to wall clock
+through a per-source epoch — not inventing a scheme.
+
+**And `fakeRtspCameras.js` cannot host this as written**: it is a fixture *replayer*, serving a
+pre-recorded take from `~/recordings/gsDirector-rtsp-fixtures/20260820-stopwatch`. Live wall clock
+cannot be burned into already-encoded fixtures. `mobile/tools/gsNdiCameras` is a real generator that
+draws the same picture as `SyntheticFrameSource` — sweeping bar, gradient, stopwatch, frame counter,
+FrameMarker strip — precisely so a test can read the marker back out of a decoded archive. Build on
+that, and treat giving the RTSP farm a generator mode as part of this item.
 
 - Render into every generated frame a block of black/white cells encoding **milliseconds since a
   single farm epoch**: start marker, 32 data bits, parity. All cameras share one epoch, so the
@@ -218,6 +239,13 @@ the RTMP stream keep going as they do now.
 
 ### W6 — duration sanity in the remuxer
 
+**Master fixed the tooling half (`ce1db601`).** `verifyArchives.js` now takes the frame rate from
+the video stream's own duration rather than dividing decoded frames by the container's, because a
+container reports its longest track — a camera declaring 120 while sending 60 wrote a 3.000 s video
+track beside a 5.887 s audio track and was reported as a healthy 59.4 fps. It also calls out a video
+track more than half a second from the audio beside it. That check is a better acceptance assertion
+than anything this plan had. The app-side fix below is still open.
+
 `playableDuration` (`ArchiveRemux.swift:117`) accepts any declared duration under
 `maximumSaneDuration = 20_000 s` (`ArchiveRemux.swift:115`). Recording 253's `-3` stub is 7.2 MB
 claiming 6,550 s — 8.8 kbps against 8 Mbps of real content — and the app's export turned it into a
@@ -229,6 +257,21 @@ Reject a declared duration whose implied bitrate is impossible for the file's si
 track.
 
 ### W7 — fault injection (`--scenario`)
+
+**The NDI farm already has the harder half.** `gsNdiCameras` carries a loopback fault port covering
+loss, bursts, stalls, jitter, mid-stream format changes, 4K, unhandled pixel formats, short strides,
+zero frame-rate denominators, backwards timestamps, malformed metadata and sender destroy/rename —
+plus `ndiFaultRun.js` to sweep them, and a `/clock` endpoint reporting what the generator actually
+sent, which is the independent ground truth W2's verifier needs.
+
+`958a37b4` added the one fault this plan most needed and the old RTSP harness could never produce:
+`late=<ms>` stamps a frame where it was taken and delivers it behind that. It **ramps** rather than
+steps, because subtracting the whole amount at once sends the timestamp backwards and
+`NDIReceiveClock` correctly reads a persistent backwards shift as the sender restarting — a 1.5 s
+step was absorbed in half a second and the age went back to zero.
+
+`fakeRtspCameras.js` still has neither `--scenario` nor `late=`. Port the vocabulary rather than
+inventing a second one.
 
 `--scenario` is referenced by `package.json` (`rtsp:farm:self-test`) and
 `scripts/testProgramWriterDeath.js`, but the farm's argument parser **rejects it — it was never
@@ -249,6 +292,13 @@ Syntax: `--scenario 1:stall:12@120,2:drop-frames:30,3:clock-jump:5@300`.
 **Acceptance:** S5, S6, S9, S11.
 
 ### W8 — one configured display latency, and freeze on late (the R1 fix, device only)
+
+**The freeze half shipped with NDI (`661ffa0e`).** `FrameLatencyGate` refuses a picture too old to
+show and the last good frame stays up rather than the tile blanking — that is the operator decision,
+already live, on both transports. What did *not* ship is the other half: `PlayoutController` still
+computes `offsetSeconds` per camera with `maximumMilliseconds: Double = 2_000` as a default literal.
+A staleness ceiling is not a common presentation instant. The item below is now only about applying
+one configured `D` to every tile and the compositor; do not rebuild the hold.
 
 `PlayoutController` (`PlayoutController.swift:92`) computes `offsetSeconds` **per camera,
 independently**, adapting to that camera's own jitter, under `maximumMilliseconds = 2_000`
@@ -271,7 +321,28 @@ tile runs on its own schedule, and a frame is late against a deadline only that 
 composite. **Blocked while testing is simulator-only (§0.3)** — the logic can be unit-tested, the
 acceptance measurement cannot.
 
-### W9 — both latencies become configuration, with a slider each
+### W9 — the latency sliders, and whether the caps ship on
+
+**Mostly landed with NDI (`661ffa0e`), and one claim in the original draft was wrong.** That draft
+named `SegmentWriter.maximumFrameDuration = 2` as the save-to-disk deadline. It is not — it is a
+gap-plausibility threshold, and master states plainly that there was no disk cap at all. There are
+now two real caps in `AppConfig`: `displayLatencyCapMilliseconds` (500 ms, 10–2 000) and
+`diskLatencyCapMilliseconds` (**10 s**, 100 ms–60 s), read by a transport-agnostic
+`FrameLatencyGate`, judged on capture-to-arrival age, with `-displayLatencyCap` /
+`-diskLatencyCap` launch overrides so a flow can exercise them.
+
+Three things remain, and they are the whole of this item now:
+
+- **Neither slider is in Settings.** Both sit on `PerfHarnessView`; `SettingsView` still has no
+  latency section. Master's commit message says Settings gets a second slider — the diff does not
+  touch `SettingsView.swift`. Add the section with both, at 10–2 000 ms and 0.1–60 s, which as that
+  commit notes have no useful shared scale.
+- **Both caps ship `enabled = false`**, so nothing refuses a stale picture out of the box and the
+  gate is inert on a default install. Whether either defaults on is an operator decision.
+- **Delete `PlayoutController.Limits.maximumMilliseconds`' default literal** so configuration is the
+  only source of truth for the display ceiling. Still present.
+
+`maximumFrameDuration` keeps its own job and should not be folded into the disk cap.
 
 There are two deadlines and only one is reachable. The display one is
 `AppConfig.displayLatencyCapEnabled` / `displayLatencyCapMilliseconds` (default 500 ms, clamped
@@ -304,6 +375,19 @@ believed.
 
 ### W10 — apply the camera clock offset that is already measured
 
+**NDI already does this, and it is the shape to copy.** `NDIReceiveClock` measures the sender's
+offset over a 600 s rolling window, sampled once a second rather than once a frame (a full window at
+1080p60 would be 36 000 samples scanned on the receive thread), keeps the window's **maximum**
+because transit only ever makes an observation smaller, guards an unset sender clock with a 3 600 s
+skew limit, falls back to arrival time, and then applies it:
+`capture = WallClock(seconds: senderSeconds - offset)`. Its own comment notes this is the same
+filtering and sign convention the RTSP path uses for its sender-report offset — RTSP computes the
+identical quantity and discards it into telemetry.
+
+**This stopped being optional when both transports became always-on.** See W13: a mixed take now has
+two families of segments whose wall clocks are derived differently, and only one family is
+corrected.
+
 R1 corrects each camera for its own clock offset. That correction is computed and thrown away.
 `RTPClockAudit` derives `ntpOffsetSeconds` and a filtered version from RTCP sender reports; both
 are written to a telemetry snapshot at `RTSPFrameSource.swift:215-216` and shown on the tile HUD.
@@ -320,6 +404,74 @@ that wrong wall clock. An angle confidently in the wrong place is worse than one
 - Record the applied offset per segment, so an export can be re-derived if it later proves wrong.
 
 **Acceptance:** S23.
+
+### W11 — record how a segment was made (C7, C10)
+
+`segments` carries `source_id`, `sequence`, `start_wall`, `duration`, `is_initialization` and
+nothing else. Three facts are missing and each one blocks something:
+
+- **`transport`** — without it a misplaced angle cannot be attributed to NDI or RTSP after the fact,
+  which is the whole of W13's diagnosis.
+- **`applied_clock_offset`** — so an export can be re-derived if an offset later proves wrong. W10
+  was already going to need this; C10 just widens it to both transports.
+- **`archive_rate`** — the rate this segment was actually written at, which W12's tolerance needs.
+
+Separately, record **archive intent per source per recording**. Past `NDIArchiveBudget` capacity
+(default 4) a camera previews and cuts to programme but does not archive, and writes no segment rows
+at all — so at export it is indistinguishable from a camera that was never selected. Name it at
+record start, and report it at export as *not recorded, by budget*.
+
+**Acceptance:** S24, S27.
+
+### W12 — express the file tolerance in frame intervals (C8)
+
+A camera whose encoder falls behind halves its archive frame rate and climbs back. At 15 fps a
+sample covers 66 ms, so the frame covering an arbitrary instant can honestly be 66 ms old and a flat
+40 ms tolerance can never be met — not because placement drifted but because the grid is coarser.
+
+`verifySync.js` compares against `max(40 ms, one frame interval at that segment's recorded rate)`,
+reading the rate from W11. Keep reporting the raw error too, so a real drift is not hidden behind a
+generous tolerance.
+
+**Acceptance:** S25.
+
+### W13 — cross-transport clock agreement (C9, and why W10 is now mandatory)
+
+Both live transports are always on, so a normal take mixes them. NDI stamps every frame with UTC
+from the sending SDK and applies a filtered offset; RTSP reconstructs capture time from sender
+reports every few seconds and applies nothing. W3 places both families by `start_wall`, so a
+systematic bias between them becomes a systematic offset between angles that correct export code
+cannot fix.
+
+Order matters: **measure the bias first**, with one NDI and one RTSP camera on the same time
+reference, and record the number. Then land W10. Then measure again. Without the before number
+there is no way to show W10 did anything.
+
+**Acceptance:** S26.
+
+### W14 — decide where the freeze is manufactured, once, for both transports (C11)
+
+RTSP archives are a passthrough bitstream copy; NDI archives are encoded by the app. A held frame is
+easy where the app owns the encoder and awkward where it does not. Either manufacture the freeze at
+remux — one mechanism, both transports, and the place W3 already touches — or at record time, which
+is cheaper per frame and has to be written twice. This blocks W3's gap handling, so decide before
+starting it.
+
+**Acceptance:** S19, and S2 for both transports.
+
+### W15 — gate refusals become ledger entries (C12, C13)
+
+`FrameLatencyGate` refusing a late frame leaves a hole that is not a network gap. Under W3 that hole
+becomes a freeze span, which is right — but the verifier's "no fill outside the ledger" check reads
+it as the system inventing gaps. The gate must report refusals per source and per span, not as a
+running count, and the harness must fold them into the fault ledger.
+
+While in there: the first segment of a take from a camera declaring the wrong frame rate is written
+while `FrameRateEstimator` is still converging, so its frames can be spaced by a declaration rather
+than a measurement. Wall-clock placement fixes where that segment starts, not how its frames sit
+inside it.
+
+**Acceptance:** S28, S29.
 
 ---
 
@@ -410,9 +562,115 @@ Hard-won. Each of these cost real time.
 
 ---
 
+## 5a. Network-shaped device testing
+
+Added 2026-09-09, when the `pi-conditioner` became available. **This supersedes §0.3's
+simulator-only constraint for the iPad and the Pixel 10 only.** Everything else in §0.3 stands, and
+two devices stay untouched — see the roles table.
+
+This lane is what finally makes the R1/R2 corner cases reachable on real hardware. The old RTSP
+harness could hold frames on the sender, which keeps RTP timestamps continuous and so exercises
+lateness but *never* a gap. A bandwidth cap on the real link does produce genuine loss, which means
+**gap filling becomes testable for the first time.**
+
+### Device roles — read before shaping anything
+
+| Device | Role | Shape it? |
+|---|---|---|
+| **iPad (Director)** | the app under test | **Only in Lane B.** Shaping it degrades every ingress at once, including the control server this lane drives it through. |
+| **Pixel 10** | GS Cameraman, RTSP | **Yes — this is the primary subject.** |
+| **Cosmo C2** | NDI camera | **No — cannot.** It is on the wired LAN, so its traffic never crosses the Pi. Reachable only indirectly, via Lane B. |
+| **iPhone 15 Pro** | draws the image the Cosmo captures over HDMI | **No. Never.** It is the NDI path's time reference; shaping it corrupts the measurement rather than testing it. |
+
+### Two lanes, and they are mutually exclusive
+
+The skill is explicit: *shape the camera, not Director*, and traffic between two devices both on
+`spjr-outside` may be bridged inside the Wi-Fi firmware and is not reliably shapeable. So a run is
+in one lane or the other, never both.
+
+- **Lane A — per-camera (default).** Pixel 10 on `spjr-outside`; Director and everything else on the
+  UniFi SSID. Isolates one RTSP camera while the others stay clean, which is what makes "this angle
+  degraded and the others did not" a falsifiable claim.
+- **Lane B — whole-Director.** iPad on `spjr-outside`; every camera on UniFi. The **only** way to
+  degrade the NDI path, since the Cosmo cannot be shaped directly. Blunt by nature: it hits every
+  camera and the control channel together, so keep latencies modest and expect telemetry polls to
+  slow down with everything else.
+
+### Preflight, every run
+
+1. `GET /v1/health` — `treeIntact` must be true. If the API does not answer at all, see the
+   `brcmfmac` oops in the skill: the box needs a hardware power cycle and the watchdog may not fire.
+2. `GET /v1/devices` — the device under test must appear **with an IP**. One of the three associated
+   on 2026-09-09 had `ip: null` and cannot be shaped at all.
+3. **Forget the main SPJR SSID on the Pixel** for the duration, or disable auto-join. A Pixel 10
+   logged 34 associations and 57 disassociations in half an hour on 2026-09-09 by roaming back.
+4. Confirm the branch build's retention is size-based before launching on an iPad holding footage
+   (§0.5).
+5. Apply the shape, then **verify it took** with `GET /v1/stats` — near-zero bytes on that device's
+   class while traffic is clearly flowing means it is on the wrong SSID or both ends are on
+   `spjr-outside`.
+6. **Arm cleanup before the first shape.** Shapes have no TTL and survive a dead test run:
+   `trap 'curl -sk -X DELETE https://pi1.vtex.net/v1/shape' EXIT INT TERM`.
+
+`latencyMs` is **one-way**; RTT rises by about twice it, and the response echoes
+`expectedRttDeltaMs`. Every figure below is the one-way value to send.
+
+### Lower the cap rather than raising the latency
+
+The disk cap defaults to 10 s. Reaching that with real latency would need `latencyMs > 10000`, which
+collapses RTSP over TCP into retransmit timeouts and measures the transport rather than the gate.
+Master's own device measurement took the other route — *"with the disk cap at 1 s instead, both
+refused and the archive stood still"* — and that is the pattern to follow: set
+`-diskLatencyCap 1000` and apply ~1.5 s. Both caps also ship **disabled**, so every phase here must
+launch with `-displayLatencyCap` / `-diskLatencyCap` set explicitly or nothing will refuse anything.
+
+### Phases
+
+Each phase: apply the shape, hold 90 s while recording, **capture and read a webcam frame at every
+phase boundary** (non-negotiable — see `webcam-capture` and the 2026-09-05 run where every device
+claim came from `dump-state` and the screen was black), sample `dump-state` every 10 s, then stop,
+export, and run the verifier. Record `refused`/`late` counters per source per phase.
+
+| # | Lane | Shape | Caps | What it proves |
+|---|---|---|---|---|
+| **P0** | A | none | 500 ms / 10 s | Baseline: capture-to-display age, export spread, and that `/v1/stats` sees the traffic at all. |
+| **P1** | A | Pixel `latencyMs: 300` | 500 ms / 10 s | Nothing refuses. Establishes headroom below the display cap. |
+| **P2** | A | Pixel latency stepped 100→900 ms, 60 s each | 500 ms / 10 s | **Paul's first case.** Refusals begin as age crosses the display cap; the Pixel tile freezes on its last good frame while its archive stays unbroken and full length. |
+| **P3** | A | Pixel `latencyMs: 150, jitterMs: 100` | 500 ms / 10 s | Jitter alone does not trip a gate that judges *age*; the delay line absorbs it. Distinguishes jitter from staleness. |
+| **P4** | A | Pixel `latencyMs: 700` | 500 ms / **1 s** | Below the lowered disk cap: display refuses, disk still keeps everything. |
+| **P5** | A | Pixel `latencyMs: 1500` | 500 ms / **1 s** | **Paul's second case.** Both refuse; the archive stands still while encodes continue — which is what tells this apart from an archive that stopped for its own reasons. |
+| **P6** | A | Pixel `mbit: 1.5` | 500 ms / 10 s | Starvation below encode bitrate: the camera's own queue backs up, frames arrive late with honest timestamps. Separate "late" from "lost" in the counters. |
+| **P7** | A | Pixel `mbit: 0.5` | 500 ms / 10 s | Severe starvation → **genuine delivery loss → a real archive gap.** The first test that can exercise gap filling and the freeze at all. |
+| **P8** | A | Pixel `lossPct: 2, 5, 10` | 500 ms / 10 s | RTSP is hard-coded to TCP, so loss should surface as retransmit delay rather than missing frames. Confirm that, and record it — it is why `lossPct` is a weak instrument here. |
+| **P9** | B | iPad `latencyMs: 300` | 500 ms / 10 s | Both transports degrade together. Do NDI and RTSP frames refuse at the same *age*? They should — `FrameLatencyGate` is transport-agnostic. |
+| **P10** | B | iPad `mbit: 20` | 500 ms / 10 s | 1080p NDI is bandwidth-hungry; expect the NDI path to starve first and the SDK to drop frames the receiver never sees. Real gaps on the NDI archive. |
+| **P11** | A | none | 500 ms / 10 s | **The W13 measurement.** One NDI and one RTSP camera on the same time reference, unshaped, export and compare. This is the cross-transport bias number, and it must be taken before W10 lands. |
+
+**Every phase ends with an export and a verifier run.** That is Paul's third requirement and the
+only one that cannot be judged from telemetry: whatever the network did, each exported file must
+still put each event at its true wall clock, and P5's and P7's refused spans must appear as freezes
+at the right instants rather than as a shortened file.
+
+### What this lane cannot do
+
+- **Shape the Cosmo C2 directly.** Only Lane B, and only alongside everything else.
+- **Produce a clean NDI-only degradation.** Lane B always hits RTSP too.
+- **Reach the 10 s disk cap with real latency.** Lower the cap instead.
+- **Isolate two cameras differently in one run** if both must be shaped — they would both need to be
+  on `spjr-outside`, where the bridging caveat applies. Shape one, keep the rest clean.
+
+### Order of execution
+
+P0 and P11 first, unshaped: they are the baselines, and P11's cross-transport number is a one-time
+opportunity that disappears once W10 lands. Then P1–P3 (display band), P4–P5 (disk band), P6–P8
+(bandwidth and loss), and Lane B's P9–P10 last, since re-joining the iPad to a different SSID is the
+most disruptive step and the easiest to leave in a bad state.
+
 ## 6. Done means
 
-- `verifySync.js` passes S1–S23 at ≤ 40 ms on a take with every fault injected at once.
+- `verifySync.js` passes S1–S30 at the W12 tolerance on a take with every fault injected at once.
+- The network-shaped phases S31–S45 pass on real hardware, and every shaped take exports on the
+  correct timeline — including the spans the latency gates refused.
 - A camera with a 30 s dropout exports the same length as one without.
 - A gap decodes as a held frame, not black; black appears only before a camera's first frame.
 - Programme file length equals take length.
