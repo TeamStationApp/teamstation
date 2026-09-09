@@ -61,9 +61,14 @@ struct CameramanApp: App {
     }
     .onChange(of: scenePhase) { _, phase in
       // `isIdleTimerDisabled` stops the screen locking *itself*, but a side-button press, the app
-      // switcher, or another app launching still backgrounds this one, and iOS cancels the listener
-      // on the way out. Nothing restores it on the way back in, so the app has to ask.
-      if phase == .active { environment.handleForeground() }
+      // switcher, or another app launching still backgrounds this one, and iOS takes the
+      // advertisement and the video encoder down on the way out. Nothing restores either on the way
+      // back in, so the app has to ask.
+      switch phase {
+      case .background: environment.handleBackground()
+      case .active: environment.handleForeground()
+      default: break
+      }
     }
   }
 }

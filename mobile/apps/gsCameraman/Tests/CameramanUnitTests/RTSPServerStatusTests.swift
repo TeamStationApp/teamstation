@@ -168,6 +168,32 @@ struct RTSPServerStatusTests {
     #expect(server.status.acceptedClients == 1, "the connected client was dropped by a needless rebind")
   }
 
+  @Test("Re-advertising on every foreground does not disturb a listener that is already serving")
+  func refreshAdvertisementLeavesAServingListenerAlone() async throws {
+    let (server, port) = try await Self.startServerOnAFixedPort()
+    defer { server.stop() }
+
+    let client = try await LoopbackRTSPClient(port: port)
+    defer { client.close() }
+    _ = try await client.exchange("OPTIONS rtsp://127.0.0.1/live/mainstream RTSP/1.0\r\nCSeq: 1\r\n\r\n")
+    #expect(await Self.waitUntil { server.status.acceptedClients == 1 })
+
+    // Foregrounding re-publishes unconditionally, because the advertisement can be gone while the
+    // listener is still up. That is only safe if it never touches the listener or its clients.
+    server.refreshAdvertisement()
+    try await Task.sleep(for: .milliseconds(300))
+
+    #expect(server.status.isListening)
+    #expect(server.status.port == port)
+    #expect(server.status.acceptedClients == 1)
+    #expect(server.status.closedClients == 0, "re-advertising dropped a live client")
+
+    let again = try await client.exchange(
+      "OPTIONS rtsp://127.0.0.1/live/mainstream RTSP/1.0\r\nCSeq: 2\r\n\r\n"
+    )
+    #expect(again.statusCode == 200, "the connection did not survive a re-advertisement")
+  }
+
   @Test("A server that was deliberately stopped is not resurrected by becoming active")
   func ensureListeningDoesNotUndoStop() async throws {
     let (server, _) = try await Self.startServerOnAFixedPort()
