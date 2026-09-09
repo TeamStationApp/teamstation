@@ -19,6 +19,22 @@ struct CameraFaults: Sendable {
   var burstRemaining: Int = 0
   var stallUntil: Date?
   var jitterMilliseconds: Double = 0
+  /// How far behind its own capture this camera's delivery has fallen, in milliseconds.
+  ///
+  /// Distinct from `jitterMilliseconds`, which delays the send and stamps the frame when it goes:
+  /// the receiver sees the timestamp move with it and reads no lateness at all. This stamps the
+  /// frame where it was taken and delivers it late, which is the only shape that makes a picture
+  /// genuinely stale — and the shape the display cap exists to catch.
+  ///
+  /// Reached gradually rather than in one step, because a step is not lateness. Subtracting the
+  /// whole amount from one frame's timestamp makes that timestamp go *backwards*, and a receiver
+  /// worth its salt reads a permanent backwards shift as the sender's clock having restarted and
+  /// re-anchors to it — measured here absorbing a 1.5 s step in half a second, correctly. A camera
+  /// that falls behind does so frame by frame, and that is what this reproduces.
+  var lateMilliseconds: Double = 0
+  /// Milliseconds of lateness added per frame while ramping. Kept well under a frame interval so
+  /// the timestamps stay monotonic all the way up.
+  static let lateRampPerFrame: Double = 5
 
   var width: Int?
   var height: Int?
@@ -75,6 +91,10 @@ struct CameraFaults: Sendable {
     if let value = query["stall"], let seconds = Double(value) {
       stallUntil = seconds > 0 ? Date().addingTimeInterval(seconds) : nil
       applied.append("stall=\(seconds)")
+    }
+    if let value = query["late"], let milliseconds = Double(value) {
+      lateMilliseconds = max(0, milliseconds)
+      applied.append("late=\(lateMilliseconds)")
     }
     if let value = query["jitter"], let milliseconds = Double(value) {
       jitterMilliseconds = max(0, milliseconds)
@@ -149,6 +169,7 @@ struct CameraFaults: Sendable {
     if burstRemaining > 0 { parts.append("burst=\(burstRemaining)") }
     if isStalled { parts.append("stalled") }
     if jitterMilliseconds > 0 { parts.append("jitter=\(jitterMilliseconds)") }
+    if lateMilliseconds > 0 { parts.append("late=\(lateMilliseconds)") }
     if let width, let height { parts.append("size=\(width)x\(height)") }
     if let frameRate { parts.append("fps=\(frameRate)") }
     if let fourCC { parts.append("fourcc=\(fourCC)") }

@@ -71,6 +71,10 @@ final class FakeCamera: @unchecked Sendable {
     ]
   }
 
+  /// Lateness actually in effect, walking towards `faults.lateMilliseconds` a few milliseconds
+  /// per frame. See `CameraFaults.lateMilliseconds` for why it is not applied in one step.
+  private var lateRamp: Double = 0
+
   func applyFaults(_ query: [String: String]) -> [String] {
     lock.lock()
     let applied = faults.apply(query)
@@ -318,6 +322,20 @@ final class FakeCamera: @unchecked Sendable {
     frame.line_stride_in_bytes = Int32(faults.shortStride ? width * 2 : width * 4)
 
     var timestamp = Int64(Date().timeIntervalSince1970 * 10_000_000)
+    // Taken when it says, delivered now. A receiver that anchors capture times off its
+    // least-delayed frame reads this as exactly this much lateness.
+    lock.lock()
+    let target = faults.lateMilliseconds
+    if lateRamp < target {
+      lateRamp = min(target, lateRamp + CameraFaults.lateRampPerFrame)
+    } else if lateRamp > target {
+      lateRamp = max(target, lateRamp - CameraFaults.lateRampPerFrame)
+    }
+    let late = lateRamp
+    lock.unlock()
+    if late > 0 {
+      timestamp -= Int64(late * 10_000)
+    }
     if faults.backwardsTimestamps, id % 10 == 5 {
       // One frame in ten steps back a full second. Scattered rather than continuous, so the
       // receiver's timeline has to recover rather than simply stop.
