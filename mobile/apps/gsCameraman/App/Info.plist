@@ -52,10 +52,25 @@
     <string>_awx_service._tcp</string>
   </array>
 
+  <!-- Multiple scenes only so a USB-C display gets its own scene; an iPhone still opens exactly one
+       app window. The external-display scene shows the encoder's picture with no chrome
+       (CleanFeedController); with clean HDMI off no window is put on it and iOS mirrors. -->
   <key>UIApplicationSceneManifest</key>
   <dict>
     <key>UIApplicationSupportsMultipleScenes</key>
-    <false/>
+    <true/>
+    <key>UISceneConfigurations</key>
+    <dict>
+      <key>UIWindowSceneSessionRoleExternalDisplayNonInteractive</key>
+      <array>
+        <dict>
+          <key>UISceneConfigurationName</key>
+          <string>Clean Feed</string>
+          <key>UISceneDelegateClassName</key>
+          <string>CameramanUI.ExternalDisplaySceneDelegate</string>
+        </dict>
+      </array>
+    </dict>
   </dict>
   <key>UILaunchScreen</key>
   <dict/>
