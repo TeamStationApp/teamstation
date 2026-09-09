@@ -204,6 +204,14 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     snapshot.pacingSpreadMilliseconds = (jitter.latenessSpreadMilliseconds * 10).rounded() / 10
     snapshot.playoutMilliseconds = (playout.bufferMilliseconds * 10).rounded() / 10
     snapshot.playoutLateFrames = playout.lateFrames
+    snapshot.stalledForSeconds = running
+      ? StallWatchdog.stalledForSeconds(
+        now: Date(),
+        lastAccessUnitAt: lastAccessUnitAt,
+        sessionStartedAt: sessionStartedAt,
+        timeout: Self.stallTimeout
+      )
+      : 0
     snapshot.playoutDepth = pictures.count + decodedFrames.count
     snapshot.senderReports = clockAudit.reportCount
     snapshot.senderReportIntervalSeconds = (clockAudit.meanIntervalSeconds * 100).rounded() / 100

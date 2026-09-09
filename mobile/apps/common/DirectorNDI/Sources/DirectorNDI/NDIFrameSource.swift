@@ -35,6 +35,9 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
   private let clock: DirectorClock
   private let encodeCodec: CompressedFrame.Codec
   private let encodeBitrate: Int
+  /// How long a source may deliver nothing before it is reported as silent. Matches the RTSP
+  /// path's timeout so an operator reads one number for both transports.
+  private static let stallTimeout: TimeInterval = 5
   private let wantsLowBandwidth: Bool
 
   /// The archive encode runs here, never on the receive thread.
@@ -56,6 +59,11 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
 
   private let lock = NSLock()
   private var receiver: NDIlib_recv_instance_t?
+  /// When the last video frame arrived, and when this source was started. The pair the stall
+  /// watchdog needs: without the start time, a receiver that never delivers a first frame looks
+  /// healthy for ever rather than silent from the outset.
+  private var lastVideoAt: Date?
+  private var startedAt: Date?
   private var videoThread: Thread?
   private var audioThread: Thread?
   private var running = false
@@ -154,6 +162,14 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     var snapshot = stats
     snapshot.outOfOrderFrames = receiveClock.outOfOrderFrames
     snapshot.senderClockRestarts = receiveClock.clockRestarts
+    snapshot.stalledForSeconds = running
+      ? StallWatchdog.stalledForSeconds(
+        now: Date(),
+        lastAccessUnitAt: lastVideoAt,
+        sessionStartedAt: startedAt,
+        timeout: Self.stallTimeout
+      )
+      : 0
     snapshot.decodeSessions = videoEncoder == nil ? 0 : 1
     return snapshot
   }
@@ -215,6 +231,8 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     self.sinks = sinks
     running = true
     receiveClock.reset()
+    startedAt = Date()
+    lastVideoAt = nil
     audioConverter.reset()
     audioSampleIndex = 0
     audioFormat = AudioSampleBuilder.makeFormatDescription(
@@ -304,6 +322,8 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     let receiver = self.receiver
     let encoder = videoEncoder
     self.receiver = nil
+    startedAt = nil
+    lastVideoAt = nil
     videoEncoder = nil
     audioEncoder = nil
     videoThread = nil
@@ -375,6 +395,10 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
       lock.unlock()
       return
     }
+
+    lock.lock()
+    lastVideoAt = Date()
+    lock.unlock()
 
     guard let timing = receiveClock.timing(for: frame) else { return }
 
