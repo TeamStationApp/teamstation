@@ -52,6 +52,7 @@ func usage() -> String {
     /fault?cam=1&burst=30       drop 30 consecutive frames
     /fault?cam=1&stall=8        send nothing for 8 seconds
     /fault?cam=1&jitter=120     randomise send timing up to 120 ms
+    /fault?cam=1&late=1500      deliver frames 1500 ms behind their own capture
     /fault?cam=1&fps=60         change frame rate mid-stream
     /fault?cam=1&size=1280x720  change resolution mid-stream
     /fault?cam=1&size=3840x2160 send 4K, which the app must refuse
