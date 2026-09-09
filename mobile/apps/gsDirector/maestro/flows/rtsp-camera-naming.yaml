@@ -25,9 +25,7 @@ appId: co.gamestation.director
     timeout: 60000
 
 - tapOn:
-    id: 'source-name-menu-1'
-- tapOn:
-    id: 'camera-rename-1'
+    id: 'source-name-1'
 - eraseText
 - inputText: 'Third Base'
 - pressKey: Enter

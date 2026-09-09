@@ -73,7 +73,6 @@ does — as long as the Mac is on their network, wired or not:
 DIRECTOR_SIMULATOR_UDID=<udid> bash scripts/build-sim.sh
 node scripts/run-maestro.js --device <udid> --sim rtsp-three-cameras
 node scripts/run-maestro.js --device <udid> --sim rtsp-camera-naming
-node scripts/run-maestro.js --device <udid> --sim rtsp-camera-rebind
 ```
 
 That covers the transport, the search and the identity rules against real cameras without the iPad on
@@ -304,7 +303,6 @@ clear it.
 | `rtsp-three-cameras` | All three real cameras found by search, decoded, live, nothing lost |
 | `rtsp-camera-naming` | A named camera is recognised again by unique id at the next launch |
 | `cameraman-control` | A Cameraman tile's three-dot button opens the phone's own screen; zoom, flip and Settings reach the phone (simulator, against `fakeRtspCameras.js --cameraman "Phone 1" --only-cameraman`) |
-| `rtsp-camera-rebind` | A wrong auto-match can be corrected from the cache in one tap |
 | `operator-*` | Product vectors in [operator-test-vectors.md](operator-test-vectors.md) |
 | `record-and-stop` | Recording starts, segments accumulate, the stop *completes*, program file exists |
 | `scrub-and-return` | Scrub back through history while recording continues, then return to live |

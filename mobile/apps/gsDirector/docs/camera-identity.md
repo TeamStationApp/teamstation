@@ -51,10 +51,16 @@ is not persisted and is not derived from the address.
 
 ## What the operator sees
 
-Each row names its camera through a menu. A camera that has advertised is shown under that name with
-an `ID` badge as soon as it is found. The operator can still rename it; that local name follows the
-unique id across IP changes. A socket with no unique id is `Unnamed` until the operator names it or
-the camera advertises.
+Each row's name is the rename control: one tap opens an inline editor, and the keyboard's Done key
+commits. A camera that has advertised is shown under that name with an `ID` badge as soon as it is
+found. The operator can still rename it; that local name follows the unique id across IP changes. A
+socket with no unique id is `Unnamed` until the operator names it or the camera advertises.
+
+There is no menu for picking a different cached camera, and no "forget". Both existed for the days
+when a row was keyed by address and two cameras that swapped DHCP leases each came up under the
+other's name. An IP address is never a camera identifier now, so there is nothing for the operator
+to correct by hand: the unique id and the CNAME follow the camera, and the automatic binding does
+the rest. The `/bind-camera` and `/forget-camera` harness commands remain for tests.
 
 The row shows `host:port` underneath the name. There is no IP badge: the address is not an identity.
 
