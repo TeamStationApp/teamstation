@@ -392,10 +392,9 @@ public struct SourceSelectionView: View {
         .accessibilityIdentifier("link-remove-\(index + 1)")
       }
     } label: {
-      Image(systemName: linked == nil ? "link.slash" : "link")
-        .font(.system(size: 14, weight: .semibold))
+      ChainLinkGlyph(broken: linked == nil, color: linked == nil ? Color.white.opacity(0.75) : Color.sourceBlue)
         .frame(width: 34, height: 30)
-        .foregroundStyle(linked == nil ? Color.white.opacity(0.75) : Color.sourceBlue)
+        .contentShape(Rectangle())
     }
     .accessibilityIdentifier("source-link-\(index + 1)")
     .accessibilityLabel(linked.map { "Linked to \(rowName(for: $0))" } ?? "Link a camera for remote control")
