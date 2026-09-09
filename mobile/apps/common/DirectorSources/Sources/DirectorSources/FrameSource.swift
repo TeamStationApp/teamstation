@@ -18,6 +18,10 @@ public struct PixelFrame: @unchecked Sendable {
   public let presentationTime: CMTime
   /// When the frame was received, used to place it on the DVR wall-clock timeline.
   public let wallClock: WallClock
+  /// When the camera took the picture, on the Director's clock. Nil while a source has no clock
+  /// anchor yet. Carried here as well as on the coded frame because how old a picture is decides
+  /// whether it is still worth showing, and that question is asked of the decoded one.
+  public let captureWallClock: WallClock?
   /// Monotonic per-source counter starting at 0. The unit of R4's "every frame appears once".
   public let frameID: UInt64
   /// Frame number burned into the picture by the fixture generator or the synthetic renderer,
@@ -29,6 +33,7 @@ public struct PixelFrame: @unchecked Sendable {
     pixelBuffer: CVPixelBuffer,
     presentationTime: CMTime,
     wallClock: WallClock,
+    captureWallClock: WallClock? = nil,
     frameID: UInt64,
     markerValue: Int? = nil
   ) {
@@ -36,6 +41,7 @@ public struct PixelFrame: @unchecked Sendable {
     self.pixelBuffer = pixelBuffer
     self.presentationTime = presentationTime
     self.wallClock = wallClock
+    self.captureWallClock = captureWallClock
     self.frameID = frameID
     self.markerValue = markerValue
   }
@@ -247,6 +253,45 @@ public struct ReceiveStats: Sendable, Equatable {
   /// Seconds spent downstream of capture, on the receive thread, which is time the loop cannot
   /// spend collecting the next frame.
   public var deliverySeconds: Double = 0
+  /// That delivery time split in two, in milliseconds, because they have different owners and
+  /// different fixes: `copy` is the source's own move of the frame into a pixel buffer, `publish`
+  /// is everything the pipeline then does with it on the same thread — convert, playout, tile,
+  /// compositor. A source that looks slow is almost always one of these two and never both, and
+  /// without the split the answer is a guess.
+  public var copyMilliseconds: Double = 0
+  public var publishMilliseconds: Double = 0
+  /// Frames a source encoded for its own archive, and frames it refused to encode because the
+  /// encoder was already too far behind.
+  ///
+  /// Only sources that make their own coded form report these. A climbing `archiveDropped` is the
+  /// archive degrading on purpose so the picture does not: the alternative is an encode that backs
+  /// up onto the receive thread and takes the live tile down with it.
+  public var archiveEncoded: UInt64 = 0
+  /// Sync samples among those encodes. `SegmentWriter` opens every file on one, so an archive
+  /// whose encodes climb while these do not is an archive that has silently stopped growing.
+  public var archiveKeyframes: UInt64 = 0
+  /// Encode submissions VideoToolbox refused, and how many times its session had to be rebuilt
+  /// because it had stopped accepting work altogether.
+  public var archiveEncodeRefused: UInt64 = 0
+  public var archiveEncoderRebuilds: UInt64 = 0
+  /// The `OSStatus` of the most recent refusal, so the failure can be named rather than guessed at.
+  public var archiveEncodeStatus: Int = 0
+  /// Decode failures, sessions rebuilt after one went permanently bad, and the `OSStatus` of the
+  /// last failure. A dead decoder and a silent camera look identical from a tile that has stopped
+  /// updating; these are what tell them apart.
+  public var decodeFailures: UInt64 = 0
+  public var decoderRebuilds: UInt64 = 0
+  public var decodeStatus: Int = 0
+  /// Receivers thrown away and rebuilt because they went silent. A sender that rebooted leaves the
+  /// old connection open and empty, and nothing but a new receiver ever hears from it again.
+  public var reconnects: UInt64 = 0
+  public var archiveDropped: UInt64 = 0
+  /// How many frames are waiting to be encoded right now.
+  public var archiveBacklog: Int = 0
+  /// One frame in this many reaches the archive. Above 1, the source is deliberately recording at
+  /// a fraction of its live rate because the encoder could not sustain the full one — a continuous
+  /// half-rate angle rather than a full-rate one full of holes.
+  public var archiveStride: Int = 1
   /// The widest gap between two arriving frames during the last complete second, in milliseconds,
   /// and whether that gap ended on a keyframe.
   ///
@@ -316,6 +361,11 @@ public struct ReceiveStats: Sendable, Equatable {
   /// reordered; a count that climbs at the frame rate means the source timeline has stopped moving
   /// and the tile is frozen, which is otherwise indistinguishable from a camera holding still.
   public var outOfOrderFrames: UInt64 = 0
+  /// Times the sender's clock has been seen to restart, which in practice is the camera rebooting.
+  public var senderClockRestarts: UInt64 = 0
+  /// How long this source has been silent past the stall timeout, or zero while it is delivering.
+  /// The one counter on a tile that can describe frames that did *not* arrive.
+  public var stalledForSeconds: Double = 0
   /// Why delivery last stopped, in the words of whatever noticed — a socket error, or a session that
   /// went quiet without one. Empty while healthy, and the difference between a tile that is black for
   /// a knowable reason and one that is simply black.
@@ -346,11 +396,26 @@ public protocol FrameSource: AnyObject, Sendable {
 
   func start(sinks: FrameSinks) throws
   func stop()
+
+  /// Whether anything downstream currently wants the coded form of this source's frames.
+  ///
+  /// The router wires all four sinks for every source and leaves them wired, which is right for a
+  /// camera whose coded frames arrive whether we want them or not — an RTSP camera's `compressed`
+  /// sink costs nothing, because those bytes came off the socket already.
+  ///
+  /// It is not right for a source that has to *make* the coded form. The free NDI SDK hands over
+  /// decoded pixels, so an NDI camera's archive is a re-encode, and treating a wired sink as a
+  /// request to encode means four idle preview tiles hold four 1080p encode sessions for output
+  /// nobody reads. Encode sessions, not CPU, are what this app runs out of.
+  ///
+  /// Default is a no-op, so only sources that encode need to care.
+  func setArchiving(_ isArchiving: Bool)
 }
 
 public extension FrameSource {
   var connections: Int { isRunning ? 1 : 0 }
   var receiveStats: ReceiveStats { ReceiveStats() }
+  func setArchiving(_ isArchiving: Bool) {}
 
   func start(onPixelFrame: @escaping PixelFrameHandler) throws {
     try start(sinks: FrameSinks(pixel: onPixelFrame))

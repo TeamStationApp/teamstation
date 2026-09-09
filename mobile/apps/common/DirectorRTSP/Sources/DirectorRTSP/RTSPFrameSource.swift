@@ -204,7 +204,19 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     snapshot.pacingSpreadMilliseconds = (jitter.latenessSpreadMilliseconds * 10).rounded() / 10
     snapshot.playoutMilliseconds = (playout.bufferMilliseconds * 10).rounded() / 10
     snapshot.playoutLateFrames = playout.lateFrames
+    snapshot.stalledForSeconds = running
+      ? StallWatchdog.stalledForSeconds(
+        now: Date(),
+        lastAccessUnitAt: lastAccessUnitAt,
+        sessionStartedAt: sessionStartedAt,
+        timeout: Self.stallTimeout
+      )
+      : 0
     snapshot.playoutDepth = pictures.count + decodedFrames.count
+    let decoding = decoder?.currentStatistics
+    snapshot.decodeFailures = decoding?.failures ?? 0
+    snapshot.decoderRebuilds = decoding?.rebuilds ?? 0
+    snapshot.decodeStatus = decoding?.lastFailureStatus ?? 0
     snapshot.senderReports = clockAudit.reportCount
     snapshot.senderReportIntervalSeconds = (clockAudit.meanIntervalSeconds * 100).rounded() / 100
     snapshot.senderReportAgeSeconds = clockAudit.lastReportUptime > 0
@@ -630,6 +642,11 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
         pixelBuffer: pixelBuffer,
         presentationTime: presentationTime,
         wallClock: clock.now,
+        // The corrected capture time when the camera's sender reports have anchored one, so how
+        // old a picture is can be judged the same way on both transports.
+        captureWallClock: lastCorrectedCapture > 0
+          ? WallClock(seconds: lastCorrectedCapture)
+          : nil,
         frameID: id,
         markerValue: nil
       ),

@@ -47,6 +47,9 @@
   <array>
     <string>_awx_service._tcp</string>
     <string>_rtsp._tcp</string>
+    <!-- NDI cameras and the SDK's own finder. The SDK documentation requires this entry for NDI
+         discovery to work at all on iOS 14 and later. -->
+    <string>_ndi._tcp</string>
   </array>
   <key>NSCameraUsageDescription</key>
   <string>GS Director does not use the built-in camera; video comes from cameras on the network.</string>

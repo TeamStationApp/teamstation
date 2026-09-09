@@ -60,6 +60,11 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
 
   private let configuration: Configuration
   private let scanner: SubnetScanner
+  /// The most recent shared sweep, when something above is sweeping for us. Its own scanner then
+  /// goes unused: two transports each scanning the same /24 is the duplication the shared sweep
+  /// exists to remove, and the ARP cost is per address rather than per port.
+  private var sharedScan: SubnetScanner.Result?
+  private var isSweptExternally = false
   private let confirmHost: HostConfirmation
   private let clock: DirectorClock
   private let resolveIdentity: IdentityResolver?
@@ -171,6 +176,43 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
     rescan()
   }
 
+  public var sweepPorts: [Int] { configuration.isScanEnabled ? [configuration.port] : [] }
+
+  public func setSweepIsShared(_ isShared: Bool) {
+    lock.lock()
+    isSweptExternally = isShared
+    if !isShared { sharedScan = nil }
+    lock.unlock()
+  }
+
+  /// Confirmation stays on this transport's own cadence rather than the sweep's. The sweep is
+  /// cheap enough to run every three seconds; a DESCRIBE probe to every open host is not, and
+  /// probing five times as often to find cameras no sooner is a poor trade. A host set that has
+  /// actually changed does get confirmed at once, which is what makes a camera that came back at
+  /// a new address appear without waiting out the interval.
+  public func acceptSweep(_ result: SubnetScanner.Result) {
+    let mine = result.hosts(onPort: configuration.port)
+    lock.lock()
+    let changed = mine != (sharedScan?.openHosts ?? [])
+    sharedScan = SubnetScanner.Result(
+      openHosts: mine,
+      probedCount: result.probedCount,
+      subnet: result.subnet,
+      diagnostic: result.diagnostic,
+      portsByHost: result.portsByHost
+    )
+    let wasRunning = running
+    lock.unlock()
+    guard changed, wasRunning else { return }
+    rescan()
+  }
+
+  private func latestSharedScan() -> SubnetScanner.Result? {
+    lock.lock()
+    defer { lock.unlock() }
+    return isSweptExternally ? sharedScan : nil
+  }
+
   public func stop() {
     lock.lock()
     running = false
@@ -196,7 +238,9 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
 
   private func sweep() async {
     let scan: SubnetScanner.Result?
-    if configuration.isScanEnabled {
+    if let shared = latestSharedScan() {
+      scan = shared
+    } else if configuration.isScanEnabled {
       scan = await scanner.scan()
     } else {
       scan = nil

@@ -4,16 +4,29 @@
 // connected iPad would send parallel agents to the same machine.
 
 const { execFileSync } = require('node:child_process')
+const { mkdtempSync, readFileSync, rmSync } = require('node:fs')
+const { tmpdir } = require('node:os')
+const { join } = require('node:path')
 
 const PORT = Number(process.env.DIRECTOR_CONTROL_PORT ?? 8765)
 
+// `--json-output /dev/stdout` interleaves the report with devicectl's own human-readable table,
+// so the stream is JSON followed by a column listing and cannot be parsed. Every caller then
+// failed as "not paired" or "no device answered", which reads exactly like absent hardware.
+// Write the report to a file instead, which is the only place it arrives unaccompanied.
 function pairedDevices() {
-  const raw = execFileSync(
-    'xcrun',
-    ['devicectl', 'list', 'devices', '--json-output', '/dev/stdout'],
-    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }
-  )
-  return JSON.parse(raw.slice(raw.indexOf('{'))).result.devices
+  const directory = mkdtempSync(join(tmpdir(), 'gs-devicectl-'))
+  const report = join(directory, 'devices.json')
+  try {
+    execFileSync(
+      'xcrun',
+      ['devicectl', 'list', 'devices', '--json-output', report],
+      { encoding: 'utf8', stdio: ['ignore', 'ignore', 'ignore'] }
+    )
+    return JSON.parse(readFileSync(report, 'utf8')).result.devices
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
 }
 
 function resolveDevice() {

@@ -1,0 +1,6 @@
+// The NDI SDK is a C library with no module map of its own. This is what makes
+// `import CNDI` work from Swift.
+module CNDI {
+  umbrella header "CNDI.h"
+  export *
+}

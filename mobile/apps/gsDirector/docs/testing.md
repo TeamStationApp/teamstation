@@ -269,6 +269,13 @@ makes it arrive sooner — see the keyframe entry in `risks.md`.
 | `-rtspScan false` | Turn the subnet search off, leaving only `rtspHosts` |
 | `-rtspPath /live/mainstream` | Stream path to request |
 | `-rtspTransport tcp` | Only TCP is implemented; `udp` fails rather than quietly using TCP |
+| `-sourceProfile ndi` | Receive NDI cameras instead of RTSP ones |
+| `-ndiSources a;b` | Restrict the list to these NDI names |
+| `-ndiExtraIPs a,b` | Query these addresses directly, for a camera mDNS cannot reach |
+| `-ndiBandwidth lowest` | Ask the SDK for its reduced-bandwidth stream |
+| `-sourceEncodeCodec h264\|hevc` | Codec for archives the app has to encode itself |
+| `-sourceEncodeBitrate N` | Bitrate for those archives |
+| `-sourceEncodeLimit N` | How many cameras may encode an archive at once |
 
 With no `-sourceProfile`, the Settings switch decides: simulated cameras on gives `synthetic4`, off
 gives `rtsp`. An app opened from the home screen passes no arguments, so it searches for real
@@ -371,6 +378,31 @@ DIRECTOR_DEVICE_UDID=00008132-0000193801B9001C \
 ```
 
 Not in `--suite operator`.
+
+## NDI cameras
+
+The transport, the filter and the archive shape are covered in [ndi.md](ndi.md), including the
+fault table. The farm and the app:
+
+```bash
+node scripts/fakeNdiCameras.js --self-test           # markers, render cost, pacing
+node scripts/fakeNdiCameras.js --count 4 --fps 30
+DIRECTOR_SIMULATOR_UDID=<udid> bash scripts/build-sim.sh
+xcrun simctl launch <udid> co.gamestation.director -uiTest true -sourceProfile ndi
+node scripts/control.js enable 1 2 3 4
+node scripts/fakeNdiCameras.js --fault cam=1 drop=0.05
+node scripts/fakeNdiCameras.js --clock               # what the generator actually sent
+node scripts/fakeNdiCameras.js --stop
+```
+
+Two counters answer most NDI questions, and they are on the tile rather than in a log.
+`archiveStride` above 1 means the camera is recording at a fraction of its live rate because its
+encoder could not sustain the full one; `archiveDropped` climbing beside a healthy `framesPerSecond`
+is the archive degrading on purpose so the picture does not.
+
+**A simulator has no hardware video encoder.** Four 1080p HEVC archives there are software encodes
+and the fleet collapses; that number says nothing about the iPad. Preview, discovery, the filter,
+timing and format handling are all honest on a simulator — capacity is not.
 
 ## Fixtures
 

@@ -96,6 +96,9 @@ public final class ReplayDecoder: @unchecked Sendable {
   private var replayAnchorWall: Double?
   private var replayAnchorMedia: Double = 0
   private var lastShownMedia: Double?
+  /// The previously shown frame's position, so the frame now on screen can be given the duration
+  /// its own timeline says it has rather than one assumed from a declared rate.
+  private var previousShownMedia: Double?
   private var waitingForMoreFiles = false
   private var lastDeliveredAt: CFAbsoluteTime = 0
   private let stallPolicy = ReplayStallPolicy()
@@ -234,6 +237,7 @@ public final class ReplayDecoder: @unchecked Sendable {
     elapsed = 0
     deliveredFrames = 0
     filePumpTick = 0
+    previousShownMedia = nil
     lock.unlock()
     deliver(pixelBuffer: copy, time: CMClockGetTime(CMClockGetHostTimeClock()), played: 0)
   }
@@ -449,6 +453,23 @@ public final class ReplayDecoder: @unchecked Sendable {
     }
   }
 
+  /// Content shown from the replay's first frame up to and including the one now on screen.
+  ///
+  /// The frames carry their own presentation timestamps and the anchor is the first one shown, so
+  /// this is a subtraction rather than a running total at an assumed rate. The trailing frame's
+  /// own duration is included — otherwise a replay stops at the *start* of its last frame, which
+  /// at 30 fps is 33 ms short of the requested duration and outside the 20 ms tolerance.
+  private func playedSeconds(upTo media: TimeInterval, bootstrapStep: TimeInterval) -> TimeInterval {
+    lock.lock()
+    let anchor = replayAnchorMedia
+    let previous = previousShownMedia
+    previousShownMedia = media
+    lock.unlock()
+    let step = previous.map { max(0, media - $0) } ?? 0
+    let duration = step > 0 ? step : bootstrapStep
+    return max(0, media - anchor) + duration
+  }
+
   private func pumpFiles(_ reader: ReplayFileReader) {
     lock.lock()
     let shown = elapsed
@@ -508,7 +529,10 @@ public final class ReplayDecoder: @unchecked Sendable {
       return
     }
     guard let copy = detachedCopy(frame.pixel) else { return }
-    let played = shown + step
+    // How much tape has been shown, measured on the frames' own timeline rather than counted at
+    // the rate the camera claimed. `step` is the bootstrap for the very first frame, which has no
+    // predecessor to be measured against.
+    let played = playedSeconds(upTo: frame.media, bootstrapStep: step)
     deliver(
       pixelBuffer: copy,
       time: CMClockGetTime(CMClockGetHostTimeClock()),

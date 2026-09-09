@@ -777,3 +777,64 @@ already reads segments through `SegmentAssembler`, which does not care how they 
 
 Under NDI this required an Advanced SDK licence and a commercial agreement, which is why it was
 previously filed under licensing. It now needs nothing but the code.
+
+## NDI: the archive is a re-encode, and the simulator cannot do it
+
+Measured 2026-09-06 on an M4 iPad Air simulator (iOS 26.5) against four 1080p cameras from
+`gsNdiCameras` on the same Mac. **Device figures are still outstanding.**
+
+| Condition | Result |
+|---|---|
+| 4 x 1080p30, preview only | 29.7–30.5 fps per tile, nothing dropped by the SDK, 94% of each receive thread idle, 51% CPU |
+| 4 x 1080p30, recording, HEVC | preview falls to 5–7 fps, archives decimate to stride 4, 862% CPU |
+| 2 x 1080p30, recording, HEVC (`-sourceEncodeLimit 2`) | the two archiving cameras hold their archives; the two past the cap stay live and archive nothing |
+| 4 x 1080p60, preview only | 53.3–57.6 fps per tile against a generator sending 57, nothing lost, nothing late |
+| Archive on disk, HEVC | HEVC 1920x1080 plus AAC 48 kHz mono, segments 3.37 s |
+| Archive on disk, H.264 (`-sourceEncodeCodec h264`) | H.264 1920x1080 plus AAC 48 kHz mono, segments 3.007 s |
+| Fault sweep (`ndiFaultRun.js`) | 13/13, on the M4 and the iPad Pro 11-inch (M5) simulator; re-run 13/13 at the reduced input bitrate |
+| 4 x 1080p30 at `--quality 8` (~12.3 Mbps each) | 29.8–30.3 fps, nothing lost or late, 49.2 Mbps aggregate |
+| 4 x 1080p60 at `--quality 8` (~15.4 Mbps each) | 55.6–60.0 fps, nothing lost or late, 61.4 Mbps aggregate |
+| Archive at 8 Mbps, camera-shaped content | HEVC and H.264 both meet the target at 30 and 60 fps |
+| Archive at 8 Mbps, incompressible content | HEVC 11.7 / 22.8 Mbps, H.264 13.4 / 26.2 Mbps at 30 / 60 — the disk-budget ceiling |
+
+Two unit tests fail on this machine and are **not** from this work: `ReplayFileReaderTests`
+"Instant replay plays the requested content duration across file boundaries" (0.8 s decoded of a
+required 1.0) and `ReplayHTTPServerTests` "stop releases the port" (port 19841 in use). Both
+reproduce identically on unmodified `origin/master` at `09e8723`, checked 2026-09-06.
+
+The recording figures are a **software** encoder: a simulator has no video encode hardware, and
+four 1080p HEVC streams saturate the Mac. They say nothing about the iPad and must not be quoted as
+capacity. What the simulator does establish is that the transport, the filter, the timing, the
+format handling and the archive's shape are right.
+
+There is a second cost, and it is the less obvious one. Full-bandwidth NDI is SpeedHQ, which
+`libndi` decodes **on the CPU** — no SpeedHQ object in the library references a VideoToolbox symbol,
+and the codec ships hand-written NEON, SSE and AVX2 variants. An RTSP camera, by contrast, is
+decoded by VideoToolbox in hardware. So an NDI camera can cost more than an RTSP one on the
+*receive* side too, before any archive exists; the 51% CPU for four cameras in preview above is
+largely that decode. NDI|HX cameras send H.264 or H.265 and the SDK does use VideoToolbox for them.
+
+The device question this leaves open is the only one that matters for a game: **how many NDI
+cameras can an M4 iPad receive and archive at once, at 30 and at 60 fps, in HEVC and in H.264 —
+and how much of the budget goes on SpeedHQ decode before the encoder is even reached?**
+`NDIArchiveBudget.defaultCapacity` is 4 on the strength of the programme master's own measured
+figures (118 fps of 1080p H.264 against 296 fps of HEVC), not on a measurement of four
+simultaneous source encodes. Until that run happens the number is an estimate.
+
+Three things were found on the way and are worth not rediscovering:
+
+- Converting pixel format on the receive thread ran the fleet at 2.3 fps. `PixelConverter` already
+  does that conversion once per frame in hardware; the NDI copy is now format-preserving.
+- `TileRouter` wires the compressed sink for every source and leaves it wired, so treating it as a
+  request to encode meant four idle preview tiles held four encode sessions. `FrameSource
+  .setArchiving(_:)` is the seam that fixed it.
+- The generator, not the app, was the bottleneck twice: the kernel's timer coalescing paced a
+  declared 30 fps stream at 12, and synchronous sending capped four cameras at 54 of 60.
+  `gsNdiCameras --self-test` now fails on either.
+- An NDI camera's delay line holds decoded pixels, because the free SDK hands over nothing else:
+  about 4 MB a frame at 1080p. The pool is budgeted at 256 MB per source, which is roughly a second
+  of 1080p60, and the line's ceiling is set from the pool, a quarter-second under it: a display
+  latency cap above that holds as much as the pool allows rather than as much as was asked for. The
+  ceiling has to bound the *hold*, not only the queue — a queue cap alone evicts the earliest-due
+  picture on every arrival once the hold exceeds it, and the tile freezes while the archive keeps
+  recording. Three NDI cameras is ~750 MB of pictures.

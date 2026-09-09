@@ -1,6 +1,6 @@
 import Foundation
 import DirectorCore
-import DirectorRTSP
+import DirectorSources
 import Testing
 
 @Suite("Stall watchdog")
@@ -56,5 +56,45 @@ struct StallWatchdogTests {
         timeout: 5
       )
     )
+  }
+
+  /// The reporting half. `shouldReconnect` answers whether to act; this answers what to show, and
+  /// a tile needs the second because every other counter on it describes frames that arrived.
+  @Test("Reports zero while delivering and the silence once past the timeout")
+  func reportsSilence() {
+    let last = Date(timeIntervalSince1970: 2_000)
+    #expect(StallWatchdog.stalledForSeconds(
+      now: last.addingTimeInterval(1),
+      lastAccessUnitAt: last,
+      sessionStartedAt: last.addingTimeInterval(-30),
+      timeout: 5
+    ) == 0)
+    #expect(StallWatchdog.stalledForSeconds(
+      now: last.addingTimeInterval(12),
+      lastAccessUnitAt: last,
+      sessionStartedAt: last.addingTimeInterval(-30),
+      timeout: 5
+    ) == 12)
+  }
+
+  @Test("A source that never delivered anything is silent from its start, not healthy")
+  func neverDeliveredIsSilentFromStart() {
+    let started = Date(timeIntervalSince1970: 3_000)
+    #expect(StallWatchdog.stalledForSeconds(
+      now: started.addingTimeInterval(9),
+      lastAccessUnitAt: nil,
+      sessionStartedAt: started,
+      timeout: 5
+    ) == 9)
+  }
+
+  @Test("Nothing to judge before a source has started")
+  func noOriginIsNotAStall() {
+    #expect(StallWatchdog.stalledForSeconds(
+      now: Date(),
+      lastAccessUnitAt: nil,
+      sessionStartedAt: nil,
+      timeout: 5
+    ) == 0)
   }
 }

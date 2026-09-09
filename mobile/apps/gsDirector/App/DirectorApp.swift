@@ -1,4 +1,6 @@
 import AVFoundation
+import DirectorCore
+import DirectorNDI
 import DirectorRTSP
 import DirectorSources
 import DirectorTestHarness
@@ -23,8 +25,11 @@ struct DirectorApp: App {
     _environment = State(initialValue: AppEnvironment(
       launch: launch,
       cameras: cameras,
-      discoveryFactory: {
-        RTSPDiscovery(
+      discoveryFactory: { kind in
+        guard kind != .ndi else {
+          return Self.makeNDIDiscovery(launch: launch, coordinator: cameras.playout)
+        }
+        return RTSPDiscovery(
           configuration: RTSPDiscovery.Configuration(
             path: launch.rtspPath,
             manualHosts: launch.rtspHosts,
@@ -41,6 +46,47 @@ struct DirectorApp: App {
         )
       }
     ))
+  }
+
+  /// NDI discovery, and the sources it hands out.
+  ///
+  /// The archive codec is read here rather than inside `DirectorNDI` because it is an operator
+  /// setting: the free SDK decodes before we see a frame, so unlike an RTSP camera the codec on
+  /// disk is ours to choose. A launch argument wins for the session, as it does for the programme
+  /// master.
+  private static func makeNDIDiscovery(
+    launch: LaunchConfiguration,
+    coordinator: PlayoutCoordinator
+  ) -> SourceDiscovery {
+    let stored = ConfigStore().load()
+    let codec: CompressedFrame.Codec = (launch.sourceEncodeCodec ?? stored.sourceEncodeCodec) == .h264
+      ? .h264
+      : .hevc
+    let bitrate = launch.sourceEncodeBitrate ?? stored.programBitrate
+    if let limit = launch.sourceEncodeLimit {
+      NDIArchiveBudget.shared.setCapacity(limit)
+    }
+    NDIRuntime.shared.setReliableUDP(launch.ndiReliableUDP)
+
+    return NDIDiscovery(
+      configuration: NDIDiscovery.Configuration(
+        showLocalSources: launch.ndiLocalSources,
+        extraIPs: launch.ndiExtraIPs,
+        allowedNames: launch.ndiSources
+      ),
+      makeSource: { discovered, source in
+        NDIFrameSource(
+          sourceID: discovered.id,
+          displayName: discovered.advertisedName,
+          ndiName: source.name.full,
+          ndiURL: source.url,
+          encodeCodec: codec,
+          encodeBitrate: bitrate,
+          lowBandwidth: launch.ndiBandwidth == "lowest",
+          coordinator: coordinator
+        )
+      }
+    )
   }
 
   var body: some Scene {

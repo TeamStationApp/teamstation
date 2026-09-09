@@ -1,0 +1,4 @@
+module CNDIMac {
+  header "include/CNDIMac.h"
+  export *
+}
