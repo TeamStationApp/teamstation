@@ -19,6 +19,9 @@ struct Options {
   var controlPort: UInt16 = 8770
   var selfTest = false
   var seconds: Double?
+  /// SpeedHQ bitrate as a percentage of the codec's default, written into an NDI config file
+  /// before the library starts. 100 is the default.
+  var quality: Int?
 }
 
 func usage() -> String {
@@ -32,6 +35,9 @@ func usage() -> String {
     --name-prefix S      Sender name prefix (default "GS NDI"); cameras are "<prefix> 1"...
     --control-port N     Loopback HTTP fault port (default 8770; 0 disables)
     --seconds N          Run for N seconds and exit, instead of until interrupted
+    --quality N          SpeedHQ bitrate as a percentage of default (100 = default). Measured:
+                         1080p60 is 58 Mbps at 100 and 19 at 15, then floors near 13.6.
+                         1080p30 floors near 12.2. SpeedHQ cannot reach 8 Mbps at 1080p.
     --self-test          Render one frame, read its marker back, and exit
 
   Faults, all on http://127.0.0.1:<control-port>:
@@ -82,6 +88,7 @@ func parseOptions(_ argv: [String]) -> Options {
     case "--control-port": options.controlPort = value().flatMap(UInt16.init) ?? options.controlPort
     case "--seconds": options.seconds = value().flatMap(Double.init)
     case "--self-test": options.selfTest = true
+    case "--quality": options.quality = value().flatMap(Int.init)
     default:
       FileHandle.standardError.write(Data("unknown argument: \(argument)\n".utf8))
       print(usage())
@@ -184,6 +191,30 @@ func runSelfTest(_ options: Options) -> Int32 {
 }
 
 let options = parseOptions(Array(CommandLine.arguments.dropFirst()))
+
+/// Writes an NDI configuration file and points the library at it, before anything initialises it.
+///
+/// The SDK documentation says the codec quality setting is Advanced-SDK only. Measured here, the
+/// free SDK honours it: one 1080p60 camera went from 58.4 Mbps at the default to 18.8 at 15. It
+/// does not go arbitrarily low — below about 8 the bitrate floors near 13.6 Mbps at 1080p60 and
+/// 12.2 at 1080p30, which is SpeedHQ's floor for this content rather than the setting being
+/// ignored. An 8 Mbps 1080p stream is an NDI|HX operating point, and NDI|HX cannot be sent with
+/// the free SDK at all.
+func applyQuality(_ quality: Int) {
+  let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+    .appendingPathComponent("gs-ndi-config")
+  try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+  let json = "{ \"ndi\": { \"codec\": { \"shq\": { \"quality\": \(quality), \"mode\": \"4:2:0\" } } } }"
+  try? json.write(
+    to: directory.appendingPathComponent("ndi-config.v1.json"),
+    atomically: true,
+    encoding: .utf8
+  )
+  setenv("NDI_CONFIG_DIR", directory.path, 1)
+  print("SpeedHQ quality \(quality)% via \(directory.path)")
+}
+
+if let quality = options.quality { applyQuality(quality) }
 
 if options.selfTest {
   exit(runSelfTest(options))

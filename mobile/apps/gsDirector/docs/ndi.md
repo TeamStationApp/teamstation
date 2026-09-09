@@ -180,6 +180,82 @@ heuristics, which the documentation says should generally be left alone.
 
 Neither figure has been taken on the iPad yet. See `risks.md`.
 
+## The 8 Mbps question
+
+An 8 Mbps camera is an NDI|HX camera — SpeedHQ cannot go there. Two separate limits, both
+measured on this machine.
+
+**We cannot generate an 8 Mbps NDI input with the free SDK.** It has no compressed-send types at
+all (no `NDIlib_compressed_packet_t`, no `NDIlib_FourCC_type_H264`), and `NDIlib_send_create_t`
+carries four fields — name, groups, and the two clock flags — with no codec, quality or bitrate
+among them. So the farm can only send SpeedHQ.
+
+**SpeedHQ has a floor well above 8 Mbps at 1080p.** The SDK documentation says the `codec.shq
+.quality` config knob is Advanced-SDK only; measured, the free SDK honours it. One 1080p60 camera
+went 58.4 Mbps at the default, 18.8 at quality 15, and then floored:
+
+| quality | 1080p60 | 1080p30 |
+|---|---|---|
+| 100 (default) | 58.4 Mbps | — |
+| 15 | 18.8 Mbps | — |
+| 8 | 13.6 Mbps | 12.2 Mbps |
+| 5 | 13.6 Mbps | 12.2 Mbps |
+| 3 | 14.1 Mbps | — |
+
+`gsNdiCameras --quality 8` is therefore the closest the rig gets to an 8 Mbps camera, and it is
+about 12 Mbps. Testing against a *real* 8 Mbps HX camera needs either an HX sender (the NDI HX
+Camera app on an iPhone is one) or the Advanced SDK.
+
+### The archive at 8 Mbps
+
+This half is entirely ours and is fully tested, by `WireEncoderBitrateTests`. Rate control is a
+function of presentation time rather than wall time, so it is provable on a simulator even though
+the simulator's software encoder cannot record 1080p HEVC in real time: feed five seconds of
+timestamps, measure the bytes.
+
+On camera-shaped content — a drifting gradient, a sweeping bar, a band of detail — an 8 Mbps
+request is met for HEVC and H.264 at both 30 and 60 fps, and asking for 4 against 16 moves the
+output accordingly.
+
+On **incompressible** content it is not, and cannot be. 1080p of per-block noise is close to
+uncompressible and no encoder reaches 8 Mbps on it:
+
+| worst case, 8 Mbps requested | achieved |
+|---|---|
+| HEVC 1080p30 | 11.7 Mbps |
+| HEVC 1080p60 | 22.8 Mbps |
+| H.264 1080p30 | 13.4 Mbps |
+| H.264 1080p60 | 26.2 Mbps |
+
+That is the ceiling a disk budget has to survive, not a defect. `WireVideoEncoder` also asks for a
+hard `DataRateLimits` ceiling; H.264 accepts it and **HEVC rejects it** with
+`kVTPropertyNotSupportedErr` on the simulator's software encoder, which is recorded in
+`dataRateLimitStatus` rather than silently ignored. Whether the iPad's hardware HEVC encoder
+accepts it is untested.
+
+### Keyframes are demanded, not requested
+
+`SegmentWriter` cuts on sync samples, so the keyframe cadence *is* the segment length. Setting
+`MaxKeyFrameIntervalDuration` to one second is not enough: VideoToolbox reckons it against the
+frame rate the session was told, and a source that decimates its archive under encoder pressure
+feeds a fraction of that. Measured, a stride-4 1080p HEVC archive emitted a keyframe every four
+seconds and its segments came out at **7.8 s** against the three seconds every other source
+produces. Updating `ExpectedFrameRate` on the live session did not move it.
+
+`WireVideoEncoder` therefore asks for the keyframe outright, with
+`kVTEncodeFrameOptionKey_ForceKeyFrame`, once per second of presentation time. After that change,
+measured at 8 Mbps:
+
+| | before | after |
+|---|---|---|
+| HEVC 1080p30, stride 4 | 7.83 s | **4.37 s** |
+| HEVC 1080p60, stride 4 | 9.53 s | **3.61 s** |
+| H.264 1080p30, no decimation | 3.01 s | **3.05 s** |
+
+The residual overshoot is decimation itself: at stride 4 the frames are 133 ms apart, so the first
+sync sample after three seconds can be most of a second late. Undecimated — which is what a
+hardware encoder gives — it is 3.0 s.
+
 ## Timing
 
 The SDK fills `timestamp` on every frame: UTC, 100 ns units, from a high-precision clock,
