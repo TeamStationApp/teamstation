@@ -75,7 +75,7 @@ The layout is a 3×3 with the top-left four cells merged into Output. Source til
 | B9 | Disable the on-air camera while the grid is live | Exactly one `onair=1`; disabled slot `state=empty onair=0`; Output still has a source | `operator-program-disable` |
 | B10 | Settings Remote Control templates | Radio selects; tap name opens editor with `remote-editor-rename`; Settings-row pencil is gone; editor lists Source 1–5 live + six Instant Replays; Done returns | `remote-control` |
 | B11 | Injected pad chord cuts Source 2 live | `/bind-remote?action=live-2&controls=a` then `/remote-chord?controls=a` → `source=2 onair=1` | `remote-control` |
-| B12 | Nameplate is `source N: camera` | `source 1: CAM1`, not `source: 1 CAM1` | `operator-source-layout` |
+| B12 | Nameplate is `N: camera` | `1: CAM1`, not `source 1: CAM1`; no `OUT` pill on the on-air tile, the green outline says it | `operator-source-layout` |
 | B13 | Source tiles keep a saved screen order | Long-press drag swaps by source number; `order=` survives relaunch even if the camera on Source 1 changes | `operator-source-layout` |
 
 ---

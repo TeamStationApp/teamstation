@@ -5,7 +5,7 @@ import SwiftUI
 /// white on top, turning the Low Power Mode yellow under 20 %.
 ///
 /// `.pill` is the operating-screen size, matched to the thermal pill beside it. `.compact` is the
-/// tile size in GS Director, the same footprint as its `OUT` badge. Untappable in both: on the phone
+/// tile size in GS Director, one header row tall beside the loss pill. Untappable in both: on the phone
 /// a zoom drag has to reach the preview underneath, and on a tile a tap has to cut to programme.
 ///
 /// Both sizes are laid out against the widest state the pill can ever show — the bolt beside
