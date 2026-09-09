@@ -122,6 +122,24 @@ a 65 000-host scan in the middle of a game. It also stops entirely once producti
 new can be put on a tile from that screen, and a subnet search competes with the streams it already
 found for the same radio; a camera that drops is looked for on demand instead.
 
+## Linking a picture to a phone
+
+A Cameraman can be on the grid twice over without being received twice. Its clean HDMI output goes
+into a capture box that turns it into NDI — the Hollyland Cosmo C2 on the bench — and that NDI
+source is the tile's picture. The phone itself is then **linked** to that row: the row's telemetry
+polling and its control screen resolve to the phone's socket (`AppEnvironment.controlEndpoint(for:)`)
+while identity, naming and the media path keep resolving the row's own. Only `RTSPParameterSession`s
+are ever opened to a linked phone — `OPTIONS`, `GET_PARAMETER`, `SET_PARAMETER`, never `SETUP` or
+`PLAY` — so its radio carries a few hundred bytes every five seconds instead of a stream, and its
+encoder idles.
+
+The link is one field on the row with the picture, `SourceSelection.linkedControlID`, so the two
+sides cannot disagree; `SourceSelectionRules` derives everything else. A linked phone is taken off
+the grid (no tile, no slot, no place in the mix) and stays off it until unlinked; the list shows it
+directly under the row it controls without reordering what is stored, so slots, merges and the
+control channel's row numbers are unaffected. Either half of a link survives dropping off the
+network, and loaded state is normalised so an old blob cannot put a linked phone back on a tile.
+
 ## Mixing programme audio
 
 Cameras stamp audio with their own clocks and deliver it on their own threads, so the mixer cannot
