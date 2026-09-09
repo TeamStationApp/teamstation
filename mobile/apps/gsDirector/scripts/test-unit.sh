@@ -13,6 +13,9 @@ if command -v xcodegen > /dev/null 2>&1; then
 fi
 
 ONLY="${ONLY:-}"
+# Expanded as `${ARGS[@]+"${ARGS[@]}"}` below: bash 3.2, which is what /bin/bash is on macOS,
+# treats an empty array as unset under `set -u`, so a plain `"${ARGS[@]}"` aborts the whole run
+# with "unbound variable" whenever ONLY is not given — that is, on every full test run.
 ARGS=()
 if [ -n "$ONLY" ]; then
   ARGS+=(-only-testing:"$ONLY")
@@ -34,7 +37,7 @@ xcodebuild test \
   -destination "platform=iOS Simulator,id=$SIM_UDID" \
   -derivedDataPath "$DIRECTOR_DERIVED_DATA" \
   -resultBundlePath "$DIRECTOR_DERIVED_DATA/TestResults.xcresult" \
-  "${ARGS[@]}" \
+  ${ARGS[@]+"${ARGS[@]}"} \
   > "$LOG" 2>&1
 STATUS=$?
 set -e
