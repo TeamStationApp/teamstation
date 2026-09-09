@@ -37,7 +37,10 @@ public final class NDIDiscovery: SourceDiscovery, @unchecked Sendable {
 
   public let kind = SourceKind.ndi
 
-  private let configuration: Configuration
+  private var configuration: Configuration
+  /// The fallback that finds a camera mDNS cannot resolve. Owned here because the addresses it
+  /// finds go straight into this finder's `extra_ips`.
+  private var sweeper: CameraSweeper?
   private let clock: DirectorClock
   /// Where an on-demand search runs. Never the caller's thread: `searchNow` reaches the finder,
   /// the finder's lock is also held by the discovery thread's wait, and the one caller that
@@ -87,8 +90,11 @@ public final class NDIDiscovery: SourceDiscovery, @unchecked Sendable {
   /// Shaped like `RTSPDiscovery`'s so the HUD and `/dump-state` parse one format.
   public var diagnostic: String {
     lock.lock()
-    defer { lock.unlock() }
-    return status
+    let status = self.status
+    let sweeper = self.sweeper
+    lock.unlock()
+    guard let sweeper else { return status }
+    return "\(status) \(sweeper.diagnostic)"
   }
 
   public func start(onChange: @escaping DiscoveryChangeHandler) {
@@ -113,6 +119,8 @@ public final class NDIDiscovery: SourceDiscovery, @unchecked Sendable {
     status = "ndi=on found=0 seen=0"
     lock.unlock()
 
+    startSweeper()
+
     // A thread rather than a Task: the body parks in a blocking SDK call for seconds at a time,
     // and a suspended cooperative thread pool is how a whole app stops scheduling.
     let thread = Thread { [weak self] in self?.watch() }
@@ -130,6 +138,8 @@ public final class NDIDiscovery: SourceDiscovery, @unchecked Sendable {
 
   public func stop() {
     lock.lock()
+    sweeper?.stop()
+    sweeper = nil
     running = false
     handler = nil
     finder = nil
@@ -144,6 +154,77 @@ public final class NDIDiscovery: SourceDiscovery, @unchecked Sendable {
     lock.lock()
     periodicSearch = enabled
     lock.unlock()
+  }
+
+  /// Replace the addresses the finder queries directly.
+  ///
+  /// `p_extra_ips` is fixed when a finder is created, so this destroys the current one and builds
+  /// another. That is why it only acts on a genuine change: recreating the finder restarts
+  /// discovery, and doing it on every sweep would empty the source list a few times a minute.
+  ///
+  /// Worth the cost when it does change, because it is the only route to a camera that mDNS cannot
+  /// resolve. Measured on a Hollyland Cosmo C2 back from a reboot: browsable service names with no
+  /// SRV or A record behind them, invisible to every NDI receiver on the network, and found by
+  /// name the moment its address was handed over this way.
+  public func setSweepDemand(isBusy: Bool, anyEnabledCameraMissing: Bool) {
+    lock.lock()
+    let sweeper = self.sweeper
+    lock.unlock()
+    sweeper?.setDemand(isBusy: isBusy, anyEnabledCameraMissing: anyEnabledCameraMissing)
+  }
+
+  /// Diagnostic for the fallback sweep, appended to this discovery's own status.
+  public var sweepDiagnostic: String {
+    lock.lock()
+    let sweeper = self.sweeper
+    lock.unlock()
+    return sweeper?.diagnostic ?? "sweep=off"
+  }
+
+  /// The port an NDI machine answers "what sources are you running?" on.
+  ///
+  /// 5960, not the 5961 a stream connection uses: the docs describe 5960 as the TCP port "used for
+  /// remote sources to query this machine and discover all the sources running on it… from an IP
+  /// address alone". A camera with no stream connected has 5961 closed and 5960 open, so sweeping
+  /// 5961 would find only cameras that happen to be in use.
+  public static let queryPort = 5_960
+
+  private func startSweeper() {
+    guard sweeper == nil else { return }
+    let sweeper = CameraSweeper(ports: [Self.queryPort]) { [weak self] result in
+      self?.setExtraIPs(result.hosts(onPort: Self.queryPort))
+    }
+    self.sweeper = sweeper
+    sweeper.start()
+  }
+
+  public func setExtraIPs(_ addresses: [String]) {
+    let wanted = Set(addresses)
+    lock.lock()
+    guard running else {
+      configuration.extraIPs = addresses
+      lock.unlock()
+      return
+    }
+    guard Set(configuration.extraIPs) != wanted else {
+      lock.unlock()
+      return
+    }
+    configuration.extraIPs = addresses
+    let replacement = NDIFinder(
+      showLocalSources: configuration.showLocalSources,
+      extraIPs: addresses
+    )
+    guard let replacement else {
+      lock.unlock()
+      return
+    }
+    // The discovery thread may be parked in the old finder's wait. It holds its own strong
+    // reference for the duration of that call, so the old instance outlives this swap and is
+    // released when that call returns.
+    finder = replacement
+    lock.unlock()
+    searchNow()
   }
 
   public func searchNow() {

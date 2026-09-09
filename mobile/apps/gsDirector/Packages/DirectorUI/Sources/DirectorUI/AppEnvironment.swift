@@ -3274,6 +3274,14 @@ public final class AppEnvironment {
     let composedFrames = compositor?.frameCount ?? 0
     let discoveryStatus = discovery?.diagnostic ?? ""
     let displayLatency = cameras.playout.programMilliseconds
+    // Tell discovery what is at stake, so its fallback sweep can decide whether to run at all.
+    // An enabled camera the finder cannot currently see is the whole trigger: during a recording
+    // there is no sweep until one goes missing, and none once it is back.
+    let missing = selections.contains { $0.isEnabled && !$0.isPresent }
+    discovery?.setSweepDemand(
+      isBusy: self.isRecording || self.isStreaming,
+      anyEnabledCameraMissing: missing
+    )
     telemetry.mutate {
       $0.statusMessage = status
       $0.sources = summaries

@@ -4,8 +4,13 @@ import Foundation
 /// One NDI source as the finder saw it.
 public struct NDISource: Hashable, Sendable {
   public let name: NDISourceName
-  /// `host:port` or a URL, as the SDK reports it. Kept for diagnostics only — connecting is done
-  /// by name, because the SDK documents this string as internal and changeable.
+  /// `host:port` or a URL, as the SDK reports it.
+  ///
+  /// Passed to the receiver alongside the name rather than kept for diagnostics. The SDK does
+  /// document the string as internal and changeable, and connecting by name is the ordinary route
+  /// — but a receiver given only a name resolves it through a finder of its own, which has none of
+  /// the extra IPs the fallback sweep supplies. A camera discovered only because of that sweep is
+  /// otherwise listed and unconnectable.
   public let url: String
 
   public init(name: NDISourceName, url: String) {
