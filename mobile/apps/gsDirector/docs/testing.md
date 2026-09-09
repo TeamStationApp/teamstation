@@ -40,12 +40,22 @@ node scripts/control.js --device send /start
 node scripts/control.js --device send "/record?on=true"
 node scripts/control.js --device send "/name-camera?index=1&name=Third%20Base"
 node scripts/control.js --device send "/bind-camera?index=1&name=First%20Base"
+node scripts/control.js --device send "/link-source?video=1&control=2"   # row 2's phone controls row 1's tile
+node scripts/control.js --device send "/unlink-source?index=2"           # from either row of the link
 node scripts/control.js --device send /search-cameras
 node scripts/control.js --device send "/source-layout?order=5,1,2,3,4"
 ```
 
 The camera commands exist so identity can be asserted without driving a menu by coordinates, and
 `/search-cameras` forces a search while production has the periodic one switched off.
+
+Row numbers on the wire are the **stored** order, the one `/dump-state` lists under `sources`
+(`linkedControlIndex` and `isLinkedControl` say who is linked to whom). The Cameras screen shows a
+linked phone directly under the row it controls, so on screen `source-row-{n}` counts **display**
+order; a row's accessibility value carries `link=video:{n}` or `link=control:{n}` naming its partner's
+display row. A row's name is its rename control (`source-name-{n}`, Done commits); the chain button is
+`source-link-{n}`, its picker entries `link-choice-{n}` by the candidate's display row, and the red X
+on a linked phone is `source-unlink-{n}`.
 
 ### Launch camera runs through Maestro, not `devicectl`
 
@@ -73,7 +83,6 @@ does — as long as the Mac is on their network, wired or not:
 DIRECTOR_SIMULATOR_UDID=<udid> bash scripts/build-sim.sh
 node scripts/run-maestro.js --device <udid> --sim rtsp-three-cameras
 node scripts/run-maestro.js --device <udid> --sim rtsp-camera-naming
-node scripts/run-maestro.js --device <udid> --sim rtsp-camera-rebind
 ```
 
 That covers the transport, the search and the identity rules against real cameras without the iPad on
@@ -304,7 +313,6 @@ clear it.
 | `rtsp-three-cameras` | All three real cameras found by search, decoded, live, nothing lost |
 | `rtsp-camera-naming` | A named camera is recognised again by unique id at the next launch |
 | `cameraman-control` | A Cameraman tile's three-dot button opens the phone's own screen; zoom, flip and Settings reach the phone (simulator, against `fakeRtspCameras.js --cameraman "Phone 1" --only-cameraman`) |
-| `rtsp-camera-rebind` | A wrong auto-match can be corrected from the cache in one tap |
 | `operator-*` | Product vectors in [operator-test-vectors.md](operator-test-vectors.md) |
 | `record-and-stop` | Recording starts, segments accumulate, the stop *completes*, program file exists |
 | `scrub-and-return` | Scrub back through history while recording continues, then return to live |

@@ -23,6 +23,10 @@ public struct SourceSelection: Identifiable, Hashable, Sendable, Codable {
   /// False once discovery stops seeing it, but the row stays so a rename is not lost when a
   /// camera briefly drops off the network.
   public var isPresent: Bool
+  /// The camera whose parameter channel drives this row's tile — telemetry and remote control,
+  /// never a media session. Set on the row that has the picture (an NDI capture of a phone's HDMI,
+  /// say); the phone it names is taken off the grid and listed directly under this row.
+  public var linkedControlID: SourceID?
 
   public init(
     id: SourceID,
@@ -33,7 +37,8 @@ public struct SourceSelection: Identifiable, Hashable, Sendable, Codable {
     usesAudio: Bool = true,
     inputGain: Double = SourceSelectionRules.defaultInputGain,
     sourceIndex: Int? = nil,
-    isPresent: Bool = true
+    isPresent: Bool = true,
+    linkedControlID: SourceID? = nil
   ) {
     self.id = id
     self.kind = kind
@@ -44,11 +49,12 @@ public struct SourceSelection: Identifiable, Hashable, Sendable, Codable {
     self.inputGain = SourceSelectionRules.clampedInputGain(inputGain)
     self.sourceIndex = sourceIndex
     self.isPresent = isPresent
+    self.linkedControlID = linkedControlID
   }
 
   enum CodingKeys: String, CodingKey {
     case id, kind, advertisedName, customName, isEnabled, usesAudio, inputGain, sourceIndex, isPresent
-    case tileIndex
+    case tileIndex, linkedControlID
   }
 
   /// Selections saved before `usesAudio` existed decode with audio on, matching the old behaviour
@@ -67,7 +73,8 @@ public struct SourceSelection: Identifiable, Hashable, Sendable, Codable {
         ?? SourceSelectionRules.defaultInputGain,
       sourceIndex: try container.decodeIfPresent(Int.self, forKey: .sourceIndex)
         ?? container.decodeIfPresent(Int.self, forKey: .tileIndex),
-      isPresent: try container.decodeIfPresent(Bool.self, forKey: .isPresent) ?? true
+      isPresent: try container.decodeIfPresent(Bool.self, forKey: .isPresent) ?? true,
+      linkedControlID: try container.decodeIfPresent(SourceID.self, forKey: .linkedControlID)
     )
   }
 
@@ -83,6 +90,7 @@ public struct SourceSelection: Identifiable, Hashable, Sendable, Codable {
     try container.encodeIfPresent(sourceIndex, forKey: .sourceIndex)
     try container.encodeIfPresent(sourceIndex, forKey: .tileIndex)
     try container.encode(isPresent, forKey: .isPresent)
+    try container.encodeIfPresent(linkedControlID, forKey: .linkedControlID)
   }
 
   public var displayName: String {
@@ -124,11 +132,15 @@ public enum SourceSelectionRules {
       }
     }
 
-    // Named cameras on a tile stay when they drop off the network. An address-keyed row that
-    // identity later bound to a real camera must not remain as a grey duplicate.
+    // Named cameras on a tile stay when they drop off the network, and so does either half of a
+    // link: a phone that is off tonight is still the phone that controls that tile. An
+    // address-keyed row that identity later bound to a real camera must not remain as a grey
+    // duplicate.
+    let controls = linkedControlIDs(in: existing)
     for var absent in existing where !seen.contains(absent.id) {
       guard !CameraIdentityRules.isAddressKeyedSourceID(absent.id) else { continue }
-      guard absent.isEnabled || !(absent.customName?.isEmpty ?? true) else { continue }
+      let linked = absent.linkedControlID != nil || controls.contains(absent.id)
+      guard absent.isEnabled || linked || !(absent.customName?.isEmpty ?? true) else { continue }
       absent.isPresent = false
       result.append(absent)
     }
@@ -198,6 +210,8 @@ public enum SourceSelectionRules {
   }
 
   public enum EnableResult: Equatable {
+    /// The row is another row's control link; it has no picture of its own to put on a tile.
+    case linkedForControl
     case enabled(sourceIndex: Int)
     case disabled
     case rejectedAtCap
@@ -223,6 +237,7 @@ public enum SourceSelectionRules {
       selections[position].isEnabled = false
       return .disabled
     }
+    if isLinkedControl(id, in: selections) { return .linkedForControl }
     if selections[position].isEnabled, let slot = selections[position].sourceIndex {
       return .enabled(sourceIndex: slot)
     }
@@ -267,6 +282,7 @@ public enum SourceSelectionRules {
   ) -> AssignResult {
     guard (0 ..< maximumEnabled).contains(slot) else { return .invalidSlot }
     guard let position = selections.firstIndex(where: { $0.id == id }) else { return .unknownSource }
+    guard !isLinkedControl(id, in: selections) else { return .unchanged }
     let from = selections[position].sourceIndex
     if from == slot { return .unchanged }
 
@@ -298,6 +314,7 @@ public enum SourceSelectionRules {
     in selections: inout [SourceSelection]
   ) {
     guard let position = selections.firstIndex(where: { $0.id == id }) else { return }
+    guard !isLinkedControl(id, in: selections) else { return }
     selections[position].usesAudio = usesAudio
   }
 
@@ -352,6 +369,123 @@ public enum SourceSelectionRules {
       return match.sourceIndex
     }
     return live.last?.sourceIndex
+  }
+
+  // MARK: - Linking
+
+  public enum LinkResult: Equatable {
+    case linked
+    case unknownSource
+    case sameSource
+    /// The phone is already the control for another row, or has a link of its own.
+    case controlAlreadyLinked
+    /// The row asked to carry the picture is itself somebody's control.
+    case videoIsControl
+  }
+
+  /// Every row that is currently serving as another row's control.
+  public static func linkedControlIDs(in selections: [SourceSelection]) -> Set<SourceID> {
+    Set(selections.compactMap(\.linkedControlID))
+  }
+
+  public static func isLinkedControl(_ id: SourceID, in selections: [SourceSelection]) -> Bool {
+    selections.contains { $0.linkedControlID == id }
+  }
+
+  /// The row whose picture `id` controls, when `id` is a linked control.
+  public static func linkedVideoID(forControl id: SourceID, in selections: [SourceSelection]) -> SourceID? {
+    selections.first { $0.linkedControlID == id }?.id
+  }
+
+  /// Points `video`'s tile at `control`'s parameter channel. The phone leaves the grid: no tile, no
+  /// slot, no place in the mix, and `setEnabled` refuses it while the link stands. Nothing but the
+  /// parameter channel is ever opened to it, which is what keeps its radio and encoder quiet.
+  @discardableResult
+  public static func link(
+    video: SourceID,
+    control: SourceID,
+    in selections: inout [SourceSelection]
+  ) -> LinkResult {
+    guard video != control else { return .sameSource }
+    guard let videoPosition = selections.firstIndex(where: { $0.id == video }),
+          let controlPosition = selections.firstIndex(where: { $0.id == control })
+    else { return .unknownSource }
+    guard !isLinkedControl(video, in: selections) else { return .videoIsControl }
+    if let owner = linkedVideoID(forControl: control, in: selections), owner != video {
+      return .controlAlreadyLinked
+    }
+    guard selections[controlPosition].linkedControlID == nil else { return .controlAlreadyLinked }
+
+    selections[videoPosition].linkedControlID = control
+    selections[controlPosition].isEnabled = false
+    selections[controlPosition].sourceIndex = nil
+    selections[controlPosition].usesAudio = false
+    return .linked
+  }
+
+  /// Breaks the link from the phone's side (the red X on its row). The phone becomes an ordinary
+  /// disabled row the operator can turn on again.
+  public static func unlink(control id: SourceID, in selections: inout [SourceSelection]) {
+    for position in selections.indices where selections[position].linkedControlID == id {
+      selections[position].linkedControlID = nil
+    }
+  }
+
+  /// Breaks the link from the picture's side.
+  public static func unlink(video id: SourceID, in selections: inout [SourceSelection]) {
+    guard let position = selections.firstIndex(where: { $0.id == id }) else { return }
+    selections[position].linkedControlID = nil
+  }
+
+  /// Rows the picker may offer `video`: controllable, not the row itself, and not spoken for —
+  /// except by `video`, whose current partner stays in the list so the picker can mark it.
+  public static func linkCandidates(
+    for video: SourceID,
+    in selections: [SourceSelection],
+    controllable: (SourceSelection) -> Bool
+  ) -> [SourceSelection] {
+    guard !isLinkedControl(video, in: selections) else { return [] }
+    return selections.filter { candidate in
+      guard candidate.id != video, controllable(candidate), candidate.linkedControlID == nil else { return false }
+      let owner = linkedVideoID(forControl: candidate.id, in: selections)
+      return owner == nil || owner == video
+    }
+  }
+
+  /// The list as the operator reads it: each linked phone directly under the row it controls.
+  /// The stored order is untouched, so slots, `merge` and the control channel's row numbers are
+  /// unaffected; only the picture on screen changes.
+  public static func displayOrder(_ selections: [SourceSelection]) -> [SourceSelection] {
+    let controls = linkedControlIDs(in: selections)
+    var ordered: [SourceSelection] = []
+    for selection in selections where !controls.contains(selection.id) {
+      ordered.append(selection)
+      if let control = selection.linkedControlID,
+         let partner = selections.first(where: { $0.id == control }) {
+        ordered.append(partner)
+      }
+    }
+    return ordered
+  }
+
+  /// Applied to what the store hands back. A linked phone that still holds a slot — state saved
+  /// before the rule, or edited by hand — would otherwise open a media session at launch, and a
+  /// link to a row that was never persisted has nothing to point at.
+  public static func normalizingLinks(_ selections: [SourceSelection]) -> [SourceSelection] {
+    let ids = Set(selections.map(\.id))
+    var result = selections
+    for position in result.indices {
+      if let control = result[position].linkedControlID, !ids.contains(control) {
+        result[position].linkedControlID = nil
+      }
+    }
+    let controls = linkedControlIDs(in: result)
+    for position in result.indices where controls.contains(result[position].id) {
+      result[position].isEnabled = false
+      result[position].sourceIndex = nil
+      result[position].usesAudio = false
+    }
+    return result
   }
 
   /// A camera the scanner has not published has no stream to open. Starting it anyway is what
