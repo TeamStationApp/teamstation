@@ -143,6 +143,7 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     defer { lock.unlock() }
     var snapshot = stats
     snapshot.outOfOrderFrames = receiveClock.outOfOrderFrames
+    snapshot.senderClockRestarts = receiveClock.clockRestarts
     snapshot.decodeSessions = videoEncoder == nil ? 0 : 1
     return snapshot
   }
@@ -367,7 +368,11 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
 
     let width = Int(frame.xres)
     let height = Int(frame.yres)
-    let rate = Double(frame.frame_rate_N) / Double(frame.frame_rate_D)
+    // The measured rate, not `frame_rate_N/D`. This is the value the archive encoder's keyframe
+    // cadence and instant replay's pacing are both built on, so a camera that misdeclares its rate
+    // would otherwise mis-time its own archive and replay at the wrong speed.
+    let rate = receiveClock.measuredFrameRate
+      ?? Double(frame.frame_rate_N) / Double(frame.frame_rate_D)
     updateFormat(width: width, height: height, rate: rate, fourCC: frame.FourCC)
 
     let copyStarted = Date()
