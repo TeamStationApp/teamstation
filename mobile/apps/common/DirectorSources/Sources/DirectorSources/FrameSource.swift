@@ -261,6 +261,15 @@ public struct ReceiveStats: Sendable, Equatable {
   /// archive degrading on purpose so the picture does not: the alternative is an encode that backs
   /// up onto the receive thread and takes the live tile down with it.
   public var archiveEncoded: UInt64 = 0
+  /// Sync samples among those encodes. `SegmentWriter` opens every file on one, so an archive
+  /// whose encodes climb while these do not is an archive that has silently stopped growing.
+  public var archiveKeyframes: UInt64 = 0
+  /// Encode submissions VideoToolbox refused, and how many times its session had to be rebuilt
+  /// because it had stopped accepting work altogether.
+  public var archiveEncodeRefused: UInt64 = 0
+  public var archiveEncoderRebuilds: UInt64 = 0
+  /// The `OSStatus` of the most recent refusal, so the failure can be named rather than guessed at.
+  public var archiveEncodeStatus: Int = 0
   public var archiveDropped: UInt64 = 0
   /// How many frames are waiting to be encoded right now.
   public var archiveBacklog: Int = 0

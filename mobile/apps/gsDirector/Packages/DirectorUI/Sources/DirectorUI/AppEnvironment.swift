@@ -3338,6 +3338,10 @@ public final class AppEnvironment {
         tile.copyMilliseconds = receive.copyMilliseconds
         tile.publishMilliseconds = receive.publishMilliseconds
         tile.archiveEncoded = receive.archiveEncoded
+        tile.archiveKeyframes = receive.archiveKeyframes
+        tile.archiveEncodeRefused = receive.archiveEncodeRefused
+        tile.archiveEncoderRebuilds = receive.archiveEncoderRebuilds
+        tile.archiveEncodeStatus = receive.archiveEncodeStatus
         tile.archiveDropped = receive.archiveDropped
         tile.archiveBacklog = receive.archiveBacklog
         tile.archiveStride = receive.archiveStride

@@ -144,6 +144,12 @@ public struct TileTelemetry: Sendable, Codable, Equatable {
   /// was already too far behind, and how many are waiting now. A climbing `archiveDropped` is the
   /// archive degrading deliberately so the live picture does not.
   public var archiveEncoded: UInt64 = 0
+  /// Sync samples among those encodes. Every archive file opens on one, so encodes climbing while
+  /// these stand still is the signature of a recording that has stopped without saying so.
+  public var archiveKeyframes: UInt64 = 0
+  public var archiveEncodeRefused: UInt64 = 0
+  public var archiveEncoderRebuilds: UInt64 = 0
+  public var archiveEncodeStatus: Int = 0
   public var archiveDropped: UInt64 = 0
   public var archiveBacklog = 0
   /// One frame in this many reaches the archive. Above 1 the camera is recording at a fraction of
