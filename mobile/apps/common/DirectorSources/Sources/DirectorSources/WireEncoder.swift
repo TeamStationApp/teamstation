@@ -4,17 +4,18 @@ import CoreVideo
 import Foundation
 import VideoToolbox
 
-/// Encodes generated frames once, so a simulated camera hands the pipeline what a real one does:
-/// coded access units, their parameter sets, and AAC.
+/// Encodes decoded pixels into what a camera would have put on the wire: coded access units, their
+/// parameter sets, and AAC.
 ///
-/// This exists because archives are copies of what arrived rather than re-encodes of it. A source
-/// that only produced pixels could be previewed and cut but never recorded, which would leave the
-/// archive, scrub and export paths with no simulator coverage at all — they would only ever be
-/// exercised on a bench with three cameras on it.
+/// The archive is a passthrough muxer — a camera's own bytes reach the file unaltered — so any
+/// source that hands the pipeline pixels rather than a bitstream has nothing to write with. Two do:
+/// the simulated cameras, and NDI cameras, whose bitstream the free NDI SDK decodes before a
+/// receiver ever sees it.
 ///
 /// The encode is deliberately camera-like: no frame reordering, and a keyframe about once a second,
-/// which is what the VM33s send.
-public final class SyntheticWireEncoder: @unchecked Sendable {
+/// which is both what the VM33s send and what keeps a 3-second segment 3 seconds long — the writer
+/// cuts on sync samples, so a longer GOP silently produces longer chunks.
+public final class WireVideoEncoder: @unchecked Sendable {
   /// One coded picture, ready to be published as a `CompressedFrame`.
   public struct Unit: @unchecked Sendable {
     public let data: Data
@@ -24,6 +25,24 @@ public final class SyntheticWireEncoder: @unchecked Sendable {
   }
 
   public let codec: CompressedFrame.Codec
+  /// Whether this encoder accepted a hard data-rate ceiling. Not every encoder supports one, and
+  /// the difference is worth knowing rather than guessing: without it `AverageBitRate` is only a
+  /// hint and the output can be several times the requested rate.
+  public private(set) var dataRateLimitStatus: OSStatus = noErr
+  /// Encode submissions VideoToolbox refused, and the status of the most recent refusal.
+  ///
+  /// The return of `VTCompressionSessionEncodeFrame` used to be discarded. A session that starts
+  /// refusing frames therefore looked exactly like a healthy one: submissions kept counting, output
+  /// stopped, and an NDI recording ended after a minute without a word. Whatever else is done about
+  /// it, the count has to exist.
+  public private(set) var refusedFrames: UInt64 = 0
+  public private(set) var lastEncodeStatus: OSStatus = noErr
+  /// The frame rate the session currently believes it is encoding.
+  private var expectedFrameRate: Double = 0
+  /// Presentation time of the last frame this encoder was told to make a keyframe.
+  private var lastForcedKeyframe: CMTime = .invalid
+  /// How often a keyframe is demanded, in seconds of presentation time.
+  private let keyframeInterval: Double = 1
 
   /// Optional only because `VTCompressionSessionCreate` needs a pointer to `self` as its callback
   /// context, which is not available until every stored property has a value.
@@ -52,7 +71,7 @@ public final class SyntheticWireEncoder: @unchecked Sendable {
       compressedDataAllocator: nil,
       outputCallback: { context, _, status, _, sampleBuffer in
         guard let context, status == noErr, let sampleBuffer else { return }
-        Unmanaged<SyntheticWireEncoder>.fromOpaque(context)
+        Unmanaged<WireVideoEncoder>.fromOpaque(context)
           .takeUnretainedValue()
           .publish(sampleBuffer)
       },
@@ -76,6 +95,20 @@ public final class SyntheticWireEncoder: @unchecked Sendable {
       key: kVTCompressionPropertyKey_AverageBitRate,
       value: NSNumber(value: bitrate)
     )
+    // A hard ceiling as well as an average, because `AverageBitRate` on its own is a hint that
+    // VideoToolbox overshoots badly on hard content. Measured on 1080p noise: an 8 Mbps request
+    // produced 22.7 Mbps in HEVC and 26.0 in H.264 at 60 fps, and asking for 4 against 16 changed
+    // the output by less than half an octave. A recording three times its budget fills the disk
+    // three times as fast and pushes an export past what the operator was told to expect.
+    //
+    // The window is one second and the allowance 1.25x, which leaves room for the keyframe this
+    // encoder emits every second — a tighter cap makes the frame after each keyframe collapse.
+    let ceilingBytes = Double(bitrate) / 8 * 1.25
+    dataRateLimitStatus = VTSessionSetProperty(
+      session,
+      key: kVTCompressionPropertyKey_DataRateLimits,
+      value: [ NSNumber(value: ceilingBytes), NSNumber(value: 1.0) ] as CFArray
+    )
     VTSessionSetProperty(
       session,
       key: kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration,
@@ -86,11 +119,38 @@ public final class SyntheticWireEncoder: @unchecked Sendable {
       key: kVTCompressionPropertyKey_ExpectedFrameRate,
       value: NSNumber(value: frameRate)
     )
+    expectedFrameRate = frameRate
     VTCompressionSessionPrepareToEncodeFrames(session)
   }
 
+  /// Only reached by an encoder that was never finished. Still worth doing — an abandoned session
+  /// holds hardware — but every path that retires an encoder should call `finish()` instead, so
+  /// the invalidate happens before this object starts being destroyed rather than during.
   deinit {
     if let session { VTCompressionSessionInvalidate(session) }
+  }
+
+  /// Tells the session the rate it is *actually* being fed, which is not always the rate the
+  /// source runs at.
+  ///
+  /// This matters for segment length, not for quality. `MaxKeyFrameIntervalDuration` is one second,
+  /// but VideoToolbox reckons that against `ExpectedFrameRate` — so an encoder told 30 fps and then
+  /// fed 7.5 emits a keyframe every four seconds of real time. `SegmentWriter` cuts on sync
+  /// samples, so segments stretched to 7.9 s when a 1080p HEVC archive decimated, against the three
+  /// seconds every other source produces. Measured on a simulator, where the software encoder makes
+  /// decimation certain; on a thermally throttled iPad it would be the same shape.
+  public func setExpectedFrameRate(_ frameRate: Double) {
+    lock.lock()
+    let session = self.session
+    let unchanged = abs(frameRate - expectedFrameRate) < 0.01
+    if !unchanged { expectedFrameRate = frameRate }
+    lock.unlock()
+    guard !unchanged, let session, frameRate > 0 else { return }
+    VTSessionSetProperty(
+      session,
+      key: kVTCompressionPropertyKey_ExpectedFrameRate,
+      value: NSNumber(value: frameRate)
+    )
   }
 
   public func setHandler(_ handler: ((Unit) -> Void)?) {
@@ -101,20 +161,82 @@ public final class SyntheticWireEncoder: @unchecked Sendable {
 
   public func encode(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime, duration: CMTime) {
     guard let session else { return }
-    VTCompressionSessionEncodeFrame(
+
+    // The keyframe cadence is demanded here rather than left to the encoder's own interval.
+    //
+    // `MaxKeyFrameIntervalDuration` is set to one second, but VideoToolbox reckons it against the
+    // frame rate it was told, and a source that decimates its archive under encoder pressure feeds
+    // a fraction of that. Measured: a stride-4 1080p HEVC archive emitted a keyframe every four
+    // seconds, and since `SegmentWriter` cuts on sync samples its segments came out at 7.8 s
+    // against the three seconds every other source produces — which is the whole basis of scrub,
+    // replay and export behaving the same way for every camera. Updating `ExpectedFrameRate` on the
+    // live session did not move it; asking for the keyframe outright does, and does not depend on
+    // the encoder agreeing with us about the rate.
+    lock.lock()
+    let previousForcedKeyframe = lastForcedKeyframe
+    let due = !lastForcedKeyframe.isNumeric
+      || CMTimeGetSeconds(CMTimeSubtract(presentationTime, lastForcedKeyframe)) >= keyframeInterval
+    if due { lastForcedKeyframe = presentationTime }
+    lock.unlock()
+
+    let properties: CFDictionary? = due
+      ? [ kVTEncodeFrameOptionKey_ForceKeyFrame: kCFBooleanTrue ] as CFDictionary
+      : nil
+
+    let status = VTCompressionSessionEncodeFrame(
       session,
       imageBuffer: pixelBuffer,
       presentationTimeStamp: presentationTime,
       duration: duration,
-      frameProperties: nil,
+      frameProperties: properties,
       sourceFrameRefcon: nil,
       infoFlagsOut: nil
     )
+    guard status != noErr else { return }
+    lock.lock()
+    refusedFrames &+= 1
+    lastEncodeStatus = status
+    // A forced keyframe that was refused was never made, so the next frame has to ask again.
+    // Leaving the mark set means the archive waits a further second for a sync sample that is
+    // already lost, and `SegmentWriter` opens every file on one.
+    if due { lastForcedKeyframe = previousForcedKeyframe }
+    lock.unlock()
   }
 
+  /// Whether this session has stopped accepting work and needs rebuilding rather than retrying.
+  ///
+  /// `kVTInvalidSessionErr` is the documented "this session is finished" answer, and a malfunction
+  /// is the encoder having given up. Both are permanent for the session, so a caller that keeps
+  /// submitting to it produces a recording that never grows again.
+  public var needsRebuild: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return lastEncodeStatus == kVTInvalidSessionErr
+      || lastEncodeStatus == kVTVideoEncoderMalfunctionErr
+      || lastEncodeStatus == kVTVideoEncoderNotAvailableNowErr
+  }
+
+  /// Drains and tears the session down here, while this object is definitely still alive.
+  ///
+  /// The output callback holds `self` unretained, which is only safe as long as the session is
+  /// invalidated before the object goes. Leaving the invalidate to `deinit` inverted that: the
+  /// session was torn down *as* the encoder was being destroyed, so a callback arriving in that
+  /// window dereferenced an object already on its way out. Rare while an encoder was built once
+  /// per camera and kept; not rare at all once a malfunctioning session gets replaced, which under
+  /// three 1080p60 archives happened roughly twice a minute and crashed the app with SIGSEGV.
+  ///
+  /// Order matters. The handler goes first so nothing is published from a session being retired,
+  /// then the pending frames are drained, then the session is invalidated — which is the point
+  /// VideoToolbox guarantees no further callbacks — and only then may this object be released.
   public func finish() {
-    if let session { VTCompressionSessionCompleteFrames(session, untilPresentationTimeStamp: .invalid) }
     setHandler(nil)
+    lock.lock()
+    let session = self.session
+    self.session = nil
+    lock.unlock()
+    guard let session else { return }
+    VTCompressionSessionCompleteFrames(session, untilPresentationTimeStamp: .invalid)
+    VTCompressionSessionInvalidate(session)
   }
 
   private func publish(_ sampleBuffer: CMSampleBuffer) {
@@ -202,10 +324,9 @@ public final class SyntheticWireEncoder: @unchecked Sendable {
   }
 }
 
-/// Encodes the generated tone to AAC-LC, for the same reason the video is encoded: a simulated
-/// camera's archive has to be the same shape as a real one's, and a passthrough writer has nothing
-/// to write from PCM.
-public final class SyntheticAudioEncoder: @unchecked Sendable {
+/// Encodes PCM to AAC-LC, for the same reason the video is encoded: the archive has to be the same
+/// shape whatever the source was, and a passthrough writer has nothing to write from PCM.
+public final class WireAudioEncoder: @unchecked Sendable {
   public struct Packet: Sendable {
     public let data: Data
     /// Sample index of the packet's first frame, on the source's own audio clock.
@@ -321,7 +442,7 @@ public final class SyntheticAudioEncoder: @unchecked Sendable {
         converter,
         { _, packetCount, bufferList, packetDescriptions, context in
           guard let context else { return kAudio_ParamError }
-          return Unmanaged<SyntheticAudioEncoder>.fromOpaque(context)
+          return Unmanaged<WireAudioEncoder>.fromOpaque(context)
             .takeUnretainedValue()
             .provideInput(
               packetCount: packetCount,

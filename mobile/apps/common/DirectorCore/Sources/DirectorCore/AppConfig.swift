@@ -30,12 +30,20 @@ public struct ProgramResolution: Hashable, Sendable, Codable {
 /// Everything the operator can change, persisted in `UserDefaults` and readable from any
 /// thread as an immutable value.
 ///
-/// Note what is *not* here: the quality of a camera's own recording. Per-camera archives are a copy
-/// of what the camera sent, so their codec, resolution and frame rate are the camera's to choose
-/// and there is nothing to configure. The codec and canvas settings below describe the programme
-/// master, which is a composite and therefore has to be encoded.
+/// An RTSP camera's archive is a copy of what it sent, so its codec, resolution and frame rate are
+/// the camera's to choose and there is nothing here to configure. NDI is the exception:
+/// the free SDK decodes before a receiver ever sees a frame, so an NDI camera's archive is a
+/// re-encode and `sourceEncodeCodec` is what it is encoded with. The programme settings below
+/// describe the master, which is a composite and has to be encoded whatever the cameras are.
 public struct AppConfig: Hashable, Sendable, Codable {
   public var programCodec: ProgramCodec
+  /// Codec for any source the app has to encode to archive — today, NDI cameras.
+  ///
+  /// HEVC by default because the encode budget decides how many cameras can be recorded at once:
+  /// the same hardware sustains 118 fps of 1080p H.264 and 296 fps of 1080p HEVC, which at 60 fps
+  /// per camera is the difference between two cameras and four. H.264 is offered for a player that
+  /// cannot open HEVC.
+  public var sourceEncodeCodec: ProgramCodec
   public var programResolution: ProgramResolution
   public var programFrameRate: Int
   public var gopSeconds: Double
@@ -55,6 +63,17 @@ public struct AppConfig: Hashable, Sendable, Codable {
   public var displayLatencyCapEnabled: Bool
   /// Operator ceiling for monitor latency, in milliseconds. Ignored until the cap is on.
   public var displayLatencyCapMilliseconds: Double
+  /// Whether a picture too old to show is also too old to keep.
+  ///
+  /// Separate from the display cap because the two answer different questions. The monitor is
+  /// worthless showing action that has already happened, so a late picture is better skipped; the
+  /// recording is watched afterwards, where a late picture is simply a picture and dropping it
+  /// leaves a hole in the tape. The disk cap is therefore the more generous of the two, and exists
+  /// only to stop a source that has fallen minutes behind from writing history into the middle of
+  /// a recording.
+  public var diskLatencyCapEnabled: Bool
+  /// Operator ceiling for how old a picture may be and still be archived, in milliseconds.
+  public var diskLatencyCapMilliseconds: Double
   /// Playback rate for every slow-motion instant-replay button. One setting for the whole board.
   public var replaySlowMotionRate: Double
   /// RTMP publish URL for the programme output. Empty means streaming is off until the operator
@@ -64,12 +83,18 @@ public struct AppConfig: Hashable, Sendable, Codable {
   public static let displayLatencyCapDefaultMilliseconds: Double = 500
   public static let displayLatencyCapMinimumMilliseconds: Double = 10
   public static let displayLatencyCapMaximumMilliseconds: Double = 2_000
+  /// Ten seconds by default: far beyond any delivery hiccup worth keeping, and short enough that a
+  /// source which has fallen badly behind stops writing stale pictures into the recording.
+  public static let diskLatencyCapDefaultMilliseconds: Double = 10_000
+  public static let diskLatencyCapMinimumMilliseconds: Double = 100
+  public static let diskLatencyCapMaximumMilliseconds: Double = 60_000
   public static let replaySlowMotionRateDefault: Double = 0.5
   public static let replaySlowMotionRateMinimum: Double = 0
   public static let replaySlowMotionRateMaximum: Double = 1.0
 
   public init(
     programCodec: ProgramCodec = .hevc,
+    sourceEncodeCodec: ProgramCodec = .hevc,
     programResolution: ProgramResolution = .hd1080,
     programFrameRate: Int = 30,
     gopSeconds: Double = 2,
@@ -81,10 +106,13 @@ public struct AppConfig: Hashable, Sendable, Codable {
     useSimulatedCameras: Bool = false,
     displayLatencyCapEnabled: Bool = false,
     displayLatencyCapMilliseconds: Double = AppConfig.displayLatencyCapDefaultMilliseconds,
+    diskLatencyCapEnabled: Bool = false,
+    diskLatencyCapMilliseconds: Double = AppConfig.diskLatencyCapDefaultMilliseconds,
     replaySlowMotionRate: Double = AppConfig.replaySlowMotionRateDefault,
     streamURL: String = ""
   ) {
     self.programCodec = programCodec
+    self.sourceEncodeCodec = sourceEncodeCodec
     self.programResolution = programResolution
     self.programFrameRate = programFrameRate
     self.gopSeconds = gopSeconds
@@ -96,6 +124,8 @@ public struct AppConfig: Hashable, Sendable, Codable {
     self.useSimulatedCameras = useSimulatedCameras
     self.displayLatencyCapEnabled = displayLatencyCapEnabled
     self.displayLatencyCapMilliseconds = Self.clampedDisplayLatencyCap(displayLatencyCapMilliseconds)
+    self.diskLatencyCapEnabled = diskLatencyCapEnabled
+    self.diskLatencyCapMilliseconds = Self.clampedDiskLatencyCap(diskLatencyCapMilliseconds)
     self.replaySlowMotionRate = Self.clampedReplaySlowMotionRate(replaySlowMotionRate)
     self.streamURL = streamURL
   }
@@ -104,6 +134,13 @@ public struct AppConfig: Hashable, Sendable, Codable {
     min(
       max(milliseconds, displayLatencyCapMinimumMilliseconds),
       displayLatencyCapMaximumMilliseconds
+    )
+  }
+
+  public static func clampedDiskLatencyCap(_ milliseconds: Double) -> Double {
+    min(
+      max(milliseconds, diskLatencyCapMinimumMilliseconds),
+      diskLatencyCapMaximumMilliseconds
     )
   }
 
@@ -122,6 +159,10 @@ public struct AppConfig: Hashable, Sendable, Codable {
     self.init(
       programCodec: try container.decodeIfPresent(ProgramCodec.self, forKey: .programCodec)
         ?? fallback.programCodec,
+      sourceEncodeCodec: try container.decodeIfPresent(
+        ProgramCodec.self,
+        forKey: .sourceEncodeCodec
+      ) ?? fallback.sourceEncodeCodec,
       programResolution: try container.decodeIfPresent(
         ProgramResolution.self,
         forKey: .programResolution
@@ -150,6 +191,14 @@ public struct AppConfig: Hashable, Sendable, Codable {
         Double.self,
         forKey: .displayLatencyCapMilliseconds
       ) ?? fallback.displayLatencyCapMilliseconds,
+      diskLatencyCapEnabled: try container.decodeIfPresent(
+        Bool.self,
+        forKey: .diskLatencyCapEnabled
+      ) ?? fallback.diskLatencyCapEnabled,
+      diskLatencyCapMilliseconds: try container.decodeIfPresent(
+        Double.self,
+        forKey: .diskLatencyCapMilliseconds
+      ) ?? fallback.diskLatencyCapMilliseconds,
       replaySlowMotionRate: try container.decodeIfPresent(
         Double.self,
         forKey: .replaySlowMotionRate

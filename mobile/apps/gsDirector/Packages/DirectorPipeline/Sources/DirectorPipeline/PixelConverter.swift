@@ -78,6 +78,10 @@ public final class PixelConverter: @unchecked Sendable {
       pixelBuffer: converted,
       presentationTime: frame.presentationTime,
       wallClock: frame.wallClock,
+      // Every field of the frame has to survive the conversion, and this one is easy to forget
+      // because it is optional: dropping it silently disarmed the display cap on both transports,
+      // since a picture of unknown age is deliberately always shown.
+      captureWallClock: frame.captureWallClock,
       frameID: frame.frameID,
       markerValue: frame.markerValue
     )

@@ -219,7 +219,7 @@ public final class AppEnvironment {
   private let compositor: MetalCompositor?
   /// Builds the live-camera discovery. Injected because the transport lives in its own module and
   /// this one is written against `SourceDiscovery` alone.
-  private let discoveryFactory: (@Sendable () -> SourceDiscovery?)?
+  private let discoveryFactory: (@Sendable (SourceKind) -> SourceDiscovery?)?
   private let selectionStore: SourceSelectionStore
   /// The named-camera cache, shared with discovery so both agree on which camera is which.
   public let cameras: CameraRegistry
@@ -275,7 +275,7 @@ public final class AppEnvironment {
   public init(
     launch: LaunchConfiguration = .resolve(),
     cameras: CameraRegistry? = nil,
-    discoveryFactory: (@Sendable () -> SourceDiscovery?)? = nil
+    discoveryFactory: (@Sendable (SourceKind) -> SourceDiscovery?)? = nil
   ) {
     self.launch = launch
     self.discoveryFactory = discoveryFactory
@@ -302,6 +302,10 @@ public final class AppEnvironment {
         ? session.displayLatencyCapMilliseconds
         : nil
     )
+    // The delay line's cap above bounds how much latency is *added* deliberately. These bound how
+    // old a picture may be and still be worth showing, or still be worth keeping — which nothing
+    // enforced before, on either transport.
+
     self.cameras = registry
     self.telemetry = PipelineTelemetry(clock: clock)
     self.converter = PixelConverter()
@@ -319,6 +323,10 @@ public final class AppEnvironment {
       programStreamer: programStreamer,
       clock: clock
     )
+    // Applied here as well as on every settings change: the delay line's cap is set above during
+    // construction, and a frame gate that only took effect after the operator next opened Settings
+    // would be off for the whole of the first session.
+    self.router.setLatencyCaps(FrameLatencyGate.Caps(config: session))
 
     do {
       try DirectorPaths.createAll()
@@ -430,11 +438,27 @@ public final class AppEnvironment {
     return SourceProfile.forSimulatedCameras(config.useSimulatedCameras)
   }
 
+  /// Every live transport that could be built, as one discovery. A single one is returned on its
+  /// own rather than wrapped, so a rig with one transport available behaves exactly as before.
+  private static func liveDiscovery(
+    _ factory: (@Sendable (SourceKind) -> SourceDiscovery?)?
+  ) -> SourceDiscovery? {
+    let live = SourceKind.allCases.filter(\.isLive).compactMap { factory?($0) }
+    guard live.count > 1 else { return live.first }
+    return CompositeSourceDiscovery(live)
+  }
+
+  /// Whether two profiles mean the same set of cameras. Only the live pair does.
+  private static func describesSameSession(_ lhs: SourceProfile, _ rhs: SourceProfile) -> Bool {
+    lhs == rhs || (kind(for: lhs).isLive && kind(for: rhs).isLive)
+  }
+
   private static func kind(for profile: SourceProfile) -> SourceKind {
     switch profile {
     case .synthetic4: .synthetic
     case .file4: .file
     case .rtsp: .rtsp
+    case .ndi: .ndi
     }
   }
 
@@ -456,9 +480,13 @@ public final class AppEnvironment {
       )
     case .file4:
       SourceProfileFactory.fileDiscovery(fixtures: fixtureURLs(), clock: clock)
-    case .rtsp:
+    case .rtsp, .ndi:
+      // Both live transports, always, presented as one list. Paul's deployment is a mix of NDI
+      // converters and RTSP phones, and there is no reason for the operator to choose between
+      // protocols when the app can simply run both and let them pick cameras.
+      //
       // Injected by the app target, so this module still never imports a transport.
-      discoveryFactory?()
+      Self.liveDiscovery(discoveryFactory)
     }
 
     guard let discovery else {
@@ -471,7 +499,7 @@ public final class AppEnvironment {
     self.discovery = discovery
     discoveryUnavailableReason = nil
     telemetry.mutate {
-      $0.sourceAvailable = discovery.kind.isLive
+      $0.sourceAvailable = discovery.kinds.contains(where: \.isLive)
       $0.discoveryStatus = discovery.diagnostic
     }
     discovery.start { [weak self] discovered in
@@ -649,24 +677,33 @@ public final class AppEnvironment {
   /// without waiting up to fifteen seconds for the next scan.
   private func refreshDiscovery() {
     guard let discovery else { return }
-    let endpoints = refreshEndpoints(from: discovery)
-    guard !endpoints.isEmpty else { return }
-
-    let identities = cameras.resolve(endpoints: endpoints, advertisements: discovery.advertisements)
-    let republished = endpoints.map { endpoint in
-      DiscoveredSource(
-        id: identities[endpoint]?.id ?? SourceID(
-          "\(CameraIdentityRules.sessionIDPrefix)\(UUID().uuidString.lowercased())"
-        ),
-        kind: discovery.kind,
-        advertisedName: identities[endpoint]?.name ?? CameraIdentityRules.unnamedFallback,
-        address: endpoint.url
-      )
+    let identities = cameras.resolve(
+      endpoints: refreshEndpoints(from: discovery),
+      advertisements: discovery.advertisements
+    )
+    // Per transport, because the kind stamped here decides how the row is later connected to. One
+    // list for both would rebind an NDI camera as an RTSP one.
+    let republished = discovery.children.flatMap { child in
+      refreshEndpoints(from: child).map { endpoint in
+        DiscoveredSource(
+          id: identities[endpoint]?.id ?? SourceID(
+            "\(CameraIdentityRules.sessionIDPrefix)\(UUID().uuidString.lowercased())"
+          ),
+          kind: child.kind,
+          advertisedName: identities[endpoint]?.name ?? CameraIdentityRules.unnamedFallback,
+          address: endpoint.url
+        )
+      }
     }
+    guard !republished.isEmpty else { return }
     // Rows keyed by the old identity are dropped rather than left behind: after a rebinding they
-    // describe a camera that is now on another row.
-    selections = SourceSelectionRules.merge(existing: selections, discovered: republished)
-      .filter { $0.isPresent || $0.isEnabled }
+    // describe a camera that is now on another row. Limited to the transports that answered, or
+    // the ones that cannot answer at all lose every camera they had found.
+    selections = SourceSelectionRules.merging(
+      existing: selections,
+      discovered: republished,
+      limitedTo: Set(republished.map(\.kind))
+    )
     selectionStore.save(selections)
     noteEndpoints(of: republished)
     pushDisplayNamesToTiles()
@@ -790,9 +827,15 @@ public final class AppEnvironment {
 
   /// Keeps the last sweep's order — identified cameras first — so a rename does not bury a VM33
   /// under an unidentified RTSP host that sorts earlier by address.
+  /// Endpoints belonging to one transport: what it currently sees, plus the rows already keyed to
+  /// cameras of its own kind. Rows are filtered by kind because with both transports live an
+  /// unfiltered list would hand every row's address to both, and republish each camera twice under
+  /// the wrong protocol.
   private func refreshEndpoints(from discovery: SourceDiscovery) -> [CameraEndpoint] {
+    let kinds = Set(discovery.kinds)
     let fromSweep = discovery.currentSources.compactMap { CameraEndpoint(address: $0.address) }
-    let fromRows = Array(Set(rowEndpoints.values))
+    let ownRows = selections.filter { kinds.contains($0.kind) }.map(\.id)
+    let fromRows = Array(Set(ownRows.compactMap { rowEndpoints[$0] }))
     guard !fromSweep.isEmpty else {
       return fromRows.sorted { $0.host < $1.host }
     }
@@ -807,8 +850,12 @@ public final class AppEnvironment {
 
   /// Simulated and live cameras share the five-source cap. Leaving the other kind in the list
   /// would look like live cameras.
+  ///
+  /// `rtsp` and `ndi` are not a change from one another. Both live transports run together, so
+  /// those two profiles name the same session and tearing the grid down between them would stop a
+  /// recording and drop every tile to answer a question nobody asked.
   private func applySourceProfile(_ profile: SourceProfile) async {
-    let profileChanged = profile != sourceProfile
+    let profileChanged = !Self.describesSameSession(profile, sourceProfile)
     sourceProfile = profile
     telemetry.mutate { $0.sourceProfile = profile.rawValue }
     if profileChanged {
@@ -2982,6 +3029,14 @@ public final class AppEnvironment {
     if let url = launch.streamURL { config.streamURL = url }
     if let bitrate = launch.programBitrate { config.programBitrate = bitrate }
     if let rate = launch.programFrameRate { config.programFrameRate = rate }
+    if let cap = launch.displayLatencyCapMilliseconds {
+      config.displayLatencyCapEnabled = cap > 0
+      if cap > 0 { config.displayLatencyCapMilliseconds = AppConfig.clampedDisplayLatencyCap(cap) }
+    }
+    if let cap = launch.diskLatencyCapMilliseconds {
+      config.diskLatencyCapEnabled = cap > 0
+      if cap > 0 { config.diskLatencyCapMilliseconds = AppConfig.clampedDiskLatencyCap(cap) }
+    }
     return config
   }
 
@@ -3007,6 +3062,27 @@ public final class AppEnvironment {
         ? config.displayLatencyCapMilliseconds
         : nil
     )
+    // Two different things share the word latency. The line above bounds how much delay the
+    // delay line *adds* to smooth jitter; this bounds how old a picture may be and still be shown
+    // or still be kept. Nothing enforced the second before, on either transport, which is how a
+    // tile came to display frames two seconds behind the room.
+    router.setLatencyCaps(FrameLatencyGate.Caps(config: config))
+  }
+
+  public func setDiskLatencyCapMilliseconds(_ milliseconds: Double) {
+    var next = persistedConfig
+    next.diskLatencyCapEnabled = true
+    next.diskLatencyCapMilliseconds = AppConfig.clampedDiskLatencyCap(milliseconds)
+    update(config: next)
+  }
+
+  public func setDiskLatencyCapEnabled(_ enabled: Bool) {
+    var next = persistedConfig
+    next.diskLatencyCapEnabled = enabled
+    if enabled, next.diskLatencyCapMilliseconds <= 0 {
+      next.diskLatencyCapMilliseconds = AppConfig.diskLatencyCapDefaultMilliseconds
+    }
+    update(config: next)
   }
 
   public func export(sourceIndex: Int, lastSeconds: Double) {
@@ -3272,6 +3348,22 @@ public final class AppEnvironment {
     let composedFrames = compositor?.frameCount ?? 0
     let discoveryStatus = discovery?.diagnostic ?? ""
     let displayLatency = cameras.playout.programMilliseconds
+    // Tell discovery what is at stake, so its fallback sweep can decide whether to run at all.
+    // An enabled camera the finder cannot currently see is the whole trigger: during a recording
+    // there is no sweep until one goes missing, and none once it is back.
+    // Missing means "not usable", not merely "not listed". A camera can be present in discovery
+    // and silent — which is how tonight's dropout looked, and a sweep that waited for the
+    // discovery list to change would never have started.
+    let silent = Set(
+      telemetry.snapshot.tiles.filter { $0.stalledForSeconds > 0 }.compactMap(\.sourceID)
+    )
+    let missing = selections.contains {
+      $0.isEnabled && (!$0.isPresent || silent.contains($0.id.rawValue))
+    }
+    discovery?.setSweepDemand(
+      isBusy: self.isRecording || self.isStreaming,
+      anyEnabledCameraMissing: missing
+    )
     telemetry.mutate {
       $0.statusMessage = status
       $0.sources = summaries
@@ -3288,6 +3380,9 @@ public final class AppEnvironment {
       $0.residentSizeMB = ProcessLoad.residentSizeMB()
       $0.discoveryStatus = discoveryStatus
       $0.displayLatencyMilliseconds = displayLatency
+      let caps = FrameLatencyGate.Caps(config: config)
+      $0.displayLatencyCapMilliseconds = (caps.displaySeconds ?? 0) * 1_000
+      $0.diskLatencyCapMilliseconds = (caps.diskSeconds ?? 0) * 1_000
       $0.programAudioPlaying = self.router.audioPlayer.isRunning
       $0.isStreaming = self.isStreaming
       $0.keepAliveInBackground = self.shouldKeepAliveInBackground
@@ -3317,6 +3412,20 @@ public final class AppEnvironment {
         tile.deliveryMilliseconds = receive.captured > 0
           ? (receive.deliverySeconds / Double(receive.captured)) * 1000
           : 0
+        tile.copyMilliseconds = receive.copyMilliseconds
+        tile.publishMilliseconds = receive.publishMilliseconds
+        tile.archiveEncoded = receive.archiveEncoded
+        tile.archiveKeyframes = receive.archiveKeyframes
+        tile.archiveEncodeRefused = receive.archiveEncodeRefused
+        tile.archiveEncoderRebuilds = receive.archiveEncoderRebuilds
+        tile.archiveEncodeStatus = receive.archiveEncodeStatus
+        tile.decodeFailures = receive.decodeFailures
+        tile.decoderRebuilds = receive.decoderRebuilds
+        tile.decodeStatus = receive.decodeStatus
+        tile.reconnects = receive.reconnects
+        tile.archiveDropped = receive.archiveDropped
+        tile.archiveBacklog = receive.archiveBacklog
+        tile.archiveStride = receive.archiveStride
         tile.arrivalGapMaxMilliseconds = receive.arrivalGapMaxMilliseconds
         tile.arrivalGapWasKeyframe = receive.arrivalGapWasKeyframe
         tile.deliverMaxMilliseconds = receive.deliverMaxMilliseconds
@@ -3326,6 +3435,8 @@ public final class AppEnvironment {
         tile.playoutLateFrames = receive.playoutLateFrames
         tile.playoutDepth = receive.playoutDepth
         tile.outOfOrderFrames = receive.outOfOrderFrames
+        tile.senderClockRestarts = receive.senderClockRestarts
+        tile.stalledForSeconds = (receive.stalledForSeconds * 10).rounded() / 10
         tile.senderReports = receive.senderReports
         tile.senderReportIntervalSeconds = receive.senderReportIntervalSeconds
         tile.senderReportAgeSeconds = receive.senderReportAgeSeconds
@@ -3454,6 +3565,8 @@ public final class AppEnvironment {
       if let bitrate = launch.programBitrate { config.programBitrate = bitrate }
       if let rate = launch.programFrameRate { config.programFrameRate = rate }
       if let url = launch.streamURL { config.streamURL = url }
+      config = Self.applying(launch, to: config)
+      applyDisplayLatencyCap()
       if launch.useTestClock, testClock == nil { statusMessage = "Test clock requires relaunch" }
       if let profile = launch.sourceProfile {
         Task { await applySourceProfile(profile) }

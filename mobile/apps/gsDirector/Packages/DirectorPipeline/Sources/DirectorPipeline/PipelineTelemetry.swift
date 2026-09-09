@@ -135,6 +135,30 @@ public struct TileTelemetry: Sendable, Codable, Equatable {
   public var receiveWaitFraction: Double = 0
   /// Mean milliseconds spent downstream of capture per frame, on the receive thread.
   public var deliveryMilliseconds: Double = 0
+  /// That time split between the source's own copy of the frame and everything the pipeline does
+  /// with it on the same thread. They have different owners and different fixes, and a source that
+  /// looks slow is nearly always one of the two.
+  public var copyMilliseconds: Double = 0
+  public var publishMilliseconds: Double = 0
+  /// For a source that encodes its own archive: frames encoded, frames refused because the encoder
+  /// was already too far behind, and how many are waiting now. A climbing `archiveDropped` is the
+  /// archive degrading deliberately so the live picture does not.
+  public var archiveEncoded: UInt64 = 0
+  /// Sync samples among those encodes. Every archive file opens on one, so encodes climbing while
+  /// these stand still is the signature of a recording that has stopped without saying so.
+  public var archiveKeyframes: UInt64 = 0
+  public var archiveEncodeRefused: UInt64 = 0
+  public var archiveEncoderRebuilds: UInt64 = 0
+  public var archiveEncodeStatus: Int = 0
+  public var decodeFailures: UInt64 = 0
+  public var decoderRebuilds: UInt64 = 0
+  public var decodeStatus: Int = 0
+  public var reconnects: UInt64 = 0
+  public var archiveDropped: UInt64 = 0
+  public var archiveBacklog = 0
+  /// One frame in this many reaches the archive. Above 1 the camera is recording at a fraction of
+  /// its live rate on purpose, because its encoder could not sustain the full one.
+  public var archiveStride = 1
   /// The last complete second's worst frame timing: how late the latest frame was, whether that late
   /// frame was a keyframe, and the longest one frame spent in our own decode-and-deliver work. A
   /// stutter the operator can see is one of these two numbers, and which one says whose fault it is.
@@ -170,6 +194,30 @@ public struct TileTelemetry: Sendable, Codable, Equatable {
   /// Decoded frames dropped for a timestamp that did not advance. Climbing at the frame rate means
   /// this tile is frozen because its source timeline stopped, not because the scene is still.
   public var outOfOrderFrames: UInt64 = 0
+  /// Times this camera's clock has restarted — a reboot, in practice. A discontinuity in capture
+  /// times is explained by this, and a count that climbs steadily is an unstable sender rather
+  /// than one that was power-cycled once.
+  public var senderClockRestarts: UInt64 = 0
+  /// Pictures not shown because they were older than the display cap. The monitor is worthless
+  /// showing action that has already happened, so these are skipped and the last good picture
+  /// stays up — and counted, because a bounded latency that reports nothing is indistinguishable
+  /// from a frozen tile.
+  public var displayRefusedLate: UInt64 = 0
+  /// How old the newest picture was when the display gate judged it, in milliseconds — capture to
+  /// presentation, including this app's own queueing. The whole feature exists because a tile was
+  /// seen running two seconds behind the room, and this is the field that says so out loud.
+  public var frameAgeMilliseconds: Double = 0
+  /// Pictures not archived because they were older than the disk cap. Expected to stay at zero in
+  /// ordinary use: the recording is watched afterwards, where a late picture is simply a picture,
+  /// so this cap is the generous one and only stops a source minutes behind from writing history
+  /// into the middle of a recording.
+  public var diskRefusedLate: UInt64 = 0
+  /// Seconds this camera has been silent past the stall timeout, or zero while it is delivering.
+  ///
+  /// Every other counter here describes a frame that arrived, so none of them can say that none
+  /// did. A tile whose camera had rebooted read `live` at 60.4 fps while receiving nothing, and
+  /// this is the field that contradicts it.
+  public var stalledForSeconds: Double = 0
   /// How often the archive had to re-anchor audio to video, and by how much it had drifted. A
   /// non-zero count means this camera's audio clock does not advance at the same rate as its video
   /// clock, which is what stalls the muxer if left alone.
@@ -191,6 +239,12 @@ public struct TileTelemetry: Sendable, Codable, Equatable {
   /// silent, so nothing could say which one swallowed it.
   public var audioReceived: UInt64 = 0
   public var audioRejectedNotStarted: UInt64 = 0
+  /// Audio the writer refused before it could be placed — because the recording was closing or
+  /// carries no audio track — and audio that could not be made into a sample buffer at all. Both
+  /// used to return silently, which left "audio arrived and none was written" with no counter
+  /// between the two ends to say where it went.
+  public var audioRejectedClosed: UInt64 = 0
+  public var audioRejectedBuild: UInt64 = 0
   public var audioRejectedPlacement: UInt64 = 0
   public var audioAppended: UInt64 = 0
   public var audioDrainNotReady: UInt64 = 0
@@ -404,6 +458,11 @@ public struct TelemetrySnapshot: Sendable, Codable, Equatable {
   /// Delay the live preview is currently holding, in milliseconds — the engine's choice, already
   /// clamped by the operator cap when one is on.
   public var displayLatencyMilliseconds: Double = 0
+  /// The two staleness caps as the pipeline currently has them, zero meaning off. Reported because
+  /// a refusal counter reading zero is otherwise ambiguous between a cap that is not firing and a
+  /// cap that never arrived.
+  public var displayLatencyCapMilliseconds: Double = 0
+  public var diskLatencyCapMilliseconds: Double = 0
   /// Programme mix is actually playing through the system audio route.
   public var programAudioPlaying = false
   /// Programme RTMP publish is currently running. Distinct from `dvr.isRecording`.
@@ -450,7 +509,7 @@ public struct TelemetrySnapshot: Sendable, Codable, Equatable {
 public final class PipelineTelemetry: @unchecked Sendable {
   private let lock = NSLock()
   private var state = TelemetrySnapshot()
-  private var frameTimestamps: [Int: (count: UInt64, since: CFAbsoluteTime)] = [:]
+  private var frameTimestamps: [Int: (count: UInt64, since: CFAbsoluteTime, last: CFAbsoluteTime)] = [:]
   private var displayedTimestamps: [Int: (count: UInt64, since: CFAbsoluteTime, last: CFAbsoluteTime)] = [:]
   /// Kept apart because they are counted differently, and their sum is what the HUD reports.
   private var replayDecodeSessions = 0
@@ -476,6 +535,14 @@ public final class PipelineTelemetry: @unchecked Sendable {
       let last = displayedTimestamps[sourceIndex]?.last ?? 0
       if now - last > 1.2 {
         copy.tiles[index].displayedFramesPerSecond = 0
+      }
+      // The arrival rate needs the same ageing, and for a sharper reason: it is only recomputed
+      // when a frame arrives, so a source that stops delivering leaves its last healthy figure
+      // standing for ever. A tile wedged by a camera reboot went on reporting 60.4 fps while
+      // receiving nothing, which is precisely the reading that made a dead tile look alive.
+      let lastArrival = frameTimestamps[sourceIndex]?.last ?? 0
+      if now - lastArrival > 1.2 {
+        copy.tiles[index].framesPerSecond = 0
       }
     }
     return copy
@@ -531,14 +598,15 @@ public final class PipelineTelemetry: @unchecked Sendable {
       state.tiles[position].receivedFrames += 1
       state.tiles[position].frameID = frameID
     }
-    var tracker = frameTimestamps[tile] ?? (count: 0, since: now)
+    var tracker = frameTimestamps[tile] ?? (count: 0, since: now, last: now)
     tracker.count += 1
+    tracker.last = now
     let elapsed = now - tracker.since
     if elapsed >= 1 {
       if let position = state.tiles.firstIndex(where: { $0.index == tile }) {
         state.tiles[position].framesPerSecond = (Double(tracker.count) / elapsed * 10).rounded() / 10
       }
-      tracker = (count: 0, since: now)
+      tracker = (count: 0, since: now, last: now)
     }
     frameTimestamps[tile] = tracker
     lock.unlock()
@@ -562,6 +630,30 @@ public final class PipelineTelemetry: @unchecked Sendable {
       tracker = (count: 0, since: now, last: now)
     }
     displayedTimestamps[tile] = tracker
+    lock.unlock()
+  }
+
+  public func recordFrameAge(tile: Int, milliseconds: Double) {
+    lock.lock()
+    if let position = state.tiles.firstIndex(where: { $0.index == tile }) {
+      state.tiles[position].frameAgeMilliseconds = milliseconds
+    }
+    lock.unlock()
+  }
+
+  public func recordDisplayRefusedLate(tile: Int) {
+    lock.lock()
+    if let position = state.tiles.firstIndex(where: { $0.index == tile }) {
+      state.tiles[position].displayRefusedLate &+= 1
+    }
+    lock.unlock()
+  }
+
+  public func recordDiskRefusedLate(tile: Int) {
+    lock.lock()
+    if let position = state.tiles.firstIndex(where: { $0.index == tile }) {
+      state.tiles[position].diskRefusedLate &+= 1
+    }
     lock.unlock()
   }
 

@@ -117,6 +117,73 @@ struct SourceSelectionTests {
     #expect(fileOnly.map(\.id.rawValue) == ["fixture-left-field"])
   }
 
+  /// The two live transports run together, so pruning between them is what made a mixed rig
+  /// impossible: starting RTSP discovery discarded every NDI selection the operator had made.
+  @Test("A live profile keeps cameras of both live transports")
+  func retainingKeepsBothLiveKinds() {
+    let mixed = [
+      SourceSelection(id: .init("ndi-c2"), kind: .ndi, advertisedName: "C2", isPresent: true),
+      SourceSelection(id: .init("rtsp-pixel"), kind: .rtsp, advertisedName: "Pixel", isPresent: true),
+      SourceSelection(id: .init("CAM1"), kind: .synthetic, advertisedName: "CAM1", isPresent: true)
+    ]
+    #expect(
+      SourceSelectionRules.retaining(mixed, kind: .rtsp).map(\.id.rawValue) == ["ndi-c2", "rtsp-pixel"]
+    )
+    #expect(
+      SourceSelectionRules.retaining(mixed, kind: .ndi).map(\.id.rawValue) == ["ndi-c2", "rtsp-pixel"]
+    )
+  }
+
+  @Test("A generated profile still drops every live camera")
+  func retainingStillPrunesLiveForGenerated() {
+    let mixed = [
+      SourceSelection(id: .init("ndi-c2"), kind: .ndi, advertisedName: "C2", isPresent: true),
+      SourceSelection(id: .init("rtsp-pixel"), kind: .rtsp, advertisedName: "Pixel", isPresent: true),
+      SourceSelection(id: .init("CAM1"), kind: .synthetic, advertisedName: "CAM1", isPresent: true)
+    ]
+    #expect(SourceSelectionRules.retaining(mixed, kind: .synthetic).map(\.id.rawValue) == ["CAM1"])
+  }
+
+  /// Endpoint rebinding is an RTSP concern — NDI cameras are keyed by name and have no endpoint —
+  /// so a refresh that only RTSP can answer must not speak for NDI. Sent through the full merge it
+  /// marked the enabled C2 missing and deleted the NDI cameras nobody had enabled yet.
+  @Test("Refreshing one transport leaves the other transport's cameras alone")
+  func refreshLimitedToAnsweringKinds() {
+    let existing = [
+      SourceSelection(id: .init("ndi-c2"), kind: .ndi, advertisedName: "C2", isEnabled: true, isPresent: true),
+      SourceSelection(id: .init("ndi-spare"), kind: .ndi, advertisedName: "Spare", isPresent: true),
+      SourceSelection(id: .init("rtsp-pixel"), kind: .rtsp, advertisedName: "Pixel", isPresent: true)
+    ]
+    let refreshed = SourceSelectionRules.merging(
+      existing: existing,
+      discovered: [
+        DiscoveredSource(id: .init("rtsp-pixel"), kind: .rtsp, advertisedName: "Pixel", address: "192.168.7.208")
+      ],
+      limitedTo: [.rtsp]
+    )
+    #expect(refreshed.map { $0.id.rawValue } == ["ndi-c2", "ndi-spare", "rtsp-pixel"])
+    #expect(refreshed.allSatisfy { $0.isPresent })
+  }
+
+  @Test("A refresh keeps existing rows on the tiles they were already on")
+  func refreshPreservesOrder() {
+    let existing = [
+      SourceSelection(id: .init("rtsp-a"), kind: .rtsp, advertisedName: "A", isPresent: true),
+      SourceSelection(id: .init("ndi-c2"), kind: .ndi, advertisedName: "C2", isPresent: true),
+      SourceSelection(id: .init("rtsp-b"), kind: .rtsp, advertisedName: "B", isPresent: true)
+    ]
+    let refreshed = SourceSelectionRules.merging(
+      existing: existing,
+      discovered: [
+        DiscoveredSource(id: .init("rtsp-b"), kind: .rtsp, advertisedName: "B", address: "192.168.7.2"),
+        DiscoveredSource(id: .init("rtsp-a"), kind: .rtsp, advertisedName: "A", address: "192.168.7.1"),
+        DiscoveredSource(id: .init("rtsp-new"), kind: .rtsp, advertisedName: "New", address: "192.168.7.3")
+      ],
+      limitedTo: [.rtsp]
+    )
+    #expect(refreshed.map { $0.id.rawValue } == ["rtsp-a", "ndi-c2", "rtsp-b", "rtsp-new"])
+  }
+
   /// Off has to reach the cameras. Sending it to `file4` gave a device with no fixtures a source
   /// list that could never fill, and the operator no way back to real cameras from the UI.
   @Test("Turning simulated cameras off selects real cameras")

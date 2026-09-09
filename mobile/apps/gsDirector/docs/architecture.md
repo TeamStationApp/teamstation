@@ -41,6 +41,13 @@ The archive and proxy branches come **before** the tile's display state is consu
 what makes "scrub backwards while it keeps recording" true rather than aspirational: a tile in
 replay is still feeding its archive.
 
+Sources that hand over pixels rather than a bitstream — the simulated cameras, and NDI cameras,
+whose bitstream the free NDI SDK decodes before a receiver sees it — cannot use the archive branch
+as it stands, because there is nothing to copy. They encode their own coded form on a queue of
+their own and publish it into the same sink. That costs one encode session per camera rather than
+none, which is why `FrameSource.setArchiving(_:)` exists: nothing encodes until an archive is
+actually reading. See [ndi.md](ndi.md).
+
 ## Receiving a camera
 
 A camera is an RTSP server. `DirectorRTSP` speaks to it directly rather than through a media
@@ -103,7 +110,10 @@ the identity layer rather than the transport — see
 
 ## Finding the cameras
 
-These cameras advertise nothing. No mDNS, no ONVIF, no discovery protocol of any kind, so there is
+NDI cameras are the exception to everything in this section: they announce themselves over mDNS and
+the SDK's own finder maintains the list, so there is nothing to scan for and no port to probe.
+
+These RTSP cameras advertise nothing. No mDNS, no ONVIF, no discovery protocol of any kind, so there is
 nothing to browse for and the only way to find one is to look for an open port 554 on the local
 subnet and ask each answer to describe itself.
 
