@@ -127,16 +127,27 @@ reason.
 ### Thermals under sustained encode are unmeasured
 
 No sustained-stream run has been done yet, so nothing is known about how long the phone holds 1080p30
-before throttling, or what 4K30 costs. Unlike the iPad in `../gsDirector/docs/risks.md`, this handset
+before throttling, or what 4K30 costs. One data point from the 2026-09-09 link bring-up: a handset
+capturing 1080p60 for HDMI with **no** client playing — so no compression at all — still sat at
+`system.thermal: serious` on a warm bench, charging through the adapter. Capture and the display
+path alone are not free. Unlike the iPad in `../gsDirector/docs/risks.md`, this handset
 is not sitting on a Peltier cooler.
 
-### Mirroring when clean HDMI is off is unverified until the hardware test
+### Mirroring when clean HDMI is off — verified on a cable, 2026-09-09
 
-The design puts no window on the external-display scene when the toggle is off and expects iOS to
-resume mirroring the phone's screen. That is the documented behaviour of a scene with no window,
-but it has not yet been seen on a cable: the first A3 run with the iPhone 15 Pro on the Cosmo C2
-has to flip the toggle both ways and watch the display. If mirroring does not come back, the
-fallback is to render the phone's own root view into the external window when the toggle is off.
+Settled, so the fallback (rendering the phone's own root view into the external window) is not
+needed. iPhone 15 Pro → USB-C → Hollyland Cosmo C2 → NDI → GS Director, toggled both ways over
+`videoOutput.hdmi.clean`:
+
+| `cleanHDMIEnabled` | What the capture device received | `externalDisplay.framesEnqueued` |
+| --- | --- | --- |
+| true | the encoder's picture, no chrome | tracks `capturedFrames` exactly |
+| false | the phone's screen, chrome and all | frozen while `capturedFrames` climbs |
+
+Off really does hand the display back: the window is removed, nothing is drawn, and iOS mirrors.
+On again resumes, `framesEnqueued` behind `capturedFrames` by exactly what was missed. The
+external-display scene stays connected throughout at `1920x1080`, so neither switch waits for a
+replug.
 
 ### The external scene goes away when the app is backgrounded
 
