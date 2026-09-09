@@ -55,6 +55,27 @@ public final class AppEnvironment {
   public var capturedFrames: Int { frameCounts.withLock { $0.captured } }
   public var encodedFrames: Int { frameCounts.withLock { $0.encoded } }
 
+  /// What the capture queue needs to decide whether to encode a frame, kept off the main actor so
+  /// the decision costs a lock and not a hop. `playingClients` is written from the server's status
+  /// callback on its queue.
+  @ObservationIgnored
+  nonisolated private let encoderGate = OSAllocatedUnfairLock(initialState: EncoderGate())
+
+  private struct EncoderGate: Sendable {
+    var playingClients = 0
+    var encodeWhenIdle = false
+  }
+
+  /// True while frames are being captured but not compressed because nobody is playing.
+  public var encoderIdle: Bool {
+    let gate = encoderGate.withLock { $0 }
+    return !EncoderIdlePolicy.shouldEncodeVideo(
+      playingClients: gate.playingClients,
+      encodeWhenIdle: gate.encodeWhenIdle,
+      hasParameterSets: !latestParameterSets.withLock { $0.isEmpty }
+    )
+  }
+
   /// Capture and encode queues call these. They must not hop to the main actor.
   nonisolated func noteCapturedFrame() {
     frameCounts.withLock { $0.captured += 1 }
@@ -118,6 +139,8 @@ public final class AppEnvironment {
     self.publishedIdentity = OSAllocatedUnfairLock(initialState: loaded)
     self.publishedSettings = OSAllocatedUnfairLock(initialState: initial)
     self.appliedSettings = initial
+    // A recording run has no server and so never a client; it must encode regardless.
+    encoderGate.withLock { $0.encodeWhenIdle = launch.encodeWhenIdle || launch.recordSeconds > 0 }
     cleanFeed.setEnabled(initial.cleanHDMIEnabled)
     cleanFeed.setStreamSize(width: initial.width, height: initial.height)
     CleanFeedController.active = cleanFeed
@@ -220,7 +243,7 @@ public final class AppEnvironment {
     syncCleanFeed(next)
     guard pipelineChanged else { return }
     appliedSettings = next
-    videoEncoder.configure(settings: next)
+    reconfigureVideoEncoder(next)
     if next.audioEnabled {
       audioEncoder.configure(sampleRate: next.audioSampleRate, channelCount: 1)
     }
@@ -331,7 +354,17 @@ public final class AppEnvironment {
         }
       }
     )
-    server.onStatusChange = { [weak self] status in
+    let gate = encoderGate
+    server.onStatusChange = { [weak self, videoEncoder] status in
+      // On the server's queue, before the hop: the capture queue reads the count on the very next
+      // frame, and a client that joined while the encoder was idle has no frame to carry the
+      // keyframe its PLAY asked for, so the transition asks again.
+      let wakes = gate.withLock { current in
+        let previous = current.playingClients
+        current.playingClients = status.clientCount
+        return EncoderIdlePolicy.needsKeyframe(previousClients: previous, currentClients: status.clientCount)
+      }
+      if wakes { videoEncoder.requestKeyframe() }
       Task { @MainActor in
         self?.serverStatus = status
         // Printed as well as shown, because a bind failure on a handset is otherwise invisible from
@@ -366,7 +399,7 @@ public final class AppEnvironment {
     audioEncoder.onFailure = { [weak self] failure in
       Task { @MainActor in self?.encodeFailure = failure.description }
     }
-    videoEncoder.configure(settings: settings)
+    reconfigureVideoEncoder(settings)
     if settings.audioEnabled && fromCamera {
       audioEncoder.configure(sampleRate: settings.audioSampleRate, channelCount: 1)
     }
@@ -375,17 +408,48 @@ public final class AppEnvironment {
     camera.onCaptureRotationChange = { [videoEncoder] in
       videoEncoder.requestKeyframe()
     }
-    camera.onVideoFrame = { [weak self, videoEncoder, cleanFeed] sample in
+    camera.onVideoFrame = { [weak self, videoEncoder, cleanFeed, gate = encoderGate, sets = latestParameterSets] sample in
       let blank = !(self?.publishedSettings.withLock { $0.videoEnabled } ?? true)
       let frame = SampleBufferRef(sample.buffer)
-      videoEncoder.encode(frame, blank: blank)
+      if Self.shouldEncodeVideo(gate, parameterSets: sets) {
+        videoEncoder.encode(frame, blank: blank)
+      }
       cleanFeed.enqueue(frame, blank: blank)
       self?.noteCapturedFrame()
     }
-    camera.onAudioFrame = { [audioEncoder, settingsLock = publishedSettings] sample in
+    camera.onAudioFrame = { [audioEncoder, settingsLock = publishedSettings, gate = encoderGate] sample in
+      guard Self.shouldEncodeAudio(gate) else { return }
       let silent = !settingsLock.withLock { $0.audioEnabled }
       audioEncoder.encode(SampleBufferRef(sample.buffer), silent: silent)
     }
+  }
+
+  nonisolated private static func shouldEncodeVideo(
+    _ gate: OSAllocatedUnfairLock<EncoderGate>,
+    parameterSets: OSAllocatedUnfairLock<[Data]>
+  ) -> Bool {
+    let current = gate.withLock { $0 }
+    return EncoderIdlePolicy.shouldEncodeVideo(
+      playingClients: current.playingClients,
+      encodeWhenIdle: current.encodeWhenIdle,
+      hasParameterSets: !parameterSets.withLock { $0.isEmpty }
+    )
+  }
+
+  nonisolated private static func shouldEncodeAudio(_ gate: OSAllocatedUnfairLock<EncoderGate>) -> Bool {
+    let current = gate.withLock { $0 }
+    return EncoderIdlePolicy.shouldEncodeAudio(
+      playingClients: current.playingClients,
+      encodeWhenIdle: current.encodeWhenIdle
+    )
+  }
+
+  /// A new compression session starts with a keyframe, whose parameter sets replace the ones the
+  /// SDP hands out. Clearing them first is what makes the idle encoder run for that one keyframe:
+  /// otherwise a codec change with nobody playing would leave DESCRIBE describing the old codec.
+  private func reconfigureVideoEncoder(_ settings: StreamSettings) {
+    latestParameterSets.withLock { $0 = [] }
+    videoEncoder.configure(settings: settings)
   }
 
   /// Frames from a pattern generator instead of a lens, so the encode-and-serve path is exercisable
@@ -408,10 +472,12 @@ public final class AppEnvironment {
     let synthetic = SyntheticCamera(configuration: SyntheticCamera.Configuration(settings))
     // The same fan-out as the camera path, so a simulator with a virtual external display draws
     // the pattern on it and dump-state's `framesEnqueued` climbs.
-    synthetic.onVideoFrame = { [weak self, videoEncoder, cleanFeed] buffer in
+    synthetic.onVideoFrame = { [weak self, videoEncoder, cleanFeed, gate = encoderGate, sets = latestParameterSets] buffer in
       let blank = !(self?.publishedSettings.withLock { $0.videoEnabled } ?? true)
       let frame = SampleBufferRef(buffer)
-      videoEncoder.encode(frame, blank: blank)
+      if Self.shouldEncodeVideo(gate, parameterSets: sets) {
+        videoEncoder.encode(frame, blank: blank)
+      }
       cleanFeed.enqueue(frame, blank: blank)
       self?.noteCapturedFrame()
     }
@@ -531,6 +597,8 @@ public final class AppEnvironment {
     public var isRunning: Bool
     public var capturedFrames: Int
     public var encodedFrames: Int
+    /// True while nobody is playing and frames are captured but not compressed.
+    public var encoderIdle: Bool
     public var encodeFailure: String?
     public var droppedFrames: Int
     public var physFootprintMB: Int
@@ -592,6 +660,7 @@ public final class AppEnvironment {
       isRunning: cameraState.isRunning,
       capturedFrames: capturedFrames,
       encodedFrames: encodedFrames,
+      encoderIdle: encoderIdle,
       encodeFailure: encodeFailure,
       droppedFrames: sendQueueDroppedFrames,
       physFootprintMB: ProcessLoad.physFootprintMB(),
@@ -686,7 +755,7 @@ public final class AppEnvironment {
       guard mbps > 0 else { return nil }
       settings.bitrate = Int(mbps * 1_000_000)
       noteSettingsApplied()
-      videoEncoder.configure(settings: settings)
+      reconfigureVideoEncoder(settings)
       return ok()
 
     case let .setCodec(name):
@@ -695,7 +764,7 @@ public final class AppEnvironment {
       // way the Settings picker does. Leaving HEVC's rate on an H.264 stream is now a saved mistake.
       settings.setCodec(codec)
       noteSettingsApplied()
-      videoEncoder.configure(settings: settings)
+      reconfigureVideoEncoder(settings)
       return ok()
 
     case let .setFormat(width, height, fps):
@@ -705,7 +774,7 @@ public final class AppEnvironment {
       settings.frameRate = Double(fps)
       noteSettingsApplied()
       camera.configure(position: cameraState.position, settings: settings)
-      videoEncoder.configure(settings: settings)
+      reconfigureVideoEncoder(settings)
       return ok()
 
     case let .setAudio(on):
@@ -742,7 +811,7 @@ public final class AppEnvironment {
     case .reset:
       settings = launch.settings
       noteSettingsApplied()
-      videoEncoder.configure(settings: settings)
+      reconfigureVideoEncoder(settings)
       camera.configure(position: .back, settings: settings)
       return ok()
     }
