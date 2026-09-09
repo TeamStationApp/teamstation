@@ -140,6 +140,7 @@ the SOAP stack itself is not implemented. Lenses have no ONVIF standard. `rw` = 
 | `videoEncoder.formats` | int | count; then `format.<i>.width`, `.height`, `.frameRate`, `.multiLens` |
 | `audioEncoder.enabled` | rw bool | microphone on/off |
 | `audioEncoder.sampleRate` | int | 48000 |
+| `videoOutput.hdmi.clean` | rw bool | a connected USB-C display shows the encoder's picture with no overlays; `false` hands it back to iOS mirroring. Not a pipeline change: nothing restarts. Absent from a phone that predates it, which a client should read as `true` |
 | `lens.count` | int | then `lens.<i>.id`, `.position`, `.deviceType`, `.title`, `.displayedZoom`, `.focalLengthMM`, `.native` |
 | `lens.disabled` | rw comma list of ids | a `SET` that would disable the last lens at a position is a `400` |
 | `stream.url` | string | `rtsp://<ip>:<port><path>`, the string Settings copies |
