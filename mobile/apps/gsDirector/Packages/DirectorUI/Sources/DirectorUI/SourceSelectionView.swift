@@ -2,7 +2,7 @@ import DirectorCore
 import DirectorSources
 import SwiftUI
 
-/// Spec 6.1: discovered sources, enable toggles capped at five, inline rename.
+/// Spec 6.1: discovered sources, enable toggles capped at five, inline rename from the name itself.
 public struct SourceSelectionView: View {
   @Environment(AppEnvironment.self) private var environment
   @State private var renamingID: SourceID?
@@ -98,6 +98,14 @@ public struct SourceSelectionView: View {
         .padding(.vertical, 12)
       }
       .scrollDismissesKeyboard(.interactively)
+      .onChange(of: isNamingFocused) { _, focused in
+        // Done is one way out of the editor; dismissing the keyboard or tapping elsewhere is the
+        // other, and both mean "keep what I typed". There is no cancel: clear and Done is one.
+        guard !focused, let id = renamingID,
+              let selection = environment.selections.first(where: { $0.id == id })
+        else { return }
+        commitRename(for: selection)
+      }
       .onChange(of: renamingID) { _, id in
         guard let id else {
           isNamingFocused = false
@@ -146,23 +154,22 @@ public struct SourceSelectionView: View {
               .font(.system(size: 16, weight: .semibold, design: .rounded))
               .foregroundStyle(.white)
               .focused($isNamingFocused)
+              // "Done" on the keyboard, because a return key on a one-line name field reads as
+              // "new line" to an operator who is not thinking about text fields.
+              .submitLabel(.done)
               .accessibilityIdentifier("source-name-field-\(index + 1)")
               .onSubmit { commitRename(for: selection) }
               .onAppear {
-                // Menu dismiss and keyboard avoidance both steal first responder if focus is
-                // claimed in the same turn the field appears — especially on the last row.
+                // Keyboard avoidance steals first responder if focus is claimed in the same turn
+                // the field appears — especially on the last row.
                 Task { @MainActor in
                   try? await Task.sleep(for: .milliseconds(350))
                   isNamingFocused = true
                 }
               }
           }
-        } else if let endpoint = environment.endpoint(for: selection.id) {
-          nameMenu(index: index, selection: selection, endpoint: endpoint)
         } else {
-          Text(selection.displayName)
-            .font(.system(size: 16, weight: .semibold, design: .rounded))
-            .foregroundStyle(.white)
+          nameButton(index: index, selection: selection)
         }
 
         // A camera's address is what the operator checks against the label on its tripod when a
@@ -186,7 +193,8 @@ public struct SourceSelectionView: View {
         if let format = formatLabel(for: selection) {
           Text(format)
             .font(.system(size: 11, weight: .semibold, design: .monospaced))
-            .foregroundStyle(Color.sourceBlue.opacity(0.95))
+            // Off-white, not blue: blue is what the tappable things in this row wear.
+            .foregroundStyle(.white.opacity(0.7))
             .lineLimit(1)
             .accessibilityIdentifier("source-format-\(index + 1)")
         }
@@ -238,22 +246,6 @@ public struct SourceSelectionView: View {
         .accessibilityIdentifier("source-slot-\(index + 1)")
         .accessibilityValue("source=\(slot + 1)")
       }
-
-      Button {
-        if renamingID == selection.id {
-          commitRename(for: selection)
-        } else {
-          renamingID = selection.id
-          draftName = selection.displayName
-        }
-      } label: {
-        Image(systemName: renamingID == selection.id ? "checkmark" : "pencil")
-          .font(.system(size: 14, weight: .semibold))
-          .frame(width: 34, height: 30)
-          .foregroundStyle(.white.opacity(0.75))
-      }
-      .buttonStyle(.plain)
-      .accessibilityIdentifier("source-rename-\(index + 1)")
 
       // Two independent decisions, so two switches: whether the camera gets a tile, and whether its
       // microphone is in the programme mix. Labelled, because an unlabelled pair of toggles is a
@@ -318,85 +310,28 @@ public struct SourceSelectionView: View {
     return environment.boundCamera(for: selection.id)?.name ?? "Unnamed"
   }
 
-  /// The naming control for a live camera. A menu rather than a text field because the answer is
-  /// usually a camera the operator has already named at a previous game — typing it again is both
-  /// slower and a chance to create a second record for the same camera.
-  private func nameMenu(index: Int, selection: SourceSelection, endpoint: CameraEndpoint) -> some View {
+  /// The name is the rename control: one tap opens the inline editor. Blue, because blue is what
+  /// tappable things wear in this row. A live camera with no record shows "Unnamed" in amber so
+  /// the operator can see which tripod still needs a label.
+  private func nameButton(index: Int, selection: SourceSelection) -> some View {
+    let endpoint = environment.endpoint(for: selection.id)
     let bound = environment.boundCamera(for: selection.id)
+    let unnamed = endpoint != nil && bound == nil
 
-    return Menu {
-      Button(bound == nil ? "Name…" : "Rename…") {
-        renamingID = selection.id
-        // Empty for an unnamed camera: the address is already the caption, and nobody wants to
-        // edit an IP into "Third Base".
-        draftName = bound?.name ?? ""
-      }
-      .accessibilityIdentifier("camera-rename-\(index + 1)")
-
-      // Only worth offering when it would change something: the camera has a name of its own and
-      // the operator has overridden it. Otherwise this is already what the row is doing.
-      if let advertised = bound?.advertisedName, bound?.nameOrigin == .operatorAssigned {
-        Button("Use camera's name (\"\(advertised)\")") {
-          environment.followCamera(for: selection.id)
-        }
-        .accessibilityIdentifier("camera-use-advertised-\(index + 1)")
-      }
-
-      Button("New camera…") {
-        environment.nameCamera(
-          CameraIdentityRules.nextDefaultName(in: environment.cameraRecords),
-          for: selection.id
-        )
-      }
-      .accessibilityIdentifier("camera-new-\(index + 1)")
-
-      if !choices(besides: bound).isEmpty {
-        Divider()
-        ForEach(choices(besides: bound)) { record in
-          Button(choiceLabel(for: record)) {
-            environment.bindCamera(record.id, to: selection.id)
-          }
-          .accessibilityIdentifier("camera-choice-\(slug(record.name))")
-        }
-      }
-
-      if let bound {
-        Divider()
-        Button("Forget this camera", role: .destructive) {
-          environment.forgetCamera(for: selection.id)
-        }
-        .accessibilityIdentifier("camera-forget-\(index + 1)")
-      }
+    return Button {
+      renamingID = selection.id
+      // Empty for an unnamed camera: the address is already the caption, and nobody wants to
+      // edit an IP into "Third Base".
+      draftName = endpoint != nil ? (bound?.name ?? "") : selection.displayName
     } label: {
-      HStack(spacing: 5) {
-        Text(bound?.name ?? "Unnamed")
-          .font(.system(size: 16, weight: .semibold, design: .rounded))
-          .foregroundStyle(bound == nil ? Color.replayAmber : .white)
-        Image(systemName: "chevron.down")
-          .font(.system(size: 10, weight: .bold))
-          .foregroundStyle(.white.opacity(0.4))
-      }
+      Text(rowName(for: selection))
+        .font(.system(size: 16, weight: .semibold, design: .rounded))
+        .foregroundStyle(unnamed ? Color.replayAmber : Color.sourceBlue)
+        .lineLimit(1)
     }
-    .accessibilityIdentifier("source-name-menu-\(index + 1)")
-    .accessibilityLabel("Camera name for \(endpoint.host)")
-  }
-
-  /// Every named camera except the one this row already has. A camera answering on another address
-  /// stays in the list: choosing it is how the operator corrects two cameras that swapped leases.
-  private func choices(besides bound: CameraRecord?) -> [CameraRecord] {
-    environment.cameraRecords
-      .filter { $0.id != bound?.id }
-      .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-  }
-
-  private func choiceLabel(for record: CameraRecord) -> String {
-    if let host = environment.presentHost(forCamera: record.id) {
-      return "\(record.name) · in use by \(host)"
-    }
-    if record.lastKnownHost.isEmpty {
-      return record.name
-    }
-    return "\(record.name) · last seen \(record.lastKnownHost)"
+    .buttonStyle(.plain)
+    .accessibilityIdentifier("source-name-\(index + 1)")
+    .accessibilityLabel(endpoint.map { "Camera name for \($0.host)" } ?? "Name for \(selection.displayName)")
   }
 
   /// Why this camera is on this row. `ID` is automatic matching on NearStream TXT or RTSP CNAME.
@@ -407,16 +342,6 @@ public struct SourceSelectionView: View {
     case .manual: "MANUAL"
     case .unbound: nil
     }
-  }
-
-  /// Menu rows are addressed by name in flows, so the identifier has to be derived from it.
-  private func slug(_ name: String) -> String {
-    let allowed = name.lowercased().map { character -> Character in
-      character.isLetter || character.isNumber ? character : "-"
-    }
-    return String(allowed)
-      .split(separator: "-", omittingEmptySubsequences: true)
-      .joined(separator: "-")
   }
 
   private func toggle(
