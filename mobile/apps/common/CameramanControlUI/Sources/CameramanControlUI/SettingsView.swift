@@ -20,9 +20,9 @@ struct SettingsView<Model: CameraControlling>: View {
 
   var body: some View {
     NavigationStack {
-      // One shared scroll. Landscape: two rows of two (video/audio + lenses, then name + stream),
-      // which is the phone's layout. Portrait, on a rotating client: the five cards stacked. The
-      // draft lives above this switch, so rotating mid-edit keeps every edited value.
+      // One shared scroll. Landscape: two rows of two (video/audio/output + lenses, then name +
+      // stream), which is the phone's layout. Portrait, on a rotating client: the six cards
+      // stacked. The draft lives above this switch, so rotating mid-edit keeps every edited value.
       GeometryReader { geo in
         let columns = SettingsLayout.columns(for: geo.size)
         ScrollView {
@@ -32,6 +32,7 @@ struct SettingsView<Model: CameraControlling>: View {
                 VStack(spacing: 16) {
                   videoSection
                   audioSection
+                  outputSection
                 }
                 .frame(maxWidth: .infinity, alignment: .top)
                 lensesSection
@@ -44,6 +45,7 @@ struct SettingsView<Model: CameraControlling>: View {
             } else {
               videoSection
               audioSection
+              outputSection
               lensesSection
               nameSection
               serverSection
@@ -228,6 +230,20 @@ struct SettingsView<Model: CameraControlling>: View {
       cardRow {
         Toggle("Microphone", isOn: $draftSettings.audioEnabled)
           .accessibilityIdentifier("settings-audio")
+      }
+    }
+  }
+
+  /// Not in the Video card: the video rows all restart the encoder on Done, and this one must not
+  /// read as if it did.
+  private var outputSection: some View {
+    settingsCard(
+      "Output",
+      footer: "Send the camera picture to a USB-C display with no overlays. Off shows this screen instead."
+    ) {
+      cardRow {
+        Toggle("Clean HDMI output", isOn: $draftSettings.cleanHDMIEnabled)
+          .accessibilityIdentifier("settings-clean-hdmi")
       }
     }
   }

@@ -83,6 +83,7 @@ struct CameraParametersTests {
     #expect(decoded.lenses[3].focalLengthMM == nil)
     #expect(decoded.clientCount == 2)
     #expect(decoded.streamURL == original.streamURL)
+    #expect(decoded.settings.cleanHDMIEnabled)
   }
 
   @Test("Values are ONVIF-shaped on the wire")
@@ -100,7 +101,28 @@ struct CameraParametersTests {
     #expect(set["videoEncoder.formats"] == "3")
     #expect(set["format.2.multiLens"] == "false")
     #expect(set["stream.clients"] == "2")
+    #expect(set["videoOutput.hdmi.clean"] == "true")
     #expect(set.names.first == "device.name")
+  }
+
+  @Test("The clean HDMI toggle is written as a settings change, and an old phone's silence reads as on")
+  func cleanHDMI() throws {
+    let write = try set("videoOutput.hdmi.clean: off\r\n")
+    #expect(write.cleanHDMIEnabled == false)
+    #expect(write.touchesSettings)
+    #expect(write.isEmpty == false)
+    let applied = CameraParameters.snapshot(applying: write, to: Self.snapshot())
+    #expect(applied.settings.cleanHDMIEnabled == false)
+    #expect(CameraParameters.echo(write, applied: applied)["videoOutput.hdmi.clean"] == "false")
+    #expect(failure("videoOutput.hdmi.clean: maybe\r\n")?.kind == .badRequest)
+
+    // A phone that predates the name leaves it out of `*`; the client must not read that as off.
+    var withoutIt = CameraParameterSet()
+    for (name, value) in CameraParameters.encode(Self.snapshot()).pairs
+    where name != CameraParameterName.videoOutputHDMIClean {
+      withoutIt.set(name, value)
+    }
+    #expect(try #require(CameraParameters.decodeSnapshot(withoutIt)).settings.cleanHDMIEnabled)
   }
 
   @Test("An unknown battery is an empty value, and decodes to nil")

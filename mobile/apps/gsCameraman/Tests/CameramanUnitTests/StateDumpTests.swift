@@ -1,3 +1,4 @@
+import CameramanTestHarness
 import Foundation
 import Testing
 
@@ -19,11 +20,26 @@ struct StateDumpTests {
     #expect(json?["cpuCores"] != nil)
     #expect(json?["interrupted"] as? Bool == false)
     #expect(json?["audioPendingBytes"] as? Int == 0)
+    #expect(json?["cleanHDMIEnabled"] as? Bool == true)
+    // Not idle yet: with no keyframe produced there are no parameter sets for the SDP, and the
+    // encoder runs until there are, client or no client.
+    #expect(json?["encoderIdle"] as? Bool == false)
+    let display = json?["externalDisplay"] as? [String: Any]
+    #expect(display?["connected"] as? Bool == false)
+    #expect(display?["framesEnqueued"] as? Int == 0)
     let server = json?["server"] as? [String: Any]
     #expect(server?["acceptedClients"] as? Int == 0)
     #expect(server?["closedClients"] as? Int == 0)
     #expect(server?["sendQueuePendingBytes"] as? Int == 0)
     #expect(server?["isListening"] as? Bool == false)
+  }
+
+  @Test @MainActor
+  func encoderIdleFollowsTheLaunchOverride() {
+    let overridden = AppEnvironment(launch: LaunchConfiguration(arguments: [ "-encodeWhenIdle", "true" ]))
+    #expect(overridden.encoderIdle == false)
+    let recording = AppEnvironment(launch: LaunchConfiguration(arguments: [ "-recordSeconds", "5" ]))
+    #expect(recording.encoderIdle == false)
   }
 
   @Test @MainActor

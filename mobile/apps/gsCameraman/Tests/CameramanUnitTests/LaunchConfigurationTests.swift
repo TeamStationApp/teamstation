@@ -18,8 +18,28 @@ struct LaunchConfigurationTests {
     #expect(configuration.settings.codec == .hevc)
     #expect(configuration.settings.port == 554)
     #expect(configuration.settings.audioEnabled)
+    #expect(configuration.settings.cleanHDMIEnabled)
     #expect(configuration.providedSettingFields.isEmpty)
     #expect(configuration.persistSettings)
+  }
+
+  @Test("Encoding with no client is off unless a diagnostic asks for it")
+  func encodeWhenIdleIsALaunchKey() {
+    #expect(LaunchConfiguration(arguments: []).encodeWhenIdle == false)
+    let configuration = LaunchConfiguration(arguments: [ "-encodeWhenIdle", "true" ])
+    #expect(configuration.encodeWhenIdle)
+    #expect(configuration.unknownKeys.isEmpty)
+    // Not a stream setting: it is never persisted and never pinned against a saved value.
+    #expect(configuration.providedSettingFields.isEmpty)
+  }
+
+  @Test("Clean HDMI can be pinned off for a flow, and counts as provided")
+  func cleanHDMIIsALaunchKey() {
+    let configuration = LaunchConfiguration(arguments: [ "-cleanHdmi", "false" ])
+    #expect(configuration.settings.cleanHDMIEnabled == false)
+    #expect(configuration.providedSettingFields == Set([ .cleanHDMI ]))
+    #expect(configuration.unknownKeys.isEmpty)
+    #expect(LaunchConfiguration(arguments: [ "-cleanHdmi", "yes" ]).settings.cleanHDMIEnabled)
   }
 
   @Test("Saved settings are off under uiTest and can be switched back on")

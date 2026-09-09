@@ -38,10 +38,12 @@ struct ControlChannelTests {
     for yes in [ "1", "true", "yes", "on", "TRUE", "Yes" ] {
       #expect(command("/set-audio?on=\(yes)") == .setAudio(on: true))
       #expect(command("/set-video?on=\(yes)") == .setVideo(on: true))
+      #expect(command("/set-clean-hdmi?on=\(yes)") == .setCleanHDMI(on: true))
     }
     for no in [ "0", "false", "no", "off" ] {
       #expect(command("/set-audio?on=\(no)") == .setAudio(on: false))
       #expect(command("/set-video?on=\(no)") == .setVideo(on: false))
+      #expect(command("/set-clean-hdmi?on=\(no)") == .setCleanHDMI(on: false))
     }
   }
 
@@ -61,6 +63,7 @@ struct ControlChannelTests {
     #expect(command("/set-codec?codec=") == nil)
     #expect(command("/set-audio") == nil)
     #expect(command("/set-video") == nil)
+    #expect(command("/set-clean-hdmi") == nil)
   }
 
   @Test func anUnknownCommandIsNotGuessedAt() {
