@@ -168,6 +168,8 @@ public enum CameraParameterName {
   public static let formatCount = "videoEncoder.formats"
   public static let audioEnabled = "audioEncoder.enabled"
   public static let audioSampleRate = "audioEncoder.sampleRate"
+  /// Whether a connected external display carries the encoder's picture with no overlays.
+  public static let videoOutputHDMIClean = "videoOutput.hdmi.clean"
   public static let lensCount = "lens.count"
   public static let lensDisabled = "lens.disabled"
   public static let streamURL = "stream.url"
@@ -180,7 +182,7 @@ public enum CameraParameterName {
 
   public static let writable: Set<String> = [
     deviceName, sourcePosition, ptzZoom, encoding, width, height, frameRate, bitrateKbps,
-    audioEnabled, lensDisabled
+    audioEnabled, videoOutputHDMIClean, lensDisabled
   ]
 
   /// The fixed names, in the order the full set is emitted. Indexed `format.<i>.*` and `lens.<i>.*`
@@ -193,6 +195,7 @@ public enum CameraParameterName {
     ptzZoom, ptzZoomDevice,
     encoding, width, height, frameRate, bitrateKbps, formatCount,
     audioEnabled, audioSampleRate,
+    videoOutputHDMIClean,
     lensCount, lensDisabled,
     streamURL, streamClients
   ]
@@ -295,6 +298,7 @@ public struct CameraParameterWrite: Sendable, Equatable {
   /// Bits per second, converted from the wire's kbps.
   public var bitrate: Int?
   public var audioEnabled: Bool?
+  public var cleanHDMIEnabled: Bool?
   public var disabledLensIDs: Set<String>?
   /// The names in the request, in order, so the reply can echo exactly those.
   public var requestedNames: [String] = []
@@ -304,14 +308,14 @@ public struct CameraParameterWrite: Sendable, Equatable {
   public var isEmpty: Bool {
     name == nil && position == nil && displayedZoom == nil && codec == nil && width == nil
       && height == nil && frameRate == nil && bitrate == nil && audioEnabled == nil
-      && disabledLensIDs == nil
+      && cleanHDMIEnabled == nil && disabledLensIDs == nil
   }
 
   /// True when anything in `StreamSettings` is named, i.e. the phone should run one
   /// `applySettings()` after the merge.
   public var touchesSettings: Bool {
     codec != nil || width != nil || height != nil || frameRate != nil || bitrate != nil
-      || audioEnabled != nil || disabledLensIDs != nil
+      || audioEnabled != nil || cleanHDMIEnabled != nil || disabledLensIDs != nil
   }
 }
 
@@ -361,6 +365,7 @@ public enum CameraParameters {
     }
     set.set(CameraParameterName.audioEnabled, bool(s.audioEnabled))
     set.set(CameraParameterName.audioSampleRate, String(s.audioSampleRate))
+    set.set(CameraParameterName.videoOutputHDMIClean, bool(s.cleanHDMIEnabled))
     set.set(CameraParameterName.lensCount, String(snapshot.lenses.count))
     for (index, lens) in snapshot.lenses.enumerated() {
       set.set(CameraParameterName.lens(index, "id"), lens.id)
@@ -458,7 +463,10 @@ public enum CameraParameters {
       audioSampleRate: set[CameraParameterName.audioSampleRate].flatMap(Int.init) ?? 48_000,
       disabledLensIDs: idSet(set[CameraParameterName.lensDisabled]),
       cameraPosition: position,
-      displayedZoom: mapping.displayedZoom(forDevice: deviceZoom)
+      displayedZoom: mapping.displayedZoom(forDevice: deviceZoom),
+      // Absent from a phone that predates the name; those phones mirror, which the toggle also
+      // reads as "on" until it is told otherwise.
+      cleanHDMIEnabled: parseBool(set[CameraParameterName.videoOutputHDMIClean]) ?? true
     )
 
     return CameraSnapshot(
@@ -582,6 +590,10 @@ public enum CameraParameters {
         guard let enabled = parseBool(value) else { return .failure(bad("expected true or false")) }
         write.audioEnabled = enabled
 
+      case CameraParameterName.videoOutputHDMIClean:
+        guard let enabled = parseBool(value) else { return .failure(bad("expected true or false")) }
+        write.cleanHDMIEnabled = enabled
+
       case CameraParameterName.lensDisabled:
         let ids = idSet(value)
         let known = Set(snapshot.lenses.map(\.id))
@@ -636,6 +648,7 @@ public enum CameraParameters {
     // After `setCodec`, so an explicit rate in the same request wins over the codec default.
     if let bitrate = write.bitrate { next.bitrate = bitrate }
     if let audio = write.audioEnabled { next.audioEnabled = audio }
+    if let clean = write.cleanHDMIEnabled { next.cleanHDMIEnabled = clean }
     if let disabled = write.disabledLensIDs { next.disabledLensIDs = disabled }
     return next
   }

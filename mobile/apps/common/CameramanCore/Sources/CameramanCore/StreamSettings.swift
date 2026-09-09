@@ -49,6 +49,10 @@ public struct StreamSettings: Sendable, Codable, Equatable {
   /// shot, and on a fixed rig nobody is standing there to notice.
   public var cameraPosition: CameraPosition
   public var displayedZoom: Double
+  /// Whether a connected external display shows the encoder's picture with no overlays. Off hands
+  /// the display back to iOS mirroring, which shows this screen, chrome and all. Not a pipeline
+  /// setting: toggling it must never restart the encoder or cut the stream.
+  public var cleanHDMIEnabled: Bool
 
   public init(
     width: Int = 1920,
@@ -63,7 +67,8 @@ public struct StreamSettings: Sendable, Codable, Equatable {
     audioSampleRate: Int = 48_000,
     disabledLensIDs: Set<String> = [],
     cameraPosition: CameraPosition = .back,
-    displayedZoom: Double = 1
+    displayedZoom: Double = 1,
+    cleanHDMIEnabled: Bool = true
   ) {
     self.width = width
     self.height = height
@@ -78,6 +83,7 @@ public struct StreamSettings: Sendable, Codable, Equatable {
     self.cameraPosition = cameraPosition
     self.displayedZoom = displayedZoom
     self.disabledLensIDs = disabledLensIDs
+    self.cleanHDMIEnabled = cleanHDMIEnabled
   }
 
   /// Decoded field by field with defaults for anything absent.
@@ -101,6 +107,7 @@ public struct StreamSettings: Sendable, Codable, Equatable {
     disabledLensIDs = try c.decodeIfPresent(Set<String>.self, forKey: .disabledLensIDs) ?? d.disabledLensIDs
     cameraPosition = try c.decodeIfPresent(CameraPosition.self, forKey: .cameraPosition) ?? d.cameraPosition
     displayedZoom = try c.decodeIfPresent(Double.self, forKey: .displayedZoom) ?? d.displayedZoom
+    cleanHDMIEnabled = try c.decodeIfPresent(Bool.self, forKey: .cleanHDMIEnabled) ?? d.cleanHDMIEnabled
   }
 
   public static let `default` = StreamSettings()
@@ -126,6 +133,7 @@ public struct StreamSettings: Sendable, Codable, Equatable {
     case rtspPort
     case rtspPath
     case disabledLenses
+    case cleanHDMI = "cleanHdmi"
   }
 
   /// What was saved on the device, laid over these launch defaults.
@@ -146,6 +154,7 @@ public struct StreamSettings: Sendable, Codable, Equatable {
     if !explicit.contains(.rtspPort) { merged.port = saved.port }
     if !explicit.contains(.rtspPath) { merged.path = saved.path }
     if !explicit.contains(.disabledLenses) { merged.disabledLensIDs = saved.disabledLensIDs }
+    if !explicit.contains(.cleanHDMI) { merged.cleanHDMIEnabled = saved.cleanHDMIEnabled }
     return merged
   }
 }

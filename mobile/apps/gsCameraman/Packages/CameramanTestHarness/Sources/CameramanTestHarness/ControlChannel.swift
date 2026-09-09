@@ -17,6 +17,8 @@ public enum ControlCommand: Sendable, Equatable {
   case setAudio(on: Bool)
   case setLenses(disabled: [String])
   case setVideo(on: Bool)
+  /// The clean external-display feed. Off hands a connected display back to iOS mirroring.
+  case setCleanHDMI(on: Bool)
   /// Hold outgoing frames back to imitate a congested link. All three in milliseconds; all zero
   /// restores immediate delivery.
   case setSendDelay(milliseconds: Double, jitter: Double, burst: Double)
@@ -90,6 +92,10 @@ public enum ControlChannel {
     case "set-video":
       guard let on = query["on"].map(isTruthy) else { return nil }
       return .setVideo(on: on)
+
+    case "set-clean-hdmi":
+      guard let on = query["on"].map(isTruthy) else { return nil }
+      return .setCleanHDMI(on: on)
 
     case "set-send-delay", "setsenddelay":
       // Every field optional so a flow can set only what it is exercising; omitted means zero.

@@ -19,6 +19,10 @@ struct StateDumpTests {
     #expect(json?["cpuCores"] != nil)
     #expect(json?["interrupted"] as? Bool == false)
     #expect(json?["audioPendingBytes"] as? Int == 0)
+    #expect(json?["cleanHDMIEnabled"] as? Bool == true)
+    let display = json?["externalDisplay"] as? [String: Any]
+    #expect(display?["connected"] as? Bool == false)
+    #expect(display?["framesEnqueued"] as? Int == 0)
     let server = json?["server"] as? [String: Any]
     #expect(server?["acceptedClients"] as? Int == 0)
     #expect(server?["closedClients"] as? Int == 0)

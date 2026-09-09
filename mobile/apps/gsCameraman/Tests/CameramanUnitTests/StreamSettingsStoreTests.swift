@@ -30,10 +30,24 @@ struct StreamSettingsStoreTests {
     written.port = 8554
     written.path = "/live/other"
     written.disabledLensIDs = [ "uw", "tele" ]
+    written.cleanHDMIEnabled = false
 
     persistence.save(written)
     let read = try #require(persistence.load())
     #expect(read == written)
+  }
+
+  @Test("Settings saved before the clean HDMI toggle existed come back with it on")
+  func legacyBlobWithoutCleanHDMIDecodesToOn() throws {
+    // The store treats a decode failure as "never configured", so a missing key must decode
+    // rather than throw, and it must decode to the default the operator never chose against.
+    let backing = InMemorySettingsStore(
+      values: [ StreamSettingsStore.settingsKey: #"{"codec":"h264","bitrate":6000000}"# ]
+    )
+    let persistence = StreamSettingsStore(store: backing, legacyDefaults: nil)
+    let read = try #require(persistence.load())
+    #expect(read.codec == .h264)
+    #expect(read.cleanHDMIEnabled)
   }
 
   @Test("A later save replaces the previous one")
@@ -128,13 +142,24 @@ struct StreamSettingsMergeTests {
     saved.frameRate = 60
     saved.audioEnabled = false
     saved.disabledLensIDs = [ "uw" ]
+    saved.cleanHDMIEnabled = false
     let merged = StreamSettings.default.merging(saved: saved, keeping: [ .codec ])
     #expect(merged.width == 1280)
     #expect(merged.height == 720)
     #expect(merged.frameRate == 60)
     #expect(merged.audioEnabled == false)
     #expect(merged.disabledLensIDs == Set([ "uw" ]))
+    #expect(merged.cleanHDMIEnabled == false)
     #expect(merged.codec == StreamSettings.default.codec)
+  }
+
+  @Test("Clean HDMI is on by default and a launch that pins it beats the saved value")
+  func cleanHDMIDefaultsOnAndCanBePinned() {
+    #expect(StreamSettings.default.cleanHDMIEnabled)
+    var saved = StreamSettings()
+    saved.cleanHDMIEnabled = false
+    #expect(StreamSettings.default.merging(saved: saved, keeping: [ .cleanHDMI ]).cleanHDMIEnabled)
+    #expect(StreamSettings.default.merging(saved: saved, keeping: []).cleanHDMIEnabled == false)
   }
 
   @Test("A blanked camera comes back showing a picture")
@@ -168,7 +193,7 @@ struct StreamSettingsMergeTests {
     #expect(
       Set(StreamSettings.Field.allCases.map(\.rawValue)) == Set([
         "codec", "bitrateMbps", "width", "height", "frameRate",
-        "audioEnabled", "rtspPort", "rtspPath", "disabledLenses"
+        "audioEnabled", "rtspPort", "rtspPath", "disabledLenses", "cleanHdmi"
       ])
     )
   }

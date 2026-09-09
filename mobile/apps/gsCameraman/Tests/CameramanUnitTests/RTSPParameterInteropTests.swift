@@ -104,6 +104,24 @@ struct RTSPParameterInteropTests {
     #expect(set["videoEncoder.rateControl.bitrateLimit"] == "6000")
   }
 
+  @Test("Director reads the clean HDMI toggle and can turn it off")
+  func cleanHDMI() throws {
+    var responder = responder(CameraParametersTests.snapshot())
+    var builder = RTSPRequestBuilder()
+    let name = CameraParameterName.videoOutputHDMIClean
+
+    let before = try exchange(builder.make(.getParameter, uri: uri, body: Data("\(name)\r\n".utf8)), through: &responder)
+    #expect(before.statusCode == 200)
+    #expect(try CameraParameterSet.decode(before.bodyText).get()[name] == "true")
+
+    let write = try exchange(builder.make(.setParameter, uri: uri, body: Data("\(name): false\r\n".utf8)), through: &responder)
+    #expect(write.statusCode == 200)
+    #expect(try CameraParameterSet.decode(write.bodyText).get()[name] == "false")
+
+    let after = try exchange(builder.make(.getParameter, uri: uri, body: Data("\(name)\r\n".utf8)), through: &responder)
+    #expect(try CameraParameterSet.decode(after.bodyText).get()[name] == "false")
+  }
+
   @Test("Errors reach Director with their RTSP status and the offending name")
   func errors() throws {
     var responder = responder(CameraParametersTests.snapshot())
