@@ -150,6 +150,9 @@ public struct TileTelemetry: Sendable, Codable, Equatable {
   public var archiveEncodeRefused: UInt64 = 0
   public var archiveEncoderRebuilds: UInt64 = 0
   public var archiveEncodeStatus: Int = 0
+  public var decodeFailures: UInt64 = 0
+  public var decoderRebuilds: UInt64 = 0
+  public var decodeStatus: Int = 0
   public var archiveDropped: UInt64 = 0
   public var archiveBacklog = 0
   /// One frame in this many reaches the archive. Above 1 the camera is recording at a fraction of

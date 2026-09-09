@@ -3419,6 +3419,9 @@ public final class AppEnvironment {
         tile.archiveEncodeRefused = receive.archiveEncodeRefused
         tile.archiveEncoderRebuilds = receive.archiveEncoderRebuilds
         tile.archiveEncodeStatus = receive.archiveEncodeStatus
+        tile.decodeFailures = receive.decodeFailures
+        tile.decoderRebuilds = receive.decoderRebuilds
+        tile.decodeStatus = receive.decodeStatus
         tile.archiveDropped = receive.archiveDropped
         tile.archiveBacklog = receive.archiveBacklog
         tile.archiveStride = receive.archiveStride

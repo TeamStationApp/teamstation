@@ -213,6 +213,10 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
       )
       : 0
     snapshot.playoutDepth = pictures.count + decodedFrames.count
+    let decoding = decoder?.currentStatistics
+    snapshot.decodeFailures = decoding?.failures ?? 0
+    snapshot.decoderRebuilds = decoding?.rebuilds ?? 0
+    snapshot.decodeStatus = decoding?.lastFailureStatus ?? 0
     snapshot.senderReports = clockAudit.reportCount
     snapshot.senderReportIntervalSeconds = (clockAudit.meanIntervalSeconds * 100).rounded() / 100
     snapshot.senderReportAgeSeconds = clockAudit.lastReportUptime > 0

@@ -276,6 +276,12 @@ public struct ReceiveStats: Sendable, Equatable {
   public var archiveEncoderRebuilds: UInt64 = 0
   /// The `OSStatus` of the most recent refusal, so the failure can be named rather than guessed at.
   public var archiveEncodeStatus: Int = 0
+  /// Decode failures, sessions rebuilt after one went permanently bad, and the `OSStatus` of the
+  /// last failure. A dead decoder and a silent camera look identical from a tile that has stopped
+  /// updating; these are what tell them apart.
+  public var decodeFailures: UInt64 = 0
+  public var decoderRebuilds: UInt64 = 0
+  public var decodeStatus: Int = 0
   public var archiveDropped: UInt64 = 0
   /// How many frames are waiting to be encoded right now.
   public var archiveBacklog: Int = 0
