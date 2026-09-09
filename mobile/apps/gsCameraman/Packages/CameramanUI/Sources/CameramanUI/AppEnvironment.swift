@@ -483,6 +483,15 @@ public final class AppEnvironment {
     public var enabled: Bool
   }
 
+  /// The external display as the app sees it. `framesEnqueued` climbing is the only proof the clean
+  /// feed is being drawn: a display can be connected with the feed disabled, and a run reporting
+  /// zero here while a display is attached has shown nothing on it.
+  public struct ExternalDisplayDump: Encodable, Sendable, Equatable {
+    public var connected: Bool
+    public var mode: String?
+    public var framesEnqueued: Int
+  }
+
   /// What a flow can assert on without reading pixels. Everything here is a decision the app made,
   /// not a rendering of it, so a failing assertion names the decision that was wrong.
   public struct StateDump: Encodable, Sendable {
@@ -496,6 +505,8 @@ public final class AppEnvironment {
     public var bitrateMbps: Double
     public var audioEnabled: Bool
     public var videoEnabled: Bool
+    public var cleanHDMIEnabled: Bool
+    public var externalDisplay: ExternalDisplayDump
     public var position: String
     public var deviceType: String
     public var displayedZoom: Double
@@ -546,6 +557,8 @@ public final class AppEnvironment {
       bitrateMbps: Double(settings.bitrate) / 1_000_000,
       audioEnabled: settings.audioEnabled,
       videoEnabled: settings.videoEnabled,
+      cleanHDMIEnabled: settings.cleanHDMIEnabled,
+      externalDisplay: externalDisplayDump,
       position: cameraState.position.rawValue,
       deviceType: cameraState.deviceType,
       displayedZoom: cameraState.displayedZoom,
@@ -588,6 +601,10 @@ public final class AppEnvironment {
       sendDelayHeldNow: sendDelaySummary.held,
       sendDelayHeldTotal: sendDelaySummary.totalHeld
     )
+  }
+
+  private var externalDisplayDump: ExternalDisplayDump {
+    ExternalDisplayDump(connected: false, mode: nil, framesEnqueued: 0)
   }
 
   private var sendQueueDroppedFrames: Int {
@@ -693,6 +710,11 @@ public final class AppEnvironment {
       settings.videoEnabled = on
       noteSettingsApplied()
       videoEncoder.requestKeyframe()
+      return ok()
+
+    case let .setCleanHDMI(on):
+      settings.cleanHDMIEnabled = on
+      noteSettingsApplied()
       return ok()
 
     case let .setSendDelay(milliseconds, jitter, burst):

@@ -227,6 +227,9 @@ public final class RemoteCameraControl: CameraControlling {
     if next.audioEnabled != current.audioEnabled {
       lines.append((CameraParameterName.audioEnabled, next.audioEnabled ? "true" : "false"))
     }
+    if next.cleanHDMIEnabled != current.cleanHDMIEnabled {
+      lines.append((CameraParameterName.videoOutputHDMIClean, next.cleanHDMIEnabled ? "true" : "false"))
+    }
     if next.disabledLensIDs != current.disabledLensIDs {
       lines.append((CameraParameterName.lensDisabled, next.disabledLensIDs.sorted().joined(separator: ",")))
     }
