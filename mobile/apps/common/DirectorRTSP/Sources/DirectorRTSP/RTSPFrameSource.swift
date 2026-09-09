@@ -638,6 +638,11 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
         pixelBuffer: pixelBuffer,
         presentationTime: presentationTime,
         wallClock: clock.now,
+        // The corrected capture time when the camera's sender reports have anchored one, so how
+        // old a picture is can be judged the same way on both transports.
+        captureWallClock: lastCorrectedCapture > 0
+          ? WallClock(seconds: lastCorrectedCapture)
+          : nil,
         frameID: id,
         markerValue: nil
       ),

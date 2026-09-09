@@ -302,6 +302,10 @@ public final class AppEnvironment {
         ? session.displayLatencyCapMilliseconds
         : nil
     )
+    // The delay line's cap above bounds how much latency is *added* deliberately. These bound how
+    // old a picture may be and still be worth showing, or still be worth keeping — which nothing
+    // enforced before, on either transport.
+
     self.cameras = registry
     self.telemetry = PipelineTelemetry(clock: clock)
     self.converter = PixelConverter()
@@ -319,6 +323,10 @@ public final class AppEnvironment {
       programStreamer: programStreamer,
       clock: clock
     )
+    // Applied here as well as on every settings change: the delay line's cap is set above during
+    // construction, and a frame gate that only took effect after the operator next opened Settings
+    // would be off for the whole of the first session.
+    self.router.setLatencyCaps(FrameLatencyGate.Caps(config: session))
 
     do {
       try DirectorPaths.createAll()
@@ -2984,6 +2992,14 @@ public final class AppEnvironment {
     if let url = launch.streamURL { config.streamURL = url }
     if let bitrate = launch.programBitrate { config.programBitrate = bitrate }
     if let rate = launch.programFrameRate { config.programFrameRate = rate }
+    if let cap = launch.displayLatencyCapMilliseconds {
+      config.displayLatencyCapEnabled = cap > 0
+      if cap > 0 { config.displayLatencyCapMilliseconds = AppConfig.clampedDisplayLatencyCap(cap) }
+    }
+    if let cap = launch.diskLatencyCapMilliseconds {
+      config.diskLatencyCapEnabled = cap > 0
+      if cap > 0 { config.diskLatencyCapMilliseconds = AppConfig.clampedDiskLatencyCap(cap) }
+    }
     return config
   }
 
@@ -3009,6 +3025,27 @@ public final class AppEnvironment {
         ? config.displayLatencyCapMilliseconds
         : nil
     )
+    // Two different things share the word latency. The line above bounds how much delay the
+    // delay line *adds* to smooth jitter; this bounds how old a picture may be and still be shown
+    // or still be kept. Nothing enforced the second before, on either transport, which is how a
+    // tile came to display frames two seconds behind the room.
+    router.setLatencyCaps(FrameLatencyGate.Caps(config: config))
+  }
+
+  public func setDiskLatencyCapMilliseconds(_ milliseconds: Double) {
+    var next = persistedConfig
+    next.diskLatencyCapEnabled = true
+    next.diskLatencyCapMilliseconds = AppConfig.clampedDiskLatencyCap(milliseconds)
+    update(config: next)
+  }
+
+  public func setDiskLatencyCapEnabled(_ enabled: Bool) {
+    var next = persistedConfig
+    next.diskLatencyCapEnabled = enabled
+    if enabled, next.diskLatencyCapMilliseconds <= 0 {
+      next.diskLatencyCapMilliseconds = AppConfig.diskLatencyCapDefaultMilliseconds
+    }
+    update(config: next)
   }
 
   public func export(sourceIndex: Int, lastSeconds: Double) {
@@ -3306,6 +3343,9 @@ public final class AppEnvironment {
       $0.residentSizeMB = ProcessLoad.residentSizeMB()
       $0.discoveryStatus = discoveryStatus
       $0.displayLatencyMilliseconds = displayLatency
+      let caps = FrameLatencyGate.Caps(config: config)
+      $0.displayLatencyCapMilliseconds = (caps.displaySeconds ?? 0) * 1_000
+      $0.diskLatencyCapMilliseconds = (caps.diskSeconds ?? 0) * 1_000
       $0.programAudioPlaying = self.router.audioPlayer.isRunning
       $0.isStreaming = self.isStreaming
       $0.keepAliveInBackground = self.shouldKeepAliveInBackground
@@ -3484,6 +3524,8 @@ public final class AppEnvironment {
       if let bitrate = launch.programBitrate { config.programBitrate = bitrate }
       if let rate = launch.programFrameRate { config.programFrameRate = rate }
       if let url = launch.streamURL { config.streamURL = url }
+      config = Self.applying(launch, to: config)
+      applyDisplayLatencyCap()
       if launch.useTestClock, testClock == nil { statusMessage = "Test clock requires relaunch" }
       if let profile = launch.sourceProfile {
         Task { await applySourceProfile(profile) }

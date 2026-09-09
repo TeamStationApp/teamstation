@@ -79,6 +79,43 @@ public struct PerfHarnessView: View {
           )
         }
 
+        Section {
+          LabeledContent("Refused for display") {
+            Text("\(environment.snapshot.tiles.reduce(0) { $0 + $1.displayRefusedLate })")
+          }
+          .accessibilityIdentifier("perf-display-refused-late")
+
+          LabeledContent("Refused for disk") {
+            Text("\(environment.snapshot.tiles.reduce(0) { $0 + $1.diskRefusedLate })")
+          }
+          .accessibilityIdentifier("perf-disk-refused-late")
+
+          Toggle(
+            "Cap how old a picture may be to record",
+            isOn: Binding(
+              get: { environment.config.diskLatencyCapEnabled },
+              set: { environment.setDiskLatencyCapEnabled($0) }
+            )
+          )
+          .accessibilityIdentifier("perf-disk-latency-cap-enabled")
+
+          if environment.config.diskLatencyCapEnabled {
+            DiskLatencyCapSlider(
+              milliseconds: environment.config.diskLatencyCapMilliseconds,
+              onChange: { environment.setDiskLatencyCapMilliseconds($0) }
+            )
+          }
+        } header: {
+          Text("Recording latency")
+        } footer: {
+          Text(
+            environment.config.diskLatencyCapEnabled
+              ? "A picture older than this is not written. Keep it well above the display cap: a "
+                + "late picture is still worth recording, and dropping it leaves a hole in the tape."
+              : "Unbounded: every picture is recorded however late it arrives."
+          )
+        }
+
         Section("Per source") {
           ForEach(environment.snapshot.tiles.filter { $0.sourceID != nil }, id: \.index) { tile in
             VStack(alignment: .leading, spacing: 3) {
@@ -111,6 +148,39 @@ public struct PerfHarnessView: View {
 }
 
 /// 10 ms to 2 s, labelled in milliseconds, with a tick every 100 ms and a taller mark every 500.
+/// The disk cap's own slider, in seconds rather than milliseconds.
+///
+/// Separate from the display slider because the two ranges have nothing in common: a monitor is
+/// already useless a few hundred milliseconds behind, while a recording only becomes wrong when a
+/// source has fallen seconds behind. One control spanning both would give the display cap two
+/// usable pixels.
+private struct DiskLatencyCapSlider: View {
+  var milliseconds: Double
+  var onChange: (Double) -> Void
+
+  private static let range = AppConfig.diskLatencyCapMinimumMilliseconds
+    ... AppConfig.diskLatencyCapMaximumMilliseconds
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      Text("Maximum \(milliseconds / 1_000, specifier: "%.1f") s")
+        .font(.subheadline)
+        .foregroundStyle(.secondary)
+        .accessibilityIdentifier("perf-disk-latency-cap-value")
+
+      Slider(
+        value: Binding(
+          get: { milliseconds },
+          set: { onChange($0) }
+        ),
+        in: Self.range,
+        step: 100
+      )
+      .accessibilityIdentifier("perf-disk-latency-cap")
+    }
+  }
+}
+
 private struct DisplayLatencyCapSlider: View {
   var milliseconds: Double
   var onChange: (Double) -> Void

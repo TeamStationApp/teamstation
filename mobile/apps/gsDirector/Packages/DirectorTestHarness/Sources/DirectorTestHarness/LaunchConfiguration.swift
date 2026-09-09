@@ -80,6 +80,11 @@ public struct LaunchConfiguration: Sendable, Equatable {
   /// of driving the Settings stepper. Session-only, like `streamURL`.
   public var programBitrate: Int?
   public var programFrameRate: Int?
+  /// How old a picture may be and still be shown, and still be kept. Session-only overlays, so a
+  /// run can prove the caps bite without leaving a 10 ms display cap in the operator's Settings.
+  /// Zero means off, which is how a run turns a cap back off again.
+  public var displayLatencyCapMilliseconds: Double?
+  public var diskLatencyCapMilliseconds: Double?
 
   public init() {}
 
@@ -163,6 +168,12 @@ public struct LaunchConfiguration: Sendable, Equatable {
     if let value = values["programFrameRate"], let rate = Int(value), rate > 0 {
       configuration.programFrameRate = rate
     }
+    if let value = values["displayLatencyCap"], let cap = Double(value), cap >= 0 {
+      configuration.displayLatencyCapMilliseconds = cap
+    }
+    if let value = values["diskLatencyCap"], let cap = Double(value), cap >= 0 {
+      configuration.diskLatencyCapMilliseconds = cap
+    }
 
     // `-key value` is registered in UserDefaults by the system before `main` runs, and it stays
     // there after the process exits. The next tap of the icon would then still be running last
@@ -196,6 +207,12 @@ public struct LaunchConfiguration: Sendable, Equatable {
     if let value = queryItems["programFrameRate"], let rate = Int(value), rate > 0 {
       programFrameRate = rate
     }
+    if let value = queryItems["displayLatencyCap"], let cap = Double(value), cap >= 0 {
+      displayLatencyCapMilliseconds = cap
+    }
+    if let value = queryItems["diskLatencyCap"], let cap = Double(value), cap >= 0 {
+      diskLatencyCapMilliseconds = cap
+    }
   }
 
   /// Names of every key understood here, surfaced in the HUD so a failing flow shows what the
@@ -207,7 +224,7 @@ public struct LaunchConfiguration: Sendable, Equatable {
     // A key missing from this array is silently ignored, which has already cost this project
     // debugging time; every argument above must appear here.
     "rtspTransport", "rtspHosts", "rtspPath", "rtspScan", "streamURL",
-    "programBitrate", "programFrameRate",
+    "programBitrate", "programFrameRate", "displayLatencyCap", "diskLatencyCap",
     "ndiSources", "ndiExtraIPs", "ndiBandwidth", "ndiLocalSources",
     "sourceEncodeCodec", "sourceEncodeBitrate", "sourceEncodeLimit"
   ]
