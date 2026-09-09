@@ -155,11 +155,37 @@ public final class NDIVideoFrameConverter: @unchecked Sendable {
     return destination
   }
 
+  /// Bytes one source may hold in decoded pictures, delay line included.
+  static let poolByteBudget = 256 * 1024 * 1024
+  /// Two bytes a pixel is UYVY, the format `NDIlib_recv_color_format_fastest` delivers here.
+  static func poolSize(width: Int, height: Int) -> Int {
+    let bytesPerFrame = max(1, width * height * 2)
+    return max(16, min(150, poolByteBudget / bytesPerFrame))
+  }
+
+  /// What the current pool can lend, for a delay line that must not outgrow it.
+  var maximumBuffers: Int {
+    lock.lock()
+    defer { lock.unlock() }
+    return factory?.maximumBuffers ?? Self.poolSize(width: 1920, height: 1080)
+  }
+
   private func buffer(width: Int, height: Int, format: OSType) -> CVPixelBuffer? {
     lock.lock()
     defer { lock.unlock() }
     if factory == nil || factoryWidth != width || factoryHeight != height || factoryFormat != format {
-      factory = PixelBufferFactory(width: width, height: height, pixelFormat: format)
+      // Sized for the delay line, not just for in-flight frames — a pool of 32 starved a half-second
+      // line into `poolMisses` — but bounded in bytes, not frames. NDI has no compressed form, so
+      // what the line holds is decoded pixels: at 1080p that is about 4 MB a frame, and a count
+      // chosen for the 2 s ceiling would let three cameras hold well over a gigabyte between them.
+      // The budget gives 1080p about a second at 60 fps; the line is capped to the pool so it never
+      // asks for more than this.
+      factory = PixelBufferFactory(
+        width: width,
+        height: height,
+        pixelFormat: format,
+        maximumBuffers: Self.poolSize(width: width, height: height)
+      )
       factoryWidth = width
       factoryHeight = height
       factoryFormat = format

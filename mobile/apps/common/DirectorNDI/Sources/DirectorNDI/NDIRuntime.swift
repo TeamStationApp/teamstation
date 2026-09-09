@@ -48,9 +48,25 @@ public final class NDIRuntime: @unchecked Sendable {
   /// when the SDK is next updated: it costs whatever reliable UDP was buying on a lossy network.
   static let reliableUDPDisabled = #"{ "ndi": { "rudp": { "recv": { "enable": false } } } }"#
 
+  /// Set before the first `acquire` to keep reliable UDP on — for measuring what turning it off
+  /// costs on a given rig, and for the day the SDK fixes the crash. Default is off.
+  public func setReliableUDP(_ enabled: Bool) {
+    lock.lock()
+    reliableUDPWanted = enabled
+    lock.unlock()
+  }
+
+  private var reliableUDPWanted = false
+
   private func configureTransport() {
-    let directory = URL(fileURLWithPath: NSHomeDirectory())
-      .appendingPathComponent("Documents")
+    guard !reliableUDPWanted else {
+      transportNote = "rudp receive ENABLED (crash risk at three cameras)"
+      return
+    }
+    // Application Support rather than Documents: this is ours, not the operator's, and Documents is
+    // what the Files app shows and what backups carry.
+    let directory = (FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+      ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support"))
       .appendingPathComponent("ndi")
     do {
       try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

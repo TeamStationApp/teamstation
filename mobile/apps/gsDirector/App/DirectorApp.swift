@@ -26,7 +26,9 @@ struct DirectorApp: App {
       launch: launch,
       cameras: cameras,
       discoveryFactory: { kind in
-        guard kind != .ndi else { return Self.makeNDIDiscovery(launch: launch) }
+        guard kind != .ndi else {
+          return Self.makeNDIDiscovery(launch: launch, coordinator: cameras.playout)
+        }
         return RTSPDiscovery(
           configuration: RTSPDiscovery.Configuration(
             path: launch.rtspPath,
@@ -52,7 +54,10 @@ struct DirectorApp: App {
   /// setting: the free SDK decodes before we see a frame, so unlike an RTSP camera the codec on
   /// disk is ours to choose. A launch argument wins for the session, as it does for the programme
   /// master.
-  private static func makeNDIDiscovery(launch: LaunchConfiguration) -> SourceDiscovery {
+  private static func makeNDIDiscovery(
+    launch: LaunchConfiguration,
+    coordinator: PlayoutCoordinator
+  ) -> SourceDiscovery {
     let stored = ConfigStore().load()
     let codec: CompressedFrame.Codec = (launch.sourceEncodeCodec ?? stored.sourceEncodeCodec) == .h264
       ? .h264
@@ -61,6 +66,7 @@ struct DirectorApp: App {
     if let limit = launch.sourceEncodeLimit {
       NDIArchiveBudget.shared.setCapacity(limit)
     }
+    NDIRuntime.shared.setReliableUDP(launch.ndiReliableUDP)
 
     return NDIDiscovery(
       configuration: NDIDiscovery.Configuration(
@@ -76,7 +82,8 @@ struct DirectorApp: App {
           ndiURL: source.url,
           encodeCodec: codec,
           encodeBitrate: bitrate,
-          lowBandwidth: launch.ndiBandwidth == "lowest"
+          lowBandwidth: launch.ndiBandwidth == "lowest",
+          coordinator: coordinator
         )
       }
     )

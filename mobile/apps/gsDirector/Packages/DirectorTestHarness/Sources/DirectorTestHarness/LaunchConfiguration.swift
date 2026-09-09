@@ -65,6 +65,10 @@ public struct LaunchConfiguration: Sendable, Equatable {
   /// Whether the NDI finder reports senders on this machine. On by default because on a simulator
   /// the whole test rig is a generator on the same host.
   public var ndiLocalSources = true
+  /// Keeps NDI's reliable-UDP receive transport on despite the crash it carries at three cameras.
+  /// A measurement switch: it is the smoother transport, and whether that matters on a given rig
+  /// is only answerable by running both.
+  public var ndiReliableUDP = false
   /// Codec for archives the app has to encode itself. Overrides the stored setting for the
   /// session, the way `programCodec` does for the master.
   public var sourceEncodeCodec: ProgramCodec?
@@ -152,6 +156,7 @@ public struct LaunchConfiguration: Sendable, Equatable {
       configuration.ndiBandwidth = bandwidth
     }
     configuration.ndiLocalSources = boolean(values["ndiLocalSources"]) ?? true
+    configuration.ndiReliableUDP = boolean(values["ndiRudp"]) ?? false
     if let raw = values["sourceEncodeCodec"]?.lowercased(), let codec = ProgramCodec(rawValue: raw) {
       configuration.sourceEncodeCodec = codec
     }
@@ -225,7 +230,7 @@ public struct LaunchConfiguration: Sendable, Equatable {
     // debugging time; every argument above must appear here.
     "rtspTransport", "rtspHosts", "rtspPath", "rtspScan", "streamURL",
     "programBitrate", "programFrameRate", "displayLatencyCap", "diskLatencyCap",
-    "ndiSources", "ndiExtraIPs", "ndiBandwidth", "ndiLocalSources",
+    "ndiSources", "ndiExtraIPs", "ndiBandwidth", "ndiLocalSources", "ndiRudp",
     "sourceEncodeCodec", "sourceEncodeBitrate", "sourceEncodeLimit"
   ]
 
