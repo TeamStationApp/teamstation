@@ -94,6 +94,26 @@ targets:
       - package: DirectorTestHarness
         product: DirectorTestHarness
 
+  # Nothing of Director's is linked here on purpose. See `gsNdiProbe/App/Probe.swift`.
+  NDIProbe:
+    type: application
+    platform: iOS
+    sources:
+      - path: ../gsNdiProbe/App
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: co.gamestation.ndiprobe
+        PRODUCT_NAME: NDI Probe
+        INFOPLIST_FILE: ../gsNdiProbe/App/Info.plist
+        CURRENT_PROJECT_VERSION: "1"
+        MARKETING_VERSION: "1.0"
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD: NO
+        LD_RUNPATH_SEARCH_PATHS: $(inherited) @executable_path/Frameworks
+    dependencies:
+      - package: DirectorNDI
+        product: CNDI
+
   DirectorUnitTests:
     type: bundle.unit-test
     platform: iOS
@@ -164,6 +184,13 @@ targets:
         BUNDLE_LOADER: $(TEST_HOST)
 
 schemes:
+  NDIProbe:
+    build:
+      targets:
+        NDIProbe: all
+    run:
+      config: Debug
+
   Director:
     build:
       targets:
