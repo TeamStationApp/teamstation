@@ -415,6 +415,18 @@ phone's; the control path is unaffected, but nothing may assume the two clocks a
 still captures and draws for HDMI, so it is not idle — it has simply stopped compressing and sending,
 which is where most of its power went.
 
+Measured on the bench, 2026-09-09, iPhone 15 Pro at 1080p60 into a C2, Director on an iPad Pro M4
+simulator, with a stopwatch in shot:
+
+| | |
+| --- | --- |
+| Tile arrival rate | 59 fps, and 117 distinct frames in a 2 s screen recording — no repeats |
+| Glass to glass, wall clock to tile | 0.62–0.82 s, across three timestamped captures |
+| Frames the phone compressed while linked | 2, the pair the SDP needs; `stream.clients` stayed 0 |
+
+That last row is the point of the arrangement: 3,436 frames captured, 2,741 drawn on HDMI, 2
+encoded. The path from the phone is a `GET_PARAMETER` every five seconds.
+
 ## Capacity, and what a simulator does not tell you
 
 The simulator has **no hardware video encoder**. Four 1080p HEVC archives there are software
