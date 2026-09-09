@@ -29,6 +29,14 @@ public final class WireVideoEncoder: @unchecked Sendable {
   /// the difference is worth knowing rather than guessing: without it `AverageBitRate` is only a
   /// hint and the output can be several times the requested rate.
   public private(set) var dataRateLimitStatus: OSStatus = noErr
+  /// Encode submissions VideoToolbox refused, and the status of the most recent refusal.
+  ///
+  /// The return of `VTCompressionSessionEncodeFrame` used to be discarded. A session that starts
+  /// refusing frames therefore looked exactly like a healthy one: submissions kept counting, output
+  /// stopped, and an NDI recording ended after a minute without a word. Whatever else is done about
+  /// it, the count has to exist.
+  public private(set) var refusedFrames: UInt64 = 0
+  public private(set) var lastEncodeStatus: OSStatus = noErr
   /// The frame rate the session currently believes it is encoding.
   private var expectedFrameRate: Double = 0
   /// Presentation time of the last frame this encoder was told to make a keyframe.
@@ -115,6 +123,9 @@ public final class WireVideoEncoder: @unchecked Sendable {
     VTCompressionSessionPrepareToEncodeFrames(session)
   }
 
+  /// Only reached by an encoder that was never finished. Still worth doing — an abandoned session
+  /// holds hardware — but every path that retires an encoder should call `finish()` instead, so
+  /// the invalidate happens before this object starts being destroyed rather than during.
   deinit {
     if let session { VTCompressionSessionInvalidate(session) }
   }
@@ -162,6 +173,7 @@ public final class WireVideoEncoder: @unchecked Sendable {
     // live session did not move it; asking for the keyframe outright does, and does not depend on
     // the encoder agreeing with us about the rate.
     lock.lock()
+    let previousForcedKeyframe = lastForcedKeyframe
     let due = !lastForcedKeyframe.isNumeric
       || CMTimeGetSeconds(CMTimeSubtract(presentationTime, lastForcedKeyframe)) >= keyframeInterval
     if due { lastForcedKeyframe = presentationTime }
@@ -171,7 +183,7 @@ public final class WireVideoEncoder: @unchecked Sendable {
       ? [ kVTEncodeFrameOptionKey_ForceKeyFrame: kCFBooleanTrue ] as CFDictionary
       : nil
 
-    VTCompressionSessionEncodeFrame(
+    let status = VTCompressionSessionEncodeFrame(
       session,
       imageBuffer: pixelBuffer,
       presentationTimeStamp: presentationTime,
@@ -180,11 +192,51 @@ public final class WireVideoEncoder: @unchecked Sendable {
       sourceFrameRefcon: nil,
       infoFlagsOut: nil
     )
+    guard status != noErr else { return }
+    lock.lock()
+    refusedFrames &+= 1
+    lastEncodeStatus = status
+    // A forced keyframe that was refused was never made, so the next frame has to ask again.
+    // Leaving the mark set means the archive waits a further second for a sync sample that is
+    // already lost, and `SegmentWriter` opens every file on one.
+    if due { lastForcedKeyframe = previousForcedKeyframe }
+    lock.unlock()
   }
 
+  /// Whether this session has stopped accepting work and needs rebuilding rather than retrying.
+  ///
+  /// `kVTInvalidSessionErr` is the documented "this session is finished" answer, and a malfunction
+  /// is the encoder having given up. Both are permanent for the session, so a caller that keeps
+  /// submitting to it produces a recording that never grows again.
+  public var needsRebuild: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return lastEncodeStatus == kVTInvalidSessionErr
+      || lastEncodeStatus == kVTVideoEncoderMalfunctionErr
+      || lastEncodeStatus == kVTVideoEncoderNotAvailableNowErr
+  }
+
+  /// Drains and tears the session down here, while this object is definitely still alive.
+  ///
+  /// The output callback holds `self` unretained, which is only safe as long as the session is
+  /// invalidated before the object goes. Leaving the invalidate to `deinit` inverted that: the
+  /// session was torn down *as* the encoder was being destroyed, so a callback arriving in that
+  /// window dereferenced an object already on its way out. Rare while an encoder was built once
+  /// per camera and kept; not rare at all once a malfunctioning session gets replaced, which under
+  /// three 1080p60 archives happened roughly twice a minute and crashed the app with SIGSEGV.
+  ///
+  /// Order matters. The handler goes first so nothing is published from a session being retired,
+  /// then the pending frames are drained, then the session is invalidated — which is the point
+  /// VideoToolbox guarantees no further callbacks — and only then may this object be released.
   public func finish() {
-    if let session { VTCompressionSessionCompleteFrames(session, untilPresentationTimeStamp: .invalid) }
     setHandler(nil)
+    lock.lock()
+    let session = self.session
+    self.session = nil
+    lock.unlock()
+    guard let session else { return }
+    VTCompressionSessionCompleteFrames(session, untilPresentationTimeStamp: .invalid)
+    VTCompressionSessionInvalidate(session)
   }
 
   private func publish(_ sampleBuffer: CMSampleBuffer) {

@@ -77,7 +77,13 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
   /// previews and still cuts to programme; only its own recording is refused, which is the existing
   /// rule for starting a recording applied one level down.
   private var archiveRefused = false
+  /// `WireVideoEncoder` could not be made for this camera's archive. Reported until one can be.
+  private var encoderUnavailable = false
+  private static let encoderUnavailableReason = "no encoder available for this camera's archive"
   private var decimator = ArchiveDecimator()
+  /// Refusals from sessions this camera has already discarded, so the count describes the camera
+  /// rather than whichever encoder it happens to be holding.
+  private var archiveRefusalsCarried: UInt64 = 0
   private var videoEncoder: WireVideoEncoder?
   private var audioEncoder: WireAudioEncoder?
   private var encoderWidth = 0
@@ -297,6 +303,7 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
       self.isArchiving = false
       archiveRefused = false
       NDIArchiveBudget.shared.release(sourceID.rawValue)
+      encoderUnavailable = false
       // The video encoder is dropped here and rebuilt on the first archived frame, so the session
       // is genuinely returned rather than parked. Rebuilding costs one frame at the start of a
       // recording, which is a keyframe anyway.
@@ -308,7 +315,10 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
       decimator.reset()
     }
     lock.unlock()
-    if !isArchiving { previousVideo?.finish() }
+    // On the encode queue, so the teardown can never overlap an `encode` in flight on the same
+    // session — VideoToolbox does not document that as safe. Asynchronous, because this is also
+    // reached from `deinit`, which may itself be running on that queue.
+    if !isArchiving, let previousVideo { encodeQueue.async { previousVideo.finish() } }
   }
 
   public func stop() {
@@ -485,6 +495,10 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
       self.encodeBacklog -= 1
       self.stats.archiveBacklog = self.encodeBacklog
       self.stats.archiveEncoded += 1
+      self.stats.archiveEncodeRefused = self.archiveRefusalsCarried + (encoder?.refusedFrames ?? 0)
+      if let status = encoder?.lastEncodeStatus, status != noErr {
+        self.stats.archiveEncodeStatus = Int(status)
+      }
       self.lock.unlock()
     }
   }
@@ -497,15 +511,35 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
   private func encoderForArchive(width: Int, height: Int, rate: Double) -> WireVideoEncoder? {
     lock.lock()
     if let existing = videoEncoder, encoderWidth == width, encoderHeight == height {
+      // A session that has stopped accepting work is not reusable, and feeding it anyway is how an
+      // NDI recording came to stop after a minute in silence: submissions kept succeeding, the
+      // encoder produced nothing, and because every archive file opens on a sync sample the writer
+      // had nothing to open the next one with. Rebuilding costs one keyframe.
+      guard !existing.needsRebuild else {
+        stats.archiveEncoderRebuilds += 1
+        lock.unlock()
+        return rebuildEncoder(width: width, height: height, rate: rate)
+      }
       lock.unlock()
       return existing
     }
+    lock.unlock()
+    return rebuildEncoder(width: width, height: height, rate: rate)
+  }
+
+  private func rebuildEncoder(width: Int, height: Int, rate: Double) -> WireVideoEncoder? {
+    lock.lock()
     let hadEncoder = videoEncoder != nil
     let previous = videoEncoder
+    archiveRefusalsCarried += previous?.refusedFrames ?? 0
     videoEncoder = nil
+    let wanted = running && isArchiving
     lock.unlock()
 
     previous?.finish()
+    // A source that has stopped, or whose archive is off, retires the old encoder and builds
+    // nothing: a `stop` racing an encode would otherwise pay for a 1080p session to throw away.
+    guard wanted else { return nil }
 
     guard let encoder = WireVideoEncoder(
       width: width,
@@ -515,13 +549,26 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
       bitrate: encodeBitrate
     ) else {
       lock.lock()
-      stats.status = "no encoder available for this camera's archive"
+      // Sticky, like `archiveRefused`: the next frame's format update would otherwise overwrite
+      // this with nothing and the operator would never see it.
+      encoderUnavailable = true
+      stats.status = Self.encoderUnavailableReason
       lock.unlock()
       return nil
     }
     encoder.setHandler { [weak self] unit in self?.publish(unit) }
 
     lock.lock()
+    // Building takes long enough for the source to have been stopped or its archive turned off
+    // meanwhile; an encoder installed now would be a live 1080p session held by a source that is
+    // recording nothing, until deinit tears it down — which is the window this class must not be
+    // in. Retire it here instead, on the queue that owns encoding.
+    guard running, isArchiving else {
+      lock.unlock()
+      encoder.finish()
+      return nil
+    }
+    encoderUnavailable = false
     videoEncoder = encoder
     encoderWidth = width
     encoderHeight = height
@@ -538,6 +585,7 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     lock.lock()
     let handler = sinks.compressed
     let pending = pendingFrames.removeValue(forKey: unit.presentationTime.value)
+    if unit.isKeyframe { stats.archiveKeyframes += 1 }
     lock.unlock()
     guard let handler else { return }
 
@@ -672,7 +720,9 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     // A healthy frame clears a *receive* complaint, but not the archive refusal: that camera is
     // receiving perfectly and still not recording, which is exactly the state the operator has to
     // be told about and the one a cleared status would hide.
-    stats.status = archiveRefused ? Self.archiveRefusedReason : nil
+    stats.status = archiveRefused
+      ? Self.archiveRefusedReason
+      : (encoderUnavailable ? Self.encoderUnavailableReason : nil)
   }
 
   /// One string, so the refusal reads the same whether it is set when the archive is asked for or
