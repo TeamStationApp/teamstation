@@ -130,6 +130,30 @@ No sustained-stream run has been done yet, so nothing is known about how long th
 before throttling, or what 4K30 costs. Unlike the iPad in `../gsDirector/docs/risks.md`, this handset
 is not sitting on a Peltier cooler.
 
+### Mirroring when clean HDMI is off is unverified until the hardware test
+
+The design puts no window on the external-display scene when the toggle is off and expects iOS to
+resume mirroring the phone's screen. That is the documented behaviour of a scene with no window,
+but it has not yet been seen on a cable: the first A3 run with the iPhone 15 Pro on the Cosmo C2
+has to flip the toggle both ways and watch the display. If mirroring does not come back, the
+fallback is to render the phone's own root view into the external window when the toggle is off.
+
+### The external scene goes away when the app is backgrounded
+
+An external-display scene is torn down when the app leaves the foreground, and the RTSP listener
+already dies then (see the backgrounded-Cameraman note in the operating memory). Nothing new,
+but a phone whose only output is HDMI now shows the display going dark as well as the stream
+stopping. When the listener-lifecycle work lands, `handleForeground()` should also flush the
+display layer so the first frame back is not a stale one.
+
+### HDMI adds heat
+
+DisplayPort alt mode on top of capture, and encode when a client is playing, on a phone that may be
+in the sun. The idle encoder removes the encode share when nothing is playing, which is the linked
+Cosmo C2 case, but the A3 soak (20 min at 1080p30 with HDMI and RTSP together, `system.thermal`
+recorded over time) is what says whether the phone holds it. The thermal badge and Director's
+thermal pill surface it either way.
+
 ### The simulator has no camera
 
 Anything touching `AVCaptureSession` is verifiable only on the handset. The synthetic camera source

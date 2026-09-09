@@ -22,9 +22,9 @@ the same screen for a phone they control over the network:
 | `common/CameramanCore` | identity, stream settings, zoom mapping, lenses, format catalogue, thermal level, frame types, the `CameraControlling` seam | no |
 | `common/CameramanControlUI` | the operating screen, Settings, zoom rail, thermal and battery pills, generic over `CameraControlling` | no |
 | `CameramanCapture` | `AVCaptureSession`, lens selection, format selection | yes |
-| `CameramanEncode` | VideoToolbox H.264/HEVC, AAC, NAL and parameter-set handling | partly |
+| `CameramanEncode` | VideoToolbox H.264/HEVC, AAC, NAL and parameter-set handling, the black frame both blanking paths share | partly |
 | `CameramanRTSP` | RTSP server, packetizers, SDP, RTCP, interleaved framing | no |
-| `CameramanUI` | `AppEnvironment` (which conforms to `CameraControlling`), the preview layer, root and diagnostic views | no |
+| `CameramanUI` | `AppEnvironment` (which conforms to `CameraControlling`), the preview layer, root and diagnostic views, the external-display scene and clean feed | no |
 | `CameramanTestHarness` | launch arguments, control channel, synthetic camera, recorders | no |
 
 The encoder emits plain elementary NAL units rather than `CMSampleBuffer`s, which is what lets every
@@ -47,6 +47,15 @@ in-band on every keyframe.
 
 **Audio** is AAC-LC at 48 kHz mono, RFC 3640 `mpeg4-generic` in AAC-hbr mode. On by default, and
 omitted from the SDP entirely rather than announced-and-silent when muted.
+
+**Nobody playing, nobody encoding.** While `stream.clients` is 0 the frames are still captured,
+counted and drawn on an external display, but neither encoder runs (`EncoderIdlePolicy`): a phone
+that only answers telemetry and control, with its picture leaving over HDMI, spends nothing on
+VideoToolbox. Two exceptions: the video encoder runs until it has produced parameter sets, since
+`DESCRIBE` puts those in the SDP before anyone can `PLAY`; and `-encodeWhenIdle true` keeps both
+running for a diagnostic. The first client's `PLAY` requests a keyframe and the 0→1 client
+transition requests another, so the first encoded frame after idle is an IDR. `dump-state` reports
+`encoderIdle`.
 
 **Backpressure** is a byte budget per connection. Audio is never dropped, non-keyframes are dropped
 once over the water mark, and a keyframe flushes the backlog and starts a fresh one. A client that
@@ -95,6 +104,41 @@ same `persistFramingIfChanged` path as a local pinch. Only playing sessions coun
 connection that merely polls parameters is not a viewer. The Bonjour TXT record carries
 `control=params/1` so a client knows before connecting that this build answers the verbs.
 
+## External display
+
+A USB-C display gets exactly what the encoder is given, and nothing else: no name badge, thermal or
+battery pill, zoom rail or buttons. The point is a capture device on the end of the cable (a
+Hollyland Cosmo C2 turning HDMI into NDI), which then carries the encoder's framing byte for byte
+while the phone's radio stays quiet.
+
+```
+  capture frame ──► VideoEncoder.encode(frame, blank:)          ──► RTSP
+        └─────────► CleanFeedController.enqueue(frame, blank:)  ──► AVSampleBufferDisplayLayer on the external window
+```
+
+The fan-out is the one `onVideoFrame` closure in `AppEnvironment.startEncoding`, so the display and
+the stream always see the same picture, including black when video is off. The display gets a new
+`CMSampleBuffer` over the same pixels with `DisplayImmediately` set (`CleanFeedFrame`); the buffer
+the encoder is reading on its own queue is never touched. Frames go from the capture queue to
+`AVSampleBufferVideoRenderer` directly, with no main-actor hop.
+
+The display is a UIKit scene: `Info.plist` declares `UIApplicationSupportsMultipleScenes` and a
+configuration for `UIWindowSceneSessionRoleExternalDisplayNonInteractive`, and
+`CameramanAppDelegate.application(_:configurationForConnecting:options:)` names
+`ExternalDisplaySceneDelegate` for that role. The delegate hands the connected `UIWindowScene` to
+`CleanFeedController` (owned by `AppEnvironment`), which picks the screen mode whose size matches
+the stream's width × height, else the largest, with overscan compensation off, and puts a
+`UIWindow` with a `CleanFeedViewController` on it. `.resizeAspect`, so a stream that does not match
+the display is letterboxed rather than cropped. A resolution change in Settings re-runs the mode
+selection.
+
+`StreamSettings.cleanHDMIEnabled` (Settings → Output → "Clean HDMI output", on by default) is not a
+pipeline setting: it never restarts the encoder. Off means the controller puts no window on the
+display and drops the one it had, which is what lets iOS resume mirroring the phone's screen. The
+same value is the `cleanHdmi` launch key, the `set-clean-hdmi` control command, the
+`videoOutput.hdmi.clean` parameter, and `cleanHDMIEnabled` plus `externalDisplay`
+(`connected`, `mode`, `framesEnqueued`) in `dump-state`.
+
 ## Discovery
 
 The server advertises `_rtsp._tcp` and `_awx_service._tcp` over Bonjour. Director finds NearStream
@@ -113,7 +157,7 @@ fallback are visible on screen, because an operator reading "554" off a phone th
 ```bash
 socket npm run bootstrap        # xcodegen + resolve packages
 socket npm run build:device     # build, install and launch on the connected iPhone
-socket npm run test:unit        # 188 tests on the simulator
+socket npm run test:unit        # 302 tests on the simulator
 socket npm run verify:stream    # end-to-end: build, launch, discover, pull, decode
 ```
 
