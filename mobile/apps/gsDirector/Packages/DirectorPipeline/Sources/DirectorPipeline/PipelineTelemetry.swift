@@ -184,6 +184,10 @@ public struct TileTelemetry: Sendable, Codable, Equatable {
   /// Decoded frames dropped for a timestamp that did not advance. Climbing at the frame rate means
   /// this tile is frozen because its source timeline stopped, not because the scene is still.
   public var outOfOrderFrames: UInt64 = 0
+  /// Times this camera's clock has restarted — a reboot, in practice. A discontinuity in capture
+  /// times is explained by this, and a count that climbs steadily is an unstable sender rather
+  /// than one that was power-cycled once.
+  public var senderClockRestarts: UInt64 = 0
   /// How often the archive had to re-anchor audio to video, and by how much it had drifted. A
   /// non-zero count means this camera's audio clock does not advance at the same rate as its video
   /// clock, which is what stalls the muxer if left alone.

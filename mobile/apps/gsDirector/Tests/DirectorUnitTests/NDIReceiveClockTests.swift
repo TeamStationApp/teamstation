@@ -159,6 +159,118 @@ final class NDIReceiveClockTests: XCTestCase {
     XCTAssertEqual(timing.presentationTime, .zero)
   }
 
+  /// A Hollyland Cosmo C2 declares `frame_rate_N/D` of 120/1 and sends 60 fps. Measured against
+  /// its own timestamps and the SDK's dropped-frame counters, both of which say 60.00 with nothing
+  /// lost, so this is a false declaration rather than frames going missing.
+  ///
+  /// Stepping the timeline by the declared 1/120 wrote a video track lasting half the audio track
+  /// beside it: 360 frames spanning 3.000 s of video against 5.887 s of audio, which plays the
+  /// picture at double speed and drifts nearly three seconds out of sync inside one segment.
+  func testMisdeclaredFrameRateIsMeasuredRatherThanBelieved() {
+    let clock = NDIReceiveClock(clock: SystemClock())
+    let base = Date().timeIntervalSince1970
+    let realRate = 60.0
+
+    var times: [Double] = []
+    for index in 0 ..< 40 {
+      let frame = makeFrame(
+        rateN: 120,
+        rateD: 1,
+        timestamp: ticks(secondsSince1970: base + Double(index) / realRate)
+      )
+      guard let timing = clock.timing(for: frame) else {
+        return XCTFail("frame \(index) was refused")
+      }
+      times.append(timing.presentationTime.seconds)
+    }
+
+    XCTAssertEqual(clock.measuredFrameRate, realRate)
+    // The last stretch is measured; the opening frames ran on the declaration while the window
+    // filled, which is why the whole span is not asserted.
+    let step = times[39] - times[38]
+    XCTAssertEqual(step, 1 / realRate, accuracy: 1e-6)
+  }
+
+  /// The declaration is still what the first frames run on: a measurement needs a window, and a
+  /// timeline cannot wait for one.
+  func testDeclaredRateIsUsedUntilThereIsAMeasurement() {
+    let clock = NDIReceiveClock(clock: SystemClock())
+    let base = Date().timeIntervalSince1970
+    guard let first = clock.timing(for: makeFrame(
+      rateN: 60, rateD: 1, timestamp: ticks(secondsSince1970: base)
+    )) else { return XCTFail("first frame refused") }
+    guard let second = clock.timing(for: makeFrame(
+      rateN: 60, rateD: 1, timestamp: ticks(secondsSince1970: base + 1 / 60)
+    )) else { return XCTFail("second frame refused") }
+    XCTAssertNil(clock.measuredFrameRate)
+    XCTAssertEqual(second.presentationTime.seconds - first.presentationTime.seconds, 1 / 60, accuracy: 1e-9)
+  }
+
+  /// A camera power-cycled mid-session comes back with its clock restarted, so every frame it
+  /// sends is older than the last one accepted before it went away.
+  ///
+  /// Measured on a Hollyland Cosmo C2: 614 frames arrived in ten seconds and all 614 were refused
+  /// as reordering, the tile staying frozen on the last picture from before the reboot with no way
+  /// back. Two webcam frames four seconds apart read the same stopwatch to the millisecond.
+  func testSenderClockRestartIsAdoptedRatherThanRefusedForever() {
+    let clock = NDIReceiveClock(clock: SystemClock())
+    let base = Date().timeIntervalSince1970
+
+    for index in 0 ..< 20 {
+      _ = clock.timing(for: makeFrame(
+        rateN: 60, rateD: 1, timestamp: ticks(secondsSince1970: base + Double(index) / 60)
+      ))
+    }
+    let beforeRestart = clock.outOfOrderFrames
+
+    // The camera reboots: its clock comes back an hour behind where it was.
+    let sent = 90
+    var accepted = 0
+    var lastPresentation: Double = -1
+    var acceptedTail = 0
+    for index in 0 ..< sent {
+      guard let timing = clock.timing(for: makeFrame(
+        rateN: 60,
+        rateD: 1,
+        timestamp: ticks(secondsSince1970: base - 3_600 + Double(index) / 60)
+      )) else { continue }
+      accepted += 1
+      if index >= NDIReceiveClock.clockRestartFrames { acceptedTail += 1 }
+      // Monotonic across the restart, because the timeline is a counter and not the sender's clock.
+      XCTAssertGreaterThan(timing.presentationTime.seconds, lastPresentation)
+      lastPresentation = timing.presentationTime.seconds
+    }
+
+    XCTAssertEqual(clock.clockRestarts, 1, "the restart should be recognised exactly once")
+    // Everything after the diagnosis flows; the tile is not wedged.
+    XCTAssertEqual(acceptedTail, sent - NDIReceiveClock.clockRestartFrames)
+    XCTAssertGreaterThan(accepted, 0)
+    // Exactly the frames spent reaching the diagnosis are counted as out of order.
+    XCTAssertEqual(
+      clock.outOfOrderFrames - beforeRestart,
+      UInt64(NDIReceiveClock.clockRestartFrames),
+      "a restart should cost the diagnosis window and nothing more"
+    )
+  }
+
+  /// And a genuinely reordered frame is still refused, which is what the guard is for.
+  func testSingleReorderedFrameIsStillRefused() {
+    let clock = NDIReceiveClock(clock: SystemClock())
+    let base = Date().timeIntervalSince1970
+    for index in 0 ..< 20 {
+      _ = clock.timing(for: makeFrame(
+        rateN: 60, rateD: 1, timestamp: ticks(secondsSince1970: base + Double(index) / 60)
+      ))
+    }
+    let before = clock.outOfOrderFrames
+    // One frame arriving two frame intervals late.
+    XCTAssertNil(clock.timing(for: makeFrame(
+      rateN: 60, rateD: 1, timestamp: ticks(secondsSince1970: base + 17.0 / 60)
+    )))
+    XCTAssertEqual(clock.outOfOrderFrames - before, 1)
+    XCTAssertEqual(clock.clockRestarts, 0)
+  }
+
   func testAudioTimeIsOnItsOwnClock() {
     let clock = NDIReceiveClock(clock: SystemClock())
     let first = clock.audioPresentationTime(sampleIndex: 0, sampleRate: 48_000)

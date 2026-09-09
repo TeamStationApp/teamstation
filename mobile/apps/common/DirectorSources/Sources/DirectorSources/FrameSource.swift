@@ -337,6 +337,8 @@ public struct ReceiveStats: Sendable, Equatable {
   /// reordered; a count that climbs at the frame rate means the source timeline has stopped moving
   /// and the tile is frozen, which is otherwise indistinguishable from a camera holding still.
   public var outOfOrderFrames: UInt64 = 0
+  /// Times the sender's clock has been seen to restart, which in practice is the camera rebooting.
+  public var senderClockRestarts: UInt64 = 0
   /// Why delivery last stopped, in the words of whatever noticed — a socket error, or a session that
   /// went quiet without one. Empty while healthy, and the difference between a tile that is black for
   /// a knowable reason and one that is simply black.

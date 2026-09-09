@@ -3334,6 +3334,7 @@ public final class AppEnvironment {
         tile.playoutLateFrames = receive.playoutLateFrames
         tile.playoutDepth = receive.playoutDepth
         tile.outOfOrderFrames = receive.outOfOrderFrames
+        tile.senderClockRestarts = receive.senderClockRestarts
         tile.senderReports = receive.senderReports
         tile.senderReportIntervalSeconds = receive.senderReportIntervalSeconds
         tile.senderReportAgeSeconds = receive.senderReportAgeSeconds
