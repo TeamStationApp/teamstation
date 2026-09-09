@@ -293,6 +293,17 @@ struct ControlChannelSourceTests {
     )
   }
 
+  @Test("Link-source and unlink-source use 1-based row indices")
+  func linkSourceCommands() {
+    let link = ControlChannel.command(
+      from: URL(string: "gsdirector://test/link-source?video=1&control=3")!
+    )
+    #expect(link == .linkSource(video: 0, control: 2))
+    #expect(ControlChannel.command(from: URL(string: "gsdirector://test/link-source?video=1")!) == nil)
+    let unlink = ControlChannel.command(from: URL(string: "gsdirector://test/unlink-source?index=3")!)
+    #expect(unlink == .unlinkSource(index: 2))
+  }
+
   @Test("Assign-source uses 1-based index and slot")
   func assignSourceCommand() {
     let command = ControlChannel.command(

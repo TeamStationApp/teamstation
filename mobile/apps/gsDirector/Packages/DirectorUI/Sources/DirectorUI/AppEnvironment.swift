@@ -364,7 +364,7 @@ public final class AppEnvironment {
       cameras.clear()
       telemetry.reset()
     }
-    selections = selectionStore.load()
+    selections = SourceSelectionRules.normalizingLinks(selectionStore.load())
     sourceLayout = layoutStore.load()
     preferredProgramSourceID = programSourceStore.load()
     cameraRecords = cameras.records
@@ -729,18 +729,35 @@ public final class AppEnvironment {
     return discovery?.advertisements.first { $0.host == endpoint.host }
   }
 
+  /// The socket whose parameter channel drives this row's tile: the linked phone's when the row
+  /// has a link, otherwise the row's own. Identity, naming and the media session keep using
+  /// `endpoint(for:)`; only telemetry and control go through here.
+  public func controlEndpoint(for id: SourceID) -> CameraEndpoint? {
+    if let control = selections.first(where: { $0.id == id })?.linkedControlID {
+      return endpoint(for: control)
+    }
+    return endpoint(for: id)
+  }
+
+  public func controlAdvertisement(for id: SourceID) -> CameraAdvertisement? {
+    guard let endpoint = controlEndpoint(for: id) else { return nil }
+    return discovery?.advertisements.first { $0.host == endpoint.host }
+  }
+
   /// A GS Cameraman that advertises `control=params/1`, so the tile gets its controls. An older
   /// build without the verbs, or a NearStream, gets nothing rather than a screen that cannot connect.
   public func isCameramanControllable(sourceIndex: Int) -> Bool {
     guard let pipeline = router.pipeline(at: sourceIndex) else { return false }
-    return cameraAdvertisement(for: pipeline.sourceID)?.isControllable == true
+    return controlAdvertisement(for: pipeline.sourceID)?.isControllable == true
   }
 
-  /// Opens the phone's own operating screen for the camera on a tile.
+  /// Opens the phone's own operating screen for the camera on a tile. For a linked tile the
+  /// picture behind the controls is the tile's own (the NDI capture) and the parameter session
+  /// goes to the linked phone.
   public func openCameraControl(sourceIndex: Int) {
     guard activeSheet == nil, let pipeline = router.pipeline(at: sourceIndex),
-          let endpoint = endpoint(for: pipeline.sourceID),
-          cameraAdvertisement(for: pipeline.sourceID)?.isControllable == true
+          let endpoint = controlEndpoint(for: pipeline.sourceID),
+          controlAdvertisement(for: pipeline.sourceID)?.isControllable == true
     else { return }
     stopCameraControl()
     let session = RTSPParameterSession(
@@ -774,8 +791,8 @@ public final class AppEnvironment {
   private func syncCameraTelemetry() {
     var wanted: [SourceID: CameraEndpoint] = [:]
     for pipeline in router.activePipelines {
-      guard let endpoint = endpoint(for: pipeline.sourceID),
-            cameraAdvertisement(for: pipeline.sourceID)?.isControllable == true
+      guard let endpoint = controlEndpoint(for: pipeline.sourceID),
+            controlAdvertisement(for: pipeline.sourceID)?.isControllable == true
       else {
         telemetry.mutateTile(pipeline.sourceIndex) {
           $0.hasCameraControl = false
@@ -902,6 +919,8 @@ public final class AppEnvironment {
     let result = SourceSelectionRules.setEnabled(enabled, for: id, in: &selections)
     if result == .rejectedAtCap {
       statusMessage = "Five sources maximum — turn one off first"
+    } else if result == .linkedForControl {
+      statusMessage = "That camera is linked for remote control — unlink it first"
     } else {
       statusMessage = nil
       selectionStore.save(selections)
@@ -943,6 +962,60 @@ public final class AppEnvironment {
 
   public var enabledSelections: [SourceSelection] {
     SourceSelectionRules.enabled(in: selections)
+  }
+
+  // MARK: - Linking
+
+  /// Rows the picker may offer as `video`'s control: Cameramen that advertise the parameter
+  /// vocabulary and are not already spoken for.
+  public func linkCandidates(for video: SourceID) -> [SourceSelection] {
+    SourceSelectionRules.linkCandidates(for: video, in: selections) { candidate in
+      cameraAdvertisement(for: candidate.id)?.isControllable == true
+    }
+  }
+
+  public func isLinkedControl(_ id: SourceID) -> Bool {
+    SourceSelectionRules.isLinkedControl(id, in: selections)
+  }
+
+  public func linkedControl(for video: SourceID) -> SourceSelection? {
+    guard let control = selections.first(where: { $0.id == video })?.linkedControlID else { return nil }
+    return selections.first { $0.id == control }
+  }
+
+  public func linkedVideo(forControl id: SourceID) -> SourceSelection? {
+    guard let video = SourceSelectionRules.linkedVideoID(forControl: id, in: selections) else { return nil }
+    return selections.first { $0.id == video }
+  }
+
+  /// Points `video`'s tile at `control`'s parameter channel. If the phone had a tile of its own,
+  /// that media session ends now; from here on only `RTSPParameterSession`s are opened to it,
+  /// which is what keeps its radio and encoder quiet.
+  @discardableResult
+  public func linkSource(video: SourceID, control: SourceID) -> SourceSelectionRules.LinkResult {
+    let hadTile = selections.first { $0.id == control }?.isEnabled ?? false
+    let result = SourceSelectionRules.link(video: video, control: control, in: &selections)
+    guard result == .linked else { return result }
+    statusMessage = nil
+    selectionStore.save(selections)
+    if hadTile { stopSource(control) }
+    applyAudioContributors()
+    syncCameraTelemetry()
+    return result
+  }
+
+  /// The red X on the phone's row.
+  public func unlinkSource(control: SourceID) {
+    SourceSelectionRules.unlink(control: control, in: &selections)
+    selectionStore.save(selections)
+    syncCameraTelemetry()
+  }
+
+  /// "Unlink" from the picture's own link menu.
+  public func unlinkSource(video: SourceID) {
+    SourceSelectionRules.unlink(video: video, in: &selections)
+    selectionStore.save(selections)
+    syncCameraTelemetry()
   }
 
   // MARK: - Production
@@ -3340,7 +3413,11 @@ public final class AppEnvironment {
         sourceIndex: selection.sourceIndex,
         endpointHost: endpoint(for: selection.id)?.host,
         advertisedHost: cameraAdvertisement(for: selection.id)?.host,
-        controlVersion: cameraAdvertisement(for: selection.id)?.controlVersion
+        controlVersion: cameraAdvertisement(for: selection.id)?.controlVersion,
+        linkedControlIndex: selection.linkedControlID.flatMap { control in
+          selections.firstIndex { $0.id == control }.map { $0 + 1 }
+        },
+        isLinkedControl: SourceSelectionRules.isLinkedControl(selection.id, in: selections)
       )
     }
     let mix = router.audioMixer.currentStatistics
@@ -3637,6 +3714,13 @@ public final class AppEnvironment {
     case let .forgetCamera(index):
       guard index >= 0, index < selections.count else { return false }
       forgetCamera(for: selections[index].id)
+    case let .linkSource(video, control):
+      guard video >= 0, video < selections.count, control >= 0, control < selections.count else { return false }
+      return linkSource(video: selections[video].id, control: selections[control].id) == .linked
+    case let .unlinkSource(index):
+      guard index >= 0, index < selections.count else { return false }
+      let id = selections[index].id
+      if isLinkedControl(id) { unlinkSource(control: id) } else { unlinkSource(video: id) }
     case .searchCameras:
       discovery?.searchNow()
     case let .advanceClock(seconds):

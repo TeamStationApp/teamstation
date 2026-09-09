@@ -400,6 +400,33 @@ stalled.
 
 Last full run on the iPad Air 13-inch (M4) simulator, 2026-09-06: **13/13**.
 
+## A phone over HDMI: the Cosmo C2 and a linked Cameraman
+
+The C2 exists on this rig to carry a Cameraman's picture without the phone streaming it. The phone's
+clean HDMI output (on by default in Cameraman; Settings → Output turns it off) goes into the C2 over
+USB-C, and the C2 publishes it as NDI. Director receives that NDI source like any other. The phone
+then appears in the Cameras list as an RTSP row with the parameter vocabulary; tap the chain button
+on the NDI row and choose the phone, and the NDI tile gets the phone's battery and thermal pills, its
+three-dot menu and its operating screen, with the tile's own picture behind the controls. Nothing but
+parameter sessions are opened to the phone from then on.
+
+Two consequences worth knowing. The NDI picture carries the C2's clock and the C2's latency, not the
+phone's; the control path is unaffected, but nothing may assume the two clocks agree. And the phone
+still captures and draws for HDMI, so it is not idle — it has simply stopped compressing and sending,
+which is where most of its power went.
+
+Measured on the bench, 2026-09-09, iPhone 15 Pro at 1080p60 into a C2, Director on an iPad Pro M4
+simulator, with a stopwatch in shot:
+
+| | |
+| --- | --- |
+| Tile arrival rate | 59 fps, and 117 distinct frames in a 2 s screen recording — no repeats |
+| Glass to glass, wall clock to tile | 0.62–0.82 s, across three timestamped captures |
+| Frames the phone compressed while linked | 2, the pair the SDP needs; `stream.clients` stayed 0 |
+
+That last row is the point of the arrangement: 3,436 frames captured, 2,741 drawn on HDMI, 2
+encoded. The path from the phone is a `GET_PARAMETER` every five seconds.
+
 ## Capacity, and what a simulator does not tell you
 
 The simulator has **no hardware video encoder**. Four 1080p HEVC archives there are software
