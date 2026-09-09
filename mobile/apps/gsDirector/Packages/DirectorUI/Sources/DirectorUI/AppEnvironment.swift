@@ -3277,7 +3277,15 @@ public final class AppEnvironment {
     // Tell discovery what is at stake, so its fallback sweep can decide whether to run at all.
     // An enabled camera the finder cannot currently see is the whole trigger: during a recording
     // there is no sweep until one goes missing, and none once it is back.
-    let missing = selections.contains { $0.isEnabled && !$0.isPresent }
+    // Missing means "not usable", not merely "not listed". A camera can be present in discovery
+    // and silent — which is how tonight's dropout looked, and a sweep that waited for the
+    // discovery list to change would never have started.
+    let silent = Set(
+      telemetry.snapshot.tiles.filter { $0.stalledForSeconds > 0 }.compactMap(\.sourceID)
+    )
+    let missing = selections.contains {
+      $0.isEnabled && (!$0.isPresent || silent.contains($0.id.rawValue))
+    }
     discovery?.setSweepDemand(
       isBusy: self.isRecording || self.isStreaming,
       anyEnabledCameraMissing: missing
@@ -3343,6 +3351,7 @@ public final class AppEnvironment {
         tile.playoutDepth = receive.playoutDepth
         tile.outOfOrderFrames = receive.outOfOrderFrames
         tile.senderClockRestarts = receive.senderClockRestarts
+        tile.stalledForSeconds = (receive.stalledForSeconds * 10).rounded() / 10
         tile.senderReports = receive.senderReports
         tile.senderReportIntervalSeconds = receive.senderReportIntervalSeconds
         tile.senderReportAgeSeconds = receive.senderReportAgeSeconds

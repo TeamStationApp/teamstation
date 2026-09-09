@@ -188,6 +188,12 @@ public struct TileTelemetry: Sendable, Codable, Equatable {
   /// times is explained by this, and a count that climbs steadily is an unstable sender rather
   /// than one that was power-cycled once.
   public var senderClockRestarts: UInt64 = 0
+  /// Seconds this camera has been silent past the stall timeout, or zero while it is delivering.
+  ///
+  /// Every other counter here describes a frame that arrived, so none of them can say that none
+  /// did. A tile whose camera had rebooted read `live` at 60.4 fps while receiving nothing, and
+  /// this is the field that contradicts it.
+  public var stalledForSeconds: Double = 0
   /// How often the archive had to re-anchor audio to video, and by how much it had drifted. A
   /// non-zero count means this camera's audio clock does not advance at the same rate as its video
   /// clock, which is what stalls the muxer if left alone.

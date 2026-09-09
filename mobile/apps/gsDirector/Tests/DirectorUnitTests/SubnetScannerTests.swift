@@ -1,5 +1,5 @@
 import Foundation
-import DirectorRTSP
+import DirectorSources
 import Testing
 
 @Suite("Subnet scanning")

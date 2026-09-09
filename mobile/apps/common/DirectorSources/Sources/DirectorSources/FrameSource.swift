@@ -339,6 +339,9 @@ public struct ReceiveStats: Sendable, Equatable {
   public var outOfOrderFrames: UInt64 = 0
   /// Times the sender's clock has been seen to restart, which in practice is the camera rebooting.
   public var senderClockRestarts: UInt64 = 0
+  /// How long this source has been silent past the stall timeout, or zero while it is delivering.
+  /// The one counter on a tile that can describe frames that did *not* arrive.
+  public var stalledForSeconds: Double = 0
   /// Why delivery last stopped, in the words of whatever noticed — a socket error, or a session that
   /// went quiet without one. Empty while healthy, and the difference between a tile that is black for
   /// a knowable reason and one that is simply black.
