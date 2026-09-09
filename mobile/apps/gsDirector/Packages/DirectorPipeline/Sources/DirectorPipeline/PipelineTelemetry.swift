@@ -474,7 +474,7 @@ public struct TelemetrySnapshot: Sendable, Codable, Equatable {
 public final class PipelineTelemetry: @unchecked Sendable {
   private let lock = NSLock()
   private var state = TelemetrySnapshot()
-  private var frameTimestamps: [Int: (count: UInt64, since: CFAbsoluteTime)] = [:]
+  private var frameTimestamps: [Int: (count: UInt64, since: CFAbsoluteTime, last: CFAbsoluteTime)] = [:]
   private var displayedTimestamps: [Int: (count: UInt64, since: CFAbsoluteTime, last: CFAbsoluteTime)] = [:]
   /// Kept apart because they are counted differently, and their sum is what the HUD reports.
   private var replayDecodeSessions = 0
@@ -500,6 +500,14 @@ public final class PipelineTelemetry: @unchecked Sendable {
       let last = displayedTimestamps[sourceIndex]?.last ?? 0
       if now - last > 1.2 {
         copy.tiles[index].displayedFramesPerSecond = 0
+      }
+      // The arrival rate needs the same ageing, and for a sharper reason: it is only recomputed
+      // when a frame arrives, so a source that stops delivering leaves its last healthy figure
+      // standing for ever. A tile wedged by a camera reboot went on reporting 60.4 fps while
+      // receiving nothing, which is precisely the reading that made a dead tile look alive.
+      let lastArrival = frameTimestamps[sourceIndex]?.last ?? 0
+      if now - lastArrival > 1.2 {
+        copy.tiles[index].framesPerSecond = 0
       }
     }
     return copy
@@ -555,14 +563,15 @@ public final class PipelineTelemetry: @unchecked Sendable {
       state.tiles[position].receivedFrames += 1
       state.tiles[position].frameID = frameID
     }
-    var tracker = frameTimestamps[tile] ?? (count: 0, since: now)
+    var tracker = frameTimestamps[tile] ?? (count: 0, since: now, last: now)
     tracker.count += 1
+    tracker.last = now
     let elapsed = now - tracker.since
     if elapsed >= 1 {
       if let position = state.tiles.firstIndex(where: { $0.index == tile }) {
         state.tiles[position].framesPerSecond = (Double(tracker.count) / elapsed * 10).rounded() / 10
       }
-      tracker = (count: 0, since: now)
+      tracker = (count: 0, since: now, last: now)
     }
     frameTimestamps[tile] = tracker
     lock.unlock()
