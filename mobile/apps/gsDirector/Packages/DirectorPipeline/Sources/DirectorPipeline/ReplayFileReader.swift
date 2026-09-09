@@ -27,6 +27,10 @@ final class ReplayFileReader: @unchecked Sendable {
   private var startIndex = 0
   private var fileIndex = 0
   private var producedSeconds: TimeInterval = 0
+  /// The gap between the last two frames' own timestamps, which is what a frame's duration
+  /// actually is. `frameRate` seeds it so the first frame has something to use, and is not
+  /// consulted again once two frames have been seen.
+  private var observedStep: TimeInterval = 0
   private var producerExhausted = false
   private let hardware = ReplayHardwareDecoder()
   private var pool: PixelBufferFactory?
@@ -69,6 +73,7 @@ final class ReplayFileReader: @unchecked Sendable {
     cursor = nil
     producerExhausted = false
     producedSeconds = 0
+    observedStep = 0
     startSkip = 0
     startOrigin = 0
     startIndex = 0
@@ -170,6 +175,20 @@ final class ReplayFileReader: @unchecked Sendable {
     return producerExhausted && frames.isEmpty
   }
 
+  /// How much content the FIFO is holding, from the frames' own timeline. Must be called with
+  /// `lock` held. Dividing the frame count by an assumed rate answered this before, which made
+  /// the watermarks wrong by the same factor as any mis-stated rate — the queue then ran at half
+  /// or double the intended depth without anything reporting it.
+  private func queuedSecondsLocked(fallbackRate: Double) -> TimeInterval {
+    guard let first = frames.first, let last = frames.last, frames.count > 1 else {
+      return Double(frames.count) / max(fallbackRate, 1)
+    }
+    let span = last.media - first.media
+    guard span > 0 else { return Double(frames.count) / max(fallbackRate, 1) }
+    // The span covers the gaps between frames, so it is one frame short of what is held.
+    return span + (observedStep > 0 ? observedStep : 1 / max(fallbackRate, 1))
+  }
+
   /// Must be called with `lock` held. Releases the lock.
   private func takeFrame() -> (pixel: CVPixelBuffer, time: CMTime, media: TimeInterval)? {
     let fps = frameRate
@@ -184,7 +203,7 @@ final class ReplayFileReader: @unchecked Sendable {
       return nil
     }
     let frame = frames.removeFirst()
-    let need = Double(frames.count) / fps < Self.lowWatermark && !cancelled && !producerExhausted
+    let need = queuedSecondsLocked(fallbackRate: fps) < Self.lowWatermark && !cancelled && !producerExhausted
     lock.broadcast()
     lock.unlock()
     if need {
@@ -211,7 +230,7 @@ final class ReplayFileReader: @unchecked Sendable {
         closeCursor()
         return
       }
-      let queued = Double(frames.count) / frameRate
+      let queued = queuedSecondsLocked(fallbackRate: frameRate)
       let done = producerExhausted
       lock.unlock()
       if done || queued >= Self.lowWatermark { return }
@@ -226,15 +245,25 @@ final class ReplayFileReader: @unchecked Sendable {
           return
         }
         guard let copy = copyPixelWaiting(frame.pixel) else { break }
-        let step = 1 / frameRate
         lock.lock()
         if cancelled {
           lock.unlock()
           closeCursor()
           return
         }
-        let media = startOrigin + producedSeconds
-        producedSeconds += step
+        // The cursor already placed this frame on the replay timeline from its own presentation
+        // timestamp. Recomputing that position by counting frames at an assumed rate is what made
+        // a requested duration wrong whenever the rate was: a camera declaring 120 while sending
+        // 60 asked for twice as many frames as the archive holds, and the pre-existing
+        // "plays the requested content duration" failure is the same arithmetic falling short.
+        let media = frame.media
+        let previous = producedSeconds > 0 ? startOrigin + producedSeconds : media
+        let step = max(0, media - previous)
+        if step > 0 { observedStep = step }
+        // The position reached is the end of this frame, not its start, or the next file would be
+        // opened at an origin one frame early and the cap would stop a frame short.
+        let reached = media - startOrigin + (observedStep > 0 ? observedStep : 1 / frameRate)
+        producedSeconds = max(producedSeconds, reached)
         frames.append((copy, frame.time, media))
         firstReady = true
         if let cap = playDuration, producedSeconds >= cap {
@@ -242,11 +271,11 @@ final class ReplayFileReader: @unchecked Sendable {
         }
         lock.broadcast()
         lock.unlock()
-        added += step
+        added += observedStep > 0 ? observedStep : 1 / frameRate
       }
 
       lock.lock()
-      let queuedAfter = Double(frames.count) / frameRate
+      let queuedAfter = queuedSecondsLocked(fallbackRate: frameRate)
       let exhausted = producerExhausted
       let stillShort = queuedAfter < Self.lowWatermark && !exhausted && !cancelled
       lock.unlock()
