@@ -1,11 +1,17 @@
 import Foundation
 
-/// Measures a camera's frame rate from the RTP timestamps it is already sending.
+/// Measures a camera's frame rate from the timestamps it is already sending.
 ///
-/// Nothing on the wire states it. The SDP these cameras return carries `a=framesize` but no
-/// `a=framerate`, so the spacing of the timestamps is the only honest source. That matters well
-/// beyond the HUD: instant replay pumps frames at whatever rate the source reports, so a 60 fps
-/// camera described as 30 replays at half speed and mis-times its own trim.
+/// Two transports need this for opposite reasons. RTSP states nothing on the wire: the SDP these
+/// cameras return carries `a=framesize` but no `a=framerate`, so the spacing of the timestamps is
+/// the only honest source. NDI *does* state a rate in every frame header, and a sender can state
+/// it wrongly — a Hollyland Cosmo C2 declares 120/1 while sending 60, measured with its own
+/// timestamps and the SDK's dropped-frame counters both agreeing on 60.00.
+///
+/// Either way the declaration cannot be trusted, and the consequences reach well beyond the HUD:
+/// instant replay pumps frames at whatever rate the source reports, so a 60 fps camera described
+/// as 30 replays at half speed and mis-times its own trim, and an archive timestamped from a
+/// declared 120 while fed 60 writes a video track at half the duration of the audio beside it.
 ///
 /// The **median** interval is taken rather than the mean. A dropped or merged access unit doubles
 /// one interval and a burst produces several short ones; either drags an average far enough to
@@ -44,6 +50,15 @@ public struct FrameRateEstimator: Sendable {
     self.clockRate = clockRate
   }
 
+  /// Records the gap between one frame and the previous one, in seconds, for transports that do
+  /// not carry an RTP-style tick counter. Same window, same median, same snapping — only the unit
+  /// of the sample differs.
+  @discardableResult
+  public mutating func note(intervalSeconds: Double) -> Bool {
+    guard intervalSeconds > 0, intervalSeconds.isFinite else { return false }
+    return record(interval: intervalSeconds, perSecond: 1)
+  }
+
   /// Records one access unit's RTP timestamp. Returns true when the answer changed, which is a
   /// caller's cue to republish the format.
   @discardableResult
@@ -59,7 +74,13 @@ public struct FrameRateEstimator: Sendable {
     // and a negative step is reordering. Neither says anything about the rate.
     guard delta > 0 else { return false }
 
-    intervals.append(delta)
+    return record(interval: delta, perSecond: clockRate)
+  }
+
+  /// The shared half: keep a bounded window, take its middle, and snap. `perSecond` is how many
+  /// units of `interval` make a second — the media clock rate for ticks, one for seconds.
+  private mutating func record(interval: Double, perSecond: Double) -> Bool {
+    intervals.append(interval)
     if intervals.count > Self.windowSize {
       intervals.removeFirst(intervals.count - Self.windowSize)
     }
@@ -68,7 +89,7 @@ public struct FrameRateEstimator: Sendable {
     let median = intervals.sorted()[intervals.count / 2]
     guard median > 0 else { return false }
 
-    let resolved = Self.snap(clockRate / median)
+    let resolved = Self.snap(perSecond / median)
     guard resolved != frameRate else { return false }
     frameRate = resolved
     return true
@@ -97,5 +118,37 @@ public struct FrameRateEstimator: Sendable {
       }
     }
     return best ?? (measured * 100).rounded() / 100
+  }
+
+  /// The measured rate as an exact numerator over denominator, for building a presentation
+  /// timeline that does not drift.
+  ///
+  /// A frame's duration has to be exact: writing 1/59.94 through a rounded timescale is a part in
+  /// three thousand, which is a second of drift an hour into a recording. Every rate a camera
+  /// actually sends is a whole number or one of the 1001-denominator broadcast rates, so those are
+  /// returned as the rationals they are and anything else falls back to a fine timescale.
+  public static func rational(for rate: Double) -> (numerator: Int32, denominator: Int32) {
+    let exact: [(Double, Int32, Int32)] = [
+      (23.976, 24_000, 1_001),
+      (29.97, 30_000, 1_001),
+      (59.94, 60_000, 1_001),
+      (119.88, 120_000, 1_001)
+    ]
+    for (candidate, numerator, denominator) in exact where abs(rate - candidate) < 0.001 {
+      return (numerator, denominator)
+    }
+    if rate > 0, rate.isFinite, abs(rate.rounded() - rate) < 0.001 {
+      return (Int32(rate.rounded()), 1)
+    }
+    // Not a rate any camera in the population sends. Keep the timescale fine enough that the
+    // rounding is smaller than the jitter it is describing.
+    let timescale: Int32 = 90_000
+    let value = max(1, Int32((Double(timescale) / max(rate, 0.001)).rounded()))
+    return (timescale, value)
+  }
+
+  /// This estimator's own measurement in that form, once it has one.
+  public var rational: (numerator: Int32, denominator: Int32)? {
+    frameRate.map { Self.rational(for: $0) }
   }
 }
