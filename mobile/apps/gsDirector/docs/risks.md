@@ -791,7 +791,11 @@ Measured 2026-09-06 on an M4 iPad Air simulator (iOS 26.5) against four 1080p ca
 | 4 x 1080p60, preview only | 53.3–57.6 fps per tile against a generator sending 57, nothing lost, nothing late |
 | Archive on disk, HEVC | HEVC 1920x1080 plus AAC 48 kHz mono, segments 3.37 s |
 | Archive on disk, H.264 (`-sourceEncodeCodec h264`) | H.264 1920x1080 plus AAC 48 kHz mono, segments 3.007 s |
-| Fault sweep (`ndiFaultRun.js`) | 13/13, on the M4 and the iPad Pro 11-inch (M5) simulator |
+| Fault sweep (`ndiFaultRun.js`) | 13/13, on the M4 and the iPad Pro 11-inch (M5) simulator; re-run 13/13 at the reduced input bitrate |
+| 4 x 1080p30 at `--quality 8` (~12.3 Mbps each) | 29.8–30.3 fps, nothing lost or late, 49.2 Mbps aggregate |
+| 4 x 1080p60 at `--quality 8` (~15.4 Mbps each) | 55.6–60.0 fps, nothing lost or late, 61.4 Mbps aggregate |
+| Archive at 8 Mbps, camera-shaped content | HEVC and H.264 both meet the target at 30 and 60 fps |
+| Archive at 8 Mbps, incompressible content | HEVC 11.7 / 22.8 Mbps, H.264 13.4 / 26.2 Mbps at 30 / 60 — the disk-budget ceiling |
 
 Two unit tests fail on this machine and are **not** from this work: `ReplayFileReaderTests`
 "Instant replay plays the requested content duration across file boundaries" (0.8 s decoded of a

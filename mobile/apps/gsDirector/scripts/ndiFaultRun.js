@@ -106,10 +106,16 @@ const CASES = [
     // Sampled *during* the stall, not after it: waiting for the stall to end and then measuring
     // reads a camera that has already recovered, which passes for the wrong reason.
     settle: 6,
-    expect: (before, after, sent) =>
-      after.tiles[0].capturedFrames === before.tiles[0].capturedFrames
+    // Not exactly zero. The fault takes effect on the generator's next loop iteration and the
+    // SDK keeps a short receive queue, so a frame or two already in flight lands after the fault
+    // is applied. Demanding zero fails on that race about one run in three and says nothing about
+    // the app; what matters is that a twelve-second stall does not keep delivering.
+    expect: (before, after, sent) => {
+      const arrived = after.tiles[0].capturedFrames - before.tiles[0].capturedFrames
+      return arrived <= 3
         ? null
-        : `frames still arriving during a stall (+${after.tiles[0].capturedFrames - before.tiles[0].capturedFrames})`
+        : `frames still arriving during a stall (+${arrived})`
+    }
   },
   {
     name: 'stallRecovery',

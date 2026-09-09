@@ -33,6 +33,9 @@ function usage() {
   --height N         Picture height (default 1080)
   --name-prefix S    Sender name prefix (default "GS NDI")
   --control-port N   Fault port (default ${DEFAULT_CONTROL_PORT})
+  --quality N        SpeedHQ bitrate as a percentage of default. 1080p60 is ~58 Mbps at 100 and
+                     floors near 13.6 below 8; 1080p30 floors near 12.2. SpeedHQ cannot reach
+                     8 Mbps at 1080p — that is an NDI|HX operating point.
   --self-test        Run the generator's own checks and exit
   --fault K=V ...    Apply faults to a running farm, e.g. --fault cam=1 drop=0.05
   --clock            Print what the running farm has sent
@@ -49,6 +52,7 @@ function parseArgs(argv) {
     height: 1080,
     namePrefix: 'GS NDI',
     controlPort: DEFAULT_CONTROL_PORT,
+    quality: null,
     selfTest: false,
     fault: null,
     clock: false,
@@ -70,6 +74,7 @@ function parseArgs(argv) {
       case '--height': options.height = Number(next()); break
       case '--name-prefix': options.namePrefix = next(); break
       case '--control-port': options.controlPort = Number(next()); break
+      case '--quality': options.quality = Number(next()); break
       case '--self-test': options.selfTest = true; break
       case '--clock': options.clock = true; break
       case '--stop': options.stop = true; break
@@ -174,6 +179,7 @@ async function main() {
     '--name-prefix', options.namePrefix,
     '--control-port', String(options.controlPort)
   ]
+  if (options.quality !== null) args.push('--quality', String(options.quality))
   // The child's output goes to a file rather than being inherited: inheriting keeps this process's
   // stdout pipe open, so a caller waiting on this command never sees it return.
   const log = fs.openSync(LOG_PATH, 'a')
