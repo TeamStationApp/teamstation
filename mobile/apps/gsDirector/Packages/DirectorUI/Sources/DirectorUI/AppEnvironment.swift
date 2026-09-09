@@ -135,7 +135,19 @@ public final class AppEnvironment {
   public private(set) var streamDroppedPackets: UInt64 = 0
   public let pictureInPicture = ProgramPictureInPicture()
   private var isInBackground = false
-  public private(set) var statusMessage: String?
+  public private(set) var statusMessage: String? {
+    didSet {
+      // Stamped when the words change, not on every assignment. Several writers re-post the same
+      // sentence on a timer — the retention sweep repeats "Low storage" every sixty seconds for
+      // as long as the disk is tight — and re-stamping there would leave the toast reading a
+      // minute old however long the condition had been true, which is the opposite of what the
+      // operator reads a timestamp for.
+      guard statusMessage != oldValue else { return }
+      statusMessagePostedAt = statusMessage == nil ? nil : Date()
+    }
+  }
+  /// When `statusMessage` was posted, for the toast's timestamp. Nil whenever the message is.
+  public private(set) var statusMessagePostedAt: Date?
 
   public func dismissStatusMessage() {
     statusMessage = nil
