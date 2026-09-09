@@ -22,6 +22,8 @@ struct Options {
   var receive: String?
   var receiveLowest = false
   var receiveTally = false
+  var receiveURL: String?
+  var receiveExtraIPs: String?
   var seconds: Double?
   /// SpeedHQ bitrate as a percentage of the codec's default, written into an NDI config file
   /// before the library starts. 100 is the default.
@@ -95,6 +97,8 @@ func parseOptions(_ argv: [String]) -> Options {
     case "--receive": options.receive = value()
     case "--receive-lowest": options.receiveLowest = true
     case "--receive-tally": options.receiveTally = true
+    case "--receive-url": options.receiveURL = value()
+    case "--extra-ips": options.receiveExtraIPs = value()
     case "--quality": options.quality = value().flatMap(Int.init)
     default:
       FileHandle.standardError.write(Data("unknown argument: \(argument)\n".utf8))
@@ -228,7 +232,9 @@ if let fragment = options.receive {
     nameFragment: fragment,
     seconds: options.seconds ?? 10,
     lowest: options.receiveLowest,
-    tally: options.receiveTally
+    tally: options.receiveTally,
+    url: options.receiveURL,
+    extraIPs: options.receiveExtraIPs
   ))
 }
 
