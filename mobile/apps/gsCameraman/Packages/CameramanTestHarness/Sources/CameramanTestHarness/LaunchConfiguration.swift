@@ -26,7 +26,9 @@ public struct LaunchConfiguration: Sendable, Equatable {
     "recordSeconds",
     "selfTest",
     "advertise",
-    "disabledLenses"
+    "disabledLenses",
+    "cleanHdmi",
+    "encodeWhenIdle"
   ]
 
   public var isUITest = false
@@ -42,6 +44,10 @@ public struct LaunchConfiguration: Sendable, Equatable {
   public var selfTest = false
   /// Bonjour advertising, on by default. Off isolates the listener from the advertisement.
   public var advertise = true
+  /// Keeps both encoders running with no client playing. Off by default: a phone nobody is
+  /// watching over RTSP should not pay for VideoToolbox. On for a soak or a thermal reading that
+  /// wants the encode load without a viewer.
+  public var encodeWhenIdle = false
   public var settings = StreamSettings.default
   /// Which stream settings this launch named outright. Those must not be replaced by what the
   /// operator last saved on the device, or a flow that pins a format would depend on the handset.
@@ -93,6 +99,7 @@ public struct LaunchConfiguration: Sendable, Equatable {
     recordSeconds = values["recordSeconds"].flatMap(Double.init) ?? 0
     selfTest = Self.bool(values["selfTest"]) ?? false
     advertise = Self.bool(values["advertise"]) ?? true
+    encodeWhenIdle = Self.bool(values["encodeWhenIdle"]) ?? false
     showDebugHUD = Self.bool(values["debugHUD"]) ?? isUITest
     persistSettings = Self.bool(values["persistSettings"]) ?? !isUITest
     cameraName = values["cameraName"]
@@ -108,6 +115,7 @@ public struct LaunchConfiguration: Sendable, Equatable {
     if let height = values["height"].flatMap(Int.init) { settings.height = height }
     if let frameRate = values["frameRate"].flatMap(Double.init) { settings.frameRate = frameRate }
     if let audio = Self.bool(values["audioEnabled"]) { settings.audioEnabled = audio }
+    if let clean = Self.bool(values["cleanHdmi"]) { settings.cleanHDMIEnabled = clean }
     if let disabled = values["disabledLenses"] {
       settings.disabledLensIDs = Set(
         disabled.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }

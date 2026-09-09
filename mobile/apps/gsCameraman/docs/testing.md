@@ -8,7 +8,7 @@ Four layers, each answering something the others cannot.
 socket npm run test:unit
 ```
 
-188 tests on the simulator. The interesting ones are not the ones that check our own code against
+302 tests on the simulator. The interesting ones are not the ones that check our own code against
 itself:
 
 | Suite | What it settles |
@@ -116,7 +116,20 @@ node scripts/control.js --host 10.10.7.118 set-codec codec=hevc
 ```
 
 `dump-state`, `clients`, `flip-camera`, `force-keyframe`, `reset`, `set-zoom`, `set-format`,
-`set-bitrate`, `set-codec`, `set-name`, `set-audio`.
+`set-bitrate`, `set-codec`, `set-name`, `set-audio`, `set-video`, `set-lenses`, `set-send-delay`,
+`set-clean-hdmi`.
+
+`set-clean-hdmi?on=false` is the external-display toggle, the same value as Settings → Output. It
+never restarts the encoder. `dump-state` reports `cleanHDMIEnabled` and an `externalDisplay`
+object: `connected`, `mode` (`1920x1080` while a display is attached) and `framesEnqueued`. The
+counter climbing is the only proof the clean feed is drawing; a display can be connected with the
+feed off, and a run reporting zero here while a display is attached has shown nothing on it. The
+`cleanHdmi` launch key pins it for a flow.
+
+`dump-state` also reports `encoderIdle`: true while no client is playing and the encoders are
+skipping frames (`capturedFrames` climbs, `encodedFrames` does not). Launch with
+`-encodeWhenIdle true` to keep both encoders running with no client, for a soak or a thermal
+reading that wants the encode load without a viewer.
 
 It exists so a state assertion does not depend on gesture precision: a flow that pinches and then
 asserts a zoom conflates "the app got the zoom wrong" with "the tap landed eight points off". A

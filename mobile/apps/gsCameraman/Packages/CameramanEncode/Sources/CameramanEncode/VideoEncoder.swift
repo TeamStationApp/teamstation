@@ -26,7 +26,7 @@ public final class VideoEncoder: @unchecked Sendable {
   private var session: VTCompressionSession?
   private var settings: StreamSettings?
   private var parameterSets: [Data] = []
-  private var blackPixelBuffer: CVPixelBuffer?
+  private var blackFrames = BlackFrameCache()
   /// Consumed by the next `encode` call. `kVTEncodeFrameOptionKey_ForceKeyFrame` is a per-frame
   /// option, not a session property, so it has to travel with `VTCompressionSessionEncodeFrame`.
   private var forceNextKeyframe = false
@@ -72,7 +72,7 @@ public final class VideoEncoder: @unchecked Sendable {
       guard let session, let imageBuffer = CMSampleBufferGetImageBuffer(sample.buffer) else { return }
       let time = CMSampleBufferGetPresentationTimeStamp(sample.buffer)
       let toEncode: CVPixelBuffer
-      if blank, let black = self.blackBuffer(matching: imageBuffer) {
+      if blank, let black = blackFrames.buffer(matching: imageBuffer) {
         toEncode = black
       } else {
         toEncode = imageBuffer
@@ -190,7 +190,7 @@ public final class VideoEncoder: @unchecked Sendable {
     parameterSets = []
     forceNextKeyframe = false
     wasBlank = false
-    blackPixelBuffer = nil
+    blackFrames = BlackFrameCache()
   }
 
   /// True when video is entering or leaving a blank stretch. P-frames of black still
@@ -198,57 +198,6 @@ public final class VideoEncoder: @unchecked Sendable {
   /// this frame is forced to a keyframe on the same encoder-queue hop as `blank:`.
   public static func shouldForceKeyframe(blank: Bool, wasBlank: Bool) -> Bool {
     blank != wasBlank
-  }
-
-  private func blackBuffer(matching imageBuffer: CVPixelBuffer) -> CVPixelBuffer? {
-    let width = CVPixelBufferGetWidth(imageBuffer)
-    let height = CVPixelBufferGetHeight(imageBuffer)
-    let format = CVPixelBufferGetPixelFormatType(imageBuffer)
-    if let existing = blackPixelBuffer,
-      CVPixelBufferGetWidth(existing) == width,
-      CVPixelBufferGetHeight(existing) == height,
-      CVPixelBufferGetPixelFormatType(existing) == format
-    {
-      return existing
-    }
-    var created: CVPixelBuffer?
-    let status = CVPixelBufferCreate(
-      kCFAllocatorDefault,
-      width,
-      height,
-      format,
-      nil,
-      &created
-    )
-    guard status == kCVReturnSuccess, let created else { return nil }
-    Self.fillBlack(created)
-    blackPixelBuffer = created
-    return created
-  }
-
-  private static func fillBlack(_ buffer: CVPixelBuffer) {
-    CVPixelBufferLockBaseAddress(buffer, [])
-    defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
-    let format = CVPixelBufferGetPixelFormatType(buffer)
-    let videoRange = format == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
-    let biplanar = videoRange || format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
-    if biplanar {
-      if let y = CVPixelBufferGetBaseAddressOfPlane(buffer, 0) {
-        let bytes = CVPixelBufferGetBytesPerRowOfPlane(buffer, 0)
-          * CVPixelBufferGetHeightOfPlane(buffer, 0)
-        y.assumingMemoryBound(to: UInt8.self).update(repeating: videoRange ? 16 : 0, count: bytes)
-      }
-      if let uv = CVPixelBufferGetBaseAddressOfPlane(buffer, 1) {
-        let bytes = CVPixelBufferGetBytesPerRowOfPlane(buffer, 1)
-          * CVPixelBufferGetHeightOfPlane(buffer, 1)
-        uv.assumingMemoryBound(to: UInt8.self).update(repeating: 128, count: bytes)
-      }
-      return
-    }
-    if let base = CVPixelBufferGetBaseAddress(buffer) {
-      let bytes = CVPixelBufferGetBytesPerRow(buffer) * CVPixelBufferGetHeight(buffer)
-      base.assumingMemoryBound(to: UInt8.self).update(repeating: 0, count: bytes)
-    }
   }
 
   private func emit(_ buffer: CMSampleBuffer) {

@@ -127,8 +127,43 @@ reason.
 ### Thermals under sustained encode are unmeasured
 
 No sustained-stream run has been done yet, so nothing is known about how long the phone holds 1080p30
-before throttling, or what 4K30 costs. Unlike the iPad in `../gsDirector/docs/risks.md`, this handset
+before throttling, or what 4K30 costs. One data point from the 2026-09-09 link bring-up: a handset
+capturing 1080p60 for HDMI with **no** client playing — so no compression at all — still sat at
+`system.thermal: serious` on a warm bench, charging through the adapter. Capture and the display
+path alone are not free. Unlike the iPad in `../gsDirector/docs/risks.md`, this handset
 is not sitting on a Peltier cooler.
+
+### Mirroring when clean HDMI is off — verified on a cable, 2026-09-09
+
+Settled, so the fallback (rendering the phone's own root view into the external window) is not
+needed. iPhone 15 Pro → USB-C → Hollyland Cosmo C2 → NDI → GS Director, toggled both ways over
+`videoOutput.hdmi.clean`:
+
+| `cleanHDMIEnabled` | What the capture device received | `externalDisplay.framesEnqueued` |
+| --- | --- | --- |
+| true | the encoder's picture, no chrome | tracks `capturedFrames` exactly |
+| false | the phone's screen, chrome and all | frozen while `capturedFrames` climbs |
+
+Off really does hand the display back: the window is removed, nothing is drawn, and iOS mirrors.
+On again resumes, `framesEnqueued` behind `capturedFrames` by exactly what was missed. The
+external-display scene stays connected throughout at `1920x1080`, so neither switch waits for a
+replug.
+
+### The external scene goes away when the app is backgrounded
+
+An external-display scene is torn down when the app leaves the foreground, and the RTSP listener
+already dies then (see the backgrounded-Cameraman note in the operating memory). Nothing new,
+but a phone whose only output is HDMI now shows the display going dark as well as the stream
+stopping. When the listener-lifecycle work lands, `handleForeground()` should also flush the
+display layer so the first frame back is not a stale one.
+
+### HDMI adds heat
+
+DisplayPort alt mode on top of capture, and encode when a client is playing, on a phone that may be
+in the sun. The idle encoder removes the encode share when nothing is playing, which is the linked
+Cosmo C2 case, but the A3 soak (20 min at 1080p30 with HDMI and RTSP together, `system.thermal`
+recorded over time) is what says whether the phone holds it. The thermal badge and Director's
+thermal pill surface it either way.
 
 ### The simulator has no camera
 
