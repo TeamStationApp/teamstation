@@ -5,7 +5,11 @@ let package = Package(
   name: "DirectorNDI",
   platforms: [ .iOS(.v18) ],
   products: [
-    .library(name: "DirectorNDI", targets: [ "DirectorNDI" ])
+    .library(name: "DirectorNDI", targets: [ "DirectorNDI" ]),
+    // The raw SDK, with none of our Swift on top. Exposed for `gsNdiProbe`, which exists to run
+    // the receive path with everything of ours removed, so a crash inside the SDK can be told
+    // apart from Director provoking one.
+    .library(name: "CNDI", targets: [ "CNDI" ])
   ],
   dependencies: [
     .package(path: "../DirectorCore"),
