@@ -51,6 +51,11 @@ public typealias DiscoveryChangeHandler = @Sendable ([DiscoveredSource]) -> Void
 
 public protocol SourceDiscovery: AnyObject, Sendable {
   var kind: SourceKind { get }
+  /// Every kind this discovery can produce. One for a transport, several for a composite of them.
+  var kinds: [SourceKind] { get }
+  /// The transports underneath, which for a single transport is itself. Callers that must attribute
+  /// a source, an endpoint or a diagnostic to one transport walk these rather than reading `kind`.
+  var children: [SourceDiscovery] { get }
   var isRunning: Bool { get }
   var currentSources: [DiscoveredSource] { get }
   /// Compact finder/Bonjour status for the HUD and `/dump-state`. Empty for fake sources.
@@ -71,12 +76,31 @@ public protocol SourceDiscovery: AnyObject, Sendable {
   /// found again at whatever address it came back on.
   func searchNow()
   func setSweepDemand(isBusy: Bool, anyEnabledCameraMissing: Bool)
+  /// Ports this transport wants probed by the shared address sweep. Empty means it does not sweep.
+  ///
+  /// One sweep serves both transports because the expensive part is ARP, which resolves per
+  /// address and not per port: asking one address about 5960 and 554 in the same pass costs one
+  /// broadcast instead of two. With both transports always live, separate sweeps would mean two
+  /// independent passes over the same /24 several times a minute.
+  var sweepPorts: [Int] { get }
+  /// Hosts the shared sweep found. A transport takes what it asked for and ignores the rest.
+  func acceptSweep(_ result: SubnetScanner.Result)
+  /// Told before starting that something above is sweeping on its behalf, so it does not also
+  /// sweep. A transport running on its own is not told, and keeps doing it itself.
+  func setSweepIsShared(_ isShared: Bool)
 }
 
 extension SourceDiscovery {
   /// Tell discovery what the pipeline is doing, so a fallback address sweep can decide whether its
   /// broadcasts are worth making. Only the transports that sweep implement it.
   public func setSweepDemand(isBusy: Bool, anyEnabledCameraMissing: Bool) {}
+
+  public var sweepPorts: [Int] { [] }
+  public func acceptSweep(_ result: SubnetScanner.Result) {}
+  public func setSweepIsShared(_ isShared: Bool) {}
+
+  public var kinds: [SourceKind] { [kind] }
+  public var children: [SourceDiscovery] { [self] }
 
   public var diagnostic: String { "" }
   public var advertisements: [CameraAdvertisement] { [] }

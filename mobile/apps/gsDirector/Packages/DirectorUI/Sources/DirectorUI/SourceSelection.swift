@@ -135,6 +135,43 @@ public enum SourceSelectionRules {
     return result
   }
 
+  /// Re-merges only the kinds a refresh actually covered, leaving every other transport's rows
+  /// exactly as they were.
+  ///
+  /// `merge` treats its list as the whole truth: anything missing becomes absent, and an unnamed
+  /// disabled row is dropped outright. That is right for a discovery publishing everything it can
+  /// see, and wrong for a republish that only one transport can answer. Endpoint identity is an
+  /// RTSP concern — NDI cameras are keyed by name and have no endpoint to rebind — so a rebinding
+  /// pass sent through the full merge marked every NDI camera missing and deleted the ones nobody
+  /// had enabled yet.
+  ///
+  /// Existing rows keep their order, so nothing moves to another tile because of a refresh.
+  public static func merging(
+    existing: [SourceSelection],
+    discovered: [DiscoveredSource],
+    limitedTo kinds: Set<SourceKind>
+  ) -> [SourceSelection] {
+    guard !kinds.isEmpty else { return existing }
+    let untouched = existing.filter { !kinds.contains($0.kind) }
+    let refreshed = merge(
+      existing: existing.filter { kinds.contains($0.kind) },
+      discovered: discovered.filter { kinds.contains($0.kind) }
+    ).filter { $0.isPresent || $0.isEnabled }
+
+    var rank: [SourceID: Int] = [:]
+    for (offset, selection) in existing.enumerated() where rank[selection.id] == nil {
+      rank[selection.id] = offset
+    }
+    return (untouched + refreshed)
+      .enumerated()
+      .sorted { lhs, rhs in
+        let left = rank[lhs.element.id] ?? (existing.count + lhs.offset)
+        let right = rank[rhs.element.id] ?? (existing.count + rhs.offset)
+        return left < right
+      }
+      .map(\.element)
+  }
+
   /// Synthetic and file rows persist. RTSP only persists when the SourceID is a CameraRecord UUID.
   /// An NDI row always persists: its SourceID is derived from the camera's own NDI name rather
   /// than from an address, so it survives the camera moving and is meaningful again next launch.
@@ -150,8 +187,14 @@ public enum SourceSelectionRules {
   /// Launch arguments and Settings can switch synthetic ↔ live. Rows of the other kind must not
   /// stay in the list: they look like live cameras and a missing live row would otherwise try
   /// to connect from a leftover address.
+  ///
+  /// The live transports are not exclusive of each other, though, and treating them as such is
+  /// what made a mixed session impossible: both NDI selections were discarded the moment RTSP
+  /// discovery started. So the boundary that prunes is generated against live, and one generated
+  /// kind against the other — never NDI against RTSP.
   public static func retaining(_ selections: [SourceSelection], kind: SourceKind) -> [SourceSelection] {
-    selections.filter { $0.kind == kind }
+    guard kind.isLive else { return selections.filter { $0.kind == kind } }
+    return selections.filter(\.kind.isLive)
   }
 
   public enum EnableResult: Equatable {

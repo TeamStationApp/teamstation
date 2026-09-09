@@ -438,6 +438,21 @@ public final class AppEnvironment {
     return SourceProfile.forSimulatedCameras(config.useSimulatedCameras)
   }
 
+  /// Every live transport that could be built, as one discovery. A single one is returned on its
+  /// own rather than wrapped, so a rig with one transport available behaves exactly as before.
+  private static func liveDiscovery(
+    _ factory: (@Sendable (SourceKind) -> SourceDiscovery?)?
+  ) -> SourceDiscovery? {
+    let live = SourceKind.allCases.filter(\.isLive).compactMap { factory?($0) }
+    guard live.count > 1 else { return live.first }
+    return CompositeSourceDiscovery(live)
+  }
+
+  /// Whether two profiles mean the same set of cameras. Only the live pair does.
+  private static func describesSameSession(_ lhs: SourceProfile, _ rhs: SourceProfile) -> Bool {
+    lhs == rhs || (kind(for: lhs).isLive && kind(for: rhs).isLive)
+  }
+
   private static func kind(for profile: SourceProfile) -> SourceKind {
     switch profile {
     case .synthetic4: .synthetic
@@ -466,9 +481,12 @@ public final class AppEnvironment {
     case .file4:
       SourceProfileFactory.fileDiscovery(fixtures: fixtureURLs(), clock: clock)
     case .rtsp, .ndi:
-      // Injected by the app target, so this module still never imports a transport. The kind is
-      // passed through because there is now more than one live transport to choose between.
-      discoveryFactory?(kind)
+      // Both live transports, always, presented as one list. Paul's deployment is a mix of NDI
+      // converters and RTSP phones, and there is no reason for the operator to choose between
+      // protocols when the app can simply run both and let them pick cameras.
+      //
+      // Injected by the app target, so this module still never imports a transport.
+      Self.liveDiscovery(discoveryFactory)
     }
 
     guard let discovery else {
@@ -481,7 +499,7 @@ public final class AppEnvironment {
     self.discovery = discovery
     discoveryUnavailableReason = nil
     telemetry.mutate {
-      $0.sourceAvailable = discovery.kind.isLive
+      $0.sourceAvailable = discovery.kinds.contains(where: \.isLive)
       $0.discoveryStatus = discovery.diagnostic
     }
     discovery.start { [weak self] discovered in
@@ -659,24 +677,33 @@ public final class AppEnvironment {
   /// without waiting up to fifteen seconds for the next scan.
   private func refreshDiscovery() {
     guard let discovery else { return }
-    let endpoints = refreshEndpoints(from: discovery)
-    guard !endpoints.isEmpty else { return }
-
-    let identities = cameras.resolve(endpoints: endpoints, advertisements: discovery.advertisements)
-    let republished = endpoints.map { endpoint in
-      DiscoveredSource(
-        id: identities[endpoint]?.id ?? SourceID(
-          "\(CameraIdentityRules.sessionIDPrefix)\(UUID().uuidString.lowercased())"
-        ),
-        kind: discovery.kind,
-        advertisedName: identities[endpoint]?.name ?? CameraIdentityRules.unnamedFallback,
-        address: endpoint.url
-      )
+    let identities = cameras.resolve(
+      endpoints: refreshEndpoints(from: discovery),
+      advertisements: discovery.advertisements
+    )
+    // Per transport, because the kind stamped here decides how the row is later connected to. One
+    // list for both would rebind an NDI camera as an RTSP one.
+    let republished = discovery.children.flatMap { child in
+      refreshEndpoints(from: child).map { endpoint in
+        DiscoveredSource(
+          id: identities[endpoint]?.id ?? SourceID(
+            "\(CameraIdentityRules.sessionIDPrefix)\(UUID().uuidString.lowercased())"
+          ),
+          kind: child.kind,
+          advertisedName: identities[endpoint]?.name ?? CameraIdentityRules.unnamedFallback,
+          address: endpoint.url
+        )
+      }
     }
+    guard !republished.isEmpty else { return }
     // Rows keyed by the old identity are dropped rather than left behind: after a rebinding they
-    // describe a camera that is now on another row.
-    selections = SourceSelectionRules.merge(existing: selections, discovered: republished)
-      .filter { $0.isPresent || $0.isEnabled }
+    // describe a camera that is now on another row. Limited to the transports that answered, or
+    // the ones that cannot answer at all lose every camera they had found.
+    selections = SourceSelectionRules.merging(
+      existing: selections,
+      discovered: republished,
+      limitedTo: Set(republished.map(\.kind))
+    )
     selectionStore.save(selections)
     noteEndpoints(of: republished)
     pushDisplayNamesToTiles()
@@ -800,9 +827,15 @@ public final class AppEnvironment {
 
   /// Keeps the last sweep's order — identified cameras first — so a rename does not bury a VM33
   /// under an unidentified RTSP host that sorts earlier by address.
+  /// Endpoints belonging to one transport: what it currently sees, plus the rows already keyed to
+  /// cameras of its own kind. Rows are filtered by kind because with both transports live an
+  /// unfiltered list would hand every row's address to both, and republish each camera twice under
+  /// the wrong protocol.
   private func refreshEndpoints(from discovery: SourceDiscovery) -> [CameraEndpoint] {
+    let kinds = Set(discovery.kinds)
     let fromSweep = discovery.currentSources.compactMap { CameraEndpoint(address: $0.address) }
-    let fromRows = Array(Set(rowEndpoints.values))
+    let ownRows = selections.filter { kinds.contains($0.kind) }.map(\.id)
+    let fromRows = Array(Set(ownRows.compactMap { rowEndpoints[$0] }))
     guard !fromSweep.isEmpty else {
       return fromRows.sorted { $0.host < $1.host }
     }
@@ -817,8 +850,12 @@ public final class AppEnvironment {
 
   /// Simulated and live cameras share the five-source cap. Leaving the other kind in the list
   /// would look like live cameras.
+  ///
+  /// `rtsp` and `ndi` are not a change from one another. Both live transports run together, so
+  /// those two profiles name the same session and tearing the grid down between them would stop a
+  /// recording and drop every tile to answer a question nobody asked.
   private func applySourceProfile(_ profile: SourceProfile) async {
-    let profileChanged = profile != sourceProfile
+    let profileChanged = !Self.describesSameSession(profile, sourceProfile)
     sourceProfile = profile
     telemetry.mutate { $0.sourceProfile = profile.rawValue }
     if profileChanged {
