@@ -39,6 +39,10 @@ public struct SourceSummary: Sendable, Codable, Equatable {
   public var advertisedHost: String?
   /// Bonjour TXT `control` for this row's camera, empty for a NearStream or an older Cameraman.
   public var controlVersion: String?
+  /// One-based index of the row whose parameter channel drives this row's tile, when linked.
+  public var linkedControlIndex: Int?
+  /// True when this row is some other row's control link and so never gets a tile of its own.
+  public var isLinkedControl = false
 
   public init(
     index: Int,
@@ -50,7 +54,9 @@ public struct SourceSummary: Sendable, Codable, Equatable {
     sourceIndex: Int?,
     endpointHost: String? = nil,
     advertisedHost: String? = nil,
-    controlVersion: String? = nil
+    controlVersion: String? = nil,
+    linkedControlIndex: Int? = nil,
+    isLinkedControl: Bool = false
   ) {
     self.index = index
     self.name = name
@@ -62,6 +68,8 @@ public struct SourceSummary: Sendable, Codable, Equatable {
     self.endpointHost = endpointHost
     self.advertisedHost = advertisedHost
     self.controlVersion = controlVersion
+    self.linkedControlIndex = linkedControlIndex
+    self.isLinkedControl = isLinkedControl
   }
 }
 

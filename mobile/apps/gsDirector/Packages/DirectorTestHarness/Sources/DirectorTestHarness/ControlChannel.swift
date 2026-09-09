@@ -31,6 +31,10 @@ public enum ControlCommand: Sendable, Equatable {
   case nameCamera(index: Int, name: String)
   case bindCamera(index: Int, name: String)
   case forgetCamera(index: Int)
+  /// Points row `video`'s tile at row `control`'s parameter channel, and clears a link from either
+  /// of its rows. Row indices, 0-based here and 1-based on the wire, like `enableSource`.
+  case linkSource(video: Int, control: Int)
+  case unlinkSource(index: Int)
   /// Searches the network now, without waiting for the next periodic sweep.
   case searchCameras
   /// Opens or closes the Cameraman control screen on a 0-based source.
@@ -146,6 +150,14 @@ public enum ControlChannel {
     case "forget-camera", "forgetcamera":
       guard let index = query["index"].flatMap({ Int($0) }) else { return nil }
       return .forgetCamera(index: index - 1)
+    case "link-source", "linksource":
+      guard let video = query["video"].flatMap({ Int($0) }),
+            let control = query["control"].flatMap({ Int($0) })
+      else { return nil }
+      return .linkSource(video: video - 1, control: control - 1)
+    case "unlink-source", "unlinksource":
+      guard let index = query["index"].flatMap({ Int($0) }) else { return nil }
+      return .unlinkSource(index: index - 1)
     case "search-cameras", "searchcameras":
       return .searchCameras
     case "camera-control", "cameracontrol":
