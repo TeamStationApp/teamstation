@@ -9,7 +9,8 @@ struct ProbeApp: App {
     wantedReceivers: Self.integerArgument("receivers") ?? 3,
     readsPixels: Self.flagArgument("readPixels"),
     lowBandwidth: Self.flagArgument("lowBandwidth"),
-    nameFilter: Self.stringArgument("nameFilter") ?? ""
+    nameFilter: Self.stringArgument("nameFilter") ?? "",
+    disableRUDP: Self.flagArgument("disableRudp")
   )
 
   var body: some Scene {

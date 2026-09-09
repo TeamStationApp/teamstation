@@ -23,7 +23,53 @@ public final class NDIRuntime: @unchecked Sendable {
   private var users = 0
   private var initialized = false
 
+  /// What happened when the transport workaround was applied, for `/dump-state`.
+  public private(set) var transportNote = ""
+
   private init() {}
+
+  /// Where the SDK's configuration is written, and why it is written at all.
+  ///
+  /// Reliable UDP is NDI's default receive transport, and it is where this SDK crashes. Three
+  /// 1080p60 receivers reliably take the app down with a NULL write inside
+  /// `ndi::reference::recv::tcp_udp_stream::push`, on the SDK's own QUIC worker thread — measured
+  /// at 27 seconds, and reproduced in `gsNdiProbe`, an app that links the SDK and does nothing but
+  /// capture a frame and free it. Nothing of ours is required to reach it, so nothing of ours can
+  /// fix it. Turning the transport off avoids the code path: the same three receivers then ran
+  /// nineteen minutes and 28,000 frames each without incident.
+  ///
+  /// The documented location is `$HOME/.ndi/ndi-config.v1.json`, which on iOS is the container
+  /// root and is not writable — creating it fails with "Operation not permitted" and leaves the
+  /// SDK silently on its defaults, which is how this looked fixed once when it was not. The
+  /// documentation also says `NDI_CONFIG_DIR` is honoured on every platform if it is set before
+  /// the library is initialized, and that is the way in from inside a sandbox.
+  ///
+  /// The fallback is multi-TCP, then unicast UDP, then plain TCP — all still enabled. Revisit this
+  /// when the SDK is next updated: it costs whatever reliable UDP was buying on a lossy network.
+  static let reliableUDPDisabled = #"{ "ndi": { "rudp": { "recv": { "enable": false } } } }"#
+
+  private func configureTransport() {
+    let directory = URL(fileURLWithPath: NSHomeDirectory())
+      .appendingPathComponent("Documents")
+      .appendingPathComponent("ndi")
+    do {
+      try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+      try Self.reliableUDPDisabled.write(
+        to: directory.appendingPathComponent("ndi-config.v1.json"),
+        atomically: true,
+        encoding: .utf8
+      )
+      setenv("NDI_CONFIG_DIR", directory.path, 1)
+      transportNote = "rudp receive disabled"
+    } catch {
+      // Not fatal: the app still runs, on a transport that is known to crash it at three cameras.
+      // Said out loud rather than swallowed, because "it crashed again" and "the workaround did
+      // not apply" are otherwise the same observation.
+      transportNote = "could not disable rudp: \(error.localizedDescription)"
+    }
+  }
+
+
 
   /// `NDI SDK APPLE ... 6.3.2.0`, or empty if the library never came up.
   public var version: String {
@@ -54,6 +100,8 @@ public final class NDIRuntime: @unchecked Sendable {
       unavailableReason = "this device's CPU is not supported by the NDI SDK"
       return false
     }
+    // Before `initialize`, which is when the SDK reads its configuration.
+    configureTransport()
     guard NDIlib_initialize() else {
       unavailableReason = "the NDI library failed to start"
       return false

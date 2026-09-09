@@ -51,6 +51,8 @@ final class Probe: @unchecked Sendable {
   /// order it learned them, so without it "the first three" is a different three between runs and
   /// the experiment is not repeatable.
   let nameFilter: String
+  /// Whether NDI reliable-UDP receiving is turned off before the SDK starts.
+  let disableRUDP: Bool
 
   private let lock = NSLock()
   private var readings: [Int: Reading] = [:]
@@ -60,7 +62,14 @@ final class Probe: @unchecked Sendable {
   private var running = false
   private var receivers: [NDIlib_recv_instance_t?] = []
 
-  init(wantedReceivers: Int, readsPixels: Bool, lowBandwidth: Bool, nameFilter: String) {
+  init(
+    wantedReceivers: Int,
+    readsPixels: Bool,
+    lowBandwidth: Bool,
+    nameFilter: String,
+    disableRUDP: Bool
+  ) {
+    self.disableRUDP = disableRUDP
     self.wantedReceivers = wantedReceivers
     self.readsPixels = readsPixels
     self.lowBandwidth = lowBandwidth
@@ -78,6 +87,34 @@ final class Probe: @unchecked Sendable {
     )
   }
 
+  /// Writes `$HOME/.ndi/ndi-config.v1.json` before the SDK starts, turning off the transport the
+  /// crash lives in.
+  ///
+  /// NDI's reliable UDP — the `NDI_quic` / `ntk_quic` code in the faulting stack — is the default
+  /// connection type, and the documentation says it can be force-disabled per side, falling back
+  /// to multi-TCP and then to plain TCP. On iOS the SDK reads this file from the app's own
+  /// container, so this needs no device-wide setting and no environment variable.
+  private func writeConfiguration() {
+    guard disableRUDP else { return }
+    // Into Documents, and pointed at with `NDI_CONFIG_DIR`. The documented location is
+    // `$HOME/.ndi/`, which on iOS is the root of the app container and is not writable — creating
+    // it fails with "Operation not permitted", silently leaving the SDK on its defaults. The
+    // documentation says the environment variable is honoured on every platform if it is set
+    // before the library is initialized, which is the only way in from inside a sandbox.
+    let directory = URL(fileURLWithPath: NSHomeDirectory())
+      .appendingPathComponent("Documents")
+      .appendingPathComponent("ndi")
+    let file = directory.appendingPathComponent("ndi-config.v1.json")
+    do {
+      try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+      try #"{ "ndi": { "rudp": { "recv": { "enable": false } } } }"#.write(to: file, atomically: true, encoding: .utf8)
+      setenv("NDI_CONFIG_DIR", directory.path, 1)
+      setNote("rudp receive disabled via " + directory.path)
+    } catch {
+      setNote("could not write NDI config: \(error)")
+    }
+  }
+
   func start() {
     lock.lock()
     guard !running else {
@@ -87,6 +124,8 @@ final class Probe: @unchecked Sendable {
     running = true
     startedAt = Date()
     lock.unlock()
+
+    writeConfiguration()
 
     guard NDIlib_initialize() else {
       setNote("NDIlib_initialize failed")
