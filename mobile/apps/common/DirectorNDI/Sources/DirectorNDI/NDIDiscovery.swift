@@ -41,6 +41,9 @@ public final class NDIDiscovery: SourceDiscovery, @unchecked Sendable {
   /// The fallback that finds a camera mDNS cannot resolve. Owned here because the addresses it
   /// finds go straight into this finder's `extra_ips`.
   private var sweeper: CameraSweeper?
+  /// Set when something above is sweeping for us, so this one does not make the same broadcasts
+  /// a second time.
+  private var isSweptExternally = false
   private let clock: DirectorClock
   /// Where an on-demand search runs. Never the caller's thread: `searchNow` reaches the finder,
   /// the finder's lock is also held by the discovery thread's wait, and the one caller that
@@ -189,10 +192,30 @@ public final class NDIDiscovery: SourceDiscovery, @unchecked Sendable {
   /// 5961 would find only cameras that happen to be in use.
   public static let queryPort = 5_960
 
+  public var sweepPorts: [Int] { [Self.queryPort] }
+
+  public func setSweepIsShared(_ isShared: Bool) {
+    lock.lock()
+    isSweptExternally = isShared
+    let existing = isShared ? sweeper : nil
+    if isShared { sweeper = nil }
+    lock.unlock()
+    existing?.stop()
+  }
+
+  /// The finder's `p_extra_ips`, from whatever swept. Only the addresses that answered on the
+  /// query port: handing it every host on the segment would have it querying printers.
+  public func acceptSweep(_ result: SubnetScanner.Result) {
+    setExtraIPs(result.hosts(onPort: Self.queryPort))
+  }
+
+  /// Its own sweep, for when nothing else is driving one — a single-transport rig, or a test that
+  /// builds this discovery on its own. Under `CompositeSourceDiscovery` the shared sweep calls
+  /// `acceptSweep` instead and this stays unused, so the segment sees one pass rather than two.
   private func startSweeper() {
-    guard sweeper == nil else { return }
+    guard sweeper == nil, !isSweptExternally else { return }
     let sweeper = CameraSweeper(ports: [Self.queryPort]) { [weak self] result in
-      self?.setExtraIPs(result.hosts(onPort: Self.queryPort))
+      self?.acceptSweep(result)
     }
     self.sweeper = sweeper
     sweeper.start()
