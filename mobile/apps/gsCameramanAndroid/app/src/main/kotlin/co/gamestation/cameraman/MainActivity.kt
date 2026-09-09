@@ -6,13 +6,11 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
-import android.hardware.display.DisplayManager
 import android.net.Uri
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
 import android.os.IBinder
-import android.view.Surface
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -60,30 +58,10 @@ class MainActivity : ComponentActivity() {
     private var environment by mutableStateOf<AppEnvironment?>(null)
     private var isBound = false
 
-    /**
-     * The only thing that reports the 180° between the two landscape holds.
-     *
-     * `onConfigurationChanged` does not fire for it: landscape-left and landscape-right have the
-     * same orientation, the same size and the same layout, so nothing in `Configuration` changes.
-     * The activity does not pause either, so `onResume` never runs. Without this listener a phone
-     * re-clamped the other way up — or one whose auto-rotate simply changes its mind — keeps
-     * rendering with the rotation computed for the hold it no longer has, and every client sees an
-     * upside-down picture while the UI on the handset looks perfectly correct.
-     */
-    private val displayListener = object : DisplayManager.DisplayListener {
-        override fun onDisplayChanged(displayId: Int) {
-            if (displayId == display?.displayId) applyDisplayRotation()
-        }
-
-        override fun onDisplayAdded(displayId: Int) = Unit
-        override fun onDisplayRemoved(displayId: Int) = Unit
-    }
-
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             val local = binder as? CameramanService.LocalBinder
             environment = local?.environment
-            applyDisplayRotation()
             handleControlIntent(intent)
         }
 
@@ -189,26 +167,6 @@ class MainActivity : ComponentActivity() {
         handleControlIntent(intent)
     }
 
-    override fun onStart() {
-        super.onStart()
-        displayManager?.registerDisplayListener(displayListener, null)
-    }
-
-    override fun onStop() {
-        displayManager?.unregisterDisplayListener(displayListener)
-        super.onStop()
-    }
-
-    override fun onResume() {
-        super.onResume()
-        applyDisplayRotation()
-    }
-
-    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
-        super.onConfigurationChanged(newConfig)
-        applyDisplayRotation()
-    }
-
     override fun onDestroy() {
         if (isBound) {
             unbindService(connection)
@@ -238,22 +196,6 @@ class MainActivity : ComponentActivity() {
         val current = environment ?: return
         if (!current.launch.isUITest) return
         ControlChannel.command(data.toString())?.let { current.handle(it) }
-    }
-
-    private val displayManager: DisplayManager?
-        get() = getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager
-
-    private fun applyDisplayRotation() {
-        val current = environment ?: return
-        val rotation = display?.rotation ?: Surface.ROTATION_0
-        current.camera.setDisplayRotation(
-            when (rotation) {
-                Surface.ROTATION_90 -> 90
-                Surface.ROTATION_180 -> 180
-                Surface.ROTATION_270 -> 270
-                else -> 0
-            }
-        )
     }
 
     private fun requiredPermissions(): List<String> = listOf(
