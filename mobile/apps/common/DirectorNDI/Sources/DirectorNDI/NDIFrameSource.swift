@@ -24,6 +24,14 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
   /// The full `MACHINE (Stream)` name. The only thing `NDIlib_recv_connect` accepts, and the
   /// reason a rename is treated as a new camera.
   private let ndiName: String
+  /// The address the finder resolved for this source, when it had one.
+  ///
+  /// Handed to the receiver alongside the name because connecting by name alone makes the receiver
+  /// resolve it again through a finder of its own — one with none of the extra IPs the fallback
+  /// sweep supplies. A camera found only because of that sweep could then be listed and not
+  /// connected to: measured as `connections=0` and no frames at all, against a camera that was
+  /// transmitting perfectly the whole time.
+  private let ndiURL: String
   private let clock: DirectorClock
   private let encodeCodec: CompressedFrame.Codec
   private let encodeBitrate: Int
@@ -97,6 +105,7 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     sourceID: SourceID,
     displayName: String,
     ndiName: String,
+    ndiURL: String = "",
     encodeCodec: CompressedFrame.Codec = .hevc,
     encodeBitrate: Int = 12_000_000,
     lowBandwidth: Bool = false,
@@ -105,6 +114,7 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     self.sourceID = sourceID
     self.displayName = displayName
     self.ndiName = ndiName
+    self.ndiURL = ndiURL
     self.encodeCodec = encodeCodec
     self.encodeBitrate = encodeBitrate
     self.wantsLowBandwidth = lowBandwidth
@@ -170,10 +180,11 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     }
 
     let created: NDIlib_recv_instance_t? = ndiName.withCString { name in
+      ndiURL.withCString { address in
       "GS Director".withCString { receiverName in
         var source = NDIlib_source_t()
         source.p_ndi_name = name
-        source.p_url_address = nil
+        source.p_url_address = ndiURL.isEmpty ? nil : address
 
         var settings = NDIlib_recv_create_v3_t()
         settings.source_to_connect_to = source
@@ -191,6 +202,7 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
         settings.allow_video_fields = false
         settings.p_ndi_recv_name = receiverName
         return NDIlib_recv_create_v3(&settings)
+      }
       }
     }
 

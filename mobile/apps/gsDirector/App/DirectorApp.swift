@@ -73,6 +73,7 @@ struct DirectorApp: App {
           sourceID: discovered.id,
           displayName: discovered.advertisedName,
           ndiName: source.name.full,
+          ndiURL: source.url,
           encodeCodec: codec,
           encodeBitrate: bitrate,
           lowBandwidth: launch.ndiBandwidth == "lowest"

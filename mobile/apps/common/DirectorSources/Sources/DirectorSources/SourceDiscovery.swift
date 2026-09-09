@@ -70,9 +70,14 @@ public protocol SourceDiscovery: AnyObject, Sendable {
   /// Searches once, now, regardless of the periodic setting. How a camera that dropped mid-game is
   /// found again at whatever address it came back on.
   func searchNow()
+  func setSweepDemand(isBusy: Bool, anyEnabledCameraMissing: Bool)
 }
 
 extension SourceDiscovery {
+  /// Tell discovery what the pipeline is doing, so a fallback address sweep can decide whether its
+  /// broadcasts are worth making. Only the transports that sweep implement it.
+  public func setSweepDemand(isBusy: Bool, anyEnabledCameraMissing: Bool) {}
+
   public var diagnostic: String { "" }
   public var advertisements: [CameraAdvertisement] { [] }
   public func setPeriodicSearch(_ enabled: Bool) {}
