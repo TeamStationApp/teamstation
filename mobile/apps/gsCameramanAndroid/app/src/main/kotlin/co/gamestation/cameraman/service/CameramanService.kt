@@ -12,6 +12,8 @@ import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Binder
 import android.os.IBinder
+import android.view.OrientationEventListener
+import android.view.Surface
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import co.gamestation.cameraman.MainActivity
@@ -62,6 +64,43 @@ class CameramanService : Service() {
     private var scope: CoroutineScope? = null
     private var notificationJob: Job? = null
 
+    /**
+     * Which way up the handset is, taken from the accelerometer rather than from the display.
+     *
+     * The display's rotation is the wrong signal for this service. It reports how the *foreground
+     * window* is oriented, so once the activity is swiped away it follows the launcher — a phone
+     * clamped in landscape with the launcher in portrait reports ROTATION_0, and deriving the
+     * capture rotation from that turns the stream on its side. The service outliving its activity
+     * is the whole point of this build, so the frame of reference has to be the device itself.
+     *
+     * `onConfigurationChanged` is no use either: it does not fire for the 180° between the two
+     * landscape holds, because landscape-left and landscape-right share an orientation, a size and
+     * a layout. That half turn is the one that matters on a tripod.
+     */
+    private var orientationListener: OrientationEventListener? = null
+
+    private fun startWatchingOrientation() {
+        val listener = object : OrientationEventListener(this) {
+            override fun onOrientationChanged(orientation: Int) {
+                val rotation = landscapeSurfaceRotation(orientation) ?: return
+                val current = environment ?: return
+                current.camera.setDisplayRotation(
+                    when (rotation) {
+                        Surface.ROTATION_90 -> 90
+                        Surface.ROTATION_270 -> 270
+                        else -> 0
+                    }
+                )
+            }
+        }
+        // A handset with no accelerometer cannot report, and enabling anyway would silently never
+        // fire; the capture rotation then stays at whatever the activity last supplied.
+        if (listener.canDetectOrientation()) {
+            listener.enable()
+            orientationListener = listener
+        }
+    }
+
     override fun onBind(intent: Intent?): IBinder = binder
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -85,6 +124,9 @@ class CameramanService : Service() {
 
             startForegroundWithTypes(created)
             created.start()
+            // Reports immediately on enable, so a service started while the phone is already in
+            // the other hold does not wait for a change that may never come.
+            startWatchingOrientation()
 
             val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
             this.scope = scope
@@ -104,6 +146,8 @@ class CameramanService : Service() {
     }
 
     override fun onDestroy() {
+        orientationListener?.disable()
+        orientationListener = null
         notificationJob?.cancel()
         scope?.cancel()
         scope = null
@@ -180,6 +224,21 @@ class CameramanService : Service() {
     }
 
     companion object {
+
+        /**
+         * Landscape-only, so only the two landscape holds are meaningful and a portrait reading is
+         * held rather than applied — the app cannot be in portrait, and a phone tipped upright on
+         * its way to being re-clamped should not send a quarter-turned picture on the way past.
+         * `ORIENTATION_UNKNOWN`, which is what a handset lying flat reports, is held for the same
+         * reason.
+         */
+        fun landscapeSurfaceRotation(degrees: Int): Int? = when {
+            degrees == OrientationEventListener.ORIENTATION_UNKNOWN -> null
+            degrees in 45..134 -> Surface.ROTATION_270
+            degrees in 225..314 -> Surface.ROTATION_90
+            else -> null
+        }
+
         const val channelId = "co.gamestation.cameraman.streaming"
         const val notificationId = 1
 

@@ -12,6 +12,9 @@ import co.gamestation.cameraman.harness.ControlChannel
 import co.gamestation.cameraman.harness.ControlCommand
 import co.gamestation.cameraman.harness.ControlServer
 import co.gamestation.cameraman.harness.LaunchConfiguration
+import co.gamestation.cameraman.service.CameramanService
+import android.view.OrientationEventListener
+import android.view.Surface
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -416,6 +419,31 @@ class CaptureRotationTest {
         val front = CameraSession.captureRotation(270, 90, isFront = true)
         assertEquals(back, front)
         assertEquals(90, front)
+    }
+
+    @Test
+    fun `only the two landscape holds move the capture rotation`() {
+        // The app is landscape-only. A portrait reading — a phone tipped upright while it is being
+        // re-clamped — must be held rather than applied, or the stream sends a quarter-turned
+        // picture on the way past. Flat on a bench reports ORIENTATION_UNKNOWN and is held too.
+        assertNull(CameramanService.landscapeSurfaceRotation(0))
+        assertNull(CameramanService.landscapeSurfaceRotation(180))
+        assertNull(CameramanService.landscapeSurfaceRotation(359))
+        assertNull(
+            CameramanService.landscapeSurfaceRotation(OrientationEventListener.ORIENTATION_UNKNOWN)
+        )
+    }
+
+    @Test
+    fun `the two landscape holds map to opposite surface rotations`() {
+        val one = CameramanService.landscapeSurfaceRotation(90)
+        val other = CameramanService.landscapeSurfaceRotation(270)
+        assertEquals(Surface.ROTATION_270, one)
+        assertEquals(Surface.ROTATION_90, other)
+        // Which is what makes the pictures they produce a half turn apart, via captureRotation.
+        val oneAngle = CameraSession.captureRotation(90, 270, isFront = false)
+        val otherAngle = CameraSession.captureRotation(90, 90, isFront = false)
+        assertEquals(180, ((otherAngle - oneAngle) + 360) % 360)
     }
 
     @Test
