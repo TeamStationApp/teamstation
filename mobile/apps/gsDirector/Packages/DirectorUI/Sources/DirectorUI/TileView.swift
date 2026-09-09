@@ -266,17 +266,13 @@ public struct TileView: View {
 
   private var nameplate: some View {
     HStack(spacing: 6) {
-      if telemetry.isProgram {
-        Text("OUT")
-          .font(.system(size: 10, weight: .heavy, design: .rounded))
-          .padding(.horizontal, 5)
-          .padding(.vertical, 2)
-          .background(Color.programGreen, in: RoundedRectangle(cornerRadius: 3))
-          .foregroundStyle(.black)
-      }
+      // No on-air badge here: the green outline already says which tile is programme, and the
+      // header of a narrow tile has no room to say it twice.
+      //
       // The status pills to the right of this hold their width now, so on a narrow tile the
       // squeeze lands here instead. Truncate the name rather than wrap the header onto two lines.
-      Text("source \(sourceIndex + 1): \(telemetry.displayName ?? "—")")
+      // The accessibility label on the tile still says "source N", which reads better aloud.
+      Text("\(sourceIndex + 1): \(telemetry.displayName ?? "—")")
         .font(.system(size: 13, weight: .semibold, design: .rounded))
         .foregroundStyle(.white)
         .lineLimit(1)
@@ -293,7 +289,7 @@ public struct TileView: View {
     .background(.black.opacity(0.45), in: Capsule())
   }
 
-  /// The phone's own thermal and battery, the size of the OUT badge, in the corner where the phone
+  /// The phone's own thermal and battery, one header row tall, in the corner where the phone
   /// draws them. Untappable; a tap here still cuts the tile to programme.
   @ViewBuilder
   private var cameraStatusPills: some View {
