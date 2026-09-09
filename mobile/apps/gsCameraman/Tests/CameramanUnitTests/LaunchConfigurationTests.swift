@@ -23,6 +23,16 @@ struct LaunchConfigurationTests {
     #expect(configuration.persistSettings)
   }
 
+  @Test("Encoding with no client is off unless a diagnostic asks for it")
+  func encodeWhenIdleIsALaunchKey() {
+    #expect(LaunchConfiguration(arguments: []).encodeWhenIdle == false)
+    let configuration = LaunchConfiguration(arguments: [ "-encodeWhenIdle", "true" ])
+    #expect(configuration.encodeWhenIdle)
+    #expect(configuration.unknownKeys.isEmpty)
+    // Not a stream setting: it is never persisted and never pinned against a saved value.
+    #expect(configuration.providedSettingFields.isEmpty)
+  }
+
   @Test("Clean HDMI can be pinned off for a flow, and counts as provided")
   func cleanHDMIIsALaunchKey() {
     let configuration = LaunchConfiguration(arguments: [ "-cleanHdmi", "false" ])
