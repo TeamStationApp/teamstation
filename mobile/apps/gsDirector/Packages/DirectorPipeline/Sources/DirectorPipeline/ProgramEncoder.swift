@@ -59,6 +59,14 @@ public final class ProgramEncoder: @unchecked Sendable {
   /// timebase; a single such sample wrote a jump of days into the programme file, and export
   /// then scored the file unplayable and refused the whole recording with "no files to remux".
   private var partStartHost: Double?
+  /// Wall clock of the last frame actually placed on the programme timeline.
+  ///
+  /// The programme is watched afterwards, so its timeline has to be real time even across a
+  /// stall. Without this, a frame arriving on a foreign timebase advanced the file by exactly one
+  /// frame however long the compositor had been away, and the master ended shorter than the take
+  /// it came from, accumulating at each
+  /// stall and never recovering.
+  private var lastAppendHost: Double?
   /// How far past real time the programme clock may run before a sample is treated as carrying a
   /// foreign timestamp. Loose enough to absorb scheduling jitter and a late frame burst.
   private static let timelineAdvanceSlack: Double = 2
@@ -133,6 +141,7 @@ public final class ProgramEncoder: @unchecked Sendable {
       part = 1
       outputURLs = []
       lastSourceTime = nil
+      lastAppendHost = nil
       pendingRecoveryFill = false
       previousPartsDuration = 0
       startedAt = wall
@@ -207,6 +216,7 @@ public final class ProgramEncoder: @unchecked Sendable {
     self.adaptor = adaptor
     self.baseTime = nil
     self.partStartHost = nil
+    self.lastAppendHost = nil
     self.baseAudioTime = nil
     self.nextAudioTime = nil
     self.lastTime = .negativeInfinity
@@ -278,18 +288,27 @@ public final class ProgramEncoder: @unchecked Sendable {
     // another source's timebase does not, and is re-based onto the next frame.
     let nowHost = CFAbsoluteTimeGetCurrent()
     if partStartHost == nil { partStartHost = nowHost }
+    // How much real time this frame is worth. A frame that follows the last one immediately is
+    // worth one frame; one that arrives after the compositor stalled for nine seconds is worth
+    // nine seconds, and saying otherwise is what shortened the file.
+    let realStep = lastAppendHost.map { max(oneFrame.seconds, nowHost - $0) } ?? oneFrame.seconds
+    let advance = CMTime(seconds: realStep, preferredTimescale: 600)
     if let partStart = partStartHost, lastTime.isNumeric, lastTime >= .zero {
       let realElapsed = max(0, nowHost - partStart)
       if !time.isNumeric || time.seconds < -0.5
         || time.seconds > realElapsed + Self.timelineAdvanceSlack {
-        time = CMTimeAdd(lastTime, oneFrame)
+        // The timestamp is unusable, but the time it stands for still passed. Advance by what the
+        // clock says rather than by a frame, so the hole is held at its true length: the sample
+        // before it runs until this one, which is the freeze a viewer should see.
+        time = CMTimeAdd(lastTime, advance)
         baseTime = CMTimeSubtract(presentationTime, time)
       }
     }
     if time <= lastTime {
-      time = CMTimeAdd(lastTime, oneFrame)
+      time = CMTimeAdd(lastTime, advance)
     }
     lastTime = time
+    lastAppendHost = nowHost
     lastSourceTime = presentationTime
     let ready = videoInput.isReadyForMoreMediaData
     lock.unlock()
@@ -545,6 +564,7 @@ public final class ProgramEncoder: @unchecked Sendable {
     isRunning = false
     pendingRecoveryFill = false
     lastSourceTime = nil
+    lastAppendHost = nil
     return PendingFinish(writer: writer, videoInput: videoInput, audioInput: audioInput, url: outputURL)
   }
 
