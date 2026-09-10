@@ -615,8 +615,8 @@ lateness but *never* a gap. A bandwidth cap on the real link does produce genuin
 
 | Device | Role | Shape it? |
 |---|---|---|
-| **Pixel 10** | GS Cameraman, RTSP, pointed at the wall clock | **Yes — the primary subject.** |
-| **iPad (Director)** | the app under test | **Lane B only.** Its Wi-Fi is the *only* thing that can delay the Cosmo, so this is not a workaround — it is the real production failure mode. |
+| **Pixel 10** | GS Cameraman, RTSP, pointed at the wall clock | **Yes — the primary subject.** `10.10.7.226`, verified. |
+| **iPad (Director)** | the app under test | **Lane B.** Its Wi-Fi is the *only* thing that can delay the Cosmo, so this is not a workaround — it is the real production failure mode. Confirm its IP first. |
 | **Cosmo C2** | NDI camera, capturing the iPhone over HDMI | **No, and no need.** Wired to the access point, so its traffic never crosses the Pi. In the production deployment this link is not the risk. |
 | **iPhone 15 Pro** | draws the picture the Cosmo captures, pointed at the wall clock | **No. Never.** Its network path is irrelevant — it only sends HDMI. Shaping it would corrupt the reference, not test anything. |
 
@@ -628,19 +628,41 @@ all, with no burned-in timecode needed on the device lane.
 The realistic NDI risk is therefore **the Director's own Wi-Fi**, a 5 GHz link at under thirty feet.
 Lane B is how that gets exercised.
 
-### Two lanes, and they are mutually exclusive
+### Two lanes — and MEASURED 2026-09-09, they are not mutually exclusive here
 
-The skill is explicit: *shape the camera, not Director*, and traffic between two devices both on
-`spjr-outside` may be bridged inside the Wi-Fi firmware and is not reliably shapeable. So a run is
-in one lane or the other, never both.
+The skill warns that traffic between two devices both on `spjr-outside` may be bridged inside the
+Wi-Fi firmware and not reliably shapeable, and advises keeping Director on the UniFi AP. **On this
+rig that caveat does not bite, and it was verified rather than assumed.** Both the Pixel and the
+iPad are on `spjr-outside`, and with the Pixel capped at 1.5 Mbit an RTSP pull fell from
+**4.21 Mbit/s to 2.04 Mbit/s**. The shaper sees the traffic and the cap takes effect.
 
-- **Lane A — per-camera (default).** Pixel 10 on `spjr-outside`; Director and everything else on the
-  UniFi SSID. Isolates one RTSP camera while the others stay clean, which is what makes "this angle
-  degraded and the others did not" a falsifiable claim.
-- **Lane B — whole-Director.** iPad on `spjr-outside`; every camera on UniFi. The **only** way to
-  degrade the NDI path, since the Cosmo cannot be shaped directly. Blunt by nature: it hits every
-  camera and the control channel together, so keep latencies modest and expect telemetry polls to
-  slow down with everything else.
+So both lanes are available without moving any device between SSIDs:
+
+- **Lane A — per-camera (default).** Shape the Pixel. Isolates one RTSP camera while the rest stay
+  clean, which is what makes "this angle degraded and the others did not" falsifiable.
+- **Lane B — whole-Director.** Shape the iPad. The **only** way to reach the NDI path, since the
+  Cosmo is wired to the AP — and the production-realistic failure, because the Director's own Wi-Fi
+  is the one link that can delay it. Blunt by nature: it hits every camera and the control channel
+  together, so keep latencies modest and expect telemetry polls to slow with everything else.
+
+Re-verify the cap before trusting any run. Both devices randomise MAC per SSID and the Pixel is
+documented to roam back to the main SPJR SSID, so a lane that worked yesterday can be silently inert
+today.
+
+### Known IPs, and one device that cannot be shaped at all
+
+MEASURED 2026-09-09 from `GET /v1/devices` plus reverse DNS:
+
+| Station | IP | Identified by | Shapeable |
+|---|---|---|---|
+| `d6:97:e1:ca:aa:25` | `10.10.7.226` | reverse DNS `Pixel-10.vtex.net`; RTSP open on 8554 | **yes, verified** |
+| `92:e1:43:95:7a:46` | `10.10.7.128` | no reverse DNS, no open port — **unconfirmed** | yes, once identified |
+| `36:17:82:3b:fd:8e` | **none** | — | **no — it holds no IP lease** |
+
+**Confirm which station is the iPad before shaping anything in Lane B.** The iPhone 15 Pro must
+never be shaped, and an unidentified station is not a safe thing to guess at. Note also that a
+station with no lease cannot be shaped at all; if that turns out to be the iPad, Lane B is blocked
+until it gets one.
 
 ### The webcam is the primary instrument, not a check box
 
@@ -674,6 +696,12 @@ a 50 % replay closes that gap at half rate. Reading the clock in the frame is th
 5. Apply the shape, then **verify it took** with `GET /v1/stats` — near-zero bytes on that device's
    class while traffic is clearly flowing means it is on the wrong SSID or both ends are on
    `spjr-outside`.
+   **Read the right class.** The shape response returns `"slot": N`, and slot *N* is class
+   **`1:N`** — slot 1 is `1:1`. Class `1:11` also exists, is unrelated, and sits at 0 bytes
+   forever; reading it instead produced a confident and completely wrong conclusion that shaping was
+   inert on 2026-09-09. Cross-check against
+   `ssh root@pi1.vtex.net 'iw dev wlan0 station dump'`, whose per-station byte counters are
+   independent of the tc tree, and prefer a throughput measurement over any counter.
 6. **Arm cleanup before the first shape.** Shapes have no TTL and survive a dead test run:
    `trap 'curl -sk -X DELETE https://pi1.vtex.net/v1/shape' EXIT INT TERM`.
 
