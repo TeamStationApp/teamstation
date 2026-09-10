@@ -253,6 +253,9 @@ public final class SourcePipeline: @unchecked Sendable {
 
   // MARK: - Frame path
 
+  /// Backstop for a replay that stopped without telling anyone. See `ReplayWedgePolicy`.
+  private let wedgePolicy = ReplayWedgePolicy()
+
   private func handle(_ frame: PixelFrame) {
     guard let converted = converter.convert(frame) else {
       telemetry.recordDroppedFrame(tile: sourceIndex)
@@ -296,6 +299,16 @@ public final class SourcePipeline: @unchecked Sendable {
     }
     if state != .replaying {
       programSink?(converted.pixelBuffer, converted.presentationTime)
+    } else if wedgePolicy.shouldReturnToLive(
+      now: Date().timeIntervalSince1970,
+      lastPresentedAt: renderer.failCounts.lastEnqueueAt
+    ) {
+      // Measured on the live path on purpose: these frames are arriving whatever the replay is
+      // doing, so they are the one heartbeat available while `.replaying` suppresses everything
+      // else. A replay that is actually running keeps `lastEnqueueAt` fresh through this same
+      // renderer and never reaches the timeout.
+      telemetry.recordReplayWedgeRecovery(tile: sourceIndex)
+      returnToLive()
     }
   }
 
