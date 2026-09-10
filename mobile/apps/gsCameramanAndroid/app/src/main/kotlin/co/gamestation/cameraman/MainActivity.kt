@@ -11,7 +11,6 @@ import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
 import android.os.IBinder
-import android.view.Surface
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -63,7 +62,6 @@ class MainActivity : ComponentActivity() {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             val local = binder as? CameramanService.LocalBinder
             environment = local?.environment
-            applyDisplayRotation()
             handleControlIntent(intent)
         }
 
@@ -169,16 +167,6 @@ class MainActivity : ComponentActivity() {
         handleControlIntent(intent)
     }
 
-    override fun onResume() {
-        super.onResume()
-        applyDisplayRotation()
-    }
-
-    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
-        super.onConfigurationChanged(newConfig)
-        applyDisplayRotation()
-    }
-
     override fun onDestroy() {
         if (isBound) {
             unbindService(connection)
@@ -208,19 +196,6 @@ class MainActivity : ComponentActivity() {
         val current = environment ?: return
         if (!current.launch.isUITest) return
         ControlChannel.command(data.toString())?.let { current.handle(it) }
-    }
-
-    private fun applyDisplayRotation() {
-        val current = environment ?: return
-        val rotation = display?.rotation ?: Surface.ROTATION_0
-        current.camera.setDisplayRotation(
-            when (rotation) {
-                Surface.ROTATION_90 -> 90
-                Surface.ROTATION_180 -> 180
-                Surface.ROTATION_270 -> 270
-                else -> 0
-            }
-        )
     }
 
     private fun requiredPermissions(): List<String> = listOf(
