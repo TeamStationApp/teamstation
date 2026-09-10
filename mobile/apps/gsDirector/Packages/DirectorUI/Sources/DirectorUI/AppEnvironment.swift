@@ -2051,7 +2051,10 @@ public final class AppEnvironment {
     releasedAt: UInt64
   ) {
     guard isCurrentReplay(sourceIndex: sourceIndex, sourceID: sourceID, epoch: epoch) else { return }
-    if playDuration != nil {
+    // A timed replay is over when it has shown what was asked for -- not merely when the decoder
+    // reaches the end of whatever was staged. The continuation below already carries the remainder
+    // and stops itself once the offset reaches live; it was simply unreachable from here.
+    if ScrubMapping.hasFinishedTimedReplay(played: played, requested: playDuration) {
       returnToLive(sourceIndex: sourceIndex)
       return
     }
