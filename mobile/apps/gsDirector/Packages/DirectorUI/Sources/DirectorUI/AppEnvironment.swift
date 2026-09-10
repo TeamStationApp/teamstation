@@ -1857,7 +1857,12 @@ public final class AppEnvironment {
 
     // File-relative: the first assembled sample is t=0 for the decoder, even though fragment
     // PTS is counted from the start of the recording.
-    let startOffset = max(0, target - assembly.startWall)
+    //
+    // Walked rather than subtracted. The staged files play back to back, so tape time only advances
+    // where a segment exists, while wall clock advances through the gaps too. Subtracting one from
+    // the other put the start that much too deep in the tape, ran the replay out early by about the
+    // gap, and past a threshold made `shouldStartReplay` refuse a window that was perfectly good.
+    let startOffset = assembly.mediaOffset(forWall: target)
     // Read outside the mutation: `availableHistorySeconds` reads the snapshot, and the telemetry lock
     // is not recursive, so calling it inside `mutate` deadlocks the main thread while holding the lock
     // every other thread needs.

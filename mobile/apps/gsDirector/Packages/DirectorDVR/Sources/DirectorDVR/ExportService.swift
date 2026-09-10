@@ -102,29 +102,28 @@ public struct ExportService: Sendable {
     var urls: [URL] = []
     let duration = recording.endedAt.map { $0 - recording.startedAt }
 
-    // One wall-clock window that every camera can actually fill, taken from the index.
+    // One wall-clock window, the recording's own, for every camera and the programme alike.
     //
-    // Asking each camera for the recording's own span does not give matching files. A camera's
-    // archive begins at its first keyframe after the record button, and those land at different
-    // moments, so the window is partly empty at the head for some cameras and the tail for others.
-    // The remuxer pads a short result — but the pad is an empty time range, and a passthrough export
-    // copies samples, so a range containing none of them is dropped on the way out. The files then
-    // end up at whatever each camera happened to hold: measured at 620 ms apart, which is twenty
-    // frames of disagreement between angles cut together.
+    // Each output is now built by placing segments where they happened rather than end to end, so
+    // a camera that joined late or dropped out contributes silence where it had nothing instead of
+    // dragging its later frames earlier. That makes the recording's span usable directly: every
+    // file is the same length, every file maps position to wall clock the same way, and an event
+    // 31:30 into the take is 31:30 into all of them.
     //
-    // Trimming to the overlap instead gives every camera the same window with real samples in it.
-    // It costs the head and tail that not every camera covered — the same 620 ms — and that is
-    // material nobody could have cut between anyway.
-    var latestStart = recording.startedAt
+    // This replaces trimming to the overlap the cameras shared. That trim existed to hide a ~620 ms
+    // disagreement at the head, which was a symptom of the running-cursor placement rather than a
+    // fact about the footage, and it threw away real material at both ends to do it.
+    let latestStart = recording.startedAt
     var earliestEnd = recording.endedAt
-    for camera in cameras {
-      guard let bounds = try? index.recordingBounds(id: recording.id, sourceID: camera.sourceID)
-      else { continue }
-      if bounds.start > latestStart { latestStart = bounds.start }
-      if let current = earliestEnd {
-        if bounds.end < current { earliestEnd = bounds.end }
-      } else {
-        earliestEnd = bounds.end
+    if earliestEnd == nil {
+      for camera in cameras {
+        guard let bounds = try? index.recordingBounds(id: recording.id, sourceID: camera.sourceID)
+        else { continue }
+        if let current = earliestEnd {
+          if bounds.end > current { earliestEnd = bounds.end }
+        } else {
+          earliestEnd = bounds.end
+        }
       }
     }
 
@@ -186,9 +185,8 @@ public struct ExportService: Sendable {
           files: assembly.files,
           fileDurations: assembly.fileDurations,
           targetDuration: max(0, to - from),
-          // How far the first segment starts before the window does — different on every camera,
-          // because each opens on its own keyframe. Dropping it aligns the exports.
-          headTrim: max(0, from - assembly.startWall),
+          startWalls: assembly.startWalls,
+          windowStart: from,
           destination: destination
         )
       }
