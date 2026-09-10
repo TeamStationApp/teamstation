@@ -52,6 +52,14 @@ struct RTPClockAudit: Sendable {
   /// latest. See `filteredOffsetSeconds`.
   private var offsetSamples: [OffsetSample] = []
   private static let offsetWindowSeconds: Double = 600
+  /// An offset larger than this is a camera whose clock was never set, not a camera in another
+  /// time zone. A NearStream ships without an NTP client and reports whatever it powered up
+  /// believing; correcting by that would anchor every one of its segments decades from the rest of
+  /// the take and place a perfectly good angle nowhere near the game. Beyond this we decline to
+  /// answer, and the writer falls back to arrival time -- which is late, but is at least today.
+  ///
+  /// Matches the guard the NDI receive clock applies to the same question.
+  static let maximumClockSkewSeconds: Double = 3_600
 
   /// Sender reports seen on this connection. Zero after a minute of video means this camera sends
   /// none, and an absolute timeline is not available from it.
@@ -105,9 +113,11 @@ struct RTPClockAudit: Sendable {
   /// anchor reads as negative rather than as most of a rollover.
   func captureTimeOnLocalClock(rtpTimestamp: UInt32, ssrc: UInt32) -> Double? {
     guard let anchor = anchor(forSSRC: ssrc) else { return nil }
+    let offset = filteredOffsetSeconds
+    guard abs(offset) <= Self.maximumClockSkewSeconds else { return nil }
     let ticks = Int32(bitPattern: rtpTimestamp &- anchor.rtpTimestamp)
     let cameraWall = anchor.ntpSeconds + Double(ticks) / 90_000
-    return cameraWall - filteredOffsetSeconds
+    return cameraWall - offset
   }
 
   /// Mean seconds between sender reports.
