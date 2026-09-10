@@ -37,6 +37,45 @@ struct ReplayFileReaderTests {
     #expect(lastMedia > 1.0)
   }
 
+  /// A rewind almost never starts on a segment boundary: it skips into its first file. The producer
+  /// once counted that skip as footage already played and stopped short by exactly the skip — up
+  /// to a whole segment — which is how one 5 s slow-mo played its full ten seconds and the next
+  /// stopped at 7.8. The requested duration is measured from the first frame shown.
+  @Test("A rewind that starts partway into a segment still produces the full requested duration")
+  func capCountsFromFirstFrameNotFileStart() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("replay-skip-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    var urls: [URL] = []
+    for index in 0..<3 {
+      let url = root.appendingPathComponent("seg-\(index).mp4")
+      try await writeTestMovie(to: url, seconds: 1.0, framesPerSecond: 10)
+      urls.append(url)
+    }
+
+    let reader = ReplayFileReader(
+      urls: urls,
+      durations: [ 1.0, 1.0, 1.0 ],
+      frameRate: 10,
+      playDuration: 1.5
+    )
+    try reader.open(startOffset: 0.55)
+    var first: TimeInterval?
+    var last: TimeInterval = 0
+    var count = 0
+    while let frame = reader.next() {
+      if first == nil { first = frame.media }
+      last = frame.media
+      count += 1
+      if count > 100 { break }
+    }
+    reader.cancel()
+    let produced = last - (first ?? last) + 0.1
+    #expect(abs(produced - 1.5) <= 0.1, "produced \(produced) s of a 1.5 s request")
+  }
+
   @Test("A later append starts the next file while the current file is still playing")
   func appendStartsNextFileBeforeEOF() async throws {
     let root = FileManager.default.temporaryDirectory

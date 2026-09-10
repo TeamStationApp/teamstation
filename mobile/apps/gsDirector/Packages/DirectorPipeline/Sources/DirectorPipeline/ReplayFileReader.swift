@@ -175,6 +175,19 @@ final class ReplayFileReader: @unchecked Sendable {
     return producerExhausted && frames.isEmpty
   }
 
+  /// Content produced since the first frame shown, which is what a requested duration counts.
+  /// Must be called with `lock` held.
+  ///
+  /// `producedSeconds` is measured from the start of the first *file*, because that is what places
+  /// the next file on the timeline. A rewind rarely starts on a file boundary, though: it skips
+  /// `startSkip` into its first segment, and counting that skip as played footage stopped the
+  /// producer short by exactly the skip — anywhere from nothing to a whole three-second segment,
+  /// depending on where the rewind point fell. That is what made one 5 s slow-mo play its full ten
+  /// seconds and the next stop at 7.8. The 0.0.1 producer counted from zero and never had it.
+  private var contentProducedLocked: TimeInterval {
+    max(0, producedSeconds - startSkip)
+  }
+
   /// How much content the FIFO is holding, from the frames' own timeline. Must be called with
   /// `lock` held. Dividing the frame count by an assumed rate answered this before, which made
   /// the watermarks wrong by the same factor as any mis-stated rate — the queue then ran at half
@@ -223,7 +236,7 @@ final class ReplayFileReader: @unchecked Sendable {
         closeCursor()
         return
       }
-      if let cap = playDuration, producedSeconds >= cap {
+      if let cap = playDuration, contentProducedLocked >= cap {
         producerExhausted = true
         lock.broadcast()
         lock.unlock()
@@ -238,7 +251,7 @@ final class ReplayFileReader: @unchecked Sendable {
       var added: TimeInterval = 0
       while added < Self.fillQuantum {
         lock.lock()
-        let stop = cancelled || (playDuration.map { producedSeconds >= $0 } ?? false)
+        let stop = cancelled || (playDuration.map { contentProducedLocked >= $0 } ?? false)
         lock.unlock()
         if stop { break }
         guard let frame = nextDecodedFrame() else {
@@ -266,7 +279,7 @@ final class ReplayFileReader: @unchecked Sendable {
         producedSeconds = max(producedSeconds, reached)
         frames.append((copy, frame.time, media))
         firstReady = true
-        if let cap = playDuration, producedSeconds >= cap {
+        if let cap = playDuration, contentProducedLocked >= cap {
           producerExhausted = true
         }
         lock.broadcast()
@@ -306,7 +319,7 @@ final class ReplayFileReader: @unchecked Sendable {
     let index = fileIndex
     guard index < urls.count else {
       let cap = playDuration
-      if cap == nil || producedSeconds >= (cap ?? 0) - 0.02 {
+      if cap == nil || contentProducedLocked >= (cap ?? 0) - 0.02 {
         producerExhausted = true
       }
       lock.broadcast()
