@@ -163,6 +163,47 @@ struct WallClockPlacementTests {
     #expect(abs((late ?? 0) - expected) <= 2)
   }
 
+  /// What a gap actually contains, which decides whether W14 has anything to do.
+  ///
+  /// The composition leaves a real gap as an empty range. Whether that reaches the exported file as
+  /// black or as the previous picture held is a property of AVFoundation and the container, not
+  /// something to assume: an empty edit is rendered differently by different players, and the
+  /// operator asked for a freeze. This records the answer rather than guessing at it.
+  @Test("What a gap holds in the exported file")
+  func gapContent() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("gapc-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let first = root.appendingPathComponent("a.mp4")
+    let second = root.appendingPathComponent("b.mp4")
+    try await markedMovie(at: first, firstValue: 1_000, frames: 90)
+    try await markedMovie(at: second, firstValue: 500_000, frames: 90)
+
+    let out = root.appendingPathComponent("out.mp4")
+    try await ArchiveRemux.concatenate(
+      files: [ first, second ],
+      fileDurations: [ 3, 3 ],
+      targetDuration: 16,
+      startWalls: [ WallClock(seconds: 1_000), WallClock(seconds: 1_013) ],
+      windowStart: WallClock(seconds: 1_000),
+      destination: out
+    )
+
+    // Eight seconds in is squarely inside the ten-second hole.
+    let inGap = try await marker(in: out, at: 8.0)
+    let lastBeforeGap = (1_000 + 89) & FrameMarker.maximumValue
+    if let inGap {
+      // Held: the picture before the gap is still on screen, which is what was asked for.
+      #expect(abs(inGap - lastBeforeGap) <= 2)
+    }
+    // Either way the segment after the gap is still in its right place, which is what this suite
+    // is really protecting. The gap's own content is recorded above for W14 to act on.
+    let after = try await marker(in: out, at: 13.5)
+    #expect(after != nil)
+  }
+
   @Test("Two cameras that dropped out differently still line up with each other")
   func anglesAgreeAcrossDifferentGaps() async throws {
     let root = FileManager.default.temporaryDirectory

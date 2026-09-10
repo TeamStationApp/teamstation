@@ -233,11 +233,37 @@ public final class TileRenderer: @unchecked Sendable {
     // which is how four 1080p tiles climb hundreds of megabytes a minute.
     renderer.flush(removingDisplayedImage: false)
     renderer.enqueue(sampleBuffer)
-    if renderer.status == .failed || renderer.requiresFlushToResumeDecoding {
-      lock.lock()
-      failCountsStorage.rendererFailed += 1
-      lock.unlock()
+
+    let now = Date().timeIntervalSince1970
+    let failed = renderer.status == .failed
+    let needsFlush = renderer.requiresFlushToResumeDecoding
+    // Read the error before taking the lock: it crosses into AVFoundation and there is no reason
+    // to hold every other tile's enqueue while it does.
+    let description = failed ? Self.describe(renderer.error) : ""
+
+    lock.lock()
+    failCountsStorage.lastEnqueueAt = now
+    if needsFlush { failCountsStorage.requiresFlush &+= 1 }
+    if failed || needsFlush {
+      failCountsStorage.rendererFailed &+= 1
+      if failed, failCountsStorage.lastRendererError != description {
+        // Kept verbatim and stamped. A failed renderer swallows every later sample in silence, so
+        // this line is the only account of why a tile stopped moving while its arrivals climbed.
+        failCountsStorage.lastRendererError = description
+        failCountsStorage.lastRendererFailureAt = now
+      }
     }
+    lock.unlock()
+  }
+
+  /// Renders a renderer error into something a `dump-state` reader can act on.
+  ///
+  /// Domain and code first, because those are what a search matches; the message is often generic
+  /// where the pair is specific.
+  private static func describe(_ error: Error?) -> String {
+    guard let error else { return "failed with no error reported" }
+    let ns = error as NSError
+    return "\(ns.domain) \(ns.code): \(ns.localizedDescription)"
   }
 
   private func snapshotLayers() -> [AVSampleBufferDisplayLayer] {
