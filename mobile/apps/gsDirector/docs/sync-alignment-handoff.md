@@ -848,3 +848,20 @@ Fixes:
 - Tile readout: "60 FPS" and "7 MB" (megabytes/s) to the left of the loss count. RTSP counts its
   own socket; NDI's socket belongs to the SDK, so a lone NDI tile shows Wi-Fi total less the RTSP
   tiles' counts, and a dash when two NDI tiles would have to split it.
+
+### Cosmo C2 lockup, and NDI outside capture alignment (2026-09-10, afternoon)
+
+- At 13:11:08 the Cosmo C2 stopped answering on everything: NDI 5960/5961 and its web page on
+  port 80, from the Mac as well as the Director, with no shaping active. Its mDNS record lingered.
+  A power cycle recovered it (firmware V1.0.4.8, the newest published), and the Director
+  reconnected with no help, smooth beside the Pixel. No public report of this failure was found;
+  Hollyland's notes say only "Optimize the system". This is the third C2 outage on this bench.
+- Reading the bench wall clock against both tiles over three frames after recovery: NDI chain
+  627–657 ms, Pixel chain 573–590 ms, both on the 500 ms delay. Before the lockup the two tiles
+  were within 10 ms; the recovered Cosmo is ~50 ms slower glass-to-glass.
+- The Director cannot see that: `captureSpreadMilliseconds` covers RTSP cameras only, and an NDI
+  tile publishes no clock offset or corrected capture time. NDI's stamp is when the Cosmo encoded
+  the picture, not when the iPhone captured it, so aligning NDI against RTSP needs either
+  calibration against a clock in shot or a per-camera latency setting.
+- `FrameRateEstimator`'s scattered-stamp mean now runs over 3,600 intervals (~60 s). Over 120 it
+  flipped between 59.94 and 60, which steps the NDI archive timeline 3.6 s an hour apart.
