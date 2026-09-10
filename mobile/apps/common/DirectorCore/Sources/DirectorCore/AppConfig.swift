@@ -68,10 +68,18 @@ public struct AppConfig: Hashable, Sendable, Codable {
   public var useSimulatedCameras: Bool
   /// When false the delay line sizes itself. When true, `displayLatencyCapMilliseconds` is the
   /// most video it may hold.
-  /// On by default. The cap is what stops the monitor showing action that has already happened,
-  /// and shipping it off meant a default install would happily display a picture ten seconds
-  /// behind the room — observed on the bench during a bad network stretch. Off remains available
-  /// for anyone who would rather have late video than a held frame.
+  /// Off by default, after turning it on made things worse rather than better.
+  ///
+  /// The cap refuses a picture that is too old and holds the last good one instead. That is only an
+  /// improvement while *some* frames pass: when every frame is refused, the held picture is what
+  /// ages, and the tile ends up showing older content than it would have with no cap at all.
+  /// Measured on the bench with a 500 ms cap — a Pixel tile sixteen seconds behind the wall clock
+  /// with 633 refusals, while its own capture-time correction was out by 1.309 s. A cap below the
+  /// error in the capture-time estimate refuses everything, and refusing everything is indefinite
+  /// staleness rather than a monitor that holds briefly.
+  ///
+  /// Turning it on needs the clock offset to be trustworthy first, and a cap chosen above the
+  /// residual error rather than below it. Until then this stays where it was.
   ///
   /// Its counterpart, `diskLatencyCapEnabled`, stays off on purpose: the recording is watched
   /// afterwards, where a late picture is simply a picture, and dropping it leaves a hole in the
@@ -122,7 +130,7 @@ public struct AppConfig: Hashable, Sendable, Codable {
     freeDiskFloorBytes: Int64 = AppConfig.freeDiskFloorBytesDefault,
     showDebugHUD: Bool = false,
     useSimulatedCameras: Bool = false,
-    displayLatencyCapEnabled: Bool = true,
+    displayLatencyCapEnabled: Bool = false,
     displayLatencyCapMilliseconds: Double = AppConfig.displayLatencyCapDefaultMilliseconds,
     diskLatencyCapEnabled: Bool = false,
     diskLatencyCapMilliseconds: Double = AppConfig.diskLatencyCapDefaultMilliseconds,
