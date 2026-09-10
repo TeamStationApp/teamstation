@@ -364,10 +364,9 @@ public final class AppEnvironment {
 
     // Set here rather than at construction: the encoder is built before the index exists.
     let anchorIndex = index
-    programEncoder.setAnchorSink { [weak self] part, seconds, wall in
-      // Only while a recording owns the output. The programme is composited for the preview too,
-      // and that has nothing to anchor to.
-      guard let recording = self?.recordingIDForAnchor else { return }
+    // No `self` here on purpose: this runs on whichever queue delivered the frame, so it must not
+    // reach back into anything main-actor isolated. The recording it belongs to is carried in.
+    programEncoder.setAnchorSink { recording, part, seconds, wall in
       try? anchorIndex.insertProgramAnchor(
         recordingID: recording,
         part: part,
@@ -1335,6 +1334,8 @@ public final class AppEnvironment {
       return
     }
     self.recordingID = recordingID
+    // Anchors belong to this recording until it stops.
+    programEncoder.setAnchorRecording(recordingID)
     self.recordingStartedAt = now
 
     do {
@@ -1588,6 +1589,7 @@ public final class AppEnvironment {
       try? index.endRecording(recordingID, at: endedAt)
     }
     recordingID = nil
+    programEncoder.setAnchorRecording(nil)
     recordingStartedAt = nil
     telemetry.mutate { $0.dvr.isRecording = false }
     setRecordingStage("idle")
@@ -3233,11 +3235,6 @@ public final class AppEnvironment {
 
   /// The take currently being written, if any. Recordings refuses to select or delete it.
   public var activeRecordingID: Int64? { isRecording ? recordingID : nil }
-
-  /// Read from the anchor sink, which runs on the compositor's thread rather than the main actor.
-  nonisolated private var recordingIDForAnchor: Int64? {
-    MainActor.assumeIsolated { activeRecordingID }
-  }
 
   public func listedRecordings() -> [RecordingSummary] {
     (try? index.recordings()) ?? []

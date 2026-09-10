@@ -511,3 +511,85 @@ struct DeclaredDurationTests {
     #expect(!ArchiveRemux.isPlausibleDuration(seconds: 0, nominalFrameRate: 30))
   }
 }
+
+@Suite("Programme anchor emission")
+struct ProgramAnchorEmissionTests {
+  /// The anchor sink runs on whichever queue delivered the frame — an NDI receive queue, an RTSP
+  /// delivery queue — and never the main actor. An earlier version reached back for the active
+  /// recording through `MainActor.assumeIsolated`, which is a hard trap off the main actor: it
+  /// killed the app on the first composited frame after the record button, every time. The
+  /// recording is carried through the call instead, so the sink touches nothing isolated.
+  @Test("Anchors carry their recording, and none are emitted without one")
+  func anchorsOnlyWhileRecording() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("anchor-emit-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let box = AnchorBox()
+    let encoder = ProgramEncoder(
+      telemetry: PipelineTelemetry(),
+      converter: PixelConverter(),
+      config: AppConfig(
+        programCodec: .h264,
+        programResolution: ProgramResolution(width: 160, height: 120),
+        programBitrate: 1_000_000
+      ),
+      directory: root
+    )
+    encoder.setAnchorSink { recording, part, seconds, _ in
+      box.append(recording: recording, part: part, seconds: seconds)
+    }
+    try encoder.start(at: WallClock(seconds: 1_000))
+    let factory = try #require(
+      PixelBufferFactory(width: 160, height: 120, pixelFormat: kCVPixelFormatType_32BGRA)
+    )
+    let buffer = try #require(factory.makeBuffer())
+
+    // Composited for the preview with nothing recording: nothing to anchor to.
+    for index in 0..<40 {
+      encoder.append(buffer, presentationTime: CMTime(value: CMTimeValue(index), timescale: 30))
+      try await Task.sleep(nanoseconds: 5_000_000)
+    }
+    #expect(box.all().isEmpty, "anchors were written with no recording to attach them to")
+
+    // Record pressed.
+    encoder.setAnchorRecording(77)
+    for index in 40..<220 {
+      encoder.append(buffer, presentationTime: CMTime(value: CMTimeValue(index), timescale: 30))
+      try await Task.sleep(nanoseconds: 5_000_000)
+    }
+    let during = box.all()
+    #expect(!during.isEmpty, "no anchors while recording")
+    #expect(during.allSatisfy { $0.recording == 77 })
+    #expect(during.allSatisfy { $0.part >= 1 })
+
+    // Stopped: the sink stays wired, but there is nothing to attach to again.
+    encoder.setAnchorRecording(nil)
+    let countAtStop = box.all().count
+    for index in 220..<300 {
+      encoder.append(buffer, presentationTime: CMTime(value: CMTimeValue(index), timescale: 30))
+      try await Task.sleep(nanoseconds: 5_000_000)
+    }
+    #expect(box.all().count == countAtStop, "anchors kept coming after the recording stopped")
+    _ = await encoder.finish()
+  }
+}
+
+/// Collects what the sink was handed, from whatever thread it ran on.
+private final class AnchorBox: @unchecked Sendable {
+  private let lock = NSLock()
+  private var items: [(recording: Int64, part: Int, seconds: Double)] = []
+
+  func append(recording: Int64, part: Int, seconds: Double) {
+    lock.lock()
+    items.append((recording, part, seconds))
+    lock.unlock()
+  }
+
+  func all() -> [(recording: Int64, part: Int, seconds: Double)] {
+    lock.lock()
+    defer { lock.unlock() }
+    return items
+  }
+}
