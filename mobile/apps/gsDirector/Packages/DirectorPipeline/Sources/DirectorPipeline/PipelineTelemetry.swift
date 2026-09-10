@@ -134,6 +134,10 @@ public struct TileTelemetry: Sendable, Codable, Equatable {
   /// Why `enqueue` returned false. Counters, not per-frame logs — a frozen tile with `out=0`
   /// is diagnosed from which of these climbed while `framesPerSecond` stayed healthy.
   public var enqueueFails = TileEnqueueFails()
+  /// Times this tile was found wedged in `.replaying` and put back on live by the watchdog.
+  /// Any value above zero is a bug that was survived, not a healthy recovery — the tile was
+  /// showing a still while the game went on.
+  public var replayWedgeRecoveries: UInt64 = 0
   /// What the source says it is sending, as opposed to what actually arrives. The gap between
   /// `sourceFrameRate` and the measured rate is the first thing to look at when a camera looks
   /// slow, because it separates a network problem from a pipeline one.
@@ -756,6 +760,14 @@ public final class PipelineTelemetry: @unchecked Sendable {
     lock.lock()
     if let position = state.tiles.firstIndex(where: { $0.index == tile }) {
       state.tiles[position].frameAgeMilliseconds = milliseconds
+    }
+    lock.unlock()
+  }
+
+  public func recordReplayWedgeRecovery(tile: Int) {
+    lock.lock()
+    if let position = state.tiles.firstIndex(where: { $0.index == tile }) {
+      state.tiles[position].replayWedgeRecoveries &+= 1
     }
     lock.unlock()
   }
