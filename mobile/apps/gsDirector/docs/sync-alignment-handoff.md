@@ -375,7 +375,17 @@ believed.
 
 ### W10 — apply the camera clock offset that is already measured
 
-**NDI already does this, and it is the shape to copy.** `NDIReceiveClock` measures the sender's
+**CORRECTED 2026-09-09: RTSP already applies its offset too, so most of this item was based on a
+misreading.** `RTPClockAudit.captureTimeOnLocalClock` returns `cameraWall - filteredOffsetSeconds`;
+the telemetry copy in `RTSPFrameSource` going nowhere is what made it look otherwise. Both
+transports correct, over a 600 s window, taking the window's maximum. **What was actually missing is
+the skew guard, and that is now done**: an offset beyond 3,600 s is declined and the writer falls
+back to arrival, which is what keeps a NearStream — no NTP client, powers up believing it is 1970 —
+from anchoring its segments decades away. Four tests cover it.
+
+What remains of this item is recording the applied offset per segment, which lives in W11.
+
+**NDI's implementation is still the reference for anything further.** `NDIReceiveClock` measures the sender's
 offset over a 600 s rolling window, sampled once a second rather than once a frame (a full window at
 1080p60 would be 36 000 samples scanned on the receive thread), keeps the window's **maximum**
 because transit only ever makes an observation smaller, guards an unset sender clock with a 3 600 s

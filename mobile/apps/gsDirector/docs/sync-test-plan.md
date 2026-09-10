@@ -188,6 +188,19 @@ the sample collapses to one frame's duration — the "file runs short" failure R
 
 ### C6 — apply the camera clock offset that is already measured
 
+**CORRECTED 2026-09-09: the RTSP path already applies it.** An earlier draft of this section said
+the offset was measured and thrown away. That was wrong, and the mistake was reading only
+`RTSPFrameSource`, where `cameraClockOffsetSeconds` does indeed go nowhere but telemetry. The
+correction happens one level down, inside the audit itself:
+`RTPClockAudit.captureTimeOnLocalClock` returns `cameraWall - filteredOffsetSeconds`, over the same
+600 s window and the same maximum-of-window filtering NDI uses. So both transports correct, and
+C9's premise — that only one family of segments is corrected — does not hold.
+
+What RTSP genuinely lacked was NDI's **skew guard**, and that is what this item is now. A camera
+whose clock was never set reports 1970, and correcting by that anchors every one of its segments
+decades from the rest of the take. NDI declines beyond 3,600 s and falls back to arrival; RTSP
+believed it. Fixed, with the NearStream in mind — it ships without an NTP client.
+
 R1 judges each camera against the Director's wall clock *corrected for that camera's own clock
 offset*. That correction is computed and then discarded.
 
@@ -250,7 +263,9 @@ holds segments whose wall clocks were derived two different ways:
   `NDIReceiveClock` **applies** a filtered offset (600 s window, sampled 1/s, maximum-of-window
   since transit only shrinks an observation, 3 600 s skew guard).
 - **RTSP** reconstructs capture time from RTCP sender reports arriving every few seconds, and
-  applies no offset at all — it only reports one.
+  applies the same maximum-of-window correction (see the correction note in C6 — an earlier draft
+  claimed otherwise). Its remaining exposure is a camera that never sends a report at all, which
+  falls back to arrival time.
 
 C1 places both families by `start_wall`. A systematic bias between the families therefore becomes a
 systematic offset between angles that no amount of export correctness can fix. This is what turns
