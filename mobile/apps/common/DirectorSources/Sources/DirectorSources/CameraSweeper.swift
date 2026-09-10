@@ -22,6 +22,7 @@ public final class CameraSweeper: @unchecked Sendable {
     var lastSweep: Date?
     var foundCount = 0
     var sweepCount: UInt64 = 0
+    var knownProbeCount: UInt64 = 0
   }
 
   /// How often the loop re-checks whether a sweep has become worthwhile, while it has nothing to
@@ -32,17 +33,27 @@ public final class CameraSweeper: @unchecked Sendable {
   private let handler: ResultHandler
   private let state = OSAllocatedUnfairLock(initialState: State())
   private let now: @Sendable () -> Double
+  /// Where the addresses that answered are kept between launches. Nil keeps them in memory only,
+  /// which is what every caller had before and what tests want.
+  private let persistenceKey: String?
 
   public init(
     ports: [Int],
     timeout: TimeInterval = 0.3,
     concurrency: Int = 32,
     now: @escaping @Sendable () -> Double = { Date().timeIntervalSince1970 },
+    persistenceKey: String? = nil,
     onResult: @escaping ResultHandler
   ) {
     self.scanner = SubnetScanner(ports: ports, timeout: timeout, concurrency: concurrency)
     self.handler = onResult
     self.now = now
+    self.persistenceKey = persistenceKey
+    if let persistenceKey,
+       let remembered = UserDefaults.standard.stringArray(forKey: persistenceKey),
+       !remembered.isEmpty {
+      state.withLock { $0.lastSeen = remembered }
+    }
     // Startup grace from here: at launch no camera has been heard from yet, and that is not a
     // dropout worth sweeping the segment for.
     let startedAt = now()
@@ -69,7 +80,32 @@ public final class CameraSweeper: @unchecked Sendable {
       return true
     }
     guard shouldStart else { return }
+    Task.detached(priority: .utility) { [weak self] in await self?.probeRemembered() }
     Task.detached(priority: .utility) { [weak self] in await self?.loop() }
+  }
+
+  /// At launch, ask the addresses cameras answered on last time, and nothing else.
+  ///
+  /// The startup grace keeps launch from sweeping the segment, but on this network the NDI camera
+  /// is only ever found by address: the iPad does not hear its mDNS. Without this it appeared a
+  /// minute after launch, once the first post-grace sweep had finished. Asking one or two known
+  /// hosts directly finds it in about a second, at the cost of a few unicast packets.
+  private func probeRemembered() async {
+    let remembered = state.withLock { $0.lastSeen }
+    guard !remembered.isEmpty else { return }
+    let result = await scanner.probeKnown(remembered)
+    let stillRunning = state.withLock { state -> Bool in
+      guard state.running else { return false }
+      state.knownProbeCount &+= 1
+      return true
+    }
+    guard stillRunning, !result.openHosts.isEmpty else { return }
+    handler(result)
+  }
+
+  private func remember(_ hosts: [String]) {
+    guard let persistenceKey else { return }
+    UserDefaults.standard.set(hosts, forKey: persistenceKey)
   }
 
   public func stop() {
@@ -83,6 +119,7 @@ public final class CameraSweeper: @unchecked Sendable {
     let missingFor = snapshot.policy.missingForSeconds(now: now())
     let age = snapshot.lastSweep.map { Int(Date().timeIntervalSince($0)) }
     return "sweeps=\(snapshot.sweepCount) found=\(snapshot.foundCount)"
+      + (snapshot.knownProbeCount > 0 ? " known=\(snapshot.knownProbeCount)" : "")
       + (age.map { " lastAgo=\($0)s" } ?? "")
       + " busy=\(snapshot.isBusy ? 1 : 0) missing=\(snapshot.missing ? 1 : 0)"
       + (missingFor.map { " missingFor=\(Int($0))s" } ?? "")
@@ -124,6 +161,7 @@ public final class CameraSweeper: @unchecked Sendable {
       }
       guard stillRunning else { return }
 
+      if !result.openHosts.isEmpty { remember(result.openHosts) }
       handler(result)
 
       // The gap runs from here — the end of the sweep — so a sweep that takes longer than the gap
