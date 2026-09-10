@@ -28,6 +28,14 @@ tile=1 state=live src=VM33_00001 f=246 off=0.0 onair=1 arch=720 out=30
 `f=` counts arrivals even while the tile is paused on a still. `out=` is the rate of frames that
 actually reached the display layer — that is how Return to Live is proven not frozen.
 
+`loss=` is packets the transport lost over the last whole second (on an NDI tile, the SDK's
+dropped frames). It is the raw rate: the pill on the tile shows an em dash instead whenever
+nothing is arriving to measure, because loss is counted from gaps between packets that *do*
+arrive, so a dead link would otherwise read zero like a clean one. Output's value carries
+`fps=`, `loss=`, `age=` and `rec=` for its own pills; `age=` is the on-air camera's
+capture-to-arrival age, and `rec=` counts only while the operator has recording engaged, not
+while a stopped recording is still flushing.
+
 **The control server.** When launched with `-uiTest true`, the app runs a loopback HTTP server
 on port 8765. It exists because custom URL schemes make iOS show a confirmation dialog that
 breaks unattended runs.

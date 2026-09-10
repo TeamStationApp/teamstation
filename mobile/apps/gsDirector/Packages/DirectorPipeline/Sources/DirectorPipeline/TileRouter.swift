@@ -210,7 +210,10 @@ public final class SourcePipeline: @unchecked Sendable {
       $0.sourceID = nil
       $0.displayName = nil
       $0.isProgram = false
+      $0.packetsLost = 0
+      $0.packetsLostPerSecond = 0
     }
+    telemetry.resetLossRate(tile: sourceIndex)
   }
 
   public func setArchive(_ sink: ArchiveSink?) {

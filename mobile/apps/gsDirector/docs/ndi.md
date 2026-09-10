@@ -129,6 +129,12 @@ well as the archive. The encode runs on its own serial queue with a backlog capp
 past that the frame is dropped and counted in `archiveDropped`. A climbing `archiveDropped` is the
 archive degrading on purpose so the picture does not.
 
+The loss pill on an NDI tile — `packetsLost` and `packetsLostPerSecond` in telemetry — is the
+SDK's `recv_get_performance` dropped video and audio *frames*, taken as deltas. That counts
+frames the receiver could not dequeue in time, which is our own backlog as much as the
+network's, because the free SDK exposes nothing finer. Read it the same way as on an RTSP tile
+(look at the link first), but remember it can also climb when the iPad is the bottleneck.
+
 ## What is refused, and why
 
 NDI's reliable UDP repairs the wire, so what reaches a receiver is not torn packets but
