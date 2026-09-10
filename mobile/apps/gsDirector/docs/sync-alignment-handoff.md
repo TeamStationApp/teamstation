@@ -510,6 +510,44 @@ unit test passes while the rig symptom remains.
 
 ---
 
+## 3a. Execution status
+
+Updated as work lands on `paul/directorExportDamagedMedia`. Every entry below is on origin, built
+for the simulator, and run against the full unit suite — which sits at **587 cases with one
+pre-existing failure** (`ReplayHTTPServerTests` "stop releases the port", POSIX 48, present on
+master and unrelated to any of this).
+
+| Item | State |
+|---|---|
+| **W3** wall-clock placement on export | **done** — `ArchiveRemux` places at `startWall − windowStart`; `ExportService` gives every camera the recording's own window and the overlap trim is gone |
+| **W16** replay on the same footing | **done** — `Assembly` reports wall span and media duration separately and maps between them by walking segments |
+| **W5** programme keeps wall clock | **done** — the timeline advances by real elapsed time instead of one frame, so a stall is held rather than closed up |
+| **W6** duration sanity | **done** — a declared duration implying an impossible bitrate for the file's size is refused |
+| **W9** latency sliders | **done** — Settings has a Latency section with both caps; saving applies them live |
+| **W10** clock offset | **done, and smaller than written** — RTSP already applied its offset; what was missing was NDI's skew guard, now added |
+| **W11** segment provenance | **done** — `transport`, `applied_clock_offset`, `archive_rate` on every segment, plus a `recording_sources` table so a camera that never archived is nameable |
+| **W1** timecode burn-in | **partly moot** — `FrameMarker` already exists and is drawn by `SyntheticFrameSource`; used directly by the placement proof below |
+| W2 verifier, W4 anchors, W7 fault injection, W8 shared display latency, W12 tolerance, W13 cross-transport, W14 freeze mechanism, W15 gate ledger | not started |
+
+### What is proven, and how
+
+`WallClockPlacementTests` is the acceptance evidence for W3, and it is not bookkeeping: two real
+MP4s are encoded with a `FrameMarker` painted into every frame, indexed thirteen seconds apart with
+three seconds of tape in each, remuxed, and decoded back. Reading the marker out of the exported
+picture says which frame is actually at a given moment of the file — the one check a correct-looking
+index cannot fake.
+
+It also covers the pair case directly: one camera that lost the middle and one that joined late
+export to the same length and, at the same instant, each shows the frame it captured then.
+
+### Deliberately not done
+
+`PlayoutController.Limits.maximumMilliseconds` still holds its 2 000 ms default. The plan called for
+deleting it so configuration is the only source of truth, but that literal bounds how much delay the
+delay line *adds* to smooth jitter, which is a different quantity from how old a picture may be —
+the distinction master drew when it added `FrameLatencyGate`. Removing it would change the delay
+line's behaviour to fix a naming confusion. Left alone, and documented here instead.
+
 ## 4. Running things
 
 ```bash
