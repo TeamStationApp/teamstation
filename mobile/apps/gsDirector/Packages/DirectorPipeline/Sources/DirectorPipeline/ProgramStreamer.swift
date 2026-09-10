@@ -37,6 +37,9 @@ public final class ProgramStreamer: @unchecked Sendable {
   private var sentAudioConfig = false
   private var sentMetadata = false
   private var clock = StreamEncodeClock()
+  /// When this stream started, so the watchdog can tell "no keyframe yet" from "no keyframe for a
+  /// while". Zero until `start`.
+  private var streamStartWall: CFAbsoluteTime = 0
   private var onFailure: FailureHandler?
   /// VideoToolbox keeps each submitted pixel buffer until the encode callback. Without a cap,
   /// a slow RTMP ingest lets that queue grow without bound at programme frame rate.
@@ -122,6 +125,7 @@ public final class ProgramStreamer: @unchecked Sendable {
     lastCallbackWall = 0
     lastProgramFrameWall = 0
     lastResetWall = 0
+    streamStartWall = CFAbsoluteTimeGetCurrent()
     pendingEncodes = 0
     return true
   }
@@ -307,7 +311,8 @@ public final class ProgramStreamer: @unchecked Sendable {
       lastCallbackWall: lastCallbackWall,
       pendingEncodes: pendingEncodes,
       hasLastFrame: lastEncodable != nil,
-      lastResetWall: lastResetWall
+      lastResetWall: lastResetWall,
+      startedWall: streamStartWall
     )
     let idleBuffer = lastEncodable
     lock.unlock()

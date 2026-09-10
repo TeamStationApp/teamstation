@@ -121,4 +121,12 @@ struct StreamEncodeClockTests {
     #expect(!ProgramStreamer.payloadContainsIDR(Data([ 0, 0, 0, 1, 0x41 ])))
     #expect(!ProgramStreamer.payloadContainsIDR(Data()))
   }
+
+  @Test("Keyframe age before the first keyframe is time since the first frame, not the date")
+  func keyframeAgeBeforeFirstKeyframe() {
+    var clock = StreamEncodeClock(frameRate: 30, gopSeconds: 2)
+    #expect(clock.keyframeAgeSeconds(now: 810_726_820) == 0)
+    _ = clock.nextPresentationTime(source: .zero, now: 1_000)
+    #expect(abs(clock.keyframeAgeSeconds(now: 1_003) - 3) < 0.001)
+  }
 }

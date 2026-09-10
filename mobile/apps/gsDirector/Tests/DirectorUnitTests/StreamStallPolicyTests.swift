@@ -83,4 +83,48 @@ struct StreamStallPolicyTests {
     )
     #expect(action == .encodeIdleIDR)
   }
+
+  /// The stress run's publish that connected, then sent 3,406 bytes and no media: after a start, no
+  /// keyframe ever came out, and both rules measured from events that had not happened.
+  @Test("A stream with no keyframe since it started gets an idle IDR after one GOP")
+  func noKeyframeSinceStartForcesIDR() {
+    let action = policy.action(
+      now: 103,
+      lastKeyframeWall: 0,
+      lastCallbackWall: 0,
+      pendingEncodes: 0,
+      hasLastFrame: true,
+      lastResetWall: 0,
+      startedWall: 100
+    )
+    #expect(action == .encodeIdleIDR)
+  }
+
+  @Test("A stream whose encoder never called back is rebuilt after three GOPs")
+  func noCallbackSinceStartResetsAfterThreeGOPs() {
+    let action = policy.action(
+      now: 107,
+      lastKeyframeWall: 0,
+      lastCallbackWall: 0,
+      pendingEncodes: 3,
+      hasLastFrame: true,
+      lastResetWall: 0,
+      startedWall: 100
+    )
+    #expect(action == .resetSession)
+  }
+
+  @Test("A slow first encode is not rebuilt inside three GOPs")
+  func slowFirstEncodeIsLeftAlone() {
+    let action = policy.action(
+      now: 104,
+      lastKeyframeWall: 0,
+      lastCallbackWall: 0,
+      pendingEncodes: 3,
+      hasLastFrame: true,
+      lastResetWall: 0,
+      startedWall: 100
+    )
+    #expect(action == .encodeIdleIDR)
+  }
 }
