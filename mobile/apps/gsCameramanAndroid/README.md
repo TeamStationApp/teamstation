@@ -66,8 +66,9 @@ its tile. Updates and reboots are fine; only uninstall is not. See `PreferencesI
 
 iOS sets `videoRotationAngle` on the capture connection and AVFoundation does the work. Camera2 has
 no such control, so frames go camera → `SurfaceTexture` → GL → encoder surface, and the rotation is a
-matrix in that shader. The same GL pass also draws the preview, which is what keeps the promise the
-iOS build makes: *the operator frames what the client receives*, including after a flip.
+matrix in that shader. The same GL pass also draws the preview, letterboxed so the whole encoded
+frame is on screen, which is what keeps the promise the iOS build makes: *the operator frames what
+the client receives*, including after a flip.
 
 The angle is not the textbook one. On this handset the `SurfaceTexture` transform matrix is
 `[0,-1,0,0, -1,0,0,0, ...]` — a reflection about the anti-diagonal, not the plain vertical flip the

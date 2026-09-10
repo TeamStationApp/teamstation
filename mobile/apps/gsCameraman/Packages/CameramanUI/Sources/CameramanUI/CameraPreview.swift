@@ -7,8 +7,9 @@ import UIKit
 /// Hosts the `AVCaptureVideoPreviewLayer`.
 ///
 /// The layer is attached on the main thread to a session that runs on the capture queue, which is the
-/// arrangement AVFoundation is built for. `resizeAspectFill` matches what the encoder sends: the
-/// stream is cropped to the same aspect, so the operator frames what the client receives.
+/// arrangement AVFoundation is built for. `resizeAspect` shows the whole encoded frame: a 16:9
+/// stream on a wider phone is letterboxed against the black view, so the operator frames exactly
+/// what the client receives and the bars either side are where the chrome sits.
 public struct CameraPreview: UIViewRepresentable {
   private let session: AVCaptureSession
   /// Included so a camera flip (same session, different input) still refreshes rotation.
@@ -33,7 +34,7 @@ public struct CameraPreview: UIViewRepresentable {
     view.position = position
     view.captureRotation = captureRotation
     view.previewLayer.session = session
-    view.previewLayer.videoGravity = .resizeAspectFill
+    view.previewLayer.videoGravity = .resizeAspect
     view.syncRotation()
     return view
   }
