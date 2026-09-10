@@ -59,18 +59,32 @@ public final class RTSPServer: @unchecked Sendable {
   /// Answers `GET_PARAMETER` / `SET_PARAMETER` bodies. Nil offers no parameters.
   private let parameters: RTSPResponder.ParameterHandler?
 
+  /// What `start` was last called with, so the listener can be rebuilt without the caller having to
+  /// remember. `stop` clears it, so a deliberate shutdown is never undone by a retry.
+  private struct StartRequest {
+    var port: UInt16
+    var fallbackPort: UInt16
+    var path: String
+    var advertise: Bool
+  }
+
   private struct MutableState {
     var listener: NWListener?
     var connections: [ObjectIdentifier: RTSPClientConnection] = [:]
     var status = Status()
     var advertise = false
     var path = "/live/mainstream"
+    var startRequest: StartRequest?
   }
 
   /// Second Bonjour type, published beside the NWListener's `_rtsp._tcp` service. One listener can
   /// only advertise one type; Director finds NearStream on this one.
   private var awxAdvertisement: NetService?
   private var pathMonitor: NWPathMonitor?
+  /// Pending rebind, and how many have been tried since the last `.ready`. Both are touched only on
+  /// `queue`, like the monitors above.
+  private var rebindWork: DispatchWorkItem?
+  private var rebindAttempt = 0
   /// Browsing is how iOS keeps AWDL and Local Network permission warm. Advertising alone is not.
   private var localNetworkBrowser: NWBrowser?
 
@@ -98,15 +112,70 @@ public final class RTSPServer: @unchecked Sendable {
   /// rather than a thrown error, because the app has to keep running and show the operator why.
   public func start(port: UInt16, fallbackPort: UInt16, path: String, advertise: Bool = true) {
     queue.async { [self] in
-      stopLocked()
-      if !bind(port: port, requested: port, path: path, advertise: advertise) {
-        _ = bind(port: fallbackPort, requested: port, path: path, advertise: advertise)
+      state.withLock {
+        $0.startRequest = StartRequest(
+          port: port,
+          fallbackPort: fallbackPort,
+          path: path,
+          advertise: advertise
+        )
       }
+      cancelRebind()
+      bindStartRequest()
     }
   }
 
   public func stop() {
-    queue.async { [self] in stopLocked() }
+    queue.async { [self] in
+      cancelRebind()
+      stopLocked()
+    }
+  }
+
+  /// Puts the listener back if it is down but was never deliberately stopped, and does nothing if it
+  /// is already up.
+  ///
+  /// iOS cancels the `NWListener` and its Bonjour record when the app leaves the foreground and does
+  /// not restore either on the way back. Nothing else in the app notices: capture and encode are
+  /// independent of the listener, so the app returns to the foreground rendering a live preview
+  /// while serving nobody — which over the network is indistinguishable from a camera that was never
+  /// started. Call this whenever the app becomes active.
+  public func ensureListening() {
+    queue.async { [self] in
+      let down = state.withLock { $0.startRequest != nil && $0.listener == nil }
+      guard down else { return }
+      cancelRebind()
+      bindStartRequest()
+    }
+  }
+
+  /// Cancels the listener the way iOS does when the scene leaves the foreground: the start request
+  /// is left in place, so this produces exactly the state `ensureListening` and the automatic rebind
+  /// exist to get out of. Verification only — nothing in the app calls it.
+  public func simulateListenerLoss() {
+    queue.async { [self] in
+      state.withLock { $0.listener }?.cancel()
+    }
+  }
+
+  /// Binds the stored request, preferring its port and falling back to the second. Runs on `queue`.
+  private func bindStartRequest() {
+    guard let request = state.withLock({ $0.startRequest }) else { return }
+    stopLocked(clearingRequest: false)
+    let bound = bind(
+      port: request.port,
+      requested: request.port,
+      path: request.path,
+      advertise: request.advertise
+    ) || bind(
+      port: request.fallbackPort,
+      requested: request.port,
+      path: request.path,
+      advertise: request.advertise
+    )
+    // Neither port produced a listener, so no state handler will fire to ask for a retry. Without
+    // this the server would sit down forever on a transient bind failure.
+    if !bound { scheduleRebind() }
   }
 
   /// Re-publishes `_rtsp._tcp` under the current name. A rename that only updated the in-memory
@@ -262,6 +331,7 @@ public final class RTSPServer: @unchecked Sendable {
       switch listenerState {
       case .ready:
         let bound = listener.port?.rawValue ?? port
+        cancelRebind()
         update {
           $0.isListening = true
           $0.port = bound
@@ -280,19 +350,31 @@ public final class RTSPServer: @unchecked Sendable {
           self.publishAWX(identity: self.identity(), path: path, ip: ip, port: Int(bound))
         }
       case .failed(let error):
+        // Only the current listener may report. A rebind leaves the previous one to finish dying,
+        // and its late callback would otherwise overwrite the new listener's `ready` with a fault
+        // that is already history.
+        guard clearIfCurrent(listener) else { return }
         update {
           $0.isListening = false
           $0.port = nil
           $0.lastError = "listener failed on \(port): \(error.localizedDescription)"
           $0.listenerState = "failed"
         }
+        scheduleRebind()
       case .cancelled:
+        // A cancel this server asked for goes through `stopLocked`, which drops its reference
+        // first, so still being the current listener here means something else took it — a
+        // backgrounded scene, or a network path that went away. Those are the cases worth
+        // recovering from; a deliberate stop keeps the `stopped` state `stopLocked` already set.
+        guard clearIfCurrent(listener) else { return }
         update {
           $0.isListening = false
           $0.port = nil
           $0.listenerState = "cancelled"
         }
+        scheduleRebind()
       default:
+        guard isCurrent(listener) else { return }
         update { $0.listenerState = String(describing: listenerState) }
       }
     }
@@ -355,11 +437,12 @@ public final class RTSPServer: @unchecked Sendable {
     connections.values.filter(\.isStreaming).count
   }
 
-  private func stopLocked() {
+  private func stopLocked(clearingRequest: Bool = true) {
     let (listener, connections) = state.withLock { current -> (NWListener?, [RTSPClientConnection]) in
       let result = (current.listener, Array(current.connections.values))
       current.listener = nil
       current.connections = [:]
+      if clearingRequest { current.startRequest = nil }
       return result
     }
     listener?.cancel()
@@ -377,6 +460,45 @@ public final class RTSPServer: @unchecked Sendable {
       $0.clientCount = 0
       $0.listenerState = "stopped"
     }
+  }
+
+  private func isCurrent(_ listener: NWListener) -> Bool {
+    state.withLock { $0.listener === listener }
+  }
+
+  /// Drops the server's reference to `listener` if it is still the current one, reporting whether
+  /// it was. Lets a state handler tell a listener that died under it from one this server replaced.
+  private func clearIfCurrent(_ listener: NWListener) -> Bool {
+    state.withLock { current in
+      guard current.listener === listener else { return false }
+      current.listener = nil
+      return true
+    }
+  }
+
+  /// Backoff between rebind attempts, so a port that is genuinely held by something else does not
+  /// spin. Reset once a listener reaches `.ready`.
+  private static let rebindDelays: [Double] = [0.5, 1, 2, 5, 10]
+
+  private func scheduleRebind() {
+    guard state.withLock({ $0.startRequest != nil }), rebindWork == nil else { return }
+    let delay = Self.rebindDelays[min(rebindAttempt, Self.rebindDelays.count - 1)]
+    rebindAttempt += 1
+    let work = DispatchWorkItem { [weak self] in
+      guard let self else { return }
+      rebindWork = nil
+      // `stop` or a successful `ensureListening` may have overtaken this while it waited.
+      guard state.withLock({ $0.startRequest != nil && $0.listener == nil }) else { return }
+      bindStartRequest()
+    }
+    rebindWork = work
+    queue.asyncAfter(deadline: .now() + delay, execute: work)
+  }
+
+  private func cancelRebind() {
+    rebindWork?.cancel()
+    rebindWork = nil
+    rebindAttempt = 0
   }
 
   private func startPathMonitor() {
