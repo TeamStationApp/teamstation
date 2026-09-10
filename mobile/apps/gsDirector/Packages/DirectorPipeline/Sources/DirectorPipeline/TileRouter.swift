@@ -297,8 +297,17 @@ public final class SourcePipeline: @unchecked Sendable {
         telemetry.recordDisplayRefusedLate(tile: sourceIndex)
       }
     }
+    // The programme gets the same answer as the tile, because it is the same picture.
+    //
+    // This used to be decided only for the tile: a frame too old to show was still handed to the
+    // compositor, so during a bad stretch the operator watched the programme move while the camera
+    // tile it was cut from sat still. Whichever of the two is right, they cannot both be — and the
+    // programme is the one going to air, so a picture too stale for the monitor is too stale to cut
+    // to. The camera archive is unaffected either way; it is fed on arrival, before any of this.
     if state != .replaying {
-      programSink?(converted.pixelBuffer, converted.presentationTime)
+      if showable {
+        programSink?(converted.pixelBuffer, converted.presentationTime)
+      }
     } else if wedgePolicy.shouldReturnToLive(
       now: Date().timeIntervalSince1970,
       lastPresentedAt: renderer.failCounts.lastEnqueueAt
