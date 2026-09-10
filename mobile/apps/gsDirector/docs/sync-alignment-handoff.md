@@ -825,3 +825,26 @@ most disruptive step and the easiest to leave in a bad state.
 - Exported MP4 and MOV both pass identically.
 - Unit test count went up and the only failures are the two known ones.
 - `--suite operator` still passes.
+
+## NDI stutter on a healthy link: the Cosmo stamps frames in pairs (2026-09-10)
+
+With the iPad rebooted and the link above 100 Mbps, the NDI tile still stuttered while the Pixel
+beside it was smooth. Telemetry ruled out the network and the buffer: both tiles held ~29 frames
+(496 ms) with zero late frames, yet NDI released in 104 ms clumps against the Pixel's 37 ms.
+
+Measured on the Mac with `gsNdiCameras --receive` (now prints quartiles; `GS_NDI_GAPS_OUT=<file>`
+dumps every gap): the Cosmo C2 paces an exact 60.00 fps by its own span, drops nothing, but stamps
+consecutive frames **5 ms then 30 ms apart** (p25 5.5 ms, p75 30.2 ms, mean 16.67 ms). Released at
+stamp + fixed delay, each pair lands inside one 60 Hz refresh: one frame is never shown and the
+other is held twice — 30 fps judder. The same skew put the *median* interval in the short cluster,
+so `FrameRateEstimator` read 70–80 fps, which also stepped the NDI archive timeline ~15% fast.
+
+Fixes:
+
+- `CaptureTimelineSmoother` (DirectorSources): predict one period after the last frame, move 5%
+  toward the stamp; reseat on a jump > 250 ms. NDI schedules on its output instead of raw stamps.
+- `FrameRateEstimator`: when the interquartile spread exceeds 25% of the median, take the window's
+  mean interval (span ÷ count) instead of the median. Clean RTP clocks with drops keep the median.
+- Tile readout: "60 FPS" and "7 MB" (megabytes/s) to the left of the loss count. RTSP counts its
+  own socket; NDI's socket belongs to the SDK, so a lone NDI tile shows Wi-Fi total less the RTSP
+  tiles' counts, and a dash when two NDI tiles would have to split it.

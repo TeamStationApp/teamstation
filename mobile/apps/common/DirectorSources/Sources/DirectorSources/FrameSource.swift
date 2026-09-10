@@ -325,6 +325,10 @@ public struct ReceiveStats: Sendable, Equatable {
   /// up", which is the first question to ask when a tile looks slow. Always zero for
   /// sources that generate their frames locally.
   public var packetsLost: UInt64 = 0
+  /// Bytes read off this camera's connection since it opened. Nil for a transport that does not
+  /// let us see its socket: the NDI SDK reads the network itself and hands back decoded pixels, so
+  /// its wire rate is not ours to count.
+  public var bytesReceived: UInt64?
   /// What this camera's own RTCP sender reports say about its clock (RFC 3550 §6.4). The playout
   /// path does not use any of this yet; it is here to decide whether it could.
   ///

@@ -16,8 +16,9 @@ struct ReplayWedgePolicyTests {
   func stalledReplayIsRecovered() {
     let policy = ReplayWedgePolicy()
     #expect(policy.shouldReturnToLive(now: 1_000, lastPresentedAt: 995))
-    // The case that was actually found: a tile wedged for four and a half hours.
-    #expect(policy.shouldReturnToLive(now: 1_000, lastPresentedAt: 1_000 - 15_471))
+    // The case that was actually found: a tile wedged for four and a half hours. Uptime has to
+    // be longer than that for the stamp to be positive — zero and below mean "never presented".
+    #expect(policy.shouldReturnToLive(now: 20_000, lastPresentedAt: 20_000 - 15_471))
   }
 
   @Test("A tile that has never shown a picture is not the watchdog's business")

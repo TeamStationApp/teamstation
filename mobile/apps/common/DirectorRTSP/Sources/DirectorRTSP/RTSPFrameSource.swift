@@ -196,6 +196,9 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     defer { lock.unlock() }
     var snapshot = stats
     snapshot.packetsLost = videoTracker.lost &+ audioTracker.lost
+    // Per session: a reconnect starts again from zero, which the rate tracker reads as a new
+    // baseline rather than a negative rate.
+    snapshot.bytesReceived = session?.bytesReceived ?? 0
     snapshot.status = lastFailure
     snapshot.arrivalGapMaxMilliseconds = (jitter.gapMaxMilliseconds * 10).rounded() / 10
     snapshot.arrivalGapWasKeyframe = jitter.gapWasKeyframe

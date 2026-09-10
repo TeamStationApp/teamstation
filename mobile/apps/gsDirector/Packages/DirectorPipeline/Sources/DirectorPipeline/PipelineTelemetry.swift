@@ -170,6 +170,27 @@ public struct TileTelemetry: Sendable, Codable, Equatable {
     return String(format: "%.0f", packetsLostPerSecond)
   }
 
+  /// What the camera's link is carrying, in bytes a second. RTSP counts its own socket; NDI's
+  /// socket belongs to the SDK, so an NDI tile is given the Wi-Fi total less what the RTSP tiles
+  /// account for, and only while it is the one NDI camera live. Nil when neither is available.
+  public var receiveBytesPerSecond: Double?
+
+  /// The tile's frame rate as the operator reads it: "60 FPS", whole frames, arrivals rather than
+  /// what the screen showed. An em dash when nothing is arriving, like the loss beside it.
+  public var frameRateLabel: String {
+    guard framesPerSecond > 0, stalledForSeconds == 0 else { return "— FPS" }
+    return String(format: "%.0f FPS", framesPerSecond)
+  }
+
+  /// "4 Mbps": whole megabits a second, the unit a camera's bitrate is set in. It used to be
+  /// megabytes, so a 4 Mbps camera — half a megabyte a second — read 0 or 1 and looked broken.
+  public var throughputLabel: String {
+    guard let receiveBytesPerSecond, framesPerSecond > 0, stalledForSeconds == 0 else {
+      return "— Mbps"
+    }
+    return String(format: "%.0f Mbps", receiveBytesPerSecond * 8 / 1_000_000)
+  }
+
   /// Why this source last stopped delivering, in the words of whatever noticed. Empty while healthy.
   public var sourceStatus = ""
   /// The `CNAME` this camera presents, empty for the cameras that present none. Worth surfacing
@@ -591,6 +612,7 @@ public final class PipelineTelemetry: @unchecked Sendable {
   private var frameTimestamps: [Int: (count: UInt64, since: TimeInterval, last: TimeInterval)] = [:]
   private var displayedTimestamps: [Int: (count: UInt64, since: TimeInterval, last: TimeInterval)] = [:]
   private var lossRates: [Int: CounterRateTracker] = [:]
+  private var byteRates: [Int: CounterRateTracker] = [:]
   private var composedRate = CounterRateTracker()
   /// Kept apart because they are counted differently, and their sum is what the HUD reports.
   private var replayDecodeSessions = 0
@@ -683,6 +705,35 @@ public final class PipelineTelemetry: @unchecked Sendable {
     let lossA = lossRates[a]
     lossRates[a] = lossRates[b]
     lossRates[b] = lossA
+    let bytesA = byteRates[a]
+    byteRates[a] = byteRates[b]
+    byteRates[b] = bytesA
+  }
+
+  /// The transport's cumulative received bytes for this tile, folded into
+  /// `receiveBytesPerSecond`. Returns the rate so the caller can subtract it from the interface
+  /// total when attributing the rest to an NDI tile.
+  @discardableResult
+  public func recordReceivedBytes(tile: Int, cumulative: UInt64) -> Double {
+    let now = Self.monotonicNow()
+    lock.lock()
+    var tracker = byteRates[tile] ?? CounterRateTracker()
+    let rate = tracker.record(cumulative, at: now)
+    byteRates[tile] = tracker
+    if let position = state.tiles.firstIndex(where: { $0.index == tile }) {
+      state.tiles[position].receiveBytesPerSecond = rate
+    }
+    lock.unlock()
+    return rate
+  }
+
+  /// A rate worked out elsewhere — the NDI tile's share of the interface — or nil to clear it.
+  public func setReceiveRate(tile: Int, bytesPerSecond: Double?) {
+    lock.lock()
+    if let position = state.tiles.firstIndex(where: { $0.index == tile }) {
+      state.tiles[position].receiveBytesPerSecond = bytesPerSecond
+    }
+    lock.unlock()
   }
 
   /// The transport's cumulative loss for this tile, as of now. Stores the count and folds it
@@ -705,6 +756,7 @@ public final class PipelineTelemetry: @unchecked Sendable {
   public func resetLossRate(tile: Int) {
     lock.lock()
     lossRates[tile] = nil
+    byteRates[tile] = nil
     lock.unlock()
   }
 
@@ -934,6 +986,7 @@ public final class PipelineTelemetry: @unchecked Sendable {
     // publish the pre-reset figure back into the fresh snapshot on the very next poll, which is
     // exactly the stale reading a reset is asked for to get rid of.
     lossRates.removeAll()
+    byteRates.removeAll()
     composedRate = CounterRateTracker()
     lock.unlock()
   }
