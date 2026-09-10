@@ -20,6 +20,9 @@ import Foundation
 /// takes a couple of seconds, and a fixed timer shorter than that would start the next one before
 /// the last had finished.
 public struct CameraSweepPolicy: Sendable, Equatable {
+  /// When a sweep happens at all: only while the operator is on the camera list, or while an
+  /// enabled camera is missing. Never simply because time passed.
+  ///
   /// Gap between sweeps, whether the sweep is routine or chasing a camera that dropped.
   ///
   /// Ten seconds rather than the three it began at, because the cost is not the app's to pay: most
@@ -53,16 +56,25 @@ public struct CameraSweepPolicy: Sendable, Equatable {
   ///   - anyEnabledCameraMissing: an enabled camera that discovery cannot currently see.
   ///   - now: monotonic seconds.
   /// - Returns: the gap to leave after the sweep that follows, or nil to not sweep at all.
+  /// - Parameters:
+  ///   - isBusy: recording or streaming — the states where a sweep's broadcasts are unwelcome.
+  ///   - anyEnabledCameraMissing: an enabled camera that discovery cannot currently see.
+  ///   - isBrowsing: the operator is looking at the camera list, so a sweep is what they asked for.
+  ///   - now: monotonic seconds.
   public mutating func gapAfterNextSweep(
     isBusy: Bool,
     anyEnabledCameraMissing: Bool,
+    isBrowsing: Bool,
     now: Double
   ) -> Double? {
     guard anyEnabledCameraMissing else {
       // Everything enabled is accounted for. Clearing this is what makes the next dropout read as
       // a new one rather than a continuation of the last.
       missingSince = nil
-      return isBusy ? nil : Self.idleGapSeconds
+      // Nothing missing and nobody looking: do not sweep at all. Sweeping on a timer through a
+      // whole game costs every device on the segment an ARP storm every few seconds to answer a
+      // question nobody asked, and it was measured slowing a camera's own delivery.
+      return isBrowsing ? Self.gapSeconds : nil
     }
 
     // Remembered for telemetry, and so a camera that comes back and goes again reads as a fresh

@@ -4,25 +4,40 @@ import DirectorSources
 
 @Suite("Camera sweep policy")
 struct CameraSweepPolicyTests {
-  @Test("Sweeps at the standing gap when nothing is being recorded or streamed")
-  func idleSweepsAtTheStandingGap() {
+  /// Sweeping simply because time passed is what made the segment noisy. Idle and healthy is now
+  /// silence, whether or not anything is recording.
+  @Test("Does not sweep when nothing is missing and nobody is looking")
+  func idleAndHealthyIsSilent() {
     var policy = CameraSweepPolicy()
-    #expect(policy.gapAfterNextSweep(isBusy: false, anyEnabledCameraMissing: false, now: 0) == 10)
-    #expect(policy.gapAfterNextSweep(isBusy: false, anyEnabledCameraMissing: true, now: 300) == 10)
+    #expect(policy.gapAfterNextSweep(isBusy: false, anyEnabledCameraMissing: false, isBrowsing: false, now: 0) == nil)
+    #expect(policy.gapAfterNextSweep(isBusy: true, anyEnabledCameraMissing: false, isBrowsing: false, now: 10) == nil)
+  }
+
+  @Test("Sweeps while the operator is on the camera list, which is what that screen is for")
+  func browsingSweeps() {
+    var policy = CameraSweepPolicy()
+    #expect(policy.gapAfterNextSweep(isBusy: false, anyEnabledCameraMissing: false, isBrowsing: true, now: 0) == 10)
+    #expect(policy.gapAfterNextSweep(isBusy: true, anyEnabledCameraMissing: false, isBrowsing: true, now: 5) == 10)
+  }
+
+  @Test("A missing camera is chased whether or not anyone is looking")
+  func missingSweepsRegardless() {
+    var policy = CameraSweepPolicy()
+    #expect(policy.gapAfterNextSweep(isBusy: true, anyEnabledCameraMissing: true, isBrowsing: false, now: 300) == 10)
   }
 
   @Test("Does not sweep at all while recording with every camera accounted for")
   func busyAndHealthyDoesNotSweep() {
     var policy = CameraSweepPolicy()
-    #expect(policy.gapAfterNextSweep(isBusy: true, anyEnabledCameraMissing: false, now: 0) == nil)
+    #expect(policy.gapAfterNextSweep(isBusy: true, anyEnabledCameraMissing: false, isBrowsing: false, now: 0) == nil)
   }
 
   /// The whole point of the design: a recording pays nothing for discovery until something breaks.
   @Test("Starts sweeping the moment an enabled camera goes missing mid-recording")
   func dropoutStartsRecoverySweeping() {
     var policy = CameraSweepPolicy()
-    #expect(policy.gapAfterNextSweep(isBusy: true, anyEnabledCameraMissing: false, now: 0) == nil)
-    #expect(policy.gapAfterNextSweep(isBusy: true, anyEnabledCameraMissing: true, now: 10) == 10)
+    #expect(policy.gapAfterNextSweep(isBusy: true, anyEnabledCameraMissing: false, isBrowsing: false, now: 0) == nil)
+    #expect(policy.gapAfterNextSweep(isBusy: true, anyEnabledCameraMissing: true, isBrowsing: false, now: 10) == 10)
   }
 
   /// One gap, however long the camera has been gone. The broadcasts a shorter early gap costs are
@@ -31,7 +46,7 @@ struct CameraSweepPolicyTests {
   func gapDoesNotChangeWithTime() {
     var policy = CameraSweepPolicy()
     let start = 1_000.0
-    _ = policy.gapAfterNextSweep(isBusy: true, anyEnabledCameraMissing: true, now: start)
+    _ = policy.gapAfterNextSweep(isBusy: true, anyEnabledCameraMissing: true, isBrowsing: false, now: start)
     for (elapsed, expected) in [
       (0.0, 10.0), (30.0, 10.0), (59.9, 10.0),
       (60.0, 10.0), (90.0, 10.0), (119.9, 10.0),
@@ -40,6 +55,7 @@ struct CameraSweepPolicyTests {
       let gap = policy.gapAfterNextSweep(
         isBusy: true,
         anyEnabledCameraMissing: true,
+        isBrowsing: false,
         now: start + elapsed
       )
       #expect(gap == expected, "at \(elapsed)s missing, expected \(expected)s gap, got \(gap as Any)")
@@ -52,21 +68,21 @@ struct CameraSweepPolicyTests {
   func recoveryResetsTheDropoutClock() {
     var policy = CameraSweepPolicy()
     let start = 500.0
-    _ = policy.gapAfterNextSweep(isBusy: true, anyEnabledCameraMissing: true, now: start)
-    #expect(policy.gapAfterNextSweep(isBusy: true, anyEnabledCameraMissing: true, now: start + 300) == 10)
+    _ = policy.gapAfterNextSweep(isBusy: true, anyEnabledCameraMissing: true, isBrowsing: false, now: start)
+    #expect(policy.gapAfterNextSweep(isBusy: true, anyEnabledCameraMissing: true, isBrowsing: false, now: start + 300) == 10)
     // Found again.
-    #expect(policy.gapAfterNextSweep(isBusy: true, anyEnabledCameraMissing: false, now: start + 301) == nil)
+    #expect(policy.gapAfterNextSweep(isBusy: true, anyEnabledCameraMissing: false, isBrowsing: false, now: start + 301) == nil)
     // And gone again: back to chasing hard.
-    #expect(policy.gapAfterNextSweep(isBusy: true, anyEnabledCameraMissing: true, now: start + 302) == 10)
+    #expect(policy.gapAfterNextSweep(isBusy: true, anyEnabledCameraMissing: true, isBrowsing: false, now: start + 302) == 10)
   }
 
   @Test("Reports how long the dropout has lasted, and nothing when healthy")
   func missingDuration() {
     var policy = CameraSweepPolicy()
     #expect(policy.missingForSeconds(now: 0) == nil)
-    _ = policy.gapAfterNextSweep(isBusy: true, anyEnabledCameraMissing: true, now: 100)
+    _ = policy.gapAfterNextSweep(isBusy: true, anyEnabledCameraMissing: true, isBrowsing: false, now: 100)
     #expect(policy.missingForSeconds(now: 175) == 75)
-    _ = policy.gapAfterNextSweep(isBusy: true, anyEnabledCameraMissing: false, now: 200)
+    _ = policy.gapAfterNextSweep(isBusy: true, anyEnabledCameraMissing: false, isBrowsing: false, now: 200)
     #expect(policy.missingForSeconds(now: 200) == nil)
   }
 }

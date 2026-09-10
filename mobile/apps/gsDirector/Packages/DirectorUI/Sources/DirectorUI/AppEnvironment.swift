@@ -3488,7 +3488,10 @@ public final class AppEnvironment {
     }
     discovery?.setSweepDemand(
       isBusy: self.isRecording || self.isStreaming,
-      anyEnabledCameraMissing: missing
+      anyEnabledCameraMissing: missing,
+      // The camera list is the one screen whose whole purpose is finding cameras, so it is the one
+      // place a sweep is what the operator asked for rather than something done to them.
+      isBrowsing: self.activeSheet == .cameras
     )
     telemetry.mutate {
       $0.statusMessage = status

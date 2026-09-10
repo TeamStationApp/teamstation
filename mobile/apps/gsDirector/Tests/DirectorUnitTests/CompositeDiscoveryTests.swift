@@ -68,7 +68,7 @@ struct CompositeDiscoveryTests {
 
     composite.setPeriodicSearch(false)
     composite.searchNow()
-    composite.setSweepDemand(isBusy: true, anyEnabledCameraMissing: true)
+    composite.setSweepDemand(isBusy: true, anyEnabledCameraMissing: true, isBrowsing: false)
 
     for child in [ndi, rtsp] {
       #expect(child.periodicSearch == false)
@@ -148,7 +148,7 @@ private final class StubDiscovery: SourceDiscovery, @unchecked Sendable {
   func setPeriodicSearch(_ enabled: Bool) { periodicSearch = enabled }
   func searchNow() { searches += 1 }
 
-  func setSweepDemand(isBusy: Bool, anyEnabledCameraMissing: Bool) {
+  func setSweepDemand(isBusy: Bool, anyEnabledCameraMissing: Bool, isBrowsing: Bool) {
     demand = (isBusy, anyEnabledCameraMissing)
   }
 }
