@@ -163,14 +163,14 @@ struct WallClockPlacementTests {
     #expect(abs((late ?? 0) - expected) <= 2)
   }
 
-  /// What a gap actually contains, which decides whether W14 has anything to do.
+  /// A gap holds the picture that was there before it.
   ///
-  /// The composition leaves a real gap as an empty range. Whether that reaches the exported file as
-  /// black or as the previous picture held is a property of AVFoundation and the container, not
-  /// something to assume: an empty edit is rendered differently by different players, and the
-  /// operator asked for a freeze. This records the answer rather than guessing at it.
-  @Test("What a gap holds in the exported file")
-  func gapContent() async throws {
+  /// Placement alone leaves a real gap as an empty range, and an empty range has no samples at all —
+  /// measured, every probe across the hole decoded nothing. So the freeze is manufactured: the last
+  /// frame before the gap is inserted once and scaled to the length of the hole, which a passthrough
+  /// export honours. One sample, not one per frame, so a 150 s dropout costs a single insertion.
+  @Test("A gap holds the last frame before it, all the way across")
+  func gapHoldsLastFrame() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent("gapc-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -191,17 +191,47 @@ struct WallClockPlacementTests {
       destination: out
     )
 
-    // Eight seconds in is squarely inside the ten-second hole.
-    let inGap = try await marker(in: out, at: 8.0)
     let lastBeforeGap = (1_000 + 89) & FrameMarker.maximumValue
-    if let inGap {
-      // Held: the picture before the gap is still on screen, which is what was asked for.
-      #expect(abs(inGap - lastBeforeGap) <= 2)
+    // Sampled right after the gap opens, in its middle, and just before it closes: a hold that only
+    // covered part of the hole would pass a single probe in the middle.
+    for instant in [ 3.5, 8.0, 12.5 ] {
+      let value = try await marker(in: out, at: instant)
+      #expect(value != nil, "nothing at \(instant)s — the gap is empty, not held")
+      #expect(abs((value ?? 0) - lastBeforeGap) <= 2, "wrong picture held at \(instant)s")
     }
-    // Either way the segment after the gap is still in its right place, which is what this suite
-    // is really protecting. The gap's own content is recorded above for W14 to act on.
-    let after = try await marker(in: out, at: 13.5)
-    #expect(after != nil)
+
+    // The hold must not run over the segment that follows it.
+    let after = try await marker(in: out, at: 14.5)
+    #expect(abs((after ?? 0) - ((500_000 + 45) & FrameMarker.maximumValue)) <= 2)
+  }
+
+  @Test("A camera that stops early holds its last frame to the end of the window")
+  func tailHoldsLastFrame() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("tail-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let only = root.appendingPathComponent("a.mp4")
+    try await markedMovie(at: only, firstValue: 7_000, frames: 90)
+
+    let out = root.appendingPathComponent("out.mp4")
+    try await ArchiveRemux.concatenate(
+      files: [ only ],
+      fileDurations: [ 3 ],
+      targetDuration: 10,
+      startWalls: [ WallClock(seconds: 2_000) ],
+      windowStart: WallClock(seconds: 2_000),
+      destination: out
+    )
+
+    let duration = try await AVURLAsset(url: out).load(.duration).seconds
+    #expect(abs(duration - 10) < 0.35)
+    // Seven seconds of tail the camera never covered, holding its last picture rather than going
+    // black — the same answer a mid-take dropout gets.
+    let value = try await marker(in: out, at: 8.0)
+    #expect(value != nil)
+    #expect(abs((value ?? 0) - ((7_000 + 89) & FrameMarker.maximumValue)) <= 2)
   }
 
   @Test("Two cameras that dropped out differently still line up with each other")
