@@ -29,9 +29,6 @@ public struct DirectorRootView: View {
             .environment(environment)
         }
       }
-      .sheet(isPresented: $environment.isSharingRecordings) {
-        ShareSheet(urls: environment.lastRecordingShare)
-      }
       .task { await environment.bootstrap() }
       .onOpenURL { url in
         _ = environment.handle(url: url)
