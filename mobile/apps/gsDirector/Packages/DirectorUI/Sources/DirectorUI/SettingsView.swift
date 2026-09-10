@@ -310,6 +310,44 @@ public struct SettingsView: View {
         }
 
         Section {
+          Toggle("Cap preview latency", isOn: $draft.displayLatencyCapEnabled)
+            .accessibilityIdentifier("settings-display-latency-cap-enabled")
+          if draft.displayLatencyCapEnabled {
+            LatencyCapSlider(
+              title: "Preview",
+              milliseconds: $draft.displayLatencyCapMilliseconds,
+              range: AppConfig.displayLatencyCapMinimumMilliseconds
+                ... AppConfig.displayLatencyCapMaximumMilliseconds,
+              step: 10,
+              identifier: "settings-display-latency-cap"
+            )
+          }
+
+          Toggle("Cap recording latency", isOn: $draft.diskLatencyCapEnabled)
+            .accessibilityIdentifier("settings-disk-latency-cap-enabled")
+          if draft.diskLatencyCapEnabled {
+            LatencyCapSlider(
+              title: "Recording",
+              milliseconds: $draft.diskLatencyCapMilliseconds,
+              range: AppConfig.diskLatencyCapMinimumMilliseconds
+                ... AppConfig.diskLatencyCapMaximumMilliseconds,
+              step: 100,
+              identifier: "settings-disk-latency-cap"
+            )
+          }
+        } header: {
+          Text("Latency")
+        } footer: {
+          Text(
+            "How old a picture may be and still be used, measured from when it was taken. "
+              + "The preview is worthless showing action that has already happened, so a picture "
+              + "past its cap is held and the last good frame stays up. The recording is watched "
+              + "afterwards, where a late picture is simply a picture and dropping it leaves a "
+              + "hole in the tape — so give it the longer allowance. Off means no ceiling."
+          )
+        }
+
+        Section {
           Text("""
           Recording to external storage is not supported. GS Director writes to the iPad's \
           internal storage only, and stops archiving when free space drops below the headroom \
@@ -512,6 +550,35 @@ private struct NewTemplateSheet: View {
 }
 
 /// 0–100 percent of live speed, with a tick every 10 and a taller mark every 25.
+/// One latency ceiling, in whatever unit reads naturally for its range.
+///
+/// Milliseconds below a couple of seconds, seconds above: 10-2000 ms and 0.1-60 s have no useful
+/// scale between them, which is why these are two sliders rather than one.
+private struct LatencyCapSlider: View {
+  var title: String
+  @Binding var milliseconds: Double
+  var range: ClosedRange<Double>
+  var step: Double
+  var identifier: String
+
+  private var label: String {
+    milliseconds >= 2_000
+      ? String(format: "%@ up to %.1f s", title, milliseconds / 1_000)
+      : "\(title) up to \(Int(milliseconds.rounded())) ms"
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      Text(label)
+        .font(.subheadline)
+        .foregroundStyle(.secondary)
+        .accessibilityIdentifier("\(identifier)-value")
+      Slider(value: $milliseconds, in: range, step: step)
+        .accessibilityIdentifier(identifier)
+    }
+  }
+}
+
 private struct ReplaySlowMotionSlider: View {
   @Binding var percent: Double
 
