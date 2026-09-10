@@ -13,15 +13,21 @@ public struct SegmentWriterSettings: Sendable, Equatable {
   public var segmentSeconds: Double
   public var includesAudio: Bool
   public var minimumFreeDiskBytes: Int64
+  /// Which transport delivers this source, recorded on every segment so a misplaced angle can be
+  /// attributed to one after the fact. A take now mixes NDI and RTSP, and the two derive capture
+  /// time differently enough that "which one wrote this row" is the first question worth asking.
+  public var transport: String?
 
   public init(
     segmentSeconds: Double = 3,
     includesAudio: Bool = true,
-    minimumFreeDiskBytes: Int64 = 4 * 1024 * 1024 * 1024
+    minimumFreeDiskBytes: Int64 = 4 * 1024 * 1024 * 1024,
+    transport: String? = nil
   ) {
     self.segmentSeconds = segmentSeconds
     self.includesAudio = includesAudio
     self.minimumFreeDiskBytes = minimumFreeDiskBytes
+    self.transport = transport
   }
 
   public static func from(
@@ -117,6 +123,10 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
   private var baseWallClock: WallClock?
   private var lastVideoTime: CMTime = .negativeInfinity
   private var lastVideoDuration = CMTime(value: 3000, timescale: 90_000)
+  /// Video samples written to the file currently open. Divided by the segment's span it gives the
+  /// rate this stretch of the archive was really written at, which is not the camera's nominal one
+  /// when an encoder under pressure is archiving at half rate.
+  private var segmentVideoFrames = 0
   /// Added to every incoming presentation time so the file's timeline survives the camera's clock
   /// restarting. A reconnect resets the RTP unwrapper, and every frame after it arrived stamped
   /// earlier than the frame before the outage; the writer read that as "does not advance" and
@@ -299,7 +309,8 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
         sequence: pending.sequence,
         startWall: pending.startWall,
         duration: pending.duration,
-        firstFrameID: pending.firstFrameID
+        firstFrameID: pending.firstFrameID,
+        videoFrames: pending.videoFrames
       )
     }
 
@@ -319,6 +330,7 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     let startWall: WallClock?
     let duration: TimeInterval
     let firstFrameID: UInt64?
+    let videoFrames: Int
   }
 
   private func beginFinish() -> PendingFinish? {
@@ -335,7 +347,8 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
       sequence: sequence,
       startWall: baseWallClock,
       duration: lastVideoTime.seconds,
-      firstFrameID: pendingFirstFrameID
+      firstFrameID: pendingFirstFrameID,
+      videoFrames: segmentVideoFrames
     )
   }
 
@@ -652,6 +665,7 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
       }
     }
     lastVideoDuration = sampleDuration
+    segmentVideoFrames += 1
     lastVideoTime = presentationTime
     if pendingFirstFrameID == nil { pendingFirstFrameID = picture.frameID }
 
@@ -802,6 +816,7 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     let startWall = baseWallClock
     let duration = lastVideoTime.isNumeric ? lastVideoTime.seconds : 0
     let firstFrameID = pendingFirstFrameID
+    let frames = segmentVideoFrames
     self.writer = nil
     self.videoInput = nil
     self.audioInput = nil
@@ -811,6 +826,7 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     baseWallClock = nil
     lastVideoTime = .negativeInfinity
     pendingFirstFrameID = nil
+    segmentVideoFrames = 0
     // Keep `held`. Recycle runs from appendVideo of the keyframe that *opens* the next file,
     // and `held` is already the picture after that keyframe. Clearing it dropped one frame
     // at every 3s cut. That frame belongs on the new file's timeline.
@@ -828,7 +844,8 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
         sequence: seq,
         startWall: startWall,
         duration: duration,
-        firstFrameID: firstFrameID
+        firstFrameID: firstFrameID,
+        videoFrames: frames
       )
     }
   }
@@ -838,7 +855,8 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     sequence: Int,
     startWall: WallClock?,
     duration: TimeInterval,
-    firstFrameID: UInt64?
+    firstFrameID: UInt64?,
+    videoFrames: Int
   ) {
     guard let filename else { return }
     let url = directory.appendingPathComponent(filename)
@@ -853,7 +871,11 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
         startWall: startWall ?? clock.now,
         duration: max(0, duration),
         byteCount: bytes,
-        firstFrameID: firstFrameID
+        firstFrameID: firstFrameID,
+        transport: settings.transport,
+        archiveRate: duration > 0.05 && videoFrames > 0
+          ? Double(videoFrames) / duration
+          : nil
       )
       telemetry.recordSegment(bytes: UInt64(max(0, bytes)))
     } catch {
