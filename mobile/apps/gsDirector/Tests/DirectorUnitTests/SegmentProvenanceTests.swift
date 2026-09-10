@@ -120,3 +120,64 @@ struct SegmentProvenanceTests {
     #expect(sources[0].reason == "encoder stopped")
   }
 }
+
+@Suite("Programme anchors")
+struct ProgramAnchorTests {
+  private func index() throws -> (ArchiveIndex, URL) {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("anchor-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    return (try ArchiveIndex(url: root.appendingPathComponent("index.sqlite")), root)
+  }
+
+  @Test("An anchor says where a part's own timeline starts in real time")
+  func partStartFromAnchor() throws {
+    let (index, root) = try index()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let recording = try index.beginRecording(at: WallClock(seconds: 1_000))
+    // Nine seconds into part one, and it was 1009 — so part one began at 1000.
+    try index.insertProgramAnchor(
+      recordingID: recording, part: 1, programSeconds: 9, wall: WallClock(seconds: 1_009)
+    )
+    let anchors = try index.programAnchors(recordingID: recording)
+    #expect(anchors.count == 1)
+    #expect(abs(anchors[0].partStartWall - WallClock(seconds: 1_000)) < 0.001)
+  }
+
+  @Test("A recovered writer's continuation part is placed where it resumed, not where the last ended")
+  func continuationPartKeepsItsGap() throws {
+    let (index, root) = try index()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let recording = try index.beginRecording(at: WallClock(seconds: 1_000))
+    // Part one ran from 1000. Part two opened at 1050 after a recovery that cost 20 s — the old
+    // behaviour butted it against part one and silently discarded that interval.
+    for seconds in stride(from: 3.0, through: 27.0, by: 3.0) {
+      try index.insertProgramAnchor(
+        recordingID: recording, part: 1, programSeconds: seconds,
+        wall: WallClock(seconds: 1_000 + seconds)
+      )
+    }
+    for seconds in stride(from: 3.0, through: 12.0, by: 3.0) {
+      try index.insertProgramAnchor(
+        recordingID: recording, part: 2, programSeconds: seconds,
+        wall: WallClock(seconds: 1_050 + seconds)
+      )
+    }
+    let starts = try index.programPartStarts(recordingID: recording)
+    #expect(starts.count == 2)
+    #expect(abs((starts[1] ?? WallClock(seconds: 0)) - WallClock(seconds: 1_000)) < 0.001)
+    #expect(abs((starts[2] ?? WallClock(seconds: 0)) - WallClock(seconds: 1_050)) < 0.001)
+    // Fifty seconds apart, of which thirty were written: the twenty-second hole is now visible
+    // rather than being absorbed into the join.
+    let gap = (starts[2] ?? WallClock(seconds: 0)) - (starts[1] ?? WallClock(seconds: 0))
+    #expect(abs(gap - 50) < 0.001)
+  }
+
+  @Test("A take with no anchors reports none rather than guessing")
+  func noAnchorsIsEmpty() throws {
+    let (index, root) = try index()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let recording = try index.beginRecording(at: WallClock(seconds: 2_000))
+    #expect(try index.programPartStarts(recordingID: recording).isEmpty)
+  }
+}

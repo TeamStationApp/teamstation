@@ -139,14 +139,26 @@ public struct ExportService: Sendable {
           if sources.count == 1, duration == nil {
             try FileManager.default.copyItem(at: sources[0], to: destination)
           } else {
+            // Placed by wall clock when the programme recorded where it was.
+            //
+            // Without anchors the parts are laid end to end, which is why a stress run found the
+            // cameras exact at every sample and the programme drifting to seven seconds ahead: a
+            // writer that died and was recovered leaves a continuation part, and butting it against
+            // its predecessor discards however long the recovery took. Anchors give each part the
+            // wall clock its own timeline starts at, so a part goes where it happened and the gap
+            // it left is held.
+            let partStarts = (try? index.programPartStarts(recordingID: recording.id)) ?? [:]
+            let startWalls: [WallClock] = partStarts.isEmpty
+              ? []
+              : (1...sources.count).compactMap { partStarts[$0] }
             try await ArchiveRemux.concatenate(
               files: sources,
               fileDurations: sources.map { _ in 0 },
-              // The same window the cameras get. Exporting the programme over the whole recording
-              // while the angles are trimmed to their overlap leaves it a fraction of a second
-              // longer than everything it was cut from, which is the disagreement this was meant
-              // to remove.
+              // The same window the cameras get, so the programme is the length of the take rather
+              // than the length of whatever survived being written.
               targetDuration: earliestEnd.map { max(0, $0 - latestStart) } ?? duration,
+              startWalls: startWalls.count == sources.count ? startWalls : [],
+              windowStart: startWalls.count == sources.count ? latestStart : nil,
               destination: destination
             )
           }

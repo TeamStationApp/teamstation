@@ -14,6 +14,7 @@ import VideoToolbox
 public final class ProgramEncoder: @unchecked Sendable {
   public private(set) var outputURL: URL?
 
+  private var anchorSink: AnchorSink?
   private let telemetry: PipelineTelemetry
   private let converter: PixelConverter
   private let width: Int
@@ -49,6 +50,12 @@ public final class ProgramEncoder: @unchecked Sendable {
   private var isDraining = false
   private var writtenFrames: UInt64 = 0
   private var part = 1
+  /// Programme seconds of the last anchor written, so anchors land at a steady spacing rather
+  /// than on every frame.
+  private var lastAnchorSeconds: Double = -.infinity
+  /// How often the programme records where it was in real time. Matches the movie-fragment
+  /// interval, so an anchor lands about once per fragment without needing a fragment callback.
+  private static let anchorIntervalSeconds: Double = 3
   public private(set) var outputURLs: [URL] = []
   /// Incoming compositor time of the last successful video sample, kept across a writer recover
   /// so the continuation file can hold the dead interval as black + silence.
@@ -101,6 +108,12 @@ public final class ProgramEncoder: @unchecked Sendable {
   }
   private var isRunning = false
 
+  /// Called as the programme is written, with where it had reached and what time it was.
+  ///
+  /// A closure rather than an index reference so the encoder keeps knowing nothing about storage;
+  /// the owner decides which recording the anchor belongs to.
+  public typealias AnchorSink = @Sendable (_ part: Int, _ programSeconds: Double, _ wall: WallClock) -> Void
+
   public init(
     telemetry: PipelineTelemetry,
     converter: PixelConverter,
@@ -130,6 +143,14 @@ public final class ProgramEncoder: @unchecked Sendable {
     return isRunning
   }
 
+  /// Set once, after the owner has finished building itself. The encoder is constructed before the
+  /// index it would write to exists, so this cannot be an initialiser argument.
+  public func setAnchorSink(_ sink: AnchorSink?) {
+    lock.lock()
+    anchorSink = sink
+    lock.unlock()
+  }
+
   public func start(at wall: WallClock) throws {
     lock.lock()
     guard !isRunning else {
@@ -142,6 +163,7 @@ public final class ProgramEncoder: @unchecked Sendable {
       outputURLs = []
       lastSourceTime = nil
       lastAppendHost = nil
+      lastAnchorSeconds = -.infinity
       pendingRecoveryFill = false
       previousPartsDuration = 0
       startedAt = wall
@@ -310,8 +332,20 @@ public final class ProgramEncoder: @unchecked Sendable {
     lastTime = time
     lastAppendHost = nowHost
     lastSourceTime = presentationTime
+    // Sampled here, where the programme's own timeline is decided, so the pair is exactly what was
+    // written rather than what a later reader infers.
+    var anchor: (part: Int, seconds: Double, wall: WallClock)?
+    if time.isNumeric, time.seconds - lastAnchorSeconds >= Self.anchorIntervalSeconds {
+      lastAnchorSeconds = time.seconds
+      anchor = (part, time.seconds, WallClock(seconds: Date().timeIntervalSince1970))
+    }
+    let sink = anchorSink
     let ready = videoInput.isReadyForMoreMediaData
     lock.unlock()
+
+    // Outside the lock: the sink writes to the index, and there is no reason to hold the
+    // compositor's append behind a database write.
+    if let anchor { sink?(anchor.part, anchor.seconds, anchor.wall) }
 
     guard ready else { return }
 
