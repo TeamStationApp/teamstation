@@ -139,35 +139,40 @@ public enum ArchiveRemux {
   /// multi-day durations; the longest track inside this window is the programme.
   public static let maximumSaneDuration: TimeInterval = 20_000
 
-  /// Floor on what a real recording of ours can average, in bits per second.
+  /// Fewest frames per second a real part of ours can hold.
   ///
-  /// The cameras run at megabits; the programme master is configured in the same range. A part
-  /// claiming a duration so long that it would imply less than this is not a long recording, it is
-  /// a short one with a broken header. A continuation stub was a small file declaring
-  /// hours of duration against the bitrate of real content, and the export believed it, turning a
-  /// single frame into a long second video track that confuses players and editors alike.
+  /// Not a bitrate. An earlier attempt compared the declared duration against the file's size and
+  /// rejected anything implying too few bits per second, which is wrong in both directions: a
+  /// recovery hold is black and silent at 10 fps and compresses to almost nothing, so a perfectly
+  /// good part looked broken.
   ///
-  /// Set two orders of magnitude below the real figure, so it only ever catches a header that is
-  /// wrong rather than a stretch of genuinely quiet footage.
-  public static let minimumPlausibleBitsPerSecond: Double = 50_000
+  /// What actually distinguishes a broken header is that the samples are not there. One take's
+  /// continuation stub declared hours while holding a single frame, and the
+  /// export believed it, turning that frame into a long second video track. Even a hold
+  /// writes ten frames a second, so anything under one is a header describing content the file does
+  /// not contain.
+  public static let minimumPlausibleFrameRate: Float = 1
 
-  /// Whether a declared duration is believable for a file of this size.
+  /// Whether a declared duration is believable for a track that reports this nominal rate.
   ///
-  /// Public and pure so the decision can be tested without an asset on disk.
-  public static func isPlausibleDuration(seconds: Double, byteCount: Int64) -> Bool {
+  /// Public and pure so the decision can be tested without an asset on disk. A rate of zero is
+  /// "unknown", not "empty" -- fragmented parts often report nothing -- and unknown is not evidence
+  /// of anything, so it passes.
+  public static func isPlausibleDuration(seconds: Double, nominalFrameRate: Float) -> Bool {
     guard seconds.isFinite, seconds > 0.05, seconds < maximumSaneDuration else { return false }
-    // Nothing to check against. A size we could not read is not evidence of anything.
-    guard byteCount > 0 else { return true }
-    return (Double(byteCount) * 8 / seconds) >= minimumPlausibleBitsPerSecond
+    guard nominalFrameRate > 0 else { return true }
+    return nominalFrameRate >= minimumPlausibleFrameRate
   }
 
   public static func playableDuration(of asset: AVURLAsset) async throws -> CMTime {
-    let byteCount = (try? FileManager.default.attributesOfItem(atPath: asset.url.path)[.size] as? Int64) ?? nil
     var best: TimeInterval = 0
     for type in [AVMediaType.audio, .video] {
       for track in try await asset.loadTracks(withMediaType: type) {
         let seconds = try await track.load(.timeRange).duration.seconds
-        if isPlausibleDuration(seconds: seconds, byteCount: byteCount ?? 0) {
+        // Only video carries a frame rate worth testing; an audio track's duration is its own
+        // business and is not what the stub case gets wrong.
+        let rate = type == .video ? ((try? await track.load(.nominalFrameRate)) ?? 0) : 0
+        if isPlausibleDuration(seconds: seconds, nominalFrameRate: rate) {
           best = max(best, seconds)
         }
       }
@@ -176,7 +181,7 @@ public enum ArchiveRemux {
       return CMTime(seconds: best, preferredTimescale: 600)
     }
     let loaded = try await asset.load(.duration)
-    if isPlausibleDuration(seconds: loaded.seconds, byteCount: byteCount ?? 0) {
+    if isPlausibleDuration(seconds: loaded.seconds, nominalFrameRate: 0) {
       return loaded
     }
     return .zero

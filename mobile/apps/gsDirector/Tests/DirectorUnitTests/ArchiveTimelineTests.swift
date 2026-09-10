@@ -480,31 +480,34 @@ private final class TimelineHarness {
 
 @Suite("Declared duration plausibility")
 struct DeclaredDurationTests {
-  @Test("A stub claiming hours for a few megabytes is not believed")
-  func rejectsImpossibleBitrate() {
-    // A continuation stub declaring hours over a small file.
-    #expect(!ArchiveRemux.isPlausibleDuration(seconds: 6_550, byteCount: 7_200_000))
+  @Test("A stub declaring hours while holding one frame is not believed")
+  func rejectsImpossibleFrameRate() {
+    // A continuation stub: hours of declared duration over a single frame.
+    let rate = Float(1.0 / 6_550)
+    #expect(!ArchiveRemux.isPlausibleDuration(seconds: 6_550, nominalFrameRate: rate))
   }
 
-  @Test("A real recording at a real bitrate is believed")
+  @Test("A recovery hold at ten frames a second is believed")
+  func acceptsHold() {
+    // Black and silent, and it compresses to almost nothing -- which is why size is the wrong
+    // thing to judge this on.
+    #expect(ArchiveRemux.isPlausibleDuration(seconds: 45, nominalFrameRate: 10))
+  }
+
+  @Test("A normal recording is believed")
   func acceptsRealFile() {
-    // 8 Mbit/s for a minute.
-    #expect(ArchiveRemux.isPlausibleDuration(seconds: 60, byteCount: 60_000_000))
+    #expect(ArchiveRemux.isPlausibleDuration(seconds: 600, nominalFrameRate: 30))
   }
 
-  @Test("A short file is believed even when small")
-  func acceptsShortFile() {
-    #expect(ArchiveRemux.isPlausibleDuration(seconds: 3, byteCount: 400_000))
-  }
-
-  @Test("A size we could not read is not treated as evidence")
-  func unknownSizePasses() {
-    #expect(ArchiveRemux.isPlausibleDuration(seconds: 600, byteCount: 0))
+  @Test("A rate the container does not report is not treated as evidence")
+  func unknownRatePasses() {
+    // Fragmented parts often report nothing here, and unknown is not the same as empty.
+    #expect(ArchiveRemux.isPlausibleDuration(seconds: 600, nominalFrameRate: 0))
   }
 
   @Test("The multi-day and zero cases are still refused")
   func keepsExistingBounds() {
-    #expect(!ArchiveRemux.isPlausibleDuration(seconds: 90_000, byteCount: 9_000_000_000))
-    #expect(!ArchiveRemux.isPlausibleDuration(seconds: 0, byteCount: 1_000))
+    #expect(!ArchiveRemux.isPlausibleDuration(seconds: 90_000, nominalFrameRate: 30))
+    #expect(!ArchiveRemux.isPlausibleDuration(seconds: 0, nominalFrameRate: 30))
   }
 }
