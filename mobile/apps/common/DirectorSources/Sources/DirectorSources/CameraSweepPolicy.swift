@@ -12,26 +12,34 @@ import Foundation
 /// is at stake and only on demand when something is: during a recording or a stream the sweep
 /// starts *because* an enabled camera has gone missing, and stops when it comes back.
 ///
+/// The dropout itself is noticed within a second — the sweeper re-checks that cheaply while it has
+/// nothing to do — so a camera that drops mid-recording is chased straight away, and only then
+/// settles into the gap below.
+///
 /// Gaps are measured from the end of the previous sweep rather than on a fixed period. A sweep
 /// takes a couple of seconds, and a fixed timer shorter than that would start the next one before
 /// the last had finished.
 public struct CameraSweepPolicy: Sendable, Equatable {
-  /// Gap between sweeps when nothing is being recorded or streamed. Discovery costs nothing to
-  /// anyone at that point, and the operator is usually looking at the camera list.
-  public static let idleGapSeconds: Double = 3
+  /// Gap between sweeps, whether the sweep is routine or chasing a camera that dropped.
+  ///
+  /// Ten seconds rather than the three it began at, because the cost is not the app's to pay: most
+  /// of a /24 has no host, and every one of those probes is an ARP broadcast that every device on
+  /// the segment must process. Measured on the bench, sweeping every three seconds was enough to
+  /// make the iPad's own Wi-Fi noticeably slow, and the Director is the device that can least
+  /// afford it.
+  ///
+  /// One gap for both cases on purpose. The backoff this replaces stepped 3 → 6 → 15 by how long a
+  /// camera had been missing, on the reasoning that a camera gone two minutes is probably switched
+  /// off. That is still true, but it bought its patience with a burst of broadcasts in the first
+  /// minute — exactly when the operator is most likely to be recording.
+  public static let gapSeconds: Double = 10
 
-  /// Gap between recovery sweeps, by how long the camera has been missing. A camera that has just
-  /// dropped is worth chasing hard; one that has been gone two minutes is probably switched off,
-  /// and hammering the segment for the rest of the game helps nobody.
-  public static let backoff: [(afterSeconds: Double, gapSeconds: Double)] = [
-    (0, 3),
-    (60, 6),
-    (120, 15)
-  ]
+  /// Kept as the name the rest of the app already uses for the routine cadence.
+  public static var idleGapSeconds: Double { gapSeconds }
 
-  /// The longest gap the backoff reaches. Held from then on rather than growing: a camera that
-  /// comes back an hour in should still be found within fifteen seconds.
-  public static var maximumGapSeconds: Double { backoff.last?.gapSeconds ?? 15 }
+  /// The longest gap between sweeps. Flat now, so a camera that comes back an hour in is still
+  /// found within ten seconds rather than fifteen.
+  public static var maximumGapSeconds: Double { gapSeconds }
 
   /// When the current run of recovery sweeps began. Nil when nothing is missing.
   private var missingSince: Double?
@@ -51,23 +59,16 @@ public struct CameraSweepPolicy: Sendable, Equatable {
     now: Double
   ) -> Double? {
     guard anyEnabledCameraMissing else {
-      // Everything enabled is accounted for, so the next dropout starts the backoff again from
-      // its shortest gap rather than inheriting the last one's patience.
+      // Everything enabled is accounted for. Clearing this is what makes the next dropout read as
+      // a new one rather than a continuation of the last.
       missingSince = nil
       return isBusy ? nil : Self.idleGapSeconds
     }
 
-    let since = missingSince ?? now
-    missingSince = since
-
-    guard isBusy else { return Self.idleGapSeconds }
-
-    let missingFor = max(0, now - since)
-    var gap = Self.backoff[0].gapSeconds
-    for step in Self.backoff where missingFor >= step.afterSeconds {
-      gap = step.gapSeconds
-    }
-    return gap
+    // Remembered for telemetry, and so a camera that comes back and goes again reads as a fresh
+    // dropout rather than a continuation.
+    missingSince = missingSince ?? now
+    return Self.gapSeconds
   }
 
   /// How long the current dropout has lasted, for telemetry. Nil when nothing is missing.
