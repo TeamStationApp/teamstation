@@ -477,3 +477,34 @@ private final class TimelineHarness {
     return count == 0 ? -1 : Double(total) / Double(count)
   }
 }
+
+@Suite("Declared duration plausibility")
+struct DeclaredDurationTests {
+  @Test("A stub claiming hours for a few megabytes is not believed")
+  func rejectsImpossibleBitrate() {
+    // A continuation stub declaring hours over a small file.
+    #expect(!ArchiveRemux.isPlausibleDuration(seconds: 6_550, byteCount: 7_200_000))
+  }
+
+  @Test("A real recording at a real bitrate is believed")
+  func acceptsRealFile() {
+    // 8 Mbit/s for a minute.
+    #expect(ArchiveRemux.isPlausibleDuration(seconds: 60, byteCount: 60_000_000))
+  }
+
+  @Test("A short file is believed even when small")
+  func acceptsShortFile() {
+    #expect(ArchiveRemux.isPlausibleDuration(seconds: 3, byteCount: 400_000))
+  }
+
+  @Test("A size we could not read is not treated as evidence")
+  func unknownSizePasses() {
+    #expect(ArchiveRemux.isPlausibleDuration(seconds: 600, byteCount: 0))
+  }
+
+  @Test("The multi-day and zero cases are still refused")
+  func keepsExistingBounds() {
+    #expect(!ArchiveRemux.isPlausibleDuration(seconds: 90_000, byteCount: 9_000_000_000))
+    #expect(!ArchiveRemux.isPlausibleDuration(seconds: 0, byteCount: 1_000))
+  }
+}
