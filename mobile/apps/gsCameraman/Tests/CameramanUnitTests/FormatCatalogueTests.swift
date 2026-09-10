@@ -93,24 +93,25 @@ struct FormatCatalogueTests {
     #expect(at1080p60.first?.supportsMultiLensSwitching == true)
   }
 
-  @Test("Options are sorted by pixel count then frame rate")
-  func optionsSorted() {
-    let options = catalogue.options
-    for (earlier, later) in zip(options, options.dropFirst()) {
-      let earlierPixels = earlier.width * earlier.height
-      let laterPixels = later.width * later.height
-      let ascending = earlierPixels < laterPixels
-        || (earlierPixels == laterPixels && earlier.frameRate < later.frameRate)
-      #expect(ascending)
-    }
+  @Test("Options are the offered formats the device can serve, in menu order")
+  func optionsFollowTheMenu() {
+    // 720p here tops out at 30, so 720p60 is left out rather than offered and failed.
+    #expect(catalogue.options.map(\.label) == [ "1080p 60 fps", "1080p 30 fps", "720p 30 fps" ])
   }
 
-  @Test("Only curated frame rates are offered, not every integer in the range")
-  func curatedFrameRates() {
-    let rates = Set(catalogue.options.map(\.frameRate))
-    #expect(rates.isSubset(of: Set(FormatCatalogue.candidateFrameRates)))
-    #expect(rates.contains(30))
-    #expect(rates.contains(240))
+  @Test("Sizes and rates the device advertises but the menu does not offer are left out")
+  func unofferedFormatsAreLeftOut() {
+    // 4K and 240 fps are both in the fixture and neither belongs on a sideline menu.
+    let options = catalogue.options
+    #expect(!options.contains { $0.width > 1920 })
+    #expect(Set(options.map(\.frameRate)) == [ 30, 60 ])
+  }
+
+  @Test("A 16:9 option reads as a broadcast format; anything else is spelled out")
+  func labels() {
+    #expect(FormatCatalogue.Option(width: 1920, height: 1080, frameRate: 60, supportsMultiLensSwitching: true).label == "1080p 60 fps")
+    #expect(FormatCatalogue.Option(width: 1280, height: 720, frameRate: 30, supportsMultiLensSwitching: true).label == "720p 30 fps")
+    #expect(FormatCatalogue.Option(width: 1440, height: 1080, frameRate: 30, supportsMultiLensSwitching: true).label == "1440x1080 @ 30")
   }
 
   @Test("A single-lens format is annotated so the trade-off is visible in the list")

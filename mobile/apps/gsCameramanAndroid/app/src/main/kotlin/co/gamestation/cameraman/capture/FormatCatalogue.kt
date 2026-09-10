@@ -18,7 +18,17 @@ data class FormatCatalogue(val formats: List<CaptureFormatDescriptor>) {
         val frameRate: Double,
         val supportsMultiLensSwitching: Boolean
     ) {
-        val label: String get() = "${width}x$height @ ${frameRate.toInt()}"
+        /**
+         * `1080p 60 fps` for a 16:9 size, which is every size the menu offers. Anything else can only
+         * arrive by launch argument or the control channel, and is spelled out so that 1440x1080
+         * does not pass for 1080p.
+         */
+        val label: String
+            get() = if (width * 9 == height * 16) {
+                "${height}p ${frameRate.toInt()} fps"
+            } else {
+                "${width}x$height @ ${frameRate.toInt()}"
+            }
 
         /**
          * Shown in the settings list so losing lens switching is a visible trade-off rather than a
@@ -28,26 +38,16 @@ data class FormatCatalogue(val formats: List<CaptureFormatDescriptor>) {
     }
 
     /**
-     * One entry per resolution and frame rate, keeping the variant that preserves lens switching
-     * when the device offers both.
+     * The offered formats this device can serve, in menu order, each reported as keeping lens
+     * switching when any format that serves it does.
      */
     val options: List<Option>
-        get() {
-            val best = LinkedHashMap<Option, Boolean>()
-            for (format in formats) {
-                for (rate in candidateFrameRates) {
-                    if (!format.supports(rate)) continue
-                    val key = Option(format.width, format.height, rate, false)
-                    best[key] = (best[key] ?: false) || format.supportsMultiLensSwitching
-                }
+        get() = offeredFormats.mapNotNull { (width, height, frameRate) ->
+            val serving = formats.filter {
+                it.width == width && it.height == height && it.supports(frameRate)
             }
-            return best
-                .map { (key, switching) ->
-                    Option(key.width, key.height, key.frameRate, switching)
-                }
-                .sortedWith(
-                    compareBy({ it.width * it.height }, { it.frameRate })
-                )
+            if (serving.isEmpty()) return@mapNotNull null
+            Option(width, height, frameRate, serving.any { it.supportsMultiLensSwitching })
         }
 
     /**
@@ -94,9 +94,20 @@ data class FormatCatalogue(val formats: List<CaptureFormatDescriptor>) {
 
     companion object {
         /**
-         * The frame rates worth offering. A device advertises continuous ranges, so without a
-         * curated list the menu would contain every integer from 1 to 240.
+         * The menu, in the order it reads: 16:9 at the two rates a game is shot at, 1080p first.
+         *
+         * A device advertises dozens of sizes from 176x144 up to 4K and continuous frame-rate
+         * ranges to 240, and every combination is a choice the operator has to get right on a
+         * sideline. Director composes a 1080p programme, so anything above 1080p is battery and
+         * bandwidth spent on detail that is scaled away, anything below 720p is unwatchable in a
+         * broadcast, a 4:3 size would be cropped, and a cadence other than 30 or 60 judders in the
+         * mix. Only these four are offered; a device that lacks one simply has a shorter menu.
          */
-        val candidateFrameRates = listOf(24.0, 25.0, 30.0, 50.0, 60.0, 120.0, 240.0)
+        val offeredFormats: List<Triple<Int, Int, Double>> = listOf(
+            Triple(1920, 1080, 60.0),
+            Triple(1920, 1080, 30.0),
+            Triple(1280, 720, 60.0),
+            Triple(1280, 720, 30.0)
+        )
     }
 }
