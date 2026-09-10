@@ -68,6 +68,15 @@ public struct AppConfig: Hashable, Sendable, Codable {
   public var useSimulatedCameras: Bool
   /// When false the delay line sizes itself. When true, `displayLatencyCapMilliseconds` is the
   /// most video it may hold.
+  /// On by default. The cap is what stops the monitor showing action that has already happened,
+  /// and shipping it off meant a default install would happily display a picture ten seconds
+  /// behind the room — observed on the bench during a bad network stretch. Off remains available
+  /// for anyone who would rather have late video than a held frame.
+  ///
+  /// Its counterpart, `diskLatencyCapEnabled`, stays off on purpose: the recording is watched
+  /// afterwards, where a late picture is simply a picture, and dropping it leaves a hole in the
+  /// tape. The monitor refuses, the archive keeps everything, which is the whole reason there are
+  /// two of them.
   public var displayLatencyCapEnabled: Bool
   /// Operator ceiling for monitor latency, in milliseconds. Ignored until the cap is on.
   public var displayLatencyCapMilliseconds: Double
@@ -113,7 +122,7 @@ public struct AppConfig: Hashable, Sendable, Codable {
     freeDiskFloorBytes: Int64 = AppConfig.freeDiskFloorBytesDefault,
     showDebugHUD: Bool = false,
     useSimulatedCameras: Bool = false,
-    displayLatencyCapEnabled: Bool = false,
+    displayLatencyCapEnabled: Bool = true,
     displayLatencyCapMilliseconds: Double = AppConfig.displayLatencyCapDefaultMilliseconds,
     diskLatencyCapEnabled: Bool = false,
     diskLatencyCapMilliseconds: Double = AppConfig.diskLatencyCapDefaultMilliseconds,
