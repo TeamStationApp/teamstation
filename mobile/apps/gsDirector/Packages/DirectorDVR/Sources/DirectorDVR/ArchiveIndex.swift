@@ -15,6 +15,16 @@ public struct SegmentRecord: Sendable, Equatable, Codable {
   public var duration: TimeInterval
   public var byteCount: Int64
   public var firstFrameID: UInt64?
+  /// Which transport delivered this segment, so a misplaced angle can be attributed to one after
+  /// the fact. Nil on rows written before the column existed.
+  public var transport: String?
+  /// The clock correction applied to this segment's capture times, in seconds. Recorded so an
+  /// export can be re-derived if the offset later proves wrong, rather than being unrecoverable.
+  public var appliedClockOffset: Double?
+  /// Frames per second this segment was actually written at, which is not always the camera's
+  /// nominal rate: an encoder under pressure archives at half rate rather than dropping frames at
+  /// random. A verifier comparing against a flat tolerance needs this to know what "one frame" is.
+  public var archiveRate: Double?
 
   public var endWall: WallClock { startWall + duration }
 }
@@ -145,6 +155,25 @@ public final class ArchiveIndex: @unchecked Sendable {
         duration REAL NOT NULL,
         byte_count INTEGER NOT NULL,
         first_frame_id INTEGER
+      );
+      """)
+    // Provenance, added later: how a segment was made, so a wrong placement can be attributed and
+    // an export re-derived. Existing archives get them as NULL, which reads as "not recorded".
+    try? store.execute("ALTER TABLE segments ADD COLUMN transport TEXT;")
+    try? store.execute("ALTER TABLE segments ADD COLUMN applied_clock_offset REAL;")
+    try? store.execute("ALTER TABLE segments ADD COLUMN archive_rate REAL;")
+    // What each source was *meant* to do this recording. A camera past the archive encode budget
+    // previews and cuts to programme but writes no segments at all, which at export is
+    // indistinguishable from a camera nobody selected. Recording the intent is what lets an export
+    // say "not recorded, by budget" instead of quietly leaving an angle out.
+    try store.execute("""
+      CREATE TABLE IF NOT EXISTS recording_sources (
+        recording_id INTEGER NOT NULL,
+        source_id TEXT NOT NULL,
+        transport TEXT,
+        archiving INTEGER NOT NULL DEFAULT 1,
+        reason TEXT,
+        PRIMARY KEY (recording_id, source_id)
       );
       """)
     try store.execute(
@@ -384,14 +413,18 @@ public final class ArchiveIndex: @unchecked Sendable {
     startWall: WallClock,
     duration: TimeInterval,
     byteCount: Int64,
-    firstFrameID: UInt64?
+    firstFrameID: UInt64?,
+    transport: String? = nil,
+    appliedClockOffset: Double? = nil,
+    archiveRate: Double? = nil
   ) throws -> Int64 {
     try store.execute(
       """
       INSERT OR REPLACE INTO segments
         (recording_id, source_id, sequence, filename, is_initialization,
-         start_wall, duration, byte_count, first_frame_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+         start_wall, duration, byte_count, first_frame_id,
+         transport, applied_clock_offset, archive_rate)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
       """,
       [
         .integer(recordingID),
@@ -402,9 +435,66 @@ public final class ArchiveIndex: @unchecked Sendable {
         .real(startWall.seconds),
         .real(duration),
         .integer(byteCount),
-        firstFrameID.map { .integer(Int64($0)) } ?? .null
+        firstFrameID.map { .integer(Int64($0)) } ?? .null,
+        transport.map { .text($0) } ?? .null,
+        appliedClockOffset.map { .real($0) } ?? .null,
+        archiveRate.map { .real($0) } ?? .null
       ]
     )
+  }
+
+  /// Records what a source was meant to do for one recording.
+  ///
+  /// `archiving: false` with a reason is the case that matters: the source was live and on air but
+  /// nothing was written for it, and an export that simply omitted the angle would look identical
+  /// to one where the operator never chose it.
+  @discardableResult
+  public func noteSource(
+    recordingID: Int64,
+    sourceID: SourceID,
+    transport: String?,
+    archiving: Bool,
+    reason: String? = nil
+  ) throws -> Int64 {
+    try store.execute(
+      """
+      INSERT OR REPLACE INTO recording_sources
+        (recording_id, source_id, transport, archiving, reason)
+      VALUES (?, ?, ?, ?, ?);
+      """,
+      [
+        .integer(recordingID),
+        .text(sourceID.rawValue),
+        transport.map { .text($0) } ?? .null,
+        .integer(archiving ? 1 : 0),
+        reason.map { .text($0) } ?? .null
+      ]
+    )
+  }
+
+  public struct RecordingSource: Sendable, Equatable {
+    public var sourceID: SourceID
+    public var transport: String?
+    public var archiving: Bool
+    public var reason: String?
+  }
+
+  /// Every source this recording knew about, whether or not it wrote anything.
+  public func sources(forRecording recordingID: Int64) throws -> [RecordingSource] {
+    try store.query(
+      """
+      SELECT source_id, transport, archiving, reason FROM recording_sources
+      WHERE recording_id = ? ORDER BY source_id ASC;
+      """,
+      [ .integer(recordingID) ]
+    ).map { row in
+      RecordingSource(
+        sourceID: SourceID(row.string(0)),
+        transport: row.values[1] == .null ? nil : row.string(1),
+        archiving: row.int(2) == 1,
+        reason: row.values[3] == .null ? nil : row.string(3)
+      )
+    }
   }
 
   public func segments(
@@ -752,7 +842,8 @@ public final class ArchiveIndex: @unchecked Sendable {
 
   private static let segmentColumns = """
     id, recording_id, source_id, sequence, filename, is_initialization,
-    start_wall, duration, byte_count, first_frame_id
+    start_wall, duration, byte_count, first_frame_id,
+    transport, applied_clock_offset, archive_rate
     """
 
   private static func segment(from row: SQLiteRow) -> SegmentRecord {
@@ -766,7 +857,10 @@ public final class ArchiveIndex: @unchecked Sendable {
       startWall: WallClock(seconds: row.double(6)),
       duration: row.double(7),
       byteCount: row.int(8),
-      firstFrameID: row.values[9] == .null ? nil : UInt64(row.int(9))
+      firstFrameID: row.values[9] == .null ? nil : UInt64(row.int(9)),
+      transport: row.values[10] == .null ? nil : row.string(10),
+      appliedClockOffset: row.values[11] == .null ? nil : row.double(11),
+      archiveRate: row.values[12] == .null ? nil : row.double(12)
     )
   }
 
