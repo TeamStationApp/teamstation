@@ -57,6 +57,127 @@ struct WallClockPlacementTests {
     }
   }
 
+  /// Same as `markedMovie` but with an audio track, because a real archive has one and the
+  /// composition treats video and audio differently once a gap has to be filled.
+  private func markedMovieWithAudio(at url: URL, firstValue: Int, frames: Int) async throws {
+    try? FileManager.default.removeItem(at: url)
+    let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
+    let video = AVAssetWriterInput(
+      mediaType: .video,
+      outputSettings: [
+        AVVideoCodecKey: AVVideoCodecType.h264,
+        AVVideoWidthKey: Self.width,
+        AVVideoHeightKey: Self.height
+      ]
+    )
+    video.expectsMediaDataInRealTime = false
+    let audio = AVAssetWriterInput(
+      mediaType: .audio,
+      outputSettings: [
+        AVFormatIDKey: kAudioFormatMPEG4AAC,
+        AVSampleRateKey: 44_100,
+        AVNumberOfChannelsKey: 1,
+        AVEncoderBitRateKey: 64_000
+      ]
+    )
+    audio.expectsMediaDataInRealTime = false
+    let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+      assetWriterInput: video,
+      sourcePixelBufferAttributes: [
+        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+        kCVPixelBufferWidthKey as String: Self.width,
+        kCVPixelBufferHeightKey as String: Self.height
+      ]
+    )
+    writer.add(video)
+    writer.add(audio)
+    #expect(writer.startWriting())
+    writer.startSession(atSourceTime: .zero)
+
+    // Silence, at the same length as the picture.
+    let samplesPerChunk = 1_024
+    let chunks = max(1, Int((Double(frames) / Self.fps * 44_100) / Double(samplesPerChunk)))
+    var asbd = AudioStreamBasicDescription(
+      mSampleRate: 44_100, mFormatID: kAudioFormatLinearPCM,
+      mFormatFlags: kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked,
+      mBytesPerPacket: 2, mFramesPerPacket: 1, mBytesPerFrame: 2,
+      mChannelsPerFrame: 1, mBitsPerChannel: 16, mReserved: 0
+    )
+    var format: CMAudioFormatDescription?
+    CMAudioFormatDescriptionCreate(
+      allocator: nil, asbd: &asbd, layoutSize: 0, layout: nil,
+      magicCookieSize: 0, magicCookie: nil, extensions: nil, formatDescriptionOut: &format
+    )
+    let audioFormat = try #require(format)
+
+    func silence(chunk: Int) -> CMSampleBuffer? {
+      var block: CMBlockBuffer?
+      let bytes = samplesPerChunk * 2
+      CMBlockBufferCreateWithMemoryBlock(
+        allocator: nil, memoryBlock: nil, blockLength: bytes, blockAllocator: nil,
+        customBlockSource: nil, offsetToData: 0, dataLength: bytes,
+        flags: kCMBlockBufferAssureMemoryNowFlag, blockBufferOut: &block
+      )
+      guard let block else { return nil }
+      CMBlockBufferFillDataBytes(with: 0, blockBuffer: block, offsetIntoDestination: 0, dataLength: bytes)
+      var sample: CMSampleBuffer?
+      var timing = CMSampleTimingInfo(
+        duration: CMTime(value: 1, timescale: 44_100),
+        presentationTimeStamp: CMTime(value: CMTimeValue(chunk * samplesPerChunk), timescale: 44_100),
+        decodeTimeStamp: .invalid
+      )
+      CMSampleBufferCreateReady(
+        allocator: nil, dataBuffer: block, formatDescription: audioFormat,
+        sampleCount: samplesPerChunk, sampleTimingEntryCount: 1, sampleTimingArray: &timing,
+        sampleSizeEntryCount: 1, sampleSizeArray: [ 2 ], sampleBufferOut: &sample
+      )
+      return sample
+    }
+
+    // Waits for an input, and fails the fixture rather than appending to one that is not ready:
+    // appending anyway throws an Objective-C exception that takes the whole test process down.
+    func ready(_ input: AVAssetWriterInput) async throws {
+      for _ in 0..<2_500 where !input.isReadyForMoreMediaData {
+        try await Task.sleep(for: .milliseconds(2))
+      }
+      try #require(input.isReadyForMoreMediaData, "writer input never became ready")
+    }
+
+    // Picture and sound interleaved by time. Writing all the picture first stalls it: a writer with
+    // two inputs stops taking video until the audio has caught up, and then some.
+    var nextChunk = 0
+    for index in 0..<frames {
+      let time = Double(index) / Self.fps
+      while nextChunk < chunks, Double(nextChunk * samplesPerChunk) / 44_100 <= time {
+        try await ready(audio)
+        if let sample = silence(chunk: nextChunk) { audio.append(sample) }
+        nextChunk += 1
+        if nextChunk == chunks { audio.markAsFinished() }
+      }
+      // A blocked picture input is the writer waiting for sound to get ahead of it: feed it.
+      while !video.isReadyForMoreMediaData, nextChunk < chunks, audio.isReadyForMoreMediaData {
+        if let sample = silence(chunk: nextChunk) { audio.append(sample) }
+        nextChunk += 1
+        // Until the sound is marked finished the writer keeps waiting for more of it, and the
+        // last second of picture never goes in.
+        if nextChunk == chunks { audio.markAsFinished() }
+      }
+      try await ready(video)
+      guard let buffer = Self.paint(value: firstValue + index) else { continue }
+      adaptor.append(buffer, withPresentationTime: CMTime(seconds: time, preferredTimescale: 600))
+    }
+    video.markAsFinished()
+    while nextChunk < chunks {
+      try await ready(audio)
+      if let sample = silence(chunk: nextChunk) { audio.append(sample) }
+      nextChunk += 1
+      if nextChunk == chunks { audio.markAsFinished() }
+    }
+    await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+      writer.finishWriting { c.resume() }
+    }
+  }
+
   private static func paint(value: Int) -> CVPixelBuffer? {
     var buffer: CVPixelBuffer?
     CVPixelBufferCreate(
@@ -203,6 +324,57 @@ struct WallClockPlacementTests {
     // The hold must not run over the segment that follows it.
     let after = try await marker(in: out, at: 14.5)
     #expect(abs((after ?? 0) - ((500_000 + 45) & FrameMarker.maximumValue)) <= 2)
+  }
+
+  /// The shape of a real archive: audio alongside the picture, and more than one gap.
+  ///
+  /// A stress run on the device produced an export with **two** video tracks of identical format,
+  /// the second starting partway in, plus an audio track shorter than either and a container longer
+  /// than the recording. Only the camera that stopped -- the one that got a hold -- came out that
+  /// way. This is that case, in the small.
+  @Test("Holding a gap leaves one video track and one audio track, not several")
+  func holdKeepsTrackCountAtOne() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("tracks-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    var files: [URL] = []
+    for index in 0..<3 {
+      let url = root.appendingPathComponent("s\(index).mp4")
+      try await markedMovieWithAudio(at: url, firstValue: 1_000 + index * 1_000, frames: 90)
+      files.append(url)
+    }
+
+    let out = root.appendingPathComponent("out.mp4")
+    // Segments whose recorded length runs past where the next one starts. This is what a camera
+    // that misdeclares its frame rate actually writes -- measured at 26 overruns in 986 segments,
+    // the worst 104 ms -- and placing them at their true starts makes the ranges overlap.
+    try await ArchiveRemux.concatenate(
+      files: files,
+      fileDurations: [ 3, 3, 3 ],
+      targetDuration: 30,
+      startWalls: [
+        WallClock(seconds: 1_000),
+        WallClock(seconds: 1_002.6),
+        WallClock(seconds: 1_005.1)
+      ],
+      windowStart: WallClock(seconds: 1_000),
+      destination: out
+    )
+
+    let asset = AVURLAsset(url: out)
+    let videoTracks = try await asset.loadTracks(withMediaType: .video)
+    let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+    #expect(videoTracks.count == 1, "expected one video track, got \(videoTracks.count)")
+    #expect(audioTracks.count <= 1, "expected at most one audio track, got \(audioTracks.count)")
+
+    let container = try await asset.load(.duration).seconds
+    #expect(abs(container - 30) < 0.5, "container ran to \(container)s against a 30s window")
+    for track in videoTracks {
+      let span = try await track.load(.timeRange)
+      #expect(abs(span.end.seconds - container) < 0.5, "video track ends at \(span.end.seconds)")
+    }
   }
 
   @Test("A camera that stops early holds its last frame to the end of the window")

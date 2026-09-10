@@ -109,6 +109,23 @@ public enum ArchiveRemux {
             use = CMTime(seconds: remaining, preferredTimescale: 600)
           }
         }
+        // A segment may not run into the one after it.
+        //
+        // A recorded duration is what the writer measured, and it is occasionally a little longer
+        // than the distance to the next segment's own start -- measured on a camera that misdeclares
+        // its frame rate, 26 of 986 segments overran, the worst by 104 ms. Placed at their true
+        // starts and inserted at full length they overlap, and a composition given overlapping
+        // content puts it on a *second* video track: one stress export came back with two video
+        // tracks of identical format, the second starting where the first overrun was, and a
+        // container 139 s longer than the recording. Trimming the overrun costs a few milliseconds
+        // of tape that the next segment is about to show anyway.
+        if placed, index + 1 < startWalls.count {
+          let nextAt = max(0, startWalls[index + 1] - origin)
+          let room = nextAt - at.seconds
+          if room > 0.001, use.seconds > room {
+            use = CMTime(seconds: room, preferredTimescale: 600)
+          }
+        }
         guard use.seconds > 0.001 else { continue }
         let range = CMTimeRange(start: start, duration: use)
         // Inserting past the current end leaves the gap between as an empty range, which is what a
@@ -177,13 +194,26 @@ public enum ArchiveRemux {
   ) async throws {
     let span = CMTimeSubtract(end, previous.timelineEnd)
     guard span.seconds > 0.001, previous.frame.seconds > 0 else { return }
+
+    // Into the picture track by name, rather than letting the composition place it.
+    //
+    // `AVMutableComposition.insertTimeRange` inserts *every* track the source has and puts anything
+    // that will not sit on an existing track onto a new one. Holding that way cost a stress run an
+    // export with two video tracks of identical format and an audio track scaled to nonsense: the
+    // hold's audio sliver was stretched across the hole alongside the picture, and a seam that
+    // rounded a fraction long overlapped the segment after it, which is exactly when a second track
+    // appears. Naming the track keeps one of each, and leaves the hole silent -- which is what a
+    // gap sounded like.
+    guard let videoTrack = composition.tracks(withMediaType: .video).first,
+          let sourceVideo = try await previous.asset.loadTracks(withMediaType: .video).first
+    else { return }
     let lastFrameStart = CMTimeMaximum(.zero, CMTimeSubtract(previous.sourceEnd, previous.frame))
-    try await composition.insertTimeRange(
+    try videoTrack.insertTimeRange(
       CMTimeRange(start: lastFrameStart, duration: previous.frame),
-      of: previous.asset,
+      of: sourceVideo,
       at: previous.timelineEnd
     )
-    composition.scaleTimeRange(
+    videoTrack.scaleTimeRange(
       CMTimeRange(start: previous.timelineEnd, duration: previous.frame),
       toDuration: span
     )
