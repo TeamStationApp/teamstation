@@ -54,6 +54,9 @@ public final class ProgramEncoder: @unchecked Sendable {
   /// Programme seconds of the last anchor written, so anchors land at a steady spacing rather
   /// than on every frame.
   private var lastAnchorSeconds: Double = -.infinity
+  /// How far behind real time the on-air picture was when it was captured, from the last live
+  /// frame that said. Carried across replays, whose frames have no capture time of their own.
+  private var contentLagSeconds: Double?
   /// How often the programme records where it was in real time. Matches the movie-fragment
   /// interval, so an anchor lands about once per fragment without needing a fragment callback.
   private static let anchorIntervalSeconds: Double = 3
@@ -183,6 +186,7 @@ public final class ProgramEncoder: @unchecked Sendable {
       lastSourceTime = nil
       lastAppendHost = nil
       lastAnchorSeconds = -.infinity
+      contentLagSeconds = nil
       pendingRecoveryFill = false
       previousPartsDuration = 0
       startedAt = wall
@@ -275,7 +279,9 @@ public final class ProgramEncoder: @unchecked Sendable {
   }
 
   /// `pixelBuffer` may be BGRA straight out of the compositor; it is converted once here.
-  public func append(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime) {
+  /// `captureWall` is when the on-air camera captured this picture, for a live frame. Nil for a
+  /// replay frame or a source that does not know.
+  public func append(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime, captureWall: WallClock? = nil) {
     lock.lock()
     if poisonFinishing {
       lock.unlock()
@@ -353,12 +359,23 @@ public final class ProgramEncoder: @unchecked Sendable {
     lastSourceTime = presentationTime
     // Sampled here, where the programme's own timeline is decided, so the pair is exactly what was
     // written rather than what a later reader infers.
+    //
+    // The wall an anchor records is when the picture was *captured*, not when it was composed. The
+    // programme is built from pictures the delay line has already held for half a second, so
+    // stamping composition time placed rec-320's programme master about 0.55 s behind the camera
+    // files it was cut from. A live frame says exactly how old it is; a replay frame does not, so
+    // it borrows the lag the last live frame measured, which keeps the timeline continuous.
+    let nowWall = Date().timeIntervalSince1970
+    if let captureWall, nowWall - captureWall.seconds >= 0, nowWall - captureWall.seconds < 10 {
+      contentLagSeconds = nowWall - captureWall.seconds
+    }
+    let contentWall = WallClock(seconds: nowWall - (contentLagSeconds ?? 0))
     var anchor: (recording: Int64, part: Int, seconds: Double, wall: WallClock)?
     if let recording = anchorRecordingID,
        time.isNumeric,
        time.seconds - lastAnchorSeconds >= Self.anchorIntervalSeconds {
       lastAnchorSeconds = time.seconds
-      anchor = (recording, part, time.seconds, WallClock(seconds: Date().timeIntervalSince1970))
+      anchor = (recording, part, time.seconds, contentWall)
     }
     let sink = anchorSink
     let ready = videoInput.isReadyForMoreMediaData

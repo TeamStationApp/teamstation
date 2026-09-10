@@ -40,7 +40,8 @@ public final class SourcePipeline: @unchecked Sendable {
   private var archive: ArchiveSink?
   private var proxy: ProxySink?
   private var state: TileState = .live
-  private var programSink: (@Sendable (CVPixelBuffer, CMTime) -> Void)?
+  /// Picture, its presentation time, and when the camera captured it (nil for replay frames).
+  private var programSink: (@Sendable (CVPixelBuffer, CMTime, WallClock?) -> Void)?
   /// Fired on a programme cut, replay start, or return to live so RTMP can force an IDR.
   public var onProgramDiscontinuity: (@Sendable () -> Void)?
   private var audioSink: (@Sendable (AudioFrame) -> Void)?
@@ -232,7 +233,7 @@ public final class SourcePipeline: @unchecked Sendable {
     lock.unlock()
   }
 
-  public func setProgramSink(_ sink: (@Sendable (CVPixelBuffer, CMTime) -> Void)?) {
+  public func setProgramSink(_ sink: (@Sendable (CVPixelBuffer, CMTime, WallClock?) -> Void)?) {
     lock.lock()
     programSink = sink
     lock.unlock()
@@ -306,7 +307,7 @@ public final class SourcePipeline: @unchecked Sendable {
     // to. The camera archive is unaffected either way; it is fed on arrival, before any of this.
     if state != .replaying {
       if showable {
-        programSink?(converted.pixelBuffer, converted.presentationTime)
+        programSink?(converted.pixelBuffer, converted.presentationTime, converted.captureWallClock)
       }
     } else if wedgePolicy.shouldReturnToLive(
       now: Date().timeIntervalSince1970,
@@ -472,7 +473,7 @@ public final class SourcePipeline: @unchecked Sendable {
     }
 
     presentOnRenderer(pixelBuffer: pixelBuffer, presentationTime: presentationTime)
-    programSink?(pixelBuffer, presentationTime)
+    programSink?(pixelBuffer, presentationTime, nil)
     telemetry.mutateTile(sourceIndex) { tile in
       guard tile.state == .replaying || tile.state == .live else { return }
       tile.state = .replaying
@@ -695,8 +696,8 @@ public final class TileRouter: @unchecked Sendable {
         pipeline.onProgramDiscontinuity = { [weak self] in
           self?.programStreamer.requestKeyframe()
         }
-        pipeline.setProgramSink { [weak self] buffer, time in
-          self?.composeAndEncode(buffer, presentationTime: time)
+        pipeline.setProgramSink { [weak self] buffer, time, capture in
+          self?.composeAndEncode(buffer, presentationTime: time, captureWall: capture)
         }
       } else {
         pipeline.onProgramDiscontinuity = nil
@@ -750,11 +751,15 @@ public final class TileRouter: @unchecked Sendable {
   /// The compositing happens whether or not anything is recording, which is the point of the
   /// preview: the operator has to be able to see overlays sitting over the picture before
   /// committing it to a file, not discover afterwards that it was mispositioned.
-  private func composeAndEncode(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime) {
+  private func composeAndEncode(
+    _ pixelBuffer: CVPixelBuffer,
+    presentationTime: CMTime,
+    captureWall: WallClock? = nil
+  ) {
     let composed = compositor?.compose(program: pixelBuffer) ?? pixelBuffer
     programRenderer.enqueue(pixelBuffer: composed, presentationTime: presentationTime)
     if programEncoder.running {
-      programEncoder.append(composed, presentationTime: presentationTime)
+      programEncoder.append(composed, presentationTime: presentationTime, captureWall: captureWall)
     }
     if programStreamer.running {
       programStreamer.append(composed, presentationTime: presentationTime)

@@ -865,3 +865,29 @@ Fixes:
   calibration against a clock in shot or a per-camera latency setting.
 - `FrameRateEstimator`'s scattered-stamp mean now runs over 3,600 intervals (~60 s). Over 120 it
   flipped between 59.94 and 60, which steps the NDI archive timeline 3.6 s an hour apart.
+
+### Export accuracy on the device, rec-320 (2026-09-10, 14:14)
+
+A 114.7 s take with the Pixel on RTSP and the Cosmo on NDI, a 15 s Pixel outage (conditioner, 100%
+loss), a 5 s slow-mo and a 10 s full-speed rewind, then an export. Driver
+`/tmp/gs-shots/exportsync.sh`; clocks read with AVFoundation (`frameat` + tesseract).
+
+- **Lengths:** every file, container, video and audio track within 40 ms of the take.
+- **Gap:** the Pixel outage fell inside one 16.9 s segment; the export freezes the frame before it
+  (14:14:52.532) until the camera returns, as decided. ffmpeg shows the take's *first* frame there
+  instead: it mishandles the composition's edit lists. **Judge exports with AVFoundation, never
+  ffmpeg frame seeks** — ffmpeg also read every clock ~50 ms off.
+- **Bench clock:** the UniFi watermark ticks over when the bench clock reads N−0.65 s, so the bench
+  runs ~0.65 s slow of true time. Subtract that before judging absolute placement.
+- **Pixel file:** clock − position steady at −810…−829 ms (≈ −170 ms against true time).
+- **NDI file:** wanders −800…−987 ms within seconds, inside segments as well as between them; the
+  Cosmo's HDMI/wireless chain delivers content with irregular latency. Segment starts also jittered
+  ±90 ms from raw stamps — now taken from the smoothed capture timeline.
+- **Programme:** ~0.55 s behind the camera it shows — anchored on composition time, which includes
+  the 500 ms display hold. Now anchored on the on-air frame's capture time.
+- **Programme lip sync:** its audio is 306 ms later than the Pixel file's audio, its picture ~630 ms
+  later than the Pixel file's picture: sound leads picture by ~0.3 s inside the programme. Open.
+- **NDI audio** is silent: the iPhone's camera screen sends no microphone audio over HDMI.
+- **Rewinds:** Pixel 5 s @ 50% played 10.41 s (correct). NDI 10 s full played ~9.5 s — the 0.5 s
+  "finished" tolerance. NDI 5 s @ 50% measured 7.71 s, but the poller stops at the continuation's
+  state change, so that figure is unproven either way.
