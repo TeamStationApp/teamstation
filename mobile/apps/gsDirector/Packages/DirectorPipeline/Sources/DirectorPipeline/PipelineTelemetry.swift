@@ -17,6 +17,24 @@ public struct TileEnqueueFails: Sendable, Codable, Equatable {
   public var sampleBuffer: UInt64 = 0
   public var rendererFailed: UInt64 = 0
   public var lastSampleBufferStatus: Int32 = 0
+  /// What the display renderer said when it failed, rather than only that it did.
+  ///
+  /// A failed `AVSampleBufferVideoRenderer` accepts every later enqueue and shows none of them, so
+  /// the tile freezes on its last picture while arrivals keep counting -- which is exactly what a
+  /// frozen board looks like from the outside. The count alone cannot tell that apart from a
+  /// decoder that simply stopped producing, so the error is kept verbatim.
+  public var lastRendererError: String = ""
+  /// Seconds since 1970 when the renderer first reported a failure, so it can be lined up against
+  /// a webcam frame or a system report without guessing.
+  public var lastRendererFailureAt: Double = 0
+  /// Seconds since 1970 of the last sample this tile actually handed to the display layer.
+  /// A tile whose arrivals climb while this stands still is stalled after decode, not before.
+  public var lastEnqueueAt: Double = 0
+  /// Times the renderer asked to be flushed before it would decode again, counted separately
+  /// from an outright failure because the two have different fixes.
+  public var requiresFlush: UInt64 = 0
+  /// Times a failed renderer was rebuilt from scratch, which is the only thing that clears one.
+  public var rendererRebuilds: UInt64 = 0
 
   public init() {}
 }
