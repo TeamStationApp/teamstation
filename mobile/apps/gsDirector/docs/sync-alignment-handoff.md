@@ -891,3 +891,26 @@ loss), a 5 s slow-mo and a 10 s full-speed rewind, then an export. Driver
 - **Rewinds:** Pixel 5 s @ 50% played 10.41 s (correct). NDI 10 s full played ~9.5 s — the 0.5 s
   "finished" tolerance. NDI 5 s @ 50% measured 7.71 s, but the poller stops at the continuation's
   state change, so that figure is unproven either way.
+
+### Clapperboard sync on the exported files, rec-323 (2026-09-10, 15:17–15:31)
+
+The Big Time clock app on the Pixel 2 now plays a clap and flashes grey every 5–10 s, logging the
+sound's output time and the flash's display time (`claps.csv` in its external files dir; flash and
+sound within 1–11 ms of each other). The Pixel 2's own clock runs **688 ms behind** the Mac (which
+is within 4 ms of time.apple.com) — that is the "bench clock 0.65 s slow" seen all day. Analysis
+tools: `/tmp/gs-shots/avsync/avsync` (AVFoundation per-frame luma and audio peaks) and `pair.py`.
+
+Measured on the final exported files, which were stitched across real breaks (two Pixel dropouts
+inside segments at 246 s and 262 s; NDI gaps of 0.82, 0.35 and 9.04 s):
+
+- **Pixel file, sound vs picture:** median +56 ms (sound late), drifting linearly at **129 ms per
+  1,000 s** from −39 ms at the start of the take (residual sd 10 ms). Cause: each 3 s segment
+  re-anchored its audio to the video position when its first audio buffer was written — i.e. to
+  arrival — and the Pixel's audio arrives steadily later relative to its picture. Fixed by one
+  audio-to-wall anchor per recording (`ArchiveAudioTimeline.WallAnchor`).
+- **Programme audio does not drift** (−20 ms per 1,000 s, within noise): the live mix schedules
+  audio by its own timestamps. It lands ~100 ms after true time.
+- **Placement against true time:** Pixel picture −60 ms, Pixel sound −11 ms, NDI picture +113 ms.
+- **NDI across its 9 s gap:** flash placement 806 ms before, 801.5 ms after — the stitch is clean.
+- The Pixel sends RTCP sender reports for **video only** (`senderReportStreams: 1`), so audio
+  cannot be mapped through its own reports without a Cameraman change.

@@ -41,11 +41,36 @@ struct ArchiveAudioTimeline {
   /// stalls the muxer, and the muxer then stops accepting video too.
   private var next: CMTime?
 
-  mutating func place(sourceTime: CMTime, duration: CMTime, videoTime: CMTime) -> Placement? {
+  /// Where the source's audio clock sits on the recording's wall clock, fixed once per recording.
+  ///
+  /// Anchoring each segment's audio to wherever the video happened to be when that segment's first
+  /// audio buffer was written ties it to *arrival*, and arrival is not steady: a Pixel running
+  /// Cameraman delivered its audio later and later relative to its picture, 129 ms per 1,000 s, and
+  /// every three-second segment baked the latest lag in. Measured with a clapperboard on rec-323,
+  /// the export's sound went from 39 ms early to 70 ms late over fourteen minutes while the live
+  /// programme, which schedules audio by its own timestamps, stayed flat. With this, each segment
+  /// places audio from the source's own clock through one mapping held for the whole recording.
+  struct WallAnchor: Equatable {
+    /// A source audio time, in seconds on the source's clock.
+    let sourceSeconds: Double
+    /// The recording wall-clock time that source time corresponds to.
+    let wallSeconds: Double
+  }
+
+  mutating func place(
+    sourceTime: CMTime,
+    duration: CMTime,
+    videoTime: CMTime,
+    wallAnchor: WallAnchor? = nil,
+    segmentBaseWall: Double? = nil
+  ) -> Placement? {
     guard videoTime.isNumeric, duration.isNumeric, duration > .zero else { return nil }
 
     var candidate: CMTime
-    if !clockUnusable, sourceTime.isNumeric {
+    if !clockUnusable, sourceTime.isNumeric, let wallAnchor, let segmentBaseWall {
+      let wall = wallAnchor.wallSeconds + (sourceTime.seconds - wallAnchor.sourceSeconds)
+      candidate = CMTime(seconds: wall - segmentBaseWall, preferredTimescale: sourceTime.timescale)
+    } else if !clockUnusable, sourceTime.isNumeric {
       if epoch == nil {
         epoch = sourceTime
         anchor = videoTime
