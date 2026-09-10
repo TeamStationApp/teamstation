@@ -32,14 +32,25 @@ public enum ArchiveRemux {
     fileDurations: [TimeInterval],
     targetDuration: TimeInterval? = nil,
     headTrim: TimeInterval = 0,
+    startWalls: [WallClock] = [],
+    windowStart: WallClock? = nil,
     destination: URL
   ) async throws {
     guard !files.isEmpty else { throw Error.empty }
     try? FileManager.default.removeItem(at: destination)
-    if files.count == 1, targetDuration == nil, headTrim <= 0.001 {
+    if files.count == 1, targetDuration == nil, headTrim <= 0.001, startWalls.isEmpty {
       try FileManager.default.copyItem(at: files[0], to: destination)
       return
     }
+
+    // Placement mode. With a wall clock per file and a window to measure from, a segment goes where
+    // it happened -- `startWall - windowStart` -- rather than at the running total of everything
+    // before it. The two agree only while a source delivered without interruption; the moment it
+    // dropped out, a running cursor pulls every later frame earlier by the length of the gap, and
+    // the file comes out short by the same amount. That is the whole of R2: a camera that lost
+    // 150 s exported 150 s early from then on, and no two angles agreed after their first gap.
+    let placed = !startWalls.isEmpty && startWalls.count == files.count && windowStart != nil
+    let origin = windowStart ?? WallClock(seconds: 0)
 
     let composition = AVMutableComposition()
     var cursor = CMTime.zero
@@ -59,26 +70,40 @@ public enum ArchiveRemux {
           duration = try await playableDuration(of: asset)
         }
         guard duration.seconds > 0.05 else { continue }
-        // Only the first file is trimmed, and never past its own length.
-        let trim = index == 0 ? min(max(0, headTrim), max(0, duration.seconds - 0.05)) : 0
+        // In placement mode a segment is trimmed by however much of it precedes the window, which
+        // is a per-file question and not only the first file's. Otherwise the old rule stands:
+        // only the head of the first file is trimmed, and never past its own length.
+        let wantedTrim: TimeInterval
+        if placed {
+          wantedTrim = max(0, origin - startWalls[index])
+        } else {
+          wantedTrim = index == 0 ? headTrim : 0
+        }
+        let trim = min(max(0, wantedTrim), max(0, duration.seconds - 0.05))
         let start = CMTime(seconds: trim, preferredTimescale: 600)
         let kept = CMTimeSubtract(duration, start)
         guard kept.seconds > 0.05 else { continue }
         // Trimmed at the tail as well, for the same reason as the head: the last segment runs to
         // its camera's next keyframe, which is past where the window ends and by a different
         // amount on every camera. Without this the files still disagree by about a frame.
+        // Where this segment belongs on the output timeline.
+        let at: CMTime = placed
+          ? CMTime(seconds: max(0, (startWalls[index] + trim) - origin), preferredTimescale: 600)
+          : cursor
         var use = kept
         if let targetDuration {
-          let remaining = targetDuration - cursor.seconds
-          if remaining <= 0.001 { break }
+          let remaining = targetDuration - at.seconds
+          if remaining <= 0.001 { if placed { continue } else { break } }
           if kept.seconds > remaining {
             use = CMTime(seconds: remaining, preferredTimescale: 600)
           }
         }
         guard use.seconds > 0.001 else { continue }
         let range = CMTimeRange(start: start, duration: use)
-        try await composition.insertTimeRange(range, of: asset, at: cursor)
-        cursor = CMTimeAdd(cursor, use)
+        // Inserting past the current end leaves the gap between as an empty range, which is what a
+        // gap was: no camera delivered anything for it.
+        try await composition.insertTimeRange(range, of: asset, at: at)
+        cursor = CMTimeMaximum(cursor, CMTimeAdd(at, use))
       } catch {
         skipped.append(file.lastPathComponent)
         continue

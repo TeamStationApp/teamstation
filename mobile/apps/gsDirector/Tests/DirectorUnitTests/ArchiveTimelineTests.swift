@@ -22,7 +22,7 @@ struct ArchiveTimelineTests {
   // previous picture without touching the reference chain. **That phase owes this file three
   // replacements** — a video hole, an audio hole, and duration equal to the recording's wall clock.
 
-  @Test("Export duration follows recording wall clock, not the sum of segments")
+  @Test("An assembly reports wall clock and tape separately, and says where each segment belongs")
   func exportDurationMatchesRecording() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent("export-d-\(UUID().uuidString)", isDirectory: true)
@@ -61,8 +61,17 @@ struct ArchiveTimelineTests {
       from: WallClock(seconds: 1_000),
       to: WallClock(seconds: 1_009)
     )
-    #expect(abs(assembly.duration - 9) < 0.001)
+    // Two 2 s segments five seconds apart: nine seconds of wall clock holding four of tape. The
+    // two numbers are now reported separately instead of one standing in for the other, because
+    // conflating them is what placed every post-gap frame five seconds early.
+    #expect(abs(assembly.wallSpan - 9) < 0.001)
+    #expect(abs(assembly.duration - 4) < 0.001)
     #expect(abs(assembly.fileDurations.reduce(0, +) - 4) < 0.001)
+    // And the export's guarantee, which is no longer a duration at all but a position: the second
+    // segment belongs seven seconds in, not immediately after the first.
+    #expect(assembly.startWalls.count == 2)
+    #expect(abs(assembly.startWalls[1] - assembly.startWalls[0] - 7) < 0.001)
+    #expect(abs(assembly.mediaOffset(forWall: WallClock(seconds: 1_008)) - 3) < 0.001)
   }
 
   @Test("Program writer recovery holds the dead interval so concat lasts the take")
