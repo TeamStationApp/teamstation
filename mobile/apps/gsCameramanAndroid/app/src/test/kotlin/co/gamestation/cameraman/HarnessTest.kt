@@ -104,17 +104,25 @@ class FormatCatalogueTest {
     private val catalogue = FormatCatalogue(formats)
 
     @Test
-    fun `options are one per size and rate, sorted by pixels then rate`() {
-        val labels = catalogue.options.map { it.label }
-        assertEquals("1280x720 @ 24", labels.first())
-        assertTrue(labels.indexOf("1280x720 @ 30") < labels.indexOf("1920x1080 @ 30"))
-        assertTrue(labels.indexOf("1920x1080 @ 30") < labels.indexOf("3840x2160 @ 30"))
+    fun `options are the offered formats the device can serve, in menu order`() {
+        assertEquals(
+            listOf("1080p 60 fps", "1080p 30 fps", "720p 60 fps", "720p 30 fps"),
+            catalogue.options.map { it.label }
+        )
     }
 
     @Test
-    fun `only the curated frame rates appear, not every integer in a range`() {
-        // A device advertises continuous ranges; without a curated list the menu would run 1 to 240.
-        assertTrue(catalogue.options.all { it.frameRate in FormatCatalogue.candidateFrameRates })
+    fun `sizes and rates the device advertises but the menu does not offer are left out`() {
+        // 4K and 240 fps are both in the fixture and neither belongs on a sideline menu.
+        assertTrue(catalogue.options.none { it.width > 1920 })
+        assertEquals(setOf(30.0, 60.0), catalogue.options.map { it.frameRate }.toSet())
+    }
+
+    @Test
+    fun `a 16 by 9 option reads as a broadcast format and anything else is spelled out`() {
+        assertEquals("1080p 60 fps", FormatCatalogue.Option(1920, 1080, 60.0, true).label)
+        assertEquals("720p 30 fps", FormatCatalogue.Option(1280, 720, 30.0, true).label)
+        assertEquals("1440x1080 @ 30", FormatCatalogue.Option(1440, 1080, 30.0, true).label)
     }
 
     @Test
@@ -127,7 +135,7 @@ class FormatCatalogueTest {
     @Test
     fun `a size that only exists as a single-lens mode says so`() {
         // Losing lens switching should be a visible trade-off rather than a silent one.
-        val option = catalogue.options.first { it.width == 1280 && it.frameRate == 240.0 }
+        val option = catalogue.options.first { it.width == 1280 && it.frameRate == 60.0 }
         assertFalse(option.supportsMultiLensSwitching)
         assertEquals("single lens only", option.annotation)
     }

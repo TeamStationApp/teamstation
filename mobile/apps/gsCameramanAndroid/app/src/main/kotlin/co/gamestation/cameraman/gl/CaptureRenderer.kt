@@ -259,7 +259,7 @@ internal class CaptureRenderer(
             }
             // The encoder surface is exactly the encoded size, so at 0 or 180 nothing needs scaling.
             // At 90 or 270 the source turns portrait against a landscape destination, and a bare
-            // rotation of the quad would squash it, so the same aspect-fill the preview uses applies.
+            // rotation of the quad would squash it, so an aspect-fill scale applies.
             val (encoderScaleX, encoderScaleY) = fillScale(width, height)
             buildMvp(encoderScaleX, encoderScaleY)
             program.draw(textureId, textureMatrix, mvpMatrix)
@@ -278,9 +278,13 @@ internal class CaptureRenderer(
                 return@let
             }
             GLES20.glViewport(0, 0, previewWidth, previewHeight)
-            // Aspect-fill, matching the iOS preview's `resizeAspectFill`: the stream is cropped to
-            // the same aspect the operator is looking at, so what is framed is what is sent.
-            val (scaleX, scaleY) = fillScale(previewWidth, previewHeight)
+            // Aspect-fit, matching the iOS preview's `resizeAspect`: the whole encoded frame is on
+            // screen, so what the operator sees is exactly what is sent, and a 16:9 picture on a
+            // wider phone gets black bars either side, where the chrome sits. Cleared first, because
+            // nothing else paints the bars.
+            GLES20.glClearColor(0f, 0f, 0f, 1f)
+            GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+            val (scaleX, scaleY) = fitScale(previewWidth, previewHeight)
             buildMvp(scaleX, scaleY)
             program.draw(textureId, textureMatrix, mvpMatrix)
             egl.swapBuffers(surface)
@@ -343,17 +347,46 @@ internal class CaptureRenderer(
     /**
      * Scales the quad so the destination is covered and the overflow runs off an edge.
      *
+     * `buildMvp` composes as `scale * rotate`, so the vertex is rotated first and these factors are
+     * already in destination axes. They must not be swapped.
+     */
+    private fun fillScale(destinationWidth: Int, destinationHeight: Int): Pair<Float, Float> {
+        val ratio = aspectRatio(destinationWidth, destinationHeight) ?: return 1f to 1f
+        return if (ratio > 1f) {
+            // Destination is wider: fill the width and let the top and bottom run off.
+            1f to ratio
+        } else {
+            (1f / ratio) to 1f
+        }
+    }
+
+    /**
+     * Scales the quad so the whole picture fits inside the destination and the remainder is left to
+     * whatever the destination was cleared to.
+     *
+     * The same destination-axis rule as [fillScale] applies.
+     */
+    private fun fitScale(destinationWidth: Int, destinationHeight: Int): Pair<Float, Float> {
+        val ratio = aspectRatio(destinationWidth, destinationHeight) ?: return 1f to 1f
+        return if (ratio > 1f) {
+            // Destination is wider: fill the height and leave bars either side.
+            (1f / ratio) to 1f
+        } else {
+            1f to ratio
+        }
+    }
+
+    /**
+     * The destination's aspect over the drawn picture's, or null while there is no destination.
+     *
      * Two quarter turns are in play and only their *net* matters: the one the `SurfaceTexture`
      * transform already applied, and the one [rotationDegrees] is about to. When they cancel — as
      * they do on this handset at 90 degrees — the picture lands back at 16:9 against a 16:9 buffer
      * and nothing needs scaling. Compensating anyway would silently crop to the middle third of the
      * frame, which reads as "the camera is zoomed in" rather than as a bug.
-     *
-     * `buildMvp` composes as `scale * rotate`, so the vertex is rotated first and these factors are
-     * already in destination axes. They must not be swapped.
      */
-    private fun fillScale(destinationWidth: Int, destinationHeight: Int): Pair<Float, Float> {
-        if (destinationWidth <= 0 || destinationHeight <= 0) return 1f to 1f
+    private fun aspectRatio(destinationWidth: Int, destinationHeight: Int): Float? {
+        if (destinationWidth <= 0 || destinationHeight <= 0) return null
         val quarterTurn = rotationDegrees == 90 || rotationDegrees == 270
         val netTransposed = (transformIsTransposed ?: false) != quarterTurn
         val drawnAspect = if (netTransposed) {
@@ -361,12 +394,6 @@ internal class CaptureRenderer(
         } else {
             width.toFloat() / height.toFloat()
         }
-        val destinationAspect = destinationWidth.toFloat() / destinationHeight.toFloat()
-        return if (destinationAspect > drawnAspect) {
-            // Destination is wider: fill the width and let the top and bottom run off.
-            1f to (destinationAspect / drawnAspect)
-        } else {
-            (drawnAspect / destinationAspect) to 1f
-        }
+        return (destinationWidth.toFloat() / destinationHeight.toFloat()) / drawnAspect
     }
 }

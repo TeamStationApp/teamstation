@@ -11,8 +11,8 @@ import java.nio.FloatBuffer
  *
  * Two matrices, and keeping them apart is the point. `texMatrix` is whatever `SurfaceTexture` says
  * is needed to sample its buffer correctly — crop, vertical flip, driver-specific layout — and is
- * never ours to reason about. `mvpMatrix` is ours: the 0°/180° capture rotation and the aspect-fill
- * scale.
+ * never ours to reason about. `mvpMatrix` is ours: the 0°/180° capture rotation and the aspect
+ * scale — fill for the encoder, fit for the preview.
  */
 internal class TextureProgram {
     private val program: Int
