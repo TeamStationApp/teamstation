@@ -76,8 +76,11 @@ public struct StreamEncodeClock: Sendable {
     awaitingKeyframe = false
   }
 
+  /// Before the first keyframe, how long the stream has gone without one — since its first frame.
+  /// This returned `now` itself there, the absolute date: the stress run logged keyframe ages of
+  /// 810,726,820 s, about 25.7 years, which read as a clock bug and was only "no keyframe yet".
   public func keyframeAgeSeconds(now: CFAbsoluteTime) -> Double {
-    guard lastKeyframeWall > 0 else { return now }
+    guard lastKeyframeWall > 0 else { return startWall > 0 ? max(0, now - startWall) : 0 }
     return max(0, now - lastKeyframeWall)
   }
 }
