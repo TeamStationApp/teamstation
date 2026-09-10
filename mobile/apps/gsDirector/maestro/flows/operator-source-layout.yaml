@@ -34,17 +34,20 @@ appId: co.gamestation.director
     visible: 'source=3 state=live.*'
     timeout: 15000
 
-- assertVisible: 'source 1: CAM1'
-- assertVisible: 'source 2: CAM2'
-- assertVisible: 'source 3: CAM3'
+- assertVisible: '1: CAM1'
+- assertVisible: '2: CAM2'
+- assertVisible: '3: CAM3'
+# B12: the on-air tile is marked by its green outline alone. Anchored, so the Output tile's own
+# "Output" label cannot satisfy this by accident.
+- assertNotVisible: '^OUT$'
 - assertVisible: 'order=1,2,3,4,5'
 
 - openLink: 'gsdirector://test/source-layout?order=5,1,2,3,4'
 - extendedWaitUntil:
     visible: 'order=5,1,2,3,4'
     timeout: 8000
-- assertVisible: 'source 1: CAM1'
-- assertVisible: 'source 5: —'
+- assertVisible: '1: CAM1'
+- assertVisible: '5: —'
 
 - launchApp:
     appId: co.gamestation.director
@@ -61,5 +64,5 @@ appId: co.gamestation.director
       id: 'output'
     timeout: 20000
 - assertVisible: 'order=5,1,2,3,4'
-- assertVisible: 'source 1: CAM1'
+- assertVisible: '1: CAM1'
 - assertVisible: 'output src=CAM3 .*'

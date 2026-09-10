@@ -138,6 +138,9 @@ public struct TileView: View {
             nameplate
           }
           Spacer()
+          if pipeline != nil, !isRewinding {
+            lossPill
+          }
           if telemetry.hasCameraControl {
             cameraStatusPills
             cameraMenuButton
@@ -266,17 +269,13 @@ public struct TileView: View {
 
   private var nameplate: some View {
     HStack(spacing: 6) {
-      if telemetry.isProgram {
-        Text("OUT")
-          .font(.system(size: 10, weight: .heavy, design: .rounded))
-          .padding(.horizontal, 5)
-          .padding(.vertical, 2)
-          .background(Color.programGreen, in: RoundedRectangle(cornerRadius: 3))
-          .foregroundStyle(.black)
-      }
+      // No on-air badge here: the green outline already says which tile is programme, and the
+      // header of a narrow tile has no room to say it twice.
+      //
       // The status pills to the right of this hold their width now, so on a narrow tile the
       // squeeze lands here instead. Truncate the name rather than wrap the header onto two lines.
-      Text("source \(sourceIndex + 1): \(telemetry.displayName ?? "—")")
+      // The accessibility label on the tile still says "source N", which reads better aloud.
+      Text("\(sourceIndex + 1): \(telemetry.displayName ?? "—")")
         .font(.system(size: 13, weight: .semibold, design: .rounded))
         .foregroundStyle(.white)
         .lineLimit(1)
@@ -293,7 +292,23 @@ public struct TileView: View {
     .background(.black.opacity(0.45), in: Capsule())
   }
 
-  /// The phone's own thermal and battery, the size of the OUT badge, in the corner where the phone
+  /// What the link lost in the last second, as a bare number on the nameplate's grey. Shown even
+  /// at zero, because a zero that is there says the link is measured and clean, where a pill that
+  /// hid at zero would leave "clean" and "not shown" looking the same. A tile that is not
+  /// delivering shows an em dash instead — see `TileTelemetry.lossPerSecondLabel` for why a dead
+  /// link would otherwise read zero like a clean one. Hidden in rewind so that chrome — which
+  /// already overruns a Cameraman tile — keeps the room. On an NDI tile the number is the SDK's
+  /// dropped frames; see `TileTelemetry.packetsLostPerSecond`.
+  private var lossPill: some View {
+    StatPill(
+      text: telemetry.lossPerSecondLabel,
+      identifier: "source-\(sourceIndex + 1)-loss",
+      label: "Lost per second",
+      value: telemetry.lossPerSecondLabel
+    )
+  }
+
+  /// The phone's own thermal and battery, one header row tall, in the corner where the phone
   /// draws them. Untappable; a tap here still cuts the tile to programme.
   @ViewBuilder
   private var cameraStatusPills: some View {

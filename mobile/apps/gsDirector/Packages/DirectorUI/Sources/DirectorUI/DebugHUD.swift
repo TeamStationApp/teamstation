@@ -37,7 +37,7 @@ public enum DebugHUDLines {
 
     rows.append([
       .init(id: "hud-recording", text: "rec=\(snapshot.dvr.isRecording ? "1" : "0")"),
-      .init(id: "hud-dvr-duration", text: "dur=\(recordingSeconds(snapshot))"),
+      .init(id: "hud-dvr-duration", text: "dur=\(snapshot.recordingSeconds)"),
       .init(id: "hud-dvr-segments", text: "seg=\(snapshot.dvr.segmentCount)"),
       .init(id: "hud-dvr-bytes", text: "bytes=\(snapshot.dvr.byteCount)"),
       .init(id: "hud-proxy-stills", text: "proxy=\(snapshot.dvr.proxyStills)"),
@@ -116,8 +116,7 @@ public enum DebugHUDLines {
   }
 
   private static func programCNAME(_ snapshot: TelemetrySnapshot) -> String? {
-    guard let index = snapshot.programSource else { return nil }
-    let cname = snapshot.tiles.first { $0.index == index }?.cname
+    let cname = snapshot.programTile?.cname
     return (cname?.isEmpty == false) ? cname : nil
   }
 
@@ -125,10 +124,7 @@ public enum DebugHUDLines {
     Int(snapshot.tiles.map(\.replayLatencyMilliseconds).max() ?? 0)
   }
 
-  private static func recordingSeconds(_ snapshot: TelemetrySnapshot) -> Int {
-    guard let startedAt = snapshot.dvr.recordingStartedAt else { return 0 }
-    return max(0, Int(snapshot.clockSeconds - startedAt))
-  }
+
 
   private static func programBytes(_ snapshot: TelemetrySnapshot) -> String {
     snapshot.dvr.programOutput.split(separator: " ").last.map(String.init) ?? "0"

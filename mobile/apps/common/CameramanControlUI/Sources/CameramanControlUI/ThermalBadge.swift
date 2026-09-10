@@ -13,7 +13,7 @@ extension ThermalBadgeLevel {
 /// swallows them so a tap on the header pill does not fall through to Recordings. The identifier
 /// differs per host (`camera-thermal` on the operating screen, `header-thermal` in Director's
 /// toolbar) so each app's existing flows keep finding it. `.compact` is the tile size in
-/// Director, the footprint of its `OUT` badge, for a Cameraman source's own thermal state.
+/// Director, one header row tall beside the loss pill, for a Cameraman source's own thermal state.
 public struct ThermalBadge: View {
   public enum Style: Sendable {
     case pill

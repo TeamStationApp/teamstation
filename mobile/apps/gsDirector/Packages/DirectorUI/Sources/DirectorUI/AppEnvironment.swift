@@ -135,7 +135,19 @@ public final class AppEnvironment {
   public private(set) var streamDroppedPackets: UInt64 = 0
   public let pictureInPicture = ProgramPictureInPicture()
   private var isInBackground = false
-  public private(set) var statusMessage: String?
+  public private(set) var statusMessage: String? {
+    didSet {
+      // Stamped when the words change, not on every assignment. Several writers re-post the same
+      // sentence on a timer — the retention sweep repeats "Low storage" every sixty seconds for
+      // as long as the disk is tight — and re-stamping there would leave the toast reading a
+      // minute old however long the condition had been true, which is the opposite of what the
+      // operator reads a timestamp for.
+      guard statusMessage != oldValue else { return }
+      statusMessagePostedAt = statusMessage == nil ? nil : Date()
+    }
+  }
+  /// When `statusMessage` was posted, for the toast's timestamp. Nil whenever the message is.
+  public private(set) var statusMessagePostedAt: Date?
 
   public func dismissStatusMessage() {
     statusMessage = nil
@@ -3445,7 +3457,6 @@ public final class AppEnvironment {
       $0.statusMessage = status
       $0.sources = summaries
       $0.overlay = overlayStatus
-      $0.composedFrames = composedFrames
       $0.audioMixContributors = mix.contributors
       $0.audioMixSeconds = (mix.emittedSeconds * 10).rounded() / 10
       $0.audioMixLateBuffers = mix.lateBuffers
@@ -3466,12 +3477,14 @@ public final class AppEnvironment {
       $0.pictureInPictureActive = self.pictureInPicture.isActive
       $0.sourceLayout = self.sourceLayout.displayOrder
     }
+    telemetry.recordComposedFrames(composedFrames)
     var liveDecodeSessions = 0
     for pipeline in router.activePipelines {
       let format = pipeline.format
       let connections = pipeline.connections
       let receive = pipeline.receiveStats
       liveDecodeSessions += receive.decodeSessions
+      telemetry.recordPacketsLost(tile: pipeline.sourceIndex, cumulative: receive.packetsLost)
       telemetry.mutateTile(pipeline.sourceIndex) { tile in
         tile.sourceWidth = format?.width ?? 0
         tile.sourceHeight = format?.height ?? 0
@@ -3482,7 +3495,6 @@ public final class AppEnvironment {
         tile.capturedFrames = receive.captured
         tile.poolMisses = receive.poolMisses
         tile.formatMisses = receive.formatMisses
-        tile.packetsLost = receive.packetsLost
         tile.sourceStatus = receive.status ?? ""
         let elapsed = receive.waitingSeconds + receive.deliverySeconds
         tile.receiveWaitFraction = elapsed > 0 ? receive.waitingSeconds / elapsed : 0

@@ -45,8 +45,32 @@ appId: co.gamestation.director
     visible:
       id: 'status-toast'
     timeout: 5000
+# Every toast says when it was posted. The shape is asserted here; which zone name it ends in is
+# StatusTimestampTests' business, because that varies with the device's region and this flow runs
+# on whatever bench hardware is free.
+- assertVisible:
+    id: 'status-timestamp'
+- assertVisible: '20[0-9]{2}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3} .+'
+# The body dismisses, not only the X.
+- tapOn:
+    id: 'status-message'
+- extendedWaitUntil:
+    notVisible:
+      id: 'status-toast'
+    timeout: 5000
+# And the X still dismisses, which is the only place that button is exercised.
+- tapOn:
+    id: 'stream-button'
+- extendedWaitUntil:
+    visible:
+      id: 'status-toast'
+    timeout: 5000
 - tapOn:
     id: 'status-dismiss'
+- extendedWaitUntil:
+    notVisible:
+      id: 'status-toast'
+    timeout: 5000
 
 - tapOn:
     id: 'settings-button'

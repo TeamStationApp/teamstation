@@ -132,6 +132,22 @@ public struct TileTelemetry: Sendable, Codable, Equatable {
   /// RTP packets the camera sent that never arrived, counted from sequence-number gaps. The
   /// difference between a camera that is struggling and a link that is losing its traffic.
   public var packetsLost: UInt64 = 0
+  /// How fast `packetsLost` is climbing, over the last whole second. This is the number on the
+  /// tile: the cumulative count says whether the link has ever been bad, this says whether it is
+  /// bad now. On an NDI tile the counter underneath is the SDK's dropped *frames*, which include
+  /// our own backlog as well as the network's losses — the free SDK offers nothing finer.
+  public var packetsLostPerSecond: Double = 0
+  /// What the loss pill shows: the rate, or an em dash when nothing is arriving to measure.
+  ///
+  /// Loss is counted from gaps between packets that *arrive* (RTP sequence numbers) or from the
+  /// NDI SDK's dropped-frame counters. A link that has died therefore stops moving the counter
+  /// altogether and the rate folds to zero — the same zero a clean link shows, at the one moment
+  /// the operator most needs to tell them apart. So a tile that is not delivering says so.
+  public var lossPerSecondLabel: String {
+    guard framesPerSecond > 0, stalledForSeconds == 0 else { return "—" }
+    return String(format: "%.0f", packetsLostPerSecond)
+  }
+
   /// Why this source last stopped delivering, in the words of whatever noticed. Empty while healthy.
   public var sourceStatus = ""
   /// The `CNAME` this camera presents, empty for the cameras that present none. Worth surfacing
@@ -295,6 +311,8 @@ public struct TileTelemetry: Sendable, Codable, Equatable {
     parts.append(String(format: "pl=%.0f", playoutMilliseconds))
     parts.append(String(format: "rel=%.0f", releaseGapMaxMilliseconds))
     parts.append("late=\(playoutLateFrames)")
+    // The number on the tile's loss pill, so a flow can assert it moved when the network did.
+    parts.append(String(format: "loss=%.0f", packetsLostPerSecond))
     return parts.joined(separator: " ")
   }
 }
@@ -421,6 +439,9 @@ public struct TelemetrySnapshot: Sendable, Codable, Equatable {
   /// Frames the compositor has produced, which is how an overlay that loaded but never reached the
   /// picture is told apart from one that never loaded.
   public var composedFrames: UInt64 = 0
+  /// How fast `composedFrames` is climbing. The Output tile shows this, because it is the rate
+  /// that reads zero when every source tile is healthy and the programme picture has stopped.
+  public var composedFramesPerSecond: Double = 0
   public var audioMixContributors = 0
   public var audioMixSeconds: Double = 0
   /// Mixer ring misses. `late` is audio that arrived after its slot had already been emitted —
@@ -504,10 +525,35 @@ public struct TelemetrySnapshot: Sendable, Codable, Equatable {
   public init() {}
 
   public var programSourceLabel: String {
-    guard let programSource, let tile = tiles.first(where: { $0.index == programSource }) else {
+    guard let programSource, let tile = programTile else {
       return "none"
     }
     return tile.displayName ?? "source\(programSource + 1)"
+  }
+
+  /// The tile currently on programme. Every reader of "what is on air" asks this question, and
+  /// answering it in one place is what keeps a change to how programme is resolved — a slot
+  /// swap, say — from having to be found again in each of them.
+  public var programTile: TileTelemetry? {
+    guard let programSource else { return nil }
+    return tiles.first { $0.index == programSource }
+  }
+
+  /// The operator has recording engaged, as opposed to a recording that is still closing.
+  ///
+  /// `dvr.isRecording` stays true through the whole stop path — detaching, flushing each archive,
+  /// finishing the programme, closing the index — because that path is what still owns the files.
+  /// `recordingStage` leaves `idle` the instant the operator stops, so the two together separate
+  /// "recording" from "stopping", which is the difference between a clock that should still be
+  /// running and one that should not.
+  public var isActivelyRecording: Bool {
+    dvr.isRecording && recordingStage == "idle"
+  }
+
+  /// How long the take has been running, in whole seconds; zero when nothing is being recorded.
+  public var recordingSeconds: Int {
+    guard dvr.isRecording, let startedAt = dvr.recordingStartedAt else { return 0 }
+    return max(0, Int(clockSeconds - startedAt))
   }
 }
 
@@ -517,12 +563,24 @@ public struct TelemetrySnapshot: Sendable, Codable, Equatable {
 public final class PipelineTelemetry: @unchecked Sendable {
   private let lock = NSLock()
   private var state = TelemetrySnapshot()
-  private var frameTimestamps: [Int: (count: UInt64, since: CFAbsoluteTime, last: CFAbsoluteTime)] = [:]
-  private var displayedTimestamps: [Int: (count: UInt64, since: CFAbsoluteTime, last: CFAbsoluteTime)] = [:]
+  private var frameTimestamps: [Int: (count: UInt64, since: TimeInterval, last: TimeInterval)] = [:]
+  private var displayedTimestamps: [Int: (count: UInt64, since: TimeInterval, last: TimeInterval)] = [:]
+  private var lossRates: [Int: CounterRateTracker] = [:]
+  private var composedRate = CounterRateTracker()
   /// Kept apart because they are counted differently, and their sum is what the HUD reports.
   private var replayDecodeSessions = 0
   private var liveDecodeSessions = 0
   private let clock: DirectorClock
+
+  /// A clock that only moves forward, for every elapsed-time measurement in this class.
+  ///
+  /// The rate folds and the staleness ageing below all subtract two samples of it. Wall clock
+  /// cannot answer that question: an NTP step, or an operator correcting Date & Time, moves it
+  /// backwards, and a negative `elapsed` leaves every rate frozen on its last value until wall
+  /// time has caught up again. This one is immune to both.
+  private static func monotonicNow() -> TimeInterval {
+    ProcessInfo.processInfo.systemUptime
+  }
 
   public init(clock: DirectorClock = SystemClock()) {
     self.clock = clock
@@ -537,7 +595,7 @@ public final class PipelineTelemetry: @unchecked Sendable {
     copy.thermalState = Self.thermalStateName(ProcessInfo.processInfo.thermalState)
     copy.sleptSeconds = Self.sleptSeconds()
     copy.dvr.freeDiskBytes = DirectorPaths.freeDiskBytes()
-    let now = CFAbsoluteTimeGetCurrent()
+    let now = Self.monotonicNow()
     for index in copy.tiles.indices {
       let sourceIndex = copy.tiles[index].index
       let last = displayedTimestamps[sourceIndex]?.last ?? 0
@@ -597,10 +655,45 @@ public final class PipelineTelemetry: @unchecked Sendable {
     let displayedA = displayedTimestamps[a]
     displayedTimestamps[a] = displayedTimestamps[b]
     displayedTimestamps[b] = displayedA
+    let lossA = lossRates[a]
+    lossRates[a] = lossRates[b]
+    lossRates[b] = lossA
+  }
+
+  /// The transport's cumulative loss for this tile, as of now. Stores the count and folds it
+  /// into `packetsLostPerSecond`; see `CounterRateTracker` for why a rate rather than the count.
+  public func recordPacketsLost(tile: Int, cumulative: UInt64) {
+    let now = Self.monotonicNow()
+    lock.lock()
+    var tracker = lossRates[tile] ?? CounterRateTracker()
+    let rate = tracker.record(cumulative, at: now)
+    lossRates[tile] = tracker
+    if let position = state.tiles.firstIndex(where: { $0.index == tile }) {
+      state.tiles[position].packetsLost = cumulative
+      state.tiles[position].packetsLostPerSecond = rate
+    }
+    lock.unlock()
+  }
+
+  /// Forget a stopped tile's baseline, so the next pipeline on the slot is measured from its own
+  /// first sample rather than against a counter that no longer exists.
+  public func resetLossRate(tile: Int) {
+    lock.lock()
+    lossRates[tile] = nil
+    lock.unlock()
+  }
+
+  /// The compositor's frame count, as of now, folded into `composedFramesPerSecond`.
+  public func recordComposedFrames(_ cumulative: UInt64) {
+    let now = Self.monotonicNow()
+    lock.lock()
+    state.composedFrames = cumulative
+    state.composedFramesPerSecond = composedRate.record(cumulative, at: now)
+    lock.unlock()
   }
 
   public func recordReceivedFrame(tile: Int, frameID: UInt64) {
-    let now = CFAbsoluteTimeGetCurrent()
+    let now = Self.monotonicNow()
     lock.lock()
     if let position = state.tiles.firstIndex(where: { $0.index == tile }) {
       state.tiles[position].receivedFrames += 1
@@ -621,7 +714,7 @@ public final class PipelineTelemetry: @unchecked Sendable {
   }
 
   public func recordDisplayedFrame(tile: Int) {
-    let now = CFAbsoluteTimeGetCurrent()
+    let now = Self.monotonicNow()
     lock.lock()
     if let position = state.tiles.firstIndex(where: { $0.index == tile }) {
       state.tiles[position].displayedFrames += 1
@@ -804,6 +897,11 @@ public final class PipelineTelemetry: @unchecked Sendable {
     state.sourceAvailable = sourceAvailable
     frameTimestamps.removeAll()
     displayedTimestamps.removeAll()
+    // The rate trackers hold a baseline and the last rate they folded. Left alone they would
+    // publish the pre-reset figure back into the fresh snapshot on the very next poll, which is
+    // exactly the stale reading a reset is asked for to get rid of.
+    lossRates.removeAll()
+    composedRate = CounterRateTracker()
     lock.unlock()
   }
 
