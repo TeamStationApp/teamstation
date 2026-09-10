@@ -473,6 +473,31 @@ inside it.
 
 **Acceptance:** S28, S29.
 
+### W16 — put instant replay on wall-clock placement too (C14)
+
+**Reported from the rig: replay occasionally ends before its requested period.** The cause is C1's
+defect on a second path, and W3 as written does not reach it — W3 changes
+`ArchiveRemux.concatenate` and `ExportService`, while replay goes through
+`SegmentAssembler.assemblePlaylist` and the private `assembly(url:media:)` in the same file.
+
+`assembly()` reports `duration` as **summed media time**, and `AppEnvironment.startReplay` computes
+`startOffset = target - assembly.startWall`, a **wall-clock** delta. The two agree only while the
+window is contiguous. Put a gap in it and the replay starts too deep into the tape, ends short by
+about the gap, and — when the gap is big enough that
+`startOffset >= assemblyDuration - 0.25` — is refused outright as not ready.
+
+- Give `Assembly` a wall-clock span alongside its media duration, and stop letting callers mix them.
+- Stage segments at `startWall − windowStart`, as W3 does for export, so a gap is held rather than
+  closed up.
+- `ScrubMapping.shouldStartReplay` compares like with like.
+- `maximumSegments: 64` bounds the replay window at roughly 192 s of 3 s segments; confirm it cannot
+  itself truncate a long slow-motion rewind on a source with irregular IDR cadence.
+
+Do not re-fix how *played* duration is counted — `01cef5b7` did that, correctly, and it is why the
+unit test passes while the rig symptom remains.
+
+**Acceptance:** S46–S52, judged on the webcam.
+
 ---
 
 ## 4. Running things
@@ -575,12 +600,33 @@ lateness but *never* a gap. A bandwidth cap on the real link does produce genuin
 
 ### Device roles — read before shaping anything
 
+```
+        wall clock  ← the single time reference, in shot for everything
+           ↑   ↑
+   iPhone 15 Pro  Pixel 10
+      │ HDMI        │ RTSP over Wi-Fi (shapeable)
+      ▼             │
+   Cosmo C2 ────────┴──→  Director (iPad)
+      wired to the AP          │
+                               ▼
+                    webcam sees all four at once:
+                 wall clock, iPhone, Pixel, Director screen
+```
+
 | Device | Role | Shape it? |
 |---|---|---|
-| **iPad (Director)** | the app under test | **Only in Lane B.** Shaping it degrades every ingress at once, including the control server this lane drives it through. |
-| **Pixel 10** | GS Cameraman, RTSP | **Yes — this is the primary subject.** |
-| **Cosmo C2** | NDI camera | **No — cannot.** It is on the wired LAN, so its traffic never crosses the Pi. Reachable only indirectly, via Lane B. |
-| **iPhone 15 Pro** | draws the image the Cosmo captures over HDMI | **No. Never.** It is the NDI path's time reference; shaping it corrupts the measurement rather than testing it. |
+| **Pixel 10** | GS Cameraman, RTSP, pointed at the wall clock | **Yes — the primary subject.** |
+| **iPad (Director)** | the app under test | **Lane B only.** Its Wi-Fi is the *only* thing that can delay the Cosmo, so this is not a workaround — it is the real production failure mode. |
+| **Cosmo C2** | NDI camera, capturing the iPhone over HDMI | **No, and no need.** Wired to the access point, so its traffic never crosses the Pi. In the production deployment this link is not the risk. |
+| **iPhone 15 Pro** | draws the picture the Cosmo captures, pointed at the wall clock | **No. Never.** Its network path is irrelevant — it only sends HDMI. Shaping it would corrupt the reference, not test anything. |
+
+**Both camera chains see the same wall clock.** The iPhone films it and feeds the Cosmo over HDMI;
+the Pixel films it directly. So the two transports carry a common image, and any difference between
+them in an export is the app's — which is what makes the C9 cross-transport measurement possible at
+all, with no burned-in timecode needed on the device lane.
+
+The realistic NDI risk is therefore **the Director's own Wi-Fi**, a 5 GHz link at under thirty feet.
+Lane B is how that gets exercised.
 
 ### Two lanes, and they are mutually exclusive
 
@@ -595,6 +641,25 @@ in one lane or the other, never both.
   degrade the NDI path, since the Cosmo cannot be shaped directly. Blunt by nature: it hits every
   camera and the control channel together, so keep latencies modest and expect telemetry polls to
   slow down with everything else.
+
+### The webcam is the primary instrument, not a check box
+
+One frame from the bench webcam contains the wall clock, the iPhone's screen, the Pixel's screen and
+the Director's display. That single frame answers, without any telemetry at all:
+
+- what time it really is,
+- what each camera was showing at that instant,
+- and what the Director was displaying — so **per-transport end-to-end latency is a subtraction
+  between two numbers in the same photograph.**
+
+Read it, do not merely capture it. On 2026-09-05 an entire acceptance run was reported from
+`dump-state` alone while the Director screen had been black for three and a half minutes. Standing
+rule, and here it is also the cheapest measurement available: capture and *read* a frame at every
+phase boundary, and at replay entry and exit.
+
+For replay specifically the webcam is the only honest judge of speed and duration: the programme
+tile shows the replay overlay with the clock reading behind the live tiles by the rewind depth, and
+a 50 % replay closes that gap at half rate. Reading the clock in the frame is the measurement.
 
 ### Preflight, every run
 
@@ -644,7 +709,10 @@ export, and run the verifier. Record `refused`/`late` counters per source per ph
 | **P8** | A | Pixel `lossPct: 2, 5, 10` | 500 ms / 10 s | RTSP is hard-coded to TCP, so loss should surface as retransmit delay rather than missing frames. Confirm that, and record it — it is why `lossPct` is a weak instrument here. |
 | **P9** | B | iPad `latencyMs: 300` | 500 ms / 10 s | Both transports degrade together. Do NDI and RTSP frames refuse at the same *age*? They should — `FrameLatencyGate` is transport-agnostic. |
 | **P10** | B | iPad `mbit: 20` | 500 ms / 10 s | 1080p NDI is bandwidth-hungry; expect the NDI path to starve first and the SDK to drop frames the receiver never sees. Real gaps on the NDI archive. |
-| **P11** | A | none | 500 ms / 10 s | **The W13 measurement.** One NDI and one RTSP camera on the same time reference, unshaped, export and compare. This is the cross-transport bias number, and it must be taken before W10 lands. |
+| **P11** | A | none | 500 ms / 10 s | **The W13 measurement.** Both chains already film the same wall clock, so this is a webcam frame plus an export comparison. The cross-transport bias number, and it must be taken before W10 lands. |
+| **P12** | A | none | 500 ms / 10 s | Replay baseline: 10 s at full speed, then 10 s at 50 %, webcam at entry and exit. Establishes correct speed and duration with no gap in the window. |
+| **P13** | A | Pixel `mbit: 0.5` for 20 s, then clear | 500 ms / 10 s | **The replay truncation case.** Rewind across the gap the starvation left. Today this is expected to end early or be refused; after W16 it must play the full period, holding through the gap. Capture the before number. |
+| **P14** | B | iPad `latencyMs: 300` | 500 ms / 10 s | Replay on the NDI source while the Director's own link is degraded — the production-realistic NDI failure, since the Cosmo's wired hop is not the risk. |
 
 **Every phase ends with an export and a verifier run.** That is Paul's third requirement and the
 only one that cannot be judged from telemetry: whatever the network did, each exported file must
@@ -661,9 +729,9 @@ at the right instants rather than as a shortened file.
 
 ### Order of execution
 
-P0 and P11 first, unshaped: they are the baselines, and P11's cross-transport number is a one-time
+P0, P11 and P12 first, unshaped: they are the baselines, and P11's cross-transport number is a one-time
 opportunity that disappears once W10 lands. Then P1–P3 (display band), P4–P5 (disk band), P6–P8
-(bandwidth and loss), and Lane B's P9–P10 last, since re-joining the iPad to a different SSID is the
+(bandwidth and loss), P13 for the replay truncation, and Lane B's P9–P10 and P14 last, since re-joining the iPad to a different SSID is the
 most disruptive step and the easiest to leave in a bad state.
 
 ## 6. Done means
@@ -671,6 +739,8 @@ most disruptive step and the easiest to leave in a bad state.
 - `verifySync.js` passes S1–S30 at the W12 tolerance on a take with every fault injected at once.
 - The network-shaped phases S31–S45 pass on real hardware, and every shaped take exports on the
   correct timeline — including the spans the latency gates refused.
+- Instant replay S46–S52: a rewind across a gap plays its full requested period at the requested
+  speed, read off the webcam, rather than ending early or being refused.
 - A camera with a 30 s dropout exports the same length as one without.
 - A gap decodes as a held frame, not black; black appears only before a camera's first frame.
 - Programme file length equals take length.
