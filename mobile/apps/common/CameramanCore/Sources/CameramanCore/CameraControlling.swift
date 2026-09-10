@@ -21,8 +21,9 @@ public protocol CameraControlling: AnyObject, Observable {
   var displayedZoom: Double { get }
   var deviceZoom: Double { get }
   var availableLenses: [CameraLens] { get }
-  /// The formats this camera offers, for the Settings picker. Empty until capture has configured a
-  /// device, which is the normal state on a simulator.
+  /// The formats this camera offers, for the Settings picker: the `FormatCatalogue` menu narrowed
+  /// to what the device can serve. Empty until capture has configured a device, which is the normal
+  /// state on a simulator.
   var formatOptions: [FormatCatalogue.Option] { get }
   var settings: StreamSettings { get }
   var thermalLevel: ThermalBadgeLevel { get }

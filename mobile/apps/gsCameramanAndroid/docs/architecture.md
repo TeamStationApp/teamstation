@@ -107,9 +107,9 @@ publishes them. See `docs/capabilities.md`.
 
 Camera2 output is always in sensor orientation and there is no `videoRotationAngle` to set, so frames
 go camera → `SurfaceTexture` → GL → encoder surface and the rotation is a matrix in that shader. The
-same GL pass draws the preview, which is what keeps the iOS build's promise that the operator frames
-what the client receives — including after a flip to the front camera, which is also un-mirrored
-there.
+same GL pass draws the preview, letterboxed so the whole encoded frame is on screen, which is what
+keeps the iOS build's promise that the operator frames what the client receives — including after a
+flip to the front camera, which is also un-mirrored there.
 
 The angle is not the textbook one, and why is measured rather than argued: `docs/capabilities.md`.
 
