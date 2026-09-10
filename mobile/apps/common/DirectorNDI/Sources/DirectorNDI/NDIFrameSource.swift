@@ -734,6 +734,7 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     // is not held — it takes the pixels straight from here, so what reaches disk is unaffected.
     let presentationSeconds = timing.presentationTime.seconds
     let arrived = Self.seconds(.now())
+    var smoothedCaptureSeconds = timing.captureWallClock?.seconds ?? 0
     // Never more than the pool can lend, less a few for the renderer, compositor and encoder to be
     // holding; a line longer than the pool starves itself into `poolMisses`. Read here, on the
     // thread that owns the converter, and handed to the drain as the hold it may not exceed.
@@ -751,6 +752,7 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
       capture: timing.captureWallClock?.seconds ?? presentationSeconds,
       period: 1 / rate
     )
+    smoothedCaptureSeconds = timelineSeconds
     let anchor = presentationAnchorSeconds ?? (arrived - timelineSeconds)
     presentationAnchorSeconds = anchor
     // The same instant, expressed on the clock the delay line schedules against.
@@ -790,9 +792,13 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     }
     encodeBacklog += 1
     stats.archiveBacklog = encodeBacklog
+    // The smoothed capture time, not the raw stamp: a segment's start on the recording's wall clock
+    // comes from its first frame's entry here, and the Cosmo's raw stamps jitter enough that
+    // rec-320's NDI segments started up to 90 ms off the three-second step their frames kept,
+    // which placed alternate segments of the export at visibly different offsets.
     pendingFrames[timing.presentationTime.value] = PendingFrame(
       frameID: timing.frameID,
-      captureWallClock: timing.captureWallClock
+      captureWallClock: timing.captureWallClock == nil ? nil : WallClock(seconds: smoothedCaptureSeconds)
     )
     // Bounded so a stalled encoder cannot grow this without limit. Two seconds of 60 fps is far
     // more slack than the encoder ever needs, and the oldest entry is the one whose frame is least
