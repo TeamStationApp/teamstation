@@ -158,6 +158,28 @@ public final class SubnetScanner: @unchecked Sendable {
     )
   }
 
+  /// Only the given addresses, unpaced, and nothing else on the segment.
+  ///
+  /// For launch: the cameras are almost always where they were last time, and asking one or two
+  /// known hosts directly is a handful of unicast packets where a sweep is an ARP broadcast per
+  /// empty address. Addresses outside the local subnet are dropped rather than probed, since a
+  /// lease from another network is not a camera on this one.
+  public func probeKnown(_ addresses: [String]) async -> Result {
+    guard let subnet = Self.localSubnet() else {
+      return Result(openHosts: [], probedCount: 0, subnet: "", diagnostic: "no IPv4 interface")
+    }
+    let local = Set(subnet.hostAddresses() ?? [])
+    let known = addresses.filter { local.contains($0) }
+    let open = known.isEmpty ? [:] : await probe(hosts: known, paced: false)
+    return Result(
+      openHosts: open.keys.sorted { (IPv4Subnet.parse($0) ?? 0) < (IPv4Subnet.parse($1) ?? 0) },
+      probedCount: known.count,
+      subnet: subnet.cidrDescription,
+      diagnostic: nil,
+      portsByHost: open
+    )
+  }
+
   /// Probes in bounded batches. Opening a thousand sockets at once exhausts the process's file
   /// descriptors, and the failures look exactly like closed ports.
   private func probe(hosts: [String], paced: Bool) async -> [String: Set<Int>] {

@@ -70,6 +70,10 @@ public final class CompositeSourceDiscovery: SourceDiscovery, @unchecked Sendabl
     for child in children { child.acceptSweep(result) }
   }
 
+  /// UserDefaults key for the addresses the last sweep found cameras on. A discovery hint only:
+  /// a camera is never identified by its address, and a stale entry costs one failed probe.
+  public static let rememberedHostsKey = "discovery.rememberedCameraHosts"
+
   /// Nothing sweeps on this one's behalf; it is the thing that sweeps.
   public func setSweepIsShared(_ isShared: Bool) {}
 
@@ -102,7 +106,9 @@ public final class CompositeSourceDiscovery: SourceDiscovery, @unchecked Sendabl
       lock.unlock()
       return
     }
-    let sweeper = CameraSweeper(ports: ports) { [weak self] result in
+    // Remembered across launches so the next launch can ask those cameras directly instead of
+    // waiting out the startup grace and a full sweep.
+    let sweeper = CameraSweeper(ports: ports, persistenceKey: Self.rememberedHostsKey) { [weak self] result in
       self?.acceptSweep(result)
     }
     self.sweeper = sweeper
