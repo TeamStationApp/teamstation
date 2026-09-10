@@ -15,6 +15,7 @@ public final class ProgramEncoder: @unchecked Sendable {
   public private(set) var outputURL: URL?
 
   private var anchorSink: AnchorSink?
+  private var anchorRecordingID: Int64?
   private let telemetry: PipelineTelemetry
   private let converter: PixelConverter
   private let width: Int
@@ -112,7 +113,17 @@ public final class ProgramEncoder: @unchecked Sendable {
   ///
   /// A closure rather than an index reference so the encoder keeps knowing nothing about storage;
   /// the owner decides which recording the anchor belongs to.
-  public typealias AnchorSink = @Sendable (_ part: Int, _ programSeconds: Double, _ wall: WallClock) -> Void
+  /// The recording is carried through rather than looked up, because this is called from whichever
+  /// thread delivered the frame -- an NDI receive queue, an RTSP delivery queue -- and never the
+  /// main actor. An earlier version read the owner's `activeRecordingID` through
+  /// `MainActor.assumeIsolated`, which is a hard trap off the main actor and killed the app on the
+  /// first frame after the record button.
+  public typealias AnchorSink = @Sendable (
+    _ recordingID: Int64,
+    _ part: Int,
+    _ programSeconds: Double,
+    _ wall: WallClock
+  ) -> Void
 
   public init(
     telemetry: PipelineTelemetry,
@@ -148,6 +159,14 @@ public final class ProgramEncoder: @unchecked Sendable {
   public func setAnchorSink(_ sink: AnchorSink?) {
     lock.lock()
     anchorSink = sink
+    lock.unlock()
+  }
+
+  /// Which recording the anchors belong to, or nil when the programme is only being previewed.
+  /// Set from the main actor as recording starts and stops; read under the encoder's own lock.
+  public func setAnchorRecording(_ recordingID: Int64?) {
+    lock.lock()
+    anchorRecordingID = recordingID
     lock.unlock()
   }
 
@@ -334,10 +353,12 @@ public final class ProgramEncoder: @unchecked Sendable {
     lastSourceTime = presentationTime
     // Sampled here, where the programme's own timeline is decided, so the pair is exactly what was
     // written rather than what a later reader infers.
-    var anchor: (part: Int, seconds: Double, wall: WallClock)?
-    if time.isNumeric, time.seconds - lastAnchorSeconds >= Self.anchorIntervalSeconds {
+    var anchor: (recording: Int64, part: Int, seconds: Double, wall: WallClock)?
+    if let recording = anchorRecordingID,
+       time.isNumeric,
+       time.seconds - lastAnchorSeconds >= Self.anchorIntervalSeconds {
       lastAnchorSeconds = time.seconds
-      anchor = (part, time.seconds, WallClock(seconds: Date().timeIntervalSince1970))
+      anchor = (recording, part, time.seconds, WallClock(seconds: Date().timeIntervalSince1970))
     }
     let sink = anchorSink
     let ready = videoInput.isReadyForMoreMediaData
@@ -345,7 +366,7 @@ public final class ProgramEncoder: @unchecked Sendable {
 
     // Outside the lock: the sink writes to the index, and there is no reason to hold the
     // compositor's append behind a database write.
-    if let anchor { sink?(anchor.part, anchor.seconds, anchor.wall) }
+    if let anchor { sink?(anchor.recording, anchor.part, anchor.seconds, anchor.wall) }
 
     guard ready else { return }
 
