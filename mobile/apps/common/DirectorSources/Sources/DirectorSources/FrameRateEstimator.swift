@@ -35,10 +35,15 @@ public struct FrameRateEstimator: Sendable {
   public static let minimumSamples = 12
 
   /// Interquartile spread, as a fraction of the median, beyond which the timestamps are taken to be
-  /// scattered rather than ticked. A clean clock with drops has a spread of zero — three quarters of
-  /// its intervals are identical — so this only ever selects the mean for a sender whose stamps
-  /// genuinely wander.
-  public static let scatterTolerance = 0.25
+  /// scattered rather than ticked.
+  ///
+  /// Tight on purpose. A ticked clock spreads by at most one tick — 1501 against 1502 at 59.94 on
+  /// 90 kHz is 0.07% — and a clean clock with drops spreads by nothing, since three quarters of its
+  /// intervals are identical. Anything wider is a sender stamping with real jitter, and the median
+  /// of jittered intervals cannot resolve 59.94 from 60, which are 0.1% apart. At 25% a Cosmo C2
+  /// stamping with ±1 ms of jitter took the median and read 59.94 or 60 at random; only its paired
+  /// stamps, far wider, reached the mean.
+  public static let scatterTolerance = 0.01
 
   /// Several seconds of history at the rates in use. Long enough that one bad patch cannot define
   /// the answer, short enough to follow a camera that changes format without reconnecting.
