@@ -576,6 +576,64 @@ struct ProgramAnchorEmissionTests {
   }
 }
 
+@Suite("Programme anchors carry capture time")
+struct ProgramAnchorCaptureTimeTests {
+  /// The programme shows pictures the delay line has held for half a second. Anchoring on when
+  /// they were composed put rec-401's programme master 0.55 s behind the camera files.
+  @Test("A live frame anchors at its capture time; a replay frame at the lag the last live one had")
+  func anchorsAtCaptureTime() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("anchor-capture-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let walls = WallBox()
+    let encoder = ProgramEncoder(
+      telemetry: PipelineTelemetry(),
+      converter: PixelConverter(),
+      config: AppConfig(
+        programCodec: .h264,
+        programResolution: ProgramResolution(width: 160, height: 120),
+        programBitrate: 1_000_000
+      ),
+      directory: root
+    )
+    encoder.setAnchorSink { _, _, _, wall in walls.append(wall.seconds) }
+    try encoder.start(at: WallClock(seconds: Date().timeIntervalSince1970))
+    let factory = try #require(
+      PixelBufferFactory(width: 160, height: 120, pixelFormat: kCVPixelFormatType_32BGRA)
+    )
+    let buffer = try #require(factory.makeBuffer())
+    encoder.setAnchorRecording(9)
+
+    let captured = Date().timeIntervalSince1970 - 0.6
+    encoder.append(buffer, presentationTime: CMTime(value: 0, timescale: 30), captureWall: WallClock(seconds: captured))
+    let first = try #require(walls.all().first)
+    #expect(abs(first - captured) < 0.05, "anchored \(first - captured) s from the capture time")
+
+    // Replay frames carry no capture time. Once the next anchor is due, it must still sit about
+    // 0.6 s behind real time rather than jump forward to composition time.
+    for index in 1 ... 200 {
+      encoder.append(buffer, presentationTime: CMTime(value: CMTimeValue(index), timescale: 30))
+      try await Task.sleep(nanoseconds: 20_000_000)
+      if walls.all().count > 1 { break }
+    }
+    let values = walls.all()
+    if values.count > 1 {
+      let lag = Date().timeIntervalSince1970 - values[1]
+      #expect(lag > 0.5 && lag < 0.8, "replay anchor lagged real time by \(lag) s")
+    }
+    _ = await encoder.finish()
+  }
+}
+
+private final class WallBox: @unchecked Sendable {
+  private let lock = NSLock()
+  private var items: [Double] = []
+  func append(_ value: Double) { lock.lock(); items.append(value); lock.unlock() }
+  func all() -> [Double] { lock.lock(); defer { lock.unlock() }; return items }
+}
+
 /// Collects what the sink was handed, from whatever thread it ran on.
 private final class AnchorBox: @unchecked Sendable {
   private let lock = NSLock()
