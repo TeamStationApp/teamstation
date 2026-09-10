@@ -32,12 +32,14 @@ public struct SegmentWriterSettings: Sendable, Equatable {
 
   public static func from(
     config: AppConfig,
-    includesAudio: Bool = true
+    includesAudio: Bool = true,
+    transport: String? = nil
   ) -> SegmentWriterSettings {
     SegmentWriterSettings(
       segmentSeconds: config.segmentSeconds,
       includesAudio: includesAudio,
-      minimumFreeDiskBytes: config.minimumFreeDiskBytes
+      minimumFreeDiskBytes: config.minimumFreeDiskBytes,
+      transport: transport
     )
   }
 }

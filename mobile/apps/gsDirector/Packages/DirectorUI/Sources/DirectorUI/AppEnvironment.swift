@@ -1454,7 +1454,12 @@ public final class AppEnvironment {
       // A camera that sends no audio must not be given an audio track: the segmented writer waits
       // for audio it will never receive and stops accepting video a few seconds in, which the hold
       // filler then bridges with black. That is the burst-then-stall instant replay shows.
-      includesAudio: pipeline.hasDeliveredAudio && launch.archiveAudio
+      includesAudio: pipeline.hasDeliveredAudio && launch.archiveAudio,
+      // Stamped on every segment this writer produces. A take mixes NDI and RTSP now, and the two
+      // derive capture time differently enough that "which one wrote this row" is the first
+      // question worth asking of an angle that came out in the wrong place.
+      transport: discovery?.currentSources
+        .first(where: { $0.id == pipeline.sourceID })?.kind.rawValue
     )
     let writer = SegmentWriter(
       sourceID: pipeline.sourceID,
