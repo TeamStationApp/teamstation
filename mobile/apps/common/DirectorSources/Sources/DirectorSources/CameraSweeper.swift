@@ -14,6 +14,10 @@ public final class CameraSweeper: @unchecked Sendable {
     var policy = CameraSweepPolicy()
     var running = false
     var isBusy = false
+    var isBrowsing = false
+    /// Addresses that answered last time, newest first. A camera that dropped is almost always
+    /// still where it was, so these are probed before the segment and without pacing.
+    var lastSeen: [String] = []
     var missing = false
     var lastSweep: Date?
     var foundCount = 0
@@ -43,6 +47,10 @@ public final class CameraSweeper: @unchecked Sendable {
 
   /// What the pipeline currently is: recording or streaming, and whether an enabled camera is
   /// unaccounted for. Cheap to call on every telemetry poll.
+  public func setBrowsing(_ isBrowsing: Bool) {
+    state.withLock { $0.isBrowsing = isBrowsing }
+  }
+
   public func setDemand(isBusy: Bool, anyEnabledCameraMissing: Bool) {
     state.withLock {
       $0.isBusy = isBusy
@@ -83,6 +91,7 @@ public final class CameraSweeper: @unchecked Sendable {
         let gap = state.policy.gapAfterNextSweep(
           isBusy: state.isBusy,
           anyEnabledCameraMissing: state.missing,
+          isBrowsing: state.isBrowsing,
           now: now()
         )
         return (true, gap)
@@ -96,11 +105,15 @@ public final class CameraSweeper: @unchecked Sendable {
         continue
       }
 
-      let result = await scanner.scan()
+      let priority = state.withLock { $0.lastSeen }
+      let result = await scanner.scan(priority: priority)
 
       let stillRunning = state.withLock { state -> Bool in
         guard state.running else { return false }
         state.lastSweep = Date()
+        // Kept for the next sweep's head start. Only what answered, so a segment that has never
+        // held a camera never grows this.
+        if !result.openHosts.isEmpty { state.lastSeen = result.openHosts }
         state.foundCount = result.openHosts.count
         state.sweepCount &+= 1
         return true

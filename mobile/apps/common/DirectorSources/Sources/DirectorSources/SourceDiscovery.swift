@@ -75,7 +75,7 @@ public protocol SourceDiscovery: AnyObject, Sendable {
   /// Searches once, now, regardless of the periodic setting. How a camera that dropped mid-game is
   /// found again at whatever address it came back on.
   func searchNow()
-  func setSweepDemand(isBusy: Bool, anyEnabledCameraMissing: Bool)
+  func setSweepDemand(isBusy: Bool, anyEnabledCameraMissing: Bool, isBrowsing: Bool)
   /// Ports this transport wants probed by the shared address sweep. Empty means it does not sweep.
   ///
   /// One sweep serves both transports because the expensive part is ARP, which resolves per
@@ -93,7 +93,7 @@ public protocol SourceDiscovery: AnyObject, Sendable {
 extension SourceDiscovery {
   /// Tell discovery what the pipeline is doing, so a fallback address sweep can decide whether its
   /// broadcasts are worth making. Only the transports that sweep implement it.
-  public func setSweepDemand(isBusy: Bool, anyEnabledCameraMissing: Bool) {}
+  public func setSweepDemand(isBusy: Bool, anyEnabledCameraMissing: Bool, isBrowsing: Bool) {}
 
   public var sweepPorts: [Int] { [] }
   public func acceptSweep(_ result: SubnetScanner.Result) {}

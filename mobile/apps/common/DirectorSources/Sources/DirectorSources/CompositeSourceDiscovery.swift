@@ -137,13 +137,18 @@ public final class CompositeSourceDiscovery: SourceDiscovery, @unchecked Sendabl
   }
 
   /// Answered here rather than passed down: the sweep the demand describes is this one.
-  public func setSweepDemand(isBusy: Bool, anyEnabledCameraMissing: Bool) {
+  public func setSweepDemand(isBusy: Bool, anyEnabledCameraMissing: Bool, isBrowsing: Bool) {
     lock.lock()
     let sweeper = self.sweeper
     lock.unlock()
     sweeper?.setDemand(isBusy: isBusy, anyEnabledCameraMissing: anyEnabledCameraMissing)
+    sweeper?.setBrowsing(isBrowsing)
     for child in children {
-      child.setSweepDemand(isBusy: isBusy, anyEnabledCameraMissing: anyEnabledCameraMissing)
+      child.setSweepDemand(
+        isBusy: isBusy,
+        anyEnabledCameraMissing: anyEnabledCameraMissing,
+        isBrowsing: isBrowsing
+      )
     }
   }
 

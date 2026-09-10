@@ -104,6 +104,10 @@ public final class SubnetScanner: @unchecked Sendable {
   private let ports: [Int]
   private let timeout: TimeInterval
   private let concurrency: Int
+  /// Addresses probed together once the known ones are out of the way.
+  public static let pacedBatchSize = 5
+  /// Left between those batches. Five every 200 ms is a /24 in about ten seconds.
+  public static let pacedGapMilliseconds = 200
 
   public convenience init(port: Int = 554, timeout: TimeInterval = 0.3, concurrency: Int = 32) {
     self.init(ports: [port], timeout: timeout, concurrency: concurrency)
@@ -122,7 +126,11 @@ public final class SubnetScanner: @unchecked Sendable {
     self.concurrency = concurrency
   }
 
-  public func scan() async -> Result {
+  /// Addresses worth trying before the rest of the segment, newest first.
+  ///
+  /// A camera that dropped is nearly always still on the address it was last seen at, so probing
+  /// that one first turns the common case into a single packet instead of a segment-wide sweep.
+  public func scan(priority: [String] = []) async -> Result {
     guard let subnet = Self.localSubnet() else {
       return Result(openHosts: [], probedCount: 0, subnet: "", diagnostic: "no IPv4 interface")
     }
@@ -135,7 +143,12 @@ public final class SubnetScanner: @unchecked Sendable {
       )
     }
 
-    let open = await probe(hosts: hosts)
+    // Known addresses first and without pacing, then everything else gently.
+    let known = priority.filter { IPv4Subnet.parse($0) != nil }
+    let seen = Set(known)
+    let rest = hosts.filter { !seen.contains($0) }
+    var open = known.isEmpty ? [:] : await probe(hosts: known, paced: false)
+    for (host, ports) in await probe(hosts: rest, paced: true) { open[host] = ports }
     return Result(
       openHosts: open.keys.sorted { (IPv4Subnet.parse($0) ?? 0) < (IPv4Subnet.parse($1) ?? 0) },
       probedCount: hosts.count,
@@ -147,13 +160,21 @@ public final class SubnetScanner: @unchecked Sendable {
 
   /// Probes in bounded batches. Opening a thousand sockets at once exhausts the process's file
   /// descriptors, and the failures look exactly like closed ports.
-  private func probe(hosts: [String]) async -> [String: Set<Int>] {
+  private func probe(hosts: [String], paced: Bool) async -> [String: Set<Int>] {
     var open: [String: Set<Int>] = [:]
     var index = 0
+    let size = paced ? Self.pacedBatchSize : concurrency
 
     while index < hosts.count {
-      let batch = hosts[index ..< min(index + concurrency, hosts.count)]
+      let batch = hosts[index ..< min(index + size, hosts.count)]
       index += batch.count
+      // Spread out rather than fired at once. Every probe of an empty address is an ARP broadcast
+      // that every device on the segment must process, cameras included, and a segment-wide sweep
+      // delivered as fast as the sockets allow was measured stalling a camera's delivery for over
+      // a second. Paced, a /24 takes about ten seconds and nothing else notices.
+      if paced, index > batch.count {
+        try? await Task.sleep(for: .milliseconds(Self.pacedGapMilliseconds))
+      }
 
       let found = await withTaskGroup(of: (String, Set<Int>).self) { group in
         for host in batch {
