@@ -151,6 +151,14 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
   private var silenceChannels: Int = 0
   private var boundary = SegmentBoundary(interval: 6)
   private var audioTimeline = ArchiveAudioTimeline()
+  /// The source's audio clock pinned to the recording's wall clock, once per recording. Kept across
+  /// segment recycles on purpose; see `ArchiveAudioTimeline.WallAnchor`.
+  private var audioWallAnchor: ArchiveAudioTimeline.WallAnchor?
+  /// Whether this segment's `baseWallClock` came from the camera's capture clock. Only then does the
+  /// recording-long audio anchor mean anything: an arrival-time base moves with delivery, and a
+  /// camera back from a reconnect with no capture times used to have its audio mapped through that
+  /// and land 1.9 s off its picture.
+  private var baseWallIsCapture = false
   /// Audio waiting for the writer to accept it.
   ///
   /// Discarding a buffer because `isReadyForMoreMediaData` was false is not survivable: the audio
@@ -364,6 +372,8 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     started = false
     held = nil
     audioTimeline = ArchiveAudioTimeline()
+    audioWallAnchor = nil
+    baseWallIsCapture = false
     pendingAudio.removeAll()
   }
 
@@ -589,6 +599,7 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
       // different moment on every camera — each start carrying that camera's delivery delay on top
       // of its own keyframe phase.
       baseWallClock = picture.captureWallClock ?? clock.now
+      baseWallIsCapture = picture.captureWallClock != nil
     }
     guard let base = basePresentationTime else {
       lock.unlock()
@@ -826,6 +837,7 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     started = false
     basePresentationTime = nil
     baseWallClock = nil
+    baseWallIsCapture = false
     lastVideoTime = .negativeInfinity
     pendingFirstFrameID = nil
     segmentVideoFrames = 0
@@ -943,10 +955,28 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
       return
     }
 
+    // The newest picture's capture time on the recording's wall clock: the segment's base plus how
+    // far into the segment that picture sits.
+    let segmentBaseWall = baseWallIsCapture ? baseWallClock?.seconds : nil
+    let videoWall = segmentBaseWall.map { $0 + lastVideoTime.seconds }
+    if let videoWall, frame.presentationTime.isNumeric {
+      if let anchor = audioWallAnchor {
+        // A source clock that restarted — a camera reconnect — no longer fits the anchor at all.
+        // Re-pin it rather than lose the audio for the rest of the recording.
+        let predicted = anchor.wallSeconds + (frame.presentationTime.seconds - anchor.sourceSeconds)
+        if abs(predicted - videoWall) > 2 {
+          audioWallAnchor = .init(sourceSeconds: frame.presentationTime.seconds, wallSeconds: videoWall)
+        }
+      } else {
+        audioWallAnchor = .init(sourceSeconds: frame.presentationTime.seconds, wallSeconds: videoWall)
+      }
+    }
     let placement = audioTimeline.place(
       sourceTime: frame.presentationTime,
       duration: frame.duration,
-      videoTime: lastVideoTime
+      videoTime: lastVideoTime,
+      wallAnchor: audioWallAnchor,
+      segmentBaseWall: segmentBaseWall
     )
     lock.unlock()
 

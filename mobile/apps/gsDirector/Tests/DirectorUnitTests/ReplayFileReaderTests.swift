@@ -65,11 +65,17 @@ struct ReplayFileReaderTests {
     var first: TimeInterval?
     var last: TimeInterval = 0
     var count = 0
-    while let frame = reader.next() {
+    // `next()` gives up after two seconds without a frame, which a loaded simulator can hit
+    // mid-replay. Only the reader saying it is exhausted ends the replay; a timeout just asks again.
+    let deadline = Date().addingTimeInterval(10)
+    while count <= 100, Date() < deadline {
+      guard let frame = reader.next() else {
+        if reader.isExhausted { break }
+        continue
+      }
       if first == nil { first = frame.media }
       last = frame.media
       count += 1
-      if count > 100 { break }
     }
     reader.cancel()
     let produced = last - (first ?? last) + 0.1
