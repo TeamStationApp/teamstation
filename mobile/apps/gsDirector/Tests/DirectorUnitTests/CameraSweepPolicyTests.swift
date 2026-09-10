@@ -4,11 +4,11 @@ import DirectorSources
 
 @Suite("Camera sweep policy")
 struct CameraSweepPolicyTests {
-  @Test("Sweeps freely when nothing is being recorded or streamed")
-  func idleSweepsAtTheShortGap() {
+  @Test("Sweeps at the standing gap when nothing is being recorded or streamed")
+  func idleSweepsAtTheStandingGap() {
     var policy = CameraSweepPolicy()
-    #expect(policy.gapAfterNextSweep(isBusy: false, anyEnabledCameraMissing: false, now: 0) == 3)
-    #expect(policy.gapAfterNextSweep(isBusy: false, anyEnabledCameraMissing: true, now: 300) == 3)
+    #expect(policy.gapAfterNextSweep(isBusy: false, anyEnabledCameraMissing: false, now: 0) == 10)
+    #expect(policy.gapAfterNextSweep(isBusy: false, anyEnabledCameraMissing: true, now: 300) == 10)
   }
 
   @Test("Does not sweep at all while recording with every camera accounted for")
@@ -22,18 +22,20 @@ struct CameraSweepPolicyTests {
   func dropoutStartsRecoverySweeping() {
     var policy = CameraSweepPolicy()
     #expect(policy.gapAfterNextSweep(isBusy: true, anyEnabledCameraMissing: false, now: 0) == nil)
-    #expect(policy.gapAfterNextSweep(isBusy: true, anyEnabledCameraMissing: true, now: 10) == 3)
+    #expect(policy.gapAfterNextSweep(isBusy: true, anyEnabledCameraMissing: true, now: 10) == 10)
   }
 
-  @Test("Backs off 3 to 6 to 15 a minute at a time, then holds")
-  func backoffSchedule() {
+  /// One gap, however long the camera has been gone. The broadcasts a shorter early gap costs are
+  /// what made the Director's own Wi-Fi slow, and they land during the recording.
+  @Test("Holds the same gap however long the dropout lasts")
+  func gapDoesNotChangeWithTime() {
     var policy = CameraSweepPolicy()
     let start = 1_000.0
     _ = policy.gapAfterNextSweep(isBusy: true, anyEnabledCameraMissing: true, now: start)
     for (elapsed, expected) in [
-      (0.0, 3.0), (30.0, 3.0), (59.9, 3.0),
-      (60.0, 6.0), (90.0, 6.0), (119.9, 6.0),
-      (120.0, 15.0), (600.0, 15.0), (7_200.0, 15.0)
+      (0.0, 10.0), (30.0, 10.0), (59.9, 10.0),
+      (60.0, 10.0), (90.0, 10.0), (119.9, 10.0),
+      (120.0, 10.0), (600.0, 10.0), (7_200.0, 10.0)
     ] {
       let gap = policy.gapAfterNextSweep(
         isBusy: true,
@@ -44,18 +46,18 @@ struct CameraSweepPolicyTests {
     }
   }
 
-  /// A camera that comes back and drops again is a fresh emergency, not a continuation of the old
-  /// one — otherwise the second dropout inherits a fifteen second gap and takes that long to notice.
-  @Test("Recovery resets the backoff")
-  func recoveryResetsTheBackoff() {
+  /// The dropout clock still resets, because `missingForSeconds` drives telemetry and an
+  /// offline-for-hours tile is judged on it.
+  @Test("Recovery resets the dropout clock")
+  func recoveryResetsTheDropoutClock() {
     var policy = CameraSweepPolicy()
     let start = 500.0
     _ = policy.gapAfterNextSweep(isBusy: true, anyEnabledCameraMissing: true, now: start)
-    #expect(policy.gapAfterNextSweep(isBusy: true, anyEnabledCameraMissing: true, now: start + 300) == 15)
+    #expect(policy.gapAfterNextSweep(isBusy: true, anyEnabledCameraMissing: true, now: start + 300) == 10)
     // Found again.
     #expect(policy.gapAfterNextSweep(isBusy: true, anyEnabledCameraMissing: false, now: start + 301) == nil)
     // And gone again: back to chasing hard.
-    #expect(policy.gapAfterNextSweep(isBusy: true, anyEnabledCameraMissing: true, now: start + 302) == 3)
+    #expect(policy.gapAfterNextSweep(isBusy: true, anyEnabledCameraMissing: true, now: start + 302) == 10)
   }
 
   @Test("Reports how long the dropout has lasted, and nothing when healthy")
