@@ -36,6 +36,7 @@ final class CameramanAppDelegate: NSObject, UIApplicationDelegate {
 struct CameramanApp: App {
   @UIApplicationDelegateAdaptor(CameramanAppDelegate.self) private var appDelegate
   @State private var environment: AppEnvironment
+  @Environment(\.scenePhase) private var scenePhase
 
   init() {
     let launch = LaunchConfiguration(
@@ -57,6 +58,17 @@ struct CameramanApp: App {
           // also what makes an unattended device run survive to the end.
           UIApplication.shared.isIdleTimerDisabled = true
         }
+    }
+    .onChange(of: scenePhase) { _, phase in
+      // `isIdleTimerDisabled` stops the screen locking *itself*, but a side-button press, the app
+      // switcher, or another app launching still backgrounds this one, and iOS takes the
+      // advertisement and the video encoder down on the way out. Nothing restores either on the way
+      // back in, so the app has to ask.
+      switch phase {
+      case .background: environment.handleBackground()
+      case .active: environment.handleForeground()
+      default: break
+      }
     }
   }
 }

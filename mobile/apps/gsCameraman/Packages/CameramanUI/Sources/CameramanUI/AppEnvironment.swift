@@ -40,6 +40,10 @@ public final class AppEnvironment {
   public private(set) var cameraAuthorized = false
   public private(set) var microphoneAuthorized = false
   public private(set) var status = "starting"
+  /// Whether the scene actually reached the background since it was last active. See
+  /// `handleBackground`.
+  @ObservationIgnored
+  private var wasBackgrounded = false
   public private(set) var encodeFailure: String?
   public private(set) var serverStatus = RTSPServer.Status()
   /// Frames in and frames out. Held off Observation and off the main actor so a 30 fps bump does
@@ -200,6 +204,42 @@ public final class AppEnvironment {
         self?.thermalState = ProcessLoad.thermalStateName()
       }
     }
+  }
+
+  /// Called when the scene enters the background, purely to record that it happened.
+  ///
+  /// `.active` also arrives after a merely inactive scene — a Control Center pull, a notification
+  /// banner — where nothing was torn down and rebuilding the encoder would cut a working stream for
+  /// no reason. Only a real trip to the background needs the repair below.
+  public func handleBackground() {
+    wasBackgrounded = true
+  }
+
+  /// Called when the scene becomes active, to put back the three things iOS takes away.
+  ///
+  /// None of them are restored on the way in, and none of them are visible from the handset: the
+  /// preview keeps rendering throughout, because capture is independent of all three. The app comes
+  /// back looking perfectly healthy while Director cannot find it, or finds it and gets no picture.
+  public func handleForeground() {
+    server?.ensureListening()
+    // Unconditionally, not only when the listener had to be rebuilt. iOS drops the Bonjour record
+    // the moment the scene leaves the foreground but leaves the listener itself bound and
+    // accepting, so the app can be serving on an open port with no advertisement at all. Director
+    // finds an iOS camera by `_rtsp._tcp` alone, so that state is invisible to it.
+    server?.refreshAdvertisement()
+
+    guard wasBackgrounded else { return }
+    wasBackgrounded = false
+    // The VideoToolbox session does not survive the background transition, and nothing reports it:
+    // encode calls fail against a session that is gone, audio keeps flowing from its own encoder,
+    // and the RTSP server keeps serving that audio to anyone who connects. Measured on an iPhone
+    // 15 Pro — a fresh launch sends 360 frames in six seconds, and after one background cycle it
+    // sends none while audio is unaffected. A source that answers with sound and no picture is
+    // worse for Director than one it cannot find, so this is repaired on the way back in.
+    guard !launch.useSyntheticCamera, !Self.hasNoCaptureHardware, cameraAuthorized else { return }
+    videoEncoder.invalidate()
+    videoEncoder.configure(settings: settings)
+    videoEncoder.requestKeyframe()
   }
 
   public func rename(to name: String) {
