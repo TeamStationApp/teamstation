@@ -76,6 +76,29 @@ struct CameraSweepPolicyTests {
     #expect(policy.gapAfterNextSweep(isBusy: true, anyEnabledCameraMissing: true, isBrowsing: false, now: start + 302) == 10)
   }
 
+  /// Every enabled camera is "not present" for the first seconds after launch, before discovery
+  /// has heard from it. That is not a dropout, and treating it as one swept the segment on every
+  /// launch.
+  @Test("Does not sweep for cameras that simply have not appeared yet at launch")
+  func launchIsNotADropout() {
+    var policy = CameraSweepPolicy(startedAt: 1_000)
+    #expect(policy.gapAfterNextSweep(isBusy: false, anyEnabledCameraMissing: true, isBrowsing: false, now: 1_000) == nil)
+    #expect(policy.gapAfterNextSweep(isBusy: false, anyEnabledCameraMissing: true, isBrowsing: false, now: 1_019.9) == nil)
+    #expect(policy.missingForSeconds(now: 1_019.9) == nil)
+  }
+
+  @Test("A camera still missing once startup is over is chased")
+  func missingAfterGraceSweeps() {
+    var policy = CameraSweepPolicy(startedAt: 1_000)
+    #expect(policy.gapAfterNextSweep(isBusy: true, anyEnabledCameraMissing: true, isBrowsing: false, now: 1_020) == 10)
+  }
+
+  @Test("The camera list sweeps even during startup, because the operator asked")
+  func browsingDuringGraceSweeps() {
+    var policy = CameraSweepPolicy(startedAt: 1_000)
+    #expect(policy.gapAfterNextSweep(isBusy: false, anyEnabledCameraMissing: true, isBrowsing: true, now: 1_001) == 10)
+  }
+
   @Test("Reports how long the dropout has lasted, and nothing when healthy")
   func missingDuration() {
     var policy = CameraSweepPolicy()
