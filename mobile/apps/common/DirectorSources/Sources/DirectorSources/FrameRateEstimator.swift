@@ -44,9 +44,20 @@ public struct FrameRateEstimator: Sendable {
   /// the answer, short enough to follow a camera that changes format without reconnecting.
   private static let windowSize = 120
 
+  /// About a minute at 60 fps. Only consulted for scattered stamps: over 120 frames the Cosmo's
+  /// ±12 ms scatter leaves the mean uncertain by about 1%, enough to land on 59.94 or 60 at random,
+  /// and the archive timeline steps at whichever it lands on — 3.6 s an hour apart. Over 3,600 the
+  /// uncertainty is 0.02%, which separates them.
+  private static let longWindowSize = 3_600
+
   private let clockRate: Double
   private var previous: UInt32?
   private var intervals: [Double] = []
+  /// A ring of the most recent intervals with its running sum, so the long mean costs one add and
+  /// one subtract per frame rather than a pass over a minute of history.
+  private var longIntervals: [Double] = []
+  private var longHead = 0
+  private var longSum: Double = 0
 
   /// Nil until `minimumSamples` intervals have been seen. Callers are expected to have their own
   /// fallback for that window rather than being handed a guess dressed as a measurement.
@@ -86,6 +97,15 @@ public struct FrameRateEstimator: Sendable {
   /// The shared half: keep a bounded window, take its middle, and snap. `perSecond` is how many
   /// units of `interval` make a second — the media clock rate for ticks, one for seconds.
   private mutating func record(interval: Double, perSecond: Double) -> Bool {
+    if longIntervals.count < Self.longWindowSize {
+      longIntervals.append(interval)
+    } else {
+      longSum -= longIntervals[longHead]
+      longIntervals[longHead] = interval
+      longHead = (longHead + 1) % Self.longWindowSize
+    }
+    longSum += interval
+
     intervals.append(interval)
     if intervals.count > Self.windowSize {
       intervals.removeFirst(intervals.count - Self.windowSize)
@@ -104,8 +124,10 @@ public struct FrameRateEstimator: Sendable {
     // single intervals say little and the window's total span says everything: the scatter
     // telescopes away, leaving the sender's real pacing.
     let quartileSpread = sorted[sorted.count * 3 / 4] - sorted[sorted.count / 4]
+    // The long window rather than the short one, for the precision reason given on
+    // `longWindowSize`: it is what lets the mean tell 59.94 from 60.
     let period = quartileSpread > median * Self.scatterTolerance
-      ? intervals.reduce(0, +) / Double(intervals.count)
+      ? longSum / Double(longIntervals.count)
       : median
 
     let resolved = Self.snap(perSecond / period)
@@ -119,6 +141,9 @@ public struct FrameRateEstimator: Sendable {
   public mutating func reset() {
     previous = nil
     intervals.removeAll(keepingCapacity: true)
+    longIntervals.removeAll(keepingCapacity: true)
+    longHead = 0
+    longSum = 0
     frameRate = nil
   }
 

@@ -71,6 +71,33 @@ struct FrameRateEstimatorTests {
     #expect(estimator.frameRate == 60)
   }
 
+  /// Scattered stamps around an exact rate: frames displaced in pairs by about ±6 ms, the way the
+  /// Cosmo stamps them, so no single window of 120 intervals can say whether it is 59.94 or 60.
+  private func scatteredIntervals(rate: Double, count: Int) -> [Double] {
+    var state: UInt64 = 0x2545_F491_4F6C_DD1D
+    func noise() -> Double {
+      state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+      return Double(state >> 11) / Double(1 << 53) * 2 - 1
+    }
+    let stamps = (0 ... count).map { index in
+      // ±6 ms in pairs plus ±2 ms of noise: every interval stays positive, as the camera's do.
+      Double(index) / rate + (index % 2 == 0 ? -0.006 : 0.006) + noise() * 0.002
+    }
+    return zip(stamps.dropFirst(), stamps).map { $0 - $1 }
+  }
+
+  @Test("Scattered stamps settle on 60 rather than flipping to its broadcast twin", arguments: [60.0, 59.94])
+  func scatteredStampsResolveTheFractionalTwin(rate: Double) {
+    var estimator = FrameRateEstimator()
+    var readings: [Double] = []
+    for (index, interval) in scatteredIntervals(rate: rate, count: 7_200).enumerated() {
+      estimator.note(intervalSeconds: interval)
+      if index >= 3_600, let reading = estimator.frameRate { readings.append(reading) }
+    }
+    #expect(!readings.isEmpty)
+    #expect(readings.allSatisfy { $0 == rate }, "read \(Set(readings)) for a \(rate) fps sender")
+  }
+
   @Test("Packets of one picture sharing a timestamp are not counted as frames")
   func ignoresRepeatedTimestamps() {
     var estimator = FrameRateEstimator()
