@@ -51,6 +51,9 @@ public enum ArchiveRemux {
     // 150 s exported 150 s early from then on, and no two angles agreed after their first gap.
     let placed = !startWalls.isEmpty && startWalls.count == files.count && windowStart != nil
     let origin = windowStart ?? WallClock(seconds: 0)
+    // The last picture placed, kept so a gap can be filled by holding it. One sample stretched over
+    // the hole rather than one sample per frame: a 150 s dropout costs a single insertion.
+    var held: (asset: AVURLAsset, sourceEnd: CMTime, frame: CMTime, timelineEnd: CMTime)?
 
     let composition = AVMutableComposition()
     var cursor = CMTime.zero
@@ -90,6 +93,14 @@ public enum ArchiveRemux {
         let at: CMTime = placed
           ? CMTime(seconds: max(0, (startWalls[index] + trim) - origin), preferredTimescale: 600)
           : cursor
+        // Anything between the last picture and this one is a stretch the camera did not cover.
+        // Hold the last frame across it rather than leaving an empty range: an empty range has no
+        // samples at all -- measured -- and a viewer should see the picture freeze, not the file
+        // decide for itself what to show. Nothing is held before the first frame: at the head of a
+        // file there is no picture yet, and black is the honest answer there.
+        if placed, let previous = held, at > previous.timelineEnd {
+          try? await holdFrame(previous, until: at, in: composition)
+        }
         var use = kept
         if let targetDuration {
           let remaining = targetDuration - at.seconds
@@ -104,6 +115,14 @@ public enum ArchiveRemux {
         // gap was: no camera delivered anything for it.
         try await composition.insertTimeRange(range, of: asset, at: at)
         cursor = CMTimeMaximum(cursor, CMTimeAdd(at, use))
+        if placed {
+          held = (
+            asset: asset,
+            sourceEnd: CMTimeAdd(start, use),
+            frame: await Self.frameDuration(of: asset),
+            timelineEnd: CMTimeAdd(at, use)
+          )
+        }
       } catch {
         skipped.append(file.lastPathComponent)
         continue
@@ -116,8 +135,15 @@ public enum ArchiveRemux {
 
     guard cursor.seconds > 0.05 else { throw Error.empty }
     if let targetDuration, targetDuration - cursor.seconds > 0.05 {
-      let pad = CMTime(seconds: targetDuration - cursor.seconds, preferredTimescale: 600)
-      composition.insertEmptyTimeRange(CMTimeRange(start: cursor, duration: pad))
+      let end = CMTime(seconds: targetDuration, preferredTimescale: 600)
+      // A camera that stopped before the window did is the same case as one that dropped out in the
+      // middle, so it gets the same answer.
+      if placed, let previous = held, (try? await holdFrame(previous, until: end, in: composition)) != nil {
+        cursor = end
+      } else {
+        let pad = CMTime(seconds: targetDuration - cursor.seconds, preferredTimescale: 600)
+        composition.insertEmptyTimeRange(CMTimeRange(start: cursor, duration: pad))
+      }
     }
 
     guard let session = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetPassthrough)
@@ -138,6 +164,41 @@ public enum ArchiveRemux {
   /// A take lasts hours, not days. Video tracks stamped on a compositor/boot clock report
   /// multi-day durations; the longest track inside this window is the programme.
   public static let maximumSaneDuration: TimeInterval = 20_000
+
+  /// Holds `previous`'s last picture from where it ended until `end`.
+  ///
+  /// The frame is inserted once and then scaled to the length of the hole. A passthrough export
+  /// copies samples rather than re-encoding them, and it honours the scaling: measured across a
+  /// ten-second gap, every probe inside it decoded as the frame before the gap.
+  private static func holdFrame(
+    _ previous: (asset: AVURLAsset, sourceEnd: CMTime, frame: CMTime, timelineEnd: CMTime),
+    until end: CMTime,
+    in composition: AVMutableComposition
+  ) async throws {
+    let span = CMTimeSubtract(end, previous.timelineEnd)
+    guard span.seconds > 0.001, previous.frame.seconds > 0 else { return }
+    let lastFrameStart = CMTimeMaximum(.zero, CMTimeSubtract(previous.sourceEnd, previous.frame))
+    try await composition.insertTimeRange(
+      CMTimeRange(start: lastFrameStart, duration: previous.frame),
+      of: previous.asset,
+      at: previous.timelineEnd
+    )
+    composition.scaleTimeRange(
+      CMTimeRange(start: previous.timelineEnd, duration: previous.frame),
+      toDuration: span
+    )
+  }
+
+  /// One frame of this asset, for the hold above. Falls back to 30 fps when the track will not say,
+  /// which only decides how much of the source the single held sample is taken from.
+  private static func frameDuration(of asset: AVURLAsset) async -> CMTime {
+    let fallback = CMTime(value: 1, timescale: 30)
+    guard let track = try? await asset.loadTracks(withMediaType: .video).first,
+          let rate = try? await track.load(.nominalFrameRate),
+          rate > 0
+    else { return fallback }
+    return CMTime(seconds: 1 / Double(rate), preferredTimescale: 600)
+  }
 
   /// Fewest frames per second a real part of ours can hold.
   ///
