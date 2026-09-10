@@ -300,6 +300,47 @@ Wall-clock placement fixes where a segment *starts*; it says nothing about how f
 inside it. The first segment of a take from a mis-declaring camera is therefore the exposed case,
 because it is the one written while the estimator is still converging.
 
+### C14 — instant replay shares the export defect, and truncates because of it
+
+Reported from the rig: instant replay **occasionally cuts off before the requested period is
+complete**. It is the same conflation C1 fixes for export, in the same file, on a different path —
+so fixing `ArchiveRemux.concatenate` alone will *not* fix it.
+
+`SegmentAssembler.assembly(url:media:)` sets
+
+```swift
+duration: media.reduce(0) { $0 + $1.duration }     // summed MEDIA time
+startWall: media[0].startWall
+```
+
+and `AppEnvironment` then computes
+
+```swift
+let startOffset = max(0, target - assembly.startWall)   // a WALL-CLOCK delta
+ScrubMapping.shouldStartReplay(assemblyDuration: assembly.duration, startOffset: startOffset)
+```
+
+A wall-clock offset is being applied to a media timeline. While every segment is contiguous the two
+are equal and nothing shows. As soon as the requested window contains a gap, `summed` is shorter
+than the wall span by the gap, and three things follow at once:
+
+1. **The replay starts too far in.** `startOffset` counts wall-clock seconds that the tape does not
+   contain, so playback begins later than the operator asked for.
+2. **It ends early**, by roughly the gap length — which is exactly "cut off before the period is
+   complete", and exactly why it is *occasional*: it needs a gap in that window.
+3. **It can refuse outright.** `shouldStartReplay` is `startOffset < assemblyDuration - 0.25`, so a
+   large enough gap makes a perfectly good window look unplayable — the "Replay not ready yet"
+   refusal seen before on a tile that had just come back.
+
+`01cef5b7` fixed a different and real bug in the same area — how much tape has been *shown* was a
+frame count over an assumed rate, so the requested duration was wrong by whatever factor the rate
+was wrong by. That is why the unit test passes now. It does not touch this, because this is about
+which tape is staged and where playback starts within it, not how its progress is counted.
+
+**The fix is C1's, applied to the replay path too:** stage by `startWall − windowStart` so media
+position and wall clock agree, and let a gap be a gap that the player holds through rather than a
+shortfall. Both paths then answer the same question the same way.
+
 ---
 
 ## 4. Test infrastructure
@@ -419,6 +460,18 @@ double. Caps are given as display / disk and must be set explicitly, since both 
 | S43 | Any shaped phase, unshaped again | counters return to baseline and the tile recovers without a relaunch |
 | S44 | Every shaped take | webcam frame read at each phase boundary agrees with what telemetry claimed |
 | S45 | Shaping left applied after a killed run | the trap cleared it; `GET /v1/shape` is empty |
+
+Instant replay. Judged on the webcam against the wall clock, not on telemetry.
+
+| ID | Condition | Pass |
+|---|---|---|
+| S46 | 10 s replay, clean window, full speed | plays 10 s of content and returns to live; webcam shows the overlay reading 10 s behind the wall clock at entry |
+| S47 | 10 s replay whose window contains a shaped dropout | plays the full 10 s wall-clock period, holding the last frame across the gap; does not end early and is not refused |
+| S48 | 10 s replay at 50 % | plays 10 s of content over 20 s of wall clock; the gap to live closes at half rate |
+| S49 | Replay rate set to 40 % | plays at 40 %, not quantised to 50 % |
+| S50 | Replay on a camera that reconnected seconds earlier | starts at the requested instant, not at the first segment after the gap |
+| S51 | Replay of an NDI source running decimated | correct duration and speed at the reduced rate; no double-speed picture from a declared rate |
+| S52 | Replay immediately after a disk-cap refusal span | the refused span is held, and the replay still spans its full requested period |
 
 ## 6. Order of work
 
