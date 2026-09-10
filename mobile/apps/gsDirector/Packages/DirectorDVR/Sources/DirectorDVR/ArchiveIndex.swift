@@ -176,6 +176,24 @@ public final class ArchiveIndex: @unchecked Sendable {
         PRIMARY KEY (recording_id, source_id)
       );
       """)
+    // Where the programme was in real time, sampled as it was written.
+    //
+    // A camera records the wall clock of every segment; the programme had exactly two facts for a
+    // whole take, its start and its end, which is why its drift stayed invisible until somebody
+    // compared it against a camera frame by frame. One row every few seconds makes the programme as
+    // re-timeable as the cameras, and turns "the programme holds wall clock" into something a test
+    // can assert rather than infer.
+    try store.execute("""
+      CREATE TABLE IF NOT EXISTS program_anchors (
+        recording_id INTEGER NOT NULL,
+        part INTEGER NOT NULL,
+        program_seconds REAL NOT NULL,
+        wall REAL NOT NULL
+      );
+      """)
+    try store.execute(
+      "CREATE INDEX IF NOT EXISTS program_anchors_lookup ON program_anchors(recording_id, part, program_seconds);"
+    )
     try store.execute(
       "CREATE UNIQUE INDEX IF NOT EXISTS segments_unique ON segments(recording_id, source_id, sequence);"
     )
@@ -470,6 +488,61 @@ public final class ArchiveIndex: @unchecked Sendable {
         reason.map { .text($0) } ?? .null
       ]
     )
+  }
+
+  public struct ProgramAnchor: Sendable, Equatable {
+    /// Which output file, 1-based. A writer that died mid-take leaves a continuation part.
+    public var part: Int
+    /// Seconds from the start of that part's own timeline.
+    public var programSeconds: Double
+    /// What time it was when that moment was written.
+    public var wall: WallClock
+
+    /// Wall clock this part's timeline begins at, which is what places it in an export.
+    public var partStartWall: WallClock { wall - programSeconds }
+  }
+
+  @discardableResult
+  public func insertProgramAnchor(
+    recordingID: Int64,
+    part: Int,
+    programSeconds: Double,
+    wall: WallClock
+  ) throws -> Int64 {
+    try store.execute(
+      "INSERT INTO program_anchors (recording_id, part, program_seconds, wall) VALUES (?, ?, ?, ?);",
+      [
+        .integer(recordingID),
+        .integer(Int64(part)),
+        .real(programSeconds),
+        .real(wall.seconds)
+      ]
+    )
+  }
+
+  public func programAnchors(recordingID: Int64) throws -> [ProgramAnchor] {
+    try store.query(
+      """
+      SELECT part, program_seconds, wall FROM program_anchors
+      WHERE recording_id = ? ORDER BY part ASC, program_seconds ASC;
+      """,
+      [ .integer(recordingID) ]
+    ).map {
+      ProgramAnchor(
+        part: Int($0.int(0)),
+        programSeconds: $0.double(1),
+        wall: WallClock(seconds: $0.double(2))
+      )
+    }
+  }
+
+  /// The wall clock each programme part's own timeline starts at, earliest anchor per part.
+  public func programPartStarts(recordingID: Int64) throws -> [Int: WallClock] {
+    var starts: [Int: WallClock] = [:]
+    for anchor in try programAnchors(recordingID: recordingID) where starts[anchor.part] == nil {
+      starts[anchor.part] = anchor.partStartWall
+    }
+    return starts
   }
 
   public struct RecordingSource: Sendable, Equatable {
