@@ -82,4 +82,19 @@ public enum ScrubMapping: Sendable {
   public static func shouldContinueReplay(currentOffsetSeconds: Double) -> Bool {
     currentOffsetSeconds < -snapToLiveSeconds
   }
+
+  /// Whether a timed replay that has just run out of staged tape is actually finished.
+  ///
+  /// It is finished when it has shown what was asked for, not when the decoder happens to reach
+  /// the end of the files staged so far. Treating those as the same thing is what made a
+  /// slow-motion rewind stop about a quarter short: the decoder exhausts its playlist, reports
+  /// finished, and the remainder is abandoned with seconds still owed. Full speed hid it, because
+  /// the next segment had usually closed by the time the tape ran out.
+  ///
+  /// The half-second is the same snap-to-live margin used elsewhere: chasing a last fraction of a
+  /// second is not worth a decoder restart the operator would see.
+  public static func hasFinishedTimedReplay(played: TimeInterval, requested: TimeInterval?) -> Bool {
+    guard let requested else { return false }
+    return played + snapToLiveSeconds >= requested
+  }
 }
