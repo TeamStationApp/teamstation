@@ -46,4 +46,42 @@ public enum LocalAddresses {
     }
     return found.sorted()
   }
+
+  /// Bytes received on Wi-Fi since boot, as the interface's own 32-bit counter.
+  ///
+  /// The one place the NDI camera's wire rate can be read at all: the SDK owns that socket, so the
+  /// interface total less what the RTSP cameras account for is what the NDI camera is sending.
+  /// Nil when there is no `en0`.
+  public static func wifiReceivedBytes() -> UInt32? {
+    var head: UnsafeMutablePointer<ifaddrs>?
+    guard getifaddrs(&head) == 0, let first = head else { return nil }
+    defer { freeifaddrs(head) }
+    for pointer in sequence(first: first, next: { $0.pointee.ifa_next }) {
+      guard String(cString: pointer.pointee.ifa_name) == "en0",
+            let address = pointer.pointee.ifa_addr,
+            address.pointee.sa_family == UInt8(AF_LINK),
+            let data = pointer.pointee.ifa_data
+      else { continue }
+      return data.assumingMemoryBound(to: if_data.self).pointee.ifi_ibytes
+    }
+    return nil
+  }
+}
+
+/// Extends a 32-bit interface counter into one that does not wrap.
+///
+/// `if_data` counts bytes in 32 bits, which a 50 Mbps camera wraps in under twelve minutes. Read
+/// at least once per wrap — the telemetry tick is once a second — the wrapping difference between
+/// two reads is exactly what arrived between them.
+public struct WrappingByteCounter: Sendable, Equatable {
+  private var last: UInt32?
+  public private(set) var total: UInt64 = 0
+
+  public init() {}
+
+  public mutating func extend(_ raw: UInt32) -> UInt64 {
+    if let last { total &+= UInt64(raw &- last) }
+    last = raw
+    return total
+  }
 }

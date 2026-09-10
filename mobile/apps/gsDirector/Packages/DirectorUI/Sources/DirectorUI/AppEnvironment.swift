@@ -227,6 +227,10 @@ public final class AppEnvironment {
   let programEncoder: ProgramEncoder
   let programStreamer: ProgramStreamer
   private var streamErrorGate = StreamErrorGate()
+  /// Wi-Fi's received bytes, extended past the interface's 32-bit wrap and folded into a rate.
+  /// What an NDI tile shows as its throughput, less the RTSP tiles' own counts.
+  private var wifiReceivedBytes = WrappingByteCounter()
+  private var wifiReceiveRate = CounterRateTracker()
 
   private let compositor: MetalCompositor?
   /// Builds the live-camera discovery. Injected because the transport lives in its own module and
@@ -3522,12 +3526,19 @@ public final class AppEnvironment {
     }
     telemetry.recordComposedFrames(composedFrames)
     var liveDecodeSessions = 0
+    var countedBytesPerSecond = 0.0
+    var uncountedTiles: [Int] = []
     for pipeline in router.activePipelines {
       let format = pipeline.format
       let connections = pipeline.connections
       let receive = pipeline.receiveStats
       liveDecodeSessions += receive.decodeSessions
       telemetry.recordPacketsLost(tile: pipeline.sourceIndex, cumulative: receive.packetsLost)
+      if let bytes = receive.bytesReceived {
+        countedBytesPerSecond += telemetry.recordReceivedBytes(tile: pipeline.sourceIndex, cumulative: bytes)
+      } else {
+        uncountedTiles.append(pipeline.sourceIndex)
+      }
       telemetry.mutateTile(pipeline.sourceIndex) { tile in
         tile.sourceWidth = format?.width ?? 0
         tile.sourceHeight = format?.height ?? 0
@@ -3604,6 +3615,22 @@ public final class AppEnvironment {
       }
     }
     if !isRecording { announcedCameraStatus.removeAll() }
+
+    // An NDI camera's bytes never pass through us, so its share is inferred: everything Wi-Fi
+    // received less what the RTSP cameras counted. Only honest with one such camera; with two,
+    // there is no telling how to split the remainder, so neither claims it.
+    if let raw = LocalAddresses.wifiReceivedBytes() {
+      let interfaceRate = wifiReceiveRate.record(
+        wifiReceivedBytes.extend(raw),
+        at: ProcessInfo.processInfo.systemUptime
+      )
+      for tile in uncountedTiles {
+        telemetry.setReceiveRate(
+          tile: tile,
+          bytesPerSecond: uncountedTiles.count == 1 ? max(0, interfaceRate - countedBytesPerSecond) : nil
+        )
+      }
+    }
 
     // The acceptance number, computed once every camera's tile has been written this pass.
     //

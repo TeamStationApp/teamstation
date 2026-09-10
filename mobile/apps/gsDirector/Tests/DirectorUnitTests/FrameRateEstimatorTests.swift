@@ -54,6 +54,23 @@ struct FrameRateEstimatorTests {
     #expect(estimator.frameRate == 60)
   }
 
+  /// Recorded from a Hollyland Cosmo C2 over NDI: the sender paces an exact 60.00 fps by its own
+  /// span, but stamps frames in pairs, ~5 ms then ~30 ms apart. The median interval sits in the
+  /// short cluster and read as 80.78 fps on the Mac and 70.41 on the iPad.
+  @Test("A sender that stamps frames in pairs reads at its real rate, not its median interval")
+  func pairedStampsReadAtSpanRate() {
+    let trace: [Double] = [
+      0.007555, 0.030308, 0.005428, 0.022488, 0.007765, 0.030063, 0.005194, 0.030788,
+      0.004782, 0.021975, 0.007409, 0.030459, 0.005026, 0.020159, 0.012884, 0.023216,
+      0.007197, 0.030703, 0.005019, 0.023841, 0.008047, 0.030499, 0.005442, 0.021837
+    ]
+    var estimator = FrameRateEstimator()
+    for _ in 0 ..< 10 {
+      for interval in trace { estimator.note(intervalSeconds: interval) }
+    }
+    #expect(estimator.frameRate == 60)
+  }
+
   @Test("Packets of one picture sharing a timestamp are not counted as frames")
   func ignoresRepeatedTimestamps() {
     var estimator = FrameRateEstimator()

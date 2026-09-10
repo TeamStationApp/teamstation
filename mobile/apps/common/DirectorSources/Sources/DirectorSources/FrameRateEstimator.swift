@@ -34,6 +34,12 @@ public struct FrameRateEstimator: Sendable {
   /// arrives within half a second at 30 fps.
   public static let minimumSamples = 12
 
+  /// Interquartile spread, as a fraction of the median, beyond which the timestamps are taken to be
+  /// scattered rather than ticked. A clean clock with drops has a spread of zero — three quarters of
+  /// its intervals are identical — so this only ever selects the mean for a sender whose stamps
+  /// genuinely wander.
+  public static let scatterTolerance = 0.25
+
   /// Several seconds of history at the rates in use. Long enough that one bad patch cannot define
   /// the answer, short enough to follow a camera that changes format without reconnecting.
   private static let windowSize = 120
@@ -86,10 +92,23 @@ public struct FrameRateEstimator: Sendable {
     }
     guard intervals.count >= Self.minimumSamples else { return false }
 
-    let median = intervals.sorted()[intervals.count / 2]
+    let sorted = intervals.sorted()
+    let median = sorted[sorted.count / 2]
     guard median > 0 else { return false }
 
-    let resolved = Self.snap(perSecond / median)
+    // The median is right for a clean clock and wrong for a scattered one. RTP ticks step by
+    // exactly one frame, so the middle interval *is* the period and a drop cannot move it. NDI
+    // stamps are not ticks: a Cosmo C2 pacing an exact 60.03 fps stamps frames 3–37 ms apart in a
+    // skewed spread whose median is 15.7 ms, which read as 63.56 on the Mac and 70.41 on the iPad
+    // — and the archive timeline stepped at that. When the middle half of the window is that wide,
+    // single intervals say little and the window's total span says everything: the scatter
+    // telescopes away, leaving the sender's real pacing.
+    let quartileSpread = sorted[sorted.count * 3 / 4] - sorted[sorted.count / 4]
+    let period = quartileSpread > median * Self.scatterTolerance
+      ? intervals.reduce(0, +) / Double(intervals.count)
+      : median
+
+    let resolved = Self.snap(perSecond / period)
     guard resolved != frameRate else { return false }
     frameRate = resolved
     return true

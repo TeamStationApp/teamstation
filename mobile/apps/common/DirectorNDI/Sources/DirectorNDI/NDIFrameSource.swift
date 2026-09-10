@@ -119,6 +119,33 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
   /// drains and the hold is gone again. The capture clock advances at real time by construction, so
   /// the mapping stays put.
   private var presentationAnchorSeconds: Double?
+  /// Evens out the sender's capture stamps before they are scheduled. Scheduling on them raw put
+  /// their 3–37 ms scatter straight on screen; see `CaptureTimelineSmoother`.
+  private var captureSmoother = CaptureTimelineSmoother()
+  /// Arrival and release pacing, the pair that says whether the delay line is doing its job.
+  ///
+  /// RTSP has published these since the beginning; NDI published nothing, so a tile that visibly
+  /// stuttered could not be told apart from a sender that bursts. Arrival is what the camera and
+  /// the link did, release is what the screen saw: a large arrival gap with a small release gap is
+  /// the buffer working, and both large is the buffer being bypassed.
+  private var lastArrivalUptime: Double?
+  private var lastReleaseUptime: Double?
+  private var arrivalGapWindowMax: Double = 0
+  private var releaseGapWindowMax: Double = 0
+  private var gapWindowStart: Double = 0
+  private var arrivalGapPublished: Double = 0
+  private var releaseGapPublished: Double = 0
+
+  /// Held for a whole second so a reader sampling at 1 Hz sees every window rather than whichever
+  /// moment it happened to ask in.
+  private func noteGapWindow(now: Double) {
+    guard now - gapWindowStart >= 1 else { return }
+    arrivalGapPublished = arrivalGapWindowMax
+    releaseGapPublished = releaseGapWindowMax
+    arrivalGapWindowMax = 0
+    releaseGapWindowMax = 0
+    gapWindowStart = now
+  }
   private var drainTimer: DispatchSourceTimer?
   private var lastReportAt: Double = 0
   private let playoutQueue: DispatchQueue
@@ -248,6 +275,8 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     snapshot.playoutMilliseconds = (playout.bufferMilliseconds * 10).rounded() / 10
     snapshot.playoutLateFrames = playout.lateFrames
     snapshot.playoutDepth = pictures.count
+    snapshot.arrivalGapMaxMilliseconds = (arrivalGapPublished * 10).rounded() / 10
+    snapshot.releaseGapMaxMilliseconds = (releaseGapPublished * 10).rounded() / 10
     return snapshot
   }
 
@@ -415,6 +444,13 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     }
     playout.advance(to: now)
     let due = pictures.release(at: now)
+    if !due.isEmpty {
+      if let last = lastReleaseUptime {
+        releaseGapWindowMax = max(releaseGapWindowMax, (now - last) * 1000)
+      }
+      lastReleaseUptime = now
+    }
+    noteGapWindow(now: now)
     let handler = sinks.pixel
     let buffer = playout.bufferMilliseconds
     let shouldReport = now - lastReportAt >= Self.reportInterval
@@ -497,6 +533,7 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     pictures.removeAll()
     // The timeline restarts with the receiver, so the mapping onto uptime has to be taken again.
     presentationAnchorSeconds = nil
+    captureSmoother.reset()
     stats.status = reason
     stats.reconnects &+= 1
     let delay = Self.backoffSeconds[min(attempt - 1, Self.backoffSeconds.count - 1)]
@@ -702,10 +739,18 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     // thread that owns the converter, and handed to the drain as the hold it may not exceed.
     let poolFrames = max(8, videoConverter.maximumBuffers - 8)
     lock.lock()
+    if let last = lastArrivalUptime {
+      arrivalGapWindowMax = max(arrivalGapWindowMax, (arrived - last) * 1000)
+    }
+    lastArrivalUptime = arrived
+    noteGapWindow(now: arrived)
     poolHoldMilliseconds = max(0, Double(poolFrames) / rate - Self.poolHeadroomSeconds) * 1000
     // Scheduled against whichever clock actually tracks real time: the sender's capture stamp when
     // it gave one, the stepped presentation timeline only as a fallback.
-    let timelineSeconds = timing.captureWallClock?.seconds ?? presentationSeconds
+    let timelineSeconds = captureSmoother.place(
+      capture: timing.captureWallClock?.seconds ?? presentationSeconds,
+      period: 1 / rate
+    )
     let anchor = presentationAnchorSeconds ?? (arrived - timelineSeconds)
     presentationAnchorSeconds = anchor
     // The same instant, expressed on the clock the delay line schedules against.

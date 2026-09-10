@@ -139,6 +139,7 @@ public struct TileView: View {
           }
           Spacer()
           if pipeline != nil, !isRewinding {
+            ratePills
             lossPill
           }
           if telemetry.hasCameraControl {
@@ -305,6 +306,25 @@ public struct TileView: View {
       identifier: "source-\(sourceIndex + 1)-loss",
       label: "Lost per second",
       value: telemetry.lossPerSecondLabel
+    )
+  }
+
+  /// What the camera is delivering — frames a second and how much link it takes — to the left of
+  /// what it is losing, so a tile that looks slow can be read at a glance: fewer frames than the
+  /// camera's rate with loss beside it is the network, fewer frames with none is the camera.
+  @ViewBuilder
+  private var ratePills: some View {
+    StatPill(
+      text: telemetry.frameRateLabel,
+      identifier: "source-\(sourceIndex + 1)-fps",
+      label: "Frames per second",
+      value: telemetry.frameRateLabel
+    )
+    StatPill(
+      text: telemetry.throughputLabel,
+      identifier: "source-\(sourceIndex + 1)-throughput",
+      label: "Megabytes per second",
+      value: telemetry.throughputLabel
     )
   }
 
