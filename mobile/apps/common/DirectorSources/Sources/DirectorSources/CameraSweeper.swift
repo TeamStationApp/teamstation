@@ -43,6 +43,10 @@ public final class CameraSweeper: @unchecked Sendable {
     self.scanner = SubnetScanner(ports: ports, timeout: timeout, concurrency: concurrency)
     self.handler = onResult
     self.now = now
+    // Startup grace from here: at launch no camera has been heard from yet, and that is not a
+    // dropout worth sweeping the segment for.
+    let startedAt = now()
+    state.withLock { $0.policy = CameraSweepPolicy(startedAt: startedAt) }
   }
 
   /// What the pipeline currently is: recording or streaming, and whether an enabled camera is

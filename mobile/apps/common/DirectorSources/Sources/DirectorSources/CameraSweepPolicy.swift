@@ -44,10 +44,26 @@ public struct CameraSweepPolicy: Sendable, Equatable {
   /// found within ten seconds rather than fifteen.
   public static var maximumGapSeconds: Double { gapSeconds }
 
+  /// How long after startup a camera that has not appeared yet is taken to be still arriving
+  /// rather than missing.
+  ///
+  /// At launch every enabled camera is "not present" until discovery has heard from it, which
+  /// takes a few seconds. Counting that as a dropout started a full sweep on every launch — one
+  /// the operator never asked for, run to completion even after every camera had appeared, and
+  /// probing every host on the segment including cameras whose embedded servers may not welcome
+  /// it. Twenty seconds is several times what mDNS takes to answer on this network.
+  public static let startupGraceSeconds: Double = 20
+
+  /// When the owner started, on the same monotonic clock as `now`. Nil disables the grace, which
+  /// is what a policy constructed without one — every existing caller and test — has always had.
+  private let startedAt: Double?
+
   /// When the current run of recovery sweeps began. Nil when nothing is missing.
   private var missingSince: Double?
 
-  public init() {}
+  public init(startedAt: Double? = nil) {
+    self.startedAt = startedAt
+  }
 
   /// What to do now. Nil means do not sweep.
   ///
@@ -67,11 +83,12 @@ public struct CameraSweepPolicy: Sendable, Equatable {
     isBrowsing: Bool,
     now: Double
   ) -> Double? {
-    guard anyEnabledCameraMissing else {
+    let stillStarting = startedAt.map { now - $0 < Self.startupGraceSeconds } ?? false
+    guard anyEnabledCameraMissing, !stillStarting else {
       // Everything enabled is accounted for. Clearing this is what makes the next dropout read as
       // a new one rather than a continuation of the last.
       missingSince = nil
-      // Nothing missing and nobody looking: do not sweep at all. Sweeping on a timer through a
+      // Nothing missing (or nothing missing yet, during startup) and nobody looking: do not sweep at all. Sweeping on a timer through a
       // whole game costs every device on the segment an ARP storm every few seconds to answer a
       // question nobody asked, and it was measured slowing a camera's own delivery.
       return isBrowsing ? Self.gapSeconds : nil
