@@ -90,12 +90,16 @@ fun SettingsScreen(environment: AppEnvironment, onDone: () -> Unit) {
     var didCopyURL by remember { mutableStateOf(false) }
 
     val options = remember(environment.formatOptions, draft.width, draft.height, draft.frameRate) {
-        // The catalogue is empty until the camera has been configured, and a picker with no options
-        // cannot show what is currently selected. Falling back to the current settings keeps the row
-        // honest before the first frame.
-        environment.formatOptions.ifEmpty {
-            listOf(FormatCatalogue.Option(draft.width, draft.height, draft.frameRate, true))
+        // The menu plus, when it is missing from the menu, the current setting. The catalogue is
+        // empty until the camera has been configured, and a setting that arrived by launch argument
+        // or from an earlier build need not be one the menu offers; the row shows what is streaming
+        // either way.
+        val offered = environment.formatOptions
+        val isOffered = offered.any {
+            it.width == draft.width && it.height == draft.height && it.frameRate == draft.frameRate
         }
+        if (isOffered) offered
+        else offered + FormatCatalogue.Option(draft.width, draft.height, draft.frameRate, true)
     }
     val selected = options.firstOrNull {
         it.width == draft.width && it.height == draft.height && it.frameRate == draft.frameRate
@@ -340,9 +344,8 @@ private fun VideoCard(
             }
         }
 
-        // A menu rather than the whole list inline. A handset reports dozens of capture sizes — this
-        // Pixel starts at 176x144 — and rendering them all pushed the bitrate, the microphone toggle
-        // and the identifier off the bottom of a landscape screen.
+        // A menu rather than the list inline, so the card keeps one height however many of the
+        // offered formats this handset serves, and the row reads like the codec row above it.
         var isPickingFormat by remember { mutableStateOf(false) }
         ExposedDropdownMenuBox(
             expanded = isPickingFormat,

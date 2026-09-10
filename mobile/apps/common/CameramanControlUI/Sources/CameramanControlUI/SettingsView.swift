@@ -328,18 +328,22 @@ struct SettingsView<Model: CameraControlling>: View {
 
   // MARK: - Bindings
 
-  /// The catalogue is empty until the camera has been configured, and a picker with no options
-  /// cannot show what is currently selected. Falling back to the current settings keeps the row
-  /// honest on a simulator and before the first frame.
+  /// The menu plus, when it is missing from the menu, the current setting. The catalogue is empty
+  /// until the camera has been configured, and a setting that arrived by launch argument or from an
+  /// earlier build need not be one the menu offers; a picker that cannot show what is selected would
+  /// show the first row instead and lie about what is streaming.
   private var formatOptions: [FormatCatalogue.Option] {
     let options = model.formatOptions
-    guard options.isEmpty else { return options }
-    return [ FormatCatalogue.Option(
+    let current = FormatCatalogue.Option(
       width: draftSettings.width,
       height: draftSettings.height,
       frameRate: draftSettings.frameRate,
       supportsMultiLensSwitching: true
-    ) ]
+    )
+    let isOffered = options.contains {
+      $0.width == current.width && $0.height == current.height && $0.frameRate == current.frameRate
+    }
+    return isOffered ? options : options + [ current ]
   }
 
   private var selectedOption: FormatCatalogue.Option? {
