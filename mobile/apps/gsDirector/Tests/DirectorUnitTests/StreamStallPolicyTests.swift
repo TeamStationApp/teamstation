@@ -127,4 +127,51 @@ struct StreamStallPolicyTests {
     )
     #expect(action == .encodeIdleIDR)
   }
+
+  /// The soak's stall: -12912 at 64 callbacks a second, no picture out, keyframes frozen. The
+  /// callbacks are fresh, so the silence rule never fired.
+  @Test("Callbacks that only carry errors rebuild the session after two GOPs")
+  func failingCallbacksReset() {
+    let action = policy.action(
+      now: 200,
+      lastKeyframeWall: 150,
+      lastCallbackWall: 199.98,
+      pendingEncodes: 0,
+      hasLastFrame: true,
+      lastResetWall: 0,
+      startedWall: 100,
+      lastOutputWall: 150
+    )
+    #expect(action == .resetSession)
+  }
+
+  @Test("A failing encoder is not rebuilt again inside the cooldown")
+  func failingCallbacksRespectCooldown() {
+    let action = policy.action(
+      now: 200,
+      lastKeyframeWall: 150,
+      lastCallbackWall: 199.98,
+      pendingEncodes: 0,
+      hasLastFrame: true,
+      lastResetWall: 195,
+      startedWall: 100,
+      lastOutputWall: 150
+    )
+    #expect(action == .encodeIdleIDR)
+  }
+
+  @Test("Healthy output with fresh callbacks does nothing")
+  func healthyOutputIsLeftAlone() {
+    let action = policy.action(
+      now: 200,
+      lastKeyframeWall: 199,
+      lastCallbackWall: 199.98,
+      pendingEncodes: 1,
+      hasLastFrame: true,
+      lastResetWall: 0,
+      startedWall: 100,
+      lastOutputWall: 199.98
+    )
+    #expect(action == .none)
+  }
 }

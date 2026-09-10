@@ -914,3 +914,36 @@ inside segments at 246 s and 262 s; NDI gaps of 0.82, 0.35 and 9.04 s):
 - **NDI across its 9 s gap:** flash placement 806 ms before, 801.5 ms after — the stitch is clean.
 - The Pixel sends RTCP sender reports for **video only** (`senderReportStreams: 1`), so audio
   cannot be mapped through its own reports without a Cameraman change.
+
+### Streaming: the stress run's §1 and §5 (2026-09-10, 16:10)
+
+- The "keyframe age 810,726,820 s" (25.7 years) was `StreamEncodeClock.keyframeAgeSeconds`
+  returning the absolute `CFAbsoluteTime` whenever no keyframe had been sent since the stream clock
+  reset — i.e. "no keyframe yet", not a clock bug. Now reports time since the stream's first frame.
+- The same state blinded the RTMP watchdog: `StreamStallPolicy` measured idle-IDR from the last
+  keyframe and encoder-reset from the last callback, so a stream that never produced either had no
+  watchdog at all — the §5 publish that connected, sent 3,406 bytes and no media, and stayed there.
+  It now takes the stream's start time: idle IDR one GOP in with no keyframe yet, encoder rebuild
+  three GOPs in with pending encodes and no callback yet (`358b0493`).
+- The §1 programme-master freezes coincide with these stream resets; since `d18a47ee` the programme
+  timeline advances by real elapsed time, so a stall is held at its true length rather than
+  shortening the file. The stall itself is what the soak (`/tmp/gs-shots/streamsoak.sh`, ingest
+  `scripts/rtmpStallServer.js --port 19350`; port 1935 is taken by the GameStation local server)
+  is for.
+- **Soak, 16:22** (local ingest on 19350, recording as well): about 40 s in, the stream's
+  VideoToolbox session started failing every frame with **-12912** (`kVTVideoEncoderMalfunctionErr`)
+  — 64 failures a second, callbacks continuous, keyframes frozen at 62, RTMP connection still open,
+  `isStreaming` true. Every watchdog rule read that as healthy (callbacks fresh), so it never
+  recovered: 230 s of dead stream. A manual stream stop/start recovered it instantly, so a fresh
+  compression session is enough. The watchdog now rebuilds the session when callbacks are alive but
+  no picture has come out for two GOPs (or three from start).
+- The same restart showed **~2.5 keyframes a second** against a 2 s GOP: every encoder-backpressure
+  drop (three pending) requested an IDR. Dropped before the encoder, so no reference was broken;
+  the request is removed, as it already had been for over-budget network drops.
+- **It recurs.** After the manual restart at 16:26:36 the stream ran clean for 22 minutes, then at
+  16:48:37 the same -12912 signature returned (62 failures a second, keyframes frozen at 1,826).
+  Thermal state nominal, footprint 363–367 MB, so not heat or memory. Roughly once every twenty
+  minutes on this rig, and before the watchdog change it never recovered on its own.
+- **The operator cannot see it.** During the dead stream the webcam shows the STREAMING and
+  RECORDING badges lit as normal and every tile live; nothing on screen says no video has gone out
+  for a minute. Worth a visible warning when keyframe age passes a few GOPs.

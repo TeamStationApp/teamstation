@@ -28,9 +28,23 @@ public struct StreamStallPolicy: Sendable {
     pendingEncodes: Int,
     hasLastFrame: Bool,
     lastResetWall: CFAbsoluteTime,
-    startedWall: CFAbsoluteTime = 0
+    startedWall: CFAbsoluteTime = 0,
+    lastOutputWall: CFAbsoluteTime = 0
   ) -> StreamStallAction {
     let cooledDown = lastResetWall == 0 || now - lastResetWall >= resetCooldown
+
+    // Callbacks still arriving, but carrying errors and no picture. A malfunctioning hardware
+    // encoder does exactly this — measured in a soak: -12912 (kVTVideoEncoderMalfunctionErr) at 64
+    // callbacks a second, keyframes frozen for minutes, the RTMP connection still open — and every
+    // other rule here reads it as healthy, because the callbacks are fresh. Only rebuilding the
+    // session recovers it. Measured from the last *good* output, or from the start if there has
+    // never been one.
+    if startedWall > 0 || lastOutputWall > 0, lastCallbackWall > 0, now - lastCallbackWall < gopSeconds {
+      let outputSilent = lastOutputWall > 0
+        ? now - lastOutputWall >= 2 * gopSeconds
+        : now - startedWall >= 3 * gopSeconds
+      if outputSilent, cooledDown { return .resetSession }
+    }
     let resetDue =
       pendingEncodes > 0
       && lastCallbackWall > 0
