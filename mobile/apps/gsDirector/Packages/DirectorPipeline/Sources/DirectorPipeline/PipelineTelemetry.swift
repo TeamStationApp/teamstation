@@ -476,6 +476,9 @@ public struct TelemetrySnapshot: Sendable, Codable, Equatable {
   public var availableMemoryMB = 0
   /// Jetsam bill, including surfaces lent to the display and encoder daemons.
   public var physFootprintMB = 0
+  /// This device's own IPv4 addresses, `interface=address`. The other end of every camera link,
+  /// and the one address nothing else in a dump could tell you.
+  public var localAddresses: [String] = []
   /// Anonymous resident pages. A soak that only watches `physFootprintMB` can miss a malloc climb.
   public var residentSizeMB = 0
   public var programSource: Int?

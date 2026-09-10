@@ -3502,6 +3502,9 @@ public final class AppEnvironment {
       $0.cpuCores = ProcessLoad.coreCount
       $0.availableMemoryMB = ProcessLoad.availableMemoryMB()
       $0.physFootprintMB = ProcessLoad.physFootprintMB()
+      // Re-read rather than cached: a device that roams between networks gets a new lease, and a
+      // stale answer here is worse than none when the question is which link to condition.
+      $0.localAddresses = LocalAddresses.ipv4()
       $0.residentSizeMB = ProcessLoad.residentSizeMB()
       $0.discoveryStatus = discoveryStatus
       $0.displayLatencyMilliseconds = displayLatency
