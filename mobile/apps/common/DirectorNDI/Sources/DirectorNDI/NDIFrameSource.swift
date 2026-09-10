@@ -100,6 +100,25 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
   /// until the first frame has sized the pool.
   private var poolHoldMilliseconds: Double?
   private var pictures = PlayoutQueue<PixelFrame>()
+  /// Maps this source's presentation timeline onto the uptime clock the delay line schedules on.
+  ///
+  /// `NDIReceiveClock` starts its timeline at zero and steps it per frame, which is right for the
+  /// archive and wrong for the delay line: `dueTime` is `presentation + offset`, and that offset is
+  /// clamped to a couple of seconds, so a presentation value near zero is due at uptime zero --
+  /// hours in the past. Every frame came due the instant it arrived, the queue never held anything,
+  /// and the burstiness the delay line exists to absorb went straight to the screen. Measured with
+  /// the RTSP tile beside it holding thirty frames while this one held none, both nominally on the
+  /// same 500 ms delay.
+  ///
+  /// Anchored once from the first frame's arrival rather than tracked, so the hold stays fixed.
+  ///
+  /// Taken against the sender's own capture clock, not the stepped presentation timeline. That
+  /// timeline advances at the *measured* frame rate, and a measurement that is fractionally low --
+  /// 58.67 against a sender pacing 60, as this camera reads -- makes it slip behind real time by a
+  /// second a minute. Every frame then arrives "late", the offset pins at its ceiling, the queue
+  /// drains and the hold is gone again. The capture clock advances at real time by construction, so
+  /// the mapping stays put.
+  private var presentationAnchorSeconds: Double?
   private var drainTimer: DispatchSourceTimer?
   private var lastReportAt: Double = 0
   private let playoutQueue: DispatchQueue
@@ -476,6 +495,8 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     let attempt = failedAttempts
     playout = playout.reset()
     pictures.removeAll()
+    // The timeline restarts with the receiver, so the mapping onto uptime has to be taken again.
+    presentationAnchorSeconds = nil
     stats.status = reason
     stats.reconnects &+= 1
     let delay = Self.backoffSeconds[min(attempt - 1, Self.backoffSeconds.count - 1)]
@@ -682,10 +703,17 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     let poolFrames = max(8, videoConverter.maximumBuffers - 8)
     lock.lock()
     poolHoldMilliseconds = max(0, Double(poolFrames) / rate - Self.poolHeadroomSeconds) * 1000
-    _ = playout.note(lateness: arrived - presentationSeconds, at: arrived)
+    // Scheduled against whichever clock actually tracks real time: the sender's capture stamp when
+    // it gave one, the stepped presentation timeline only as a fallback.
+    let timelineSeconds = timing.captureWallClock?.seconds ?? presentationSeconds
+    let anchor = presentationAnchorSeconds ?? (arrived - timelineSeconds)
+    presentationAnchorSeconds = anchor
+    // The same instant, expressed on the clock the delay line schedules against.
+    let scheduled = timelineSeconds + anchor
+    _ = playout.note(lateness: arrived - scheduled, at: arrived)
     pictures.enqueue(
       picture,
-      due: playout.dueTime(presentationSeconds: presentationSeconds),
+      due: playout.dueTime(presentationSeconds: scheduled),
       keepingAtMost: min(Int((rate * Self.pictureQueueSeconds).rounded(.up)), poolFrames)
     )
     lock.unlock()
