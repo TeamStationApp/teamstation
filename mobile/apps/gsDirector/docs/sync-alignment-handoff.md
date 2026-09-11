@@ -1150,4 +1150,18 @@ inside segments at 246 s and 262 s; NDI gaps of 0.82, 0.35 and 9.04 s):
   failure reaches it through `reportStreamError`.
 - **Test controls:** Cameraman Android `set-audio-delay` (`6d8af2cb`) holds only the audio back;
   `launch.sh` runs with no arguments (`80c09fda`).
+- **Cosmo power cycle during a recording (rec-335, programme on NDI):** the Pixel did not flinch — its
+  archive has no gap past the file's first 0.86 s, its sound sat +20 ms from its picture throughout,
+  and its tile stayed live on the webcam while the NDI tile and programme froze. The NDI archive has a
+  26.5 s gap where the Cosmo was off, and the programme held it as one freeze.
+- **Programme drift from NDI timestamps (rec-335):** from 80 s the programme master's picture fell 0.1 s
+  behind its own timeline every second, to −23 s by the end, while the NDI tile, the NDI archive (−0.28
+  s throughout) and the live display (0.6 s behind Big Time) were all fine. `NDIReceiveClock` makes each
+  frame's presentation time a counter advancing one *measured* frame period per frame received, so a
+  rate estimate below the true 60 fps runs it fast, and `ProgramEncoder` took those times as given
+  (frame spacing 18–20 ms from 80 s against 16.7 ms before). A first fix that held any half-second
+  gap would also have held frames that were only late. `d8937ef4` places each programme frame on the
+  host clock it went out on, spaced by its source's timestamp steps and steered back to the host
+  clock, which covers both. Why the Cosmo's rate estimate read low after a 0.61 s hiccup is not
+  known; nothing timing-critical depends on it now.
 
