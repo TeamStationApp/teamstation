@@ -18,5 +18,7 @@ done
 [ $# -eq 0 ] || fail "launch arguments must be key/value pairs"
 
 adb -s "$DEVICE" shell am force-stop "$CAMERAMAN_PACKAGE"
-log "Launching ${EXTRAS[*]:-with no arguments}"
-adb -s "$DEVICE" shell am start -n "$CAMERAMAN_ACTIVITY" "${EXTRAS[@]}" >/dev/null
+log "Launching ${EXTRAS[*]+${EXTRAS[*]}}"
+# Guarded: with no arguments the array is empty, and bash 3 under `set -u` calls an empty array
+# unbound, which stopped a plain launch before the app ever started.
+adb -s "$DEVICE" shell am start -n "$CAMERAMAN_ACTIVITY" ${EXTRAS[@]+"${EXTRAS[@]}"} >/dev/null
