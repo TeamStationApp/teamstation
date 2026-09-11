@@ -305,6 +305,7 @@ public final class AppEnvironment {
     self.persistedConfig = persisted
     let session = Self.applying(launch, to: persisted)
     self.config = session
+    SubnetScanner.setOverrideSubnets(networkAddresses: session.activeScanSubnets)
     self.sourceProfile = Self.resolveSourceProfile(launch: launch, config: session)
 
     self.selectionStore = SourceSelectionStore(store: configStore)
@@ -3141,8 +3142,12 @@ public final class AppEnvironment {
     session.replaySlowMotionRate = AppConfig.clampedReplaySlowMotionRate(session.replaySlowMotionRate)
     // Launch `-debugHUD` is a one-time overlay. Saving Settings must be able to hide the HUD.
     session.showDebugHUD = newConfig.showDebugHUD
+    let sweptSubnetChanged = config.activeScanSubnets != session.activeScanSubnets
     config = session
     applyDisplayLatencyCap()
+    SubnetScanner.setOverrideSubnets(networkAddresses: session.activeScanSubnets)
+    // A new subnet to sweep should be looked at now, not whenever the next sweep comes due.
+    if sweptSubnetChanged { discovery?.sweepNow() }
     if wantsSimulated != sessionIsSimulated {
       Task { await applySourceProfile(SourceProfile.forSimulatedCameras(wantsSimulated)) }
     }
@@ -3807,6 +3812,7 @@ public final class AppEnvironment {
       let id = selections[index].id
       if isLinkedControl(id) { unlinkSource(control: id) } else { unlinkSource(video: id) }
     case .searchCameras:
+      discovery?.sweepNow()
       discovery?.searchNow()
     case let .advanceClock(seconds):
       testClock?.advance(by: seconds)

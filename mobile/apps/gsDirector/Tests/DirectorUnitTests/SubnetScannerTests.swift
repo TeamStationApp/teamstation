@@ -73,4 +73,18 @@ struct SubnetScannerTests {
       (IPv4Subnet.numeric(lhs) ?? 0) < (IPv4Subnet.numeric(rhs) ?? 0)
     })
   }
+
+  @Test("An override sweeps every address of that /24 instead of the local subnet, until cleared")
+  func overrideSubnet() throws {
+    SubnetScanner.setOverrideSubnets(networkAddresses: ["10.10.6.0", "10.10.7.0"])
+    defer { SubnetScanner.setOverrideSubnets(networkAddresses: []) }
+    let subnets = SubnetScanner.scanSubnets()
+    #expect(subnets.map(\.cidrDescription) == ["10.10.6.0/24", "10.10.7.0/24"])
+    let hosts = try #require(subnets.first?.hostAddresses())
+    #expect(hosts.count == 254)
+    #expect(hosts.first == "10.10.6.1")
+    #expect(hosts.last == "10.10.6.254")
+    SubnetScanner.setOverrideSubnets(networkAddresses: [])
+    #expect(!SubnetScanner.scanSubnets().map(\.cidrDescription).contains("10.10.6.0/24"))
+  }
 }

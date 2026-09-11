@@ -310,6 +310,32 @@ public struct SettingsView: View {
         }
 
         Section {
+          Toggle("Scan a different subnet", isOn: $draft.subnetScanOverrideEnabled)
+            .accessibilityIdentifier("settings-subnet-scan-enabled")
+          TextField("10.10.6.0, 10.10.7.0", text: $draft.subnetScanOverride)
+            .keyboardType(.numbersAndPunctuation)
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            .foregroundStyle(draft.subnetScanOverrideEnabled ? .primary : .secondary)
+            .accessibilityIdentifier("settings-subnet-scan")
+          if draft.subnetScanOverrideEnabled,
+             AppConfig.scanSubnetNetworkAddresses(draft.subnetScanOverride) == nil {
+            Text("Enter one or two subnets, comma-separated, like 10.10.6.0, 10.10.7.0.")
+              .font(.footnote)
+              .foregroundStyle(.red)
+              .accessibilityIdentifier("settings-subnet-scan-invalid")
+          }
+        } header: {
+          Text("Camera discovery")
+        } footer: {
+          Text("""
+          When on, the camera search sweeps every address (.1 to .254) of up to two subnets, \
+          comma-separated, instead of this iPad's own. Turn it off for normal use; the subnets are \
+          kept for next time.
+          """)
+        }
+
+        Section {
           Toggle("Cap preview latency", isOn: $draft.displayLatencyCapEnabled)
             .accessibilityIdentifier("settings-display-latency-cap-enabled")
           if draft.displayLatencyCapEnabled {
