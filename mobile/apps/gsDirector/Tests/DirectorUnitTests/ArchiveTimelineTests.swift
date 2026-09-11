@@ -96,14 +96,16 @@ struct ArchiveTimelineTests {
       PixelBufferFactory(width: 160, height: 120, pixelFormat: kCVPixelFormatType_32BGRA)
     )
     let buffer = try #require(factory.makeBuffer())
+    // Paced at the rate the timestamps claim: the programme follows real time, so frames stamped a
+    // thirtieth of a second apart have to arrive that far apart for the take to last what they say.
     for index in 0..<60 {
       encoder.append(buffer, presentationTime: CMTime(value: CMTimeValue(index), timescale: 30))
-      try await Task.sleep(nanoseconds: 20_000_000)
+      try await Task.sleep(nanoseconds: 33_000_000)
     }
     encoder.recoverAfterFailure()
     for index in 210..<270 {
       encoder.append(buffer, presentationTime: CMTime(value: CMTimeValue(index), timescale: 30))
-      try await Task.sleep(nanoseconds: 20_000_000)
+      try await Task.sleep(nanoseconds: 33_000_000)
     }
     _ = await encoder.finish()
     #expect(encoder.outputURLs.count == 2)
@@ -116,6 +118,121 @@ struct ArchiveTimelineTests {
     )
     let duration = try await AVURLAsset(url: destination).load(.duration)
     #expect(abs(duration.seconds - 9) < 0.6)
+  }
+
+  private func programEncoder(in root: URL) throws -> ProgramEncoder {
+    let encoder = ProgramEncoder(
+      telemetry: PipelineTelemetry(),
+      converter: PixelConverter(),
+      config: AppConfig(
+        programCodec: .h264,
+        programResolution: ProgramResolution(width: 160, height: 120),
+        programBitrate: 1_000_000
+      ),
+      directory: root
+    )
+    try encoder.start(at: WallClock(seconds: 1_000))
+    return encoder
+  }
+
+  private func videoSampleTimes(of url: URL) async throws -> [Double] {
+    let asset = AVURLAsset(url: url)
+    let track = try #require(try await asset.loadTracks(withMediaType: .video).first)
+    let reader = try AVAssetReader(asset: asset)
+    let output = AVAssetReaderTrackOutput(track: track, outputSettings: nil)
+    reader.add(output)
+    #expect(reader.startReading())
+    var times: [Double] = []
+    while let sample = output.copyNextSampleBuffer() {
+      if CMSampleBufferGetNumSamples(sample) > 0 {
+        times.append(CMSampleBufferGetPresentationTimeStamp(sample).seconds)
+      }
+    }
+    return times
+  }
+
+  private func now() -> Double { Date().timeIntervalSince1970 }
+
+  /// rec-333: the programme's NDI source went quiet for 18 s and came back with its timestamps one
+  /// frame on from where they stopped. Taken at their word, the stall vanished from the picture while
+  /// the programme's sound kept real time.
+  @Test("An outage the timestamps do not show is held at its real length")
+  func programHoldsOutageByCaptureTime() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("program-outage-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let encoder = try programEncoder(in: root)
+    let factory = try #require(PixelBufferFactory(width: 160, height: 120, pixelFormat: kCVPixelFormatType_32BGRA))
+    let buffer = try #require(factory.makeBuffer())
+    for index in 0..<30 {
+      encoder.append(buffer, presentationTime: CMTime(value: CMTimeValue(index), timescale: 30), captureWall: WallClock(seconds: now() - 0.05))
+      try await Task.sleep(nanoseconds: 20_000_000)
+    }
+    try await Task.sleep(nanoseconds: 2_000_000_000)
+    for index in 30..<60 {
+      encoder.append(buffer, presentationTime: CMTime(value: CMTimeValue(index), timescale: 30), captureWall: WallClock(seconds: now() - 0.05))
+      try await Task.sleep(nanoseconds: 20_000_000)
+    }
+    _ = await encoder.finish()
+    let times = try await videoSampleTimes(of: try #require(encoder.outputURLs.first))
+    let widest = zip(times.dropFirst(), times).map { $0 - $1 }.max() ?? 0
+    #expect(widest > 1.7, "widest gap between programme frames \(widest) s; the 2 s outage was collapsed")
+  }
+
+  /// rec-335: an NDI source's timestamps ran 9% fast after its frame-rate estimate read low, and the
+  /// programme master ran ahead of its own picture for five minutes.
+  @Test("A source whose timestamps run fast is placed in real time")
+  func programFollowsCaptureNotTimestamps() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("program-rate-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let encoder = try programEncoder(in: root)
+    let factory = try #require(PixelBufferFactory(width: 160, height: 120, pixelFormat: kCVPixelFormatType_32BGRA))
+    let buffer = try #require(factory.makeBuffer())
+    var captures: [Double] = []
+    for index in 0..<90 {
+      let capture = now() - 0.05
+      captures.append(capture)
+      // Timestamps a frame period of 1/55 s apart for frames that really come 60 a second.
+      encoder.append(buffer, presentationTime: CMTime(value: CMTimeValue(index), timescale: 55), captureWall: WallClock(seconds: capture))
+      try await Task.sleep(nanoseconds: 16_000_000)
+    }
+    _ = await encoder.finish()
+    let times = try await videoSampleTimes(of: try #require(encoder.outputURLs.first))
+    let fileSpan = (times.last ?? 0) - (times.first ?? 0)
+    let captureSpan = (captures.last ?? 0) - (captures.first ?? 0)
+    #expect(abs(fileSpan - captureSpan) < 0.03, "file spans \(fileSpan) s for \(captureSpan) s of capture")
+  }
+
+  /// What went out is what the programme records: a source that stops delivering for a second is a
+  /// frozen picture on the monitor for a second, and the frames it then delivers in a burst follow
+  /// the freeze rather than being slotted back into it.
+  @Test("A delivery stall is held as the freeze that went out, and the burst after it follows it")
+  func programHoldsDeliveryStall() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("program-late-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let encoder = try programEncoder(in: root)
+    let factory = try #require(PixelBufferFactory(width: 160, height: 120, pixelFormat: kCVPixelFormatType_32BGRA))
+    let buffer = try #require(factory.makeBuffer())
+    for index in 0..<30 {
+      encoder.append(buffer, presentationTime: CMTime(value: CMTimeValue(index), timescale: 60))
+      try await Task.sleep(nanoseconds: 16_000_000)
+    }
+    try await Task.sleep(nanoseconds: 1_000_000_000)
+    for index in 30..<120 {
+      encoder.append(buffer, presentationTime: CMTime(value: CMTimeValue(index), timescale: 60))
+      if index > 90 { try await Task.sleep(nanoseconds: 16_000_000) }
+    }
+    _ = await encoder.finish()
+    let times = try await videoSampleTimes(of: try #require(encoder.outputURLs.first))
+    let gaps = zip(times.dropFirst(), times).map { $0 - $1 }
+    let widest = gaps.max() ?? 0
+    #expect(abs(widest - 1.0) < 0.2, "the one-second stall was held for \(widest) s")
+    #expect(gaps.allSatisfy { $0 > 0 }, "a frame went back in time")
   }
 
   @Test("Recovering with no compositor gap keeps continuation PTS on the file timeline")

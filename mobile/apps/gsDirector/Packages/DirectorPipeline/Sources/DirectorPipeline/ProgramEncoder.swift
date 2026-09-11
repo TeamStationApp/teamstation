@@ -78,9 +78,15 @@ public final class ProgramEncoder: @unchecked Sendable {
   /// it came from -- measured at 95 s adrift by 1:37 into recording 253, accumulating at each
   /// stall and never recovering.
   private var lastAppendHost: Double?
-  /// How far past real time the programme clock may run before a sample is treated as carrying a
-  /// foreign timestamp. Loose enough to absorb scheduling jitter and a late frame burst.
-  private static let timelineAdvanceSlack: Double = 2
+  /// Host time at which this part's programme timeline reads zero. Set at the part's first frame,
+  /// so a continuation after a recovery fill carries on from the held timeline.
+  private var hostOrigin: Double?
+  /// A source step longer than this is not frame spacing; one frame is assumed instead.
+  private static let maximumSourceStep: Double = 0.25
+  /// How far the timeline may stray from real time before it is put straight back.
+  private static let hostReseatSeconds: Double = 0.25
+  /// The fraction of the remaining error each frame takes back.
+  private static let hostSteerGain: Double = 0.1
   /// Serialises recover so a failed writer noticed on video and audio at once does not
   /// open two continuation files.
   private var isRecovering = false
@@ -260,6 +266,7 @@ public final class ProgramEncoder: @unchecked Sendable {
     self.audioInput = audioInput
     self.adaptor = adaptor
     self.baseTime = nil
+    self.hostOrigin = nil
     self.partStartHost = nil
     self.lastAppendHost = nil
     self.baseAudioTime = nil
@@ -328,32 +335,45 @@ public final class ProgramEncoder: @unchecked Sendable {
       lock.unlock()
       return
     }
-    var time = CMTimeSubtract(presentationTime, base)
+    _ = base
     let oneFrame = CMTime(value: 1, timescale: CMTimeScale(max(frameRate, 1)))
-    // The programme clock may not outrun real time. A stalled compositor spends wall clock too,
-    // so a genuine gap still holds and the file keeps recording wall clock; a sample arriving on
-    // another source's timebase does not, and is re-based onto the next frame.
+    // The programme is what went out, when it went out: each frame is placed on the host clock it
+    // was composed on, since the part began. That is the clock the programme's audio is mixed and
+    // placed on, so picture and sound stay locked however the display delay moves.
+    //
+    // The source's own timestamps only set the spacing between frames, which they do evenly where
+    // arrival jitters, and the timeline is steered back to real time a tenth of the error at a
+    // time. They are not trusted for position: an NDI camera's advance one measured frame period
+    // per frame, so a rate estimate a few percent low ran rec-335's programme master 9% fast for
+    // five minutes, and they need not show an outage at all — rec-333's NDI source came back from 18
+    // s of nothing one frame on, and the picture ran 18.6 s ahead of its sound from then on. Capture
+    // time was tried and is the wrong clock here: it moved the picture 0.47 s ahead of the sound when
+    // the display delay settled after a take began, and copied the Cosmo's paired stamps into the
+    // frame timing as judder. Any error past a quarter of a second is a stall or an outage, and the
+    // timeline goes straight to real time, which holds the picture across it.
     let nowHost = CFAbsoluteTimeGetCurrent()
     if partStartHost == nil { partStartHost = nowHost }
-    // How much real time this frame is worth. A frame that follows the last one immediately is
-    // worth one frame; one that arrives after the compositor stalled for nine seconds is worth
-    // nine seconds, and saying otherwise is what shortened the file.
-    let realStep = lastAppendHost.map { max(oneFrame.seconds, nowHost - $0) } ?? oneFrame.seconds
-    let advance = CMTime(seconds: realStep, preferredTimescale: 600)
-    if let partStart = partStartHost, lastTime.isNumeric, lastTime >= .zero {
-      let realElapsed = max(0, nowHost - partStart)
-      if !time.isNumeric || time.seconds < -0.5
-        || time.seconds > realElapsed + Self.timelineAdvanceSlack {
-        // The timestamp is unusable, but the time it stands for still passed. Advance by what the
-        // clock says rather than by a frame, so the hole is held at its true length: the sample
-        // before it runs until this one, which is the freeze a viewer should see.
-        time = CMTimeAdd(lastTime, advance)
-        baseTime = CMTimeSubtract(presentationTime, time)
-      }
+    let hasTimeline = lastTime.isNumeric && lastTime >= .zero
+    if hostOrigin == nil {
+      hostOrigin = nowHost - (hasTimeline ? CMTimeAdd(lastTime, oneFrame).seconds : 0)
     }
-    if time <= lastTime {
-      time = CMTimeAdd(lastTime, advance)
+    let hostSeconds = nowHost - (hostOrigin ?? nowHost)
+    var time: CMTime
+    if hasTimeline {
+      let sourceStep = lastSourceTime.map { CMTimeSubtract(presentationTime, $0).seconds } ?? 0
+      let step = sourceStep > 0 && sourceStep < Self.maximumSourceStep ? sourceStep : oneFrame.seconds
+      let predicted = lastTime.seconds + step
+      let error = hostSeconds - predicted
+      let seconds = abs(error) > Self.hostReseatSeconds ? hostSeconds : predicted + Self.hostSteerGain * error
+      time = CMTime(seconds: seconds, preferredTimescale: 600)
+      if time <= lastTime { time = CMTimeAdd(lastTime, CMTime(value: 1, timescale: 600)) }
+    } else {
+      time = CMTime(seconds: max(0, hostSeconds), preferredTimescale: 600)
     }
+    // A replay frame's or a recovery's arithmetic on source time stays consistent with where this
+    // frame went.
+    baseTime = CMTimeSubtract(presentationTime, time)
+    let nowWall = Date().timeIntervalSince1970
     lastTime = time
     lastAppendHost = nowHost
     lastSourceTime = presentationTime
@@ -365,7 +385,6 @@ public final class ProgramEncoder: @unchecked Sendable {
     // stamping composition time placed rec-320's programme master about 0.55 s behind the camera
     // files it was cut from. A live frame says exactly how old it is; a replay frame does not, so
     // it borrows the lag the last live frame measured, which keeps the timeline continuous.
-    let nowWall = Date().timeIntervalSince1970
     if let captureWall, nowWall - captureWall.seconds >= 0, nowWall - captureWall.seconds < 10 {
       contentLagSeconds = nowWall - captureWall.seconds
     }
