@@ -26,6 +26,11 @@ public final class AudioEncoder: @unchecked Sendable {
   private var destinationFormat = AudioStreamBasicDescription()
   private var pcmPending = PCMPendingBuffer()
   private var pendingTime: Double = 0
+  /// Recent capture buffers: where each one's first sample sits on the sample-count timeline, and
+  /// when it was captured. A frame's capture time comes from the latest buffer at or before its own
+  /// position, moved by how far into it the frame starts. The newest buffer alone is wrong for a
+  /// frame cut from samples queued before it, which is exactly the frame beside a dropped stretch.
+  private var captureAnchors: [(position: Double, capture: Double)] = []
   private var bytesPerSourceFrame = 0
   private var wasSilent = false
   /// Last non-empty silent access unit. The converter can return a 0-byte packet for zeros
@@ -125,6 +130,11 @@ public final class AudioEncoder: @unchecked Sendable {
       if pcmPending.readableCount == 0 {
         pendingTime = pts
       }
+      if pts.isFinite, bytesPerSourceFrame > 0, sourceFormat.mSampleRate > 0 {
+        let queued = Double(pcmPending.readableCount / bytesPerSourceFrame) / sourceFormat.mSampleRate
+        captureAnchors.append((position: pendingTime + queued, capture: pts))
+        if captureAnchors.count > 16 { captureAnchors.removeFirst(captureAnchors.count - 16) }
+      }
       pcmPending.append(pcm)
       dropIfBackedUp()
       drain(silent: silent)
@@ -158,10 +168,17 @@ public final class AudioEncoder: @unchecked Sendable {
         data: encoded,
         presentationTime: pendingTime,
         sampleRate: Int(destinationFormat.mSampleRate),
-        channelCount: Int(destinationFormat.mChannelsPerFrame)
+        channelCount: Int(destinationFormat.mChannelsPerFrame),
+        captureTime: captureTime(at: pendingTime)
       ))
       pendingTime += Double(Self.samplesPerFrame) / destinationFormat.mSampleRate
     }
+  }
+
+  private func captureTime(at position: Double) -> Double? {
+    guard let anchor = captureAnchors.last(where: { $0.position <= position + 1e-6 }) ?? captureAnchors.first
+    else { return nil }
+    return anchor.capture + (position - anchor.position)
   }
 
   private func encodeAccessUnit(_ pcm: Data) -> Data? {
@@ -213,6 +230,7 @@ public final class AudioEncoder: @unchecked Sendable {
   }
 
   private func teardownLocked() {
+    captureAnchors.removeAll()
     if let converter { AudioConverterDispose(converter) }
     converter = nil
     pcmPending.reset()

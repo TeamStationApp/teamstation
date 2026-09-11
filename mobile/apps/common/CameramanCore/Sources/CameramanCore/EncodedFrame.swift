@@ -35,11 +35,23 @@ public struct EncodedAudioFrame: Sendable, Equatable {
   public let presentationTime: Double
   public let sampleRate: Int
   public let channelCount: Int
+  /// When the first sample of this frame was captured, on the host clock video frames are stamped
+  /// on. `presentationTime` counts samples from the start of a run and stays the RTP timeline; this
+  /// follows the capture buffers themselves, so samples the system dropped do not put every later
+  /// frame early. Nil when the encoder had no capture time to go on.
+  public let captureTime: Double?
 
-  public init(data: Data, presentationTime: Double, sampleRate: Int, channelCount: Int) {
+  public init(
+    data: Data,
+    presentationTime: Double,
+    sampleRate: Int,
+    channelCount: Int,
+    captureTime: Double? = nil
+  ) {
     self.data = data
     self.presentationTime = presentationTime
     self.sampleRate = sampleRate
     self.channelCount = channelCount
+    self.captureTime = captureTime
   }
 }
