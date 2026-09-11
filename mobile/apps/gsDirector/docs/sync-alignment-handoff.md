@@ -1228,3 +1228,15 @@ inside segments at 246 s and 262 s; NDI gaps of 0.82, 0.35 and 9.04 s):
   socket".
 - **Tooling:** `progclock.py` wraps a take that crosses midnight; `pair.py` takes `PAIR_LEAD`, and
   `postsoak.sh` gives the programme 1.0 s.
+- **Three cameras (rec-346, 2026-09-11 01:50): iPhone Cameraman over RTSP, the Pixel, and the Cosmo
+  NDI.** The iPhone 15 Pro was the Cosmo's HDMI source, linked in Director as the NDI camera's control;
+  it was unlinked and enabled as a camera with its audio on, so two of the three pictures are nearly
+  the same view. Its new build sends sender reports for video and audio (Director counts two streams,
+  its clock within 9 ms). Over 6.5 min with a Cosmo power cycle and cuts iPhone → NDI → iPhone: the
+  iPhone's sound sits +1 ms from its picture (−25..+15, 51 claps), iPhone and Pixel flashes land at the
+  same +822 ms after true time, NDI at +899 ms, the Pixel's sound +23 ms from its picture; neither the
+  iPhone nor the Pixel flinched at the power cycle, NDI's 26.4 s outage is held, the programme has no
+  gap and every file decodes. Programme sound read 51 ms earlier in the second half — as did the
+  iPhone's and the Pixel's own, by the same amount at the same clap: the Pixel 2 clock stepped, not
+  Director. Afterwards the iPhone went back to its standing role (disabled, linked as the NDI camera's
+  control) with `enable-source?index=1&on=0` and `link-source?video=3&control=1`.
