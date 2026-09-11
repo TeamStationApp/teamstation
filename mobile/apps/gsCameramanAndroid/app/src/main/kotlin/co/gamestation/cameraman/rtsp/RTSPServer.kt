@@ -517,10 +517,26 @@ class RTSPServer(
                 else -> 4
             }
 
+            // Cellular never: it is not the field's network, and for the moments Wi-Fi drops it is
+            // the only address left, which moved an iPhone's live tile to 203.0.113.16 for 20 s. Some
+            // carriers hand out 10.x on cellular, so the interface is excluded as well as the range.
             return addresses
-                .filter { (_, ip) -> ip != "127.0.0.1" && !ip.startsWith("169.254.") }
+                .filter { (name, ip) -> !isCellular(name) && isPrivateIPv4(ip) }
                 .minByOrNull { (name, _) -> rank(name) }
                 ?.second
+        }
+
+        private fun isCellular(interfaceName: String): Boolean =
+            interfaceName.startsWith("rmnet") || interfaceName.startsWith("ccmni") ||
+                interfaceName.startsWith("v4-rmnet") || interfaceName.startsWith("v4-ccmni")
+
+        /** 10/8, 172.16/12 or 192.168/16: the addresses a Director on the same network can dial. */
+        fun isPrivateIPv4(ip: String): Boolean {
+            val octets = ip.split(".").mapNotNull { it.toIntOrNull()?.takeIf { value -> value in 0..255 } }
+            if (octets.size != 4) return false
+            return octets[0] == 10 ||
+                (octets[0] == 172 && octets[1] in 16..31) ||
+                (octets[0] == 192 && octets[1] == 168)
         }
 
         /** Every IPv4 this device answers on, for the state dump. */
