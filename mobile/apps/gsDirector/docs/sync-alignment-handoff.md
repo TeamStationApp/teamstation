@@ -1240,3 +1240,13 @@ inside segments at 246 s and 262 s; NDI gaps of 0.82, 0.35 and 9.04 s):
   iPhone's and the Pixel's own, by the same amount at the same clap: the Pixel 2 clock stepped, not
   Director. Afterwards the iPhone went back to its standing role (disabled, linked as the NDI camera's
   control) with `enable-source?index=1&on=0` and `link-source?video=3&control=1`.
+- **Three-camera soak (rec-347, 31 min, 02:03–02:34): recording and streaming RTMP to a local ingest,
+  the programme cut iPhone → Pixel → NDI every 2 min, the Cosmo power cycled at 10 min, the Pixel cut
+  off for 20 s at 20 min.** Every file decodes (1,864.6 s). iPhone sound −1 ms from its picture
+  (−32..+16, 246 claps); Pixel +21 ms; iPhone and Pixel flashes 4 ms apart (+755, +759 ms after true
+  time), NDI +843 ms. The iPhone has no gap at all; the Pixel's outage and the NDI's power cycle are
+  each held as one freeze (24.9 s, 26.5 s), and the programme holds whichever of them was on air.
+  NDI also shows a dozen 0.25–1.0 s hiccups, four of them just after the Pixel came back from its
+  outage. The stream stayed up in all 180 readings, 0 packets dropped, keyframes rising every time.
+  The iPad went to thermal "serious" 16 min in and stayed there, with no change in any camera's
+  frame rate (medians 60.0 / 59.5 / 60.0 fps in both states).
