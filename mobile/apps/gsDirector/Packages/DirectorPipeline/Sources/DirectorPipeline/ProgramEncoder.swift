@@ -224,10 +224,20 @@ public final class ProgramEncoder: @unchecked Sendable {
       ? kVTProfileLevel_HEVC_Main_AutoLevel as String
       : AVVideoProfileLevelH264HighAutoLevel
 
+    // Colour is stated rather than left to the first picture. Unstated, the encoder takes it from
+    // whatever buffer comes first: a take opens on the compositor's tagged frames, but a part
+    // started after a failed writer opens on the untagged black hold. rec-409's second part came out
+    // with no colour tags, a format its first part's track would not take, and the export put it
+    // on a second video track. Every part of a take must describe itself identically.
     let videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: [
       AVVideoCodecKey: codec == .hevc ? AVVideoCodecType.hevc : AVVideoCodecType.h264,
       AVVideoWidthKey: width,
       AVVideoHeightKey: height,
+      AVVideoColorPropertiesKey: [
+        AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
+        AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
+        AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2
+      ],
       AVVideoCompressionPropertiesKey: compression
     ])
     videoInput.expectsMediaDataInRealTime = true
