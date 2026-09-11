@@ -28,6 +28,38 @@ struct AudioEncoderSilenceTests {
     #expect(silentCount >= 7, "mute must emit AUs, not drop zeros as DTX")
   }
 
+  /// iOS delivers capture buffers stamped on the host clock, and a stretch the system dropped shows
+  /// as a jump between them. The encoder re-bases on a buffer's own time when nothing is queued; the
+  /// case left is a jump while samples are still waiting, where the sample count runs on regardless
+  /// and each frame's capture time must still come from the buffer its first sample belongs to.
+  @Test("Each frame's capture time comes from the buffer its first sample belongs to")
+  func captureTimeFollowsBuffers() throws {
+    let encoder = AudioEncoder()
+    let box = FrameBox()
+    encoder.onFrame = { box.append($0) }
+    encoder.configure(sampleRate: 48_000, channelCount: 1)
+    _ = encoder.pendingBytes
+
+    // 1,500 samples: one frame goes out and 476 samples stay queued.
+    let first = try #require(Self.pcmBuffer(samples: 1_500, rate: 48_000, pts: 10, value: 4_000))
+    encoder.encode(SampleBufferRef(first), silent: false)
+    _ = encoder.pendingBytes
+    // The next buffer starts where the count says 1,500 samples in, but was captured half a second
+    // later than that.
+    let boundary = 10 + 1_500.0 / 48_000
+    let second = try #require(Self.pcmBuffer(samples: 2_596, rate: 48_000, pts: boundary + 0.5, value: 4_000))
+    encoder.encode(SampleBufferRef(second), silent: false)
+    _ = encoder.pendingBytes
+
+    let frames = box.all
+    try #require(frames.count >= 3, "only \(frames.count) frames came out")
+    for frame in frames {
+      let position = frame.presentationTime
+      let expected = position < boundary - 1e-6 ? position : position + 0.5
+      #expect(abs((frame.captureTime ?? 0) - expected) < 0.001, "frame at \(position): \(frame.captureTime ?? -1)")
+    }
+  }
+
   private static func pcmBuffer(
     samples: Int,
     rate: Double,
@@ -115,5 +147,11 @@ private final class FrameBox: @unchecked Sendable {
     lock.lock()
     defer { lock.unlock() }
     return frames.count
+  }
+
+  var all: [EncodedAudioFrame] {
+    lock.lock()
+    defer { lock.unlock() }
+    return frames
   }
 }
