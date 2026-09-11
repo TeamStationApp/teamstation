@@ -1077,3 +1077,35 @@ inside segments at 246 s and 262 s; NDI gaps of 0.82, 0.35 and 9.04 s):
   stamp-minus-arrival trend in the Director so the next occurrence says which it is, and let the Pixel
   cool (it has been streaming about ten hours).
 
+### Frozen tiles: two silent causes, fixed and seen on the device (2026-09-10, 22:20)
+
+- **Display cap hold.** The preview latency cap is on at 500 ms, and `TileRouter` holds the last picture
+  whenever a picture arrives more than 500 ms after capture. Reproduced with 600 ms added to the
+  Pixel: displayed frames stopped at 12,550 for 64 s while `framesPerSecond` read 59.5 throughout,
+  and the backed-up TCP pushed frame age to 7.8 s at its worst. `47d7c258` measures the hold
+  (`displayHeldLateSeconds`, which climbed to 64.5 s) and shows a red "Late N s" pill on the tile; the
+  webcam shows the pill during the hold and not before. Side effect: the extra pill pushes the
+  nameplate off a narrow tile's header, as other crowding already does. Whether to keep holding
+  or show late pictures once the hold runs long is Paul's call; the hold is unchanged.
+- **Stall reset by reconnects.** The Cosmo went off the network at 19:33 (ARP incomplete, no mDNS);
+  its tile and the programme sat on that picture for over two hours through 565 reconnects with
+  `stalledForSeconds` 0, which also kept it off the list of missing cameras that starts a sweep.
+  `10d745f6` measures silence from the last real picture across reconnects (`SilenceClock`) in both
+  NDI and RTSP, and the pill reads "No picture N min". The Cosmo needs a physical power cycle: the
+  Meross plug is not paired to this Mac, and a failed pairing once stranded it.
+
+### Pixel sound: direct capture and the missing audio sender report (2026-09-10, 21:44–21:56)
+
+- The Mac recorded the Pixel's RTSP directly alongside a Director take and timed 98 claps. Audio
+  stamps within ±4 ms of the true clap time with no drift, video within +19 ms; both arrived a steady
+  156–180 ms after the event. The Pixel was healthy on this take (thermal status 4 still), so the
+  rec-331 fault did not recur and its cause is still unproven.
+- Cameraman Android sends sender reports for **video only** (`RTCPWriter` is built with the video
+  SSRC), although `MicrophoneSource` says audio and video are aligned by RTCP. The Director
+  therefore has no wall-clock mapping for Pixel audio at all: it pins the audio's first arrival to the
+  video and follows the sample count from there. Samples the phone drops under load would put every
+  later stamp early with nothing downstream able to tell. Proposed fix: Cameraman sends an audio
+  sender report whose NTP time comes from `AudioRecord.getTimestamp` (frame position against
+  `CLOCK_MONOTONIC`), and the Director places audio through it as it does video —
+  `RTPClockAudit.captureTimeOnLocalClock` assumes 90 kHz and would need the stream's rate.
+
