@@ -971,8 +971,8 @@ inside segments at 246 s and 262 s; NDI gaps of 0.82, 0.35 and 9.04 s):
 - **Pixel picture drift is not fixed.** Clapperboard, 248 claps: Pixel picture 828 → 658 ms over
   30 min (−101 ms per 1,000 s), still ramping — so not the ten-minute-maximum lag, which would
   have saturated at ~63 ms. Pixel sound (+2), NDI picture (+5) and programme sound (+20 ms per
-  1,000 s) are flat, so neither the iPad's nor the Pixel 2's clock is the drifting one. `89d86f7d`
-  (trend-following filter) is harmless but was not the fix.
+  1,000 s) are flat, so neither the iPad's nor the Pixel 2's clock is the drifting one. The
+  trend-following offset filter tried for this was not the fix and has been dropped (see below).
 - Cameras export in placement mode (each segment at its own `start_wall`), and rec-326's 605 Pixel
   segments are spaced by exactly their RTP durations: 0.03 s of slack over 30 min. So the stored
   capture walls advance at the camera's media clock, not ours. Each archived frame's capture time
@@ -986,3 +986,43 @@ inside segments at 246 s and 262 s; NDI gaps of 0.82, 0.35 and 9.04 s):
 - The stream here is configured at 60 fps (the ingest reads `framerate=60` from onMetaData), so the
   stream pacer passes every frame by design. The wire carries about 55 frames and 0.6 keyframes a
   second against a 2 s GOP: no keyframe storm on this rig.
+
+### The Pixel picture drift was the export, not capture (2026-09-10, evening)
+
+- **Capture was right.** A 30-minute offset log shows the Pixel's sender reports agree with the iPad
+  (raw offset −9 ms per 1,000 s) and the Pixel's BOOTTIME, which Camera2 stamps frames in, runs at
+  the Mac's rate within a few ppm. 42 raw rec-326 segments, each flash placed at its segment's
+  `start_wall` plus its time in the file, put the flash at a steady +821..+860 ms across the take.
+  The export of the same segments slid from +828 to +656 ms.
+- **The exporter made it.** `ArchiveRemux` was compiled into a Mac harness and run on all 605 raw
+  segments: the composition's segment starts matched their wall clocks to 1.65 ms, yet the
+  passthrough export drifted the same way. The file held 133,296 video samples for 109,165 real
+  frames — 24,000 one- and two-tick samples behind 413 edits. They come from the hold at each seam:
+  seams leave a one-tick hole from rounding, and the hold took one nominal frame back from the
+  segment's end, which on a Pixel's 10/11-tick frames starts a tick inside the sample before.
+- **Fix:** the hold now takes exactly the last sample, found with an `AVSampleCursor`. The same 605
+  segments export as one edit with no sliver samples; Pixel flash +12 and sound +7 ms per 1,000 s
+  over 30 minutes (was −101 and +2). Butting sub-frame seams instead was tried and rejected: with
+  one-sided holes it accumulates up to a frame and a half before a hold resets it.
+- **Trend filter dropped.** Its premise, a Pixel wall clock moving 105 ppm, was this export drift
+  misread. It is also wrong under load: when the Pixel link's latency rose about 300 ms for three
+  minutes during rec-328, the fit followed the latency down (−1.33 → −1.45 s against a true −1.28 s)
+  and then overshot upward (−1.20 s) after recovery, moving the Pixel's capture times by tens of
+  milliseconds either way. The plain ten-minute maximum is immune to exactly this.
+
+### Open: archive audio holes when a camera's audio arrives late (rec-328)
+
+- From 675 s to 864 s of rec-328 the Pixel's link latency rose about 300 ms (raw offset −1.28 →
+  −1.50..−1.60 s; Cameraman reported no drops and no send-queue flushes). The Pixel's archived audio
+  lost 1.5–3.3 s of every 5–6 s: 39 holes, 83 s in all. Its picture stayed placed.
+- Every hole starts 1.1–2.2 s before a Pixel segment begins and ends 0.3–0.7 s after it. So the
+  audio reached the writer that far behind its own picture (the tile's `lastAudioDrift` read 1.25 s):
+  the tail of each segment's audio arrived after the keyframe had closed the file, and in the next
+  file `ArchiveAudioTimeline` resynced the first late buffers forward to the newest picture. The
+  anchor re-pin in `SegmentWriter` compares against the newest picture too, so a lag near 2 s re-pins
+  it to arrival.
+- Needed: the writer has to let a segment's audio catch up before closing it — hold the new
+  segment's pictures (a second or two, a few MB) until the audio passes the cut, with a timeout —
+  and judge the audio clock against its own continuity rather than the newest picture's arrival.
+  Why the Pixel's audio fell seconds behind its picture on one TCP connection is still unexplained.
+
