@@ -1,5 +1,7 @@
 package co.gamestation.cameraman.ui
 
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -33,6 +35,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
@@ -74,6 +77,10 @@ fun CameraScreen(environment: AppEnvironment, onOpenSettings: () -> Unit) {
     var pinchedScale by remember { mutableDoubleStateOf(1.0) }
     // Centre-to-centre gap between adjacent pills, measured from the drawn column.
     var pointsPerSegment by remember { mutableFloatStateOf(72f) }
+    // Whether the current gesture's first finger landed within [CameramanTokens.systemGestureBand]
+    // of the top or bottom edge. Such a gesture is on its way to the system's shade or home bar and
+    // leaves the zoom alone for its whole length, however far it then travels into the picture.
+    var startedInSystemBand by remember { mutableStateOf(false) }
 
     Surface(
         modifier = Modifier
@@ -86,8 +93,24 @@ fun CameraScreen(environment: AppEnvironment, onOpenSettings: () -> Unit) {
                 camera = environment.camera,
                 modifier = Modifier
                     .fillMaxSize()
+                    // Where the first finger landed, read on the Initial pass so it is settled
+                    // before either detector below sees the down. The drag detector only reports a
+                    // position once touch slop is crossed, which is already some way off the edge.
+                    // The preview is edge to edge, so its bounds are the glass.
+                    .pointerInput(Unit) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown(
+                                requireUnconsumed = false,
+                                pass = PointerEventPass.Initial
+                            )
+                            val band = CameramanTokens.systemGestureBand.toPx()
+                            startedInSystemBand =
+                                down.position.y < band || down.position.y > size.height - band
+                        }
+                    }
                     .pointerInput(Unit) {
                         detectTransformGestures { _, _, zoom, _ ->
+                            if (startedInSystemBand) return@detectTransformGestures
                             val start = zoomAtGestureStart ?: liveState.deviceZoom.also {
                                 pinchedScale = 1.0
                             }
@@ -102,8 +125,8 @@ fun CameraScreen(environment: AppEnvironment, onOpenSettings: () -> Unit) {
                         zoomAtGestureStart = null
                         pinchedScale = 1.0
                     }
-                    // Vertical drag anywhere. Up zooms in. A drag as long as one pill-to-pill gap
-                    // walks one segment.
+                    // Vertical drag anywhere but the edge bands. Up zooms in. A drag as long as one
+                    // pill-to-pill gap walks one segment.
                     .pointerInput(Unit) {
                         detectDragGestures(
                             onDragStart = {
@@ -113,6 +136,7 @@ fun CameraScreen(environment: AppEnvironment, onOpenSettings: () -> Unit) {
                             onDragEnd = { scrubAtGestureStart = null },
                             onDragCancel = { scrubAtGestureStart = null }
                         ) { change, dragAmount ->
+                            if (startedInSystemBand) return@detectDragGestures
                             change.consume()
                             scrubbedPoints -= dragAmount.y
                             val start = scrubAtGestureStart ?: liveState.displayedZoom
