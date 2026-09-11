@@ -43,6 +43,17 @@ sealed interface ControlCommand {
         val jitter: Double,
         val burst: Double
     ) : ControlCommand
+
+    /**
+     * Holds outgoing audio back on its own, leaving the picture alone: a camera whose sound falls
+     * behind its picture, which a throttled phone does and a congested link cannot imitate because
+     * both streams share one connection.
+     */
+    data class SetAudioDelay(
+        val milliseconds: Double,
+        val jitter: Double,
+        val burst: Double
+    ) : ControlCommand
     data object ForceKeyframe : ControlCommand
     data object Clients : ControlCommand
     data object Reset : ControlCommand
@@ -114,6 +125,12 @@ object ControlChannel {
 
             // Every field optional so a flow can set only what it is exercising; omitted means zero.
             "set-send-delay" -> ControlCommand.SetSendDelay(
+                milliseconds = query["ms"]?.toDoubleOrNull() ?: 0.0,
+                jitter = query["jitter"]?.toDoubleOrNull() ?: 0.0,
+                burst = query["burst"]?.toDoubleOrNull() ?: 0.0
+            )
+
+            "set-audio-delay" -> ControlCommand.SetAudioDelay(
                 milliseconds = query["ms"]?.toDoubleOrNull() ?: 0.0,
                 jitter = query["jitter"]?.toDoubleOrNull() ?: 0.0,
                 burst = query["burst"]?.toDoubleOrNull() ?: 0.0
