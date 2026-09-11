@@ -88,6 +88,8 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
   /// decoder needs to decode them: the writer builds its own format descriptions from these.
   private var videoCodec: VideoCodec?
   private var videoParameterSets: [Data] = []
+  /// Keeps pictures that predict from a lost one out of the archive until the next keyframe.
+  private var archiveGate = ArchiveReferenceGate()
   private var audioConfig: (cookie: Data, sampleRate: Double, channels: Int)?
 
   private var frameID: UInt64 = 0
@@ -312,6 +314,7 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     audioFormatDescription = nil
     videoCodec = nil
     videoParameterSets = []
+    archiveGate.reset()
     audioConfig = nil
     pendingFrameIDs.removeAll()
     videoTracker = RTPSequenceTracker()
@@ -505,13 +508,15 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     let archive = sinks.compressed
     let codec = videoCodec
     let sets = videoParameterSets
+    let admitted = archiveGate.admit(isKeyframe: unit.isKeyframe, isCorrupt: unit.isCorrupt)
     lock.unlock()
 
     // The archive is fed here, on arrival, rather than from the delay line: holding a picture back
     // is a courtesy to the operator's eyes, and the file wants the camera's own pacing. A picture
     // assembled across a packet loss is dropped from both — writing known-corrupt bytes would make
     // the recording undecodable at exactly the moment it mattered.
-    guard let archive, let codec, !unit.isCorrupt, !unit.data.isEmpty, !sets.isEmpty else { return }
+    // Nor is anything after it that predicts from what was lost; see `ArchiveReferenceGate`.
+    guard let archive, let codec, admitted, !unit.data.isEmpty, !sets.isEmpty else { return }
     archive(
       CompressedFrame(
         sourceID: sourceID,
