@@ -11,7 +11,15 @@ public struct SegmentWriterSettings: Sendable, Equatable {
   /// How much video a segment holds. Boundaries land on the camera's own keyframes, so a segment is
   /// this long rounded up to the next one.
   public var segmentSeconds: Double
+  /// Whether the writer waits for the camera's audio before writing anything, and gives every file
+  /// an audio track.
   public var includesAudio: Bool
+  /// Whether a file opened after the camera's audio has appeared may carry it, for a writer made
+  /// before any had arrived. Unlike `includesAudio` it never waits: the audio joins at the next
+  /// segment. The decision used to be made once, when the writer was, so a camera still
+  /// reconnecting when a recording began was archived with no sound for the whole take — fifteen
+  /// minutes of this bench's Pixel.
+  public var acceptsLateAudio: Bool
   public var minimumFreeDiskBytes: Int64
   /// Which transport delivers this source, recorded on every segment so a misplaced angle can be
   /// attributed to one after the fact. A take now mixes NDI and RTSP, and the two derive capture
@@ -21,11 +29,13 @@ public struct SegmentWriterSettings: Sendable, Equatable {
   public init(
     segmentSeconds: Double = 3,
     includesAudio: Bool = true,
+    acceptsLateAudio: Bool = false,
     minimumFreeDiskBytes: Int64 = 4 * 1024 * 1024 * 1024,
     transport: String? = nil
   ) {
     self.segmentSeconds = segmentSeconds
     self.includesAudio = includesAudio
+    self.acceptsLateAudio = acceptsLateAudio
     self.minimumFreeDiskBytes = minimumFreeDiskBytes
     self.transport = transport
   }
@@ -33,15 +43,20 @@ public struct SegmentWriterSettings: Sendable, Equatable {
   public static func from(
     config: AppConfig,
     includesAudio: Bool = true,
+    acceptsLateAudio: Bool = false,
     transport: String? = nil
   ) -> SegmentWriterSettings {
     SegmentWriterSettings(
       segmentSeconds: config.segmentSeconds,
       includesAudio: includesAudio,
+      acceptsLateAudio: acceptsLateAudio,
       minimumFreeDiskBytes: config.minimumFreeDiskBytes,
       transport: transport
     )
   }
+
+  /// Whether any file this writer opens may carry audio.
+  var archivesAudio: Bool { includesAudio || acceptsLateAudio }
 }
 
 public enum SegmentWriterError: Error, CustomStringConvertible {
@@ -536,7 +551,7 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     startingAt start: CMTime,
     sourceID: SourceID
   ) -> (frames: [CompressedAudioFrame], covered: Double) {
-    guard settings.includesAudio, silenceSampleRate > 0, silenceChannels > 0 else { return ([], 0) }
+    guard settings.archivesAudio, silenceSampleRate > 0, silenceChannels > 0 else { return ([], 0) }
     if silence == nil {
       silence = ArchiveFiller(
         width: 2, height: 2,
@@ -593,7 +608,8 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
   private func deferCutForAudio(at cut: CMTime, picture: HeldPicture, duration: CMTime) -> Bool {
     lock.lock()
     defer { lock.unlock() }
-    guard settings.includesAudio, audioFormat != nil else { return false }
+    // A file opened before the camera's audio appeared has no track for it to land in.
+    guard settings.archivesAudio, audioFormat != nil, audioInput != nil else { return false }
     if let end = audioTimeline.endTime, end.seconds >= cut.seconds - Self.audioCatchUpTolerance {
       return false
     }
@@ -845,7 +861,7 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     writer.add(videoInput)
 
     var audioInput: AVAssetWriterInput?
-    if settings.includesAudio, let audioFormat {
+    if settings.archivesAudio, let audioFormat {
       let input = AVAssetWriterInput(
         mediaType: .audio,
         outputSettings: nil,
@@ -994,7 +1010,7 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
   private func write(audio frame: CompressedAudioFrame, retry: Bool = false) {
     if !retry { telemetry.mutateTile(sourceIndex) { $0.audioReceived &+= 1 } }
     lock.lock()
-    guard !finishing, settings.includesAudio, stopError == nil else {
+    guard !finishing, settings.archivesAudio, stopError == nil else {
       lock.unlock()
       telemetry.mutateTile(sourceIndex) { $0.audioRejectedClosed &+= 1 }
       return
