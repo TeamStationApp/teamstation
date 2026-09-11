@@ -59,7 +59,17 @@ struct WallClockPlacementTests {
 
   /// Same as `markedMovie` but with an audio track, because a real archive has one and the
   /// composition treats video and audio differently once a gap has to be filled.
-  private func markedMovieWithAudio(at url: URL, firstValue: Int, frames: Int) async throws {
+  ///
+  /// `audioLead` starts the sound that long after the first picture and `audioOverrun` runs it that
+  /// long past the last, which is the shape a camera segment really has: its sound begins and ends a
+  /// few tens of milliseconds after its picture does.
+  private func markedMovieWithAudio(
+    at url: URL,
+    firstValue: Int,
+    frames: Int,
+    audioLead: Double = 0,
+    audioOverrun: Double = 0
+  ) async throws {
     try? FileManager.default.removeItem(at: url)
     let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
     let video = AVAssetWriterInput(
@@ -96,7 +106,11 @@ struct WallClockPlacementTests {
 
     // Silence, at the same length as the picture.
     let samplesPerChunk = 1_024
-    let chunks = max(1, Int((Double(frames) / Self.fps * 44_100) / Double(samplesPerChunk)))
+    let chunks = max(
+      1,
+      Int(((Double(frames) / Self.fps + audioOverrun - audioLead) * 44_100) / Double(samplesPerChunk))
+    )
+    let leadSamples = CMTimeValue((audioLead * 44_100).rounded())
     var asbd = AudioStreamBasicDescription(
       mSampleRate: 44_100, mFormatID: kAudioFormatLinearPCM,
       mFormatFlags: kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked,
@@ -123,7 +137,10 @@ struct WallClockPlacementTests {
       var sample: CMSampleBuffer?
       var timing = CMSampleTimingInfo(
         duration: CMTime(value: 1, timescale: 44_100),
-        presentationTimeStamp: CMTime(value: CMTimeValue(chunk * samplesPerChunk), timescale: 44_100),
+        presentationTimeStamp: CMTime(
+          value: leadSamples + CMTimeValue(chunk * samplesPerChunk),
+          timescale: 44_100
+        ),
         decodeTimeStamp: .invalid
       )
       CMSampleBufferCreateReady(
@@ -148,7 +165,7 @@ struct WallClockPlacementTests {
     var nextChunk = 0
     for index in 0..<frames {
       let time = Double(index) / Self.fps
-      while nextChunk < chunks, Double(nextChunk * samplesPerChunk) / 44_100 <= time {
+      while nextChunk < chunks, audioLead + Double(nextChunk * samplesPerChunk) / 44_100 <= time {
         try await ready(audio)
         if let sample = silence(chunk: nextChunk) { audio.append(sample) }
         nextChunk += 1
@@ -375,6 +392,51 @@ struct WallClockPlacementTests {
       let span = try await track.load(.timeRange)
       #expect(abs(span.end.seconds - container) < 0.5, "video track ends at \(span.end.seconds)")
     }
+  }
+
+  /// A camera segment's sound starts after its first picture and runs past its last, and the next
+  /// segment's sound picks up where this one's left off. Cut to the picture's range, every seam lost
+  /// the overrun and left a hole: rec-351's Pixel export had 2,334 of them, 288 s of recorded sound.
+  @Test("Sound comes out as one piece the length of the window, with no seams to open")
+  func soundCrossesSeamsWithoutHoles() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("seams-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    var files: [URL] = []
+    for index in 0..<3 {
+      let url = root.appendingPathComponent("s\(index).mp4")
+      try await markedMovieWithAudio(
+        at: url,
+        firstValue: 1_000 + index * 1_000,
+        frames: 90,
+        audioLead: 0.06,
+        audioOverrun: 0.12
+      )
+      files.append(url)
+    }
+
+    let out = root.appendingPathComponent("out.mp4")
+    try await ArchiveRemux.concatenate(
+      files: files,
+      fileDurations: [ 3, 3, 3 ],
+      targetDuration: 9,
+      startWalls: [ WallClock(seconds: 1_000), WallClock(seconds: 1_003), WallClock(seconds: 1_006) ],
+      windowStart: WallClock(seconds: 1_000),
+      destination: out
+    )
+
+    let asset = AVURLAsset(url: out)
+    // One rendered piece of sound, the whole window long: nothing for an exporter to split or slide.
+    let audio = try #require(try await asset.loadTracks(withMediaType: .audio).first)
+    let segments = try await audio.load(.segments)
+    #expect(segments.count == 1 && segments.first?.isEmpty == false, "sound in \(segments.count) pieces")
+    let span = try await audio.load(.timeRange)
+    #expect(abs(span.start.seconds) < 0.03, "sound starts at \(span.start.seconds) s")
+    #expect(abs(span.end.seconds - 9) < 0.05, "sound ends at \(span.end.seconds) s")
+    let video = try #require(try await asset.loadTracks(withMediaType: .video).first)
+    #expect(abs(try await video.load(.timeRange).end.seconds - 9) < 0.05)
   }
 
   @Test("A camera that stops early holds its last frame to the end of the window")
