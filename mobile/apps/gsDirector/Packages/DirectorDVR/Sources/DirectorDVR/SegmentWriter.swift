@@ -139,6 +139,11 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
   private var basePresentationTime: CMTime?
   private var baseWallClock: WallClock?
   private var lastVideoTime: CMTime = .negativeInfinity
+  /// Where the last picture written to the current file ends, which is how long the segment is
+  /// recorded as. It is not always where the next picture starts: a gap clamped as a glitch leaves
+  /// the file one frame past its last picture, while the picture after the gap opens the next file
+  /// wherever its own clock put it.
+  private var writtenVideoEnd: CMTime = .invalid
   private var lastVideoDuration = CMTime(value: 3000, timescale: 90_000)
   /// Video samples written to the file currently open. Divided by the segment's span it gives the
   /// rate this stretch of the archive was really written at, which is not the camera's nominal one
@@ -392,7 +397,7 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
       filename: outputFilename,
       sequence: sequence,
       startWall: baseWallClock,
-      duration: lastVideoTime.seconds,
+      duration: writtenVideoEnd.isNumeric ? writtenVideoEnd.seconds : lastVideoTime.seconds,
       firstFrameID: pendingFirstFrameID,
       videoFrames: segmentVideoFrames
     )
@@ -811,6 +816,7 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     if videoInput.append(sampleBuffer) {
       lock.lock()
       appendedFrames &+= 1
+      writtenVideoEnd = CMTimeAdd(presentationTime, sampleDuration)
       lock.unlock()
       let seconds = presentationTime.seconds
       telemetry.mutateTile(sourceIndex) { $0.archiveVideoSeconds = seconds }
@@ -909,7 +915,12 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     let filename = outputFilename
     let seq = sequence
     let startWall = baseWallClock
-    let duration = lastVideoTime.isNumeric ? lastVideoTime.seconds : 0
+    // What the file holds, not where the next picture starts. rec-408's index said a Pixel segment
+    // ran 42.7 s to the keyframe after a 40 s dropout the writer had clamped as a glitch; the file
+    // held 2.5 s, and the export left the rest with no picture instead of holding the last one.
+    let duration = writtenVideoEnd.isNumeric
+      ? writtenVideoEnd.seconds
+      : (lastVideoTime.isNumeric ? lastVideoTime.seconds : 0)
     let firstFrameID = pendingFirstFrameID
     let frames = segmentVideoFrames
     self.writer = nil
@@ -921,6 +932,7 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     baseWallClock = nil
     baseWallIsCapture = false
     lastVideoTime = .negativeInfinity
+    writtenVideoEnd = .invalid
     pendingFirstFrameID = nil
     segmentVideoFrames = 0
     // Keep `held`. Recycle runs from appendVideo of the keyframe that *opens* the next file,
