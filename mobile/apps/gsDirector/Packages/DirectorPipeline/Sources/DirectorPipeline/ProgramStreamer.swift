@@ -42,6 +42,8 @@ public final class ProgramStreamer: @unchecked Sendable {
   private var streamStartWall: CFAbsoluteTime = 0
   /// When the encoder last handed back a real picture, as opposed to a callback carrying an error.
   private var lastOutputWall: CFAbsoluteTime = 0
+  /// Holds the encoder to the stream's own frame rate; see `StreamFramePacer`.
+  private var pacer = StreamFramePacer(frameRate: 30)
   private var onFailure: FailureHandler?
   /// VideoToolbox keeps each submitted pixel buffer until the encode callback. Without a cap,
   /// a slow RTMP ingest lets that queue grow without bound at programme frame rate.
@@ -122,6 +124,7 @@ public final class ProgramStreamer: @unchecked Sendable {
     sentAudioConfig = false
     sentMetadata = false
     clock = StreamEncodeClock(frameRate: frameRate, gopSeconds: gopSeconds)
+    pacer = StreamFramePacer(frameRate: frameRate)
     aac.reset()
     lastEncodable = nil
     lastCallbackWall = 0
@@ -171,6 +174,10 @@ public final class ProgramStreamer: @unchecked Sendable {
   }
 
   public func append(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime) {
+    lock.lock()
+    let admitted = pacer.admit(now: CFAbsoluteTimeGetCurrent())
+    lock.unlock()
+    guard admitted else { return }
     encode(pixelBuffer, sourceTime: presentationTime, forceKey: nil, isIdle: false)
   }
 
