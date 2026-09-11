@@ -1123,4 +1123,9 @@ inside segments at 246 s and 262 s; NDI gaps of 0.82, 0.35 and 9.04 s):
   `CompressedAudioFrame.captureWallClock`; `ArchiveAudioTimeline` places audio there, contiguous within
   20 ms and a real gap beyond; the camera offset is taken from the busiest stream only, so audio
   reports cannot move where pictures go. Sources without audio reports keep the recording anchor.
+- **Verified, rec-333 (22:36–22:46, 10 min, Pixel audio reports on):** Pixel sound minus picture median
+  **+7 ms**, range −10..+37 ms over all 79 claps (it had sat 70–84 ms early, and on rec-331 went seconds
+  wrong); Pixel sound −5 and picture −29 ms per 1,000 s; zero audio placements rejected, zero resyncs.
+  NDI flat. The programme was on the NDI tile and froze at 10 fps held frames for most of its last
+  20 s: the Cosmo, just power-cycled, went offline for over 5 s ("no frames for 5s", 5 reconnects).
 
