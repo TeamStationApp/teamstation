@@ -57,15 +57,19 @@ class StreamSendQueueTest {
     }
 
     @Test
-    fun `completion credits the queue and resumes sending`() {
+    fun `completion credits the queue and sending resumes at the next keyframe`() {
         val queue = StreamSendQueue(highWaterMark = 1_000)
         queue.decide(1_200, true)
         assertEquals(StreamSendQueue.Decision.DROP, queue.decide(100, false))
 
         queue.complete(1_200)
         assertEquals(0, queue.pendingBytes)
-        assertEquals(StreamSendQueue.Decision.SEND, queue.decide(100, false))
+        // Room again, but this picture predicts from the one just dropped, so it would not decode.
+        assertEquals(StreamSendQueue.Decision.DROP, queue.decide(100, false))
+        assertTrue(queue.isDropping)
+        assertEquals(StreamSendQueue.Decision.SEND, queue.decide(100, true))
         assertFalse(queue.isDropping)
+        assertEquals(StreamSendQueue.Decision.SEND, queue.decide(100, false))
     }
 
     @Test

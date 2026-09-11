@@ -328,8 +328,14 @@ internal class RTSPClientConnection(
             if (payloads.isEmpty()) return@submit
 
             val bytes = payloads.sumOf { it.size }
+            val wasDropping = sendQueue.isDropping
             when (sendQueue.decide(bytes, frame.isKeyframe)) {
-                StreamSendQueue.Decision.DROP -> return@submit
+                StreamSendQueue.Decision.DROP -> {
+                    // Nothing more goes out until a keyframe, so ask for one now rather than leaving
+                    // the client without pictures for the rest of the GOP.
+                    if (!wasDropping) requestKeyframe()
+                    return@submit
+                }
                 StreamSendQueue.Decision.FLUSH_THEN_SEND ->
                     // `decide` bumped `generation`, so completions from the abandoned batches will
                     // not debit this keyframe. Unlike Network.framework, a queue of not-yet-written
