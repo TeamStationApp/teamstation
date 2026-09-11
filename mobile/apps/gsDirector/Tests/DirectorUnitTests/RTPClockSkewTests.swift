@@ -62,4 +62,42 @@ struct RTPClockSkewTests {
     let audit = RTPClockAudit()
     #expect(audit.captureTimeOnLocalClock(rtpTimestamp: 90_000, ssrc: 7) == nil)
   }
+
+  /// Cameraman Android now reports on its audio too, on its own RTCP channel, at 48 kHz.
+  @Test("Audio maps through its own sender report at its own rate")
+  func audioUsesItsOwnReportAndRate() {
+    let now = 1_800_000_000.0
+    var audit = RTPClockAudit()
+    let video = RTCPReport.SenderReport(
+      ssrc: 7, ntpTimestamp: ntpTimestamp(unixSeconds: now), rtpTimestamp: 90_000,
+      packetCount: 100, octetCount: 100_000
+    )
+    let audio = RTCPReport.SenderReport(
+      ssrc: 8, ntpTimestamp: ntpTimestamp(unixSeconds: now), rtpTimestamp: 48_000,
+      packetCount: 50, octetCount: 5_000
+    )
+    audit.note(report: RTCPReport(senderReports: [ video ]), arrivalUptime: 10, wallClockNow: Date(timeIntervalSince1970: now))
+    audit.note(report: RTCPReport(senderReports: [ audio ]), arrivalUptime: 10.1, wallClockNow: Date(timeIntervalSince1970: now + 0.1))
+    // Half a second of 48 kHz ticks past the audio report's anchor.
+    let capture = audit.captureTimeOnLocalClock(rtpTimestamp: 72_000, ssrc: 8, clockRate: 48_000)
+    #expect(abs((capture ?? 0) - (now + 0.5)) < 0.001)
+  }
+
+  @Test("An audio report leaves the offset the video set alone")
+  func audioReportDoesNotMoveOffset() {
+    let now = 1_800_000_000.0
+    var audit = RTPClockAudit()
+    let video = RTCPReport.SenderReport(
+      ssrc: 7, ntpTimestamp: ntpTimestamp(unixSeconds: now + 2.15), rtpTimestamp: 90_000,
+      packetCount: 100, octetCount: 100_000
+    )
+    // An audio report whose clock reads 300 ms later than the picture's.
+    let audio = RTCPReport.SenderReport(
+      ssrc: 8, ntpTimestamp: ntpTimestamp(unixSeconds: now + 2.45), rtpTimestamp: 48_000,
+      packetCount: 50, octetCount: 5_000
+    )
+    audit.note(report: RTCPReport(senderReports: [ video ]), arrivalUptime: 10, wallClockNow: Date(timeIntervalSince1970: now))
+    audit.note(report: RTCPReport(senderReports: [ audio ]), arrivalUptime: 10.5, wallClockNow: Date(timeIntervalSince1970: now))
+    #expect(abs(audit.filteredOffsetSeconds - 2.15) < 0.001)
+  }
 }

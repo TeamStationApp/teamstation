@@ -48,4 +48,21 @@ struct ArchiveAudioTimelineTests {
     let first = timeline.place(sourceTime: CMTime(seconds: 50, preferredTimescale: 48_000), duration: duration, videoTime: CMTime(seconds: 0.2, preferredTimescale: 90_000))
     #expect(abs((first?.start.seconds ?? 0) - 0.2) < 0.001)
   }
+
+  /// Audio whose camera reports when it captured it is placed there, contiguous within a packet,
+  /// and a jump the sample count could not have shown becomes a gap.
+  @Test("Audio with its own capture time is placed by it")
+  func captureTimePlacesAudio() {
+    let duration = CMTime(value: 1024, timescale: 48_000)
+    var timeline = ArchiveAudioTimeline()
+    let video = CMTime(seconds: 2, preferredTimescale: 90_000)
+    let first = timeline.place(sourceTime: .zero, duration: duration, videoTime: video, segmentBaseWall: 1_000, captureWall: 1_001)
+    #expect(abs((first?.start.seconds ?? 0) - 1) < 0.001)
+    // A report re-anchored the mapping 3 ms off: stays glued to the previous buffer.
+    let second = timeline.place(sourceTime: duration, duration: duration, videoTime: video, segmentBaseWall: 1_000, captureWall: 1_001.0213 + 0.003)
+    #expect(abs((second?.start.seconds ?? 0) - (1 + 1024.0 / 48_000)) < 0.0001)
+    // Samples the camera dropped: capture time is 150 ms past where the count would put it.
+    let third = timeline.place(sourceTime: CMTimeMultiply(duration, multiplier: 2), duration: duration, videoTime: video, segmentBaseWall: 1_000, captureWall: 1_001.0427 + 0.15)
+    #expect(abs((third?.start.seconds ?? 0) - 1.1927) < 0.001)
+  }
 }

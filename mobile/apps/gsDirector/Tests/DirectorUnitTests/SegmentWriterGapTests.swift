@@ -207,6 +207,36 @@ struct SegmentWriterGapTests {
     #expect(harness.telemetry.snapshot.tiles[0].audioResyncs == 0)
   }
 
+  /// rec-331: after two minutes the Pixel's sound came out of the export 0.3–1.6 s early and full of
+  /// holes, which is what a sample count that falls behind real time looks like to a receiver with
+  /// nothing else to go on. With a capture time on every packet, the archive places it correctly.
+  @Test("Audio whose sample clock loses time is placed by its capture time", .timeLimit(.minutes(1)))
+  func captureTimeOutranksLostSamples() async throws {
+    let harness = try GapHarness()
+    defer { harness.tearDown() }
+
+    let writer = harness.makeWriter()
+    try writer.prepare()
+    try harness.feedLateAudio(
+      writer, from: 1_000, seconds: 10, audioLag: 0, after: 0, samplesLost: (at: 4, seconds: 0.5)
+    )
+    await writer.finish()
+
+    let files = try harness.segmentFiles()
+    try #require(files.count >= 3, "expected several 3 s segments, got \(files.count)")
+    for file in files.dropLast() {
+      let asset = AVURLAsset(url: file)
+      let video = try #require(try await asset.loadTracks(withMediaType: .video).first)
+      let audio = try #require(try await asset.loadTracks(withMediaType: .audio).first)
+      let videoEnd = try await video.load(.timeRange).end.seconds
+      let audioEnd = try await audio.load(.timeRange).end.seconds
+      #expect(abs(audioEnd - videoEnd) < 0.1, "\(file.lastPathComponent): audio ends at \(audioEnd) s, video at \(videoEnd) s")
+    }
+    let tile = harness.telemetry.snapshot.tiles[0]
+    #expect(tile.audioResyncs == 0)
+    #expect(tile.audioRejectedPlacement < 5, "rejected \(tile.audioRejectedPlacement)")
+  }
+
   /// This bench's Pixel was still reconnecting when a recording began, 25 s after the Director
   /// relaunched. Its writer was made before it had sent any audio, so it got no audio track, and
   /// every one of its 14,311 audio packets for the next fifteen minutes was turned away.
@@ -345,7 +375,8 @@ private final class GapHarness {
     seconds: Double,
     audioLag: Double,
     after lagStart: Double,
-    audioFrom: Double = 0
+    audioFrom: Double = 0,
+    samplesLost: (at: Double, seconds: Double)? = nil
   ) throws {
     guard let buffer = Self.buffer(width: 160, height: 120) else {
       throw CocoaError(.fileWriteUnknown)
@@ -356,12 +387,24 @@ private final class GapHarness {
     var audioTime = audioFrom
     func sendAudio(upTo limit: Double) {
       while audioTime <= limit {
+        // With `samplesLost`, the camera's sample count falls that far behind real time at that
+        // point, and says so through a capture time on every packet, as Cameraman now does.
+        let lost = samplesLost.map { audioTime >= $0.at ? $0.seconds : 0 } ?? 0
         if let silence = filler.encodeSilence(
           sourceID: source,
-          presentationTime: CMTime(seconds: audioTime, preferredTimescale: 90_000),
+          presentationTime: CMTime(seconds: audioTime - lost, preferredTimescale: 90_000),
           wallClock: clock.now
         ) {
-          writer.append(audio: silence)
+          writer.append(audio: samplesLost == nil ? silence : CompressedAudioFrame(
+            sourceID: silence.sourceID,
+            data: silence.data,
+            magicCookie: silence.magicCookie,
+            sampleRate: silence.sampleRate,
+            channelCount: silence.channelCount,
+            presentationTime: silence.presentationTime,
+            wallClock: silence.wallClock,
+            captureWallClock: WallClock(seconds: start + audioTime)
+          ))
         }
         audioTime += packet
       }

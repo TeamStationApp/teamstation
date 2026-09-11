@@ -690,6 +690,15 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
       // rate, so that path still decodes and resamples — but only what reaches the programme, and
       // never what reaches disk.
       if let archive, let config {
+        // Through the audio stream's own sender reports, when the camera sends them, at the audio's
+        // sample rate. Without them the archive pins the audio clock to the picture instead.
+        lock.lock()
+        let capture = clockAudit.captureTimeOnLocalClock(
+          rtpTimestamp: rtpTimestamp,
+          ssrc: packet.ssrc,
+          clockRate: config.sampleRate
+        )
+        lock.unlock()
         archive(
           CompressedAudioFrame(
             sourceID: sourceID,
@@ -701,7 +710,8 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
               value: CMTimeValue(packet.timestamp) + step,
               timescale: CMTimeScale(config.sampleRate)
             ),
-            wallClock: clock.now
+            wallClock: clock.now,
+            captureWallClock: capture.map { WallClock(seconds: $0) }
           )
         )
       }

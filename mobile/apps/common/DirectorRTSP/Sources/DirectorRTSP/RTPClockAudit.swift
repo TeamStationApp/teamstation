@@ -45,6 +45,11 @@ struct RTPClockAudit: Sendable {
   }
 
   private var tracks: [UInt32: Track] = [:]
+  /// The stream the offset is measured from: the busiest, which is the video. A camera that also
+  /// reports on its audio sends those reports on their own, and their capture times need not agree
+  /// with the picture's to the millisecond; letting them into a window that keeps its maximum
+  /// would let the audio's clock move where every picture is placed.
+  private var offsetSSRC: UInt32?
   private var lastArrivalUptime: Double?
   private var intervalTotal: Double = 0
   private var intervalSamples: UInt64 = 0
@@ -111,12 +116,12 @@ struct RTPClockAudit: Sendable {
   ///
   /// The tick difference is taken as a signed 32-bit quantity so a frame slightly older than the
   /// anchor reads as negative rather than as most of a rollover.
-  func captureTimeOnLocalClock(rtpTimestamp: UInt32, ssrc: UInt32) -> Double? {
-    guard let anchor = anchor(forSSRC: ssrc) else { return nil }
+  func captureTimeOnLocalClock(rtpTimestamp: UInt32, ssrc: UInt32, clockRate: Double = 90_000) -> Double? {
+    guard let anchor = anchor(forSSRC: ssrc), clockRate > 0 else { return nil }
     let offset = filteredOffsetSeconds
     guard abs(offset) <= Self.maximumClockSkewSeconds else { return nil }
     let ticks = Int32(bitPattern: rtpTimestamp &- anchor.rtpTimestamp)
-    let cameraWall = anchor.ntpSeconds + Double(ticks) / 90_000
+    let cameraWall = anchor.ntpSeconds + Double(ticks) / clockRate
     return cameraWall - offset
   }
 
@@ -158,16 +163,6 @@ struct RTPClockAudit: Sendable {
     lastArrivalUptime = arrivalUptime
     lastReportUptime = arrivalUptime
 
-    // Every sender in one compound packet shares an arrival, so the offset is taken from the
-    // busiest stream in this report rather than from whichever happened to be parsed last.
-    if let primary = report.senderReports.max(by: { $0.octetCount < $1.octetCount }) {
-      let observed = primary.ntpDate.timeIntervalSince1970 - wallClockNow.timeIntervalSince1970
-      ntpOffsetSeconds = observed
-      offsetSamples.append(OffsetSample(atUptime: arrivalUptime, offset: observed))
-      let cutoff = arrivalUptime - Self.offsetWindowSeconds
-      offsetSamples.removeAll { $0.atUptime < cutoff }
-    }
-
     for sender in report.senderReports {
       let ntpSeconds = sender.ntpDate.timeIntervalSince1970
 
@@ -194,12 +189,28 @@ struct RTPClockAudit: Sendable {
       track.reports &+= 1
       tracks[sender.ssrc] = track
     }
+
+    // The offset is taken from the busiest stream only. A report without it, such as the audio's
+    // own, anchors its stream above and leaves the offset alone.
+    let busiest = tracks.max { $0.value.octetCount < $1.value.octetCount }?.key
+    if busiest != offsetSSRC {
+      offsetSSRC = busiest
+      offsetSamples.removeAll()
+    }
+    if let busiest, let primary = report.senderReports.first(where: { $0.ssrc == busiest }) {
+      let observed = primary.ntpDate.timeIntervalSince1970 - wallClockNow.timeIntervalSince1970
+      ntpOffsetSeconds = observed
+      offsetSamples.append(OffsetSample(atUptime: arrivalUptime, offset: observed))
+      let cutoff = arrivalUptime - Self.offsetWindowSeconds
+      offsetSamples.removeAll { $0.atUptime < cutoff }
+    }
   }
 
   /// A reconnect gives the camera a new timeline and possibly a new SSRC, so nothing measured
   /// against the old one carries over.
   mutating func reset() {
     tracks.removeAll()
+    offsetSSRC = nil
     offsetSamples.removeAll()
     lastArrivalUptime = nil
     intervalTotal = 0

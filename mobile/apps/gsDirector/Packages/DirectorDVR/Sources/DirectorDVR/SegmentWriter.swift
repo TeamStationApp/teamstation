@@ -1055,10 +1055,14 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     }
     // Sound that belongs after a waiting cut goes in the segment the cut opens, so the cut is made
     // first and this buffer placed again against the new segment.
-    if let cut = deferredCut, let anchor = audioWallAnchor, let segmentBaseWall,
-       frame.presentationTime.isNumeric {
-      let position = anchor.wallSeconds + (frame.presentationTime.seconds - anchor.sourceSeconds)
-        - segmentBaseWall
+    let anchoredWall = audioWallAnchor.flatMap { anchor in
+      frame.presentationTime.isNumeric
+        ? anchor.wallSeconds + (frame.presentationTime.seconds - anchor.sourceSeconds)
+        : nil
+    }
+    if let cut = deferredCut, let wall = frame.captureWallClock?.seconds ?? anchoredWall,
+       let segmentBaseWall {
+      let position = wall - segmentBaseWall
       if position >= cut.at.seconds - Self.audioCatchUpTolerance {
         lock.unlock()
         performDeferredCut()
@@ -1071,7 +1075,8 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
       duration: frame.duration,
       videoTime: lastVideoTime,
       wallAnchor: audioWallAnchor,
-      segmentBaseWall: segmentBaseWall
+      segmentBaseWall: segmentBaseWall,
+      captureWall: frame.captureWallClock?.seconds
     )
     lock.unlock()
 
