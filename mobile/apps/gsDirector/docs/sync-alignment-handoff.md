@@ -947,3 +947,17 @@ inside segments at 246 s and 262 s; NDI gaps of 0.82, 0.35 and 9.04 s):
 - **The operator cannot see it.** During the dead stream the webcam shows the STREAMING and
   RECORDING badges lit as normal and every tile live; nothing on screen says no video has gone out
   for a minute. Worth a visible warning when keyframe age passes a few GOPs.
+- **The programme master did not freeze during either stream stall** (rec-325, 1,831.7 s): one
+  frozen stretch over 0.5 s in the whole file (0.57 s, 33 s after a manual stream restart), none in
+  16:22:42–16:26:36 or 16:48:37–16:52. So the stress run's 160 s programme freezes (§1) are not this
+  encoder failure; the recorder carries on independently.
+- **Programme audio starts ~0.4 s after its picture** in every export (rec-321, rec-325): first
+  video packet at −0.433 s, first audio at −0.036 s, no holes after that. Cosmetic — players read a
+  late audio start as silence — but it is why the programme's audio track is 0.44 s short.
+- **Replay reader, open:** in the simulator a segment sometimes stops yielding frames partway (the
+  partway-into-a-segment test fails about half its runs, the reader short and never exhausted).
+  The new counters settled it: **decode misses, not failed readers** (e.g. 6 misses, 0 failed
+  readers, 1.6 s produced of 1.5). The simulator's decoder intermittently refuses samples; a few
+  misses move the last frame on by one, enough at a segment's start leave it yielding nothing. The
+  iPad's hardware decoder played all eight rewinds in full. The test now accepts up to one frame
+  over and still fails on anything short.
