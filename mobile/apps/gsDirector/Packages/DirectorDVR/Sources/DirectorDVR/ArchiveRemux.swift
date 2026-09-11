@@ -57,6 +57,8 @@ public enum ArchiveRemux {
 
     let composition = AVMutableComposition()
     var cursor = CMTime.zero
+    // Each file's sound, placed after the picture is: see `placeSound`.
+    var sound: [SoundPiece] = []
     var skipped: [String] = []
     for (index, file) in files.enumerated() {
       let asset = AVURLAsset(url: file)
@@ -130,7 +132,8 @@ public enum ArchiveRemux {
         let range = CMTimeRange(start: start, duration: use)
         // Inserting past the current end leaves the gap between as an empty range, which is what a
         // gap was: no camera delivered anything for it.
-        try await composition.insertTimeRange(range, of: asset, at: at)
+        try await insertPicture(range, of: asset, at: at, into: composition)
+        if let piece = try await soundPiece(range, of: asset, at: at) { sound.append(piece) }
         cursor = CMTimeMaximum(cursor, CMTimeAdd(at, use))
         if placed {
           held = (
@@ -162,6 +165,42 @@ public enum ArchiveRemux {
         composition.insertEmptyTimeRange(CMTimeRange(start: cursor, duration: pad))
       }
     }
+    try placeSound(
+      sound,
+      until: targetDuration.map { CMTime(seconds: $0, preferredTimescale: 600) },
+      in: composition
+    )
+    // Every track the length of the take. A camera's sound that stopped before the window did --
+    // or a programme whose mix ended a beat before its picture -- runs out in silence rather than
+    // leaving the file's sound shorter than its picture.
+    if let targetDuration {
+      let end = CMTime(seconds: targetDuration, preferredTimescale: 600)
+      for track in composition.tracks where track.timeRange.isValid && track.timeRange.end < end {
+        track.insertEmptyTimeRange(CMTimeRange(start: track.timeRange.end, end: end))
+      }
+    }
+
+    // The sound goes out as one continuous track rendered from the composition, not as the pieces
+    // the composition holds: see `renderSound`.
+    let rendered = destination.deletingPathExtension().appendingPathExtension("sound.m4a")
+    defer { try? FileManager.default.removeItem(at: rendered) }
+    if let sound = composition.tracks(withMediaType: .audio).first,
+       try await renderSound(
+         of: composition,
+         track: sound,
+         length: CMTime(seconds: targetDuration ?? cursor.seconds, preferredTimescale: 600),
+         to: rendered
+       ) {
+      composition.removeTrack(sound)
+      let asset = AVURLAsset(url: rendered)
+      if let source = try await asset.loadTracks(withMediaType: .audio).first,
+         let target = composition.addMutableTrack(
+           withMediaType: .audio,
+           preferredTrackID: kCMPersistentTrackID_Invalid
+         ) {
+        try target.insertTimeRange(try await source.load(.timeRange), of: source, at: .zero)
+      }
+    }
 
     guard let session = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetPassthrough)
       ?? AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetHighestQuality)
@@ -176,6 +215,272 @@ public enum ArchiveRemux {
     guard session.status == .completed else {
       throw Error.exportFailed(session.error?.localizedDescription ?? "\(session.status)")
     }
+  }
+
+  /// The source's picture, into the composition's one video track.
+  ///
+  /// `AVMutableComposition.insertTimeRange(_:of:at:)` puts a source track onto a *new* composition
+  /// track whenever it will not sit on an existing one, and a programme part written after a
+  /// recovered encoder is exactly such a source: the same codec and size, but a format description
+  /// that differs in its colour tags. rec-409's programme came out with its last 78 minutes on a
+  /// second video track, and every reader that takes the first video track showed them as one
+  /// frozen picture. A composition track holds several format descriptions, so picture and sound
+  /// each go into their one track by name.
+  private static func insertPicture(
+    _ range: CMTimeRange,
+    of asset: AVURLAsset,
+    at time: CMTime,
+    into composition: AVMutableComposition
+  ) async throws {
+    guard let source = try await asset.loadTracks(withMediaType: .video).first,
+          let target = try await track(.video, for: source, in: composition)
+    else { return }
+    let covered = CMTimeRangeGetIntersection(range, otherRange: try await source.load(.timeRange))
+    guard covered.duration.seconds > 0.0005 else { return }
+    try target.insertTimeRange(covered, of: source, at: CMTimeAdd(time, CMTimeSubtract(covered.start, range.start)))
+  }
+
+  /// One file's sound and where on the output it belongs.
+  private struct SoundPiece {
+    /// Held so the track stays usable: an `AVAssetTrack` does not keep its asset alive, and a
+    /// piece placed after the loop that opened its file otherwise fails every insert (-12780).
+    var asset: AVURLAsset
+    var source: AVAssetTrack
+    /// On the file's own timeline.
+    var span: CMTimeRange
+    /// Where `span.start` goes on the output.
+    var place: CMTime
+  }
+
+  /// The file's sound from where its picture's range starts to wherever the sound itself ends.
+  ///
+  /// A segment's sound starts a few tens of milliseconds after its first picture and ends as far
+  /// past its last one. Cut to the picture's range, every seam lost that tail and left a hole:
+  /// rec-409's Pixel export had 2,334 of them, 288 s of recorded sound missing.
+  private static func soundPiece(
+    _ range: CMTimeRange,
+    of asset: AVURLAsset,
+    at time: CMTime
+  ) async throws -> SoundPiece? {
+    guard let source = try await asset.loadTracks(withMediaType: .audio).first else { return nil }
+    // Where the sound is actually audible, not the track's whole range: a segment's sound track
+    // opens on an empty stretch before its first sample, and a piece placed from the start of
+    // that stretch cut the previous piece's overrun there and put silence in its place.
+    let segments = try await source.load(.segments)
+    guard let first = segments.first(where: { !$0.isEmpty }),
+          let last = segments.last(where: { !$0.isEmpty })
+    else { return nil }
+    let audible = CMTimeRange(start: first.timeMapping.target.start, end: last.timeMapping.target.end)
+    let start = CMTimeMaximum(audible.start, range.start)
+    guard audible.end > start else { return nil }
+    return SoundPiece(
+      asset: asset,
+      source: source,
+      span: CMTimeRange(start: start, end: audible.end),
+      place: CMTimeAdd(time, CMTimeSubtract(start, range.start))
+    )
+  }
+
+  /// Every piece of sound where it happened, each stopping where the next begins.
+  ///
+  /// Placed only from each piece's own position, never from where the composition says the last
+  /// one ended: that end is rounded to the composition's timescale, and taking the next piece's
+  /// start from it lost a tick at every seam -- 531 ms per 1,000 s on rec-409's Pixel, sound
+  /// sliding steadily ahead of picture. A piece that would run into the next is cut at the next
+  /// one's start (inserting into a composition track shifts what follows, so nothing may overlap),
+  /// and nothing runs past `windowEnd`.
+  private static func placeSound(
+    _ pieces: [SoundPiece],
+    until windowEnd: CMTime?,
+    in composition: AVMutableComposition
+  ) throws {
+    let ordered = pieces.sorted { $0.place < $1.place }
+    for (index, piece) in ordered.enumerated() {
+      var stop = CMTimeAdd(piece.place, piece.span.duration)
+      if index + 1 < ordered.count { stop = CMTimeMinimum(stop, ordered[index + 1].place) }
+      if let windowEnd { stop = CMTimeMinimum(stop, windowEnd) }
+      let length = CMTimeSubtract(stop, piece.place)
+      guard length.seconds > 0.0005 else { continue }
+      guard let target = composition.tracks(withMediaType: .audio).first
+        ?? composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
+      else { return }
+      try target.insertTimeRange(
+        CMTimeRange(start: piece.span.start, duration: length),
+        of: piece.source,
+        at: piece.place
+      )
+    }
+  }
+
+  /// The composition's sound as one continuous AAC track, `length` long, written to `url`.
+  ///
+  /// A passthrough export of sound laid down piece by piece does not keep it where it was put.
+  /// Measured on rec-409's Pixel: the composition's own sound, read back, held within 15 ms per
+  /// 1,000 s of its picture, and the same composition exported by `AVAssetExportSession` slid
+  /// 531 ms per 1,000 s ahead of it, with a hole of about one AAC packet at every seam -- where two
+  /// pieces meet, the exporter trims one and moves the next. So the sound is decoded exactly as
+  /// placed, every stretch nothing was recorded for is filled with silence, the start and the end
+  /// included, and it is encoded once. One piece of sound, the length of the take, has no seams to
+  /// get wrong.
+  ///
+  /// Returns false, leaving `url` alone, when there is nothing to render.
+  private static func renderSound(
+    of composition: AVMutableComposition,
+    track: AVMutableCompositionTrack,
+    length: CMTime,
+    to url: URL
+  ) async throws -> Bool {
+    guard length.seconds > 0.05 else { return false }
+    // The rate and layout of the sound that was recorded, so the render neither resamples nor folds.
+    var rate = 48_000.0
+    var channels: UInt32 = 1
+    if let description = track.formatDescriptions.first,
+       let basic = CMAudioFormatDescriptionGetStreamBasicDescription(description as! CMAudioFormatDescription)?.pointee {
+      if basic.mSampleRate > 0 { rate = basic.mSampleRate }
+      if basic.mChannelsPerFrame > 0 { channels = min(basic.mChannelsPerFrame, 2) }
+    }
+    let reader = try AVAssetReader(asset: composition)
+    reader.timeRange = CMTimeRange(start: .zero, duration: length)
+    let output = AVAssetReaderTrackOutput(track: track, outputSettings: [
+      AVFormatIDKey: kAudioFormatLinearPCM,
+      AVLinearPCMBitDepthKey: 16,
+      AVLinearPCMIsFloatKey: false,
+      AVLinearPCMIsBigEndianKey: false,
+      AVLinearPCMIsNonInterleaved: false,
+      AVSampleRateKey: rate,
+      AVNumberOfChannelsKey: channels
+    ])
+    output.alwaysCopiesSampleData = false
+    guard reader.canAdd(output) else { return false }
+    reader.add(output)
+
+    try? FileManager.default.removeItem(at: url)
+    let writer = try AVAssetWriter(outputURL: url, fileType: .m4a)
+    let input = AVAssetWriterInput(mediaType: .audio, outputSettings: [
+      AVFormatIDKey: kAudioFormatMPEG4AAC,
+      AVSampleRateKey: rate,
+      AVNumberOfChannelsKey: channels,
+      AVEncoderBitRateKey: channels > 1 ? 192_000 : 128_000
+    ])
+    input.expectsMediaDataInRealTime = false
+    guard writer.canAdd(input) else { return false }
+    writer.add(input)
+
+    var asbd = AudioStreamBasicDescription(
+      mSampleRate: rate,
+      mFormatID: kAudioFormatLinearPCM,
+      mFormatFlags: kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked,
+      mBytesPerPacket: 2 * channels,
+      mFramesPerPacket: 1,
+      mBytesPerFrame: 2 * channels,
+      mChannelsPerFrame: channels,
+      mBitsPerChannel: 16,
+      mReserved: 0
+    )
+    var format: CMAudioFormatDescription?
+    CMAudioFormatDescriptionCreate(
+      allocator: nil, asbd: &asbd, layoutSize: 0, layout: nil,
+      magicCookieSize: 0, magicCookie: nil, extensions: nil, formatDescriptionOut: &format
+    )
+    guard let format, reader.startReading(), writer.startWriting() else { return false }
+    writer.startSession(atSourceTime: .zero)
+
+    let bytesPerFrame = Int(2 * channels)
+    let total = Int64((length.seconds * rate).rounded())
+    var written: Int64 = 0
+    /// Appends `frames` of `bytes` (or of silence, when nil) at the running sample position.
+    func append(_ bytes: Data?, frames: Int) async throws {
+      var remaining = frames
+      var offset = 0
+      while remaining > 0 {
+        let chunk = min(remaining, 4_096)
+        let length = chunk * bytesPerFrame
+        var block: CMBlockBuffer?
+        guard CMBlockBufferCreateWithMemoryBlock(
+          allocator: nil, memoryBlock: nil, blockLength: length, blockAllocator: nil,
+          customBlockSource: nil, offsetToData: 0, dataLength: length,
+          flags: kCMBlockBufferAssureMemoryNowFlag, blockBufferOut: &block
+        ) == noErr, let block else { throw Error.exportFailed("sound block") }
+        if let bytes {
+          bytes.withUnsafeBytes { raw in
+            guard let base = raw.baseAddress else { return }
+            CMBlockBufferReplaceDataBytes(
+              with: base.advanced(by: offset * bytesPerFrame), blockBuffer: block,
+              offsetIntoDestination: 0, dataLength: length
+            )
+          }
+        } else {
+          CMBlockBufferFillDataBytes(with: 0, blockBuffer: block, offsetIntoDestination: 0, dataLength: length)
+        }
+        var sample: CMSampleBuffer?
+        var timing = CMSampleTimingInfo(
+          duration: CMTime(value: 1, timescale: CMTimeScale(rate)),
+          presentationTimeStamp: CMTime(value: written, timescale: CMTimeScale(rate)),
+          decodeTimeStamp: .invalid
+        )
+        var size = bytesPerFrame
+        guard CMSampleBufferCreateReady(
+          allocator: nil, dataBuffer: block, formatDescription: format,
+          sampleCount: chunk, sampleTimingEntryCount: 1, sampleTimingArray: &timing,
+          sampleSizeEntryCount: 1, sampleSizeArray: &size, sampleBufferOut: &sample
+        ) == noErr, let sample else { throw Error.exportFailed("sound sample") }
+        while !input.isReadyForMoreMediaData {
+          guard writer.status == .writing else { throw Error.exportFailed("sound writer \(writer.status.rawValue)") }
+          try await Task.sleep(nanoseconds: 1_000_000)
+        }
+        guard input.append(sample) else {
+          throw Error.exportFailed(writer.error?.localizedDescription ?? "sound append")
+        }
+        written += Int64(chunk)
+        remaining -= chunk
+        offset += chunk
+      }
+    }
+
+    while written < total, let buffer = output.copyNextSampleBuffer() {
+      guard let block = CMSampleBufferGetDataBuffer(buffer) else { continue }
+      let frames = CMSampleBufferGetNumSamples(buffer)
+      guard frames > 0 else { continue }
+      // Where this buffer was placed, in samples. Anything between the last sample written and here
+      // is a stretch no camera sound covered: silence, so what follows stays where it belongs.
+      let at = Int64((CMSampleBufferGetPresentationTimeStamp(buffer).seconds * rate).rounded())
+      if at > written { try await append(nil, frames: Int(min(at, total) - written)) }
+      // Sound already written for this stretch keeps its place; the overlap is dropped.
+      let skip = Int(max(0, written - at))
+      let keep = min(frames - skip, Int(total - written))
+      guard keep > 0 else { continue }
+      var data = Data(count: frames * bytesPerFrame)
+      let copied = data.withUnsafeMutableBytes { raw -> Bool in
+        guard let base = raw.baseAddress else { return false }
+        return CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: frames * bytesPerFrame, destination: base) == noErr
+      }
+      guard copied else { continue }
+      try await append(data.subdata(in: (skip * bytesPerFrame)..<((skip + keep) * bytesPerFrame)), frames: keep)
+    }
+    if reader.status == .failed { throw Error.exportFailed(reader.error?.localizedDescription ?? "sound read") }
+    // To the end of the take, whatever the last camera sound reached.
+    if written < total { try await append(nil, frames: Int(total - written)) }
+    input.markAsFinished()
+    await writer.finishWriting()
+    guard writer.status == .completed else {
+      throw Error.exportFailed(writer.error?.localizedDescription ?? "sound finish")
+    }
+    return true
+  }
+
+  /// The composition's one track of `type`, made on first use.
+  private static func track(
+    _ type: AVMediaType,
+    for source: AVAssetTrack,
+    in composition: AVMutableComposition
+  ) async throws -> AVMutableCompositionTrack? {
+    if let existing = composition.tracks(withMediaType: type).first { return existing }
+    guard let created = composition.addMutableTrack(
+      withMediaType: type,
+      preferredTrackID: kCMPersistentTrackID_Invalid
+    ) else { return nil }
+    if type == .video { created.preferredTransform = try await source.load(.preferredTransform) }
+    return created
   }
 
   /// A take lasts hours, not days. Video tracks stamped on a compositor/boot clock report
