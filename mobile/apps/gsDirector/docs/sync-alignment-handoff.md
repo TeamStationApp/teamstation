@@ -1129,3 +1129,25 @@ inside segments at 246 s and 262 s; NDI gaps of 0.82, 0.35 and 9.04 s):
   NDI flat. The programme was on the NDI tile and froze at 10 fps held frames for most of its last
   20 s: the Cosmo, just power-cycled, went offline for over 5 s ("no frames for 5s", 5 reconnects).
 
+### Overnight test pass (2026-09-10, from 22:50)
+
+- **Full unit suite:** 611 tests in 98 suites; two failures, neither a regression:
+  `ReplayHTTPServerTests.stopReleasesPort` (known on the M5 simulator) and
+  `ReplayFileReaderTests.decoderPlaysRequestedDuration` (played 0.93 s against a 1.0 s floor once;
+  three reruns passed, the last with its known intermittent issue).
+- **Rewind after the segment-close changes:** 8 of 8 on the device, each playing 9.80–10.37 s of the
+  expected 10.0 s (Pixel and NDI, slow and full).
+- **Programme audio start:** the 0.4 s late audio head is gone — rec-333's programme file has both
+  tracks starting at 0. Where the programme showed a flash, sound led picture by a median 30 ms
+  (range −61..+19, only five claps usable).
+- **Programme stall collapse, fixed in `d8937ef4`:** rec-333's programme master ran 18.6 s ahead of
+  its own sound from 28.5 s on. The NDI source went quiet for 18 s, and the compositor's clock resumed
+  one frame on, which `ProgramEncoder` accepted: its anchors show programme time moving 3 s over 21 s
+  of wall clock. Each programme frame is now placed on the host clock it went out on, so an outage
+  its timestamps do not show is held at its real length. The test fails without it (widest gap
+  0.033 s) and passes with it.
+- **Amber toast:** `StatusToast` rises from the bottom in `replayAmber` for `statusMessage`; a stream
+  failure reaches it through `reportStreamError`.
+- **Test controls:** Cameraman Android `set-audio-delay` (`6d8af2cb`) holds only the audio back;
+  `launch.sh` runs with no arguments (`80c09fda`).
+
