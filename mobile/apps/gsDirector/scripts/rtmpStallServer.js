@@ -28,6 +28,7 @@ function parseArgs(argv) {
     else if (flag === '--stall-after' && next) { options.stallAfter = Number(next); i += 1 }
     else if (flag === '--stall-for' && next) { options.stallFor = Number(next); i += 1 }
     else if (flag === '--verbose') options.verbose = true
+    else if (flag === '--frames') options.frames = true
     else if (flag.startsWith('--')) throw new Error(`unknown flag ${flag}`)
   }
   return options
@@ -148,6 +149,17 @@ function handle(socket, options, log) {
 
   if (options.stallAfter > 0) setTimeout(stall, options.stallAfter * 1000)
 
+  // With --frames, every 10 s: video messages and keyframes received, so a keyframe storm or a
+  // doubled frame rate shows on the wire rather than only in the sender's own counters.
+  const frames = { video: 0, keyframes: 0 }
+  const frameTimer = options.frames
+    ? setInterval(() => {
+      log(`frames video=${frames.video} keyframes=${frames.keyframes} per 10 s`)
+      frames.video = 0
+      frames.keyframes = 0
+    }, 10_000)
+    : null
+
   socket.on('data', chunk => {
     buffered = Buffer.concat([ buffered, chunk ])
     mediaBytes += chunk.length
@@ -173,6 +185,12 @@ function handle(socket, options, log) {
       if (!parsed) break
       buffered = parsed.rest
       if (parsed.message) {
+        const payload = parsed.message.payload
+        // FLV video tag: high nibble 1 is a keyframe; AVC packet type 1 is a picture, 0 the config.
+        if (parsed.message.type === 9 && payload.length > 1 && payload.readUInt8(1) === 1) {
+          frames.video += 1
+          if (payload.readUInt8(0) >> 4 === 1) frames.keyframes += 1
+        }
         const result = onMessage(parsed.message, socket, log)
         if (result && result.chunkSize) chunkSizeIn = result.chunkSize
       }
@@ -180,7 +198,10 @@ function handle(socket, options, log) {
   })
 
   socket.on('error', error => log(`socket error ${error.message}`))
-  socket.on('close', () => log(`closed after ${mediaBytes} bytes`))
+  socket.on('close', () => {
+    if (frameTimer) clearInterval(frameTimer)
+    log(`closed after ${mediaBytes} bytes`)
+  })
 }
 
 function readChunk(buffer, chunkSize, partial, previous) {
@@ -241,6 +262,14 @@ function onMessage(message, socket, log) {
     const size = message.payload.readUInt32BE(0)
     log(`client set chunk size ${size}`)
     return { chunkSize: size }
+  }
+  // onMetaData (AMF0 data message): log the frame rate the sender declares.
+  if (message.type === 18) {
+    const at = message.payload.indexOf('framerate')
+    if (at >= 0 && message.payload.length >= at + 18 && message.payload.readUInt8(at + 9) === 0) {
+      log(`metadata framerate=${message.payload.readDoubleBE(at + 10)}`)
+    }
+    return null
   }
   if (message.type !== 20) {
     return null
