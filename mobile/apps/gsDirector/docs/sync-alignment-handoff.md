@@ -1165,3 +1165,66 @@ inside segments at 246 s and 262 s; NDI gaps of 0.82, 0.35 and 9.04 s):
   clock, which covers both. Why the Cosmo's rate estimate read low after a 0.61 s hiccup is not
   known; nothing timing-critical depends on it now.
 
+
+### Overnight test pass, continued (2026-09-11, 00:00–)
+
+- **Programme sound against its picture (Paul's question):** not consistently early once the picture
+  and the sound come from the same camera. With the search widened to the programme's 1.2 s latency
+  (`PAIR_LEAD`), rec-337 pairs 38 claps at +21 ms (−8..+81) and rec-340, on the host-clock build, 36
+  claps at +21 ms (+11..+38), against the Pixel's own +4 ms. The earlier "sound led by 30 ms" was
+  five claps. With the programme on NDI and the sound from the Pixel (rec-339) it sits −42 ms
+  (−69..−3): the gap between the two cameras' delay lines, the NDI-behind-Pixel issue.
+- **Host-clock programme on the device (rec-339, NDI programme, Cosmo power cycled):** no drift (the
+  programme clock reads −0.36 s before the outage and −0.26 s after, where rec-335 fell to −23 s),
+  the 26.9 s outage held as one sample of its real length, 10-tick spacing with 9/11-tick neighbours
+  and no one-tick slivers, every file decodes. The Pixel did not flinch.
+- **Programme on NDI again (rec-343, no power cycle):** sound −40 ms from picture (−60..−16, 14
+  claps), no tail, a stop that switched files within 1.1 s, and the webcam shows every tile live across
+  it. Programme audio is pinned to the picture at its first buffer, so the offset is the Pixel audio's
+  playout delay less the on-air camera's display delay, plus the mix's 20 ms: +21 ms when both come
+  from the Pixel, −40 ms when the NDI picture (about 50 ms behind the Pixel on the display) is on air.
+- **Programme "ran on" after the stop (rec-339, rec-344): an export artefact, the master is clean.**
+  Both exports carried 22–29 s of hidden media past the take, the last 1–2 s of pictures at 0.2–0.42 s
+  a sample, which ffmpeg with `-ignore_editlist` shows as a slow replay. rec-344's master ends at
+  205.44 s with no tail. The export holds the programme's last picture for the ~0.2 s to the end of the
+  window (`holdFrame`); that picture is not a keyframe, so the passthrough copies its whole keyframe
+  group and `scaleTimeRange` stretches every sample by the same factor. The edit list presents only
+  the held picture, which is the right one. It reproduced only after an NDI outage (rec-343, the same
+  take without one, held a single sample). An `endMedia()` cut-off written on the wrong diagnosis was
+  withdrawn.
+- **Pixel export with no picture across a 40 s dropout (rec-340):** the camera archive's segment 89
+  holds 2.5 s, but the index recorded it as 42.7 s. After 2% loss the archive keeps nothing until the
+  next keyframe, and the writer judged the 40 s hole a glitch (no silence fill, the picture before it
+  kept one frame), yet `recycleWriter` recorded the segment as reaching the keyframe after the hole.
+  The export inserted 42.7 s of a 2.5 s file — 40 s with no picture — and then held the "last
+  sample", which ran from 2.49 s to 42.67 s, into the next 9.8 s hole, scaling a keyframe group into
+  3–5 ms samples. Reproduced on the Mac with `remuxsim`; with the segment's true 2.5 s the same export
+  is one edit with the last picture held across the whole 50 s. Segments are now recorded as long as
+  the picture their file holds (`70525991`); the new gap test fails without it (index 5.0 s longer
+  than the file) and the full suite passes, 617 tests, with only `ReplayHTTPServerTests.stopReleasesPort`.
+- **Lossy Pixel take on the segment fix (rec-345, programme on the Pixel):** two stretches of 2% loss
+  with jitter; the Pixel export is one 253.9 s edit with both dropouts held as the last picture
+  (43.2 s and 39.3 s samples), no segment recorded longer than its file, the programme held both as
+  the freezes that went out (45.2 s and 41.0 s), Pixel sound +5 ms and programme +32 ms from their
+  pictures, every file decodes. The webcam shows the Pixel tile and programme on the same held
+  second with the red pill while the NDI tile stays live.
+- **Shaped Pixel take on the host-clock build (rec-340, programme on the Pixel):** 25 s total loss,
+  a 600 ms backlog and 2% loss with jitter were each held as the freeze that went out (25.0 s,
+  65.0 s, 63.0 s), and the clock returns to −0.65 s after each. Under the steady 600 ms backlog every
+  frame is over the 500 ms display cap, so the tile holds its last good picture until the backlog
+  clears; the webcam shows tile and programme on the same held second.
+- **RTMP stream death:** an ingest that stops reading ends the stream after about 27 s with "stopped
+  accepting data"; a killed ingest ends it at once. Both raise the amber toast, which stays until
+  dismissed. A server that hung up on a live stream used to append the handshake trace
+  (`t5/4 t6/5 …`) to the toast; it no longer does (`8f1f13e9`).
+- **Late audio (rec-342):** the Pixel's audio held back 1.5 s for two minutes kept its place in the
+  camera archive — sound +888 ms after true time throughout (+886..+925), +4 ms from its picture. The
+  live programme went without it for exactly those two minutes (17 claps, 62.7–182.2 s): the mix emits
+  20 ms behind the live edge, and waiting for sound that late would hold back the whole programme.
+  rec-338's attempt was void: Cameraman Android serves `set-audio-delay` only when launched with
+  `uiTest true` (add `persistSettings true` to keep its format), and with the Pixel 2 attached
+  `launch.sh` needs `ANDROID_SERIAL`.
+- **RTMP rerun on the new build:** a killed ingest now reads "stream disconnected: server closed the
+  socket".
+- **Tooling:** `progclock.py` wraps a take that crosses midnight; `pair.py` takes `PAIR_LEAD`, and
+  `postsoak.sh` gives the programme 1.0 s.
