@@ -33,6 +33,11 @@ struct ArchiveAudioTimeline {
   /// sound up to the picture is what cut holes in it. Only a disagreement this large is a clock that
   /// has failed.
   private static let anchoredClockTolerance: Double = 10
+  /// Audio with its own capture time follows it, but not to the millisecond: each sender report
+  /// re-anchors the mapping and moves it by a little, and following those steps would cut the track
+  /// into slivers — the same thing that made the Pixel's picture drift in exports. Within one AAC
+  /// packet of the previous buffer's end it stays contiguous; beyond that it is a real gap.
+  private static let captureSnapSeconds: Double = 0.02
   private static let driftReportThreshold: Double = 0.05
 
   private(set) var clockUnusable = false
@@ -68,13 +73,21 @@ struct ArchiveAudioTimeline {
     duration: CMTime,
     videoTime: CMTime,
     wallAnchor: WallAnchor? = nil,
-    segmentBaseWall: Double? = nil
+    segmentBaseWall: Double? = nil,
+    captureWall: Double? = nil
   ) -> Placement? {
     guard videoTime.isNumeric, duration.isNumeric, duration > .zero else { return nil }
 
     var candidate: CMTime
     var anchored = false
-    if !clockUnusable, sourceTime.isNumeric, let wallAnchor, let segmentBaseWall {
+    if !clockUnusable, let captureWall, let segmentBaseWall {
+      // The camera said when it captured this audio: that is where it goes.
+      candidate = CMTime(seconds: captureWall - segmentBaseWall, preferredTimescale: duration.timescale)
+      if let next, abs(CMTimeSubtract(candidate, next).seconds) < Self.captureSnapSeconds {
+        candidate = next
+      }
+      anchored = true
+    } else if !clockUnusable, sourceTime.isNumeric, let wallAnchor, let segmentBaseWall {
       let wall = wallAnchor.wallSeconds + (sourceTime.seconds - wallAnchor.sourceSeconds)
       candidate = CMTime(seconds: wall - segmentBaseWall, preferredTimescale: sourceTime.timescale)
       anchored = true

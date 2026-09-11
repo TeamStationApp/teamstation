@@ -137,6 +137,10 @@ public struct CompressedAudioFrame: @unchecked Sendable {
   /// On the source's own audio clock, which need not share a timebase with its video.
   public let presentationTime: CMTime
   public let wallClock: WallClock
+  /// When the camera captured this audio, on our clock, from the audio stream's own sender reports.
+  /// Nil for a source that sends none — the archive then falls back to pinning the audio clock to
+  /// the picture once per recording.
+  public let captureWallClock: WallClock?
 
   public init(
     sourceID: SourceID,
@@ -145,7 +149,8 @@ public struct CompressedAudioFrame: @unchecked Sendable {
     sampleRate: Double,
     channelCount: Int,
     presentationTime: CMTime,
-    wallClock: WallClock
+    wallClock: WallClock,
+    captureWallClock: WallClock? = nil
   ) {
     self.sourceID = sourceID
     self.data = data
@@ -154,6 +159,7 @@ public struct CompressedAudioFrame: @unchecked Sendable {
     self.channelCount = channelCount
     self.presentationTime = presentationTime
     self.wallClock = wallClock
+    self.captureWallClock = captureWallClock
   }
 
   public var duration: CMTime {
