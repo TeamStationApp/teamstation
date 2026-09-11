@@ -152,6 +152,8 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
   private var stallTimer: DispatchSourceTimer?
   private var reconnectItem: DispatchWorkItem?
   private var failedAttempts = 0
+  /// Silence measured across reconnects; see `SilenceClock`.
+  private var silence = SilenceClock()
   private let supervisionQueue = DispatchQueue(label: "co.gamestation.director.ndi.supervise")
   private var sinks = FrameSinks()
 
@@ -263,13 +265,9 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     var snapshot = stats
     snapshot.outOfOrderFrames = receiveClock.outOfOrderFrames
     snapshot.senderClockRestarts = receiveClock.clockRestarts
+    // From the last picture across reconnects, not from this session; see `SilenceClock`.
     snapshot.stalledForSeconds = running
-      ? StallWatchdog.stalledForSeconds(
-        now: Date(),
-        lastAccessUnitAt: lastVideoAt,
-        sessionStartedAt: startedAt,
-        timeout: Self.stallTimeout
-      )
+      ? silence.stalledForSeconds(now: Date(), timeout: Self.stallTimeout)
       : 0
     snapshot.decodeSessions = videoEncoder == nil ? 0 : 1
     snapshot.playoutMilliseconds = (playout.bufferMilliseconds * 10).rounded() / 10
@@ -372,6 +370,7 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     }
     receiver = created
     startedAt = Date()
+    silence.sessionStarted(at: startedAt ?? Date())
     lastVideoAt = nil
     upstreamConnections = 0
     // Tell the sender who we are. Not decoration: it is what appears in a camera's own connection
@@ -624,6 +623,7 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     pictures.removeAll()
     startedAt = nil
     lastVideoAt = nil
+    silence.stop()
     videoEncoder = nil
     audioEncoder = nil
     pendingFrames.removeAll()
@@ -698,6 +698,7 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
 
     lock.lock()
     lastVideoAt = Date()
+    silence.notePicture(at: lastVideoAt ?? Date())
     failedAttempts = 0
     lock.unlock()
 
