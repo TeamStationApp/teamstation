@@ -141,6 +141,7 @@ public struct TileView: View {
           if pipeline != nil, !isRewinding {
             ratePills
             lossPill
+            heldPicturePill
           }
           if telemetry.hasCameraControl {
             cameraStatusPills
@@ -307,6 +308,21 @@ public struct TileView: View {
       label: "Lost per second",
       value: telemetry.lossPerSecondLabel
     )
+  }
+
+  /// Red, and only there when the picture on this tile is not live: stopped, or held because
+  /// everything newer was over the display cap. See `TileTelemetry.heldPictureLabel`.
+  @ViewBuilder
+  private var heldPicturePill: some View {
+    if let held = telemetry.heldPictureLabel {
+      StatPill(
+        text: held,
+        identifier: "source-\(sourceIndex + 1)-held",
+        label: "Picture not live",
+        value: held,
+        background: .red.opacity(0.85)
+      )
+    }
   }
 
   /// What the camera is delivering — frames a second and how much link it takes — to the left of

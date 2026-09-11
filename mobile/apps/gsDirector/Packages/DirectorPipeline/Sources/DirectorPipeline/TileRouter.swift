@@ -56,6 +56,8 @@ public final class SourcePipeline: @unchecked Sendable {
   /// that has already happened, while the recording is watched afterwards, where a late picture is
   /// simply a picture and dropping it leaves a hole in the tape.
   private var latency = FrameLatencyGate()
+  /// When the display gate started holding the last picture, nil while pictures are being shown.
+  private var heldLateSince: WallClock?
   public init(
     sourceID: SourceID,
     sourceIndex: Int,
@@ -277,7 +279,15 @@ public final class SourcePipeline: @unchecked Sendable {
     let arrived = converted.wallClock
     let showable = latency.admitsForDisplay(captured: converted.captureWallClock, now: arrived)
     let age = FrameLatencyGate.age(captured: converted.captureWallClock, now: arrived)
+    if showable || state != .live {
+      heldLateSince = nil
+    } else if heldLateSince == nil {
+      heldLateSince = arrived
+    }
+    let heldFor = heldLateSince.map { max(0, arrived.seconds - $0.seconds) } ?? 0
     lock.unlock()
+
+    telemetry.recordDisplayHeldLate(tile: sourceIndex, seconds: heldFor)
 
     if let age { telemetry.recordFrameAge(tile: sourceIndex, milliseconds: age * 1_000) }
 
