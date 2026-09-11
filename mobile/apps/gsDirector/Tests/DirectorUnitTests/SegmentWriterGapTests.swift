@@ -46,6 +46,66 @@ struct SegmentWriterGapTests {
     #expect(abs(covered - 5) < 0.25, "audio covered \(covered) s of a 5 s gap")
   }
 
+  /// After loss the archive keeps nothing until the next keyframe, so the picture after a dropout
+  /// opens a new segment, and the picture held across the hole is the last sample of its file.
+  @Test("A picture held across a gap keeps its length when the next picture opens a segment")
+  func heldPictureSurvivesTheCut() async throws {
+    let harness = try GapHarness()
+    defer { harness.tearDown() }
+
+    let writer = harness.makeWriter()
+    try writer.prepare()
+    try harness.feed(writer, from: 1_000, seconds: 1)
+    // The next run starts on a keyframe past the 3 s boundary, so it opens the second segment.
+    try harness.feed(writer, from: 1_006, seconds: 1)
+    await writer.finish()
+
+    let records = try harness.index.segments(forRecording: harness.recordingID)
+      .filter { !$0.isInitialization }
+      .sorted { $0.sequence < $1.sequence }
+    #expect(records.count >= 2, "segments: \(records.map(\.filename))")
+    let first = try #require(records.first)
+    let url = harness.archives.appendingPathComponent(harness.source.slug, isDirectory: true)
+      .appendingPathComponent(first.filename)
+    let track = try #require(try await AVURLAsset(url: url).loadTracks(withMediaType: .video).first)
+    let video = try await track.load(.timeRange).duration.seconds
+    #expect(abs(video - 6) < 0.1, "first segment's picture runs \(video) s; it should hold across the 5 s hole to 6 s")
+    #expect(abs(first.duration - video) < 0.1, "index says \(first.duration) s, the file holds \(video) s")
+  }
+
+  /// rec-340: 2% loss kept the Pixel's archive empty for 40 s, and the writer judged the hole a
+  /// glitch, so the picture before it kept one frame's length. The index still said that segment
+  /// ran to the keyframe after the hole, 42.7 s against a 2.5 s file, and the export left 40 s with
+  /// no picture at all and scaled a keyframe group into a sliver behind it.
+  @Test("A glitched gap leaves each segment recorded as long as its file, not as long as the gap")
+  func clampedGapKeepsTheIndexHonest() async throws {
+    let harness = try GapHarness()
+    defer { harness.tearDown() }
+
+    let writer = harness.makeWriter()
+    try writer.prepare()
+    try harness.feed(writer, from: 1_000, seconds: 1)
+    try harness.feed(writer, from: 1_006, seconds: 1, captureOffset: -5)
+    await writer.finish()
+
+    let records = try harness.index.segments(forRecording: harness.recordingID)
+      .filter { !$0.isInitialization }
+      .sorted { $0.sequence < $1.sequence }
+    #expect(!records.isEmpty)
+    // Capture time says the glitch took no time, so the pictures sit back to back: whichever path
+    // takes it out, re-based at intake or clamped at the write, no segment may claim the gap.
+    var pictures = 0.0
+    for record in records {
+      let url = harness.archives.appendingPathComponent(harness.source.slug, isDirectory: true)
+        .appendingPathComponent(record.filename)
+      let track = try #require(try await AVURLAsset(url: url).loadTracks(withMediaType: .video).first)
+      let video = try await track.load(.timeRange).duration.seconds
+      pictures += video
+      #expect(abs(record.duration - video) < 0.05, "index says \(record.duration) s for \(record.filename), the file holds \(video) s")
+    }
+    #expect(pictures < 2.5, "the pictures run \(pictures) s; the glitch should have added nothing")
+  }
+
   @Test("An uncorroborated gap is clamped and fills nothing")
   func uncorroboratedGapDoesNotFill() async throws {
     let harness = try GapHarness()
