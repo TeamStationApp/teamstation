@@ -227,8 +227,12 @@ final class RTSPClientConnection: @unchecked Sendable {
       guard !payloads.isEmpty else { return }
 
       let bytes = payloads.reduce(0) { $0 + $1.count }
+      let wasDropping = sendQueue.isDropping
       switch sendQueue.decide(frameBytes: bytes, isKeyframe: frame.isKeyframe) {
       case .drop:
+        // Nothing more goes out until a keyframe, so ask for one now rather than leaving the client
+        // without pictures for the rest of the GOP.
+        if !wasDropping { requestKeyframe() }
         return
       case .flushThenSend:
         // NWConnection cannot cancel the stale send buffers; `decide` bumped `generation` so their
