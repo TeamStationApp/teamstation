@@ -22,6 +22,9 @@ public struct CameraView<Model: CameraControlling, Picture: View>: View {
   @State private var scrubAtGestureStart: Double?
   /// Center-to-center gap between adjacent pills, measured from the drawn column.
   @State private var pointsPerSegment: CGFloat = 72
+  /// The picture's frame in the window, safe area included, so the edge bands are measured from
+  /// the glass rather than from wherever the safe area happens to start.
+  @State private var pictureFrame: CGRect = .zero
   @State private var isShowingSettings = false
 
   public init(
@@ -38,6 +41,7 @@ public struct CameraView<Model: CameraControlling, Picture: View>: View {
     ZStack {
       picture()
         .ignoresSafeArea()
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { pictureFrame = $0 }
         .gesture(pinch)
         // On the picture rather than on the enclosing ZStack: an accessibility identifier on a
         // container makes SwiftUI publish it as one element and hides the controls inside it, so a
@@ -107,6 +111,8 @@ public struct CameraView<Model: CameraControlling, Picture: View>: View {
   private var pinch: some Gesture {
     MagnifyGesture()
       .onChanged { value in
+        // Local to the picture, which ignores the safe area, so already measured from the glass.
+        guard !isInSystemEdgeBand(value.startLocation.y) else { return }
         let start = zoomAtGestureStart ?? model.deviceZoom
         zoomAtGestureStart = start
         model.setDeviceZoom(model.mapping.pinchedDeviceZoom(from: start, scale: value.magnification))
@@ -114,10 +120,14 @@ public struct CameraView<Model: CameraControlling, Picture: View>: View {
       .onEnded { _ in zoomAtGestureStart = nil }
   }
 
-  /// Vertical drag anywhere. Up zooms in. A drag as long as one pill-to-pill gap walks one segment.
+  /// Vertical drag anywhere but the edge bands. Up zooms in. A drag as long as one pill-to-pill gap
+  /// walks one segment.
+  ///
+  /// Global rather than local: this sits on the ZStack, whose own bounds stop at the safe area.
   private var verticalScrub: some Gesture {
-    DragGesture(minimumDistance: 12)
+    DragGesture(minimumDistance: 12, coordinateSpace: .global)
       .onChanged { value in
+        guard !isInSystemEdgeBand(value.startLocation.y - pictureFrame.minY) else { return }
         let start = scrubAtGestureStart ?? model.displayedZoom
         scrubAtGestureStart = start
         let displayed = model.mapping.displayedZoom(
@@ -193,9 +203,22 @@ public struct CameraView<Model: CameraControlling, Picture: View>: View {
     .accessibilityIdentifier("camera-close")
     .accessibilityLabel("Close camera controls")
   }
+
+  /// Whether a gesture that started `y` points below the top of the picture is on its way to the
+  /// system instead: Notification Center and Control Center from the top edge, home and the app
+  /// switcher from the bottom. Such a gesture leaves the zoom alone for its whole length, however
+  /// far it then travels into the picture, so a pull-down does not reframe the shot on the way.
+  private func isInSystemEdgeBand(_ y: CGFloat) -> Bool {
+    // Before the first layout pass there is no frame to measure against; let the gesture through.
+    guard pictureFrame.height > 0 else { return false }
+    return y < Metrics.systemEdgeBand || y > pictureFrame.height - Metrics.systemEdgeBand
+  }
 }
 
 /// File scope rather than nested: a generic type cannot hold static stored properties.
 private enum Metrics {
   static let dimmedOpacity = 0.4
+  /// About half an inch: an iPhone screen runs roughly 150 to 165 points to the inch. Matches the
+  /// 80dp band on Android.
+  static let systemEdgeBand: CGFloat = 80
 }
