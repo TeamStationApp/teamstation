@@ -1109,3 +1109,18 @@ inside segments at 246 s and 262 s; NDI gaps of 0.82, 0.35 and 9.04 s):
   `CLOCK_MONOTONIC`), and the Director places audio through it as it does video —
   `RTPClockAudit.captureTimeOnLocalClock` assumes 90 kHz and would need the stream's rate.
 
+### Pixel audio now has its own wall-clock timestamps (2026-09-10, 22:40)
+
+- **`80d0ff00` (Cameraman Android):** each microphone read takes its capture time from
+  `AudioRecord.getTimestamp` on the boot clock (what Camera2 stamps video with); the AAC encoder
+  carries it to each frame; the RTSP connection sends an audio sender report about once a second on
+  the audio stream's RTCP channel, through the same wall offset as the video's. Installed on the Pixel
+  10 (`adb install -r`, identity kept); the Director at once showed `senderReportStreams` 2.
+  `scripts/launch.sh` fails with no arguments (`EXTRAS[@]: unbound variable` under `set -u`); start the
+  app with `adb shell am start -n co.gamestation.cameraman/.MainActivity`.
+- **`285dc13d` (Director):** `RTSPFrameSource` maps each archived audio packet through the audio's own
+  report at its sample rate (`captureTimeOnLocalClock(clockRate:)`) and sets
+  `CompressedAudioFrame.captureWallClock`; `ArchiveAudioTimeline` places audio there, contiguous within
+  20 ms and a real gap beyond; the camera offset is taken from the busiest stream only, so audio
+  reports cannot move where pictures go. Sources without audio reports keep the recording anchor.
+
