@@ -1026,3 +1026,33 @@ inside segments at 246 s and 262 s; NDI gaps of 0.82, 0.35 and 9.04 s):
   and judge the audio clock against its own continuity rather than the newest picture's arrival.
   Why the Pixel's audio fell seconds behind its picture on one TCP connection is still unexplained.
 
+### Late audio: fixed in `fca56ea3`, and a camera without audio at record start (2026-09-10, 18:50)
+
+- **Cause of rec-328's lag found:** the Pixel 10 reported Android thermal status 5 (emergency) after
+  about nine hours of streaming. Throttled, it dropped to about 19 fps and fell behind on audio; its
+  Wi-Fi was fine (−55 dBm) and Cameraman reported no drops or send-queue flushes at the time.
+- **`fca56ea3`:** a keyframe cut waits (up to 3 s, holding the pictures after it) until the segment's
+  audio reaches it, and audio placed through the wall anchor is never resynced to the newest
+  picture. `lateAudioStaysInItsSegment` reproduces rec-328 on the unpatched writer (first segment's
+  audio 1.9 s against 2.9 s of picture, 352 resyncs) and passes with it.
+- **Found on the next take:** a writer is made with `includesAudio: pipeline.hasDeliveredAudio`, so a
+  camera that has not delivered audio at the moment recording starts is archived silent for the
+  whole take. The Pixel was still reconnecting 25 s after a relaunch; all 14,311 of its audio packets
+  were refused (`audioRejectedClosed`). Fixed in `19f2799a` (`acceptsLateAudio`): a later segment
+  carries the audio once it appears, and no file gets an audio track before the format is known.
+  Verified on the device: a take started while the Pixel was still at 0 fps had 2,767 Pixel audio
+  packets archived and none refused a minute in.
+- **Shaped take (300 ± 50 ms on the Pixel only, three minutes):** the added round trip backed the
+  Pixel's TCP stream up to 3–6 s of capture age; Cameraman flushed 54 times and dropped 1,976 frames.
+  The filtered offset held at −1.318 s throughout and the Pixel was back to an 8 ms capture age a
+  minute after clearing — the plain maximum doing its job. The Pixel tile on the Director froze on
+  its last picture for over a minute with `stalledForSeconds` 0 and no reconnect: frames still
+  trickled in, too late to show, so the stall watchdog never fired. Open.
+- **rec-330 (the shaped take) export:** NDI flash flat (+26 ms per 1,000 s), programme 0 frozen
+  stretches; the Pixel's picture sat at 811–824 ms for the first five minutes on the build without the
+  trend filter. Past 305 s the Pixel export could not be read at all: AVAssetReader failed with
+  "Cannot Decode" (−12137) and stopped. The fault was in the archive, not the export: segment 89
+  (from 305 s, recorded as 56 s long) decodes 22 frames and fails, because the pictures after
+  Cameraman's queue flushes predict from pictures that never arrived. Fixed in the RTSP archive feed
+  by `ArchiveReferenceGate` (wait for a keyframe after any damaged picture); not yet on the device.
+
