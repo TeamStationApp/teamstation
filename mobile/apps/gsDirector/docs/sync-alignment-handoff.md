@@ -961,3 +961,28 @@ inside segments at 246 s and 262 s; NDI gaps of 0.82, 0.35 and 9.04 s):
   misses move the last frame on by one, enough at a segment's start leave it yielding nothing. The
   iPad's hardware decoder played all eight rewinds in full. The test now accepts up to one frame
   over and still fails on anything short.
+
+### Re-soak on the fix build, rec-326 (2026-09-10, 16:56–17:26)
+
+- 30 minutes streaming and recording with no encoder malfunction and no resets; the programme
+  master has **zero** frozen stretches over 0.5 s. File lengths within 0.2 s of the take for video
+  and Pixel/programme audio; the NDI file's (silent) audio track was 1.8 s short (68 s short on
+  rec-325) — its length is not reliable.
+- **Pixel picture drift is not fixed.** Clapperboard, 248 claps: Pixel picture 828 → 658 ms over
+  30 min (−101 ms per 1,000 s), still ramping — so not the ten-minute-maximum lag, which would
+  have saturated at ~63 ms. Pixel sound (+2), NDI picture (+5) and programme sound (+20 ms per
+  1,000 s) are flat, so neither the iPad's nor the Pixel 2's clock is the drifting one. `89d86f7d`
+  (trend-following filter) is harmless but was not the fix.
+- Cameras export in placement mode (each segment at its own `start_wall`), and rec-326's 605 Pixel
+  segments are spaced by exactly their RTP durations: 0.03 s of slack over 30 min. So the stored
+  capture walls advance at the camera's media clock, not ours. Each archived frame's capture time
+  does come from the per-report mapping (`RTSPFrameSource.handleVideo`), and Cameraman Android pairs
+  RTP and NTP in its sender reports from the same capture time. The Pixel 10's camera stamps frames
+  in REALTIME (BOOTTIME), which `adb` sampling shows running at the Mac's rate within noise; the
+  Pixel 2 reference clock moved 13 ms against the Mac in about two hours, and the iPad agrees with
+  the Mac to 30 ms. Next: rec-327, a clapboard take logged alongside `correctedCaptureAgeMilliseconds`
+  and the raw and filtered offsets, to find which of these the drift actually follows.
+- Top bar showed an orange WARM thermal badge by the end of 30 minutes streaming plus recording.
+- The stream here is configured at 60 fps (the ingest reads `framerate=60` from onMetaData), so the
+  stream pacer passes every frame by design. The wire carries about 55 frames and 0.6 keyframes a
+  second against a 2 s GOP: no keyframe storm on this rig.
