@@ -207,16 +207,38 @@ public enum ArchiveRemux {
     guard let videoTrack = composition.tracks(withMediaType: .video).first,
           let sourceVideo = try await previous.asset.loadTracks(withMediaType: .video).first
     else { return }
-    let lastFrameStart = CMTimeMaximum(.zero, CMTimeSubtract(previous.sourceEnd, previous.frame))
-    try videoTrack.insertTimeRange(
-      CMTimeRange(start: lastFrameStart, duration: previous.frame),
-      of: sourceVideo,
-      at: previous.timelineEnd
+    let fallback = CMTimeRange(
+      start: CMTimeMaximum(.zero, CMTimeSubtract(previous.sourceEnd, previous.frame)),
+      duration: previous.frame
     )
+    let picture = await lastSample(of: sourceVideo, endingBy: previous.sourceEnd) ?? fallback
+    try videoTrack.insertTimeRange(picture, of: sourceVideo, at: previous.timelineEnd)
     videoTrack.scaleTimeRange(
-      CMTimeRange(start: previous.timelineEnd, duration: previous.frame),
+      CMTimeRange(start: previous.timelineEnd, duration: picture.duration),
       toDuration: span
     )
+  }
+
+  /// The last sample showing before `end`, from where it starts to `end`.
+  ///
+  /// The hold used to take one nominal frame back from `end`, which lands on a sample boundary only
+  /// when frames are exactly as long as the nominal rate says. A Pixel's are not -- its 59.5 fps
+  /// comes out as ten- and eleven-tick samples at 600 -- so the range began a tick inside the
+  /// sample before, and the hold carried a sliver of it. Seams between back-to-back segments leave
+  /// one-tick holes from rounding, so nearly every 3 s seam got such a hold, and a passthrough export
+  /// writes each as one-tick samples behind their own edits. rec-412's Pixel picture came out 101 ms
+  /// per 1,000 s early while its sound held steady; its capture times were right, measured from
+  /// the raw segments. Remuxed on a Mac with the hold starting on a sample, the same 605 segments
+  /// export as one edit with no sliver samples, and the picture holds to 12 ms per 1,000 s.
+  public static func lastSample(of track: AVAssetTrack, endingBy end: CMTime) async -> CMTimeRange? {
+    guard (try? await track.load(.canProvideSampleCursors)) == true else { return nil }
+    // Just before `end`, so a sample that starts exactly there -- the next segment's business -- is
+    // not the one chosen.
+    let probe = CMTimeSubtract(end, CMTime(value: 1, timescale: 90_000))
+    guard let cursor = track.makeSampleCursor(presentationTimeStamp: probe) else { return nil }
+    let start = cursor.presentationTimeStamp
+    guard start.isNumeric, start < end else { return nil }
+    return CMTimeRange(start: start, end: end)
   }
 
   /// One frame of this asset, for the hold above. Falls back to 30 fps when the track will not say,
