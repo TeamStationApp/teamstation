@@ -226,7 +226,8 @@ private final class Expectation: @unchecked Sendable {
 
 private struct ReplayTimeout: Error {}
 
-private func writeTestMovie(
+/// A short H.264 movie of solid frames, for tests that need a real replay to attach.
+func writeTestMovie(
   to url: URL,
   seconds: TimeInterval,
   framesPerSecond: Double,

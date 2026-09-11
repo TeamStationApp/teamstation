@@ -474,6 +474,7 @@ public final class SourcePipeline: @unchecked Sendable {
       promote = true
     }
     let state = self.state
+    let epoch = replayEpoch
     let programSink = self.programSink
     lock.unlock()
     guard state == .replaying else { return }
@@ -484,6 +485,14 @@ public final class SourcePipeline: @unchecked Sendable {
 
     presentOnRenderer(pixelBuffer: pixelBuffer, presentationTime: presentationTime)
     programSink?(pixelBuffer, presentationTime, nil)
+    // Only for the replay that delivered this frame, and under the lock. A return to live that
+    // lands while the frame is being presented has already put the tile back on live; written
+    // after it, this left the tile saying "replaying" for good -- the picture live, the tile still
+    // offering Return to Live, and the programme still marked as a replay -- with nothing left
+    // running to clear it.
+    lock.lock()
+    defer { lock.unlock() }
+    guard replayEpoch == epoch, self.state == .replaying else { return }
     telemetry.mutateTile(sourceIndex) { tile in
       guard tile.state == .replaying || tile.state == .live else { return }
       tile.state = .replaying
