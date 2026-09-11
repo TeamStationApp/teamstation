@@ -43,6 +43,13 @@ class AudioEncoder {
     private var codec: MediaCodec? = null
     private var pcmPending = PCMPendingBuffer()
     private var pendingTime: Double = 0.0
+    /**
+     * Recent (presentation time, capture time) pairs from the microphone, one per read; see
+     * [captureFor]. Kept as a short history because a frame is cut from a buffer that spans reads.
+     */
+    private val captureAnchors = ArrayDeque<Pair<Double, Double>>()
+    /** Capture time of each frame in the codec, keyed by its presentation time in microseconds. */
+    private val captureByPresentation = LinkedHashMap<Long, Double>()
     private var bytesPerSourceFrame = 0
     private var configuredSampleRate = 0
     private var configuredChannels = 0
@@ -108,6 +115,8 @@ class AudioEncoder {
                     pcmPending.reset()
                     pendingTime = 0.0
                     hasStartTime = false
+                    captureAnchors.clear()
+                    captureByPresentation.clear()
                 }
                 freeInputBuffers.clear()
             } catch (error: Exception) {
@@ -122,12 +131,16 @@ class AudioEncoder {
      * The bytes are copied here rather than retained, so the caller's `AudioRecord` buffer can be
      * reused on the very next read.
      */
-    fun encode(pcm: ByteArray, count: Int, presentationTime: Double) {
+    fun encode(pcm: ByteArray, count: Int, presentationTime: Double, captureTime: Double? = null) {
         if (count <= 0) return
         val copy = pcm.copyOf(count)
         handler.post {
             if (lock.withLock { codec } == null) return@post
             lock.withLock {
+                if (captureTime != null) {
+                    captureAnchors.addLast(presentationTime to captureTime)
+                    while (captureAnchors.size > 16) captureAnchors.removeFirst()
+                }
                 if (pcmPending.readableCount == 0 || !hasStartTime) {
                     pendingTime = presentationTime
                     hasStartTime = true
@@ -170,6 +183,16 @@ class AudioEncoder {
             }
 
             val time = lock.withLock { pendingTime }
+            val timeMicros = (time * 1_000_000).toLong()
+            captureFor(time)?.let { capture ->
+                lock.withLock {
+                    captureByPresentation[timeMicros] = capture
+                    // Bounded: a frame the codec never returns must not leave its entry forever.
+                    while (captureByPresentation.size > 64) {
+                        captureByPresentation.remove(captureByPresentation.keys.first())
+                    }
+                }
+            }
             try {
                 val buffer = running.getInputBuffer(index) ?: return
                 buffer.clear()
@@ -178,7 +201,7 @@ class AudioEncoder {
                     index,
                     0,
                     chunk.size,
-                    (time * 1_000_000).toLong(),
+                    timeMicros,
                     0
                 )
             } catch (error: Exception) {
@@ -189,6 +212,17 @@ class AudioEncoder {
                 pendingTime += samplesPerFrame.toDouble() / configuredSampleRate.toDouble()
             }
         }
+    }
+
+    /**
+     * Capture time of the sample at presentation time [time]: the latest read at or before it, moved
+     * by how far into that read [time] falls. Frames are cut from a buffer that spans reads, so the
+     * newest read is not always the frame's own — and beside a stretch the system dropped, using it
+     * would stamp the frame off by the whole drop.
+     */
+    private fun captureFor(time: Double): Double? = lock.withLock {
+        val anchor = captureAnchors.lastOrNull { it.first <= time + 1e-6 } ?: captureAnchors.firstOrNull()
+        anchor?.let { (presentation, capture) -> capture + (time - presentation) }
     }
 
     /**
@@ -239,12 +273,14 @@ class AudioEncoder {
                 buffer.get(bytes)
 
                 val (rate, channels) = lock.withLock { configuredSampleRate to configuredChannels }
+                val capture = lock.withLock { captureByPresentation.remove(info.presentationTimeUs) }
                 onFrame?.invoke(
                     EncodedAudioFrame(
                         data = bytes,
                         presentationTime = info.presentationTimeUs / 1_000_000.0,
                         sampleRate = rate,
-                        channelCount = channels
+                        channelCount = channels,
+                        captureTime = capture
                     )
                 )
             } finally {
@@ -266,6 +302,8 @@ class AudioEncoder {
             pcmPending.reset()
             pendingTime = 0.0
             hasStartTime = false
+            captureAnchors.clear()
+            captureByPresentation.clear()
             audioSpecificConfigValue = null
             current
         }
