@@ -27,6 +27,12 @@ struct ArchiveAudioTimeline {
   private static let clockTolerance: Double = 2
   /// Beyond this, closing the gap would cost lip sync for the rest of the recording.
   private static let resyncThreshold: Double = 0.5
+  /// The same guard for audio placed through the recording's wall anchor. There the source clock is
+  /// trusted, and a buffer landing behind the newest picture has only arrived late: rec-328's Pixel,
+  /// thermally throttled, delivered its sound one to two seconds behind its picture, and moving that
+  /// sound up to the picture is what cut holes in it. Only a disagreement this large is a clock that
+  /// has failed.
+  private static let anchoredClockTolerance: Double = 10
   private static let driftReportThreshold: Double = 0.05
 
   private(set) var clockUnusable = false
@@ -67,9 +73,11 @@ struct ArchiveAudioTimeline {
     guard videoTime.isNumeric, duration.isNumeric, duration > .zero else { return nil }
 
     var candidate: CMTime
+    var anchored = false
     if !clockUnusable, sourceTime.isNumeric, let wallAnchor, let segmentBaseWall {
       let wall = wallAnchor.wallSeconds + (sourceTime.seconds - wallAnchor.sourceSeconds)
       candidate = CMTime(seconds: wall - segmentBaseWall, preferredTimescale: sourceTime.timescale)
+      anchored = true
     } else if !clockUnusable, sourceTime.isNumeric {
       if epoch == nil {
         epoch = sourceTime
@@ -87,18 +95,20 @@ struct ArchiveAudioTimeline {
     // is worse than committing to the wrong one.
     var rejectedClock = false
     let offset = CMTimeSubtract(candidate, videoTime).seconds
-    if !candidate.isNumeric || abs(offset) > Self.clockTolerance {
+    let tolerance = anchored ? Self.anchoredClockTolerance : Self.clockTolerance
+    if !candidate.isNumeric || abs(offset) > tolerance {
       if !clockUnusable {
         clockUnusable = true
         rejectedClock = true
       }
       candidate = next ?? videoTime
+      anchored = false
     }
 
     var resynced = false
     var drift: Double?
     let behind = CMTimeSubtract(videoTime, candidate).seconds
-    if behind > Self.resyncThreshold {
+    if behind > Self.resyncThreshold, !anchored {
       candidate = videoTime
       resynced = true
       drift = behind
