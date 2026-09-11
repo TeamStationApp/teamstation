@@ -3814,6 +3814,15 @@ public final class AppEnvironment {
     case .searchCameras:
       discovery?.sweepNow()
       discovery?.searchNow()
+    case let .setSubnetScan(subnet, on):
+      // Through `update(config:)`, like the Settings switch it stands in for, so a bench set up this
+      // way is still set up after a relaunch. Turning it on without a usable subnet is refused
+      // rather than quietly sweeping the local one.
+      var next = persistedConfig
+      if let subnet { next.subnetScanOverride = subnet }
+      if let on { next.subnetScanOverrideEnabled = on }
+      guard !next.subnetScanOverrideEnabled || !next.activeScanSubnets.isEmpty else { return false }
+      update(config: next)
     case let .advanceClock(seconds):
       testClock?.advance(by: seconds)
       sweepRetention()
