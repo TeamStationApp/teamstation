@@ -365,8 +365,23 @@ final class ReplayFileReader: @unchecked Sendable {
     lock.lock()
     let closing = cursor
     cursor = nil
+    if let closing {
+      totalDecodeMisses += closing.decodeMisses
+      if closing.endedWithFailure { failedReaders += 1 }
+    }
     lock.unlock()
     closing?.cancel()
+  }
+
+  private var totalDecodeMisses = 0
+  private var failedReaders = 0
+
+  /// Why a segment stopped yielding frames, for the tests that catch it happening: samples that
+  /// would not decode, and readers that stopped in a failed state rather than at the end of a file.
+  var diagnostics: (decodeMisses: Int, failedReaders: Int) {
+    lock.lock()
+    defer { lock.unlock() }
+    return (totalDecodeMisses + (cursor?.decodeMisses ?? 0), failedReaders + ((cursor?.endedWithFailure ?? false) ? 1 : 0))
   }
 
   private func findStart(
@@ -464,6 +479,11 @@ private final class FileCursor: @unchecked Sendable {
   private var skipRemaining: TimeInterval
   private var retainedSample: CMSampleBuffer?
   private var pool: PixelBufferFactory?
+  /// Samples that would not decode, and whether the reader stopped in a failed state rather than at
+  /// the end of its file. A segment that yields nothing looks the same from outside either way;
+  /// these say which it was.
+  private(set) var decodeMisses = 0
+  private(set) var endedWithFailure = false
   private let cancelLock = NSLock()
   private var didCancel = false
 
@@ -546,6 +566,7 @@ private final class FileCursor: @unchecked Sendable {
       } else if let pulled = output?.copyNextSampleBuffer() {
         sample = pulled
       } else {
+        if reader?.status == .failed { endedWithFailure = true }
         return nil
       }
       let pts = CMSampleBufferGetPresentationTimeStamp(sample)
@@ -565,6 +586,7 @@ private final class FileCursor: @unchecked Sendable {
       } else {
         // P-frames before the first successful IDR cannot be shown, but an IDR that
         // fails once is retried inside decode. Skipping here is a true decode miss.
+        decodeMisses += 1
         continue
       }
       lastMedia = timelineOrigin + intoFile
