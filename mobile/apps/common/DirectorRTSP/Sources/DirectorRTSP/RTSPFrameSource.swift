@@ -141,6 +141,19 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
   /// Frame identities handed out at arrival and claimed at decode, so the copy on disk and the
   /// picture on screen agree on which frame they are — the audit R4 rests on.
   private var pendingFrameIDs: [CMTimeValue: UInt64] = [:]
+  /// Each picture's own corrected capture time, taken at arrival and claimed when it is published.
+  ///
+  /// Published pictures used to carry the *newest* arrival's capture time, but a picture reaches
+  /// `publish` after half a second in the delay line, so every phone picture looked that much
+  /// younger than it was. The programme's anchors are built from that age, and rec-409's opened
+  /// on a phone: its first 41 minutes exported 0.47 s behind the camera files.
+  private var pendingCaptures: [CMTimeValue: Double] = [:]
+  /// When each picture arrived, claimed with its capture time. A published picture is stamped with
+  /// its arrival, which is what `PixelFrame.wallClock` says it is: stamped with the moment it left
+  /// the delay line instead, capture-to-"arrival" counted the deliberate half-second hold as
+  /// staleness, and once a latency burst raised the hold every phone picture was refused as late --
+  /// the tiles and the programme froze for good while the camera kept sending.
+  private var pendingArrivals: [CMTimeValue: Double] = [:]
 
   public init(
     sourceID: SourceID,
@@ -501,10 +514,20 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     let id = frameID
     frameID &+= 1
     pendingFrameIDs[presentationTime.value] = id
+    if let frameCapture { pendingCaptures[presentationTime.value] = frameCapture }
+    pendingArrivals[presentationTime.value] = clock.now.seconds
     // Bounded: a picture that never decodes would otherwise leave its identity behind forever.
     if pendingFrameIDs.count > 240 {
       let stale = pendingFrameIDs.keys.sorted().prefix(120)
       for key in stale { pendingFrameIDs.removeValue(forKey: key) }
+    }
+    if pendingCaptures.count > 240 {
+      let stale = pendingCaptures.keys.sorted().prefix(120)
+      for key in stale { pendingCaptures.removeValue(forKey: key) }
+    }
+    if pendingArrivals.count > 240 {
+      let stale = pendingArrivals.keys.sorted().prefix(120)
+      for key in stale { pendingArrivals.removeValue(forKey: key) }
     }
 
     if !unit.parameterSets.isEmpty { videoParameterSets = unit.parameterSets }
@@ -638,6 +661,10 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     lastPresentationTime = presentationTime
 
     let id = pendingFrameIDs.removeValue(forKey: presentationTime.value) ?? frameID
+    let capture = pendingCaptures.removeValue(forKey: presentationTime.value)
+      ?? (lastCorrectedCapture > 0 ? lastCorrectedCapture : nil)
+    let arrived = pendingArrivals.removeValue(forKey: presentationTime.value)
+      .map { WallClock(seconds: $0) } ?? clock.now
     resolvedFormat = SourceFormat(
       width: CVPixelBufferGetWidth(pixelBuffer),
       height: CVPixelBufferGetHeight(pixelBuffer),
@@ -652,12 +679,10 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
         sourceID: sourceID,
         pixelBuffer: pixelBuffer,
         presentationTime: presentationTime,
-        wallClock: clock.now,
-        // The corrected capture time when the camera's sender reports have anchored one, so how
-        // old a picture is can be judged the same way on both transports.
-        captureWallClock: lastCorrectedCapture > 0
-          ? WallClock(seconds: lastCorrectedCapture)
-          : nil,
+        wallClock: arrived,
+        // This picture's own corrected capture time when the camera's sender reports have
+        // anchored one, so how old a picture is can be judged the same way on both transports.
+        captureWallClock: capture.map { WallClock(seconds: $0) },
         frameID: id,
         markerValue: nil
       ),
