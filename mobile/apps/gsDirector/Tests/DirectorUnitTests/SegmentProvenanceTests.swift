@@ -173,6 +173,45 @@ struct ProgramAnchorTests {
     #expect(abs(gap - 50) < 0.001)
   }
 
+  /// rec-351 opened on a phone picture whose capture time was half a second too young, and the
+  /// first anchor alone placed the whole of part one 0.47 s behind the cameras.
+  @Test("One bad anchor does not move a part: the part starts where most of its anchors say")
+  func partStartIgnoresAnOutlier() throws {
+    let (index, root) = try index()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let recording = try index.beginRecording(at: WallClock(seconds: 1_000))
+    try index.insertProgramAnchor(
+      recordingID: recording, part: 1, programSeconds: 0, wall: WallClock(seconds: 1_000.47)
+    )
+    for seconds in stride(from: 3.0, through: 30.0, by: 3.0) {
+      try index.insertProgramAnchor(
+        recordingID: recording, part: 1, programSeconds: seconds,
+        wall: WallClock(seconds: 1_000 + seconds)
+      )
+    }
+    let start = try #require(try index.programPartStarts(recordingID: recording)[1])
+    #expect(abs(start - WallClock(seconds: 1_000)) < 0.001, "part one placed at \(start.seconds)")
+  }
+
+  /// rec-351's shape: most anchors from phone pictures that anchored 0.45 s late, the rest from a
+  /// camera whose capture time was honest. The part starts where the honest ones say.
+  @Test("A late majority of anchors does not outvote the honest ones")
+  func partStartFollowsTheEarliestAgreeingAnchors() throws {
+    let (index, root) = try index()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let recording = try index.beginRecording(at: WallClock(seconds: 1_000))
+    for step in 0..<60 {
+      let seconds = Double(step) * 3
+      let late = step % 3 != 0
+      try index.insertProgramAnchor(
+        recordingID: recording, part: 1, programSeconds: seconds,
+        wall: WallClock(seconds: 1_000 + seconds + (late ? 0.45 : 0.01 * Double(step % 2)))
+      )
+    }
+    let start = try #require(try index.programPartStarts(recordingID: recording)[1])
+    #expect(abs(start - WallClock(seconds: 1_000)) < 0.02, "part one placed at \(start.seconds)")
+  }
+
   @Test("A take with no anchors reports none rather than guessing")
   func noAnchorsIsEmpty() throws {
     let (index, root) = try index()

@@ -537,13 +537,35 @@ public final class ArchiveIndex: @unchecked Sendable {
   }
 
   /// The wall clock each programme part's own timeline starts at, earliest anchor per part.
+  /// Where each part's timeline begins on the wall clock: where its earliest anchors agree.
+  ///
+  /// Every anchor restates the part's start, and they disagree by however wrong the capture time
+  /// behind each one was. Those errors run one way: a picture whose capture time under-reports its
+  /// age -- a phone's, before its own capture time was carried through the delay line -- anchors
+  /// late, and nothing anchors early. rec-351's first anchor was such a phone picture and alone put
+  /// the first 41 minutes of its programme 0.47 s behind the cameras; a plain median fared no
+  /// better, because most of its anchors were phone pictures too. So a part starts at the median of
+  /// the anchors within a quarter of a second of its earliest tenth -- on a take whose anchors are
+  /// all honest, that is nearly all of them.
   public func programPartStarts(recordingID: Int64) throws -> [Int: WallClock] {
-    var starts: [Int: WallClock] = [:]
-    for anchor in try programAnchors(recordingID: recordingID) where starts[anchor.part] == nil {
-      starts[anchor.part] = anchor.partStartWall
+    var starts: [Int: [Double]] = [:]
+    for anchor in try programAnchors(recordingID: recordingID) {
+      starts[anchor.part, default: []].append(anchor.partStartWall.seconds)
     }
-    return starts
+    return starts.mapValues { values in
+      let sorted = values.sorted()
+      let floor = sorted[sorted.count / 10]
+      let agreeing = sorted.filter { $0 <= floor + Self.anchorAgreementSeconds }
+      let middle = agreeing.count / 2
+      let median = agreeing.count % 2 == 1
+        ? agreeing[middle]
+        : (agreeing[middle - 1] + agreeing[middle]) / 2
+      return WallClock(seconds: median)
+    }
   }
+
+  /// How far apart anchors may be and still count as agreeing about where their part starts.
+  static let anchorAgreementSeconds: Double = 0.25
 
   public struct RecordingSource: Sendable, Equatable {
     public var sourceID: SourceID
