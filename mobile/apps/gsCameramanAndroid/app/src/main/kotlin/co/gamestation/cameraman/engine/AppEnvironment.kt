@@ -97,6 +97,9 @@ class AppEnvironment(
      */
     val sendDelay = SendDelayLine()
 
+    /** The same, for the audio only. See `ControlCommand.SetAudioDelay`. */
+    val audioSendDelay = SendDelayLine()
+
     private val scope = kotlinx.coroutines.CoroutineScope(
         kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main.immediate
     )
@@ -565,7 +568,8 @@ class AppEnvironment(
         }
 
         audioEncoder.onFrame = { frame ->
-            server?.send(frame)
+            val current = server
+            audioSendDelay.submit { current?.send(frame) }
             audioRecorder?.append(frame)
         }
         audioEncoder.configure(settings.audioSampleRate, 1)
@@ -832,6 +836,11 @@ class AppEnvironment(
             ok()
         }
 
+        is ControlCommand.SetAudioDelay -> {
+            audioSendDelay.configure(command.milliseconds, command.jitter, command.burst)
+            ok()
+        }
+
         is ControlCommand.SetAudio -> {
             val next = settingsState.value.copy(audioEnabled = command.on)
             settingsState.value = next
@@ -911,6 +920,16 @@ class AppEnvironment(
                         put("delayMilliseconds", summary.delayMilliseconds)
                         put("jitterMilliseconds", summary.jitterMilliseconds)
                         put("burstMilliseconds", summary.burstMilliseconds)
+                        put("held", summary.held)
+                        put("totalHeld", summary.totalHeld)
+                    }
+                }
+            )
+            put(
+                "audioSendDelay",
+                audioSendDelay.summary().let { summary ->
+                    JSONObject().apply {
+                        put("delayMilliseconds", summary.delayMilliseconds)
                         put("held", summary.held)
                         put("totalHeld", summary.totalHeld)
                     }
