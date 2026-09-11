@@ -74,6 +74,8 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
   private var session: RTSPSession?
   private var sinks = FrameSinks()
   private var running = false
+  /// Silence measured across reconnects; see `SilenceClock`.
+  private var silence = SilenceClock()
 
   private var videoDepacketizer: VideoDepacketizer?
   private var videoTracker = RTPSequenceTracker()
@@ -209,13 +211,9 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     snapshot.pacingSpreadMilliseconds = (jitter.latenessSpreadMilliseconds * 10).rounded() / 10
     snapshot.playoutMilliseconds = (playout.bufferMilliseconds * 10).rounded() / 10
     snapshot.playoutLateFrames = playout.lateFrames
+    // From the last picture across reconnects, not from this session; see `SilenceClock`.
     snapshot.stalledForSeconds = running
-      ? StallWatchdog.stalledForSeconds(
-        now: Date(),
-        lastAccessUnitAt: lastAccessUnitAt,
-        sessionStartedAt: sessionStartedAt,
-        timeout: Self.stallTimeout
-      )
+      ? silence.stalledForSeconds(now: Date(), timeout: Self.stallTimeout)
       : 0
     snapshot.playoutDepth = pictures.count + decodedFrames.count
     let decoding = decoder?.currentStatistics
@@ -262,6 +260,7 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
   public func stop() {
     lock.lock()
     running = false
+    silence.stop()
     let session = self.session
     self.session = nil
     stallTimer?.cancel()
@@ -301,6 +300,7 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     parserStateReset()
     pendingWaitStart = .now()
     sessionStartedAt = Date()
+    silence.sessionStarted(at: sessionStartedAt ?? Date())
     lock.unlock()
 
     session.start()
@@ -458,6 +458,9 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     videoSSRC = packet.ssrc
     stats.captured &+= 1
     lastAccessUnitAt = Date()
+    // A picture, which the session answering at setup is not: a camera that accepts the connection
+    // and sends nothing must go on reading as silent.
+    silence.notePicture(at: lastAccessUnitAt ?? Date())
     jitter.noteArrival(at: arrivedAt, isKeyframe: unit.isKeyframe)
 
     // 90 kHz is the RTP video clock rate these cameras advertise. Unwrapped rather than measured
