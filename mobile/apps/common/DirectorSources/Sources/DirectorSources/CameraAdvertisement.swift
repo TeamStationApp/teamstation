@@ -78,7 +78,22 @@ public struct CameraAdvertisement: Hashable, Sendable {
   public var hasUsableMediaHost: Bool { Self.isUsableMediaHost(host) }
 
   public static func isUsableMediaHost(_ host: String) -> Bool {
-    dottedQuad(host) != nil && !host.hasPrefix("169.254.")
+    isLANAddress(host)
+  }
+
+  /// A private IPv4: 10/8, 172.16/12 or 192.168/16. A camera on the field is on Director's own
+  /// network, so anything else is the phone's other side — its cellular address, advertised for the
+  /// moments its Wi-Fi drops. The iPhone on the 2026-09-11 soak advertised 203.0.113.16 twice, Director
+  /// moved its live tile there, and the camera was off the air for 20 s each time.
+  public static func isLANAddress(_ host: String) -> Bool {
+    guard dottedQuad(host) != nil else { return false }
+    let octets = host.split(separator: ".").compactMap { UInt8($0) }
+    switch (octets[0], octets[1]) {
+    case (10, _): return true
+    case (172, 16...31): return true
+    case (192, 168): return true
+    default: return false
+    }
   }
 
   /// Bonjour target like `3278e89a-60d9-411d-a93e-5960cb08de79.local`.
@@ -124,12 +139,12 @@ public struct CameraAdvertisement: Hashable, Sendable {
   /// NearStream publishes `ip=` in TXT. The `_awx_service._tcp` SRV port is closed, so a UDP
   /// connect to that port is not a usable way to learn the address.
   public static func ipv4Host(fromTXT fields: [String: String]) -> String? {
-    dottedQuad(lookup(fields)["ip"])
+    dottedQuad(lookup(fields)["ip"]).flatMap { isLANAddress($0) ? $0 : nil }
   }
 
   /// Prefer a resolved A-record IPv4 when the path actually produced one; otherwise TXT `ip=`.
   public static func resolvedHost(txtFields: [String: String], pathIPv4: String? = nil) -> String? {
-    dottedQuad(pathIPv4) ?? ipv4Host(fromTXT: txtFields)
+    dottedQuad(pathIPv4).flatMap { isLANAddress($0) ? $0 : nil } ?? ipv4Host(fromTXT: txtFields)
   }
 
   private static func lookup(_ fields: [String: String]) -> [String: String] {
