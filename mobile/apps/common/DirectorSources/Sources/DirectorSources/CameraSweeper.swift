@@ -19,6 +19,8 @@ public final class CameraSweeper: @unchecked Sendable {
     /// still where it was, so these are probed before the segment and without pacing.
     var lastSeen: [String] = []
     var missing = false
+    /// A sweep asked for outright, run once whatever the policy says: the subnets to sweep changed.
+    var sweepRequested = false
     var lastSweep: Date?
     var foundCount = 0
     var sweepCount: UInt64 = 0
@@ -71,6 +73,12 @@ public final class CameraSweeper: @unchecked Sendable {
       $0.isBusy = isBusy
       $0.missing = anyEnabledCameraMissing
     }
+  }
+
+  /// Sweeps once as soon as the loop next looks, even with every camera accounted for. For when
+  /// what a sweep covers has changed, so the last one's answer is stale.
+  public func sweepSoon() {
+    state.withLock { $0.sweepRequested = true }
   }
 
   public func start() {
@@ -135,7 +143,9 @@ public final class CameraSweeper: @unchecked Sendable {
           isBrowsing: state.isBrowsing,
           now: now()
         )
-        return (true, gap)
+        let requested = state.sweepRequested
+        state.sweepRequested = false
+        return (true, gap ?? (requested ? CameraSweepPolicy.gapSeconds : nil))
       }
       guard decision.running else { return }
 

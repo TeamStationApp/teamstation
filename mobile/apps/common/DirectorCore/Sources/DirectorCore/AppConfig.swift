@@ -104,6 +104,13 @@ public struct AppConfig: Hashable, Sendable, Codable {
   /// RTMP publish URL for the programme output. Empty means streaming is off until the operator
   /// enters one. Not a launch-only flag: it has to still be there tomorrow.
   public var streamURL: String
+  /// Sweep a different /24 for cameras instead of this iPad's own, for a bench where the cameras sit
+  /// behind a traffic shaper on another subnet. Off for normal use.
+  public var subnetScanOverrideEnabled: Bool
+  /// The subnets to sweep while the override is on, as the operator typed them: one, or two
+  /// separated by a comma (`192.168.6.0, 192.168.7.0`). Kept when the override is off, so turning it
+  /// back on does not mean typing them again. Always full /24s.
+  public var subnetScanOverride: String
 
   public static let displayLatencyCapDefaultMilliseconds: Double = 500
   public static let displayLatencyCapMinimumMilliseconds: Double = 10
@@ -135,7 +142,9 @@ public struct AppConfig: Hashable, Sendable, Codable {
     diskLatencyCapEnabled: Bool = false,
     diskLatencyCapMilliseconds: Double = AppConfig.diskLatencyCapDefaultMilliseconds,
     replaySlowMotionRate: Double = AppConfig.replaySlowMotionRateDefault,
-    streamURL: String = ""
+    streamURL: String = "",
+    subnetScanOverrideEnabled: Bool = false,
+    subnetScanOverride: String = ""
   ) {
     self.programCodec = programCodec
     self.sourceEncodeCodec = sourceEncodeCodec
@@ -155,6 +164,43 @@ public struct AppConfig: Hashable, Sendable, Codable {
     self.diskLatencyCapMilliseconds = Self.clampedDiskLatencyCap(diskLatencyCapMilliseconds)
     self.replaySlowMotionRate = Self.clampedReplaySlowMotionRate(replaySlowMotionRate)
     self.streamURL = streamURL
+    self.subnetScanOverrideEnabled = subnetScanOverrideEnabled
+    self.subnetScanOverride = subnetScanOverride
+  }
+
+  /// The /24s to sweep instead of the local one, as network addresses (`192.168.6.0`). Empty when the
+  /// override is off or what was typed is not one or two subnets.
+  public var activeScanSubnets: [String] {
+    guard subnetScanOverrideEnabled else { return [] }
+    return Self.scanSubnetNetworkAddresses(subnetScanOverride) ?? []
+  }
+
+  /// How many subnets the override may name: the shaped cameras' and one more, such as the NDI box's.
+  public static let maximumScanSubnets = 2
+
+  /// `["192.168.6.0", "192.168.7.0"]` from `192.168.6.0, 192.168.7.0`; a repeat counts once. Nil when any part
+  /// is not a dotted quad, or more than `maximumScanSubnets` are named.
+  public static func scanSubnetNetworkAddresses(_ text: String) -> [String]? {
+    let parts = text.split(separator: ",").map(String.init)
+    guard !parts.isEmpty, parts.count <= maximumScanSubnets else { return nil }
+    var addresses: [String] = []
+    for part in parts {
+      guard let address = scanSubnetNetworkAddress(part) else { return nil }
+      if !addresses.contains(address) { addresses.append(address) }
+    }
+    return addresses
+  }
+
+  /// `192.168.6.0` from `192.168.6.0`, `192.168.6.25` or ` 192.168.6.0/24 `: the first three octets, since
+  /// only a full /24 is supported. Nil for anything that is not a dotted quad.
+  public static func scanSubnetNetworkAddress(_ text: String) -> String? {
+    var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmed.hasSuffix("/24") { trimmed = String(trimmed.dropLast(3)) }
+    let parts = trimmed.split(separator: ".", omittingEmptySubsequences: false)
+    guard parts.count == 4 else { return nil }
+    let octets = parts.compactMap { UInt8($0) }
+    guard octets.count == 4 else { return nil }
+    return "\(octets[0]).\(octets[1]).\(octets[2]).0"
   }
 
   public static func clampedDisplayLatencyCap(_ milliseconds: Double) -> Double {
@@ -233,7 +279,13 @@ public struct AppConfig: Hashable, Sendable, Codable {
         forKey: .replaySlowMotionRate
       ) ?? fallback.replaySlowMotionRate,
       streamURL: try container.decodeIfPresent(String.self, forKey: .streamURL)
-        ?? fallback.streamURL
+        ?? fallback.streamURL,
+      subnetScanOverrideEnabled: try container.decodeIfPresent(
+        Bool.self,
+        forKey: .subnetScanOverrideEnabled
+      ) ?? fallback.subnetScanOverrideEnabled,
+      subnetScanOverride: try container.decodeIfPresent(String.self, forKey: .subnetScanOverride)
+        ?? fallback.subnetScanOverride
     )
   }
 

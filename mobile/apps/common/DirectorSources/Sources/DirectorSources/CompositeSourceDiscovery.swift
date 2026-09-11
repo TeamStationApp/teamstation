@@ -142,6 +142,15 @@ public final class CompositeSourceDiscovery: SourceDiscovery, @unchecked Sendabl
     for child in children { child.searchNow() }
   }
 
+  /// Sweeps the subnet once now rather than when the policy next wants to. For a change to which
+  /// subnets are swept: without it the new ones are not looked at until a camera goes missing.
+  public func sweepNow() {
+    lock.lock()
+    let sweeper = self.sweeper
+    lock.unlock()
+    sweeper?.sweepSoon()
+  }
+
   /// Answered here rather than passed down: the sweep the demand describes is this one.
   public func setSweepDemand(isBusy: Bool, anyEnabledCameraMissing: Bool, isBrowsing: Bool) {
     lock.lock()

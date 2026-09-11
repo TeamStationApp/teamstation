@@ -131,16 +131,22 @@ public final class SubnetScanner: @unchecked Sendable {
   /// A camera that dropped is nearly always still on the address it was last seen at, so probing
   /// that one first turns the common case into a single packet instead of a segment-wide sweep.
   public func scan(priority: [String] = []) async -> Result {
-    guard let subnet = Self.localSubnet() else {
+    let subnets = Self.scanSubnets()
+    guard !subnets.isEmpty else {
       return Result(openHosts: [], probedCount: 0, subnet: "", diagnostic: "no IPv4 interface")
     }
-    guard let hosts = subnet.hostAddresses() else {
-      return Result(
-        openHosts: [],
-        probedCount: 0,
-        subnet: subnet.cidrDescription,
-        diagnostic: "refusing to scan \(subnet.cidrDescription): wider than /\(IPv4Subnet.widestAllowedPrefix)"
-      )
+    let described = subnets.map(\.cidrDescription).joined(separator: ",")
+    var hosts: [String] = []
+    for subnet in subnets {
+      guard let addresses = subnet.hostAddresses() else {
+        return Result(
+          openHosts: [],
+          probedCount: 0,
+          subnet: described,
+          diagnostic: "refusing to scan \(subnet.cidrDescription): wider than /\(IPv4Subnet.widestAllowedPrefix)"
+        )
+      }
+      hosts += addresses.filter { !hosts.contains($0) }
     }
 
     // Known addresses first and without pacing, then everything else gently.
@@ -152,7 +158,7 @@ public final class SubnetScanner: @unchecked Sendable {
     return Result(
       openHosts: open.keys.sorted { (IPv4Subnet.parse($0) ?? 0) < (IPv4Subnet.parse($1) ?? 0) },
       probedCount: hosts.count,
-      subnet: subnet.cidrDescription,
+      subnet: described,
       diagnostic: nil,
       portsByHost: open
     )
@@ -165,16 +171,17 @@ public final class SubnetScanner: @unchecked Sendable {
   /// empty address. Addresses outside the local subnet are dropped rather than probed, since a
   /// lease from another network is not a camera on this one.
   public func probeKnown(_ addresses: [String]) async -> Result {
-    guard let subnet = Self.localSubnet() else {
+    let subnets = Self.scanSubnets()
+    guard !subnets.isEmpty else {
       return Result(openHosts: [], probedCount: 0, subnet: "", diagnostic: "no IPv4 interface")
     }
-    let local = Set(subnet.hostAddresses() ?? [])
+    let local = Set(subnets.flatMap { $0.hostAddresses() ?? [] })
     let known = addresses.filter { local.contains($0) }
     let open = known.isEmpty ? [:] : await probe(hosts: known, paced: false)
     return Result(
       openHosts: open.keys.sorted { (IPv4Subnet.parse($0) ?? 0) < (IPv4Subnet.parse($1) ?? 0) },
       probedCount: known.count,
-      subnet: subnet.cidrDescription,
+      subnet: subnets.map(\.cidrDescription).joined(separator: ","),
       diagnostic: nil,
       portsByHost: open
     )
@@ -271,6 +278,24 @@ public final class SubnetScanner: @unchecked Sendable {
     label: "co.gamestation.director.rtsp.scan",
     attributes: .concurrent
   )
+
+  /// /24s to sweep instead of the local one, set from Settings. Empty sweeps this device's own subnet.
+  private static let overrideSubnets = OSAllocatedUnfairLock<[IPv4Subnet]>(initialState: [])
+
+  /// Sweeps the /24s whose network addresses these are (`192.168.6.0`) instead of the local subnet, or
+  /// the local subnet again when empty. Every scanner reads them at the start of each sweep.
+  public static func setOverrideSubnets(networkAddresses: [String]) {
+    let subnets = networkAddresses.compactMap { IPv4Subnet(address: $0, netmask: "255.255.255.0") }
+    overrideSubnets.withLock { $0 = subnets }
+  }
+
+  /// What a sweep covers: the override subnets when any are set, otherwise the local subnet. The
+  /// override replaces the local subnet rather than adding to it.
+  public static func scanSubnets() -> [IPv4Subnet] {
+    let override = overrideSubnets.withLock { $0 }
+    if !override.isEmpty { return override }
+    return localSubnet().map { [$0] } ?? []
+  }
 
   /// The subnet to scan: the Wi-Fi interface's on a device, where it is `en0`. The simulator
   /// inherits the Mac's interfaces instead, which is what lets a simulator run reach the real

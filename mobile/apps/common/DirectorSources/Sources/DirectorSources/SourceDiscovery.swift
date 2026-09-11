@@ -75,6 +75,9 @@ public protocol SourceDiscovery: AnyObject, Sendable {
   /// Searches once, now, regardless of the periodic setting. How a camera that dropped mid-game is
   /// found again at whatever address it came back on.
   func searchNow()
+  /// Runs the shared address sweep once, now, even with every camera accounted for. For when the
+  /// subnets it covers have changed. Transports that do not sweep ignore it.
+  func sweepNow()
   func setSweepDemand(isBusy: Bool, anyEnabledCameraMissing: Bool, isBrowsing: Bool)
   /// Ports this transport wants probed by the shared address sweep. Empty means it does not sweep.
   ///
@@ -106,6 +109,7 @@ extension SourceDiscovery {
   public var advertisements: [CameraAdvertisement] { [] }
   public func setPeriodicSearch(_ enabled: Bool) {}
   public func searchNow() {}
+  public func sweepNow() {}
 }
 
 /// Which discovery and source implementations the app wires up. Chosen by launch argument so
