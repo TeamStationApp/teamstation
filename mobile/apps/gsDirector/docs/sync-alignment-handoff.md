@@ -1056,3 +1056,24 @@ inside segments at 246 s and 262 s; NDI gaps of 0.82, 0.35 and 9.04 s):
   Cameraman's queue flushes predict from pictures that never arrived. Fixed in the RTSP archive feed
   by `ArchiveReferenceGate` (wait for a keyframe after any damaged picture); not yet on the device.
 
+### rec-331: first take with all the fixes (2026-09-10, 18:58–19:08) — Pixel sound still open
+
+- Recording started while the Pixel was still connecting; its audio was archived from the start
+  (`19f2799a` works). **Pixel picture flat on the device: −14 ms per 1,000 s over 10 minutes** (the old
+  build drifted −100); NDI +12 ms per 1,000 s; programme 0 frozen stretches.
+- **Pixel sound: perfect for 132 s** (sound 70 ms ahead of picture on every clap), **then broken**:
+  14 s holes, then 2.4 s holes every 3 s from 339 s; 11,950 of 24,160 audio packets rejected as
+  placing before their segment's start; `lastAudioDrift` 2.39 s; the claps still heard land 0.3–1.6 s
+  early. The Pixel was at thermal status 4 (critical) throughout.
+- Two explanations fit the Director's view and need opposite fixes. (a) The Pixel's audio stamps lose
+  time: `MicrophoneSource` stamps by counting samples read, so samples the OS drops under load put
+  every later stamp early. Then trusting the anchored stamps (`fca56ea3`) is wrong for this camera,
+  the old resync-to-arrival masked it with holes, and the fix belongs in Cameraman (stamp from
+  `AudioRecord.getTimestamp`). (b) The audio arrives late with correct stamps; then `fca56ea3`'s wait
+  is right but three seconds is too short. The early-landing claps favour (a), but hole edges confuse
+  the onset detector. No overrun appeared in logcat.
+- Measured afterwards from the Mac (ffprobe on the Pixel's RTSP, 90 s): audio stamps track arrival
+  exactly (+0.1 ms/s, full 46.9 packets/s), so the fault is intermittent. Next: log each tile's audio
+  stamp-minus-arrival trend in the Director so the next occurrence says which it is, and let the Pixel
+  cool (it has been streaming about ten hours).
+
