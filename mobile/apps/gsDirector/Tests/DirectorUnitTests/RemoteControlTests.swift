@@ -344,7 +344,11 @@ struct ControlChannelSourceTests {
     let command = ControlChannel.command(
       from: URL(string: "gsdirector://test/export-recording")!
     )
-    #expect(command == .exportRecording)
+    #expect(command == .exportRecording(reprocess: false))
+    #expect(
+      ControlChannel.command(from: URL(string: "gsdirector://test/export-recording?reprocess=1")!)
+        == .exportRecording(reprocess: true)
+    )
   }
 }
 

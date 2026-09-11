@@ -52,7 +52,8 @@ public enum ControlCommand: Sendable, Equatable {
   /// UITest-only: fail the live program `AVAssetWriter` mid-take.
   case killProgramWriter
   /// UITest-only: remux the latest stopped take into Prepared/ without opening the share sheet.
-  case exportRecording
+  /// `reprocess` rebuilds files already there, so a changed export can be judged on an old take.
+  case exportRecording(reprocess: Bool)
 }
 
 public enum ControlChannel {
@@ -182,7 +183,7 @@ public enum ControlChannel {
     case "kill-program-writer", "killprogramwriter":
       return .killProgramWriter
     case "export-recording", "exportrecording":
-      return .exportRecording
+      return .exportRecording(reprocess: query["reprocess"].flatMap { LaunchConfiguration.boolean($0) } ?? false)
     default:
       return nil
     }

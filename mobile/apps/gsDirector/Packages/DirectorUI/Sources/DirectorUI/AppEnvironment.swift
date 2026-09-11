@@ -3341,7 +3341,7 @@ public final class AppEnvironment {
   }
 
   /// Remux the most recent stopped take into Prepared/. Does not present the share sheet.
-  private func beginPreparedExport() {
+  private func beginPreparedExport(reprocess: Bool = false) {
     guard !isExporting else { return }
     guard let recording = listedRecordings().first(where: { $0.endedAt != nil }) else {
       telemetry.mutate { $0.dvr.lastExportError = "no stopped recording" }
@@ -3363,7 +3363,8 @@ public final class AppEnvironment {
           try await exporter.exportRecording(
             recording,
             cameras: cameras.map { (sourceID: $0.0, name: $0.1) },
-            includeProgram: includeProgram
+            includeProgram: includeProgram,
+            reprocess: reprocess
           )
         }.value
         await MainActor.run {
@@ -3855,8 +3856,8 @@ public final class AppEnvironment {
       setSourceLayout(SourceLayout(order: order))
     case .killProgramWriter:
       programEncoder.poisonWriter()
-    case .exportRecording:
-      beginPreparedExport()
+    case let .exportRecording(reprocess):
+      beginPreparedExport(reprocess: reprocess)
     }
     return true
   }
