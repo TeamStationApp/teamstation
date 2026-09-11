@@ -10,6 +10,7 @@ struct StatPill: View {
   let identifier: String
   var label: String?
   var value: String?
+  var background: Color = .black.opacity(0.45)
 
   var body: some View {
     Text(text)
@@ -19,7 +20,7 @@ struct StatPill: View {
       .fixedSize()
       .padding(.horizontal, 7)
       .padding(.vertical, 2)
-      .background(.black.opacity(0.45), in: Capsule())
+      .background(background, in: Capsule())
       .allowsHitTesting(false)
       .accessibilityElement(children: .ignore)
       .accessibilityIdentifier(identifier)

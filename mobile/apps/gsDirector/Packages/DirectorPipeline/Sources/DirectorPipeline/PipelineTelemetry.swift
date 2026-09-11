@@ -182,6 +182,22 @@ public struct TileTelemetry: Sendable, Codable, Equatable {
     return String(format: "%.0f FPS", framesPerSecond)
   }
 
+  /// What the tile's own picture is not telling the operator: that it has stopped, or that it is a
+  /// still held because everything newer arrived too late to show. Nil while the picture is live.
+  ///
+  /// Both used to be silent. A camera that went off the network left its last picture up for two
+  /// hours; one whose link backed up to five seconds had every picture refused by the display cap
+  /// and froze for over a minute. Neither showed anything but the frozen picture.
+  public var heldPictureLabel: String? {
+    if stalledForSeconds > 0 { return "No picture \(Self.duration(stalledForSeconds))" }
+    if displayHeldLateSeconds >= 1 { return "Late \(Self.duration(displayHeldLateSeconds))" }
+    return nil
+  }
+
+  private static func duration(_ seconds: Double) -> String {
+    seconds < 120 ? String(format: "%.0f s", seconds) : String(format: "%.0f min", seconds / 60)
+  }
+
   /// "4 Mbps": whole megabits a second, the unit a camera's bitrate is set in. It used to be
   /// megabytes, so a 4 Mbps camera — half a megabyte a second — read 0 or 1 and looked broken.
   public var throughputLabel: String {
@@ -270,6 +286,10 @@ public struct TileTelemetry: Sendable, Codable, Equatable {
   /// stays up — and counted, because a bounded latency that reports nothing is indistinguishable
   /// from a frozen tile.
   public var displayRefusedLate: UInt64 = 0
+  /// How long the tile has held its last picture because every one since was over the display cap,
+  /// in seconds; zero while it is showing live pictures. The count above says pictures were
+  /// refused; this says the operator is looking at a still, and for how long.
+  public var displayHeldLateSeconds: Double = 0
   /// How old the newest picture was when the display gate judged it, in milliseconds — capture to
   /// presentation, including this app's own queueing. The whole feature exists because a tile was
   /// seen running two seconds behind the room, and this is the field that says so out loud.
@@ -831,6 +851,14 @@ public final class PipelineTelemetry: @unchecked Sendable {
     lock.lock()
     if let position = state.tiles.firstIndex(where: { $0.index == tile }) {
       state.tiles[position].displayRefusedLate &+= 1
+    }
+    lock.unlock()
+  }
+
+  public func recordDisplayHeldLate(tile: Int, seconds: Double) {
+    lock.lock()
+    if let position = state.tiles.firstIndex(where: { $0.index == tile }) {
+      state.tiles[position].displayHeldLateSeconds = seconds
     }
     lock.unlock()
   }
