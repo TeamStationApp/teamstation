@@ -51,7 +51,8 @@ const OPERATOR_SUITE = [
   'program-five-sources',
   'recordings-export',
   'remote-control',
-  'operator-background-record'
+  'operator-background-record',
+  'resume-after-crash'
 ]
 
 function flowFiles(names) {
