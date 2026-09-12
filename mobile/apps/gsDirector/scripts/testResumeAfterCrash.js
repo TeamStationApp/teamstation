@@ -23,7 +23,13 @@ const path = require('node:path')
 
 const ROOT = path.resolve(__dirname, '..')
 const BUNDLE = 'co.gamestation.director'
-const FIXTURES = process.env.DIRECTOR_RTSP_FIXTURES_OUT || '/tmp/gs-rtsp-fixtures'
+// Live cameras: each frame shows the wall clock it was generated at and each whole second beeps,
+// which is what lets an export be judged for picture and sound against the clock. `--loop` serves
+// the older looped capture instead, which proves resuming but cannot prove sync.
+const LIVE_FIXTURES = process.env.DIRECTOR_RTSP_LIVE_FIXTURES || '/tmp/gs-rtsp-live-fixtures'
+const LOOP_FIXTURES = process.env.DIRECTOR_RTSP_FIXTURES_OUT || '/tmp/gs-rtsp-fixtures'
+let FIXTURES = LIVE_FIXTURES
+const { verify: verifyWallClock } = require('./verifyWallClockSync')
 const CAMERAS = 2
 const SQLITE = '/usr/bin/sqlite3'
 const PATH_WITH_SBIN = `/usr/sbin:/sbin:${process.env.PATH || ''}`
@@ -37,6 +43,7 @@ function usage() {
   --crashes N       how many times to kill the app during the take (default 1)
   --keep-farm       leave the RTSP farm running when the run finishes
   --keep-app        leave the app running when the run finishes
+  --loop            serve the looped capture rather than live wall-clock cameras (no sync checks)
 `
 }
 
@@ -65,12 +72,15 @@ function parseArgs(argv) {
       index += 1
     } else if (arg === '--crashes') {
       options.crashes = Number(argv[index + 1])
-      if (!(options.crashes >= 1)) throw new Error('--crashes needs a positive count')
+      // Zero is a control take: record, stop, export and judge it with nothing done to the app.
+      if (!(options.crashes >= 0)) throw new Error('--crashes needs a count, zero or more')
       index += 1
     } else if (arg === '--keep-farm') {
       options.keepFarm = true
     } else if (arg === '--keep-app') {
       options.keepApp = true
+    } else if (arg === '--loop') {
+      options.loop = true
     } else {
       throw new Error(`unknown argument ${arg}\n${usage()}`)
     }
@@ -132,7 +142,11 @@ function ensureFixtures() {
     process.stdout.write('building RTSP fixtures…\n')
     const result = spawnSync(
       'node',
-      [path.join(ROOT, 'scripts/makeRtspFixtures.js'), '--out', FIXTURES, '--cameras', String(CAMERAS)],
+      [
+        path.join(ROOT, 'scripts/makeRtspFixtures.js'),
+        '--out', FIXTURES, '--cameras', String(CAMERAS),
+        ...(FIXTURES === LIVE_FIXTURES ? ['--live'] : [])
+      ],
       { encoding: 'utf8', stdio: 'inherit' }
     )
     if (result.status !== 0) throw new Error('could not build the RTSP fixtures')
@@ -288,6 +302,8 @@ async function scenarioRecord(options) {
   let recordingID = ''
   let segmentsBeforeFirstCrash = 0
   let killedAt = 0
+  const killTimes = []
+  const sourceByName = {}
 
   for (let round = 1; round <= options.crashes; round += 1) {
     await sleep(options.recordSeconds * 1_000)
@@ -298,6 +314,7 @@ async function scenarioRecord(options) {
     )
 
     killedAt = Date.now() / 1_000
+    killTimes.push(killedAt)
     try { await control('/crash') } catch { /* the reply dies with the process */ }
     await sleep(4_000)
 
@@ -307,10 +324,19 @@ async function scenarioRecord(options) {
     check(`kill ${round}: the live session survived`, live.startsWith(recordingID),
       `live_session=${live}`)
 
+    const relaunchedAt = Date.now() / 1_000
     launch()
     const resumed = await waitFor('the take to be picked up again', 90, snapshot =>
       snapshot.dvr?.isRecording === true)
     const downSeconds = Date.now() / 1_000 - killedAt
+    const resumedAt = Date.now() / 1_000
+    // Where the time to get the cameras back goes: seen by discovery, then delivering, then writing.
+    const seenAt = (await waitFor('both fixture cameras to be listed again', 120, snapshot =>
+      (snapshot.sources || []).filter(source => /Fixture Cam/.test(source.name || '') && source.isPresent)
+        .length >= CAMERAS), Date.now() / 1_000)
+    await waitFor('both cameras to deliver again', 120, snapshot =>
+      (snapshot.tiles || []).filter(tile => (tile.receivedFrames || 0) > 30).length >= CAMERAS)
+    const deliveringAt = Date.now() / 1_000
 
     check(`kill ${round}: recording resumed without being asked`, resumed.dvr.isRecording === true)
     check(`kill ${round}: it is the same take, not a new one`,
@@ -330,11 +356,25 @@ async function scenarioRecord(options) {
     // and a writer that continues the take.
     const rearmed = await waitFor('both cameras to archive again', 120, snapshot =>
       (snapshot.tiles || []).filter(tile => tile.isArchiving).length >= CAMERAS)
+    const archivingAt = Date.now() / 1_000
+    process.stdout.write(
+      `  kill ${round} timeline from relaunch: recording ${(resumedAt - relaunchedAt).toFixed(1)} s, `
+      + `cameras listed ${(seenAt - relaunchedAt).toFixed(1)} s, delivering ${(deliveringAt - relaunchedAt).toFixed(1)} s, `
+      + `archiving ${(archivingAt - relaunchedAt).toFixed(1)} s\n`
+    )
+    for (const tile of rearmed.tiles || []) {
+      if (/Fixture Cam/.test(tile.displayName || '')) sourceByName[tile.displayName] = tile.sourceID
+    }
     check(`kill ${round}: both cameras re-armed with no operator action`,
       (rearmed.tiles || []).filter(tile => tile.isArchiving).length >= CAMERAS)
     check(`kill ${round}: the programme went back to the camera the operator chose`,
       rearmed.programSource === programBefore,
       `programSource=${rearmed.programSource} vs ${programBefore}`)
+  }
+
+  // A control take never went through the loop above, so it has not learnt which take it is.
+  if (!recordingID) {
+    recordingID = readIndex('SELECT id FROM recordings WHERE ended_at IS NULL ORDER BY id DESC LIMIT 1;')
   }
 
   await sleep(options.resumeSeconds * 1_000)
@@ -392,11 +432,12 @@ async function scenarioRecord(options) {
   // programme comes back with the app while a camera comes back when it reconnects. Read the two
   // ends of each hole out of the index rather than guessing them from the requested timings, then
   // probe inside that file's own hole.
-  for (const name of files) {
+  // A control take has no hole to look inside.
+  for (const name of killTimes.length > 0 ? files : []) {
     const file = path.join(prepared, name)
     // The last hole, which is the one `killedAt` marks. With several kills the earlier ones are
     // covered by the same mechanism and by the length check above.
-    const hole = holeFor({ name, recordingID, takeStart, crashAt: killedAt })
+    const hole = holeFor({ name, recordingID, takeStart, crashAt: killedAt, sourceByName })
     if (!hole) {
       check(`${name} has a measurable outage`, false, 'nothing in the index says where it is')
       continue
@@ -424,7 +465,31 @@ async function scenarioRecord(options) {
     check(`${name} holds a picture rather than going black`, first.mean > 8,
       `mean luma ${first.mean.toFixed(1)}`)
   }
+  // The part that matters most: whatever the app went through, each file keeps picture and sound
+  // on the wall clock. Only the live cameras can show this — they stamp every frame with the time
+  // it was made and beep on every whole second — so the looped capture skips it.
+  if (FIXTURES === LIVE_FIXTURES) {
+    process.stdout.write('  checking picture and sound against the wall clock\n')
+    for (const name of files) {
+      const file = path.join(prepared, name)
+      const holes = killTimes
+        .map(crashAt => holeFor({ name, recordingID, takeStart, crashAt, sourceByName }))
+        .filter(Boolean)
+      // A camera that reconnects mid-take is placed by arrival for its first segment, before its
+      // sender reports have settled; after a crash every camera reconnects mid-take. The strict
+      // checks count that segment; the settled ones leave the first few seconds after a hole out,
+      // so the two can be told apart.
+      const verdict = verifyWallClock(file, { takeStart, takeEnd, holes, every: 1, settleSeconds: 3.5 })
+      for (const result of verdict.checks) {
+        check(`${name} ${result.name}`, result.pass, result.detail)
+      }
+      wallClockReport.push({ name, holes, checks: verdict.checks })
+    }
+  }
 }
+
+/// What the wall-clock checks measured, per file, for the summary at the end of the run.
+const wallClockReport = []
 
 /// Where one exported file's hole is, in seconds from the take's start.
 ///
@@ -432,32 +497,57 @@ async function scenarioRecord(options) {
 /// when it has rediscovered its server and reconnected, which is seconds later and different per
 /// camera. Asking every file about the same span would test the slowest camera's hole against the
 /// programme's content and call a correct file a failure.
-function holeFor({ name, recordingID, takeStart, crashAt }) {
-  const crashOffset = crashAt - takeStart
+function holeFor({ name, recordingID, takeStart, crashAt, sourceByName = {} }) {
   const camera = /-(Fixture_Cam_[A-Z])\.mov$/.exec(name)
   if (camera) {
-    const slug = camera[1].replace(/_/g, ' ')
-    const rows = readIndex(
-      `SELECT s.source_id, MIN(s.start_wall) FROM segments s WHERE s.recording_id = ${recordingID}`
-      + ` AND s.start_wall > ${crashAt} GROUP BY s.source_id;`
+    // The hole starts where the camera's last segment ended, not at the kill: the segment being
+    // written when the process died is lost with it, up to one segment long.
+    const sourceID = sourceByName[camera[1].replace(/_/g, ' ')]
+    const only = sourceID ? ` AND source_id = '${sourceID}'` : ''
+    const before = readIndex(
+      `SELECT MAX(start_wall + duration) FROM segments WHERE recording_id = ${recordingID}${only}`
+      + ` AND start_wall < ${crashAt} AND is_initialization = 0;`
     )
-    // Two cameras, two rows; the export names them but the index keys them by identity, so take
-    // the earliest first segment after the crash that is not already covered. Both cameras
-    // reconnect within a second or two of each other, so the earliest is a fair floor for either
-    // and never claims more hole than there was.
-    const starts = rows.split('\n').filter(Boolean).map(row => Number(row.split('|')[1]))
-    if (starts.length === 0) return null
-    const back = Math.max(...starts) - takeStart
-    void slug
-    return { from: crashOffset, to: back }
+    const after = readIndex(
+      `SELECT MIN(start_wall) FROM segments WHERE recording_id = ${recordingID}${only}`
+      + ` AND start_wall > ${crashAt} AND is_initialization = 0;`
+    )
+    if (!after) return null
+    return { from: Number(before || crashAt) - takeStart, to: Number(after) - takeStart }
   }
-  const parts = readIndex(
-    `SELECT start FROM (SELECT part, MIN(wall - program_seconds) AS start FROM program_anchors`
-    + ` WHERE recording_id = ${recordingID} GROUP BY part)`
-    + ` WHERE start > ${crashAt} ORDER BY start LIMIT 1;`
-  )
-  if (!parts) return null
-  return { from: crashOffset, to: Number(parts) - takeStart }
+  // The programme: from where the killed part's readable fragments end to where the next part starts.
+  const starts = readIndex(
+    `SELECT part, MIN(wall - program_seconds), MAX(wall) FROM program_anchors`
+    + ` WHERE recording_id = ${recordingID} GROUP BY part ORDER BY part;`
+  ).split('\n').filter(Boolean).map(row => row.split('|').map(Number))
+  const killed = starts.filter(([, , lastAnchor]) => lastAnchor < crashAt).pop()
+  const next = starts.find(([, start]) => start > crashAt)
+  if (!next) return null
+  let from = crashAt
+  if (killed) {
+    const listed = readIndex(`SELECT program_filename FROM recordings WHERE id = ${recordingID};`)
+    const stem = (listed.split(',')[0] || '').replace(/\.mp4$/, '')
+    const file = path.join(container(), 'Documents', 'Program',
+      `${stem}${killed[0] === 1 ? '' : `-${killed[0]}`}.mp4`)
+    const readable = fs.existsSync(file) ? playableSeconds(file) : null
+    if (readable !== null) from = Math.min(crashAt, killed[1] + readable)
+  }
+  return { from: from - takeStart, to: next[1] - takeStart }
+}
+
+/// How much of a programme part a reader gets, which for one killed mid-write is up to its last
+/// complete fragment.
+function playableSeconds(file) {
+  try {
+    const { verify } = require('./verifyWallClockSync')
+    void verify
+    const binary = path.join(ROOT, 'DerivedData', 'tools', 'wallClockSync')
+    const result = spawnSync(binary, [file, '--every', '1000'], { encoding: 'utf8' })
+    const report = JSON.parse(result.stdout)
+    return typeof report.videoSeconds === 'number' ? report.videoSeconds : null
+  } catch {
+    return null
+  }
 }
 
 async function scenarioStream(options) {
@@ -582,6 +672,7 @@ async function main() {
   const options = parseArgs(process.argv.slice(2))
   simulator()
   requireSudo()
+  if (options.loop) FIXTURES = LOOP_FIXTURES
   ensureFixtures()
 
   if (options.scenario === 'stream') sharedLaunchArguments = ['-streamURL', STREAM_URL]

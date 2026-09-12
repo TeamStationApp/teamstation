@@ -19,7 +19,7 @@ const fs = require('node:fs')
 const http = require('node:http')
 const os = require('node:os')
 const path = require('node:path')
-const { createCameraServer, LoopSource, selfTest } = require('./rtspLoopServer')
+const { createCameraServer, LiveSource, LoopSource, selfTest } = require('./rtspLoopServer')
 const { FakeCameramanModel } = require('./fakeCameramanModel')
 
 const DEFAULT_FIXTURE_DIR = '/Users/paul/recordings/gsDirector-rtsp-fixtures/20260820-stopwatch'
@@ -27,6 +27,20 @@ const STATE_PATH = '/tmp/gs-director-rtsp-farm.json'
 const LOCAL_BASE_PORT = 18554
 /// Loopback aliases this run added, so it can take them away again.
 const LOOPBACK_ALIASES = []
+/// Where each live camera's clock was when it started: its epoch, and how long ffmpeg took to hand
+/// over the first frame. A verifier reads this to tell a generation delay from a placement error.
+const CLOCK_PATH = '/tmp/gs-director-rtsp-farm-clock.json'
+
+function recordClock(slug, clock) {
+  let clocks = {}
+  try { clocks = JSON.parse(fs.readFileSync(CLOCK_PATH, 'utf8')) } catch { clocks = {} }
+  clocks[slug] = clock
+  try {
+    fs.writeFileSync(CLOCK_PATH, `${JSON.stringify(clocks, null, 2)}\n`, { mode: 0o644 })
+  } catch (error) {
+    process.stderr.write(`could not record ${slug}'s clock: ${error.message}\n`)
+  }
+}
 
 function usage() {
   return `Usage: node scripts/fakeRtspCameras.js [options]
@@ -150,7 +164,8 @@ function loadInventory(fixtureDir) {
   return inventory.cameras.map(camera => {
     const file = path.join(fixtureDir, 'video', `${camera.slug}.mkv`)
     const sdpPath = path.join(fixtureDir, 'sdp', `${camera.slug}.sdp`)
-    if (!fs.existsSync(file)) throw new Error(`missing ${file}`)
+    // A live camera generates its picture as it goes, so there is no capture to find.
+    if (!camera.live && !fs.existsSync(file)) throw new Error(`missing ${file}`)
     if (!fs.existsSync(sdpPath)) throw new Error(`missing ${sdpPath}`)
     const sdp = fs.readFileSync(sdpPath, 'utf8').replace(/\s+$/, '') + '\n'
     if (/ndi/i.test(camera.bonjour?.serviceType || '')) {
@@ -512,19 +527,25 @@ async function main() {
       const host = hosts[index]
       const port = options.local ? options.basePort : 554
       const media = sdpMedia(camera.sdp)
-      const source = new LoopSource({
-        file: camera.file,
-        codec: media.codec,
+      const common = {
         videoPayloadType: media.videoPayloadType,
         audioPayloadType: media.audioPayloadType,
         videoClock: media.videoClock,
-        frameRate: 30,
-        audioRate: media.audioRate,
         videoSsrc: media.videoSsrc ?? ssrcFromSlug(camera.slug, 1),
         audioSsrc: media.audioSsrc ?? ssrcFromSlug(camera.slug, 2)
-      })
+      }
+      const source = camera.live
+        ? new LiveSource({ ...common, ...camera.live, name: camera.displayName })
+        : new LoopSource({
+          ...common,
+          file: camera.file,
+          codec: media.codec,
+          frameRate: 30,
+          audioRate: media.audioRate
+        })
       source.on('log', message => process.stderr.write(`${camera.slug}: ${message}`))
       source.on('error', error => process.stderr.write(`${camera.slug}: ${error.message}\n`))
+      source.on('clock', clock => recordClock(camera.slug, clock))
       let parameters = null
       let publicMethods = null
       if (camera.controlUUID) {
