@@ -21,6 +21,7 @@
 const { spawnSync } = require('node:child_process')
 const fs = require('node:fs')
 const path = require('node:path')
+const { liveSampleArgs } = require('./rtspLoopServer')
 
 const FONT = '/System/Library/Fonts/Menlo.ttc'
 const WIDTH = 1280
@@ -41,11 +42,13 @@ function usage() {
   --cameras N      How many cameras, 1-4 (default 2)
   --seconds N      Loop length (default 60)
   --force          Rebuild even if the capture is already there
+  --live           Cameras that generate their picture and sound as they are served, stamped with
+                   the wall clock, instead of a looped capture. What a sync verifier needs.
 `
 }
 
 function parseArgs(argv) {
-  const options = { out: '/tmp/gs-rtsp-fixtures', cameras: 2, seconds: 60, force: false }
+  const options = { out: '/tmp/gs-rtsp-fixtures', cameras: 2, seconds: 60, force: false, live: false }
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]
     if (arg === '--help' || arg === '-h') {
@@ -62,6 +65,8 @@ function parseArgs(argv) {
       index += 1
     } else if (arg === '--force') {
       options.force = true
+    } else if (arg === '--live') {
+      options.live = true
     } else {
       throw new Error(`unknown argument ${arg}\n${usage()}`)
     }
@@ -112,6 +117,14 @@ function encodeCamera(camera, index, options) {
     '-c:a', 'aac', '-b:a', '96k', '-ar', '48000', '-ac', '2',
     '-shortest', file
   ], `encode ${camera.slug}`)
+  return file
+}
+
+/// One second from the live encoder, with the settings the farm will use, so the SDP's parameter
+/// sets are the ones actually sent.
+function encodeLiveSample(camera, live, options) {
+  const file = path.join(options.out, 'video', `${camera.slug}-sample.mkv`)
+  run('ffmpeg', liveSampleArgs({ ...live, name: camera.name }, file, 1), `sample ${camera.slug}`)
   return file
 }
 
@@ -190,7 +203,7 @@ function main() {
   const manifest = path.join(options.out, 'cameras.json')
   if (fs.existsSync(manifest) && !options.force) {
     const existing = JSON.parse(fs.readFileSync(manifest, 'utf8'))
-    if (existing.cameras?.length === options.cameras) {
+    if (existing.cameras?.length === options.cameras && Boolean(existing.live) === options.live) {
       process.stdout.write(`fixtures already at ${options.out}\n`)
       return
     }
@@ -201,10 +214,17 @@ function main() {
   }
 
   const cameras = PALETTE.slice(0, options.cameras).map((camera, index) => {
-    process.stdout.write(`encoding ${camera.slug} (${options.seconds}s)…\n`)
-    const file = encodeCamera(camera, index, options)
+    // A live camera's own tone, so a programme that mixes two of them can still be attributed.
+    const live = options.live
+      ? { width: WIDTH, height: HEIGHT, fps: FPS, colour: camera.colour, toneHz: 1000 + index * 500 }
+      : null
+    process.stdout.write(live
+      ? `sampling ${camera.slug}'s live encoder…\n`
+      : `encoding ${camera.slug} (${options.seconds}s)…\n`)
+    const file = live ? encodeLiveSample(camera, live, options) : encodeCamera(camera, index, options)
     writeSdp(camera, file, options)
     return {
+      ...(live ? { live } : {}),
       slug: camera.slug,
       displayName: camera.name,
       kind: 'gs-cameraman',
@@ -227,6 +247,7 @@ function main() {
 
   fs.writeFileSync(manifest, `${JSON.stringify({
     generator: 'makeRtspFixtures.js',
+    live: options.live,
     seconds: options.seconds,
     width: WIDTH,
     height: HEIGHT,

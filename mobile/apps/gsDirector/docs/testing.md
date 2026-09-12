@@ -343,12 +343,34 @@ DIRECTOR_SIMULATOR_UDID=<udid> node scripts/testResumeAfterCrash.js --scenario s
 DIRECTOR_SIMULATOR_UDID=<udid> node scripts/testResumeAfterCrash.js --scenario expired   # too late
 ```
 
-It serves two RTSP cameras from a generated capture rather than using the in-app test pattern,
-because rediscovering and reconnecting is the part under test. `scripts/makeRtspFixtures.js`
-builds that capture; the driver calls it when it is missing. Both need **passwordless sudo**: each
-camera binds `:554` on its own loopback address, which is what makes Director see two cameras
-rather than one — it identifies a camera by its IPv4, so two advertised on `127.0.0.1` collapse
-into a single row.
+It serves two RTSP cameras rather than using the in-app test pattern, because rediscovering and
+reconnecting is the part under test. By default they are **live wall-clock cameras**
+(`scripts/makeRtspFixtures.js --live`): ffmpeg generates each picture and its sound as it is served,
+drawing the Unix time of every frame as 32 binary cells and beeping on every whole second. After the
+export, `scripts/verifyWallClockSync.js` reads both back out of each file with AVFoundation (ffmpeg's
+edit-list handling shows the wrong frames on these files) and checks, per file:
+
+| Check | Means |
+|---|---|
+| length | the file lasts the take, start to stop, within 0.1 s |
+| pace | every picture outside a hole shows the take's clock at one constant offset — no drift, no jump |
+| placement | that offset is under a second |
+| hole | where the app was away, one frame is held |
+| sync | each beep lands on the second the picture shows: median within 40 ms, none past 100 ms |
+| rhythm | beeps a second apart, so the sound runs at wall speed |
+
+It can be pointed at any export by hand:
+
+```bash
+node scripts/verifyWallClockSync.js <file.mov> --take-start <unix s> --take-end <unix s> --holes 27.1-35.6
+```
+
+`--loop` serves the older looped capture instead, which proves resuming but not sync.
+
+Both need **passwordless sudo**. Each camera binds `:554` on its own `10.255.77.N/32` alias on the
+loopback interface. Director identifies a camera by its IPv4, so two cameras on one address collapse
+into a single row; and it accepts only private LAN addresses, so `127.0.0.x` will not do. An iOS
+simulator reaches the aliases because it shares the Mac's network stack.
 
 `gsdirector://test/crash` is `SIGKILL` on the app's own process. Terminating the app politely runs
 the stop path, which is the path that already worked.

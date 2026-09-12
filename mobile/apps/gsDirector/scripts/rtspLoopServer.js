@@ -588,8 +588,201 @@ function selfTest() {
   return 'ok'
 }
 
+// A camera that generates its picture and sound live, stamped with the wall clock, instead of
+// looping a captured file.
+//
+// Every frame carries the Unix time it was generated, in milliseconds mod 2^32, as 32 binary cells
+// with a sentinel cell that is always white; every whole wall-clock second the sound beeps at the
+// camera's own tone for 50 ms. So an exported file can be asked, at any position, what time its
+// picture says and whether its sound agrees — the ground truth a looped capture cannot give,
+// because its burn-in restarts every loop and its sound is a steady tone.
+//
+// The epoch is taken as ffmpeg is spawned and `-re` paces generation, so frame n is epoch + n/fps.
+// The time from spawning to the first frame arriving here is kept as `startLatencyMs`, so a verifier
+// can tell a constant generation delay from a placement error.
+const LIVE_MARKER = { bits: 32, originX: 40, originY: 40, stride: 36, cell: 32, sentinelSlot: 32 }
+
+function liveMarkerFilters(epochMs) {
+  const { bits, originX, originY, stride, cell, sentinelSlot } = LIVE_MARKER
+  const filters = [
+    `drawbox=x=20:y=20:w=${originX + (sentinelSlot + 1) * stride - 16}:h=72:color=black:t=fill`
+  ]
+  for (let bit = 0; bit < bits; bit += 1) {
+    filters.push(
+      `drawbox=x=${originX + bit * stride}:y=${originY}:w=${cell}:h=${cell}:color=white:t=fill:`
+      + `enable='mod(floor((${epochMs}+t*1000)/pow(2\\,${bit}))\\,2)'`
+    )
+  }
+  filters.push(
+    `drawbox=x=${originX + sentinelSlot * stride}:y=${originY}:w=${cell}:h=${cell}:color=white:t=fill`
+  )
+  return filters
+}
+
+/// The video encoder a live camera uses, shared by the stream and by the sample its SDP is read from.
+///
+/// `zerolatency` would otherwise turn on x264's sliced threads, which cut every picture into several
+/// slices. The packetizer here, like a camera's, starts a new access unit at each coded slice, so a
+/// sliced picture went out under several timestamps and nothing could put it back together: a pull
+/// got nine frames in three seconds.
+function liveVideoEncoderArgs(fps) {
+  return [
+    '-c:v', 'libx264', '-profile:v', 'high', '-pix_fmt', 'yuv420p', '-tune', 'zerolatency',
+    '-x264-params', 'sliced-threads=0',
+    '-g', String(fps), '-keyint_min', String(fps), '-sc_threshold', '0', '-bf', '0', '-b:v', '4000k'
+  ]
+}
+
+/// The ffmpeg command for one live camera. Also used, bounded with `-t`, to encode the sample the
+/// fixture generator reads parameter sets from, so the SDP matches what is actually sent.
+function liveArgs({ epochMs, width = 1280, height = 720, fps = 30, colour, name, toneHz }) {
+  const flash = `drawbox=x=40:y=110:w=240:h=80:color=white:t=fill:`
+    + `enable='lt(mod(${epochMs}+t*1000\\,1000)\\,${(1000 / fps).toFixed(3)})'`
+  const video = [
+    `drawbox=x=0:y=0:w=${width}:h=${height}:color=${colour}@0.35:t=fill`,
+    ...liveMarkerFilters(epochMs),
+    flash,
+    `drawtext=fontfile=/System/Library/Fonts/Menlo.ttc:text='${name}':x=40:y=${height - 120}:`
+      + 'fontsize=56:fontcolor=white:box=1:boxcolor=black@0.6:boxborderw=10',
+    "drawtext=fontfile=/System/Library/Fonts/Menlo.ttc:text='%{localtime\\:%H\\\\\\:%M\\\\\\:%S}':"
+      + `x=${width - 420}:y=${height - 120}:fontsize=56:fontcolor=white:box=1:boxcolor=black@0.6:boxborderw=10`
+  ].join(',')
+  // The AAC encoder delays its output by 1024 samples of priming, so a beep generated exactly on the
+  // second would reach the wire 21 ms behind the frame that shows that second. Generating it that
+  // much early makes the camera itself sync-exact, so anything an export shows is Director's.
+  const lead = (1024 / 48000).toFixed(6)
+  const beep = `if(lt(mod(${epochMs}/1000+t+${lead}\\,1)\\,0.05)\\,0.8*sin(2*PI*${toneHz}*t)\\,0)`
+  return [
+    '-hide_banner', '-loglevel', 'error', '-re',
+    '-f', 'lavfi', '-i', `color=c=gray:s=${width}x${height}:r=${fps}`,
+    '-f', 'lavfi', '-i', `aevalsrc=exprs='${beep}|${beep}':s=48000`,
+    '-filter_complex', `[0:v]${video}[v]`,
+    '-map', '[v]', ...liveVideoEncoderArgs(fps), '-bsf:v', 'h264_mp4toannexb', '-f', 'h264', 'pipe:1',
+    '-map', '1:a', '-c:a', 'aac', '-b:a', '96k', '-ar', '48000', '-ac', '2', '-f', 'adts', 'pipe:3'
+  ]
+}
+
+/// An RTCP sender report: this RTP timestamp was this wall-clock instant.
+///
+/// A real camera sends one every few seconds per stream, and Director takes a picture's capture time
+/// — and places a stream's sound against its picture — from them. A fixture that sends none is timed
+/// by arrival instead, which measures the fixture's pipes rather than Director.
+function senderReport({ ssrc, wallMs, rtpTimestamp, packets, octets }) {
+  const packet = Buffer.alloc(28)
+  packet[0] = 0x80
+  packet[1] = 200
+  packet.writeUInt16BE(6, 2)
+  packet.writeUInt32BE(ssrc >>> 0, 4)
+  const ntpSeconds = Math.floor(wallMs / 1000) + 2_208_988_800
+  const fraction = Math.floor(((wallMs % 1000) / 1000) * 4_294_967_296)
+  packet.writeUInt32BE(ntpSeconds >>> 0, 8)
+  packet.writeUInt32BE(fraction >>> 0, 12)
+  packet.writeUInt32BE(rtpTimestamp >>> 0, 16)
+  packet.writeUInt32BE(packets >>> 0, 20)
+  packet.writeUInt32BE(octets >>> 0, 24)
+  return packet
+}
+
+class LiveSource extends LoopSource {
+  constructor(options) {
+    super({ ...options, codec: 'h264', frameRate: options.fps ?? 30, audioRate: 48_000 })
+    this.live = options
+    this.epochMs = null
+    this.spawnedAt = null
+    this.startLatencyMs = null
+    this.reportTimer = null
+    this.sent = { video: { packets: 0, octets: 0 }, audio: { packets: 0, octets: 0 } }
+    this.on('rtp', ({ channel, packet }) => {
+      const stream = channel === 0 ? this.sent.video : channel === 2 ? this.sent.audio : null
+      if (!stream) return
+      stream.packets += 1
+      stream.octets += Math.max(0, packet.length - 12)
+    })
+  }
+
+  /// Frame n is generated at epoch + n/fps and audio sample k at epoch + k/48000, and the RTP
+  /// timestamps count from zero at the epoch on both, so the mapping is exact rather than estimated.
+  sendReports() {
+    if (this.epochMs === null || this.startLatencyMs === null) return
+    const wallMs = Date.now()
+    const elapsedMs = wallMs - this.spawnedAt
+    this.emit('rtp', {
+      channel: 1,
+      keyframe: false,
+      packet: senderReport({
+        ssrc: this.videoSsrc,
+        wallMs,
+        rtpTimestamp: Math.round(elapsedMs * (this.videoClock / 1000)),
+        ...this.sent.video
+      })
+    })
+    this.emit('rtp', {
+      channel: 3,
+      keyframe: false,
+      packet: senderReport({
+        ssrc: this.audioSsrc,
+        wallMs,
+        rtpTimestamp: Math.round(elapsedMs * 48),
+        ...this.sent.audio
+      })
+    })
+  }
+
+  stop() {
+    if (this.reportTimer) clearInterval(this.reportTimer)
+    this.reportTimer = null
+    super.stop()
+  }
+
+  start() {
+    if (this.ffmpeg) return
+    this.spawnedAt = Date.now()
+    this.epochMs = this.spawnedAt % 4_294_967_296
+    this.startLatencyMs = null
+    this.ffmpeg = spawn('ffmpeg', liveArgs({ ...this.live, epochMs: this.epochMs }), {
+      stdio: ['ignore', 'pipe', 'pipe', 'pipe']
+    })
+    this.ffmpeg.stdio[1].on('data', chunk => {
+      if (this.startLatencyMs === null) {
+        this.startLatencyMs = Date.now() - this.spawnedAt
+        this.emit('clock', { epochMs: this.epochMs, spawnedAt: this.spawnedAt, startLatencyMs: this.startLatencyMs })
+        if (!this.reportTimer) this.reportTimer = setInterval(() => this.sendReports(), 1000)
+      }
+      this.handleVideo(chunk)
+    })
+    this.ffmpeg.stdio[3].on('data', chunk => this.handleAudio(chunk))
+    this.ffmpeg.stderr.on('data', chunk => this.emit('log', chunk.toString()))
+    this.ffmpeg.on('exit', (code, signal) => {
+      this.ffmpeg = null
+      if (code && code !== 0 && signal !== 'SIGTERM') {
+        this.emit('error', new Error(`ffmpeg exited ${code}/${signal ?? ''}`))
+      }
+    })
+  }
+}
+
+/// The same encoder, bounded and written to one file, for the fixture generator to read parameter
+/// sets from. Identical settings mean identical SPS and PPS, so the SDP describes the live stream.
+function liveSampleArgs(options, file, seconds = 1) {
+  const args = liveArgs({ ...options, epochMs: 0 })
+  const filter = args.indexOf('-filter_complex')
+  const head = args.slice(0, filter + 2).filter(arg => arg !== '-re')
+  return [
+    ...head, '-y', '-t', String(seconds),
+    '-map', '[v]', '-map', '1:a',
+    ...liveVideoEncoderArgs(options.fps ?? 30),
+    '-c:a', 'aac', '-b:a', '96k', '-ar', '48000', '-ac', '2',
+    file
+  ]
+}
+
 module.exports = {
+  LIVE_MARKER,
+  LiveSource,
+  liveArgs,
+  liveSampleArgs,
   LoopSource,
+  senderReport,
   createCameraServer,
   packetizeH264,
   packetizeHevc,
