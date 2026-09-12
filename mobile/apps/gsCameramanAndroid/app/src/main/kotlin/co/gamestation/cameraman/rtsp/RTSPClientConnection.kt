@@ -31,7 +31,12 @@ internal class RTSPClientConnection(
     hasAudio: Boolean,
     private val identity: () -> DeviceIdentity,
     private val requestKeyframe: () -> Unit,
-    private val parameters: RTSPParameterHandler? = null
+    private val parameters: RTSPParameterHandler? = null,
+    /**
+     * The TCP send buffer to ask for, or null for the platform's own. See [start] for why a small
+     * one is what makes the congestion signal honest.
+     */
+    private val sendBufferBytes: Int? = null
 ) {
     private val queue: ExecutorService =
         Executors.newSingleThreadExecutor { runnable -> Thread(runnable, "rtsp-conn") }
@@ -86,6 +91,12 @@ internal class RTSPClientConnection(
     }
 
     val sendQueue = StreamSendQueue()
+
+    /** Written on the executor, read by the bitrate loop's thread; the lock is its own. */
+    private val congestion = CongestionMeter()
+
+    /** The kernel's side of the queue, when the platform lets it be read. */
+    private var socketQueue: SocketQueue? = null
     private var closeReason = "cancelled"
     private var isClosed = false
 
@@ -113,6 +124,17 @@ internal class RTSPClientConnection(
         // A client that vanished without a FIN would otherwise hold a thread and a send queue open
         // until the OS gave up, which on Wi-Fi is minutes.
         runCatching { socket.soTimeout = 0 }
+        // Linux autotunes the send buffer to megabytes, seconds of video at these rates, and bytes
+        // in the kernel can no longer be dropped for a fresher picture. A buffer of about a quarter
+        // second at the ceiling keeps most of a backlog on this side, where stale frames can still
+        // be discarded — Goel et al. (IWQoS 2002) measured the same fix for latency-sensitive media
+        // over TCP — while leaving room for a round trip of 250 ms at the full rate. Set before the
+        // first write, while it can still take effect.
+        sendBufferBytes?.let { bytes -> runCatching { socket.sendBufferSize = bytes } }
+        socketQueue = SocketQueue.open(socket)
+        // Once per client, so a sandbox that refuses the read is visible in logcat rather than
+        // showing up only as a controller that reacts late.
+        android.util.Log.i("GSCameraman", "kernel send queue readable: ${socketQueue != null}")
         output = socket.getOutputStream()
 
         writerThread = Thread({ writeLoop() }, "rtsp-write").apply { isDaemon = true; start() }
@@ -148,6 +170,7 @@ internal class RTSPClientConnection(
         // A poison pill rather than an interrupt: an interrupted write leaves the socket in an
         // indeterminate state, and this one is being closed anyway.
         writes.offer(poisonPill())
+        socketQueue?.close()
         runCatching { socket.close() }
         val callback = onClose
         onClose = null
@@ -292,7 +315,10 @@ internal class RTSPClientConnection(
                     val generation = item.generation
                     // Credited on completion rather than enqueue, so the queue depth reflects what
                     // the client has actually taken.
-                    submit { sendQueue.complete(count, generation) }
+                    submit {
+                        sendQueue.complete(count, generation)
+                        synchronized(congestion) { congestion.delivered() }
+                    }
                 }
             }
         } catch (error: Exception) {
@@ -328,6 +354,7 @@ internal class RTSPClientConnection(
             if (payloads.isEmpty()) return@submit
 
             val bytes = payloads.sumOf { it.size }
+            synchronized(congestion) { congestion.offered(bytes) }
             val wasDropping = sendQueue.isDropping
             when (sendQueue.decide(bytes, frame.isKeyframe)) {
                 StreamSendQueue.Decision.DROP -> {
@@ -397,6 +424,7 @@ internal class RTSPClientConnection(
             audioOctetCount += payload.size
 
             val framed = InterleavedFramer.frame(setup.dataChannel, packet) ?: return@submit
+            synchronized(congestion) { congestion.offered(framed.size) }
             sendQueue.enqueueAudio(framed.size)
             sendMedia(framed)
             frame.captureTime?.let { sendAudioReportIfDue(setup, timestamp.toLong(), it) }
@@ -405,7 +433,16 @@ internal class RTSPClientConnection(
 
     private fun sendMedia(data: ByteArray) {
         if (data.isEmpty() || isClosed) return
+        synchronized(congestion) { congestion.sent(data.size, System.nanoTime() / 1e9) }
         writes.offer(WriteItem(data, sendQueue.generation, true))
+    }
+
+    /** This client's link since the last call, or null when it is not playing. */
+    fun congestionSample(now: Double): CongestionSample? {
+        val sample = synchronized(congestion) {
+            congestion.sample(now, sendQueue.droppedFrames, sendQueue.flushes, socketQueue?.queuedBytes())
+        }
+        return if (isStreaming) sample else null
     }
 
     private fun dropPendingMedia() {
@@ -415,6 +452,9 @@ internal class RTSPClientConnection(
         // RTSP responses queued behind media must still go out; only pictures are expendable.
         for (item in drained) if (!item.isMedia) kept.add(item)
         for (item in kept) writes.offer(item)
+        // Never written, so never completed: the meter must forget them or it would wait for ever.
+        val abandoned = drained.size - kept.size
+        synchronized(congestion) { congestion.discardNewest(abandoned) }
     }
 
     /**

@@ -41,6 +41,10 @@ final class RTSPClientConnection: @unchecked Sendable {
   private var lastReportTime = Date.distantPast
 
   private(set) var sendQueue = StreamSendQueue()
+  private var congestion = CongestionMeter()
+  /// The most free space the TCP send buffer has reported, which is its size as far as this side can
+  /// tell. Network.framework reports only the free space, and the backlog is what is missing from it.
+  private var largestAvailableSendBuffer = 0
   private var closeReason = "cancelled"
 
   var onClose: (@Sendable (String) -> Void)?
@@ -227,6 +231,7 @@ final class RTSPClientConnection: @unchecked Sendable {
       guard !payloads.isEmpty else { return }
 
       let bytes = payloads.reduce(0) { $0 + $1.count }
+      congestion.offered(bytes: bytes)
       let wasDropping = sendQueue.isDropping
       switch sendQueue.decide(frameBytes: bytes, isKeyframe: frame.isKeyframe) {
       case .drop:
@@ -297,6 +302,7 @@ final class RTSPClientConnection: @unchecked Sendable {
       guard let framed = InterleavedFramer.frame(channel: setup.dataChannel, payload: packet) else {
         return
       }
+      congestion.offered(bytes: framed.count)
       sendQueue.enqueueAudio(bytes: framed.count)
       sendMedia(framed)
       sendAudioReportIfDue(
@@ -311,14 +317,43 @@ final class RTSPClientConnection: @unchecked Sendable {
     guard !data.isEmpty else { return }
     let count = data.count
     let generation = sendQueue.generation
+    congestion.sent(bytes: count, at: ProcessInfo.processInfo.systemUptime)
     connection.send(content: data, completion: .contentProcessed { [weak self] _ in
       // Credited on completion rather than enqueue, so the queue depth reflects what the client has
-      // actually taken. Completions from a flushed generation are ignored.
+      // actually taken. Completions from a flushed generation are ignored by the send queue, but the
+      // meter still counts them: flushed or not, those bytes went down the link.
       guard let self else { return }
       self.queue.async {
         self.sendQueue.complete(bytes: count, generation: generation)
+        self.congestion.delivered()
       }
     })
+  }
+
+  /// This client's link since the last call, or nil when it is not playing. Runs on the server's
+  /// queue like everything else here.
+  func congestionSample(at now: Double) -> CongestionSample? {
+    let sample = congestion.sample(
+      at: now,
+      droppedFrames: sendQueue.droppedFrames,
+      flushes: sendQueue.flushes,
+      transportBacklogBytes: transportBacklogBytes()
+    )
+    return isStreaming ? sample : nil
+  }
+
+  /// Bytes the TCP send buffer is holding, estimated as its largest free space seen less its free
+  /// space now.
+  ///
+  /// `.contentProcessed` fires when Network.framework has handed bytes to TCP, not when they left,
+  /// so a send buffer that autotunes to megabytes can hold seconds of video with nothing waiting on
+  /// this side at all. This is the part of the queue the ledger cannot see.
+  private func transportBacklogBytes() -> Int? {
+    guard let metadata = connection.metadata(definition: NWProtocolTCP.definition) as? NWProtocolTCP.Metadata
+    else { return nil }
+    let available = Int(metadata.availableSendBuffer)
+    largestAvailableSendBuffer = max(largestAvailableSendBuffer, available)
+    return largestAvailableSendBuffer - available
   }
 
   /// A sender report about once a second, which is what RFC 3550 §6.2 recommends and what clients use
