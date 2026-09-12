@@ -382,6 +382,13 @@ public struct TileTelemetry: Sendable, Codable, Equatable {
 
 public struct DVRTelemetry: Sendable, Codable, Equatable {
   public var isRecording = false
+  /// How many times the take now rolling has been picked up again after the app stopped running,
+  /// and how long it was away the last time. Both are how a flow tells a resumed take apart from
+  /// a fresh one without reading the database.
+  public var resumeCount: UInt64 = 0
+  public var lastDowntimeSeconds: Double = 0
+  /// The stream was re-dialled at launch rather than started by hand.
+  public var resumedStream = false
   /// How long the last stop spent flushing archive writers. Segmented writers can take seconds to
   /// finalise, and knowing whether that is 2s or 25s is the difference between a tuning decision
   /// and a bug hunt.
