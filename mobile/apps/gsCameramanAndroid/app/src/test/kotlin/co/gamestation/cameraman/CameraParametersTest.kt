@@ -216,6 +216,27 @@ class CameraParametersTest {
     }
 
     @Test
+    fun `adaptive bitrate is writable, the rate the encoder is running at is read-only`() {
+        val encoded = CameraParameters.encode(snapshot())
+        // On by default, and at the ceiling while nothing has adapted.
+        assertEquals("true", encoded["videoEncoder.rateControl.adaptive"])
+        assertEquals("4000", encoded["videoEncoder.rateControl.currentBitrate"])
+
+        val adapting = snapshot().copy(currentBitrate = 2_600_000)
+        assertEquals("2600", CameraParameters.encode(adapting)["videoEncoder.rateControl.currentBitrate"])
+        val parsed = CameraParameterSet.decode(CameraParameters.encode(adapting).encoded).getOrNull()!!
+        val decoded = CameraParameters.decodeSnapshot(parsed)!!
+        assertEquals(2_600_000, decoded.currentBitrate)
+        assertTrue(decoded.settings.adaptiveBitrate)
+
+        val write = set("videoEncoder.rateControl.adaptive: false\r\n")
+        assertTrue(write.touchesSettings)
+        assertEquals(false, CameraParameters.settings(write, StreamSettings()).adaptiveBitrate)
+        assertEquals(400, failure("videoEncoder.rateControl.adaptive: sometimes\r\n")?.statusCode)
+        assertEquals(458, failure("videoEncoder.rateControl.currentBitrate: 1000\r\n")?.statusCode)
+    }
+
+    @Test
     fun `zoom is clamped to the mapping on apply, and non-numbers are 400`() {
         val write = set("ptz.zoom: 40\r\n")
         val applied = CameraParameters.snapshot(write, snapshot())

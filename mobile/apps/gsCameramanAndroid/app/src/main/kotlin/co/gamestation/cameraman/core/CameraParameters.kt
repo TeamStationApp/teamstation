@@ -191,6 +191,12 @@ object CameraParameterName {
     const val height = "videoEncoder.resolution.height"
     const val frameRate = "videoEncoder.rateControl.frameRateLimit"
     const val bitrateKbps = "videoEncoder.rateControl.bitrateLimit"
+
+    /** Whether the phone lowers its rate, never below half of `bitrateLimit`, while a link backs up. */
+    const val adaptiveBitrate = "videoEncoder.rateControl.adaptive"
+
+    /** The rate the encoder is running at, in kbps: `bitrateLimit`, or less while adapting. */
+    const val currentBitrateKbps = "videoEncoder.rateControl.currentBitrate"
     const val formatCount = "videoEncoder.formats"
     const val audioEnabled = "audioEncoder.enabled"
     const val audioSampleRate = "audioEncoder.sampleRate"
@@ -206,7 +212,7 @@ object CameraParameterName {
 
     val writable: Set<String> = setOf(
         deviceName, sourcePosition, ptzZoom, encoding, width, height, frameRate, bitrateKbps,
-        audioEnabled, lensDisabled
+        adaptiveBitrate, audioEnabled, lensDisabled
     )
 
     /**
@@ -219,7 +225,8 @@ object CameraParameterName {
         sourcePosition, sourceDeviceType,
         zoomMinimumDevice, zoomMaximumDevice, zoomDisplayMultiplier, zoomSwitchOverDevice,
         ptzZoom, ptzZoomDevice,
-        encoding, width, height, frameRate, bitrateKbps, formatCount,
+        encoding, width, height, frameRate, bitrateKbps, adaptiveBitrate, currentBitrateKbps,
+        formatCount,
         audioEnabled, audioSampleRate,
         lensCount, lensDisabled,
         streamURL, streamClients
@@ -267,7 +274,12 @@ data class CameraSnapshot(
     val formats: List<FormatCatalogue.Option>,
     val lenses: List<CameraLens>,
     val streamURL: String,
-    val clientCount: Int
+    val clientCount: Int,
+    /**
+     * What the encoder is running at, which is below `settings.bitrate` while adapting. Null from a
+     * phone that predates adaptation, which always runs at `settings.bitrate`.
+     */
+    val currentBitrate: Int? = null
 ) {
     val displayedZoom: Double get() = mapping.displayedZoom(deviceZoom)
 }
@@ -287,6 +299,7 @@ data class CameraParameterWrite(
     val frameRate: Double? = null,
     /** Bits per second, converted from the wire's kbps. */
     val bitrate: Int? = null,
+    val adaptiveBitrate: Boolean? = null,
     val audioEnabled: Boolean? = null,
     val disabledLensIDs: Set<String>? = null,
     /** The names in the request, in order, so the reply can echo exactly those. */
@@ -295,7 +308,7 @@ data class CameraParameterWrite(
     val isEmpty: Boolean
         get() = name == null && position == null && displayedZoom == null && codec == null &&
             width == null && height == null && frameRate == null && bitrate == null &&
-            audioEnabled == null && disabledLensIDs == null
+            adaptiveBitrate == null && audioEnabled == null && disabledLensIDs == null
 
     /**
      * True when anything in [StreamSettings] is named, i.e. the phone should run one
@@ -303,7 +316,8 @@ data class CameraParameterWrite(
      */
     val touchesSettings: Boolean
         get() = codec != null || width != null || height != null || frameRate != null ||
-            bitrate != null || audioEnabled != null || disabledLensIDs != null
+            bitrate != null || adaptiveBitrate != null || audioEnabled != null ||
+            disabledLensIDs != null
 }
 
 object CameraParameters {
@@ -341,6 +355,11 @@ object CameraParameters {
         set.set(CameraParameterName.height, s.height.toString())
         set.set(CameraParameterName.frameRate, number(s.frameRate))
         set.set(CameraParameterName.bitrateKbps, (s.bitrate / 1000).toString())
+        set.set(CameraParameterName.adaptiveBitrate, bool(s.adaptiveBitrate))
+        set.set(
+            CameraParameterName.currentBitrateKbps,
+            ((snapshot.currentBitrate ?: s.bitrate) / 1000).toString()
+        )
         set.set(CameraParameterName.formatCount, snapshot.formats.size.toString())
         snapshot.formats.forEachIndexed { index, format ->
             set.set(CameraParameterName.format(index, "width"), format.width.toString())
@@ -448,6 +467,8 @@ object CameraParameters {
             frameRate = frameRate,
             codec = codec,
             bitrate = bitrateKbps * 1000,
+            // Absent from a phone that predates adaptation, which never adapts.
+            adaptiveBitrate = parseBool(set[CameraParameterName.adaptiveBitrate]) ?: false,
             port = port ?: StreamSettings.defaultPort,
             path = path ?: StreamSettings.canonicalPath,
             audioEnabled = parseBool(set[CameraParameterName.audioEnabled]) ?: true,
@@ -478,7 +499,8 @@ object CameraParameters {
             formats = formats,
             lenses = lenses,
             streamURL = streamURL,
-            clientCount = set[CameraParameterName.streamClients]?.toIntOrNull() ?: 0
+            clientCount = set[CameraParameterName.streamClients]?.toIntOrNull() ?: 0,
+            currentBitrate = set[CameraParameterName.currentBitrateKbps]?.toIntOrNull()?.let { it * 1000 }
         )
     }
 
@@ -583,6 +605,11 @@ object CameraParameters {
                     write = write.copy(bitrate = kbps * 1000)
                 }
 
+                CameraParameterName.adaptiveBitrate -> {
+                    val enabled = parseBool(value) ?: return bad("expected true or false")
+                    write = write.copy(adaptiveBitrate = enabled)
+                }
+
                 CameraParameterName.audioEnabled -> {
                     val enabled = parseBool(value) ?: return bad("expected true or false")
                     write = write.copy(audioEnabled = enabled)
@@ -655,6 +682,7 @@ object CameraParameters {
         applying.frameRate?.let { next.frameRate = it }
         // After `selectCodec`, so an explicit rate in the same request wins over the codec default.
         applying.bitrate?.let { next.bitrate = it }
+        applying.adaptiveBitrate?.let { next.adaptiveBitrate = it }
         applying.audioEnabled?.let { next.audioEnabled = it }
         applying.disabledLensIDs?.let { next.disabledLensIDs = it }
         return next

@@ -107,7 +107,7 @@ Forwarded over `adb` rather than Wi-Fi, so it works on a bench with no route to 
 is a real difference from the iOS build, where the same channel needs an IP address.
 
 `dump-state`, `clients`, `flip-camera`, `force-keyframe`, `reset`, `set-zoom`, `set-format`,
-`set-bitrate`, `set-codec`, `set-name`, `set-audio`, `set-video`, `set-lenses`, `set-rotation`,
+`set-bitrate`, `set-adaptive-bitrate`, `set-codec`, `set-name`, `set-audio`, `set-video`, `set-lenses`, `set-rotation`,
 `set-send-delay`.
 
 `set-send-delay` holds outgoing frames back to imitate a congested link, in three shapes because they

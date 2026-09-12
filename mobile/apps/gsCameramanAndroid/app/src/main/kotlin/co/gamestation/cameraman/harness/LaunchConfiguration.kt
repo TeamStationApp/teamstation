@@ -64,6 +64,7 @@ data class LaunchConfiguration(
             "rtspPath",
             "codec",
             "bitrateMbps",
+            "adaptiveBitrate",
             "width",
             "height",
             "frameRate",
@@ -102,6 +103,7 @@ data class LaunchConfiguration(
             values["bitrateMbps"]?.toDoubleOrNull()?.let {
                 settings.bitrate = (it * 1_000_000).toInt()
             }
+            bool(values["adaptiveBitrate"])?.let { settings.adaptiveBitrate = it }
             values["width"]?.toIntOrNull()?.let { settings.width = it }
             values["height"]?.toIntOrNull()?.let { settings.height = it }
             values["frameRate"]?.toDoubleOrNull()?.let { settings.frameRate = it }

@@ -353,6 +353,13 @@ class ControlChannelTest {
     }
 
     @Test
+    fun `set-adaptive-bitrate takes an on value`() {
+        assertEquals(ControlCommand.SetAdaptiveBitrate(false), command("/set-adaptive-bitrate?on=false"))
+        assertEquals(ControlCommand.SetAdaptiveBitrate(true), command("/set-adaptive-bitrate?on=yes"))
+        assertNull(command("/set-adaptive-bitrate"))
+    }
+
+    @Test
     fun `an empty name is a real request, because it checks the fallback appears`() {
         assertEquals(ControlCommand.SetName(""), command("/set-name?name="))
         assertEquals(ControlCommand.SetName("Third Base"), command("/set-name?name=Third%20Base"))

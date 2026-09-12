@@ -68,6 +68,21 @@ once over the water mark, and a keyframe flushes the backlog and starts a fresh 
 stops reading costs a bounded amount of memory and then a gap, rather than growing until something
 gives.
 
+**Adaptive bitrate** is the iOS build's, constant for constant (see its `docs/architecture.md`). On
+by default, it lowers the encoder's rate while the link to the weakest playing client backs up,
+never below half the operator's bitrate, and climbs back once the link clears. Changes go to the
+running codec as `PARAMETER_KEY_VIDEO_BITRATE`, so none of them restarts it.
+
+The signal differs in one respect. The writer is credited when `write` returns, which is when bytes
+reach the kernel, and Android's public API offers no way to read how much the kernel is still
+holding. `SocketQueue` reads it with one native call, `ioctl(SIOCOUTQ)` in `src/main/cpp`, which the
+app sandbox allows; the bytes it reports count toward the queue the controller sees. While
+adapting, each new client's socket also asks for a send buffer of about a quarter second at the
+operator's rate (never under 64 KiB) instead of Linux's autotuned megabytes. Bytes in the kernel can
+no longer be dropped for a fresher picture, so this keeps most of a backlog on the app's side, and a
+quarter second still carries the full rate over a 250 ms round trip. With adaptation off, the
+platform's own buffer is kept.
+
 ### One place the transport is better than the iOS build's
 
 `NWConnection` cannot retract bytes it has already been handed, so on iOS a flush can only stop the

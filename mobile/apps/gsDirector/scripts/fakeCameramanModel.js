@@ -15,7 +15,7 @@ const WRITABLE = new Set([
   'device.name', 'videoSource.position', 'ptz.zoom', 'videoEncoder.encoding',
   'videoEncoder.resolution.width', 'videoEncoder.resolution.height',
   'videoEncoder.rateControl.frameRateLimit', 'videoEncoder.rateControl.bitrateLimit',
-  'audioEncoder.enabled', 'lens.disabled'
+  'videoEncoder.rateControl.adaptive', 'audioEncoder.enabled', 'lens.disabled'
 ])
 
 const BACK_MAPPING = { min: 1, max: 18, multiplier: 0.5, switchOvers: [2, 6] }
@@ -77,6 +77,7 @@ class FakeCameramanModel {
     this.height = 1080
     this.frameRate = 30
     this.bitrateKbps = 4000
+    this.adaptive = true
     this.audio = true
     this.disabled = new Set()
     this.formats = loadFormats()
@@ -104,6 +105,9 @@ class FakeCameramanModel {
       ['videoEncoder.resolution.width', String(this.width)], ['videoEncoder.resolution.height', String(this.height)],
       ['videoEncoder.rateControl.frameRateLimit', number(this.frameRate)],
       ['videoEncoder.rateControl.bitrateLimit', String(this.bitrateKbps)],
+      // A fake link never congests, so it always runs at the ceiling.
+      ['videoEncoder.rateControl.adaptive', String(this.adaptive)],
+      ['videoEncoder.rateControl.currentBitrate', String(this.bitrateKbps)],
       ['videoEncoder.formats', String(this.formats.length)]
     ]
     this.formats.forEach((format, index) => {
@@ -164,6 +168,7 @@ class FakeCameramanModel {
         case 'videoEncoder.resolution.height': next.height = Number(value); if (!(next.height > 0)) return bad(name, 'expected a positive integer'); break
         case 'videoEncoder.rateControl.frameRateLimit': next.frameRate = Number(value); if (!(next.frameRate > 0)) return bad(name, 'expected a positive number'); break
         case 'videoEncoder.rateControl.bitrateLimit': next.bitrateKbps = Number(value); if (!Number.isInteger(next.bitrateKbps) || next.bitrateKbps < 1000 || next.bitrateKbps > 50000) return bad(name, 'expected 1000…50000 kbps'); break
+        case 'videoEncoder.rateControl.adaptive': if (!['true', 'false', '1', '0', 'yes', 'no', 'on', 'off'].includes(value.toLowerCase())) return bad(name, 'expected true or false'); next.adaptive = ['true', '1', 'yes', 'on'].includes(value.toLowerCase()); break
         case 'audioEncoder.enabled': if (!['true', 'false', '1', '0', 'yes', 'no', 'on', 'off'].includes(value.toLowerCase())) return bad(name, 'expected true or false'); next.audio = ['true', '1', 'yes', 'on'].includes(value.toLowerCase()); break
         case 'lens.disabled': {
           const ids = value.split(',').map(entry => entry.trim()).filter(Boolean)
@@ -194,6 +199,7 @@ class FakeCameramanModel {
     if (next.height != null) this.height = next.height
     if (next.frameRate != null) this.frameRate = next.frameRate
     if (next.bitrateKbps != null) this.bitrateKbps = next.bitrateKbps
+    if (next.adaptive != null) this.adaptive = next.adaptive
     if (next.audio != null) this.audio = next.audio
     if (next.disabled != null) this.disabled = next.disabled
     if (next.zoom != null) this.deviceZoom = this.clampDevice(next.zoom / this.mapping().multiplier)
