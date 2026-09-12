@@ -224,6 +224,9 @@ public final class RemoteCameraControl: CameraControlling {
     if next.bitrate != current.bitrate {
       lines.append((CameraParameterName.bitrateKbps, String(next.bitrate / 1000)))
     }
+    if next.adaptiveBitrate != current.adaptiveBitrate {
+      lines.append((CameraParameterName.adaptiveBitrate, next.adaptiveBitrate ? "true" : "false"))
+    }
     if next.audioEnabled != current.audioEnabled {
       lines.append((CameraParameterName.audioEnabled, next.audioEnabled ? "true" : "false"))
     }
@@ -267,6 +270,7 @@ public final class RemoteCameraControl: CameraControlling {
     }
     if let echoed = echo[CameraParameterName.deviceName] { name = echoed }
     if let kbps = echo[CameraParameterName.bitrateKbps].flatMap(Int.init) { settings.bitrate = kbps * 1000 }
+    if let adaptive = echo[CameraParameterName.adaptiveBitrate] { settings.adaptiveBitrate = adaptive == "true" }
     if let encoding = echo[CameraParameterName.encoding], let codec = StreamCodec(sdpEncodingName: encoding) {
       settings.codec = codec
     }

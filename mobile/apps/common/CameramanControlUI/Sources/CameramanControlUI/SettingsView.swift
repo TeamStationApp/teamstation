@@ -214,6 +214,16 @@ struct SettingsView<Model: CameraControlling>: View {
             .accessibilityIdentifier("settings-bitrate")
         }
       }
+      Divider().padding(.leading, 16)
+      cardRow {
+        VStack(alignment: .leading, spacing: 2) {
+          Toggle("Adaptive bitrate", isOn: $draftSettings.adaptiveBitrate)
+            .accessibilityIdentifier("settings-adaptive-bitrate")
+          Text("Never below half, and only while the network cannot keep up.")
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+        }
+      }
       if let annotation = selectedOption?.annotation {
         Text(annotation)
           .font(.footnote)

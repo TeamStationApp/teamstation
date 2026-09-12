@@ -223,4 +223,14 @@ struct RemoteCameraControlTests {
     #expect(lines.map(\.0) == [ "videoEncoder.encoding", "videoEncoder.rateControl.bitrateLimit", "lens.disabled" ])
     #expect(lines.map(\.1) == [ "H264", "2500", "a,b" ])
   }
+
+  @Test("Adaptive bitrate goes on the wire right after the rate it adapts")
+  func adaptiveBitrateLine() {
+    var next = StreamSettings()
+    next.bitrate = 8_000_000
+    next.adaptiveBitrate = false
+    let lines = RemoteCameraControl.settingsLines(from: StreamSettings(), to: next)
+    #expect(lines.map(\.0) == [ "videoEncoder.rateControl.bitrateLimit", "videoEncoder.rateControl.adaptive" ])
+    #expect(lines.map(\.1) == [ "8000", "false" ])
+  }
 }

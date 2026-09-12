@@ -147,6 +147,7 @@ class StreamSettingsPersistenceTest {
             frameRate = 60.0,
             codec = StreamCodec.H264,
             bitrate = 9_000_000,
+            adaptiveBitrate = false,
             audioEnabled = false,
             videoEnabled = false,
             disabledLensIDs = setOf("uw", "t"),
@@ -169,6 +170,8 @@ class StreamSettingsPersistenceTest {
         assertEquals(1280, loaded!!.width)
         assertEquals(StreamSettings().codec, loaded.codec)
         assertEquals(StreamSettings().audioEnabled, loaded.audioEnabled)
+        // Saved before adaptation existed, which comes back on like a new install.
+        assertTrue(loaded.adaptiveBitrate)
     }
 
     @Test

@@ -116,7 +116,7 @@ node scripts/control.js --host 10.10.7.118 set-codec codec=hevc
 ```
 
 `dump-state`, `clients`, `flip-camera`, `force-keyframe`, `reset`, `set-zoom`, `set-format`,
-`set-bitrate`, `set-codec`, `set-name`, `set-audio`, `set-video`, `set-lenses`, `set-send-delay`,
+`set-bitrate`, `set-adaptive-bitrate`, `set-codec`, `set-name`, `set-audio`, `set-video`, `set-lenses`, `set-send-delay`,
 `set-clean-hdmi`.
 
 `set-clean-hdmi?on=false` is the external-display toggle, the same value as Settings → Output. It

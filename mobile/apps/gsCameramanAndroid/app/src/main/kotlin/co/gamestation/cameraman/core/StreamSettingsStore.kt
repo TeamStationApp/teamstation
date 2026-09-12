@@ -64,6 +64,7 @@ class StreamSettingsStore(private val store: SettingsStore) {
             "frameRate" to settings.frameRate.toString(),
             "codec" to settings.codec.rawValue,
             "bitrate" to settings.bitrate.toString(),
+            "adaptiveBitrate" to settings.adaptiveBitrate.toString(),
             "port" to settings.port.toString(),
             "path" to settings.path,
             "audioEnabled" to settings.audioEnabled.toString(),
@@ -92,6 +93,8 @@ class StreamSettingsStore(private val store: SettingsStore) {
                 frameRate = values["frameRate"]?.toDoubleOrNull() ?: defaults.frameRate,
                 codec = values["codec"]?.let { StreamCodec.fromRawValue(it) } ?: defaults.codec,
                 bitrate = values["bitrate"]?.toIntOrNull() ?: defaults.bitrate,
+                adaptiveBitrate = values["adaptiveBitrate"]?.toBooleanStrictOrNull()
+                    ?: defaults.adaptiveBitrate,
                 port = values["port"]?.toIntOrNull() ?: defaults.port,
                 path = values["path"]?.takeIf { it.isNotEmpty() } ?: defaults.path,
                 audioEnabled = values["audioEnabled"]?.toBooleanStrictOrNull()

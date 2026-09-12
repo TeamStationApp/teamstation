@@ -33,7 +33,12 @@ public struct StreamSettings: Sendable, Codable, Equatable {
   public var height: Int
   public var frameRate: Double
   public var codec: StreamCodec
+  /// The operator's rate, and with `adaptiveBitrate` on, the ceiling: the stream runs at this and
+  /// comes down, never below half of it, only while the link cannot carry it.
   public var bitrate: Int
+  /// Lower the rate while the link to a client backs up, instead of dropping frames at the full
+  /// rate. On by default; a softer picture for a few seconds beats a frozen one.
+  public var adaptiveBitrate: Bool
   public var port: Int
   public var path: String
   public var audioEnabled: Bool
@@ -60,6 +65,7 @@ public struct StreamSettings: Sendable, Codable, Equatable {
     frameRate: Double = 30,
     codec: StreamCodec = .hevc,
     bitrate: Int = StreamCodec.hevc.defaultBitrate,
+    adaptiveBitrate: Bool = true,
     port: Int = StreamSettings.defaultPort,
     path: String = StreamSettings.canonicalPath,
     audioEnabled: Bool = true,
@@ -75,6 +81,7 @@ public struct StreamSettings: Sendable, Codable, Equatable {
     self.frameRate = frameRate
     self.codec = codec
     self.bitrate = bitrate
+    self.adaptiveBitrate = adaptiveBitrate
     self.port = port
     self.path = path
     self.audioEnabled = audioEnabled
@@ -99,6 +106,7 @@ public struct StreamSettings: Sendable, Codable, Equatable {
     frameRate = try c.decodeIfPresent(Double.self, forKey: .frameRate) ?? d.frameRate
     codec = try c.decodeIfPresent(StreamCodec.self, forKey: .codec) ?? d.codec
     bitrate = try c.decodeIfPresent(Int.self, forKey: .bitrate) ?? d.bitrate
+    adaptiveBitrate = try c.decodeIfPresent(Bool.self, forKey: .adaptiveBitrate) ?? d.adaptiveBitrate
     port = try c.decodeIfPresent(Int.self, forKey: .port) ?? d.port
     path = try c.decodeIfPresent(String.self, forKey: .path) ?? d.path
     audioEnabled = try c.decodeIfPresent(Bool.self, forKey: .audioEnabled) ?? d.audioEnabled
@@ -126,6 +134,7 @@ public struct StreamSettings: Sendable, Codable, Equatable {
   public enum Field: String, Sendable, CaseIterable {
     case codec
     case bitrateMbps
+    case adaptiveBitrate
     case width
     case height
     case frameRate
@@ -147,6 +156,7 @@ public struct StreamSettings: Sendable, Codable, Equatable {
     var merged = self
     if !explicit.contains(.codec) { merged.codec = saved.codec }
     if !explicit.contains(.bitrateMbps) { merged.bitrate = saved.bitrate }
+    if !explicit.contains(.adaptiveBitrate) { merged.adaptiveBitrate = saved.adaptiveBitrate }
     if !explicit.contains(.width) { merged.width = saved.width }
     if !explicit.contains(.height) { merged.height = saved.height }
     if !explicit.contains(.frameRate) { merged.frameRate = saved.frameRate }
