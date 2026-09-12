@@ -111,6 +111,8 @@ public struct AppConfig: Hashable, Sendable, Codable {
   /// separated by a comma (`10.10.6.0, 10.10.7.0`). Kept when the override is off, so turning it
   /// back on does not mean typing them again. Always full /24s.
   public var subnetScanOverride: String
+  /// How long the app may have been away and still pick a take back up.
+  public var resumeDowntimeLimitSeconds: Double
 
   public static let displayLatencyCapDefaultMilliseconds: Double = 500
   public static let displayLatencyCapMinimumMilliseconds: Double = 10
@@ -123,6 +125,16 @@ public struct AppConfig: Hashable, Sendable, Codable {
   public static let replaySlowMotionRateDefault: Double = 0.5
   public static let replaySlowMotionRateMinimum: Double = 0
   public static let replaySlowMotionRateMaximum: Double = 1.0
+
+  /// How long the app may have been gone and still pick a take back up, in seconds.
+  ///
+  /// An hour. Long enough to cover a crash, a reboot, a flat battery put on charge, or the walk
+  /// back to the bench; short enough that yesterday's abandoned take does not come back to life
+  /// tomorrow and run until somebody notices. The clock is on the app being away, not on the
+  /// take's own length: a two-hour game interrupted for ninety seconds resumes.
+  public static let resumeDowntimeLimitDefaultSeconds: Double = 3_600
+  public static let resumeDowntimeLimitMinimumSeconds: Double = 60
+  public static let resumeDowntimeLimitMaximumSeconds: Double = 86_400
 
   public init(
     programCodec: ProgramCodec = .hevc,
@@ -144,7 +156,8 @@ public struct AppConfig: Hashable, Sendable, Codable {
     replaySlowMotionRate: Double = AppConfig.replaySlowMotionRateDefault,
     streamURL: String = "",
     subnetScanOverrideEnabled: Bool = false,
-    subnetScanOverride: String = ""
+    subnetScanOverride: String = "",
+    resumeDowntimeLimitSeconds: Double = AppConfig.resumeDowntimeLimitDefaultSeconds
   ) {
     self.programCodec = programCodec
     self.sourceEncodeCodec = sourceEncodeCodec
@@ -166,6 +179,11 @@ public struct AppConfig: Hashable, Sendable, Codable {
     self.streamURL = streamURL
     self.subnetScanOverrideEnabled = subnetScanOverrideEnabled
     self.subnetScanOverride = subnetScanOverride
+    self.resumeDowntimeLimitSeconds = Self.clampedResumeDowntimeLimit(resumeDowntimeLimitSeconds)
+  }
+
+  public static func clampedResumeDowntimeLimit(_ seconds: Double) -> Double {
+    min(max(seconds, resumeDowntimeLimitMinimumSeconds), resumeDowntimeLimitMaximumSeconds)
   }
 
   /// The /24s to sweep instead of the local one, as network addresses (`10.10.6.0`). Empty when the
@@ -285,7 +303,11 @@ public struct AppConfig: Hashable, Sendable, Codable {
         forKey: .subnetScanOverrideEnabled
       ) ?? fallback.subnetScanOverrideEnabled,
       subnetScanOverride: try container.decodeIfPresent(String.self, forKey: .subnetScanOverride)
-        ?? fallback.subnetScanOverride
+        ?? fallback.subnetScanOverride,
+      resumeDowntimeLimitSeconds: try container.decodeIfPresent(
+        Double.self,
+        forKey: .resumeDowntimeLimitSeconds
+      ) ?? fallback.resumeDowntimeLimitSeconds
     )
   }
 

@@ -283,6 +283,14 @@ public final class AppEnvironment {
   private var pendingWebNative: [UUID: OverlayLayout.PendingWebNative] = [:]
   private var overlayImages: [UUID: CGImage] = [:]
   private var retentionTimer: Timer?
+  /// The grid last written to the open take, so an unchanged one is not written again.
+  private var lastGridSnapshot: Data?
+  /// Writes the live session's heartbeat while anything is live. How stale this is at the next
+  /// launch is the whole measurement of how long the app was away.
+  private var heartbeatTimer: Timer?
+  /// Every five seconds. Frequent enough that the downtime reading is never meaningfully wrong,
+  /// rare enough that it is one small write a minute rather than a background load.
+  private static let heartbeatInterval: TimeInterval = 5
   private var testClock: TestClock?
   private var announcedCameraStatus: [SourceID: String] = [:]
 
@@ -404,11 +412,27 @@ public final class AppEnvironment {
     if let result = try? index.reconcile(), result.removed > 0 {
       statusMessage = "Recovered index: dropped \(result.removed) missing segment(s)"
     }
+    // What the app was doing when it stopped running, and whether it was long enough ago to
+    // matter. Read before anything is closed and before any camera starts: a take is picked up by
+    // restoring the state that says one is rolling, after which the ordinary camera path attaches
+    // a writer to each camera as it arrives.
+    //
+    // `clearState` abandons instead. It is how a test flow gets a clean device, and a flow that
+    // died mid-take must not leak a live recording into the next one.
+    let resume = launch.clearState
+      ? nil
+      : try? LiveSessionResume.plan(
+        index: index, now: clock.now, limit: config.resumeDowntimeLimitSeconds
+      )
+
     // After reconcile, so an interrupted take is closed at the end of media that survives on
-    // disk rather than at a segment row whose file was never written.
-    if let closed = try? index.closeAbandonedRecordings(), closed > 0 {
+    // disk rather than at a segment row whose file was never written. The take being resumed is
+    // the one row this must not touch.
+    if let closed = try? index.closeAbandonedRecordings(except: resume?.liveRecordingID),
+      closed > 0 {
       statusMessage = "Closed \(closed) interrupted recording(s)"
     }
+    applyResumedRecording(resume)
 
     let manifest = overlayStore.loadManifest()
     apply(manifest)
@@ -424,16 +448,142 @@ public final class AppEnvironment {
     startControlServer()
     ensureProductionReady()
     await syncEnabledSources()
+    // After the cameras, because the stream carries the programme composite and there is nothing
+    // to send until at least one of them is up.
+    applyResumedStream(resume)
     if launch.autoRecord {
       startRecording()
-    } else {
+    } else if !isRecording {
       openCameras()
+    }
+  }
+
+  /// Puts a take that was still rolling back the way it was, before any camera starts.
+  ///
+  /// Order is the whole feature. `startSource` already gives a camera an archive writer when the
+  /// app believes it is recording, and `SegmentWriter.prepare` already continues that camera's
+  /// segment numbering, so restoring the state here means every camera re-arms as it appears —
+  /// at launch, or minutes later when it is plugged back in — with no further code.
+  private func applyResumedRecording(_ resume: LiveSessionResume?) {
+    guard let resume else { return }
+    let limit = config.resumeDowntimeLimitSeconds
+    guard case let .resume(recording, _) = resume.outcome else {
+      // Too long ago. The take has just been closed at its last media with the rest, and the row
+      // that said it was live has to go with it or the next launch would try again.
+      try? index.closeLiveSession()
+      statusMessage = resume.banner(limit: limit)
+      return
+    }
+    guard let take = recording else { return }
+
+    // The grid as it was, over the top of whatever the stores hold now. An operator who
+    // reconfigured between the crash and the relaunch reconfigured a take that had already ended
+    // as far as they knew; this one keeps the cameras it was actually recording.
+    if let data = take.selections,
+      let restored = try? JSONDecoder().decode([SourceSelection].self, from: data),
+      !restored.isEmpty
+    {
+      selections = SourceSelectionRules.normalizingLinks(restored)
+      selectionStore.save(selections)
+      // Already what the take has on record, so the first discovery sweep after this does not
+      // write it straight back.
+      lastGridSnapshot = data
+    }
+    if let source = take.programSource {
+      preferredProgramSourceID = source
+      programSourceStore.save(source)
+    }
+
+    recordingID = take.recordingID
+    recordingStartedAt = take.startedAt
+    isRecording = true
+    // Anchors from here on belong to the take being picked up, under whatever part the resumed
+    // encoder opens.
+    programEncoder.setAnchorRecording(take.recordingID)
+    try? index.noteResumed(take.recordingID, at: clock.now)
+    let resumeCount = (try? index.recordings().first { $0.id == take.recordingID })?.resumeCount
+
+    // A new part of the same programme file family. Losing it is not losing the take: the
+    // per-camera archives are the part of a game that cannot be made again.
+    do {
+      try programEncoder.resume(
+        startedAt: take.startedAt,
+        nextPart: take.nextProgramPart,
+        at: clock.now
+      )
+      // On record now, not at stop: a take that is killed again before it stops must still list the
+      // part this process wrote.
+      if let opened = programEncoder.outputURL?.lastPathComponent {
+        let listed = (try? index.recordings().first { $0.id == take.recordingID })?.programFilename ?? ""
+        let names = listed.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+          .filter { !$0.isEmpty }
+        if !names.contains(opened) {
+          try? index.setProgramFilename((names + [opened]).joined(separator: ","), for: take.recordingID)
+        }
+      }
+    } catch {
+      let message = "Program output unavailable after resume: \(error)"
+      statusMessage = message
+      telemetry.mutate { $0.dvr.lastError = message }
+    }
+
+    // The segment each camera was part-way through when the app died was never closed, so it has
+    // no row and no movie header. Reconcile reports those as orphans and leaves them; for this
+    // take they are unreadable files that would sit on the device forever.
+    discardUnreadableOrphans(ofRecording: take.recordingID)
+
+    telemetry.mutate {
+      $0.dvr.isRecording = true
+      $0.dvr.recordingStartedAt = take.startedAt.seconds
+      $0.dvr.resumeCount = UInt64(max(0, resumeCount ?? 1))
+      $0.dvr.lastDowntimeSeconds = resume.downtime
+    }
+    beginLiveSession(recording: take.recordingID)
+    startRetentionSweeps()
+    syncLiveSessionPresentation()
+    statusMessage = resume.banner(limit: limit)
+  }
+
+  /// Re-dials the stream if one was up. A stream that had already failed is not one: a transport
+  /// failure stops streaming outright, so by the time the app died the session no longer said it
+  /// was streaming, and the operator would have seen the same thing.
+  private func applyResumedStream(_ resume: LiveSessionResume?) {
+    guard let resume, case let .resume(_, streaming) = resume.outcome, streaming else { return }
+    guard !config.streamURL.isEmpty else {
+      reportStreamError("Stream not resumed — no destination configured")
+      // And stop saying it was streaming, or every launch from here on tries again and fails the
+      // same way.
+      endLiveSession(streaming: true)
+      return
+    }
+    telemetry.mutate { $0.dvr.resumedStream = true }
+    startStreaming()
+  }
+
+  /// Deletes this take's segment files that were never finished and never indexed.
+  ///
+  /// One per camera at most: the file being written when the process died. It has no movie header,
+  /// so nothing can read it, and `reconcile` only reports it. Anything a reader can open is left
+  /// alone — that is somebody's footage, whatever the index thinks.
+  private func discardUnreadableOrphans(ofRecording id: Int64) {
+    guard let orphans = try? index.reconcile().orphans, !orphans.isEmpty else { return }
+    let marker = "rec-\(id)"
+    let mine = orphans.filter { $0.deletingLastPathComponent().lastPathComponent == marker }
+    guard !mine.isEmpty else { return }
+    Task.detached(priority: .utility) {
+      for url in mine {
+        let asset = AVURLAsset(url: url)
+        let readable = (try? await asset.load(.duration))?.seconds ?? 0
+        if readable <= 0.05 { try? FileManager.default.removeItem(at: url) }
+      }
     }
   }
 
   public func shutdown() async {
     pollTimer?.invalidate()
     retentionTimer?.invalidate()
+    heartbeatTimer?.invalidate()
+    heartbeatTimer = nil
     if isRecording { await stopRecording() }
     pictureInPicture.tearDown()
     router.audioPlayer.stop()
@@ -497,6 +647,7 @@ public final class AppEnvironment {
     let kind = Self.kind(for: sourceProfile)
     selections = SourceSelectionRules.retaining(selections, kind: kind)
     selectionStore.save(selections)
+    refreshGridSnapshot()
     let discovery: SourceDiscovery? = switch sourceProfile {
     case .synthetic4:
       SourceProfileFactory.syntheticDiscovery(
@@ -540,6 +691,7 @@ public final class AppEnvironment {
   private func applyDiscovery(_ discovered: [DiscoveredSource]) {
     selections = SourceSelectionRules.merge(existing: selections, discovered: discovered)
     selectionStore.save(selections)
+    refreshGridSnapshot()
     cameraRecords = cameras.records
     noteEndpoints(of: discovered)
     telemetry.mutate {
@@ -735,6 +887,7 @@ public final class AppEnvironment {
       limitedTo: Set(republished.map(\.kind))
     )
     selectionStore.save(selections)
+    refreshGridSnapshot()
     noteEndpoints(of: republished)
     pushDisplayNamesToTiles()
   }
@@ -954,6 +1107,7 @@ public final class AppEnvironment {
     } else {
       statusMessage = nil
       selectionStore.save(selections)
+      refreshGridSnapshot()
       switch result {
       case let .enabled(sourceIndex):
         rememberProgramSource(id)
@@ -973,6 +1127,7 @@ public final class AppEnvironment {
       return
     case let .applied(move):
       selectionStore.save(selections)
+      refreshGridSnapshot()
       if let move {
         returnToLive(sourceIndex: move.from)
         returnToLive(sourceIndex: move.to)
@@ -984,6 +1139,7 @@ public final class AppEnvironment {
   public func rename(_ name: String?, for id: SourceID) {
     SourceSelectionRules.rename(name, for: id, in: &selections)
     selectionStore.save(selections)
+    refreshGridSnapshot()
     if let pipeline = router.pipeline(for: id),
        let selection = selections.first(where: { $0.id == id }) {
       telemetry.mutateTile(pipeline.sourceIndex) { $0.displayName = selection.displayName }
@@ -1028,6 +1184,7 @@ public final class AppEnvironment {
     guard result == .linked else { return result }
     statusMessage = nil
     selectionStore.save(selections)
+    refreshGridSnapshot()
     if hadTile { stopSource(control) }
     applyAudioContributors()
     syncCameraTelemetry()
@@ -1038,6 +1195,7 @@ public final class AppEnvironment {
   public func unlinkSource(control: SourceID) {
     SourceSelectionRules.unlink(control: control, in: &selections)
     selectionStore.save(selections)
+    refreshGridSnapshot()
     syncCameraTelemetry()
   }
 
@@ -1045,6 +1203,7 @@ public final class AppEnvironment {
   public func unlinkSource(video: SourceID) {
     SourceSelectionRules.unlink(video: video, in: &selections)
     selectionStore.save(selections)
+    refreshGridSnapshot()
     syncCameraTelemetry()
   }
 
@@ -1271,12 +1430,14 @@ public final class AppEnvironment {
   public func setUsesAudio(_ usesAudio: Bool, for id: SourceID) {
     SourceSelectionRules.setUsesAudio(usesAudio, for: id, in: &selections)
     selectionStore.save(selections)
+    refreshGridSnapshot()
     applyAudioContributors()
   }
 
   public func setInputGain(_ gain: Double, for id: SourceID) {
     SourceSelectionRules.setInputGain(gain, for: id, in: &selections)
     selectionStore.save(selections)
+    refreshGridSnapshot()
     applyInputGains()
   }
 
@@ -1287,9 +1448,40 @@ public final class AppEnvironment {
 
   public func selectProgram(sourceIndex: Int, persist: Bool = true) {
     guard let pipeline = router.pipeline(at: sourceIndex) else { return }
+    let changed = router.currentProgramSource != sourceIndex
     router.selectProgram(sourceIndex: sourceIndex)
     if persist { rememberProgramSource(pipeline.sourceID) }
+    // Every cut as it happens, while a take is open. `persist` is the operator's own choice
+    // against the app picking a camera because the chosen one is not live, and a fallback must
+    // not become the take's preference when it is picked up again.
+    if changed, isRecording, let recordingID {
+      try? index.insertProgramCut(
+        recordingID: recordingID,
+        wall: clock.now,
+        sourceID: pipeline.sourceID,
+        intended: persist
+      )
+    }
     applyProgramOverlays()
+  }
+
+  /// Keeps the open take's snapshot current when the grid changes mid-take.
+  ///
+  /// Called from every place that persists the selection list, which includes each discovery
+  /// sweep's merge — so it has to be cheap when nothing has actually changed, and most sweeps
+  /// change nothing. Comparing the encoded bytes is what keeps this an event rather than a
+  /// steady trickle of writes for the length of a game.
+  private func refreshGridSnapshot() {
+    guard isRecording, let recordingID else { return }
+    saveGridSnapshot(for: recordingID)
+  }
+
+  /// Writes down the grid this take is recording with, if it is not already what is on record.
+  private func saveGridSnapshot(for recordingID: Int64) {
+    guard let data = try? JSONEncoder().encode(selections) else { return }
+    guard data != lastGridSnapshot else { return }
+    try? index.saveSelections(data, for: recordingID)
+    lastGridSnapshot = data
   }
 
   private func rememberProgramSource(_ id: SourceID) {
@@ -1342,6 +1534,11 @@ public final class AppEnvironment {
     // Anchors belong to this recording until it stops.
     programEncoder.setAnchorRecording(recordingID)
     self.recordingStartedAt = now
+    // The grid as it is at this instant, so the take can be picked up against the cameras it was
+    // actually recording rather than whatever the stores hold at the next launch. Cleared first:
+    // an identical grid to the previous take's is still a row this take has not got.
+    lastGridSnapshot = nil
+    saveGridSnapshot(for: recordingID)
 
     do {
       for pipeline in router.activePipelines {
@@ -1369,10 +1566,22 @@ public final class AppEnvironment {
     }
 
     isRecording = true
+    // Whatever is on air at the start is the take's first cut. Without it a take that nobody
+    // touched has no record of which camera it opened on.
+    if let source = router.currentProgramSource,
+      let pipeline = router.pipeline(at: source)
+    {
+      try? index.insertProgramCut(
+        recordingID: recordingID, wall: now, sourceID: pipeline.sourceID, intended: true
+      )
+    }
     telemetry.mutate {
       $0.dvr.isRecording = true
       $0.dvr.recordingStartedAt = now.seconds
+      $0.dvr.resumeCount = 0
+      $0.dvr.lastDowntimeSeconds = 0
     }
+    beginLiveSession(recording: recordingID)
     startRetentionSweeps()
     syncLiveSessionPresentation()
   }
@@ -1389,6 +1598,7 @@ public final class AppEnvironment {
     guard !isStreaming else { return }
     streamErrorGate.reset()
     isStreaming = true
+    beginLiveSession(streaming: true)
     let url = config.streamURL
     let session = config
     Task { [weak self] in
@@ -1412,9 +1622,13 @@ public final class AppEnvironment {
   public func stopStreaming() async {
     guard isStreaming || programStreamer.running else {
       isStreaming = false
+      endLiveSession(streaming: true)
       return
     }
     isStreaming = false
+    // Also the failure path: a stream that dropped is a stream that is off, so it is not one the
+    // next launch should dial again.
+    endLiveSession(streaming: true)
     programStreamer.stop()
     streamMegabitsPerSecond = 0
     streamDroppedPackets = 0
@@ -1500,6 +1714,14 @@ public final class AppEnvironment {
       try writer.prepare()
       writers[pipeline.sourceID] = writer
       pipeline.setArchive(writer)
+      // What this take meant to do with this camera. A camera that is live but writes no segments
+      // is otherwise indistinguishable at export from one nobody selected.
+      _ = try? index.noteSource(
+        recordingID: recordingID,
+        sourceID: pipeline.sourceID,
+        transport: settings.transport,
+        archiving: true
+      )
     } catch {
       statusMessage = "\(pipeline.displayName): \(error)"
     }
@@ -1535,6 +1757,16 @@ public final class AppEnvironment {
     guard isRecording else { return }
     let endedAt = clock.now
     isRecording = false
+    // Before anything is flushed, not after. Stopping takes seconds — writers to finalise, a
+    // programme master to close — and a crash in the middle of that would otherwise leave a
+    // session still saying the take is live, so the next launch would pick up a take the operator
+    // had already stopped. Clearing it first means the worst case is a take closed at its last
+    // media by the ordinary sweep, which is what the operator asked for.
+    endLiveSession(recording: true)
+    // Nothing the programme writes after this instant belongs to the take. Finishing fills it out to
+    // the stop, and a live picture arriving during that fill takes its timestamp from it; anchoring
+    // those would record the fill's pace as real time.
+    programEncoder.setAnchorRecording(nil)
     retentionTimer?.invalidate()
     retentionTimer = nil
     setRecordingStage("detaching")
@@ -1590,7 +1822,13 @@ public final class AppEnvironment {
 
     setRecordingStage("closing index")
     if let recordingID {
-      let names = programEncoder.outputURLs.map(\.lastPathComponent).filter { !$0.isEmpty }
+      // The whole family, not only this process's own list. After a resume the parts written
+      // before the crash are not in `outputURLs`, and the export stem-matches from the first
+      // name, so the list has to keep starting with the take's first part.
+      let recorded = ((try? index.recordings().first { $0.id == recordingID })?.programFilename)
+        .map { $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) } } ?? []
+      let written = programEncoder.outputURLs.map(\.lastPathComponent).filter { !$0.isEmpty }
+      let names = recorded.filter { !$0.isEmpty } + written.filter { !recorded.contains($0) }
       if !names.isEmpty {
         try? index.setProgramFilename(names.joined(separator: ","), for: recordingID)
       }
@@ -1599,6 +1837,7 @@ public final class AppEnvironment {
     recordingID = nil
     programEncoder.setAnchorRecording(nil)
     recordingStartedAt = nil
+    lastGridSnapshot = nil
     telemetry.mutate { $0.dvr.isRecording = false }
     setRecordingStage("idle")
     syncLiveSessionPresentation()
@@ -1671,6 +1910,38 @@ public final class AppEnvironment {
       claimed = true
       return true
     }
+  }
+
+  /// Opens or updates the row that says what this app is doing, and starts the heartbeat.
+  private func beginLiveSession(recording: Int64? = nil, streaming: Bool? = nil) {
+    try? index.openLiveSession(recordingID: recording, streaming: streaming, at: clock.now)
+    guard heartbeatTimer == nil else { return }
+    heartbeatTimer = Timer.scheduledTimer(
+      withTimeInterval: Self.heartbeatInterval,
+      repeats: true
+    ) { [weak self] _ in
+      Task { @MainActor in self?.beatLiveSession() }
+    }
+  }
+
+  private func beatLiveSession() {
+    guard isRecording || isStreaming else {
+      endLiveSession()
+      return
+    }
+    try? index.heartbeat(at: clock.now)
+  }
+
+  /// Clears one half of the live session, and stops the heartbeat once neither is left.
+  private func endLiveSession(recording: Bool = false, streaming: Bool = false) {
+    if recording || streaming {
+      try? index.closeLiveSession(recording: recording, streaming: streaming)
+    } else {
+      try? index.closeLiveSession()
+    }
+    guard !isRecording, !isStreaming else { return }
+    heartbeatTimer?.invalidate()
+    heartbeatTimer = nil
   }
 
   private func startRetentionSweeps() {
@@ -3170,6 +3441,9 @@ public final class AppEnvironment {
     if let cap = launch.diskLatencyCapMilliseconds {
       config.diskLatencyCapEnabled = cap > 0
       if cap > 0 { config.diskLatencyCapMilliseconds = AppConfig.clampedDiskLatencyCap(cap) }
+    }
+    if let seconds = launch.resumeDowntimeLimitSeconds {
+      config.resumeDowntimeLimitSeconds = seconds
     }
     return config
   }

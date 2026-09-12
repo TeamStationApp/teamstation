@@ -89,6 +89,9 @@ public struct LaunchConfiguration: Sendable, Equatable {
   /// Zero means off, which is how a run turns a cap back off again.
   public var displayLatencyCapMilliseconds: Double?
   public var diskLatencyCapMilliseconds: Double?
+  /// How long the app may have been away and still pick a take back up, in seconds. A flow can
+  /// set it to a second or two and reach the expiry without waiting an hour for it.
+  public var resumeDowntimeLimitSeconds: Double?
 
   public init() {}
 
@@ -179,6 +182,9 @@ public struct LaunchConfiguration: Sendable, Equatable {
     if let value = values["diskLatencyCap"], let cap = Double(value), cap >= 0 {
       configuration.diskLatencyCapMilliseconds = cap
     }
+    if let value = values["resumeLimit"], let seconds = Double(value), seconds > 0 {
+      configuration.resumeDowntimeLimitSeconds = seconds
+    }
 
     // `-key value` is registered in UserDefaults by the system before `main` runs, and it stays
     // there after the process exits. The next tap of the icon would then still be running last
@@ -218,6 +224,9 @@ public struct LaunchConfiguration: Sendable, Equatable {
     if let value = queryItems["diskLatencyCap"], let cap = Double(value), cap >= 0 {
       diskLatencyCapMilliseconds = cap
     }
+    if let value = queryItems["resumeLimit"], let seconds = Double(value), seconds > 0 {
+      resumeDowntimeLimitSeconds = seconds
+    }
   }
 
   /// Names of every key understood here, surfaced in the HUD so a failing flow shows what the
@@ -229,7 +238,7 @@ public struct LaunchConfiguration: Sendable, Equatable {
     // A key missing from this array is silently ignored, which has already cost this project
     // debugging time; every argument above must appear here.
     "rtspTransport", "rtspHosts", "rtspPath", "rtspScan", "streamURL",
-    "programBitrate", "programFrameRate", "displayLatencyCap", "diskLatencyCap",
+    "programBitrate", "programFrameRate", "displayLatencyCap", "diskLatencyCap", "resumeLimit",
     "ndiSources", "ndiExtraIPs", "ndiBandwidth", "ndiLocalSources", "ndiRudp",
     "sourceEncodeCodec", "sourceEncodeBitrate", "sourceEncodeLimit"
   ]
