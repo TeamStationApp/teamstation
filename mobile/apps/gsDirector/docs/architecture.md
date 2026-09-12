@@ -194,3 +194,30 @@ and 90 MB for the same 25 seconds.
 `PipelineTelemetry` is the single director of state for the debug HUD, the accessibility values
 Maestro asserts on, and the JSON state dump. There is no test-only shadow copy, so an assertion
 observes the same numbers the app is running on.
+
+## A take survives the process
+
+A recording used to end when the app did. The take was closed from its segments at the next
+launch, and everything about how it was being made — which cameras were archiving, which one was
+on air, how far the programme had got — went with the process.
+
+One row says what the app was doing when it was last alive (`live_session`), with a heartbeat
+every five seconds while anything is live. At launch the age of that heartbeat is how long the app
+was away; within `resumeDowntimeLimitSeconds` (an hour by default) the take is picked up, and past
+it the take is closed at its last media.
+
+Picking it up is a state restore and nothing more: the recording's identity, its start, the grid
+it was recording with and the camera the operator last chose are put back **before** the first
+camera opens. From there the ordinary path does the work, because `startSource` already gives a
+camera an archive writer when the app believes it is recording, and `SegmentWriter.prepare`
+already continues that camera's segment numbering. A camera that comes back ten minutes later
+joins the same take with no extra code.
+
+Streaming comes back the same way, after the cameras, since the stream carries the composite. A
+session that was only streaming opens no take at all.
+
+The hole is not filled at record time. The programme opens a new part of the same file family,
+whose anchors say where it sits; each camera simply has no segments for the span it was away. The
+export places both by wall clock and holds the last picture across the gap, so every file for the
+take is the same length and an event is at the same instant in all of them. That is one mechanism
+for both, in the one place that already knew where things belonged.

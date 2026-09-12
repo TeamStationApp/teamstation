@@ -527,7 +527,8 @@ master and unrelated to any of this).
 | **W10** clock offset | **done, and smaller than written** — RTSP already applied its offset; what was missing was NDI's skew guard, now added |
 | **W11** segment provenance | **done** — `transport`, `applied_clock_offset`, `archive_rate` on every segment, plus a `recording_sources` table so a camera that never archived is nameable |
 | **W1** timecode burn-in | **partly moot** — `FrameMarker` already exists and is drawn by `SyntheticFrameSource`; used directly by the placement proof below |
-| W2 verifier, W4 anchors, W7 fault injection, W8 shared display latency, W12 tolerance, W13 cross-transport, W14 freeze mechanism, W15 gate ledger | not started |
+| **W14** where the freeze is manufactured | **decided: at remux** — one mechanism for the cameras and now the programme too, which is the place placement already touches |
+| W2 verifier, W4 anchors, W7 fault injection, W8 shared display latency, W12 tolerance, W13 cross-transport, W15 gate ledger | not started |
 
 ### What is proven, and how
 

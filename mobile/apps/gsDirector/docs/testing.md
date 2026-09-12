@@ -326,8 +326,32 @@ clear it.
 | `scrub-and-return` | Scrub back through history while recording continues, then return to live |
 | `scrub-incremental` | A second swipe continues from the playhead, not from live |
 | `recordings-export` | Recordings lists a stopped take, Export is offered, Select All + Delete removes it |
+| `resume-after-crash` | The app is killed mid-take and comes back recording the same take, and a take the operator stopped stays stopped |
 
 Screenshots and hierarchy dumps land in `maestro/reports/<timestamp>/assets/`.
+
+### Resuming a take across a crash
+
+`resume-after-crash.yaml` is the operator's half: the deck comes back already recording and the
+HUD says the take was picked up. Everything below the UI — that each camera rediscovers its server
+and re-arms, that the export still puts every angle and the programme on the wall clock, and that
+the hole holds the last picture — needs real cameras and a decode, so it lives in a driver:
+
+```bash
+DIRECTOR_SIMULATOR_UDID=<udid> node scripts/testResumeAfterCrash.js                  # a take
+DIRECTOR_SIMULATOR_UDID=<udid> node scripts/testResumeAfterCrash.js --scenario stream    # a stream
+DIRECTOR_SIMULATOR_UDID=<udid> node scripts/testResumeAfterCrash.js --scenario expired   # too late
+```
+
+It serves two RTSP cameras from a generated capture rather than using the in-app test pattern,
+because rediscovering and reconnecting is the part under test. `scripts/makeRtspFixtures.js`
+builds that capture; the driver calls it when it is missing. Both need **passwordless sudo**: each
+camera binds `:554` on its own loopback address, which is what makes Director see two cameras
+rather than one — it identifies a camera by its IPv4, so two advertised on `127.0.0.1` collapse
+into a single row.
+
+`gsdirector://test/crash` is `SIGKILL` on the app's own process. Terminating the app politely runs
+the stop path, which is the path that already worked.
 
 **This runner ignores `text` when an `id` is also present in a selector.** `{id: hud-recording,
 text: 'rec=0'}` therefore passes the instant the label exists, whatever it says — which made a

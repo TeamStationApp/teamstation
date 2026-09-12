@@ -25,11 +25,19 @@ const { FakeCameramanModel } = require('./fakeCameramanModel')
 const DEFAULT_FIXTURE_DIR = '/Users/paul/recordings/gsDirector-rtsp-fixtures/20260820-stopwatch'
 const STATE_PATH = '/tmp/gs-director-rtsp-farm.json'
 const LOCAL_BASE_PORT = 18554
+/// Loopback aliases this run added, so it can take them away again.
+const LOOPBACK_ALIASES = []
 
 function usage() {
   return `Usage: node scripts/fakeRtspCameras.js [options]
   --fixtures DIR   Capture directory with cameras.json and video/*.mkv
-  --local          127.0.0.1:18554-18557, no aliases, no Bonjour
+  --local          10.255.77.1-4 aliased onto lo0, no LAN aliases, no Bonjour. One private
+                   address per camera, because Director identifies a camera by its IPv4 and
+                   accepts only private LAN addresses. Needs root or passwordless sudo.
+  --advertise      Publish mDNS anyway, at whatever host and port the cameras ended up on.
+                   With --local that is loopback on a high port, which an iOS *simulator* can
+                   reach because it shares this Mac's network stack — so a simulator gets real
+                   discovery over real RTSP with no root and no LAN aliases.
   --no-advertise   Do not publish mDNS (RTSP only)
   --no-alias       Do not add LAN aliases (bind the chosen hosts as they are)
   --hosts a,b,c,d  Four IPv4s, in cameras.json order
@@ -39,6 +47,9 @@ function usage() {
   --only-cameraman Serve just that phone on this Mac's own LAN address: no aliases, no root
   --status-port N  Loopback HTTP that reports the fake phone's parameters as JSON (default 8768),
                    so a Maestro runScript can assert on the phone's state; 0 disables it
+  --base-port N    Port for --local cameras (default ${LOCAL_BASE_PORT}). Use 554 under sudo to
+                   match production exactly, which some code paths assume when an advertisement
+                   carries no port of its own.
   --stop           Tear down a previous farm from ${STATE_PATH}
   --self-test      Packetization checks, then exit
 `
@@ -52,6 +63,8 @@ function parseArgs(argv) {
     alias: true,
     hosts: null,
     stop: false,
+    basePort: LOCAL_BASE_PORT,
+    forceAdvertise: false,
     selfTest: false,
     cameraman: null,
     onlyCameraman: false,
@@ -71,6 +84,12 @@ function parseArgs(argv) {
     }
     if (arg === '--no-advertise') {
       options.advertise = false
+      options.forceAdvertise = false
+      continue
+    }
+    if (arg === '--advertise') {
+      options.advertise = true
+      options.forceAdvertise = true
       continue
     }
     if (arg === '--no-alias') {
@@ -87,6 +106,12 @@ function parseArgs(argv) {
     }
     if (arg === '--fixtures') {
       options.fixtures = argv[index + 1]
+      index += 1
+      continue
+    }
+    if (arg === '--base-port') {
+      options.basePort = Number(argv[index + 1])
+      if (!(options.basePort > 0)) throw new Error('--base-port needs a port')
       index += 1
       continue
     }
@@ -114,7 +139,7 @@ function parseArgs(argv) {
     throw new Error(`unknown argument ${arg}\n${usage()}`)
   }
   if (options.local) {
-    options.advertise = false
+    options.advertise = options.forceAdvertise === true
     options.alias = false
   }
   return options
@@ -149,6 +174,55 @@ function sdpMedia(sdp) {
     audioRate: Number(audio[2]),
     videoSsrc: videoSsrc ? Number(videoSsrc[1]) : null,
     audioSsrc: audioSsrc ? Number(audioSsrc[1]) : null
+  }
+}
+
+/// A private address per camera, aliased onto the loopback interface: 10.255.77.1, .2, .3, .4.
+///
+/// Two constraints meet here. Director identifies a camera by its IPv4, so two cameras on one
+/// address collapse into one row; and it only accepts a camera on a private LAN address — 10/8,
+/// 172.16/12, 192.168/16 — because a phone whose Wi-Fi drops advertises its cellular address. So
+/// 127.0.0.x will not do. A /32 alias on lo0 in 10/8 satisfies both, touches no real subnet, and an
+/// iOS simulator reaches it because it shares this Mac's network stack. Adding one needs root.
+const LOOPBACK_BASE = '10.255.77.'
+
+function loopbackHosts(count) {
+  const hosts = []
+  for (let index = 0; index < count; index += 1) {
+    const address = `${LOOPBACK_BASE}${index + 1}`
+    if (!ensureLoopbackAlias(address)) {
+      throw new Error(
+        `could not alias ${address} onto lo0; this needs root or passwordless sudo, and without it `
+        + 'Director has no private address to reach the cameras on'
+      )
+    }
+    hosts.push(address)
+  }
+  return hosts
+}
+
+function ensureLoopbackAlias(address) {
+  const env = { ...process.env, PATH: `/usr/sbin:/sbin:${process.env.PATH || ''}` }
+  const existing = spawnSync('ifconfig', ['lo0'], { encoding: 'utf8', env })
+  if ((existing.stdout || '').includes(`inet ${address} `)) return true
+  const args = ['lo0', 'alias', address, 'netmask', '255.255.255.255', 'up']
+  const added = isRoot()
+    ? spawnSync('ifconfig', args, { encoding: 'utf8', env })
+    : spawnSync('sudo', ['-n', 'ifconfig', ...args], { encoding: 'utf8', env })
+  if (added.status !== 0) return false
+  LOOPBACK_ALIASES.push(address)
+  return true
+}
+
+function removeLoopbackAliases() {
+  const env = { ...process.env, PATH: `/usr/sbin:/sbin:${process.env.PATH || ''}` }
+  while (LOOPBACK_ALIASES.length > 0) {
+    const address = LOOPBACK_ALIASES.pop()
+    if (isRoot()) {
+      spawnSync('ifconfig', ['lo0', '-alias', address], { encoding: 'utf8', env })
+    } else {
+      spawnSync('sudo', ['-n', 'ifconfig', 'lo0', '-alias', address], { encoding: 'utf8', env })
+    }
   }
 }
 
@@ -387,7 +461,7 @@ async function main() {
   if (options.onlyCameraman) cameras = cameras.filter(camera => camera.controlUUID)
   const nic = options.local ? null : lanInterface()
   const hosts = options.local
-    ? cameras.map(() => '127.0.0.1')
+    ? loopbackHosts(cameras.length)
     : options.onlyCameraman
       ? [nic.address]
       : chooseHosts(cameras.length, nic, options.hosts)
@@ -415,6 +489,7 @@ async function main() {
     if (options.alias) {
       for (const alias of addedAliases) removeAlias(alias.iface, alias.address)
     }
+    removeLoopbackAliases()
     if (fs.existsSync(STATE_PATH)) fs.unlinkSync(STATE_PATH)
   }
 
@@ -435,7 +510,7 @@ async function main() {
     for (let index = 0; index < cameras.length; index += 1) {
       const camera = cameras[index]
       const host = hosts[index]
-      const port = options.local ? LOCAL_BASE_PORT + index : 554
+      const port = options.local ? options.basePort : 554
       const media = sdpMedia(camera.sdp)
       const source = new LoopSource({
         file: camera.file,

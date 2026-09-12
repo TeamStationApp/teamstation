@@ -13,8 +13,11 @@ build/
 
 # Test + measurement output
 reports/
+maestro/reports/
 maestro/snippets/
 maestro/config.env
+# `takeScreenshot` writes beside the flow that asked for it, so every run leaves PNGs in here.
+maestro/flows/*.png
 
 # Generated media fixtures — only the manifest is committed
 fixtures/*

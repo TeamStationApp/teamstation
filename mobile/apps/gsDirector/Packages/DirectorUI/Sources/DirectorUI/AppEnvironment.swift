@@ -4132,6 +4132,10 @@ public final class AppEnvironment {
       programEncoder.poisonWriter()
     case let .exportRecording(reprocess):
       beginPreparedExport(reprocess: reprocess)
+    case .crash:
+      // SIGKILL, so nothing runs on the way out: no scene callbacks, no writer finalise, no stop
+      // path. Anything gentler tests the code that already works.
+      kill(getpid(), SIGKILL)
     }
     return true
   }
