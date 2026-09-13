@@ -5,9 +5,10 @@
  *
  * Source of truth for the G: `src/client/assets/images/gs_logo.png`.
  *
- * Layout: cream canvas (sampled from the logo), G scaled to 75% and
- * placed upper-left, outline glyph lower-right with a cream understroke
- * so it stays readable where it crosses the G.
+ * Layout: cream canvas (sampled from the logo). The glyph leads, centered and
+ * as large as an equal margin on every side allows. A small G signs the
+ * lower-right corner at that same margin; where the two meet the G sits on
+ * top, with a cream halo so it stays readable.
  *
  * Requires ImageMagick (`magick`) and librsvg (`rsvg-convert`) on PATH.
  * Magick's built-in SVG renderer leaves these stroke-only glyphs blank, so
@@ -27,11 +28,12 @@ const repoRoot = path.resolve(iconsDir, '..', '..')
 const SRC_LOGO = path.join(repoRoot, 'src', 'client', 'assets', 'images', 'gs_logo.png')
 
 const CANVAS = 1024
-const G_SCALE = 0.75
-const G_INSET = Math.round(CANVAS * 0.06)
-const GLYPH_SIZE = Math.round(CANVAS * 0.4)
-const GLYPH_INSET = Math.round(CANVAS * 0.08)
-const HALO_DISK = 8
+const MARGIN = Math.round(CANVAS * 0.125)
+const GLYPH_BOX = CANVAS - 2 * MARGIN
+const SIGNATURE_SIZE = Math.round(CANVAS * 0.37)
+const HALO_DISK = 24
+// The logo's cream carries faint compression noise, so trimming it needs some tolerance.
+const TRIM_FUZZ = '6%'
 
 const APPS = [
   {
@@ -112,19 +114,6 @@ function sampleCream(logoPath) {
   return `#${rgb.toUpperCase()}`
 }
 
-function squarePadLogo(logoPath, cream, dest) {
-  magick(
-    logoPath,
-    '-background',
-    cream,
-    '-gravity',
-    'center',
-    '-extent',
-    '%[fx:max(w,h)]x%[fx:max(w,h)]',
-    dest
-  )
-}
-
 function rasterizeSvg(svgPath, sizePx, dest) {
   execFileSync(
     RSVG,
@@ -133,9 +122,13 @@ function rasterizeSvg(svgPath, sizePx, dest) {
   )
 }
 
-function addCreamHalo(glyphPath, cream, dest) {
+function trimToContent(src, dest) {
+  magick(src, '-fuzz', TRIM_FUZZ, '-trim', '+repage', dest)
+}
+
+function addCreamHalo(imagePath, cream, dest) {
   magick(
-    glyphPath,
+    imagePath,
     '(',
     '+clone',
     '-alpha',
@@ -145,15 +138,14 @@ function addCreamHalo(glyphPath, cream, dest) {
     '-morphology',
     'Dilate',
     `Disk:${HALO_DISK}`,
-    '-channel',
-    'RGB',
-    '-fill',
+    // The dilated mask becomes the halo's alpha and cream fills it. Copying alpha from a
+    // colorized image instead would make the whole box ~90% opaque cream, graying what it covers.
+    '-colorspace',
+    'sRGB',
+    '-background',
     cream,
-    '-colorize',
-    '100',
-    '+channel',
     '-alpha',
-    'copy',
+    'shape',
     ')',
     '+swap',
     '-background',
@@ -165,21 +157,68 @@ function addCreamHalo(glyphPath, cream, dest) {
   )
 }
 
-function composeIcon({ paddedLogo, cream, glyph, dest }) {
-  const gPx = Math.round(CANVAS * G_SCALE)
-  const glyphX = CANVAS - GLYPH_INSET - GLYPH_SIZE
-  const glyphY = CANVAS - GLYPH_INSET - GLYPH_SIZE
+// The trimmed G at signature size, its convex hull filled with cream so glyph lines stop at the
+// G's outline instead of showing through its counter, then haloed. The border leaves the halo
+// room to grow past the G's own box.
+function prepareSignature(trimmedLogo, cream, dest) {
+  const keyed = `${dest}.keyed.png`
+  const filled = `${dest}.filled.png`
+  magick(
+    trimmedLogo,
+    '-resize',
+    `${SIGNATURE_SIZE}x${SIGNATURE_SIZE}`,
+    '-fuzz',
+    TRIM_FUZZ,
+    '-transparent',
+    cream,
+    '-bordercolor',
+    'none',
+    '-border',
+    String(HALO_DISK),
+    keyed
+  )
+  const hull = magickOut(keyed, '-format', '%[convex-hull]', 'info:')
+  magick(
+    keyed,
+    '(',
+    '+clone',
+    '-alpha',
+    'transparent',
+    '-fill',
+    cream,
+    '-draw',
+    `polygon ${hull}`,
+    ')',
+    '+swap',
+    '-compose',
+    'over',
+    '-composite',
+    filled
+  )
+  addCreamHalo(filled, cream, dest)
+}
+
+function composeIcon({ signature, cream, glyph, dest }) {
+  const signatureOffset = MARGIN - HALO_DISK
   magick(
     '-size',
     `${CANVAS}x${CANVAS}`,
     `xc:${cream}`,
-    paddedLogo,
-    '-geometry',
-    `${gPx}x${gPx}+${G_INSET}+${G_INSET}`,
-    '-composite',
+    '(',
     glyph,
+    '-resize',
+    `${GLYPH_BOX}x${GLYPH_BOX}`,
+    ')',
+    '-gravity',
+    'center',
     '-geometry',
-    `${GLYPH_SIZE}x${GLYPH_SIZE}+${glyphX}+${glyphY}`,
+    '+0+0',
+    '-composite',
+    signature,
+    '-gravity',
+    'southeast',
+    '-geometry',
+    `+${signatureOffset}+${signatureOffset}`,
     '-composite',
     '-alpha',
     'off',
@@ -244,8 +283,10 @@ function main() {
   const cream = sampleCream(SRC_LOGO)
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gs-app-icons-'))
   try {
-    const padded = path.join(tmp, 'logo-square.png')
-    squarePadLogo(SRC_LOGO, cream, padded)
+    const trimmed = path.join(tmp, 'logo-trimmed.png')
+    trimToContent(SRC_LOGO, trimmed)
+    const signature = path.join(tmp, 'logo-signature.png')
+    prepareSignature(trimmed, cream, signature)
 
     for (const app of APPS) {
       if (!fs.existsSync(app.svg)) {
@@ -253,19 +294,14 @@ function main() {
       }
       fs.mkdirSync(path.dirname(app.out), { recursive: true })
       const glyphRaw = path.join(tmp, `${app.name}-glyph.png`)
-      const glyphHalo = path.join(tmp, `${app.name}-glyph-halo.png`)
-      rasterizeSvg(app.svg, GLYPH_SIZE, glyphRaw)
-      addCreamHalo(glyphRaw, cream, glyphHalo)
-      composeIcon({
-        paddedLogo: padded,
-        cream,
-        glyph: glyphHalo,
-        dest: app.out
-      })
+      const glyphTrimmed = path.join(tmp, `${app.name}-glyph-trimmed.png`)
+      rasterizeSvg(app.svg, CANVAS, glyphRaw)
+      trimToContent(glyphRaw, glyphTrimmed)
+      composeIcon({ signature, cream, glyph: glyphTrimmed, dest: app.out })
       console.log(
         `[icons] ${app.name}: ${path.relative(repoRoot, app.out)} ` +
-          `(canvas ${CANVAS}, G ${Math.round(CANVAS * G_SCALE)} at +${G_INSET}+${G_INSET}, ` +
-          `glyph ${GLYPH_SIZE} SE inset ${GLYPH_INSET}, cream ${cream})`
+          `(canvas ${CANVAS}, glyph fits ${GLYPH_BOX} centered, ` +
+          `G ${SIGNATURE_SIZE} SE margin ${MARGIN}, cream ${cream})`
       )
       if (app.androidRes) {
         writeAndroidMipmaps(app.name, app.out, app.androidRes)
