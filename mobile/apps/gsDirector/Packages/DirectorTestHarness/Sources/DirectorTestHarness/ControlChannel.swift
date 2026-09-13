@@ -54,6 +54,10 @@ public enum ControlCommand: Sendable, Equatable {
   /// UITest-only: remux the latest stopped take into Prepared/ without opening the share sheet.
   /// `reprocess` rebuilds files already there, so a changed export can be judged on an old take.
   case exportRecording(reprocess: Bool)
+  /// UITest-only: kill this process outright, with no lifecycle callbacks and no chance to
+  /// finalise anything. The only way to write a test for what the app does after a crash, since
+  /// terminating it politely exercises the stop path instead — which is the path that works.
+  case crash
 }
 
 public enum ControlChannel {
@@ -184,6 +188,8 @@ public enum ControlChannel {
       return .killProgramWriter
     case "export-recording", "exportrecording":
       return .exportRecording(reprocess: query["reprocess"].flatMap { LaunchConfiguration.boolean($0) } ?? false)
+    case "crash":
+      return .crash
     default:
       return nil
     }

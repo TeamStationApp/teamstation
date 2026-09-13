@@ -100,6 +100,9 @@ public final class ProgramEncoder: @unchecked Sendable {
   /// Duration already committed to earlier continuation files, so `finish(until:)` fills
   /// the current part out to wall clock rather than writing a second full take.
   private var previousPartsDuration: Double = 0
+  /// A resumed part whose first picture has not arrived yet. Its timeline begins with that picture,
+  /// not at the resume, so the span before it is measured when it comes.
+  private var resumedAwaitingPicture = false
 
   /// Roughly two seconds of audio at the buffer sizes cameras send.
   private static let maximumPendingAudio = 200
@@ -186,6 +189,7 @@ public final class ProgramEncoder: @unchecked Sendable {
       return
     }
     let continuing = pendingRecoveryFill
+    resumedAwaitingPicture = false
     if !continuing {
       part = 1
       outputURLs = []
@@ -198,19 +202,75 @@ public final class ProgramEncoder: @unchecked Sendable {
       startedAt = wall
     }
     sessionStarted = false
-    lock.unlock()
-
-    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-    let formatter = DateFormatter()
-    formatter.dateFormat = "yyyyMMdd-HHmmss"
-    let suffix = part == 1 ? "" : "-\(part)"
     // Continuations keep the original take's timestamp so export can stem-match
     // `program-…mp4` and `program-…-2.mp4`.
     let stamp = (continuing ? startedAt : nil)?.date ?? wall.date
-    let url = directory.appendingPathComponent(
-      "program-\(formatter.string(from: stamp))\(suffix).mp4"
-    )
-    try? FileManager.default.removeItem(at: url)
+    lock.unlock()
+
+    try openPart(stamp: stamp, replacingExistingFile: true)
+  }
+
+  /// Picks up a take this process did not start, as another part of the same file family.
+  ///
+  /// The in-process recovery below can rely on knowing what it had already written. Nothing here
+  /// can: the parts on disk were written by a process that is gone, and the only facts to hand
+  /// are when the take began and which part number is free. That is enough.
+  /// `previousPartsDuration` becomes the whole span before this instant, so `finish(until:)`
+  /// fills this part out to the stop rather than out to the take, and the hole where the app was
+  /// not running is left for the export to hold. Filling it here would mean encoding minutes of
+  /// black on the one code path that has to be quick.
+  ///
+  /// Where the part sits on the wall clock needs nothing extra: its anchors are sampled from the
+  /// pictures it is given, under its own part number, exactly as the first part's were.
+  public func resume(startedAt take: WallClock, nextPart: Int, at wall: WallClock) throws {
+    lock.lock()
+    guard !isRunning else {
+      lock.unlock()
+      throw ProgramEncoderError.alreadyRunning
+    }
+    part = max(1, nextPart)
+    outputURLs = []
+    lastSourceTime = nil
+    lastAppendHost = nil
+    lastAnchorSeconds = -.infinity
+    contentLagSeconds = nil
+    pendingRecoveryFill = false
+    // Everything up to the resume, for now. The part's own timeline begins with its first picture,
+    // which after a crash comes only once a camera is delivering again — seconds after this, and in
+    // a take whose cameras take half a minute to come back, half a minute after. That picture moves
+    // this to where the part really starts; a part that never gets one keeps the resume.
+    previousPartsDuration = max(0, wall.seconds - take.seconds)
+    resumedAwaitingPicture = true
+    startedAt = take
+    sessionStarted = false
+    lock.unlock()
+
+    // Never replace an existing file here. A crash between opening a part and its first anchor
+    // leaves a name in use that no anchor mentions, and that file holds footage.
+    try openPart(stamp: take.date, replacingExistingFile: false)
+  }
+
+  private func openPart(stamp: Date, replacingExistingFile: Bool) throws {
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let formatter = DateFormatter()
+    formatter.dateFormat = "yyyyMMdd-HHmmss"
+    let stem = "program-\(formatter.string(from: stamp))"
+
+    lock.lock()
+    var seq = part
+    lock.unlock()
+    var url = Self.partURL(stem: stem, part: seq, in: directory)
+    if replacingExistingFile {
+      try? FileManager.default.removeItem(at: url)
+    } else {
+      while FileManager.default.fileExists(atPath: url.path) {
+        seq += 1
+        url = Self.partURL(stem: stem, part: seq, in: directory)
+      }
+      lock.lock()
+      part = seq
+      lock.unlock()
+    }
 
     let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
     writer.movieFragmentInterval = CMTime(seconds: 3, preferredTimescale: 600)
@@ -295,6 +355,11 @@ public final class ProgramEncoder: @unchecked Sendable {
     telemetry.recordEncodeSessionChange(delta: 1)
   }
 
+  private static func partURL(stem: String, part: Int, in directory: URL) -> URL {
+    let suffix = part == 1 ? "" : "-\(part)"
+    return directory.appendingPathComponent("\(stem)\(suffix).mp4")
+  }
+
   /// `pixelBuffer` may be BGRA straight out of the compositor; it is converted once here.
   /// `captureWall` is when the on-air camera captured this picture, for a live frame. Nil for a
   /// replay frame or a source that does not know.
@@ -336,6 +401,14 @@ public final class ProgramEncoder: @unchecked Sendable {
     }
     if baseTime == nil {
       baseTime = presentationTime
+      // A resumed part starts here. Left at the resume instead, `finish(until:)` would fill the part
+      // out to the stop as if it had been running since the resume, and write the whole wait for
+      // the cameras a second time at the end of the file — as fast as it can, while live pictures
+      // still arriving pick their timestamps up from that fill and anchor it as real time.
+      if resumedAwaitingPicture, let startedAt {
+        resumedAwaitingPicture = false
+        previousPartsDuration = max(0, Date().timeIntervalSince1970 - startedAt.seconds)
+      }
       if !sessionStarted {
         writer.startSession(atSourceTime: .zero)
         sessionStarted = true
@@ -973,11 +1046,13 @@ public final class ProgramEncoder: @unchecked Sendable {
   public enum ProgramEncoderError: Error, CustomStringConvertible {
     case writerRejectedInput
     case startFailed(String)
+    case alreadyRunning
 
     public var description: String {
       switch self {
       case .writerRejectedInput: "program writer rejected the video input"
       case let .startFailed(reason): "program writer failed to start: \(reason)"
+      case .alreadyRunning: "program writer is already running"
       }
     }
   }

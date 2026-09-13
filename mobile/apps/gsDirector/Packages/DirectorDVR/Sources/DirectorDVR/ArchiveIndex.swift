@@ -38,6 +38,9 @@ public struct RecordingSummary: Sendable, Equatable, Identifiable {
   /// End of the last media segment written for this recording. Stands in for `endedAt` on a take
   /// the app never got to close.
   public var lastSegmentEnd: WallClock?
+  /// How many times this take has been picked up again after the app stopped running. Zero for a
+  /// take that recorded straight through, which is every take made before resuming existed.
+  public var resumeCount: Int
 
   /// How long the take is, from what was actually written.
   ///
@@ -58,7 +61,8 @@ public struct RecordingSummary: Sendable, Equatable, Identifiable {
     endedAt: WallClock?,
     programFilename: String?,
     sourceIDs: [SourceID],
-    lastSegmentEnd: WallClock? = nil
+    lastSegmentEnd: WallClock? = nil,
+    resumeCount: Int = 0
   ) {
     self.id = id
     self.startedAt = startedAt
@@ -66,6 +70,7 @@ public struct RecordingSummary: Sendable, Equatable, Identifiable {
     self.programFilename = programFilename
     self.sourceIDs = sourceIDs
     self.lastSegmentEnd = lastSegmentEnd
+    self.resumeCount = resumeCount
   }
 }
 
@@ -143,6 +148,13 @@ public final class ArchiveIndex: @unchecked Sendable {
       """)
     // Existing installs created recordings without a program column.
     try? store.execute("ALTER TABLE recordings ADD COLUMN program_filename TEXT;")
+    // How often the app came back to this take, and the grid it was recording with. The snapshot
+    // is what stops a take being resumed against a different set of cameras than it started on:
+    // the selection store is shared with every later launch, and an operator who reconfigured
+    // between the crash and the relaunch would otherwise silently change the take.
+    try? store.execute("ALTER TABLE recordings ADD COLUMN resume_count INTEGER NOT NULL DEFAULT 0;")
+    try? store.execute("ALTER TABLE recordings ADD COLUMN last_resumed_at REAL;")
+    try? store.execute("ALTER TABLE recordings ADD COLUMN selections_json TEXT;")
     try store.execute("""
       CREATE TABLE IF NOT EXISTS segments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -213,6 +225,39 @@ public final class ArchiveIndex: @unchecked Sendable {
     try store.execute(
       "CREATE INDEX IF NOT EXISTS proxy_lookup ON proxy_stills(source_id, wall);"
     )
+    // What the app was doing when it was last alive, and when that was.
+    //
+    // One row, or none at all when the app is idle. `last_alive` is a heartbeat rather than a
+    // stop time because the two are only the same when the app was shut down properly: after a
+    // crash nothing gets to write a stop time, and the last segment on disk is not a substitute
+    // (cameras that dropped out twenty minutes before the crash would make a two-minute outage
+    // read as twenty-two). The heartbeat is the only measurement of how long the app itself was
+    // away.
+    try store.execute("""
+      CREATE TABLE IF NOT EXISTS live_session (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        recording_id INTEGER,
+        streaming INTEGER NOT NULL DEFAULT 0,
+        started_at REAL NOT NULL,
+        last_alive REAL NOT NULL
+      );
+      """)
+    // Every cut the programme made, as it was made. The preference store holds one camera — the
+    // last one cut to — which is enough to put the programme back where it was and nothing else.
+    // A resumed take needs to know what was on air at each moment, and an export or an edit list
+    // wants the same thing, so the cuts are kept rather than overwritten.
+    try store.execute("""
+      CREATE TABLE IF NOT EXISTS program_cuts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        recording_id INTEGER NOT NULL,
+        wall REAL NOT NULL,
+        source_id TEXT NOT NULL,
+        intended INTEGER NOT NULL DEFAULT 1
+      );
+      """)
+    try store.execute(
+      "CREATE INDEX IF NOT EXISTS program_cuts_lookup ON program_cuts(recording_id, wall);"
+    )
   }
 
   // MARK: - Recordings
@@ -238,12 +283,222 @@ public final class ArchiveIndex: @unchecked Sendable {
     )
   }
 
+  // MARK: - The live session
+
+  /// What the app was doing when it was last alive.
+  ///
+  /// `recordingID` is the take that is still rolling; nil means the app was streaming only.
+  /// `lastAlive` is the heartbeat, and the age of it is how long the app has been away.
+  public struct LiveSession: Sendable, Equatable {
+    public var recordingID: Int64?
+    public var streaming: Bool
+    public var startedAt: WallClock
+    public var lastAlive: WallClock
+
+    public init(recordingID: Int64?, streaming: Bool, startedAt: WallClock, lastAlive: WallClock) {
+      self.recordingID = recordingID
+      self.streaming = streaming
+      self.startedAt = startedAt
+      self.lastAlive = lastAlive
+    }
+
+    /// Nothing to resume. The row should not exist in this state; deleting it is how the two
+    /// halves stopping independently is handled without either needing to know about the other.
+    public var isEmpty: Bool { recordingID == nil && !streaming }
+  }
+
+  /// Opens the live session, or updates the half named by whichever argument is given.
+  ///
+  /// Called from both `startRecording` and `startStreaming`, which can happen in either order and
+  /// independently, so this must never clobber the half it was not asked about.
+  public func openLiveSession(
+    recordingID: Int64? = nil,
+    streaming: Bool? = nil,
+    at wall: WallClock
+  ) throws {
+    let existing = try liveSession()
+    let recording = recordingID ?? existing?.recordingID
+    let isStreaming = streaming ?? existing?.streaming ?? false
+    let startedAt = existing?.startedAt ?? wall
+    try store.execute(
+      """
+      INSERT OR REPLACE INTO live_session (id, recording_id, streaming, started_at, last_alive)
+      VALUES (1, ?, ?, ?, ?);
+      """,
+      [
+        recording.map { .integer($0) } ?? .null,
+        .integer(isStreaming ? 1 : 0),
+        .real(startedAt.seconds),
+        .real(wall.seconds)
+      ]
+    )
+  }
+
+  /// Clears one half of the live session and deletes the row once both are off. The operator
+  /// stopping the last of the two is what says "there is nothing to come back to".
+  public func closeLiveSession(recording: Bool = false, streaming: Bool = false) throws {
+    guard let existing = try liveSession() else { return }
+    var next = existing
+    if recording { next.recordingID = nil }
+    if streaming { next.streaming = false }
+    if (!recording && !streaming) || next.isEmpty {
+      try store.execute("DELETE FROM live_session;")
+      return
+    }
+    try store.execute(
+      "UPDATE live_session SET recording_id = ?, streaming = ? WHERE id = 1;",
+      [
+        next.recordingID.map { .integer($0) } ?? .null,
+        .integer(next.streaming ? 1 : 0)
+      ]
+    )
+  }
+
+  /// Moves the heartbeat forward. Never backwards: a test clock or a system clock correction
+  /// must not be able to make the app look like it has been away longer than it has.
+  public func heartbeat(at wall: WallClock) throws {
+    try store.execute(
+      "UPDATE live_session SET last_alive = ? WHERE id = 1 AND last_alive < ?;",
+      [ .real(wall.seconds), .real(wall.seconds) ]
+    )
+  }
+
+  public func liveSession() throws -> LiveSession? {
+    guard let row = try store.query(
+      "SELECT recording_id, streaming, started_at, last_alive FROM live_session WHERE id = 1;"
+    ).first else { return nil }
+    return LiveSession(
+      recordingID: row.values[0] == .null ? nil : row.int(0),
+      streaming: row.int(1) == 1,
+      startedAt: WallClock(seconds: row.double(2)),
+      lastAlive: WallClock(seconds: row.double(3))
+    )
+  }
+
+  /// The take the live session names, if it is still open.
+  ///
+  /// A session naming a take that has since been closed is stale — the app stopped properly and
+  /// something else went wrong — so the pointer is cleared rather than being allowed to resume a
+  /// finished recording.
+  public func liveRecording() throws -> RecordingSummary? {
+    guard let session = try liveSession(), let id = session.recordingID else { return nil }
+    guard let summary = try recordings().first(where: { $0.id == id }) else {
+      try closeLiveSession(recording: true)
+      return nil
+    }
+    guard summary.endedAt == nil else {
+      try closeLiveSession(recording: true)
+      return nil
+    }
+    return summary
+  }
+
+  public func noteResumed(_ id: Int64, at wall: WallClock) throws {
+    try store.execute(
+      "UPDATE recordings SET resume_count = resume_count + 1, last_resumed_at = ? WHERE id = ?;",
+      [ .real(wall.seconds), .integer(id) ]
+    )
+  }
+
+  // MARK: - The grid a take was recording with
+
+  public func saveSelections(_ json: Data, for id: Int64) throws {
+    try store.execute(
+      "UPDATE recordings SET selections_json = ? WHERE id = ?;",
+      [ .text(String(decoding: json, as: UTF8.self)), .integer(id) ]
+    )
+  }
+
+  public func selections(for id: Int64) throws -> Data? {
+    guard let row = try store.query(
+      "SELECT selections_json FROM recordings WHERE id = ?;",
+      [ .integer(id) ]
+    ).first else { return nil }
+    guard row.values[0] != .null else { return nil }
+    let text = row.string(0)
+    return text.isEmpty ? nil : Data(text.utf8)
+  }
+
+  // MARK: - Programme cuts
+
+  public struct ProgramCut: Sendable, Equatable {
+    public var wall: WallClock
+    public var sourceID: SourceID
+    /// The operator chose this camera. False when the app picked one because the chosen camera
+    /// was not live — a fallback should not become the take's preference.
+    public var intended: Bool
+  }
+
+  @discardableResult
+  public func insertProgramCut(
+    recordingID: Int64,
+    wall: WallClock,
+    sourceID: SourceID,
+    intended: Bool
+  ) throws -> Int64 {
+    try store.execute(
+      "INSERT INTO program_cuts (recording_id, wall, source_id, intended) VALUES (?, ?, ?, ?);",
+      [
+        .integer(recordingID),
+        .real(wall.seconds),
+        .text(sourceID.rawValue),
+        .integer(intended ? 1 : 0)
+      ]
+    )
+  }
+
+  public func programCuts(forRecording id: Int64) throws -> [ProgramCut] {
+    try store.query(
+      """
+      SELECT wall, source_id, intended FROM program_cuts
+      WHERE recording_id = ? ORDER BY wall ASC, id ASC;
+      """,
+      [ .integer(id) ]
+    ).map { row in
+      ProgramCut(
+        wall: WallClock(seconds: row.double(0)),
+        sourceID: SourceID(row.string(1)),
+        intended: row.int(2) == 1
+      )
+    }
+  }
+
+  /// The camera the operator last chose for programme in this take.
+  public func lastIntendedProgramSource(forRecording id: Int64) throws -> SourceID? {
+    try store.query(
+      """
+      SELECT source_id FROM program_cuts
+      WHERE recording_id = ? AND intended = 1 ORDER BY wall DESC, id DESC LIMIT 1;
+      """,
+      [ .integer(id) ]
+    ).first.map { SourceID($0.string(0)) }
+  }
+
+  // MARK: - Programme parts
+
+  /// The part number a resumed programme encoder should open: one past the highest part this take
+  /// has anchored, or one when it has anchored nothing yet.
+  ///
+  /// Read from the anchors rather than from the files, because a part is only useful to an export
+  /// once it has said where it sits on the wall clock. A part that opened and died before its first
+  /// anchor is still on disk under that number; the encoder steps over a name that is taken, so
+  /// nothing is overwritten either way.
+  public func nextProgramPart(forRecording id: Int64) throws -> Int {
+    let row = try store.query(
+      "SELECT MAX(part) FROM program_anchors WHERE recording_id = ?;",
+      [ .integer(id) ]
+    ).first
+    guard let row, row.values[0] != .null else { return 1 }
+    return Int(row.int(0)) + 1
+  }
+
   public func recordings() throws -> [RecordingSummary] {
     let rows = try store.query(
       """
       SELECT r.id, r.started_at, r.ended_at, r.program_filename,
         (SELECT MAX(s.start_wall + s.duration) FROM segments s
-          WHERE s.recording_id = r.id AND s.is_initialization = 0)
+          WHERE s.recording_id = r.id AND s.is_initialization = 0),
+        r.resume_count
       FROM recordings r
       ORDER BY r.started_at DESC;
       """
@@ -260,7 +515,8 @@ public final class ArchiveIndex: @unchecked Sendable {
         endedAt: ended,
         programFilename: program,
         sourceIDs: try sourceIDs(in: id),
-        lastSegmentEnd: lastSegment
+        lastSegmentEnd: lastSegment,
+        resumeCount: Int(row.int(5))
       )
     }
   }
@@ -332,6 +588,13 @@ public final class ArchiveIndex: @unchecked Sendable {
     }
 
     try store.execute("DELETE FROM segments WHERE recording_id = ?;", [ .integer(id) ])
+    try store.execute("DELETE FROM recording_sources WHERE recording_id = ?;", [ .integer(id) ])
+    try store.execute("DELETE FROM program_cuts WHERE recording_id = ?;", [ .integer(id) ])
+    try store.execute("DELETE FROM program_anchors WHERE recording_id = ?;", [ .integer(id) ])
+    try store.execute(
+      "UPDATE live_session SET recording_id = NULL WHERE recording_id = ?;",
+      [ .integer(id) ]
+    )
     try store.execute("DELETE FROM recordings WHERE id = ?;", [ .integer(id) ])
 
     for url in files {
@@ -693,15 +956,16 @@ public final class ArchiveIndex: @unchecked Sendable {
     return Int(rows.first?.int(0) ?? 0)
   }
 
-  /// Drops index rows whose files are gone and reports files that exist but are unindexed.
-  /// Closes recordings the app never got to close, at the end of the media it actually wrote.
+  /// Closes takes nobody is going to write to again, at the end of the media they actually
+  /// wrote. The take being resumed, if there is one, is left open.
   ///
   /// A take left open is not merely cosmetic: its length counts up in the Recordings list
   /// forever, and the export path skips any recording without an end, so the footage cannot be
-  /// got at. Runs at launch, before anything reads the timeline and before a new take can begin,
-  /// so the only row it can touch is one no longer being written.
+  /// got at. Runs at launch, before anything reads the timeline and before a new take can begin.
+  /// The one row it must not touch is the one the app is about to pick up again, which is what
+  /// `live` names — every other open row belongs to a take that ended when the app did.
   @discardableResult
-  public func closeInterruptedRecordings() throws -> Int {
+  public func closeAbandonedRecordings(except live: Int64? = nil) throws -> Int {
     let rows = try store.query(
       """
       SELECT r.id,
@@ -714,6 +978,7 @@ public final class ArchiveIndex: @unchecked Sendable {
     var closed = 0
     for row in rows {
       let id = row.int(0)
+      if let live, id == live { continue }
       // A take with no segments never wrote anything, so it ends where it started rather than
       // being given a length invented from the clock.
       let endedAt: Double

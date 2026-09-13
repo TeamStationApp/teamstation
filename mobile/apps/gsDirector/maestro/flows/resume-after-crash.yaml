@@ -1,0 +1,111 @@
+# A take that was rolling when the process died comes back on its own.
+#
+# The UI half of the resume work. What the operator sees is the whole of it here: the deck comes
+# up already recording, the duration carries on from where the take began rather than restarting,
+# and the counter says the take was picked up. The archive and export side is not reachable from a
+# flow at all — `scripts/testResumeAfterCrash.js` covers that, with real RTSP cameras.
+#
+# `clearState` on the first launch only. The second must not clear, or there would be nothing to
+# resume — which is itself the behaviour the last step checks.
+appId: co.gamestation.director
+---
+- launchApp:
+    appId: co.gamestation.director
+    arguments:
+      clearState: true
+      uiTest: true
+      debugHUD: true
+      sourceProfile: synthetic4
+      segmentSeconds: 3
+
+- extendedWaitUntil:
+    visible:
+      id: 'source-row-1'
+    timeout: 20000
+- runFlow: shared/settle-source-list.yaml
+- tapOn:
+    id: 'source-toggle-1'
+- tapOn:
+    id: 'source-toggle-2'
+- tapOn:
+    id: 'start-directing'
+- extendedWaitUntil:
+    visible: 'source=1 state=live.*'
+    timeout: 20000
+
+- tapOn:
+    id: 'record-button'
+- assertVisible: 'rec=1'
+- assertVisible: 'resumed=0'
+
+# Cut to the second camera, so the resume has a choice to restore that is not the default.
+- openLink: 'gsdirector://test/program?source=2'
+
+# Long enough for several segments on both cameras and a programme fragment or two. Counted in
+# segments rather than in seconds: `seg` only ever climbs, so the wait cannot be satisfied before
+# the flow starts or missed because it was already past when the wait began. A duration threshold
+# is neither — this flow first asked for `dur` between 15 and 29 and found 99 already on screen.
+- extendedWaitUntil:
+    visible: 'seg=([1-9][0-9]+)'
+    timeout: 90000
+- takeScreenshot: resume-before-crash
+
+# SIGKILL. Nothing runs on the way out — no scene callback, no writer finalise, no stop path.
+- openLink: 'gsdirector://test/crash'
+
+- launchApp:
+    appId: co.gamestation.director
+    arguments:
+      uiTest: true
+      debugHUD: true
+      sourceProfile: synthetic4
+      segmentSeconds: 3
+
+# Recording again with nobody asking, and it is the same take: the duration carries on past where
+# it was when the app died rather than starting from zero.
+- extendedWaitUntil:
+    visible: 'rec=1'
+    timeout: 30000
+# The exact tell that this is the take that was already running rather than a new one: a take
+# started by hand reads zero here, and nothing but a resume moves it.
+- extendedWaitUntil:
+    visible: 'resumed=1'
+    timeout: 20000
+# How long the app was away is on the HUD as well, by id. The value itself is checked by
+# `scripts/testResumeAfterCrash.js` against the wall clock it measured; a text regex on `down=`
+# is not matched by this runner even with the element plainly on screen and labelled `down=2`.
+- extendedWaitUntil:
+    visible:
+      id: 'hud-downtime'
+    timeout: 20000
+- takeScreenshot: resume-after-crash
+
+# Segments are being written again, which means the cameras re-armed on their own.
+- extendedWaitUntil:
+    visible: 'seg=[1-9][0-9]*'
+    timeout: 90000
+
+# And only an explicit stop closes it.
+#
+# Through the control channel rather than the record button and the slide. That gesture has its
+# own coverage in `record-and-stop`, and on the iPad Pro M5 simulator it fails there too — the
+# runner finds several `slide-to-stop-track` elements and the first one is not visible. Depending
+# on it here would hide the thing this flow is for behind a known simulator defect.
+- openLink: 'gsdirector://test/record?on=false'
+- extendedWaitUntil:
+    visible: 'rec=0'
+    timeout: 120000
+- takeScreenshot: resume-stopped
+
+# A stopped take stays stopped. Relaunching must not bring it back.
+- launchApp:
+    appId: co.gamestation.director
+    arguments:
+      uiTest: true
+      debugHUD: true
+      sourceProfile: synthetic4
+      segmentSeconds: 3
+- extendedWaitUntil:
+    visible: 'rec=0'
+    timeout: 30000
+- assertVisible: 'resumed=0'

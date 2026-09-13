@@ -36,7 +36,7 @@ struct ArchiveIndexInterruptedTests {
     let id = try index.beginRecording(at: start)
     try seed(index: index, recording: id, source: source, start: start, segments: 3, each: 10)
 
-    #expect(try index.closeInterruptedRecordings() == 1)
+    #expect(try index.closeAbandonedRecordings() == 1)
 
     let summary = try #require(try index.recordings().first { $0.id == id })
     let ended = try #require(summary.endedAt)
@@ -44,7 +44,7 @@ struct ArchiveIndexInterruptedTests {
     #expect(abs(summary.duration - 30) < 0.001)
     #expect(!summary.wasInterrupted)
     // Idempotent: a second launch has nothing left to close.
-    #expect(try index.closeInterruptedRecordings() == 0)
+    #expect(try index.closeAbandonedRecordings() == 0)
   }
 
   @Test("A take that wrote nothing closes at its start rather than inventing a length")
@@ -53,7 +53,7 @@ struct ArchiveIndexInterruptedTests {
     let start = WallClock(seconds: 9_000)
     let id = try index.beginRecording(at: start)
 
-    #expect(try index.closeInterruptedRecordings() == 1)
+    #expect(try index.closeAbandonedRecordings() == 1)
 
     let summary = try #require(try index.recordings().first { $0.id == id })
     #expect(summary.endedAt?.seconds == start.seconds)
@@ -92,7 +92,7 @@ struct ArchiveIndexInterruptedTests {
     try seed(index: index, recording: id, source: source, start: start, segments: 2, each: 7)
     try index.endRecording(id, at: WallClock(seconds: start.seconds + 100))
 
-    #expect(try index.closeInterruptedRecordings() == 0)
+    #expect(try index.closeAbandonedRecordings() == 0)
     let summary = try #require(try index.recordings().first { $0.id == id })
     #expect(summary.endedAt?.seconds == start.seconds + 100)
     #expect(abs(summary.duration - 100) < 0.001)
