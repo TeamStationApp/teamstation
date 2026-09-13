@@ -408,8 +408,12 @@ public final class AppEnvironment {
     cameraRecords = cameras.records
 
     // A mid-segment kill leaves index rows describing files that were never written. Cleaning
-    // up before anything reads the timeline is what makes "relaunch after a crash" safe.
-    if let result = try? index.reconcile(), result.removed > 0 {
+    // up before anything reads the timeline is what makes "relaunch after a crash" safe. Only a
+    // take still open when the app died can have been cut off, so only those are checked here;
+    // the whole archive waits for `reconcileArchiveInBackground`, because stat-ing every segment
+    // on this path held the first screen past the launch watchdog.
+    let openTakes = (try? index.openRecordingIDs()) ?? []
+    if let result = try? index.reconcile(recordings: openTakes), result.removed > 0 {
       statusMessage = "Recovered index: dropped \(result.removed) missing segment(s)"
     }
     // What the app was doing when it stopped running, and whether it was long enough ago to
@@ -455,6 +459,20 @@ public final class AppEnvironment {
       startRecording()
     } else if !isRecording {
       openCameras()
+    }
+    reconcileArchiveInBackground()
+  }
+
+  /// The whole-archive check, off the launch path. A file removed outside the app from a take that
+  /// closed normally still loses its row; checking tens of thousands of them just no longer holds
+  /// the first screen.
+  private func reconcileArchiveInBackground() {
+    let index = self.index
+    Task.detached(priority: .utility) { [weak self] in
+      guard let result = try? index.reconcile(), result.removed > 0 else { return }
+      await MainActor.run { [weak self] in
+        self?.statusMessage = "Recovered index: dropped \(result.removed) missing segment(s)"
+      }
     }
   }
 
@@ -565,11 +583,11 @@ public final class AppEnvironment {
   /// One per camera at most: the file being written when the process died. It has no movie header,
   /// so nothing can read it, and `reconcile` only reports it. Anything a reader can open is left
   /// alone — that is somebody's footage, whatever the index thinks.
+  ///
+  /// The list is taken here, before any camera starts, so a segment a camera begins in the same
+  /// folder after the resume can never be mistaken for one. Only this take's folder is searched.
   private func discardUnreadableOrphans(ofRecording id: Int64) {
-    guard let orphans = try? index.reconcile().orphans, !orphans.isEmpty else { return }
-    let marker = "rec-\(id)"
-    let mine = orphans.filter { $0.deletingLastPathComponent().lastPathComponent == marker }
-    guard !mine.isEmpty else { return }
+    guard let mine = try? index.reconcile(recordings: [id]).orphans, !mine.isEmpty else { return }
     Task.detached(priority: .utility) {
       for url in mine {
         let asset = AVURLAsset(url: url)
