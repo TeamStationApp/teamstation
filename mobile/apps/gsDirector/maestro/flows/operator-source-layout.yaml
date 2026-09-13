@@ -1,6 +1,7 @@
-# B12/B13: source tiles are labelled "source N: name"; long-press order is by source
-# number and survives a relaunch. The swap-on-hover path is unit-tested; this flow
-# checks the nameplate and that the same store the gesture writes is restored.
+# B12/B13/B14: source tiles are labelled "source N: name"; long-press order is by source
+# number, Output can be parked in any corner, and both survive a relaunch. The drag paths are
+# unit-tested geometry; this flow checks the nameplate and that the same store the gestures
+# write is restored.
 appId: co.gamestation.director
 ---
 - launchApp:
@@ -48,6 +49,14 @@ appId: co.gamestation.director
     timeout: 8000
 - assertVisible: '1: CAM1'
 - assertVisible: '5: —'
+- assertVisible: 'corner=topLeading'
+
+# B14: Output parks bottom-right; the order set above is kept.
+- openLink: 'gsdirector://test/source-layout?order=5,1,2,3,4&corner=bottomTrailing'
+- extendedWaitUntil:
+    visible: 'corner=bottomTrailing'
+    timeout: 8000
+- assertVisible: 'order=5,1,2,3,4'
 
 - launchApp:
     appId: co.gamestation.director
@@ -64,5 +73,6 @@ appId: co.gamestation.director
       id: 'output'
     timeout: 20000
 - assertVisible: 'order=5,1,2,3,4'
+- assertVisible: 'corner=bottomTrailing'
 - assertVisible: '1: CAM1'
 - assertVisible: 'output src=CAM3 .*'
