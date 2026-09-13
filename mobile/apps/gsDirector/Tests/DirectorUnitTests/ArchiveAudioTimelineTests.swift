@@ -18,4 +18,51 @@ struct ArchiveAudioTimelineTests {
     #expect(gap > 7.5)
     #expect(gap < 8.5)
   }
+
+  /// rec-323: every three-second segment re-anchored its audio to whatever the video was doing when
+  /// the first audio buffer was written, so audio that arrived steadily later drifted the export by
+  /// 129 ms per 1,000 s. With one anchor for the whole recording, a later segment places audio by
+  /// the source's own clock however late it is written.
+  @Test("A later segment places audio by the source clock, not by when it arrived")
+  func laterSegmentFollowsSourceClock() {
+    let duration = CMTime(value: 1024, timescale: 48_000)
+    let anchor = ArchiveAudioTimeline.WallAnchor(sourceSeconds: 100, wallSeconds: 1_000)
+    // Segment two starts at wall 1_003. Its first audio buffer was captured at source 103.02, i.e.
+    // wall 1_003.02, but is written when the video is already 90 ms further on.
+    var segment = ArchiveAudioTimeline()
+    let placed = segment.place(
+      sourceTime: CMTime(seconds: 103.02, preferredTimescale: 48_000),
+      duration: duration,
+      videoTime: CMTime(seconds: 0.11, preferredTimescale: 90_000),
+      wallAnchor: anchor,
+      segmentBaseWall: 1_003
+    )
+    #expect(placed != nil)
+    #expect(abs((placed?.start.seconds ?? 0) - 0.02) < 0.001, "placed at \(placed?.start.seconds ?? -1)")
+  }
+
+  @Test("Without an anchor the timeline behaves as it always has")
+  func noAnchorIsUnchanged() {
+    let duration = CMTime(value: 1024, timescale: 48_000)
+    var timeline = ArchiveAudioTimeline()
+    let first = timeline.place(sourceTime: CMTime(seconds: 50, preferredTimescale: 48_000), duration: duration, videoTime: CMTime(seconds: 0.2, preferredTimescale: 90_000))
+    #expect(abs((first?.start.seconds ?? 0) - 0.2) < 0.001)
+  }
+
+  /// Audio whose camera reports when it captured it is placed there, contiguous within a packet,
+  /// and a jump the sample count could not have shown becomes a gap.
+  @Test("Audio with its own capture time is placed by it")
+  func captureTimePlacesAudio() {
+    let duration = CMTime(value: 1024, timescale: 48_000)
+    var timeline = ArchiveAudioTimeline()
+    let video = CMTime(seconds: 2, preferredTimescale: 90_000)
+    let first = timeline.place(sourceTime: .zero, duration: duration, videoTime: video, segmentBaseWall: 1_000, captureWall: 1_001)
+    #expect(abs((first?.start.seconds ?? 0) - 1) < 0.001)
+    // A report re-anchored the mapping 3 ms off: stays glued to the previous buffer.
+    let second = timeline.place(sourceTime: duration, duration: duration, videoTime: video, segmentBaseWall: 1_000, captureWall: 1_001.0213 + 0.003)
+    #expect(abs((second?.start.seconds ?? 0) - (1 + 1024.0 / 48_000)) < 0.0001)
+    // Samples the camera dropped: capture time is 150 ms past where the count would put it.
+    let third = timeline.place(sourceTime: CMTimeMultiply(duration, multiplier: 2), duration: duration, videoTime: video, segmentBaseWall: 1_000, captureWall: 1_001.0427 + 0.15)
+    #expect(abs((third?.start.seconds ?? 0) - 1.1927) < 0.001)
+  }
 }

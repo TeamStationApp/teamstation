@@ -47,15 +47,19 @@ struct StreamSendQueueTests {
     #expect(queue.pendingBytes == 800)
   }
 
-  @Test func completionCreditsTheQueueAndResumesSending() {
+  @Test func completionCreditsTheQueueAndSendingResumesAtTheNextKeyframe() {
     var queue = StreamSendQueue(highWaterMark: 1_000)
     _ = queue.decide(frameBytes: 1_200, isKeyframe: true)
     #expect(queue.decide(frameBytes: 100, isKeyframe: false) == .drop)
 
     queue.complete(bytes: 1_200)
     #expect(queue.pendingBytes == 0)
-    #expect(queue.decide(frameBytes: 100, isKeyframe: false) == .send)
+    // Room again, but this picture predicts from the one just dropped, so it would not decode.
+    #expect(queue.decide(frameBytes: 100, isKeyframe: false) == .drop)
+    #expect(queue.isDropping)
+    #expect(queue.decide(frameBytes: 100, isKeyframe: true) == .send)
     #expect(!queue.isDropping)
+    #expect(queue.decide(frameBytes: 100, isKeyframe: false) == .send)
   }
 
   @Test func completionCannotDriveTheQueueNegative() {

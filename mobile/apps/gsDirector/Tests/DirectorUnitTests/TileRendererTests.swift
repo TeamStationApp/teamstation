@@ -48,3 +48,45 @@ struct TileRendererTests {
     return try #require(factory.makeBuffer())
   }
 }
+
+@Suite("Tile renderer stall diagnostics")
+struct TileRendererStallTests {
+  private func pixelBuffer() throws -> CVPixelBuffer {
+    var buffer: CVPixelBuffer?
+    CVPixelBufferCreate(nil, 32, 32, kCVPixelFormatType_32BGRA, nil, &buffer)
+    return try #require(buffer)
+  }
+
+  @Test("A tile records when it last handed a frame to the display")
+  func stampsLastEnqueue() throws {
+    let renderer = TileRenderer()
+    renderer.attach(layer: AVSampleBufferDisplayLayer())
+    #expect(renderer.failCounts.lastEnqueueAt == 0)
+
+    let before = Date().timeIntervalSince1970
+    _ = renderer.enqueue(pixelBuffer: try pixelBuffer(), presentationTime: .zero)
+    let stamp = renderer.failCounts.lastEnqueueAt
+
+    // The stall this exists to catch shows up as arrivals climbing while this stands still, so it
+    // has to be a real wall clock rather than a counter.
+    #expect(stamp >= before)
+    #expect(stamp <= Date().timeIntervalSince1970)
+  }
+
+  @Test("A healthy renderer reports no error")
+  func healthyRendererIsQuiet() throws {
+    let renderer = TileRenderer()
+    renderer.attach(layer: AVSampleBufferDisplayLayer())
+    _ = renderer.enqueue(pixelBuffer: try pixelBuffer(), presentationTime: .zero)
+    #expect(renderer.failCounts.lastRendererError.isEmpty)
+    #expect(renderer.failCounts.lastRendererFailureAt == 0)
+    #expect(renderer.failCounts.rendererRebuilds == 0)
+  }
+
+  @Test("A tile with no layer never stamps an enqueue it did not make")
+  func noLayerDoesNotStamp() throws {
+    let renderer = TileRenderer()
+    #expect(!renderer.enqueue(pixelBuffer: try pixelBuffer(), presentationTime: .zero))
+    #expect(renderer.failCounts.lastEnqueueAt == 0)
+  }
+}

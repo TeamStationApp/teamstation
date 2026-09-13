@@ -227,6 +227,10 @@ public final class AppEnvironment {
   let programEncoder: ProgramEncoder
   let programStreamer: ProgramStreamer
   private var streamErrorGate = StreamErrorGate()
+  /// Wi-Fi's received bytes, extended past the interface's 32-bit wrap and folded into a rate.
+  /// What an NDI tile shows as its throughput, less the RTSP tiles' own counts.
+  private var wifiReceivedBytes = WrappingByteCounter()
+  private var wifiReceiveRate = CounterRateTracker()
 
   private let compositor: MetalCompositor?
   /// Builds the live-camera discovery. Injected because the transport lives in its own module and
@@ -301,6 +305,7 @@ public final class AppEnvironment {
     self.persistedConfig = persisted
     let session = Self.applying(launch, to: persisted)
     self.config = session
+    SubnetScanner.setOverrideSubnets(networkAddresses: session.activeScanSubnets)
     self.sourceProfile = Self.resolveSourceProfile(launch: launch, config: session)
 
     self.selectionStore = SourceSelectionStore(store: configStore)
@@ -352,7 +357,7 @@ public final class AppEnvironment {
     self.proxyReader = ProxyReader(index: index)
     self.assembler = SegmentAssembler(index: index)
     self.exporter = ExportService(index: index)
-    self.retention = RetentionPolicy(index: index, clock: clock)
+    self.retention = RetentionPolicy(index: index)
 
     telemetry.mutate { [sourceProfile] snapshot in
       snapshot.sourceProfile = sourceProfile.rawValue
@@ -360,6 +365,19 @@ public final class AppEnvironment {
 
     pictureInPicture.onStateChange = { [weak self] in
       self?.publishLiveSessionTelemetry()
+    }
+
+    // Set here rather than at construction: the encoder is built before the index exists.
+    let anchorIndex = index
+    // No `self` here on purpose: this runs on whichever queue delivered the frame, so it must not
+    // reach back into anything main-actor isolated. The recording it belongs to is carried in.
+    programEncoder.setAnchorSink { recording, part, seconds, wall in
+      try? anchorIndex.insertProgramAnchor(
+        recordingID: recording,
+        part: part,
+        programSeconds: seconds,
+        wall: wall
+      )
     }
   }
 
@@ -1321,6 +1339,8 @@ public final class AppEnvironment {
       return
     }
     self.recordingID = recordingID
+    // Anchors belong to this recording until it stops.
+    programEncoder.setAnchorRecording(recordingID)
     self.recordingStartedAt = now
 
     do {
@@ -1454,7 +1474,15 @@ public final class AppEnvironment {
       // A camera that sends no audio must not be given an audio track: the segmented writer waits
       // for audio it will never receive and stops accepting video a few seconds in, which the hold
       // filler then bridges with black. That is the burst-then-stall instant replay shows.
-      includesAudio: pipeline.hasDeliveredAudio && launch.archiveAudio
+      includesAudio: pipeline.hasDeliveredAudio && launch.archiveAudio,
+      // One that has not delivered any yet still gets its sound once it does, from the next segment:
+      // a camera reconnecting as the recording begins is otherwise silent for the whole take.
+      acceptsLateAudio: launch.archiveAudio,
+      // Stamped on every segment this writer produces. A take mixes NDI and RTSP now, and the two
+      // derive capture time differently enough that "which one wrote this row" is the first
+      // question worth asking of an angle that came out in the wrong place.
+      transport: discovery?.currentSources
+        .first(where: { $0.id == pipeline.sourceID })?.kind.rawValue
     )
     let writer = SegmentWriter(
       sourceID: pipeline.sourceID,
@@ -1569,6 +1597,7 @@ public final class AppEnvironment {
       try? index.endRecording(recordingID, at: endedAt)
     }
     recordingID = nil
+    programEncoder.setAnchorRecording(nil)
     recordingStartedAt = nil
     telemetry.mutate { $0.dvr.isRecording = false }
     setRecordingStage("idle")
@@ -1653,15 +1682,23 @@ public final class AppEnvironment {
 
   public func sweepRetention() {
     guard let sweep = try? retention.sweep(
-      retentionHours: config.retentionHours,
-      minimumFreeDiskBytes: config.minimumFreeDiskBytes
+      maximumArchiveBytes: config.maximumArchiveBytes,
+      freeDiskFloorBytes: config.freeDiskFloorBytes,
+      protecting: recordingID
     ) else { return }
     telemetry.mutate {
       $0.dvr.retentionSwept += UInt64(sweep.removedSegments)
       $0.dvr.retentionReclaimedBytes += UInt64(max(0, sweep.reclaimedBytes))
     }
-    if sweep.triggeredByDiskPressure {
-      statusMessage = "Low storage — retention window halved"
+    if sweep.exhausted {
+      // Worth saying out loud: the archive is over budget and the sweeper has nothing left it is
+      // allowed to take, so the next thing to run out is the device.
+      statusMessage = "Storage low — nothing left to sweep; export and delete old recordings"
+    } else if sweep.removedRecordings > 0 {
+      let gb = Double(sweep.reclaimedBytes) / 1_073_741_824
+      statusMessage = sweep.triggeredByDiskPressure
+        ? String(format: "Low storage — freed %.1f GB from %d recording(s)", gb, sweep.removedRecordings)
+        : String(format: "Archive full — freed %.1f GB from %d recording(s)", gb, sweep.removedRecordings)
     }
   }
 
@@ -1849,7 +1886,12 @@ public final class AppEnvironment {
 
     // File-relative: the first assembled sample is t=0 for the decoder, even though fragment
     // PTS is counted from the start of the recording.
-    let startOffset = max(0, target - assembly.startWall)
+    //
+    // Walked rather than subtracted. The staged files play back to back, so tape time only advances
+    // where a segment exists, while wall clock advances through the gaps too. Subtracting one from
+    // the other put the start that much too deep in the tape, ran the replay out early by about the
+    // gap, and past a threshold made `shouldStartReplay` refuse a window that was perfectly good.
+    let startOffset = assembly.mediaOffset(forWall: target)
     // Read outside the mutation: `availableHistorySeconds` reads the snapshot, and the telemetry lock
     // is not recursive, so calling it inside `mutate` deadlocks the main thread while holding the lock
     // every other thread needs.
@@ -2033,7 +2075,10 @@ public final class AppEnvironment {
     releasedAt: UInt64
   ) {
     guard isCurrentReplay(sourceIndex: sourceIndex, sourceID: sourceID, epoch: epoch) else { return }
-    if playDuration != nil {
+    // A timed replay is over when it has shown what was asked for -- not merely when the decoder
+    // reaches the end of whatever was staged. The continuation below already carries the remainder
+    // and stops itself once the offset reaches live; it was simply unreachable from here.
+    if ScrubMapping.hasFinishedTimedReplay(played: played, requested: playDuration) {
       returnToLive(sourceIndex: sourceIndex)
       return
     }
@@ -3097,8 +3142,12 @@ public final class AppEnvironment {
     session.replaySlowMotionRate = AppConfig.clampedReplaySlowMotionRate(session.replaySlowMotionRate)
     // Launch `-debugHUD` is a one-time overlay. Saving Settings must be able to hide the HUD.
     session.showDebugHUD = newConfig.showDebugHUD
+    let sweptSubnetChanged = config.activeScanSubnets != session.activeScanSubnets
     config = session
     applyDisplayLatencyCap()
+    SubnetScanner.setOverrideSubnets(networkAddresses: session.activeScanSubnets)
+    // A new subnet to sweep should be looked at now, not whenever the next sweep comes due.
+    if sweptSubnetChanged { discovery?.sweepNow() }
     if wantsSimulated != sessionIsSimulated {
       Task { await applySourceProfile(SourceProfile.forSimulatedCameras(wantsSimulated)) }
     }
@@ -3292,7 +3341,7 @@ public final class AppEnvironment {
   }
 
   /// Remux the most recent stopped take into Prepared/. Does not present the share sheet.
-  private func beginPreparedExport() {
+  private func beginPreparedExport(reprocess: Bool = false) {
     guard !isExporting else { return }
     guard let recording = listedRecordings().first(where: { $0.endedAt != nil }) else {
       telemetry.mutate { $0.dvr.lastExportError = "no stopped recording" }
@@ -3314,7 +3363,8 @@ public final class AppEnvironment {
           try await exporter.exportRecording(
             recording,
             cameras: cameras.map { (sourceID: $0.0, name: $0.1) },
-            includeProgram: includeProgram
+            includeProgram: includeProgram,
+            reprocess: reprocess
           )
         }.value
         await MainActor.run {
@@ -3451,7 +3501,10 @@ public final class AppEnvironment {
     }
     discovery?.setSweepDemand(
       isBusy: self.isRecording || self.isStreaming,
-      anyEnabledCameraMissing: missing
+      anyEnabledCameraMissing: missing,
+      // The camera list is the one screen whose whole purpose is finding cameras, so it is the one
+      // place a sweep is what the operator asked for rather than something done to them.
+      isBrowsing: self.activeSheet == .cameras
     )
     telemetry.mutate {
       $0.statusMessage = status
@@ -3465,6 +3518,9 @@ public final class AppEnvironment {
       $0.cpuCores = ProcessLoad.coreCount
       $0.availableMemoryMB = ProcessLoad.availableMemoryMB()
       $0.physFootprintMB = ProcessLoad.physFootprintMB()
+      // Re-read rather than cached: a device that roams between networks gets a new lease, and a
+      // stale answer here is worse than none when the question is which link to condition.
+      $0.localAddresses = LocalAddresses.ipv4()
       $0.residentSizeMB = ProcessLoad.residentSizeMB()
       $0.discoveryStatus = discoveryStatus
       $0.displayLatencyMilliseconds = displayLatency
@@ -3479,12 +3535,19 @@ public final class AppEnvironment {
     }
     telemetry.recordComposedFrames(composedFrames)
     var liveDecodeSessions = 0
+    var countedBytesPerSecond = 0.0
+    var uncountedTiles: [Int] = []
     for pipeline in router.activePipelines {
       let format = pipeline.format
       let connections = pipeline.connections
       let receive = pipeline.receiveStats
       liveDecodeSessions += receive.decodeSessions
       telemetry.recordPacketsLost(tile: pipeline.sourceIndex, cumulative: receive.packetsLost)
+      if let bytes = receive.bytesReceived {
+        countedBytesPerSecond += telemetry.recordReceivedBytes(tile: pipeline.sourceIndex, cumulative: bytes)
+      } else {
+        uncountedTiles.append(pipeline.sourceIndex)
+      }
       telemetry.mutateTile(pipeline.sourceIndex) { tile in
         tile.sourceWidth = format?.width ?? 0
         tile.sourceHeight = format?.height ?? 0
@@ -3561,6 +3624,22 @@ public final class AppEnvironment {
       }
     }
     if !isRecording { announcedCameraStatus.removeAll() }
+
+    // An NDI camera's bytes never pass through us, so its share is inferred: everything Wi-Fi
+    // received less what the RTSP cameras counted. Only honest with one such camera; with two,
+    // there is no telling how to split the remainder, so neither claims it.
+    if let raw = LocalAddresses.wifiReceivedBytes() {
+      let interfaceRate = wifiReceiveRate.record(
+        wifiReceivedBytes.extend(raw),
+        at: ProcessInfo.processInfo.systemUptime
+      )
+      for tile in uncountedTiles {
+        telemetry.setReceiveRate(
+          tile: tile,
+          bytesPerSecond: uncountedTiles.count == 1 ? max(0, interfaceRate - countedBytesPerSecond) : nil
+        )
+      }
+    }
 
     // The acceptance number, computed once every camera's tile has been written this pass.
     //
@@ -3734,7 +3813,17 @@ public final class AppEnvironment {
       let id = selections[index].id
       if isLinkedControl(id) { unlinkSource(control: id) } else { unlinkSource(video: id) }
     case .searchCameras:
+      discovery?.sweepNow()
       discovery?.searchNow()
+    case let .setSubnetScan(subnet, on):
+      // Through `update(config:)`, like the Settings switch it stands in for, so a bench set up this
+      // way is still set up after a relaunch. Turning it on without a usable subnet is refused
+      // rather than quietly sweeping the local one.
+      var next = persistedConfig
+      if let subnet { next.subnetScanOverride = subnet }
+      if let on { next.subnetScanOverrideEnabled = on }
+      guard !next.subnetScanOverrideEnabled || !next.activeScanSubnets.isEmpty else { return false }
+      update(config: next)
     case let .advanceClock(seconds):
       testClock?.advance(by: seconds)
       sweepRetention()
@@ -3767,8 +3856,8 @@ public final class AppEnvironment {
       setSourceLayout(SourceLayout(order: order))
     case .killProgramWriter:
       programEncoder.poisonWriter()
-    case .exportRecording:
-      beginPreparedExport()
+    case let .exportRecording(reprocess):
+      beginPreparedExport(reprocess: reprocess)
     }
     return true
   }

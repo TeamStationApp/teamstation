@@ -54,8 +54,15 @@ appId: co.gamestation.director
       id: 'recordings-select-1'
     timeout: 5000
 - takeScreenshot: recordings-export
+
+# Clean up after this flow and nothing else. Row 1 is the take this flow just recorded — the
+# list is ordered newest first, and the recording finished seconds ago — so marking row 1 marks
+# exactly what was created here.
+#
+# This used to tap `recordings-select-all`, which deleted every recording on the device. On an
+# iPad that had been shot with, that is somebody's game.
 - tapOn:
-    id: 'recordings-select-all'
+    id: 'recordings-select-1'
 - tapOn:
     id: 'recordings-delete'
 - extendedWaitUntil:
@@ -64,8 +71,11 @@ appId: co.gamestation.director
     timeout: 5000
 - tapOn:
     id: 'recordings-delete-confirm'
+
+# The list survives: only this flow's own take went. Asserting `recordings-empty` would be
+# asserting that the device had been wiped.
 - extendedWaitUntil:
     visible:
-      id: 'recordings-empty'
+      id: 'recordings-dates'
     timeout: 10000
 - takeScreenshot: recordings-deleted

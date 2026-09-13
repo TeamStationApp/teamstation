@@ -11,29 +11,52 @@ public struct SegmentWriterSettings: Sendable, Equatable {
   /// How much video a segment holds. Boundaries land on the camera's own keyframes, so a segment is
   /// this long rounded up to the next one.
   public var segmentSeconds: Double
+  /// Whether the writer waits for the camera's audio before writing anything, and gives every file
+  /// an audio track.
   public var includesAudio: Bool
+  /// Whether a file opened after the camera's audio has appeared may carry it, for a writer made
+  /// before any had arrived. Unlike `includesAudio` it never waits: the audio joins at the next
+  /// segment. The decision used to be made once, when the writer was, so a camera still
+  /// reconnecting when a recording began was archived with no sound for the whole take — fifteen
+  /// minutes of this bench's Pixel.
+  public var acceptsLateAudio: Bool
   public var minimumFreeDiskBytes: Int64
+  /// Which transport delivers this source, recorded on every segment so a misplaced angle can be
+  /// attributed to one after the fact. A take now mixes NDI and RTSP, and the two derive capture
+  /// time differently enough that "which one wrote this row" is the first question worth asking.
+  public var transport: String?
 
   public init(
     segmentSeconds: Double = 3,
     includesAudio: Bool = true,
-    minimumFreeDiskBytes: Int64 = 4 * 1024 * 1024 * 1024
+    acceptsLateAudio: Bool = false,
+    minimumFreeDiskBytes: Int64 = 4 * 1024 * 1024 * 1024,
+    transport: String? = nil
   ) {
     self.segmentSeconds = segmentSeconds
     self.includesAudio = includesAudio
+    self.acceptsLateAudio = acceptsLateAudio
     self.minimumFreeDiskBytes = minimumFreeDiskBytes
+    self.transport = transport
   }
 
   public static func from(
     config: AppConfig,
-    includesAudio: Bool = true
+    includesAudio: Bool = true,
+    acceptsLateAudio: Bool = false,
+    transport: String? = nil
   ) -> SegmentWriterSettings {
     SegmentWriterSettings(
       segmentSeconds: config.segmentSeconds,
       includesAudio: includesAudio,
-      minimumFreeDiskBytes: config.minimumFreeDiskBytes
+      acceptsLateAudio: acceptsLateAudio,
+      minimumFreeDiskBytes: config.minimumFreeDiskBytes,
+      transport: transport
     )
   }
+
+  /// Whether any file this writer opens may carry audio.
+  var archivesAudio: Bool { includesAudio || acceptsLateAudio }
 }
 
 public enum SegmentWriterError: Error, CustomStringConvertible {
@@ -116,7 +139,16 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
   private var basePresentationTime: CMTime?
   private var baseWallClock: WallClock?
   private var lastVideoTime: CMTime = .negativeInfinity
+  /// Where the last picture written to the current file ends, which is how long the segment is
+  /// recorded as. It is not always where the next picture starts: a gap clamped as a glitch leaves
+  /// the file one frame past its last picture, while the picture after the gap opens the next file
+  /// wherever its own clock put it.
+  private var writtenVideoEnd: CMTime = .invalid
   private var lastVideoDuration = CMTime(value: 3000, timescale: 90_000)
+  /// Video samples written to the file currently open. Divided by the segment's span it gives the
+  /// rate this stretch of the archive was really written at, which is not the camera's nominal one
+  /// when an encoder under pressure is archiving at half rate.
+  private var segmentVideoFrames = 0
   /// Added to every incoming presentation time so the file's timeline survives the camera's clock
   /// restarting. A reconnect resets the RTP unwrapper, and every frame after it arrived stamped
   /// earlier than the frame before the outage; the writer read that as "does not advance" and
@@ -139,6 +171,17 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
   private var silenceChannels: Int = 0
   private var boundary = SegmentBoundary(interval: 6)
   private var audioTimeline = ArchiveAudioTimeline()
+  /// The source's audio clock pinned to the recording's wall clock, once per recording. Kept across
+  /// segment recycles on purpose; see `ArchiveAudioTimeline.WallAnchor`.
+  private var audioWallAnchor: ArchiveAudioTimeline.WallAnchor?
+  /// Whether this segment's `baseWallClock` came from the camera's capture clock. Only then does the
+  /// recording-long audio anchor mean anything: an arrival-time base moves with delivery, and a
+  /// camera back from a reconnect with no capture times used to have its audio mapped through that
+  /// and land 1.9 s off its picture.
+  private var baseWallIsCapture = false
+  /// A keyframe cut waiting for this segment's audio to reach it, with the pictures that arrived
+  /// since. See `deferCutForAudio`.
+  private var deferredCut: DeferredCut?
   /// Audio waiting for the writer to accept it.
   ///
   /// Discarding a buffer because `isReadyForMoreMediaData` was false is not survivable: the audio
@@ -156,6 +199,22 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
   private var droppedFrames: UInt64 = 0
   private var appendedFrames: UInt64 = 0
   private var stopError: Error?
+
+  private struct DeferredCut {
+    /// Where the cut falls on the timeline of the segment being closed.
+    let at: CMTime
+    /// When the cutting keyframe arrived, which bounds the wait.
+    let since: WallClock
+    var pictures: [(picture: HeldPicture, duration: CMTime, captureGap: Double?, arrivalGap: Double?)]
+  }
+
+  /// Longest a cut waits for its segment's audio. Past this the audio is not late but gone.
+  static let audioCatchUpSeconds: Double = 3
+  private static let audioCatchUpTolerance: Double = 0.05
+  /// How far the recording's audio anchor may disagree with the newest picture before it is re-pinned.
+  /// A reconnect restarts the source clock at a random point, hours from the old one; audio that is
+  /// merely late — a second or two on a throttled camera — must not re-pin it to arrival.
+  private static let anchorRepinSeconds: Double = 10
 
   private struct HeldPicture {
     let data: Data
@@ -265,6 +324,8 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     // The held picture is a real frame of the recording; without this the last one is lost every
     // time, and with a one-second keyframe interval that is visible at the cut.
     await onQueue { self.flushHeld() }
+    // A cut still waiting for audio is made now; the audio it was waiting for is not coming.
+    await onQueue { self.performDeferredCut() }
 
     // Before `beginFinish` sets the flag that stops the drain, or the tail of the audio track is
     // simply thrown away and the last segment ends with video the audio never reaches.
@@ -299,7 +360,8 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
         sequence: pending.sequence,
         startWall: pending.startWall,
         duration: pending.duration,
-        firstFrameID: pending.firstFrameID
+        firstFrameID: pending.firstFrameID,
+        videoFrames: pending.videoFrames
       )
     }
 
@@ -319,6 +381,7 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     let startWall: WallClock?
     let duration: TimeInterval
     let firstFrameID: UInt64?
+    let videoFrames: Int
   }
 
   private func beginFinish() -> PendingFinish? {
@@ -334,14 +397,16 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
       filename: outputFilename,
       sequence: sequence,
       startWall: baseWallClock,
-      duration: lastVideoTime.seconds,
-      firstFrameID: pendingFirstFrameID
+      duration: writtenVideoEnd.isNumeric ? writtenVideoEnd.seconds : lastVideoTime.seconds,
+      firstFrameID: pendingFirstFrameID,
+      videoFrames: segmentVideoFrames
     )
   }
 
   private func clearWriter() {
     lock.lock()
     defer { lock.unlock() }
+    deferredCut = nil
     writer = nil
     videoInput = nil
     audioInput = nil
@@ -349,6 +414,8 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     started = false
     held = nil
     audioTimeline = ArchiveAudioTimeline()
+    audioWallAnchor = nil
+    baseWallIsCapture = false
     pendingAudio.removeAll()
   }
 
@@ -425,7 +492,17 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     var adjusted = CMTimeAdd(frame.presentationTime, timelineOffset)
     if let previous {
       let rawGap = CMTimeSubtract(adjusted, previous.presentationTime)
-      let elapsed = frame.wallClock.seconds - previous.wallClock.seconds
+      // Capture time is the witness when both pictures carry one, arrival only when they do not. A
+      // camera that drops to its next keyframe on a starved link sends that keyframe as soon as the
+      // backlog drains, so arrival can show a fraction of a second across seconds of real dropout:
+      // rec-354 took a Pixel's 3.65 s drop for a glitch on a 0.31 s arrival gap, and placed the
+      // second of pictures after it 3.35 s early.
+      let elapsed: Double = {
+        guard let a = previous.captureWallClock, let b = frame.captureWallClock else {
+          return frame.wallClock.seconds - previous.wallClock.seconds
+        }
+        return b.seconds - a.seconds
+      }()
       // The media clock is only trusted while it agrees with the time that actually passed. Going
       // backwards means the camera's clock restarted; a long jump that real elapsed time cannot
       // corroborate means it glitched. Either way the frame is placed where the wall clock says it
@@ -489,7 +566,7 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     startingAt start: CMTime,
     sourceID: SourceID
   ) -> (frames: [CompressedAudioFrame], covered: Double) {
-    guard settings.includesAudio, silenceSampleRate > 0, silenceChannels > 0 else { return ([], 0) }
+    guard settings.archivesAudio, silenceSampleRate > 0, silenceChannels > 0 else { return ([], 0) }
     if silence == nil {
       silence = ArchiveFiller(
         width: 2, height: 2,
@@ -535,6 +612,43 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     return (frames, Double(frames.count) * step.seconds)
   }
 
+  /// Holds a cut whose segment's audio has not reached it yet.
+  ///
+  /// A camera's audio can arrive well behind its picture on the same connection: rec-328's Pixel,
+  /// thermally throttled, delivered it one to two seconds late. Closing the file on the keyframe then
+  /// left the audio for the segment's last stretch nowhere to go, and each cut cost that much sound.
+  /// So the keyframe and the pictures after it wait, and the audio keeps landing in the file it
+  /// belongs to, until it reaches the cut or `audioCatchUpSeconds` pass. The pictures are compressed
+  /// and a few seconds of them is a few megabytes.
+  private func deferCutForAudio(at cut: CMTime, picture: HeldPicture, duration: CMTime) -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    // A file opened before the camera's audio appeared has no track for it to land in.
+    guard settings.archivesAudio, audioFormat != nil, audioInput != nil else { return false }
+    if let end = audioTimeline.endTime, end.seconds >= cut.seconds - Self.audioCatchUpTolerance {
+      return false
+    }
+    deferredCut = DeferredCut(at: cut, since: picture.wallClock, pictures: [(picture, duration, nil, nil)])
+    return true
+  }
+
+  /// Makes a waiting cut: closes the segment and writes the pictures held since into the next one.
+  private func performDeferredCut() {
+    lock.lock()
+    guard let cut = deferredCut else {
+      lock.unlock()
+      return
+    }
+    deferredCut = nil
+    lock.unlock()
+    drainAudio(limit: .max)
+    recycleWriter()
+    // A later boundary among these pictures defers again, and the rest queue behind it in order.
+    for held in cut.pictures {
+      appendVideo(held.picture, duration: held.duration, captureGap: held.captureGap, arrivalGap: held.arrivalGap)
+    }
+  }
+
   private func flushHeld() {
     lock.lock()
     let previous = held
@@ -552,6 +666,13 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     arrivalGap: Double? = nil
   ) {
     lock.lock()
+    if deferredCut != nil {
+      deferredCut?.pictures.append((picture, duration, captureGap, arrivalGap))
+      let waited = picture.wallClock.seconds - (deferredCut?.since.seconds ?? picture.wallClock.seconds)
+      lock.unlock()
+      if waited > Self.audioCatchUpSeconds { performDeferredCut() }
+      return
+    }
     guard !finishing, stopError == nil, let format = videoFormat else {
       lock.unlock()
       return
@@ -574,6 +695,7 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
       // different moment on every camera — each start carrying that camera's delivery delay on top
       // of its own keyframe phase.
       baseWallClock = picture.captureWallClock ?? clock.now
+      baseWallIsCapture = picture.captureWallClock != nil
     }
     guard let base = basePresentationTime else {
       lock.unlock()
@@ -652,6 +774,7 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
       }
     }
     lastVideoDuration = sampleDuration
+    segmentVideoFrames += 1
     lastVideoTime = presentationTime
     if pendingFirstFrameID == nil { pendingFirstFrameID = picture.frameID }
 
@@ -671,6 +794,7 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     if shouldFlush {
       // Audio first, so the file being closed carries the sound that belongs to it.
       drainAudio(limit: .max)
+      if deferCutForAudio(at: presentationTime, picture: picture, duration: duration) { return }
       recycleWriter()
       // This keyframe opens the next file so the cut stays on a sync sample.
       appendVideo(picture, duration: duration)
@@ -702,6 +826,7 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     if videoInput.append(sampleBuffer) {
       lock.lock()
       appendedFrames &+= 1
+      writtenVideoEnd = CMTimeAdd(presentationTime, sampleDuration)
       lock.unlock()
       let seconds = presentationTime.seconds
       telemetry.mutateTile(sourceIndex) { $0.archiveVideoSeconds = seconds }
@@ -752,7 +877,7 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     writer.add(videoInput)
 
     var audioInput: AVAssetWriterInput?
-    if settings.includesAudio, let audioFormat {
+    if settings.archivesAudio, let audioFormat {
       let input = AVAssetWriterInput(
         mediaType: .audio,
         outputSettings: nil,
@@ -800,8 +925,14 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     let filename = outputFilename
     let seq = sequence
     let startWall = baseWallClock
-    let duration = lastVideoTime.isNumeric ? lastVideoTime.seconds : 0
+    // What the file holds, not where the next picture starts. rec-340's index said a Pixel segment
+    // ran 42.7 s to the keyframe after a 40 s dropout the writer had clamped as a glitch; the file
+    // held 2.5 s, and the export left the rest with no picture instead of holding the last one.
+    let duration = writtenVideoEnd.isNumeric
+      ? writtenVideoEnd.seconds
+      : (lastVideoTime.isNumeric ? lastVideoTime.seconds : 0)
     let firstFrameID = pendingFirstFrameID
+    let frames = segmentVideoFrames
     self.writer = nil
     self.videoInput = nil
     self.audioInput = nil
@@ -809,8 +940,11 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     started = false
     basePresentationTime = nil
     baseWallClock = nil
+    baseWallIsCapture = false
     lastVideoTime = .negativeInfinity
+    writtenVideoEnd = .invalid
     pendingFirstFrameID = nil
+    segmentVideoFrames = 0
     // Keep `held`. Recycle runs from appendVideo of the keyframe that *opens* the next file,
     // and `held` is already the picture after that keyframe. Clearing it dropped one frame
     // at every 3s cut. That frame belongs on the new file's timeline.
@@ -828,7 +962,8 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
         sequence: seq,
         startWall: startWall,
         duration: duration,
-        firstFrameID: firstFrameID
+        firstFrameID: firstFrameID,
+        videoFrames: frames
       )
     }
   }
@@ -838,7 +973,8 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     sequence: Int,
     startWall: WallClock?,
     duration: TimeInterval,
-    firstFrameID: UInt64?
+    firstFrameID: UInt64?,
+    videoFrames: Int
   ) {
     guard let filename else { return }
     let url = directory.appendingPathComponent(filename)
@@ -853,7 +989,11 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
         startWall: startWall ?? clock.now,
         duration: max(0, duration),
         byteCount: bytes,
-        firstFrameID: firstFrameID
+        firstFrameID: firstFrameID,
+        transport: settings.transport,
+        archiveRate: duration > 0.05 && videoFrames > 0
+          ? Double(videoFrames) / duration
+          : nil
       )
       telemetry.recordSegment(bytes: UInt64(max(0, bytes)))
     } catch {
@@ -889,10 +1029,10 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     queue.async { [weak self] in self?.write(audio: frame) }
   }
 
-  private func write(audio frame: CompressedAudioFrame) {
-    telemetry.mutateTile(sourceIndex) { $0.audioReceived &+= 1 }
+  private func write(audio frame: CompressedAudioFrame, retry: Bool = false) {
+    if !retry { telemetry.mutateTile(sourceIndex) { $0.audioReceived &+= 1 } }
     lock.lock()
-    guard !finishing, settings.includesAudio, stopError == nil else {
+    guard !finishing, settings.archivesAudio, stopError == nil else {
       lock.unlock()
       telemetry.mutateTile(sourceIndex) { $0.audioRejectedClosed &+= 1 }
       return
@@ -919,10 +1059,46 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
       return
     }
 
+    // The newest picture's capture time on the recording's wall clock: the segment's base plus how
+    // far into the segment that picture sits.
+    let segmentBaseWall = baseWallIsCapture ? baseWallClock?.seconds : nil
+    let videoWall = segmentBaseWall.map { $0 + lastVideoTime.seconds }
+    if let videoWall, frame.presentationTime.isNumeric {
+      if let anchor = audioWallAnchor {
+        // A source clock that restarted — a camera reconnect — no longer fits the anchor at all.
+        // Re-pin it rather than lose the audio for the rest of the recording.
+        let predicted = anchor.wallSeconds + (frame.presentationTime.seconds - anchor.sourceSeconds)
+        if abs(predicted - videoWall) > Self.anchorRepinSeconds {
+          audioWallAnchor = .init(sourceSeconds: frame.presentationTime.seconds, wallSeconds: videoWall)
+        }
+      } else {
+        audioWallAnchor = .init(sourceSeconds: frame.presentationTime.seconds, wallSeconds: videoWall)
+      }
+    }
+    // Sound that belongs after a waiting cut goes in the segment the cut opens, so the cut is made
+    // first and this buffer placed again against the new segment.
+    let anchoredWall = audioWallAnchor.flatMap { anchor in
+      frame.presentationTime.isNumeric
+        ? anchor.wallSeconds + (frame.presentationTime.seconds - anchor.sourceSeconds)
+        : nil
+    }
+    if let cut = deferredCut, let wall = frame.captureWallClock?.seconds ?? anchoredWall,
+       let segmentBaseWall {
+      let position = wall - segmentBaseWall
+      if position >= cut.at.seconds - Self.audioCatchUpTolerance {
+        lock.unlock()
+        performDeferredCut()
+        write(audio: frame, retry: true)
+        return
+      }
+    }
     let placement = audioTimeline.place(
       sourceTime: frame.presentationTime,
       duration: frame.duration,
-      videoTime: lastVideoTime
+      videoTime: lastVideoTime,
+      wallAnchor: audioWallAnchor,
+      segmentBaseWall: segmentBaseWall,
+      captureWall: frame.captureWallClock?.seconds
     )
     lock.unlock()
 
@@ -950,9 +1126,15 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
       pendingAudio.removeFirst(pendingAudio.count - Self.maximumPendingAudio)
       telemetry.mutateTile(sourceIndex) { $0.audioBuffersDiscarded &+= 1 }
     }
+    // Without an anchor there is no telling in advance where a buffer lands, so a waiting cut is
+    // made once the audio placed here has reached it.
+    let caughtUp = deferredCut.map { cut in
+      (audioTimeline.endTime?.seconds ?? -.infinity) >= cut.at.seconds - Self.audioCatchUpTolerance
+    } ?? false
     lock.unlock()
 
     drainAudio(limit: 8)
+    if caughtUp { performDeferredCut() }
   }
 
   private func report(_ placement: ArchiveAudioTimeline.Placement) {

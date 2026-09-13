@@ -3,6 +3,7 @@ package co.gamestation.cameraman.capture
 import android.annotation.SuppressLint
 import android.media.AudioFormat
 import android.media.AudioRecord
+import android.media.AudioTimestamp
 import android.media.MediaRecorder
 import co.gamestation.cameraman.encode.AudioEncoder
 
@@ -82,6 +83,7 @@ class MicrophoneSource(private val encoder: AudioEncoder) {
 
         thread = Thread({
             val buffer = ByteArray(chunkBytes)
+            val stamp = AudioTimestamp()
             while (running) {
                 val read = created.read(buffer, 0, buffer.size)
                 if (read <= 0) {
@@ -95,7 +97,17 @@ class MicrophoneSource(private val encoder: AudioEncoder) {
                 // delivers in bursts, and timestamping on arrival would put that jitter straight
                 // into the RTP timestamps.
                 val presentationTime = framesRead.toDouble() / sampleRate.toDouble()
-                encoder.encode(buffer, read, presentationTime)
+                // And, beside it, when those samples were actually captured. The sample count alone
+                // cannot know about samples the system dropped when this thread fell behind, so every
+                // stamp after a drop is early; `AudioRecord`'s own timestamp can, and the sender
+                // report pairs the two so the receiver places audio by the real time.
+                val captureTime =
+                    if (created.getTimestamp(stamp, AudioTimestamp.TIMEBASE_BOOTTIME) == AudioRecord.SUCCESS) {
+                        captureSeconds(stamp.nanoTime, stamp.framePosition, framesRead, sampleRate)
+                    } else {
+                        null
+                    }
+                encoder.encode(buffer, read, presentationTime, captureTime)
                 framesRead += read / bytesPerFrame
             }
         }, "cameraman-mic").apply {
@@ -103,6 +115,16 @@ class MicrophoneSource(private val encoder: AudioEncoder) {
             isDaemon = true
             start()
         }
+    }
+
+    companion object {
+        /**
+         * When sample [framesRead] was captured, in boot-clock seconds, from a timestamp that says
+         * sample [framePosition] was captured at [nanoTime]. Boot clock because the camera stamps
+         * video frames on it, so audio and video share one mapping to wall time.
+         */
+        fun captureSeconds(nanoTime: Long, framePosition: Long, framesRead: Long, sampleRate: Int): Double =
+            nanoTime / 1_000_000_000.0 + (framesRead - framePosition).toDouble() / sampleRate.toDouble()
     }
 
     fun stop() {

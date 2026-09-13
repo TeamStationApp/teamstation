@@ -148,6 +148,14 @@ struct RTSPServerMessageTests {
     )
   }
 
+  @Test("Cellular is never advertised, even when it is the only address left")
+  func preferredLANIPv4NeverOffersCellular() {
+    #expect(RTSPServer.preferredLANIPv4(addresses: [("pdp_ip0", "48.146.19.16")]) == nil)
+    #expect(RTSPServer.preferredLANIPv4(addresses: [("pdp_ip0", "10.44.2.9")]) == nil)
+    #expect(RTSPServer.preferredLANIPv4(addresses: [("pdp_ip0", "48.146.19.16"), ("en0", "10.10.7.151")]) == "10.10.7.151")
+    #expect(RTSPServer.preferredLANIPv4(addresses: [("en2", "100.64.3.3")]) == nil)
+  }
+
   @Test func preferredLANIPv4SkipsLinkLocalAndPrefersWiFi() {
     #expect(
       RTSPServer.preferredLANIPv4(addresses: [

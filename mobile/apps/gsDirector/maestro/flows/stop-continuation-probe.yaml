@@ -1,0 +1,50 @@
+# Does an ordinary stop leave continuation parts behind?
+#
+# No clearState: this runs on Paul's configured iPad and must not disturb his camera list.
+# Records ~90 s from the synthetic sources, then stops through the real UI path
+# (record button + slide-to-stop) rather than the control channel, because the stop path
+# is what is under test.
+appId: co.gamestation.director
+---
+- launchApp:
+    appId: co.gamestation.director
+    arguments:
+      uiTest: true
+      debugHUD: true
+      sourceProfile: synthetic4
+      segmentSeconds: 3
+
+- extendedWaitUntil:
+    visible:
+      id: 'source-row-1'
+    timeout: 20000
+- runFlow: shared/settle-source-list.yaml
+
+- openLink: 'gsdirector://test/enable-source?index=1&on=true'
+- openLink: 'gsdirector://test/enable-source?index=2&on=true'
+- openLink: 'gsdirector://test/start'
+
+- extendedWaitUntil:
+    visible: 'source=1 state=live.*'
+    timeout: 30000
+
+- tapOn:
+    id: 'record-button'
+- assertVisible: 'rec=1'
+
+# ~90 s of programme so the master is a real file, not a stub.
+- extendedWaitUntil:
+    visible: 'dur=(9[0-9]|1[0-9][0-9])'
+    timeout: 150000
+- takeScreenshot: before-stop
+
+- tapOn:
+    id: 'record-button'
+- runFlow: shared/slide-to-stop.yaml
+- extendedWaitUntil:
+    visible: 'rec=0'
+    timeout: 120000
+
+- assertVisible: 'flush=[0-9]+\.[0-9]'
+- assertVisible: 'progbytes=[1-9][0-9]{5,}'
+- takeScreenshot: after-stop

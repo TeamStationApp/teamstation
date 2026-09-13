@@ -74,6 +74,8 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
   private var session: RTSPSession?
   private var sinks = FrameSinks()
   private var running = false
+  /// Silence measured across reconnects; see `SilenceClock`.
+  private var silence = SilenceClock()
 
   private var videoDepacketizer: VideoDepacketizer?
   private var videoTracker = RTPSequenceTracker()
@@ -88,6 +90,8 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
   /// decoder needs to decode them: the writer builds its own format descriptions from these.
   private var videoCodec: VideoCodec?
   private var videoParameterSets: [Data] = []
+  /// Keeps pictures that predict from a lost one out of the archive until the next keyframe.
+  private var archiveGate = ArchiveReferenceGate()
   private var audioConfig: (cookie: Data, sampleRate: Double, channels: Int)?
 
   private var frameID: UInt64 = 0
@@ -137,6 +141,19 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
   /// Frame identities handed out at arrival and claimed at decode, so the copy on disk and the
   /// picture on screen agree on which frame they are — the audit R4 rests on.
   private var pendingFrameIDs: [CMTimeValue: UInt64] = [:]
+  /// Each picture's own corrected capture time, taken at arrival and claimed when it is published.
+  ///
+  /// Published pictures used to carry the *newest* arrival's capture time, but a picture reaches
+  /// `publish` after half a second in the delay line, so every phone picture looked that much
+  /// younger than it was. The programme's anchors are built from that age, and rec-351's opened
+  /// on a phone: its first 41 minutes exported 0.47 s behind the camera files.
+  private var pendingCaptures: [CMTimeValue: Double] = [:]
+  /// When each picture arrived, claimed with its capture time. A published picture is stamped with
+  /// its arrival, which is what `PixelFrame.wallClock` says it is: stamped with the moment it left
+  /// the delay line instead, capture-to-"arrival" counted the deliberate half-second hold as
+  /// staleness, and once a latency burst raised the hold every phone picture was refused as late --
+  /// the tiles and the programme froze for good while the camera kept sending.
+  private var pendingArrivals: [CMTimeValue: Double] = [:]
 
   public init(
     sourceID: SourceID,
@@ -196,6 +213,9 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     defer { lock.unlock() }
     var snapshot = stats
     snapshot.packetsLost = videoTracker.lost &+ audioTracker.lost
+    // Per session: a reconnect starts again from zero, which the rate tracker reads as a new
+    // baseline rather than a negative rate.
+    snapshot.bytesReceived = session?.bytesReceived ?? 0
     snapshot.status = lastFailure
     snapshot.arrivalGapMaxMilliseconds = (jitter.gapMaxMilliseconds * 10).rounded() / 10
     snapshot.arrivalGapWasKeyframe = jitter.gapWasKeyframe
@@ -204,13 +224,9 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     snapshot.pacingSpreadMilliseconds = (jitter.latenessSpreadMilliseconds * 10).rounded() / 10
     snapshot.playoutMilliseconds = (playout.bufferMilliseconds * 10).rounded() / 10
     snapshot.playoutLateFrames = playout.lateFrames
+    // From the last picture across reconnects, not from this session; see `SilenceClock`.
     snapshot.stalledForSeconds = running
-      ? StallWatchdog.stalledForSeconds(
-        now: Date(),
-        lastAccessUnitAt: lastAccessUnitAt,
-        sessionStartedAt: sessionStartedAt,
-        timeout: Self.stallTimeout
-      )
+      ? silence.stalledForSeconds(now: Date(), timeout: Self.stallTimeout)
       : 0
     snapshot.playoutDepth = pictures.count + decodedFrames.count
     let decoding = decoder?.currentStatistics
@@ -257,6 +273,7 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
   public func stop() {
     lock.lock()
     running = false
+    silence.stop()
     let session = self.session
     self.session = nil
     stallTimer?.cancel()
@@ -296,6 +313,7 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     parserStateReset()
     pendingWaitStart = .now()
     sessionStartedAt = Date()
+    silence.sessionStarted(at: sessionStartedAt ?? Date())
     lock.unlock()
 
     session.start()
@@ -309,6 +327,7 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     audioFormatDescription = nil
     videoCodec = nil
     videoParameterSets = []
+    archiveGate.reset()
     audioConfig = nil
     pendingFrameIDs.removeAll()
     videoTracker = RTPSequenceTracker()
@@ -452,6 +471,9 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     videoSSRC = packet.ssrc
     stats.captured &+= 1
     lastAccessUnitAt = Date()
+    // A picture, which the session answering at setup is not: a camera that accepts the connection
+    // and sends nothing must go on reading as silent.
+    silence.notePicture(at: lastAccessUnitAt ?? Date())
     jitter.noteArrival(at: arrivedAt, isKeyframe: unit.isKeyframe)
 
     // 90 kHz is the RTP video clock rate these cameras advertise. Unwrapped rather than measured
@@ -492,23 +514,35 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     let id = frameID
     frameID &+= 1
     pendingFrameIDs[presentationTime.value] = id
+    if let frameCapture { pendingCaptures[presentationTime.value] = frameCapture }
+    pendingArrivals[presentationTime.value] = clock.now.seconds
     // Bounded: a picture that never decodes would otherwise leave its identity behind forever.
     if pendingFrameIDs.count > 240 {
       let stale = pendingFrameIDs.keys.sorted().prefix(120)
       for key in stale { pendingFrameIDs.removeValue(forKey: key) }
+    }
+    if pendingCaptures.count > 240 {
+      let stale = pendingCaptures.keys.sorted().prefix(120)
+      for key in stale { pendingCaptures.removeValue(forKey: key) }
+    }
+    if pendingArrivals.count > 240 {
+      let stale = pendingArrivals.keys.sorted().prefix(120)
+      for key in stale { pendingArrivals.removeValue(forKey: key) }
     }
 
     if !unit.parameterSets.isEmpty { videoParameterSets = unit.parameterSets }
     let archive = sinks.compressed
     let codec = videoCodec
     let sets = videoParameterSets
+    let admitted = archiveGate.admit(isKeyframe: unit.isKeyframe, isCorrupt: unit.isCorrupt)
     lock.unlock()
 
     // The archive is fed here, on arrival, rather than from the delay line: holding a picture back
     // is a courtesy to the operator's eyes, and the file wants the camera's own pacing. A picture
     // assembled across a packet loss is dropped from both — writing known-corrupt bytes would make
     // the recording undecodable at exactly the moment it mattered.
-    guard let archive, let codec, !unit.isCorrupt, !unit.data.isEmpty, !sets.isEmpty else { return }
+    // Nor is anything after it that predicts from what was lost; see `ArchiveReferenceGate`.
+    guard let archive, let codec, admitted, !unit.data.isEmpty, !sets.isEmpty else { return }
     archive(
       CompressedFrame(
         sourceID: sourceID,
@@ -627,6 +661,10 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     lastPresentationTime = presentationTime
 
     let id = pendingFrameIDs.removeValue(forKey: presentationTime.value) ?? frameID
+    let capture = pendingCaptures.removeValue(forKey: presentationTime.value)
+      ?? (lastCorrectedCapture > 0 ? lastCorrectedCapture : nil)
+    let arrived = pendingArrivals.removeValue(forKey: presentationTime.value)
+      .map { WallClock(seconds: $0) } ?? clock.now
     resolvedFormat = SourceFormat(
       width: CVPixelBufferGetWidth(pixelBuffer),
       height: CVPixelBufferGetHeight(pixelBuffer),
@@ -641,12 +679,10 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
         sourceID: sourceID,
         pixelBuffer: pixelBuffer,
         presentationTime: presentationTime,
-        wallClock: clock.now,
-        // The corrected capture time when the camera's sender reports have anchored one, so how
-        // old a picture is can be judged the same way on both transports.
-        captureWallClock: lastCorrectedCapture > 0
-          ? WallClock(seconds: lastCorrectedCapture)
-          : nil,
+        wallClock: arrived,
+        // This picture's own corrected capture time when the camera's sender reports have
+        // anchored one, so how old a picture is can be judged the same way on both transports.
+        captureWallClock: capture.map { WallClock(seconds: $0) },
         frameID: id,
         markerValue: nil
       ),
@@ -679,6 +715,15 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
       // rate, so that path still decodes and resamples — but only what reaches the programme, and
       // never what reaches disk.
       if let archive, let config {
+        // Through the audio stream's own sender reports, when the camera sends them, at the audio's
+        // sample rate. Without them the archive pins the audio clock to the picture instead.
+        lock.lock()
+        let capture = clockAudit.captureTimeOnLocalClock(
+          rtpTimestamp: rtpTimestamp,
+          ssrc: packet.ssrc,
+          clockRate: config.sampleRate
+        )
+        lock.unlock()
         archive(
           CompressedAudioFrame(
             sourceID: sourceID,
@@ -690,7 +735,8 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
               value: CMTimeValue(packet.timestamp) + step,
               timescale: CMTimeScale(config.sampleRate)
             ),
-            wallClock: clock.now
+            wallClock: clock.now,
+            captureWallClock: capture.map { WallClock(seconds: $0) }
           )
         )
       }

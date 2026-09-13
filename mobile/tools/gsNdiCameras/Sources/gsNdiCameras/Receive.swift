@@ -233,6 +233,20 @@ func runReceive(nameFragment: String, seconds: Double, lowest: Bool = false, tal
         + "(= \(String(format: "%.2f", 1 / median)) fps) "
         + "min=\(String(format: "%.5f", sorted.first!)) max=\(String(format: "%.5f", sorted.last!))"
     )
+    // The shape, not just the middle: a median that disagrees with the span-derived rate is a
+    // skewed distribution, and the quartiles say how skewed.
+    func percentile(_ fraction: Double) -> String {
+      String(format: "%.5f", sorted[min(sorted.count - 1, Int(Double(sorted.count) * fraction))])
+    }
+    let mean = gaps.reduce(0, +) / Double(gaps.count)
+    print(
+      "\(label): p10=\(percentile(0.1)) p25=\(percentile(0.25)) p75=\(percentile(0.75)) "
+        + "p90=\(percentile(0.9)) mean=\(String(format: "%.5f", mean))s"
+    )
+    if let path = ProcessInfo.processInfo.environment["GS_NDI_GAPS_OUT"] {
+      try? gaps.map { String(format: "%.6f", $0) }.joined(separator: "\n")
+        .write(toFile: path, atomically: true, encoding: .utf8)
+    }
   }
   describe("sender timestamp gap", timestampGaps)
   describe("sender timecode gap", timecodeGaps)

@@ -344,6 +344,30 @@ struct ControlChannelSourceTests {
     let command = ControlChannel.command(
       from: URL(string: "gsdirector://test/export-recording")!
     )
-    #expect(command == .exportRecording)
+    #expect(command == .exportRecording(reprocess: false))
+    #expect(
+      ControlChannel.command(from: URL(string: "gsdirector://test/export-recording?reprocess=1")!)
+        == .exportRecording(reprocess: true)
+    )
+  }
+}
+
+@Suite("Subnet scan command")
+struct SubnetScanCommandTests {
+  @Test("subnet-scan sets the subnet to sweep and its switch; with neither it is refused")
+  func parses() {
+    #expect(
+      ControlChannel.command(from: URL(string: "gsdirector://test/subnet-scan?subnet=10.10.6.0&on=1")!)
+        == .setSubnetScan(subnet: "10.10.6.0", on: true)
+    )
+    #expect(
+      ControlChannel.command(from: URL(string: "gsdirector://test/subnet-scan?on=0")!)
+        == .setSubnetScan(subnet: nil, on: false)
+    )
+    #expect(
+      ControlChannel.command(from: URL(string: "gsdirector://test/subnet-scan?subnet=10.10.6.0,10.10.7.0")!)
+        == .setSubnetScan(subnet: "10.10.6.0,10.10.7.0", on: nil)
+    )
+    #expect(ControlChannel.command(from: URL(string: "gsdirector://test/subnet-scan")!) == nil)
   }
 }

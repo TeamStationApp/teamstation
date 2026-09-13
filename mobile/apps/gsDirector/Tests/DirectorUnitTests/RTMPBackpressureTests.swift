@@ -228,3 +228,13 @@ private func waitUntil(seconds: Double, _ condition: () -> Bool) -> Bool {
   }
   return condition()
 }
+
+@Suite("RTMP disconnect reason")
+struct RTMPDisconnectReasonTests {
+  @Test("A server that hangs up on a live stream is reported without the handshake trace")
+  func liveHangUpDropsTrace() {
+    let trace = " t5/4 t6/5 t20/165 _result#1 t20/29 _result#2"
+    #expect(RTMPClient.serverClosedReason(live: true, handshakeTrace: trace) == "server closed the socket")
+    #expect(RTMPClient.serverClosedReason(live: false, handshakeTrace: trace) == "server closed the socket" + trace)
+  }
+}

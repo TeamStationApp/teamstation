@@ -33,6 +33,9 @@ final class RTSPClientConnection: @unchecked Sendable {
   private var videoPacketCount: UInt32 = 0
   private var videoOctetCount: UInt32 = 0
   private var audioFrameIndex = 0
+  private var audioPacketCount: UInt32 = 0
+  private var audioOctetCount: UInt32 = 0
+  private var lastAudioReportTime = Date.distantPast
   private var firstVideoPresentationTime: Double?
   private var videoTimestamps = RTPTimestampSequencer()
   private var lastReportTime = Date.distantPast
@@ -224,8 +227,12 @@ final class RTSPClientConnection: @unchecked Sendable {
       guard !payloads.isEmpty else { return }
 
       let bytes = payloads.reduce(0) { $0 + $1.count }
+      let wasDropping = sendQueue.isDropping
       switch sendQueue.decide(frameBytes: bytes, isKeyframe: frame.isKeyframe) {
       case .drop:
+        // Nothing more goes out until a keyframe, so ask for one now rather than leaving the client
+        // without pictures for the rest of the GOP.
+        if !wasDropping { requestKeyframe() }
         return
       case .flushThenSend:
         // NWConnection cannot cancel the stale send buffers; `decide` bumped `generation` so their
@@ -275,20 +282,28 @@ final class RTSPClientConnection: @unchecked Sendable {
       guard let payload = AACPacketizer().payload(for: frame) else { return }
 
       let writer = RTPPacketWriter(payloadType: SDPBuilder.audioPayloadType, ssrc: audioSSRC)
+      let timestamp = AACPacketizer.timestamp(forFrameIndex: audioFrameIndex)
       let packet = writer.packet(
         sequenceNumber: audioSequence,
-        timestamp: AACPacketizer.timestamp(forFrameIndex: audioFrameIndex),
+        timestamp: timestamp,
         marker: true,
         payload: payload
       )
       audioSequence &+= 1
       audioFrameIndex += 1
+      audioPacketCount &+= 1
+      audioOctetCount &+= UInt32(truncatingIfNeeded: payload.count)
 
       guard let framed = InterleavedFramer.frame(channel: setup.dataChannel, payload: packet) else {
         return
       }
       sendQueue.enqueueAudio(bytes: framed.count)
       sendMedia(framed)
+      sendAudioReportIfDue(
+        setup: setup,
+        rtpTimestamp: timestamp,
+        captureTime: frame.captureTime ?? frame.presentationTime
+      )
     }
   }
 
@@ -316,6 +331,29 @@ final class RTSPClientConnection: @unchecked Sendable {
   private lazy var captureToWallOffset: Double = {
     Date().timeIntervalSince1970 - CMClockGetTime(CMClockGetHostTimeClock()).seconds
   }()
+
+  /// The audio stream's own sender report, about once a second, on the audio control channel.
+  ///
+  /// Only the picture used to have one, so a receiver could tie the audio's RTP timeline to a wall
+  /// clock only through when its first packet arrived. Paired from the frame's capture time and put
+  /// on wall time through the same offset as the video's, so both streams share one mapping.
+  private func sendAudioReportIfDue(setup: RTSPResponder.Setup, rtpTimestamp: UInt32, captureTime: Double) {
+    let now = Date()
+    guard now.timeIntervalSince(lastAudioReportTime) >= 1 else { return }
+    lastAudioReportTime = now
+
+    let captureWall = Date(timeIntervalSince1970: captureTime + captureToWallOffset)
+    let writer = RTCPWriter(ssrc: audioSSRC, identity: identity())
+    let report = writer.compoundPacket(
+      ntpTime: RTCPWriter.ntpTime(from: captureWall),
+      rtpTimestamp: rtpTimestamp,
+      packetCount: audioPacketCount,
+      octetCount: audioOctetCount
+    )
+    if let framed = InterleavedFramer.frame(channel: setup.controlChannel, payload: report) {
+      write(framed)
+    }
+  }
 
   private func sendReportIfDue(setup: RTSPResponder.Setup, rtpTimestamp: UInt32, captureTime: Double) {
     let now = Date()

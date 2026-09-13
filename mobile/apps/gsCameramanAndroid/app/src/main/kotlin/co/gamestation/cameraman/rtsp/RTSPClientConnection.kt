@@ -66,6 +66,9 @@ internal class RTSPClientConnection(
     private var videoPacketCount = 0L
     private var videoOctetCount = 0L
     private var audioFrameIndex = 0
+    private var audioPacketCount = 0L
+    private var audioOctetCount = 0L
+    private var lastAudioReportMillis = 0L
     private var firstVideoPresentationTime: Double? = null
     private val videoTimestamps = RTPTimestampSequencer()
     private var lastReportMillis = 0L
@@ -325,8 +328,14 @@ internal class RTSPClientConnection(
             if (payloads.isEmpty()) return@submit
 
             val bytes = payloads.sumOf { it.size }
+            val wasDropping = sendQueue.isDropping
             when (sendQueue.decide(bytes, frame.isKeyframe)) {
-                StreamSendQueue.Decision.DROP -> return@submit
+                StreamSendQueue.Decision.DROP -> {
+                    // Nothing more goes out until a keyframe, so ask for one now rather than leaving
+                    // the client without pictures for the rest of the GOP.
+                    if (!wasDropping) requestKeyframe()
+                    return@submit
+                }
                 StreamSendQueue.Decision.FLUSH_THEN_SEND ->
                     // `decide` bumped `generation`, so completions from the abandoned batches will
                     // not debit this keyframe. Unlike Network.framework, a queue of not-yet-written
@@ -375,18 +384,22 @@ internal class RTSPClientConnection(
             val payload = AACPacketizer().payload(frame) ?: return@submit
 
             val writer = RTPPacketWriter(SDPBuilder.audioPayloadType, audioSSRC)
+            val timestamp = AACPacketizer.timestamp(audioFrameIndex)
             val packet = writer.packet(
                 sequenceNumber = audioSequence,
-                timestamp = AACPacketizer.timestamp(audioFrameIndex),
+                timestamp = timestamp,
                 marker = true,
                 payload = payload
             )
             audioSequence = (audioSequence + 1) and 0xFFFF
             audioFrameIndex += 1
+            audioPacketCount += 1
+            audioOctetCount += payload.size
 
             val framed = InterleavedFramer.frame(setup.dataChannel, packet) ?: return@submit
             sendQueue.enqueueAudio(framed.size)
             sendMedia(framed)
+            frame.captureTime?.let { sendAudioReportIfDue(setup, timestamp.toLong(), it) }
         }
     }
 
@@ -433,6 +446,34 @@ internal class RTSPClientConnection(
             rtpTimestamp = rtpTimestamp,
             packetCount = videoPacketCount,
             octetCount = videoOctetCount
+        )
+        InterleavedFramer.frame(setup.controlChannel, report)?.let { write(it) }
+    }
+
+    /**
+     * The audio stream's own sender report, about once a second, on the audio control channel.
+     *
+     * Without one a receiver has nothing tying the audio's RTP timeline to a wall clock, only to the
+     * moment its first packet happened to arrive, and nothing downstream can tell when the sample
+     * count behind those timestamps fell behind real time. Paired from the frame's capture time and
+     * put on wall time through the same offset as the video's, so both streams share one mapping.
+     */
+    private fun sendAudioReportIfDue(
+        setup: RTSPResponder.Setup,
+        rtpTimestamp: Long,
+        captureTime: Double
+    ) {
+        val now = System.currentTimeMillis()
+        if (now - lastAudioReportMillis < 1000) return
+        lastAudioReportMillis = now
+
+        val captureWallMillis = (captureTime * 1000).toLong() + captureToWallOffsetMillis
+        val writer = RTCPWriter(audioSSRC, identity())
+        val report = writer.compoundPacket(
+            ntpTime = RTCPWriter.ntpTime(captureWallMillis),
+            rtpTimestamp = rtpTimestamp,
+            packetCount = audioPacketCount,
+            octetCount = audioOctetCount
         )
         InterleavedFramer.frame(setup.controlChannel, report)?.let { write(it) }
     }

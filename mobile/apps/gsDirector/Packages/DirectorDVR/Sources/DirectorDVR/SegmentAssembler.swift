@@ -28,6 +28,58 @@ public struct SegmentAssembler: Sendable {
     public var files: [URL] = []
     /// Per-file durations matching `files`, used to skip `startOffset` without opening every asset.
     public var fileDurations: [TimeInterval] = []
+    /// Wall clock each staged file starts at, in the same order as `files` — and, for a playlist,
+    /// in the same order as the playlist's entries. This is what lets a caller place a segment
+    /// where it actually happened instead of where the running total put it.
+    public var startWalls: [WallClock] = []
+    /// Wall clock the assembly ends at: the last segment's end, not the sum of the durations.
+    /// `duration` is media time and is shorter than this by every gap the source left.
+    public var endWall: WallClock
+
+    /// The span this assembly covers in real time, gaps included.
+    ///
+    /// Distinct from `duration` on purpose. A caller asking "is the moment I want inside this?"
+    /// means wall clock; a caller asking "how much tape is there?" means `duration`. Answering one
+    /// with the other is what made a replay across a gap start too deep in the tape and stop early.
+    public var wallSpan: TimeInterval { max(0, endWall - startWall) }
+
+    public init(
+      url: URL,
+      startWall: WallClock,
+      duration: TimeInterval,
+      segmentCount: Int,
+      files: [URL] = [],
+      fileDurations: [TimeInterval] = [],
+      startWalls: [WallClock] = [],
+      endWall: WallClock
+    ) {
+      self.url = url
+      self.startWall = startWall
+      self.duration = duration
+      self.segmentCount = segmentCount
+      self.files = files
+      self.fileDurations = fileDurations
+      self.startWalls = startWalls
+      self.endWall = endWall
+    }
+
+    /// Where `wall` sits in the concatenated media timeline.
+    ///
+    /// The staged files play back to back with no gap between them, so a wall clock cannot simply
+    /// be subtracted from the start: every gap the source left makes real time run ahead of tape
+    /// time. This walks the segments and accumulates only tape. A moment inside a gap resolves to
+    /// the first frame after it, which is the nearest thing that actually exists.
+    public func mediaOffset(forWall wall: WallClock) -> TimeInterval {
+      guard !startWalls.isEmpty else { return max(0, wall - startWall) }
+      var played: TimeInterval = 0
+      for (index, segmentStart) in startWalls.enumerated() {
+        let length = index < fileDurations.count ? fileDurations[index] : 0
+        if wall < segmentStart { return played }
+        if wall < segmentStart + length { return played + (wall - segmentStart) }
+        played += length
+      }
+      return played
+    }
   }
 
   public enum AssemblyError: Error, CustomStringConvertible {
@@ -92,15 +144,16 @@ public struct SegmentAssembler: Sendable {
     let archive = archiveDirectory(for: sourceID)
     let files = resolved.media.map { archive.appendingPathComponent($0.filename) }
     guard !files.isEmpty else { throw AssemblyError.noSegments }
-    let wallDuration = max(0, to - from)
     let summed = resolved.media.reduce(0) { $0 + $1.duration }
     return Assembly(
       url: files[0],
       startWall: resolved.media[0].startWall,
-      duration: max(wallDuration, summed),
+      duration: summed,
       segmentCount: resolved.media.count,
       files: files,
-      fileDurations: resolved.media.map(\.duration)
+      fileDurations: resolved.media.map(\.duration),
+      startWalls: resolved.media.map(\.startWall),
+      endWall: resolved.media.last?.endWall ?? resolved.media[0].startWall
     )
   }
 
@@ -223,7 +276,9 @@ public struct SegmentAssembler: Sendable {
       duration: media.reduce(0) { $0 + $1.duration },
       segmentCount: media.count,
       files: files,
-      fileDurations: media.map(\.duration)
+      fileDurations: media.map(\.duration),
+      startWalls: media.map(\.startWall),
+      endWall: media.last?.endWall ?? media[0].startWall
     )
   }
 
@@ -244,7 +299,10 @@ public struct SegmentAssembler: Sendable {
       url: url,
       startWall: media[0].startWall,
       duration: media.reduce(0) { $0 + $1.duration },
-      segmentCount: media.count
+      segmentCount: media.count,
+      fileDurations: media.map(\.duration),
+      startWalls: media.map(\.startWall),
+      endWall: media.last?.endWall ?? media[0].startWall
     )
   }
 }

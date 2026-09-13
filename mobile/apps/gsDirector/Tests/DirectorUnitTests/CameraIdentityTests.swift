@@ -689,6 +689,12 @@ struct CameraIdentityTests {
     #expect(CameraAdvertisement.isUsableMediaHost("10.10.7.118"))
     #expect(!CameraAdvertisement.isUsableMediaHost("169.254.113.105"))
     #expect(!CameraAdvertisement.isUsableMediaHost("3278e89a-60d9-411d-a93e-5960cb08de79"))
+    // A phone's cellular side is not on the field's network, whatever it advertises.
+    #expect(!CameraAdvertisement.isUsableMediaHost("48.146.19.16"))
+    #expect(!CameraAdvertisement.isUsableMediaHost("100.64.12.7"))
+    #expect(CameraAdvertisement.isUsableMediaHost("172.20.1.4"))
+    #expect(!CameraAdvertisement.isUsableMediaHost("172.32.1.4"))
+    #expect(CameraAdvertisement.isUsableMediaHost("192.168.1.30"))
     #expect(CameraAdvertisement.isUUIDHostname("3278e89a-60d9-411d-a93e-5960cb08de79.local"))
   }
 
@@ -864,6 +870,12 @@ struct CameraIdentityTests {
     ]
     #expect(CameraAdvertisement.ipv4Host(fromTXT: fields) == "10.10.8.201")
     #expect(CameraAdvertisement.resolvedHost(txtFields: fields) == "10.10.8.201")
+    // The same camera advertising its cellular address while its Wi-Fi drops keeps no host from TXT,
+    // so the browser holds on to the LAN address it already had rather than moving the tile.
+    var cellular = fields
+    cellular["ip"] = "48.146.19.16"
+    #expect(CameraAdvertisement.ipv4Host(fromTXT: cellular) == nil)
+    #expect(CameraAdvertisement.resolvedHost(txtFields: cellular) == nil)
     #expect(
       CameraAdvertisement.resolvedHost(txtFields: fields, pathIPv4: "10.10.8.199") == "10.10.8.199"
     )

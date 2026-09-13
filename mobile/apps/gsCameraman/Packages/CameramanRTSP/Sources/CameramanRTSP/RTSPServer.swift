@@ -278,10 +278,25 @@ public final class RTSPServer: @unchecked Sendable {
       return 4
     }
 
+    // Cellular never: it is not the field's network, and for the moments Wi-Fi drops it was the
+    // only address left, so Director moved a live tile to 48.146.19.16 and lost the camera for 20 s.
+    // Some carriers hand out 10.x on cellular, so the interface is excluded as well as the range.
     return addresses
-      .filter { _, ip in ip != "127.0.0.1" && !ip.hasPrefix("169.254.") }
+      .filter { interface, ip in !interface.hasPrefix("pdp_ip") && isPrivateIPv4(ip) }
       .min { rank($0.interface) < rank($1.interface) }?
       .ip
+  }
+
+  /// 10/8, 172.16/12 or 192.168/16: the addresses a Director on the same network can dial.
+  public static func isPrivateIPv4(_ ip: String) -> Bool {
+    let octets = ip.split(separator: ".", omittingEmptySubsequences: false).compactMap { UInt8($0) }
+    guard octets.count == 4 else { return false }
+    switch (octets[0], octets[1]) {
+    case (10, _): return true
+    case (172, 16...31): return true
+    case (192, 168): return true
+    default: return false
+    }
   }
 
   private func bind(port: UInt16, requested: UInt16, path: String, advertise: Bool) -> Bool {

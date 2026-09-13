@@ -169,11 +169,12 @@ public final class NDIDiscovery: SourceDiscovery, @unchecked Sendable {
   /// resolve. Measured on a Hollyland Cosmo C2 back from a reboot: browsable service names with no
   /// SRV or A record behind them, invisible to every NDI receiver on the network, and found by
   /// name the moment its address was handed over this way.
-  public func setSweepDemand(isBusy: Bool, anyEnabledCameraMissing: Bool) {
+  public func setSweepDemand(isBusy: Bool, anyEnabledCameraMissing: Bool, isBrowsing: Bool) {
     lock.lock()
     let sweeper = self.sweeper
     lock.unlock()
     sweeper?.setDemand(isBusy: isBusy, anyEnabledCameraMissing: anyEnabledCameraMissing)
+    sweeper?.setBrowsing(isBrowsing)
   }
 
   /// Diagnostic for the fallback sweep, appended to this discovery's own status.

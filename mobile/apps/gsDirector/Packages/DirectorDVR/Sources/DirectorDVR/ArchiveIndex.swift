@@ -15,6 +15,16 @@ public struct SegmentRecord: Sendable, Equatable, Codable {
   public var duration: TimeInterval
   public var byteCount: Int64
   public var firstFrameID: UInt64?
+  /// Which transport delivered this segment, so a misplaced angle can be attributed to one after
+  /// the fact. Nil on rows written before the column existed.
+  public var transport: String?
+  /// The clock correction applied to this segment's capture times, in seconds. Recorded so an
+  /// export can be re-derived if the offset later proves wrong, rather than being unrecoverable.
+  public var appliedClockOffset: Double?
+  /// Frames per second this segment was actually written at, which is not always the camera's
+  /// nominal rate: an encoder under pressure archives at half rate rather than dropping frames at
+  /// random. A verifier comparing against a flat tolerance needs this to know what "one frame" is.
+  public var archiveRate: Double?
 
   public var endWall: WallClock { startWall + duration }
 }
@@ -147,6 +157,43 @@ public final class ArchiveIndex: @unchecked Sendable {
         first_frame_id INTEGER
       );
       """)
+    // Provenance, added later: how a segment was made, so a wrong placement can be attributed and
+    // an export re-derived. Existing archives get them as NULL, which reads as "not recorded".
+    try? store.execute("ALTER TABLE segments ADD COLUMN transport TEXT;")
+    try? store.execute("ALTER TABLE segments ADD COLUMN applied_clock_offset REAL;")
+    try? store.execute("ALTER TABLE segments ADD COLUMN archive_rate REAL;")
+    // What each source was *meant* to do this recording. A camera past the archive encode budget
+    // previews and cuts to programme but writes no segments at all, which at export is
+    // indistinguishable from a camera nobody selected. Recording the intent is what lets an export
+    // say "not recorded, by budget" instead of quietly leaving an angle out.
+    try store.execute("""
+      CREATE TABLE IF NOT EXISTS recording_sources (
+        recording_id INTEGER NOT NULL,
+        source_id TEXT NOT NULL,
+        transport TEXT,
+        archiving INTEGER NOT NULL DEFAULT 1,
+        reason TEXT,
+        PRIMARY KEY (recording_id, source_id)
+      );
+      """)
+    // Where the programme was in real time, sampled as it was written.
+    //
+    // A camera records the wall clock of every segment; the programme had exactly two facts for a
+    // whole take, its start and its end, which is why its drift stayed invisible until somebody
+    // compared it against a camera frame by frame. One row every few seconds makes the programme as
+    // re-timeable as the cameras, and turns "the programme holds wall clock" into something a test
+    // can assert rather than infer.
+    try store.execute("""
+      CREATE TABLE IF NOT EXISTS program_anchors (
+        recording_id INTEGER NOT NULL,
+        part INTEGER NOT NULL,
+        program_seconds REAL NOT NULL,
+        wall REAL NOT NULL
+      );
+      """)
+    try store.execute(
+      "CREATE INDEX IF NOT EXISTS program_anchors_lookup ON program_anchors(recording_id, part, program_seconds);"
+    )
     try store.execute(
       "CREATE UNIQUE INDEX IF NOT EXISTS segments_unique ON segments(recording_id, source_id, sequence);"
     )
@@ -292,6 +339,60 @@ public final class ArchiveIndex: @unchecked Sendable {
     }
   }
 
+  /// Drops one recording's rolling camera archive — its segments and scrubbing proxies — and
+  /// leaves the recording itself listed.
+  ///
+  /// Retention reclaims the archive only. The programme master and anything already prepared for
+  /// export are the operator's deliverables, so they go when the operator deletes the recording
+  /// and not before; a sweep that quietly took the master would be the same mistake as the
+  /// clock-based window, just more expensive.
+  @discardableResult
+  public func deleteArchive(
+    forRecording id: Int64,
+    roots: RecordingFileRoots = .standard,
+    fileManager: FileManager = .default
+  ) throws -> (segments: Int, stills: Int, bytes: Int64) {
+    let segments = try allSegments(forRecording: id)
+    guard !segments.isEmpty else { return (0, 0, 0) }
+    let from = segments.map(\.startWall).min() ?? segments[0].startWall
+    let to = segments.map(\.endWall).max() ?? from
+
+    var files: [URL] = []
+    var bytes: Int64 = 0
+    for segment in segments {
+      files.append(
+        roots.archiveDirectory(for: segment.sourceID).appendingPathComponent(segment.filename)
+      )
+      bytes += segment.byteCount
+    }
+
+    var stills = 0
+    for sourceID in Set(segments.map(\.sourceID)) {
+      let existing = try proxyStills(for: sourceID, from: from, to: to)
+      stills += existing.count
+      let chunks = Set(existing.map(\.chunk))
+      try store.execute(
+        "DELETE FROM proxy_stills WHERE source_id = ? AND wall >= ? AND wall <= ?;",
+        [ .text(sourceID.rawValue), .real(from.seconds), .real(to.seconds) ]
+      )
+      for chunk in chunks {
+        let remaining = try store.query(
+          "SELECT COUNT(*) FROM proxy_stills WHERE source_id = ? AND chunk = ?;",
+          [ .text(sourceID.rawValue), .text(chunk) ]
+        ).first?.int(0) ?? 0
+        if remaining == 0 {
+          files.append(roots.proxyDirectory(for: sourceID).appendingPathComponent(chunk))
+        }
+      }
+    }
+
+    // Files before rows: a crash mid-sweep leaves rows describing missing files, which
+    // `reconcile` clears at launch, rather than files nothing knows about, which leak forever.
+    for url in files { try? fileManager.removeItem(at: url) }
+    try store.execute("DELETE FROM segments WHERE recording_id = ?;", [ .integer(id) ])
+    return (segments.count, stills, bytes)
+  }
+
   public func sourceIDs(in recordingID: Int64) throws -> [SourceID] {
     try store.query(
       """
@@ -330,14 +431,18 @@ public final class ArchiveIndex: @unchecked Sendable {
     startWall: WallClock,
     duration: TimeInterval,
     byteCount: Int64,
-    firstFrameID: UInt64?
+    firstFrameID: UInt64?,
+    transport: String? = nil,
+    appliedClockOffset: Double? = nil,
+    archiveRate: Double? = nil
   ) throws -> Int64 {
     try store.execute(
       """
       INSERT OR REPLACE INTO segments
         (recording_id, source_id, sequence, filename, is_initialization,
-         start_wall, duration, byte_count, first_frame_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+         start_wall, duration, byte_count, first_frame_id,
+         transport, applied_clock_offset, archive_rate)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
       """,
       [
         .integer(recordingID),
@@ -348,9 +453,143 @@ public final class ArchiveIndex: @unchecked Sendable {
         .real(startWall.seconds),
         .real(duration),
         .integer(byteCount),
-        firstFrameID.map { .integer(Int64($0)) } ?? .null
+        firstFrameID.map { .integer(Int64($0)) } ?? .null,
+        transport.map { .text($0) } ?? .null,
+        appliedClockOffset.map { .real($0) } ?? .null,
+        archiveRate.map { .real($0) } ?? .null
       ]
     )
+  }
+
+  /// Records what a source was meant to do for one recording.
+  ///
+  /// `archiving: false` with a reason is the case that matters: the source was live and on air but
+  /// nothing was written for it, and an export that simply omitted the angle would look identical
+  /// to one where the operator never chose it.
+  @discardableResult
+  public func noteSource(
+    recordingID: Int64,
+    sourceID: SourceID,
+    transport: String?,
+    archiving: Bool,
+    reason: String? = nil
+  ) throws -> Int64 {
+    try store.execute(
+      """
+      INSERT OR REPLACE INTO recording_sources
+        (recording_id, source_id, transport, archiving, reason)
+      VALUES (?, ?, ?, ?, ?);
+      """,
+      [
+        .integer(recordingID),
+        .text(sourceID.rawValue),
+        transport.map { .text($0) } ?? .null,
+        .integer(archiving ? 1 : 0),
+        reason.map { .text($0) } ?? .null
+      ]
+    )
+  }
+
+  public struct ProgramAnchor: Sendable, Equatable {
+    /// Which output file, 1-based. A writer that died mid-take leaves a continuation part.
+    public var part: Int
+    /// Seconds from the start of that part's own timeline.
+    public var programSeconds: Double
+    /// What time it was when that moment was written.
+    public var wall: WallClock
+
+    /// Wall clock this part's timeline begins at, which is what places it in an export.
+    public var partStartWall: WallClock { wall - programSeconds }
+  }
+
+  @discardableResult
+  public func insertProgramAnchor(
+    recordingID: Int64,
+    part: Int,
+    programSeconds: Double,
+    wall: WallClock
+  ) throws -> Int64 {
+    try store.execute(
+      "INSERT INTO program_anchors (recording_id, part, program_seconds, wall) VALUES (?, ?, ?, ?);",
+      [
+        .integer(recordingID),
+        .integer(Int64(part)),
+        .real(programSeconds),
+        .real(wall.seconds)
+      ]
+    )
+  }
+
+  public func programAnchors(recordingID: Int64) throws -> [ProgramAnchor] {
+    try store.query(
+      """
+      SELECT part, program_seconds, wall FROM program_anchors
+      WHERE recording_id = ? ORDER BY part ASC, program_seconds ASC;
+      """,
+      [ .integer(recordingID) ]
+    ).map {
+      ProgramAnchor(
+        part: Int($0.int(0)),
+        programSeconds: $0.double(1),
+        wall: WallClock(seconds: $0.double(2))
+      )
+    }
+  }
+
+  /// The wall clock each programme part's own timeline starts at, earliest anchor per part.
+  /// Where each part's timeline begins on the wall clock: where its earliest anchors agree.
+  ///
+  /// Every anchor restates the part's start, and they disagree by however wrong the capture time
+  /// behind each one was. Those errors run one way: a picture whose capture time under-reports its
+  /// age -- a phone's, before its own capture time was carried through the delay line -- anchors
+  /// late, and nothing anchors early. rec-351's first anchor was such a phone picture and alone put
+  /// the first 41 minutes of its programme 0.47 s behind the cameras; a plain median fared no
+  /// better, because most of its anchors were phone pictures too. So a part starts at the median of
+  /// the anchors within a quarter of a second of its earliest tenth -- on a take whose anchors are
+  /// all honest, that is nearly all of them.
+  public func programPartStarts(recordingID: Int64) throws -> [Int: WallClock] {
+    var starts: [Int: [Double]] = [:]
+    for anchor in try programAnchors(recordingID: recordingID) {
+      starts[anchor.part, default: []].append(anchor.partStartWall.seconds)
+    }
+    return starts.mapValues { values in
+      let sorted = values.sorted()
+      let floor = sorted[sorted.count / 10]
+      let agreeing = sorted.filter { $0 <= floor + Self.anchorAgreementSeconds }
+      let middle = agreeing.count / 2
+      let median = agreeing.count % 2 == 1
+        ? agreeing[middle]
+        : (agreeing[middle - 1] + agreeing[middle]) / 2
+      return WallClock(seconds: median)
+    }
+  }
+
+  /// How far apart anchors may be and still count as agreeing about where their part starts.
+  static let anchorAgreementSeconds: Double = 0.25
+
+  public struct RecordingSource: Sendable, Equatable {
+    public var sourceID: SourceID
+    public var transport: String?
+    public var archiving: Bool
+    public var reason: String?
+  }
+
+  /// Every source this recording knew about, whether or not it wrote anything.
+  public func sources(forRecording recordingID: Int64) throws -> [RecordingSource] {
+    try store.query(
+      """
+      SELECT source_id, transport, archiving, reason FROM recording_sources
+      WHERE recording_id = ? ORDER BY source_id ASC;
+      """,
+      [ .integer(recordingID) ]
+    ).map { row in
+      RecordingSource(
+        sourceID: SourceID(row.string(0)),
+        transport: row.values[1] == .null ? nil : row.string(1),
+        archiving: row.int(2) == 1,
+        reason: row.values[3] == .null ? nil : row.string(3)
+      )
+    }
   }
 
   public func segments(
@@ -628,14 +867,35 @@ public final class ArchiveIndex: @unchecked Sendable {
 
   /// Returns the segments and proxy rows that fall entirely before `cutoff`, oldest first, so
   /// the caller can delete files before dropping the rows.
-  public func expiredSegments(before cutoff: WallClock) throws -> [SegmentRecord] {
+  /// The recording whose media starts earliest, and the wall-clock window it covers.
+  ///
+  /// Retention drops whole recordings rather than the leading segments of one, so a take that
+  /// survives a sweep is still a take: an operator exporting a game gets all of it or none of it,
+  /// never a game missing its first twenty minutes.
+  public func oldestRecordingWithSegments() throws -> (id: Int64, start: WallClock, end: WallClock)? {
+    let rows = try store.query(
+      """
+      SELECT recording_id, MIN(start_wall), MAX(start_wall + duration) FROM segments
+      WHERE is_initialization = 0
+      GROUP BY recording_id
+      ORDER BY MIN(start_wall) ASC
+      LIMIT 1;
+      """
+    )
+    guard let row = rows.first else { return nil }
+    return (row.int(0), WallClock(seconds: row.double(1)), WallClock(seconds: row.double(2)))
+  }
+
+  /// Every segment belonging to one recording, initialisation segments included, so a caller
+  /// deleting the recording can unlink all of its files.
+  public func allSegments(forRecording id: Int64) throws -> [SegmentRecord] {
     try store.query(
       """
       SELECT \(Self.segmentColumns) FROM segments
-      WHERE is_initialization = 0 AND start_wall + duration < ?
+      WHERE recording_id = ?
       ORDER BY start_wall ASC;
       """,
-      [ .real(cutoff.seconds) ]
+      [ .integer(id) ]
     ).map(Self.segment(from:))
   }
 
@@ -677,7 +937,8 @@ public final class ArchiveIndex: @unchecked Sendable {
 
   private static let segmentColumns = """
     id, recording_id, source_id, sequence, filename, is_initialization,
-    start_wall, duration, byte_count, first_frame_id
+    start_wall, duration, byte_count, first_frame_id,
+    transport, applied_clock_offset, archive_rate
     """
 
   private static func segment(from row: SQLiteRow) -> SegmentRecord {
@@ -691,7 +952,10 @@ public final class ArchiveIndex: @unchecked Sendable {
       startWall: WallClock(seconds: row.double(6)),
       duration: row.double(7),
       byteCount: row.int(8),
-      firstFrameID: row.values[9] == .null ? nil : UInt64(row.int(9))
+      firstFrameID: row.values[9] == .null ? nil : UInt64(row.int(9)),
+      transport: row.values[10] == .null ? nil : row.string(10),
+      appliedClockOffset: row.values[11] == .null ? nil : row.double(11),
+      archiveRate: row.values[12] == .null ? nil : row.double(12)
     )
   }
 

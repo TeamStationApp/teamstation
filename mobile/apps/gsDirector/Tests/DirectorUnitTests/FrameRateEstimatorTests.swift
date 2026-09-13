@@ -54,6 +54,79 @@ struct FrameRateEstimatorTests {
     #expect(estimator.frameRate == 60)
   }
 
+  /// Recorded from a Hollyland Cosmo C2 over NDI: the sender paces an exact 60.00 fps by its own
+  /// span, but stamps frames in pairs, ~5 ms then ~30 ms apart. The median interval sits in the
+  /// short cluster and read as 80.78 fps on the Mac and 70.41 on the iPad.
+  @Test("A sender that stamps frames in pairs reads at its real rate, not its median interval")
+  func pairedStampsReadAtSpanRate() {
+    let trace: [Double] = [
+      0.007555, 0.030308, 0.005428, 0.022488, 0.007765, 0.030063, 0.005194, 0.030788,
+      0.004782, 0.021975, 0.007409, 0.030459, 0.005026, 0.020159, 0.012884, 0.023216,
+      0.007197, 0.030703, 0.005019, 0.023841, 0.008047, 0.030499, 0.005442, 0.021837
+    ]
+    var estimator = FrameRateEstimator()
+    for _ in 0 ..< 10 {
+      for interval in trace { estimator.note(intervalSeconds: interval) }
+    }
+    #expect(estimator.frameRate == 60)
+  }
+
+  /// Scattered stamps around an exact rate: frames displaced in pairs by about ±6 ms, the way the
+  /// Cosmo stamps them, so no single window of 120 intervals can say whether it is 59.94 or 60.
+  private func scatteredIntervals(rate: Double, count: Int) -> [Double] {
+    var state: UInt64 = 0x2545_F491_4F6C_DD1D
+    func noise() -> Double {
+      state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+      return Double(state >> 11) / Double(1 << 53) * 2 - 1
+    }
+    let stamps = (0 ... count).map { index in
+      // ±6 ms in pairs plus ±2 ms of noise: every interval stays positive, as the camera's do.
+      Double(index) / rate + (index % 2 == 0 ? -0.006 : 0.006) + noise() * 0.002
+    }
+    return zip(stamps.dropFirst(), stamps).map { $0 - $1 }
+  }
+
+  @Test("Scattered stamps settle on 60 rather than flipping to its broadcast twin", arguments: [60.0, 59.94])
+  func scatteredStampsResolveTheFractionalTwin(rate: Double) {
+    var estimator = FrameRateEstimator()
+    var readings: [Double] = []
+    for (index, interval) in scatteredIntervals(rate: rate, count: 7_200).enumerated() {
+      estimator.note(intervalSeconds: interval)
+      if index >= 3_600, let reading = estimator.frameRate { readings.append(reading) }
+    }
+    #expect(!readings.isEmpty)
+    #expect(readings.allSatisfy { $0 == rate }, "read \(Set(readings)) for a \(rate) fps sender")
+  }
+
+  /// The Cosmo C2 after a power cycle stamped with plain jitter rather than pairs. That passed the
+  /// old 25% scatter test as "clean", took the median, and read 59.94 or 60 at random.
+  @Test("Jittered stamps read at their real rate, not whichever twin the median lands on", arguments: [60.0, 59.94])
+  func jitteredStampsResolveTheFractionalTwin(rate: Double) {
+    var state: UInt64 = 0x9E37_79B9_7F4A_7C15
+    func noise() -> Double {
+      state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+      return Double(state >> 11) / Double(1 << 53) * 2 - 1
+    }
+    var estimator = FrameRateEstimator()
+    var readings: [Double] = []
+    var previous: Double?
+    for index in 0 ... 7_200 {
+      let stamp = Double(index) / rate + noise() * 0.001
+      if let previous { estimator.note(intervalSeconds: stamp - previous) }
+      previous = stamp
+      if index > 3_600, let reading = estimator.frameRate { readings.append(reading) }
+    }
+    #expect(!readings.isEmpty)
+    #expect(readings.allSatisfy { $0 == rate }, "read \(Set(readings)) for a \(rate) fps sender")
+  }
+
+  @Test("RTP ticks at 59.94 alternate 1501 and 1502 and still take the median")
+  func broadcastTicksStayOnTheMedian() {
+    var estimator = FrameRateEstimator()
+    feed(&estimator, rate: 59.94, count: 400)
+    #expect(estimator.frameRate == 59.94)
+  }
+
   @Test("Packets of one picture sharing a timestamp are not counted as frames")
   func ignoresRepeatedTimestamps() {
     var estimator = FrameRateEstimator()

@@ -104,6 +104,10 @@ public final class SubnetScanner: @unchecked Sendable {
   private let ports: [Int]
   private let timeout: TimeInterval
   private let concurrency: Int
+  /// Addresses probed together once the known ones are out of the way.
+  public static let pacedBatchSize = 5
+  /// Left between those batches. Five every 200 ms is a /24 in about ten seconds.
+  public static let pacedGapMilliseconds = 200
 
   public convenience init(port: Int = 554, timeout: TimeInterval = 0.3, concurrency: Int = 32) {
     self.init(ports: [port], timeout: timeout, concurrency: concurrency)
@@ -122,24 +126,62 @@ public final class SubnetScanner: @unchecked Sendable {
     self.concurrency = concurrency
   }
 
-  public func scan() async -> Result {
-    guard let subnet = Self.localSubnet() else {
+  /// Addresses worth trying before the rest of the segment, newest first.
+  ///
+  /// A camera that dropped is nearly always still on the address it was last seen at, so probing
+  /// that one first turns the common case into a single packet instead of a segment-wide sweep.
+  public func scan(priority: [String] = []) async -> Result {
+    let subnets = Self.scanSubnets()
+    guard !subnets.isEmpty else {
       return Result(openHosts: [], probedCount: 0, subnet: "", diagnostic: "no IPv4 interface")
     }
-    guard let hosts = subnet.hostAddresses() else {
-      return Result(
-        openHosts: [],
-        probedCount: 0,
-        subnet: subnet.cidrDescription,
-        diagnostic: "refusing to scan \(subnet.cidrDescription): wider than /\(IPv4Subnet.widestAllowedPrefix)"
-      )
+    let described = subnets.map(\.cidrDescription).joined(separator: ",")
+    var hosts: [String] = []
+    for subnet in subnets {
+      guard let addresses = subnet.hostAddresses() else {
+        return Result(
+          openHosts: [],
+          probedCount: 0,
+          subnet: described,
+          diagnostic: "refusing to scan \(subnet.cidrDescription): wider than /\(IPv4Subnet.widestAllowedPrefix)"
+        )
+      }
+      hosts += addresses.filter { !hosts.contains($0) }
     }
 
-    let open = await probe(hosts: hosts)
+    // Known addresses first and without pacing, then everything else gently.
+    let known = priority.filter { IPv4Subnet.parse($0) != nil }
+    let seen = Set(known)
+    let rest = hosts.filter { !seen.contains($0) }
+    var open = known.isEmpty ? [:] : await probe(hosts: known, paced: false)
+    for (host, ports) in await probe(hosts: rest, paced: true) { open[host] = ports }
     return Result(
       openHosts: open.keys.sorted { (IPv4Subnet.parse($0) ?? 0) < (IPv4Subnet.parse($1) ?? 0) },
       probedCount: hosts.count,
-      subnet: subnet.cidrDescription,
+      subnet: described,
+      diagnostic: nil,
+      portsByHost: open
+    )
+  }
+
+  /// Only the given addresses, unpaced, and nothing else on the segment.
+  ///
+  /// For launch: the cameras are almost always where they were last time, and asking one or two
+  /// known hosts directly is a handful of unicast packets where a sweep is an ARP broadcast per
+  /// empty address. Addresses outside the local subnet are dropped rather than probed, since a
+  /// lease from another network is not a camera on this one.
+  public func probeKnown(_ addresses: [String]) async -> Result {
+    let subnets = Self.scanSubnets()
+    guard !subnets.isEmpty else {
+      return Result(openHosts: [], probedCount: 0, subnet: "", diagnostic: "no IPv4 interface")
+    }
+    let local = Set(subnets.flatMap { $0.hostAddresses() ?? [] })
+    let known = addresses.filter { local.contains($0) }
+    let open = known.isEmpty ? [:] : await probe(hosts: known, paced: false)
+    return Result(
+      openHosts: open.keys.sorted { (IPv4Subnet.parse($0) ?? 0) < (IPv4Subnet.parse($1) ?? 0) },
+      probedCount: known.count,
+      subnet: subnets.map(\.cidrDescription).joined(separator: ","),
       diagnostic: nil,
       portsByHost: open
     )
@@ -147,13 +189,21 @@ public final class SubnetScanner: @unchecked Sendable {
 
   /// Probes in bounded batches. Opening a thousand sockets at once exhausts the process's file
   /// descriptors, and the failures look exactly like closed ports.
-  private func probe(hosts: [String]) async -> [String: Set<Int>] {
+  private func probe(hosts: [String], paced: Bool) async -> [String: Set<Int>] {
     var open: [String: Set<Int>] = [:]
     var index = 0
+    let size = paced ? Self.pacedBatchSize : concurrency
 
     while index < hosts.count {
-      let batch = hosts[index ..< min(index + concurrency, hosts.count)]
+      let batch = hosts[index ..< min(index + size, hosts.count)]
       index += batch.count
+      // Spread out rather than fired at once. Every probe of an empty address is an ARP broadcast
+      // that every device on the segment must process, cameras included, and a segment-wide sweep
+      // delivered as fast as the sockets allow was measured stalling a camera's delivery for over
+      // a second. Paced, a /24 takes about ten seconds and nothing else notices.
+      if paced, index > batch.count {
+        try? await Task.sleep(for: .milliseconds(Self.pacedGapMilliseconds))
+      }
 
       let found = await withTaskGroup(of: (String, Set<Int>).self) { group in
         for host in batch {
@@ -228,6 +278,24 @@ public final class SubnetScanner: @unchecked Sendable {
     label: "co.gamestation.director.rtsp.scan",
     attributes: .concurrent
   )
+
+  /// /24s to sweep instead of the local one, set from Settings. Empty sweeps this device's own subnet.
+  private static let overrideSubnets = OSAllocatedUnfairLock<[IPv4Subnet]>(initialState: [])
+
+  /// Sweeps the /24s whose network addresses these are (`10.10.6.0`) instead of the local subnet, or
+  /// the local subnet again when empty. Every scanner reads them at the start of each sweep.
+  public static func setOverrideSubnets(networkAddresses: [String]) {
+    let subnets = networkAddresses.compactMap { IPv4Subnet(address: $0, netmask: "255.255.255.0") }
+    overrideSubnets.withLock { $0 = subnets }
+  }
+
+  /// What a sweep covers: the override subnets when any are set, otherwise the local subnet. The
+  /// override replaces the local subnet rather than adding to it.
+  public static func scanSubnets() -> [IPv4Subnet] {
+    let override = overrideSubnets.withLock { $0 }
+    if !override.isEmpty { return override }
+    return localSubnet().map { [$0] } ?? []
+  }
 
   /// The subnet to scan: the Wi-Fi interface's on a device, where it is `en0`. The simulator
   /// inherits the Mac's interfaces instead, which is what lets a simulator run reach the real
