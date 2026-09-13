@@ -46,6 +46,17 @@ public enum DebugHUDLines {
       .init(id: "hud-program-bytes", text: "progbytes=\(programBytes(snapshot))")
     ])
 
+    // Whether this take was picked up rather than started, how long the app was away when it was,
+    // whether the stream came back with it, and which camera is on air. A flow asserting that a
+    // resume worked has to be able to read all four without opening the database.
+    rows.append([
+      .init(id: "hud-resumed", text: "resumed=\(snapshot.dvr.resumeCount)"),
+      .init(id: "hud-downtime", text: "down=\(Int(snapshot.dvr.lastDowntimeSeconds.rounded()))"),
+      .init(id: "hud-streaming", text: "stream=\(snapshot.isStreaming ? "1" : "0")"),
+      .init(id: "hud-resumed-stream", text: "resumestream=\(snapshot.dvr.resumedStream ? "1" : "0")"),
+      .init(id: "hud-program-source", text: "prog=\(snapshot.programSource.map(String.init) ?? "-")")
+    ])
+
     rows.append([
       .init(id: "hud-encode-sessions", text: "enc=\(snapshot.sessions.encodeSessions)"),
       .init(id: "hud-decode-sessions", text: "dec=\(snapshot.sessions.decodeSessions)"),
