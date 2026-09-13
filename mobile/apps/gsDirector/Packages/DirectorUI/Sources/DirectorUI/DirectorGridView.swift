@@ -10,6 +10,9 @@ public struct DirectorGridView: View {
   @State private var draggingSource: Int?
   @State private var dragLocation: CGPoint = .zero
   @State private var dragGrabOffset = CGSize.zero
+  @State private var draggingProgram = false
+  @State private var programDragLocation: CGPoint = .zero
+  @State private var programGrabOffset = CGSize.zero
   @State private var slideToStop: SlideToStopTarget?
   @State private var toolbarHeight: CGFloat = 36
 
@@ -251,7 +254,7 @@ public struct DirectorGridView: View {
     .accessibilityValue(accessibilityValue)
   }
 
-  /// A 3×3 grid whose top-left four cells are merged into Output:
+  /// A 3×3 grid with four cells merged into Output, top-left until the operator moves it:
   ///
   /// ```
   /// ┌─────────────┬───────┐
@@ -263,18 +266,18 @@ public struct DirectorGridView: View {
   /// └───────┴─────┴───────┘
   /// ```
   ///
-  /// Output stays in the large cell. Long-pressing a source tile and dragging it over another
-  /// swaps them; the order is by source number, not by which camera is on that source.
+  /// Long-pressing Output and dragging it parks it in the corner of the quadrant it is dropped in,
+  /// at the same size; the source tiles take the cells it leaves, in reading order. Long-pressing a
+  /// source tile and dragging it over another swaps them; the order is by source number, not by
+  /// which camera is on that source.
   private var grid: some View {
     GeometryReader { proxy in
-      let geometry = SourceGridGeometry(size: proxy.size)
+      let geometry = SourceGridGeometry(
+        size: proxy.size,
+        programCorner: environment.sourceLayout.programCorner
+      )
       ZStack(alignment: .topLeading) {
-        ProgramTileView(
-          renderer: environment.router.programRenderer,
-          snapshot: environment.snapshot
-        )
-        .frame(width: geometry.programFrame.width, height: geometry.programFrame.height)
-        .position(x: geometry.programFrame.midX, y: geometry.programFrame.midY)
+        programTile(geometry: geometry)
 
         ForEach(0 ..< SourceIndex.count, id: \.self) { sourceIndex in
           sourceTile(sourceIndex, geometry: geometry)
@@ -288,6 +291,11 @@ public struct DirectorGridView: View {
           .allowsHitTesting(false)
           .accessibilityIdentifier("source-layout")
           .accessibilityValue("order=\(environment.sourceLayout.displayOrder)")
+        Color.clear
+          .frame(width: 1, height: 1)
+          .allowsHitTesting(false)
+          .accessibilityIdentifier("output-corner")
+          .accessibilityValue("corner=\(environment.sourceLayout.programCorner.rawValue)")
       }
       .onAppear { environment.smallTileWidth = Double(geometry.tileWidth) }
       .onChange(of: geometry.tileWidth) { _, value in environment.smallTileWidth = Double(value) }
@@ -295,6 +303,86 @@ public struct DirectorGridView: View {
         guard draggingSource != nil else { return }
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
       }
+      .onChange(of: environment.sourceLayout.programCorner) { _, _ in
+        guard draggingProgram else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+      }
+    }
+  }
+
+  private func programTile(geometry: SourceGridGeometry) -> some View {
+    let frame = geometry.programFrame
+    let center: CGPoint = {
+      if draggingProgram {
+        return CGPoint(
+          x: programDragLocation.x - programGrabOffset.width,
+          y: programDragLocation.y - programGrabOffset.height
+        )
+      }
+      return CGPoint(x: frame.midX, y: frame.midY)
+    }()
+
+    return ProgramTileView(
+      renderer: environment.router.programRenderer,
+      snapshot: environment.snapshot
+    )
+    .frame(width: frame.width, height: frame.height)
+    .scaleEffect(draggingProgram ? 1.03 : 1)
+    .shadow(
+      color: .black.opacity(draggingProgram ? 0.45 : 0),
+      radius: draggingProgram ? 18 : 0,
+      y: draggingProgram ? 10 : 0
+    )
+    .position(center)
+    .zIndex(draggingProgram ? 10 : 0)
+    .simultaneousGesture(programMoveGesture(geometry: geometry))
+  }
+
+  /// Same long-press-then-drag as a source reorder. Output follows the finger, and the sources
+  /// reflow the moment its centre crosses into another quadrant, so the drop only settles it.
+  private func programMoveGesture(geometry: SourceGridGeometry) -> some Gesture {
+    LongPressGesture(minimumDuration: 0.45, maximumDistance: 14)
+      .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .named("directorGrid")))
+      .onChanged { value in
+        guard case .second(true, let drag) = value, draggingSource == nil else { return }
+        if !draggingProgram {
+          beginProgramMove(geometry: geometry, location: drag?.location)
+        }
+        guard let drag else { return }
+        programDragLocation = drag.location
+        let corner = geometry.programCorner(nearest: CGPoint(
+          x: drag.location.x - programGrabOffset.width,
+          y: drag.location.y - programGrabOffset.height
+        ))
+        if corner != environment.sourceLayout.programCorner {
+          withAnimation(.easeInOut(duration: 0.18)) {
+            environment.moveProgram(to: corner)
+          }
+        }
+      }
+      .onEnded { _ in
+        endProgramMove()
+      }
+  }
+
+  private func beginProgramMove(geometry: SourceGridGeometry, location: CGPoint?) {
+    let frame = geometry.programFrame
+    let point = location ?? CGPoint(x: frame.midX, y: frame.midY)
+    draggingProgram = true
+    environment.isDraggingOutput = true
+    programDragLocation = point
+    programGrabOffset = CGSize(width: point.x - frame.midX, height: point.y - frame.midY)
+    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+  }
+
+  private func endProgramMove() {
+    guard draggingProgram else { return }
+    environment.commitSourceLayout()
+    environment.isDraggingOutput = false
+    environment.ignoreProgramTapUntil = ProcessInfo.processInfo.systemUptime + 0.35
+    withAnimation(.easeInOut(duration: 0.18)) {
+      draggingProgram = false
+      programGrabOffset = .zero
     }
   }
 
@@ -331,6 +419,7 @@ public struct DirectorGridView: View {
       .onChanged { value in
         switch value {
         case .second(true, let drag):
+          guard !draggingProgram else { return }
           if draggingSource == nil {
             beginReorder(sourceIndex: sourceIndex, geometry: geometry, location: drag?.location)
           }

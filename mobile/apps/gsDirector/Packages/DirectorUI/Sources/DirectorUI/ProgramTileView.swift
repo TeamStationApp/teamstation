@@ -45,7 +45,7 @@ public struct ProgramTileView: View {
             accessibilityPrefix: "output",
             slowMotionRate: environment.config.replaySlowMotionRate
           ) { seconds, rate in
-            guard let sourceIndex = snapshot.programSource else { return }
+            guard acceptsTaps, let sourceIndex = snapshot.programSource else { return }
             environment.startInstantReplay(sourceIndex: sourceIndex, seconds: seconds, rate: rate)
           }
         }
@@ -79,6 +79,12 @@ public struct ProgramTileView: View {
 
   private var sourceName: String? {
     programTelemetry?.displayName
+  }
+
+  /// A long press that turned into moving Output must not also fire the button it began on.
+  private var acceptsTaps: Bool {
+    !environment.isDraggingOutput
+      && ProcessInfo.processInfo.systemUptime >= environment.ignoreProgramTapUntil
   }
 
   private var isRewinding: Bool {
@@ -125,7 +131,7 @@ public struct ProgramTileView: View {
 
   private var returnToLiveButton: some View {
     Button {
-      guard let sourceIndex = snapshot.programSource else { return }
+      guard acceptsTaps, let sourceIndex = snapshot.programSource else { return }
       environment.returnToLive(sourceIndex: sourceIndex)
     } label: {
       Label("Return to live", systemImage: "forward.end.fill")
