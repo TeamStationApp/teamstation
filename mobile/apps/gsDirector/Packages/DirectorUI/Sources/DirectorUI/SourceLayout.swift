@@ -2,27 +2,61 @@ import CoreGraphics
 import Foundation
 import DirectorCore
 
-/// On-screen order of the five source tiles. The value at each slot is a source number, so
-/// Source 1 stays in the slot the operator parked it in even when a different camera is mapped
-/// onto that source.
+/// The corner of the director grid that Output's merged 2×2 cell sits in. The operator drags it
+/// there; the five source tiles take whichever cells it leaves free.
+public enum ProgramCorner: String, CaseIterable, Hashable, Sendable, Codable {
+  case topLeading
+  case topTrailing
+  case bottomLeading
+  case bottomTrailing
+
+  public init(isTop: Bool, isLeading: Bool) {
+    switch (isTop, isLeading) {
+    case (true, true): self = .topLeading
+    case (true, false): self = .topTrailing
+    case (false, true): self = .bottomLeading
+    case (false, false): self = .bottomTrailing
+    }
+  }
+
+  public var isTop: Bool { self == .topLeading || self == .topTrailing }
+  public var isLeading: Bool { self == .topLeading || self == .bottomLeading }
+}
+
+/// On-screen arrangement of the director grid: the corner Output sits in and the order of the five
+/// source tiles around it. The value at each slot is a source number, so Source 1 stays in the
+/// slot the operator parked it in even when a different camera is mapped onto that source.
 public struct SourceLayout: Hashable, Sendable, Codable, Equatable {
-  /// Visual slot 0…4 → source index 0…4. Slot 0 is top-right, 1 mid-right, 2–4 the bottom row.
+  /// Visual slot 0…4 → source index 0…4. Slots are the cells Output leaves free, in reading order:
+  /// with Output top-left, slot 0 is top-right, 1 mid-right, 2–4 the bottom row.
   public var order: [Int]
+  public var programCorner: ProgramCorner
 
   public static let `default` = SourceLayout(order: Array(0 ..< SourceIndex.count))
 
-  public init(order: [Int] = Array(0 ..< SourceIndex.count)) {
+  public init(
+    order: [Int] = Array(0 ..< SourceIndex.count),
+    programCorner: ProgramCorner = .topLeading
+  ) {
     self.order = Self.sanitized(order)
+    self.programCorner = programCorner
   }
 
+  /// A layout saved before Output could move has no corner, and one written by a later build may
+  /// name a corner this one does not know. Both come back top-left rather than failing the load.
   public init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
-    self.init(order: try container.decodeIfPresent([Int].self, forKey: .order) ?? [])
+    self.init(
+      order: try container.decodeIfPresent([Int].self, forKey: .order) ?? [],
+      programCorner: (try? container.decodeIfPresent(ProgramCorner.self, forKey: .programCorner))
+        ?? .topLeading
+    )
   }
 
   public func encode(to encoder: Encoder) throws {
     var container = encoder.container(keyedBy: CodingKeys.self)
     try container.encode(order, forKey: .order)
+    try container.encode(programCorner, forKey: .programCorner)
   }
 
   /// Drops duplicates and out-of-range entries, then fills any missing source so the grid always
@@ -66,38 +100,57 @@ public struct SourceLayout: Hashable, Sendable, Codable, Equatable {
 
   private enum CodingKeys: String, CodingKey {
     case order
+    case programCorner
   }
 }
 
-/// Frames of the 3×3 director grid. Output occupies the merged top-left 2×2; the five source
-/// slots are the remaining cells.
+/// Frames of the 3×3 director grid. Output occupies a merged 2×2 in `programCorner`; the five
+/// source slots are the remaining cells, in reading order.
 public struct SourceGridGeometry: Equatable, Sendable {
+  public var size: CGSize
   public var spacing: CGFloat
   public var tileWidth: CGFloat
   public var tileHeight: CGFloat
   public var programFrame: CGRect
   public var slotFrames: [CGRect]
 
-  public init(size: CGSize, spacing: CGFloat = 8) {
+  public init(size: CGSize, spacing: CGFloat = 8, programCorner: ProgramCorner = .topLeading) {
+    self.size = size
     self.spacing = spacing
     let tileWidth = (size.width - spacing * 2) / 3
     let tileHeight = (size.height - spacing * 2) / 3
     self.tileWidth = tileWidth
     self.tileHeight = tileHeight
-    let programWidth = tileWidth * 2 + spacing
-    let programHeight = tileHeight * 2 + spacing
-    self.programFrame = CGRect(x: 0, y: 0, width: programWidth, height: programHeight)
-    self.slotFrames = [
-      CGRect(x: programWidth + spacing, y: 0, width: tileWidth, height: tileHeight),
-      CGRect(x: programWidth + spacing, y: tileHeight + spacing, width: tileWidth, height: tileHeight),
-      CGRect(x: 0, y: programHeight + spacing, width: tileWidth, height: tileHeight),
-      CGRect(x: tileWidth + spacing, y: programHeight + spacing, width: tileWidth, height: tileHeight),
-      CGRect(x: (tileWidth + spacing) * 2, y: programHeight + spacing, width: tileWidth, height: tileHeight)
-    ]
+    let cellOrigin = { (column: Int, row: Int) in
+      CGPoint(x: CGFloat(column) * (tileWidth + spacing), y: CGFloat(row) * (tileHeight + spacing))
+    }
+    let programColumn = programCorner.isLeading ? 0 : 1
+    let programRow = programCorner.isTop ? 0 : 1
+    self.programFrame = CGRect(
+      origin: cellOrigin(programColumn, programRow),
+      size: CGSize(width: tileWidth * 2 + spacing, height: tileHeight * 2 + spacing)
+    )
+    var slotFrames: [CGRect] = []
+    for row in 0 ..< 3 {
+      for column in 0 ..< 3 {
+        let inProgram = (programColumn ... programColumn + 1).contains(column)
+          && (programRow ... programRow + 1).contains(row)
+        guard !inProgram else { continue }
+        slotFrames.append(
+          CGRect(origin: cellOrigin(column, row), size: CGSize(width: tileWidth, height: tileHeight))
+        )
+      }
+    }
+    self.slotFrames = slotFrames
   }
 
   public func slot(containing point: CGPoint) -> Int? {
     slotFrames.enumerated().first { $0.element.contains(point) }?.offset
+  }
+
+  /// The corner of the quadrant `point` is in: where Output lands when its centre is dropped there.
+  public func programCorner(nearest point: CGPoint) -> ProgramCorner {
+    ProgramCorner(isTop: point.y < size.height / 2, isLeading: point.x < size.width / 2)
   }
 }
 

@@ -592,8 +592,10 @@ public struct TelemetrySnapshot: Sendable, Codable, Equatable {
   public var keepAliveInBackground = false
   /// System Picture-in-Picture of the programme output is showing over other apps.
   public var pictureInPictureActive = false
-  /// 1-based source numbers in visual-slot order (top-right, mid-right, then the bottom row).
+  /// 1-based source numbers in visual-slot order: the cells Output leaves free, in reading order.
   public var sourceLayout = "1,2,3,4,5"
+  /// The corner Output's merged cell is parked in (`ProgramCorner` raw value).
+  public var outputCorner = "topLeading"
 
   public init() {}
 
