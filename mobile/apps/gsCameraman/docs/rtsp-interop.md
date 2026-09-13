@@ -136,7 +136,9 @@ the SOAP stack itself is not implemented. Lenses have no ONVIF standard. `rw` = 
 | `videoEncoder.encoding` | rw `H264` / `H265` | applied like the Settings picker, so the codec's default bitrate carries unless a rate is sent in the same request |
 | `videoEncoder.resolution.width`, `.height` | rw int | with the rate, must name one offered format |
 | `videoEncoder.rateControl.frameRateLimit` | rw number | fps |
-| `videoEncoder.rateControl.bitrateLimit` | rw int | **kbps**, 1000–50000 |
+| `videoEncoder.rateControl.bitrateLimit` | rw int | **kbps**, 1000–50000. With `adaptive` on, the ceiling: the stream runs at this and comes down only while a client's link backs up |
+| `videoEncoder.rateControl.adaptive` | rw bool | on by default. Lowers the rate while the link to the weakest playing client backs up, never below half of `bitrateLimit`, and climbs back once it clears. A change is live: nothing restarts. Absent from a phone that predates it, which never adapts |
+| `videoEncoder.rateControl.currentBitrate` | int | **kbps** the encoder is running at now: `bitrateLimit`, or less while adapting |
 | `videoEncoder.formats` | int | count; then `format.<i>.width`, `.height`, `.frameRate`, `.multiLens` |
 | `audioEncoder.enabled` | rw bool | microphone on/off |
 | `audioEncoder.sampleRate` | int | 48000 |

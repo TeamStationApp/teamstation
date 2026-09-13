@@ -14,6 +14,7 @@ public struct LaunchConfiguration: Sendable, Equatable {
     "rtspPath",
     "codec",
     "bitrateMbps",
+    "adaptiveBitrate",
     "width",
     "height",
     "frameRate",
@@ -111,6 +112,7 @@ public struct LaunchConfiguration: Sendable, Equatable {
     if let mbps = values["bitrateMbps"].flatMap(Double.init) {
       settings.bitrate = Int(mbps * 1_000_000)
     }
+    if let adaptive = Self.bool(values["adaptiveBitrate"]) { settings.adaptiveBitrate = adaptive }
     if let width = values["width"].flatMap(Int.init) { settings.width = width }
     if let height = values["height"].flatMap(Int.init) { settings.height = height }
     if let frameRate = values["frameRate"].flatMap(Double.init) { settings.frameRate = frameRate }

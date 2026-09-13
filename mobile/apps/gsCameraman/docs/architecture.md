@@ -62,6 +62,38 @@ once over the water mark, and a keyframe flushes the backlog and starts a fresh 
 stops reading costs a bounded amount of memory and then a gap, rather than growing until something
 gives.
 
+**Adaptive bitrate** keeps most links from ever reaching that budget. On by default, it lowers the
+encoder's rate while the link to the weakest playing client backs up, never below half the
+operator's bitrate, and climbs back once the link clears. The operator's bitrate is the ceiling; the
+rate in force is `videoEncoder.rateControl.currentBitrate`, and `dump-state` reports the controller
+under `adaptiveBitrate`.
+
+Nothing comes back from the receiver to steer by, so every signal is measured here
+(`CongestionMeter`): the age of the oldest send Network.framework has not yet processed, the bytes
+it did process each tick, and the TCP send buffer's backlog, read as its largest free space seen
+less its free space now. That last one matters because `.contentProcessed` fires when bytes reach
+TCP, and an autotuned send buffer can hold seconds of video without anything waiting on this side.
+
+`AdaptiveBitrateController` ticks four times a second:
+
+- a drop, or 300 ms of frames waiting in the app itself, cuts to 0.7 of the rate;
+- 150 ms for two ticks cuts to 0.9, and a queue past 80 ms that has grown for three ticks trims 5%;
+- every cut is also held to 0.85 of what the link delivered over the last second;
+- the rate climbs 8% a second after 4 s clean, slowing near what the link carried when it was last
+  cut.
+
+The steps are OBS's dynamic bitrate, GCC and SCReAM's; the file names each one's source. The delay
+thresholds are Director's: it shows nothing more than 500 ms late, and the network adds delay this
+side cannot see, so the literature's 200–400 ms froze the picture on the bench. The transport's
+backlog counts only as a standing queue (the smaller of two ticks, CoDel's rule) above its smallest
+reading of the last ten seconds, because it includes bytes in flight and every keyframe as a burst,
+and only while the link carries less than 90% of what the encoder offers: a longer round trip puts
+more bytes in flight on a link that is still keeping up, and is no reason to soften the picture.
+
+Changes go to the running compression session with `VTSessionSetProperty`, so none of them
+cuts the stream. Director records what it receives, so while the rate is down the archive is softer
+too: that is the trade for pictures that keep moving.
+
 ## Identity
 
 Every camera has a UUID it keeps forever and a name the operator can change.

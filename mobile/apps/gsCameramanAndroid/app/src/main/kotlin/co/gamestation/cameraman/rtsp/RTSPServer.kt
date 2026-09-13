@@ -40,6 +40,11 @@ class RTSPServer(
      * the keyframe interval on frames whose references it never received.
      */
     private val requestKeyframe: () -> Unit,
+    /**
+     * The TCP send buffer each new client gets, or null for the platform's own. Asked per accept,
+     * because it is sized from the bitrate in force at the time.
+     */
+    private val sendBufferBytes: () -> Int? = { null },
     /** Answers `GET_PARAMETER` / `SET_PARAMETER` bodies. Null offers no parameters. */
     private val parameters: RTSPParameterHandler? = null
 ) {
@@ -230,7 +235,8 @@ class RTSPServer(
             hasAudio = hasAudio(),
             identity = identity,
             requestKeyframe = requestKeyframe,
-            parameters = parameters
+            parameters = parameters,
+            sendBufferBytes = sendBufferBytes()
         )
         client.onClose = { reason -> noteDisconnect(client, reason) }
         client.onStreamingChange = { recountClients() }
@@ -430,6 +436,18 @@ class RTSPServer(
      */
     fun sendQueueSummaries(): List<StreamSendQueue.Snapshot> =
         lock.withLock { connections.keys.toList() }.map { it.sendQueue.snapshot() }
+
+    /**
+     * The worst playing client's link since the previous call, or null when nobody is playing.
+     *
+     * Every connection is sampled, playing or not, so each one's interval starts from this call
+     * rather than from whenever it last happened to be the worst.
+     */
+    fun sampleCongestion(): CongestionSample? {
+        val now = System.nanoTime() / 1e9
+        val clients = lock.withLock { connections.keys.toList() }
+        return CongestionSample.worst(clients.mapNotNull { it.congestionSample(now) })
+    }
 
     companion object {
         const val bonjourServiceType = "_rtsp._tcp"

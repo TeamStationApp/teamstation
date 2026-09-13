@@ -19,6 +19,12 @@ struct ControlChannelTests {
     #expect(command("/reset") == .reset)
   }
 
+  @Test func adaptiveBitrateTakesAnOnValue() {
+    #expect(command("/set-adaptive-bitrate?on=false") == .setAdaptiveBitrate(on: false))
+    #expect(command("/set-adaptive-bitrate?on=yes") == .setAdaptiveBitrate(on: true))
+    #expect(command("/set-adaptive-bitrate") == nil)
+  }
+
   @Test func readsTheZoomItWasGiven() {
     #expect(command("/set-zoom?displayed=2.5") == .setZoom(displayed: 2.5))
     #expect(command("/set-zoom?displayed=0.5") == .setZoom(displayed: 0.5))

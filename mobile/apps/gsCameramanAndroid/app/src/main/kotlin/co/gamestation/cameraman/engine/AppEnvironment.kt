@@ -84,6 +84,12 @@ class AppEnvironment(
 
     private val identityProvider: DeviceIdentityProvider
     private var server: RTSPServer? = null
+
+    /**
+     * Lowers the encoder's rate while the link to a client backs up. Null until the server exists,
+     * since the server is where the link is measured.
+     */
+    private var adaptiveBitrate: co.gamestation.cameraman.rtsp.AdaptiveBitrateLoop? = null
     private var controlServer: ControlServer? = null
     private var synthetic: SyntheticCamera? = null
     private var recorder: ElementaryStreamRecorder? = null
@@ -311,6 +317,7 @@ class AppEnvironment(
             next.height != previous.height ||
             next.frameRate != previous.frameRate ||
             next.bitrate != previous.bitrate ||
+            next.adaptiveBitrate != previous.adaptiveBitrate ||
             next.audioEnabled != previous.audioEnabled ||
             next.audioSampleRate != previous.audioSampleRate
         if (!pipelineChanged) {
@@ -319,8 +326,9 @@ class AppEnvironment(
         }
         appliedSettings = next
 
-        // A bitrate-only change is a live parameter, not a reconfigure. Restarting the encoder for
-        // it would drop a GOP and make every watching client re-buffer.
+        // A rate-only change — the bitrate, or adaptation on or off — is a live parameter, not a
+        // reconfigure. Restarting the encoder for it would drop a GOP and make every watching client
+        // re-buffer.
         val onlyBitrateChanged = next.codec == previous.codec &&
             next.width == previous.width &&
             next.height == previous.height &&
@@ -328,7 +336,7 @@ class AppEnvironment(
             next.audioEnabled == previous.audioEnabled &&
             next.audioSampleRate == previous.audioSampleRate
         if (onlyBitrateChanged) {
-            videoEncoder.setBitrate(next.bitrate)
+            applyRate(next)
             return
         }
 
@@ -407,6 +415,8 @@ class AppEnvironment(
         camera.close()
         videoEncoder.invalidate()
         audioEncoder.invalidate()
+        adaptiveBitrate?.stop()
+        adaptiveBitrate = null
         server?.stop()
         server = null
         controlServer?.stop()
@@ -546,6 +556,32 @@ class AppEnvironment(
                 startSynthetic(surface, settings)
             }
         }
+        // The new codec starts at the ceiling, so the controller does too.
+        adaptiveBitrate?.configure(settings.bitrate, settings.adaptiveBitrate)
+    }
+
+    /**
+     * A new rate, or adaptation switched on or off, handed to the running encoder without
+     * restarting it.
+     */
+    private fun applyRate(settings: StreamSettings) {
+        val loop = adaptiveBitrate
+        if (loop != null) {
+            loop.configure(settings.bitrate, settings.adaptiveBitrate)
+        } else {
+            videoEncoder.setBitrate(settings.bitrate)
+        }
+    }
+
+    /**
+     * The TCP send buffer a new client gets while adapting: about a quarter second at the
+     * operator's rate, never under 64 KiB. With adaptation off the platform's own buffer is kept.
+     * [co.gamestation.cameraman.rtsp.RTSPClientConnection.start] says why it matters.
+     */
+    private fun adaptiveSendBufferBytes(): Int? {
+        val settings = stateLock.withLock { publishedSettings }
+        if (!settings.adaptiveBitrate) return null
+        return maxOf(64 * 1024, settings.bitrate / 8 / 4)
     }
 
     /**
@@ -608,7 +644,8 @@ class AppEnvironment(
             },
             identity = { stateLock.withLock { publishedIdentity } },
             requestKeyframe = { videoEncoder.requestKeyframe() },
-            parameters = { request -> handleParameters(request) }
+            parameters = { request -> handleParameters(request) },
+            sendBufferBytes = { adaptiveSendBufferBytes() }
         )
         server.onStatusChange = { status ->
             serverStatusState.value = status
@@ -624,6 +661,13 @@ class AppEnvironment(
             advertise = launch.advertise
         )
         this.server = server
+
+        val settings = stateLock.withLock { publishedSettings }
+        adaptiveBitrate = co.gamestation.cameraman.rtsp.AdaptiveBitrateLoop(
+            ceiling = settings.bitrate,
+            sample = { server.sampleCongestion() },
+            apply = { videoEncoder.setBitrate(it) }
+        ).also { it.configure(settings.bitrate, settings.adaptiveBitrate) }
     }
 
     private fun startSynthetic(surface: Surface?, settings: StreamSettings) {
@@ -672,7 +716,8 @@ class AppEnvironment(
                 formats = formatOptions,
                 lenses = lensCatalogState.value,
                 streamURL = streamURL,
-                clientCount = serverStatusState.value.clientCount
+                clientCount = serverStatusState.value.clientCount,
+                currentBitrate = adaptiveBitrate?.status?.controller?.bitrate
             )
         }
 
@@ -773,7 +818,15 @@ class AppEnvironment(
             val next = settingsState.value.copy(bitrate = (command.mbps * 1_000_000).toInt())
             settingsState.value = next
             noteSettingsApplied(next)
-            videoEncoder.setBitrate(next.bitrate)
+            applyRate(next)
+            ok()
+        }
+
+        is ControlCommand.SetAdaptiveBitrate -> {
+            val next = settingsState.value.copy(adaptiveBitrate = command.on)
+            settingsState.value = next
+            noteSettingsApplied(next)
+            applyRate(next)
             ok()
         }
 
@@ -890,6 +943,7 @@ class AppEnvironment(
             put("height", settings.height)
             put("frameRate", settings.frameRate)
             put("bitrateMbps", settings.bitrate / 1_000_000.0)
+            put("adaptiveBitrate", adaptiveBitrate?.status?.let(::adaptiveBitrateJSON) ?: JSONObject.NULL)
             put("audioEnabled", settings.audioEnabled)
             put("position", cameraState.position.rawValue)
             put("deviceType", cameraState.deviceType)
@@ -968,6 +1022,28 @@ class AppEnvironment(
         val power = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
             ?: return "unknown"
         return ProcessLoad.thermalStateName(power.currentThermalStatus)
+    }
+
+    /** The iOS build's `AdaptiveBitrateLoop.Status` keys, so one script reads both. */
+    private fun adaptiveBitrateJSON(status: co.gamestation.cameraman.rtsp.AdaptiveBitrateLoop.Status): JSONObject {
+        val controller = status.controller
+        return JSONObject().apply {
+            put("enabled", status.enabled)
+            put(
+                "controller",
+                JSONObject().apply {
+                    put("ceiling", controller.ceiling)
+                    put("floor", controller.floor)
+                    put("bitrate", controller.bitrate)
+                    put("lastDecision", controller.lastDecision.rawValue)
+                    put("decreases", controller.decreases)
+                    put("increases", controller.increases)
+                    put("queueDelayMilliseconds", controller.queueDelayMilliseconds)
+                    put("deliveryBitsPerSecond", controller.deliveryBitsPerSecond ?: JSONObject.NULL)
+                    put("transportBaseMilliseconds", controller.transportBaseMilliseconds)
+                }
+            )
+        }
     }
 
     private fun serverStatusJSON(status: RTSPServer.Status): JSONObject {

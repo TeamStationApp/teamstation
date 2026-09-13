@@ -46,7 +46,16 @@ data class StreamSettings(
     var height: Int = 1080,
     var frameRate: Double = 30.0,
     var codec: StreamCodec = StreamCodec.HEVC,
+    /**
+     * The operator's rate, and with [adaptiveBitrate] on, the ceiling: the stream runs at this and
+     * comes down, never below half of it, only while the link cannot carry it.
+     */
     var bitrate: Int = StreamCodec.HEVC.defaultBitrate,
+    /**
+     * Lower the rate while the link to a client backs up, instead of dropping frames at the full
+     * rate. On by default; a softer picture for a few seconds beats a frozen one.
+     */
+    var adaptiveBitrate: Boolean = true,
     var port: Int = defaultPort,
     var path: String = canonicalPath,
     var audioEnabled: Boolean = true,
@@ -91,6 +100,7 @@ data class StreamSettings(
     enum class Field(val key: String) {
         CODEC("codec"),
         BITRATE_MBPS("bitrateMbps"),
+        ADAPTIVE_BITRATE("adaptiveBitrate"),
         WIDTH("width"),
         HEIGHT("height"),
         FRAME_RATE("frameRate"),
@@ -113,6 +123,7 @@ data class StreamSettings(
         val merged = copy()
         if (Field.CODEC !in explicit) merged.codec = saved.codec
         if (Field.BITRATE_MBPS !in explicit) merged.bitrate = saved.bitrate
+        if (Field.ADAPTIVE_BITRATE !in explicit) merged.adaptiveBitrate = saved.adaptiveBitrate
         if (Field.WIDTH !in explicit) merged.width = saved.width
         if (Field.HEIGHT !in explicit) merged.height = saved.height
         if (Field.FRAME_RATE !in explicit) merged.frameRate = saved.frameRate

@@ -205,6 +205,27 @@ struct CameraParametersTests {
     #expect(failure("videoEncoder.rateControl.bitrateLimit: lots\r\n")?.statusCode == 400)
   }
 
+  @Test("Adaptive bitrate is writable; the rate the encoder is running at is read-only")
+  func adaptiveBitrate() throws {
+    let encoded = CameraParameters.encode(Self.snapshot())
+    #expect(encoded["videoEncoder.rateControl.adaptive"] == "true", "on by default")
+    #expect(encoded["videoEncoder.rateControl.currentBitrate"] == "4000", "the ceiling while nothing has adapted")
+
+    var adapting = Self.snapshot()
+    adapting.currentBitrate = 2_600_000
+    let text = CameraParameters.encode(adapting).encoded
+    #expect(CameraParameters.encode(adapting)["videoEncoder.rateControl.currentBitrate"] == "2600")
+    let decoded = try #require(CameraParameters.decodeSnapshot(try CameraParameterSet.decode(text).get()))
+    #expect(decoded.currentBitrate == 2_600_000)
+    #expect(decoded.settings.adaptiveBitrate)
+
+    let write = try set("videoEncoder.rateControl.adaptive: false\r\n")
+    #expect(write.touchesSettings)
+    #expect(!CameraParameters.settings(applying: write, to: StreamSettings()).adaptiveBitrate)
+    #expect(failure("videoEncoder.rateControl.adaptive: sometimes\r\n")?.statusCode == 400)
+    #expect(failure("videoEncoder.rateControl.currentBitrate: 1000\r\n")?.statusCode == 458)
+  }
+
   @Test("Zoom is clamped to the mapping on apply, and non-numbers are 400")
   func zoomClamping() throws {
     let write = try set("ptz.zoom: 40\r\n")

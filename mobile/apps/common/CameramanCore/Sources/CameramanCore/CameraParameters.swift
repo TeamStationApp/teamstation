@@ -165,6 +165,10 @@ public enum CameraParameterName {
   public static let height = "videoEncoder.resolution.height"
   public static let frameRate = "videoEncoder.rateControl.frameRateLimit"
   public static let bitrateKbps = "videoEncoder.rateControl.bitrateLimit"
+  /// Whether the phone lowers its rate, never below half of `bitrateLimit`, while a link backs up.
+  public static let adaptiveBitrate = "videoEncoder.rateControl.adaptive"
+  /// The rate the encoder is running at, in kbps: `bitrateLimit`, or less while adapting.
+  public static let currentBitrateKbps = "videoEncoder.rateControl.currentBitrate"
   public static let formatCount = "videoEncoder.formats"
   public static let audioEnabled = "audioEncoder.enabled"
   public static let audioSampleRate = "audioEncoder.sampleRate"
@@ -182,7 +186,7 @@ public enum CameraParameterName {
 
   public static let writable: Set<String> = [
     deviceName, sourcePosition, ptzZoom, encoding, width, height, frameRate, bitrateKbps,
-    audioEnabled, videoOutputHDMIClean, lensDisabled
+    adaptiveBitrate, audioEnabled, videoOutputHDMIClean, lensDisabled
   ]
 
   /// The fixed names, in the order the full set is emitted. Indexed `format.<i>.*` and `lens.<i>.*`
@@ -193,7 +197,7 @@ public enum CameraParameterName {
     sourcePosition, sourceDeviceType,
     zoomMinimumDevice, zoomMaximumDevice, zoomDisplayMultiplier, zoomSwitchOverDevice,
     ptzZoom, ptzZoomDevice,
-    encoding, width, height, frameRate, bitrateKbps, formatCount,
+    encoding, width, height, frameRate, bitrateKbps, adaptiveBitrate, currentBitrateKbps, formatCount,
     audioEnabled, audioSampleRate,
     videoOutputHDMIClean,
     lensCount, lensDisabled,
@@ -244,6 +248,9 @@ public struct CameraSnapshot: Sendable, Equatable {
   public var lenses: [CameraLens]
   public var streamURL: String
   public var clientCount: Int
+  /// What the encoder is running at, which is below `settings.bitrate` while adapting. Nil from a
+  /// phone that predates adaptation, which always runs at `settings.bitrate`.
+  public var currentBitrate: Int?
 
   public init(
     name: String,
@@ -260,7 +267,8 @@ public struct CameraSnapshot: Sendable, Equatable {
     formats: [FormatCatalogue.Option],
     lenses: [CameraLens],
     streamURL: String,
-    clientCount: Int
+    clientCount: Int,
+    currentBitrate: Int? = nil
   ) {
     self.name = name
     self.cname = cname
@@ -277,6 +285,7 @@ public struct CameraSnapshot: Sendable, Equatable {
     self.lenses = lenses
     self.streamURL = streamURL
     self.clientCount = clientCount
+    self.currentBitrate = currentBitrate
   }
 
   public var displayedZoom: Double { mapping.displayedZoom(forDevice: deviceZoom) }
@@ -297,6 +306,7 @@ public struct CameraParameterWrite: Sendable, Equatable {
   public var frameRate: Double?
   /// Bits per second, converted from the wire's kbps.
   public var bitrate: Int?
+  public var adaptiveBitrate: Bool?
   public var audioEnabled: Bool?
   public var cleanHDMIEnabled: Bool?
   public var disabledLensIDs: Set<String>?
@@ -307,15 +317,15 @@ public struct CameraParameterWrite: Sendable, Equatable {
 
   public var isEmpty: Bool {
     name == nil && position == nil && displayedZoom == nil && codec == nil && width == nil
-      && height == nil && frameRate == nil && bitrate == nil && audioEnabled == nil
-      && cleanHDMIEnabled == nil && disabledLensIDs == nil
+      && height == nil && frameRate == nil && bitrate == nil && adaptiveBitrate == nil
+      && audioEnabled == nil && cleanHDMIEnabled == nil && disabledLensIDs == nil
   }
 
   /// True when anything in `StreamSettings` is named, i.e. the phone should run one
   /// `applySettings()` after the merge.
   public var touchesSettings: Bool {
     codec != nil || width != nil || height != nil || frameRate != nil || bitrate != nil
-      || audioEnabled != nil || cleanHDMIEnabled != nil || disabledLensIDs != nil
+      || adaptiveBitrate != nil || audioEnabled != nil || cleanHDMIEnabled != nil || disabledLensIDs != nil
   }
 }
 
@@ -356,6 +366,8 @@ public enum CameraParameters {
     set.set(CameraParameterName.height, String(s.height))
     set.set(CameraParameterName.frameRate, number(s.frameRate))
     set.set(CameraParameterName.bitrateKbps, String(s.bitrate / 1000))
+    set.set(CameraParameterName.adaptiveBitrate, bool(s.adaptiveBitrate))
+    set.set(CameraParameterName.currentBitrateKbps, String((snapshot.currentBitrate ?? s.bitrate) / 1000))
     set.set(CameraParameterName.formatCount, String(snapshot.formats.count))
     for (index, format) in snapshot.formats.enumerated() {
       set.set(CameraParameterName.format(index, "width"), String(format.width))
@@ -456,6 +468,8 @@ public enum CameraParameters {
       frameRate: frameRate,
       codec: codec,
       bitrate: bitrateKbps * 1000,
+      // Absent from a phone that predates adaptation, which never adapts.
+      adaptiveBitrate: parseBool(set[CameraParameterName.adaptiveBitrate]) ?? false,
       port: port ?? StreamSettings.defaultPort,
       path: path ?? StreamSettings.canonicalPath,
       audioEnabled: parseBool(set[CameraParameterName.audioEnabled]) ?? true,
@@ -489,7 +503,8 @@ public enum CameraParameters {
       formats: formats,
       lenses: lenses,
       streamURL: streamURL,
-      clientCount: set[CameraParameterName.streamClients].flatMap(Int.init) ?? 0
+      clientCount: set[CameraParameterName.streamClients].flatMap(Int.init) ?? 0,
+      currentBitrate: set[CameraParameterName.currentBitrateKbps].flatMap(Int.init).map { $0 * 1000 }
     )
   }
 
@@ -586,6 +601,10 @@ public enum CameraParameters {
         }
         write.bitrate = kbps * 1000
 
+      case CameraParameterName.adaptiveBitrate:
+        guard let enabled = parseBool(value) else { return .failure(bad("expected true or false")) }
+        write.adaptiveBitrate = enabled
+
       case CameraParameterName.audioEnabled:
         guard let enabled = parseBool(value) else { return .failure(bad("expected true or false")) }
         write.audioEnabled = enabled
@@ -647,6 +666,7 @@ public enum CameraParameters {
     if let rate = write.frameRate { next.frameRate = rate }
     // After `setCodec`, so an explicit rate in the same request wins over the codec default.
     if let bitrate = write.bitrate { next.bitrate = bitrate }
+    if let adaptive = write.adaptiveBitrate { next.adaptiveBitrate = adaptive }
     if let audio = write.audioEnabled { next.audioEnabled = audio }
     if let clean = write.cleanHDMIEnabled { next.cleanHDMIEnabled = clean }
     if let disabled = write.disabledLensIDs { next.disabledLensIDs = disabled }
