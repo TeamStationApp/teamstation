@@ -602,4 +602,16 @@ public final class RTSPServer: @unchecked Sendable {
   public func sendQueueSummaries() -> [StreamSendQueue] {
     state.withLock { Array($0.connections.values) }.map(\.sendQueue)
   }
+
+  /// The worst playing client's link since the previous call, or nil when nobody is playing.
+  ///
+  /// Every connection is sampled, playing or not, so each one's interval starts from this call
+  /// rather than from whenever it last happened to be the worst.
+  public func sampleCongestion(_ completion: @escaping @Sendable (CongestionSample?) -> Void) {
+    queue.async { [self] in
+      let now = ProcessInfo.processInfo.systemUptime
+      let clients = state.withLock { Array($0.connections.values) }
+      completion(CongestionSample.worst(of: clients.compactMap { $0.congestionSample(at: now) }))
+    }
+  }
 }

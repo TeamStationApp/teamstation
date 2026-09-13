@@ -8,6 +8,7 @@ android {
     namespace = "co.gamestation.cameraman"
     compileSdk = 36
     buildToolsVersion = "36.0.0"
+    ndkVersion = "27.1.12297006"
 
     defaultConfig {
         applicationId = "co.gamestation.cameraman"
@@ -18,6 +19,16 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
+
+        // Only for the Pixel this ships to. The one native call is `SocketQueue`'s.
+        ndk { abiFilters += listOf("arm64-v8a") }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 
     signingConfigs {

@@ -93,6 +93,9 @@ public final class AppEnvironment {
   private var recorder: ElementaryStreamRecorder?
   private var audioRecorder: AudioStreamRecorder?
   private var server: RTSPServer?
+  /// Lowers the encoder's rate while the link to a client backs up. Nil until the server exists,
+  /// since the server is where the link is measured.
+  private var adaptiveBitrate: AdaptiveBitrateLoop?
   private var controlServer: ControlServer?
   private var synthetic: SyntheticCamera?
   /// The parameter sets arrive with the first keyframe, and a client may DESCRIBE before then, so the
@@ -240,6 +243,7 @@ public final class AppEnvironment {
     videoEncoder.invalidate()
     videoEncoder.configure(settings: settings)
     videoEncoder.requestKeyframe()
+    adaptiveBitrate?.configure(ceiling: settings.bitrate, enabled: settings.adaptiveBitrate)
   }
 
   public func rename(to name: String) {
@@ -276,6 +280,7 @@ public final class AppEnvironment {
       || next.height != previous.height
       || next.frameRate != previous.frameRate
       || next.bitrate != previous.bitrate
+      || next.adaptiveBitrate != previous.adaptiveBitrate
       || next.audioEnabled != previous.audioEnabled
       || next.audioSampleRate != previous.audioSampleRate
       || next.disabledLensIDs != previous.disabledLensIDs
@@ -283,6 +288,22 @@ public final class AppEnvironment {
     syncCleanFeed(next)
     guard pipelineChanged else { return }
     appliedSettings = next
+
+    // A rate-only change is a live parameter, not a reconfigure. Rebuilding the compression session
+    // for it would cut every watching client back to its next keyframe, and reopening the camera
+    // would reset the zoom.
+    let onlyRateChanged = next.codec == previous.codec
+      && next.width == previous.width
+      && next.height == previous.height
+      && next.frameRate == previous.frameRate
+      && next.audioEnabled == previous.audioEnabled
+      && next.audioSampleRate == previous.audioSampleRate
+      && next.disabledLensIDs == previous.disabledLensIDs
+    if onlyRateChanged {
+      applyRate(next)
+      return
+    }
+
     reconfigureVideoEncoder(next)
     if next.audioEnabled {
       audioEncoder.configure(sampleRate: next.audioSampleRate, channelCount: 1)
@@ -429,6 +450,17 @@ public final class AppEnvironment {
       advertise: launch.advertise
     )
     self.server = server
+
+    let adaptiveBitrate = AdaptiveBitrateLoop(
+      ceiling: settings.bitrate,
+      sample: { [weak server] completion in
+        guard let server else { return completion(nil) }
+        server.sampleCongestion(completion)
+      },
+      apply: { [videoEncoder] bitrate in videoEncoder.setBitrate(bitrate) }
+    )
+    adaptiveBitrate.configure(ceiling: settings.bitrate, enabled: settings.adaptiveBitrate)
+    self.adaptiveBitrate = adaptiveBitrate
   }
 
 
@@ -490,6 +522,18 @@ public final class AppEnvironment {
   private func reconfigureVideoEncoder(_ settings: StreamSettings) {
     latestParameterSets.withLock { $0 = [] }
     videoEncoder.configure(settings: settings)
+    // The new session starts at the ceiling, so the controller does too.
+    adaptiveBitrate?.configure(ceiling: settings.bitrate, enabled: settings.adaptiveBitrate)
+  }
+
+  /// A new rate, or adaptation switched on or off, handed to the running encoder without rebuilding
+  /// it.
+  private func applyRate(_ settings: StreamSettings) {
+    if let adaptiveBitrate {
+      adaptiveBitrate.configure(ceiling: settings.bitrate, enabled: settings.adaptiveBitrate)
+    } else {
+      videoEncoder.setBitrate(settings.bitrate)
+    }
   }
 
   /// Frames from a pattern generator instead of a lens, so the encode-and-serve path is exercisable
@@ -557,7 +601,8 @@ public final class AppEnvironment {
       formats: formatOptions,
       lenses: cameraState.availableLenses,
       streamURL: streamURL,
-      clientCount: serverStatus.clientCount
+      clientCount: serverStatus.clientCount,
+      currentBitrate: adaptiveBitrate?.status.controller.bitrate
     )
   }
 
@@ -622,6 +667,8 @@ public final class AppEnvironment {
     public var height: Int
     public var frameRate: Double
     public var bitrateMbps: Double
+    /// Nil until the server is up. `controller.bitrate` is what the encoder is running at.
+    public var adaptiveBitrate: AdaptiveBitrateLoop.Status?
     public var audioEnabled: Bool
     public var videoEnabled: Bool
     public var cleanHDMIEnabled: Bool
@@ -676,6 +723,7 @@ public final class AppEnvironment {
       height: settings.height,
       frameRate: settings.frameRate,
       bitrateMbps: Double(settings.bitrate) / 1_000_000,
+      adaptiveBitrate: adaptiveBitrate?.status,
       audioEnabled: settings.audioEnabled,
       videoEnabled: settings.videoEnabled,
       cleanHDMIEnabled: settings.cleanHDMIEnabled,
@@ -795,7 +843,13 @@ public final class AppEnvironment {
       guard mbps > 0 else { return nil }
       settings.bitrate = Int(mbps * 1_000_000)
       noteSettingsApplied()
-      reconfigureVideoEncoder(settings)
+      applyRate(settings)
+      return ok()
+
+    case let .setAdaptiveBitrate(on):
+      settings.adaptiveBitrate = on
+      noteSettingsApplied()
+      applyRate(settings)
       return ok()
 
     case let .setCodec(name):
@@ -953,10 +1007,10 @@ public final class AppEnvironment {
 /// The phone's own screen drives the phone through the same seam a remote screen uses. Almost all
 /// of this is forwarding; `apply` is the Done-button pair that already existed.
 ///
-/// The harness `set-bitrate` / `set-codec` / `set-format` cases deliberately do not go through
-/// `apply`: they reconfigure only the encoder so a flow can change the rate mid-run without the
-/// capture device being reopened and the zoom reset, which `applySettings()` does on purpose for
-/// the operator's Done.
+/// The harness `set-codec` / `set-format` cases deliberately do not go through `apply`: they
+/// reconfigure only the encoder so a flow can change them mid-run without the capture device being
+/// reopened and the zoom reset, which `applySettings()` does on purpose for the operator's Done.
+/// `set-bitrate` needs neither: a rate is a live change to the running encoder.
 extension AppEnvironment: CameraControlling {
   public var name: String { identity.name }
   public var cname: String { identity.cname }

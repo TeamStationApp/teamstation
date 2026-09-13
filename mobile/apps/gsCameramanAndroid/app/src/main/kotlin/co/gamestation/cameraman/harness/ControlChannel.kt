@@ -17,6 +17,9 @@ sealed interface ControlCommand {
     data class SetZoom(val displayed: Double) : ControlCommand
     data class SetFormat(val width: Int, val height: Int, val fps: Int) : ControlCommand
     data class SetBitrate(val mbps: Double) : ControlCommand
+
+    /** Adaptive bitrate on or off. Either way the encoder goes back to the operator's rate. */
+    data class SetAdaptiveBitrate(val on: Boolean) : ControlCommand
     data class SetCodec(val codec: String) : ControlCommand
     data class SetName(val name: String) : ControlCommand
     data class SetAudio(val on: Boolean) : ControlCommand
@@ -101,6 +104,8 @@ object ControlChannel {
             }
 
             "set-bitrate" -> query["mbps"]?.toDoubleOrNull()?.let { ControlCommand.SetBitrate(it) }
+
+            "set-adaptive-bitrate" -> query["on"]?.let { ControlCommand.SetAdaptiveBitrate(isTruthy(it)) }
 
             "set-codec" -> query["codec"]
                 ?.takeIf { it.isNotEmpty() }

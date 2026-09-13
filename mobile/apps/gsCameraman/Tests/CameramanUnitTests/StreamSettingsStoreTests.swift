@@ -188,11 +188,28 @@ struct StreamSettingsMergeTests {
     #expect(settings.bitrate == 9_000_000)
   }
 
+  @Test("Adaptive bitrate is on by default, survives a save, and older saves come back with it on")
+  func adaptiveBitrateDefaultsOn() {
+    #expect(StreamSettings.default.adaptiveBitrate)
+
+    let store = StreamSettingsStore(store: InMemorySettingsStore(), legacyDefaults: nil)
+    var written = StreamSettings()
+    written.adaptiveBitrate = false
+    store.save(written)
+    #expect(store.load()?.adaptiveBitrate == false)
+
+    let older = StreamSettingsStore(
+      store: InMemorySettingsStore(values: [ StreamSettingsStore.settingsKey: #"{"codec":"h264","bitrate":6000000}"# ]),
+      legacyDefaults: nil
+    )
+    #expect(older.load()?.adaptiveBitrate == true)
+  }
+
   @Test("Every persisted field has a launch-argument name")
   func fieldNamesMatchLaunchArguments() {
     #expect(
       Set(StreamSettings.Field.allCases.map(\.rawValue)) == Set([
-        "codec", "bitrateMbps", "width", "height", "frameRate",
+        "codec", "bitrateMbps", "adaptiveBitrate", "width", "height", "frameRate",
         "audioEnabled", "rtspPort", "rtspPath", "disabledLenses", "cleanHdmi"
       ])
     )

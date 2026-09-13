@@ -12,6 +12,8 @@ public enum ControlCommand: Sendable, Equatable {
   case setZoom(displayed: Double)
   case setFormat(width: Int, height: Int, fps: Int)
   case setBitrate(mbps: Double)
+  /// Adaptive bitrate on or off. Either way the encoder goes back to the operator's rate.
+  case setAdaptiveBitrate(on: Bool)
   case setCodec(String)
   case setName(String)
   case setAudio(on: Bool)
@@ -69,6 +71,10 @@ public enum ControlChannel {
     case "set-bitrate":
       guard let mbps = query["mbps"].flatMap(Double.init) else { return nil }
       return .setBitrate(mbps: mbps)
+
+    case "set-adaptive-bitrate":
+      guard let on = query["on"].map(isTruthy) else { return nil }
+      return .setAdaptiveBitrate(on: on)
 
     case "set-codec":
       guard let codec = query["codec"], !codec.isEmpty else { return nil }

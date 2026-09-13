@@ -426,6 +426,27 @@ private fun VideoCard(
                 modifier = Modifier.testTag("settings-bitrate")
             )
         }
+
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 2.dp)
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Adaptive bitrate", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    "Never below half, and only while the network cannot keep up",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Switch(
+                checked = draft.adaptiveBitrate,
+                onCheckedChange = { onDraftChange(draft.copy(adaptiveBitrate = it)) },
+                modifier = Modifier.testTag("settings-adaptive-bitrate")
+            )
+        }
     }
 }
 
