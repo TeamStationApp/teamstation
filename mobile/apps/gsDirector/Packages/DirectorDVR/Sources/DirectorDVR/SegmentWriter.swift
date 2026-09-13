@@ -492,7 +492,17 @@ public final class SegmentWriter: NSObject, ArchiveSink, @unchecked Sendable {
     var adjusted = CMTimeAdd(frame.presentationTime, timelineOffset)
     if let previous {
       let rawGap = CMTimeSubtract(adjusted, previous.presentationTime)
-      let elapsed = frame.wallClock.seconds - previous.wallClock.seconds
+      // Capture time is the witness when both pictures carry one, arrival only when they do not. A
+      // camera that drops to its next keyframe on a starved link sends that keyframe as soon as the
+      // backlog drains, so arrival can show a fraction of a second across seconds of real dropout:
+      // rec-354 took a Pixel's 3.65 s drop for a glitch on a 0.31 s arrival gap, and placed the
+      // second of pictures after it 3.35 s early.
+      let elapsed: Double = {
+        guard let a = previous.captureWallClock, let b = frame.captureWallClock else {
+          return frame.wallClock.seconds - previous.wallClock.seconds
+        }
+        return b.seconds - a.seconds
+      }()
       // The media clock is only trusted while it agrees with the time that actually passed. Going
       // backwards means the camera's clock restarted; a long jump that real elapsed time cannot
       // corroborate means it glitched. Either way the frame is placed where the wall clock says it

@@ -123,6 +123,31 @@ struct SegmentWriterGapTests {
     #expect(snap.dvr.archiveFillEvents == 0)
   }
 
+  /// A camera on a starved link drops to its next keyframe and sends it as soon as the backlog
+  /// drains, so across a real dropout the pictures on either side can arrive a fraction of a second
+  /// apart. Judged on arrival, rec-354's Pixel took a 3.65 s drop for a glitch and placed the next
+  /// second of pictures 3.35 s early; its capture time said all along that the time had passed.
+  @Test("A dropout that arrives quickly is still held at the length its capture time says", .timeLimit(.minutes(1)))
+  func captureTimeOutranksArrivalAcrossADropout() async throws {
+    let harness = try GapHarness()
+    defer { harness.tearDown() }
+
+    let writer = harness.makeWriter()
+    try writer.prepare()
+    try harness.feed(writer, from: 1_000, seconds: 1)
+    // 3.65 s of pictures never sent; the next one arrives 0.3 s after the last, but its media and
+    // capture clocks both say 3.65 s.
+    try harness.feed(writer, from: 1_001.3, media: 1_004.65, seconds: 1, captureOffset: 3.35)
+    await writer.finish()
+
+    let dvr = harness.telemetry.snapshot.dvr
+    #expect(writer.appendedFrameCount >= 58, "appended \(writer.appendedFrameCount) of 60 frames")
+    #expect(dvr.archiveClockRebases == 0, "a corroborated dropout was re-based onto its arrival time")
+    #expect(dvr.archiveFillEvents == 1)
+    let covered = Double(dvr.archiveFillPackets) * 1024 / 48_000
+    #expect(abs(covered - 3.65) < 0.3, "audio covered \(covered) s of a 3.65 s dropout")
+  }
+
   /// The failure reproduced on the device: kill the Cameraman, let it reconnect, stop. The RTP
   /// unwrapper restarts on reconnect, so every later frame arrives stamped earlier than the frame
   /// before the outage. The writer read that as a clock that "does not advance" and dropped every
