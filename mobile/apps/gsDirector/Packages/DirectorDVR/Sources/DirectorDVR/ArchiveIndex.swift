@@ -492,6 +492,11 @@ public final class ArchiveIndex: @unchecked Sendable {
     return Int(row.int(0)) + 1
   }
 
+  /// Takes with no end: the one being picked back up, and any a crash left behind.
+  public func openRecordingIDs() throws -> Set<Int64> {
+    Set(try store.query("SELECT id FROM recordings WHERE ended_at IS NULL;").map { $0.int(0) })
+  }
+
   public func recordings() throws -> [RecordingSummary] {
     let rows = try store.query(
       """
@@ -1001,17 +1006,37 @@ public final class ArchiveIndex: @unchecked Sendable {
     return closed
   }
 
-  /// Run at launch so a mid-segment kill cannot leave the index describing a fiction.
+  /// Drops rows whose file is gone and reports files no row describes, so a mid-segment kill
+  /// cannot leave the index describing a fiction.
+  ///
+  /// `recordings` limits it to those takes: their rows, and their `rec-<id>` folder under each
+  /// camera. Only a take that was still open when the app died can have been cut off mid-segment,
+  /// and one take is a few hundred files where the whole archive is tens of thousands — too many
+  /// to stat on the launch path inside the watchdog's allowance. `nil` checks the whole archive.
   @discardableResult
-  public func reconcile(with fileManager: FileManager = .default) throws -> (removed: Int, orphans: [URL]) {
-    let rows = try store.query(
-      "SELECT \(Self.segmentColumns) FROM segments ORDER BY id ASC;"
-    ).map(Self.segment(from:))
+  public func reconcile(
+    recordings ids: Set<Int64>? = nil,
+    archivesRoot: URL = DirectorPaths.archives,
+    with fileManager: FileManager = .default
+  ) throws -> (removed: Int, orphans: [URL]) {
+    let rows: [SegmentRecord]
+    if let ids {
+      guard !ids.isEmpty else { return (0, []) }
+      let placeholders = Array(repeating: "?", count: ids.count).joined(separator: ", ")
+      rows = try store.query(
+        "SELECT \(Self.segmentColumns) FROM segments WHERE recording_id IN (\(placeholders)) ORDER BY id ASC;",
+        ids.sorted().map { .integer($0) }
+      ).map(Self.segment(from:))
+    } else {
+      rows = try store.query(
+        "SELECT \(Self.segmentColumns) FROM segments ORDER BY id ASC;"
+      ).map(Self.segment(from:))
+    }
 
     var removed = 0
     var indexed: Set<String> = []
     for record in rows {
-      let url = DirectorPaths.archiveDirectory(for: record.sourceID)
+      let url = archivesRoot.appendingPathComponent(record.sourceID.slug, isDirectory: true)
         .appendingPathComponent(record.filename)
       if fileManager.fileExists(atPath: url.path) {
         indexed.insert(url.standardizedFileURL.path)
@@ -1021,11 +1046,23 @@ public final class ArchiveIndex: @unchecked Sendable {
       }
     }
 
+    let searched: [URL]
+    if let ids {
+      let cameras = (try? fileManager.contentsOfDirectory(
+        at: archivesRoot,
+        includingPropertiesForKeys: nil
+      )) ?? []
+      searched = cameras.flatMap { camera in
+        ids.sorted().map { camera.appendingPathComponent("rec-\($0)", isDirectory: true) }
+      }
+    } else {
+      searched = [archivesRoot]
+    }
     var orphans: [URL] = []
-    if let enumerator = fileManager.enumerator(
-      at: DirectorPaths.archives,
-      includingPropertiesForKeys: nil
-    ) {
+    for folder in searched {
+      guard let enumerator = fileManager.enumerator(at: folder, includingPropertiesForKeys: nil) else {
+        continue
+      }
       for case let url as URL in enumerator where url.pathExtension == "mp4" {
         if !indexed.contains(url.standardizedFileURL.path) { orphans.append(url) }
       }
