@@ -25,6 +25,10 @@ settings:
 packages:
   DirectorCore:
     path: ../common/DirectorCore
+  # The archive index and the export that stitches segments into finished files, shared with
+  # GS Distributor on the Mac.
+  DirectorExport:
+    path: ../common/DirectorExport
   DirectorSources:
     path: ../common/DirectorSources
   DirectorPipeline:
@@ -127,6 +131,8 @@ targets:
       - target: Director
       - package: DirectorCore
         product: DirectorCore
+      - package: DirectorExport
+        product: DirectorExport
       - package: DirectorSources
         product: DirectorSources
       - package: DirectorPipeline
