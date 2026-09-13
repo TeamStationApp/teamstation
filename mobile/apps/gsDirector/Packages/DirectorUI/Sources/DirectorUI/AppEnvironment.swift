@@ -264,11 +264,15 @@ public final class AppEnvironment {
   private static let replayUIPublishInterval: TimeInterval = 0.05
   /// Width of one small source tile, used so Output scrub (if added) shares the 60s-per-width rate.
   public var smallTileWidth: Double = 300
-  /// Visual order of Source 1…5. Independent of which camera occupies a source.
+  /// Output's corner and the visual order of Source 1…5. Independent of which camera occupies a
+  /// source.
   public private(set) var sourceLayout = SourceLayout.default
   /// Source currently being dragged to a new slot, if any. Scrub and program-tap stand down.
   public var draggingSourceIndex: Int?
-  /// Wall time until which a lift after a reorder must not cut that tile to Output.
+  /// Output is being dragged to another corner. Its replay and return-to-live buttons stand down.
+  public var isDraggingOutput = false
+  /// Wall time until which a lift after a drag must not act as a tap: cutting the dragged source
+  /// to Output, or pressing a button on Output after moving it.
   public var ignoreProgramTapUntil: TimeInterval = 0
   private let layoutStore: SourceLayoutStore
   private let programSourceStore: ProgramSourceStore
@@ -1103,9 +1107,18 @@ public final class AppEnvironment {
     sourceLayout.moveSource(sourceIndex, toSlot: slot)
   }
 
+  /// Parks Output in `corner`; the sources reflow into the cells it leaves. Saved on drop, like a
+  /// source swap.
+  public func moveProgram(to corner: ProgramCorner) {
+    sourceLayout.programCorner = corner
+  }
+
   public func commitSourceLayout() {
     layoutStore.save(sourceLayout)
-    telemetry.mutate { $0.sourceLayout = sourceLayout.displayOrder }
+    telemetry.mutate {
+      $0.sourceLayout = sourceLayout.displayOrder
+      $0.outputCorner = sourceLayout.programCorner.rawValue
+    }
   }
 
   public func setSourceLayout(_ layout: SourceLayout) {
@@ -3824,6 +3837,7 @@ public final class AppEnvironment {
       $0.keepAliveInBackground = self.shouldKeepAliveInBackground
       $0.pictureInPictureActive = self.pictureInPicture.isActive
       $0.sourceLayout = self.sourceLayout.displayOrder
+      $0.outputCorner = self.sourceLayout.programCorner.rawValue
     }
     telemetry.recordComposedFrames(composedFrames)
     var liveDecodeSessions = 0
@@ -4144,8 +4158,11 @@ public final class AppEnvironment {
       telemetry.reset()
       testClock?.reset()
       statusMessage = nil
-    case let .sourceLayout(order):
-      setSourceLayout(SourceLayout(order: order))
+    case let .sourceLayout(order, corner):
+      setSourceLayout(SourceLayout(
+        order: order,
+        programCorner: corner.flatMap(ProgramCorner.init(rawValue:)) ?? sourceLayout.programCorner
+      ))
     case .killProgramWriter:
       programEncoder.poisonWriter()
     case let .exportRecording(reprocess):

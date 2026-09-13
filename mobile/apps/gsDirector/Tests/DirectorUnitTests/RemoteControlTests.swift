@@ -323,6 +323,14 @@ struct ControlChannelSourceTests {
     )
   }
 
+  @Test("Source-layout can also name Output's corner")
+  func sourceLayoutCornerCommand() {
+    let command = ControlChannel.command(
+      from: URL(string: "gsdirector://test/source-layout?order=5,1,2,3,4&corner=bottomTrailing")!
+    )
+    #expect(command == .sourceLayout(order: [4, 0, 1, 2, 3], corner: "bottomTrailing"))
+  }
+
   @Test("Source-gain uses 1-based index and 0...1 gain")
   func sourceGainCommand() {
     let command = ControlChannel.command(

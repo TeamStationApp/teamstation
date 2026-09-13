@@ -67,6 +67,35 @@ struct SourceLayoutTests {
     store.clear()
     #expect(store.load() == .default)
   }
+
+  @Test("Output's corner round-trips, and a layout saved without one comes back top-left")
+  func cornerRoundTrip() throws {
+    let layout = SourceLayout(order: [4, 3, 2, 1, 0], programCorner: .bottomTrailing)
+    let data = try JSONEncoder().encode(layout)
+    #expect(try JSONDecoder().decode(SourceLayout.self, from: data) == layout)
+
+    let saved = try JSONDecoder().decode(
+      SourceLayout.self,
+      from: Data(#"{"order":[4,3,2,1,0]}"#.utf8)
+    )
+    #expect(saved.order == [4, 3, 2, 1, 0])
+    #expect(saved.programCorner == .topLeading)
+
+    let unknown = try JSONDecoder().decode(
+      SourceLayout.self,
+      from: Data(#"{"order":[4,3,2,1,0],"programCorner":"middle"}"#.utf8)
+    )
+    #expect(unknown.order == [4, 3, 2, 1, 0])
+    #expect(unknown.programCorner == .topLeading)
+  }
+
+  @Test("Swapping sources leaves Output's corner alone")
+  func swapKeepsCorner() {
+    var layout = SourceLayout(programCorner: .topTrailing)
+    layout.moveSource(0, toSlot: 4)
+    #expect(layout.order == [4, 1, 2, 3, 0])
+    #expect(layout.programCorner == .topTrailing)
+  }
 }
 
 @Suite("Source grid geometry")
@@ -96,5 +125,41 @@ struct SourceGridGeometryTests {
     #expect(geometry.slot(containing: CGPoint(x: 50, y: 258)) == 2)
     #expect(geometry.slot(containing: CGPoint(x: 158, y: 258)) == 3)
     #expect(geometry.slot(containing: CGPoint(x: 266, y: 258)) == 4)
+  }
+
+  @Test(
+    "Output in any corner keeps its size and leaves the other cells to the sources in reading order",
+    arguments: [
+      (ProgramCorner.topLeading, CGPoint(x: 0, y: 0), [(216, 0), (216, 108), (0, 216), (108, 216), (216, 216)]),
+      (ProgramCorner.topTrailing, CGPoint(x: 108, y: 0), [(0, 0), (0, 108), (0, 216), (108, 216), (216, 216)]),
+      (ProgramCorner.bottomLeading, CGPoint(x: 0, y: 108), [(0, 0), (108, 0), (216, 0), (216, 108), (216, 216)]),
+      (ProgramCorner.bottomTrailing, CGPoint(x: 108, y: 108), [(0, 0), (108, 0), (216, 0), (0, 108), (0, 216)])
+    ] as [(ProgramCorner, CGPoint, [(CGFloat, CGFloat)])]
+  )
+  func cornerFrames(corner: ProgramCorner, programOrigin: CGPoint, slotOrigins: [(CGFloat, CGFloat)]) {
+    let geometry = SourceGridGeometry(
+      size: CGSize(width: 316, height: 316),
+      spacing: 8,
+      programCorner: corner
+    )
+    #expect(abs(geometry.programFrame.minX - programOrigin.x) < 0.01)
+    #expect(abs(geometry.programFrame.minY - programOrigin.y) < 0.01)
+    #expect(abs(geometry.programFrame.width - 208) < 0.01)
+    #expect(abs(geometry.programFrame.height - 208) < 0.01)
+    #expect(geometry.slotFrames.count == SourceIndex.count)
+    for (slot, origin) in slotOrigins.enumerated() {
+      #expect(abs(geometry.slotFrames[slot].minX - origin.0) < 0.01)
+      #expect(abs(geometry.slotFrames[slot].minY - origin.1) < 0.01)
+      #expect(!geometry.slotFrames[slot].intersects(geometry.programFrame))
+    }
+  }
+
+  @Test("Output lands in the corner of the quadrant its centre is dropped in")
+  func nearestCorner() {
+    let geometry = SourceGridGeometry(size: CGSize(width: 316, height: 316), spacing: 8)
+    #expect(geometry.programCorner(nearest: CGPoint(x: 104, y: 104)) == .topLeading)
+    #expect(geometry.programCorner(nearest: CGPoint(x: 212, y: 104)) == .topTrailing)
+    #expect(geometry.programCorner(nearest: CGPoint(x: 104, y: 212)) == .bottomLeading)
+    #expect(geometry.programCorner(nearest: CGPoint(x: 212, y: 212)) == .bottomTrailing)
   }
 }

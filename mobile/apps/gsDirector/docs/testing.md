@@ -52,6 +52,7 @@ node scripts/control.js --device send "/link-source?video=1&control=2"   # row 2
 node scripts/control.js --device send "/unlink-source?index=2"           # from either row of the link
 node scripts/control.js --device send /search-cameras
 node scripts/control.js --device send "/source-layout?order=5,1,2,3,4"
+node scripts/control.js --device send "/source-layout?order=1,2,3,4,5&corner=bottomTrailing"  # park Output bottom-right
 ```
 
 The camera commands exist so identity can be asserted without driving a menu by coordinates, and

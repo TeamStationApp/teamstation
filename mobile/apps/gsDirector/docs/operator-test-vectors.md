@@ -77,6 +77,7 @@ The layout is a 3×3 with the top-left four cells merged into Output. Source til
 | B11 | Injected pad chord cuts Source 2 live | `/bind-remote?action=live-2&controls=a` then `/remote-chord?controls=a` → `source=2 onair=1` | `remote-control` |
 | B12 | Nameplate is `N: camera` | `1: CAM1`, not `source 1: CAM1`; no `OUT` pill on the on-air tile, the green outline says it | `operator-source-layout` |
 | B13 | Source tiles keep a saved screen order | Long-press drag swaps by source number; `order=` survives relaunch even if the camera on Source 1 changes | `operator-source-layout` |
+| B14 | Output can be parked in any corner | Long-press drag on Output moves it, same size, to the corner of the quadrant it is dropped in; sources reflow around it in reading order; `corner=` survives relaunch and keeps `order=` | `operator-source-layout` |
 
 ---
 
@@ -211,7 +212,7 @@ Flows in `scripts/run-maestro.js --device <udid> --suite operator`, in order:
 5. `operator-program-cut` — A3, A8, B1–B4
 6. `operator-program-disable` — B9
 7. `operator-empty-tiles` — B5, B6
-8. `operator-source-layout` — B12, B13
+8. `operator-source-layout` — B12, B13, B14
 9. `operator-menu-back` — G3, G4
 10. `stream-controls` — stream URL field and clear X; empty-URL toast; Stream left of Record; RECORDING not STOP; no REC pill; thermal pill left of Recordings
 11. `thermal-visuals` — G9
