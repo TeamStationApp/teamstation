@@ -9,6 +9,7 @@ let package = Package(
   ],
   dependencies: [
     .package(path: "../../common/DirectorCore"),
+    .package(path: "../../../common/DirectorExport"),
     .package(path: "../../common/DirectorSources"),
     .package(path: "../../common/DirectorRTSP"),
     .package(path: "../../common/CameramanCore"),
@@ -24,6 +25,7 @@ let package = Package(
       name: "DirectorUI",
       dependencies: [
         "DirectorCore",
+        "DirectorExport",
         "DirectorSources",
         "DirectorRTSP",
         "CameramanCore",
