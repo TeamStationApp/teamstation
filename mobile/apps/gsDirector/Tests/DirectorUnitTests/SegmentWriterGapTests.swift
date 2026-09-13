@@ -46,6 +46,66 @@ struct SegmentWriterGapTests {
     #expect(abs(covered - 5) < 0.25, "audio covered \(covered) s of a 5 s gap")
   }
 
+  /// After loss the archive keeps nothing until the next keyframe, so the picture after a dropout
+  /// opens a new segment, and the picture held across the hole is the last sample of its file.
+  @Test("A picture held across a gap keeps its length when the next picture opens a segment")
+  func heldPictureSurvivesTheCut() async throws {
+    let harness = try GapHarness()
+    defer { harness.tearDown() }
+
+    let writer = harness.makeWriter()
+    try writer.prepare()
+    try harness.feed(writer, from: 1_000, seconds: 1)
+    // The next run starts on a keyframe past the 3 s boundary, so it opens the second segment.
+    try harness.feed(writer, from: 1_006, seconds: 1)
+    await writer.finish()
+
+    let records = try harness.index.segments(forRecording: harness.recordingID)
+      .filter { !$0.isInitialization }
+      .sorted { $0.sequence < $1.sequence }
+    #expect(records.count >= 2, "segments: \(records.map(\.filename))")
+    let first = try #require(records.first)
+    let url = harness.archives.appendingPathComponent(harness.source.slug, isDirectory: true)
+      .appendingPathComponent(first.filename)
+    let track = try #require(try await AVURLAsset(url: url).loadTracks(withMediaType: .video).first)
+    let video = try await track.load(.timeRange).duration.seconds
+    #expect(abs(video - 6) < 0.1, "first segment's picture runs \(video) s; it should hold across the 5 s hole to 6 s")
+    #expect(abs(first.duration - video) < 0.1, "index says \(first.duration) s, the file holds \(video) s")
+  }
+
+  /// rec-408: 2% loss kept the Pixel's archive empty for 40 s, and the writer judged the hole a
+  /// glitch, so the picture before it kept one frame's length. The index still said that segment
+  /// ran to the keyframe after the hole, 42.7 s against a 2.5 s file, and the export left 40 s with
+  /// no picture at all and scaled a keyframe group into a sliver behind it.
+  @Test("A glitched gap leaves each segment recorded as long as its file, not as long as the gap")
+  func clampedGapKeepsTheIndexHonest() async throws {
+    let harness = try GapHarness()
+    defer { harness.tearDown() }
+
+    let writer = harness.makeWriter()
+    try writer.prepare()
+    try harness.feed(writer, from: 1_000, seconds: 1)
+    try harness.feed(writer, from: 1_006, seconds: 1, captureOffset: -5)
+    await writer.finish()
+
+    let records = try harness.index.segments(forRecording: harness.recordingID)
+      .filter { !$0.isInitialization }
+      .sorted { $0.sequence < $1.sequence }
+    #expect(!records.isEmpty)
+    // Capture time says the glitch took no time, so the pictures sit back to back: whichever path
+    // takes it out, re-based at intake or clamped at the write, no segment may claim the gap.
+    var pictures = 0.0
+    for record in records {
+      let url = harness.archives.appendingPathComponent(harness.source.slug, isDirectory: true)
+        .appendingPathComponent(record.filename)
+      let track = try #require(try await AVURLAsset(url: url).loadTracks(withMediaType: .video).first)
+      let video = try await track.load(.timeRange).duration.seconds
+      pictures += video
+      #expect(abs(record.duration - video) < 0.05, "index says \(record.duration) s for \(record.filename), the file holds \(video) s")
+    }
+    #expect(pictures < 2.5, "the pictures run \(pictures) s; the glitch should have added nothing")
+  }
+
   @Test("An uncorroborated gap is clamped and fills nothing")
   func uncorroboratedGapDoesNotFill() async throws {
     let harness = try GapHarness()
@@ -61,6 +121,31 @@ struct SegmentWriterGapTests {
     let snap = harness.telemetry.snapshot
     #expect(writer.appendedFrameCount > 0, "no frames appended — this pass would be vacuous")
     #expect(snap.dvr.archiveFillEvents == 0)
+  }
+
+  /// A camera on a starved link drops to its next keyframe and sends it as soon as the backlog
+  /// drains, so across a real dropout the pictures on either side can arrive a fraction of a second
+  /// apart. Judged on arrival, rec-410's Pixel took a 3.65 s drop for a glitch and placed the next
+  /// second of pictures 3.35 s early; its capture time said all along that the time had passed.
+  @Test("A dropout that arrives quickly is still held at the length its capture time says", .timeLimit(.minutes(1)))
+  func captureTimeOutranksArrivalAcrossADropout() async throws {
+    let harness = try GapHarness()
+    defer { harness.tearDown() }
+
+    let writer = harness.makeWriter()
+    try writer.prepare()
+    try harness.feed(writer, from: 1_000, seconds: 1)
+    // 3.65 s of pictures never sent; the next one arrives 0.3 s after the last, but its media and
+    // capture clocks both say 3.65 s.
+    try harness.feed(writer, from: 1_001.3, media: 1_004.65, seconds: 1, captureOffset: 3.35)
+    await writer.finish()
+
+    let dvr = harness.telemetry.snapshot.dvr
+    #expect(writer.appendedFrameCount >= 58, "appended \(writer.appendedFrameCount) of 60 frames")
+    #expect(dvr.archiveClockRebases == 0, "a corroborated dropout was re-based onto its arrival time")
+    #expect(dvr.archiveFillEvents == 1)
+    let covered = Double(dvr.archiveFillPackets) * 1024 / 48_000
+    #expect(abs(covered - 3.65) < 0.3, "audio covered \(covered) s of a 3.65 s dropout")
   }
 
   /// The failure reproduced on the device: kill the Cameraman, let it reconnect, stop. The RTP
@@ -170,6 +255,100 @@ struct SegmentWriterGapTests {
     let tile = harness.telemetry.snapshot.tiles[0]
     #expect(tile.audioBuffersDiscarded == 0)
   }
+
+  /// rec-403: a Pixel under thermal throttling delivered its audio one to two seconds behind its
+  /// picture. Each segment was closed on its keyframe before the audio for its last stretch had
+  /// arrived, and that audio then had nowhere to go: 39 holes, 83 s of the Pixel's sound, every one
+  /// straddling a segment boundary.
+  @Test("Audio that arrives well behind its picture still lands in the segment it belongs to", .timeLimit(.minutes(1)))
+  func lateAudioStaysInItsSegment() async throws {
+    let harness = try GapHarness()
+    defer { harness.tearDown() }
+
+    let writer = harness.makeWriter()
+    try writer.prepare()
+    // On time for the first two seconds, which is where the recording pins its audio to its
+    // picture, then a second and a half behind: rec-403's Pixel was fine until it throttled.
+    try harness.feedLateAudio(writer, from: 1_000, seconds: 10, audioLag: 1.5, after: 2)
+    await writer.finish()
+
+    let files = try harness.segmentFiles()
+    try #require(files.count >= 3, "expected several 3 s segments, got \(files.count)")
+    // The last segment's tail depends on how finishing treats audio still owed; every other one is
+    // closed mid-recording, which is where the audio went missing.
+    for file in files.dropLast() {
+      let asset = AVURLAsset(url: file)
+      let video = try #require(try await asset.loadTracks(withMediaType: .video).first)
+      let audio = try #require(try await asset.loadTracks(withMediaType: .audio).first)
+      let videoRange = try await video.load(.timeRange)
+      let audioRange = try await audio.load(.timeRange)
+      #expect(
+        audioRange.end.seconds >= videoRange.end.seconds - 0.1,
+        "\(file.lastPathComponent): audio ends at \(audioRange.end.seconds) s, video at \(videoRange.end.seconds) s"
+      )
+      #expect(audioRange.start.seconds <= 0.1, "\(file.lastPathComponent): audio starts at \(audioRange.start.seconds) s")
+    }
+    // Late is not wrong: the source clock placed every buffer, so none should have been moved.
+    #expect(harness.telemetry.snapshot.tiles[0].audioResyncs == 0)
+  }
+
+  /// rec-405: after two minutes the Pixel's sound came out of the export 0.3–1.6 s early and full of
+  /// holes, which is what a sample count that falls behind real time looks like to a receiver with
+  /// nothing else to go on. With a capture time on every packet, the archive places it correctly.
+  @Test("Audio whose sample clock loses time is placed by its capture time", .timeLimit(.minutes(1)))
+  func captureTimeOutranksLostSamples() async throws {
+    let harness = try GapHarness()
+    defer { harness.tearDown() }
+
+    let writer = harness.makeWriter()
+    try writer.prepare()
+    try harness.feedLateAudio(
+      writer, from: 1_000, seconds: 10, audioLag: 0, after: 0, samplesLost: (at: 4, seconds: 0.5)
+    )
+    await writer.finish()
+
+    let files = try harness.segmentFiles()
+    try #require(files.count >= 3, "expected several 3 s segments, got \(files.count)")
+    for file in files.dropLast() {
+      let asset = AVURLAsset(url: file)
+      let video = try #require(try await asset.loadTracks(withMediaType: .video).first)
+      let audio = try #require(try await asset.loadTracks(withMediaType: .audio).first)
+      let videoEnd = try await video.load(.timeRange).end.seconds
+      let audioEnd = try await audio.load(.timeRange).end.seconds
+      #expect(abs(audioEnd - videoEnd) < 0.1, "\(file.lastPathComponent): audio ends at \(audioEnd) s, video at \(videoEnd) s")
+    }
+    let tile = harness.telemetry.snapshot.tiles[0]
+    #expect(tile.audioResyncs == 0)
+    #expect(tile.audioRejectedPlacement < 5, "rejected \(tile.audioRejectedPlacement)")
+  }
+
+  /// This bench's Pixel was still reconnecting when a recording began, 25 s after the Director
+  /// relaunched. Its writer was made before it had sent any audio, so it got no audio track, and
+  /// every one of its 14,311 audio packets for the next fifteen minutes was turned away.
+  @Test("A camera whose audio starts after the recording does gets it from the next segment on", .timeLimit(.minutes(1)))
+  func audioThatStartsLateJoinsTheNextSegment() async throws {
+    let harness = try GapHarness()
+    defer { harness.tearDown() }
+
+    let writer = harness.makeWriter(
+      settings: SegmentWriterSettings(segmentSeconds: 3, includesAudio: false, acceptsLateAudio: true)
+    )
+    try writer.prepare()
+    try harness.feedLateAudio(writer, from: 1_000, seconds: 10, audioLag: 0, after: 0, audioFrom: 2.5)
+    await writer.finish()
+
+    let files = try harness.segmentFiles()
+    try #require(files.count >= 3, "expected several 3 s segments, got \(files.count)")
+    var withAudio: [String] = []
+    for file in files where try await !AVURLAsset(url: file).loadTracks(withMediaType: .audio).isEmpty {
+      withAudio.append(file.lastPathComponent)
+    }
+    #expect(!withAudio.contains(files[0].lastPathComponent), "the first segment predates the camera's audio")
+    #expect(
+      withAudio.count >= files.count - 2,
+      "segments with audio: \(withAudio) of \(files.map(\.lastPathComponent))"
+    )
+  }
 }
 
 private final class GapHarness {
@@ -196,14 +375,16 @@ private final class GapHarness {
     try? FileManager.default.removeItem(at: root)
   }
 
-  func makeWriter() -> SegmentWriter {
+  func makeWriter(
+    settings: SegmentWriterSettings = SegmentWriterSettings(segmentSeconds: 3, includesAudio: true)
+  ) -> SegmentWriter {
     SegmentWriter(
       sourceID: source,
       sourceIndex: 0,
       recordingID: recordingID,
       index: index,
       telemetry: telemetry,
-      settings: SegmentWriterSettings(segmentSeconds: 3, includesAudio: true),
+      settings: settings,
       clock: clock,
       directory: archives
         .appendingPathComponent(source.slug, isDirectory: true)
@@ -267,6 +448,98 @@ private final class GapHarness {
         )
       )
     }
+  }
+
+  /// Feeds `seconds` of 30 fps video whose audio arrives on time until `after` seconds in and
+  /// `audioLag` seconds behind it from then on. The audio runs at its own packet cadence on the
+  /// source clock; whatever is still owed at the end is delivered then, as a camera catching up would.
+  /// With `audioFrom`, the camera sends no audio at all before that many seconds in.
+  func feedLateAudio(
+    _ writer: SegmentWriter,
+    from start: Double,
+    seconds: Double,
+    audioLag: Double,
+    after lagStart: Double,
+    audioFrom: Double = 0,
+    samplesLost: (at: Double, seconds: Double)? = nil
+  ) throws {
+    guard let buffer = Self.buffer(width: 160, height: 120) else {
+      throw CocoaError(.fileWriteUnknown)
+    }
+    let fps = 30
+    let frames = Int((seconds * Double(fps)).rounded(.down))
+    let packet = filler.audioDuration.seconds
+    var audioTime = audioFrom
+    func sendAudio(upTo limit: Double) {
+      while audioTime <= limit {
+        // With `samplesLost`, the camera's sample count falls that far behind real time at that
+        // point, and says so through a capture time on every packet, as Cameraman now does.
+        let lost = samplesLost.map { audioTime >= $0.at ? $0.seconds : 0 } ?? 0
+        if let silence = filler.encodeSilence(
+          sourceID: source,
+          presentationTime: CMTime(seconds: audioTime - lost, preferredTimescale: 90_000),
+          wallClock: clock.now
+        ) {
+          writer.append(audio: samplesLost == nil ? silence : CompressedAudioFrame(
+            sourceID: silence.sourceID,
+            data: silence.data,
+            magicCookie: silence.magicCookie,
+            sampleRate: silence.sampleRate,
+            channelCount: silence.channelCount,
+            presentationTime: silence.presentationTime,
+            wallClock: silence.wallClock,
+            captureWallClock: WallClock(seconds: start + audioTime)
+          ))
+        }
+        audioTime += packet
+      }
+    }
+    for step in 0..<frames {
+      let offset = Double(step) / Double(fps)
+      let wall = start + offset
+      clock.set(wall)
+      frameID += 1
+      // The writer has to have seen audio before it takes any video, so the first packet is on
+      // time; everything after it is late.
+      if offset >= audioFrom {
+        sendAudio(upTo: step == 0 ? 0 : offset - (offset < lagStart ? 0 : audioLag))
+      }
+      guard
+        let coded = filler.encode(
+          pixelBuffer: buffer,
+          sourceID: source,
+          presentationTime: CMTime(seconds: offset, preferredTimescale: 90_000),
+          wallClock: WallClock(seconds: wall),
+          frameID: frameID,
+          forceKeyframe: step % fps == 0
+        )
+      else { continue }
+      writer.append(
+        CompressedFrame(
+          sourceID: coded.sourceID,
+          codec: coded.codec,
+          data: coded.data,
+          parameterSets: coded.parameterSets,
+          isKeyframe: coded.isKeyframe,
+          presentationTime: coded.presentationTime,
+          decodeTime: coded.decodeTime,
+          wallClock: coded.wallClock,
+          captureWallClock: WallClock(seconds: wall),
+          frameID: coded.frameID
+        )
+      )
+    }
+    sendAudio(upTo: seconds)
+  }
+
+  /// The segment files this harness's writer produced, in order.
+  func segmentFiles() throws -> [URL] {
+    let directory = archives
+      .appendingPathComponent(source.slug, isDirectory: true)
+      .appendingPathComponent("rec-\(recordingID)", isDirectory: true)
+    return try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+      .filter { $0.pathExtension == "mp4" }
+      .sorted { $0.lastPathComponent < $1.lastPathComponent }
   }
 
   private static func buffer(width: Int, height: Int) -> CVPixelBuffer? {

@@ -47,6 +47,14 @@ class StreamSendQueue(val highWaterMark: Int = defaultHighWaterMark) {
 
     fun decide(frameBytes: Int, isKeyframe: Boolean): Decision {
         if (pendingBytes <= highWaterMark) {
+            // What follows a dropped picture predicts from it, directly or through the pictures
+            // between, so it cannot be decoded either. Sent anyway, a receiver records frames nobody
+            // can play: rec-409's Pixel export held them in 13 places. Only a keyframe ends a drop,
+            // however much room the queue has.
+            if (isDropping && !isKeyframe) {
+                droppedFrames += 1
+                return Decision.DROP
+            }
             isDropping = false
             pendingBytes += frameBytes
             return Decision.SEND

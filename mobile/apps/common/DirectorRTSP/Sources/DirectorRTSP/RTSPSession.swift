@@ -69,6 +69,7 @@ public final class RTSPSession: @unchecked Sendable {
   private let onEvent: EventHandler
   private let queue: DispatchQueue
   private let lock = NSLock()
+  private var receivedBytes: UInt64 = 0
 
   private var connection: NWConnection?
   private var parser = RTSPStreamParser()
@@ -403,8 +404,17 @@ public final class RTSPSession: @unchecked Sendable {
     }
   }
 
+  /// Every byte this session has read off the socket, media and responses alike. The tile's rate
+  /// readout is built on it, so it counts what the link carried rather than what decoded.
+  public var bytesReceived: UInt64 {
+    lock.lock()
+    defer { lock.unlock() }
+    return receivedBytes
+  }
+
   private func handle(received data: Data) {
     lock.lock()
+    receivedBytes &+= UInt64(data.count)
     parser.append(data)
     var items: [RTSPStreamItem] = []
     while let item = parser.next() { items.append(item) }

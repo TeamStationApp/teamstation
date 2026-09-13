@@ -17,6 +17,24 @@ public struct TileEnqueueFails: Sendable, Codable, Equatable {
   public var sampleBuffer: UInt64 = 0
   public var rendererFailed: UInt64 = 0
   public var lastSampleBufferStatus: Int32 = 0
+  /// What the display renderer said when it failed, rather than only that it did.
+  ///
+  /// A failed `AVSampleBufferVideoRenderer` accepts every later enqueue and shows none of them, so
+  /// the tile freezes on its last picture while arrivals keep counting -- which is exactly what a
+  /// frozen board looks like from the outside. The count alone cannot tell that apart from a
+  /// decoder that simply stopped producing, so the error is kept verbatim.
+  public var lastRendererError: String = ""
+  /// Seconds since 1970 when the renderer first reported a failure, so it can be lined up against
+  /// a webcam frame or a system report without guessing.
+  public var lastRendererFailureAt: Double = 0
+  /// Seconds since 1970 of the last sample this tile actually handed to the display layer.
+  /// A tile whose arrivals climb while this stands still is stalled after decode, not before.
+  public var lastEnqueueAt: Double = 0
+  /// Times the renderer asked to be flushed before it would decode again, counted separately
+  /// from an outright failure because the two have different fixes.
+  public var requiresFlush: UInt64 = 0
+  /// Times a failed renderer was rebuilt from scratch, which is the only thing that clears one.
+  public var rendererRebuilds: UInt64 = 0
 
   public init() {}
 }
@@ -116,6 +134,10 @@ public struct TileTelemetry: Sendable, Codable, Equatable {
   /// Why `enqueue` returned false. Counters, not per-frame logs — a frozen tile with `out=0`
   /// is diagnosed from which of these climbed while `framesPerSecond` stayed healthy.
   public var enqueueFails = TileEnqueueFails()
+  /// Times this tile was found wedged in `.replaying` and put back on live by the watchdog.
+  /// Any value above zero is a bug that was survived, not a healthy recovery — the tile was
+  /// showing a still while the game went on.
+  public var replayWedgeRecoveries: UInt64 = 0
   /// What the source says it is sending, as opposed to what actually arrives. The gap between
   /// `sourceFrameRate` and the measured rate is the first thing to look at when a camera looks
   /// slow, because it separates a network problem from a pipeline one.
@@ -146,6 +168,43 @@ public struct TileTelemetry: Sendable, Codable, Equatable {
   public var lossPerSecondLabel: String {
     guard framesPerSecond > 0, stalledForSeconds == 0 else { return "—" }
     return String(format: "%.0f", packetsLostPerSecond)
+  }
+
+  /// What the camera's link is carrying, in bytes a second. RTSP counts its own socket; NDI's
+  /// socket belongs to the SDK, so an NDI tile is given the Wi-Fi total less what the RTSP tiles
+  /// account for, and only while it is the one NDI camera live. Nil when neither is available.
+  public var receiveBytesPerSecond: Double?
+
+  /// The tile's frame rate as the operator reads it: "60 FPS", whole frames, arrivals rather than
+  /// what the screen showed. An em dash when nothing is arriving, like the loss beside it.
+  public var frameRateLabel: String {
+    guard framesPerSecond > 0, stalledForSeconds == 0 else { return "— FPS" }
+    return String(format: "%.0f FPS", framesPerSecond)
+  }
+
+  /// What the tile's own picture is not telling the operator: that it has stopped, or that it is a
+  /// still held because everything newer arrived too late to show. Nil while the picture is live.
+  ///
+  /// Both used to be silent. A camera that went off the network left its last picture up for two
+  /// hours; one whose link backed up to five seconds had every picture refused by the display cap
+  /// and froze for over a minute. Neither showed anything but the frozen picture.
+  public var heldPictureLabel: String? {
+    if stalledForSeconds > 0 { return "No picture \(Self.duration(stalledForSeconds))" }
+    if displayHeldLateSeconds >= 1 { return "Late \(Self.duration(displayHeldLateSeconds))" }
+    return nil
+  }
+
+  private static func duration(_ seconds: Double) -> String {
+    seconds < 120 ? String(format: "%.0f s", seconds) : String(format: "%.0f min", seconds / 60)
+  }
+
+  /// "4 Mbps": whole megabits a second, the unit a camera's bitrate is set in. It used to be
+  /// megabytes, so a 4 Mbps camera — half a megabyte a second — read 0 or 1 and looked broken.
+  public var throughputLabel: String {
+    guard let receiveBytesPerSecond, framesPerSecond > 0, stalledForSeconds == 0 else {
+      return "— Mbps"
+    }
+    return String(format: "%.0f Mbps", receiveBytesPerSecond * 8 / 1_000_000)
   }
 
   /// Why this source last stopped delivering, in the words of whatever noticed. Empty while healthy.
@@ -227,6 +286,10 @@ public struct TileTelemetry: Sendable, Codable, Equatable {
   /// stays up — and counted, because a bounded latency that reports nothing is indistinguishable
   /// from a frozen tile.
   public var displayRefusedLate: UInt64 = 0
+  /// How long the tile has held its last picture because every one since was over the display cap,
+  /// in seconds; zero while it is showing live pictures. The count above says pictures were
+  /// refused; this says the operator is looking at a still, and for how long.
+  public var displayHeldLateSeconds: Double = 0
   /// How old the newest picture was when the display gate judged it, in milliseconds — capture to
   /// presentation, including this app's own queueing. The whole feature exists because a tile was
   /// seen running two seconds behind the room, and this is the field that says so out loud.
@@ -454,6 +517,9 @@ public struct TelemetrySnapshot: Sendable, Codable, Equatable {
   public var availableMemoryMB = 0
   /// Jetsam bill, including surfaces lent to the display and encoder daemons.
   public var physFootprintMB = 0
+  /// This device's own IPv4 addresses, `interface=address`. The other end of every camera link,
+  /// and the one address nothing else in a dump could tell you.
+  public var localAddresses: [String] = []
   /// Anonymous resident pages. A soak that only watches `physFootprintMB` can miss a malloc climb.
   public var residentSizeMB = 0
   public var programSource: Int?
@@ -566,6 +632,7 @@ public final class PipelineTelemetry: @unchecked Sendable {
   private var frameTimestamps: [Int: (count: UInt64, since: TimeInterval, last: TimeInterval)] = [:]
   private var displayedTimestamps: [Int: (count: UInt64, since: TimeInterval, last: TimeInterval)] = [:]
   private var lossRates: [Int: CounterRateTracker] = [:]
+  private var byteRates: [Int: CounterRateTracker] = [:]
   private var composedRate = CounterRateTracker()
   /// Kept apart because they are counted differently, and their sum is what the HUD reports.
   private var replayDecodeSessions = 0
@@ -658,6 +725,35 @@ public final class PipelineTelemetry: @unchecked Sendable {
     let lossA = lossRates[a]
     lossRates[a] = lossRates[b]
     lossRates[b] = lossA
+    let bytesA = byteRates[a]
+    byteRates[a] = byteRates[b]
+    byteRates[b] = bytesA
+  }
+
+  /// The transport's cumulative received bytes for this tile, folded into
+  /// `receiveBytesPerSecond`. Returns the rate so the caller can subtract it from the interface
+  /// total when attributing the rest to an NDI tile.
+  @discardableResult
+  public func recordReceivedBytes(tile: Int, cumulative: UInt64) -> Double {
+    let now = Self.monotonicNow()
+    lock.lock()
+    var tracker = byteRates[tile] ?? CounterRateTracker()
+    let rate = tracker.record(cumulative, at: now)
+    byteRates[tile] = tracker
+    if let position = state.tiles.firstIndex(where: { $0.index == tile }) {
+      state.tiles[position].receiveBytesPerSecond = rate
+    }
+    lock.unlock()
+    return rate
+  }
+
+  /// A rate worked out elsewhere — the NDI tile's share of the interface — or nil to clear it.
+  public func setReceiveRate(tile: Int, bytesPerSecond: Double?) {
+    lock.lock()
+    if let position = state.tiles.firstIndex(where: { $0.index == tile }) {
+      state.tiles[position].receiveBytesPerSecond = bytesPerSecond
+    }
+    lock.unlock()
   }
 
   /// The transport's cumulative loss for this tile, as of now. Stores the count and folds it
@@ -680,6 +776,7 @@ public final class PipelineTelemetry: @unchecked Sendable {
   public func resetLossRate(tile: Int) {
     lock.lock()
     lossRates[tile] = nil
+    byteRates[tile] = nil
     lock.unlock()
   }
 
@@ -742,10 +839,26 @@ public final class PipelineTelemetry: @unchecked Sendable {
     lock.unlock()
   }
 
+  public func recordReplayWedgeRecovery(tile: Int) {
+    lock.lock()
+    if let position = state.tiles.firstIndex(where: { $0.index == tile }) {
+      state.tiles[position].replayWedgeRecoveries &+= 1
+    }
+    lock.unlock()
+  }
+
   public func recordDisplayRefusedLate(tile: Int) {
     lock.lock()
     if let position = state.tiles.firstIndex(where: { $0.index == tile }) {
       state.tiles[position].displayRefusedLate &+= 1
+    }
+    lock.unlock()
+  }
+
+  public func recordDisplayHeldLate(tile: Int, seconds: Double) {
+    lock.lock()
+    if let position = state.tiles.firstIndex(where: { $0.index == tile }) {
+      state.tiles[position].displayHeldLateSeconds = seconds
     }
     lock.unlock()
   }
@@ -901,6 +1014,7 @@ public final class PipelineTelemetry: @unchecked Sendable {
     // publish the pre-reset figure back into the fresh snapshot on the very next poll, which is
     // exactly the stale reading a reset is asked for to get rid of.
     lossRates.removeAll()
+    byteRates.removeAll()
     composedRate = CounterRateTracker()
     lock.unlock()
   }

@@ -14,6 +14,8 @@ import VideoToolbox
 public final class ProgramEncoder: @unchecked Sendable {
   public private(set) var outputURL: URL?
 
+  private var anchorSink: AnchorSink?
+  private var anchorRecordingID: Int64?
   private let telemetry: PipelineTelemetry
   private let converter: PixelConverter
   private let width: Int
@@ -49,6 +51,15 @@ public final class ProgramEncoder: @unchecked Sendable {
   private var isDraining = false
   private var writtenFrames: UInt64 = 0
   private var part = 1
+  /// Programme seconds of the last anchor written, so anchors land at a steady spacing rather
+  /// than on every frame.
+  private var lastAnchorSeconds: Double = -.infinity
+  /// How far behind real time the on-air picture was when it was captured, from the last live
+  /// frame that said. Carried across replays, whose frames have no capture time of their own.
+  private var contentLagSeconds: Double?
+  /// How often the programme records where it was in real time. Matches the movie-fragment
+  /// interval, so an anchor lands about once per fragment without needing a fragment callback.
+  private static let anchorIntervalSeconds: Double = 3
   public private(set) var outputURLs: [URL] = []
   /// Incoming compositor time of the last successful video sample, kept across a writer recover
   /// so the continuation file can hold the dead interval as black + silence.
@@ -59,9 +70,23 @@ public final class ProgramEncoder: @unchecked Sendable {
   /// timebase; a single such sample wrote a jump of days into the programme file, and export
   /// then scored the file unplayable and refused the whole recording with "no files to remux".
   private var partStartHost: Double?
-  /// How far past real time the programme clock may run before a sample is treated as carrying a
-  /// foreign timestamp. Loose enough to absorb scheduling jitter and a late frame burst.
-  private static let timelineAdvanceSlack: Double = 2
+  /// Wall clock of the last frame actually placed on the programme timeline.
+  ///
+  /// The programme is watched afterwards, so its timeline has to be real time even across a
+  /// stall. Without this, a frame arriving on a foreign timebase advanced the file by exactly one
+  /// frame however long the compositor had been away, and the master ended shorter than the take
+  /// it came from, accumulating at each
+  /// stall and never recovering.
+  private var lastAppendHost: Double?
+  /// Host time at which this part's programme timeline reads zero. Set at the part's first frame,
+  /// so a continuation after a recovery fill carries on from the held timeline.
+  private var hostOrigin: Double?
+  /// A source step longer than this is not frame spacing; one frame is assumed instead.
+  private static let maximumSourceStep: Double = 0.25
+  /// How far the timeline may stray from real time before it is put straight back.
+  private static let hostReseatSeconds: Double = 0.25
+  /// The fraction of the remaining error each frame takes back.
+  private static let hostSteerGain: Double = 0.1
   /// Serialises recover so a failed writer noticed on video and audio at once does not
   /// open two continuation files.
   private var isRecovering = false
@@ -93,6 +118,22 @@ public final class ProgramEncoder: @unchecked Sendable {
   }
   private var isRunning = false
 
+  /// Called as the programme is written, with where it had reached and what time it was.
+  ///
+  /// A closure rather than an index reference so the encoder keeps knowing nothing about storage;
+  /// the owner decides which recording the anchor belongs to.
+  /// The recording is carried through rather than looked up, because this is called from whichever
+  /// thread delivered the frame -- an NDI receive queue, an RTSP delivery queue -- and never the
+  /// main actor. An earlier version read the owner's `activeRecordingID` through
+  /// `MainActor.assumeIsolated`, which is a hard trap off the main actor and killed the app on the
+  /// first frame after the record button.
+  public typealias AnchorSink = @Sendable (
+    _ recordingID: Int64,
+    _ part: Int,
+    _ programSeconds: Double,
+    _ wall: WallClock
+  ) -> Void
+
   public init(
     telemetry: PipelineTelemetry,
     converter: PixelConverter,
@@ -122,6 +163,22 @@ public final class ProgramEncoder: @unchecked Sendable {
     return isRunning
   }
 
+  /// Set once, after the owner has finished building itself. The encoder is constructed before the
+  /// index it would write to exists, so this cannot be an initialiser argument.
+  public func setAnchorSink(_ sink: AnchorSink?) {
+    lock.lock()
+    anchorSink = sink
+    lock.unlock()
+  }
+
+  /// Which recording the anchors belong to, or nil when the programme is only being previewed.
+  /// Set from the main actor as recording starts and stops; read under the encoder's own lock.
+  public func setAnchorRecording(_ recordingID: Int64?) {
+    lock.lock()
+    anchorRecordingID = recordingID
+    lock.unlock()
+  }
+
   public func start(at wall: WallClock) throws {
     lock.lock()
     guard !isRunning else {
@@ -133,6 +190,9 @@ public final class ProgramEncoder: @unchecked Sendable {
       part = 1
       outputURLs = []
       lastSourceTime = nil
+      lastAppendHost = nil
+      lastAnchorSeconds = -.infinity
+      contentLagSeconds = nil
       pendingRecoveryFill = false
       previousPartsDuration = 0
       startedAt = wall
@@ -164,10 +224,20 @@ public final class ProgramEncoder: @unchecked Sendable {
       ? kVTProfileLevel_HEVC_Main_AutoLevel as String
       : AVVideoProfileLevelH264HighAutoLevel
 
+    // Colour is stated rather than left to the first picture. Unstated, the encoder takes it from
+    // whatever buffer comes first: a take opens on the compositor's tagged frames, but a part
+    // started after a failed writer opens on the untagged black hold. rec-409's second part came out
+    // with no colour tags, a format its first part's track would not take, and the export put it
+    // on a second video track. Every part of a take must describe itself identically.
     let videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: [
       AVVideoCodecKey: codec == .hevc ? AVVideoCodecType.hevc : AVVideoCodecType.h264,
       AVVideoWidthKey: width,
       AVVideoHeightKey: height,
+      AVVideoColorPropertiesKey: [
+        AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
+        AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
+        AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2
+      ],
       AVVideoCompressionPropertiesKey: compression
     ])
     videoInput.expectsMediaDataInRealTime = true
@@ -206,7 +276,9 @@ public final class ProgramEncoder: @unchecked Sendable {
     self.audioInput = audioInput
     self.adaptor = adaptor
     self.baseTime = nil
+    self.hostOrigin = nil
     self.partStartHost = nil
+    self.lastAppendHost = nil
     self.baseAudioTime = nil
     self.nextAudioTime = nil
     self.lastTime = .negativeInfinity
@@ -224,7 +296,9 @@ public final class ProgramEncoder: @unchecked Sendable {
   }
 
   /// `pixelBuffer` may be BGRA straight out of the compositor; it is converted once here.
-  public func append(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime) {
+  /// `captureWall` is when the on-air camera captured this picture, for a live frame. Nil for a
+  /// replay frame or a source that does not know.
+  public func append(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime, captureWall: WallClock? = nil) {
     lock.lock()
     if poisonFinishing {
       lock.unlock()
@@ -271,28 +345,74 @@ public final class ProgramEncoder: @unchecked Sendable {
       lock.unlock()
       return
     }
-    var time = CMTimeSubtract(presentationTime, base)
+    _ = base
     let oneFrame = CMTime(value: 1, timescale: CMTimeScale(max(frameRate, 1)))
-    // The programme clock may not outrun real time. A stalled compositor spends wall clock too,
-    // so a genuine gap still holds and the file keeps recording wall clock; a sample arriving on
-    // another source's timebase does not, and is re-based onto the next frame.
+    // The programme is what went out, when it went out: each frame is placed on the host clock it
+    // was composed on, since the part began. That is the clock the programme's audio is mixed and
+    // placed on, so picture and sound stay locked however the display delay moves.
+    //
+    // The source's own timestamps only set the spacing between frames, which they do evenly where
+    // arrival jitters, and the timeline is steered back to real time a tenth of the error at a
+    // time. They are not trusted for position: an NDI camera's advance one measured frame period
+    // per frame, so a rate estimate a few percent low ran rec-407's programme master 9% fast for
+    // five minutes, and they need not show an outage at all — rec-406's NDI source came back from 18
+    // s of nothing one frame on, and the picture ran 18.6 s ahead of its sound from then on. Capture
+    // time was tried and is the wrong clock here: it moved the picture 0.47 s ahead of the sound when
+    // the display delay settled after a take began, and copied the Cosmo's paired stamps into the
+    // frame timing as judder. Any error past a quarter of a second is a stall or an outage, and the
+    // timeline goes straight to real time, which holds the picture across it.
     let nowHost = CFAbsoluteTimeGetCurrent()
     if partStartHost == nil { partStartHost = nowHost }
-    if let partStart = partStartHost, lastTime.isNumeric, lastTime >= .zero {
-      let realElapsed = max(0, nowHost - partStart)
-      if !time.isNumeric || time.seconds < -0.5
-        || time.seconds > realElapsed + Self.timelineAdvanceSlack {
-        time = CMTimeAdd(lastTime, oneFrame)
-        baseTime = CMTimeSubtract(presentationTime, time)
-      }
+    let hasTimeline = lastTime.isNumeric && lastTime >= .zero
+    if hostOrigin == nil {
+      hostOrigin = nowHost - (hasTimeline ? CMTimeAdd(lastTime, oneFrame).seconds : 0)
     }
-    if time <= lastTime {
-      time = CMTimeAdd(lastTime, oneFrame)
+    let hostSeconds = nowHost - (hostOrigin ?? nowHost)
+    var time: CMTime
+    if hasTimeline {
+      let sourceStep = lastSourceTime.map { CMTimeSubtract(presentationTime, $0).seconds } ?? 0
+      let step = sourceStep > 0 && sourceStep < Self.maximumSourceStep ? sourceStep : oneFrame.seconds
+      let predicted = lastTime.seconds + step
+      let error = hostSeconds - predicted
+      let seconds = abs(error) > Self.hostReseatSeconds ? hostSeconds : predicted + Self.hostSteerGain * error
+      time = CMTime(seconds: seconds, preferredTimescale: 600)
+      if time <= lastTime { time = CMTimeAdd(lastTime, CMTime(value: 1, timescale: 600)) }
+    } else {
+      time = CMTime(seconds: max(0, hostSeconds), preferredTimescale: 600)
     }
+    // A replay frame's or a recovery's arithmetic on source time stays consistent with where this
+    // frame went.
+    baseTime = CMTimeSubtract(presentationTime, time)
+    let nowWall = Date().timeIntervalSince1970
     lastTime = time
+    lastAppendHost = nowHost
     lastSourceTime = presentationTime
+    // Sampled here, where the programme's own timeline is decided, so the pair is exactly what was
+    // written rather than what a later reader infers.
+    //
+    // The wall an anchor records is when the picture was *captured*, not when it was composed. The
+    // programme is built from pictures the delay line has already held for half a second, so
+    // stamping composition time placed rec-401's programme master about 0.55 s behind the camera
+    // files it was cut from. A live frame says exactly how old it is; a replay frame does not, so
+    // it borrows the lag the last live frame measured, which keeps the timeline continuous.
+    if let captureWall, nowWall - captureWall.seconds >= 0, nowWall - captureWall.seconds < 10 {
+      contentLagSeconds = nowWall - captureWall.seconds
+    }
+    let contentWall = WallClock(seconds: nowWall - (contentLagSeconds ?? 0))
+    var anchor: (recording: Int64, part: Int, seconds: Double, wall: WallClock)?
+    if let recording = anchorRecordingID,
+       time.isNumeric,
+       time.seconds - lastAnchorSeconds >= Self.anchorIntervalSeconds {
+      lastAnchorSeconds = time.seconds
+      anchor = (recording, part, time.seconds, contentWall)
+    }
+    let sink = anchorSink
     let ready = videoInput.isReadyForMoreMediaData
     lock.unlock()
+
+    // Outside the lock: the sink writes to the index, and there is no reason to hold the
+    // compositor's append behind a database write.
+    if let anchor { sink?(anchor.recording, anchor.part, anchor.seconds, anchor.wall) }
 
     guard ready else { return }
 
@@ -513,6 +633,16 @@ public final class ProgramEncoder: @unchecked Sendable {
     await withCheckedContinuation { continuation in
       pending.writer.finishWriting { continuation.resume() }
     }
+    // `finishWriting` reports through the writer, not through its callback. A finalise that did
+    // not complete leaves the movie header unwritten, so every sample past the last movie
+    // fragment stays in the file but unreadable. Going quiet here is what let a broken master sit
+    // undetected until an export an hour later called it damaged media; the operator finds out at
+    // stop instead, while the camera archives for the same take are still on disk.
+    if pending.writer.status != .completed {
+      let detail = Self.describe(pending.writer.error)
+      telemetry.recordError("program master did not finalise: \(detail)")
+      telemetry.mutate { $0.dvr.lastError = "program master did not finalise: \(detail)" }
+    }
 
     clearWriter()
     telemetry.recordEncodeSessionChange(delta: -1)
@@ -535,6 +665,7 @@ public final class ProgramEncoder: @unchecked Sendable {
     isRunning = false
     pendingRecoveryFill = false
     lastSourceTime = nil
+    lastAppendHost = nil
     return PendingFinish(writer: writer, videoInput: videoInput, audioInput: audioInput, url: outputURL)
   }
 

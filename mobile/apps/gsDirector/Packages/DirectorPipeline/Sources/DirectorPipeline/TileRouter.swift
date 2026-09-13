@@ -40,7 +40,8 @@ public final class SourcePipeline: @unchecked Sendable {
   private var archive: ArchiveSink?
   private var proxy: ProxySink?
   private var state: TileState = .live
-  private var programSink: (@Sendable (CVPixelBuffer, CMTime) -> Void)?
+  /// Picture, its presentation time, and when the camera captured it (nil for replay frames).
+  private var programSink: (@Sendable (CVPixelBuffer, CMTime, WallClock?) -> Void)?
   /// Fired on a programme cut, replay start, or return to live so RTMP can force an IDR.
   public var onProgramDiscontinuity: (@Sendable () -> Void)?
   private var audioSink: (@Sendable (AudioFrame) -> Void)?
@@ -55,6 +56,8 @@ public final class SourcePipeline: @unchecked Sendable {
   /// that has already happened, while the recording is watched afterwards, where a late picture is
   /// simply a picture and dropping it leaves a hole in the tape.
   private var latency = FrameLatencyGate()
+  /// When the display gate started holding the last picture, nil while pictures are being shown.
+  private var heldLateSince: WallClock?
   public init(
     sourceID: SourceID,
     sourceIndex: Int,
@@ -232,7 +235,7 @@ public final class SourcePipeline: @unchecked Sendable {
     lock.unlock()
   }
 
-  public func setProgramSink(_ sink: (@Sendable (CVPixelBuffer, CMTime) -> Void)?) {
+  public func setProgramSink(_ sink: (@Sendable (CVPixelBuffer, CMTime, WallClock?) -> Void)?) {
     lock.lock()
     programSink = sink
     lock.unlock()
@@ -252,6 +255,9 @@ public final class SourcePipeline: @unchecked Sendable {
   }
 
   // MARK: - Frame path
+
+  /// Backstop for a replay that stopped without telling anyone. See `ReplayWedgePolicy`.
+  private let wedgePolicy = ReplayWedgePolicy()
 
   private func handle(_ frame: PixelFrame) {
     guard let converted = converter.convert(frame) else {
@@ -273,7 +279,15 @@ public final class SourcePipeline: @unchecked Sendable {
     let arrived = converted.wallClock
     let showable = latency.admitsForDisplay(captured: converted.captureWallClock, now: arrived)
     let age = FrameLatencyGate.age(captured: converted.captureWallClock, now: arrived)
+    if showable || state != .live {
+      heldLateSince = nil
+    } else if heldLateSince == nil {
+      heldLateSince = arrived
+    }
+    let heldFor = heldLateSince.map { max(0, arrived.seconds - $0.seconds) } ?? 0
     lock.unlock()
+
+    telemetry.recordDisplayHeldLate(tile: sourceIndex, seconds: heldFor)
 
     if let age { telemetry.recordFrameAge(tile: sourceIndex, milliseconds: age * 1_000) }
 
@@ -294,8 +308,27 @@ public final class SourcePipeline: @unchecked Sendable {
         telemetry.recordDisplayRefusedLate(tile: sourceIndex)
       }
     }
+    // The programme gets the same answer as the tile, because it is the same picture.
+    //
+    // This used to be decided only for the tile: a frame too old to show was still handed to the
+    // compositor, so during a bad stretch the operator watched the programme move while the camera
+    // tile it was cut from sat still. Whichever of the two is right, they cannot both be — and the
+    // programme is the one going to air, so a picture too stale for the monitor is too stale to cut
+    // to. The camera archive is unaffected either way; it is fed on arrival, before any of this.
     if state != .replaying {
-      programSink?(converted.pixelBuffer, converted.presentationTime)
+      if showable {
+        programSink?(converted.pixelBuffer, converted.presentationTime, converted.captureWallClock)
+      }
+    } else if wedgePolicy.shouldReturnToLive(
+      now: Date().timeIntervalSince1970,
+      lastPresentedAt: renderer.failCounts.lastEnqueueAt
+    ) {
+      // Measured on the live path on purpose: these frames are arriving whatever the replay is
+      // doing, so they are the one heartbeat available while `.replaying` suppresses everything
+      // else. A replay that is actually running keeps `lastEnqueueAt` fresh through this same
+      // renderer and never reaches the timeout.
+      telemetry.recordReplayWedgeRecovery(tile: sourceIndex)
+      returnToLive()
     }
   }
 
@@ -441,6 +474,7 @@ public final class SourcePipeline: @unchecked Sendable {
       promote = true
     }
     let state = self.state
+    let epoch = replayEpoch
     let programSink = self.programSink
     lock.unlock()
     guard state == .replaying else { return }
@@ -450,7 +484,15 @@ public final class SourcePipeline: @unchecked Sendable {
     }
 
     presentOnRenderer(pixelBuffer: pixelBuffer, presentationTime: presentationTime)
-    programSink?(pixelBuffer, presentationTime)
+    programSink?(pixelBuffer, presentationTime, nil)
+    // Only for the replay that delivered this frame, and under the lock. A return to live that
+    // lands while the frame is being presented has already put the tile back on live; written
+    // after it, this left the tile saying "replaying" for good -- the picture live, the tile still
+    // offering Return to Live, and the programme still marked as a replay -- with nothing left
+    // running to clear it.
+    lock.lock()
+    defer { lock.unlock() }
+    guard replayEpoch == epoch, self.state == .replaying else { return }
     telemetry.mutateTile(sourceIndex) { tile in
       guard tile.state == .replaying || tile.state == .live else { return }
       tile.state = .replaying
@@ -673,8 +715,8 @@ public final class TileRouter: @unchecked Sendable {
         pipeline.onProgramDiscontinuity = { [weak self] in
           self?.programStreamer.requestKeyframe()
         }
-        pipeline.setProgramSink { [weak self] buffer, time in
-          self?.composeAndEncode(buffer, presentationTime: time)
+        pipeline.setProgramSink { [weak self] buffer, time, capture in
+          self?.composeAndEncode(buffer, presentationTime: time, captureWall: capture)
         }
       } else {
         pipeline.onProgramDiscontinuity = nil
@@ -728,11 +770,15 @@ public final class TileRouter: @unchecked Sendable {
   /// The compositing happens whether or not anything is recording, which is the point of the
   /// preview: the operator has to be able to see overlays sitting over the picture before
   /// committing it to a file, not discover afterwards that it was mispositioned.
-  private func composeAndEncode(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime) {
+  private func composeAndEncode(
+    _ pixelBuffer: CVPixelBuffer,
+    presentationTime: CMTime,
+    captureWall: WallClock? = nil
+  ) {
     let composed = compositor?.compose(program: pixelBuffer) ?? pixelBuffer
     programRenderer.enqueue(pixelBuffer: composed, presentationTime: presentationTime)
     if programEncoder.running {
-      programEncoder.append(composed, presentationTime: presentationTime)
+      programEncoder.append(composed, presentationTime: presentationTime, captureWall: captureWall)
     }
     if programStreamer.running {
       programStreamer.append(composed, presentationTime: presentationTime)

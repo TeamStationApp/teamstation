@@ -274,17 +274,103 @@ public struct SettingsView: View {
           Text("RTMP URL the Stream button publishes the programme output to.")
         }
 
-        Section("Retention") {
+        Section {
           Stepper(
-            "Keep \(String(format: "%.1f", draft.retentionHours)) hours",
-            value: $draft.retentionHours,
-            in: 0.5 ... 24,
-            step: 0.5
+            "Keep up to \(Self.gigabytes(draft.maximumArchiveBytes)) of camera archive",
+            value: Binding(
+              get: { Double(draft.maximumArchiveBytes) / Double(AppConfig.gigabyte) },
+              set: { draft.maximumArchiveBytes = Int64($0.rounded()) * AppConfig.gigabyte }
+            ),
+            in: 10 ... 900,
+            step: 10
           )
           .accessibilityIdentifier("settings-retention")
 
+          Stepper(
+            "Sweep when free space drops under \(Self.gigabytes(draft.freeDiskFloorBytes))",
+            value: Binding(
+              get: { Double(draft.freeDiskFloorBytes) / Double(AppConfig.gigabyte) },
+              set: { draft.freeDiskFloorBytes = Int64($0.rounded()) * AppConfig.gigabyte }
+            ),
+            in: 10 ... 500,
+            step: 10
+          )
+          .accessibilityIdentifier("settings-retention-floor")
+
           LabeledContent("Free space", value: Self.gigabytes(DirectorPaths.freeDiskBytes()))
             .accessibilityIdentifier("settings-free-space")
+        } header: {
+          Text("Retention")
+        } footer: {
+          Text("""
+          Oldest recordings lose their camera archive first, whole takes at a time. The \
+          programme master and anything already exported are never swept — delete those \
+          yourself from Recordings.
+          """)
+        }
+
+        Section {
+          Toggle("Scan a different subnet", isOn: $draft.subnetScanOverrideEnabled)
+            .accessibilityIdentifier("settings-subnet-scan-enabled")
+          TextField("192.168.6.0, 192.168.7.0", text: $draft.subnetScanOverride)
+            .keyboardType(.numbersAndPunctuation)
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            .foregroundStyle(draft.subnetScanOverrideEnabled ? .primary : .secondary)
+            .accessibilityIdentifier("settings-subnet-scan")
+          if draft.subnetScanOverrideEnabled,
+             AppConfig.scanSubnetNetworkAddresses(draft.subnetScanOverride) == nil {
+            Text("Enter one or two subnets, comma-separated, like 192.168.6.0, 192.168.7.0.")
+              .font(.footnote)
+              .foregroundStyle(.red)
+              .accessibilityIdentifier("settings-subnet-scan-invalid")
+          }
+        } header: {
+          Text("Camera discovery")
+        } footer: {
+          Text("""
+          When on, the camera search sweeps every address (.1 to .254) of up to two subnets, \
+          comma-separated, instead of this iPad's own. Turn it off for normal use; the subnets are \
+          kept for next time.
+          """)
+        }
+
+        Section {
+          Toggle("Cap preview latency", isOn: $draft.displayLatencyCapEnabled)
+            .accessibilityIdentifier("settings-display-latency-cap-enabled")
+          if draft.displayLatencyCapEnabled {
+            LatencyCapSlider(
+              title: "Preview",
+              milliseconds: $draft.displayLatencyCapMilliseconds,
+              range: AppConfig.displayLatencyCapMinimumMilliseconds
+                ... AppConfig.displayLatencyCapMaximumMilliseconds,
+              step: 10,
+              identifier: "settings-display-latency-cap"
+            )
+          }
+
+          Toggle("Cap recording latency", isOn: $draft.diskLatencyCapEnabled)
+            .accessibilityIdentifier("settings-disk-latency-cap-enabled")
+          if draft.diskLatencyCapEnabled {
+            LatencyCapSlider(
+              title: "Recording",
+              milliseconds: $draft.diskLatencyCapMilliseconds,
+              range: AppConfig.diskLatencyCapMinimumMilliseconds
+                ... AppConfig.diskLatencyCapMaximumMilliseconds,
+              step: 100,
+              identifier: "settings-disk-latency-cap"
+            )
+          }
+        } header: {
+          Text("Latency")
+        } footer: {
+          Text(
+            "How old a picture may be and still be used, measured from when it was taken. "
+              + "The preview is worthless showing action that has already happened, so a picture "
+              + "past its cap is held and the last good frame stays up. The recording is watched "
+              + "afterwards, where a late picture is simply a picture and dropping it leaves a "
+              + "hole in the tape — so give it the longer allowance. Off means no ceiling."
+          )
         }
 
         Section {
@@ -490,6 +576,35 @@ private struct NewTemplateSheet: View {
 }
 
 /// 0–100 percent of live speed, with a tick every 10 and a taller mark every 25.
+/// One latency ceiling, in whatever unit reads naturally for its range.
+///
+/// Milliseconds below a couple of seconds, seconds above: 10-2000 ms and 0.1-60 s have no useful
+/// scale between them, which is why these are two sliders rather than one.
+private struct LatencyCapSlider: View {
+  var title: String
+  @Binding var milliseconds: Double
+  var range: ClosedRange<Double>
+  var step: Double
+  var identifier: String
+
+  private var label: String {
+    milliseconds >= 2_000
+      ? String(format: "%@ up to %.1f s", title, milliseconds / 1_000)
+      : "\(title) up to \(Int(milliseconds.rounded())) ms"
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      Text(label)
+        .font(.subheadline)
+        .foregroundStyle(.secondary)
+        .accessibilityIdentifier("\(identifier)-value")
+      Slider(value: $milliseconds, in: range, step: step)
+        .accessibilityIdentifier(identifier)
+    }
+  }
+}
+
 private struct ReplaySlowMotionSlider: View {
   @Binding var percent: Double
 

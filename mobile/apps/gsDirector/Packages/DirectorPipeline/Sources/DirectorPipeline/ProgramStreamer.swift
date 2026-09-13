@@ -37,6 +37,13 @@ public final class ProgramStreamer: @unchecked Sendable {
   private var sentAudioConfig = false
   private var sentMetadata = false
   private var clock = StreamEncodeClock()
+  /// When this stream started, so the watchdog can tell "no keyframe yet" from "no keyframe for a
+  /// while". Zero until `start`.
+  private var streamStartWall: CFAbsoluteTime = 0
+  /// When the encoder last handed back a real picture, as opposed to a callback carrying an error.
+  private var lastOutputWall: CFAbsoluteTime = 0
+  /// Holds the encoder to the stream's own frame rate; see `StreamFramePacer`.
+  private var pacer = StreamFramePacer(frameRate: 30)
   private var onFailure: FailureHandler?
   /// VideoToolbox keeps each submitted pixel buffer until the encode callback. Without a cap,
   /// a slow RTMP ingest lets that queue grow without bound at programme frame rate.
@@ -117,11 +124,14 @@ public final class ProgramStreamer: @unchecked Sendable {
     sentAudioConfig = false
     sentMetadata = false
     clock = StreamEncodeClock(frameRate: frameRate, gopSeconds: gopSeconds)
+    pacer = StreamFramePacer(frameRate: frameRate)
     aac.reset()
     lastEncodable = nil
     lastCallbackWall = 0
     lastProgramFrameWall = 0
     lastResetWall = 0
+    streamStartWall = CFAbsoluteTimeGetCurrent()
+    lastOutputWall = 0
     pendingEncodes = 0
     return true
   }
@@ -164,6 +174,10 @@ public final class ProgramStreamer: @unchecked Sendable {
   }
 
   public func append(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime) {
+    lock.lock()
+    let admitted = pacer.admit(now: CFAbsoluteTimeGetCurrent())
+    lock.unlock()
+    guard admitted else { return }
     encode(pixelBuffer, sourceTime: presentationTime, forceKey: nil, isIdle: false)
   }
 
@@ -208,7 +222,11 @@ public final class ProgramStreamer: @unchecked Sendable {
     telemetry.recordStreamKeyframeAge(clock.keyframeAgeSeconds(now: now))
     let cap = mustKey ? Self.idleIDRPendingCap : Self.maximumPendingEncodes
     if pendingEncodes >= cap {
-      clock.requestKeyframe()
+      // Dropped before the encoder saw it, so no reference is broken and no IDR is owed: the next
+      // frame predicts from the last one encoded, and the GOP forces a keyframe on time anyway.
+      // Asking for one here turned every backlog into a keyframe — measured in a soak at about 2.5
+      // a second against a 2 s GOP's 0.5 — which makes each frame dearer exactly when the encoder
+      // is already behind. Same reasoning as the over-budget drop below.
       telemetry.recordStreamPendingEncodes(pendingEncodes)
       lock.unlock()
       return
@@ -307,7 +325,9 @@ public final class ProgramStreamer: @unchecked Sendable {
       lastCallbackWall: lastCallbackWall,
       pendingEncodes: pendingEncodes,
       hasLastFrame: lastEncodable != nil,
-      lastResetWall: lastResetWall
+      lastResetWall: lastResetWall,
+      startedWall: streamStartWall,
+      lastOutputWall: lastOutputWall
     )
     let idleBuffer = lastEncodable
     lock.unlock()
@@ -463,6 +483,7 @@ public final class ProgramStreamer: @unchecked Sendable {
       return
     }
     let encoded = sample
+    lastOutputWall = CFAbsoluteTimeGetCurrent()
     lock.unlock()
     guard let encoded, let dataBuffer = CMSampleBufferGetDataBuffer(encoded) else { return }
     var length = 0

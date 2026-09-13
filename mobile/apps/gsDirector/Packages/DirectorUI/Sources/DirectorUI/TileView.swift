@@ -135,15 +135,31 @@ public struct TileView: View {
             }
           }
           if !isRewinding || !stacksRewindChrome {
-            nameplate
+            // What the camera is delivering sits under its name, where the eye already is.
+            VStack(alignment: .leading, spacing: 4) {
+              nameplate
+              if pipeline != nil, !isRewinding {
+                HStack(spacing: 4) { ratePills }
+              }
+            }
+            // The name takes whatever the right-hand end leaves. The pills there are sized first and
+            // never squeezed, so the name gives up room only while one of them needs it — a Late or
+            // No picture notice — and only as much as that notice takes.
+            .layoutPriority(1)
           }
-          Spacer()
+          Spacer(minLength: 0)
           if pipeline != nil, !isRewinding {
-            lossPill
+            heldPicturePill
+              .fixedSize()
+              .layoutPriority(2)
           }
           if telemetry.hasCameraControl {
-            cameraStatusPills
-            cameraMenuButton
+            HStack(spacing: 6) {
+              cameraStatusPills
+              cameraMenuButton
+            }
+            .fixedSize()
+            .layoutPriority(2)
           }
         }
         if isRewinding, stacksRewindChrome {
@@ -292,19 +308,35 @@ public struct TileView: View {
     .background(.black.opacity(0.45), in: Capsule())
   }
 
-  /// What the link lost in the last second, as a bare number on the nameplate's grey. Shown even
-  /// at zero, because a zero that is there says the link is measured and clean, where a pill that
-  /// hid at zero would leave "clean" and "not shown" looking the same. A tile that is not
-  /// delivering shows an em dash instead — see `TileTelemetry.lossPerSecondLabel` for why a dead
-  /// link would otherwise read zero like a clean one. Hidden in rewind so that chrome — which
-  /// already overruns a Cameraman tile — keeps the room. On an NDI tile the number is the SDK's
-  /// dropped frames; see `TileTelemetry.packetsLostPerSecond`.
-  private var lossPill: some View {
+  /// Red, and only there when the picture on this tile is not live: stopped, or held because
+  /// everything newer was over the display cap. See `TileTelemetry.heldPictureLabel`.
+  @ViewBuilder
+  private var heldPicturePill: some View {
+    if let held = telemetry.heldPictureLabel {
+      StatPill(
+        text: held,
+        identifier: "source-\(sourceIndex + 1)-held",
+        label: "Picture not live",
+        value: held,
+        background: .red.opacity(0.85)
+      )
+    }
+  }
+
+  /// What the camera is delivering: frames a second and how much link it takes, under its name.
+  @ViewBuilder
+  private var ratePills: some View {
     StatPill(
-      text: telemetry.lossPerSecondLabel,
-      identifier: "source-\(sourceIndex + 1)-loss",
-      label: "Lost per second",
-      value: telemetry.lossPerSecondLabel
+      text: telemetry.frameRateLabel,
+      identifier: "source-\(sourceIndex + 1)-fps",
+      label: "Frames per second",
+      value: telemetry.frameRateLabel
+    )
+    StatPill(
+      text: telemetry.throughputLabel,
+      identifier: "source-\(sourceIndex + 1)-throughput",
+      label: "Megabits per second",
+      value: telemetry.throughputLabel
     )
   }
 

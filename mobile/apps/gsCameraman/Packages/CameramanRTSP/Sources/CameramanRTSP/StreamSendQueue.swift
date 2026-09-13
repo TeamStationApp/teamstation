@@ -38,6 +38,14 @@ public struct StreamSendQueue: Sendable {
 
   public mutating func decide(frameBytes: Int, isKeyframe: Bool) -> Decision {
     guard pendingBytes > highWaterMark else {
+      // What follows a dropped picture predicts from it, directly or through the pictures between,
+      // so it cannot be decoded either. Sent anyway, a receiver records frames nobody can play:
+      // rec-409's iPhone export held them in 68 places, and AVAssetReader stops at the first. Only
+      // a keyframe ends a drop, however much room the queue has.
+      if isDropping, !isKeyframe {
+        droppedFrames += 1
+        return .drop
+      }
       isDropping = false
       pendingBytes += frameBytes
       return .send

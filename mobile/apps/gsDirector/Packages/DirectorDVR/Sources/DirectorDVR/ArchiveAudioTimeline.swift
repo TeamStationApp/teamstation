@@ -27,6 +27,17 @@ struct ArchiveAudioTimeline {
   private static let clockTolerance: Double = 2
   /// Beyond this, closing the gap would cost lip sync for the rest of the recording.
   private static let resyncThreshold: Double = 0.5
+  /// The same guard for audio placed through the recording's wall anchor. There the source clock is
+  /// trusted, and a buffer landing behind the newest picture has only arrived late: rec-403's Pixel,
+  /// thermally throttled, delivered its sound one to two seconds behind its picture, and moving that
+  /// sound up to the picture is what cut holes in it. Only a disagreement this large is a clock that
+  /// has failed.
+  private static let anchoredClockTolerance: Double = 10
+  /// Audio with its own capture time follows it, but not to the millisecond: each sender report
+  /// re-anchors the mapping and moves it by a little, and following those steps would cut the track
+  /// into slivers — the same thing that made the Pixel's picture drift in exports. Within one AAC
+  /// packet of the previous buffer's end it stays contiguous; beyond that it is a real gap.
+  private static let captureSnapSeconds: Double = 0.02
   private static let driftReportThreshold: Double = 0.05
 
   private(set) var clockUnusable = false
@@ -41,11 +52,46 @@ struct ArchiveAudioTimeline {
   /// stalls the muxer, and the muxer then stops accepting video too.
   private var next: CMTime?
 
-  mutating func place(sourceTime: CMTime, duration: CMTime, videoTime: CMTime) -> Placement? {
+  /// Where the source's audio clock sits on the recording's wall clock, fixed once per recording.
+  ///
+  /// Anchoring each segment's audio to wherever the video happened to be when that segment's first
+  /// audio buffer was written ties it to *arrival*, and arrival is not steady: a Pixel running
+  /// Cameraman delivered its audio later and later relative to its picture, 129 ms per 1,000 s, and
+  /// every three-second segment baked the latest lag in. Measured with a clapperboard on rec-402,
+  /// the export's sound went from 39 ms early to 70 ms late over fourteen minutes while the live
+  /// programme, which schedules audio by its own timestamps, stayed flat. With this, each segment
+  /// places audio from the source's own clock through one mapping held for the whole recording.
+  struct WallAnchor: Equatable {
+    /// A source audio time, in seconds on the source's clock.
+    let sourceSeconds: Double
+    /// The recording wall-clock time that source time corresponds to.
+    let wallSeconds: Double
+  }
+
+  mutating func place(
+    sourceTime: CMTime,
+    duration: CMTime,
+    videoTime: CMTime,
+    wallAnchor: WallAnchor? = nil,
+    segmentBaseWall: Double? = nil,
+    captureWall: Double? = nil
+  ) -> Placement? {
     guard videoTime.isNumeric, duration.isNumeric, duration > .zero else { return nil }
 
     var candidate: CMTime
-    if !clockUnusable, sourceTime.isNumeric {
+    var anchored = false
+    if !clockUnusable, let captureWall, let segmentBaseWall {
+      // The camera said when it captured this audio: that is where it goes.
+      candidate = CMTime(seconds: captureWall - segmentBaseWall, preferredTimescale: duration.timescale)
+      if let next, abs(CMTimeSubtract(candidate, next).seconds) < Self.captureSnapSeconds {
+        candidate = next
+      }
+      anchored = true
+    } else if !clockUnusable, sourceTime.isNumeric, let wallAnchor, let segmentBaseWall {
+      let wall = wallAnchor.wallSeconds + (sourceTime.seconds - wallAnchor.sourceSeconds)
+      candidate = CMTime(seconds: wall - segmentBaseWall, preferredTimescale: sourceTime.timescale)
+      anchored = true
+    } else if !clockUnusable, sourceTime.isNumeric {
       if epoch == nil {
         epoch = sourceTime
         anchor = videoTime
@@ -62,18 +108,20 @@ struct ArchiveAudioTimeline {
     // is worse than committing to the wrong one.
     var rejectedClock = false
     let offset = CMTimeSubtract(candidate, videoTime).seconds
-    if !candidate.isNumeric || abs(offset) > Self.clockTolerance {
+    let tolerance = anchored ? Self.anchoredClockTolerance : Self.clockTolerance
+    if !candidate.isNumeric || abs(offset) > tolerance {
       if !clockUnusable {
         clockUnusable = true
         rejectedClock = true
       }
       candidate = next ?? videoTime
+      anchored = false
     }
 
     var resynced = false
     var drift: Double?
     let behind = CMTimeSubtract(videoTime, candidate).seconds
-    if behind > Self.resyncThreshold {
+    if behind > Self.resyncThreshold, !anchored {
       candidate = videoTime
       resynced = true
       drift = behind

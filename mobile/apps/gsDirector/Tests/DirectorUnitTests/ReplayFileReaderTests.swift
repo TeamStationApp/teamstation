@@ -37,6 +37,65 @@ struct ReplayFileReaderTests {
     #expect(lastMedia > 1.0)
   }
 
+  /// A rewind almost never starts on a segment boundary: it skips into its first file. The producer
+  /// once counted that skip as footage already played and stopped short by exactly the skip — up
+  /// to a whole segment — which is how one 5 s slow-mo played its full ten seconds and the next
+  /// stopped at 7.8. The requested duration is measured from the first frame shown.
+  @Test("A rewind that starts partway into a segment still produces the full requested duration")
+  func capCountsFromFirstFrameNotFileStart() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("replay-skip-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    var urls: [URL] = []
+    for index in 0..<3 {
+      let url = root.appendingPathComponent("seg-\(index).mp4")
+      try await writeTestMovie(to: url, seconds: 1.0, framesPerSecond: 10)
+      urls.append(url)
+    }
+
+    let reader = ReplayFileReader(
+      urls: urls,
+      durations: [ 1.0, 1.0, 1.0 ],
+      frameRate: 10,
+      playDuration: 1.5
+    )
+    try reader.open(startOffset: 0.55)
+    var first: TimeInterval?
+    var last: TimeInterval = 0
+    var count = 0
+    // `next()` gives up after two seconds without a frame, which a loaded simulator can hit
+    // mid-replay. Only the reader saying it is exhausted ends the replay; a timeout just asks again.
+    let deadline = Date().addingTimeInterval(10)
+    while count <= 100, Date() < deadline {
+      guard let frame = reader.next() else {
+        if reader.isExhausted { break }
+        continue
+      }
+      if first == nil { first = frame.media }
+      last = frame.media
+      count += 1
+    }
+    let diagnostics = reader.diagnostics
+    reader.cancel()
+    let produced = last - (first ?? last) + 0.1
+    // At least what was asked for, and at most one frame more: a replay ends on a whole frame.
+    // Anything short is the bug this guards.
+    let detail: Comment = "produced \(produced) s of a 1.5 s request; decode misses \(diagnostics.decodeMisses), failed readers \(diagnostics.failedReaders)"
+    if diagnostics.decodeMisses == 0 {
+      #expect(produced >= 1.5 - 0.001 && produced <= 1.6 + 0.001, detail)
+    } else {
+      // The simulator's decoder intermittently refuses a run of samples — nine, in every case seen
+      // — and then the length depends on which ones it refused. Recorded, not failed: the reader is
+      // judged above, on runs where the decoder delivered everything. The iPad's hardware decoder
+      // played every rewind in full.
+      withKnownIssue("simulator decoder dropped samples", isIntermittent: true) {
+        #expect(produced >= 1.5 - 0.001 && produced <= 1.6 + 0.001, detail)
+      }
+    }
+  }
+
   @Test("A later append starts the next file while the current file is still playing")
   func appendStartsNextFileBeforeEOF() async throws {
     let root = FileManager.default.temporaryDirectory
@@ -167,7 +226,8 @@ private final class Expectation: @unchecked Sendable {
 
 private struct ReplayTimeout: Error {}
 
-private func writeTestMovie(
+/// A short H.264 movie of solid frames, for tests that need a real replay to attach.
+func writeTestMovie(
   to url: URL,
   seconds: TimeInterval,
   framesPerSecond: Double,

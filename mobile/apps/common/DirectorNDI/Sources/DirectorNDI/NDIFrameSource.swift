@@ -100,12 +100,60 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
   /// until the first frame has sized the pool.
   private var poolHoldMilliseconds: Double?
   private var pictures = PlayoutQueue<PixelFrame>()
+  /// Maps this source's presentation timeline onto the uptime clock the delay line schedules on.
+  ///
+  /// `NDIReceiveClock` starts its timeline at zero and steps it per frame, which is right for the
+  /// archive and wrong for the delay line: `dueTime` is `presentation + offset`, and that offset is
+  /// clamped to a couple of seconds, so a presentation value near zero is due at uptime zero --
+  /// hours in the past. Every frame came due the instant it arrived, the queue never held anything,
+  /// and the burstiness the delay line exists to absorb went straight to the screen. Measured with
+  /// the RTSP tile beside it holding thirty frames while this one held none, both nominally on the
+  /// same 500 ms delay.
+  ///
+  /// Anchored once from the first frame's arrival rather than tracked, so the hold stays fixed.
+  ///
+  /// Taken against the sender's own capture clock, not the stepped presentation timeline. That
+  /// timeline advances at the *measured* frame rate, and a measurement that is fractionally low --
+  /// 58.67 against a sender pacing 60, as this camera reads -- makes it slip behind real time by a
+  /// second a minute. Every frame then arrives "late", the offset pins at its ceiling, the queue
+  /// drains and the hold is gone again. The capture clock advances at real time by construction, so
+  /// the mapping stays put.
+  private var presentationAnchorSeconds: Double?
+  /// Evens out the sender's capture stamps before they are scheduled. Scheduling on them raw put
+  /// their 3–37 ms scatter straight on screen; see `CaptureTimelineSmoother`.
+  private var captureSmoother = CaptureTimelineSmoother()
+  /// Arrival and release pacing, the pair that says whether the delay line is doing its job.
+  ///
+  /// RTSP has published these since the beginning; NDI published nothing, so a tile that visibly
+  /// stuttered could not be told apart from a sender that bursts. Arrival is what the camera and
+  /// the link did, release is what the screen saw: a large arrival gap with a small release gap is
+  /// the buffer working, and both large is the buffer being bypassed.
+  private var lastArrivalUptime: Double?
+  private var lastReleaseUptime: Double?
+  private var arrivalGapWindowMax: Double = 0
+  private var releaseGapWindowMax: Double = 0
+  private var gapWindowStart: Double = 0
+  private var arrivalGapPublished: Double = 0
+  private var releaseGapPublished: Double = 0
+
+  /// Held for a whole second so a reader sampling at 1 Hz sees every window rather than whichever
+  /// moment it happened to ask in.
+  private func noteGapWindow(now: Double) {
+    guard now - gapWindowStart >= 1 else { return }
+    arrivalGapPublished = arrivalGapWindowMax
+    releaseGapPublished = releaseGapWindowMax
+    arrivalGapWindowMax = 0
+    releaseGapWindowMax = 0
+    gapWindowStart = now
+  }
   private var drainTimer: DispatchSourceTimer?
   private var lastReportAt: Double = 0
   private let playoutQueue: DispatchQueue
   private var stallTimer: DispatchSourceTimer?
   private var reconnectItem: DispatchWorkItem?
   private var failedAttempts = 0
+  /// Silence measured across reconnects; see `SilenceClock`.
+  private var silence = SilenceClock()
   private let supervisionQueue = DispatchQueue(label: "co.gamestation.director.ndi.supervise")
   private var sinks = FrameSinks()
 
@@ -217,18 +265,16 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     var snapshot = stats
     snapshot.outOfOrderFrames = receiveClock.outOfOrderFrames
     snapshot.senderClockRestarts = receiveClock.clockRestarts
+    // From the last picture across reconnects, not from this session; see `SilenceClock`.
     snapshot.stalledForSeconds = running
-      ? StallWatchdog.stalledForSeconds(
-        now: Date(),
-        lastAccessUnitAt: lastVideoAt,
-        sessionStartedAt: startedAt,
-        timeout: Self.stallTimeout
-      )
+      ? silence.stalledForSeconds(now: Date(), timeout: Self.stallTimeout)
       : 0
     snapshot.decodeSessions = videoEncoder == nil ? 0 : 1
     snapshot.playoutMilliseconds = (playout.bufferMilliseconds * 10).rounded() / 10
     snapshot.playoutLateFrames = playout.lateFrames
     snapshot.playoutDepth = pictures.count
+    snapshot.arrivalGapMaxMilliseconds = (arrivalGapPublished * 10).rounded() / 10
+    snapshot.releaseGapMaxMilliseconds = (releaseGapPublished * 10).rounded() / 10
     return snapshot
   }
 
@@ -324,6 +370,7 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     }
     receiver = created
     startedAt = Date()
+    silence.sessionStarted(at: startedAt ?? Date())
     lastVideoAt = nil
     upstreamConnections = 0
     // Tell the sender who we are. Not decoration: it is what appears in a camera's own connection
@@ -396,6 +443,13 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     }
     playout.advance(to: now)
     let due = pictures.release(at: now)
+    if !due.isEmpty {
+      if let last = lastReleaseUptime {
+        releaseGapWindowMax = max(releaseGapWindowMax, (now - last) * 1000)
+      }
+      lastReleaseUptime = now
+    }
+    noteGapWindow(now: now)
     let handler = sinks.pixel
     let buffer = playout.bufferMilliseconds
     let shouldReport = now - lastReportAt >= Self.reportInterval
@@ -476,6 +530,9 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     let attempt = failedAttempts
     playout = playout.reset()
     pictures.removeAll()
+    // The timeline restarts with the receiver, so the mapping onto uptime has to be taken again.
+    presentationAnchorSeconds = nil
+    captureSmoother.reset()
     stats.status = reason
     stats.reconnects &+= 1
     let delay = Self.backoffSeconds[min(attempt - 1, Self.backoffSeconds.count - 1)]
@@ -566,6 +623,7 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     pictures.removeAll()
     startedAt = nil
     lastVideoAt = nil
+    silence.stop()
     videoEncoder = nil
     audioEncoder = nil
     pendingFrames.removeAll()
@@ -640,6 +698,7 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
 
     lock.lock()
     lastVideoAt = Date()
+    silence.notePicture(at: lastVideoAt ?? Date())
     failedAttempts = 0
     lock.unlock()
 
@@ -676,16 +735,33 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     // is not held — it takes the pixels straight from here, so what reaches disk is unaffected.
     let presentationSeconds = timing.presentationTime.seconds
     let arrived = Self.seconds(.now())
+    var smoothedCaptureSeconds = timing.captureWallClock?.seconds ?? 0
     // Never more than the pool can lend, less a few for the renderer, compositor and encoder to be
     // holding; a line longer than the pool starves itself into `poolMisses`. Read here, on the
     // thread that owns the converter, and handed to the drain as the hold it may not exceed.
     let poolFrames = max(8, videoConverter.maximumBuffers - 8)
     lock.lock()
+    if let last = lastArrivalUptime {
+      arrivalGapWindowMax = max(arrivalGapWindowMax, (arrived - last) * 1000)
+    }
+    lastArrivalUptime = arrived
+    noteGapWindow(now: arrived)
     poolHoldMilliseconds = max(0, Double(poolFrames) / rate - Self.poolHeadroomSeconds) * 1000
-    _ = playout.note(lateness: arrived - presentationSeconds, at: arrived)
+    // Scheduled against whichever clock actually tracks real time: the sender's capture stamp when
+    // it gave one, the stepped presentation timeline only as a fallback.
+    let timelineSeconds = captureSmoother.place(
+      capture: timing.captureWallClock?.seconds ?? presentationSeconds,
+      period: 1 / rate
+    )
+    smoothedCaptureSeconds = timelineSeconds
+    let anchor = presentationAnchorSeconds ?? (arrived - timelineSeconds)
+    presentationAnchorSeconds = anchor
+    // The same instant, expressed on the clock the delay line schedules against.
+    let scheduled = timelineSeconds + anchor
+    _ = playout.note(lateness: arrived - scheduled, at: arrived)
     pictures.enqueue(
       picture,
-      due: playout.dueTime(presentationSeconds: presentationSeconds),
+      due: playout.dueTime(presentationSeconds: scheduled),
       keepingAtMost: min(Int((rate * Self.pictureQueueSeconds).rounded(.up)), poolFrames)
     )
     lock.unlock()
@@ -717,9 +793,13 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     }
     encodeBacklog += 1
     stats.archiveBacklog = encodeBacklog
+    // The smoothed capture time, not the raw stamp: a segment's start on the recording's wall clock
+    // comes from its first frame's entry here, and the Cosmo's raw stamps jitter enough that
+    // rec-401's NDI segments started up to 90 ms off the three-second step their frames kept,
+    // which placed alternate segments of the export at visibly different offsets.
     pendingFrames[timing.presentationTime.value] = PendingFrame(
       frameID: timing.frameID,
-      captureWallClock: timing.captureWallClock
+      captureWallClock: timing.captureWallClock == nil ? nil : WallClock(seconds: smoothedCaptureSeconds)
     )
     // Bounded so a stalled encoder cannot grow this without limit. Two seconds of 60 fps is far
     // more slack than the encoder ever needs, and the oldest entry is the one whose frame is least

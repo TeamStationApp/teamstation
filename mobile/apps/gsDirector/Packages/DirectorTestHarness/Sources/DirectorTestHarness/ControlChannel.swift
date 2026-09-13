@@ -37,6 +37,8 @@ public enum ControlCommand: Sendable, Equatable {
   case unlinkSource(index: Int)
   /// Searches the network now, without waiting for the next periodic sweep.
   case searchCameras
+  /// Sweep this /24 for cameras instead of the local subnet, or stop. Saved, like the Settings switch.
+  case setSubnetScan(subnet: String?, on: Bool?)
   /// Opens or closes the Cameraman control screen on a 0-based source.
   case cameraControl(source: Int, open: Bool)
   case advanceClock(seconds: TimeInterval)
@@ -50,7 +52,8 @@ public enum ControlCommand: Sendable, Equatable {
   /// UITest-only: fail the live program `AVAssetWriter` mid-take.
   case killProgramWriter
   /// UITest-only: remux the latest stopped take into Prepared/ without opening the share sheet.
-  case exportRecording
+  /// `reprocess` rebuilds files already there, so a changed export can be judged on an old take.
+  case exportRecording(reprocess: Bool)
 }
 
 public enum ControlChannel {
@@ -160,6 +163,10 @@ public enum ControlChannel {
       return .unlinkSource(index: index - 1)
     case "search-cameras", "searchcameras":
       return .searchCameras
+    case "subnet-scan", "subnetscan":
+      let on = query["on"].flatMap { LaunchConfiguration.boolean($0) }
+      guard query["subnet"] != nil || on != nil else { return nil }
+      return .setSubnetScan(subnet: query["subnet"], on: on)
     case "camera-control", "cameracontrol":
       guard let source = Self.slot(query) else { return nil }
       return .cameraControl(source: source - 1, open: LaunchConfiguration.boolean(query["open"]) ?? true)
@@ -176,7 +183,7 @@ public enum ControlChannel {
     case "kill-program-writer", "killprogramwriter":
       return .killProgramWriter
     case "export-recording", "exportrecording":
-      return .exportRecording
+      return .exportRecording(reprocess: query["reprocess"].flatMap { LaunchConfiguration.boolean($0) } ?? false)
     default:
       return nil
     }

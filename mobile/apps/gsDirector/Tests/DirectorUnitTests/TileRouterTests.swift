@@ -97,6 +97,48 @@ struct TileRouterTests {
     #expect(router.programRenderer.enqueue(pixelBuffer: buffer, presentationTime: .zero))
   }
 
+  @Test("A replay frame that races Return to Live cannot leave the tile marked as replaying")
+  func lateReplayFrameDoesNotReviveReplay() async throws {
+    let (router, telemetry) = makeRouter()
+    let pipe = pipeline(index: 0, telemetry: telemetry)
+    router.add(pipe)
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("replay-race-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let url = root.appendingPathComponent("seg-0.mp4")
+    try await writeTestMovie(to: url, seconds: 0.6, framesPerSecond: 10)
+    let decoder = ReplayDecoder(
+      configuration: .init(
+        url: url,
+        startOffset: 0,
+        frameRate: 10,
+        port: 19_002,
+        rate: 1,
+        playDuration: nil,
+        fileURLs: [url],
+        fileDurations: [0.6]
+      ),
+      onFrame: { _, _, _ in }
+    )
+    defer { decoder.stop() }
+    try await pipe.beginReplay(decoder, offsetSeconds: -1.5)
+    #expect(telemetry.snapshot.tiles.first { $0.index == 0 }?.state == .replaying)
+
+    // The programme sink runs after the frame has been checked and before its telemetry is written,
+    // which is exactly where a Return to Live from the operator or the control channel can land.
+    pipe.setProgramSink { [pipe] _, _, _ in pipe.returnToLive() }
+    let factory = try #require(
+      PixelBufferFactory(width: 64, height: 64, pixelFormat: kCVPixelFormatType_32BGRA)
+    )
+    let buffer = try #require(factory.makeBuffer())
+    pipe.deliverReplayFrame(buffer, presentationTime: .zero, offsetSeconds: -1.5)
+
+    let tile = telemetry.snapshot.tiles.first { $0.index == 0 }
+    #expect(tile?.state == .live)
+    #expect(tile?.offsetSeconds == 0)
+  }
+
   private func makeRouter() -> (TileRouter, PipelineTelemetry) {
     let clock = SystemClock()
     let telemetry = PipelineTelemetry(clock: clock)

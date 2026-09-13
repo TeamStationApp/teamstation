@@ -70,6 +70,10 @@ public final class CompositeSourceDiscovery: SourceDiscovery, @unchecked Sendabl
     for child in children { child.acceptSweep(result) }
   }
 
+  /// UserDefaults key for the addresses the last sweep found cameras on. A discovery hint only:
+  /// a camera is never identified by its address, and a stale entry costs one failed probe.
+  public static let rememberedHostsKey = "discovery.rememberedCameraHosts"
+
   /// Nothing sweeps on this one's behalf; it is the thing that sweeps.
   public func setSweepIsShared(_ isShared: Bool) {}
 
@@ -102,7 +106,9 @@ public final class CompositeSourceDiscovery: SourceDiscovery, @unchecked Sendabl
       lock.unlock()
       return
     }
-    let sweeper = CameraSweeper(ports: ports) { [weak self] result in
+    // Remembered across launches so the next launch can ask those cameras directly instead of
+    // waiting out the startup grace and a full sweep.
+    let sweeper = CameraSweeper(ports: ports, persistenceKey: Self.rememberedHostsKey) { [weak self] result in
       self?.acceptSweep(result)
     }
     self.sweeper = sweeper
@@ -136,14 +142,28 @@ public final class CompositeSourceDiscovery: SourceDiscovery, @unchecked Sendabl
     for child in children { child.searchNow() }
   }
 
+  /// Sweeps the subnet once now rather than when the policy next wants to. For a change to which
+  /// subnets are swept: without it the new ones are not looked at until a camera goes missing.
+  public func sweepNow() {
+    lock.lock()
+    let sweeper = self.sweeper
+    lock.unlock()
+    sweeper?.sweepSoon()
+  }
+
   /// Answered here rather than passed down: the sweep the demand describes is this one.
-  public func setSweepDemand(isBusy: Bool, anyEnabledCameraMissing: Bool) {
+  public func setSweepDemand(isBusy: Bool, anyEnabledCameraMissing: Bool, isBrowsing: Bool) {
     lock.lock()
     let sweeper = self.sweeper
     lock.unlock()
     sweeper?.setDemand(isBusy: isBusy, anyEnabledCameraMissing: anyEnabledCameraMissing)
+    sweeper?.setBrowsing(isBrowsing)
     for child in children {
-      child.setSweepDemand(isBusy: isBusy, anyEnabledCameraMissing: anyEnabledCameraMissing)
+      child.setSweepDemand(
+        isBusy: isBusy,
+        anyEnabledCameraMissing: anyEnabledCameraMissing,
+        isBrowsing: isBrowsing
+      )
     }
   }
 

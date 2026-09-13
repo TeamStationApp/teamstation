@@ -46,7 +46,13 @@ data class EncodedAudioFrame(
     val data: ByteArray,
     val presentationTime: Double,
     val sampleRate: Int,
-    val channelCount: Int
+    val channelCount: Int,
+    /**
+     * When the first sample of this frame reached the microphone, in seconds on the boot clock the
+     * camera stamps video frames with. Null when `AudioRecord` could not say. [presentationTime] is
+     * the sample count and stays the RTP timeline; this is what the sender report pairs it with.
+     */
+    val captureTime: Double? = null
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
@@ -54,13 +60,15 @@ data class EncodedAudioFrame(
         return data.contentEquals(other.data) &&
             presentationTime == other.presentationTime &&
             sampleRate == other.sampleRate &&
-            channelCount == other.channelCount
+            channelCount == other.channelCount &&
+            captureTime == other.captureTime
     }
 
     override fun hashCode(): Int {
         var result = data.contentHashCode()
         result = result * 31 + presentationTime.hashCode()
         result = result * 31 + sampleRate
-        return result * 31 + channelCount
+        result = result * 31 + channelCount
+        return result * 31 + (captureTime?.hashCode() ?: 0)
     }
 }

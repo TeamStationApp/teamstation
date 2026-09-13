@@ -187,3 +187,31 @@ struct ScrubMappingTests {
     #expect(ScrubMapping.shouldContinueReplay(currentOffsetSeconds: 0) == false)
   }
 }
+
+@Suite("Timed replay completion")
+struct TimedReplayCompletionTests {
+  @Test("A replay that has shown what was asked for is finished")
+  func finishedWhenPlayed() {
+    #expect(ScrubMapping.hasFinishedTimedReplay(played: 5.0, requested: 5.0))
+    #expect(ScrubMapping.hasFinishedTimedReplay(played: 10.0, requested: 10.0))
+  }
+
+  @Test("A replay still owing content is not finished, however the tape ran out")
+  func notFinishedWhenOwed() {
+    // The measured slow-motion case: 3.895 s covered against a 5 s request, because the decoder
+    // exhausted its playlist. Ending there is what cost about a quarter of every slow rewind.
+    #expect(!ScrubMapping.hasFinishedTimedReplay(played: 3.895, requested: 5.0))
+    #expect(!ScrubMapping.hasFinishedTimedReplay(played: 15.42, requested: 20.0))
+  }
+
+  @Test("The last half second is not worth a decoder restart")
+  func toleratesTheSnapMargin() {
+    #expect(ScrubMapping.hasFinishedTimedReplay(played: 4.6, requested: 5.0))
+    #expect(!ScrubMapping.hasFinishedTimedReplay(played: 4.4, requested: 5.0))
+  }
+
+  @Test("An untimed scrub is never finished by this rule")
+  func scrubIsNeverFinished() {
+    #expect(!ScrubMapping.hasFinishedTimedReplay(played: 900, requested: nil))
+  }
+}

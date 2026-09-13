@@ -150,6 +150,15 @@ object CameramanTokens {
     val chromeButtonSize = 52.dp
 
     /**
+     * How far in from the top and bottom edges a gesture has to start before it may zoom.
+     *
+     * About half an inch — a dp is nominally 1/160". Pulling down the notification shade or swiping
+     * up for home starts at the glass edge, and a drag that zooms on its way past reframes the shot
+     * for everyone watching. Matches the 80pt band on iOS.
+     */
+    val systemGestureBand = 80.dp
+
+    /**
      * The height every chrome pill shares — the camera name, the thermal badge, the battery badge.
      *
      * Fixed rather than derived from each one's text, so the badges on the right sit on exactly the

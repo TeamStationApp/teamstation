@@ -34,13 +34,35 @@ public struct FrameRateEstimator: Sendable {
   /// arrives within half a second at 30 fps.
   public static let minimumSamples = 12
 
+  /// Interquartile spread, as a fraction of the median, beyond which the timestamps are taken to be
+  /// scattered rather than ticked.
+  ///
+  /// Tight on purpose. A ticked clock spreads by at most one tick — 1501 against 1502 at 59.94 on
+  /// 90 kHz is 0.07% — and a clean clock with drops spreads by nothing, since three quarters of its
+  /// intervals are identical. Anything wider is a sender stamping with real jitter, and the median
+  /// of jittered intervals cannot resolve 59.94 from 60, which are 0.1% apart. At 25% a Cosmo C2
+  /// stamping with ±1 ms of jitter took the median and read 59.94 or 60 at random; only its paired
+  /// stamps, far wider, reached the mean.
+  public static let scatterTolerance = 0.01
+
   /// Several seconds of history at the rates in use. Long enough that one bad patch cannot define
   /// the answer, short enough to follow a camera that changes format without reconnecting.
   private static let windowSize = 120
 
+  /// About a minute at 60 fps. Only consulted for scattered stamps: over 120 frames the Cosmo's
+  /// ±12 ms scatter leaves the mean uncertain by about 1%, enough to land on 59.94 or 60 at random,
+  /// and the archive timeline steps at whichever it lands on — 3.6 s an hour apart. Over 3,600 the
+  /// uncertainty is 0.02%, which separates them.
+  private static let longWindowSize = 3_600
+
   private let clockRate: Double
   private var previous: UInt32?
   private var intervals: [Double] = []
+  /// A ring of the most recent intervals with its running sum, so the long mean costs one add and
+  /// one subtract per frame rather than a pass over a minute of history.
+  private var longIntervals: [Double] = []
+  private var longHead = 0
+  private var longSum: Double = 0
 
   /// Nil until `minimumSamples` intervals have been seen. Callers are expected to have their own
   /// fallback for that window rather than being handed a guess dressed as a measurement.
@@ -80,16 +102,40 @@ public struct FrameRateEstimator: Sendable {
   /// The shared half: keep a bounded window, take its middle, and snap. `perSecond` is how many
   /// units of `interval` make a second — the media clock rate for ticks, one for seconds.
   private mutating func record(interval: Double, perSecond: Double) -> Bool {
+    if longIntervals.count < Self.longWindowSize {
+      longIntervals.append(interval)
+    } else {
+      longSum -= longIntervals[longHead]
+      longIntervals[longHead] = interval
+      longHead = (longHead + 1) % Self.longWindowSize
+    }
+    longSum += interval
+
     intervals.append(interval)
     if intervals.count > Self.windowSize {
       intervals.removeFirst(intervals.count - Self.windowSize)
     }
     guard intervals.count >= Self.minimumSamples else { return false }
 
-    let median = intervals.sorted()[intervals.count / 2]
+    let sorted = intervals.sorted()
+    let median = sorted[sorted.count / 2]
     guard median > 0 else { return false }
 
-    let resolved = Self.snap(perSecond / median)
+    // The median is right for a clean clock and wrong for a scattered one. RTP ticks step by
+    // exactly one frame, so the middle interval *is* the period and a drop cannot move it. NDI
+    // stamps are not ticks: a Cosmo C2 pacing an exact 60.03 fps stamps frames 3–37 ms apart in a
+    // skewed spread whose median is 15.7 ms, which read as 63.56 on the Mac and 70.41 on the iPad
+    // — and the archive timeline stepped at that. When the middle half of the window is that wide,
+    // single intervals say little and the window's total span says everything: the scatter
+    // telescopes away, leaving the sender's real pacing.
+    let quartileSpread = sorted[sorted.count * 3 / 4] - sorted[sorted.count / 4]
+    // The long window rather than the short one, for the precision reason given on
+    // `longWindowSize`: it is what lets the mean tell 59.94 from 60.
+    let period = quartileSpread > median * Self.scatterTolerance
+      ? longSum / Double(longIntervals.count)
+      : median
+
+    let resolved = Self.snap(perSecond / period)
     guard resolved != frameRate else { return false }
     frameRate = resolved
     return true
@@ -100,6 +146,9 @@ public struct FrameRateEstimator: Sendable {
   public mutating func reset() {
     previous = nil
     intervals.removeAll(keepingCapacity: true)
+    longIntervals.removeAll(keepingCapacity: true)
+    longHead = 0
+    longSum = 0
     frameRate = nil
   }
 

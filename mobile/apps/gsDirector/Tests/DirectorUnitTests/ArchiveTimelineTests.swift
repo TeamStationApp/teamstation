@@ -22,7 +22,7 @@ struct ArchiveTimelineTests {
   // previous picture without touching the reference chain. **That phase owes this file three
   // replacements** — a video hole, an audio hole, and duration equal to the recording's wall clock.
 
-  @Test("Export duration follows recording wall clock, not the sum of segments")
+  @Test("An assembly reports wall clock and tape separately, and says where each segment belongs")
   func exportDurationMatchesRecording() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent("export-d-\(UUID().uuidString)", isDirectory: true)
@@ -61,8 +61,17 @@ struct ArchiveTimelineTests {
       from: WallClock(seconds: 1_000),
       to: WallClock(seconds: 1_009)
     )
-    #expect(abs(assembly.duration - 9) < 0.001)
+    // Two 2 s segments five seconds apart: nine seconds of wall clock holding four of tape. The
+    // two numbers are now reported separately instead of one standing in for the other, because
+    // conflating them is what placed every post-gap frame five seconds early.
+    #expect(abs(assembly.wallSpan - 9) < 0.001)
+    #expect(abs(assembly.duration - 4) < 0.001)
     #expect(abs(assembly.fileDurations.reduce(0, +) - 4) < 0.001)
+    // And the export's guarantee, which is no longer a duration at all but a position: the second
+    // segment belongs seven seconds in, not immediately after the first.
+    #expect(assembly.startWalls.count == 2)
+    #expect(abs(assembly.startWalls[1] - assembly.startWalls[0] - 7) < 0.001)
+    #expect(abs(assembly.mediaOffset(forWall: WallClock(seconds: 1_008)) - 3) < 0.001)
   }
 
   @Test("Program writer recovery holds the dead interval so concat lasts the take")
@@ -87,14 +96,16 @@ struct ArchiveTimelineTests {
       PixelBufferFactory(width: 160, height: 120, pixelFormat: kCVPixelFormatType_32BGRA)
     )
     let buffer = try #require(factory.makeBuffer())
+    // Paced at the rate the timestamps claim: the programme follows real time, so frames stamped a
+    // thirtieth of a second apart have to arrive that far apart for the take to last what they say.
     for index in 0..<60 {
       encoder.append(buffer, presentationTime: CMTime(value: CMTimeValue(index), timescale: 30))
-      try await Task.sleep(nanoseconds: 20_000_000)
+      try await Task.sleep(nanoseconds: 33_000_000)
     }
     encoder.recoverAfterFailure()
     for index in 210..<270 {
       encoder.append(buffer, presentationTime: CMTime(value: CMTimeValue(index), timescale: 30))
-      try await Task.sleep(nanoseconds: 20_000_000)
+      try await Task.sleep(nanoseconds: 33_000_000)
     }
     _ = await encoder.finish()
     #expect(encoder.outputURLs.count == 2)
@@ -107,6 +118,121 @@ struct ArchiveTimelineTests {
     )
     let duration = try await AVURLAsset(url: destination).load(.duration)
     #expect(abs(duration.seconds - 9) < 0.6)
+  }
+
+  private func programEncoder(in root: URL) throws -> ProgramEncoder {
+    let encoder = ProgramEncoder(
+      telemetry: PipelineTelemetry(),
+      converter: PixelConverter(),
+      config: AppConfig(
+        programCodec: .h264,
+        programResolution: ProgramResolution(width: 160, height: 120),
+        programBitrate: 1_000_000
+      ),
+      directory: root
+    )
+    try encoder.start(at: WallClock(seconds: 1_000))
+    return encoder
+  }
+
+  private func videoSampleTimes(of url: URL) async throws -> [Double] {
+    let asset = AVURLAsset(url: url)
+    let track = try #require(try await asset.loadTracks(withMediaType: .video).first)
+    let reader = try AVAssetReader(asset: asset)
+    let output = AVAssetReaderTrackOutput(track: track, outputSettings: nil)
+    reader.add(output)
+    #expect(reader.startReading())
+    var times: [Double] = []
+    while let sample = output.copyNextSampleBuffer() {
+      if CMSampleBufferGetNumSamples(sample) > 0 {
+        times.append(CMSampleBufferGetPresentationTimeStamp(sample).seconds)
+      }
+    }
+    return times
+  }
+
+  private func now() -> Double { Date().timeIntervalSince1970 }
+
+  /// rec-406: the programme's NDI source went quiet for 18 s and came back with its timestamps one
+  /// frame on from where they stopped. Taken at their word, the stall vanished from the picture while
+  /// the programme's sound kept real time.
+  @Test("An outage the timestamps do not show is held at its real length")
+  func programHoldsOutageByCaptureTime() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("program-outage-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let encoder = try programEncoder(in: root)
+    let factory = try #require(PixelBufferFactory(width: 160, height: 120, pixelFormat: kCVPixelFormatType_32BGRA))
+    let buffer = try #require(factory.makeBuffer())
+    for index in 0..<30 {
+      encoder.append(buffer, presentationTime: CMTime(value: CMTimeValue(index), timescale: 30), captureWall: WallClock(seconds: now() - 0.05))
+      try await Task.sleep(nanoseconds: 20_000_000)
+    }
+    try await Task.sleep(nanoseconds: 2_000_000_000)
+    for index in 30..<60 {
+      encoder.append(buffer, presentationTime: CMTime(value: CMTimeValue(index), timescale: 30), captureWall: WallClock(seconds: now() - 0.05))
+      try await Task.sleep(nanoseconds: 20_000_000)
+    }
+    _ = await encoder.finish()
+    let times = try await videoSampleTimes(of: try #require(encoder.outputURLs.first))
+    let widest = zip(times.dropFirst(), times).map { $0 - $1 }.max() ?? 0
+    #expect(widest > 1.7, "widest gap between programme frames \(widest) s; the 2 s outage was collapsed")
+  }
+
+  /// rec-407: an NDI source's timestamps ran 9% fast after its frame-rate estimate read low, and the
+  /// programme master ran ahead of its own picture for five minutes.
+  @Test("A source whose timestamps run fast is placed in real time")
+  func programFollowsCaptureNotTimestamps() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("program-rate-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let encoder = try programEncoder(in: root)
+    let factory = try #require(PixelBufferFactory(width: 160, height: 120, pixelFormat: kCVPixelFormatType_32BGRA))
+    let buffer = try #require(factory.makeBuffer())
+    var captures: [Double] = []
+    for index in 0..<90 {
+      let capture = now() - 0.05
+      captures.append(capture)
+      // Timestamps a frame period of 1/55 s apart for frames that really come 60 a second.
+      encoder.append(buffer, presentationTime: CMTime(value: CMTimeValue(index), timescale: 55), captureWall: WallClock(seconds: capture))
+      try await Task.sleep(nanoseconds: 16_000_000)
+    }
+    _ = await encoder.finish()
+    let times = try await videoSampleTimes(of: try #require(encoder.outputURLs.first))
+    let fileSpan = (times.last ?? 0) - (times.first ?? 0)
+    let captureSpan = (captures.last ?? 0) - (captures.first ?? 0)
+    #expect(abs(fileSpan - captureSpan) < 0.03, "file spans \(fileSpan) s for \(captureSpan) s of capture")
+  }
+
+  /// What went out is what the programme records: a source that stops delivering for a second is a
+  /// frozen picture on the monitor for a second, and the frames it then delivers in a burst follow
+  /// the freeze rather than being slotted back into it.
+  @Test("A delivery stall is held as the freeze that went out, and the burst after it follows it")
+  func programHoldsDeliveryStall() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("program-late-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let encoder = try programEncoder(in: root)
+    let factory = try #require(PixelBufferFactory(width: 160, height: 120, pixelFormat: kCVPixelFormatType_32BGRA))
+    let buffer = try #require(factory.makeBuffer())
+    for index in 0..<30 {
+      encoder.append(buffer, presentationTime: CMTime(value: CMTimeValue(index), timescale: 60))
+      try await Task.sleep(nanoseconds: 16_000_000)
+    }
+    try await Task.sleep(nanoseconds: 1_000_000_000)
+    for index in 30..<120 {
+      encoder.append(buffer, presentationTime: CMTime(value: CMTimeValue(index), timescale: 60))
+      if index > 90 { try await Task.sleep(nanoseconds: 16_000_000) }
+    }
+    _ = await encoder.finish()
+    let times = try await videoSampleTimes(of: try #require(encoder.outputURLs.first))
+    let gaps = zip(times.dropFirst(), times).map { $0 - $1 }
+    let widest = gaps.max() ?? 0
+    #expect(abs(widest - 1.0) < 0.2, "the one-second stall was held for \(widest) s")
+    #expect(gaps.allSatisfy { $0 > 0 }, "a frame went back in time")
   }
 
   @Test("Recovering with no compositor gap keeps continuation PTS on the file timeline")
@@ -466,5 +592,179 @@ private final class TimelineHarness {
       }
     }
     return count == 0 ? -1 : Double(total) / Double(count)
+  }
+}
+
+@Suite("Declared duration plausibility")
+struct DeclaredDurationTests {
+  @Test("A stub declaring hours while holding one frame is not believed")
+  func rejectsImpossibleFrameRate() {
+    // A continuation stub: hours of declared duration over a single frame.
+    let rate = Float(1.0 / 6_550)
+    #expect(!ArchiveRemux.isPlausibleDuration(seconds: 6_550, nominalFrameRate: rate))
+  }
+
+  @Test("A recovery hold at ten frames a second is believed")
+  func acceptsHold() {
+    // Black and silent, and it compresses to almost nothing -- which is why size is the wrong
+    // thing to judge this on.
+    #expect(ArchiveRemux.isPlausibleDuration(seconds: 45, nominalFrameRate: 10))
+  }
+
+  @Test("A normal recording is believed")
+  func acceptsRealFile() {
+    #expect(ArchiveRemux.isPlausibleDuration(seconds: 600, nominalFrameRate: 30))
+  }
+
+  @Test("A rate the container does not report is not treated as evidence")
+  func unknownRatePasses() {
+    // Fragmented parts often report nothing here, and unknown is not the same as empty.
+    #expect(ArchiveRemux.isPlausibleDuration(seconds: 600, nominalFrameRate: 0))
+  }
+
+  @Test("The multi-day and zero cases are still refused")
+  func keepsExistingBounds() {
+    #expect(!ArchiveRemux.isPlausibleDuration(seconds: 90_000, nominalFrameRate: 30))
+    #expect(!ArchiveRemux.isPlausibleDuration(seconds: 0, nominalFrameRate: 30))
+  }
+}
+
+@Suite("Programme anchor emission")
+struct ProgramAnchorEmissionTests {
+  /// The anchor sink runs on whichever queue delivered the frame — an NDI receive queue, an RTSP
+  /// delivery queue — and never the main actor. An earlier version reached back for the active
+  /// recording through `MainActor.assumeIsolated`, which is a hard trap off the main actor: it
+  /// killed the app on the first composited frame after the record button, every time. The
+  /// recording is carried through the call instead, so the sink touches nothing isolated.
+  @Test("Anchors carry their recording, and none are emitted without one")
+  func anchorsOnlyWhileRecording() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("anchor-emit-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let box = AnchorBox()
+    let encoder = ProgramEncoder(
+      telemetry: PipelineTelemetry(),
+      converter: PixelConverter(),
+      config: AppConfig(
+        programCodec: .h264,
+        programResolution: ProgramResolution(width: 160, height: 120),
+        programBitrate: 1_000_000
+      ),
+      directory: root
+    )
+    encoder.setAnchorSink { recording, part, seconds, _ in
+      box.append(recording: recording, part: part, seconds: seconds)
+    }
+    try encoder.start(at: WallClock(seconds: 1_000))
+    let factory = try #require(
+      PixelBufferFactory(width: 160, height: 120, pixelFormat: kCVPixelFormatType_32BGRA)
+    )
+    let buffer = try #require(factory.makeBuffer())
+
+    // Composited for the preview with nothing recording: nothing to anchor to.
+    for index in 0..<40 {
+      encoder.append(buffer, presentationTime: CMTime(value: CMTimeValue(index), timescale: 30))
+      try await Task.sleep(nanoseconds: 5_000_000)
+    }
+    #expect(box.all().isEmpty, "anchors were written with no recording to attach them to")
+
+    // Record pressed.
+    encoder.setAnchorRecording(77)
+    for index in 40..<220 {
+      encoder.append(buffer, presentationTime: CMTime(value: CMTimeValue(index), timescale: 30))
+      try await Task.sleep(nanoseconds: 5_000_000)
+    }
+    let during = box.all()
+    #expect(!during.isEmpty, "no anchors while recording")
+    #expect(during.allSatisfy { $0.recording == 77 })
+    #expect(during.allSatisfy { $0.part >= 1 })
+
+    // Stopped: the sink stays wired, but there is nothing to attach to again.
+    encoder.setAnchorRecording(nil)
+    let countAtStop = box.all().count
+    for index in 220..<300 {
+      encoder.append(buffer, presentationTime: CMTime(value: CMTimeValue(index), timescale: 30))
+      try await Task.sleep(nanoseconds: 5_000_000)
+    }
+    #expect(box.all().count == countAtStop, "anchors kept coming after the recording stopped")
+    _ = await encoder.finish()
+  }
+}
+
+@Suite("Programme anchors carry capture time")
+struct ProgramAnchorCaptureTimeTests {
+  /// The programme shows pictures the delay line has held for half a second. Anchoring on when
+  /// they were composed put rec-401's programme master 0.55 s behind the camera files.
+  @Test("A live frame anchors at its capture time; a replay frame at the lag the last live one had")
+  func anchorsAtCaptureTime() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("anchor-capture-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let walls = WallBox()
+    let encoder = ProgramEncoder(
+      telemetry: PipelineTelemetry(),
+      converter: PixelConverter(),
+      config: AppConfig(
+        programCodec: .h264,
+        programResolution: ProgramResolution(width: 160, height: 120),
+        programBitrate: 1_000_000
+      ),
+      directory: root
+    )
+    encoder.setAnchorSink { _, _, _, wall in walls.append(wall.seconds) }
+    try encoder.start(at: WallClock(seconds: Date().timeIntervalSince1970))
+    let factory = try #require(
+      PixelBufferFactory(width: 160, height: 120, pixelFormat: kCVPixelFormatType_32BGRA)
+    )
+    let buffer = try #require(factory.makeBuffer())
+    encoder.setAnchorRecording(9)
+
+    let captured = Date().timeIntervalSince1970 - 0.6
+    encoder.append(buffer, presentationTime: CMTime(value: 0, timescale: 30), captureWall: WallClock(seconds: captured))
+    let first = try #require(walls.all().first)
+    #expect(abs(first - captured) < 0.05, "anchored \(first - captured) s from the capture time")
+
+    // Replay frames carry no capture time. Once the next anchor is due, it must still sit about
+    // 0.6 s behind real time rather than jump forward to composition time.
+    for index in 1 ... 200 {
+      encoder.append(buffer, presentationTime: CMTime(value: CMTimeValue(index), timescale: 30))
+      try await Task.sleep(nanoseconds: 20_000_000)
+      if walls.all().count > 1 { break }
+    }
+    let values = walls.all()
+    if values.count > 1 {
+      let lag = Date().timeIntervalSince1970 - values[1]
+      #expect(lag > 0.5 && lag < 0.8, "replay anchor lagged real time by \(lag) s")
+    }
+    _ = await encoder.finish()
+  }
+}
+
+private final class WallBox: @unchecked Sendable {
+  private let lock = NSLock()
+  private var items: [Double] = []
+  func append(_ value: Double) { lock.lock(); items.append(value); lock.unlock() }
+  func all() -> [Double] { lock.lock(); defer { lock.unlock() }; return items }
+}
+
+/// Collects what the sink was handed, from whatever thread it ran on.
+private final class AnchorBox: @unchecked Sendable {
+  private let lock = NSLock()
+  private var items: [(recording: Int64, part: Int, seconds: Double)] = []
+
+  func append(recording: Int64, part: Int, seconds: Double) {
+    lock.lock()
+    items.append((recording, part, seconds))
+    lock.unlock()
+  }
+
+  func all() -> [(recording: Int64, part: Int, seconds: Double)] {
+    lock.lock()
+    defer { lock.unlock() }
+    return items
   }
 }

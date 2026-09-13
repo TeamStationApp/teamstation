@@ -367,9 +367,9 @@ public final class RTMPClient: @unchecked Sendable {
       if count == 0 {
         queue.async {
           self.lock.lock()
-          let trace = self.handshakeTrace
+          let reason = Self.serverClosedReason(live: self.phase == .live, handshakeTrace: self.handshakeTrace)
           self.lock.unlock()
-          self.fail(.disconnected("server closed the socket\(trace)"), notifyWaiter: true)
+          self.fail(.disconnected(reason), notifyWaiter: true)
         }
         return
       }
@@ -842,6 +842,13 @@ public final class RTMPClient: @unchecked Sendable {
       tv_sec: Int(whole),
       tv_usec: Int32((clamped - whole) * 1_000_000)
     )
+  }
+
+  /// Why the stream ended when the server hung up. The handshake's message trace explains a server
+  /// that hung up while connecting; once the stream is live it says nothing about why, and it lands
+  /// in the operator's toast.
+  static func serverClosedReason(live: Bool, handshakeTrace: String) -> String {
+    "server closed the socket\(live ? "" : handshakeTrace)"
   }
 
   #if DEBUG
