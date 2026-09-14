@@ -141,14 +141,18 @@ data class StreamSettings(
         const val canonicalPath = "/live/mainstream"
 
         /**
-         * 554 is the registered RTSP port and what every client tries first, so it stays the
-         * request. Unlike iOS, Linux — and therefore Android — refuses to let an unprivileged
-         * process bind below 1024, so on a handset this *always* falls through to the fallback.
-         * Asking anyway is not pointless: the attempt is what makes the fallback visible on screen
-         * and in the status dump instead of a silently different port.
+         * The one port every Cameraman serves on, Android and iPhone alike. Not the registered
+         * 554: Linux — and therefore Android — refuses any port below 1024 to an unprivileged
+         * process, and a Director sweep that probes one Cameraman port has to find both platforms
+         * there.
          */
-        const val defaultPort = 554
-        const val fallbackPort = 8554
+        const val defaultPort = 8554
+
+        /**
+         * What builds before the single port asked for. A saved 554 loads as [defaultPort], so the
+         * stored request matches what the phone can actually bind.
+         */
+        const val retiredPort = 554
 
         val default = StreamSettings()
     }

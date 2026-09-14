@@ -2,8 +2,8 @@ import Foundation
 
 /// Where the operator's stream settings are kept between launches.
 ///
-/// Separate from `IdentityStore` because the identity belongs in the Keychain — it has to survive a
-/// delete-and-reinstall — while settings are ordinary preferences that should go away with the app.
+/// Separate from `IdentityStore` because the identity has a different job: it is who this phone is to
+/// GS Director, kept in its own file, while settings are ordinary preferences.
 public protocol SettingsStore: Sendable {
   func string(forKey key: String) -> String?
   func setString(_ value: String, forKey key: String)

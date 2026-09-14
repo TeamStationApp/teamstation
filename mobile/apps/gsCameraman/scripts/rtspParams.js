@@ -13,7 +13,7 @@
 const net = require('net')
 
 function parseArgs (argv) {
-  const options = { host: null, port: 554, path: '/live/mainstream', timeout: 5000, lines: [] }
+  const options = { host: null, port: 8554, path: '/live/mainstream', timeout: 5000, lines: [] }
   for (let i = 2; i < argv.length; i += 1) {
     const key = argv[i]
     const next = () => {

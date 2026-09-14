@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Builds and installs on the connected iPhone, then optionally launches it.
 #
-# The real device is the only place this app can be verified: the simulator has no camera, no
-# hardware encoder worth measuring, and does not reliably bind port 554.
+# The real device is the only place this app can be verified: the simulator has no camera and no
+# hardware encoder worth measuring.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 

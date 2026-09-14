@@ -4,7 +4,7 @@ import Foundation
 ///
 /// NearStream (`_awx_service._tcp`) uses TXT `modelname` / `wlanmac` for identity; its SRV port is
 /// closed and media stays RTSP `:554`. GS Cameraman (`_rtsp._tcp`) puts the UUID in TXT `uuid` and
-/// the media port in the SRV record — which may be 8554 when 554 is taken.
+/// the media port, 8554 on iPhone and Android alike, in the SRV record.
 public struct CameraAdvertisement: Hashable, Sendable {
   public var host: String
   public var advertisedName: String

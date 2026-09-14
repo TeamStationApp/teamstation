@@ -37,9 +37,8 @@ resolveDevice() {
   printf '%s' "$devices"
 }
 
-# The port the app actually bound, read from the app rather than assumed. On Android this is never
-# 554: Linux refuses a privileged port to an unprivileged process, so the app always falls through
-# to its fallback and a script that assumed otherwise would connect to nothing.
+# The port the app actually bound, read from the app rather than assumed, so a script that was run
+# against a phone launched with another `rtspPort` still connects to the listener it really has.
 boundPort() {
   controlGet /dump-state | node -e '
     let body = ""

@@ -46,8 +46,6 @@ done
 PORT="$(boundPort)" || fail "the app never reported a bound listener"
 HOST="${CAMERAMAN_HOST:-$(deviceAddress)}"
 log "Camera at $HOST:$PORT"
-# Not an aside: on Android this is *always* the fallback, because 554 is privileged.
-[ "$PORT" = "554" ] || log "Serving on the fallback port — 554 is privileged on Android"
 
 node "$CAMERAMAN_IOS_SCRIPTS/rtspClient.js" \
   --host "$HOST" \

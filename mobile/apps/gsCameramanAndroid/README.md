@@ -47,20 +47,21 @@ the activity is only a window onto it. That needs four things to line up, and al
 Measured on a Pixel 10, 2026-09-05: 30.16 fps with zero sequence gaps foregrounded, backgrounded, and
 with the screen off and the device in `Dozing`. `npm run verify:background` re-runs exactly that.
 
-### Port 554 is never available
+### One port, 8554, on both builds
 
-iOS applies no privileged-port restriction, so the iOS build really does serve on 554. Android is
-Linux: an unprivileged process cannot bind below 1024, and 554 fails with `EACCES` on every handset,
-every time. The app still asks for 554 first and falls back to 8554 — the same fallback the iOS build
-has — so the fallback is a recorded fact on screen and in the state dump rather than a hardcoded port
-that quietly differs between the two builds. The settings screen says why.
+Android is Linux: an unprivileged process cannot bind below 1024, and 554 fails with `EACCES` on every
+handset, every time. So both builds serve on 8554, and GS Director's sweep finds an iPhone and an
+Android phone on the same port. A phone updated from a build that saved 554 loads 8554.
 
 ### The identity does not survive an uninstall
 
-The iOS build keeps the camera's UUID in the Keychain, which survives delete-and-reinstall. Android
-clears app storage and every Keystore entry an app owns on uninstall and offers no sanctioned store
-that outlives it. A reinstalled Cameraman is a new camera to GS Director and has to be re-bound to
-its tile. Updates and reboots are fine; only uninstall is not. See `PreferencesIdentityStore`.
+Both builds keep the camera's UUID in the app's own storage — iOS in a small file, Android in
+`PreferencesIdentityStore` — and uninstalling clears it on both. A reinstalled Cameraman is a new
+camera to GS Director and has to be re-bound to its tile. Updates and reboots are fine; only uninstall is not. See `PreferencesIdentityStore`.
+
+Within one install the UUID cannot drift, even if saving it fails. The first one is derived from the
+install — the app-scoped `ANDROID_ID` and the first-install time — so a launch whose save never
+reached disk is followed by one that mints the same UUID and saves it then.
 
 ### Rotation is done on the GPU, and it had to be measured
 

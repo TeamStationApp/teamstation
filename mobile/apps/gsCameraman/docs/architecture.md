@@ -103,9 +103,18 @@ the SDP as `a=ssrc:<id> cname:<value>` per RFC 5576. The name is the SDP session
 SDES **NAME**. Nothing here is invented — RFC 3550 already defines exactly this pair, and Producer
 reads both without a private protocol.
 
-The UUID lives in the Keychain, so it survives deleting and reinstalling the app. That matters
-because it is what binds this camera to its tile, its archive and its telemetry on the Producer
-side: renaming a camera must not make it a new one.
+The UUID lives in a small JSON file in the app's own storage, `Application Support/Identity/
+identity.json` (`FileIdentityStore`). Nothing in it is secret. An update keeps it; deleting and
+reinstalling the app makes a new camera, as on Android. It is excluded from backups, so restoring one
+phone's backup onto another cannot leave two phones announcing the same UUID. The UUID is what binds
+this camera to its tile, its archive and its telemetry on the Producer side: renaming a camera must
+not make it a new one.
+
+Builds before the file kept the UUID and name in the Keychain. While the file has no UUID, a launch
+reads that entry once and copies it into the file, so an updated phone is still the camera GS Director
+knows; nothing is ever written to the Keychain. A new UUID is minted only when neither holds one. A
+file that exists but cannot be read is never written over, and that launch runs on a stand-in UUID
+held in memory.
 
 ## Zoom and lenses
 
@@ -180,9 +189,10 @@ the way a VM33 does, so without that advertisement the phone never appears. TXT 
 `name`, `path`, `ip` and `port`. `NSBonjourServices` must list both types or advertising fails
 with `-65555` and takes the listener down with it.
 
-Port 554 by default, falling back to 8554 if something already holds it. Both the bound port and the
-fallback are visible on screen, because an operator reading "554" off a phone that is actually on
-8554 has no way to discover that from the client end.
+Port 8554, the same as the Android build, so a Director sweep finds either platform on one port.
+Not the registered 554: Android cannot bind below 1024. A bind failure is retried on 8554 with
+backoff rather than moved to another port, and a settings set saved with 554 by an older build
+loads as 8554. The address on the settings screen is built from the port actually bound.
 
 ## Running it
 

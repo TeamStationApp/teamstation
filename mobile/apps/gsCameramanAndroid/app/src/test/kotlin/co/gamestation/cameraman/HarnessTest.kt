@@ -3,6 +3,7 @@ package co.gamestation.cameraman
 import co.gamestation.cameraman.core.CaptureFormatDescriptor
 import co.gamestation.cameraman.core.DeviceIdentity
 import co.gamestation.cameraman.core.DeviceIdentityProvider
+import co.gamestation.cameraman.core.IdentityStore
 import co.gamestation.cameraman.core.InMemoryIdentityStore
 import co.gamestation.cameraman.core.StreamCodec
 import co.gamestation.cameraman.core.StreamSettings
@@ -90,6 +91,48 @@ class DeviceIdentityTest {
         // RFC 5576 requires the SDP cname and the RTCP SDES CNAME to be identical.
         val identity = DeviceIdentity("c94df9ca-d7c2-468f-8529-97d01fba14e7", "x")
         assertEquals(identity.uuid, identity.cname)
+    }
+
+    /** A store whose every save fails, the way a `commit()` on a full disk does. */
+    private class UnsavableIdentityStore : IdentityStore {
+        override fun string(key: String): String? = null
+        override fun setString(value: String, key: String) {}
+    }
+
+    @Test
+    fun `a UUID whose save failed is the same one on the next launch`() {
+        // Two providers over a store that never keeps anything are two launches after a failed
+        // commit. A random mint would announce a different camera on each.
+        val seed = "co.gamestation.cameraman:8f3a2b1c4d5e6f70:1757800000000"
+        val first = DeviceIdentityProvider(UnsavableIdentityStore(), seed).load().uuid
+        val second = DeviceIdentityProvider(UnsavableIdentityStore(), seed).load().uuid
+        assertEquals(first, second)
+        assertTrue(DeviceIdentityProvider.isWellFormed(first))
+    }
+
+    @Test
+    fun `two installs never derive the same UUID`() {
+        val one = DeviceIdentityProvider(InMemoryIdentityStore(), "pkg:8f3a2b1c4d5e6f70:1").load()
+        val reinstalled = DeviceIdentityProvider(InMemoryIdentityStore(), "pkg:8f3a2b1c4d5e6f70:2").load()
+        val otherPhone = DeviceIdentityProvider(InMemoryIdentityStore(), "pkg:0000000000000001:1").load()
+        assertFalse(one.uuid == reinstalled.uuid)
+        assertFalse(one.uuid == otherPhone.uuid)
+    }
+
+    @Test
+    fun `a stored UUID is kept rather than re-derived`() {
+        // Phones that already have an identity must not become new cameras on update.
+        val existing = "c94df9ca-d7c2-468f-8529-97d01fba14e7"
+        val store = InMemoryIdentityStore(mapOf(DeviceIdentityProvider.uuidKey to existing))
+        assertEquals(existing, DeviceIdentityProvider(store, "pkg:8f3a2b1c4d5e6f70:1").load().uuid)
+    }
+
+    @Test
+    fun `the derived UUID is what gets saved`() {
+        val store = InMemoryIdentityStore()
+        val uuid = DeviceIdentityProvider(store, "pkg:8f3a2b1c4d5e6f70:1").load().uuid
+        assertEquals(uuid, store.string(DeviceIdentityProvider.uuidKey))
+        assertEquals(DeviceIdentity.derivedUUID("pkg:8f3a2b1c4d5e6f70:1"), uuid)
     }
 }
 
@@ -200,7 +243,7 @@ class LaunchConfigurationTest {
             mapOf(
                 "uiTest" to "true",
                 "syntheticCamera" to "yes",
-                "rtspPort" to "8554",
+                "rtspPort" to "9554",
                 "rtspPath" to "/live/alt",
                 "codec" to "hevc",
                 "bitrateMbps" to "12.5",
@@ -218,7 +261,7 @@ class LaunchConfigurationTest {
         )
         assertTrue(launch.isUITest)
         assertTrue(launch.useSyntheticCamera)
-        assertEquals(8554, launch.settings.port)
+        assertEquals(9554, launch.settings.port)
         assertEquals("/live/alt", launch.settings.path)
         assertEquals(StreamCodec.HEVC, launch.settings.codec)
         assertEquals(12_500_000, launch.settings.bitrate)

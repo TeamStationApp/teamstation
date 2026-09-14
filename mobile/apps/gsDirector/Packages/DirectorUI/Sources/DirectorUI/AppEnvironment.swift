@@ -931,7 +931,16 @@ public final class AppEnvironment {
   /// The Bonjour record for the camera on a row, when discovery has one.
   public func cameraAdvertisement(for id: SourceID) -> CameraAdvertisement? {
     guard let endpoint = endpoint(for: id) else { return nil }
-    return discovery?.advertisements.first { $0.host == endpoint.host }
+    return pairedAdvertisement(for: endpoint)
+  }
+
+  /// Found by the uuid the socket presented, not by the address an old advertisement shares with it.
+  private func pairedAdvertisement(for endpoint: CameraEndpoint) -> CameraAdvertisement? {
+    CameraIdentityRules.pair(
+      endpoints: [ endpoint ],
+      advertisements: discovery?.advertisements ?? [],
+      claims: cameras.advertisement(for: endpoint).map { [ endpoint: $0 ] } ?? [:]
+    )[endpoint]
   }
 
   /// The socket whose parameter channel drives this row's tile: the linked phone's when the row
@@ -946,7 +955,7 @@ public final class AppEnvironment {
 
   public func controlAdvertisement(for id: SourceID) -> CameraAdvertisement? {
     guard let endpoint = controlEndpoint(for: id) else { return nil }
-    return discovery?.advertisements.first { $0.host == endpoint.host }
+    return pairedAdvertisement(for: endpoint)
   }
 
   /// A GS Cameraman that advertises `control=params/1`, so the tile gets its controls. An older

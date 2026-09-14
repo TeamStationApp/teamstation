@@ -16,7 +16,7 @@ struct LaunchConfigurationTests {
     #expect(configuration.settings.frameRate == 30)
     #expect(configuration.settings.bitrate == 4_000_000)
     #expect(configuration.settings.codec == .hevc)
-    #expect(configuration.settings.port == 554)
+    #expect(configuration.settings.port == 8554)
     #expect(configuration.settings.audioEnabled)
     #expect(configuration.settings.cleanHDMIEnabled)
     #expect(configuration.providedSettingFields.isEmpty)
@@ -76,11 +76,11 @@ struct LaunchConfigurationTests {
   @Test("Flags and values are both read")
   func flagsAndValues() {
     let configuration = LaunchConfiguration(arguments: [
-      "-uiTest", "-rtspPort", "8554", "-codec", "hevc", "-bitrateMbps", "2.5"
+      "-uiTest", "-rtspPort", "9554", "-codec", "hevc", "-bitrateMbps", "2.5"
     ])
 
     #expect(configuration.isUITest)
-    #expect(configuration.settings.port == 8554)
+    #expect(configuration.settings.port == 9554)
     #expect(configuration.settings.codec == .hevc)
     #expect(configuration.settings.bitrate == 2_500_000)
   }
@@ -92,7 +92,7 @@ struct LaunchConfigurationTests {
     let configuration = LaunchConfiguration(arguments: [ "-rtspPrt", "8554", "-uiTest" ])
 
     #expect(configuration.unknownKeys == [ "rtspPrt" ])
-    #expect(configuration.settings.port == 554)
+    #expect(configuration.settings.port == 8554)
   }
 
   @Test("The environment can override, so a Maestro flow needs no argument plumbing")

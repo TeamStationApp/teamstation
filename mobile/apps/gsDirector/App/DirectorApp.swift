@@ -36,7 +36,9 @@ struct DirectorApp: App {
             isScanEnabled: launch.rtspScan,
             transport: RTSPSession.Transport(rawValue: launch.rtspTransport) ?? .tcp
           ),
-          resolveIdentity: { cameras.resolve(endpoints: $0, advertisements: $1) },
+          resolveIdentity: {
+            cameras.resolve(endpoints: $0, advertisements: $1, streamAdvertisements: $2)
+          },
           requestRelocation: { cameras.reresolve(sourceID: $0) },
           coordinator: cameras.playout,
           advertisementBrowser: CompositeAdvertisementBrowser([

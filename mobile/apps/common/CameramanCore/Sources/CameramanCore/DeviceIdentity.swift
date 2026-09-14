@@ -1,11 +1,39 @@
 import Foundation
 import Security
 
-/// Persistent storage behind a protocol so the identity rules can be tested without a Keychain,
-/// which is not reliably available in a unit-test process.
+/// What a store found under a key. A store that could not be read is not a store that is empty:
+/// treating the two alike would mint a new identity whenever the file could not be read, and the
+/// phone would come back as a camera Director has never seen.
+public enum IdentityRead: Sendable, Equatable {
+  case found(String)
+  case notFound
+  case unreadable(String)
+
+  public var value: String? {
+    if case .found(let value) = self { return value }
+    return nil
+  }
+
+  public var isUnreadable: Bool {
+    if case .unreadable = self { return true }
+    return false
+  }
+}
+
+/// Persistent storage behind a protocol so the identity rules can be tested without touching the
+/// app's real storage.
 public protocol IdentityStore: Sendable {
-  func string(forKey key: String) -> String?
-  func setString(_ value: String, forKey key: String)
+  func read(forKey key: String) -> IdentityRead
+  /// False when the value did not reach storage.
+  @discardableResult
+  func setString(_ value: String, forKey key: String) -> Bool
+}
+
+extension IdentityStore {
+  /// The stored value, or nil when there is none or it could not be read.
+  public func string(forKey key: String) -> String? {
+    read(forKey: key).value
+  }
 }
 
 /// The pair of values every camera on the field needs: a machine-owned identifier that never
@@ -57,26 +85,48 @@ public struct DeviceIdentity: Sendable, Equatable, Codable {
 }
 
 /// Loads the identity, creating and persisting it on first launch.
+///
+/// `store` is where the identity lives — a file in the app's own storage. `legacy` is where builds
+/// before the file kept it, read only while the file has no UUID, so a phone that updates is still
+/// the camera GS Director already knows. A store that exists but cannot be read is never written
+/// over, since it still holds the real UUID; that launch runs on a stand-in kept for the process.
 public struct DeviceIdentityProvider: Sendable {
   public static let uuidKey = "co.gamestation.cameraman.identity.uuid"
   public static let nameKey = "co.gamestation.cameraman.identity.name"
 
   private let store: IdentityStore
+  private let legacy: IdentityStore?
+  private let standIn = InMemoryIdentityStore()
 
-  public init(store: IdentityStore) {
+  public init(store: IdentityStore, legacy: IdentityStore? = nil) {
     self.store = store
+    self.legacy = legacy
   }
 
   public func load() -> DeviceIdentity {
-    let uuid: String
-    if let stored = store.string(forKey: Self.uuidKey), Self.isWellFormed(uuid: stored) {
-      uuid = stored
-    } else {
-      uuid = DeviceIdentity.generatedUUID()
-      store.setString(uuid, forKey: Self.uuidKey)
+    let read = store.read(forKey: Self.uuidKey)
+    if let stored = read.value.flatMap(Self.wellFormed) {
+      let name = store.string(forKey: Self.nameKey) ?? DeviceIdentity.defaultName(forUUID: stored)
+      return DeviceIdentity(uuid: stored, name: name)
     }
-    let name = store.string(forKey: Self.nameKey) ?? DeviceIdentity.defaultName(forUUID: uuid)
-    return DeviceIdentity(uuid: uuid, name: name)
+
+    let carried = legacy?.string(forKey: Self.uuidKey).flatMap(Self.wellFormed)
+    let carriedName = carried == nil ? nil : legacy?.string(forKey: Self.nameKey)
+
+    guard !read.isUnreadable else {
+      let uuid = standIn.string(forKey: Self.uuidKey) ?? carried ?? DeviceIdentity.generatedUUID()
+      standIn.setString(uuid, forKey: Self.uuidKey)
+      return DeviceIdentity(uuid: uuid, name: carriedName ?? DeviceIdentity.defaultName(forUUID: uuid))
+    }
+
+    let uuid = carried ?? DeviceIdentity.generatedUUID()
+    store.setString(uuid, forKey: Self.uuidKey)
+    var name = store.string(forKey: Self.nameKey)
+    if name == nil, let carriedName {
+      store.setString(carriedName, forKey: Self.nameKey)
+      name = carriedName
+    }
+    return DeviceIdentity(uuid: uuid, name: name ?? DeviceIdentity.defaultName(forUUID: uuid))
   }
 
   @discardableResult
@@ -93,56 +143,117 @@ public struct DeviceIdentityProvider: Sendable {
     guard uuid.count == 36, uuid == uuid.lowercased() else { return false }
     return UUID(uuidString: uuid) != nil
   }
+
+  private static func wellFormed(_ uuid: String) -> String? {
+    isWellFormed(uuid: uuid) ? uuid : nil
+  }
 }
 
-/// Keychain-backed storage, so the identity survives a delete-and-reinstall of the app.
+/// The identity as one small JSON file in the app's own storage.
 ///
-/// `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` because the server has to come back after an
-/// unattended reboot, but the identity should never migrate to another handset in a backup.
-public struct KeychainIdentityStore: IdentityStore {
+/// Nothing in it is secret, so a plain file is all it needs. It lives and dies with the install: an
+/// update keeps it, a delete-and-reinstall is a new camera. It is excluded from backups, so restoring
+/// one phone's backup onto another cannot leave two phones announcing the same UUID.
+public final class FileIdentityStore: IdentityStore, @unchecked Sendable {
+  private let url: URL
+  private let lock = NSLock()
+
+  public init(url: URL = FileIdentityStore.defaultURL) {
+    self.url = url
+  }
+
+  /// `Application Support/Identity/identity.json`.
+  public static var defaultURL: URL {
+    let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+    return base
+      .appendingPathComponent("Identity", isDirectory: true)
+      .appendingPathComponent("identity.json", isDirectory: false)
+  }
+
+  public func read(forKey key: String) -> IdentityRead {
+    lock.withLock {
+      switch contents() {
+      case .values(let values): values[key].map { IdentityRead.found($0) } ?? .notFound
+      case .unreadable(let reason): .unreadable(reason)
+      }
+    }
+  }
+
+  @discardableResult
+  public func setString(_ value: String, forKey key: String) -> Bool {
+    lock.withLock {
+      guard case .values(var values) = contents() else { return false }
+      values[key] = value
+      do {
+        try FileManager.default.createDirectory(
+          at: url.deletingLastPathComponent(),
+          withIntermediateDirectories: true
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [ .prettyPrinted, .sortedKeys ]
+        try encoder.encode(values).write(to: url, options: .atomic)
+        // Set after the write: an atomic write replaces the file, and the flag belongs to the file.
+        var resource = URLResourceValues()
+        resource.isExcludedFromBackup = true
+        var written = url
+        try written.setResourceValues(resource)
+        return true
+      } catch {
+        return false
+      }
+    }
+  }
+
+  private enum Contents {
+    case values([String: String])
+    case unreadable(String)
+  }
+
+  private func contents() -> Contents {
+    guard FileManager.default.fileExists(atPath: url.path) else { return .values([:]) }
+    do {
+      let data = try Data(contentsOf: url)
+      // Contents that do not decode are a value to replace, not a file to protect.
+      return .values((try? JSONDecoder().decode([String: String].self, from: data)) ?? [:])
+    } catch {
+      return .unreadable(error.localizedDescription)
+    }
+  }
+}
+
+/// Where builds before `FileIdentityStore` kept the identity. Read once, to carry an existing phone's
+/// UUID and name into the file; never written, and nothing new is ever stored here.
+public struct LegacyKeychainIdentityStore: IdentityStore {
   private let service: String
 
   public init(service: String = "co.gamestation.cameraman.identity") {
     self.service = service
   }
 
-  public func string(forKey key: String) -> String? {
-    var query = baseQuery(key: key)
-    query[kSecReturnData as String] = true
-    query[kSecMatchLimit as String] = kSecMatchLimitOne
-
-    var item: CFTypeRef?
-    guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-          let data = item as? Data
-    else { return nil }
-    return String(data: data, encoding: .utf8)
-  }
-
-  public func setString(_ value: String, forKey key: String) {
-    let data = Data(value.utf8)
-    let query = baseQuery(key: key)
-
-    let updates: [String: Any] = [ kSecValueData as String: data ]
-    let status = SecItemUpdate(query as CFDictionary, updates as CFDictionary)
-    guard status != errSecSuccess else { return }
-
-    var insert = query
-    insert[kSecValueData as String] = data
-    insert[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-    SecItemAdd(insert as CFDictionary, nil)
-  }
-
-  private func baseQuery(key: String) -> [String: Any] {
-    [
+  public func read(forKey key: String) -> IdentityRead {
+    let query: [String: Any] = [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: service,
-      kSecAttrAccount as String: key
+      kSecAttrAccount as String: key,
+      kSecReturnData as String: true,
+      kSecMatchLimit as String: kSecMatchLimitOne
     ]
+    var item: CFTypeRef?
+    switch SecItemCopyMatching(query as CFDictionary, &item) {
+    case errSecSuccess:
+      return (item as? Data).map { .found(String(decoding: $0, as: UTF8.self)) } ?? .notFound
+    case errSecItemNotFound:
+      return .notFound
+    case let status:
+      return .unreadable("OSStatus \(status)")
+    }
   }
+
+  @discardableResult
+  public func setString(_ value: String, forKey key: String) -> Bool { false }
 }
 
-/// Test and simulator storage. Also the fallback when the Keychain refuses, which happens in a
-/// unit-test host without a provisioned keychain.
+/// Test storage, pinned identities, and the provider's stand-in for a launch that cannot read its file.
 public final class InMemoryIdentityStore: IdentityStore, @unchecked Sendable {
   private let lock = NSLock()
   private var values: [String: String]
@@ -151,11 +262,13 @@ public final class InMemoryIdentityStore: IdentityStore, @unchecked Sendable {
     self.values = values
   }
 
-  public func string(forKey key: String) -> String? {
-    lock.withLock { values[key] }
+  public func read(forKey key: String) -> IdentityRead {
+    lock.withLock { values[key] }.map { IdentityRead.found($0) } ?? .notFound
   }
 
-  public func setString(_ value: String, forKey key: String) {
+  @discardableResult
+  public func setString(_ value: String, forKey key: String) -> Bool {
     lock.withLock { values[key] = value }
+    return true
   }
 }
