@@ -5,13 +5,29 @@ import SwiftUI
 /// the iPad.
 @main
 struct DistributorApp: App {
-  @State private var model = DistributorModel()
+  @State private var model: DistributorModel
+  #if DEBUG
+  private let harness: DebugHarness
+  #endif
+
+  init() {
+    let model = DistributorModel()
+    _model = State(initialValue: model)
+    #if DEBUG
+    harness = DebugHarness(model: model)
+    #endif
+  }
 
   var body: some Scene {
     WindowGroup("GS Distributor") {
       RootView(model: model)
         .frame(minWidth: 760, minHeight: 460)
-        .task { await model.watch() }
+        .task {
+          #if DEBUG
+          if DebugHarness.isRequested { harness.start() }
+          #endif
+          await model.watch()
+        }
     }
     // No saved window state: the Mac keeps nothing of the Distributor's between launches.
     .restorationBehavior(.disabled)
