@@ -95,6 +95,27 @@ enum UsbMuxWire {
   }
 }
 
+/// lockdownd's framing, once usbmuxd has connected to it: a 4-byte big-endian length, then an XML
+/// property list.
+enum LockdownWire {
+  static let port: UInt16 = 62078
+
+  static func packet(_ message: [String: Any]) throws -> Data {
+    let payload = try PropertyListSerialization.data(fromPropertyList: message, format: .xml, options: 0)
+    var data = Data()
+    withUnsafeBytes(of: UInt32(payload.count).bigEndian) { data.append(contentsOf: $0) }
+    data.append(payload)
+    return data
+  }
+
+  static func receive(on fd: Int32) throws -> [String: Any] {
+    let header = try Socket.readExactly(fd, count: 4)
+    let length = header.withUnsafeBytes { UInt32(bigEndian: $0.loadUnaligned(as: UInt32.self)) }
+    guard length > 0, length < 1 << 20 else { throw UsbMuxError.protocolError("lockdownd message length \(length)") }
+    return try UsbMuxWire.dictionary(Socket.readExactly(fd, count: Int(length)))
+  }
+}
+
 enum Socket {
   static func openUnix(_ path: String) throws -> Int32 {
     let fd = socket(AF_UNIX, SOCK_STREAM, 0)

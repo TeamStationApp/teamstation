@@ -85,11 +85,23 @@ final class FakeUsbMuxd: @unchecked Sendable {
       try? UsbMuxWire.send([ "DeviceList": devices ], on: client, tag: 1)
     case "Connect":
       let port = UInt16(bigEndian: UInt16(truncatingIfNeeded: request["PortNumber"] as? Int ?? 0))
-      guard port == 8770 else {
+      guard port == 8770 || port == LockdownWire.port else {
         try? UsbMuxWire.send([ "MessageType": "Result", "Number": 3 ], on: client, tag: 2)
         return
       }
       try? UsbMuxWire.send([ "MessageType": "Result", "Number": 0 ], on: client, tag: 2)
+      if port == LockdownWire.port {
+        // lockdownd: answers GetValue for the name and the class, as an iPad does without pairing,
+        // one question after another on the same connection.
+        let values = [ "DeviceName": "Bench iPad", "DeviceClass": "iPad" ]
+        while let question = try? LockdownWire.receive(on: client),
+              question["Request"] as? String == "GetValue",
+              let key = question["Key"] as? String, let value = values[key],
+              let answer = try? LockdownWire.packet([ "Key": key, "Value": value, "Request": "GetValue" ]) {
+          try? Socket.writeAll(client, answer)
+        }
+        return
+      }
       var buffer = [UInt8](repeating: 0, count: 1 << 16)
       while true {
         let got = read(client, &buffer, buffer.count)
@@ -133,6 +145,22 @@ struct UsbMuxClientTests {
     #expect(throws: UsbMuxError.refused(port: 8765, result: 3)) {
       _ = try client.connect(deviceID: 396, port: 8765)
     }
+  }
+
+  @Test("The iPad's own name comes from lockdownd over the cable")
+  func deviceName() throws {
+    let daemon = try FakeUsbMuxd()
+    defer { daemon.stop() }
+    #expect(try UsbMuxClient(socketPath: daemon.path).deviceName(deviceID: 396) == "Bench iPad")
+  }
+
+  @Test("The name and whether it is an iPad come from lockdownd in one visit")
+  func identity() throws {
+    let daemon = try FakeUsbMuxd()
+    defer { daemon.stop() }
+    let identity = try UsbMuxClient(socketPath: daemon.path).identity(deviceID: 396)
+    #expect(identity.name == "Bench iPad")
+    #expect(identity.deviceClass == "iPad")
   }
 
   @Test("Plugging in and pulling out arrive as events")

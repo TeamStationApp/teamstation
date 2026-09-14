@@ -15,12 +15,16 @@ struct ConnectionView: View {
         ProgressView()
         Text("Open GS Director on the iPad")
           .font(.title3)
-        Text("iPad \(serial) is attached, but GS Director is not answering. It must be open and in front.")
+        Text("\(model.displayName(of: serial)) is attached, but GS Director is not answering. It must be open and in front.")
           .foregroundStyle(.secondary)
       case .connected(let hello):
         ProgressView()
         Text("Connected to GS Director \(hello.directorVersion)")
           .font(.title3)
+        if let serial = model.chosenDevice?.serial {
+          Text(model.displayName(of: serial))
+            .foregroundStyle(.secondary)
+        }
       case .failed(let reason):
         Image(systemName: "exclamationmark.triangle")
           .font(.largeTitle)
@@ -61,7 +65,7 @@ struct RootView: View {
             set: { serial in Task { await model.choose(serial: serial) } }
           )) {
             ForEach(model.devices, id: \.serial) { device in
-              Text(device.serial).tag(device.serial)
+              Text(model.displayName(of: device.serial)).tag(device.serial)
             }
           }
           .accessibilityIdentifier("device-picker")
