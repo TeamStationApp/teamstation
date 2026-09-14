@@ -1,0 +1,221 @@
+import DirectorClient
+import DirectorExport
+import DistributorWire
+import Foundation
+import Observation
+
+/// Where one file of an export has got to.
+public enum TrackState: Sendable, Equatable {
+  case queued
+  case fetching(worker: DistributionPlan.Worker, received: Int64, total: Int64)
+  case stitching(worker: DistributionPlan.Worker, fraction: Double)
+  case downloading(received: Int64, total: Int64)
+  case done(URL)
+  case failed(String)
+
+  public var isFinal: Bool {
+    switch self {
+    case .done, .failed: true
+    default: false
+    }
+  }
+}
+
+/// One export of one recording: the chosen tracks, stitched by the Mac and the iPad together and
+/// saved into `<destination>/<yyyy-MM-dd>/` under the names GS Director gives them.
+@MainActor
+@Observable
+public final class DistributionRun {
+  public let recording: RecordingListing
+  public let tracks: [Track]
+  public private(set) var states: [Track: TrackState]
+  public private(set) var isFinished = false
+  /// Which worker stitched each track, for the record.
+  public private(set) var stitchedBy: [Track: DistributionPlan.Worker] = [:]
+
+  private let connection: DirectorConnection
+  private let jobs: JobWatcher
+  private let destination: URL
+  private let reprocess: Bool
+  private let iPadMayStitch: @MainActor () -> Bool
+  private var plan = DistributionPlan(tracks: [])
+  private var downloads: [Task<Void, Never>] = []
+
+  public init(
+    recording: RecordingListing,
+    tracks: [Track],
+    connection: DirectorConnection,
+    jobs: JobWatcher,
+    destination: URL,
+    reprocess: Bool = false,
+    iPadMayStitch: @escaping @MainActor () -> Bool
+  ) {
+    self.recording = recording
+    self.tracks = tracks
+    self.connection = connection
+    self.jobs = jobs
+    self.destination = destination
+    self.reprocess = reprocess
+    self.iPadMayStitch = iPadMayStitch
+    self.states = Dictionary(uniqueKeysWithValues: tracks.map { ($0, TrackState.queued) })
+  }
+
+  /// The folder this export's files go in.
+  public var folder: URL {
+    destination.appendingPathComponent(PeerTubeTitle.datePrefix(for: recording.startedAt.date), isDirectory: true)
+  }
+
+  /// The name GS Director gives `track`'s file, which is also the name it gets here.
+  public func filename(for track: Track) -> String {
+    switch track {
+    case .primary:
+      return RecordingExport.programFilename(startedAt: recording.startedAt)
+    case .camera(let sourceID):
+      let name = recording.cameras.first { $0.sourceID == sourceID }?.name ?? sourceID.rawValue
+      return RecordingExport.cameraFilename(startedAt: recording.startedAt, cameraName: name)
+    }
+  }
+
+  public func run() async {
+    // Work the user asked for: macOS neither naps the app nor lets the Mac idle to sleep while an
+    // export runs, whether or not the window is in front.
+    let activity = ProcessInfo.processInfo.beginActivity(options: .userInitiated, reason: "Exporting a recording")
+    defer { ProcessInfo.processInfo.endActivity(activity) }
+    defer { isFinished = true }
+    let scratch = FileManager.default.temporaryDirectory
+      .appendingPathComponent("gsDistributor-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: scratch) }
+
+    let window: ExportWindow
+    do {
+      try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+      try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+      window = try await connection.manifest(recordingID: recording.id, tracks: []).window
+    } catch {
+      for track in tracks { states[track] = .failed("\(error)") }
+      return
+    }
+
+    // Files already here need nothing; files already stitched on the iPad need only fetching.
+    var toStitch: [Track] = []
+    for track in tracks {
+      let target = folder.appendingPathComponent(filename(for: track))
+      if !reprocess, Self.size(of: target) > 0 {
+        states[track] = .done(target)
+      } else if !reprocess, recording.preparedTracks.contains(track) {
+        fetchPrepared(track)
+      } else {
+        toStitch.append(track)
+      }
+    }
+    plan = DistributionPlan(tracks: toStitch)
+
+    // First to the Mac, second to the iPad, then whichever is free first.
+    let mac = MacStitcher(connection: connection, scratch: scratch)
+    let iPad = IPadStitcher(connection: connection, jobs: jobs)
+    let firstForMac = plan.next(for: .mac)
+    let firstForIPad = iPadMayStitch() ? plan.next(for: .iPad) : nil
+    await withTaskGroup(of: Void.self) { group in
+      group.addTask { await self.macLoop(mac, first: firstForMac, window: window) }
+      group.addTask { await self.iPadLoop(iPad, first: firstForIPad, window: window) }
+    }
+    for download in downloads { await download.value }
+  }
+
+  // MARK: - Workers
+
+  private func macLoop(_ stitcher: MacStitcher, first: Track?, window: ExportWindow) async {
+    var track = first
+    while true {
+      if track == nil { track = plan.next(for: .mac) }
+      guard let current = track else {
+        // The iPad may yet hand a track back; wait while it still holds any.
+        if plan.held(by: .iPad).isEmpty { return }
+        try? await Task.sleep(for: .milliseconds(200))
+        continue
+      }
+      track = nil
+      do {
+        let stitched = try await stitcher.stitch(recording: recording, track: current, window: window) { stage in
+          Task { @MainActor in
+            switch stage {
+            case let .fetching(received, total):
+              self.states[current] = .fetching(worker: .mac, received: received, total: total)
+            case let .stitching(fraction):
+              self.states[current] = .stitching(worker: .mac, fraction: fraction)
+            }
+          }
+        }
+        let target = folder.appendingPathComponent(filename(for: current))
+        try? FileManager.default.removeItem(at: target)
+        try FileManager.default.moveItem(at: stitched, to: target)
+        stitchedBy[current] = .mac
+        states[current] = .done(target)
+      } catch {
+        states[current] = .failed("\(error)")
+      }
+      plan.finish(current)
+    }
+  }
+
+  private func iPadLoop(_ stitcher: IPadStitcher, first: Track?, window: ExportWindow) async {
+    var track = first
+    while true {
+      if track == nil {
+        guard iPadMayStitch() else { return }
+        track = plan.next(for: .iPad)
+      }
+      guard let current = track else { return }
+      track = nil
+      do {
+        let file = try await stitcher.stitch(
+          recording: recording,
+          track: current,
+          window: window,
+          reprocess: reprocess
+        ) { fraction in
+          Task { @MainActor in self.states[current] = .stitching(worker: .iPad, fraction: fraction) }
+        }
+        stitchedBy[current] = .iPad
+        plan.finish(current)
+        // Free for the next track at once; the download goes on alongside.
+        fetch(file, for: current)
+      } catch let DirectorClientError.http(status, _) where status == 409 {
+        // Recording started: the iPad takes nothing more, and the Mac does this one.
+        plan.giveBack(current)
+        states[current] = .queued
+        return
+      } catch {
+        plan.giveBack(current)
+        states[current] = .queued
+        if case DistributionError.directorGone = error { return }
+      }
+    }
+  }
+
+  // MARK: - Downloads
+
+  private func fetchPrepared(_ track: Track) {
+    let path = "rec-\(recording.id)/\(filename(for: track))"
+    fetch(RemoteFile(root: .prepared, path: path, bytes: 0), for: track)
+  }
+
+  private func fetch(_ file: RemoteFile, for track: Track) {
+    let target = folder.appendingPathComponent(filename(for: track))
+    let connection = self.connection
+    downloads.append(Task { [weak self] in
+      do {
+        try await connection.download(file, to: target) { received, total in
+          Task { @MainActor in self?.states[track] = .downloading(received: received, total: total) }
+        }
+        self?.states[track] = .done(target)
+      } catch {
+        self?.states[track] = .failed("\(error)")
+      }
+    })
+  }
+
+  static func size(of url: URL) -> Int64 {
+    ((try? FileManager.default.attributesOfItem(atPath: url.path)[.size]) as? NSNumber)?.int64Value ?? 0
+  }
+}
