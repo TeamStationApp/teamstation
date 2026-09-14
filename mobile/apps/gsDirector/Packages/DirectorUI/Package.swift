@@ -20,7 +20,8 @@ let package = Package(
     .package(path: "../DirectorRTMP"),
     .package(path: "../DirectorTestHarness"),
     .package(path: "../DirectorLink"),
-    .package(path: "../../../common/DistributorWire")
+    .package(path: "../../../common/DistributorWire"),
+    .package(path: "../../../common/PeerTubeKit")
   ],
   targets: [
     .target(
@@ -38,7 +39,8 @@ let package = Package(
         "DirectorRTMP",
         "DirectorTestHarness",
         "DirectorLink",
-        "DistributorWire"
+        "DistributorWire",
+        "PeerTubeKit"
       ],
       swiftSettings: [ .swiftLanguageMode(.v6) ],
       linkerSettings: [ .linkedFramework("GameController") ]

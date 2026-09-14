@@ -9,6 +9,12 @@ struct SettingsView: View {
 
   @State private var hostDraft = ""
   @State private var hostProblem: String?
+  @State private var usernameDraft = ""
+  @State private var password = ""
+  @State private var code = ""
+  @State private var needsCode = false
+  @State private var signingIn = false
+  @State private var signInProblem: String?
 
   var body: some View {
     Group {
@@ -37,19 +43,15 @@ struct SettingsView: View {
             Toggle("Upload to PeerTube", isOn: uploadsToPeerTube)
               .accessibilityIdentifier("settings-peertube")
             if settings.peerTube.enabled {
-              TextField("Instance", text: $hostDraft, prompt: Text("videos.example.org"))
-                .onSubmit { commitHost() }
-                .accessibilityIdentifier("settings-peertube-host")
-              if let hostProblem {
-                Text(hostProblem)
-                  .font(.caption)
-                  .foregroundStyle(.red)
-              }
+              peerTubeAccount
             }
           }
         }
         .formStyle(.grouped)
-        .onAppear { hostDraft = settings.peerTube.host ?? "" }
+        .onAppear {
+          hostDraft = settings.peerTube.host ?? ""
+          usernameDraft = settings.peerTube.username ?? ""
+        }
       } else {
         ContentUnavailableView(
           "Connect GS Director",
@@ -58,7 +60,75 @@ struct SettingsView: View {
         )
       }
     }
-    .frame(width: 520, height: 360)
+    .frame(width: 520, height: 480)
+  }
+
+  // MARK: - PeerTube
+
+  @ViewBuilder private var peerTubeAccount: some View {
+    switch model.peerTube {
+    case .signedIn(let account):
+      LabeledContent("Account") {
+        HStack {
+          Text("\(account.username) on \(account.host)")
+            .accessibilityIdentifier("settings-peertube-account")
+          Button("Sign Out") { Task { await model.signOutOfPeerTube() } }
+            .accessibilityIdentifier("settings-peertube-signout")
+        }
+      }
+
+    case .unknown:
+      ProgressView()
+        .controlSize(.small)
+
+    case .unreachable(let reason):
+      LabeledContent("Account") {
+        HStack {
+          Text("PeerTube did not answer: \(reason)")
+            .foregroundStyle(.red)
+            .lineLimit(2)
+          Button("Try Again") { Task { await model.loadPeerTube() } }
+        }
+      }
+
+    case .signedOut:
+      TextField("Instance", text: $hostDraft, prompt: Text("videos.example.org"))
+        .onSubmit { commitHost() }
+        .accessibilityIdentifier("settings-peertube-host")
+      if let hostProblem {
+        Text(hostProblem)
+          .font(.caption)
+          .foregroundStyle(.red)
+      }
+      TextField("User name", text: $usernameDraft)
+        .textContentType(.username)
+        .accessibilityIdentifier("settings-peertube-username")
+      SecureField("Password", text: $password)
+        .textContentType(.password)
+        .onSubmit { signIn() }
+        .accessibilityIdentifier("settings-peertube-password")
+      if needsCode {
+        TextField("Two-factor code", text: $code)
+          .textContentType(.oneTimeCode)
+          .onSubmit { signIn() }
+          .accessibilityIdentifier("settings-peertube-code")
+      }
+      HStack {
+        if let signInProblem {
+          Text(signInProblem)
+            .font(.caption)
+            .foregroundStyle(.red)
+        }
+        Spacer()
+        if signingIn { ProgressView().controlSize(.small) }
+        Button("Sign In") { signIn() }
+          .disabled(signingIn || usernameDraft.isEmpty || password.isEmpty)
+          .accessibilityIdentifier("settings-peertube-signin")
+      }
+      Text("GS Director keeps the sign-in. The password is sent to PeerTube once and not stored.")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
   }
 
   // MARK: - Bindings
@@ -73,7 +143,12 @@ struct SettingsView: View {
   private var uploadsToPeerTube: Binding<Bool> {
     Binding(
       get: { model.settings?.peerTube.enabled ?? false },
-      set: { isOn in Task { await model.updateSettings { $0.peerTube.enabled = isOn } } }
+      set: { isOn in
+        Task {
+          await model.updateSettings { $0.peerTube.enabled = isOn }
+          await model.loadPeerTube()
+        }
+      }
     )
   }
 
@@ -101,17 +176,47 @@ struct SettingsView: View {
 
   /// The field takes a host, not a URL: `https://` and anything after the host are dropped, and
   /// plain http is refused.
-  private func commitHost() {
+  @discardableResult
+  private func commitHost() -> String? {
     do {
       let host = try PeerTubeHost.normalize(hostDraft)
       hostDraft = host
       hostProblem = nil
       Task { await model.updateSettings { $0.peerTube.host = host } }
+      return host
     } catch {
       switch error {
       case .insecure: hostProblem = "PeerTube must be reached over HTTPS"
       case .empty: hostProblem = "Type the instance's host name, like videos.example.org"
       case .notAHost: hostProblem = "That is not a host name"
+      }
+      return nil
+    }
+  }
+
+  private func signIn() {
+    guard !signingIn, let host = commitHost() else { return }
+    let username = usernameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    signingIn = true
+    signInProblem = nil
+    Task {
+      let outcome = await model.signInToPeerTube(
+        host: host,
+        username: username,
+        password: password,
+        code: needsCode ? code : nil
+      )
+      signingIn = false
+      switch outcome {
+      case .signedIn:
+        password = ""
+        code = ""
+        needsCode = false
+      case .needsCode:
+        if needsCode { signInProblem = "That code was not accepted." }
+        needsCode = true
+      case .failed(let reason):
+        signInProblem = reason
       }
     }
   }

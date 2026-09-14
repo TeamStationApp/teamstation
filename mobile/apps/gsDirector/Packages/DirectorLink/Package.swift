@@ -12,17 +12,18 @@ let package = Package(
   dependencies: [
     .package(path: "../../../common/DirectorCore"),
     .package(path: "../../../common/DirectorExport"),
-    .package(path: "../../../common/DistributorWire")
+    .package(path: "../../../common/DistributorWire"),
+    .package(path: "../../../common/PeerTubeKit")
   ],
   targets: [
     .target(
       name: "DirectorLink",
-      dependencies: [ "DirectorCore", "DirectorExport", "DistributorWire" ],
+      dependencies: [ "DirectorCore", "DirectorExport", "DistributorWire", "PeerTubeKit" ],
       swiftSettings: [ .swiftLanguageMode(.v6) ]
     ),
     .testTarget(
       name: "DirectorLinkTests",
-      dependencies: [ "DirectorLink", "DirectorCore", "DirectorExport", "DistributorWire" ],
+      dependencies: [ "DirectorLink", "DirectorCore", "DirectorExport", "DistributorWire", "PeerTubeKit" ],
       swiftSettings: [ .swiftLanguageMode(.v6) ]
     )
   ]

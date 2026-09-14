@@ -104,6 +104,27 @@ public final class DirectorConnection: Sendable {
     return try JSONDecoder().decode(DistributorSettings.self, from: data)
   }
 
+  /// Signs GS Director in to PeerTube. The password goes to the iPad, which sends it to PeerTube
+  /// and keeps only the tokens.
+  public func peerTubeSignIn(_ signIn: PeerTubeSignIn) async throws -> PeerTubeSignInResult {
+    let (status, data) = try await send("POST", "/v1/peertube/signin", body: try JSONEncoder().encode(signIn))
+    guard status == 200 else { throw Self.failure(status, data) }
+    return try JSONDecoder().decode(PeerTubeSignInResult.self, from: data)
+  }
+
+  /// An access token from the iPad's account; nil when it is not signed in.
+  public func peerTubeToken() async throws -> PeerTubeToken? {
+    let (status, data) = try await send("GET", "/v1/peertube/token")
+    if status == 401 { return nil }
+    guard status == 200 else { throw Self.failure(status, data) }
+    return try JSONDecoder().decode(PeerTubeToken.self, from: data)
+  }
+
+  public func peerTubeSignOut() async throws {
+    let (status, data) = try await send("POST", "/v1/peertube/signout")
+    guard status == 200 else { throw Self.failure(status, data) }
+  }
+
   /// GS Director's events until the connection drops.
   public func events() -> AsyncThrowingStream<DistributorEvent, Error> {
     let session = self.session

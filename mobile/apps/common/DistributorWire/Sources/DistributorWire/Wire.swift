@@ -170,31 +170,23 @@ public struct PeerTubeSignIn: Codable, Equatable, Sendable {
   }
 }
 
-public struct PeerTubeChannel: Codable, Equatable, Sendable {
-  public var id: Int
-  public var name: String
-  public var displayName: String
-
-  public init(id: Int, name: String, displayName: String) {
-    self.id = id
-    self.name = name
-    self.displayName = displayName
-  }
-}
-
 public enum PeerTubeSignInResult: Codable, Equatable, Sendable {
-  case signedIn(account: String, channels: [PeerTubeChannel], privacies: [Int])
+  case signedIn(account: String)
+  /// The account has two-factor sign-in: send the same again with the code.
   case otpRequired
 }
 
 /// A short-lived access token the iPad hands the Mac; the refresh token never leaves the iPad.
+/// The Mac reads channels and privacy settings, and uploads, with it itself.
 public struct PeerTubeToken: Codable, Equatable, Sendable {
   public var host: String
+  public var username: String
   public var accessToken: String
   public var expiresAt: Date
 
-  public init(host: String, accessToken: String, expiresAt: Date) {
+  public init(host: String, username: String, accessToken: String, expiresAt: Date) {
     self.host = host
+    self.username = username
     self.accessToken = accessToken
     self.expiresAt = expiresAt
   }
