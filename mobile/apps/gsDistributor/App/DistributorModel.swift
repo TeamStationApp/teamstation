@@ -97,6 +97,8 @@ final class DistributorModel {
       for try await event in locator.events() {
         switch event {
         case .attached(let device) where device.isUSB:
+          // GS Director runs only on the iPad, so an iPhone on the cable is never offered.
+          guard await isIPad(device) else { break }
           devices.removeAll { $0.serial == device.serial }
           devices.append(device)
           if chosenSerial == nil { chosenSerial = device.serial }
@@ -117,6 +119,22 @@ final class DistributorModel {
     } catch {
       link = .failed("Cannot talk to usbmuxd: \(error)")
     }
+  }
+
+  /// What the owner calls each attached iPad, by serial, as lockdownd tells it.
+  private(set) var deviceNames: [String: String] = [:]
+
+  /// The iPad's own name where it is known, else its serial.
+  func displayName(of serial: String) -> String {
+    deviceNames[serial] ?? "iPad \(serial)"
+  }
+
+  /// Asks lockdownd what the device is and what its owner calls it. An iPad is kept, and so is a
+  /// device that does not say, so a slow answer never hides an iPad.
+  private func isIPad(_ device: UsbMuxDevice) async -> Bool {
+    let identity = await Task.detached { try? UsbMuxClient().identity(deviceID: device.deviceID) }.value
+    if let name = identity?.name, !name.isEmpty { deviceNames[device.serial] = name }
+    return identity?.deviceClass.map { $0 == "iPad" } ?? true
   }
 
   func choose(serial: String) async {

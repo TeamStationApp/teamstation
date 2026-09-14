@@ -44,6 +44,32 @@ public struct UsbMuxClient: Sendable {
     }
   }
 
+  /// The name the owner gave the device, asked of lockdownd over the cable. iPadOS tells apps only
+  /// the model ("iPad"), so GS Director cannot say it itself. This question needs no pairing.
+  public func deviceName(deviceID: Int) throws -> String? {
+    try lockdownValues(deviceID: deviceID, keys: [ "DeviceName" ])["DeviceName"]
+  }
+
+  /// What the owner calls the device and what it is ("iPad", "iPhone"), asked of lockdownd in one
+  /// visit. Neither question needs pairing.
+  public func identity(deviceID: Int) throws -> (name: String?, deviceClass: String?) {
+    let values = try lockdownValues(deviceID: deviceID, keys: [ "DeviceName", "DeviceClass" ])
+    return (values["DeviceName"], values["DeviceClass"])
+  }
+
+  private func lockdownValues(deviceID: Int, keys: [String]) throws -> [String: String] {
+    let fd = try connect(deviceID: deviceID, port: LockdownWire.port)
+    defer { close(fd) }
+    var timeout = timeval(tv_sec: 5, tv_usec: 0)
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+    var values: [String: String] = [:]
+    for key in keys {
+      try Socket.writeAll(fd, LockdownWire.packet([ "Label": "GS Distributor", "Request": "GetValue", "Key": key ]))
+      values[key] = try LockdownWire.receive(on: fd)["Value"] as? String
+    }
+    return values
+  }
+
   /// Devices as they are plugged in and pulled out, starting with those already attached.
   /// Ends when the consumer stops listening.
   public func events() -> AsyncThrowingStream<UsbMuxEvent, Error> {
