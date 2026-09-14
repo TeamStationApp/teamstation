@@ -20,6 +20,14 @@ public struct MacStitcher: Sendable {
     self.parallelDownloads = parallelDownloads
   }
 
+  /// The folder one stitch worked in, which can go once its file is saved elsewhere.
+  public func workFolder(of url: URL) -> URL? {
+    let base = scratch.standardizedFileURL.pathComponents
+    let parts = url.standardizedFileURL.pathComponents
+    guard parts.count > base.count, Array(parts.prefix(base.count)) == base else { return nil }
+    return scratch.appendingPathComponent(parts[base.count], isDirectory: true)
+  }
+
   public enum Stage: Sendable, Equatable {
     case fetching(received: Int64, total: Int64)
     case stitching(Double)
