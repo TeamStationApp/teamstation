@@ -2,7 +2,7 @@ import Foundation
 import Security
 
 /// What a store found under a key. A store that could not be read is not a store that is empty:
-/// treating the two alike would mint a new identity whenever the Keychain refused a read, and the
+/// treating the two alike would mint a new identity whenever the file could not be read, and the
 /// phone would come back as a camera Director has never seen.
 public enum IdentityRead: Sendable, Equatable {
   case found(String)
@@ -20,8 +20,8 @@ public enum IdentityRead: Sendable, Equatable {
   }
 }
 
-/// Persistent storage behind a protocol so the identity rules can be tested without a Keychain,
-/// which is not reliably available in a unit-test process.
+/// Persistent storage behind a protocol so the identity rules can be tested without touching the
+/// app's real storage.
 public protocol IdentityStore: Sendable {
   func read(forKey key: String) -> IdentityRead
   /// False when the value did not reach storage.
@@ -86,28 +86,47 @@ public struct DeviceIdentity: Sendable, Equatable, Codable {
 
 /// Loads the identity, creating and persisting it on first launch.
 ///
-/// Two stores, because either can fail while the other works. `store` is authoritative — the
-/// Keychain, which survives a delete-and-reinstall. `mirror` is a per-install copy that can be read
-/// on a launch where the Keychain cannot. A UUID is minted only when neither holds one, and a store
-/// that could not be read is never written over, because it may still hold the real UUID.
+/// `store` is where the identity lives — a file in the app's own storage. `legacy` is where builds
+/// before the file kept it, read only while the file has no UUID, so a phone that updates is still
+/// the camera GS Director already knows. A store that exists but cannot be read is never written
+/// over, since it still holds the real UUID; that launch runs on a stand-in kept for the process.
 public struct DeviceIdentityProvider: Sendable {
   public static let uuidKey = "co.gamestation.cameraman.identity.uuid"
   public static let nameKey = "co.gamestation.cameraman.identity.name"
 
   private let store: IdentityStore
-  private let mirror: IdentityStore
+  private let legacy: IdentityStore?
+  private let standIn = InMemoryIdentityStore()
 
-  /// The default mirror lives in memory, which still keeps one UUID for the life of the process
-  /// when `store` cannot be read.
-  public init(store: IdentityStore, mirror: IdentityStore = InMemoryIdentityStore()) {
+  public init(store: IdentityStore, legacy: IdentityStore? = nil) {
     self.store = store
-    self.mirror = mirror
+    self.legacy = legacy
   }
 
   public func load() -> DeviceIdentity {
-    let uuid = loadUUID()
-    let name = loadName() ?? DeviceIdentity.defaultName(forUUID: uuid)
-    return DeviceIdentity(uuid: uuid, name: name)
+    let read = store.read(forKey: Self.uuidKey)
+    if let stored = read.value.flatMap(Self.wellFormed) {
+      let name = store.string(forKey: Self.nameKey) ?? DeviceIdentity.defaultName(forUUID: stored)
+      return DeviceIdentity(uuid: stored, name: name)
+    }
+
+    let carried = legacy?.string(forKey: Self.uuidKey).flatMap(Self.wellFormed)
+    let carriedName = carried == nil ? nil : legacy?.string(forKey: Self.nameKey)
+
+    guard !read.isUnreadable else {
+      let uuid = standIn.string(forKey: Self.uuidKey) ?? carried ?? DeviceIdentity.generatedUUID()
+      standIn.setString(uuid, forKey: Self.uuidKey)
+      return DeviceIdentity(uuid: uuid, name: carriedName ?? DeviceIdentity.defaultName(forUUID: uuid))
+    }
+
+    let uuid = carried ?? DeviceIdentity.generatedUUID()
+    store.setString(uuid, forKey: Self.uuidKey)
+    var name = store.string(forKey: Self.nameKey)
+    if name == nil, let carriedName {
+      store.setString(carriedName, forKey: Self.nameKey)
+      name = carriedName
+    }
+    return DeviceIdentity(uuid: uuid, name: name ?? DeviceIdentity.defaultName(forUUID: uuid))
   }
 
   @discardableResult
@@ -115,7 +134,6 @@ public struct DeviceIdentityProvider: Sendable {
     let identity = load()
     let normalised = DeviceIdentity.normalized(name: name, uuid: identity.uuid)
     store.setString(normalised, forKey: Self.nameKey)
-    mirror.setString(normalised, forKey: Self.nameKey)
     return DeviceIdentity(uuid: identity.uuid, name: normalised)
   }
 
@@ -126,50 +144,86 @@ public struct DeviceIdentityProvider: Sendable {
     return UUID(uuidString: uuid) != nil
   }
 
-  private func loadUUID() -> String {
-    let primary = store.read(forKey: Self.uuidKey)
-    let mirrored = mirror.read(forKey: Self.uuidKey).value.flatMap(Self.wellFormed)
-
-    if let stored = primary.value.flatMap(Self.wellFormed) {
-      // An install that predates the mirror, or a mirror that drifted: the Keychain wins.
-      if mirrored != stored { mirror.setString(stored, forKey: Self.uuidKey) }
-      return stored
-    }
-    if let mirrored {
-      // Missing or malformed in the store, most likely a write that failed: put it back. An
-      // unreadable store is left alone.
-      if !primary.isUnreadable { store.setString(mirrored, forKey: Self.uuidKey) }
-      return mirrored
-    }
-
-    let minted = DeviceIdentity.generatedUUID()
-    // An unreadable store may still hold the real UUID, so the new one goes to the mirror alone and
-    // the store's copy takes over again on the first launch that can read it.
-    if !primary.isUnreadable { store.setString(minted, forKey: Self.uuidKey) }
-    mirror.setString(minted, forKey: Self.uuidKey)
-    return minted
-  }
-
-  private func loadName() -> String? {
-    if let stored = store.read(forKey: Self.nameKey).value {
-      if mirror.read(forKey: Self.nameKey).value != stored {
-        mirror.setString(stored, forKey: Self.nameKey)
-      }
-      return stored
-    }
-    return mirror.read(forKey: Self.nameKey).value
-  }
-
   private static func wellFormed(_ uuid: String) -> String? {
     isWellFormed(uuid: uuid) ? uuid : nil
   }
 }
 
-/// Keychain-backed storage, so the identity survives a delete-and-reinstall of the app.
+/// The identity as one small JSON file in the app's own storage.
 ///
-/// `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` because the server has to come back after an
-/// unattended reboot, but the identity should never migrate to another handset in a backup.
-public struct KeychainIdentityStore: IdentityStore {
+/// Nothing in it is secret, so a plain file is all it needs. It lives and dies with the install: an
+/// update keeps it, a delete-and-reinstall is a new camera. It is excluded from backups, so restoring
+/// one phone's backup onto another cannot leave two phones announcing the same UUID.
+public final class FileIdentityStore: IdentityStore, @unchecked Sendable {
+  private let url: URL
+  private let lock = NSLock()
+
+  public init(url: URL = FileIdentityStore.defaultURL) {
+    self.url = url
+  }
+
+  /// `Application Support/Identity/identity.json`.
+  public static var defaultURL: URL {
+    let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+    return base
+      .appendingPathComponent("Identity", isDirectory: true)
+      .appendingPathComponent("identity.json", isDirectory: false)
+  }
+
+  public func read(forKey key: String) -> IdentityRead {
+    lock.withLock {
+      switch contents() {
+      case .values(let values): values[key].map { IdentityRead.found($0) } ?? .notFound
+      case .unreadable(let reason): .unreadable(reason)
+      }
+    }
+  }
+
+  @discardableResult
+  public func setString(_ value: String, forKey key: String) -> Bool {
+    lock.withLock {
+      guard case .values(var values) = contents() else { return false }
+      values[key] = value
+      do {
+        try FileManager.default.createDirectory(
+          at: url.deletingLastPathComponent(),
+          withIntermediateDirectories: true
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [ .prettyPrinted, .sortedKeys ]
+        try encoder.encode(values).write(to: url, options: .atomic)
+        // Set after the write: an atomic write replaces the file, and the flag belongs to the file.
+        var resource = URLResourceValues()
+        resource.isExcludedFromBackup = true
+        var written = url
+        try written.setResourceValues(resource)
+        return true
+      } catch {
+        return false
+      }
+    }
+  }
+
+  private enum Contents {
+    case values([String: String])
+    case unreadable(String)
+  }
+
+  private func contents() -> Contents {
+    guard FileManager.default.fileExists(atPath: url.path) else { return .values([:]) }
+    do {
+      let data = try Data(contentsOf: url)
+      // Contents that do not decode are a value to replace, not a file to protect.
+      return .values((try? JSONDecoder().decode([String: String].self, from: data)) ?? [:])
+    } catch {
+      return .unreadable(error.localizedDescription)
+    }
+  }
+}
+
+/// Where builds before `FileIdentityStore` kept the identity. Read once, to carry an existing phone's
+/// UUID and name into the file; never written, and nothing new is ever stored here.
+public struct LegacyKeychainIdentityStore: IdentityStore {
   private let service: String
 
   public init(service: String = "co.gamestation.cameraman.identity") {
@@ -177,79 +231,29 @@ public struct KeychainIdentityStore: IdentityStore {
   }
 
   public func read(forKey key: String) -> IdentityRead {
-    var query = baseQuery(key: key)
-    query[kSecReturnData as String] = true
-    query[kSecMatchLimit as String] = kSecMatchLimitOne
-
+    let query: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: service,
+      kSecAttrAccount as String: key,
+      kSecReturnData as String: true,
+      kSecMatchLimit as String: kSecMatchLimitOne
+    ]
     var item: CFTypeRef?
-    let status = SecItemCopyMatching(query as CFDictionary, &item)
-    return Self.interpret(status: status, data: item as? Data)
-  }
-
-  /// Only `errSecItemNotFound` means there is no value. Any other failure —
-  /// `errSecInteractionNotAllowed` before the first unlock after a reboot, a missing entitlement —
-  /// means there may be one this launch cannot see.
-  public static func interpret(status: OSStatus, data: Data?) -> IdentityRead {
-    switch status {
+    switch SecItemCopyMatching(query as CFDictionary, &item) {
     case errSecSuccess:
-      // Bytes that are not UTF-8 are a corrupt value rather than an unreadable one. Read as found,
-      // they fail the well-formed check and are replaced.
-      return .found(data.map { String(decoding: $0, as: UTF8.self) } ?? "")
+      return (item as? Data).map { .found(String(decoding: $0, as: UTF8.self)) } ?? .notFound
     case errSecItemNotFound:
       return .notFound
-    default:
-      let message = SecCopyErrorMessageString(status, nil) as String? ?? "unknown error"
-      return .unreadable("OSStatus \(status): \(message)")
+    case let status:
+      return .unreadable("OSStatus \(status)")
     }
   }
 
   @discardableResult
-  public func setString(_ value: String, forKey key: String) -> Bool {
-    let data = Data(value.utf8)
-    let query = baseQuery(key: key)
-
-    let updates: [String: Any] = [ kSecValueData as String: data ]
-    let status = SecItemUpdate(query as CFDictionary, updates as CFDictionary)
-    guard status == errSecItemNotFound else { return status == errSecSuccess }
-
-    var insert = query
-    insert[kSecValueData as String] = data
-    insert[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-    return SecItemAdd(insert as CFDictionary, nil) == errSecSuccess
-  }
-
-  private func baseQuery(key: String) -> [String: Any] {
-    [
-      kSecClass as String: kSecClassGenericPassword,
-      kSecAttrService as String: service,
-      kSecAttrAccount as String: key
-    ]
-  }
+  public func setString(_ value: String, forKey key: String) -> Bool { false }
 }
 
-/// The per-install mirror of the Keychain values. It goes away with the app, which is the right
-/// lifetime for a copy: after a reinstall the Keychain alone decides.
-///
-/// `@unchecked` because `UserDefaults` is documented as thread-safe but not marked `Sendable`.
-public struct UserDefaultsIdentityStore: IdentityStore, @unchecked Sendable {
-  private let defaults: UserDefaults
-
-  public init(defaults: UserDefaults = .standard) {
-    self.defaults = defaults
-  }
-
-  public func read(forKey key: String) -> IdentityRead {
-    defaults.string(forKey: key).map { IdentityRead.found($0) } ?? .notFound
-  }
-
-  @discardableResult
-  public func setString(_ value: String, forKey key: String) -> Bool {
-    defaults.set(value, forKey: key)
-    return true
-  }
-}
-
-/// Test and simulator storage, and the default mirror.
+/// Test storage, pinned identities, and the provider's stand-in for a launch that cannot read its file.
 public final class InMemoryIdentityStore: IdentityStore, @unchecked Sendable {
   private let lock = NSLock()
   private var values: [String: String]

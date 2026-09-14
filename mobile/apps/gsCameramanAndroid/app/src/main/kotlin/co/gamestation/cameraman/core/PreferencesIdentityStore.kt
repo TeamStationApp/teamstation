@@ -7,24 +7,17 @@ import android.provider.Settings
 import android.util.Log
 
 /**
- * The Android counterpart of the iOS build's Keychain store.
- *
- * Two of the Keychain's three properties come free here and the third does not, which is worth
- * saying plainly rather than leaving to be discovered on a field:
+ * The camera's identity as a file in the app's own storage — the Android counterpart of the iOS
+ * build's `FileIdentityStore`. Nothing in it is secret, so a plain preferences file is all it needs.
  *
  * - *Device-only.* `android:allowBackup="false"` in the manifest keeps the identity off Auto Backup
- *   and out of a device-to-device transfer, which is the point of
- *   `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`: cloning a phone must not make two cameras
- *   claim to be the same one.
+ *   and out of a device-to-device transfer: cloning a phone must not make two cameras claim to be
+ *   the same one. The iOS file is excluded from backup for the same reason.
  * - *Readable after first unlock.* App storage is credential-encrypted, so the server comes back
- *   after an unattended reboot as soon as the phone is unlocked once — the same window iOS gives.
- * - *Survives uninstall.* It does not. Android clears app storage and every Keystore entry an app
- *   owns on uninstall, and there is no sanctioned store that outlives it. A reinstalled Cameraman
- *   is a new camera to GS Director and has to be re-bound to its tile. Nothing here can fix that;
- *   pretending otherwise would move the surprise to match day.
- *
- * `EncryptedSharedPreferences` would add a Keystore-wrapped layer on top and change none of the
- * above — file-based encryption already covers data at rest — so it is not used.
+ *   after an unattended reboot as soon as the phone is unlocked once.
+ * - *Survives an update, not an uninstall.* Android clears app storage on uninstall, as iOS clears
+ *   its app container. A reinstalled Cameraman is a new camera to GS Director and has to be re-bound
+ *   to its tile.
  */
 class PreferencesIdentityStore(
     context: Context,

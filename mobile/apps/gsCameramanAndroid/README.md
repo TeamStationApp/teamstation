@@ -55,10 +55,9 @@ Android phone on the same port. A phone updated from a build that saved 554 load
 
 ### The identity does not survive an uninstall
 
-The iOS build keeps the camera's UUID in the Keychain, which survives delete-and-reinstall. Android
-clears app storage and every Keystore entry an app owns on uninstall and offers no sanctioned store
-that outlives it. A reinstalled Cameraman is a new camera to GS Director and has to be re-bound to
-its tile. Updates and reboots are fine; only uninstall is not. See `PreferencesIdentityStore`.
+Both builds keep the camera's UUID in the app's own storage — iOS in a small file, Android in
+`PreferencesIdentityStore` — and uninstalling clears it on both. A reinstalled Cameraman is a new
+camera to GS Director and has to be re-bound to its tile. Updates and reboots are fine; only uninstall is not. See `PreferencesIdentityStore`.
 
 Within one install the UUID cannot drift, even if saving it fails. The first one is derived from the
 install — the app-scoped `ANDROID_ID` and the first-install time — so a launch whose save never

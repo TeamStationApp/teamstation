@@ -1,6 +1,5 @@
 import CameramanCore
 import Foundation
-import Security
 import Testing
 
 @Suite("Device identity")
@@ -94,123 +93,105 @@ struct DeviceIdentityTests {
     #expect(identity.cname == identity.uuid)
   }
 
-  // MARK: - A store that fails
+  // MARK: - Carrying an existing phone over, and a store that fails
 
   private static let known = "3f2504e0-4f89-41d3-9a0c-0305e82c33ab"
   private static let other = "c94df9ca-d7c2-468f-8529-97d01fba14e7"
 
-  @Test("A first launch writes the new UUID to the Keychain and the mirror")
-  func firstLaunchWritesBoth() {
-    let keychain = FailingIdentityStore()
-    let mirror = InMemoryIdentityStore()
-
-    let uuid = DeviceIdentityProvider(store: keychain, mirror: mirror).load().uuid
-
-    #expect(keychain.string(forKey: DeviceIdentityProvider.uuidKey) == uuid)
-    #expect(mirror.string(forKey: DeviceIdentityProvider.uuidKey) == uuid)
-  }
-
-  @Test("An unreadable Keychain with a mirrored UUID uses the mirror and overwrites nothing")
-  func unreadableKeychainUsesMirror() {
-    let keychain = FailingIdentityStore(values: [ DeviceIdentityProvider.uuidKey: Self.other ])
-    keychain.isReadable = false
-    let mirror = FailingIdentityStore(values: [ DeviceIdentityProvider.uuidKey: Self.known ])
-
-    let identity = DeviceIdentityProvider(store: keychain, mirror: mirror).load()
-
-    #expect(identity.uuid == Self.known)
-    #expect(keychain.writes == 0)
-    #expect(mirror.writes == 0)
-  }
-
-  @Test("An unreadable Keychain with no mirror mints into the mirror only, and keeps it")
-  func unreadableKeychainWithoutMirrorNeverWritesKeychain() {
-    // The Keychain may still hold the real UUID. Writing over it would make this launch's stand-in
-    // permanent.
-    let keychain = FailingIdentityStore()
-    keychain.isReadable = false
-    let mirror = InMemoryIdentityStore()
-
-    let first = DeviceIdentityProvider(store: keychain, mirror: mirror).load().uuid
-    let second = DeviceIdentityProvider(store: keychain, mirror: mirror).load().uuid
-
-    #expect(DeviceIdentityProvider.isWellFormed(uuid: first))
-    #expect(first == second)
-    #expect(keychain.writes == 0)
-    #expect(mirror.string(forKey: DeviceIdentityProvider.uuidKey) == first)
-  }
-
-  @Test("The Keychain takes over again once it can be read")
-  func keychainWinsOverMirror() {
-    let keychain = FailingIdentityStore(values: [ DeviceIdentityProvider.uuidKey: Self.known ])
-    let mirror = InMemoryIdentityStore(values: [ DeviceIdentityProvider.uuidKey: Self.other ])
-
-    let identity = DeviceIdentityProvider(store: keychain, mirror: mirror).load()
-
-    #expect(identity.uuid == Self.known)
-    #expect(mirror.string(forKey: DeviceIdentityProvider.uuidKey) == Self.known)
-    #expect(keychain.writes == 0)
-  }
-
-  @Test("An install that predates the mirror copies the Keychain UUID into it")
-  func existingKeychainUUIDFillsMirror() {
-    let keychain = FailingIdentityStore(values: [ DeviceIdentityProvider.uuidKey: Self.known ])
-    let mirror = InMemoryIdentityStore()
-
-    _ = DeviceIdentityProvider(store: keychain, mirror: mirror).load()
-
-    #expect(mirror.string(forKey: DeviceIdentityProvider.uuidKey) == Self.known)
-  }
-
-  @Test("A UUID missing from the Keychain is restored from the mirror, not replaced")
-  func missingKeychainUUIDIsRestored() {
-    let keychain = FailingIdentityStore()
-    let mirror = InMemoryIdentityStore(values: [ DeviceIdentityProvider.uuidKey: Self.known ])
-
-    let identity = DeviceIdentityProvider(store: keychain, mirror: mirror).load()
-
-    #expect(identity.uuid == Self.known)
-    #expect(keychain.string(forKey: DeviceIdentityProvider.uuidKey) == Self.known)
-  }
-
-  @Test("A Keychain write that fails does not change the UUID on the next launch")
-  func failedKeychainWriteKeepsUUID() {
-    let keychain = FailingIdentityStore()
-    keychain.acceptsWrites = false
-    let mirror = InMemoryIdentityStore()
-
-    let first = DeviceIdentityProvider(store: keychain, mirror: mirror).load().uuid
-    keychain.acceptsWrites = true
-    let second = DeviceIdentityProvider(store: keychain, mirror: mirror).load().uuid
-
-    #expect(first == second)
-    #expect(keychain.string(forKey: DeviceIdentityProvider.uuidKey) == first)
-  }
-
-  @Test("The operator's name comes from the mirror while the Keychain is unreadable")
-  func nameFromMirror() {
-    let keychain = FailingIdentityStore()
-    keychain.isReadable = false
-    let mirror = InMemoryIdentityStore(values: [
+  @Test("An updated phone carries its Keychain UUID and name into the file, and keeps them")
+  func legacyIdentityIsCarriedOver() {
+    let file = InMemoryIdentityStore()
+    let keychain = FailingIdentityStore(values: [
       DeviceIdentityProvider.uuidKey: Self.known,
       DeviceIdentityProvider.nameKey: "Corner Flag"
     ])
 
-    #expect(DeviceIdentityProvider(store: keychain, mirror: mirror).load().name == "Corner Flag")
+    let identity = DeviceIdentityProvider(store: file, legacy: keychain).load()
+
+    #expect(identity.uuid == Self.known)
+    #expect(identity.name == "Corner Flag")
+    #expect(file.string(forKey: DeviceIdentityProvider.uuidKey) == Self.known)
+    #expect(file.string(forKey: DeviceIdentityProvider.nameKey) == "Corner Flag")
+    #expect(keychain.writes == 0)
+    // From here on the file alone decides.
+    #expect(DeviceIdentityProvider(store: file).load().uuid == Self.known)
   }
 
-  @Test("Only item-not-found reads as an empty Keychain")
-  func keychainStatuses() {
-    #expect(KeychainIdentityStore.interpret(status: errSecItemNotFound, data: nil) == .notFound)
-    #expect(KeychainIdentityStore.interpret(status: errSecInteractionNotAllowed, data: nil).isUnreadable)
-    #expect(KeychainIdentityStore.interpret(status: errSecMissingEntitlement, data: nil).isUnreadable)
-    #expect(KeychainIdentityStore.interpret(status: errSecSuccess, data: Data(Self.known.utf8)) == .found(Self.known))
-    // Corrupt bytes are a value to replace, not a store to leave alone.
-    #expect(!KeychainIdentityStore.interpret(status: errSecSuccess, data: Data([ 0xff, 0xfe ])).isUnreadable)
+  @Test("Once the file has a UUID the old store is not consulted")
+  func fileWinsOverLegacy() {
+    let file = InMemoryIdentityStore(values: [ DeviceIdentityProvider.uuidKey: Self.known ])
+    let keychain = FailingIdentityStore(values: [ DeviceIdentityProvider.uuidKey: Self.other ])
+
+    #expect(DeviceIdentityProvider(store: file, legacy: keychain).load().uuid == Self.known)
+  }
+
+  @Test("A file that cannot be read is not written over, and the launch keeps one stand-in UUID")
+  func unreadableFileIsLeftAlone() {
+    // The file may still hold the real UUID. Writing over it would make this launch's stand-in
+    // permanent.
+    let file = FailingIdentityStore(values: [ DeviceIdentityProvider.uuidKey: Self.known ])
+    file.isReadable = false
+    let provider = DeviceIdentityProvider(store: file)
+
+    let first = provider.load().uuid
+    #expect(DeviceIdentityProvider.isWellFormed(uuid: first))
+    #expect(provider.load().uuid == first)
+    #expect(file.writes == 0)
+
+    file.isReadable = true
+    #expect(DeviceIdentityProvider(store: file).load().uuid == Self.known)
+  }
+
+  @Test("A file that cannot be read still serves the old store's UUID when there is one")
+  func unreadableFileFallsBackToLegacy() {
+    let file = FailingIdentityStore()
+    file.isReadable = false
+    let keychain = FailingIdentityStore(values: [ DeviceIdentityProvider.uuidKey: Self.known ])
+
+    #expect(DeviceIdentityProvider(store: file, legacy: keychain).load().uuid == Self.known)
+    #expect(file.writes == 0)
+  }
+
+  // MARK: - The file itself
+
+  private func temporaryFile() -> URL {
+    FileManager.default.temporaryDirectory
+      .appendingPathComponent("DeviceIdentityTests-\(UUID().uuidString)", isDirectory: true)
+      .appendingPathComponent("identity.json")
+  }
+
+  @Test("The file keeps the UUID and name for the next launch")
+  func fileRoundTrips() throws {
+    let url = temporaryFile()
+    defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+
+    let first = DeviceIdentityProvider(store: FileIdentityStore(url: url)).load()
+    DeviceIdentityProvider(store: FileIdentityStore(url: url)).save(name: "Corner Flag")
+    let relaunched = DeviceIdentityProvider(store: FileIdentityStore(url: url)).load()
+
+    #expect(relaunched.uuid == first.uuid)
+    #expect(relaunched.name == "Corner Flag")
+    let values = try url.resourceValues(forKeys: [ .isExcludedFromBackupKey ])
+    #expect(values.isExcludedFromBackup == true)
+  }
+
+  @Test("A missing file is empty, and a file that does not decode is replaced")
+  func missingAndCorruptFiles() throws {
+    let url = temporaryFile()
+    defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+    let store = FileIdentityStore(url: url)
+    #expect(store.read(forKey: DeviceIdentityProvider.uuidKey) == .notFound)
+
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data("not json".utf8).write(to: url)
+    let identity = DeviceIdentityProvider(store: store).load()
+
+    #expect(DeviceIdentityProvider.isWellFormed(uuid: identity.uuid))
+    #expect(FileIdentityStore(url: url).string(forKey: DeviceIdentityProvider.uuidKey) == identity.uuid)
   }
 }
 
-/// A store that can be made unreadable or read-only, the two ways the Keychain fails.
+/// A store that can be made unreadable or read-only.
 private final class FailingIdentityStore: IdentityStore, @unchecked Sendable {
   private let lock = NSLock()
   private var values: [String: String]

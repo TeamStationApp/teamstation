@@ -59,7 +59,7 @@ public struct LaunchConfiguration: Sendable, Equatable {
   /// expects the camera to come back the way it was left.
   public var persistSettings = true
   public var cameraName: String?
-  /// Pins the identity so a flow can assert an exact CNAME instead of whatever the Keychain holds.
+  /// Pins the identity so a flow can assert an exact CNAME instead of whatever the identity file holds.
   public var identityUUID: String?
   public var unknownKeys: [String] = []
 
