@@ -55,6 +55,16 @@ public struct FrameRateEstimator: Sendable {
   /// uncertainty is 0.02%, which separates them.
   private static let longWindowSize = 3_600
 
+  /// The longest gap between two frames that still says anything about the rate.
+  ///
+  /// Anything longer is a camera that went away and came back, and one such interval is enough to
+  /// wreck the long mean. rec-361's Cosmo C2 was gone for 1,828 s; that one interval pulled the mean
+  /// of 3,600 to 0.52 s, and the camera read as 1.9 fps for the minute it took to age out. Its
+  /// archive stamped every 16 ms picture 0.54 s after the last and encoded each one as a keyframe,
+  /// and the export of that minute played one picture in six. A camera sending slower than a frame
+  /// a second is not one whose pacing matters.
+  public static let maximumIntervalSeconds: Double = 1
+
   private let clockRate: Double
   private var previous: UInt32?
   private var intervals: [Double] = []
@@ -102,6 +112,8 @@ public struct FrameRateEstimator: Sendable {
   /// The shared half: keep a bounded window, take its middle, and snap. `perSecond` is how many
   /// units of `interval` make a second — the media clock rate for ticks, one for seconds.
   private mutating func record(interval: Double, perSecond: Double) -> Bool {
+    // A dropout, not a frame interval: see `maximumIntervalSeconds`.
+    guard interval / perSecond <= Self.maximumIntervalSeconds else { return false }
     if longIntervals.count < Self.longWindowSize {
       longIntervals.append(interval)
     } else {
