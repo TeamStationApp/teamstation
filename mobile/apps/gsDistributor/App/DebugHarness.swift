@@ -15,6 +15,7 @@ import Network
 ///   /export?recording=361&tracks=primary,camera:<source id>[&reprocess=1][&combined=1[&audio=<name>]]
 ///          [&upload=primary,camera:<name>,combined&title=<title>]
 ///   /cancel                              stop the export under way
+///   /dismiss-export                      put a finished export's progress away, as Done does
 ///   /peertube-enable?on=1|0              PeerTube uploads on or off
 ///   /peertube-signin?host=<host>&credentials=<json file with username, password>[&code=<otp>]
 ///   /peertube-channel?name=<channel>     upload to that channel
@@ -81,6 +82,10 @@ final class DebugHarness {
     case "/cancel":
       model.run?.cancel()
       return [ "ok": model.run?.wasCancelled ?? false ]
+    case "/dismiss-export":
+      // As Done does. AppKit will not quit while the progress sheet is up.
+      model.dismissRun()
+      return [ "ok": model.run == nil ]
     case "/peertube-enable":
       let on = query["on"] != "0"
       await model.updateSettings { $0.peerTube.enabled = on }
