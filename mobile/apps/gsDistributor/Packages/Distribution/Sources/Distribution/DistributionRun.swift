@@ -119,9 +119,11 @@ public final class DistributionRun {
     combined: CombinedPlan? = nil,
     upload: UploadPlan? = nil,
     lockRenewal: Duration = .seconds(10),
+    spaceCheck: SpaceCheck = .system,
     iPadMayStitch: @escaping @MainActor () -> Bool
   ) {
     self.lockRenewal = lockRenewal
+    self.spaceCheck = spaceCheck
     self.recording = recording
     self.tracks = tracks
     self.combined = combined
@@ -157,6 +159,8 @@ public final class DistributionRun {
   private var work: Task<Void, Never>?
   /// How often the export lock is renewed. GS Director drops one left unrenewed for half a minute.
   private let lockRenewal: Duration
+  /// Asked before the export writes anything.
+  private let spaceCheck: SpaceCheck
   /// GS Director dropped the export lock, so it may record or stream at any moment.
   private var lostLock = false
 
@@ -271,16 +275,25 @@ public final class DistributionRun {
 
     // Files already here need nothing; files already stitched on the iPad need only fetching.
     var toStitch: [Track] = []
+    var toFetch: [Track] = []
     for track in tracks {
       let target = folder.appendingPathComponent(filename(for: track))
       if !reprocess, Self.size(of: target) > 0 {
         states[track] = .done(target)
       } else if !reprocess, recording.preparedTracks.contains(track) {
-        fetchPrepared(track)
+        toFetch.append(track)
       } else {
         toStitch.append(track)
       }
     }
+    // Nothing is written until the whole export is known to fit.
+    if let shortfall = await roomShortfall(for: toStitch + toFetch, window: window) {
+      for track in toStitch + toFetch { states[track] = .failed(shortfall) }
+      if combinedState != nil { combinedState = .failed(shortfall) }
+      await release()
+      return
+    }
+    for track in toFetch { fetchPrepared(track) }
     plan = DistributionPlan(tracks: toStitch)
 
     // First to the Mac, second to the iPad, then whichever is free first.
@@ -340,6 +353,25 @@ public final class DistributionRun {
     }
     if case .done(let url) = state { return url }
     return nil
+  }
+
+  /// Nil when the export fits on this Mac; otherwise why it does not. An iPad that cannot say how
+  /// large the files are is not a reason to stop.
+  private func roomShortfall(for work: [Track], window: ExportWindow) async -> String? {
+    var trackBytes: [Int64] = []
+    if !work.isEmpty {
+      guard let manifest = try? await connection.manifest(recordingID: recording.id, tracks: work) else { return nil }
+      trackBytes = ExportSpace.bytesPerTrack(manifest.files)
+    }
+    let combinedBytes = combined.map {
+      ExportSpace.combinedBytes(seconds: (window.end ?? window.start).seconds - window.start.seconds, cameras: $0.inputs.count)
+    } ?? 0
+    return spaceCheck.shortfall(
+      trackBytes: trackBytes,
+      combinedBytes: combinedBytes,
+      destination: folder,
+      scratch: FileManager.default.temporaryDirectory
+    )
   }
 
   /// `<stamp>-combined.mov`, beside the export's other files.
@@ -423,6 +455,9 @@ public final class DistributionRun {
         let target = folder.appendingPathComponent(filename(for: current))
         try? FileManager.default.removeItem(at: target)
         try FileManager.default.moveItem(at: stitched, to: target)
+        // The segments it was stitched from go now rather than at the end of the export, so the
+        // Mac holds one camera's working copy at a time.
+        if let work = stitcher.workFolder(of: stitched) { try? FileManager.default.removeItem(at: work) }
         stitchedBy[current] = .mac
         states[current] = .done(target)
       } catch {
