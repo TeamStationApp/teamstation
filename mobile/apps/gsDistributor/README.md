@@ -36,6 +36,7 @@ GS Director must be open and in front on the iPad: iOS takes a background app's 
 
 ```bash
 scripts/build.sh        # regenerates Distributor.xcodeproj and builds GS Distributor.app
+scripts/install.sh      # builds it for release and puts it in /Applications
 scripts/test-unit.sh    # swift test for every package the app is built from
 ```
 
