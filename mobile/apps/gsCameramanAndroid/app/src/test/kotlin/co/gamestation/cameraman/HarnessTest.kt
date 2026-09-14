@@ -200,7 +200,7 @@ class LaunchConfigurationTest {
             mapOf(
                 "uiTest" to "true",
                 "syntheticCamera" to "yes",
-                "rtspPort" to "8554",
+                "rtspPort" to "9554",
                 "rtspPath" to "/live/alt",
                 "codec" to "hevc",
                 "bitrateMbps" to "12.5",
@@ -218,7 +218,7 @@ class LaunchConfigurationTest {
         )
         assertTrue(launch.isUITest)
         assertTrue(launch.useSyntheticCamera)
-        assertEquals(8554, launch.settings.port)
+        assertEquals(9554, launch.settings.port)
         assertEquals("/live/alt", launch.settings.path)
         assertEquals(StreamCodec.HEVC, launch.settings.codec)
         assertEquals(12_500_000, launch.settings.bitrate)

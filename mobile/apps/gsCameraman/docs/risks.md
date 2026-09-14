@@ -13,10 +13,11 @@ same subnet completed against it.
 A first measurement reported `Address already in use`, caused by a leftover
 `co.gamestation.cameramanprobe` build from the device-readiness work that auto-bound 554 on launch.
 Nothing on a stock iOS install competes for the port, but another app that wants it will take it, so
-a bind failure has to be a visible state with a fallback to 8554 rather than a server that appears to
-start and serves nothing.
+a bind failure has to be a visible state rather than a server that appears to start and serves
+nothing.
 
-The simulator has not been confirmed to bind 554, which is why `StreamSettings.fallbackPort` exists.
+Since 2026-09-13 Cameraman serves on 8554 on both platforms and no longer asks for 554: Android cannot
+bind it, and Director's sweep has to find every Cameraman on one port.
 
 ### Bonjour needs an `Info.plist` declaration — 2026-08-19
 
@@ -99,8 +100,7 @@ signal 9, so permission-granting has to happen **before** the console launch, no
 ### The simulator binds 554 and runs the whole path — 2026-08-19, iPhone 16 Pro simulator, iOS 18.3
 
 This was open from Phase 1. It binds, VideoToolbox encodes, and the server serves: 30.1 fps over
-RTSP with the synthetic source, 223 frames in 8 s, all decoded by ffmpeg. `StreamSettings.fallbackPort`
-stays, but not for this reason.
+RTSP with the synthetic source, 223 frames in 8 s, all decoded by ffmpeg.
 
 ### A per-pixel test pattern is slower than the encoder — 2026-08-19
 

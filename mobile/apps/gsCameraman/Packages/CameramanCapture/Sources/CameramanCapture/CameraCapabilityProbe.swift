@@ -74,10 +74,7 @@ public struct CameraCapabilityProbe {
       modelIdentifier: Self.modelIdentifier(),
       systemVersion: UIDevice.current.systemVersion,
       devices: devices,
-      portBindings: await PortProbe.report(ports: [
-        StreamSettings.defaultPort,
-        StreamSettings.fallbackPort
-      ])
+      portBindings: await PortProbe.report(ports: [ StreamSettings.defaultPort ])
     )
   }
 

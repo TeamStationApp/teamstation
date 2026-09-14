@@ -656,7 +656,6 @@ class AppEnvironment(
 
         server.start(
             port = stateLock.withLock { publishedSettings.port },
-            fallbackPort = StreamSettings.fallbackPort,
             path = stateLock.withLock { publishedSettings.path },
             advertise = launch.advertise
         )
@@ -1051,8 +1050,6 @@ class AppEnvironment(
         return JSONObject().apply {
             put("isListening", status.isListening)
             put("port", status.port ?: JSONObject.NULL)
-            put("requestedPort", status.requestedPort ?: JSONObject.NULL)
-            put("usedFallbackPort", status.usedFallbackPort)
             put("clientCount", status.clientCount)
             put("lastError", status.lastError ?: JSONObject.NULL)
             put("droppedFrames", summaries.sumOf { it.droppedFrames })

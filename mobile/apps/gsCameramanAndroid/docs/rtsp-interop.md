@@ -40,10 +40,8 @@ needs, since it offers UDP first and reads its own numbers back.
 
 `rtsp://<phone>:8554/live/mainstream`.
 
-554 is requested first and always refused: Linux will not let an unprivileged process bind below
-1024, so on Android the iOS build's fallback is the only path. Both numbers are visible on the
-settings screen and in `dump-state`, because an operator reading "554" off an iPhone next to this
-handset needs to know why the two differ before typing the wrong address into Producer.
+Both builds serve on 8554. 554 is the registered RTSP port, but Linux will not let an unprivileged
+process bind below 1024, and GS Director has to find an iPhone and an Android phone on the same port.
 
 ## SDP
 

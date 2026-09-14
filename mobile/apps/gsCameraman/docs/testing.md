@@ -52,7 +52,7 @@ matches the SDP.
 For a third-party check with nothing of ours in the path:
 
 ```bash
-ffmpeg -rtsp_transport tcp -i rtsp://<phone>:554/live/mainstream -t 6 -c copy out.mp4
+ffmpeg -rtsp_transport tcp -i rtsp://<phone>:8554/live/mainstream -t 6 -c copy out.mp4
 ```
 
 ## The parameter channel

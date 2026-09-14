@@ -1,7 +1,7 @@
 # GS Cameraman
 
 Turns an iPhone into an RTSP camera source that GS Producer can ingest like any other camera on the
-field. Launch it and it serves `rtsp://<phone-ip>:554/live/mainstream` — unauthenticated, H.264 1080p30
+field. Launch it and it serves `rtsp://<phone-ip>:8554/live/mainstream` — unauthenticated, H.264 1080p30
 at 6 Mbps by default, with AAC audio from the device microphone.
 
 iPhone only, landscape only. It runs on an iPad, scaled.
