@@ -126,18 +126,28 @@ public enum ArchiveRemux {
         // tracks of identical format, the second starting where the first overrun was, and a
         // container 139 s longer than the recording. Trimming the overrun costs a few milliseconds
         // of tape that the next segment is about to show anyway.
+        //
+        // A segment that claims far more than its room was stamped on a runaway clock instead, and it
+        // is squeezed into the room whole rather than cut to its head: see `runawayRatio`.
+        var squeezed = false
         if placed, index + 1 < startWalls.count {
           let nextAt = max(0, startWalls[index + 1] - origin)
           let room = nextAt - at.seconds
           if room > 0.001, use.seconds > room {
+            squeezed = use.seconds > room * Self.runawayRatio
             use = CMTime(seconds: room, preferredTimescale: 600)
           }
         }
         guard use.seconds > 0.001 else { continue }
-        let range = CMTimeRange(start: start, duration: use)
+        // What is taken from the file, which a squeezed segment then fits into `use`.
+        let taken = squeezed ? kept : use
+        let range = CMTimeRange(start: start, duration: taken)
         // Inserting past the current end leaves the gap between as an empty range, which is what a
         // gap was: no camera delivered anything for it.
-        try await insertPicture(range, of: asset, at: at, into: composition)
+        let inserted = try await insertPicture(range, of: asset, at: at, into: composition)
+        if squeezed, let inserted, let track = composition.tracks(withMediaType: .video).first {
+          track.scaleTimeRange(inserted, toDuration: CMTimeSubtract(CMTimeAdd(at, use), inserted.start))
+        }
         if let piece = try await soundPiece(range, of: asset, at: at) { sound.append(piece) }
         cursor = CMTimeMaximum(cursor, CMTimeAdd(at, use))
         if placed {
@@ -146,12 +156,14 @@ public enum ArchiveRemux {
           // the hold began past the last sample and came out as a hole and a fraction of a hold.
           // rec-361's programme picture ended 0.3 s before its window that way.
           let pictureEnd = try await asset.loadTracks(withMediaType: .video).first?.load(.timeRange).end
-          let sourceEnd = CMTimeMinimum(CMTimeAdd(start, use), pictureEnd ?? CMTimeAdd(start, use))
+          let sourceEnd = CMTimeMinimum(CMTimeAdd(start, taken), pictureEnd ?? CMTimeAdd(start, taken))
           held = (
             asset: asset,
             sourceEnd: sourceEnd,
             frame: await Self.frameDuration(of: asset),
-            timelineEnd: CMTimeAdd(at, CMTimeMaximum(.zero, CMTimeSubtract(sourceEnd, start)))
+            timelineEnd: squeezed
+              ? CMTimeAdd(at, use)
+              : CMTimeAdd(at, CMTimeMaximum(.zero, CMTimeSubtract(sourceEnd, start)))
           )
         }
       } catch {
@@ -286,19 +298,35 @@ public enum ArchiveRemux {
   /// second video track, and every reader that takes the first video track showed them as one
   /// frozen picture. A composition track holds several format descriptions, so picture and sound
   /// each go into their one track by name.
+  ///
+  /// Returns the stretch of the output it filled, or nil when the file had no picture in `range`.
+  @discardableResult
   private static func insertPicture(
     _ range: CMTimeRange,
     of asset: AVURLAsset,
     at time: CMTime,
     into composition: AVMutableComposition
-  ) async throws {
+  ) async throws -> CMTimeRange? {
     guard let source = try await asset.loadTracks(withMediaType: .video).first,
           let target = try await track(.video, for: source, in: composition)
-    else { return }
+    else { return nil }
     let covered = CMTimeRangeGetIntersection(range, otherRange: try await source.load(.timeRange))
-    guard covered.duration.seconds > 0.0005 else { return }
-    try target.insertTimeRange(covered, of: source, at: CMTimeAdd(time, CMTimeSubtract(covered.start, range.start)))
+    guard covered.duration.seconds > 0.0005 else { return nil }
+    let placedAt = CMTimeAdd(time, CMTimeSubtract(covered.start, range.start))
+    try target.insertTimeRange(covered, of: source, at: placedAt)
+    return CMTimeRange(start: placedAt, duration: covered.duration)
   }
+
+  /// How many times its room a segment may claim before it is taken for one stamped on a runaway
+  /// clock and squeezed into the room whole.
+  ///
+  /// An honest overrun is milliseconds: the worst measured was 104 ms past a three-second room, and
+  /// trimming it loses nothing the next segment does not show. A runaway is not. rec-361's Cosmo came
+  /// back from a half-hour outage with its frame rate misread as 1.9 fps, and for a minute every
+  /// segment held six real pictures, 0.1 s of the game, stamped as 3.26 s. Cut to its room, each gave
+  /// the export its first picture and dropped the other five, so the minute played one frame in six.
+  /// Scaled into the room, all six play at the pace they were taken.
+  static let runawayRatio = 2.0
 
   /// One file's sound and where on the output it belongs.
   private struct SoundPiece {
