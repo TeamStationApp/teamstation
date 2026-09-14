@@ -12,6 +12,7 @@ struct RecordingsView: View {
   @State private var confirmingDelete = false
   @State private var includesPrimary = true
   @State private var includedCameras: Set<String> = []
+  @State private var combining: CombiningRequest?
 
   var body: some View {
     HSplitView {
@@ -134,16 +135,48 @@ struct RecordingsView: View {
               .foregroundStyle(.secondary)
           }
           Spacer()
-          Button("Export") { model.export(recording, tracks: chosenTracks(recording)) }
+          Button("Export") { startExport(recording) }
             .keyboardShortcut(.defaultAction)
             .disabled(recording.isLive || chosenTracks(recording).isEmpty || model.isExporting)
             .accessibilityIdentifier("recordings-export")
         }
         .padding(12)
         .background(.bar)
+        .sheet(item: $combining) { request in
+          CombinedSheet(
+            recording: request.recording,
+            cameras: request.cameras,
+            model: model,
+            onContinue: { plan in
+              combining = nil
+              model.export(request.recording, tracks: request.tracks, combined: plan)
+            },
+            onCancel: { combining = nil }
+          )
+        }
       }
     } else {
       ContentUnavailableView("Choose a recording", systemImage: "film.stack")
+    }
+  }
+
+  /// An export waiting on the combined video's layout.
+  struct CombiningRequest: Identifiable {
+    let id = UUID()
+    let recording: RecordingListing
+    let tracks: [Track]
+    let cameras: [CameraListing]
+  }
+
+  /// With a combined video on and two or more cameras ticked, the layout comes first; otherwise
+  /// the export starts straight away.
+  private func startExport(_ recording: RecordingListing) {
+    let tracks = chosenTracks(recording)
+    let cameras = recording.cameras.filter { includedCameras.contains($0.sourceID.rawValue) }
+    if model.settings?.createCombined == true, cameras.count >= 2 {
+      combining = CombiningRequest(recording: recording, tracks: tracks, cameras: cameras)
+    } else {
+      model.export(recording, tracks: tracks)
     }
   }
 

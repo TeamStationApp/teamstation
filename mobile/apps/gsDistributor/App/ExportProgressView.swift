@@ -22,6 +22,9 @@ struct ExportProgressView: View {
       ForEach(run.tracks, id: \.self) { track in
         row(track)
       }
+      if let state = run.combinedState {
+        row(label: "Combined video", state: state)
+      }
 
       HStack {
         if run.isFinished, !savedFiles.isEmpty {
@@ -41,10 +44,12 @@ struct ExportProgressView: View {
   }
 
   private var savedFiles: [URL] {
-    run.tracks.compactMap { track in
+    var files = run.tracks.compactMap { track -> URL? in
       if case .done(let url) = run.states[track] { return url }
       return nil
     }
+    if case .done(let url) = run.combinedState { files.append(url) }
+    return files
   }
 
   private func label(_ track: Track) -> String {
@@ -56,12 +61,15 @@ struct ExportProgressView: View {
     }
   }
 
-  @ViewBuilder
   private func row(_ track: Track) -> some View {
-    let state = run.states[track] ?? .queued
+    row(label: label(track), state: run.states[track] ?? .queued)
+  }
+
+  @ViewBuilder
+  private func row(label: String, state: TrackState) -> some View {
     VStack(alignment: .leading, spacing: 4) {
       HStack {
-        Text(label(track)).font(.headline)
+        Text(label).font(.headline)
         Spacer()
         Text(status(state))
           .font(.callout)
@@ -73,7 +81,7 @@ struct ExportProgressView: View {
         ProgressView().progressViewStyle(.linear)
       }
     }
-    .accessibilityIdentifier("export-row-\(label(track))")
+    .accessibilityIdentifier("export-row-\(label)")
   }
 
   private func status(_ state: TrackState) -> String {

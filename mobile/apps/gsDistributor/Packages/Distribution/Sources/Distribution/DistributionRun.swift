@@ -1,8 +1,25 @@
+import AVFoundation
+import CombinedVideo
 import DirectorClient
+import DirectorCore
 import DirectorExport
 import DistributorWire
 import Foundation
 import Observation
+
+/// The combined video to make once the cameras' files are in: which cameras, where each goes on
+/// the 4K canvas, and whose sound it carries.
+public struct CombinedPlan: Sendable {
+  public var cameras: [(name: String, sourceID: SourceID)]
+  public var frames: [String: CGRect]
+  public var audioCamera: String?
+
+  public init(cameras: [(name: String, sourceID: SourceID)], frames: [String: CGRect], audioCamera: String?) {
+    self.cameras = cameras
+    self.frames = frames
+    self.audioCamera = audioCamera
+  }
+}
 
 /// Where one file of an export has got to.
 public enum TrackState: Sendable, Equatable {
@@ -32,6 +49,11 @@ public final class DistributionRun {
   public private(set) var isFinished = false
   /// Which worker stitched each track, for the record.
   public private(set) var stitchedBy: [Track: DistributionPlan.Worker] = [:]
+  /// The combined video, when one was asked for.
+  public let combined: CombinedPlan?
+  public private(set) var combinedState: TrackState?
+  /// Whose sound the combined video carries, once it is being made.
+  public private(set) var combinedSound: String?
 
   private let connection: DirectorConnection
   private let jobs: JobWatcher
@@ -48,10 +70,13 @@ public final class DistributionRun {
     jobs: JobWatcher,
     destination: URL,
     reprocess: Bool = false,
+    combined: CombinedPlan? = nil,
     iPadMayStitch: @escaping @MainActor () -> Bool
   ) {
     self.recording = recording
     self.tracks = tracks
+    self.combined = combined
+    self.combinedState = combined == nil ? nil : .queued
     self.connection = connection
     self.jobs = jobs
     self.destination = destination
@@ -120,6 +145,61 @@ public final class DistributionRun {
       group.addTask { await self.iPadLoop(iPad, first: firstForIPad, window: window) }
     }
     for download in downloads { await download.value }
+    if let combined { await renderCombined(combined) }
+  }
+
+  /// `<stamp>-combined.mov`, beside the export's other files.
+  public var combinedFilename: String {
+    RecordingExport.programFilename(startedAt: recording.startedAt)
+      .replacingOccurrences(of: ".mov", with: "-combined.mov")
+  }
+
+  /// Every chosen camera at once, from the files this export just saved.
+  private func renderCombined(_ plan: CombinedPlan) async {
+    var inputs: [CombinedInput] = []
+    for camera in plan.cameras {
+      guard case .done(let url) = states[.camera(camera.sourceID)], let frame = plan.frames[camera.name] else {
+        combinedState = .failed("\(camera.name) did not export, so there is no combined video")
+        return
+      }
+      inputs.append(CombinedInput(camera: camera.name, url: url, frame: frame))
+    }
+    let target = folder.appendingPathComponent(combinedFilename)
+    if !reprocess, Self.size(of: target) > 0 {
+      combinedState = .done(target)
+      return
+    }
+    // The chosen file's sound; when it recorded none, the first file that has some, so the combined
+    // video is never silent while one of its videos has sound.
+    var sound = plan.audioCamera.flatMap { name in inputs.first { $0.camera == name } }
+    if let chosen = sound, await !Self.hasSound(chosen.url) { sound = nil }
+    if sound == nil {
+      for input in inputs where await Self.hasSound(input.url) {
+        sound = input
+        break
+      }
+    }
+    combinedSound = sound?.camera
+    let rate = (try? await AVURLAsset(url: inputs[0].url).loadTracks(withMediaType: .video).first?.load(.nominalFrameRate)) ?? 30
+    let partial = folder.appendingPathComponent(combinedFilename + ".partial.mov")
+    combinedState = .stitching(worker: .mac, fraction: 0)
+    do {
+      try await CombinedRenderer.render(
+        inputs: inputs,
+        audioFrom: sound?.url,
+        bitsPerSecond: CombinedLayoutRules.bitsPerSecond(cameraCount: inputs.count),
+        frameRate: Int32(max(1, rate.rounded())),
+        to: partial
+      ) { fraction in
+        Task { @MainActor in self.combinedState = .stitching(worker: .mac, fraction: fraction) }
+      }
+      try? FileManager.default.removeItem(at: target)
+      try FileManager.default.moveItem(at: partial, to: target)
+      combinedState = .done(target)
+    } catch {
+      try? FileManager.default.removeItem(at: partial)
+      combinedState = .failed("\(error)")
+    }
   }
 
   // MARK: - Workers
@@ -213,6 +293,10 @@ public final class DistributionRun {
         self?.states[track] = .failed("\(error)")
       }
     })
+  }
+
+  static func hasSound(_ url: URL) async -> Bool {
+    (try? await AVURLAsset(url: url).loadTracks(withMediaType: .audio).isEmpty == false) ?? false
   }
 
   static func size(of url: URL) -> Int64 {

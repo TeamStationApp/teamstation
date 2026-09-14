@@ -82,7 +82,25 @@ final class DebugHarness {
         if item.hasPrefix("camera:") { return .camera(SourceID(String(item.dropFirst("camera:".count)))) }
         return nil
       }
-      model.export(recording, tracks: tracks, reprocess: query["reprocess"] == "1")
+      // `combined=1` lays the combined video out from the saved layout, as the sheet would open it.
+      var plan: CombinedPlan?
+      if query["combined"] == "1" {
+        let cameras = recording.cameras.filter { camera in tracks.contains(.camera(camera.sourceID)) }
+        let saved = model.settings?.combinedLayout ?? CombinedLayoutSettings()
+        let included = CombinedLayoutRules.initialInclusion(exported: cameras.map(\.name), saved: saved)
+        let assignment = CombinedLayoutRules.assign(included, saved: saved)
+        let solo = included.count == 3 ? CombinedGeometry.effectiveSolo(assignment: assignment, saved: saved.solo) : nil
+        plan = CombinedPlan(
+          cameras: cameras.filter { included.contains($0.name) }.map { (name: $0.name, sourceID: $0.sourceID) },
+          frames: CombinedGeometry.frames(assignment: assignment, solo: solo),
+          audioCamera: CombinedLayoutRules.audioCamera(
+            included: included,
+            withAudio: Set(included),
+            saved: query["audio"] ?? saved.audioCamera
+          )
+        )
+      }
+      model.export(recording, tracks: tracks, reprocess: query["reprocess"] == "1", combined: plan)
       return [ "ok": model.run != nil ]
     default:
       return state()
@@ -117,7 +135,8 @@ final class DebugHarness {
             "state": Self.describe(run.states[track] ?? .queued),
             "stitchedBy": run.stitchedBy[track]?.rawValue ?? NSNull()
           ]
-        }
+        },
+        "combined": run.combinedState.map { Self.describe($0) } ?? NSNull()
       ] as [String: Any]
     }
     return [

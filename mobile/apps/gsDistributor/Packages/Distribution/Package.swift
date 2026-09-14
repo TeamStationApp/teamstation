@@ -9,6 +9,7 @@ let package = Package(
   ],
   dependencies: [
     .package(path: "../DirectorClient"),
+    .package(path: "../CombinedVideo"),
     .package(path: "../../../common/DirectorCore"),
     .package(path: "../../../common/DirectorExport"),
     .package(path: "../../../common/DistributorWire"),
@@ -18,7 +19,7 @@ let package = Package(
   targets: [
     .target(
       name: "Distribution",
-      dependencies: [ "DirectorClient", "DirectorCore", "DirectorExport", "DistributorWire" ],
+      dependencies: [ "DirectorClient", "CombinedVideo", "DirectorCore", "DirectorExport", "DistributorWire" ],
       swiftSettings: [ .swiftLanguageMode(.v6) ]
     ),
     .testTarget(
