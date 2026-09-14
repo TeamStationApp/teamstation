@@ -86,7 +86,7 @@ struct CameraIdentityTests {
         CameraEndpoint(host: "10.10.7.148", port: 8554)
       ],
       records: records,
-      advertisements: [ "10.10.7.148": advertisement ]
+      advertisements: [ advertisement ]
     )
 
     #expect(bindings.filter(\.isBound).count == 1)
@@ -313,7 +313,7 @@ struct CameraIdentityTests {
     var bindings = CameraIdentityRules.autoBind(
       endpoints: [ endpoint("10.10.7.148") ],
       records: records,
-      advertisements: [ "10.10.7.148": advertisement ]
+      advertisements: [ advertisement ]
     )
     CameraIdentityRules.rename(records[0].id, to: "Third Base", in: &records)
     CameraIdentityRules.forget(records[0].id, from: &records, bindings: &bindings)
@@ -323,7 +323,7 @@ struct CameraIdentityTests {
       bindings: bindings,
       endpoints: [ endpoint("10.10.7.148") ],
       records: records,
-      advertisements: [ "10.10.7.148": advertisement ]
+      advertisements: [ advertisement ]
     )
 
     #expect(records.count == 1)
@@ -346,7 +346,7 @@ struct CameraIdentityTests {
       bindings: [],
       endpoints: [ endpoint("10.10.7.148") ],
       records: records,
-      advertisements: [:]
+      advertisements: []
     )
 
     #expect(bindings[0].cameraID == nil)
@@ -449,7 +449,7 @@ struct CameraIdentityTests {
     ]
     var bindings = [ CameraBinding(endpoint: endpoint("10.10.7.201")) ]
     let advertisements = [
-      "10.10.7.201": CameraAdvertisement(
+      CameraAdvertisement(
         host: "10.10.7.201",
         advertisedName: "00D9D 3rd",
         modelName: "VM33_00D9D"
@@ -489,8 +489,8 @@ struct CameraIdentityTests {
       modelName: "VM33_00D9D"
     )
     let advertisements = [
-      "10.10.7.201": advertisement,
-      "10.10.7.202": CameraAdvertisement(
+      advertisement,
+      CameraAdvertisement(
         host: "10.10.7.202",
         advertisedName: "00D9D 3rd",
         modelName: "VM33_00D9D"
@@ -910,7 +910,7 @@ struct CameraIdentityTests {
     let bindings = CameraIdentityRules.autoBind(
       endpoints: [ endpoint("10.10.7.201") ],
       records: records,
-      advertisements: [ "10.10.7.201": advertisements[0] ]
+      advertisements: advertisements
     )
 
     #expect(records[0].name == "Third Base")
@@ -935,19 +935,19 @@ struct CameraIdentityTests {
     )
     var records = [ third, first ]
     let advertisements = [
-      "10.10.7.148": CameraAdvertisement(
+      CameraAdvertisement(
         host: "10.10.7.148",
         advertisedName: "010D2 1st",
         modelName: "VM33_010D2"
       ),
-      "10.10.7.225": CameraAdvertisement(
+      CameraAdvertisement(
         host: "10.10.7.225",
         advertisedName: "00D9D 3rd",
         modelName: "VM33_00D9D"
       )
     ]
 
-    CameraIdentityRules.applyAdvertisements(Array(advertisements.values), to: &records, now: epoch)
+    CameraIdentityRules.applyAdvertisements(advertisements, to: &records, now: epoch)
     let bindings = CameraIdentityRules.autoBind(
       endpoints: [ endpoint("10.10.7.148"), endpoint("10.10.7.225") ],
       records: records,
@@ -1045,12 +1045,80 @@ struct CameraIdentityTests {
     let bindings = CameraIdentityRules.autoBind(
       endpoints: [ endpoint ],
       records: records,
-      advertisements: [ "10.10.7.148": txt ],
+      advertisements: [ txt ],
       streamAdvertisements: [ endpoint: StreamAdvertisement(cname: "phone@example", name: "iPhone") ]
     )
 
     #expect(bindings[0].origin == .autoByIdentity)
     #expect(bindings[0].cameraID == records[0].id)
+  }
+
+  // MARK: - Which advertisement describes which socket
+
+  @Test("A Cameraman advertisement describes the socket whose CNAME is its uuid, not its address")
+  func cameramanPairingFollowsTheCNAME() {
+    let pixel = CameraAdvertisement(
+      host: "10.10.6.123",
+      advertisedName: "Pixel10",
+      port: 8554,
+      uuid: "258bf622-da23-4f23-bbba-1b42440dddf1"
+    )
+    let socket = CameraEndpoint(host: "10.10.6.123", port: 8554)
+
+    // Before the socket has said anything, the advertisement describes the socket it announced.
+    #expect(CameraIdentityRules.pair(endpoints: [ socket ], advertisements: [ pixel ])[socket] == pixel)
+
+    // Another port on the same address is a different socket.
+    let otherPort = CameraEndpoint(host: "10.10.6.123", port: 554)
+    #expect(CameraIdentityRules.pair(endpoints: [ otherPort ], advertisements: [ pixel ])[otherPort] == nil)
+
+    // A socket that says it is another phone is that phone, whatever address it shares.
+    let taken = CameraIdentityRules.pair(
+      endpoints: [ socket ],
+      advertisements: [ pixel ],
+      claims: [ socket: StreamAdvertisement(cname: "b11d5d5f-07e6-4802-a880-9a3a5ffd0e29") ]
+    )
+    #expect(taken[socket] == nil)
+
+    // And the Pixel's advertisement follows the Pixel to its new address.
+    let moved = CameraEndpoint(host: "10.10.6.140", port: 8554)
+    let followed = CameraIdentityRules.pair(
+      endpoints: [ moved ],
+      advertisements: [ pixel ],
+      claims: [ moved: StreamAdvertisement(cname: "258BF622-DA23-4F23-BBBA-1B42440DDDF1") ]
+    )
+    #expect(followed[moved] == pixel)
+  }
+
+  @Test("NearStream TXT still pairs by the address it publishes, having nothing else")
+  func nearStreamPairsByTXTAddress() {
+    let vm33 = CameraAdvertisement(host: "10.10.7.148", advertisedName: "00D9D 3rd", modelName: "VM33_00D9D")
+    let socket = endpoint("10.10.7.148")
+    #expect(CameraIdentityRules.pair(endpoints: [ socket ], advertisements: [ vm33 ])[socket] == vm33)
+  }
+
+  @Test("Only a UUID CNAME identifies a Cameraman; a firmware string identifies nobody")
+  func cameramanUUIDFromCNAME() {
+    #expect(
+      CameraIdentityRules.cameramanUUID(fromCNAME: " 258BF622-DA23-4F23-BBBA-1B42440DDDF1 ")
+        == "258bf622-da23-4f23-bbba-1b42440dddf1"
+    )
+    #expect(CameraIdentityRules.cameramanUUID(fromCNAME: "Hamedal Server/1.0(Jan 16 2026)") == nil)
+    #expect(CameraIdentityRules.cameramanUUID(fromCNAME: "phone@example") == nil)
+    #expect(CameraIdentityRules.cameramanUUID(fromCNAME: nil) == nil)
+  }
+
+  @Test("One Cameraman answering on two sockets with no advertisement is one row")
+  func cnameOnlyDuplicatesCollapse() {
+    let claim = StreamAdvertisement(cname: "258bf622-da23-4f23-bbba-1b42440dddf1")
+    let lan = CameraEndpoint(host: "10.10.6.123", port: 8554)
+    let usb = CameraEndpoint(host: "169.254.10.2", port: 8554)
+    let collapsed = CameraIdentityRules.deduplicate(
+      endpoints: [ usb, lan ],
+      advertisements: [],
+      claims: [ lan: claim, usb: claim ]
+    )
+    #expect(collapsed.endpoints == [ lan ])
   }
 
   @Test("An operator rename is not undone by a later advertisement")
