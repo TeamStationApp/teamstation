@@ -107,6 +107,12 @@ The UUID lives in the Keychain, so it survives deleting and reinstalling the app
 because it is what binds this camera to its tile, its archive and its telemetry on the Producer
 side: renaming a camera must not make it a new one.
 
+UserDefaults holds a per-install copy. A Keychain read that fails for any reason other than "not
+found" (`errSecInteractionNotAllowed`, a missing entitlement) falls back to that copy and writes
+nothing, so a launch that cannot see the Keychain is still the same camera. A new UUID is minted only
+when both are empty. If the Keychain is unreadable and the copy is empty, the new UUID goes to the
+copy alone, and the Keychain's value wins again on the first launch that can read it.
+
 ## Zoom and lenses
 
 The triple camera is one `AVCaptureDevice` that switches between its constituents as the zoom

@@ -198,7 +198,13 @@ class AppEnvironment(
             }
             ?: PreferencesIdentityStore(context)
 
-        val provider = DeviceIdentityProvider(resolvedStore)
+        // Only a real install has an install to derive the first UUID from.
+        val seed = if (resolvedStore is PreferencesIdentityStore) {
+            PreferencesIdentityStore.installSeed(context)
+        } else {
+            null
+        }
+        val provider = DeviceIdentityProvider(resolvedStore, seed)
         identityProvider = provider
         var loaded = provider.load()
         launch.cameraName?.let { loaded = provider.save(it) }
