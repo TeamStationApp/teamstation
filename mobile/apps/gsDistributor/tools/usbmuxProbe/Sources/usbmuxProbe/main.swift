@@ -96,8 +96,34 @@ do {
     let megabytes = Double(response.bodyBytes) / 1_000_000
     print(String(format: "%@: %.1f MB in %.3f s = %.0f MB/s", response.status, megabytes, seconds, megabytes / seconds))
 
+  case "save":
+    // One file or route from GS Director's link server, written to disk.
+    // The route and the file are the two arguments that are neither an option nor its value.
+    var positional: [String] = []
+    var skipNext = false
+    for argument in arguments {
+      if skipNext { skipNext = false; continue }
+      if argument.hasPrefix("--") { skipNext = true; continue }
+      positional.append(argument)
+    }
+    guard positional.count == 2 else {
+      fail("usage: usbmuxProbe save <path> <file> [--port 8770]")
+    }
+    let path = positional[0]
+    let target = positional[1]
+    let port = UInt16(option("port", default: "8770")) ?? 8770
+    let device = try pickDevice()
+    let socket = try UsbMux.connect(deviceID: device.deviceID, port: port)
+    FileManager.default.createFile(atPath: target, contents: nil)
+    guard let handle = FileHandle(forWritingAtPath: target) else { fail("cannot write \(target)") }
+    let start = DispatchTime.now().uptimeNanoseconds
+    let response = try HTTPProbe.fetch(path: path, on: socket, keepBody: false, sink: handle)
+    try handle.close()
+    let seconds = Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000_000
+    print(String(format: "%@: %.1f MB to %@ in %.3f s", response.status, Double(response.bodyBytes) / 1_000_000, target, seconds))
+
   default:
-    fail("unknown command \(command); use list, get, fetch or throughput")
+    fail("unknown command \(command); use list, get, fetch, save or throughput")
   }
 } catch {
   fail("\(error)")
@@ -112,7 +138,7 @@ enum HTTPProbe {
 
   /// Sends one GET and reads the response to its Content-Length (or to the close). With `keepBody`
   /// false the body is counted, not kept, so a 128 MB read costs one 4 MB buffer.
-  static func fetch(path: String, on fd: Int32, keepBody: Bool) throws -> Response {
+  static func fetch(path: String, on fd: Int32, keepBody: Bool, sink: FileHandle? = nil) throws -> Response {
     defer { close(fd) }
     let request = "GET \(path) HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
     try Socket.writeAll(fd, Data(request.utf8))
@@ -140,6 +166,7 @@ enum HTTPProbe {
       if headerDone {
         bodyBytes += got
         if keepBody { body.append(contentsOf: chunk) }
+        if let sink { try sink.write(contentsOf: Data(chunk)) }
         continue
       }
       head.append(contentsOf: chunk)
@@ -156,6 +183,7 @@ enum HTTPProbe {
       let rest = head[end.upperBound...]
       bodyBytes += rest.count
       if keepBody { body.append(rest) }
+      if let sink { try sink.write(contentsOf: Data(rest)) }
     }
 
     if let contentLength, bodyBytes < contentLength {
