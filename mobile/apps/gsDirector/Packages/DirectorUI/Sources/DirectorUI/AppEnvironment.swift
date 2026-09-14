@@ -3962,6 +3962,7 @@ public final class AppEnvironment {
         tile.playoutDepth = receive.playoutDepth
         tile.outOfOrderFrames = receive.outOfOrderFrames
         tile.senderClockRestarts = receive.senderClockRestarts
+        tile.audioReanchors = receive.audioReanchors
         tile.stalledForSeconds = (receive.stalledForSeconds * 10).rounded() / 10
         tile.senderReports = receive.senderReports
         tile.senderReportIntervalSeconds = receive.senderReportIntervalSeconds

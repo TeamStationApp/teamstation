@@ -128,6 +128,8 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
   private var pictures = PlayoutQueue<PendingPicture>()
   private var decodedFrames = PlayoutQueue<PixelFrame>()
   private var audioFrames = PlayoutQueue<AudioFrame>()
+  /// Keeps this camera's sound mixable when its picture falls behind it; see `AudioPlayoutAnchor`.
+  private var audioAnchor = AudioPlayoutAnchor()
   private var drainTimer: DispatchSourceTimer?
   private var lastReportAt: Double = 0
 
@@ -351,6 +353,7 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     decodedFrames.removeAll()
     audioFrames.removeAll()
     playout = playout.reset()
+    audioAnchor = AudioPlayoutAnchor()
   }
 
   private func handle(_ event: RTSPSession.Event) {
@@ -757,7 +760,16 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
       let elapsed = audioTimeline.unwrap(rtpTimestamp)
       let presentationSeconds = rate > 0 ? Double(elapsed) / rate : 0
       let nowUptime = Self.seconds(.now())
-      let due = playout.scheduleTime(presentationSeconds: presentationSeconds, nowUptime: nowUptime)
+      // The picture's timing when the mix can use it, and the sound's own arrival when it cannot:
+      // a picture seconds behind its sound would otherwise leave every sample due where the queue
+      // and the mixer drop it.
+      let scheduled = audioAnchor.schedule(
+        due: playout.scheduleTime(presentationSeconds: presentationSeconds, nowUptime: nowUptime),
+        nowUptime: nowUptime,
+        holdSeconds: playout.holdSeconds
+      )
+      if scheduled.reanchored { stats.audioReanchors &+= 1 }
+      let due = scheduled.due
       let dueWall = clock.now + (due - nowUptime)
       lock.unlock()
 
