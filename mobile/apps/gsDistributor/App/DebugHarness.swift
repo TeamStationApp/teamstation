@@ -15,6 +15,9 @@ import Network
 ///   /export?recording=361&tracks=primary,camera:<source id>[&reprocess=1][&combined=1[&audio=<name>]]
 ///          [&upload=primary,camera:<name>,combined&title=<title>]
 ///   /cancel                              stop the export under way
+///   /peertube-enable?on=1|0              PeerTube uploads on or off
+///   /peertube-signin?host=<host>&credentials=<json file with username, password>[&code=<otp>]
+///   /peertube-channel?name=<channel>     upload to that channel
 @MainActor
 final class DebugHarness {
   static let port: UInt16 = 8768
@@ -78,6 +81,36 @@ final class DebugHarness {
     case "/cancel":
       model.run?.cancel()
       return [ "ok": model.run?.wasCancelled ?? false ]
+    case "/peertube-enable":
+      let on = query["on"] != "0"
+      await model.updateSettings { $0.peerTube.enabled = on }
+      await model.loadPeerTube()
+      return [ "ok": model.settings?.peerTube.enabled == on ]
+    case "/peertube-signin":
+      // The user name and password come from a file, so the password is never on a command line.
+      guard let host = query["host"], let path = query["credentials"],
+            let data = FileManager.default.contents(atPath: path),
+            let credentials = (try? JSONSerialization.jsonObject(with: data)) as? [String: String],
+            let username = credentials["username"], let password = credentials["password"]
+      else { return [ "ok": false, "error": "host and credentials=<file with username and password> required" ] }
+      switch await model.signInToPeerTube(host: host, username: username, password: password, code: query["code"]) {
+      case .signedIn: return [ "ok": true ]
+      case .needsCode: return [ "ok": false, "error": "two-factor code needed" ]
+      case .failed(let reason): return [ "ok": false, "error": reason ]
+      }
+    case "/peertube-channel":
+      guard case .signedIn(let account) = model.peerTube else { return [ "ok": false, "error": "not signed in" ] }
+      let names = account.channels.map { "\($0.id): \($0.displayName)" }
+      // curl's --data-urlencode sends spaces as `+`, which URLComponents leaves alone.
+      let wanted = (query["name"] ?? "").replacingOccurrences(of: "+", with: " ")
+        .trimmingCharacters(in: .whitespaces).lowercased()
+      func matches(_ text: String) -> Bool {
+        text.trimmingCharacters(in: .whitespaces).lowercased() == wanted
+      }
+      guard let channel = account.channels.first(where: { matches($0.displayName) || matches($0.name) || String($0.id) == wanted })
+      else { return [ "ok": false, "error": "no channel by that name", "channels": names ] }
+      await model.updateSettings { $0.peerTube.channelID = channel.id }
+      return [ "ok": model.uploadChannelID == channel.id, "channels": names ]
     case "/export":
       guard let id = query["recording"].flatMap(Int64.init),
             let recording = model.recordings.first(where: { $0.id == id })
