@@ -12,7 +12,8 @@ import Network
 ///   /dump-state                          what the window is showing, and the export under way
 ///   /set-destination?path=/some/folder   this Mac's download folder, saved on the iPad
 ///   /clear-destination                   forget it again
-///   /export?recording=361&tracks=primary,camera:<source id>[&reprocess=1]
+///   /export?recording=361&tracks=primary,camera:<source id>[&reprocess=1][&combined=1[&audio=<name>]]
+///          [&upload=primary,camera:<name>,combined&title=<title>]
 @MainActor
 final class DebugHarness {
   static let port: UInt16 = 8768
@@ -100,7 +101,28 @@ final class DebugHarness {
           )
         )
       }
-      model.export(recording, tracks: tracks, reprocess: query["reprocess"] == "1", combined: plan)
+      // `upload=primary,camera:<name>,combined&title=<title>` uploads those files, as the title
+      // sheet would, to the channel and with the privacy it would start on. Without a title, the
+      // field's starting text (the date and a space) is used.
+      var upload: UploadPlan?
+      if let list = query["upload"], !list.isEmpty {
+        let wanted: [UploadTrack] = list.split(separator: ",").compactMap { item in
+          if item == "primary" { return .primary }
+          if item == "combined" { return .combined }
+          if item.hasPrefix("camera:") { return .camera(String(item.dropFirst("camera:".count))) }
+          return nil
+        }
+        let title = query["title"] ?? PeerTubeTitle.initialTitle(for: recording.startedAt.date)
+        upload = model.uploadPlan(
+          for: recording,
+          title: title,
+          channelID: model.uploadChannelID,
+          privacy: model.uploadPrivacy,
+          tracks: wanted
+        )
+        if upload == nil { return [ "ok": false, "error": "not signed in to PeerTube, or no channel" ] }
+      }
+      model.export(recording, tracks: tracks, reprocess: query["reprocess"] == "1", combined: plan, upload: upload)
       return [ "ok": model.run != nil ]
     default:
       return state()
@@ -136,8 +158,21 @@ final class DebugHarness {
             "stitchedBy": run.stitchedBy[track]?.rawValue ?? NSNull()
           ]
         },
-        "combined": run.combinedState.map { Self.describe($0) } ?? NSNull()
+        "combined": run.combinedState.map { Self.describe($0) } ?? NSNull(),
+        "uploads": (run.upload?.tracks ?? []).map { track -> [String: Any] in
+          [
+            "title": run.upload?.title(for: track) ?? "",
+            "state": Self.describe(run.uploadStates[track] ?? .queued)
+          ]
+        }
       ] as [String: Any]
+    }
+    let peerTube: String = switch model.peerTube {
+    case .unknown: "unknown"
+    case .signedOut: "signedOut"
+    case .signedIn(let account):
+      "signedIn \(account.username)@\(account.host) channel=\(model.uploadChannelID.map(String.init) ?? "none") privacy=\(model.uploadPrivacy)"
+    case .unreachable(let reason): "unreachable \(reason)"
     }
     return [
       "link": link,
@@ -154,6 +189,7 @@ final class DebugHarness {
       "settingsLoaded": model.settings != nil,
       "destination": model.destination?.path ?? NSNull(),
       "export": export,
+      "peerTube": peerTube,
       "problem": model.problem ?? NSNull()
     ]
   }
@@ -172,6 +208,15 @@ final class DebugHarness {
     case let .stitching(worker, fraction): String(format: "stitching(%@) %.2f", worker.rawValue, fraction)
     case let .downloading(received, total): "downloading \(received)/\(total)"
     case .done(let url): "done \(url.path)"
+    case .failed(let reason): "failed \(reason)"
+    }
+  }
+
+  private static func describe(_ state: UploadState) -> String {
+    switch state {
+    case .queued: "queued"
+    case let .uploading(sent, total): "uploading \(sent)/\(total)"
+    case .done(let page): "done \(page?.absoluteString ?? "")"
     case .failed(let reason): "failed \(reason)"
     }
   }

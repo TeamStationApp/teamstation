@@ -6,6 +6,47 @@ import DirectorExport
 import DistributorWire
 import Foundation
 import Observation
+import PeerTubeKit
+
+/// What goes to PeerTube once an export's files are saved, one video per file.
+public struct UploadPlan: Sendable {
+  public var host: String
+  public var channelID: Int
+  public var privacy: Int
+  /// What the title field held: the recording's date and what the user typed, unless they changed it.
+  public var title: String
+  public var tracks: [UploadTrack]
+  /// An access token good for a while yet; asked for before every chunk.
+  public var token: @Sendable () async throws -> String
+
+  public init(
+    host: String,
+    channelID: Int,
+    privacy: Int,
+    title: String,
+    tracks: [UploadTrack],
+    token: @escaping @Sendable () async throws -> String
+  ) {
+    self.host = host
+    self.channelID = channelID
+    self.privacy = privacy
+    self.title = title
+    self.tracks = tracks
+    self.token = token
+  }
+
+  public func title(for track: UploadTrack) -> String {
+    PeerTubeTitle.make(title: title, track: track)
+  }
+}
+
+public enum UploadState: Sendable, Equatable {
+  case queued
+  case uploading(sent: Int64, total: Int64)
+  /// Uploaded; the video's page, when PeerTube said where it is.
+  case done(URL?)
+  case failed(String)
+}
 
 /// The combined video to make once the cameras' files are in: which cameras, where each goes on
 /// the 4K canvas, and whose sound it carries.
@@ -54,6 +95,9 @@ public final class DistributionRun {
   public private(set) var combinedState: TrackState?
   /// Whose sound the combined video carries, once it is being made.
   public private(set) var combinedSound: String?
+  /// The uploads, when any were asked for.
+  public let upload: UploadPlan?
+  public private(set) var uploadStates: [UploadTrack: UploadState] = [:]
 
   private let connection: DirectorConnection
   private let jobs: JobWatcher
@@ -71,12 +115,15 @@ public final class DistributionRun {
     destination: URL,
     reprocess: Bool = false,
     combined: CombinedPlan? = nil,
+    upload: UploadPlan? = nil,
     iPadMayStitch: @escaping @MainActor () -> Bool
   ) {
     self.recording = recording
     self.tracks = tracks
     self.combined = combined
     self.combinedState = combined == nil ? nil : .queued
+    self.upload = upload
+    self.uploadStates = Dictionary(uniqueKeysWithValues: (upload?.tracks ?? []).map { ($0, UploadState.queued) })
     self.connection = connection
     self.jobs = jobs
     self.destination = destination
@@ -146,6 +193,50 @@ public final class DistributionRun {
     }
     for download in downloads { await download.value }
     if let combined { await renderCombined(combined) }
+    if let upload { await uploadAll(upload) }
+  }
+
+  /// One file at a time, in the order asked. A file that did not save is not uploaded.
+  private func uploadAll(_ plan: UploadPlan) async {
+    let api = PeerTubeAPI(host: plan.host)
+    for track in plan.tracks {
+      guard let file = savedFile(for: track) else {
+        uploadStates[track] = .failed("not saved, so not uploaded")
+        continue
+      }
+      uploadStates[track] = .uploading(sent: 0, total: Self.size(of: file))
+      do {
+        let video = try await api.upload(
+          file: file,
+          name: plan.title(for: track),
+          channelID: plan.channelID,
+          privacy: plan.privacy,
+          token: plan.token
+        ) { sent, total in
+          Task { @MainActor in
+            if case .uploading = self.uploadStates[track] { self.uploadStates[track] = .uploading(sent: sent, total: total) }
+          }
+        }
+        uploadStates[track] = .done(video.shortUUID.flatMap { URL(string: "https://\(plan.host)/w/\($0)") })
+      } catch {
+        uploadStates[track] = .failed("\(error)")
+      }
+    }
+  }
+
+  /// Where this export saved `track`'s file, if it did.
+  public func savedFile(for track: UploadTrack) -> URL? {
+    let state: TrackState?
+    switch track {
+    case .primary:
+      state = states[.primary]
+    case .camera(let name):
+      state = recording.cameras.first { $0.name == name }.flatMap { states[.camera($0.sourceID)] }
+    case .combined:
+      state = combinedState
+    }
+    if case .done(let url) = state { return url }
+    return nil
   }
 
   /// `<stamp>-combined.mov`, beside the export's other files.

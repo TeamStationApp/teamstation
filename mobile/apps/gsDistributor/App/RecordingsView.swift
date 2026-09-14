@@ -1,4 +1,5 @@
 import DirectorCore
+import Distribution
 import DistributorWire
 import SwiftUI
 
@@ -12,7 +13,7 @@ struct RecordingsView: View {
   @State private var confirmingDelete = false
   @State private var includesPrimary = true
   @State private var includedCameras: Set<String> = []
-  @State private var combining: CombiningRequest?
+  @State private var step: ExportStep?
 
   var body: some View {
     HSplitView {
@@ -142,17 +143,29 @@ struct RecordingsView: View {
         }
         .padding(12)
         .background(.bar)
-        .sheet(item: $combining) { request in
-          CombinedSheet(
-            recording: request.recording,
-            cameras: request.cameras,
-            model: model,
-            onContinue: { plan in
-              combining = nil
-              model.export(request.recording, tracks: request.tracks, combined: plan)
-            },
-            onCancel: { combining = nil }
-          )
+        .sheet(item: $step) { step in
+          switch step {
+          case let .combine(recording, tracks, cameras):
+            CombinedSheet(
+              recording: recording,
+              cameras: cameras,
+              model: model,
+              onContinue: { plan in proceed(recording, tracks: tracks, combined: plan) },
+              onCancel: { self.step = nil }
+            )
+          case let .upload(recording, tracks, combined):
+            UploadSheet(
+              recording: recording,
+              tracks: tracks,
+              makesCombined: combined != nil,
+              model: model,
+              onContinue: { upload in
+                self.step = nil
+                model.export(recording, tracks: tracks, combined: combined, upload: upload)
+              },
+              onCancel: { self.step = nil }
+            )
+          }
         }
       }
     } else {
@@ -160,24 +173,43 @@ struct RecordingsView: View {
     }
   }
 
-  /// An export waiting on the combined video's layout.
-  struct CombiningRequest: Identifiable {
-    let id = UUID()
-    let recording: RecordingListing
-    let tracks: [Track]
-    let cameras: [CameraListing]
+  /// What an export asks before it starts.
+  enum ExportStep: Identifiable {
+    /// The combined video's layout.
+    case combine(recording: RecordingListing, tracks: [Track], cameras: [CameraListing])
+    /// The title and which files go to PeerTube.
+    case upload(recording: RecordingListing, tracks: [Track], combined: CombinedPlan?)
+
+    var id: String {
+      switch self {
+      case .combine: "combine"
+      case .upload: "upload"
+      }
+    }
   }
 
-  /// With a combined video on and two or more cameras ticked, the layout comes first; otherwise
-  /// the export starts straight away.
+  /// With a combined video on and two or more cameras ticked, the layout comes first; with
+  /// PeerTube uploads on, the title next; then the export starts.
   private func startExport(_ recording: RecordingListing) {
     let tracks = chosenTracks(recording)
     let cameras = recording.cameras.filter { includedCameras.contains($0.sourceID.rawValue) }
     if model.settings?.createCombined == true, cameras.count >= 2 {
-      combining = CombiningRequest(recording: recording, tracks: tracks, cameras: cameras)
+      step = .combine(recording: recording, tracks: tracks, cameras: cameras)
     } else {
-      model.export(recording, tracks: tracks)
+      proceed(recording, tracks: tracks, combined: nil)
     }
+  }
+
+  private func proceed(_ recording: RecordingListing, tracks: [Track], combined: CombinedPlan?) {
+    if model.settings?.peerTube.enabled == true {
+      if case .signedIn = model.peerTube {
+        step = .upload(recording: recording, tracks: tracks, combined: combined)
+        return
+      }
+      model.problem = "PeerTube uploads are on, but GS Director is not signed in, so nothing is uploaded."
+    }
+    step = nil
+    model.export(recording, tracks: tracks, combined: combined)
   }
 
   /// The primary output first, then the cameras in the take's order, as they are ticked.
