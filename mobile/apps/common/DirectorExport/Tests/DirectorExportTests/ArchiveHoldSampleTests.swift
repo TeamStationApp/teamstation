@@ -1,6 +1,6 @@
 import AVFoundation
 import CoreMedia
-import DirectorDVR
+import DirectorExport
 import Foundation
 import Testing
 

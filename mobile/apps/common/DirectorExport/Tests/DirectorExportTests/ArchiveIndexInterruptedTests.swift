@@ -1,6 +1,6 @@
 import Foundation
 import DirectorCore
-import DirectorDVR
+import DirectorExport
 import Testing
 
 /// A recording the app never got to close.
