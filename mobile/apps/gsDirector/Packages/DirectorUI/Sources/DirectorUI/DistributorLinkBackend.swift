@@ -171,10 +171,14 @@ final class DistributorLinkBackend: DistributorBackend, @unchecked Sendable {
   }
 
   /// The scrub proxy's still nearest that moment when there is one within two seconds -- it is
-  /// already a small JPEG -- and otherwise a frame decoded from the segment that covers it.
+  /// already a small JPEG -- and otherwise a frame decoded from the segment that covers it. For
+  /// the primary output, a frame of the programme part that covers it.
   func still(recordingID: Int64, sourceID: SourceID, at seconds: Double) async throws -> Data? {
     guard let recording = try index.recordings().first(where: { $0.id == recordingID }) else { return nil }
     let wall = recording.startedAt + seconds
+    if sourceID.rawValue == DistributorProtocol.primaryStillCamera {
+      return try await programStill(recording, wall: wall)
+    }
     if let record = try index.proxyStill(for: sourceID, nearest: wall),
        abs(record.wall - wall) <= 2,
        let data = ProxyReader(index: index).data(for: record) {
@@ -186,10 +190,26 @@ final class DistributorLinkBackend: DistributorBackend, @unchecked Sendable {
     let url = roots.archives
       .appendingPathComponent(sourceID.slug, isDirectory: true)
       .appendingPathComponent(segment.filename)
+    return await Self.jpeg(of: url, at: max(0, wall - segment.startWall))
+  }
+
+  /// The primary output at `wall`: the latest programme part to have started by then (a take
+  /// without anchors has one part, from its start), that far into it.
+  private func programStill(_ recording: RecordingSummary, wall: WallClock) async throws -> Data? {
+    guard let filename = recording.programFilename else { return nil }
+    let parts = RecordingExport.programSourceFiles(named: filename, in: roots.program)
+    let starts = try index.programPartStarts(recordingID: recording.id)
+    let covering = starts.filter { $0.value.seconds <= wall.seconds }.max { $0.value.seconds < $1.value.seconds }
+    let part = covering?.key ?? 1
+    guard part >= 1, part <= parts.count else { return nil }
+    return await Self.jpeg(of: parts[part - 1], at: max(0, wall - (covering?.value ?? recording.startedAt)))
+  }
+
+  /// One frame of `url` `offset` seconds in, at most 640x360, as a JPEG.
+  private static func jpeg(of url: URL, at offset: Double) async -> Data? {
     let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
     generator.maximumSize = CGSize(width: 640, height: 360)
     generator.appliesPreferredTrackTransform = true
-    let offset = max(0, wall - segment.startWall)
     guard let image = try? await generator.image(at: CMTime(seconds: offset, preferredTimescale: 600)).image else {
       return nil
     }

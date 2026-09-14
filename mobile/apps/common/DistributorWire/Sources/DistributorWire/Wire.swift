@@ -8,6 +8,8 @@ public enum DistributorProtocol {
   public static let version = 1
   /// GS Director's listener, on loopback; the Mac reaches it through usbmuxd.
   public static let port: UInt16 = 8770
+  /// What `/v1/recordings/{id}/still?camera=` takes for the primary output rather than a camera.
+  public static let primaryStillCamera = "primary"
 }
 
 public struct Hello: Codable, Equatable, Sendable {
