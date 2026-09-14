@@ -77,6 +77,28 @@ public final class DirectorConnection: Sendable {
     return data
   }
 
+  /// Asks GS Director to record and stream nothing while this Mac exports. Refused with a 409
+  /// while it is recording or streaming.
+  public func beginExport() async throws -> UUID {
+    let (status, data) = try await send("POST", "/v1/export-lock")
+    guard status == 200 else { throw Self.failure(status, data) }
+    return try JSONDecoder().decode(ExportLockGranted.self, from: data).lockID
+  }
+
+  /// Keeps the export lock: GS Director drops one left unrenewed for half a minute. False when it
+  /// is no longer held.
+  public func renewExport(_ id: UUID) async throws -> Bool {
+    let (status, data) = try await send("PUT", "/v1/export-lock/\(id.uuidString)")
+    if status == 404 { return false }
+    guard status == 200 else { throw Self.failure(status, data) }
+    return true
+  }
+
+  public func endExport(_ id: UUID) async throws {
+    let (status, data) = try await send("DELETE", "/v1/export-lock/\(id.uuidString)")
+    guard status == 200 else { throw Self.failure(status, data) }
+  }
+
   public func startJob(_ job: JobRequest) async throws -> UUID {
     let (status, data) = try await send("POST", "/v1/jobs", body: try JSONEncoder().encode(job))
     guard status == 200 else { throw Self.failure(status, data) }

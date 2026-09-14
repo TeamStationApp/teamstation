@@ -134,11 +134,18 @@ struct RecordingsView: View {
           if recording.isLive {
             Text("This take is still being recorded.")
               .foregroundStyle(.secondary)
+          } else if let reason = model.exportBlockedReason {
+            Text(reason)
+              .foregroundStyle(.secondary)
+              .accessibilityIdentifier("recordings-export-blocked")
           }
           Spacer()
           Button("Export") { startExport(recording) }
             .keyboardShortcut(.defaultAction)
-            .disabled(recording.isLive || chosenTracks(recording).isEmpty || model.isExporting)
+            .disabled(
+              recording.isLive || chosenTracks(recording).isEmpty || model.isExporting
+                || model.exportBlockedReason != nil
+            )
             .accessibilityIdentifier("recordings-export")
         }
         .padding(12)

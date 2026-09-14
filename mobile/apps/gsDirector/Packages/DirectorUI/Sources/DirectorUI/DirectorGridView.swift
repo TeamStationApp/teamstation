@@ -216,7 +216,7 @@ public struct DirectorGridView: View {
   /// GS Distributor is attached by cable. Shown so the operator knows why the iPad is busy, and
   /// that it must stay open and in front until the Mac has what it needs.
   private var macPill: some View {
-    Label("MAC", systemImage: "cable.connector")
+    Label(environment.distributorExport == nil ? "MAC" : "EXPORTING", systemImage: "cable.connector")
       .font(.system(size: 11, weight: .heavy, design: .rounded))
       .tracking(1)
       .padding(.horizontal, 10)
@@ -261,10 +261,14 @@ public struct DirectorGridView: View {
     accessibilityValue: String,
     action: @escaping () -> Void
   ) -> some View {
-    Button(action: action) {
+    // Neither can start while GS Distributor is exporting; one already running can still stop.
+    let blocked = !isActive && environment.distributorExport != nil
+    return Button(action: action) {
       PulsingTransportLabel(isActive: isActive, idleLabel: idleLabel, activeLabel: activeLabel)
     }
     .buttonStyle(.plain)
+    .disabled(blocked)
+    .opacity(blocked ? 0.35 : 1)
     .accessibilityIdentifier(identifier)
     .accessibilityValue(accessibilityValue)
   }

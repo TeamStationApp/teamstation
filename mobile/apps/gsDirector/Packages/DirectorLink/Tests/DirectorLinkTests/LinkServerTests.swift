@@ -17,7 +17,27 @@ final class CountLog: @unchecked Sendable {
 /// A stand-in for GS Director behind the service.
 actor FakeBackend: DistributorBackend {
   var isRecording = false
+  var isStreaming = false
   var liveRecordingID: Int64?
+  private(set) var exportLock: UUID?
+
+  func setStreaming(_ value: Bool) { isStreaming = value }
+
+  func beginExport() throws -> UUID {
+    if isRecording { throw DistributorRefusal.recording }
+    if isStreaming { throw DistributorRefusal.streaming }
+    let id = UUID()
+    exportLock = id
+    return id
+  }
+
+  func renewExport(_ id: UUID) -> Bool {
+    exportLock == id
+  }
+
+  func endExport(_ id: UUID) {
+    if exportLock == id { exportLock = nil }
+  }
   private(set) var deleted: [Int64] = []
   private(set) var jobs: [JobRequest] = []
   private(set) var cancelled: [UUID] = []
@@ -187,6 +207,30 @@ struct LinkServerTests {
       try await Task.sleep(for: .milliseconds(20))
     }
     #expect(counts.values.last == 0)
+  }
+
+  @Test("The export lock is granted when idle, refused while recording or streaming, and handed back")
+  func exportLock() async throws {
+    let rig = try await rig()
+    defer { rig.stop() }
+    let (status, data, _) = try await rig.send("POST", "/v1/export-lock")
+    #expect(status == 200)
+    let lock = try JSONDecoder().decode(ExportLockGranted.self, from: data).lockID
+    #expect(await rig.backend.exportLock == lock)
+    #expect(try await rig.send("PUT", "/v1/export-lock/\(lock.uuidString)").status == 200)
+    #expect(try await rig.send("PUT", "/v1/export-lock/\(UUID().uuidString)").status == 404)
+    #expect(try await rig.send("DELETE", "/v1/export-lock/\(lock.uuidString)").status == 200)
+    #expect(await rig.backend.exportLock == nil)
+
+    await rig.backend.setRecording(true)
+    let recording = try await rig.send("POST", "/v1/export-lock")
+    #expect(recording.status == 409)
+    #expect(String(decoding: recording.data, as: UTF8.self).contains("recording"))
+    await rig.backend.setRecording(false)
+    await rig.backend.setStreaming(true)
+    let streaming = try await rig.send("POST", "/v1/export-lock")
+    #expect(streaming.status == 409)
+    #expect(String(decoding: streaming.data, as: UTF8.self).contains("streaming"))
   }
 
   @Test("Hello names the Director and this launch")

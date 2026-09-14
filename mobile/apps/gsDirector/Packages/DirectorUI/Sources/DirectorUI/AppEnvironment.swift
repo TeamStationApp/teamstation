@@ -143,7 +143,18 @@ public final class AppEnvironment {
   }
   /// GS Distributor is attached by cable and talking to this Director.
   public private(set) var isMacConnected = false
-  public private(set) var isStreaming = false
+  /// GS Distributor's export lease: while it is held, recording and streaming wait, and it is not
+  /// granted while either is on. Dropped when the Mac hands it back, goes away or stops renewing it.
+  private var exportLease = ExportLease()
+  private var exportLeaseWatch: Task<Void, Never>?
+  /// The export GS Distributor is running, if any.
+  public var distributorExport: UUID? { exportLease.id }
+  public private(set) var isStreaming = false {
+    didSet {
+      guard isStreaming != oldValue else { return }
+      distributorEvents.publish(.streamingStateChanged(isStreaming: isStreaming))
+    }
+  }
   public private(set) var streamMegabitsPerSecond = 0.0
   public private(set) var streamDroppedPackets: UInt64 = 0
   public let pictureInPicture = ProgramPictureInPicture()
@@ -1599,6 +1610,10 @@ public final class AppEnvironment {
   /// otherwise a single failure strands live writers that `stopRecording` would refuse to touch.
   public func startRecording() {
     guard !isRecording else { return }
+    guard distributorExport == nil else {
+      statusMessage = "GS Distributor is exporting — record once it has finished"
+      return
+    }
     let now = clock.now
     let recordingID: Int64
     do {
@@ -1673,6 +1688,10 @@ public final class AppEnvironment {
 
   public func startStreaming() {
     guard !isStreaming else { return }
+    guard distributorExport == nil else {
+      statusMessage = "GS Distributor is exporting — stream once it has finished"
+      return
+    }
     streamErrorGate.reset()
     isStreaming = true
     beginLiveSession(streaming: true)
@@ -4264,7 +4283,14 @@ public final class AppEnvironment {
     guard linkServer == nil else { return }
     let service = distributorService
     let server = LinkServer(connectionsChanged: { [weak self] count in
-      Task { @MainActor in self?.isMacConnected = count > 0 }
+      Task { @MainActor in
+        self?.isMacConnected = count > 0
+        // A Mac that went away mid-export cannot hand the lock back.
+        if count == 0 {
+          self?.exportLease.releaseAll()
+          self?.clearExportRefusal()
+        }
+      }
     }) { await service.handle($0) }
     linkServer = server
     Task { [weak self] in
@@ -4292,6 +4318,48 @@ public final class AppEnvironment {
     server.stop()
     linkServer = nil
     isMacConnected = false
+    exportLease.releaseAll()
+  }
+
+  /// GS Distributor starts an export: refused while recording or streaming, and from here until it
+  /// ends neither can start. One Mac at a time; a new export replaces an old one's lease.
+  func beginDistributorExport() throws -> UUID {
+    if isRecording { throw DistributorRefusal.recording }
+    if isStreaming { throw DistributorRefusal.streaming }
+    let id = exportLease.grant()
+    watchExportLease()
+    return id
+  }
+
+  func renewDistributorExport(_ id: UUID) -> Bool {
+    exportLease.renew(id)
+  }
+
+  func endDistributorExport(_ id: UUID) {
+    exportLease.release(id)
+    clearExportRefusal()
+  }
+
+  /// A "record once it has finished" banner outliving the export would say something no longer
+  /// true.
+  private func clearExportRefusal() {
+    guard !exportLease.isHeld, statusMessage?.hasPrefix("GS Distributor is exporting") == true else { return }
+    statusMessage = nil
+  }
+
+  /// Drops the lease if the Mac stops renewing it, so a Mac that crashed or hung mid-export never
+  /// leaves the Director unable to record.
+  private func watchExportLease() {
+    guard exportLeaseWatch == nil else { return }
+    exportLeaseWatch = Task { [weak self] in
+      while let self, exportLease.isHeld {
+        try? await Task.sleep(for: .seconds(5))
+        if exportLease.expire() {
+          statusMessage = "GS Distributor stopped answering — recording and streaming are allowed again"
+        }
+      }
+      self?.exportLeaseWatch = nil
+    }
   }
 
   private func restartLinkServer() {

@@ -45,6 +45,9 @@ actor ArchiveBackend: DistributorBackend {
 
   func startJob(_ request: JobRequest, id: UUID, events: EventHub) throws {}
   func cancelJob(_ id: UUID) {}
+  /// Never recording or streaming, so the lock is always there to take.
+  func beginExport() -> UUID { UUID() }
+  func endExport(_ id: UUID) {}
 }
 
 @Suite("Stitching on the Mac", .serialized)

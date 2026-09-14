@@ -19,6 +19,8 @@ public struct Hello: Codable, Equatable, Sendable {
   /// Stable per install of GS Director.
   public var directorID: UUID
   public var isRecording: Bool
+  /// Streaming, like recording, keeps GS Distributor from exporting.
+  public var isStreaming: Bool
   /// New every time GS Director launches. A different one means the Director restarted, and any
   /// job the Mac handed it is gone.
   public var sessionID: UUID
@@ -29,6 +31,7 @@ public struct Hello: Codable, Equatable, Sendable {
     protocolVersion: Int = DistributorProtocol.version,
     directorID: UUID,
     isRecording: Bool,
+    isStreaming: Bool = false,
     sessionID: UUID
   ) {
     self.deviceName = deviceName
@@ -36,7 +39,31 @@ public struct Hello: Codable, Equatable, Sendable {
     self.protocolVersion = protocolVersion
     self.directorID = directorID
     self.isRecording = isRecording
+    self.isStreaming = isStreaming
     self.sessionID = sessionID
+  }
+
+  /// A Director from before streaming was reported says nothing about it; that reads as not
+  /// streaming rather than as a Director that cannot be understood.
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    deviceName = try container.decode(String.self, forKey: .deviceName)
+    directorVersion = try container.decode(String.self, forKey: .directorVersion)
+    protocolVersion = try container.decode(Int.self, forKey: .protocolVersion)
+    directorID = try container.decode(UUID.self, forKey: .directorID)
+    isRecording = try container.decode(Bool.self, forKey: .isRecording)
+    isStreaming = try container.decodeIfPresent(Bool.self, forKey: .isStreaming) ?? false
+    sessionID = try container.decode(UUID.self, forKey: .sessionID)
+  }
+}
+
+/// GS Director's promise to record and stream nothing while GS Distributor exports, until the Mac
+/// hands it back or goes away.
+public struct ExportLockGranted: Codable, Equatable, Sendable {
+  public var lockID: UUID
+
+  public init(lockID: UUID) {
+    self.lockID = lockID
   }
 }
 
@@ -154,6 +181,7 @@ public enum DistributorEvent: Codable, Equatable, Sendable {
   case jobFailed(jobID: UUID, reason: String)
   case recordingsChanged
   case recordingStateChanged(isRecording: Bool)
+  case streamingStateChanged(isStreaming: Bool)
   /// The Director is leaving the foreground; its listener goes down until it returns.
   case directorBackgrounded
 }

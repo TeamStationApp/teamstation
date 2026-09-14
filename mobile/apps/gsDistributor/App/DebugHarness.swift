@@ -223,6 +223,7 @@ final class DebugHarness {
     return [
       "link": link,
       "isRecording": model.isRecording,
+      "isStreaming": model.isStreaming,
       "devices": model.devices.map { [ "serial": $0.serial, "deviceID": $0.deviceID ] },
       "recordings": model.recordings.map { recording in
         [

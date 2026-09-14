@@ -118,8 +118,10 @@ public final class DistributionRun {
     reprocess: Bool = false,
     combined: CombinedPlan? = nil,
     upload: UploadPlan? = nil,
+    lockRenewal: Duration = .seconds(10),
     iPadMayStitch: @escaping @MainActor () -> Bool
   ) {
+    self.lockRenewal = lockRenewal
     self.recording = recording
     self.tracks = tracks
     self.combined = combined
@@ -153,6 +155,18 @@ public final class DistributionRun {
   /// True once `cancel()` was called.
   public private(set) var wasCancelled = false
   private var work: Task<Void, Never>?
+  /// How often the export lock is renewed. GS Director drops one left unrenewed for half a minute.
+  private let lockRenewal: Duration
+  /// GS Director dropped the export lock, so it may record or stream at any moment.
+  private var lostLock = false
+
+  /// This Mac stopped renewing the lock for long enough that GS Director dropped it (a Mac that was
+  /// asleep or hung). The export stops rather than go on alongside a recording or a stream.
+  private func lockLost() {
+    guard !isFinished, !wasCancelled else { return }
+    lostLock = true
+    cancel()
+  }
 
   public func run() async {
     // Work the user asked for: macOS neither naps the app nor lets the Mac idle to sleep while an
@@ -179,14 +193,15 @@ public final class DistributionRun {
   }
 
   private func markCancelled() {
+    let reason = lostLock ? "Stopped: GS Director no longer held off recording" : "Cancelled"
     for track in tracks where !(states[track]?.isFinal ?? false) {
-      states[track] = .failed("Cancelled")
+      states[track] = .failed(reason)
     }
-    if let state = combinedState, !state.isFinal { combinedState = .failed("Cancelled") }
+    if let state = combinedState, !state.isFinal { combinedState = .failed(reason) }
     for (track, state) in uploadStates {
       switch state {
       case .done, .failed: continue
-      default: uploadStates[track] = .failed("Cancelled")
+      default: uploadStates[track] = .failed(reason)
       }
     }
   }
@@ -200,13 +215,57 @@ public final class DistributionRun {
       .appendingPathComponent("gsDistributor-\(UUID().uuidString)", isDirectory: true)
     defer { try? FileManager.default.removeItem(at: scratch) }
 
+    // GS Director records and streams nothing while the export works with the iPad, and grants
+    // none of it while it does either. Handed back once every file is saved; the combined video and
+    // the uploads need only this Mac.
+    let lock: UUID
+    do {
+      lock = try await connection.beginExport()
+    } catch {
+      for track in tracks { states[track] = .failed("\(error)") }
+      if combinedState != nil { combinedState = .failed("\(error)") }
+      return
+    }
+    var released = false
+    let connection = self.connection
+    // Renewed while the export works with the iPad: GS Director drops a lock left unrenewed, so a
+    // Mac that dies mid-export cannot keep it from recording.
+    let every = lockRenewal
+    let renewing = Task.detached { [weak self] in
+      while !Task.isCancelled {
+        try? await Task.sleep(for: every)
+        guard !Task.isCancelled else { return }
+        // A refusal, not a failed request: the lock is gone, and the export must not go on.
+        if let held = try? await connection.renewExport(lock), !held {
+          await self?.lockLost()
+          return
+        }
+      }
+    }
+    // Handed back from a task of its own: a cancelled export's task would have URLSession refuse
+    // the request, and GS Director would stay locked until the lease ran out.
+    func release() async {
+      guard !released else { return }
+      released = true
+      renewing.cancel()
+      await Task.detached { try? await connection.endExport(lock) }.value
+    }
+    defer {
+      renewing.cancel()
+      if !released { Task.detached { try? await connection.endExport(lock) } }
+    }
+
     let window: ExportWindow
     do {
       try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
       try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
       window = try await connection.manifest(recordingID: recording.id, tracks: []).window
     } catch {
-      for track in tracks { states[track] = .failed("\(error)") }
+      // A cancelled export's requests fail too; the cancellation says why, not the request.
+      if !wasCancelled {
+        for track in tracks { states[track] = .failed("\(error)") }
+      }
+      await release()
       return
     }
 
@@ -234,6 +293,7 @@ public final class DistributionRun {
       group.addTask { await self.iPadLoop(iPad, first: firstForIPad, window: window) }
     }
     for download in downloads { await download.value }
+    await release()
     if let combined, !wasCancelled { await renderCombined(combined) }
     if let upload, !wasCancelled { await uploadAll(upload) }
   }
@@ -366,7 +426,7 @@ public final class DistributionRun {
         stitchedBy[current] = .mac
         states[current] = .done(target)
       } catch {
-        states[current] = .failed("\(error)")
+        if !wasCancelled { states[current] = .failed("\(error)") }
       }
       plan.finish(current)
     }
@@ -424,7 +484,7 @@ public final class DistributionRun {
         }
         self?.states[track] = .done(target)
       } catch {
-        self?.states[track] = .failed("\(error)")
+        if self?.wasCancelled == false { self?.states[track] = .failed("\(error)") }
       }
     })
   }

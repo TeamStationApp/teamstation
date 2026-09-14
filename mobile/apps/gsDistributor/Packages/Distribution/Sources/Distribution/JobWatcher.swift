@@ -38,7 +38,7 @@ public actor JobWatcher {
       resolve(id, .failure(.iPadFailed(reason)))
     case .directorBackgrounded:
       abandonAll()
-    case .recordingsChanged, .recordingStateChanged:
+    case .recordingsChanged, .recordingStateChanged, .streamingStateChanged:
       break
     }
   }
