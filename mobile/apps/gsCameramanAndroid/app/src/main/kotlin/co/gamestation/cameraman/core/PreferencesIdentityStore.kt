@@ -1,6 +1,10 @@
 package co.gamestation.cameraman.core
 
+import android.annotation.SuppressLint
 import android.content.Context
+import android.content.pm.PackageManager
+import android.provider.Settings
+import android.util.Log
 
 /**
  * The Android counterpart of the iOS build's Keychain store.
@@ -33,7 +37,34 @@ class PreferencesIdentityStore(
 
     override fun setString(value: String, key: String) {
         // Committed rather than applied: the identity is written once on first launch, and a
-        // process killed before an async flush would come back as a different camera.
-        preferences.edit().putString(key, value).commit()
+        // process killed before an async flush would come back as a different camera. A commit that
+        // fails is logged rather than retried here, because the UUID is derived from [installSeed]:
+        // the next launch mints the same one and saves it then.
+        if (!preferences.edit().putString(key, value).commit()) {
+            Log.e(tag, "could not save $key; the next launch derives the same UUID and saves it again")
+        }
+    }
+
+    companion object {
+        private const val tag = "CameramanIdentity"
+
+        /**
+         * Fixed for the life of this install and different on every other one: the app-scoped
+         * `ANDROID_ID` (one per signing key, user and handset) and the moment this package was
+         * first installed, which an update keeps and a reinstall replaces. Null when either cannot
+         * be read, and the provider then draws at random.
+         */
+        @SuppressLint("HardwareIds") // App-scoped since Android 8, and hashed before it is sent.
+        fun installSeed(context: Context): String? {
+            val androidID = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
+                ?.takeIf { it.isNotBlank() }
+                ?: return null
+            val installedAt = runCatching {
+                context.packageManager
+                    .getPackageInfo(context.packageName, PackageManager.PackageInfoFlags.of(0))
+                    .firstInstallTime
+            }.getOrNull() ?: return null
+            return "${context.packageName}:$androidID:$installedAt"
+        }
     }
 }

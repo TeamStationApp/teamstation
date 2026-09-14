@@ -65,18 +65,38 @@ class DeviceIdentity(val uuid: String, rawName: String) {
         }
 
         fun generatedUUID(): String = UUID.randomUUID().toString().lowercase(Locale.US)
+
+        /**
+         * A name-based (version 3) UUID from [seed]. The same seed always gives the same UUID, and
+         * the seed itself cannot be read back out of the CNAME it ends up in.
+         */
+        fun derivedUUID(seed: String): String =
+            UUID.nameUUIDFromBytes("co.gamestation.cameraman.identity:$seed".toByteArray(Charsets.UTF_8))
+                .toString()
+                .lowercase(Locale.US)
     }
 }
 
-/** Loads the identity, creating and persisting it on first launch. */
-class DeviceIdentityProvider(private val store: IdentityStore) {
+/**
+ * Loads the identity, creating and persisting it on first launch.
+ *
+ * [installSeed] is fixed for the life of this install and differs on every other install and
+ * handset. When there is one, the first UUID is derived from it rather than drawn at random, so an
+ * install whose first save never reaches disk mints the same UUID again on the next launch instead
+ * of announcing a different camera every time. A UUID once handed out therefore stays, whether or
+ * not the save that should have kept it succeeded.
+ */
+class DeviceIdentityProvider(
+    private val store: IdentityStore,
+    private val installSeed: String? = null
+) {
 
     fun load(): DeviceIdentity {
         val stored = store.string(uuidKey)
         val uuid = if (stored != null && isWellFormed(stored)) {
             stored
         } else {
-            DeviceIdentity.generatedUUID().also { store.setString(it, uuidKey) }
+            mintedUUID().also { store.setString(it, uuidKey) }
         }
         val name = store.string(nameKey) ?: DeviceIdentity.defaultName(uuid)
         return DeviceIdentity(uuid, name)
@@ -88,6 +108,10 @@ class DeviceIdentityProvider(private val store: IdentityStore) {
         store.setString(normalised, nameKey)
         return DeviceIdentity(identity.uuid, normalised)
     }
+
+    private fun mintedUUID(): String =
+        installSeed?.takeIf { it.isNotBlank() }?.let { DeviceIdentity.derivedUUID(it) }
+            ?: DeviceIdentity.generatedUUID()
 
     companion object {
         const val uuidKey = "co.gamestation.cameraman.identity.uuid"

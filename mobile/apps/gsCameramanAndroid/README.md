@@ -60,6 +60,10 @@ clears app storage and every Keystore entry an app owns on uninstall and offers 
 that outlives it. A reinstalled Cameraman is a new camera to GS Director and has to be re-bound to
 its tile. Updates and reboots are fine; only uninstall is not. See `PreferencesIdentityStore`.
 
+Within one install the UUID cannot drift, even if saving it fails. The first one is derived from the
+install — the app-scoped `ANDROID_ID` and the first-install time — so a launch whose save never
+reached disk is followed by one that mints the same UUID and saves it then.
+
 ### Rotation is done on the GPU, and it had to be measured
 
 iOS sets `videoRotationAngle` on the capture connection and AVFoundation does the work. Camera2 has
