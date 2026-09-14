@@ -69,6 +69,14 @@ public final class DirectorConnection: Sendable {
     return try await get("/v1/recordings/\(recordingID)/manifest?tracks=\(query)")
   }
 
+  /// One JPEG frame of `camera` about `seconds` into the recording, for previews.
+  public func still(recordingID: Int64, camera: SourceID, at seconds: Double = 10) async throws -> Data {
+    let id = camera.rawValue.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? camera.rawValue
+    let (status, data) = try await send("GET", "/v1/recordings/\(recordingID)/still?camera=\(id)&at=\(seconds)")
+    guard status == 200 else { throw Self.failure(status, data) }
+    return data
+  }
+
   public func startJob(_ job: JobRequest) async throws -> UUID {
     let (status, data) = try await send("POST", "/v1/jobs", body: try JSONEncoder().encode(job))
     guard status == 200 else { throw Self.failure(status, data) }

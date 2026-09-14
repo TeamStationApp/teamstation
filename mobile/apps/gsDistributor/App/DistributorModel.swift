@@ -1,4 +1,5 @@
 import DirectorClient
+import DirectorCore
 import Distribution
 import DistributorWire
 import Foundation
@@ -28,6 +29,7 @@ final class DistributorModel {
   var problem: String?
   /// GS Distributor's settings, read from and saved to the iPad. Nil until GS Director answers.
   private(set) var settings: DistributorSettings?
+
 
   /// This Mac's download folder, as the iPad remembers it.
   var destination: URL? {
@@ -121,7 +123,12 @@ final class DistributorModel {
 
   /// Exports `tracks` of `recording` into this Mac's folder, the Mac and the iPad stitching side by
   /// side.
-  func export(_ recording: RecordingListing, tracks: [Track], reprocess: Bool = false) {
+  func export(
+    _ recording: RecordingListing,
+    tracks: [Track],
+    reprocess: Bool = false,
+    combined: CombinedPlan? = nil
+  ) {
     guard !isExporting, let connection else { return }
     guard let destination else {
       problem = "Choose a folder to save into in Settings first."
@@ -133,7 +140,8 @@ final class DistributorModel {
       connection: connection,
       jobs: jobs,
       destination: destination,
-      reprocess: reprocess
+      reprocess: reprocess,
+      combined: combined
     ) { [weak self] in
       guard let self else { return false }
       return self.connection != nil && !self.isRecording
@@ -143,6 +151,11 @@ final class DistributorModel {
       await run.run()
       await reload()
     }
+  }
+
+  /// One frame of a camera, for the combined video's previews; nil when the iPad has none.
+  func still(recordingID: Int64, camera: SourceID, at seconds: Double) async -> Data? {
+    try? await connection?.still(recordingID: recordingID, camera: camera, at: seconds)
   }
 
   /// Puts away a finished export's progress.

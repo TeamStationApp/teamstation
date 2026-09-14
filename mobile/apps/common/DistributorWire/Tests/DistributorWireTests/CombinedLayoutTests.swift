@@ -127,4 +127,64 @@ struct CombinedLayoutTests {
     #expect(CombinedGeometry.snapped(0.5075, travel: 400) == 0.5075)
     #expect(CombinedGeometry.snapped(1.4, travel: 400) == 1)
   }
+
+  /// A 1600 by 900 canvas: quadrants of 800 by 450.
+  static let screen = CGSize(width: 1600, height: 900)
+
+  static func drop(
+    _ camera: String,
+    pointer: CGPoint,
+    origin: CGPoint = .zero,
+    _ assignment: [String: Quadrant],
+    solo: SoloPlacement? = nil
+  ) -> (assignment: [String: Quadrant], solo: SoloPlacement?) {
+    CombinedGeometry.drop(camera, pointer: pointer, origin: origin, assignment: assignment, solo: solo, canvas: screen)
+  }
+
+  @Test("With four cameras, one let go over another swaps with it, and one let go at home stays")
+  func dropSwapsFour() {
+    let four: [String: Quadrant] = [ "a": .topLeading, "b": .topTrailing, "c": .bottomLeading, "d": .bottomTrailing ]
+    let swapped = Self.drop("a", pointer: CGPoint(x: 1200, y: 700), four)
+    #expect(swapped.assignment == [ "a": .bottomTrailing, "b": .topTrailing, "c": .bottomLeading, "d": .topLeading ])
+    #expect(swapped.solo == nil)
+    #expect(Self.drop("b", pointer: CGPoint(x: 900, y: 100), four).assignment == four)
+    // Let go past the canvas's edge, it counts as the nearest quadrant.
+    #expect(Self.drop("b", pointer: CGPoint(x: -50, y: 2000), four).assignment["b"] == .bottomLeading)
+  }
+
+  @Test("With three cameras, any of them can go into the empty quadrant or swap with another")
+  func dropMovesThree() {
+    let leftPair: [String: Quadrant] = [ "a": .topLeading, "b": .bottomLeading, "c": .topTrailing ]
+    // a, diagonal to the empty quadrant, goes into it; b is now beside the empty quadrant, centred.
+    let moved = Self.drop("a", pointer: CGPoint(x: 1200, y: 700), leftPair)
+    #expect(moved.assignment == [ "a": .bottomTrailing, "b": .bottomLeading, "c": .topTrailing ])
+    #expect(moved.solo == SoloPlacement(camera: "b", axis: .vertical, position: 0.5))
+    // b, beside the empty quadrant in its row, let go over a in the other row: they swap.
+    let swapped = Self.drop("b", pointer: CGPoint(x: 400, y: 100), leftPair)
+    #expect(swapped.assignment == [ "a": .bottomLeading, "b": .topLeading, "c": .topTrailing ])
+  }
+
+  @Test("With three cameras, the one beside the empty quadrant let go in its own column slides, snapping to centre")
+  func dropSlidesThree() {
+    let leftPair: [String: Quadrant] = [ "a": .topLeading, "b": .bottomLeading, "c": .topTrailing ]
+    let centred = Self.drop("c", pointer: CGPoint(x: 1200, y: 500), origin: CGPoint(x: 800, y: 226), leftPair)
+    #expect(centred.assignment == leftPair)
+    #expect(centred.solo == SoloPlacement(camera: "c", axis: .vertical, position: 0.5))
+    let partWay = Self.drop("c", pointer: CGPoint(x: 1200, y: 600), origin: CGPoint(x: 800, y: 300), leftPair)
+    #expect(partWay.solo?.position == 300.0 / 450.0)
+    let allTheWay = Self.drop("c", pointer: CGPoint(x: 1200, y: 890), origin: CGPoint(x: 800, y: 700), leftPair)
+    #expect(allTheWay.solo == SoloPlacement(camera: "c", axis: .vertical, position: 1))
+    // b shares its row with the empty quadrant, so it slides across.
+    let across = Self.drop("b", pointer: CGPoint(x: 900, y: 700), origin: CGPoint(x: 400, y: 450), leftPair)
+    #expect(across.solo == SoloPlacement(camera: "b", axis: .horizontal, position: 0.5))
+  }
+
+  @Test("With two cameras, one let go over the other swaps sides with it")
+  func dropSwapsTwo() {
+    let pair: [String: Quadrant] = [ "x": .bottomTrailing, "y": .topLeading ]
+    let swapped = Self.drop("y", pointer: CGPoint(x: 1200, y: 450), pair)
+    let frames = CombinedGeometry.frames(assignment: swapped.assignment, solo: swapped.solo, canvas: Self.screen)
+    #expect(frames["y"]?.minX == 800)
+    #expect(frames["x"]?.minX == 0)
+  }
 }

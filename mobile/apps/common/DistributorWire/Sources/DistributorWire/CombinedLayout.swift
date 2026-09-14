@@ -239,6 +239,50 @@ public enum CombinedGeometry {
     return candidates.first.map { SoloPlacement(camera: $0.camera, axis: $0.axis, position: 0.5) }
   }
 
+  /// Where a camera dragged across the canvas lands when it is let go. `pointer` is where it was
+  /// let go and `origin` the dragged picture's top-left corner, both in `canvas`'s points.
+  ///
+  /// With three cameras, the one beside the empty quadrant let go in its own column (or row) slides
+  /// along it, snapping to the centre. Otherwise a camera let go over another swaps places with it,
+  /// and one let go anywhere else takes the quadrant under the pointer.
+  public static func drop(
+    _ camera: String,
+    pointer: CGPoint,
+    origin: CGPoint,
+    assignment: [String: Quadrant],
+    solo: SoloPlacement?,
+    canvas: CGSize
+  ) -> (assignment: [String: Quadrant], solo: SoloPlacement?) {
+    guard let from = assignment[camera], canvas.width > 0, canvas.height > 0 else { return (assignment, solo) }
+    let width = canvas.width / 2
+    let height = canvas.height / 2
+    let point = CGPoint(
+      x: Swift.min(Swift.max(pointer.x, 0), canvas.width - 0.001),
+      y: Swift.min(Swift.max(pointer.y, 0), canvas.height - 0.001)
+    )
+    let column = point.x < width ? 0 : 1
+    let row = point.y < height ? 0 : 1
+
+    if let lane = soloCandidates(assignment: assignment).first(where: { $0.camera == camera }),
+       lane.axis == .vertical ? column == from.column : row == from.row {
+      let travel = lane.axis == .vertical ? height : width
+      let offset = lane.axis == .vertical
+        ? (from.row == 0 ? origin.y : height - origin.y)
+        : (from.column == 0 ? origin.x : width - origin.x)
+      let position = snapped(Double(offset / travel), travel: Double(travel))
+      return (assignment, SoloPlacement(camera: camera, axis: lane.axis, position: position))
+    }
+
+    let shown = frames(assignment: assignment, solo: solo, canvas: canvas)
+    let target = shown.first { $0.key != camera && $0.value.contains(point) }.flatMap { assignment[$0.key] }
+      ?? Quadrant.at(row: row, column: column)
+    guard target != from else { return (assignment, solo) }
+    var next = assignment
+    if let occupant = next.first(where: { $0.value == target })?.key { next[occupant] = from }
+    next[camera] = target
+    return (next, next.count == 3 ? effectiveSolo(assignment: next, saved: solo) : nil)
+  }
+
   /// Snaps a solo position to the centre when it is within `threshold` points of it, `travel`
   /// being how many on-screen points the whole slide covers. Exactly `threshold` away still snaps;
   /// the tolerance keeps floating-point rounding from deciding that.
