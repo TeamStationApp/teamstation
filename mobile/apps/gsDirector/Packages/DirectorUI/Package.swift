@@ -18,7 +18,9 @@ let package = Package(
     .package(path: "../DirectorPipeline"),
     .package(path: "../DirectorDVR"),
     .package(path: "../DirectorRTMP"),
-    .package(path: "../DirectorTestHarness")
+    .package(path: "../DirectorTestHarness"),
+    .package(path: "../DirectorLink"),
+    .package(path: "../../../common/DistributorWire")
   ],
   targets: [
     .target(
@@ -34,7 +36,9 @@ let package = Package(
         "DirectorPipeline",
         "DirectorDVR",
         "DirectorRTMP",
-        "DirectorTestHarness"
+        "DirectorTestHarness",
+        "DirectorLink",
+        "DistributorWire"
       ],
       swiftSettings: [ .swiftLanguageMode(.v6) ],
       linkerSettings: [ .linkedFramework("GameController") ]

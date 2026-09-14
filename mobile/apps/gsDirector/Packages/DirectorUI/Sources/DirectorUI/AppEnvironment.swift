@@ -11,6 +11,8 @@ import DirectorPipeline
 import DirectorRTMP
 import DirectorSources
 import DirectorTestHarness
+import DirectorLink
+import DistributorWire
 import UIKit
 
 /// One-shot latch, so the replay latency is recorded for the first decoded frame and not
@@ -129,7 +131,15 @@ public final class AppEnvironment {
   /// concerned.
   private var rowEndpoints: [SourceID: CameraEndpoint] = [:]
   public private(set) var snapshot = TelemetrySnapshot()
-  public private(set) var isRecording = false
+  public private(set) var isRecording = false {
+    didSet {
+      guard isRecording != oldValue else { return }
+      // A take starting or stopping changes what GS Distributor may ask the iPad to stitch, and the
+      // recordings it lists.
+      distributorEvents.publish(.recordingStateChanged(isRecording: isRecording))
+      distributorEvents.publish(.recordingsChanged)
+    }
+  }
   public private(set) var isStreaming = false
   public private(set) var streamMegabitsPerSecond = 0.0
   public private(set) var streamDroppedPackets: UInt64 = 0
@@ -242,6 +252,22 @@ public final class AppEnvironment {
   private let configStore: ConfigStore
   private let stateDumper = StateDumper()
   private var controlServer: ControlServer?
+  /// GS Distributor's way in: a loopback server the Mac reaches over the cable.
+  private var linkServer: LinkServer?
+  /// What GS Distributor hears on its event stream; the app publishes its own changes here.
+  private let distributorEvents = EventHub()
+  /// One per launch, so `Hello.sessionID` changes only when the Director restarts; the listener
+  /// in front of it is replaced every time the app comes back to the foreground.
+  @ObservationIgnored
+  private lazy var distributorService: DistributorService = {
+    let roots = FileRoots(.standard)
+    return DistributorService(
+      backend: DistributorLinkBackend(environment: self, index: index, exporter: exporter, roots: roots),
+      roots: roots,
+      settings: DistributorSettingsStore(),
+      events: distributorEvents
+    )
+  }()
 
   private var discovery: SourceDiscovery?
   private var writers: [SourceID: SegmentWriter] = [:]
@@ -454,6 +480,7 @@ public final class AppEnvironment {
     startDiscovery()
     startPolling()
     startControlServer()
+    startLinkServer()
     ensureProductionReady()
     await syncEnabledSources()
     // After the cameras, because the stream carries the programme composite and there is nothing
@@ -1288,6 +1315,7 @@ public final class AppEnvironment {
   public func handleForeground() {
     isInBackground = false
     syncLiveSessionPresentation()
+    restartLinkServer()
   }
 
   public func handleInactive() {
@@ -1308,6 +1336,9 @@ public final class AppEnvironment {
       publishLiveSessionTelemetry()
       return
     }
+    // Suspended, iOS leaves a listener accepting connections it never answers, and it does not
+    // recover; so it goes down here and comes back in `handleForeground`.
+    stopLinkServer()
     await prepareForSuspension()
     router.audioPlayer.stop()
     pictureInPicture.tearDown()
@@ -1876,6 +1907,9 @@ public final class AppEnvironment {
         try? index.setProgramFilename(names.joined(separator: ","), for: recordingID)
       }
       try? index.endRecording(recordingID, at: endedAt)
+      // The take stopped being live when recording stopped, but only now has an end: without this
+      // GS Distributor keeps the length it read before, and counts it up as if still recording.
+      distributorEvents.publish(.recordingsChanged)
     }
     recordingID = nil
     programEncoder.setAnchorRecording(nil)
@@ -3575,6 +3609,7 @@ public final class AppEnvironment {
     } catch {
       statusMessage = "Delete failed: \(error)"
     }
+    distributorEvents.publish(.recordingsChanged)
   }
 
   public func recordingCameraName(for sourceID: SourceID) -> String {
@@ -4214,6 +4249,47 @@ public final class AppEnvironment {
       return data
     }
     return Data(#"{"ok":true}"#.utf8)
+  }
+
+  // MARK: - GS Distributor
+
+  /// Starts the server GS Distributor reaches over the cable. It listens on loopback, where usbmuxd
+  /// delivers the Mac's connections, so nothing on the Wi-Fi can reach it.
+  private func startLinkServer() {
+    guard linkServer == nil else { return }
+    let service = distributorService
+    let server = LinkServer { await service.handle($0) }
+    linkServer = server
+    Task { [weak self] in
+      // A restart can find the port still held by the listener it replaced for a moment.
+      for attempt in 1...3 {
+        do {
+          try await server.start()
+          return
+        } catch {
+          guard let self, linkServer === server else { return }
+          if attempt == 3 {
+            linkServer = nil
+            statusMessage = "GS Distributor link unavailable: \(error.localizedDescription)"
+            return
+          }
+          try? await Task.sleep(for: .milliseconds(300))
+        }
+      }
+    }
+  }
+
+  private func stopLinkServer() {
+    guard let server = linkServer else { return }
+    distributorEvents.publish(.directorBackgrounded)
+    server.stop()
+    linkServer = nil
+  }
+
+  private func restartLinkServer() {
+    linkServer?.stop()
+    linkServer = nil
+    startLinkServer()
   }
 
   private func startControlServer() {

@@ -38,7 +38,8 @@ public protocol DistributorBackend: Sendable {
 
 /// The routes GS Distributor calls. See `DistributorWire` for the message types.
 public final class DistributorService: Sendable {
-  public let events = EventHub()
+  /// What `/v1/events` streams. Shared with GS Director, which publishes its own changes on it.
+  public let events: EventHub
   /// New every launch; `Hello.sessionID`.
   public let sessionID = UUID()
 
@@ -46,10 +47,16 @@ public final class DistributorService: Sendable {
   private let roots: FileRoots
   private let settings: DistributorSettingsStore
 
-  public init(backend: any DistributorBackend, roots: FileRoots, settings: DistributorSettingsStore) {
+  public init(
+    backend: any DistributorBackend,
+    roots: FileRoots,
+    settings: DistributorSettingsStore,
+    events: EventHub = EventHub()
+  ) {
     self.backend = backend
     self.roots = roots
     self.settings = settings
+    self.events = events
   }
 
   public func handle(_ request: HTTPRequest) async -> HTTPResponse {
