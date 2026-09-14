@@ -27,6 +27,9 @@ public enum ArchiveRemux {
   /// each file from its own start therefore produces files that disagree about when they begin,
   /// which is what leaves cameras cut together sitting frames apart. Skipping the head lets every
   /// camera's export start at the same instant.
+  ///
+  /// `progress` hears how far along the file is, from 0 to 1, and always hears 1 last. With sound
+  /// to render, that pass is the first half; the passthrough write is the rest.
   public static func concatenate(
     files: [URL],
     fileDurations: [TimeInterval],
@@ -34,12 +37,14 @@ public enum ArchiveRemux {
     headTrim: TimeInterval = 0,
     startWalls: [WallClock] = [],
     windowStart: WallClock? = nil,
-    destination: URL
+    destination: URL,
+    progress: (@Sendable (Double) -> Void)? = nil
   ) async throws {
     guard !files.isEmpty else { throw Error.empty }
     try? FileManager.default.removeItem(at: destination)
     if files.count == 1, targetDuration == nil, headTrim <= 0.001, startWalls.isEmpty {
       try FileManager.default.copyItem(at: files[0], to: destination)
+      progress?(1)
       return
     }
 
@@ -194,12 +199,18 @@ public enum ArchiveRemux {
     // the composition holds: see `renderSound`.
     let rendered = destination.deletingPathExtension().appendingPathExtension("sound.m4a")
     defer { try? FileManager.default.removeItem(at: rendered) }
-    if let sound = composition.tracks(withMediaType: .audio).first,
+    let soundTrack = composition.tracks(withMediaType: .audio).first
+    let writeShare = soundTrack == nil ? 1.0 : 0.5
+    let soundProgress: (@Sendable (Double) -> Void)? = progress.map { report in
+      { @Sendable fraction in report(fraction * (1 - writeShare)) }
+    }
+    if let sound = soundTrack,
        try await renderSound(
          of: composition,
          track: sound,
          length: CMTime(seconds: targetDuration ?? cursor.seconds, preferredTimescale: 600),
-         to: rendered
+         to: rendered,
+         progress: soundProgress
        ) {
       composition.removeTrack(sound)
       let asset = AVURLAsset(url: rendered)
@@ -233,11 +244,36 @@ public enum ArchiveRemux {
     }
     session.outputURL = destination
     session.outputFileType = .mp4
+    // The session reports its own progress only when asked, so it is asked four times a second.
+    let writeStart = 1 - writeShare
+    let watcher = progress.map { report in
+      let watched = WatchedExport(session)
+      return Task {
+        while !Task.isCancelled {
+          report(writeStart + writeShare * Double(watched.session.progress))
+          try? await Task.sleep(for: .milliseconds(250))
+        }
+      }
+    }
     await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
       session.exportAsynchronously { continuation.resume() }
     }
+    // Wait the watcher out, so no late reading lands after the final 1.
+    watcher?.cancel()
+    await watcher?.value
     guard session.status == .completed else {
       throw Error.exportFailed(session.error?.localizedDescription ?? "\(session.status)")
+    }
+    progress?(1)
+  }
+
+  /// Lets the progress watcher read the export session from its own task. It only ever reads
+  /// `progress`, which the session publishes for exactly that while it exports.
+  private final class WatchedExport: @unchecked Sendable {
+    let session: AVAssetExportSession
+
+    init(_ session: AVAssetExportSession) {
+      self.session = session
     }
   }
 
@@ -352,7 +388,8 @@ public enum ArchiveRemux {
     of composition: AVMutableComposition,
     track: AVMutableCompositionTrack,
     length: CMTime,
-    to url: URL
+    to url: URL,
+    progress: (@Sendable (Double) -> Void)?
   ) async throws -> Bool {
     guard length.seconds > 0.05 else { return false }
     // The rate and layout of the sound that was recorded, so the render neither resamples nor folds.
@@ -412,6 +449,7 @@ public enum ArchiveRemux {
     let bytesPerFrame = Int(2 * channels)
     let total = Int64((length.seconds * rate).rounded())
     var written: Int64 = 0
+    var reported = 0.0
     /// Appends `frames` of `bytes` (or of silence, when nil) at the running sample position.
     func append(_ bytes: Data?, frames: Int) async throws {
       var remaining = frames
@@ -458,6 +496,12 @@ public enum ArchiveRemux {
         written += Int64(chunk)
         remaining -= chunk
         offset += chunk
+        // A percent at a time: an hour of sound is some forty thousand chunks.
+        let fraction = total > 0 ? min(1, Double(written) / Double(total)) : 1
+        if fraction - reported >= 0.01 || (fraction >= 1 && reported < 1) {
+          reported = fraction
+          progress?(fraction)
+        }
       }
     }
 

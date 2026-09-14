@@ -154,7 +154,12 @@ public struct ExportService: Sendable {
               targetDuration: earliestEnd.map { max(0, $0 - latestStart) } ?? duration,
               startWalls: startWalls.count == sources.count ? startWalls : [],
               windowStart: startWalls.count == sources.count ? latestStart : nil,
-              destination: destination
+              destination: destination,
+              progress: progress.map { report in
+                { @Sendable fraction in
+                  report(ItemProgress(id: "program", name: "Primary output", fraction: fraction))
+                }
+              }
             )
           }
         }
@@ -194,7 +199,12 @@ public struct ExportService: Sendable {
           targetDuration: max(0, to - from),
           startWalls: assembly.startWalls,
           windowStart: from,
-          destination: destination
+          destination: destination,
+          progress: progress.map { report in
+            { @Sendable fraction in
+              report(ItemProgress(id: sourceID.rawValue, name: name, fraction: fraction))
+            }
+          }
         )
       }
       progress?(ItemProgress(id: sourceID.rawValue, name: name, fraction: 1))
