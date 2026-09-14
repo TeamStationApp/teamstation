@@ -164,6 +164,12 @@ public enum CombinedRenderer {
       }
     }
 
+    if Task.isCancelled {
+      reader.cancelReading()
+      writer.cancelWriting()
+      try? FileManager.default.removeItem(at: destination)
+      throw CancellationError()
+    }
     guard reader.status != .failed else {
       writer.cancelWriting()
       throw CombinedRenderError.unreadable(reader.error?.localizedDescription ?? "composition")
@@ -223,30 +229,34 @@ private final class Session: @unchecked Sendable {
   }
 
   /// Moves samples from the lane's output to its input whenever the writer asks for more, and
-  /// returns once the output runs dry or the writer stops. The writer's own callback drives it, so
-  /// nothing waits on a timer that macOS could stretch.
+  /// returns once the output runs dry, the writer stops, or the render is cancelled. The writer's
+  /// own callback drives it, so nothing waits on a timer that macOS could stretch.
   func pump(_ lane: Lane, onTime: @escaping @Sendable (CMTime) -> Void) async {
-    await withCheckedContinuation { continuation in
-      lane.wait(continuation)
-      lane.input.requestMediaDataWhenReady(on: DispatchQueue(label: "CombinedRenderer.pump")) { [self] in
-        while !lane.hasEnded && lane.input.isReadyForMoreMediaData {
-          guard writer.status == .writing else {
-            lane.end()
-            return
-          }
-          guard reader.status == .reading, let sample = lane.output.copyNextSampleBuffer() else {
-            lane.input.markAsFinished()
-            lane.end()
-            return
-          }
-          onTime(CMSampleBufferGetPresentationTimeStamp(sample))
-          guard lane.input.append(sample) else {
-            lane.input.markAsFinished()
-            lane.end()
-            return
+    await withTaskCancellationHandler {
+      await withCheckedContinuation { continuation in
+        lane.wait(continuation)
+        lane.input.requestMediaDataWhenReady(on: DispatchQueue(label: "CombinedRenderer.pump")) { [self] in
+          while !lane.hasEnded && lane.input.isReadyForMoreMediaData {
+            guard writer.status == .writing else {
+              lane.end()
+              return
+            }
+            guard reader.status == .reading, let sample = lane.output.copyNextSampleBuffer() else {
+              lane.input.markAsFinished()
+              lane.end()
+              return
+            }
+            onTime(CMSampleBufferGetPresentationTimeStamp(sample))
+            guard lane.input.append(sample) else {
+              lane.input.markAsFinished()
+              lane.end()
+              return
+            }
           }
         }
       }
+    } onCancel: {
+      lane.end()
     }
   }
 }

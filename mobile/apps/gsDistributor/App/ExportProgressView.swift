@@ -11,7 +11,7 @@ struct ExportProgressView: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
-      Text(run.isFinished ? "Export finished" : "Exporting")
+      Text(run.isFinished ? (run.wasCancelled ? "Export cancelled" : "Export finished") : "Exporting")
         .font(.title2.bold())
       Text(run.folder.path)
         .font(.caption)
@@ -41,6 +41,11 @@ struct ExportProgressView: View {
           }
         }
         Spacer()
+        if !run.isFinished {
+          Button("Cancel Export", role: .cancel) { run.cancel() }
+            .disabled(run.wasCancelled)
+            .accessibilityIdentifier("export-cancel")
+        }
         Button("Done") { done() }
           .keyboardShortcut(.defaultAction)
           .disabled(!run.isFinished)

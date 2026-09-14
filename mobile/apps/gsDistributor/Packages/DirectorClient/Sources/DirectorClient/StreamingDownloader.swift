@@ -5,6 +5,29 @@ import Foundation
 /// URLSession's download tasks resume only from their own resume data, and its async byte stream
 /// hands bytes over one at a time, far too slowly for a cable that moves 700 MB/s. A data task
 /// with a delegate gets the body in the chunks the network delivered them in.
+/// The data task of one download, so cancelling can reach it whenever it comes.
+private final class RunningTask: @unchecked Sendable {
+  private let lock = NSLock()
+  private var task: URLSessionTask?
+  private var cancelled = false
+
+  func adopt(_ task: URLSessionTask) {
+    let cancelNow = lock.withLock { () -> Bool in
+      self.task = task
+      return cancelled
+    }
+    if cancelNow { task.cancel() }
+  }
+
+  func cancel() {
+    let task = lock.withLock { () -> URLSessionTask? in
+      cancelled = true
+      return self.task
+    }
+    task?.cancel()
+  }
+}
+
 final class StreamingDownloader: NSObject, URLSessionDataDelegate, @unchecked Sendable {
   private let lock = NSLock()
   private var transfers: [Int: Transfer] = [:]
@@ -39,18 +62,26 @@ final class StreamingDownloader: NSObject, URLSessionDataDelegate, @unchecked Se
     let handle = try FileHandle(forWritingTo: partial)
 
     let outcome: Outcome
+    // Cancelling the caller's task cancels the transfer; what arrived stays in the partial file
+    // for the next attempt to resume from.
+    let running = RunningTask()
     do {
-      outcome = try await withCheckedThrowingContinuation { continuation in
-        let task = session.dataTask(with: request)
-        lock.withLock {
-          transfers[task.taskIdentifier] = Transfer(
-            handle: handle,
-            offset: have,
-            progress: progress,
-            continuation: continuation
-          )
+      outcome = try await withTaskCancellationHandler {
+        try await withCheckedThrowingContinuation { continuation in
+          let task = session.dataTask(with: request)
+          lock.withLock {
+            transfers[task.taskIdentifier] = Transfer(
+              handle: handle,
+              offset: have,
+              progress: progress,
+              continuation: continuation
+            )
+          }
+          task.resume()
+          running.adopt(task)
         }
-        task.resume()
+      } onCancel: {
+        running.cancel()
       }
     } catch {
       try? handle.close()
