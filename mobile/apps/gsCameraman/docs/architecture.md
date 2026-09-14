@@ -103,15 +103,18 @@ the SDP as `a=ssrc:<id> cname:<value>` per RFC 5576. The name is the SDP session
 SDES **NAME**. Nothing here is invented — RFC 3550 already defines exactly this pair, and Producer
 reads both without a private protocol.
 
-The UUID lives in the Keychain, so it survives deleting and reinstalling the app. That matters
-because it is what binds this camera to its tile, its archive and its telemetry on the Producer
-side: renaming a camera must not make it a new one.
+The UUID lives in a small JSON file in the app's own storage, `Application Support/Identity/
+identity.json` (`FileIdentityStore`). Nothing in it is secret. An update keeps it; deleting and
+reinstalling the app makes a new camera, as on Android. It is excluded from backups, so restoring one
+phone's backup onto another cannot leave two phones announcing the same UUID. The UUID is what binds
+this camera to its tile, its archive and its telemetry on the Producer side: renaming a camera must
+not make it a new one.
 
-UserDefaults holds a per-install copy. A Keychain read that fails for any reason other than "not
-found" (`errSecInteractionNotAllowed`, a missing entitlement) falls back to that copy and writes
-nothing, so a launch that cannot see the Keychain is still the same camera. A new UUID is minted only
-when both are empty. If the Keychain is unreadable and the copy is empty, the new UUID goes to the
-copy alone, and the Keychain's value wins again on the first launch that can read it.
+Builds before the file kept the UUID and name in the Keychain. While the file has no UUID, a launch
+reads that entry once and copies it into the file, so an updated phone is still the camera GS Director
+knows; nothing is ever written to the Keychain. A new UUID is minted only when neither holds one. A
+file that exists but cannot be read is never written over, and that launch runs on a stand-in UUID
+held in memory.
 
 ## Zoom and lenses
 

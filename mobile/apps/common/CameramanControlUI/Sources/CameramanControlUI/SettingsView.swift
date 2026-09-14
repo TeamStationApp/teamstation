@@ -402,7 +402,7 @@ struct SettingsView<Model: CameraControlling>: View {
   }
 
   /// Applied on the way out rather than on every keystroke: renaming per character would put a
-  /// dozen half-typed names into the Keychain and announce each of them over Bonjour.
+  /// dozen half-typed names on disk and announce each of them over Bonjour.
   ///
   /// The pipeline is left alone when nothing changed, so opening Settings to copy the URL does not
   /// restart the encoder.

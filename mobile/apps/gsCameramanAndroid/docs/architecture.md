@@ -101,8 +101,8 @@ SDES **NAME**. Nothing here is invented — RFC 3550 already defines exactly thi
 reads both without a private protocol.
 
 The UUID lives in app storage with `allowBackup="false"`, so it is device-only and readable after
-first unlock — two of the three properties the iOS Keychain gives it. It does **not** survive an
-uninstall; Android offers no store that does. See `PreferencesIdentityStore`.
+first unlock. Like the iOS build's identity file, it does **not** survive an uninstall. See
+`PreferencesIdentityStore`.
 
 ## Zoom and lenses
 
