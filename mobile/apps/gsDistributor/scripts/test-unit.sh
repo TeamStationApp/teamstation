@@ -10,7 +10,10 @@ APPS="$(cd "$DISTRIBUTOR_ROOT/.." && pwd)"
 PACKAGES=(
   "$DISTRIBUTOR_ROOT/Packages/UsbMux"
   "$DISTRIBUTOR_ROOT/Packages/DirectorClient"
+  "$DISTRIBUTOR_ROOT/Packages/Distribution"
+  "$DISTRIBUTOR_ROOT/Packages/CombinedVideo"
   "$APPS/common/DistributorWire"
+  "$APPS/common/PeerTubeKit"
   "$APPS/common/DirectorExport"
   "$APPS/gsDirector/Packages/DirectorLink"
 )
