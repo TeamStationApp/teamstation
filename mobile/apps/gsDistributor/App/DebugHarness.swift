@@ -125,21 +125,24 @@ final class DebugHarness {
         if item.hasPrefix("camera:") { return .camera(SourceID(String(item.dropFirst("camera:".count)))) }
         return nil
       }
-      // `combined=1` lays the combined video out from the saved layout, as the sheet would open it.
+      // `combined=1` puts every file of the export the combined video can take in (up to four, the
+      // primary output first), placed as the saved layout places them.
       var plan: CombinedPlan?
       if query["combined"] == "1" {
-        let cameras = recording.cameras.filter { camera in tracks.contains(.camera(camera.sourceID)) }
+        let candidates = CombinedCandidate.all(for: recording, tracks: tracks)
         let saved = model.settings?.combinedLayout ?? CombinedLayoutSettings()
-        let included = CombinedLayoutRules.initialInclusion(exported: cameras.map(\.name), saved: saved)
+        let included = Array(candidates.map(\.name).prefix(CombinedLayoutRules.maximumCameras))
         let assignment = CombinedLayoutRules.assign(included, saved: saved)
         let solo = included.count == 3 ? CombinedGeometry.effectiveSolo(assignment: assignment, saved: saved.solo) : nil
+        // curl's --data-urlencode sends spaces as `+`.
+        let audio = query["audio"].map { $0.replacingOccurrences(of: "+", with: " ") }
         plan = CombinedPlan(
-          cameras: cameras.filter { included.contains($0.name) }.map { (name: $0.name, sourceID: $0.sourceID) },
+          inputs: candidates.filter { included.contains($0.name) }.map { (name: $0.name, track: $0.track) },
           frames: CombinedGeometry.frames(assignment: assignment, solo: solo),
           audioCamera: CombinedLayoutRules.audioCamera(
             included: included,
             withAudio: Set(included),
-            saved: query["audio"] ?? saved.audioCamera
+            saved: audio ?? saved.audioCamera
           )
         )
       }

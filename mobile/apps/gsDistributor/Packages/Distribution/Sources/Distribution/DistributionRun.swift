@@ -48,15 +48,17 @@ public enum UploadState: Sendable, Equatable {
   case failed(String)
 }
 
-/// The combined video to make once the cameras' files are in: which cameras, where each goes on
-/// the 4K canvas, and whose sound it carries.
+/// The combined video to make once the export's files are in: which of them go in (cameras, and
+/// the primary output when it is chosen), where each goes on the 4K canvas, and whose sound it
+/// carries.
 public struct CombinedPlan: Sendable {
-  public var cameras: [(name: String, sourceID: SourceID)]
+  /// Each video by the name the layout knows it by, and the file of the export it comes from.
+  public var inputs: [(name: String, track: Track)]
   public var frames: [String: CGRect]
   public var audioCamera: String?
 
-  public init(cameras: [(name: String, sourceID: SourceID)], frames: [String: CGRect], audioCamera: String?) {
-    self.cameras = cameras
+  public init(inputs: [(name: String, track: Track)], frames: [String: CGRect], audioCamera: String?) {
+    self.inputs = inputs
     self.frames = frames
     self.audioCamera = audioCamera
   }
@@ -289,12 +291,12 @@ public final class DistributionRun {
   /// Every chosen camera at once, from the files this export just saved.
   private func renderCombined(_ plan: CombinedPlan) async {
     var inputs: [CombinedInput] = []
-    for camera in plan.cameras {
-      guard case .done(let url) = states[.camera(camera.sourceID)], let frame = plan.frames[camera.name] else {
-        combinedState = .failed("\(camera.name) did not export, so there is no combined video")
+    for source in plan.inputs {
+      guard case .done(let url) = states[source.track], let frame = plan.frames[source.name] else {
+        combinedState = .failed("\(source.name) did not export, so there is no combined video")
         return
       }
-      inputs.append(CombinedInput(camera: camera.name, url: url, frame: frame))
+      inputs.append(CombinedInput(camera: source.name, url: url, frame: frame))
     }
     let target = folder.appendingPathComponent(combinedFilename)
     if !reprocess, Self.size(of: target) > 0 {

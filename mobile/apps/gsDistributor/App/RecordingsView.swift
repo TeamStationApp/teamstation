@@ -145,10 +145,10 @@ struct RecordingsView: View {
         .background(.bar)
         .sheet(item: $step) { step in
           switch step {
-          case let .combine(recording, tracks, cameras):
+          case let .combine(recording, tracks, candidates):
             CombinedSheet(
               recording: recording,
-              cameras: cameras,
+              candidates: candidates,
               model: model,
               onContinue: { plan in proceed(recording, tracks: tracks, combined: plan) },
               onCancel: { self.step = nil }
@@ -176,7 +176,7 @@ struct RecordingsView: View {
   /// What an export asks before it starts.
   enum ExportStep: Identifiable {
     /// The combined video's layout.
-    case combine(recording: RecordingListing, tracks: [Track], cameras: [CameraListing])
+    case combine(recording: RecordingListing, tracks: [Track], candidates: [CombinedCandidate])
     /// The title and which files go to PeerTube.
     case upload(recording: RecordingListing, tracks: [Track], combined: CombinedPlan?)
 
@@ -188,13 +188,14 @@ struct RecordingsView: View {
     }
   }
 
-  /// With a combined video on and two or more cameras ticked, the layout comes first; with
-  /// PeerTube uploads on, the title next; then the export starts.
+  /// With a combined video on and two or more files ticked that it can take (cameras, and the
+  /// primary output), the layout comes first; with PeerTube uploads on, the title next; then the
+  /// export starts.
   private func startExport(_ recording: RecordingListing) {
     let tracks = chosenTracks(recording)
-    let cameras = recording.cameras.filter { includedCameras.contains($0.sourceID.rawValue) }
-    if model.settings?.createCombined == true, cameras.count >= 2 {
-      step = .combine(recording: recording, tracks: tracks, cameras: cameras)
+    let candidates = CombinedCandidate.all(for: recording, tracks: tracks)
+    if model.settings?.createCombined == true, candidates.count >= 2 {
+      step = .combine(recording: recording, tracks: tracks, candidates: candidates)
     } else {
       proceed(recording, tracks: tracks, combined: nil)
     }

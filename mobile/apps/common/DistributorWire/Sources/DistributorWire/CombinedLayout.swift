@@ -86,6 +86,9 @@ public struct CombinedLayoutSettings: Codable, Equatable, Sendable {
 
 public enum CombinedLayoutRules {
   public static let maximumCameras = 4
+  /// What the layout calls the primary output when it is one of the combined video's four. Its
+  /// place and sound are remembered under this name, as a camera's are under its own.
+  public static let primaryOutputName = "Primary output"
   /// Each camera is recorded at about 4 Mb/s, so the combined video gets that much per camera.
   public static let bitsPerSecondPerCamera = 4_000_000
 
