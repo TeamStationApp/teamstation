@@ -204,6 +204,7 @@ final class DebugHarness {
           ]
         },
         "combined": run.combinedState.map { Self.describe($0) } ?? NSNull(),
+        "combinedSound": run.combinedSound ?? NSNull(),
         "uploads": (run.upload?.tracks ?? []).map { track -> [String: Any] in
           [
             "title": run.upload?.title(for: track) ?? "",
