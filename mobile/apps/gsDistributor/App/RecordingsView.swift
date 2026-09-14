@@ -40,6 +40,12 @@ struct RecordingsView: View {
       filesColumn
         .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
     }
+    .sheet(isPresented: Binding(get: { model.run != nil }, set: { if !$0 { model.dismissRun() } })) {
+      if let run = model.run {
+        ExportProgressView(run: run) { model.dismissRun() }
+          .interactiveDismissDisabled(!run.isFinished)
+      }
+    }
     .confirmationDialog(
       "Delete \(marked.count) recording\(marked.count == 1 ? "" : "s") from the iPad?",
       isPresented: $confirmingDelete
@@ -121,9 +127,34 @@ struct RecordingsView: View {
         }
       }
       .id(recording.id)
+      .safeAreaInset(edge: .bottom) {
+        HStack {
+          if recording.isLive {
+            Text("This take is still being recorded.")
+              .foregroundStyle(.secondary)
+          }
+          Spacer()
+          Button("Export") { model.export(recording, tracks: chosenTracks(recording)) }
+            .keyboardShortcut(.defaultAction)
+            .disabled(recording.isLive || chosenTracks(recording).isEmpty || model.isExporting)
+            .accessibilityIdentifier("recordings-export")
+        }
+        .padding(12)
+        .background(.bar)
+      }
     } else {
       ContentUnavailableView("Choose a recording", systemImage: "film.stack")
     }
+  }
+
+  /// The primary output first, then the cameras in the take's order, as they are ticked.
+  private func chosenTracks(_ recording: RecordingListing) -> [Track] {
+    var tracks: [Track] = []
+    if recording.hasPrimary && includesPrimary { tracks.append(.primary) }
+    tracks += recording.cameras
+      .filter { includedCameras.contains($0.sourceID.rawValue) }
+      .map { .camera($0.sourceID) }
+    return tracks
   }
 
   private func cameraBinding(_ sourceID: SourceID) -> Binding<Bool> {

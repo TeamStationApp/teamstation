@@ -33,6 +33,8 @@ packages:
     path: Packages/UsbMux
   DirectorClient:
     path: Packages/DirectorClient
+  Distribution:
+    path: Packages/Distribution
 
 targets:
   Distributor:
@@ -62,6 +64,8 @@ targets:
         product: UsbMux
       - package: DirectorClient
         product: DirectorClient
+      - package: Distribution
+        product: Distribution
 
 schemes:
   Distributor:
