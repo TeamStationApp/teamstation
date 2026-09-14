@@ -468,6 +468,37 @@ struct WallClockPlacementTests {
     #expect(abs((value ?? 0) - ((7_000 + 89) & FrameMarker.maximumValue)) <= 2)
   }
 
+  @Test("A programme part whose sound outlasts its picture holds its last frame to the end of the window")
+  func programmeTailHoldsFromTheLastFrame() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("programme-tail-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    // Three seconds of picture with sound running 0.3 s past it, the shape a programme master has.
+    // It starts half a second before the window, and like a programme part it declares no length.
+    let part = root.appendingPathComponent("program.mp4")
+    try await markedMovieWithAudio(at: part, firstValue: 9_000, frames: 90, audioOverrun: 0.3)
+
+    let out = root.appendingPathComponent("out.mp4")
+    try await ArchiveRemux.concatenate(
+      files: [ part ],
+      fileDurations: [ 0 ],
+      targetDuration: 4,
+      startWalls: [ WallClock(seconds: 1_999.5) ],
+      windowStart: WallClock(seconds: 2_000),
+      destination: out
+    )
+
+    let video = try #require(try await AVURLAsset(url: out).loadTracks(withMediaType: .video).first)
+    // The picture covers the whole window, held from its last frame with no hole before the hold.
+    #expect(abs(try await video.load(.timeRange).duration.seconds - 4) < 0.02)
+    #expect(!(try await video.load(.segments)).contains { $0.isEmpty })
+    let value = try await marker(in: out, at: 3.3)
+    #expect(value != nil)
+    #expect(abs((value ?? 0) - ((9_000 + 89) & FrameMarker.maximumValue)) <= 2)
+  }
+
   @Test("Two cameras that dropped out differently still line up with each other")
   func anglesAgreeAcrossDifferentGaps() async throws {
     let root = FileManager.default.temporaryDirectory

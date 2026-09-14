@@ -136,11 +136,17 @@ public enum ArchiveRemux {
         if let piece = try await soundPiece(range, of: asset, at: at) { sound.append(piece) }
         cursor = CMTimeMaximum(cursor, CMTimeAdd(at, use))
         if placed {
+          // Held from where the picture really ends. A programme part is as long as its longer
+          // track, and its sound runs on past the last frame; measured from the end of the sound,
+          // the hold began past the last sample and came out as a hole and a fraction of a hold.
+          // rec-361's programme picture ended 0.3 s before its window that way.
+          let pictureEnd = try await asset.loadTracks(withMediaType: .video).first?.load(.timeRange).end
+          let sourceEnd = CMTimeMinimum(CMTimeAdd(start, use), pictureEnd ?? CMTimeAdd(start, use))
           held = (
             asset: asset,
-            sourceEnd: CMTimeAdd(start, use),
+            sourceEnd: sourceEnd,
             frame: await Self.frameDuration(of: asset),
-            timelineEnd: CMTimeAdd(at, use)
+            timelineEnd: CMTimeAdd(at, CMTimeMaximum(.zero, CMTimeSubtract(sourceEnd, start)))
           )
         }
       } catch {
@@ -154,13 +160,17 @@ public enum ArchiveRemux {
     }
 
     guard cursor.seconds > 0.05 else { throw Error.empty }
-    if let targetDuration, targetDuration - cursor.seconds > 0.05 {
+    if let targetDuration {
       let end = CMTime(seconds: targetDuration, preferredTimescale: 600)
       // A camera that stopped before the window did is the same case as one that dropped out in the
-      // middle, so it gets the same answer.
-      if placed, let previous = held, (try? await holdFrame(previous, until: end, in: composition)) != nil {
-        cursor = end
-      } else {
+      // middle, so it gets the same answer. Whether it stopped short is a question about its
+      // picture, not its sound: a programme's sound can reach the end of the window while its
+      // picture stops a fraction of a second before, and an empty range there is dropped by the
+      // passthrough write, leaving the picture short.
+      if placed, let previous = held, end.seconds - previous.timelineEnd.seconds > 0.001,
+         (try? await holdFrame(previous, until: end, in: composition)) != nil {
+        cursor = CMTimeMaximum(cursor, end)
+      } else if targetDuration - cursor.seconds > 0.05 {
         let pad = CMTime(seconds: targetDuration - cursor.seconds, preferredTimescale: 600)
         composition.insertEmptyTimeRange(CMTimeRange(start: cursor, duration: pad))
       }
