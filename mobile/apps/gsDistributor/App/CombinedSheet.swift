@@ -4,13 +4,37 @@ import Distribution
 import DistributorWire
 import SwiftUI
 
-/// Chooses and lays out the combined video before an export: which exported cameras go in (up
-/// to four), whose sound it carries, and where each sits. The layout is remembered on the iPad by
-/// camera name and put back next time.
+/// One video the combined video can take: a camera of the export, or its primary output.
+struct CombinedCandidate: Hashable {
+  let name: String
+  let track: Track
+  /// What the still route calls it.
+  let stillSource: SourceID
+
+  /// The primary output first, when it is exported, then the exported cameras in the take's order.
+  static func all(for recording: RecordingListing, tracks: [Track]) -> [CombinedCandidate] {
+    var candidates: [CombinedCandidate] = []
+    if recording.hasPrimary, tracks.contains(.primary) {
+      candidates.append(CombinedCandidate(
+        name: CombinedLayoutRules.primaryOutputName,
+        track: .primary,
+        stillSource: SourceID(DistributorProtocol.primaryStillCamera)
+      ))
+    }
+    for camera in recording.cameras where tracks.contains(.camera(camera.sourceID)) {
+      candidates.append(CombinedCandidate(name: camera.name, track: .camera(camera.sourceID), stillSource: camera.sourceID))
+    }
+    return candidates
+  }
+}
+
+/// Chooses and lays out the combined video before an export: which exported files go in (up to
+/// four, the primary output among them if it is exported), whose sound it carries, and where each
+/// sits. The layout is remembered on the iPad by name and put back next time.
 struct CombinedSheet: View {
   let recording: RecordingListing
-  /// The cameras ticked for export, in the take's order.
-  let cameras: [CameraListing]
+  /// The files ticked for export that can go in, the primary output first.
+  let candidates: [CombinedCandidate]
   let model: DistributorModel
   let onContinue: (CombinedPlan) -> Void
   let onCancel: () -> Void
@@ -55,7 +79,7 @@ struct CombinedSheet: View {
   private var cameraList: some View {
     VStack(alignment: .leading, spacing: 10) {
       Text("Cameras").font(.headline)
-      ForEach(cameras, id: \.sourceID.rawValue) { camera in
+      ForEach(candidates, id: \.name) { camera in
         HStack {
           Toggle(camera.name, isOn: inclusion(camera.name))
             .accessibilityIdentifier("combined-include-\(camera.name)")
@@ -97,7 +121,7 @@ struct CombinedSheet: View {
             capReached = true
             return
           }
-          included = cameras.map(\.name).filter { included.contains($0) || $0 == name }
+          included = candidates.map(\.name).filter { included.contains($0) || $0 == name }
         } else {
           included.removeAll { $0 == name }
         }
@@ -271,15 +295,15 @@ struct CombinedSheet: View {
 
   private func setUp() async {
     let saved = model.settings?.combinedLayout ?? CombinedLayoutSettings()
-    let names = cameras.map(\.name)
+    let names = candidates.map(\.name)
     included = CombinedLayoutRules.initialInclusion(exported: names, saved: saved)
     assignment = CombinedLayoutRules.assign(included, saved: saved)
     solo = included.count == 3 ? CombinedGeometry.effectiveSolo(assignment: assignment, saved: saved.solo) : nil
     audioCamera = CombinedLayoutRules.audioCamera(included: included, withAudio: Set(names), saved: saved.audioCamera)
     let length = (recording.endedAt ?? recording.startedAt) - recording.startedAt
     let at = length > 0 ? min(10, length / 2) : 10
-    for camera in cameras {
-      if let data = await model.still(recordingID: recording.id, camera: camera.sourceID, at: at),
+    for camera in candidates {
+      if let data = await model.still(recordingID: recording.id, camera: camera.stillSource, at: at),
          let image = NSImage(data: data) {
         stills[camera.name] = image
       }
@@ -292,7 +316,7 @@ struct CombinedSheet: View {
     let solo = self.solo
     let audioCamera = self.audioCamera
     let frames = CombinedGeometry.frames(assignment: assignment, solo: solo)
-    let chosen = cameras.filter { included.contains($0.name) }
+    let chosen = candidates.filter { included.contains($0.name) }
     Task {
       await model.updateSettings {
         $0.combinedLayout = CombinedLayoutRules.remember(
@@ -305,7 +329,7 @@ struct CombinedSheet: View {
       }
     }
     onContinue(CombinedPlan(
-      cameras: chosen.map { (name: $0.name, sourceID: $0.sourceID) },
+      inputs: chosen.map { (name: $0.name, track: $0.track) },
       frames: frames,
       audioCamera: audioCamera
     ))
