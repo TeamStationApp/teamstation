@@ -1,9 +1,13 @@
+import AVFoundation
 import DirectorCore
+import DirectorDVR
 import DirectorExport
 import DirectorLink
 import DistributorWire
 import Foundation
+import ImageIO
 import UIKit
+import UniformTypeIdentifiers
 
 /// GS Director's answers to GS Distributor, read from the running app.
 ///
@@ -164,6 +168,37 @@ final class DistributorLinkBackend: DistributorBackend, @unchecked Sendable {
   /// The remux itself runs to the end; a cancelled job just reports nothing when it does.
   func cancelJob(_ id: UUID) async {
     jobs.cancel(id)
+  }
+
+  /// The scrub proxy's still nearest that moment when there is one within two seconds -- it is
+  /// already a small JPEG -- and otherwise a frame decoded from the segment that covers it.
+  func still(recordingID: Int64, sourceID: SourceID, at seconds: Double) async throws -> Data? {
+    guard let recording = try index.recordings().first(where: { $0.id == recordingID }) else { return nil }
+    let wall = recording.startedAt + seconds
+    if let record = try index.proxyStill(for: sourceID, nearest: wall),
+       abs(record.wall - wall) <= 2,
+       let data = ProxyReader(index: index).data(for: record) {
+      return data
+    }
+    guard let segment = try index.segments(for: sourceID, from: wall, to: wall + 0.001)
+      .first(where: { !$0.isInitialization })
+    else { return nil }
+    let url = roots.archives
+      .appendingPathComponent(sourceID.slug, isDirectory: true)
+      .appendingPathComponent(segment.filename)
+    let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+    generator.maximumSize = CGSize(width: 640, height: 360)
+    generator.appliesPreferredTrackTransform = true
+    let offset = max(0, wall - segment.startWall)
+    guard let image = try? await generator.image(at: CMTime(seconds: offset, preferredTimescale: 600)).image else {
+      return nil
+    }
+    let data = NSMutableData()
+    guard let destination = CGImageDestinationCreateWithData(data, UTType.jpeg.identifier as CFString, 1, nil) else {
+      return nil
+    }
+    CGImageDestinationAddImage(destination, image, [ kCGImageDestinationLossyCompressionQuality: 0.8 ] as CFDictionary)
+    return CGImageDestinationFinalize(destination) ? data as Data : nil
   }
 
   // MARK: - Helpers

@@ -64,6 +64,12 @@ actor FakeBackend: DistributorBackend {
   func cancelJob(_ id: UUID) {
     cancelled.append(id)
   }
+
+  static let jpeg = Data([ 0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10 ])
+
+  func still(recordingID: Int64, sourceID: SourceID, at seconds: Double) -> Data? {
+    recordingID == 1 && sourceID == SourceID("cam-a") ? Self.jpeg : nil
+  }
 }
 
 @Suite("Link server", .serialized)
@@ -190,6 +196,18 @@ struct LinkServerTests {
 
     #expect(try await rig.send("DELETE", "/v1/jobs/\(accepted.jobID.uuidString)").status == 200)
     #expect(await rig.backend.cancelled == [ accepted.jobID ])
+  }
+
+  @Test("A camera's still comes back as a JPEG, and a camera with none is a 404")
+  func stills() async throws {
+    let rig = try await rig()
+    defer { rig.stop() }
+    let found = try await rig.send("GET", "/v1/recordings/1/still?camera=cam-a&at=10")
+    #expect(found.status == 200)
+    #expect(found.response.value(forHTTPHeaderField: "Content-Type") == "image/jpeg")
+    #expect(found.data == FakeBackend.jpeg)
+    #expect(try await rig.send("GET", "/v1/recordings/1/still?camera=cam-z").status == 404)
+    #expect(try await rig.send("GET", "/v1/recordings/1/still").status == 400)
   }
 
   @Test("Manifests come back for known recordings only")

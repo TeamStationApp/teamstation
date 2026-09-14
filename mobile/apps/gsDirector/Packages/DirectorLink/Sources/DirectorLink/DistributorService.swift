@@ -34,6 +34,13 @@ public protocol DistributorBackend: Sendable {
   /// Starts stitching one track on the iPad, reporting through `events` under `id`.
   func startJob(_ request: JobRequest, id: UUID, events: EventHub) async throws
   func cancelJob(_ id: UUID) async
+  /// One JPEG frame of `sourceID` about `seconds` into the recording, for previews; nil when there
+  /// is no picture there.
+  func still(recordingID: Int64, sourceID: SourceID, at seconds: Double) async throws -> Data?
+}
+
+public extension DistributorBackend {
+  func still(recordingID: Int64, sourceID: SourceID, at seconds: Double) async throws -> Data? { nil }
 }
 
 /// The routes GS Distributor calls. See `DistributorWire` for the message types.
@@ -86,6 +93,16 @@ public final class DistributorService: Sendable {
         return refused.isEmpty
           ? .ok
           : .json(DeleteRefused(refused: refused, reason: "a recording in progress cannot be deleted"), status: 409)
+
+      case ("GET", "recordings") where route.count == 3 && route[2] == "still":
+        guard let id = Int64(route[1]), let camera = request.query["camera"], !camera.isEmpty else {
+          return .error(400, "recording and camera required")
+        }
+        let at = request.query["at"].flatMap(Double.init) ?? 10
+        guard let jpeg = try await backend.still(recordingID: id, sourceID: SourceID(camera), at: at) else {
+          return .error(404, "no picture there")
+        }
+        return .data(status: 200, contentType: "image/jpeg", body: jpeg)
 
       case ("GET", "recordings") where route.count == 3 && route[2] == "manifest":
         guard let id = Int64(route[1]) else { return .error(400, "bad recording id") }
