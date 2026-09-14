@@ -6,6 +6,14 @@ import Foundation
 import PeerTubeKit
 import Testing
 
+/// Connection counts as the server reports them.
+final class CountLog: @unchecked Sendable {
+  private let lock = NSLock()
+  private var log: [Int] = []
+  func append(_ count: Int) { lock.withLock { log.append(count) } }
+  var values: [Int] { lock.withLock { log } }
+}
+
 /// A stand-in for GS Director behind the service.
 actor FakeBackend: DistributorBackend {
   var isRecording = false
@@ -163,6 +171,22 @@ struct LinkServerTests {
     // A sign-in without an instance or a user name never leaves the iPad.
     let empty = try JSONEncoder().encode(PeerTubeSignIn(host: "", username: "spjr", password: "x"))
     #expect(try await rig.send("POST", "/v1/peertube/signin", body: empty).status == 400)
+  }
+
+  @Test("The server says when a client is connected, and that none is once it stops")
+  func connectionCount() async throws {
+    let counts = CountLog()
+    let server = LinkServer(port: 0, connectionsChanged: { counts.append($0) }) { _ in .ok }
+    let port = try await server.start()
+    let session = URLSession(configuration: .ephemeral)
+    defer { session.invalidateAndCancel() }
+    _ = try await session.data(from: URL(string: "http://127.0.0.1:\(port)/v1/hello")!)
+    #expect(counts.values.contains { $0 > 0 })
+    server.stop()
+    for _ in 0..<50 where counts.values.last != 0 {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    #expect(counts.values.last == 0)
   }
 
   @Test("Hello names the Director and this launch")

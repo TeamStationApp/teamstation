@@ -141,6 +141,8 @@ public final class AppEnvironment {
       distributorEvents.publish(.recordingsChanged)
     }
   }
+  /// GS Distributor is attached by cable and talking to this Director.
+  public private(set) var isMacConnected = false
   public private(set) var isStreaming = false
   public private(set) var streamMegabitsPerSecond = 0.0
   public private(set) var streamDroppedPackets: UInt64 = 0
@@ -4260,7 +4262,9 @@ public final class AppEnvironment {
   private func startLinkServer() {
     guard linkServer == nil else { return }
     let service = distributorService
-    let server = LinkServer { await service.handle($0) }
+    let server = LinkServer(connectionsChanged: { [weak self] count in
+      Task { @MainActor in self?.isMacConnected = count > 0 }
+    }) { await service.handle($0) }
     linkServer = server
     Task { [weak self] in
       // A restart can find the port still held by the listener it replaced for a moment.
@@ -4286,6 +4290,7 @@ public final class AppEnvironment {
     distributorEvents.publish(.directorBackgrounded)
     server.stop()
     linkServer = nil
+    isMacConnected = false
   }
 
   private func restartLinkServer() {
