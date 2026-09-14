@@ -53,6 +53,11 @@ packages:
     path: Packages/DirectorUI
   DirectorTestHarness:
     path: Packages/DirectorTestHarness
+  # GS Distributor: the loopback server the Mac reaches over the cable, and the types both share.
+  DirectorLink:
+    path: Packages/DirectorLink
+  DistributorWire:
+    path: ../common/DistributorWire
 
 targets:
   Director:

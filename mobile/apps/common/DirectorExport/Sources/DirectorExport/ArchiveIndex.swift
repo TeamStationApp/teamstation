@@ -1288,6 +1288,17 @@ public final class ArchiveIndex: @unchecked Sendable {
     ).map(Self.segment(from:))
   }
 
+  /// Archived bytes per recording and camera, in one pass over the index.
+  public func bytesBySource() throws -> [Int64: [SourceID: Int64]] {
+    var totals: [Int64: [SourceID: Int64]] = [:]
+    for row in try store.query(
+      "SELECT recording_id, source_id, SUM(byte_count) FROM segments GROUP BY recording_id, source_id;"
+    ) {
+      totals[row.int(0), default: [:]][SourceID(row.string(1))] = row.int(2)
+    }
+    return totals
+  }
+
   public func totalBytes() throws -> Int64 {
     try store.query("SELECT COALESCE(SUM(byte_count), 0) FROM segments;").first?.int(0) ?? 0
   }
