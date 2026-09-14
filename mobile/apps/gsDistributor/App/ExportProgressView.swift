@@ -23,7 +23,7 @@ struct ExportProgressView: View {
         row(track)
       }
       if let state = run.combinedState {
-        row(label: "Combined video", state: state)
+        row(label: run.combinedSound.map { "Combined video, sound from \($0)" } ?? "Combined video", state: state)
       }
       if let upload = run.upload {
         Divider()
