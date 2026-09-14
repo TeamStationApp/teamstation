@@ -18,7 +18,13 @@ struct WallClockPlacementTests {
   private static let height = 120
   private static let fps = 30.0
 
-  private func markedMovie(at url: URL, firstValue: Int, frames: Int) async throws {
+  /// `spacing` is the time between frames, which a runaway clock stretches far past the frame rate.
+  private func markedMovie(
+    at url: URL,
+    firstValue: Int,
+    frames: Int,
+    spacing: Double = 1 / fps
+  ) async throws {
     try? FileManager.default.removeItem(at: url)
     let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
     let input = AVAssetWriterInput(
@@ -48,7 +54,7 @@ struct WallClockPlacementTests {
       guard let buffer = Self.paint(value: firstValue + index) else { continue }
       adaptor.append(
         buffer,
-        withPresentationTime: CMTime(seconds: Double(index) / Self.fps, preferredTimescale: 600)
+        withPresentationTime: CMTime(seconds: Double(index) * spacing, preferredTimescale: 600)
       )
     }
     input.markAsFinished()
@@ -341,6 +347,57 @@ struct WallClockPlacementTests {
     // The hold must not run over the segment that follows it.
     let after = try await marker(in: out, at: 14.5)
     #expect(abs((after ?? 0) - ((500_000 + 45) & FrameMarker.maximumValue)) <= 2)
+  }
+
+  /// rec-411's home camera after its outage: segments each holding six real pictures, a fifth of a
+  /// second of the game at 30 fps, stamped half a second apart so every file claims three seconds.
+  /// Their starts are right, so each has only the fifth of a second before the next.
+  @Test("A segment stamped on a runaway clock plays every picture it holds, in the room it had")
+  func runawaySegmentsAreSqueezedIntoTheirRoom() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("runaway-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let before = root.appendingPathComponent("before.mp4")
+    try await markedMovie(at: before, firstValue: 1_000, frames: 90)
+    var files = [ before ]
+    var walls = [ WallClock(seconds: 1_000) ]
+    for index in 0 ..< 5 {
+      let runaway = root.appendingPathComponent("runaway-\(index).mp4")
+      try await markedMovie(at: runaway, firstValue: 2_000 + 6 * index, frames: 6, spacing: 0.5)
+      files.append(runaway)
+      walls.append(WallClock(seconds: 1_003 + 0.2 * Double(index)))
+    }
+    let after = root.appendingPathComponent("after.mp4")
+    try await markedMovie(at: after, firstValue: 500_000, frames: 90)
+    files.append(after)
+    walls.append(WallClock(seconds: 1_004))
+
+    let out = root.appendingPathComponent("out.mp4")
+    try await ArchiveRemux.concatenate(
+      files: files,
+      fileDurations: [ 3, 3, 3, 3, 3, 3, 3 ],
+      targetDuration: 7,
+      startWalls: walls,
+      windowStart: WallClock(seconds: 1_000),
+      destination: out
+    )
+
+    // Mid-way through each segment's room: its fourth picture. Cut to its room instead, every
+    // probe here reads the segment's first.
+    for index in 0 ..< 5 {
+      let instant = 3 + 0.2 * Double(index) + 3.5 / Self.fps
+      let value = try await marker(in: out, at: instant)
+      #expect(value != nil, "nothing at \(instant)s")
+      #expect(abs((value ?? 0) - (2_000 + 6 * index + 3)) <= 1, "wrong picture at \(instant)s")
+    }
+
+    // The segment after them is still where it happened.
+    let late = try await marker(in: out, at: 4.5)
+    #expect(abs((late ?? 0) - ((500_000 + 15) & FrameMarker.maximumValue)) <= 2)
+    let video = try #require(try await AVURLAsset(url: out).loadTracks(withMediaType: .video).first)
+    #expect(abs(try await video.load(.timeRange).duration.seconds - 7) < 0.05)
   }
 
   /// The shape of a real archive: audio alongside the picture, and more than one gap.
