@@ -174,6 +174,7 @@ public struct DirectorGridView: View {
       .buttonStyle(.plain)
       .accessibilityIdentifier("settings-button")
 
+      if environment.isMacConnected { macPill }
       archivePill
       programTransportButton(
         isActive: environment.isStreaming,
@@ -210,6 +211,20 @@ public struct DirectorGridView: View {
       .frame(width: 38, height: 34)
       .background(Color.deckPanel, in: RoundedRectangle(cornerRadius: 8))
       .foregroundStyle(.white.opacity(0.85))
+  }
+
+  /// GS Distributor is attached by cable. Shown so the operator knows why the iPad is busy, and
+  /// that it must stay open and in front until the Mac has what it needs.
+  private var macPill: some View {
+    Label("MAC", systemImage: "cable.connector")
+      .font(.system(size: 11, weight: .heavy, design: .rounded))
+      .tracking(1)
+      .padding(.horizontal, 10)
+      .padding(.vertical, 7)
+      .background(Color.deckPanel, in: RoundedRectangle(cornerRadius: 8))
+      .foregroundStyle(.white.opacity(0.85))
+      .accessibilityIdentifier("mac-pill")
+      .accessibilityLabel("GS Distributor connected")
   }
 
   /// How many cameras are actually writing, always visible rather than buried in a debug view: an

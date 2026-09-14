@@ -24,8 +24,18 @@ public final class LinkServer: @unchecked Sendable {
   private let statsLock = NSLock()
   private var inFlightPeak = 0
 
-  public init(port: UInt16 = DistributorProtocol.port, handler: @escaping Handler) {
+  /// Told how many connections are open each time that changes, on the server's queue. GS
+  /// Distributor holds its event stream open all the while it is attached, so any at all means a
+  /// Mac is there.
+  private let connectionsChanged: (@Sendable (Int) -> Void)?
+
+  public init(
+    port: UInt16 = DistributorProtocol.port,
+    connectionsChanged: (@Sendable (Int) -> Void)? = nil,
+    handler: @escaping Handler
+  ) {
     self.requestedPort = port
+    self.connectionsChanged = connectionsChanged
     self.handler = handler
   }
 
@@ -80,17 +90,20 @@ public final class LinkServer: @unchecked Sendable {
       for connection in open {
         connection.close()
       }
+      if !open.isEmpty { connectionsChanged?(0) }
     }
   }
 
   private func accept(_ connection: NWConnection) {
     let link = LinkConnection(connection, server: self)
     connections[ObjectIdentifier(link)] = link
+    connectionsChanged?(connections.count)
     link.start()
   }
 
   func finished(_ link: LinkConnection) {
-    connections.removeValue(forKey: ObjectIdentifier(link))
+    guard connections.removeValue(forKey: ObjectIdentifier(link)) != nil else { return }
+    connectionsChanged?(connections.count)
   }
 }
 
@@ -132,7 +145,9 @@ final class LinkConnection: @unchecked Sendable {
       nextRequest()
       if isComplete {
         peerDone = true
-        if !responding { close() }
+        // An event stream never finishes responding, so the Mac hanging up is its end. Left open,
+        // it would count as a Mac still attached long after it had gone.
+        if !responding || subscription != nil { close() }
         return
       }
       receive()
