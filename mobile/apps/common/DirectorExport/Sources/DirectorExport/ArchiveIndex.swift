@@ -758,7 +758,7 @@ public final class ArchiveIndex: @unchecked Sendable {
     )
   }
 
-  public struct ProgramAnchor: Sendable, Equatable {
+  public struct ProgramAnchor: Sendable, Equatable, Codable {
     /// Which output file, 1-based. A writer that died mid-take leaves a continuation part.
     public var part: Int
     /// Seconds from the start of that part's own timeline.
@@ -1233,6 +1233,77 @@ public final class ArchiveIndex: @unchecked Sendable {
 
   public func totalBytes() throws -> Int64 {
     try store.query("SELECT COALESCE(SUM(byte_count), 0) FROM segments;").first?.int(0) ?? 0
+  }
+
+  // MARK: - Manifests
+
+  /// The rows an export of `sourceIDs` from recording `recordingID` reads, or nil when the index
+  /// has no such recording.
+  public func manifest(recordingID: Int64, sourceIDs: [SourceID]) throws -> RecordingManifest? {
+    guard let row = try store.query(
+      "SELECT started_at, ended_at, program_filename FROM recordings WHERE id = ?;",
+      [ .integer(recordingID) ]
+    ).first else { return nil }
+    return RecordingManifest(
+      recordingID: recordingID,
+      startedAt: WallClock(seconds: row.double(0)),
+      endedAt: row.values[1] == .null ? nil : WallClock(seconds: row.double(1)),
+      programFilename: row.values[2] == .null ? nil : row.string(2),
+      segments: try allSegments(forRecording: recordingID).filter { sourceIDs.contains($0.sourceID) },
+      programAnchors: try programAnchors(recordingID: recordingID)
+    )
+  }
+
+  /// Loads `manifest` under the recording's own id, in one transaction, replacing whatever this
+  /// index already held for that recording. Meant for an empty scratch index on the machine doing
+  /// the stitching; the segment ids are the originals, which are unique across the source index.
+  public func importManifest(_ manifest: RecordingManifest) throws {
+    try store.transaction { transaction in
+      let id = SQLiteValue.integer(manifest.recordingID)
+      try transaction.execute("DELETE FROM segments WHERE recording_id = ?;", [ id ])
+      try transaction.execute("DELETE FROM program_anchors WHERE recording_id = ?;", [ id ])
+      try transaction.execute(
+        """
+        INSERT OR REPLACE INTO recordings (id, started_at, ended_at, program_filename)
+        VALUES (?, ?, ?, ?);
+        """,
+        [
+          id,
+          .real(manifest.startedAt.seconds),
+          manifest.endedAt.map { .real($0.seconds) } ?? .null,
+          manifest.programFilename.map { .text($0) } ?? .null
+        ]
+      )
+      for segment in manifest.segments {
+        try transaction.execute(
+          """
+          INSERT INTO segments (\(Self.segmentColumns))
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+          """,
+          [
+            .integer(segment.id),
+            id,
+            .text(segment.sourceID.rawValue),
+            .integer(Int64(segment.sequence)),
+            .text(segment.filename),
+            .integer(segment.isInitialization ? 1 : 0),
+            .real(segment.startWall.seconds),
+            .real(segment.duration),
+            .integer(segment.byteCount),
+            segment.firstFrameID.map { .integer(Int64(clamping: $0)) } ?? .null,
+            segment.transport.map { .text($0) } ?? .null,
+            segment.appliedClockOffset.map { .real($0) } ?? .null,
+            segment.archiveRate.map { .real($0) } ?? .null
+          ]
+        )
+      }
+      for anchor in manifest.programAnchors {
+        try transaction.execute(
+          "INSERT INTO program_anchors (recording_id, part, program_seconds, wall) VALUES (?, ?, ?, ?);",
+          [ id, .integer(Int64(anchor.part)), .real(anchor.programSeconds), .real(anchor.wall.seconds) ]
+        )
+      }
+    }
   }
 
   // MARK: - Row mapping
