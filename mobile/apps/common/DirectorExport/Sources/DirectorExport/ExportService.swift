@@ -87,6 +87,10 @@ public struct ExportService: Sendable {
   ///
   /// Results live in `Prepared/rec-{id}/` next to the archive, not a throwaway Exports dump, so a
   /// later share can skip remux. `reprocess` rebuilds those files from the originals.
+  ///
+  /// `window` cuts every file to a window worked out beforehand, so the parts of one export that
+  /// are stitched on different machines come out the same length. Without it, `exportWindow` over
+  /// `cameras` decides.
   public func exportRecording(
     _ recording: RecordingSummary,
     cameras: [(sourceID: SourceID, name: String)],
@@ -94,6 +98,7 @@ public struct ExportService: Sendable {
     programDirectory: URL? = nil,
     preparedRoot: URL = DirectorPaths.prepared,
     reprocess: Bool = false,
+    window: ExportWindow? = nil,
     progress: (@Sendable (ItemProgress) -> Void)? = nil
   ) async throws -> [URL] {
     let programDir = programDirectory ?? self.programDirectory
@@ -113,19 +118,9 @@ public struct ExportService: Sendable {
     // This replaces trimming to the overlap the cameras shared. That trim existed to hide a ~620 ms
     // disagreement at the head, which was a symptom of the running-cursor placement rather than a
     // fact about the footage, and it threw away real material at both ends to do it.
-    let latestStart = recording.startedAt
-    var earliestEnd = recording.endedAt
-    if earliestEnd == nil {
-      for camera in cameras {
-        guard let bounds = try? index.recordingBounds(id: recording.id, sourceID: camera.sourceID)
-        else { continue }
-        if let current = earliestEnd {
-          if bounds.end > current { earliestEnd = bounds.end }
-        } else {
-          earliestEnd = bounds.end
-        }
-      }
-    }
+    let window = window ?? exportWindow(recording, sourceIDs: cameras.map(\.sourceID))
+    let latestStart = window.start
+    let earliestEnd = window.end
 
     if includeProgram, let filename = recording.programFilename {
       let sources = RecordingExport.programSourceFiles(named: filename, in: programDir)
@@ -207,6 +202,25 @@ public struct ExportService: Sendable {
     }
 
     return urls
+  }
+
+  /// The window `exportRecording` cuts every file to: the recording's own span or, for a take that
+  /// never recorded its end, out to the last segment any of `sourceIDs` wrote. Giving the same
+  /// window to every machine that stitches part of an export keeps their files the same length.
+  public func exportWindow(_ recording: RecordingSummary, sourceIDs: [SourceID]) -> ExportWindow {
+    var end = recording.endedAt
+    if end == nil {
+      for sourceID in sourceIDs {
+        guard let bounds = try? index.recordingBounds(id: recording.id, sourceID: sourceID)
+        else { continue }
+        if let current = end {
+          if bounds.end > current { end = bounds.end }
+        } else {
+          end = bounds.end
+        }
+      }
+    }
+    return ExportWindow(start: recording.startedAt, end: end)
   }
 
   /// True when every selected output already has a non-empty remux on disk.
