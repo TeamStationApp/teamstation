@@ -258,17 +258,19 @@ public enum CameraIdentityRules {
   /// found by both TXT and the subnet scan, must not become two rows.
   public static func deduplicate(
     endpoints: [CameraEndpoint],
-    advertisements: [CameraAdvertisement]
+    advertisements: [CameraAdvertisement],
+    claims: [CameraEndpoint: StreamAdvertisement] = [:]
   ) -> (endpoints: [CameraEndpoint], advertisements: [CameraAdvertisement]) {
-    let adsByHost = Dictionary(
-      advertisements.map { ($0.host, $0) },
-      uniquingKeysWith: { _, latest in latest }
-    )
+    let paired = pair(endpoints: endpoints, advertisements: advertisements, claims: claims)
 
     var groups: [String: [CameraEndpoint]] = [:]
     var unidentified: [CameraEndpoint] = []
     for endpoint in sorted(endpoints) {
-      if let uniqueID = adsByHost[endpoint.host]?.uniqueID {
+      // A Cameraman that has said its UUID is one phone wherever it answered, advertised or not.
+      let claimed = cameramanUUID(fromCNAME: claims[endpoint]?.cname).flatMap {
+        CameraAdvertisement.uniqueID(modelName: nil, wlanMAC: nil, uuid: $0)
+      }
+      if let uniqueID = paired[endpoint]?.uniqueID ?? claimed {
         groups[uniqueID, default: []].append(endpoint)
       } else {
         unidentified.append(endpoint)
@@ -303,6 +305,12 @@ public enum CameraIdentityRules {
       rewritten[uniqueID] = next
     }
 
+    // A Cameraman found by the sweep while its Bonjour never reached this network is still one row.
+    let advertised = Set(advertisements.compactMap(\.uniqueID))
+    for (uniqueID, members) in groups where !advertised.contains(uniqueID) {
+      if let winner = preferredMember(members) { chosen.append(winner) }
+    }
+
     let claimedHosts = Set(chosen.map(\.host))
     for endpoint in unidentified where !claimedHosts.contains(endpoint.host) {
       chosen.append(endpoint)
@@ -312,20 +320,69 @@ public enum CameraIdentityRules {
     return (sorted(uniqueChosen), Array(rewritten.values))
   }
 
+  /// Which Bonjour advertisement describes which endpoint.
+  ///
+  /// A GS Cameraman advertisement carries the phone's UUID, and the phone repeats that UUID as the
+  /// SDP/RTCP `CNAME` of the socket it serves, so the pairing is checked against what the socket says
+  /// about itself. Once an endpoint has presented a CNAME, only the advertisement with that uuid
+  /// describes it. Before then, an advertisement describes only the endpoint it announced. It never
+  /// describes an endpoint because the two share an address: a released lease goes to whichever
+  /// phone asks next, and the last phone's advertisement would then name the new one.
+  ///
+  /// NearStream TXT has nothing its sockets repeat, so it still pairs by the `ip=` it publishes.
+  public static func pair(
+    endpoints: [CameraEndpoint],
+    advertisements: [CameraAdvertisement],
+    claims: [CameraEndpoint: StreamAdvertisement] = [:]
+  ) -> [CameraEndpoint: CameraAdvertisement] {
+    var byUUID: [String: CameraAdvertisement] = [:]
+    var byHost: [String: CameraAdvertisement] = [:]
+    for advertisement in advertisements {
+      if let uuid = advertisement.uuid {
+        byUUID[uuid.lowercased()] = advertisement
+      } else {
+        byHost[advertisement.host] = advertisement
+      }
+    }
+
+    var paired: [CameraEndpoint: CameraAdvertisement] = [:]
+    for endpoint in endpoints {
+      let cname = claims[endpoint]?.cname
+      if let uuid = cameramanUUID(fromCNAME: cname) {
+        paired[endpoint] = byUUID[uuid]
+      } else if cname == nil,
+                let announced = advertisements.first(where: { $0.uuid != nil && $0.endpoint == endpoint }) {
+        paired[endpoint] = announced
+      } else {
+        paired[endpoint] = byHost[endpoint.host]
+      }
+    }
+    return paired
+  }
+
+  /// The UUID a GS Cameraman sends as its CNAME (RFC 7022's persistent form), lower-cased. Nil for any
+  /// other CNAME — including the VM33's firmware string, which every unit sends alike and which
+  /// therefore identifies none of them.
+  public static func cameramanUUID(fromCNAME cname: String?) -> String? {
+    guard let value = trimmed(cname), UUID(uuidString: value) != nil else { return nil }
+    return value.lowercased()
+  }
+
   /// Pairs endpoints with records. TXT unique ids outrank `CNAME`. Address is never a match key:
   /// DHCP would otherwise silently put the wrong camera on a tile.
   public static func autoBind(
     endpoints: [CameraEndpoint],
     records: [CameraRecord],
-    advertisements: [String: CameraAdvertisement] = [:],
+    advertisements: [CameraAdvertisement] = [],
     streamAdvertisements: [CameraEndpoint: StreamAdvertisement] = [:]
   ) -> [CameraBinding] {
+    let paired = pair(endpoints: endpoints, advertisements: advertisements, claims: streamAdvertisements)
     var claimed: Set<UUID> = []
     var bindings: [CameraEndpoint: CameraBinding] = [:]
 
     for endpoint in sorted(endpoints) {
       guard
-        let uniqueID = advertisements[endpoint.host]?.uniqueID,
+        let uniqueID = paired[endpoint]?.uniqueID,
         let record = records.first(where: { $0.hardwareID == uniqueID && !claimed.contains($0.id) })
       else { continue }
       claimed.insert(record.id)
@@ -357,7 +414,7 @@ public enum CameraIdentityRules {
     bindings: [CameraBinding],
     endpoints: [CameraEndpoint],
     records: [CameraRecord],
-    advertisements: [String: CameraAdvertisement] = [:],
+    advertisements: [CameraAdvertisement] = [],
     streamAdvertisements: [CameraEndpoint: StreamAdvertisement] = [:]
   ) -> [CameraBinding] {
     let live = Set(endpoints)
@@ -654,17 +711,22 @@ public enum CameraIdentityRules {
     _ cameraID: UUID,
     in bindings: inout [CameraBinding],
     records: inout [CameraRecord],
-    advertisements: [String: CameraAdvertisement] = [:],
+    advertisements: [CameraAdvertisement] = [],
     streamAdvertisements: [CameraEndpoint: StreamAdvertisement] = [:],
     now: Date
   ) -> Reresolution {
     guard let record = records.first(where: { $0.id == cameraID }) else { return .noCandidate }
     let free = bindings.filter { !$0.isBound }
+    let paired = pair(
+      endpoints: free.map(\.endpoint),
+      advertisements: advertisements,
+      claims: streamAdvertisements
+    )
 
     var matches: [CameraEndpoint] = []
     if let hardwareID = record.hardwareID, !hardwareID.isEmpty {
       matches = free.compactMap { binding in
-        advertisements[binding.endpoint.host]?.uniqueID == hardwareID ? binding.endpoint : nil
+        paired[binding.endpoint]?.uniqueID == hardwareID ? binding.endpoint : nil
       }
     }
     if matches.isEmpty, let cname = record.lastKnownCNAME, !cname.isEmpty {
@@ -702,14 +764,18 @@ public enum CameraIdentityRules {
     _ endpoints: [CameraEndpoint],
     advertisement: CameraAdvertisement
   ) -> CameraEndpoint? {
-    let winner = endpoints.min { left, right in
+    guard let winner = preferredMember(endpoints) else { return nil }
+    return CameraEndpoint(host: winner.host, port: advertisement.port, path: advertisement.path)
+  }
+
+  /// The LAN address among one camera's sockets, ahead of link-local and Bonjour hostnames.
+  private static func preferredMember(_ endpoints: [CameraEndpoint]) -> CameraEndpoint? {
+    endpoints.min { left, right in
       let leftRank = hostRank(left.host)
       let rightRank = hostRank(right.host)
       if leftRank != rightRank { return leftRank < rightRank }
-      return left.host < right.host
+      return (left.host, left.port, left.path) < (right.host, right.port, right.path)
     }
-    guard let winner else { return nil }
-    return CameraEndpoint(host: winner.host, port: advertisement.port, path: advertisement.path)
   }
 
   private static func index(

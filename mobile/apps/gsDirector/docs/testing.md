@@ -125,11 +125,13 @@ node scripts/run-maestro.js --device <udid> --suite operator
 `discoveryStatus`, in the HUD and the state dump, reports the search rather than its conclusion:
 
 ```
-scan=192.168.7.0/24 probed=253 open=3 confirmed=3 streaming=0 manual=0
+scan=192.168.7.0/24 probed=253 open=3 confirmed=3 cname=1 streaming=0 manual=0
 ```
 
-`open` counts hosts with port 554 listening; `confirmed` counts those that then described a video
-track this app can decode. `open` above `confirmed` means something else is on that port.
+`open` counts hosts listening on 554 (NearStream) or 8554 (GS Cameraman); `confirmed` counts the
+sockets that then described a video track this app can decode, and `cname` how many of those named
+themselves with a GS Cameraman UUID — each of those is recognised by its record, whatever its
+address. `open` above `confirmed` means something else is on one of those ports.
 `probed=0` with a subnet named means the mask was too wide to scan; `scan=off` means scanning is
 switched off and only `rtspHosts` will be tried.
 

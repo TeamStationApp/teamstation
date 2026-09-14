@@ -101,26 +101,33 @@ public final class CameraRegistry: @unchecked Sendable {
   public func resolve(
     endpoints: [CameraEndpoint],
     advertisements: [CameraAdvertisement] = [],
+    streamAdvertisements: [CameraEndpoint: StreamAdvertisement] = [:],
     now: Date = Date()
   ) -> [CameraEndpoint: (id: SourceID, name: String)] {
     lock.lock()
+    // What each socket said about itself at the sweep's `DESCRIBE`, laid over what it said before,
+    // so a swept camera is known by its CNAME before any tile has opened it.
+    for (endpoint, claim) in streamAdvertisements where !claim.isEmpty {
+      advertised[endpoint] = Self.merged(claim, over: advertised[endpoint])
+    }
     let collapsed = CameraIdentityRules.deduplicate(
       endpoints: endpoints,
-      advertisements: remembered(advertisements)
+      advertisements: remembered(advertisements),
+      claims: advertised
     )
     let ads = collapsed.advertisements
     let live = collapsed.endpoints
     CameraIdentityRules.applyAdvertisements(ads, to: &cachedRecords, now: now)
     CameraIdentityRules.applyStreamAdvertisements(advertised, to: &cachedRecords, now: now)
-    let byHost = Dictionary(ads.map { ($0.host, $0) }, uniquingKeysWith: { _, latest in latest })
     advertised = advertised.filter { live.contains($0.key) }
     cachedBindings = CameraIdentityRules.reconcile(
       bindings: cachedBindings,
       endpoints: live,
       records: cachedRecords,
-      advertisements: byHost,
+      advertisements: ads,
       streamAdvertisements: advertised
     )
+    let paired = CameraIdentityRules.pair(endpoints: live, advertisements: ads, claims: advertised)
 
     // A camera that has just been matched to its record may have advertised a new name while the
     // binding was still being worked out, so the adoption happens after the match, not before it.
@@ -131,20 +138,18 @@ public final class CameraRegistry: @unchecked Sendable {
 
     let records = cachedRecords
     let bindings = cachedBindings
-    let rememberedAds = lastAdvertisements
     var sessionIDs = self.sessionIDs
     var result: [CameraEndpoint: (id: SourceID, name: String)] = [:]
     for binding in bindings {
       let name = binding.cameraID
         .flatMap { id in records.first { $0.id == id }?.name }
-      let advertised = rememberedAds.first { $0.host == binding.endpoint.host }?.advertisedName
-      let trimmedAdvertised = advertised.flatMap { value -> String? in
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+      let advertised = paired[binding.endpoint].flatMap { advertisement -> String? in
+        let trimmed = advertisement.advertisedName.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
       }
       result[binding.endpoint] = (
         id: CameraIdentityRules.sourceID(for: binding, sessionIDs: &sessionIDs),
-        name: name ?? trimmedAdvertised ?? CameraIdentityRules.unnamedFallback
+        name: name ?? advertised ?? CameraIdentityRules.unnamedFallback
       )
     }
     self.sessionIDs = sessionIDs
@@ -176,8 +181,12 @@ public final class CameraRegistry: @unchecked Sendable {
   public func adopt(endpoint: CameraEndpoint, name: String? = nil, now: Date = Date()) -> UUID {
     lock.lock()
     let proposed = name ?? CameraIdentityRules.nextDefaultName(in: cachedRecords)
-    let hardwareID = lastAdvertisements.first { $0.host == endpoint.host }?.uniqueID
     let claim = advertised[endpoint]
+    let hardwareID = CameraIdentityRules.pair(
+      endpoints: [ endpoint ],
+      advertisements: lastAdvertisements,
+      claims: claim.map { [ endpoint: $0 ] } ?? [:]
+    )[endpoint]?.uniqueID
     let id = CameraIdentityRules.makeRecord(
       named: proposed,
       host: endpoint.host,
@@ -229,10 +238,7 @@ public final class CameraRegistry: @unchecked Sendable {
     guard !advertisement.isEmpty else { return }
 
     lock.lock()
-    let merged = StreamAdvertisement(
-      cname: advertisement.cname ?? advertised[endpoint]?.cname,
-      name: advertisement.name ?? advertised[endpoint]?.name
-    )
+    let merged = Self.merged(advertisement, over: advertised[endpoint])
     if advertised[endpoint] == merged {
       lock.unlock()
       return
@@ -260,19 +266,24 @@ public final class CameraRegistry: @unchecked Sendable {
     return advertised[endpoint]
   }
 
+  /// A new claim wins field by field, so a socket that now says a different CNAME is believed, and
+  /// one that says nothing new keeps what it said before.
+  private static func merged(
+    _ claim: StreamAdvertisement,
+    over earlier: StreamAdvertisement?
+  ) -> StreamAdvertisement {
+    StreamAdvertisement(cname: claim.cname ?? earlier?.cname, name: claim.name ?? earlier?.name)
+  }
+
   public func forget(_ cameraID: UUID, now: Date = Date()) {
     lock.lock()
     CameraIdentityRules.forget(cameraID, from: &cachedRecords, bindings: &cachedBindings)
     CameraIdentityRules.applyAdvertisements(lastAdvertisements, to: &cachedRecords, now: now)
-    let byHost = Dictionary(
-      lastAdvertisements.map { ($0.host, $0) },
-      uniquingKeysWith: { _, latest in latest }
-    )
     cachedBindings = CameraIdentityRules.reconcile(
       bindings: cachedBindings,
       endpoints: cachedBindings.map(\.endpoint),
       records: cachedRecords,
-      advertisements: byHost,
+      advertisements: lastAdvertisements,
       streamAdvertisements: advertised
     )
     let records = cachedRecords
@@ -286,15 +297,11 @@ public final class CameraRegistry: @unchecked Sendable {
   @discardableResult
   public func reresolve(_ cameraID: UUID, now: Date = Date()) -> CameraIdentityRules.Reresolution {
     lock.lock()
-    let byHost = Dictionary(
-      lastAdvertisements.map { ($0.host, $0) },
-      uniquingKeysWith: { _, latest in latest }
-    )
     let outcome = CameraIdentityRules.reresolve(
       cameraID,
       in: &cachedBindings,
       records: &cachedRecords,
-      advertisements: byHost,
+      advertisements: lastAdvertisements,
       streamAdvertisements: advertised,
       now: now
     )
