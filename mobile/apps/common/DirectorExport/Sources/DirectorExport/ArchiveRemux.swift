@@ -208,7 +208,21 @@ public enum ArchiveRemux {
            withMediaType: .audio,
            preferredTrackID: kCMPersistentTrackID_Invalid
          ) {
-        try target.insertTimeRange(try await source.load(.timeRange), of: source, at: .zero)
+        // The take's length, plus the encoder's priming: a passthrough write of a range cut short of
+        // the file's end takes the priming off that end -- measured, a 4 s cut came out 47.9 ms
+        // short at 44.1 kHz. The render runs past the take (see `renderSound`), so the extra is
+        // there to take, and what is written is exactly the take.
+        let range = try await source.load(.timeRange)
+        let priming = try await source.load(.segments).first?.timeMapping.source.start ?? .zero
+        let wanted = CMTimeAdd(
+          CMTime(seconds: targetDuration ?? cursor.seconds, preferredTimescale: 600),
+          priming.isNumeric ? priming : .zero
+        )
+        try target.insertTimeRange(
+          CMTimeRange(start: range.start, duration: CMTimeMinimum(range.duration, wanted)),
+          of: source,
+          at: .zero
+        )
       }
     }
 
@@ -470,6 +484,11 @@ public enum ArchiveRemux {
     if reader.status == .failed { throw Error.exportFailed(reader.error?.localizedDescription ?? "sound read") }
     // To the end of the take, whatever the last camera sound reached.
     if written < total { try await append(nil, frames: Int(total - written)) }
+    // The encoded file plays the encoder's priming -- 2,112 samples, 44 ms at 48 kHz -- short of what
+    // was written, since its edit list skips the priming at the front. Written to exactly `total`,
+    // rec-361's programme sound ended that much before its window. So a little more silence goes in
+    // here, and the caller takes exactly the take's length back out of the file.
+    try await append(nil, frames: 8_192)
     input.markAsFinished()
     await writer.finishWriting()
     guard writer.status == .completed else {
