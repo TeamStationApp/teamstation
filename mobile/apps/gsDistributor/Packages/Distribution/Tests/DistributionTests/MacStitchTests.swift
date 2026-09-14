@@ -6,6 +6,7 @@ import DirectorLink
 import Distribution
 import DistributorWire
 import Foundation
+import PeerTubeKit
 import Testing
 
 /// A fake iPad with a real archive: it answers the manifest and file routes from an index and
@@ -123,7 +124,8 @@ struct MacStitchTests {
     let service = DistributorService(
       backend: ArchiveBackend(index: index, exporter: exporter, roots: roots),
       roots: roots,
-      settings: DistributorSettingsStore(url: base.appendingPathComponent("settings.json"))
+      settings: DistributorSettingsStore(url: base.appendingPathComponent("settings.json")),
+      peerTube: PeerTubeAccount(storage: MemoryAccountStorage())
     )
     let server = LinkServer(port: 0) { await service.handle($0) }
     let port = try await server.start()

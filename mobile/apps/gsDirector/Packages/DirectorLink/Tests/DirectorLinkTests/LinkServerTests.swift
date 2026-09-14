@@ -3,6 +3,7 @@ import DirectorExport
 import DirectorLink
 import DistributorWire
 import Foundation
+import PeerTubeKit
 import Testing
 
 /// A stand-in for GS Director behind the service.
@@ -108,7 +109,7 @@ struct LinkServerTests {
     }
   }
 
-  private func rig() async throws -> Rig {
+  private func rig(peerTube: MemoryAccountStorage = MemoryAccountStorage()) async throws -> Rig {
     let base = FileManager.default.temporaryDirectory
       .appendingPathComponent("link-server-\(UUID().uuidString)", isDirectory: true)
     for folder in [ "Archives", "Program", "Prepared" ] {
@@ -125,7 +126,8 @@ struct LinkServerTests {
         program: base.appendingPathComponent("Program", isDirectory: true),
         prepared: base.appendingPathComponent("Prepared", isDirectory: true)
       ),
-      settings: DistributorSettingsStore(url: base.appendingPathComponent("settings.json"))
+      settings: DistributorSettingsStore(url: base.appendingPathComponent("settings.json")),
+      peerTube: PeerTubeAccount(storage: peerTube)
     )
     let server = LinkServer(port: 0) { await service.handle($0) }
     let port = try await server.start()
@@ -137,6 +139,30 @@ struct LinkServerTests {
       port: port,
       session: URLSession(configuration: .ephemeral)
     )
+  }
+
+  @Test("PeerTube: the iPad hands the Mac its access token, and signing out forgets the account")
+  func peerTubeToken() async throws {
+    let storage = MemoryAccountStorage(StoredAccount(
+      host: "peertube.invalid",
+      username: "spjr",
+      client: OAuthClient(clientID: "c", clientSecret: "s"),
+      tokens: TokenSet(accessToken: "a1", refreshToken: "r1", accessExpiresAt: Date().addingTimeInterval(3_600), refreshExpiresAt: nil)
+    ))
+    let rig = try await rig(peerTube: storage)
+    defer { rig.stop() }
+    let (status, data, _) = try await rig.send("GET", "/v1/peertube/token")
+    #expect(status == 200)
+    let token = try JSONDecoder().decode(PeerTubeToken.self, from: data)
+    #expect(token == PeerTubeToken(host: "peertube.invalid", username: "spjr", accessToken: "a1", expiresAt: token.expiresAt))
+    #expect(!String(decoding: data, as: UTF8.self).contains("r1"))
+
+    #expect(try await rig.send("POST", "/v1/peertube/signout").status == 200)
+    #expect(storage.load() == nil)
+    #expect(try await rig.send("GET", "/v1/peertube/token").status == 401)
+    // A sign-in without an instance or a user name never leaves the iPad.
+    let empty = try JSONEncoder().encode(PeerTubeSignIn(host: "", username: "spjr", password: "x"))
+    #expect(try await rig.send("POST", "/v1/peertube/signin", body: empty).status == 400)
   }
 
   @Test("Hello names the Director and this launch")

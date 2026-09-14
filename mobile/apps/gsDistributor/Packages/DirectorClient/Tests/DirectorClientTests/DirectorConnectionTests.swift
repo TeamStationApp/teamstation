@@ -4,6 +4,7 @@ import DirectorExport
 import DirectorLink
 import DistributorWire
 import Foundation
+import PeerTubeKit
 import Testing
 
 /// GS Director's side, played by the real server with a fake app behind it.
@@ -86,12 +87,21 @@ struct DirectorConnectionTests {
         program: base.appendingPathComponent("Program"),
         prepared: base.appendingPathComponent("Prepared")
       ),
-      settings: DistributorSettingsStore(url: base.appendingPathComponent("settings.json"))
+      settings: DistributorSettingsStore(url: base.appendingPathComponent("settings.json")),
+      peerTube: PeerTubeAccount(storage: MemoryAccountStorage())
     )
     let server = LinkServer(port: 0) { await service.handle($0) }
     let port = try await server.start()
     let connection = DirectorConnection(baseURL: URL(string: "http://127.0.0.1:\(port)/")!, macID: "MAC-TEST")
     return Rig(base: base, director: director, service: service, server: server, connection: connection)
+  }
+
+  @Test("An iPad not signed in to PeerTube has no token to give")
+  func peerTubeSignedOut() async throws {
+    let rig = try await rig()
+    defer { rig.stop() }
+    #expect(try await rig.connection.peerTubeToken() == nil)
+    try await rig.connection.peerTubeSignOut()
   }
 
   @Test("Hello, recordings, manifests and deletes")

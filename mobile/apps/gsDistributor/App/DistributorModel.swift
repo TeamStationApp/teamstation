@@ -4,6 +4,7 @@ import Distribution
 import DistributorWire
 import Foundation
 import Observation
+import PeerTubeKit
 import UsbMux
 
 /// Watches the cable for iPads, keeps a connection to GS Director on the chosen one, and holds
@@ -30,6 +31,32 @@ final class DistributorModel {
   /// GS Distributor's settings, read from and saved to the iPad. Nil until GS Director answers.
   private(set) var settings: DistributorSettings?
 
+  enum PeerTubeState: Equatable {
+    /// Uploads are off, or nothing has been asked yet.
+    case unknown
+    case signedOut
+    case signedIn(PeerTubeAccountView)
+    case unreachable(String)
+  }
+
+  struct PeerTubeAccountView: Equatable {
+    var host: String
+    var username: String
+    var channels: [PeerTubeChannelInfo]
+    var privacies: [Int: String]
+    /// The channel of the account's last video.
+    var latestChannelID: Int?
+  }
+
+  enum SignInOutcome: Equatable {
+    case signedIn
+    case needsCode
+    case failed(String)
+  }
+
+  /// The PeerTube account GS Director holds, as far as the Mac knows.
+  private(set) var peerTube: PeerTubeState = .unknown
+  private var peerTubeToken: PeerTubeToken?
 
   /// This Mac's download folder, as the iPad remembers it.
   var destination: URL? {
@@ -158,6 +185,92 @@ final class DistributorModel {
     try? await connection?.still(recordingID: recordingID, camera: camera, at: seconds)
   }
 
+  // MARK: - PeerTube
+
+  /// GS Director signs in; the Mac reads the account's channels and privacy settings, and uploads,
+  /// with access tokens the iPad hands it.
+  func loadPeerTube() async {
+    peerTubeToken = nil
+    guard settings?.peerTube.enabled == true, connection != nil else {
+      peerTube = .unknown
+      return
+    }
+    do {
+      let token = try await peerTubeAccessToken()
+      let api = PeerTubeAPI(host: token.host)
+      async let me = api.me(accessToken: token.accessToken)
+      async let privacies = api.privacies()
+      async let latest = api.latestChannelID(accessToken: token.accessToken)
+      peerTube = .signedIn(PeerTubeAccountView(
+        host: token.host,
+        username: token.username,
+        channels: try await me.channels,
+        privacies: (try? await privacies) ?? [:],
+        latestChannelID: try? await latest
+      ))
+    } catch PeerTubeError.signInAgain {
+      peerTube = .signedOut
+    } catch {
+      peerTube = .unreachable("\(error)")
+    }
+  }
+
+  /// An access token good for five more minutes at least: the one already fetched, else a new one
+  /// from the iPad, which refreshes its own.
+  func peerTubeAccessToken() async throws -> PeerTubeToken {
+    if let token = peerTubeToken, token.expiresAt.timeIntervalSinceNow > 300 { return token }
+    guard let connection else { throw PeerTubeError.signInAgain }
+    guard let token = try await connection.peerTubeToken() else {
+      peerTube = .signedOut
+      throw PeerTubeError.signInAgain
+    }
+    peerTubeToken = token
+    return token
+  }
+
+  func signInToPeerTube(host: String, username: String, password: String, code: String?) async -> SignInOutcome {
+    guard let connection else { return .failed("GS Director is not connected.") }
+    do {
+      let result = try await connection.peerTubeSignIn(
+        PeerTubeSignIn(host: host, username: username, password: password, otp: code)
+      )
+      switch result {
+      case .otpRequired:
+        return .needsCode
+      case .signedIn:
+        await loadSettings()
+        await loadPeerTube()
+        return .signedIn
+      }
+    } catch DirectorClientError.http(_, let message) {
+      return .failed(message)
+    } catch {
+      return .failed("\(error)")
+    }
+  }
+
+  func signOutOfPeerTube() async {
+    try? await connection?.peerTubeSignOut()
+    peerTubeToken = nil
+    peerTube = .signedOut
+  }
+
+  /// The channel an upload starts on: the one last uploaded to from here, else the one the
+  /// account's last video went to, else its first.
+  var uploadChannelID: Int? {
+    guard case .signedIn(let account) = peerTube else { return nil }
+    let ids = account.channels.map(\.id)
+    if let chosen = settings?.peerTube.channelID, ids.contains(chosen) { return chosen }
+    if let latest = account.latestChannelID, ids.contains(latest) { return latest }
+    return ids.first
+  }
+
+  /// The privacy an upload starts on: the one last used, else 6 where the instance has it.
+  var uploadPrivacy: Int {
+    let offered = if case .signedIn(let account) = peerTube { Array(account.privacies.keys) } else { [Int]() }
+    return PeerTubePrivacy.preferred(chosen: settings?.peerTube.privacy, offered: offered)
+  }
+
   /// Puts away a finished export's progress.
   func dismissRun() {
     if run?.isFinished == true { run = nil }
@@ -208,6 +321,7 @@ final class DistributorModel {
       isRecording = hello.isRecording
       await reload()
       await loadSettings()
+      await loadPeerTube()
       listen(to: connection)
     } catch {
       disconnect()
@@ -257,5 +371,7 @@ final class DistributorModel {
     forwarder = nil
     connection = nil
     settings = nil
+    peerTube = .unknown
+    peerTubeToken = nil
   }
 }

@@ -13,6 +13,7 @@ import DirectorSources
 import DirectorTestHarness
 import DirectorLink
 import DistributorWire
+import PeerTubeKit
 import UIKit
 
 /// One-shot latch, so the replay latency is recorded for the first decoded frame and not
@@ -265,6 +266,7 @@ public final class AppEnvironment {
       backend: DistributorLinkBackend(environment: self, index: index, exporter: exporter, roots: roots),
       roots: roots,
       settings: DistributorSettingsStore(),
+      peerTube: PeerTubeAccount(storage: KeychainAccountStorage()),
       events: distributorEvents
     )
   }()

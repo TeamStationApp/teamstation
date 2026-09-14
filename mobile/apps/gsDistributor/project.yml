@@ -29,6 +29,8 @@ packages:
     path: ../common/DirectorExport
   DistributorWire:
     path: ../common/DistributorWire
+  PeerTubeKit:
+    path: ../common/PeerTubeKit
   UsbMux:
     path: Packages/UsbMux
   DirectorClient:
@@ -60,6 +62,8 @@ targets:
         product: DirectorExport
       - package: DistributorWire
         product: DistributorWire
+      - package: PeerTubeKit
+        product: PeerTubeKit
       - package: UsbMux
         product: UsbMux
       - package: DirectorClient
