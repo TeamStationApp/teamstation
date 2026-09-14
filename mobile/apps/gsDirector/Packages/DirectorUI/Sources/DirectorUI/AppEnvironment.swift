@@ -802,6 +802,7 @@ public final class AppEnvironment {
     cameraRecords = cameras.records
     refreshDiscovery()
     pushDisplayNamesToTiles()
+    noteRenameInLiveTake(id)
   }
 
   /// The address a cached camera is answering on right now, which is what makes "in use by" in the
@@ -1184,6 +1185,7 @@ public final class AppEnvironment {
        let selection = selections.first(where: { $0.id == id }) {
       telemetry.mutateTile(pipeline.sourceIndex) { $0.displayName = selection.displayName }
     }
+    noteRenameInLiveTake(id)
   }
 
   public var enabledSelections: [SourceSelection] {
@@ -1760,7 +1762,8 @@ public final class AppEnvironment {
         recordingID: recordingID,
         sourceID: pipeline.sourceID,
         transport: settings.transport,
-        archiving: true
+        archiving: true,
+        cameraName: knownCameraName(for: pipeline.sourceID)
       )
     } catch {
       statusMessage = "\(pipeline.displayName): \(error)"
@@ -3575,13 +3578,30 @@ public final class AppEnvironment {
   }
 
   public func recordingCameraName(for sourceID: SourceID) -> String {
+    knownCameraName(for: sourceID) ?? sourceID.rawValue
+  }
+
+  /// A recorded camera's name: what the take stored for it, else what it is called now. A camera
+  /// the Director has since forgotten keeps the name it recorded under instead of showing its id.
+  public func recordingCameraName(for sourceID: SourceID, in recordingID: Int64) -> String {
+    if let recorded = try? index.recordedCameraNames(recordingID: recordingID)[sourceID] {
+      return recorded
+    }
+    return recordingCameraName(for: sourceID)
+  }
+
+  /// What the operator calls a camera right now, or nil when it has nothing but its id.
+  private func knownCameraName(for sourceID: SourceID) -> String? {
     if let selection = selections.first(where: { $0.id == sourceID }) {
       return selection.displayName
     }
-    if let record = cameraRecords.first(where: { SourceID($0.id.uuidString) == sourceID }) {
-      return record.name
-    }
-    return sourceID.rawValue
+    return cameraRecords.first(where: { SourceID($0.id.uuidString) == sourceID })?.name
+  }
+
+  /// Keeps the live take's record of a camera's name current when it is renamed mid-take.
+  private func noteRenameInLiveTake(_ sourceID: SourceID) {
+    guard isRecording, let recordingID, let name = knownCameraName(for: sourceID) else { return }
+    try? index.nameSource(recordingID: recordingID, sourceID: sourceID, cameraName: name)
   }
 
   public func shareRecording(
@@ -3668,7 +3688,7 @@ public final class AppEnvironment {
       $0.dvr.lastExportFiles = []
       $0.dvr.lastExportError = nil
     }
-    let cameras = recording.sourceIDs.map { ($0, recordingCameraName(for: $0)) }
+    let cameras = recording.sourceIDs.map { ($0, recordingCameraName(for: $0, in: recording.id)) }
     let includeProgram = recording.programFilename != nil
     let exporter = self.exporter
     Task { [weak self] in
