@@ -188,6 +188,10 @@ public final class ArchiveIndex: @unchecked Sendable {
         PRIMARY KEY (recording_id, source_id)
       );
       """)
+    // The camera's name when it joined the take, rewritten if it was renamed during it. A source id
+    // is a camera's UUID, so a camera the Director has since forgotten would otherwise come back as
+    // that UUID; the name is what the operator, and GS Distributor, know it by.
+    try? store.execute("ALTER TABLE recording_sources ADD COLUMN camera_name TEXT;")
     // Where the programme was in real time, sampled as it was written.
     //
     // A camera records the wall clock of every segment; the programme had exactly two facts for a
@@ -734,27 +738,45 @@ public final class ArchiveIndex: @unchecked Sendable {
   /// `archiving: false` with a reason is the case that matters: the source was live and on air but
   /// nothing was written for it, and an export that simply omitted the angle would look identical
   /// to one where the operator never chose it.
+  ///
+  /// `cameraName` is what the camera was called when it joined; noting the source again without
+  /// one keeps the name already stored.
   @discardableResult
   public func noteSource(
     recordingID: Int64,
     sourceID: SourceID,
     transport: String?,
     archiving: Bool,
-    reason: String? = nil
+    reason: String? = nil,
+    cameraName: String? = nil
   ) throws -> Int64 {
     try store.execute(
       """
-      INSERT OR REPLACE INTO recording_sources
-        (recording_id, source_id, transport, archiving, reason)
-      VALUES (?, ?, ?, ?, ?);
+      INSERT INTO recording_sources
+        (recording_id, source_id, transport, archiving, reason, camera_name)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT (recording_id, source_id) DO UPDATE SET
+        transport = excluded.transport,
+        archiving = excluded.archiving,
+        reason = excluded.reason,
+        camera_name = COALESCE(excluded.camera_name, recording_sources.camera_name);
       """,
       [
         .integer(recordingID),
         .text(sourceID.rawValue),
         transport.map { .text($0) } ?? .null,
         .integer(archiving ? 1 : 0),
-        reason.map { .text($0) } ?? .null
+        reason.map { .text($0) } ?? .null,
+        cameraName.map { .text($0) } ?? .null
       ]
+    )
+  }
+
+  /// Records a camera's new name against a take it is part of, for a rename made mid-take.
+  public func nameSource(recordingID: Int64, sourceID: SourceID, cameraName: String) throws {
+    try store.execute(
+      "UPDATE recording_sources SET camera_name = ? WHERE recording_id = ? AND source_id = ?;",
+      [ .text(cameraName), .integer(recordingID), .text(sourceID.rawValue) ]
     )
   }
 
@@ -840,13 +862,14 @@ public final class ArchiveIndex: @unchecked Sendable {
     public var transport: String?
     public var archiving: Bool
     public var reason: String?
+    public var cameraName: String?
   }
 
   /// Every source this recording knew about, whether or not it wrote anything.
   public func sources(forRecording recordingID: Int64) throws -> [RecordingSource] {
     try store.query(
       """
-      SELECT source_id, transport, archiving, reason FROM recording_sources
+      SELECT source_id, transport, archiving, reason, camera_name FROM recording_sources
       WHERE recording_id = ? ORDER BY source_id ASC;
       """,
       [ .integer(recordingID) ]
@@ -855,9 +878,43 @@ public final class ArchiveIndex: @unchecked Sendable {
         sourceID: SourceID(row.string(0)),
         transport: row.values[1] == .null ? nil : row.string(1),
         archiving: row.int(2) == 1,
-        reason: row.values[3] == .null ? nil : row.string(3)
+        reason: row.values[3] == .null ? nil : row.string(3),
+        cameraName: row.values[4] == .null ? nil : row.string(4)
       )
     }
+  }
+
+  /// The names a recording's cameras had, as far as the index knows: the name stored when each
+  /// joined the take, or was renamed during it, else the name in the grid snapshot saved while it
+  /// recorded. A camera with neither is absent, and the caller decides what to show for it.
+  public func recordedCameraNames(recordingID: Int64) throws -> [SourceID: String] {
+    var names: [SourceID: String] = [:]
+    if let snapshot = try selections(for: recordingID),
+       let grid = try? JSONDecoder().decode([RecordedSelection].self, from: snapshot) {
+      for entry in grid {
+        if let name = entry.name { names[entry.id] = name }
+      }
+    }
+    for source in try sources(forRecording: recordingID) {
+      if let name = Self.nonEmpty(source.cameraName) { names[source.sourceID] = name }
+    }
+    return names
+  }
+
+  /// Just enough of a grid entry to read a camera's name back out of a take's snapshot. The keys
+  /// are those of GS Director's `SourceSelection`, which wrote it.
+  private struct RecordedSelection: Decodable {
+    var id: SourceID
+    var advertisedName: String?
+    var customName: String?
+
+    var name: String? { ArchiveIndex.nonEmpty(customName) ?? ArchiveIndex.nonEmpty(advertisedName) }
+  }
+
+  private static func nonEmpty(_ value: String?) -> String? {
+    guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty
+    else { return nil }
+    return trimmed
   }
 
   public func segments(

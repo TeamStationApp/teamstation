@@ -132,7 +132,7 @@ public struct RecordingsView: View {
               .accessibilityIdentifier("recording-file-program")
           }
           ForEach(recording.sourceIDs, id: \.rawValue) { sourceID in
-            let name = environment.recordingCameraName(for: sourceID)
+            let name = environment.recordingCameraName(for: sourceID, in: recording.id)
             Toggle(name, isOn: cameraBinding(sourceID))
               .accessibilityIdentifier("recording-file-\(sourceID.slug)")
           }
@@ -361,7 +361,7 @@ public struct RecordingsView: View {
   private func export(_ recording: RecordingSummary) {
     let cameras = recording.sourceIDs
       .filter { selectedCameras.contains($0.rawValue) }
-      .map { ($0, environment.recordingCameraName(for: $0)) }
+      .map { ($0, environment.recordingCameraName(for: $0, in: recording.id)) }
     let includeProgram = selectedProgram && recording.programFilename != nil
     if environment.hasPreparedExport(recording, cameras: cameras, includeProgram: includeProgram) {
       pendingReuse = (recording, cameras, includeProgram)
