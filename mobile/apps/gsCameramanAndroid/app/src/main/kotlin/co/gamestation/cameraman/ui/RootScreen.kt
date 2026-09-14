@@ -137,7 +137,6 @@ fun DiagnosticScreen(environment: AppEnvironment) {
                     isFault = !serverStatus.isListening
                 )
                 Value("port", serverStatus.port?.toString() ?: "none", "port")
-                Value("requestedPort", serverStatus.requestedPort?.toString() ?: "none", "requested-port")
                 Value("advertising", serverStatus.isAdvertising.toString(), "advertising")
                 Value("url", environment.streamURL, "stream-url")
                 serverStatus.lastError?.let { Value("error", it, "server-error", isFault = true) }

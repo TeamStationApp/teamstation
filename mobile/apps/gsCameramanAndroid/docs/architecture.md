@@ -141,8 +141,8 @@ A failed registration leaves the socket alone, unlike iOS where a missing `NSBon
 the whole listener down with it. So `isAdvertising` is reported separately from `isListening` rather
 than being assumed from it.
 
-Port 554 by default, falling back to 8554 — which on Android is always what happens, because 554 is
-privileged. Both the bound port and the request are visible on screen.
+Port 8554, the same as the iOS build: 554 is privileged on Android, and Director looks for every
+Cameraman on one port. The bound port is on the settings screen and in `dump-state`.
 
 ## Remote control
 

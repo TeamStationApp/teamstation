@@ -25,9 +25,13 @@ public enum StreamCodec: String, Sendable, Codable, Equatable, CaseIterable {
 /// Everything the operator can change about the outgoing stream.
 public struct StreamSettings: Sendable, Codable, Equatable {
   public static let canonicalPath = "/live/mainstream"
-  public static let defaultPort = 554
-  /// Used when 554 cannot be bound, which has been reported on the simulator.
-  public static let fallbackPort = 8554
+  /// The one port every Cameraman serves on, iPhone and Android alike. Not the registered 554:
+  /// Android refuses any port below 1024 to an unprivileged process, and a Director sweep that
+  /// probes one Cameraman port has to find both platforms there.
+  public static let defaultPort = 8554
+  /// What builds before the single port saved. A saved 554 loads as `defaultPort`, so an updated
+  /// iPhone moves to the shared port instead of staying where the sweep does not look for it.
+  public static let retiredPort = 554
 
   public var width: Int
   public var height: Int
@@ -107,7 +111,8 @@ public struct StreamSettings: Sendable, Codable, Equatable {
     codec = try c.decodeIfPresent(StreamCodec.self, forKey: .codec) ?? d.codec
     bitrate = try c.decodeIfPresent(Int.self, forKey: .bitrate) ?? d.bitrate
     adaptiveBitrate = try c.decodeIfPresent(Bool.self, forKey: .adaptiveBitrate) ?? d.adaptiveBitrate
-    port = try c.decodeIfPresent(Int.self, forKey: .port) ?? d.port
+    let savedPort = try c.decodeIfPresent(Int.self, forKey: .port) ?? d.port
+    port = savedPort == Self.retiredPort ? Self.defaultPort : savedPort
     path = try c.decodeIfPresent(String.self, forKey: .path) ?? d.path
     audioEnabled = try c.decodeIfPresent(Bool.self, forKey: .audioEnabled) ?? d.audioEnabled
     videoEnabled = try c.decodeIfPresent(Bool.self, forKey: .videoEnabled) ?? d.videoEnabled

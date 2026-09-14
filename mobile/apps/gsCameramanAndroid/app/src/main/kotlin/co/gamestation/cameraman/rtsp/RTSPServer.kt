@@ -50,9 +50,8 @@ class RTSPServer(
 ) {
     data class Status(
         val isListening: Boolean = false,
+        /** The port actually bound. Null while the listener is down. */
         val port: Int? = null,
-        /** The port actually bound, which may be the fallback rather than the one asked for. */
-        val requestedPort: Int? = null,
         /**
          * Sessions currently playing. A connection that only polls parameters is not a viewer and
          * is not counted here; [acceptedClients] still counts it.
@@ -74,10 +73,7 @@ class RTSPServer(
         val listenerState: String? = null,
         /** Whether `_rtsp._tcp` is actually registered, not merely requested. */
         val isAdvertising: Boolean = false
-    ) {
-        val usedFallbackPort: Boolean
-            get() = port != null && requestedPort != null && port != requestedPort
-    }
+    )
 
     private val lock = ReentrantLock()
     private var listener: ServerSocket? = null
@@ -106,23 +102,17 @@ class RTSPServer(
     fun currentStatus(): Status = lock.withLock { status }
 
     /**
-     * Binds [port], falling back to [fallbackPort] if it is taken. A bind failure is a visible
-     * status rather than a thrown error, because the app has to keep running and show the operator
-     * why.
-     *
-     * On a handset the first attempt always fails: 554 is privileged and Linux refuses it to an
-     * unprivileged process. The attempt is still made so the fallback is a recorded fact rather than
-     * a hardcoded port that quietly differs from what the iOS build uses.
+     * Binds [port] and nothing else: Director looks for a Cameraman on one port, so a phone that
+     * quietly moved elsewhere would be a camera nobody finds. A bind failure is a visible status
+     * rather than a thrown error, because the app has to keep running and show the operator why.
      */
-    fun start(port: Int, fallbackPort: Int, path: String, advertise: Boolean = true) {
+    fun start(port: Int, path: String, advertise: Boolean = true) {
         stop()
         lock.withLock {
             wantsAdvertisement = advertise
             advertisedPath = path
         }
-        if (!bind(port, port, path, advertise)) {
-            bind(fallbackPort, port, path, advertise)
-        }
+        bind(port, path, advertise)
     }
 
     fun stop() {
@@ -167,7 +157,7 @@ class RTSPServer(
         registerAdvertisement(port, path)
     }
 
-    private fun bind(port: Int, requested: Int, path: String, advertise: Boolean): Boolean {
+    private fun bind(port: Int, path: String, advertise: Boolean): Boolean {
         val socket = try {
             ServerSocket().apply {
                 // Without this a listener that was not cleanly torn down leaves the port unusable
@@ -190,7 +180,6 @@ class RTSPServer(
             it.copy(
                 isListening = true,
                 port = bound,
-                requestedPort = requested,
                 lastError = null,
                 listenerState = "ready"
             )

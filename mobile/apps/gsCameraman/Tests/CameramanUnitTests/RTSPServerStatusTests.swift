@@ -55,7 +55,7 @@ struct RTSPServerStatusTests {
         }
       }
     )
-    server.start(port: 0, fallbackPort: 0, path: "/live/mainstream", advertise: false)
+    server.start(port: 0, path: "/live/mainstream", advertise: false)
     for _ in 0 ..< 40 where server.status.port == nil {
       try await Task.sleep(for: .milliseconds(50))
     }
@@ -92,14 +92,14 @@ struct RTSPServerStatusTests {
   /// throwaway server discovers a free port and the real one then asks for it by number.
   private static func startServerOnAFixedPort() async throws -> (server: RTSPServer, port: UInt16) {
     let discovery = makeServer()
-    discovery.start(port: 0, fallbackPort: 0, path: "/live/mainstream", advertise: false)
+    discovery.start(port: 0, path: "/live/mainstream", advertise: false)
     #expect(await waitUntil({ discovery.status.port != nil }, seconds: 5), "no ephemeral port")
     let port = try #require(discovery.status.port)
     discovery.stop()
     #expect(await waitUntil { !discovery.status.isListening })
 
     let server = makeServer()
-    server.start(port: port, fallbackPort: 0, path: "/live/mainstream", advertise: false)
+    server.start(port: port, path: "/live/mainstream", advertise: false)
     #expect(await waitUntil({ server.status.isListening }, seconds: 5), "the listener never bound")
     #expect(server.status.port == port, "the discovered port was not free")
     return (server, port)

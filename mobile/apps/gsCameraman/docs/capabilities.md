@@ -118,5 +118,9 @@ here and with a full RTSP exchange from a Mac on the same subnet on 2026-08-19.
 A first measurement reported `554: Address already in use`. The cause was a leftover
 `co.gamestation.cameramanprobe` build from the device-readiness work, which auto-bound 554 on
 launch. Nothing on a stock iOS install competes for the port, but **another app that wants it will
-take it**, so the server has to report a bind failure as a distinct, visible state and fall back to
-8554 rather than appearing to start and serving nothing.
+take it**, so the server has to report a bind failure as a distinct, visible state rather than
+appearing to start and serving nothing.
+
+Since 2026-09-13 the app no longer asks for 554. Both builds serve on 8554, because Android cannot
+bind below 1024 and GS Director's sweep has to find every Cameraman on one port, so the probe now
+measures 8554 alone.

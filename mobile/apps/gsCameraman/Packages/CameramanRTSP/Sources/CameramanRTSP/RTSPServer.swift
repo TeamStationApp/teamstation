@@ -11,9 +11,8 @@ import os
 public final class RTSPServer: @unchecked Sendable {
   public struct Status: Sendable, Equatable, Codable {
     public var isListening = false
+    /// The port actually bound. Nil while the listener is down.
     public var port: UInt16?
-    /// The port actually bound, which may be the fallback rather than the one asked for.
-    public var requestedPort: UInt16?
     /// Sessions currently playing. A connection that only polls parameters is not a viewer and is
     /// not counted here; `acceptedClients` still counts it.
     public var clientCount = 0
@@ -33,11 +32,6 @@ public final class RTSPServer: @unchecked Sendable {
     public var listenerState: String?
 
     public init() {}
-
-    public var usedFallbackPort: Bool {
-      guard let port, let requestedPort else { return false }
-      return port != requestedPort
-    }
   }
 
   /// Must also appear under `NSBonjourServices` in `Info.plist`, or advertising fails with -65555.
@@ -63,7 +57,6 @@ public final class RTSPServer: @unchecked Sendable {
   /// remember. `stop` clears it, so a deliberate shutdown is never undone by a retry.
   private struct StartRequest {
     var port: UInt16
-    var fallbackPort: UInt16
     var path: String
     var advertise: Bool
   }
@@ -108,17 +101,14 @@ public final class RTSPServer: @unchecked Sendable {
     self.parameters = parameters
   }
 
-  /// Binds `port`, falling back to `fallbackPort` if it is taken. A bind failure is a visible status
-  /// rather than a thrown error, because the app has to keep running and show the operator why.
-  public func start(port: UInt16, fallbackPort: UInt16, path: String, advertise: Bool = true) {
+  /// Binds `port` and keeps it: a bind failure is retried on the same port with backoff, never moved
+  /// to another one, because Director looks for a Cameraman on one port. The failure is a visible
+  /// status rather than a thrown error, because the app has to keep running and show the operator
+  /// why.
+  public func start(port: UInt16, path: String, advertise: Bool = true) {
     queue.async { [self] in
       state.withLock {
-        $0.startRequest = StartRequest(
-          port: port,
-          fallbackPort: fallbackPort,
-          path: path,
-          advertise: advertise
-        )
+        $0.startRequest = StartRequest(port: port, path: path, advertise: advertise)
       }
       cancelRebind()
       bindStartRequest()
@@ -158,23 +148,13 @@ public final class RTSPServer: @unchecked Sendable {
     }
   }
 
-  /// Binds the stored request, preferring its port and falling back to the second. Runs on `queue`.
+  /// Binds the stored request. Runs on `queue`.
   private func bindStartRequest() {
     guard let request = state.withLock({ $0.startRequest }) else { return }
     stopLocked(clearingRequest: false)
-    let bound = bind(
-      port: request.port,
-      requested: request.port,
-      path: request.path,
-      advertise: request.advertise
-    ) || bind(
-      port: request.fallbackPort,
-      requested: request.port,
-      path: request.path,
-      advertise: request.advertise
-    )
-    // Neither port produced a listener, so no state handler will fire to ask for a retry. Without
-    // this the server would sit down forever on a transient bind failure.
+    let bound = bind(port: request.port, path: request.path, advertise: request.advertise)
+    // No listener was produced, so no state handler will fire to ask for a retry. Without this the
+    // server would sit down forever on a transient bind failure.
     if !bound { scheduleRebind() }
   }
 
@@ -299,7 +279,7 @@ public final class RTSPServer: @unchecked Sendable {
     }
   }
 
-  private func bind(port: UInt16, requested: UInt16, path: String, advertise: Bool) -> Bool {
+  private func bind(port: UInt16, path: String, advertise: Bool) -> Bool {
     guard let endpointPort = NWEndpoint.Port(rawValue: port) else { return false }
 
     let parameters = NWParameters.tcp
@@ -350,7 +330,6 @@ public final class RTSPServer: @unchecked Sendable {
         update {
           $0.isListening = true
           $0.port = bound
-          $0.requestedPort = requested
           $0.lastError = nil
           $0.listenerState = "ready"
         }

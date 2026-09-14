@@ -27,7 +27,7 @@ struct StreamSettingsStoreTests {
     written.height = 720
     written.frameRate = 60
     written.audioEnabled = false
-    written.port = 8554
+    written.port = 9554
     written.path = "/live/other"
     written.disabledLensIDs = [ "uw", "tele" ]
     written.cleanHDMIEnabled = false
@@ -48,6 +48,18 @@ struct StreamSettingsStoreTests {
     let read = try #require(persistence.load())
     #expect(read.codec == .h264)
     #expect(read.cleanHDMIEnabled)
+  }
+
+  @Test("A port saved as 554 by an older build loads as the shared 8554")
+  func retiredPortLoadsAsTheSharedPort() throws {
+    // Director sweeps one Cameraman port. An iPhone that kept its saved 554 after the update would
+    // be the one camera the sweep never finds.
+    let backing = InMemorySettingsStore(
+      values: [ StreamSettingsStore.settingsKey: #"{"codec":"h264","port":554}"# ]
+    )
+    let read = try #require(StreamSettingsStore(store: backing, legacyDefaults: nil).load())
+    #expect(read.port == 8554)
+    #expect(read.codec == .h264)
   }
 
   @Test("A later save replaces the previous one")

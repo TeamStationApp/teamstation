@@ -131,9 +131,8 @@ on could never widen the range again.
 | 554 | `refused: bind failed: EACCES (Permission denied)` |
 | 8554 | `bound` |
 
-Not a quirk of this handset — Linux refuses ports below 1024 to unprivileged processes, so the iOS
-build's fallback path is Android's only path. The app asks for 554 anyway so that the fallback is a
-recorded fact rather than a hardcoded difference between the two builds.
+Not a quirk of this handset — Linux refuses ports below 1024 to unprivileged processes. That is why
+both builds serve on 8554 since 2026-09-13 and no longer ask for 554.
 
 ## Encode and stream
 

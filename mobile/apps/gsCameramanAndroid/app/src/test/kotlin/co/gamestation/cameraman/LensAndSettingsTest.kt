@@ -181,6 +181,23 @@ class StreamSettingsPersistenceTest {
     }
 
     @Test
+    fun `a port saved as 554 by an older build loads as the shared 8554`() {
+        // Director sweeps one Cameraman port, so a phone still asking for 554 is one it never finds.
+        val store = InMemorySettingsStore(
+            mapOf(StreamSettingsStore.settingsKey to "codec=h264&port=554")
+        )
+        val loaded = StreamSettingsStore(store).load()
+        assertEquals(8554, loaded!!.port)
+        assertEquals(StreamCodec.H264, loaded.codec)
+    }
+
+    @Test
+    fun `any other saved port is kept`() {
+        val store = InMemorySettingsStore(mapOf(StreamSettingsStore.settingsKey to "port=9554"))
+        assertEquals(9554, StreamSettingsStore(store).load()!!.port)
+    }
+
+    @Test
     fun `an explicit launch argument wins over what was saved`() {
         // Or a flow that pins a format would depend on the state of the handset.
         val saved = StreamSettings(codec = StreamCodec.H264, bitrate = 9_000_000, width = 1280)

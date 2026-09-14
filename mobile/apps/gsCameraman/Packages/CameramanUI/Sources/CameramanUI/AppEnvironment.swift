@@ -445,7 +445,6 @@ public final class AppEnvironment {
 
     server.start(
       port: UInt16(clamping: settingsLock.withLock { $0.port }),
-      fallbackPort: UInt16(clamping: StreamSettings.fallbackPort),
       path: settingsLock.withLock { $0.path },
       advertise: launch.advertise
     )

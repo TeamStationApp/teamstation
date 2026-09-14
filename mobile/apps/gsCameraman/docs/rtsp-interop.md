@@ -95,7 +95,7 @@ connection (`OPTIONS`, then parameters; never `SETUP`/`PLAY`) so a burst of zoom
 RTP on the media session. Parameters are server-level and need no `Session` header.
 
 ```
-GET_PARAMETER rtsp://192.168.7.118:554/live/mainstream RTSP/1.0
+GET_PARAMETER rtsp://192.168.7.118:8554/live/mainstream RTSP/1.0
 CSeq: 4
 Content-Type: text/parameters
 Content-Length: 2
@@ -172,7 +172,7 @@ proves only that they share a misunderstanding:
 ```bash
 # our client, then ffmpeg over the same stream
 socket npm run verify:stream
-ffmpeg -rtsp_transport tcp -i rtsp://<phone>:554/live/mainstream -t 6 -c copy out.mp4
+ffmpeg -rtsp_transport tcp -i rtsp://<phone>:8554/live/mainstream -t 6 -c copy out.mp4
 ```
 
 Measured on an iPhone 13 Pro, 2026-08-19: both codecs stream at 30 fps with no sequence gaps, the

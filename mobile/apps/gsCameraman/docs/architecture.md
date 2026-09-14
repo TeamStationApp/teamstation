@@ -180,9 +180,10 @@ the way a VM33 does, so without that advertisement the phone never appears. TXT 
 `name`, `path`, `ip` and `port`. `NSBonjourServices` must list both types or advertising fails
 with `-65555` and takes the listener down with it.
 
-Port 554 by default, falling back to 8554 if something already holds it. Both the bound port and the
-fallback are visible on screen, because an operator reading "554" off a phone that is actually on
-8554 has no way to discover that from the client end.
+Port 8554, the same as the Android build, so a Director sweep finds either platform on one port.
+Not the registered 554: Android cannot bind below 1024. A bind failure is retried on 8554 with
+backoff rather than moved to another port, and a settings set saved with 554 by an older build
+loads as 8554. The address on the settings screen is built from the port actually bound.
 
 ## Running it
 

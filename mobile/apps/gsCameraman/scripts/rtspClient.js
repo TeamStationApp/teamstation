@@ -24,7 +24,7 @@ const MAGIC = 0x24 // '$'
 function parseArgs (argv) {
   const options = {
     host: null,
-    port: 554,
+    port: 8554,
     path: 'live',
     seconds: 10,
     out: null,
