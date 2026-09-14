@@ -25,6 +25,14 @@ struct ExportProgressView: View {
       if let state = run.combinedState {
         row(label: "Combined video", state: state)
       }
+      if let upload = run.upload {
+        Divider()
+        Text("PeerTube")
+          .font(.headline)
+        ForEach(upload.tracks, id: \.self) { track in
+          uploadRow(title: upload.title(for: track), state: run.uploadStates[track] ?? .queued)
+        }
+      }
 
       HStack {
         if run.isFinished, !savedFiles.isEmpty {
@@ -82,6 +90,37 @@ struct ExportProgressView: View {
       }
     }
     .accessibilityIdentifier("export-row-\(label)")
+  }
+
+  /// One video on its way to PeerTube, named by its title.
+  @ViewBuilder
+  private func uploadRow(title: String, state: UploadState) -> some View {
+    VStack(alignment: .leading, spacing: 4) {
+      HStack {
+        Text(title)
+          .lineLimit(1)
+          .truncationMode(.middle)
+        Spacer()
+        Group {
+          switch state {
+          case .queued:
+            Text("Waiting to upload")
+          case let .uploading(sent, total):
+            Text("Uploading, \(Self.megabytes(sent)) of \(Self.megabytes(total))")
+          case .done(let page):
+            if let page { Link("Uploaded", destination: page) } else { Text("Uploaded") }
+          case .failed(let reason):
+            Text(reason).foregroundStyle(.red)
+          }
+        }
+        .font(.callout)
+        .foregroundStyle(.secondary)
+      }
+      if case let .uploading(sent, total) = state, total > 0 {
+        ProgressView(value: min(1, Double(sent) / Double(total)))
+      }
+    }
+    .accessibilityIdentifier("upload-row-\(title)")
   }
 
   private func status(_ state: TrackState) -> String {

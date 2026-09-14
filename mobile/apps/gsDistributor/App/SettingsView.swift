@@ -76,6 +76,9 @@ struct SettingsView: View {
             .accessibilityIdentifier("settings-peertube-signout")
         }
       }
+      Text("The channel and privacy are chosen with each upload.")
+        .font(.caption)
+        .foregroundStyle(.secondary)
 
     case .unknown:
       ProgressView()

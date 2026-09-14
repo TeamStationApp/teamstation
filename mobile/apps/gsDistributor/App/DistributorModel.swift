@@ -154,7 +154,8 @@ final class DistributorModel {
     _ recording: RecordingListing,
     tracks: [Track],
     reprocess: Bool = false,
-    combined: CombinedPlan? = nil
+    combined: CombinedPlan? = nil,
+    upload: UploadPlan? = nil
   ) {
     guard !isExporting, let connection else { return }
     guard let destination else {
@@ -168,7 +169,8 @@ final class DistributorModel {
       jobs: jobs,
       destination: destination,
       reprocess: reprocess,
-      combined: combined
+      combined: combined,
+      upload: upload
     ) { [weak self] in
       guard let self else { return false }
       return self.connection != nil && !self.isRecording
@@ -269,6 +271,35 @@ final class DistributorModel {
   var uploadPrivacy: Int {
     let offered = if case .signedIn(let account) = peerTube { Array(account.privacies.keys) } else { [Int]() }
     return PeerTubePrivacy.preferred(chosen: settings?.peerTube.privacy, offered: offered)
+  }
+
+  /// The uploads for an export of `recording`, to `channelID` with `privacy`; nil when GS Director
+  /// is not signed in or there is no channel.
+  func uploadPlan(
+    for recording: RecordingListing,
+    title: String,
+    channelID: Int?,
+    privacy: Int,
+    tracks: [UploadTrack]
+  ) -> UploadPlan? {
+    guard case .signedIn(let account) = peerTube, let channelID, !tracks.isEmpty else { return nil }
+    // The uploads' own token, kept through GS Director going away and coming back.
+    let tokens = UploadTokenSource(
+      held: peerTubeToken,
+      isConnected: { @MainActor [weak self] in self?.connection != nil },
+      fetch: { @MainActor [weak self] in
+        guard let self else { throw CancellationError() }
+        return try await self.peerTubeAccessToken()
+      }
+    )
+    return UploadPlan(
+      host: account.host,
+      channelID: channelID,
+      privacy: privacy,
+      title: title,
+      tracks: tracks,
+      token: { try await tokens.accessToken() }
+    )
   }
 
   /// Puts away a finished export's progress.
