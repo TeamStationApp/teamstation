@@ -10,7 +10,14 @@ import DirectorSources
 /// rather than a discovery bug.
 public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
   public struct Configuration: Sendable {
+    /// GS Cameraman's RTSP port on iOS and Android alike. Android will not let an app bind below
+    /// 1024, so the phones share 8554 rather than NearStream's 554.
+    public static let cameramanPort = 8554
+
     public var port: Int
+    /// Every port the sweep asks each address about: the configured port (NearStream's 554) and
+    /// GS Cameraman's.
+    public var sweepPorts: [Int]
     public var path: String
     /// Hosts entered by the operator or passed by a launch argument. A first-class input, not a
     /// fallback: cameras on another subnet, or a venue that blocks scanning, have no other route.
@@ -23,6 +30,7 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
 
     public init(
       port: Int = 554,
+      sweepPorts: [Int]? = nil,
       path: String = "/live/mainstream",
       manualHosts: [String] = [],
       isScanEnabled: Bool = true,
@@ -32,6 +40,7 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
       password: String? = nil
     ) {
       self.port = port
+      self.sweepPorts = sweepPorts ?? (port == Self.cameramanPort ? [ port ] : [ port, Self.cameramanPort ])
       self.path = path
       self.manualHosts = manualHosts
       self.isScanEnabled = isScanEnabled
@@ -42,15 +51,18 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
     }
   }
 
-  /// How an endpoint gets its identity. Supplied by the layer that owns the named-camera cache.
+  /// How an endpoint gets its identity. Supplied by the layer that owns the named-camera cache, with
+  /// the Bonjour advertisements and what each confirmed socket said about itself at `DESCRIBE`.
   public typealias IdentityResolver = @Sendable (
     [CameraEndpoint],
-    [CameraAdvertisement]
+    [CameraAdvertisement],
+    [CameraEndpoint: StreamAdvertisement]
   ) -> [CameraEndpoint: (id: SourceID, name: String)]
 
-  /// Whether a host is a camera this app can use. Injectable so a test can drive a sweep without a
-  /// network.
-  public typealias HostConfirmation = @Sendable (CameraEndpoint) async -> Bool
+  /// Whether a host is a camera this app can use, and what it says about itself: nil when it is not
+  /// a camera, an empty advertisement when it is one that claims nothing. Injectable so a test can
+  /// drive a sweep without a network.
+  public typealias HostConfirmation = @Sendable (CameraEndpoint) async -> StreamAdvertisement?
 
   /// Asks the identity layer to move a camera that has stopped answering onto a socket that
   /// advertises the same unique id or CNAME.
@@ -103,12 +115,23 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
     self.requestRelocation = requestRelocation
     self.coordinator = coordinator
     self.advertisementBrowser = advertisementBrowser
-    scanner = SubnetScanner(port: configuration.port)
+    scanner = SubnetScanner(ports: configuration.sweepPorts)
 
     let probe = RTSPEndpointProbe()
     self.confirmHost = confirmHost ?? { endpoint in
-      await probe.confirm(host: endpoint.host, port: endpoint.port, path: endpoint.path) != nil
+      await probe.confirm(host: endpoint.host, port: endpoint.port, path: endpoint.path)
+        .map { Self.sweepClaim(from: $0.description) }
     }
+  }
+
+  /// What a socket said about itself at the sweep's `DESCRIBE`, kept only when its CNAME is a GS
+  /// Cameraman UUID. A VM33 sends its firmware string as its CNAME, the same on every unit, so taking
+  /// that on every sweep would put one VM33's name on another; theirs stays with their TXT identity.
+  public static func sweepClaim(from description: SDPDescription) -> StreamAdvertisement {
+    guard CameraIdentityRules.cameramanUUID(fromCNAME: description.streamCNAME) != nil else {
+      return StreamAdvertisement()
+    }
+    return StreamAdvertisement(cname: description.streamCNAME, name: description.streamName)
   }
 
   public var isRunning: Bool {
@@ -176,7 +199,7 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
     rescan()
   }
 
-  public var sweepPorts: [Int] { configuration.isScanEnabled ? [configuration.port] : [] }
+  public var sweepPorts: [Int] { configuration.isScanEnabled ? configuration.sweepPorts : [] }
 
   public func setSweepIsShared(_ isShared: Bool) {
     lock.lock()
@@ -191,15 +214,19 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
   /// actually changed does get confirmed at once, which is what makes a camera that came back at
   /// a new address appear without waiting out the interval.
   public func acceptSweep(_ result: SubnetScanner.Result) {
-    let mine = result.hosts(onPort: configuration.port)
+    let wanted = Set(configuration.sweepPorts)
+    let mine = result.portsByHost.compactMapValues { ports -> Set<Int>? in
+      let answered = ports.intersection(wanted)
+      return answered.isEmpty ? nil : answered
+    }
     lock.lock()
-    let changed = mine != (sharedScan?.openHosts ?? [])
+    let changed = mine != (sharedScan?.portsByHost ?? [:])
     sharedScan = SubnetScanner.Result(
-      openHosts: mine,
+      openHosts: mine.keys.sorted { (IPv4Subnet.numeric($0) ?? 0) < (IPv4Subnet.numeric($1) ?? 0) },
       probedCount: result.probedCount,
       subnet: result.subnet,
       diagnostic: result.diagnostic,
-      portsByHost: result.portsByHost
+      portsByHost: mine
     )
     let wasRunning = running
     lock.unlock()
@@ -253,7 +280,17 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
     let rawAds = advertisementBrowser.advertisements
     var seen = Set<CameraEndpoint>()
     var candidates: [CameraEndpoint] = []
-    for host in (scan?.openHosts ?? []) + configuration.manualHosts {
+    for host in scan?.openHosts ?? [] {
+      // Every port that answered is its own candidate: NearStream on 554, GS Cameraman on 8554.
+      let answered = scan?.portsByHost[host].map { $0.sorted() } ?? []
+      for port in answered.isEmpty ? [ configuration.port ] : answered {
+        let endpoint = CameraEndpoint(host: host, port: port, path: configuration.path)
+        if seen.insert(endpoint).inserted {
+          candidates.append(endpoint)
+        }
+      }
+    }
+    for host in configuration.manualHosts {
       let endpoint = endpoint(for: host, advertisements: rawAds)
       if seen.insert(endpoint).inserted {
         candidates.append(endpoint)
@@ -267,6 +304,7 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
     }
 
     var confirmed: [CameraEndpoint] = []
+    var claims: [CameraEndpoint: StreamAdvertisement] = [:]
     var skipped = 0
     for endpoint in candidates {
       if isBeingWatched(endpoint) {
@@ -274,39 +312,40 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
         confirmed.append(endpoint)
         continue
       }
-      if await confirmHost(endpoint) {
+      if let claim = await confirmHost(endpoint) {
         confirmed.append(endpoint)
+        if !claim.isEmpty { claims[endpoint] = claim }
         continue
       }
       // GS Cameraman often fails a 2–5s DESCRIBE probe from another iOS device even when Bonjour
       // published a LAN IPv4. Listing it from the advertisement is how the operator can enable it;
       // the session then has peer-to-peer TCP and does not abort on `.waiting`.
-      if let advertisement = rawAds.first(where: { $0.host == endpoint.host }),
-         advertisement.uuid != nil,
-         advertisement.hasUsableMediaHost {
+      if rawAds.contains(where: { $0.endpoint == endpoint && $0.uuid != nil && $0.hasUsableMediaHost }) {
         confirmed.append(endpoint)
       }
     }
 
-    let collapsed = CameraIdentityRules.deduplicate(endpoints: confirmed, advertisements: rawAds)
+    let collapsed = CameraIdentityRules.deduplicate(
+      endpoints: confirmed,
+      advertisements: rawAds,
+      claims: claims
+    )
     confirmed = collapsed.endpoints
     let ads = collapsed.advertisements
+    let paired = CameraIdentityRules.pair(endpoints: confirmed, advertisements: ads, claims: claims)
 
-    let identifiedHosts = Set(ads.compactMap { advertisement -> String? in
-      advertisement.uniqueID == nil ? nil : advertisement.host
-    })
     confirmed.sort {
-      let leftKnown = identifiedHosts.contains($0.host)
-      let rightKnown = identifiedHosts.contains($1.host)
+      let leftKnown = paired[$0]?.uniqueID != nil || claims[$0] != nil
+      let rightKnown = paired[$1]?.uniqueID != nil || claims[$1] != nil
       if leftKnown != rightKnown { return leftKnown && !rightKnown }
-      return $0.host < $1.host
+      return ($0.host, $0.port) < ($1.host, $1.port)
     }
 
-    let identities = resolveIdentity?(confirmed, ads) ?? [:]
+    let identities = resolveIdentity?(confirmed, ads, claims) ?? [:]
     let discovered = sessionKeyedSources(
       endpoints: confirmed,
       identities: identities,
-      advertisements: ads
+      paired: paired
     )
 
     let awxCount = ads.filter { $0.modelName != nil || $0.wlanMAC != nil }.count
@@ -317,6 +356,7 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
       "probed=\(scan?.probedCount ?? 0)",
       "open=\(scan?.openHosts.count ?? 0)",
       "confirmed=\(confirmed.count)",
+      "cname=\(claims.count)",
       "streaming=\(skipped)",
       "manual=\(configuration.manualHosts.count)",
       "awx=\(awxCount)",
@@ -332,8 +372,9 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
     publish(sources: discovered, endpoints: confirmed, diagnostic: diagnostic)
   }
 
-  /// Prefer the port and path Bonjour advertised for this host, so a Cameraman that bound 8554 is
-  /// probed there rather than on the NearStream default of 554.
+  /// A host the operator typed. `host:port` is taken as written; a bare host takes the port and path
+  /// Bonjour advertised for it, so a Cameraman is probed on 8554 rather than the NearStream default.
+  /// Only where to connect comes from here — which camera it is comes from what the socket says.
   private func endpoint(for host: String, advertisements: [CameraAdvertisement]) -> CameraEndpoint {
     if let advertisement = advertisements.first(where: { $0.host == host }) {
       return advertisement.endpoint
@@ -369,7 +410,7 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
   private func sessionKeyedSources(
     endpoints: [CameraEndpoint],
     identities: [CameraEndpoint: (id: SourceID, name: String)],
-    advertisements: [CameraAdvertisement]
+    paired: [CameraEndpoint: CameraAdvertisement]
   ) -> [DiscoveredSource] {
     lock.lock()
     defer { lock.unlock() }
@@ -377,7 +418,7 @@ public final class RTSPDiscovery: SourceDiscovery, @unchecked Sendable {
     discovered.reserveCapacity(endpoints.count)
     for endpoint in endpoints {
       let identity = identities[endpoint]
-      let advertised = advertisements.first { $0.host == endpoint.host }?.advertisedName
+      let advertised = paired[endpoint]?.advertisedName
       let trimmedAdvertised = advertised.flatMap { value -> String? in
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed

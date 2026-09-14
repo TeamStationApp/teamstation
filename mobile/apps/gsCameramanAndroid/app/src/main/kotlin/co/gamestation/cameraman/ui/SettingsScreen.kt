@@ -268,21 +268,6 @@ private fun StreamCard(
             )
         }
 
-        if (serverStatus.usedFallbackPort) {
-            // Not a warning, a fact: Android refuses port 554 to an unprivileged process, so an
-            // operator reading "554" off the iOS build next to this one needs to know why the two
-            // differ before they type the wrong address into Producer.
-            Text(
-                "Port ${serverStatus.requestedPort} is privileged on Android; " +
-                    "serving on ${serverStatus.port}.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier
-                    .padding(horizontal = 16.dp)
-                    .testTag("settings-port-note")
-            )
-        }
-
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
         ValueRow("Clients", serverStatus.clientCount.toString(), "settings-clients")

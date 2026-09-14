@@ -9,9 +9,9 @@ build. Kept here rather than in commit messages so the next person does not have
 uninstall, and there is no sanctioned store that outlives it. A reinstalled Cameraman is a new camera
 to GS Director and has to be re-bound to its tile.
 
-The iOS build's Keychain does survive this, so the two platforms genuinely differ in an
-operator-visible way. Reinstalling a phone mid-tournament costs a re-bind on Android and does not on
-iOS. `scripts/install.sh` uses `install -r`, which is an update and keeps the identity.
+The iOS build is the same: its identity is a file in the app's storage, which a delete-and-reinstall
+removes, so reinstalling a phone mid-tournament costs a re-bind on either platform.
+`scripts/install.sh` uses `install -r`, which is an update and keeps the identity.
 
 ## The telephoto pill reads 4.1x where the stock camera app reads 5x
 

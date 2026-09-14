@@ -40,7 +40,7 @@ struct CameraParametersTests {
         CameraLens(id: "tele", position: .back, deviceType: CameraDeviceTypeName.telephoto, uniqueDeviceID: "tele", focalLengthMM: 77, displayedZoom: 3, deviceZoom: 6, isSecondaryNative: false),
         CameraLens(id: "front", position: .front, deviceType: CameraDeviceTypeName.wideAngle, uniqueDeviceID: "front", focalLengthMM: nil, displayedZoom: 1, deviceZoom: 1, isSecondaryNative: false)
       ],
-      streamURL: "rtsp://10.10.7.118:554/live/mainstream",
+      streamURL: "rtsp://10.10.7.118:8554/live/mainstream",
       clientCount: 2
     )
   }
@@ -75,7 +75,7 @@ struct CameraParametersTests {
     #expect(decoded.settings.bitrate == 4_000_000)
     #expect(decoded.settings.width == 1920)
     #expect(decoded.settings.frameRate == 30)
-    #expect(decoded.settings.port == 554)
+    #expect(decoded.settings.port == 8554)
     #expect(decoded.settings.path == "/live/mainstream")
     #expect(decoded.formats == original.formats)
     #expect(decoded.lenses.map(\.id) == [ "uw", "wide", "tele", "front" ])

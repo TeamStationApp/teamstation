@@ -37,10 +37,25 @@ is not persisted and is not derived from the address.
 
 `CameraIdentityRules` is pure, so all of this is unit tested without a network or a simulator:
 
-1. **Auto-match by unique id.** An endpoint whose TXT `modelname` (else `wlanmac`) matches a
-   record's `hardwareID` is bound to it, marked `autoByIdentity`.
+1. **Auto-match by unique id.** An endpoint whose paired advertisement's unique id (TXT
+   `modelname`, else `wlanmac`, else Cameraman `uuid`) matches a record's `hardwareID` is bound to
+   it, marked `autoByIdentity`.
 2. **Auto-match by CNAME.** GS Cameraman (and any camera that presents an SDP/RTCP `CNAME`) is
    bound on that identifier, marked `autoByCNAME`. Address is never a match key.
+
+`CameraIdentityRules.pair` decides which advertisement describes which endpoint:
+
+- A **GS Cameraman** advertisement (TXT `uuid`) describes the endpoint whose CNAME is that uuid.
+  Before a socket has said anything, it describes only the exact endpoint it announced (host, port
+  and path). It never describes an endpoint because they share an address: a released lease goes to
+  the next phone, and the last phone's advertisement would otherwise name it.
+- A **NearStream** advertisement has nothing its sockets repeat, so it still pairs by its TXT `ip=`.
+
+The subnet sweep asks every address about 554 (NearStream) and 8554 (GS Cameraman on both
+platforms), and its `DESCRIBE` probe keeps a Cameraman's UUID CNAME, so a phone whose Bonjour never
+reaches the iPad is still recognised by its record — name included — the moment the sweep finds it.
+Only UUID-form CNAMEs are taken at sweep time: every VM33 sends the same firmware string
+(`Hamedal Server/1.0 (…)`) as its CNAME, which identifies none of them.
 3. **First sight adopts the advertised name.** A new unique id creates a record named from the
    Bonjour instance. Later TXT name changes do not overwrite an operator name.
 4. **The operator wins.** A `manual` binding is never overridden by a later automatic match.

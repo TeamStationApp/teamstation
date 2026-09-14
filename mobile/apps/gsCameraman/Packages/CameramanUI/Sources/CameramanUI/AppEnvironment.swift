@@ -125,18 +125,18 @@ public final class AppEnvironment {
     }
     self.settings = initial
 
-    // A pinned UUID lets a flow assert an exact CNAME. Otherwise the Keychain copy is authoritative
-    // so the identity survives a delete-and-reinstall.
-    let resolvedStore: IdentityStore
+    // A pinned UUID lets a flow assert an exact CNAME. Otherwise the identity is a file in the app's
+    // own storage, carried over once from the Keychain where earlier builds kept it.
+    let provider: DeviceIdentityProvider
     if let store {
-      resolvedStore = store
+      provider = DeviceIdentityProvider(store: store)
     } else if let pinned = launch.identityUUID {
-      resolvedStore = InMemoryIdentityStore(values: [ DeviceIdentityProvider.uuidKey: pinned ])
+      provider = DeviceIdentityProvider(
+        store: InMemoryIdentityStore(values: [ DeviceIdentityProvider.uuidKey: pinned ])
+      )
     } else {
-      resolvedStore = KeychainIdentityStore()
+      provider = DeviceIdentityProvider(store: FileIdentityStore(), legacy: LegacyKeychainIdentityStore())
     }
-
-    let provider = DeviceIdentityProvider(store: resolvedStore)
     self.identityProvider = provider
     var loaded = provider.load()
     if let name = launch.cameraName {
@@ -445,7 +445,6 @@ public final class AppEnvironment {
 
     server.start(
       port: UInt16(clamping: settingsLock.withLock { $0.port }),
-      fallbackPort: UInt16(clamping: StreamSettings.fallbackPort),
       path: settingsLock.withLock { $0.path },
       advertise: launch.advertise
     )

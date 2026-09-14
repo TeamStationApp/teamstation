@@ -101,8 +101,8 @@ SDES **NAME**. Nothing here is invented — RFC 3550 already defines exactly thi
 reads both without a private protocol.
 
 The UUID lives in app storage with `allowBackup="false"`, so it is device-only and readable after
-first unlock — two of the three properties the iOS Keychain gives it. It does **not** survive an
-uninstall; Android offers no store that does. See `PreferencesIdentityStore`.
+first unlock. Like the iOS build's identity file, it does **not** survive an uninstall. See
+`PreferencesIdentityStore`.
 
 ## Zoom and lenses
 
@@ -141,8 +141,8 @@ A failed registration leaves the socket alone, unlike iOS where a missing `NSBon
 the whole listener down with it. So `isAdvertising` is reported separately from `isListening` rather
 than being assumed from it.
 
-Port 554 by default, falling back to 8554 — which on Android is always what happens, because 554 is
-privileged. Both the bound port and the request are visible on screen.
+Port 8554, the same as the iOS build: 554 is privileged on Android, and Director looks for every
+Cameraman on one port. The bound port is on the settings screen and in `dump-state`.
 
 ## Remote control
 

@@ -95,7 +95,9 @@ class StreamSettingsStore(private val store: SettingsStore) {
                 bitrate = values["bitrate"]?.toIntOrNull() ?: defaults.bitrate,
                 adaptiveBitrate = values["adaptiveBitrate"]?.toBooleanStrictOrNull()
                     ?: defaults.adaptiveBitrate,
-                port = values["port"]?.toIntOrNull() ?: defaults.port,
+                port = values["port"]?.toIntOrNull()
+                    ?.takeUnless { it == StreamSettings.retiredPort }
+                    ?: defaults.port,
                 path = values["path"]?.takeIf { it.isNotEmpty() } ?: defaults.path,
                 audioEnabled = values["audioEnabled"]?.toBooleanStrictOrNull()
                     ?: defaults.audioEnabled,

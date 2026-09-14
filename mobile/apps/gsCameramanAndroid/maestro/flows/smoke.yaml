@@ -24,12 +24,9 @@ appId: co.gamestation.cameraman
 
 - tapOn:
     id: "settings-button"
-# The address is read off the app rather than assumed. On Android this is always the fallback port,
-# because 554 is privileged, and the note explaining that has to be there.
+# The address is read off the app rather than assumed.
 - assertVisible:
     id: "settings-url"
-- assertVisible:
-    id: "settings-port-note"
 - assertVisible:
     id: "settings-advertising"
 - tapOn:

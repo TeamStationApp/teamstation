@@ -133,4 +133,64 @@ struct CameraRegistryTests {
     #expect(cameras.bindings.isEmpty)
     #expect(store.load().isEmpty)
   }
+
+  @Test("A Cameraman found only by the sweep keeps the operator's name through its CNAME")
+  func sweptCameramanIsNamedByItsCNAME() {
+    let suite = "co.gamestation.director.tests.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suite)!
+    defaults.removePersistentDomain(forName: suite)
+    let store = CameraRecordStore(store: ConfigStore(defaults: defaults))
+    let uuid = "258bf622-da23-4f23-bbba-1b42440dddf1"
+
+    let cameras = CameraRegistry(store: store)
+    let first = CameraEndpoint(host: "10.10.6.123", port: 8554)
+    _ = cameras.resolve(
+      endpoints: [ first ],
+      advertisements: [
+        CameraAdvertisement(host: "10.10.6.123", advertisedName: "Pixel10", port: 8554, uuid: uuid)
+      ]
+    )
+    let id = cameras.records[0].id
+    cameras.rename(id, to: "1st")
+
+    // Next launch: the phone has a new lease and none of its Bonjour reaches the iPad.
+    let relaunched = CameraRegistry(store: store)
+    let moved = CameraEndpoint(host: "10.10.6.140", port: 8554)
+    let identities = relaunched.resolve(
+      endpoints: [ moved ],
+      streamAdvertisements: [ moved: StreamAdvertisement(cname: uuid, name: "Pixel10") ]
+    )
+
+    #expect(identities[moved]?.name == "1st")
+    #expect(identities[moved]?.id == SourceID(id.uuidString))
+    #expect(relaunched.binding(for: moved)?.origin == .autoByCNAME)
+    #expect(relaunched.records.count == 1)
+  }
+
+  @Test("A remembered advertisement does not name the phone that was given its address")
+  func rememberedAdvertisementDoesNotNameTheNextPhone() {
+    let cameras = registry()
+    let pixel = "258bf622-da23-4f23-bbba-1b42440dddf1"
+    let iPhone = "b11d5d5f-07e6-4802-a880-9a3a5ffd0e29"
+    let socket = CameraEndpoint(host: "10.10.6.123", port: 8554)
+
+    _ = cameras.resolve(
+      endpoints: [ socket ],
+      advertisements: [
+        CameraAdvertisement(host: "10.10.6.123", advertisedName: "Pixel10", port: 8554, uuid: pixel)
+      ],
+      streamAdvertisements: [ socket: StreamAdvertisement(cname: pixel, name: "Pixel10") ]
+    )
+
+    // The Pixel leaves; its advertisement is still remembered when the iPhone takes the lease.
+    let identities = cameras.resolve(
+      endpoints: [ socket ],
+      streamAdvertisements: [ socket: StreamAdvertisement(cname: iPhone, name: "iPhone15") ]
+    )
+
+    let iPhoneRecord = cameras.records.first { $0.lastKnownCNAME == iPhone }
+    #expect(identities[socket]?.name == "iPhone15")
+    #expect(cameras.binding(for: socket)?.cameraID == iPhoneRecord?.id)
+    #expect(cameras.binding(for: socket)?.origin == .autoByCNAME)
+  }
 }

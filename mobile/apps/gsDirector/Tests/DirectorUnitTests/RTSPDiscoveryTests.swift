@@ -20,9 +20,12 @@ struct RTSPDiscoveryTests {
         isScanEnabled: false
       ),
       resolveIdentity: resolveIdentity,
-      confirmHost: { endpoint in confirmed.contains(endpoint.host) }
+      confirmHost: { endpoint in confirmed.contains(endpoint.host) ? StreamAdvertisement() : nil }
     )
   }
+
+  private let pixelUUID = "258bf622-da23-4f23-bbba-1b42440dddf1"
+  private let iPhoneUUID = "b11d5d5f-07e6-4802-a880-9a3a5ffd0e29"
 
   @Test("A manual host that answers becomes a source; one that does not is dropped")
   func confirmationGatesPublication() async {
@@ -93,7 +96,7 @@ struct RTSPDiscoveryTests {
     let discovery = discovery(
       hosts: [ "10.10.7.148" ],
       confirmed: [ "10.10.7.148" ],
-      resolveIdentity: { endpoints, _ in
+      resolveIdentity: { endpoints, _, _ in
         Dictionary(uniqueKeysWithValues: endpoints.map {
           ($0, (id: SourceID("camera-\(cameraID.uuidString)"), name: "Third Base"))
         })
@@ -112,7 +115,7 @@ struct RTSPDiscoveryTests {
   @Test("A camera keeps its SourceID after moving to a new address")
   func identitySurvivesAnAddressChange() async {
     let stable = SourceID("camera-fixed")
-    let resolve: RTSPDiscovery.IdentityResolver = { endpoints, _ in
+    let resolve: RTSPDiscovery.IdentityResolver = { endpoints, _, _ in
       Dictionary(uniqueKeysWithValues: endpoints.map { ($0, (id: stable, name: "Third Base")) })
     }
 
@@ -138,6 +141,7 @@ struct RTSPDiscoveryTests {
     let diagnostic = discovery.diagnostic
     #expect(diagnostic.contains("scan=off"))
     #expect(diagnostic.contains("confirmed=1"))
+    #expect(diagnostic.contains("cname=0"))
     #expect(diagnostic.contains("manual=2"))
     #expect(diagnostic.contains("awx=0"))
   }
@@ -175,7 +179,7 @@ struct RTSPDiscoveryTests {
         isScanEnabled: false,
         rescanInterval: 0.05
       ),
-      confirmHost: { _ in true }
+      confirmHost: { _ in StreamAdvertisement() }
     )
 
     discovery.setPeriodicSearch(false)
@@ -201,7 +205,7 @@ struct RTSPDiscoveryTests {
       ),
       confirmHost: { endpoint in
         probed.record(endpoint.host)
-        return true
+        return StreamAdvertisement()
       }
     )
 
@@ -237,7 +241,7 @@ struct RTSPDiscoveryTests {
     let discovery = RTSPDiscovery(
       configuration: RTSPDiscovery.Configuration(isScanEnabled: false),
       advertisementBrowser: StaticAdvertisementBrowser([ advertisement ]),
-      confirmHost: { $0.host == "10.10.7.148" }
+      confirmHost: { $0.host == "10.10.7.148" ? StreamAdvertisement() : nil }
     )
 
     await discovery.sweepNow()
@@ -261,7 +265,7 @@ struct RTSPDiscoveryTests {
       advertisementBrowser: StaticAdvertisementBrowser([ advertisement ]),
       confirmHost: { endpoint in
         probed.record(endpoint)
-        return endpoint.port == 8554
+        return endpoint.port == 8554 ? StreamAdvertisement() : nil
       }
     )
 
@@ -286,7 +290,7 @@ struct RTSPDiscoveryTests {
     let discovery = RTSPDiscovery(
       configuration: RTSPDiscovery.Configuration(isScanEnabled: false),
       advertisementBrowser: StaticAdvertisementBrowser([ advertisement ]),
-      confirmHost: { _ in false }
+      confirmHost: { _ in nil }
     )
 
     await discovery.sweepNow()
@@ -308,7 +312,7 @@ struct RTSPDiscoveryTests {
         isScanEnabled: false
       ),
       advertisementBrowser: StaticAdvertisementBrowser([ advertisement ]),
-      confirmHost: { _ in true }
+      confirmHost: { _ in StreamAdvertisement() }
     )
 
     await discovery.sweepNow()
@@ -329,13 +333,98 @@ struct RTSPDiscoveryTests {
         isScanEnabled: false
       ),
       advertisementBrowser: StaticAdvertisementBrowser([ advertisement ]),
-      confirmHost: { _ in true }
+      confirmHost: { _ in StreamAdvertisement() }
     )
 
     await discovery.sweepNow()
 
     #expect(discovery.currentEndpoints.map(\.host) == [ "10.10.7.118" ])
     #expect(discovery.currentSources.count == 1)
+  }
+
+  // MARK: - GS Cameraman on its own port
+
+  @Test("The sweep asks every address about GS Cameraman's port as well as NearStream's")
+  func sweepCoversTheCameramanPort() {
+    #expect(RTSPDiscovery.Configuration.cameramanPort == 8554)
+    #expect(RTSPDiscovery(configuration: RTSPDiscovery.Configuration()).sweepPorts == [ 554, 8554 ])
+    #expect(RTSPDiscovery(configuration: RTSPDiscovery.Configuration(isScanEnabled: false)).sweepPorts.isEmpty)
+  }
+
+  @Test("A Cameraman the sweep found on 8554 is probed there and identified by its CNAME")
+  func sweptCameramanIsIdentifiedByCNAME() async {
+    let captured = Captured()
+    let pixel = CameraEndpoint(host: "10.10.6.123", port: 8554)
+    let discovery = RTSPDiscovery(
+      configuration: RTSPDiscovery.Configuration(),
+      resolveIdentity: { _, _, claims in
+        captured.record(claims)
+        return [:]
+      },
+      confirmHost: { [pixelUUID] endpoint in
+        endpoint == pixel ? StreamAdvertisement(cname: pixelUUID, name: "Pixel10") : nil
+      }
+    )
+    discovery.setSweepIsShared(true)
+    discovery.acceptSweep(SubnetScanner.Result(
+      openHosts: [ "10.10.6.123", "10.10.6.200" ],
+      probedCount: 254,
+      subnet: "10.10.6.0/24",
+      diagnostic: nil,
+      // 5353 is some other service's port on the same sweep; it is not this transport's to probe.
+      portsByHost: [ "10.10.6.123": [ 8554 ], "10.10.6.200": [ 5353 ] ]
+    ))
+
+    await discovery.sweepNow()
+
+    #expect(discovery.currentEndpoints == [ pixel ])
+    #expect(captured.claims[pixel]?.cname == pixelUUID)
+    #expect(discovery.diagnostic.contains("cname=1"))
+  }
+
+  @Test("A phone that took another's address is not named by the other's advertisement")
+  func staleAdvertisementDoesNotNameTheNewPhone() async {
+    // The Pixel advertised this socket, left, and the iPhone was given the same lease and port.
+    let stale = CameraAdvertisement(
+      host: "10.10.6.123",
+      advertisedName: "Pixel10",
+      port: 8554,
+      uuid: pixelUUID
+    )
+    let discovery = RTSPDiscovery(
+      configuration: RTSPDiscovery.Configuration(isScanEnabled: false),
+      advertisementBrowser: StaticAdvertisementBrowser([ stale ]),
+      confirmHost: { [iPhoneUUID] _ in StreamAdvertisement(cname: iPhoneUUID, name: "iPhone15") }
+    )
+
+    await discovery.sweepNow()
+
+    #expect(discovery.currentEndpoints == [ CameraEndpoint(host: "10.10.6.123", port: 8554) ])
+    #expect(discovery.currentSources.first?.advertisedName != "Pixel10")
+  }
+
+  @Test("Only a Cameraman UUID CNAME is taken from the sweep's DESCRIBE")
+  func sweepClaimKeepsOnlyCameramanUUIDs() {
+    let cameraman = SDPDescription.parse([
+      "v=0",
+      "s=Pixel10",
+      "m=video 0 RTP/AVP 96",
+      "a=rtpmap:96 H265/90000",
+      "a=ssrc:2740792677 cname:\(pixelUUID)",
+      "a=ssrc:2740792677 name:Pixel10",
+      ""
+    ].joined(separator: "\r\n"))
+    #expect(RTSPDiscovery.sweepClaim(from: cameraman) == StreamAdvertisement(cname: pixelUUID, name: "Pixel10"))
+
+    // Every VM33 sends the same firmware string, so it cannot tell one from another.
+    let vm33 = SDPDescription.parse([
+      "v=0",
+      "m=video 0 RTP/AVP 96",
+      "a=rtpmap:96 H264/90000",
+      "a=ssrc:1 cname:Hamedal Server/1.0(Jan 16 2026)",
+      ""
+    ].joined(separator: "\r\n"))
+    #expect(RTSPDiscovery.sweepClaim(from: vm33).isEmpty)
   }
 
   @Test("An address without a host yields no endpoint, so a bad row cannot become a source")
@@ -377,6 +466,24 @@ struct RTSPDiscoveryTests {
       lock.lock()
       recorded.append(endpoint.host)
       recordedEndpoints.append(endpoint)
+      lock.unlock()
+    }
+  }
+
+  /// What the identity layer was told each socket said about itself.
+  final class Captured: @unchecked Sendable {
+    private let lock = NSLock()
+    private var latest: [CameraEndpoint: StreamAdvertisement] = [:]
+
+    var claims: [CameraEndpoint: StreamAdvertisement] {
+      lock.lock()
+      defer { lock.unlock() }
+      return latest
+    }
+
+    func record(_ claims: [CameraEndpoint: StreamAdvertisement]) {
+      lock.lock()
+      latest = claims
       lock.unlock()
     }
   }

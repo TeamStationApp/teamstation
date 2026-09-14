@@ -911,7 +911,7 @@ class RTSPServerLoopbackTest {
                 RTSPResponder.ParameterRequest.Method.SET -> RTSPResponder.ParameterResponse(body = request.body)
             }
         }
-        server.start(port = 0, fallbackPort = 0, path = "/live/mainstream", advertise = false)
+        server.start(port = 0, path = "/live/mainstream", advertise = false)
         assertNotNull("the listener never became ready", server.currentStatus().port)
         return server
     }
