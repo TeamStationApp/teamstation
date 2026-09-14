@@ -25,6 +25,13 @@ final class DistributorModel {
   private(set) var recordings: [RecordingListing] = []
   /// Something to tell the user once; the window shows it and clears it.
   var problem: String?
+  /// GS Distributor's settings, read from and saved to the iPad. Nil until GS Director answers.
+  private(set) var settings: DistributorSettings?
+
+  /// This Mac's download folder, as the iPad remembers it.
+  var destination: URL? {
+    settings?.destinations[macID].map { URL(fileURLWithPath: $0, isDirectory: true) }
+  }
 
   /// This Mac's hardware UUID, which keys its download folder on the iPad.
   let macID = MacIdentity.platformUUID
@@ -103,6 +110,31 @@ final class DistributorModel {
     await reload()
   }
 
+  func loadSettings() async {
+    guard let connection else {
+      settings = nil
+      return
+    }
+    do {
+      settings = try await connection.settings()
+    } catch {
+      problem = "Could not read the settings on the iPad: \(error)"
+    }
+  }
+
+  /// Changes the settings on the iPad. Shown at once; put back as they were if the save fails.
+  func updateSettings(_ change: (inout DistributorSettings) -> Void) async {
+    guard let connection, var next = settings else { return }
+    change(&next)
+    settings = next
+    do {
+      settings = try await connection.saveSettings(next)
+    } catch {
+      problem = "Could not save the settings on the iPad: \(error)"
+      await loadSettings()
+    }
+  }
+
   // MARK: - Connection
 
   private func retryIfWaiting() async {
@@ -121,6 +153,7 @@ final class DistributorModel {
       self.forwarder = forwarder
       link = .connected(hello)
       await reload()
+      await loadSettings()
       listen(to: connection)
     } catch {
       disconnect()
@@ -163,5 +196,6 @@ final class DistributorModel {
     forwarder?.stop()
     forwarder = nil
     connection = nil
+    settings = nil
   }
 }
