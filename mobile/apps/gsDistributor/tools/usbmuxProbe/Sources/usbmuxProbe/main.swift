@@ -82,8 +82,22 @@ do {
     let sorted = rates.sorted()
     print(String(format: "median %.0f MB/s, min %.0f, max %.0f", sorted[sorted.count / 2], sorted.first!, sorted.last!))
 
+  case "fetch":
+    // One real file (or any route) from GS Director's link server, counted and timed.
+    guard let path = arguments.first(where: { $0.hasPrefix("/") }) else {
+      fail("usage: usbmuxProbe fetch <path> [--port 8770]")
+    }
+    let port = UInt16(option("port", default: "8770")) ?? 8770
+    let device = try pickDevice()
+    let socket = try UsbMux.connect(deviceID: device.deviceID, port: port)
+    let start = DispatchTime.now().uptimeNanoseconds
+    let response = try HTTPProbe.fetch(path: path, on: socket, keepBody: false)
+    let seconds = Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000_000
+    let megabytes = Double(response.bodyBytes) / 1_000_000
+    print(String(format: "%@: %.1f MB in %.3f s = %.0f MB/s", response.status, megabytes, seconds, megabytes / seconds))
+
   default:
-    fail("unknown command \(command); use list, get or throughput")
+    fail("unknown command \(command); use list, get, fetch or throughput")
   }
 } catch {
   fail("\(error)")
