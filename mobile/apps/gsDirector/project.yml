@@ -127,6 +127,9 @@ targets:
         # put it in a build phase that has no idea what to do with an .sdp file.
         excludes:
           - Fixtures/**
+      # The export's own tests live in the shared package so `swift test` runs them on the Mac;
+      # compiling them here too runs the same tests on the iPad.
+      - path: ../common/DirectorExport/Tests/DirectorExportTests
     dependencies:
       - target: Director
       - package: DirectorCore

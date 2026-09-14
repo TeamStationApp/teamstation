@@ -2,7 +2,7 @@ import AVFoundation
 import CoreGraphics
 import Foundation
 import DirectorCore
-import DirectorDVR
+import DirectorExport
 import DirectorSources
 import Testing
 
