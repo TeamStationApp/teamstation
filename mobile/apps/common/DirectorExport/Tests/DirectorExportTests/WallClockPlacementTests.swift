@@ -499,6 +499,31 @@ struct WallClockPlacementTests {
     #expect(abs((value ?? 0) - ((9_000 + 89) & FrameMarker.maximumValue)) <= 2)
   }
 
+  @Test("The sound comes out as long as the window, to within a few milliseconds")
+  func soundReachesTheEndOfTheWindow() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("sound-tail-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let part = root.appendingPathComponent("program.mp4")
+    try await markedMovieWithAudio(at: part, firstValue: 11_000, frames: 90, audioOverrun: 0.3)
+
+    let out = root.appendingPathComponent("out.mp4")
+    try await ArchiveRemux.concatenate(
+      files: [ part ],
+      fileDurations: [ 0 ],
+      targetDuration: 4,
+      startWalls: [ WallClock(seconds: 1_999.5) ],
+      windowStart: WallClock(seconds: 2_000),
+      destination: out
+    )
+
+    let sound = try #require(try await AVURLAsset(url: out).loadTracks(withMediaType: .audio).first)
+    let length = try await sound.load(.timeRange).duration.seconds
+    #expect(abs(length - 4) < 0.005, "sound is \(length) s against a 4 s window")
+  }
+
   @Test("Two cameras that dropped out differently still line up with each other")
   func anglesAgreeAcrossDifferentGaps() async throws {
     let root = FileManager.default.temporaryDirectory
