@@ -47,6 +47,13 @@ struct RootView: View {
       }
     }
     .toolbar {
+      // The gear at the top right; ⌘, opens the same window.
+      ToolbarItem(placement: .primaryAction) {
+        SettingsLink {
+          Label("Settings", systemImage: "gearshape")
+        }
+        .accessibilityIdentifier("settings-gear")
+      }
       if model.devices.count > 1 {
         ToolbarItem(placement: .navigation) {
           Picker("iPad", selection: Binding(

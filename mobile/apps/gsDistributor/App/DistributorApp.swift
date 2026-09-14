@@ -15,6 +15,11 @@ struct DistributorApp: App {
     }
     // No saved window state: the Mac keeps nothing of the Distributor's between launches.
     .restorationBehavior(.disabled)
+
+    Settings {
+      SettingsView(model: model)
+    }
+    .restorationBehavior(.disabled)
   }
 
   @NSApplicationDelegateAdaptor(Forgetting.self) private var forgetting
