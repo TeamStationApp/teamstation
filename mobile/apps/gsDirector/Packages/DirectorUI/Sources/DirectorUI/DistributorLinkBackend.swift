@@ -38,9 +38,25 @@ final class DistributorLinkBackend: DistributorBackend, @unchecked Sendable {
         deviceName: UIDevice.current.name,
         directorVersion: Self.version,
         directorID: Self.installID,
-        isRecording: environment?.isRecording ?? false
+        isRecording: environment?.isRecording ?? false,
+        isStreaming: environment?.isStreaming ?? false
       )
     }
+  }
+
+  func beginExport() async throws -> UUID {
+    try await MainActor.run {
+      guard let environment else { throw DistributorRefusal.notFound }
+      return try environment.beginDistributorExport()
+    }
+  }
+
+  func renewExport(_ id: UUID) async -> Bool {
+    await MainActor.run { environment?.renewDistributorExport(id) ?? false }
+  }
+
+  func endExport(_ id: UUID) async {
+    await MainActor.run { environment?.endDistributorExport(id) }
   }
 
   func recordings() async throws -> [RecordingListing] {

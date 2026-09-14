@@ -10,18 +10,22 @@ public struct DirectorIdentity: Sendable {
   public var directorVersion: String
   public var directorID: UUID
   public var isRecording: Bool
+  public var isStreaming: Bool
 
-  public init(deviceName: String, directorVersion: String, directorID: UUID, isRecording: Bool) {
+  public init(deviceName: String, directorVersion: String, directorID: UUID, isRecording: Bool, isStreaming: Bool = false) {
     self.deviceName = deviceName
     self.directorVersion = directorVersion
     self.directorID = directorID
     self.isRecording = isRecording
+    self.isStreaming = isStreaming
   }
 }
 
 public enum DistributorRefusal: Error, Equatable, Sendable {
-  /// Stitching on the iPad is refused while it records, so a remux never competes with a live take.
+  /// Exporting, and stitching on the iPad, are refused while it records or streams, so neither
+  /// competes with a live game.
   case recording
+  case streaming
   case notFound
 }
 
@@ -38,10 +42,17 @@ public protocol DistributorBackend: Sendable {
   /// One JPEG frame of `sourceID` about `seconds` into the recording, for previews; nil when there
   /// is no picture there.
   func still(recordingID: Int64, sourceID: SourceID, at seconds: Double) async throws -> Data?
+  /// Starts GS Distributor's export: from now until `endExport`, GS Director records and streams
+  /// nothing. Refused while it records or streams.
+  func beginExport() async throws -> UUID
+  /// Keeps the lock from expiring. False when it is no longer held.
+  func renewExport(_ id: UUID) async -> Bool
+  func endExport(_ id: UUID) async
 }
 
 public extension DistributorBackend {
   func still(recordingID: Int64, sourceID: SourceID, at seconds: Double) async throws -> Data? { nil }
+  func renewExport(_ id: UUID) async -> Bool { true }
 }
 
 /// The routes GS Distributor calls. See `DistributorWire` for the message types.
@@ -86,8 +97,21 @@ public final class DistributorService: Sendable {
           directorVersion: identity.directorVersion,
           directorID: identity.directorID,
           isRecording: identity.isRecording,
+          isStreaming: identity.isStreaming,
           sessionID: sessionID
         ))
+
+      case ("POST", "export-lock") where route.count == 1:
+        return .json(ExportLockGranted(lockID: try await backend.beginExport()))
+
+      case ("PUT", "export-lock") where route.count == 2:
+        guard let id = UUID(uuidString: route[1]) else { return .error(400, "bad lock id") }
+        return await backend.renewExport(id) ? .ok : .error(404, "that export lock is no longer held")
+
+      case ("DELETE", "export-lock") where route.count == 2:
+        guard let id = UUID(uuidString: route[1]) else { return .error(400, "bad lock id") }
+        await backend.endExport(id)
+        return .ok
 
       case ("GET", "recordings") where route.count == 1:
         return .json(try await backend.recordings())
@@ -197,7 +221,9 @@ public final class DistributorService: Sendable {
     } catch let error as URLError {
       return .error(502, "the iPad could not reach PeerTube: \(error.localizedDescription)")
     } catch DistributorRefusal.recording {
-      return .error(409, "GS Director is recording; the Mac stitches everything until it stops")
+      return .error(409, "GS Director is recording; export once the take has stopped")
+    } catch DistributorRefusal.streaming {
+      return .error(409, "GS Director is streaming; export once the stream has stopped")
     } catch DistributorRefusal.notFound {
       return .error(404, "not found")
     } catch {

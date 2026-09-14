@@ -66,6 +66,15 @@ final class DistributorModel {
   private(set) var run: DistributionRun?
   /// Whether GS Director is recording right now. While it is, the iPad stitches nothing.
   private(set) var isRecording = false
+  /// Whether GS Director is streaming. No export starts while it records or streams.
+  private(set) var isStreaming = false
+
+  /// Why an export cannot start now, if it cannot.
+  var exportBlockedReason: String? {
+    if isRecording { return "GS Director is recording. Export once the take has stopped." }
+    if isStreaming { return "GS Director is streaming. Export once the stream has stopped." }
+    return nil
+  }
   /// The iPad's stitching jobs, matched to their events.
   let jobs = JobWatcher()
 
@@ -176,6 +185,10 @@ final class DistributorModel {
     upload: UploadPlan? = nil
   ) {
     guard !isExporting, let connection else { return }
+    if let reason = exportBlockedReason {
+      problem = reason
+      return
+    }
     guard let destination else {
       problem = "Choose a folder to save into in Settings first."
       return
@@ -368,6 +381,7 @@ final class DistributorModel {
       self.forwarder = forwarder
       link = .connected(hello)
       isRecording = hello.isRecording
+      isStreaming = hello.isStreaming
       await reload()
       await loadSettings()
       await loadPeerTube()
@@ -390,6 +404,8 @@ final class DistributorModel {
           case .recordingStateChanged(let recording):
             isRecording = recording
             await reload()
+          case .streamingStateChanged(let streaming):
+            isStreaming = streaming
           case .directorBackgrounded:
             await jobs.handle(event)
             lost()

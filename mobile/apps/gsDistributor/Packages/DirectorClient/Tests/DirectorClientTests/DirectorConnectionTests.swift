@@ -11,6 +11,18 @@ import Testing
 actor FakeDirector: DistributorBackend {
   var isRecording = false
   private(set) var jobs: [JobRequest] = []
+  private(set) var exportLock: UUID?
+
+  func beginExport() throws -> UUID {
+    if isRecording { throw DistributorRefusal.recording }
+    let id = UUID()
+    exportLock = id
+    return id
+  }
+
+  func endExport(_ id: UUID) {
+    if exportLock == id { exportLock = nil }
+  }
 
   func setRecording(_ value: Bool) { isRecording = value }
 
@@ -94,6 +106,19 @@ struct DirectorConnectionTests {
     let port = try await server.start()
     let connection = DirectorConnection(baseURL: URL(string: "http://127.0.0.1:\(port)/")!, macID: "MAC-TEST")
     return Rig(base: base, director: director, service: service, server: server, connection: connection)
+  }
+
+  @Test("The Mac takes the export lock, hands it back, and is refused it during a take")
+  func exportLock() async throws {
+    let rig = try await rig()
+    defer { rig.stop() }
+    let lock = try await rig.connection.beginExport()
+    #expect(await rig.director.exportLock == lock)
+    try await rig.connection.endExport(lock)
+    #expect(await rig.director.exportLock == nil)
+
+    await rig.director.setRecording(true)
+    await #expect(throws: DirectorClientError.self) { _ = try await rig.connection.beginExport() }
   }
 
   @Test("An iPad not signed in to PeerTube has no token to give")
