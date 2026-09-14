@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
   name: "DirectorSources",
-  platforms: [ .iOS(.v18) ],
+  platforms: [ .iOS(.v18), .macOS(.v15) ],
   products: [
     .library(name: "DirectorSources", targets: [ "DirectorSources" ])
   ],
