@@ -1,4 +1,5 @@
 import DirectorClient
+import Distribution
 import DistributorWire
 import Foundation
 import Observation
@@ -32,6 +33,14 @@ final class DistributorModel {
   var destination: URL? {
     settings?.destinations[macID].map { URL(fileURLWithPath: $0, isDirectory: true) }
   }
+  /// The export under way or just finished, if any.
+  private(set) var run: DistributionRun?
+  /// Whether GS Director is recording right now. While it is, the iPad stitches nothing.
+  private(set) var isRecording = false
+  /// The iPad's stitching jobs, matched to their events.
+  let jobs = JobWatcher()
+
+  var isExporting: Bool { run.map { !$0.isFinished } ?? false }
 
   /// This Mac's hardware UUID, which keys its download folder on the iPad.
   let macID = MacIdentity.platformUUID
@@ -110,6 +119,37 @@ final class DistributorModel {
     await reload()
   }
 
+  /// Exports `tracks` of `recording` into this Mac's folder, the Mac and the iPad stitching side by
+  /// side.
+  func export(_ recording: RecordingListing, tracks: [Track], reprocess: Bool = false) {
+    guard !isExporting, let connection else { return }
+    guard let destination else {
+      problem = "Choose a folder to save into in Settings first."
+      return
+    }
+    let run = DistributionRun(
+      recording: recording,
+      tracks: tracks,
+      connection: connection,
+      jobs: jobs,
+      destination: destination,
+      reprocess: reprocess
+    ) { [weak self] in
+      guard let self else { return false }
+      return self.connection != nil && !self.isRecording
+    }
+    self.run = run
+    Task {
+      await run.run()
+      await reload()
+    }
+  }
+
+  /// Puts away a finished export's progress.
+  func dismissRun() {
+    if run?.isFinished == true { run = nil }
+  }
+
   func loadSettings() async {
     guard let connection else {
       settings = nil
@@ -152,6 +192,7 @@ final class DistributorModel {
       self.connection = connection
       self.forwarder = forwarder
       link = .connected(hello)
+      isRecording = hello.isRecording
       await reload()
       await loadSettings()
       listen(to: connection)
@@ -168,13 +209,17 @@ final class DistributorModel {
         for try await event in connection.events() {
           guard let self else { return }
           switch event {
-          case .recordingsChanged, .recordingStateChanged:
+          case .recordingsChanged:
+            await reload()
+          case .recordingStateChanged(let recording):
+            isRecording = recording
             await reload()
           case .directorBackgrounded:
+            await jobs.handle(event)
             lost()
             return
           case .jobProgress, .jobFinished, .jobFailed:
-            break
+            await jobs.handle(event)
           }
         }
       } catch {}
@@ -185,6 +230,8 @@ final class DistributorModel {
 
   private func lost() {
     guard connection != nil else { return }
+    let jobs = self.jobs
+    Task { await jobs.abandonAll() }
     let serial = chosenDevice?.serial
     disconnect()
     link = serial.map { .waitingForDirector(serial: $0) } ?? .waitingForIPad
