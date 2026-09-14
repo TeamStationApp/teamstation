@@ -63,6 +63,7 @@ extension PeerTubeAPI {
         } catch let error as PeerTubeError {
           throw error
         } catch {
+          if Task.isCancelled { throw CancellationError() }
           // The connection dropped mid-chunk: ask where the server got to and go on from there.
           guard attempt < 5 else { throw error }
           if let resumeAt = try? await receivedSoFar(location: location, size: size, token: try await token()), resumeAt != offset {

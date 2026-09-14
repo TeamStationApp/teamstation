@@ -148,12 +148,52 @@ public final class DistributionRun {
     }
   }
 
+  /// True once `cancel()` was called.
+  public private(set) var wasCancelled = false
+  private var work: Task<Void, Never>?
+
   public func run() async {
     // Work the user asked for: macOS neither naps the app nor lets the Mac idle to sleep while an
     // export runs, whether or not the window is in front.
     let activity = ProcessInfo.processInfo.beginActivity(options: .userInitiated, reason: "Exporting a recording")
     defer { ProcessInfo.processInfo.endActivity(activity) }
-    defer { isFinished = true }
+    guard !wasCancelled else {
+      markCancelled()
+      isFinished = true
+      return
+    }
+    let work = Task { await self.perform() }
+    self.work = work
+    await work.value
+  }
+
+  /// Stops the export: stitching on both sides, downloads and uploads. Files already saved stay,
+  /// and a download stopped part way resumes next time.
+  public func cancel() {
+    guard !isFinished, !wasCancelled else { return }
+    wasCancelled = true
+    work?.cancel()
+    for download in downloads { download.cancel() }
+  }
+
+  private func markCancelled() {
+    for track in tracks where !(states[track]?.isFinal ?? false) {
+      states[track] = .failed("Cancelled")
+    }
+    if let state = combinedState, !state.isFinal { combinedState = .failed("Cancelled") }
+    for (track, state) in uploadStates {
+      switch state {
+      case .done, .failed: continue
+      default: uploadStates[track] = .failed("Cancelled")
+      }
+    }
+  }
+
+  private func perform() async {
+    defer {
+      if wasCancelled { markCancelled() }
+      isFinished = true
+    }
     let scratch = FileManager.default.temporaryDirectory
       .appendingPathComponent("gsDistributor-\(UUID().uuidString)", isDirectory: true)
     defer { try? FileManager.default.removeItem(at: scratch) }
@@ -192,14 +232,15 @@ public final class DistributionRun {
       group.addTask { await self.iPadLoop(iPad, first: firstForIPad, window: window) }
     }
     for download in downloads { await download.value }
-    if let combined { await renderCombined(combined) }
-    if let upload { await uploadAll(upload) }
+    if let combined, !wasCancelled { await renderCombined(combined) }
+    if let upload, !wasCancelled { await uploadAll(upload) }
   }
 
   /// One file at a time, in the order asked. A file that did not save is not uploaded.
   private func uploadAll(_ plan: UploadPlan) async {
     let api = PeerTubeAPI(host: plan.host)
     for track in plan.tracks {
+      guard !Task.isCancelled else { return }
       guard let file = savedFile(for: track) else {
         uploadStates[track] = .failed("not saved, so not uploaded")
         continue
@@ -297,7 +338,7 @@ public final class DistributionRun {
 
   private func macLoop(_ stitcher: MacStitcher, first: Track?, window: ExportWindow) async {
     var track = first
-    while true {
+    while !Task.isCancelled {
       if track == nil { track = plan.next(for: .mac) }
       guard let current = track else {
         // The iPad may yet hand a track back; wait while it still holds any.
@@ -331,7 +372,7 @@ public final class DistributionRun {
 
   private func iPadLoop(_ stitcher: IPadStitcher, first: Track?, window: ExportWindow) async {
     var track = first
-    while true {
+    while !Task.isCancelled {
       if track == nil {
         guard iPadMayStitch() else { return }
         track = plan.next(for: .iPad)

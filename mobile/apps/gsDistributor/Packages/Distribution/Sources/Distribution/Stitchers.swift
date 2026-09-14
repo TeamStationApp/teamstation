@@ -112,10 +112,21 @@ public struct IPadStitcher: Sendable {
     reprocess: Bool,
     progress: @escaping @Sendable (Double) -> Void
   ) async throws -> RemoteFile {
+    try Task.checkCancellation()
     let id = try await connection.startJob(
       JobRequest(recordingID: recording.id, track: track, window: window, reprocess: reprocess)
     )
-    return try await jobs.wait(for: id, progress: progress)
+    let connection = self.connection
+    let jobs = self.jobs
+    // Cancelling stops the wait here and tells the iPad, which then reports nothing for the job.
+    return try await withTaskCancellationHandler {
+      try await jobs.wait(for: id, progress: progress)
+    } onCancel: {
+      Task {
+        await jobs.cancel(id)
+        try? await connection.cancelJob(id)
+      }
+    }
   }
 }
 

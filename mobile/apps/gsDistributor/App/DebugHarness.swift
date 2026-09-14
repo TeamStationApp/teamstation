@@ -14,6 +14,7 @@ import Network
 ///   /clear-destination                   forget it again
 ///   /export?recording=361&tracks=primary,camera:<source id>[&reprocess=1][&combined=1[&audio=<name>]]
 ///          [&upload=primary,camera:<name>,combined&title=<title>]
+///   /cancel                              stop the export under way
 @MainActor
 final class DebugHarness {
   static let port: UInt16 = 8768
@@ -74,6 +75,9 @@ final class DebugHarness {
       let macID = model.macID
       await model.updateSettings { $0.destinations[macID] = nil }
       return [ "ok": model.destination == nil ]
+    case "/cancel":
+      model.run?.cancel()
+      return [ "ok": model.run?.wasCancelled ?? false ]
     case "/export":
       guard let id = query["recording"].flatMap(Int64.init),
             let recording = model.recordings.first(where: { $0.id == id })

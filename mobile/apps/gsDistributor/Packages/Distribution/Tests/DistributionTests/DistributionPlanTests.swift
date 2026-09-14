@@ -82,6 +82,20 @@ struct JobWatcherTests {
     await watcher.handle(.directorBackgrounded)
     await #expect(throws: DistributionError.directorGone) { try await waiting.value }
   }
+
+  @Test("A cancelled job stops its waiter, whether the cancel comes before the wait or during it")
+  func cancel() async throws {
+    let watcher = JobWatcher()
+    let early = UUID()
+    await watcher.cancel(early)
+    await #expect(throws: CancellationError.self) { _ = try await watcher.wait(for: early) { _ in } }
+
+    let late = UUID()
+    let waiting = Task { try await watcher.wait(for: late) { _ in } }
+    try await Task.sleep(for: .milliseconds(50))
+    await watcher.cancel(late)
+    await #expect(throws: CancellationError.self) { _ = try await waiting.value }
+  }
 }
 
 final class Heard: @unchecked Sendable {

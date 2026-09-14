@@ -24,6 +24,7 @@ public actor JobWatcher {
   private var results: [UUID: Result<RemoteFile, DistributionError>] = [:]
   private var waiters: [UUID: CheckedContinuation<RemoteFile, Error>] = [:]
   private var progress: [UUID: @Sendable (Double) -> Void] = [:]
+  private var cancelled: Set<UUID> = []
 
   public init() {}
 
@@ -43,10 +44,22 @@ public actor JobWatcher {
   }
 
   public func wait(for id: UUID, progress report: @escaping @Sendable (Double) -> Void) async throws -> RemoteFile {
+    if cancelled.remove(id) != nil { throw CancellationError() }
     if let result = results.removeValue(forKey: id) { return try result.get() }
     progress[id] = report
     return try await withCheckedThrowingContinuation { continuation in
       waiters[id] = continuation
+    }
+  }
+
+  /// Stops waiting for `id`; its waiter, now or when it comes, is told it was cancelled.
+  public func cancel(_ id: UUID) {
+    progress.removeValue(forKey: id)
+    results.removeValue(forKey: id)
+    if let waiter = waiters.removeValue(forKey: id) {
+      waiter.resume(throwing: CancellationError())
+    } else {
+      cancelled.insert(id)
     }
   }
 
