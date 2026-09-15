@@ -131,8 +131,8 @@ public final class ProgramStreamer: @unchecked Sendable {
 
     try openEncoder()
     let client = RTMPClient()
-    // How far behind the socket may fall before the client sheds media: about a second of the top
-    // of the stream's range, which is the most this session ever produces.
+    // How far behind the socket may fall before the client sheds media: `sendBufferSeconds` of the
+    // top of the stream's range, which is the most this session ever produces.
     client.configure(
       sendBudgetBytes: RTMPClient.sendBudget(forBitrate: config.streamBitrateHigh),
       videoCodec: Self.rtmpCodec(config.streamCodec)

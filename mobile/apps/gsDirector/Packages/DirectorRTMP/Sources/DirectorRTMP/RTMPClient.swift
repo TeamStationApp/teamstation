@@ -88,6 +88,8 @@ public final class RTMPClient: @unchecked Sendable {
   /// Every write in order and how much of it the socket has taken, for the bitrate controller.
   private var ledger = RTMPSendLedger()
   private var sendBudgetBytes = RTMPClient.defaultSendBudgetBytes
+  /// How long the oldest write may wait before media is shed.
+  private var bufferSeconds = RTMPClient.sendBufferSeconds
   private var sendTimeoutSeconds: Double = 10
   /// What the video tags carry. Decides what `connect` and `onMetaData` announce, and whether an
   /// early refusal is explained as the server not taking the codec.
@@ -115,23 +117,28 @@ public final class RTMPClient: @unchecked Sendable {
     case idle, handshaking, connected, creatingStream, publishing, live, failed
   }
 
-  /// About a second of stream at 12 Mbps. A second is how much latency the stream is allowed to
-  /// accumulate before it sheds load; the clamp keeps a 2 Mbps stream from shedding on a single
-  /// keyframe and a 40 Mbps one from buffering a gigabyte before it notices.
+  /// How long the stream may wait for the link before it sheds anything. Nobody watches the stream
+  /// against the field — a platform's player sits 5–20 s behind — so a dip in the link is better
+  /// sent late than dropped. Eight seconds stays inside the 10 s a single send may block before the
+  /// peer counts as gone, so a link that comes back is always given its backlog.
+  public static let sendBufferSeconds: Double = 8
+  /// What a client holds before `configure` gives it a budget of its own.
   static let defaultSendBudgetBytes = 1_500_000
   static let minimumSendBudgetBytes = 512 * 1024
-  static let maximumSendBudgetBytes = 4 * 1024 * 1024
+  static let maximumSendBudgetBytes = 32 * 1024 * 1024
 
-  /// One second of the encoder's own bitrate, clamped. `ProgramStreamer` passes its configured
-  /// programme bitrate so the budget tracks whatever the operator chose in Settings.
+  /// The send buffer's size in bytes, a memory ceiling beside its age limit: `sendBufferSeconds` of
+  /// the high bitrate, with room for the encoder's one-second spikes to half again the rate. 9 MB at
+  /// 6 Mbps, 15 MB at the 10 Mbps top of Settings. `ProgramStreamer` passes its configured high
+  /// bitrate so the budget tracks whatever the operator chose.
   public static func sendBudget(forBitrate bitrate: Int) -> Int {
-    min(max(bitrate / 8, minimumSendBudgetBytes), maximumSendBudgetBytes)
+    let bytes = Int(Double(bitrate) / 8 * sendBufferSeconds * 1.5)
+    return min(max(bytes, minimumSendBudgetBytes), maximumSendBudgetBytes)
   }
 
-  /// The bitrate controller's tuning for an RTMP stream: `Tuning.rtmpStream`, which measures
-  /// delivery over half a second and makes the large cut at 200 ms of queue, so the first cut goes
-  /// straight to what the link carries while the queue is still a third of the send budget. The
-  /// budget stays the last resort, for a link that falls faster than any controller can follow.
+  /// The bitrate controller's tuning for an RTMP stream: `Tuning.rtmpStream`, which lets the queue
+  /// run to seconds before it cuts, because the send buffer holds `sendBufferSeconds` of stream. The
+  /// buffer stays the last resort, for a link that stays down longer than it can cover.
   public static let adaptiveBitrateTuning = AdaptiveBitrateController.Tuning.rtmpStream
 
   /// What the link did since the previous call, in video's terms, for the bitrate controller: the
@@ -182,16 +189,18 @@ public final class RTMPClient: @unchecked Sendable {
     )
   }
 
-  /// How many bytes may sit between `sendVideo`/`sendAudio` and the socket before media is shed,
-  /// how long a single write may block before the peer counts as gone, and which codec the video
-  /// tags carry. Call before `publish`.
+  /// How many bytes may sit between `sendVideo`/`sendAudio` and the socket, and how long the oldest
+  /// of them may wait, before media is shed; how long a single write may block before the peer
+  /// counts as gone; and which codec the video tags carry. Call before `publish`.
   public func configure(
     sendBudgetBytes: Int,
+    bufferSeconds: Double = RTMPClient.sendBufferSeconds,
     sendTimeoutSeconds: Double = 10,
     videoCodec: RTMPVideoCodec = .h264
   ) {
     lock.lock()
     self.sendBudgetBytes = max(sendBudgetBytes, Self.minimumSendBudgetBytes)
+    self.bufferSeconds = max(bufferSeconds, 0.1)
     self.sendTimeoutSeconds = max(sendTimeoutSeconds, 0.1)
     self.videoCodec = videoCodec
     lock.unlock()
@@ -734,7 +743,9 @@ public final class RTMPClient: @unchecked Sendable {
     waiter?.resume()
   }
 
-  /// Frames a media tag and submits it, shedding load when the socket has fallen behind.
+  /// Frames a media tag and submits it, shedding load when the socket has fallen behind by more
+  /// than the send buffer: its oldest write waiting longer than `bufferSeconds`, or more bytes
+  /// waiting than the budget allows.
   ///
   /// Sequence headers are never shed: they are the decoder's only key to everything that follows.
   /// Video otherwise resumes on a keyframe, so a shed spell costs the ingest one GOP rather than
@@ -759,7 +770,7 @@ public final class RTMPClient: @unchecked Sendable {
       ? FLVTag.isVideoSequenceHeader(payload)
       : FLVTag.isAudioSequenceHeader(payload)
     if !isSequenceHeader {
-      if queuedBytes > sendBudgetBytes {
+      if queuedBytes > sendBudgetBytes || ledger.queueDelay(at: Self.monotonicNow()) > bufferSeconds {
         droppedPackets += 1
         if isVideo { awaitingKeyframe = true }
         lock.unlock()
@@ -960,7 +971,12 @@ public final class RTMPClient: @unchecked Sendable {
   #if DEBUG
   /// Drives the send path over a caller-supplied socket, so a test can stall the peer without a
   /// real RTMP server. Goes straight to `.live`; no handshake is performed.
-  func attachForTesting(fd: Int32, budgetBytes: Int, sendTimeoutSeconds: Double = 10) {
+  func attachForTesting(
+    fd: Int32,
+    budgetBytes: Int,
+    bufferSeconds: Double = RTMPClient.sendBufferSeconds,
+    sendTimeoutSeconds: Double = 10
+  ) {
     // The same options `openSocket` sets. Without `SO_NOSIGPIPE` a test that closes the peer
     // takes the whole test process down with SIGPIPE instead of seeing EPIPE.
     var noSig = Int32(1)
@@ -972,6 +988,7 @@ public final class RTMPClient: @unchecked Sendable {
     phase = .live
     streamID = 1
     sendBudgetBytes = budgetBytes
+    self.bufferSeconds = bufferSeconds
     self.sendTimeoutSeconds = sendTimeoutSeconds
     queuedBytes = 0
     ledger = RTMPSendLedger()

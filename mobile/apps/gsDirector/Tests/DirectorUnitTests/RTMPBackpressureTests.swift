@@ -34,6 +34,24 @@ struct RTMPBackpressureTests {
     #expect(metrics.droppedPackets > 0)
   }
 
+  @Test("A backlog older than the send buffer sheds, however few bytes it holds")
+  func oldBacklogSheds() {
+    let pair = SocketPair()
+    defer { pair.close() }
+    let client = RTMPClient()
+    client.attachForTesting(fd: pair.client, budgetBytes: 8 * 1024 * 1024, bufferSeconds: 0.3)
+    defer { client.stop() }
+
+    // More than the pair's small buffers take, so something waits, and far short of the budget.
+    for _ in 0 ..< 8 {
+      client.sendVideo(timestampMs: 0, tag: videoTag(keyframe: false, bytes: 8 * 1024))
+    }
+    #expect(client.sendVideo(timestampMs: 0, tag: videoTag(keyframe: false, bytes: 32)) == .sent)
+    usleep(400_000)
+    #expect(client.sendVideo(timestampMs: 0, tag: videoTag(keyframe: false, bytes: 32)) == .droppedOverBudget)
+    #expect(client.metrics.queuedBytes < 1024 * 1024)
+  }
+
   @Test("Video resumes on a keyframe rather than mid-GOP")
   func resumesOnKeyframe() {
     let pair = SocketPair()

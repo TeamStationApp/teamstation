@@ -4,10 +4,10 @@ import Foundation
 import Testing
 @testable import DirectorRTMP
 
-/// The stream's controller against a real socket whose peer reads at a fixed rate.
+/// The stream's controller against a real socket whose peer reads at a set rate.
 ///
 /// A socket stands in for the uplink, and the test reads its far end at the link's rate, so the
-/// client's own send path — ledger, queue, budget — is what the controller sees. A Unix socket pair
+/// client's own send path — ledger, queue, buffer — is what the controller sees. A Unix socket pair
 /// holds almost nothing in the kernel, so the backlog builds in the client's own queue; loopback
 /// TCP holds a large one, which only `SO_NWRITE` sees, so the two cover both halves of the sample.
 ///
@@ -16,38 +16,46 @@ import Testing
 /// Everything runs on one thread in real time, so the numbers are the ones the app would see.
 @Suite("RTMP adaptive bitrate", .serialized)
 struct RTMPAdaptiveBitrateTests {
-  @Test("A link at half the high bitrate brings the rate down before anything is shed")
+  @Test("A link at half the high bitrate is ridden for a second, then cut to what it carries, with nothing shed")
   func throttledLinkCutsBeforeDropping() {
-    let run = Self.simulate(high: 4_000_000, low: 1_000_000, link: 2_000_000, seconds: 8, transport: .unixPair)
+    let run = Self.simulate(high: 4_000_000, low: 1_000_000, seconds: 12, transport: .unixPair) { _ in 2_000_000 }
     #expect(run.dropped == 0)
     #expect(run.decreases > 0)
-    // Cut while the queue was well short of the budget: measured at 34% with the stream's tuning.
-    #expect(run.peakQueuedBytes < run.budget * 45 / 100)
-    // Down to what the link carries, and not below the operator's floor.
+    // A queue under a second is a dip the send buffer is there for.
+    #expect((run.firstCutAt ?? 0) > 1.0)
+    // Brought under the link before the queue reached the large step, let alone the buffer.
+    #expect(run.peakQueueDelay < AdaptiveBitrateController.Tuning.rtmpStream.emergencyDelay)
     #expect(run.finalRate <= 2_000_000)
     #expect(run.finalRate >= 1_000_000)
-    #expect(run.firstCutAt != nil)
-    #expect((run.firstCutAt ?? .infinity) < 1.5)
   }
 
   @Test("Over loopback TCP the kernel's backlog alone brings the rate down, before anything is shed")
   func throttledTCPCutsBeforeDropping() throws {
-    let run = Self.simulate(high: 4_000_000, low: 1_000_000, link: 2_000_000, seconds: 10, transport: .tcpLoopback)
+    let run = Self.simulate(high: 4_000_000, low: 1_000_000, seconds: 14, transport: .tcpLoopback) { _ in 2_000_000 }
     try #require(run.connected)
     #expect(run.dropped == 0)
     #expect(run.decreases > 0)
     #expect(run.sawTransportBacklog)
-    // Loopback acknowledges what the reader's buffer holds, which the sender cannot see, so this is
-    // later than a real uplink would be; measured at 2.0 s and 38% of the budget.
-    #expect((run.firstCutAt ?? .infinity) < 2.5)
-    #expect(run.peakQueuedBytes < run.budget / 2)
     #expect(run.finalRate <= 2_000_000)
     #expect(run.finalRate >= 1_000_000)
   }
 
+  @Test("A three-second stall is sent late, with nothing shed and the rate kept off the floor")
+  func stallIsRiddenOut() {
+    let run = Self.simulate(high: 4_000_000, low: 1_000_000, seconds: 10, transport: .unixPair) { elapsed in
+      (1.0 ..< 4.0).contains(elapsed) ? 0 : 20_000_000
+    }
+    #expect(run.dropped == 0)
+    // The queue did wait the stall out...
+    #expect(run.peakQueueDelay > 2.5)
+    // ...and the rate took fixed steps rather than going to the nothing the link carried, which
+    // took it to the 1 Mbps floor with the half-second tuning this replaced.
+    #expect(run.lowestRate >= 2_000_000)
+  }
+
   @Test("A link with room to spare leaves the rate at the high bitrate")
   func openLinkHolds() {
-    let run = Self.simulate(high: 3_000_000, low: 1_000_000, link: 8_000_000, seconds: 4, transport: .unixPair)
+    let run = Self.simulate(high: 3_000_000, low: 1_000_000, seconds: 4, transport: .unixPair) { _ in 8_000_000 }
     #expect(run.dropped == 0)
     #expect(run.decreases == 0)
     #expect(run.finalRate == 3_000_000)
@@ -66,12 +74,21 @@ struct RTMPAdaptiveBitrateTests {
     var dropped: UInt64
     var decreases: Int
     var finalRate: Int
+    var lowestRate: Int
     var peakQueuedBytes: Int
+    var peakQueueDelay: Double
     var budget: Int
     var firstCutAt: Double?
   }
 
-  static func simulate(high: Int, low: Int, link: Int, seconds: Double, transport: Transport) -> Run {
+  /// `link` gives the rate the far end reads at, in bits per second, for each moment of the run.
+  static func simulate(
+    high: Int,
+    low: Int,
+    seconds: Double,
+    transport: Transport,
+    link: (Double) -> Int
+  ) -> Run {
     var fds: [Int32] = [ -1, -1 ]
     switch transport {
     case .unixPair:
@@ -81,7 +98,10 @@ struct RTMPAdaptiveBitrateTests {
       setsockopt(fds[1], SOL_SOCKET, SO_RCVBUF, &size, socklen_t(MemoryLayout<Int32>.size))
     case .tcpLoopback:
       guard let pair = loopbackPair() else {
-        return Run(connected: false, dropped: 0, decreases: 0, finalRate: 0, peakQueuedBytes: 0, budget: 0)
+        return Run(
+          connected: false, dropped: 0, decreases: 0, finalRate: 0, lowestRate: 0,
+          peakQueuedBytes: 0, peakQueueDelay: 0, budget: 0
+        )
       }
       fds = [ pair.client, pair.peer ]
     }
@@ -95,8 +115,10 @@ struct RTMPAdaptiveBitrateTests {
 
     var controller = AdaptiveBitrateController(ceiling: high, floor: low, tuning: RTMPClient.adaptiveBitrateTuning)
     var rate = high
+    var lowestRate = high
     var firstCutAt: Double?
     var peakQueued = 0
+    var peakQueueDelay = 0.0
     var sawTransportBacklog = false
     var buffer = [UInt8](repeating: 0, count: 64 * 1024)
 
@@ -112,8 +134,8 @@ struct RTMPAdaptiveBitrateTests {
       let now = ProcessInfo.processInfo.systemUptime
       if now - start >= seconds { break }
 
-      // The link: the far end reads no faster than `link`.
-      readAllowance = min(readAllowance + (now - lastRead) * Double(link) / 8, 64 * 1024)
+      // The link: the far end reads no faster than it allows at this moment.
+      readAllowance = min(readAllowance + (now - lastRead) * Double(link(now - start)) / 8, 64 * 1024)
       lastRead = now
       while readAllowance >= 1 {
         let want = min(Int(readAllowance), buffer.count)
@@ -141,9 +163,11 @@ struct RTMPAdaptiveBitrateTests {
       if now >= nextTick {
         let sample = client.congestionSample(at: now)
         if (sample.transportBacklogBytes ?? 0) > 64 * 1024 { sawTransportBacklog = true }
+        peakQueueDelay = max(peakQueueDelay, sample.queueDelay)
         if let next = controller.update(sample, now: now) {
           if next < rate, firstCutAt == nil { firstCutAt = now - start }
           rate = next
+          lowestRate = min(lowestRate, rate)
         }
         nextTick += 0.25
       }
@@ -154,16 +178,19 @@ struct RTMPAdaptiveBitrateTests {
 
     // Printed so a run shows the numbers the assertions bound.
     print(
-      "[adaptive] \(transport) high=\(high) link=\(link) firstCut=\(firstCutAt.map { String(format: "%.2f s", $0) } ?? "none")"
-        + " final=\(rate) decreases=\(controller.status.decreases) dropped=\(client.metrics.droppedPackets)"
-        + " peakQueued=\(peakQueued)/\(budget) transportBacklogSeen=\(sawTransportBacklog)"
+      "[adaptive] \(transport) high=\(high) firstCut=\(firstCutAt.map { String(format: "%.2f s", $0) } ?? "none")"
+        + " final=\(rate) lowest=\(lowestRate) decreases=\(controller.status.decreases)"
+        + " dropped=\(client.metrics.droppedPackets) peakQueued=\(peakQueued)/\(budget)"
+        + " peakQueueDelay=\(String(format: "%.2f s", peakQueueDelay)) transportBacklogSeen=\(sawTransportBacklog)"
     )
     return Run(
       sawTransportBacklog: sawTransportBacklog,
       dropped: client.metrics.droppedPackets,
       decreases: controller.status.decreases,
       finalRate: rate,
+      lowestRate: lowestRate,
       peakQueuedBytes: peakQueued,
+      peakQueueDelay: peakQueueDelay,
       budget: budget,
       firstCutAt: firstCutAt
     )
