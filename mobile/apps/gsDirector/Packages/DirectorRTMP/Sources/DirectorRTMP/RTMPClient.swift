@@ -20,8 +20,9 @@ public enum RTMPClientError: Error, CustomStringConvertible, Equatable {
   }
 }
 
-/// Publishes H.264 + AAC FLV tags over RTMP. Metrics count bytes that left the socket and tags
-/// that did not, which is the OBS "dropped frames (network)" number rather than TCP retransmits.
+/// Publishes H.264 (classic FLV) or H.265 (Enhanced RTMP) video and AAC audio over RTMP. Metrics
+/// count bytes that left the socket and tags that did not, which is the OBS "dropped frames
+/// (network)" number rather than TCP retransmits.
 public final class RTMPClient: @unchecked Sendable {
   public struct Metrics: Sendable, Equatable {
     public var megabitsPerSecond: Double = 0
@@ -85,6 +86,11 @@ public final class RTMPClient: @unchecked Sendable {
   private var queuedBytes = 0
   private var sendBudgetBytes = RTMPClient.defaultSendBudgetBytes
   private var sendTimeoutSeconds: Double = 10
+  /// What the video tags carry. Decides what `connect` and `onMetaData` announce, and whether an
+  /// early refusal is explained as the server not taking the codec.
+  private var videoCodec = RTMPVideoCodec.h264
+  /// When the publish went live, so a hang-up soon after can be told from one much later.
+  private var liveSince: CFAbsoluteTime = 0
   /// Set when video is shed, cleared by the first keyframe that fits under budget, so playback
   /// downstream resumes on an IDR instead of mid-GOP.
   private var awaitingKeyframe = false
@@ -141,12 +147,42 @@ public final class RTMPClient: @unchecked Sendable {
   }
 
   /// How many bytes may sit between `sendVideo`/`sendAudio` and the socket before media is shed,
-  /// and how long a single write may block before the peer counts as gone. Call before `publish`.
-  public func configure(sendBudgetBytes: Int, sendTimeoutSeconds: Double = 10) {
+  /// how long a single write may block before the peer counts as gone, and which codec the video
+  /// tags carry. Call before `publish`.
+  public func configure(
+    sendBudgetBytes: Int,
+    sendTimeoutSeconds: Double = 10,
+    videoCodec: RTMPVideoCodec = .h264
+  ) {
     lock.lock()
     self.sendBudgetBytes = max(sendBudgetBytes, Self.minimumSendBudgetBytes)
     self.sendTimeoutSeconds = max(sendTimeoutSeconds, 0.1)
+    self.videoCodec = videoCodec
     lock.unlock()
+  }
+
+  /// How long after going live a hang-up still reads as the server refusing the codec. A server
+  /// that cannot take H.265 refuses the publish, or closes the socket once the first sequence
+  /// header or picture arrives — within a second or two. Much later than that it is the network,
+  /// and blaming the codec would send the operator to the wrong setting.
+  static let codecRefusalWindowSeconds: Double = 10
+
+  /// The operator's message for a failure, with the likely cause added when an Enhanced RTMP codec
+  /// was refused or hung up on early: otherwise a server without H.265 support reads as a flaky
+  /// connection, and the fix — choosing H.264 in Settings — is nowhere on screen.
+  static func explainingCodecRefusal(
+    _ error: RTMPClientError,
+    codec: RTMPVideoCodec,
+    secondsLive: Double?
+  ) -> RTMPClientError {
+    guard codec.isEnhanced else { return error }
+    if let secondsLive, secondsLive > codecRefusalWindowSeconds { return error }
+    let hint = "the server may not accept \(codec.displayName) over Enhanced RTMP; choose H.264 in Settings"
+    switch error {
+    case let .rejected(reason): return .rejected("\(reason) — \(hint)")
+    case let .disconnected(reason): return .disconnected("\(reason) — \(hint)")
+    default: return error
+    }
   }
 
   public var isLive: Bool {
@@ -225,25 +261,16 @@ public final class RTMPClient: @unchecked Sendable {
       self.lock.lock()
       let streamID = self.streamID
       let live = self.phase == .live
+      let codec = self.videoCodec
       self.lock.unlock()
       guard live else { return }
-      let payload = AMF0.encode([
-        .string("@setDataFrame"),
-        .string("onMetaData"),
-        .ecmaArray([
-          "duration": .number(0),
-          "width": .number(Double(width)),
-          "height": .number(Double(height)),
-          "framerate": .number(Double(frameRate)),
-          "videodatarate": .number(Double(bitrate) / 1000),
-          "videocodecid": .number(7),
-          "audiodatarate": .number(128),
-          "audiocodecid": .number(10),
-          "audiosamplerate": .number(48_000),
-          "audiochannels": .number(2),
-          "stereo": .boolean(true)
-        ])
-      ])
+      let payload = Self.metadataPayload(
+        width: width,
+        height: height,
+        frameRate: frameRate,
+        bitrate: bitrate,
+        codec: codec
+      )
       self.write(
         RTMPChunk.encode(
           RTMPMessage(streamID: streamID, type: .amf0Data, timestamp: 0, payload: payload),
@@ -252,6 +279,53 @@ public final class RTMPClient: @unchecked Sendable {
         )
       )
     }
+  }
+
+  /// `@setDataFrame onMetaData`. `videocodecid` is 7 for H.264 and, for an Enhanced RTMP codec, its
+  /// FourCC as a number (0x68766331 for `hvc1`), as the Enhanced RTMP spec has publishers send it.
+  static func metadataPayload(
+    width: Int,
+    height: Int,
+    frameRate: Int,
+    bitrate: Int,
+    codec: RTMPVideoCodec
+  ) -> Data {
+    AMF0.encode([
+      .string("@setDataFrame"),
+      .string("onMetaData"),
+      .ecmaArray([
+        "duration": .number(0),
+        "width": .number(Double(width)),
+        "height": .number(Double(height)),
+        "framerate": .number(Double(frameRate)),
+        "videodatarate": .number(Double(bitrate) / 1000),
+        "videocodecid": .number(codec.metadataCodecID),
+        "audiodatarate": .number(128),
+        "audiocodecid": .number(10),
+        "audiosamplerate": .number(48_000),
+        "audiochannels": .number(2),
+        "stereo": .boolean(true)
+      ])
+    ])
+  }
+
+  /// The `connect` command. An Enhanced RTMP codec is also named in `fourCcList`, which is how the
+  /// spec has a client say what it will send; classic H.264 leaves the object exactly as it was, so
+  /// no server that took Director's stream before sees anything new.
+  static func connectPayload(url: RTMPURL, codec: RTMPVideoCodec) -> Data {
+    var object: [String: AMF0] = [
+      "app": .string(url.app),
+      "flashVer": .string("FMLE/3.0 (compatible; FMSc/1.0)"),
+      "tcUrl": .string(url.tcURL),
+      "type": .string("nonprivate"),
+      "audioCodecs": .number(1024),
+      "videoCodecs": .number(128),
+      "videoFunction": .number(1)
+    ]
+    if codec.isEnhanced {
+      object["fourCcList"] = .strictArray([ .string(codec.fourCCString) ])
+    }
+    return AMF0.encode([ .string("connect"), .number(1), .object(object) ])
   }
 
   private func begin(url: RTMPURL, continuation: CheckedContinuation<Void, Error>) {
@@ -558,19 +632,10 @@ public final class RTMPClient: @unchecked Sendable {
         chunkSize: outChunkSize
       )
     )
-    let payload = AMF0.encode([
-      .string("connect"),
-      .number(1),
-      .object([
-        "app": .string(url.app),
-        "flashVer": .string("FMLE/3.0 (compatible; FMSc/1.0)"),
-        "tcUrl": .string(url.tcURL),
-        "type": .string("nonprivate"),
-        "audioCodecs": .number(1024),
-        "videoCodecs": .number(128),
-        "videoFunction": .number(1)
-      ])
-    ])
+    lock.lock()
+    let codec = videoCodec
+    lock.unlock()
+    let payload = Self.connectPayload(url: url, codec: codec)
     write(
       RTMPChunk.encode(
         RTMPMessage(streamID: 0, type: .amf0Command, timestamp: 0, payload: payload),
@@ -623,7 +688,10 @@ public final class RTMPClient: @unchecked Sendable {
   private func markLive() {
     lock.lock()
     let already = phase == .live || phase == .failed
-    if !already { phase = .live }
+    if !already {
+      phase = .live
+      liveSince = CFAbsoluteTimeGetCurrent()
+    }
     let waiter = connectWait
     connectWait = nil
     lock.unlock()
@@ -650,7 +718,10 @@ public final class RTMPClient: @unchecked Sendable {
     }
     let streamID = self.streamID
     let chunkSize = outChunkSize
-    if !Self.isSequenceHeader(payload) {
+    let isSequenceHeader = isVideo
+      ? FLVTag.isVideoSequenceHeader(payload)
+      : FLVTag.isAudioSequenceHeader(payload)
+    if !isSequenceHeader {
       if queuedBytes > sendBudgetBytes {
         droppedPackets += 1
         if isVideo { awaitingKeyframe = true }
@@ -658,7 +729,7 @@ public final class RTMPClient: @unchecked Sendable {
         return .droppedOverBudget
       }
       if isVideo, awaitingKeyframe {
-        guard Self.isKeyframe(payload) else {
+        guard FLVTag.isVideoKeyframe(payload) else {
           droppedPackets += 1
           lock.unlock()
           return .droppedAwaitingKeyframe
@@ -675,18 +746,6 @@ public final class RTMPClient: @unchecked Sendable {
       )
     )
     return .sent
-  }
-
-  /// FLV tags carry the packet type in their second byte, and 0 is the sequence header for both
-  /// AVC video and AAC audio.
-  private static func isSequenceHeader(_ tag: Data) -> Bool {
-    tag.count >= 2 && tag[tag.startIndex + 1] == 0
-  }
-
-  /// The high nibble of an FLV video tag's first byte is the frame type; 1 is a keyframe.
-  private static func isKeyframe(_ tag: Data) -> Bool {
-    guard let first = tag.first else { return false }
-    return (first >> 4) == 1
   }
 
   private func write(_ data: Data) {
@@ -807,8 +866,14 @@ public final class RTMPClient: @unchecked Sendable {
     }
     // Whichever path arrives first after `stop()`, a deliberate teardown reports as cancellation.
     // The socket error it provokes is our own doing and is not something to show the operator.
-    let reported: RTMPClientError = isStopping ? .cancelled : error
     let wasLive = phase == .live
+    let reported: RTMPClientError = isStopping
+      ? .cancelled
+      : Self.explainingCodecRefusal(
+        error,
+        codec: videoCodec,
+        secondsLive: wasLive ? CFAbsoluteTimeGetCurrent() - liveSince : nil
+      )
     phase = .failed
     let waiter = notifyWaiter ? connectWait : nil
     connectWait = nil
