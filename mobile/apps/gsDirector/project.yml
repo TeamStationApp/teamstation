@@ -23,6 +23,9 @@ settings:
     ENABLE_MODULE_VERIFIER: NO
 
 packages:
+  # The stream's bitrate controller, shared with GS Cameraman.
+  AdaptiveBitrate:
+    path: ../common/AdaptiveBitrate
   DirectorCore:
     path: ../common/DirectorCore
   # The archive index and the export that stitches segments into finished files, shared with
@@ -137,6 +140,8 @@ targets:
       - path: ../common/DirectorExport/Tests/DirectorExportTests
     dependencies:
       - target: Director
+      - package: AdaptiveBitrate
+        product: AdaptiveBitrate
       - package: DirectorCore
         product: DirectorCore
       - package: DirectorExport

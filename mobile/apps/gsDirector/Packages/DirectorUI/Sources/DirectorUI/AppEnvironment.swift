@@ -1745,6 +1745,7 @@ public final class AppEnvironment {
     // before the stream ended stays in `dump-state` for the rest of the session and reads as a
     // permanent backlog. Measured after a stall: 1013696 bytes, hours after the socket closed.
     telemetry.recordStreamTransport(droppedPackets: 0, queuedBytes: 0)
+    telemetry.recordStreamRate(StreamRateTelemetry())
     streamErrorGate.reset()
   }
 
@@ -4135,6 +4136,7 @@ public final class AppEnvironment {
           droppedPackets: stream.droppedPackets,
           queuedBytes: stream.queuedBytes
         )
+        telemetry.recordStreamRate(stream.rate)
       }
     }
     applyProgramOverlays()

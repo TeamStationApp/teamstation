@@ -93,6 +93,27 @@ public struct AdaptiveBitrateController: Sendable {
     public var baseDelayWindow = 10.0
 
     public init() {}
+
+    /// GS Director's RTMP stream, which differs from the defaults in two places, both so the first
+    /// large cut lands sooner and at the right rate.
+    ///
+    /// The stream's hard limit is not a viewer's patience but the RTMP client's send budget, about a
+    /// second of the high bitrate, past which video is shed. With a one-second delivery window the
+    /// controller has no delivery rate for its first second, so an emergency then can only take 30%
+    /// off, which on a link carrying half the rate leaves the queue growing until a second cut. Half
+    /// a second of delivery is enough to cut straight to what the link carries, which is OBS's rule,
+    /// and 200 ms of queue is OBS's own threshold.
+    ///
+    /// Measured on 2026-09-14 against a socket read at half the high bitrate (4 Mbps into 2), with the
+    /// RTMP client's real send path, three runs each: the queue peaked at 34% of the budget over a
+    /// Unix socket pair and 38% over loopback TCP, against 46–52% and 65–66% with the defaults, and
+    /// the first cut over TCP came at 2.0 s rather than 2.75 s. Nothing was shed with either.
+    public static let rtmpStream: Tuning = {
+      var tuning = Tuning()
+      tuning.deliveryWindow = 0.5
+      tuning.emergencyDelay = 0.2
+      return tuning
+    }()
   }
 
   /// What the controller last did and why, for the state dump.
