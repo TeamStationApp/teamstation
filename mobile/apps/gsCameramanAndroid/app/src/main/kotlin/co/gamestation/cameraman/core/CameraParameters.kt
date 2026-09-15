@@ -681,7 +681,7 @@ object CameraParameters {
         applying.height?.let { next.height = it }
         applying.frameRate?.let { next.frameRate = it }
         // After `selectCodec`, so an explicit rate in the same request wins over the codec default.
-        applying.bitrate?.let { next.bitrate = it }
+        applying.bitrate?.let { next.selectBitrate(it) }
         applying.adaptiveBitrate?.let { next.adaptiveBitrate = it }
         applying.audioEnabled?.let { next.audioEnabled = it }
         applying.disabledLensIDs?.let { next.disabledLensIDs = it }

@@ -244,7 +244,7 @@ public final class AppEnvironment {
     videoEncoder.invalidate()
     videoEncoder.configure(settings: settings)
     videoEncoder.requestKeyframe()
-    adaptiveBitrate?.configure(ceiling: settings.bitrate, enabled: settings.adaptiveBitrate)
+    adaptiveBitrate?.configure(ceiling: settings.bitrate, floor: settings.bitrateFloor, enabled: settings.adaptiveBitrate)
   }
 
   public func rename(to name: String) {
@@ -281,6 +281,7 @@ public final class AppEnvironment {
       || next.height != previous.height
       || next.frameRate != previous.frameRate
       || next.bitrate != previous.bitrate
+      || next.bitrateFloor != previous.bitrateFloor
       || next.adaptiveBitrate != previous.adaptiveBitrate
       || next.audioEnabled != previous.audioEnabled
       || next.audioSampleRate != previous.audioSampleRate
@@ -453,13 +454,14 @@ public final class AppEnvironment {
 
     let adaptiveBitrate = AdaptiveBitrateLoop(
       ceiling: settings.bitrate,
+      floor: settings.bitrateFloor,
       sample: { [weak server] completion in
         guard let server else { return completion(nil) }
         server.sampleCongestion(completion)
       },
       apply: { [videoEncoder] bitrate in videoEncoder.setBitrate(bitrate) }
     )
-    adaptiveBitrate.configure(ceiling: settings.bitrate, enabled: settings.adaptiveBitrate)
+    adaptiveBitrate.configure(ceiling: settings.bitrate, floor: settings.bitrateFloor, enabled: settings.adaptiveBitrate)
     self.adaptiveBitrate = adaptiveBitrate
   }
 
@@ -523,14 +525,14 @@ public final class AppEnvironment {
     latestParameterSets.withLock { $0 = [] }
     videoEncoder.configure(settings: settings)
     // The new session starts at the ceiling, so the controller does too.
-    adaptiveBitrate?.configure(ceiling: settings.bitrate, enabled: settings.adaptiveBitrate)
+    adaptiveBitrate?.configure(ceiling: settings.bitrate, floor: settings.bitrateFloor, enabled: settings.adaptiveBitrate)
   }
 
   /// A new rate, or adaptation switched on or off, handed to the running encoder without rebuilding
   /// it.
   private func applyRate(_ settings: StreamSettings) {
     if let adaptiveBitrate {
-      adaptiveBitrate.configure(ceiling: settings.bitrate, enabled: settings.adaptiveBitrate)
+      adaptiveBitrate.configure(ceiling: settings.bitrate, floor: settings.bitrateFloor, enabled: settings.adaptiveBitrate)
     } else {
       videoEncoder.setBitrate(settings.bitrate)
     }
@@ -841,7 +843,7 @@ public final class AppEnvironment {
 
     case let .setBitrate(mbps):
       guard mbps > 0 else { return nil }
-      settings.bitrate = Int(mbps * 1_000_000)
+      settings.setBitrate(Int(mbps * 1_000_000))
       noteSettingsApplied()
       applyRate(settings)
       return ok()

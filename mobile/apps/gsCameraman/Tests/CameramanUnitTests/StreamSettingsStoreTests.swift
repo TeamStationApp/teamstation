@@ -217,11 +217,80 @@ struct StreamSettingsMergeTests {
     #expect(older.load()?.adaptiveBitrate == true)
   }
 
+  @Test("The floor survives a save, and settings saved before it existed come back at half the rate")
+  func bitrateFloorPersists() {
+    let persistence = StreamSettingsStore(store: InMemorySettingsStore(), legacyDefaults: nil)
+    var written = StreamSettings()
+    written.bitrateFloor = 1_500_000
+    persistence.save(written)
+    #expect(persistence.load()?.bitrateFloor == 1_500_000)
+
+    let older = StreamSettingsStore(
+      store: InMemorySettingsStore(values: [ StreamSettingsStore.settingsKey: #"{"codec":"h264","bitrate":6000000}"# ]),
+      legacyDefaults: nil
+    )
+    #expect(older.load()?.bitrateFloor == 3_000_000)
+
+    let inverted = StreamSettingsStore(
+      store: InMemorySettingsStore(values: [ StreamSettingsStore.settingsKey: #"{"bitrate":4000000,"bitrateFloor":9000000}"# ]),
+      legacyDefaults: nil
+    )
+    #expect(inverted.load()?.bitrateFloor == 4_000_000, "never above the rate")
+  }
+
+  @Test("A codec change moves a default floor with the default rate, and leaves a chosen one alone")
+  func codecChangeCarriesTheDefaultFloor() {
+    var settings = StreamSettings()
+    #expect(settings.bitrateFloor == 2_000_000)
+    settings.setCodec(.h264)
+    #expect(settings.bitrateFloor == 3_000_000)
+    settings.bitrateFloor = 1_500_000
+    settings.setCodec(.hevc)
+    #expect(settings.bitrate == 4_000_000)
+    #expect(settings.bitrateFloor == 1_500_000)
+  }
+
+  @Test("A new rate carries a default floor at half, keeps a chosen one, and never leaves it above")
+  func newRateAndTheFloor() {
+    var settings = StreamSettings()
+    settings.setBitrate(10_000_000)
+    #expect(settings.bitrateFloor == 5_000_000)
+    settings.bitrateFloor = 3_000_000
+    settings.setBitrate(12_000_000)
+    #expect(settings.bitrateFloor == 3_000_000)
+    settings.setBitrate(2_000_000)
+    #expect(settings.bitrateFloor == 2_000_000)
+
+    #expect(StreamSettings(bitrate: 1_500_000).bitrateFloor == 1_000_000, "the default is not below 1 Mbps")
+    #expect(StreamSettings(bitrate: 4_000_000, bitrateFloor: 6_000_000).bitrateFloor == 4_000_000)
+  }
+
+  @Test("A pinned rate brings its own floor; otherwise the saved floor comes back under the rate")
+  func mergingTheFloor() {
+    var saved = StreamSettings()
+    saved.setBitrate(10_000_000)
+    saved.bitrateFloor = 7_000_000
+
+    var pinnedRate = StreamSettings()
+    pinnedRate.setBitrate(6_000_000)
+    let merged = pinnedRate.merging(saved: saved, keeping: [ .bitrateMbps ])
+    #expect(merged.bitrate == 6_000_000)
+    #expect(merged.bitrateFloor == 3_000_000)
+
+    #expect(StreamSettings.default.merging(saved: saved, keeping: []).bitrateFloor == 7_000_000)
+
+    var pinnedFloor = StreamSettings()
+    pinnedFloor.bitrateFloor = 1_500_000
+    let floorKept = pinnedFloor.merging(saved: saved, keeping: [ .bitrateFloorMbps ])
+    #expect(floorKept.bitrate == 10_000_000)
+    #expect(floorKept.bitrateFloor == 1_500_000)
+  }
+
   @Test("Every persisted field has a launch-argument name")
   func fieldNamesMatchLaunchArguments() {
     #expect(
       Set(StreamSettings.Field.allCases.map(\.rawValue)) == Set([
-        "codec", "bitrateMbps", "adaptiveBitrate", "width", "height", "frameRate",
+        "codec", "bitrateMbps", "bitrateFloorMbps", "adaptiveBitrate", "width", "height", "frameRate",
         "audioEnabled", "rtspPort", "rtspPath", "disabledLenses", "cleanHdmi"
       ])
     )

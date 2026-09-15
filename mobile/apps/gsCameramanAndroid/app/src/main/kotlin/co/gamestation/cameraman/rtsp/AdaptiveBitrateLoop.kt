@@ -14,6 +14,8 @@ import java.util.concurrent.TimeUnit
  */
 class AdaptiveBitrateLoop(
     ceiling: Int,
+    /** Half the ceiling when null. */
+    floor: Int? = null,
     /** The worst playing client's link since it was last asked. Must not block. */
     private val sample: () -> CongestionSample?,
     /** Hands a rate to the encoder. Must not block. */
@@ -25,7 +27,7 @@ class AdaptiveBitrateLoop(
         Executors.newSingleThreadScheduledExecutor { Thread(it, "adaptive-bitrate").apply { isDaemon = true } }
 
     // Touched only on `executor`.
-    private val controller = AdaptiveBitrateController(ceiling)
+    private val controller = AdaptiveBitrateController(ceiling, floor)
     private var enabled = false
     private var tick: ScheduledFuture<*>? = null
 
@@ -33,10 +35,13 @@ class AdaptiveBitrateLoop(
     var status: Status = Status(false, controller.status)
         private set
 
-    /** A new ceiling, or adaptation switched on or off. Either way the rate goes back to the ceiling. */
-    fun configure(ceiling: Int, enabled: Boolean) {
+    /**
+     * A new ceiling or floor, or adaptation switched on or off. Either way the rate goes back to the
+     * ceiling. [floor] is half the ceiling when null.
+     */
+    fun configure(ceiling: Int, floor: Int? = null, enabled: Boolean) {
         executor.execute {
-            controller.reset(ceiling)
+            controller.reset(ceiling, floor)
             this.enabled = enabled
             if (enabled) startTicking() else stopTicking()
             apply(ceiling)

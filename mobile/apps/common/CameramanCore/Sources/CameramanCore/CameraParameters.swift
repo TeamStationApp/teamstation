@@ -665,7 +665,7 @@ public enum CameraParameters {
     if let height = write.height { next.height = height }
     if let rate = write.frameRate { next.frameRate = rate }
     // After `setCodec`, so an explicit rate in the same request wins over the codec default.
-    if let bitrate = write.bitrate { next.bitrate = bitrate }
+    if let bitrate = write.bitrate { next.setBitrate(bitrate) }
     if let adaptive = write.adaptiveBitrate { next.adaptiveBitrate = adaptive }
     if let audio = write.audioEnabled { next.audioEnabled = audio }
     if let clean = write.cleanHDMIEnabled { next.cleanHDMIEnabled = clean }

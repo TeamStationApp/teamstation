@@ -122,6 +122,22 @@ struct LaunchConfigurationTests {
     #expect(configuration.settings.bitrate == 4_000_000)
   }
 
+  @Test("The floor is a launch argument, and a pinned rate without one gets half of it")
+  func bitrateFloorArgument() {
+    let pinned = LaunchConfiguration(arguments: [ "-bitrateMbps", "12", "-bitrateFloorMbps", "3.5" ])
+    #expect(pinned.settings.bitrate == 12_000_000)
+    #expect(pinned.settings.bitrateFloor == 3_500_000)
+    #expect(pinned.providedSettingFields == Set([ .bitrateMbps, .bitrateFloorMbps ]))
+    #expect(pinned.unknownKeys.isEmpty)
+
+    #expect(LaunchConfiguration(arguments: [ "-bitrateMbps", "12" ]).settings.bitrateFloor == 6_000_000)
+    #expect(LaunchConfiguration(arguments: []).settings.bitrateFloor == 2_000_000)
+    #expect(
+      LaunchConfiguration(arguments: [ "-bitrateMbps", "2", "-bitrateFloorMbps", "5" ]).settings.bitrateFloor == 2_000_000,
+      "never above the rate"
+    )
+  }
+
   @Test("An explicit bitrate survives a codec change")
   func explicitBitrateIsKept() {
     var settings = StreamSettings.default

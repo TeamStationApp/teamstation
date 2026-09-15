@@ -327,6 +327,26 @@ class LaunchConfigurationTest {
     }
 
     @Test
+    fun `the floor is a launch key, and a pinned rate without one gets half of it`() {
+        val pinned = LaunchConfiguration.from(mapOf("bitrateMbps" to "12", "bitrateFloorMbps" to "3.5"))
+        assertEquals(12_000_000, pinned.settings.bitrate)
+        assertEquals(3_500_000, pinned.settings.bitrateFloor)
+        assertEquals(
+            setOf(StreamSettings.Field.BITRATE_MBPS, StreamSettings.Field.BITRATE_FLOOR_MBPS),
+            pinned.providedSettingFields
+        )
+        assertTrue(pinned.unknownKeys.isEmpty())
+
+        assertEquals(6_000_000, LaunchConfiguration.from(mapOf("bitrateMbps" to "12")).settings.bitrateFloor)
+        assertEquals(2_000_000, LaunchConfiguration.from(emptyMap()).settings.bitrateFloor)
+        // Never above the rate.
+        assertEquals(
+            2_000_000,
+            LaunchConfiguration.from(mapOf("bitrateMbps" to "2", "bitrateFloorMbps" to "5")).settings.bitrateFloor
+        )
+    }
+
+    @Test
     fun `an explicit bitrate survives a codec change`() {
         val settings = StreamSettings.default.copy(bitrate = 20_000_000)
         settings.selectCodec(StreamCodec.HEVC)

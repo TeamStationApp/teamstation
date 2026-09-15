@@ -397,7 +397,7 @@ private fun VideoCard(
                 value = (draft.bitrate / 1_000_000.0).toFloat(),
                 onValueChange = { mbps ->
                     val rounded = (Math.round(mbps * 2f) / 2.0)
-                    onDraftChange(draft.copy(bitrate = (rounded * 1_000_000).toInt()))
+                    onDraftChange(draft.copy().apply { selectBitrate((rounded * 1_000_000).toInt()) })
                 },
                 valueRange = 1f..50f,
                 // The default inactive track is `surfaceContainerHighest`, which against this card's

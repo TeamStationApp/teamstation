@@ -147,6 +147,7 @@ class StreamSettingsPersistenceTest {
             frameRate = 60.0,
             codec = StreamCodec.H264,
             bitrate = 9_000_000,
+            bitrateFloor = 2_500_000,
             adaptiveBitrate = false,
             audioEnabled = false,
             videoEnabled = false,
@@ -172,6 +173,64 @@ class StreamSettingsPersistenceTest {
         assertEquals(StreamSettings().audioEnabled, loaded.audioEnabled)
         // Saved before adaptation existed, which comes back on like a new install.
         assertTrue(loaded.adaptiveBitrate)
+        // Saved before the floor was a setting, when it was always half the rate.
+        assertEquals(2_000_000, loaded.bitrateFloor)
+    }
+
+    @Test
+    fun `a saved rate without a floor comes back at half, and a floor above the rate is brought down`() {
+        val older = InMemorySettingsStore(mapOf(StreamSettingsStore.settingsKey to "codec=h264&bitrate=6000000"))
+        assertEquals(3_000_000, StreamSettingsStore(older).load()!!.bitrateFloor)
+        val inverted = InMemorySettingsStore(mapOf(StreamSettingsStore.settingsKey to "bitrate=4000000&bitrateFloor=9000000"))
+        assertEquals(4_000_000, StreamSettingsStore(inverted).load()!!.bitrateFloor)
+    }
+
+    @Test
+    fun `a codec change moves a default floor with the default rate, and leaves a chosen one alone`() {
+        val settings = StreamSettings()
+        assertEquals(2_000_000, settings.bitrateFloor)
+        settings.selectCodec(StreamCodec.H264)
+        assertEquals(3_000_000, settings.bitrateFloor)
+        settings.bitrateFloor = 1_500_000
+        settings.selectCodec(StreamCodec.HEVC)
+        assertEquals(4_000_000, settings.bitrate)
+        assertEquals(1_500_000, settings.bitrateFloor)
+    }
+
+    @Test
+    fun `a new rate carries a default floor at half, keeps a chosen one, and never leaves it above`() {
+        val settings = StreamSettings()
+        settings.selectBitrate(10_000_000)
+        assertEquals(5_000_000, settings.bitrateFloor)
+        settings.bitrateFloor = 3_000_000
+        settings.selectBitrate(12_000_000)
+        assertEquals(3_000_000, settings.bitrateFloor)
+        settings.selectBitrate(2_000_000)
+        assertEquals(2_000_000, settings.bitrateFloor)
+
+        // The default is not below 1 Mbps, and a copy that lowers the rate takes the floor with it.
+        assertEquals(1_000_000, StreamSettings(bitrate = 1_500_000).bitrateFloor)
+        assertEquals(4_000_000, StreamSettings(bitrate = 4_000_000, bitrateFloor = 6_000_000).bitrateFloor)
+        assertEquals(1_000_000, StreamSettings(bitrate = 8_000_000, bitrateFloor = 3_000_000).copy(bitrate = 1_000_000).bitrateFloor)
+    }
+
+    @Test
+    fun `a pinned rate brings its own floor, otherwise the saved floor comes back under the rate`() {
+        val saved = StreamSettings().apply {
+            selectBitrate(10_000_000)
+            bitrateFloor = 7_000_000
+        }
+        val pinnedRate = StreamSettings().apply { selectBitrate(6_000_000) }
+        val merged = pinnedRate.merging(saved, explicit = setOf(StreamSettings.Field.BITRATE_MBPS))
+        assertEquals(6_000_000, merged.bitrate)
+        assertEquals(3_000_000, merged.bitrateFloor)
+
+        assertEquals(7_000_000, StreamSettings().merging(saved, explicit = emptySet()).bitrateFloor)
+
+        val pinnedFloor = StreamSettings(bitrateFloor = 1_500_000)
+        val floorKept = pinnedFloor.merging(saved, explicit = setOf(StreamSettings.Field.BITRATE_FLOOR_MBPS))
+        assertEquals(10_000_000, floorKept.bitrate)
+        assertEquals(1_500_000, floorKept.bitrateFloor)
     }
 
     @Test
