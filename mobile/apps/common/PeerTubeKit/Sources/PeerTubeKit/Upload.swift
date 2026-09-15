@@ -15,17 +15,27 @@ extension PeerTubeAPI {
   /// pause; a dropped connection asks the server how much it has and carries on from there. The
   /// access token is fetched before every chunk, so a long upload survives the token expiring.
   /// Transcoding is not waited for. The upload session is deleted at the end, as the web client
-  /// does.
+  /// does. `originallyPublishedAt` is when the video was recorded, so the start time travels with
+  /// it.
   public func upload(
     file: URL,
     name: String,
     channelID: Int,
     privacy: Int,
+    originallyPublishedAt: Date? = nil,
     token: @escaping @Sendable () async throws -> String,
     progress: (@Sendable (Int64, Int64) -> Void)? = nil
   ) async throws -> UploadedVideo {
     let size = ((try FileManager.default.attributesOfItem(atPath: file.path)[.size]) as? NSNumber)?.int64Value ?? 0
-    let location = try await startUpload(file: file, size: size, name: name, channelID: channelID, privacy: privacy, token: try await token())
+    let location = try await startUpload(
+      file: file,
+      size: size,
+      name: name,
+      channelID: channelID,
+      privacy: privacy,
+      originallyPublishedAt: originallyPublishedAt,
+      token: try await token()
+    )
     let handle = try FileHandle(forReadingFrom: file)
     defer { try? handle.close() }
 
@@ -85,19 +95,25 @@ extension PeerTubeAPI {
   }
 
   /// Opens the upload and returns where its chunks go.
-  func startUpload(file: URL, size: Int64, name: String, channelID: Int, privacy: Int, token: String) async throws -> URL {
+  func startUpload(
+    file: URL,
+    size: Int64,
+    name: String,
+    channelID: Int,
+    privacy: Int,
+    originallyPublishedAt: Date? = nil,
+    token: String
+  ) async throws -> URL {
     let boundary = "gs-\(UUID().uuidString)"
-    var body = Data()
-    for (field, value) in [
+    var fields = [
       ("name", name),
       ("channelId", String(channelID)),
       ("privacy", String(privacy)),
       ("waitTranscoding", "false"),
       ("filename", file.lastPathComponent)
-    ] {
-      body.append(Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"\(field)\"\r\n\r\n\(value)\r\n".utf8))
-    }
-    body.append(Data("--\(boundary)--\r\n".utf8))
+    ]
+    if let originallyPublishedAt { fields.append(("originallyPublishedAt", Self.iso8601(originallyPublishedAt))) }
+    let body = Self.multipart(fields, boundary: boundary)
 
     var request = URLRequest(url: base.appendingPathComponent("videos/upload-resumable"))
     request.httpMethod = "POST"
