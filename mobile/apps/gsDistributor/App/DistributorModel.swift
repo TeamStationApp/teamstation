@@ -212,7 +212,7 @@ final class DistributorModel {
       upload: upload
     ) { [weak self] in
       guard let self else { return false }
-      return self.connection != nil && !self.isRecording
+      return self.connection != nil && !self.isRecording && self.settings?.iPadStitching == true
     }
     self.run = run
     Task {

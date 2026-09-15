@@ -11,6 +11,7 @@ struct SettingsAndWireTests {
     let settings = DistributorSettings(
       destinations: [ "8A1F-MAC": "/Users/someone/Movies/GameStation" ],
       createCombined: true,
+      iPadStitching: true,
       combinedLayout: CombinedLayoutSettings(
         included: [ "Home", "Away", "Wide" ],
         placements: [ QuadrantPlacement(camera: "Home", quadrant: .topLeading) ],
@@ -28,6 +29,7 @@ struct SettingsAndWireTests {
     )
     let decoded = try JSONDecoder().decode(DistributorSettings.self, from: JSONEncoder().encode(settings))
     #expect(decoded == settings)
+    #expect(decoded.iPadStitching)
   }
 
   @Test("Settings written before a field existed still load, with that field's default")
@@ -35,6 +37,8 @@ struct SettingsAndWireTests {
     let old = #"{"createCombined":true,"peerTube":{"enabled":true,"host":"videos.example.org"}}"#
     let decoded = try JSONDecoder().decode(DistributorSettings.self, from: Data(old.utf8))
     #expect(decoded.createCombined)
+    // iPad stitching starts off: the Mac stitches everything until it is turned on.
+    #expect(!decoded.iPadStitching)
     #expect(decoded.destinations.isEmpty)
     #expect(decoded.peerTube.host == "videos.example.org")
     #expect(decoded.peerTube.uploadChoice == UploadChoice())
