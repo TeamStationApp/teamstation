@@ -25,6 +25,12 @@ struct DistributorApp: App {
         .task {
           #if DEBUG
           if DebugHarness.isRequested { harness.start() }
+          // `-noIPad` leaves the cable alone, to see and drive the Distributor as it is with no
+          // iPad even while one is attached.
+          if DebugHarness.ignoresCable {
+            await model.loadPeerTube()
+            return
+          }
           #endif
           await model.watch()
         }

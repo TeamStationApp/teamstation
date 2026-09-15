@@ -7,7 +7,7 @@ import Network
 
 /// Debug builds only, and only when launched with `-harness`: a loopback server on port 8768 so a
 /// script can drive and check the app without seeing the screen. Like the Director's and
-/// Cameraman's harnesses, it is never in a release.
+/// Cameraman's harnesses, it is never in a release. Add `-noIPad` to keep the app off the cable.
 ///
 ///   /dump-state                          what the window is showing, and the export under way
 ///   /set-destination?path=/some/folder   this Mac's download folder, saved here and on the iPad
@@ -33,6 +33,11 @@ final class DebugHarness {
 
   static var isRequested: Bool {
     ProcessInfo.processInfo.arguments.contains("-harness")
+  }
+
+  /// `-noIPad`: the Distributor never looks at the cable, as if no iPad were attached.
+  static var ignoresCable: Bool {
+    ProcessInfo.processInfo.arguments.contains("-noIPad")
   }
 
   func start() {
