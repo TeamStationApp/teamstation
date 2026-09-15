@@ -14,6 +14,9 @@ struct RecordingsView: View {
   @State private var includesPrimary = true
   @State private var includedCameras: Set<String> = []
   @State private var step: ExportStep?
+  /// Stitch every ticked file again from the recording, rather than use the files already on this
+  /// Mac or prepared on the iPad.
+  @State private var reprocess = false
 
   var body: some View {
     HSplitView {
@@ -68,6 +71,7 @@ struct RecordingsView: View {
     .onChange(of: selectedID) { _, _ in
       includesPrimary = true
       includedCameras = Set(selected?.cameras.map(\.sourceID.rawValue) ?? [])
+      reprocess = false
     }
   }
 
@@ -122,7 +126,7 @@ struct RecordingsView: View {
     if let recording = selected {
       let inventory = model.inventory(of: recording)
       let chosen = chosenTracks(recording)
-      let needsIPad = inventory?.needsIPad(chosen) ?? true
+      let needsIPad = inventory?.needsIPad(chosen, reprocess: reprocess) ?? true
       List {
         if recording.hasPrimary {
           Toggle(isOn: $includesPrimary) { fileLabel("Primary output", inventory?.files[.primary]) }
@@ -141,6 +145,15 @@ struct RecordingsView: View {
           }
           .accessibilityIdentifier("recording-combined-state")
         }
+        Toggle(isOn: $reprocess) {
+          VStack(alignment: .leading, spacing: 1) {
+            Text("Stitch again")
+            Text("From the recording, not the files already on this Mac or prepared on the iPad")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          }
+        }
+        .accessibilityIdentifier("recording-reprocess")
       }
       .id(recording.id)
       .safeAreaInset(edge: .bottom) {
@@ -184,7 +197,7 @@ struct RecordingsView: View {
               model: model,
               onContinue: { upload in
                 self.step = nil
-                model.export(recording, tracks: tracks, combined: combined, upload: upload)
+                model.export(recording, tracks: tracks, reprocess: reprocess, combined: combined, upload: upload)
               },
               onCancel: { self.step = nil }
             )
@@ -233,7 +246,7 @@ struct RecordingsView: View {
       model.problem = "PeerTube uploads are on, but GS Director is not signed in, so nothing is uploaded."
     }
     step = nil
-    model.export(recording, tracks: tracks, combined: combined)
+    model.export(recording, tracks: tracks, reprocess: reprocess, combined: combined)
   }
 
   /// The primary output first, then the cameras in the take's order, as they are ticked.

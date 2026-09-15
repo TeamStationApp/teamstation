@@ -32,6 +32,8 @@ stitching between the Mac and the iPad, and stitching with the Director's own co
 4. Each file shows whether it is already on this Mac. Files already here need nothing from the iPad,
    so a cut-off export (an upload that failed, a combined video never made) can be picked up with
    Export even while GS Director records or streams; only fetching and stitching wait for the iPad.
+   "Stitch again" makes every ticked file afresh from the recording, and the combined video with
+   them, instead of using files already here or prepared on the iPad.
 
 GS Director must be open and in front on the iPad: iOS takes a background app's listener down.
 
