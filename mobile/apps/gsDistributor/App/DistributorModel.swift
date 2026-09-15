@@ -437,7 +437,10 @@ final class DistributorModel {
       let theirs = try await connection.settings()
       var merged = settings.reconciled(with: theirs)
       if merged != theirs {
-        merged = try await connection.saveSettings(merged)
+        // What the iPad kept, brought together with what was sent rather than taken as it is: a
+        // GS Director from before a group existed answers without it.
+        let kept = try await connection.saveSettings(merged)
+        merged = merged.reconciled(with: kept)
       }
       settings = merged
       saveSettingsHere()
