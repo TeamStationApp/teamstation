@@ -149,6 +149,16 @@ public extension JSONDecoder {
   }
 }
 
+public extension JSONEncoder {
+  /// Keys sorted and dates as ISO 8601, on one line, for an event stream.
+  static var api: JSONEncoder {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [ .sortedKeys, .withoutEscapingSlashes ]
+    encoder.dateEncodingStrategy = .iso8601
+    return encoder
+  }
+}
+
 public extension HTTPResponse {
   /// JSON for people and scripts to read: indented, keys sorted, dates as ISO 8601.
   static func apiJSON<Value: Encodable>(_ value: Value, status: Int = 200) -> HTTPResponse {

@@ -11,11 +11,15 @@ public protocol EventSource: AnyObject, Sendable {
 public final class JSONEventHub<Event: Encodable & Sendable>: EventSource, @unchecked Sendable {
   private let lock = NSLock()
   private var subscribers: [UUID: @Sendable (Data) -> Void] = [:]
+  /// Used only under `lock`. It must not pretty-print: each event is one line.
+  private let encoder: JSONEncoder
 
-  public init() {}
+  public init(encoder: JSONEncoder = JSONEncoder()) {
+    self.encoder = encoder
+  }
 
   public func publish(_ event: Event) {
-    guard let line = try? JSONEncoder().encode(event) else { return }
+    guard let line = lock.withLock({ try? encoder.encode(event) }) else { return }
     let targets = lock.withLock { Array(subscribers.values) }
     for target in targets {
       target(line)
