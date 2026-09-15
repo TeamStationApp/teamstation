@@ -260,9 +260,11 @@ struct ProgramResumeTests {
       if let audio = AudioSampleBuilder.makeSampleBuffer(
         samples: silence, formatDescription: format, presentationTime: time
       ) {
+        // The recording's mix is stamped with when its sound was captured, which for sound made
+        // beside the picture is now.
         encoder.append(
           audio: AudioFrame(
-            sourceID: SourceID("mix"), sampleBuffer: audio, wallClock: WallClock(seconds: 0)
+            sourceID: SourceID("mix"), sampleBuffer: audio, wallClock: WallClock(date: Date())
           )
         )
       }

@@ -2,11 +2,12 @@ import AVFoundation
 import Foundation
 import DirectorCore
 
-/// Concatenates complete MP4s into one movie, preserving each file's duration.
+/// Builds export files out of archive pieces placed on the wall clock.
 ///
-/// Byte-appending complete MP4s is not a valid movie. Replay stages files separately; export
-/// needs a single file whose duration is the sum of the pieces (and of any empty intervals
-/// the caller inserts by supplying a longer `targetDuration`).
+/// A camera's export is re-encoded at a fixed frame rate (see `stitch`), with its sound rendered as
+/// one continuous track and joined to the pictures without re-encoding either. A programme master
+/// that is unbroken is copied as it is (see `copyProgramme`); one that is not goes through `stitch`
+/// like a camera.
 public enum ArchiveRemux {
   public enum Error: Swift.Error, CustomStringConvertible {
     case empty
@@ -20,58 +21,74 @@ public enum ArchiveRemux {
     }
   }
 
-  /// `headTrim` drops that much from the front of the first file.
-  ///
-  /// Segments begin on their camera's own keyframes, so the first one for a given window usually
-  /// starts a little before the window does — and by a different amount on every camera. Inserting
-  /// each file from its own start therefore produces files that disagree about when they begin,
-  /// which is what leaves cameras cut together sitting frames apart. Skipping the head lets every
-  /// camera's export start at the same instant.
-  ///
-  /// `progress` hears how far along the file is, from 0 to 1, and always hears 1 last. With sound
-  /// to render, that pass is the first half; the passthrough write is the rest.
-  public static func concatenate(
-    files: [URL],
-    fileDurations: [TimeInterval],
-    targetDuration: TimeInterval? = nil,
-    headTrim: TimeInterval = 0,
-    startWalls: [WallClock] = [],
-    windowStart: WallClock? = nil,
-    destination: URL,
-    progress: (@Sendable (Double) -> Void)? = nil
-  ) async throws {
-    guard !files.isEmpty else { throw Error.empty }
-    try? FileManager.default.removeItem(at: destination)
-    if files.count == 1, targetDuration == nil, headTrim <= 0.001, startWalls.isEmpty {
-      try FileManager.default.copyItem(at: files[0], to: destination)
-      progress?(1)
-      return
+  // MARK: - Placement
+
+  /// Where one archive file's pictures and sound go on the output.
+  struct Placement {
+    var file: URL
+    /// Held so the tracks stay usable: an `AVAssetTrack` does not keep its asset alive.
+    var asset: AVURLAsset
+    /// Nil for a file that holds sound and no picture.
+    var video: AVAssetTrack?
+    /// Where the kept stretch starts on the file's own timeline: what precedes the window is cut.
+    var start: CMTime
+    /// How much of the file from `start` is used.
+    var taken: CMTime
+    /// Where `start` goes on the output.
+    var at: CMTime
+    /// How long the stretch lasts on the output: `taken`, unless the file was squeezed into its room.
+    var use: CMTime
+
+    /// Where a picture presented at `time` on the file's own timeline falls on the output, in seconds.
+    /// A squeezed file's pictures are spaced out over its room at the pace they were taken.
+    func outputSeconds(of time: CMTime) -> Double {
+      let scale = taken.seconds > 0 ? use.seconds / taken.seconds : 1
+      return at.seconds + (time.seconds - start.seconds) * scale
     }
 
-    // Placement mode. With a wall clock per file and a window to measure from, a segment goes where
-    // it happened -- `startWall - windowStart` -- rather than at the running total of everything
-    // before it. The two agree only while a source delivered without interruption; the moment it
-    // dropped out, a running cursor pulls every later frame earlier by the length of the gap, and
-    // the file comes out short by the same amount. That is the whole of R2: a camera that lost
-    // 150 s exported 150 s early from then on, and no two angles agreed after their first gap.
+    /// The end of the stretch on the file's own timeline. Pictures from here on belong to whatever
+    /// follows.
+    var end: CMTime { CMTimeAdd(start, taken) }
+  }
+
+  /// Every readable file's place, and where the last one ends.
+  struct PlacementPlan {
+    var placements: [Placement]
+    var end: CMTime
+  }
+
+  /// Places each file where it happened.
+  ///
+  /// With a wall clock per file and a window to measure from, a segment goes where it happened --
+  /// `startWall - windowStart` -- rather than at the running total of everything before it. The two
+  /// agree only while a source delivered without interruption; the moment it dropped out, a running
+  /// cursor pulls every later frame earlier by the length of the gap, and the file comes out short by
+  /// the same amount. That was R2: a camera that lost 150 s exported 150 s early from then on, and no
+  /// two angles agreed after their first gap.
+  ///
+  /// Without start walls the files are laid end to end from the start of the output, which is all a
+  /// programme recorded before anchors existed can have.
+  ///
+  /// A part the writer never finalised has no movie header, so loading it throws. Letting that escape
+  /// aborted the whole export with AVFoundation's damaged-media error: one programme was a
+  /// readable master plus a short continuation stub, left behind when a recovery writer died two
+  /// seconds after opening it, and the stub failed the export for all of it. An unreadable piece is
+  /// skipped so the readable ones still come out; only when nothing is readable does this throw, and
+  /// then it names the pieces.
+  static func place(
+    files: [URL],
+    fileDurations: [TimeInterval],
+    startWalls: [WallClock],
+    windowStart: WallClock?,
+    length: TimeInterval?
+  ) async throws -> PlacementPlan {
     let placed = !startWalls.isEmpty && startWalls.count == files.count && windowStart != nil
     let origin = windowStart ?? WallClock(seconds: 0)
-    // The last picture placed, kept so a gap can be filled by holding it. One sample stretched over
-    // the hole rather than one sample per frame: a 150 s dropout costs a single insertion.
-    var held: (asset: AVURLAsset, sourceEnd: CMTime, frame: CMTime, timelineEnd: CMTime)?
-
-    let composition = AVMutableComposition()
+    var placements: [Placement] = []
     var cursor = CMTime.zero
-    // Each file's sound, placed after the picture is: see `placeSound`.
-    var sound: [SoundPiece] = []
     var skipped: [String] = []
     for (index, file) in files.enumerated() {
       let asset = AVURLAsset(url: file)
-      // A part the writer never finalised has no movie header, so loading it throws. Letting that
-      // escape aborted the whole export with AVFoundation's damaged-media error: one take's
-      // programme was a readable master plus a short continuation stub, left behind when a
-      // recovery writer died two seconds after opening it, and the stub failed the export for all
-      // of it. An unreadable piece is skipped so the readable ones still come out.
       do {
         let duration: CMTime
         if index < fileDurations.count, fileDurations[index] > 0 {
@@ -80,37 +97,19 @@ public enum ArchiveRemux {
           duration = try await playableDuration(of: asset)
         }
         guard duration.seconds > 0.05 else { continue }
-        // In placement mode a segment is trimmed by however much of it precedes the window, which
-        // is a per-file question and not only the first file's. Otherwise the old rule stands:
-        // only the head of the first file is trimmed, and never past its own length.
-        let wantedTrim: TimeInterval
-        if placed {
-          wantedTrim = max(0, origin - startWalls[index])
-        } else {
-          wantedTrim = index == 0 ? headTrim : 0
-        }
-        let trim = min(max(0, wantedTrim), max(0, duration.seconds - 0.05))
+        // A segment is trimmed by however much of it precedes the window, which is a per-file
+        // question and not only the first file's.
+        let wantedTrim = placed ? max(0, origin - startWalls[index]) : 0
+        let trim = min(wantedTrim, max(0, duration.seconds - 0.05))
         let start = CMTime(seconds: trim, preferredTimescale: 600)
         let kept = CMTimeSubtract(duration, start)
         guard kept.seconds > 0.05 else { continue }
-        // Trimmed at the tail as well, for the same reason as the head: the last segment runs to
-        // its camera's next keyframe, which is past where the window ends and by a different
-        // amount on every camera. Without this the files still disagree by about a frame.
-        // Where this segment belongs on the output timeline.
         let at: CMTime = placed
           ? CMTime(seconds: max(0, (startWalls[index] + trim) - origin), preferredTimescale: 600)
           : cursor
-        // Anything between the last picture and this one is a stretch the camera did not cover.
-        // Hold the last frame across it rather than leaving an empty range: an empty range has no
-        // samples at all -- measured -- and a viewer should see the picture freeze, not the file
-        // decide for itself what to show. Nothing is held before the first frame: at the head of a
-        // file there is no picture yet, and black is the honest answer there.
-        if placed, let previous = held, at > previous.timelineEnd {
-          try? await holdFrame(previous, until: at, in: composition)
-        }
         var use = kept
-        if let targetDuration {
-          let remaining = targetDuration - at.seconds
+        if let length {
+          let remaining = length - at.seconds
           if remaining <= 0.001 { if placed { continue } else { break } }
           if kept.seconds > remaining {
             use = CMTime(seconds: remaining, preferredTimescale: 600)
@@ -120,12 +119,8 @@ public enum ArchiveRemux {
         //
         // A recorded duration is what the writer measured, and it is occasionally a little longer
         // than the distance to the next segment's own start -- measured on a camera that misdeclares
-        // its frame rate, 26 of 986 segments overran, the worst by 104 ms. Placed at their true
-        // starts and inserted at full length they overlap, and a composition given overlapping
-        // content puts it on a *second* video track: one stress export came back with two video
-        // tracks of identical format, the second starting where the first overrun was, and a
-        // container 139 s longer than the recording. Trimming the overrun costs a few milliseconds
-        // of tape that the next segment is about to show anyway.
+        // its frame rate, 26 of 986 segments overran, the worst by 104 ms. Trimming the overrun costs
+        // a few milliseconds of tape that the next segment is about to show anyway.
         //
         // A segment that claims far more than its room was stamped on a runaway clock instead, and it
         // is squeezed into the room whole rather than cut to its head: see `runawayRatio`.
@@ -139,182 +134,27 @@ public enum ArchiveRemux {
           }
         }
         guard use.seconds > 0.001 else { continue }
-        // What is taken from the file, which a squeezed segment then fits into `use`.
-        let taken = squeezed ? kept : use
-        let range = CMTimeRange(start: start, duration: taken)
-        // Inserting past the current end leaves the gap between as an empty range, which is what a
-        // gap was: no camera delivered anything for it.
-        let inserted = try await insertPicture(range, of: asset, at: at, into: composition)
-        if squeezed, let inserted, let track = composition.tracks(withMediaType: .video).first {
-          track.scaleTimeRange(inserted, toDuration: CMTimeSubtract(CMTimeAdd(at, use), inserted.start))
-        }
-        if let piece = try await soundPiece(range, of: asset, at: at) { sound.append(piece) }
+        let video = try await asset.loadTracks(withMediaType: .video).first
+        placements.append(Placement(
+          file: file,
+          asset: asset,
+          video: video,
+          start: start,
+          taken: squeezed ? kept : use,
+          at: at,
+          use: use
+        ))
         cursor = CMTimeMaximum(cursor, CMTimeAdd(at, use))
-        if placed {
-          // Held from where the picture really ends. A programme part is as long as its longer
-          // track, and its sound runs on past the last frame; measured from the end of the sound,
-          // the hold began past the last sample and came out as a hole and a fraction of a hold.
-          // rec-411's programme picture ended 0.3 s before its window that way.
-          let pictureEnd = try await asset.loadTracks(withMediaType: .video).first?.load(.timeRange).end
-          let sourceEnd = CMTimeMinimum(CMTimeAdd(start, taken), pictureEnd ?? CMTimeAdd(start, taken))
-          held = (
-            asset: asset,
-            sourceEnd: sourceEnd,
-            frame: await Self.frameDuration(of: asset),
-            timelineEnd: squeezed
-              ? CMTimeAdd(at, use)
-              : CMTimeAdd(at, CMTimeMaximum(.zero, CMTimeSubtract(sourceEnd, start)))
-          )
-        }
       } catch {
         skipped.append(file.lastPathComponent)
-        continue
       }
     }
-    if !skipped.isEmpty, cursor.seconds <= 0.05 {
+    if placements.isEmpty, !skipped.isEmpty {
       // Nothing readable at all is still a failure, and naming the pieces beats "no files".
       throw Error.exportFailed("unreadable: \(skipped.joined(separator: ", "))")
     }
-
-    guard cursor.seconds > 0.05 else { throw Error.empty }
-    if let targetDuration {
-      let end = CMTime(seconds: targetDuration, preferredTimescale: 600)
-      // A camera that stopped before the window did is the same case as one that dropped out in the
-      // middle, so it gets the same answer. Whether it stopped short is a question about its
-      // picture, not its sound: a programme's sound can reach the end of the window while its
-      // picture stops a fraction of a second before, and an empty range there is dropped by the
-      // passthrough write, leaving the picture short.
-      if placed, let previous = held, end.seconds - previous.timelineEnd.seconds > 0.001,
-         (try? await holdFrame(previous, until: end, in: composition)) != nil {
-        cursor = CMTimeMaximum(cursor, end)
-      } else if targetDuration - cursor.seconds > 0.05 {
-        let pad = CMTime(seconds: targetDuration - cursor.seconds, preferredTimescale: 600)
-        composition.insertEmptyTimeRange(CMTimeRange(start: cursor, duration: pad))
-      }
-    }
-    try placeSound(
-      sound,
-      until: targetDuration.map { CMTime(seconds: $0, preferredTimescale: 600) },
-      in: composition
-    )
-    // Every track the length of the take. A camera's sound that stopped before the window did --
-    // or a programme whose mix ended a beat before its picture -- runs out in silence rather than
-    // leaving the file's sound shorter than its picture.
-    if let targetDuration {
-      let end = CMTime(seconds: targetDuration, preferredTimescale: 600)
-      for track in composition.tracks where track.timeRange.isValid && track.timeRange.end < end {
-        track.insertEmptyTimeRange(CMTimeRange(start: track.timeRange.end, end: end))
-      }
-    }
-
-    // The sound goes out as one continuous track rendered from the composition, not as the pieces
-    // the composition holds: see `renderSound`.
-    let rendered = destination.deletingPathExtension().appendingPathExtension("sound.m4a")
-    defer { try? FileManager.default.removeItem(at: rendered) }
-    let soundTrack = composition.tracks(withMediaType: .audio).first
-    let writeShare = soundTrack == nil ? 1.0 : 0.5
-    let soundProgress: (@Sendable (Double) -> Void)? = progress.map { report in
-      { @Sendable fraction in report(fraction * (1 - writeShare)) }
-    }
-    if let sound = soundTrack,
-       try await renderSound(
-         of: composition,
-         track: sound,
-         length: CMTime(seconds: targetDuration ?? cursor.seconds, preferredTimescale: 600),
-         to: rendered,
-         progress: soundProgress
-       ) {
-      composition.removeTrack(sound)
-      let asset = AVURLAsset(url: rendered)
-      if let source = try await asset.loadTracks(withMediaType: .audio).first,
-         let target = composition.addMutableTrack(
-           withMediaType: .audio,
-           preferredTrackID: kCMPersistentTrackID_Invalid
-         ) {
-        // The take's length, plus the encoder's priming: a passthrough write of a range cut short of
-        // the file's end takes the priming off that end -- measured, a 4 s cut came out 47.9 ms
-        // short at 44.1 kHz. The render runs past the take (see `renderSound`), so the extra is
-        // there to take, and what is written is exactly the take.
-        let range = try await source.load(.timeRange)
-        let priming = try await source.load(.segments).first?.timeMapping.source.start ?? .zero
-        let wanted = CMTimeAdd(
-          CMTime(seconds: targetDuration ?? cursor.seconds, preferredTimescale: 600),
-          priming.isNumeric ? priming : .zero
-        )
-        try target.insertTimeRange(
-          CMTimeRange(start: range.start, duration: CMTimeMinimum(range.duration, wanted)),
-          of: source,
-          at: .zero
-        )
-      }
-    }
-
-    guard let session = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetPassthrough)
-      ?? AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetHighestQuality)
-    else {
-      throw Error.exportFailed("no export session")
-    }
-    session.outputURL = destination
-    session.outputFileType = .mp4
-    // The session reports its own progress only when asked, so it is asked four times a second.
-    let writeStart = 1 - writeShare
-    let watcher = progress.map { report in
-      let watched = WatchedExport(session)
-      return Task {
-        while !Task.isCancelled {
-          report(writeStart + writeShare * Double(watched.session.progress))
-          try? await Task.sleep(for: .milliseconds(250))
-        }
-      }
-    }
-    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-      session.exportAsynchronously { continuation.resume() }
-    }
-    // Wait the watcher out, so no late reading lands after the final 1.
-    watcher?.cancel()
-    await watcher?.value
-    guard session.status == .completed else {
-      throw Error.exportFailed(session.error?.localizedDescription ?? "\(session.status)")
-    }
-    progress?(1)
-  }
-
-  /// Lets the progress watcher read the export session from its own task. It only ever reads
-  /// `progress`, which the session publishes for exactly that while it exports.
-  private final class WatchedExport: @unchecked Sendable {
-    let session: AVAssetExportSession
-
-    init(_ session: AVAssetExportSession) {
-      self.session = session
-    }
-  }
-
-  /// The source's picture, into the composition's one video track.
-  ///
-  /// `AVMutableComposition.insertTimeRange(_:of:at:)` puts a source track onto a *new* composition
-  /// track whenever it will not sit on an existing one, and a programme part written after a
-  /// recovered encoder is exactly such a source: the same codec and size, but a format description
-  /// that differs in its colour tags. rec-409's programme came out with its last 78 minutes on a
-  /// second video track, and every reader that takes the first video track showed them as one
-  /// frozen picture. A composition track holds several format descriptions, so picture and sound
-  /// each go into their one track by name.
-  ///
-  /// Returns the stretch of the output it filled, or nil when the file had no picture in `range`.
-  @discardableResult
-  private static func insertPicture(
-    _ range: CMTimeRange,
-    of asset: AVURLAsset,
-    at time: CMTime,
-    into composition: AVMutableComposition
-  ) async throws -> CMTimeRange? {
-    guard let source = try await asset.loadTracks(withMediaType: .video).first,
-          let target = try await track(.video, for: source, in: composition)
-    else { return nil }
-    let covered = CMTimeRangeGetIntersection(range, otherRange: try await source.load(.timeRange))
-    guard covered.duration.seconds > 0.0005 else { return nil }
-    let placedAt = CMTimeAdd(time, CMTimeSubtract(covered.start, range.start))
-    try target.insertTimeRange(covered, of: source, at: placedAt)
-    return CMTimeRange(start: placedAt, duration: covered.duration)
+    guard !placements.isEmpty, cursor.seconds > 0.05 else { throw Error.empty }
+    return PlacementPlan(placements: placements, end: cursor)
   }
 
   /// How many times its room a segment may claim before it is taken for one stamped on a runaway
@@ -328,6 +168,8 @@ public enum ArchiveRemux {
   /// Scaled into the room, all six play at the pace they were taken.
   static let runawayRatio = 2.0
 
+  // MARK: - Sound
+
   /// One file's sound and where on the output it belongs.
   private struct SoundPiece {
     /// Held so the track stays usable: an `AVAssetTrack` does not keep its asset alive, and a
@@ -338,6 +180,40 @@ public enum ArchiveRemux {
     var span: CMTimeRange
     /// Where `span.start` goes on the output.
     var place: CMTime
+  }
+
+  /// The placed files' sound, laid where it happened in a composition of its own and rendered as one
+  /// continuous AAC track `length` long, written to `url`.
+  ///
+  /// Returns false, leaving `url` alone, when none of the files has any sound.
+  static func renderPlacedSound(
+    _ placements: [Placement],
+    length: CMTime,
+    to url: URL,
+    progress: (@Sendable (Double) -> Void)?
+  ) async throws -> Bool {
+    var pieces: [SoundPiece] = []
+    for placement in placements {
+      let range = CMTimeRange(start: placement.start, duration: placement.taken)
+      if let piece = try? await soundPiece(range, of: placement.asset, at: placement.at) {
+        pieces.append(piece)
+      }
+    }
+    guard !pieces.isEmpty else { return false }
+    let composition = AVMutableComposition()
+    try placeSound(pieces, until: length, in: composition)
+    guard let track = composition.tracks(withMediaType: .audio).first else { return false }
+    return try await renderSound(of: composition, track: track, length: length, to: url, progress: progress)
+  }
+
+  /// Whether any placed file has sound, without reading it.
+  static func hasSound(_ placements: [Placement]) async -> Bool {
+    for placement in placements {
+      if let tracks = try? await placement.asset.loadTracks(withMediaType: .audio), !tracks.isEmpty {
+        return true
+      }
+    }
+    return false
   }
 
   /// The file's sound from where its picture's range starts to wherever the sound itself ends.
@@ -411,6 +287,9 @@ public enum ArchiveRemux {
   /// included, and it is encoded once. One piece of sound, the length of the take, has no seams to
   /// get wrong.
   ///
+  /// Stops at the next chunk when its task is cancelled, throwing `CancellationError` and leaving no
+  /// file behind.
+  ///
   /// Returns false, leaving `url` alone, when there is nothing to render.
   private static func renderSound(
     of composition: AVMutableComposition,
@@ -483,6 +362,7 @@ public enum ArchiveRemux {
       var remaining = frames
       var offset = 0
       while remaining > 0 {
+        try Task.checkCancellation()
         let chunk = min(remaining, 4_096)
         let length = chunk * bytesPerFrame
         var block: CMBlockBuffer?
@@ -514,10 +394,7 @@ public enum ArchiveRemux {
           sampleCount: chunk, sampleTimingEntryCount: 1, sampleTimingArray: &timing,
           sampleSizeEntryCount: 1, sampleSizeArray: &size, sampleBufferOut: &sample
         ) == noErr, let sample else { throw Error.exportFailed("sound sample") }
-        while !input.isReadyForMoreMediaData {
-          guard writer.status == .writing else { throw Error.exportFailed("sound writer \(writer.status.rawValue)") }
-          try await Task.sleep(nanoseconds: 1_000_000)
-        }
+        try await waitUntilReady(input, of: writer)
         guard input.append(sample) else {
           throw Error.exportFailed(writer.error?.localizedDescription ?? "sound append")
         }
@@ -533,34 +410,42 @@ public enum ArchiveRemux {
       }
     }
 
-    while written < total, let buffer = output.copyNextSampleBuffer() {
-      guard let block = CMSampleBufferGetDataBuffer(buffer) else { continue }
-      let frames = CMSampleBufferGetNumSamples(buffer)
-      guard frames > 0 else { continue }
-      // Where this buffer was placed, in samples. Anything between the last sample written and here
-      // is a stretch no camera sound covered: silence, so what follows stays where it belongs.
-      let at = Int64((CMSampleBufferGetPresentationTimeStamp(buffer).seconds * rate).rounded())
-      if at > written { try await append(nil, frames: Int(min(at, total) - written)) }
-      // Sound already written for this stretch keeps its place; the overlap is dropped.
-      let skip = Int(max(0, written - at))
-      let keep = min(frames - skip, Int(total - written))
-      guard keep > 0 else { continue }
-      var data = Data(count: frames * bytesPerFrame)
-      let copied = data.withUnsafeMutableBytes { raw -> Bool in
-        guard let base = raw.baseAddress else { return false }
-        return CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: frames * bytesPerFrame, destination: base) == noErr
+    do {
+      while written < total, let buffer = output.copyNextSampleBuffer() {
+        try Task.checkCancellation()
+        guard let block = CMSampleBufferGetDataBuffer(buffer) else { continue }
+        let frames = CMSampleBufferGetNumSamples(buffer)
+        guard frames > 0 else { continue }
+        // Where this buffer was placed, in samples. Anything between the last sample written and here
+        // is a stretch no camera sound covered: silence, so what follows stays where it belongs.
+        let at = Int64((CMSampleBufferGetPresentationTimeStamp(buffer).seconds * rate).rounded())
+        if at > written { try await append(nil, frames: Int(min(at, total) - written)) }
+        // Sound already written for this stretch keeps its place; the overlap is dropped.
+        let skip = Int(max(0, written - at))
+        let keep = min(frames - skip, Int(total - written))
+        guard keep > 0 else { continue }
+        var data = Data(count: frames * bytesPerFrame)
+        let copied = data.withUnsafeMutableBytes { raw -> Bool in
+          guard let base = raw.baseAddress else { return false }
+          return CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: frames * bytesPerFrame, destination: base) == noErr
+        }
+        guard copied else { continue }
+        try await append(data.subdata(in: (skip * bytesPerFrame)..<((skip + keep) * bytesPerFrame)), frames: keep)
       }
-      guard copied else { continue }
-      try await append(data.subdata(in: (skip * bytesPerFrame)..<((skip + keep) * bytesPerFrame)), frames: keep)
+      if reader.status == .failed { throw Error.exportFailed(reader.error?.localizedDescription ?? "sound read") }
+      // To the end of the take, whatever the last camera sound reached.
+      if written < total { try await append(nil, frames: Int(total - written)) }
+      // The encoded file plays the encoder's priming -- 2,112 samples, 44 ms at 48 kHz -- short of
+      // what was written, since its edit list skips the priming at the front. Written to exactly
+      // `total`, rec-411's programme sound ended that much before its window. So a little more
+      // silence goes in here, and `join` takes exactly the take's length back out of the file.
+      try await append(nil, frames: 8_192)
+    } catch {
+      reader.cancelReading()
+      writer.cancelWriting()
+      try? FileManager.default.removeItem(at: url)
+      throw error
     }
-    if reader.status == .failed { throw Error.exportFailed(reader.error?.localizedDescription ?? "sound read") }
-    // To the end of the take, whatever the last camera sound reached.
-    if written < total { try await append(nil, frames: Int(total - written)) }
-    // The encoded file plays the encoder's priming -- 2,112 samples, 44 ms at 48 kHz -- short of what
-    // was written, since its edit list skips the priming at the front. Written to exactly `total`,
-    // rec-411's programme sound ended that much before its window. So a little more silence goes in
-    // here, and the caller takes exactly the take's length back out of the file.
-    try await append(nil, frames: 8_192)
     input.markAsFinished()
     await writer.finishWriting()
     guard writer.status == .completed else {
@@ -569,94 +454,105 @@ public enum ArchiveRemux {
     return true
   }
 
-  /// The composition's one track of `type`, made on first use.
-  private static func track(
-    _ type: AVMediaType,
-    for source: AVAssetTrack,
-    in composition: AVMutableComposition
-  ) async throws -> AVMutableCompositionTrack? {
-    if let existing = composition.tracks(withMediaType: type).first { return existing }
-    guard let created = composition.addMutableTrack(
-      withMediaType: type,
-      preferredTrackID: kCMPersistentTrackID_Invalid
-    ) else { return nil }
-    if type == .video { created.preferredTransform = try await source.load(.preferredTransform) }
-    return created
+  /// Waits for `input` to take more, giving up when the writer has failed or the task is cancelled.
+  static func waitUntilReady(_ input: AVAssetWriterInput, of writer: AVAssetWriter) async throws {
+    while !input.isReadyForMoreMediaData {
+      try Task.checkCancellation()
+      guard writer.status == .writing else {
+        throw Error.exportFailed(writer.error?.localizedDescription ?? "writer \(writer.status.rawValue)")
+      }
+      try await Task.sleep(nanoseconds: 1_000_000)
+    }
   }
+
+  // MARK: - Writing the file
+
+  /// The encoded pictures and the rendered sound as one file, `length` long, without re-encoding
+  /// either.
+  ///
+  /// The sound goes in as the take's length plus the encoder's priming: a passthrough write of a
+  /// range cut short of the file's end takes the priming off that end -- measured, a 4 s cut came
+  /// out 47.9 ms short at 44.1 kHz. The render runs past the take (see `renderSound`), so the extra
+  /// is there to take, and what is written is exactly the take.
+  static func join(pictures: URL, sound: URL, length: CMTime, to destination: URL) async throws {
+    let composition = AVMutableComposition()
+    let pictureAsset = AVURLAsset(url: pictures)
+    guard let source = try await pictureAsset.loadTracks(withMediaType: .video).first,
+          let video = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid)
+    else { throw Error.exportFailed("no pictures to join") }
+    let pictureRange = try await source.load(.timeRange)
+    try video.insertTimeRange(
+      CMTimeRange(start: pictureRange.start, duration: CMTimeMinimum(pictureRange.duration, length)),
+      of: source,
+      at: .zero
+    )
+    video.preferredTransform = try await source.load(.preferredTransform)
+
+    let soundAsset = AVURLAsset(url: sound)
+    if let rendered = try await soundAsset.loadTracks(withMediaType: .audio).first,
+       let audio = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
+      let range = try await rendered.load(.timeRange)
+      let priming = try await rendered.load(.segments).first?.timeMapping.source.start ?? .zero
+      let wanted = CMTimeAdd(length, priming.isNumeric ? priming : .zero)
+      try audio.insertTimeRange(
+        CMTimeRange(start: range.start, duration: CMTimeMinimum(range.duration, wanted)),
+        of: rendered,
+        at: .zero
+      )
+    }
+    try await writePassthrough(composition, timeRange: nil, to: destination)
+  }
+
+  /// Writes `asset` to `destination` as it is, samples copied rather than re-encoded.
+  ///
+  /// Stops when its task is cancelled, throwing `CancellationError` and leaving no file behind.
+  static func writePassthrough(_ asset: AVAsset, timeRange: CMTimeRange?, to destination: URL) async throws {
+    try? FileManager.default.removeItem(at: destination)
+    guard let session = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetPassthrough) else {
+      throw Error.exportFailed("no export session")
+    }
+    if let timeRange { session.timeRange = timeRange }
+    do {
+      try await session.export(to: destination, as: .mp4)
+    } catch {
+      try? FileManager.default.removeItem(at: destination)
+      if Task.isCancelled { throw CancellationError() }
+      throw Error.exportFailed(error.localizedDescription)
+    }
+    if Task.isCancelled {
+      try? FileManager.default.removeItem(at: destination)
+      throw CancellationError()
+    }
+  }
+
+  /// The programme master as it was recorded, cut to the window: every sample copied, none
+  /// re-encoded, none held.
+  ///
+  /// `offset` is how far into the part the window starts; `length` is how long the window is, nil to
+  /// run to the end of the part. Only for a master `ProgrammeExport.plan` found unbroken: nothing
+  /// here places, fills or retimes anything.
+  public static func copyProgramme(
+    part: URL,
+    offset: TimeInterval,
+    length: TimeInterval?,
+    destination: URL,
+    progress: (@Sendable (Double) -> Void)? = nil
+  ) async throws {
+    progress?(0)
+    let start = CMTime(seconds: max(0, offset), preferredTimescale: 600)
+    let duration = length.map { CMTime(seconds: max(0, $0), preferredTimescale: 600) } ?? .positiveInfinity
+    let range: CMTimeRange? = start.seconds > 0.0005 || length != nil
+      ? CMTimeRange(start: start, duration: duration)
+      : nil
+    try await writePassthrough(AVURLAsset(url: part), timeRange: range, to: destination)
+    progress?(1)
+  }
+
+  // MARK: - Durations
 
   /// A take lasts hours, not days. Video tracks stamped on a compositor/boot clock report
   /// multi-day durations; the longest track inside this window is the programme.
   public static let maximumSaneDuration: TimeInterval = 20_000
-
-  /// Holds `previous`'s last picture from where it ended until `end`.
-  ///
-  /// The frame is inserted once and then scaled to the length of the hole. A passthrough export
-  /// copies samples rather than re-encoding them, and it honours the scaling: measured across a
-  /// ten-second gap, every probe inside it decoded as the frame before the gap.
-  private static func holdFrame(
-    _ previous: (asset: AVURLAsset, sourceEnd: CMTime, frame: CMTime, timelineEnd: CMTime),
-    until end: CMTime,
-    in composition: AVMutableComposition
-  ) async throws {
-    let span = CMTimeSubtract(end, previous.timelineEnd)
-    guard span.seconds > 0.001, previous.frame.seconds > 0 else { return }
-
-    // Into the picture track by name, rather than letting the composition place it.
-    //
-    // `AVMutableComposition.insertTimeRange` inserts *every* track the source has and puts anything
-    // that will not sit on an existing track onto a new one. Holding that way cost a stress run an
-    // export with two video tracks of identical format and an audio track scaled to nonsense: the
-    // hold's audio sliver was stretched across the hole alongside the picture, and a seam that
-    // rounded a fraction long overlapped the segment after it, which is exactly when a second track
-    // appears. Naming the track keeps one of each, and leaves the hole silent -- which is what a
-    // gap sounded like.
-    guard let videoTrack = composition.tracks(withMediaType: .video).first,
-          let sourceVideo = try await previous.asset.loadTracks(withMediaType: .video).first
-    else { return }
-    let fallback = CMTimeRange(
-      start: CMTimeMaximum(.zero, CMTimeSubtract(previous.sourceEnd, previous.frame)),
-      duration: previous.frame
-    )
-    let picture = await lastSample(of: sourceVideo, endingBy: previous.sourceEnd) ?? fallback
-    try videoTrack.insertTimeRange(picture, of: sourceVideo, at: previous.timelineEnd)
-    videoTrack.scaleTimeRange(
-      CMTimeRange(start: previous.timelineEnd, duration: picture.duration),
-      toDuration: span
-    )
-  }
-
-  /// The last sample showing before `end`, from where it starts to `end`.
-  ///
-  /// The hold used to take one nominal frame back from `end`, which lands on a sample boundary only
-  /// when frames are exactly as long as the nominal rate says. A Pixel's are not -- its 59.5 fps
-  /// comes out as ten- and eleven-tick samples at 600 -- so the range began a tick inside the
-  /// sample before, and the hold carried a sliver of it. Seams between back-to-back segments leave
-  /// one-tick holes from rounding, so nearly every 3 s seam got such a hold, and a passthrough export
-  /// writes each as one-tick samples behind their own edits. rec-412's Pixel picture came out 101 ms
-  /// per 1,000 s early while its sound held steady; its capture times were right, measured from
-  /// the raw segments. Remuxed on a Mac with the hold starting on a sample, the same 605 segments
-  /// export as one edit with no sliver samples, and the picture holds to 12 ms per 1,000 s.
-  public static func lastSample(of track: AVAssetTrack, endingBy end: CMTime) async -> CMTimeRange? {
-    guard (try? await track.load(.canProvideSampleCursors)) == true else { return nil }
-    // Just before `end`, so a sample that starts exactly there -- the next segment's business -- is
-    // not the one chosen.
-    let probe = CMTimeSubtract(end, CMTime(value: 1, timescale: 90_000))
-    guard let cursor = track.makeSampleCursor(presentationTimeStamp: probe) else { return nil }
-    let start = cursor.presentationTimeStamp
-    guard start.isNumeric, start < end else { return nil }
-    return CMTimeRange(start: start, end: end)
-  }
-
-  /// One frame of this asset, for the hold above. Falls back to 30 fps when the track will not say,
-  /// which only decides how much of the source the single held sample is taken from.
-  private static func frameDuration(of asset: AVURLAsset) async -> CMTime {
-    let fallback = CMTime(value: 1, timescale: 30)
-    guard let track = try? await asset.loadTracks(withMediaType: .video).first,
-          let rate = try? await track.load(.nominalFrameRate),
-          rate > 0
-    else { return fallback }
-    return CMTime(seconds: 1 / Double(rate), preferredTimescale: 600)
-  }
 
   /// Fewest frames per second a real part of ours can hold.
   ///

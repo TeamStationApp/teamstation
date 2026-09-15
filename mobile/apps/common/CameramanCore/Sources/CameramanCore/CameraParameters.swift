@@ -165,7 +165,10 @@ public enum CameraParameterName {
   public static let height = "videoEncoder.resolution.height"
   public static let frameRate = "videoEncoder.rateControl.frameRateLimit"
   public static let bitrateKbps = "videoEncoder.rateControl.bitrateLimit"
-  /// Whether the phone lowers its rate, never below half of `bitrateLimit`, while a link backs up.
+  /// The lowest rate adaptation may reach, in kbps, never above `bitrateLimit`. A phone that predates
+  /// it adapts down to half of `bitrateLimit`, and is read as reporting that.
+  public static let bitrateFloorKbps = "videoEncoder.rateControl.bitrateFloor"
+  /// Whether the phone lowers its rate, never below `bitrateFloor`, while a link backs up.
   public static let adaptiveBitrate = "videoEncoder.rateControl.adaptive"
   /// The rate the encoder is running at, in kbps: `bitrateLimit`, or less while adapting.
   public static let currentBitrateKbps = "videoEncoder.rateControl.currentBitrate"
@@ -186,7 +189,7 @@ public enum CameraParameterName {
 
   public static let writable: Set<String> = [
     deviceName, sourcePosition, ptzZoom, encoding, width, height, frameRate, bitrateKbps,
-    adaptiveBitrate, audioEnabled, videoOutputHDMIClean, lensDisabled
+    bitrateFloorKbps, adaptiveBitrate, audioEnabled, videoOutputHDMIClean, lensDisabled
   ]
 
   /// The fixed names, in the order the full set is emitted. Indexed `format.<i>.*` and `lens.<i>.*`
@@ -197,7 +200,8 @@ public enum CameraParameterName {
     sourcePosition, sourceDeviceType,
     zoomMinimumDevice, zoomMaximumDevice, zoomDisplayMultiplier, zoomSwitchOverDevice,
     ptzZoom, ptzZoomDevice,
-    encoding, width, height, frameRate, bitrateKbps, adaptiveBitrate, currentBitrateKbps, formatCount,
+    encoding, width, height, frameRate, bitrateKbps, bitrateFloorKbps, adaptiveBitrate, currentBitrateKbps,
+    formatCount,
     audioEnabled, audioSampleRate,
     videoOutputHDMIClean,
     lensCount, lensDisabled,
@@ -306,6 +310,8 @@ public struct CameraParameterWrite: Sendable, Equatable {
   public var frameRate: Double?
   /// Bits per second, converted from the wire's kbps.
   public var bitrate: Int?
+  /// Bits per second, converted from the wire's kbps.
+  public var bitrateFloor: Int?
   public var adaptiveBitrate: Bool?
   public var audioEnabled: Bool?
   public var cleanHDMIEnabled: Bool?
@@ -317,14 +323,14 @@ public struct CameraParameterWrite: Sendable, Equatable {
 
   public var isEmpty: Bool {
     name == nil && position == nil && displayedZoom == nil && codec == nil && width == nil
-      && height == nil && frameRate == nil && bitrate == nil && adaptiveBitrate == nil
+      && height == nil && frameRate == nil && bitrate == nil && bitrateFloor == nil && adaptiveBitrate == nil
       && audioEnabled == nil && cleanHDMIEnabled == nil && disabledLensIDs == nil
   }
 
   /// True when anything in `StreamSettings` is named, i.e. the phone should run one
   /// `applySettings()` after the merge.
   public var touchesSettings: Bool {
-    codec != nil || width != nil || height != nil || frameRate != nil || bitrate != nil
+    codec != nil || width != nil || height != nil || frameRate != nil || bitrate != nil || bitrateFloor != nil
       || adaptiveBitrate != nil || audioEnabled != nil || cleanHDMIEnabled != nil || disabledLensIDs != nil
   }
 }
@@ -335,7 +341,7 @@ public enum CameraParameters {
   public static let contentType = "text/parameters"
   public static let controlVersion = "params/1"
   public static let minimumBitrateKbps = 1_000
-  public static let maximumBitrateKbps = 50_000
+  public static let maximumBitrateKbps = StreamSettings.maximumBitrate / 1000
 
   // MARK: Encode
 
@@ -366,6 +372,7 @@ public enum CameraParameters {
     set.set(CameraParameterName.height, String(s.height))
     set.set(CameraParameterName.frameRate, number(s.frameRate))
     set.set(CameraParameterName.bitrateKbps, String(s.bitrate / 1000))
+    set.set(CameraParameterName.bitrateFloorKbps, String(s.bitrateFloor / 1000))
     set.set(CameraParameterName.adaptiveBitrate, bool(s.adaptiveBitrate))
     set.set(CameraParameterName.currentBitrateKbps, String((snapshot.currentBitrate ?? s.bitrate) / 1000))
     set.set(CameraParameterName.formatCount, String(snapshot.formats.count))
@@ -468,6 +475,9 @@ public enum CameraParameters {
       frameRate: frameRate,
       codec: codec,
       bitrate: bitrateKbps * 1000,
+      // Absent from a phone that predates the setting, which adapts down to half the rate: nil
+      // decodes to that default.
+      bitrateFloor: set[CameraParameterName.bitrateFloorKbps].flatMap(Int.init).map { $0 * 1000 },
       // Absent from a phone that predates adaptation, which never adapts.
       adaptiveBitrate: parseBool(set[CameraParameterName.adaptiveBitrate]) ?? false,
       port: port ?? StreamSettings.defaultPort,
@@ -601,6 +611,13 @@ public enum CameraParameters {
         }
         write.bitrate = kbps * 1000
 
+      case CameraParameterName.bitrateFloorKbps:
+        guard let kbps = Int(value) else { return .failure(bad("expected an integer in kbps")) }
+        guard (minimumBitrateKbps ... maximumBitrateKbps).contains(kbps) else {
+          return .failure(bad("expected \(minimumBitrateKbps)…\(maximumBitrateKbps) kbps"))
+        }
+        write.bitrateFloor = kbps * 1000
+
       case CameraParameterName.adaptiveBitrate:
         guard let enabled = parseBool(value) else { return .failure(bad("expected true or false")) }
         write.adaptiveBitrate = enabled
@@ -652,6 +669,21 @@ public enum CameraParameters {
       }
     }
 
+    // A named floor is judged against the rate it will sit under, which is the request's own rate
+    // when it names one: raising both in one request is fine even if the new floor is above the old
+    // rate. A request that names only the rate is never refused for the floor, which comes down
+    // with it, so a client that predates the floor can still lower the rate.
+    if let floor = write.bitrateFloor {
+      let ceiling = settings(applying: write, to: snapshot.settings).bitrate
+      guard floor <= ceiling else {
+        return .failure(CameraParameterError(
+          kind: .badRequest,
+          name: CameraParameterName.bitrateFloorKbps,
+          detail: "\(floor / 1000) kbps is above the \(ceiling / 1000) kbps bitrateLimit"
+        ))
+      }
+    }
+
     return .success(write)
   }
 
@@ -664,8 +696,11 @@ public enum CameraParameters {
     if let width = write.width { next.width = width }
     if let height = write.height { next.height = height }
     if let rate = write.frameRate { next.frameRate = rate }
-    // After `setCodec`, so an explicit rate in the same request wins over the codec default.
-    if let bitrate = write.bitrate { next.bitrate = bitrate }
+    // After `setCodec`, so an explicit rate in the same request wins over the codec default, and
+    // the floor after the rate, so an explicit floor wins over the one the rate carried.
+    if let bitrate = write.bitrate { next.setBitrate(bitrate) }
+    if let floor = write.bitrateFloor { next.bitrateFloor = floor }
+    next.clampFloorToCeiling()
     if let adaptive = write.adaptiveBitrate { next.adaptiveBitrate = adaptive }
     if let audio = write.audioEnabled { next.audioEnabled = audio }
     if let clean = write.cleanHDMIEnabled { next.cleanHDMIEnabled = clean }

@@ -111,9 +111,10 @@ struct ArchiveTimelineTests {
     #expect(encoder.outputURLs.count == 2)
 
     let destination = root.appendingPathComponent("out.mp4")
-    try await ArchiveRemux.concatenate(
+    try await ArchiveRemux.stitch(
       files: encoder.outputURLs,
       fileDurations: encoder.outputURLs.map { _ in 0 },
+      settings: .archiveTimelineTest,
       destination: destination
     )
     let duration = try await AVURLAsset(url: destination).load(.duration)
@@ -203,7 +204,9 @@ struct ArchiveTimelineTests {
     let times = try await videoSampleTimes(of: try #require(encoder.outputURLs.first))
     let fileSpan = (times.last ?? 0) - (times.first ?? 0)
     let captureSpan = (captures.last ?? 0) - (captures.first ?? 0)
-    #expect(abs(fileSpan - captureSpan) < 0.03, "file spans \(fileSpan) s for \(captureSpan) s of capture")
+    // To the frame: the programme is written on its own grid, 30 a second here, so real time is
+    // exact to one frame period and no closer.
+    #expect(abs(fileSpan - captureSpan) <= 1.0 / 30 + 0.001, "file spans \(fileSpan) s for \(captureSpan) s of capture")
   }
 
   /// What went out is what the programme records: a source that stops delivering for a second is a
@@ -337,8 +340,9 @@ struct ArchiveTimelineTests {
         formatDescription: format,
         presentationTime: time
       ) {
+        // Stamped with when the sound was captured, which for sound made beside the picture is now.
         encoder.append(
-          audio: AudioFrame(sourceID: SourceID("program"), sampleBuffer: sample, wallClock: origin)
+          audio: AudioFrame(sourceID: SourceID("program"), sampleBuffer: sample, wallClock: WallClock(date: Date()))
         )
       }
       try await Task.sleep(nanoseconds: 20_000_000)
@@ -355,15 +359,27 @@ struct ArchiveTimelineTests {
     #expect(snapshot.dvr.lastError?.contains("program writer") == true)
 
     let destination = root.appendingPathComponent("out.mp4")
-    try await ArchiveRemux.concatenate(
+    try await ArchiveRemux.stitch(
       files: encoder.outputURLs,
       fileDurations: encoder.outputURLs.map { _ in 0 },
-      targetDuration: 9,
+      length: 9,
+      settings: .archiveTimelineTest,
       destination: destination
     )
     let duration = try await AVURLAsset(url: destination).load(.duration)
     #expect(abs(duration.seconds - 9) < 0.6)
   }
+}
+
+extension EncodeSettings {
+  /// The fixtures' own 160x120, so a stitched file's brightness is the fixture's, with no bars.
+  fileprivate static let archiveTimelineTest = EncodeSettings(
+    codec: .h264,
+    resolution: ProgramResolution(width: 160, height: 120),
+    frameRate: 30,
+    bitrate: 1_000_000,
+    keyframeSeconds: 1
+  )
 }
 
 final class FixedClock: DirectorClock, @unchecked Sendable {
@@ -518,9 +534,10 @@ private final class TimelineHarness {
       to: WallClock(seconds: 10_000)
     )
     let destination = root.appendingPathComponent("out.mp4")
-    try await ArchiveRemux.concatenate(
+    try await ArchiveRemux.stitch(
       files: assembly.files,
       fileDurations: assembly.fileDurations,
+      settings: .archiveTimelineTest,
       destination: destination
     )
     return destination

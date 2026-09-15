@@ -15,7 +15,8 @@ const WRITABLE = new Set([
   'device.name', 'videoSource.position', 'ptz.zoom', 'videoEncoder.encoding',
   'videoEncoder.resolution.width', 'videoEncoder.resolution.height',
   'videoEncoder.rateControl.frameRateLimit', 'videoEncoder.rateControl.bitrateLimit',
-  'videoEncoder.rateControl.adaptive', 'audioEncoder.enabled', 'lens.disabled'
+  'videoEncoder.rateControl.bitrateFloor', 'videoEncoder.rateControl.adaptive', 'audioEncoder.enabled',
+  'lens.disabled'
 ])
 
 const BACK_MAPPING = { min: 1, max: 18, multiplier: 0.5, switchOvers: [2, 6] }
@@ -77,6 +78,7 @@ class FakeCameramanModel {
     this.height = 1080
     this.frameRate = 30
     this.bitrateKbps = 4000
+    this.bitrateFloorKbps = 2000
     this.adaptive = true
     this.audio = true
     this.disabled = new Set()
@@ -105,6 +107,7 @@ class FakeCameramanModel {
       ['videoEncoder.resolution.width', String(this.width)], ['videoEncoder.resolution.height', String(this.height)],
       ['videoEncoder.rateControl.frameRateLimit', number(this.frameRate)],
       ['videoEncoder.rateControl.bitrateLimit', String(this.bitrateKbps)],
+      ['videoEncoder.rateControl.bitrateFloor', String(this.bitrateFloorKbps)],
       // A fake link never congests, so it always runs at the ceiling.
       ['videoEncoder.rateControl.adaptive', String(this.adaptive)],
       ['videoEncoder.rateControl.currentBitrate', String(this.bitrateKbps)],
@@ -167,7 +170,8 @@ class FakeCameramanModel {
         case 'videoEncoder.resolution.width': next.width = Number(value); if (!(next.width > 0)) return bad(name, 'expected a positive integer'); break
         case 'videoEncoder.resolution.height': next.height = Number(value); if (!(next.height > 0)) return bad(name, 'expected a positive integer'); break
         case 'videoEncoder.rateControl.frameRateLimit': next.frameRate = Number(value); if (!(next.frameRate > 0)) return bad(name, 'expected a positive number'); break
-        case 'videoEncoder.rateControl.bitrateLimit': next.bitrateKbps = Number(value); if (!Number.isInteger(next.bitrateKbps) || next.bitrateKbps < 1000 || next.bitrateKbps > 50000) return bad(name, 'expected 1000…50000 kbps'); break
+        case 'videoEncoder.rateControl.bitrateLimit': next.bitrateKbps = Number(value); if (!Number.isInteger(next.bitrateKbps) || next.bitrateKbps < 1000 || next.bitrateKbps > 16000) return bad(name, 'expected 1000…16000 kbps'); break
+        case 'videoEncoder.rateControl.bitrateFloor': next.bitrateFloorKbps = Number(value); if (!Number.isInteger(next.bitrateFloorKbps) || next.bitrateFloorKbps < 1000 || next.bitrateFloorKbps > 16000) return bad(name, 'expected 1000…16000 kbps'); break
         case 'videoEncoder.rateControl.adaptive': if (!['true', 'false', '1', '0', 'yes', 'no', 'on', 'off'].includes(value.toLowerCase())) return bad(name, 'expected true or false'); next.adaptive = ['true', '1', 'yes', 'on'].includes(value.toLowerCase()); break
         case 'audioEncoder.enabled': if (!['true', 'false', '1', '0', 'yes', 'no', 'on', 'off'].includes(value.toLowerCase())) return bad(name, 'expected true or false'); next.audio = ['true', '1', 'yes', 'on'].includes(value.toLowerCase()); break
         case 'lens.disabled': {
@@ -187,18 +191,31 @@ class FakeCameramanModel {
         return bad(which, `${w}x${h}@${number(r)} is not an offered format`)
       }
     }
+    // The phone's rate rules: a new rate carries a floor still at the old rate's default (half, not
+    // below 1000) to the new rate's, and a floor is never above the rate.
+    const defaultFloor = kbps => Math.min(kbps, Math.max(1000, Math.floor(kbps / 2)))
+    const rateAfter = (rate, floor, nextRate) => ({
+      rate: nextRate,
+      floor: Math.min(floor === defaultFloor(rate) ? defaultFloor(nextRate) : floor, nextRate)
+    })
+    const defaults = { H264: 6000, H265: 4000 }
+    let rate = { rate: this.bitrateKbps, floor: this.bitrateFloorKbps }
+    if (next.codec != null && rate.rate === defaults[this.codec]) rate = rateAfter(rate.rate, rate.floor, defaults[next.codec])
+    if (next.bitrateKbps != null) rate = rateAfter(rate.rate, rate.floor, next.bitrateKbps)
+    // A named floor is judged against the rate it will sit under.
+    if (next.bitrateFloorKbps != null) {
+      if (next.bitrateFloorKbps > rate.rate) return bad('videoEncoder.rateControl.bitrateFloor', `${next.bitrateFloorKbps} kbps is above the ${rate.rate} kbps bitrateLimit`)
+      rate.floor = next.bitrateFloorKbps
+    }
     // Apply.
     if (next.name != null) this.name = next.name
     if (next.position != null && next.position !== this.position) { this.position = next.position; this.deviceZoom = this.position === 'back' ? 2 : 1 }
-    if (next.codec != null) {
-      const defaults = { H264: 6000, H265: 4000 }
-      if (this.bitrateKbps === defaults[this.codec]) this.bitrateKbps = defaults[next.codec]
-      this.codec = next.codec
-    }
+    if (next.codec != null) this.codec = next.codec
     if (next.width != null) this.width = next.width
     if (next.height != null) this.height = next.height
     if (next.frameRate != null) this.frameRate = next.frameRate
-    if (next.bitrateKbps != null) this.bitrateKbps = next.bitrateKbps
+    this.bitrateKbps = rate.rate
+    this.bitrateFloorKbps = rate.floor
     if (next.adaptive != null) this.adaptive = next.adaptive
     if (next.audio != null) this.audio = next.audio
     if (next.disabled != null) this.disabled = next.disabled

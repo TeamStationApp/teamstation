@@ -30,22 +30,26 @@ public struct ProgramResolution: Hashable, Sendable, Codable {
 /// Everything the operator can change, persisted in `UserDefaults` and readable from any
 /// thread as an immutable value.
 ///
-/// An RTSP camera's archive is a copy of what it sent, so its codec, resolution and frame rate are
-/// the camera's to choose and there is nothing here to configure. NDI is the exception:
-/// the free SDK decodes before a receiver ever sees a frame, so an NDI camera's archive is a
-/// re-encode and `sourceEncodeCodec` is what it is encoded with. The programme settings below
-/// describe the master, which is a composite and has to be encoded whatever the cameras are.
+/// Three groups of encoding settings, each independent of the others:
+///
+/// - **Raw camera encoding** (`rawCamera…`): an NDI camera's archive, which the app has to encode
+///   because the free SDK decodes before a receiver sees a frame, and every exported camera file. An
+///   RTSP camera's archive is a copy of what it sent and is never re-encoded; only its export is.
+/// - **Programme master recording** (`program…`): the master, which is a composite and has to be
+///   encoded whatever the cameras are, and a programme export that has to be re-encoded.
+/// - **Programme master stream** (`stream…`): the live RTMP stream, which has its own encoder.
 public struct AppConfig: Hashable, Sendable, Codable {
   public var programCodec: ProgramCodec
-  /// Codec for any source the app has to encode to archive — today, NDI cameras.
+  /// Codec for an NDI camera's archive and every exported camera file.
   ///
   /// HEVC by default because the encode budget decides how many cameras can be recorded at once:
   /// the same hardware sustains 118 fps of 1080p H.264 and 296 fps of 1080p HEVC, which at 60 fps
   /// per camera is the difference between two cameras and four. H.264 is offered for a player that
   /// cannot open HEVC.
-  public var sourceEncodeCodec: ProgramCodec
+  public var rawCameraCodec: ProgramCodec
   public var programResolution: ProgramResolution
   public var programFrameRate: Int
+  /// Keyframe spacing, shared by all three groups.
   public var gopSeconds: Double
   public var segmentSeconds: Double
   /// Ceiling on the archive. Once the segments on disk exceed this, the oldest recordings are
@@ -59,6 +63,21 @@ public struct AppConfig: Hashable, Sendable, Codable {
   /// Free space the *sweeper* keeps available. When the volume falls below this, the oldest
   /// recordings are dropped until it is clear again, even if the archive is under its ceiling.
   public var freeDiskFloorBytes: Int64
+  /// Size an NDI camera is archived at and every camera is exported at. A camera sending something
+  /// else is scaled to fit, its shape kept.
+  public var rawCameraResolution: ProgramResolution
+  /// The one frame rate an NDI archive is encoded at and every camera is exported at, whatever the
+  /// camera sent: pictures a camera did not send are repeated, extra ones are dropped.
+  public var rawCameraFrameRate: Int
+  public var rawCameraBitrate: Int
+  /// The stream's codec. HEVC needs a service that takes Enhanced RTMP.
+  public var streamCodec: ProgramCodec
+  public var streamResolution: ProgramResolution
+  public var streamFrameRate: Int
+  /// The stream starts at `streamBitrateHigh` and comes down towards `streamBitrateLow` while the
+  /// network cannot keep up, rather than drop frames.
+  public var streamBitrateLow: Int
+  public var streamBitrateHigh: Int
   /// Whether the telemetry overlay is drawn over the director grid. A normal setting, not a
   /// test-only flag: the operator turns it on from Settings and it has to still be on tomorrow.
   public var showDebugHUD: Bool
@@ -126,6 +145,16 @@ public struct AppConfig: Hashable, Sendable, Codable {
   public static let replaySlowMotionRateMinimum: Double = 0
   public static let replaySlowMotionRateMaximum: Double = 1.0
 
+  /// The stream's bitrate range: 1 to 10 Mbps in half-megabit steps. Ten is the most the stream may
+  /// ever send.
+  public static let streamBitrateMinimum = 1_000_000
+  public static let streamBitrateMaximum = 10_000_000
+  public static let streamBitrateStep = 500_000
+  public static let rawCameraBitrateMinimum = 1_000_000
+  public static let rawCameraBitrateMaximum = 40_000_000
+  /// The frame rates offered for the raw camera and stream encodings.
+  public static let frameRateChoices = [ 24, 25, 30, 50, 60 ]
+
   /// How long the app may have been gone and still pick a take back up, in seconds.
   ///
   /// An hour. Long enough to cover a crash, a reboot, a flat battery put on charge, or the walk
@@ -136,17 +165,26 @@ public struct AppConfig: Hashable, Sendable, Codable {
   public static let resumeDowntimeLimitMinimumSeconds: Double = 60
   public static let resumeDowntimeLimitMaximumSeconds: Double = 86_400
 
+  /// The defaults are a new install's. A saved config keeps every value it has; see `init(from:)`.
   public init(
     programCodec: ProgramCodec = .hevc,
-    sourceEncodeCodec: ProgramCodec = .hevc,
+    rawCameraCodec: ProgramCodec = .hevc,
     programResolution: ProgramResolution = .hd1080,
     programFrameRate: Int = 30,
     gopSeconds: Double = 2,
     segmentSeconds: Double = 3,
     maximumArchiveBytes: Int64 = AppConfig.maximumArchiveBytesDefault,
-    programBitrate: Int = 12_000_000,
+    programBitrate: Int = 4_000_000,
     minimumFreeDiskBytes: Int64 = 4 * 1024 * 1024 * 1024,
     freeDiskFloorBytes: Int64 = AppConfig.freeDiskFloorBytesDefault,
+    rawCameraResolution: ProgramResolution = .hd1080,
+    rawCameraFrameRate: Int = 60,
+    rawCameraBitrate: Int = 6_000_000,
+    streamCodec: ProgramCodec = .hevc,
+    streamResolution: ProgramResolution = .hd1080,
+    streamFrameRate: Int = 60,
+    streamBitrateLow: Int = 2_000_000,
+    streamBitrateHigh: Int = 6_000_000,
     showDebugHUD: Bool = false,
     useSimulatedCameras: Bool = false,
     displayLatencyCapEnabled: Bool = false,
@@ -160,7 +198,7 @@ public struct AppConfig: Hashable, Sendable, Codable {
     resumeDowntimeLimitSeconds: Double = AppConfig.resumeDowntimeLimitDefaultSeconds
   ) {
     self.programCodec = programCodec
-    self.sourceEncodeCodec = sourceEncodeCodec
+    self.rawCameraCodec = rawCameraCodec
     self.programResolution = programResolution
     self.programFrameRate = programFrameRate
     self.gopSeconds = gopSeconds
@@ -169,6 +207,15 @@ public struct AppConfig: Hashable, Sendable, Codable {
     self.programBitrate = programBitrate
     self.minimumFreeDiskBytes = minimumFreeDiskBytes
     self.freeDiskFloorBytes = max(0, freeDiskFloorBytes)
+    self.rawCameraResolution = rawCameraResolution
+    self.rawCameraFrameRate = max(1, rawCameraFrameRate)
+    self.rawCameraBitrate = Self.clampedRawCameraBitrate(rawCameraBitrate)
+    self.streamCodec = streamCodec
+    self.streamResolution = streamResolution
+    self.streamFrameRate = max(1, streamFrameRate)
+    let stream = Self.clampedStreamBitrates(low: streamBitrateLow, high: streamBitrateHigh)
+    self.streamBitrateLow = stream.low
+    self.streamBitrateHigh = stream.high
     self.showDebugHUD = showDebugHUD
     self.useSimulatedCameras = useSimulatedCameras
     self.displayLatencyCapEnabled = displayLatencyCapEnabled
@@ -182,8 +229,65 @@ public struct AppConfig: Hashable, Sendable, Codable {
     self.resumeDowntimeLimitSeconds = Self.clampedResumeDowntimeLimit(resumeDowntimeLimitSeconds)
   }
 
+  // MARK: - The encoding groups as values
+
+  /// NDI archives and every exported camera file.
+  public var rawCameraEncoding: EncodeSettings {
+    EncodeSettings(
+      codec: rawCameraCodec,
+      resolution: rawCameraResolution,
+      frameRate: rawCameraFrameRate,
+      bitrate: rawCameraBitrate,
+      keyframeSeconds: gopSeconds
+    )
+  }
+
+  /// The programme master recording.
+  public var programEncoding: EncodeSettings {
+    EncodeSettings(
+      codec: programCodec,
+      resolution: programResolution,
+      frameRate: programFrameRate,
+      bitrate: programBitrate,
+      keyframeSeconds: gopSeconds
+    )
+  }
+
+  /// The programme master stream, at the top of its range; `streamBitrateLow` is the floor.
+  public var streamEncoding: EncodeSettings {
+    EncodeSettings(
+      codec: streamCodec,
+      resolution: streamResolution,
+      frameRate: streamFrameRate,
+      bitrate: streamBitrateHigh,
+      keyframeSeconds: gopSeconds
+    )
+  }
+
+  /// What a take starting now is recorded with, kept with the take for its exports.
+  public var takeEncoding: TakeEncoding {
+    TakeEncoding(rawCamera: rawCameraEncoding, programme: programEncoding)
+  }
+
+  // MARK: - Clamping
+
   public static func clampedResumeDowntimeLimit(_ seconds: Double) -> Double {
     min(max(seconds, resumeDowntimeLimitMinimumSeconds), resumeDowntimeLimitMaximumSeconds)
+  }
+
+  public static func clampedRawCameraBitrate(_ bitrate: Int) -> Int {
+    min(max(bitrate, rawCameraBitrateMinimum), rawCameraBitrateMaximum)
+  }
+
+  /// Both stream bitrates on the half-megabit grid, inside 1–10 Mbps, and the low one never above
+  /// the high one. They may meet, which is a fixed bitrate.
+  public static func clampedStreamBitrates(low: Int, high: Int) -> (low: Int, high: Int) {
+    func clamp(_ bitrate: Int) -> Int {
+      let snapped = Int((Double(bitrate) / Double(streamBitrateStep)).rounded()) * streamBitrateStep
+      return min(max(snapped, streamBitrateMinimum), streamBitrateMaximum)
+    }
+    let high = clamp(high)
+    return (min(clamp(low), high), high)
   }
 
   /// The /24s to sweep instead of the local one, as network addresses (`192.168.6.0`). Empty when the
@@ -239,39 +343,75 @@ public struct AppConfig: Hashable, Sendable, Codable {
     min(max(rate, replaySlowMotionRateMinimum), replaySlowMotionRateMaximum)
   }
 
+  // MARK: - Decoding
+
+  /// Keys a config was saved under before they were renamed.
+  private enum LegacyKeys: String, CodingKey {
+    /// The NDI archive codec, now `rawCameraCodec`.
+    case sourceEncodeCodec
+  }
+
   /// Written by hand so that a config saved before a key existed still loads.
   ///
   /// The synthesised decoder throws on the first missing key, and `ConfigStore.load` answers a throw
   /// by returning the defaults — so adding one property would silently discard every setting the
   /// operator had chosen.
+  ///
+  /// A saved config is an iPad already in use, so a group it has never saved carries on doing what
+  /// it did, rather than taking a new install's defaults: the stream was the programme's settings in
+  /// H.264, capped here at the stream's 10 Mbps, with half that as its floor; an NDI archive was
+  /// encoded at the programme's bitrate.
   public init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
+    let legacy = try decoder.container(keyedBy: LegacyKeys.self)
     let fallback = AppConfig()
+    let programResolution = try container.decodeIfPresent(
+      ProgramResolution.self,
+      forKey: .programResolution
+    ) ?? fallback.programResolution
+    let programFrameRate = try container.decodeIfPresent(Int.self, forKey: .programFrameRate)
+      ?? fallback.programFrameRate
+    let programBitrate = try container.decodeIfPresent(Int.self, forKey: .programBitrate)
+      ?? fallback.programBitrate
     self.init(
       programCodec: try container.decodeIfPresent(ProgramCodec.self, forKey: .programCodec)
         ?? fallback.programCodec,
-      sourceEncodeCodec: try container.decodeIfPresent(
-        ProgramCodec.self,
-        forKey: .sourceEncodeCodec
-      ) ?? fallback.sourceEncodeCodec,
-      programResolution: try container.decodeIfPresent(
-        ProgramResolution.self,
-        forKey: .programResolution
-      ) ?? fallback.programResolution,
-      programFrameRate: try container.decodeIfPresent(Int.self, forKey: .programFrameRate)
-        ?? fallback.programFrameRate,
+      rawCameraCodec: try container.decodeIfPresent(ProgramCodec.self, forKey: .rawCameraCodec)
+        ?? legacy.decodeIfPresent(ProgramCodec.self, forKey: .sourceEncodeCodec)
+        ?? fallback.rawCameraCodec,
+      programResolution: programResolution,
+      programFrameRate: programFrameRate,
       gopSeconds: try container.decodeIfPresent(Double.self, forKey: .gopSeconds)
         ?? fallback.gopSeconds,
       segmentSeconds: try container.decodeIfPresent(Double.self, forKey: .segmentSeconds)
         ?? fallback.segmentSeconds,
       maximumArchiveBytes: try container.decodeIfPresent(Int64.self, forKey: .maximumArchiveBytes)
         ?? fallback.maximumArchiveBytes,
-      programBitrate: try container.decodeIfPresent(Int.self, forKey: .programBitrate)
-        ?? fallback.programBitrate,
+      programBitrate: programBitrate,
       minimumFreeDiskBytes: try container.decodeIfPresent(Int64.self, forKey: .minimumFreeDiskBytes)
         ?? fallback.minimumFreeDiskBytes,
       freeDiskFloorBytes: try container.decodeIfPresent(Int64.self, forKey: .freeDiskFloorBytes)
         ?? fallback.freeDiskFloorBytes,
+      rawCameraResolution: try container.decodeIfPresent(
+        ProgramResolution.self,
+        forKey: .rawCameraResolution
+      ) ?? fallback.rawCameraResolution,
+      rawCameraFrameRate: try container.decodeIfPresent(Int.self, forKey: .rawCameraFrameRate)
+        ?? fallback.rawCameraFrameRate,
+      rawCameraBitrate: try container.decodeIfPresent(Int.self, forKey: .rawCameraBitrate)
+        ?? programBitrate,
+      streamCodec: try container.decodeIfPresent(ProgramCodec.self, forKey: .streamCodec)
+        ?? .h264,
+      streamResolution: try container.decodeIfPresent(
+        ProgramResolution.self,
+        forKey: .streamResolution
+      ) ?? programResolution,
+      streamFrameRate: try container.decodeIfPresent(Int.self, forKey: .streamFrameRate)
+        ?? programFrameRate,
+      streamBitrateLow: try container.decodeIfPresent(Int.self, forKey: .streamBitrateLow)
+        ?? min(programBitrate, Self.streamBitrateMaximum) / 2,
+      streamBitrateHigh: try container.decodeIfPresent(Int.self, forKey: .streamBitrateHigh)
+        ?? programBitrate,
       showDebugHUD: try container.decodeIfPresent(Bool.self, forKey: .showDebugHUD)
         ?? fallback.showDebugHUD,
       useSimulatedCameras: try container.decodeIfPresent(Bool.self, forKey: .useSimulatedCameras)

@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Box
@@ -34,6 +35,7 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
@@ -72,10 +74,15 @@ import java.util.Locale
  * changed. A reconfigure that fires because the operator wanted to read the URL would look like the
  * camera glitching.
  *
- * Two columns because the app is landscape-only. A single list on a 411dp-tall window puts
- * everything below the bitrate off the bottom, and a settings screen whose settings have to be
- * scrolled for is one whose settings do not get found — which is not a guess: the resolution list
- * was inline once, and the microphone toggle and the camera's identifier were both unreachable.
+ * Two columns because the app is landscape-only, laid out as the iPhone's landscape sheet
+ * (`CameramanControlUI`'s `SettingsView`) is: video and audio on the left with the name below them,
+ * lenses on the right with the stream below them. One layout on both phones means an operator who
+ * knows one finds everything on the other, and the flows look for the same card in the same place.
+ *
+ * A single list on a 411dp-tall window put everything below the bitrate off the bottom — the
+ * resolution list was inline once, and the microphone toggle and the camera's identifier were both
+ * unreachable. Each column scrolls on its own instead, so both columns start in view and nothing
+ * is more than one short scroll away.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -139,10 +146,10 @@ fun SettingsScreen(environment: AppEnvironment, onDone: () -> Unit) {
                 .padding(horizontal = 14.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            // Three columns, not two. A landscape window is 923dp wide and 411dp tall, so width is
-            // the resource there is plenty of and height is the one that runs out — and a settings
-            // screen whose settings have to be scrolled for is one whose settings do not get found.
-            // Five lens rows earn a column of their own.
+            // The iPhone's landscape arrangement: its first row is video, audio and output beside
+            // lenses, its second is name beside stream. Android has no output card, and here each
+            // column scrolls on its own, so the second row's cards sit at the foot of the column
+            // above them.
             Column(
                 modifier = Modifier
                     .weight(1f)
@@ -158,6 +165,11 @@ fun SettingsScreen(environment: AppEnvironment, onDone: () -> Unit) {
                 AudioCard(
                     audioEnabled = draft.audioEnabled,
                     onAudioChange = { draft = draft.copy(audioEnabled = it) }
+                )
+                NameCard(
+                    draftName = draftName,
+                    onNameChange = { draftName = it },
+                    identifier = identity.cname
                 )
             }
 
@@ -177,17 +189,6 @@ fun SettingsScreen(environment: AppEnvironment, onDone: () -> Unit) {
                     }
                 )
 
-                if (environment.launch.isUITest) {
-                    ThermalTestCard { environment.previewThermal(it) }
-                }
-            }
-
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
                 StreamCard(environment, serverStatus, didCopyURL) {
                     val clipboard =
                         context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
@@ -195,11 +196,11 @@ fun SettingsScreen(environment: AppEnvironment, onDone: () -> Unit) {
                     didCopyURL = true
                 }
 
-                NameCard(
-                    draftName = draftName,
-                    onNameChange = { draftName = it },
-                    identifier = identity.cname
-                )
+                // Test chrome, last: on iOS it is a toolbar button rather than a card, and nothing
+                // an operator sets should sit below it.
+                if (environment.launch.isUITest) {
+                    ThermalTestCard { environment.previewThermal(it) }
+                }
             }
         }
     }
@@ -385,31 +386,95 @@ private fun VideoCard(
         }
 
         Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+            val mbps = draft.bitrate / 1_000_000.0
+            val floorMbps = draft.bitrateFloor / 1_000_000.0
+            // Two spaces, which the Maestro flows match on: "Bitrate  2.0–8.0 Mbps" while adapting,
+            // the floor to the rate, and "Bitrate  6.0 Mbps" otherwise.
             Text(
-                String.format(Locale.US, "Bitrate  %.1f Mbps", draft.bitrate / 1_000_000.0),
+                if (draft.adaptiveBitrate) {
+                    String.format(Locale.US, "Bitrate  %.1f–%.1f Mbps", floorMbps, mbps)
+                } else {
+                    String.format(Locale.US, "Bitrate  %.1f Mbps", mbps)
+                },
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.testTag("settings-bitrate-value")
             )
-            // Continuous rather than stepped: Material 3 draws a tick for every step, and 97 of
-            // them turned the track into a dotted line that read as a progress bar. The half-megabit
-            // granularity the iOS build steps in is kept by rounding the value instead.
-            Slider(
-                value = (draft.bitrate / 1_000_000.0).toFloat(),
-                onValueChange = { mbps ->
-                    val rounded = (Math.round(mbps * 2f) / 2.0)
-                    onDraftChange(draft.copy(bitrate = (rounded * 1_000_000).toInt()))
-                },
-                valueRange = 1f..50f,
-                // The default inactive track is `surfaceContainerHighest`, which against this card's
-                // `surfaceContainer` is very nearly the same colour — the track vanished and the
-                // control read as a stray dot. Naming the roles explicitly is the theming answer.
-                colors = SliderDefaults.colors(
+            // Swapped in place by the switch below. Adapting, the operator sets the range the stream
+            // may move in; not adapting, the one rate it runs at, and a floor on screen would be a
+            // setting that does nothing.
+            //
+            // Both are continuous rather than stepped: Material 3 draws a tick for every step, and 97
+            // of them turned the track into a dotted line that read as a progress bar. The
+            // half-megabit granularity the iOS build steps in is kept by rounding the value instead.
+            if (draft.adaptiveBitrate) {
+                // Green between the thumbs, as on iOS: the range the stream may run in.
+                val colors = SliderDefaults.colors(
                     thumbColor = MaterialTheme.colorScheme.primary,
-                    activeTrackColor = MaterialTheme.colorScheme.primary,
+                    activeTrackColor = MaterialTheme.colorScheme.tertiary,
                     inactiveTrackColor = MaterialTheme.colorScheme.outlineVariant
-                ),
-                modifier = Modifier.testTag("settings-bitrate")
-            )
+                )
+                val lowInteraction = remember { MutableInteractionSource() }
+                val highInteraction = remember { MutableInteractionSource() }
+                RangeSlider(
+                    value = floorMbps.toFloat()..mbps.toFloat(),
+                    onValueChange = { range ->
+                        val high = halfMegabitBits(range.endInclusive)
+                        val low = minOf(halfMegabitBits(range.start), high)
+                        // Set as they are, not through `selectBitrate`: the operator is moving one
+                        // thumb, and the other must stay where they left it.
+                        onDraftChange(draft.copy(bitrate = high, bitrateFloor = low))
+                    },
+                    valueRange = 1f..(co.gamestation.cameraman.core.StreamSettings.maximumBitrate / 1_000_000f),
+                    colors = colors,
+                    startInteractionSource = lowInteraction,
+                    endInteractionSource = highInteraction,
+                    startThumb = {
+                        SliderDefaults.Thumb(
+                            interactionSource = lowInteraction,
+                            colors = colors,
+                            modifier = Modifier.testTag("settings-bitrate-low")
+                        )
+                    },
+                    endThumb = {
+                        SliderDefaults.Thumb(
+                            interactionSource = highInteraction,
+                            colors = colors,
+                            modifier = Modifier.testTag("settings-bitrate-high")
+                        )
+                    },
+                    // No gap beside the thumbs and no dot at the end. An everyday 2–8 Mbps is a
+                    // short stretch of this track, and Material's gaps swallowed the green between
+                    // the thumbs whole, while the end dot read as where the range stopped.
+                    track = { state ->
+                        SliderDefaults.Track(
+                            rangeSliderState = state,
+                            colors = colors,
+                            drawStopIndicator = null,
+                            thumbTrackGapSize = 0.dp
+                        )
+                    }
+                )
+            } else {
+                Slider(
+                    value = mbps.toFloat(),
+                    onValueChange = { value ->
+                        // `selectBitrate`, so a floor the operator never chose keeps following the
+                        // rate at half and turning adaptation on starts from there.
+                        onDraftChange(draft.copy().apply { selectBitrate(halfMegabitBits(value)) })
+                    },
+                    valueRange = 1f..(co.gamestation.cameraman.core.StreamSettings.maximumBitrate / 1_000_000f),
+                    // The default inactive track is `surfaceContainerHighest`, which against this
+                    // card's `surfaceContainer` is very nearly the same colour — the track vanished
+                    // and the control read as a stray dot. Naming the roles explicitly is the theming
+                    // answer.
+                    colors = SliderDefaults.colors(
+                        thumbColor = MaterialTheme.colorScheme.primary,
+                        activeTrackColor = MaterialTheme.colorScheme.primary,
+                        inactiveTrackColor = MaterialTheme.colorScheme.outlineVariant
+                    ),
+                    modifier = Modifier.testTag("settings-bitrate")
+                )
+            }
         }
 
         Row(
@@ -421,7 +486,7 @@ private fun VideoCard(
             Column(modifier = Modifier.weight(1f)) {
                 Text("Adaptive bitrate", style = MaterialTheme.typography.bodyMedium)
                 Text(
-                    "Never below half, and only while the network cannot keep up",
+                    "Comes down toward the low rate only while the network cannot keep up",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -434,6 +499,9 @@ private fun VideoCard(
         }
     }
 }
+
+/** A slider's megabits, rounded to the half megabit the iOS build steps in, as bits per second. */
+private fun halfMegabitBits(mbps: Float): Int = (Math.round(mbps * 2f) / 2.0 * 1_000_000).toInt()
 
 /**
  * One row per detected lens. Millimetre labels come from the optics, so each handset lists the

@@ -1,3 +1,4 @@
+import CameramanControlUI
 import DirectorCore
 import SwiftUI
 
@@ -201,6 +202,34 @@ public struct SettingsView: View {
         }
 
         Section {
+          Picker("Codec", selection: $draft.rawCameraCodec) {
+            ForEach(ProgramCodec.allCases, id: \.self) { codec in
+              Text(codec.displayName).tag(codec)
+            }
+          }
+          .accessibilityIdentifier("settings-raw-codec")
+
+          Picker("Resolution", selection: $draft.rawCameraResolution) {
+            Text("1080p").tag(ProgramResolution.hd1080)
+            Text("720p").tag(ProgramResolution.hd720)
+          }
+          .accessibilityIdentifier("settings-raw-resolution")
+
+          Picker("Frame rate", selection: $draft.rawCameraFrameRate) {
+            ForEach(AppConfig.frameRateChoices, id: \.self) { rate in
+              Text("\(rate) fps").tag(rate)
+            }
+          }
+          .accessibilityIdentifier("settings-raw-framerate")
+
+          Stepper(
+            "Bitrate \(draft.rawCameraBitrate / 1_000_000) Mbps",
+            value: $draft.rawCameraBitrate,
+            in: AppConfig.rawCameraBitrateMinimum ... AppConfig.rawCameraBitrateMaximum,
+            step: 1_000_000
+          )
+          .accessibilityIdentifier("settings-raw-bitrate")
+
           Stepper(
             "Segment \(Int(draft.segmentSeconds))s",
             value: $draft.segmentSeconds,
@@ -209,13 +238,14 @@ public struct SettingsView: View {
           )
           .accessibilityIdentifier("settings-segment")
         } header: {
-          Text("Camera archives")
+          Text("Raw camera encoding")
         } footer: {
           Text("""
-          Each camera is recorded exactly as it sends it — its own resolution, frame rate and \
-          codec, copied to disk without re-encoding. There is nothing to choose here, and nothing \
-          is ever downscaled. Segments end on the camera's own keyframes, so they run slightly \
-          longer than the length below.
+          How an NDI camera is recorded, and how every exported camera file is made. An RTSP camera \
+          is recorded exactly as it sends it; only its export is encoded with these settings. \
+          Whatever frame rate a camera sent comes out at the one chosen here, with any picture it \
+          did not send repeated. Segments end on the camera's own keyframes, so they run slightly \
+          longer than the length above.
           """)
         }
 
@@ -248,11 +278,12 @@ public struct SettingsView: View {
           }
           .accessibilityIdentifier("settings-framerate")
         } header: {
-          Text("Programme master")
+          Text("Programme master recording")
         } footer: {
           Text("""
-          The programme master is a composite — cut, overlays and mixed audio — so it is the one \
-          output that has to be encoded. These settings apply to it alone.
+          The programme master is a composite — cut, overlays and mixed audio — so it is always \
+          encoded. These settings apply to the recorded master, and to a programme export that has \
+          to be encoded again.
           """)
         }
 
@@ -268,10 +299,37 @@ public struct SettingsView: View {
               .autocorrectionDisabled()
               .accessibilityIdentifier("settings-stream-url")
           }
+
+          Picker("Codec", selection: $draft.streamCodec) {
+            ForEach(ProgramCodec.allCases, id: \.self) { codec in
+              Text(codec.displayName).tag(codec)
+            }
+          }
+          .accessibilityIdentifier("settings-stream-codec")
+
+          Picker("Resolution", selection: $draft.streamResolution) {
+            Text("1080p").tag(ProgramResolution.hd1080)
+            Text("720p").tag(ProgramResolution.hd720)
+          }
+          .accessibilityIdentifier("settings-stream-resolution")
+
+          Picker("Frame rate", selection: $draft.streamFrameRate) {
+            ForEach(AppConfig.frameRateChoices, id: \.self) { rate in
+              Text("\(rate) fps").tag(rate)
+            }
+          }
+          .accessibilityIdentifier("settings-stream-framerate")
+
+          StreamBitrateRange(low: $draft.streamBitrateLow, high: $draft.streamBitrateHigh)
         } header: {
-          Text("Stream")
+          Text("Programme master stream")
         } footer: {
-          Text("RTMP URL the Stream button publishes the programme output to.")
+          Text("""
+          The RTMP URL the Stream button publishes the programme to, and how that stream is \
+          encoded. The bitrate starts at the high point and comes down towards the low one while \
+          the network cannot keep up, rather than drop frames. HEVC needs a service that takes \
+          Enhanced RTMP; choose H.264 for one that does not.
+          """)
         }
 
         Section {
@@ -572,6 +630,45 @@ private struct NewTemplateSheet: View {
   private var canCreate: Bool {
     !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
       && (source != .copy || copyFromID != nil)
+  }
+}
+
+/// The stream's low and high bitrate on one track: 1 to 10 Mbps in half-megabit steps, with the range
+/// the bitrate may move in shown in green between the two points.
+private struct StreamBitrateRange: View {
+  @Binding var low: Int
+  @Binding var high: Int
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      Text("Bitrate \(Self.megabits(low))–\(Self.megabits(high)) Mbps")
+        .font(.subheadline)
+        .foregroundStyle(.secondary)
+        .accessibilityIdentifier("settings-stream-bitrate-value")
+      RangeSlider(
+        lower: Self.megabitBinding($low),
+        upper: Self.megabitBinding($high),
+        in: Double(AppConfig.streamBitrateMinimum) / 1_000_000 ... Double(AppConfig.streamBitrateMaximum) / 1_000_000,
+        step: Double(AppConfig.streamBitrateStep) / 1_000_000,
+        tint: .green,
+        lowerIdentifier: "settings-stream-bitrate-low",
+        upperIdentifier: "settings-stream-bitrate-high",
+        valueLabel: { "\(Self.megabits(Int(($0 * 1_000_000).rounded()))) megabits per second" }
+      )
+    }
+  }
+
+  private static func megabitBinding(_ bits: Binding<Int>) -> Binding<Double> {
+    Binding(
+      get: { Double(bits.wrappedValue) / 1_000_000 },
+      set: { bits.wrappedValue = Int(($0 * 1_000_000).rounded()) }
+    )
+  }
+
+  /// "4" for a whole number of megabits, "2.5" otherwise.
+  static func megabits(_ bits: Int) -> String {
+    let value = Double(bits) / 1_000_000
+    return value == value.rounded() ? "\(Int(value))" : String(format: "%.1f", value)
   }
 }
 

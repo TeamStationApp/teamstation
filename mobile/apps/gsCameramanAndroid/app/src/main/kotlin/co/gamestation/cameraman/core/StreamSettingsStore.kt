@@ -64,6 +64,7 @@ class StreamSettingsStore(private val store: SettingsStore) {
             "frameRate" to settings.frameRate.toString(),
             "codec" to settings.codec.rawValue,
             "bitrate" to settings.bitrate.toString(),
+            "bitrateFloor" to settings.bitrateFloor.toString(),
             "adaptiveBitrate" to settings.adaptiveBitrate.toString(),
             "port" to settings.port.toString(),
             "path" to settings.path,
@@ -87,12 +88,16 @@ class StreamSettingsStore(private val store: SettingsStore) {
             require(values.isNotEmpty()) { "no fields" }
 
             val defaults = StreamSettings()
+            val bitrate = values["bitrate"]?.toIntOrNull() ?: defaults.bitrate
             return StreamSettings(
                 width = values["width"]?.toIntOrNull() ?: defaults.width,
                 height = values["height"]?.toIntOrNull() ?: defaults.height,
                 frameRate = values["frameRate"]?.toDoubleOrNull() ?: defaults.frameRate,
                 codec = values["codec"]?.let { StreamCodec.fromRawValue(it) } ?: defaults.codec,
-                bitrate = values["bitrate"]?.toIntOrNull() ?: defaults.bitrate,
+                bitrate = bitrate,
+                // Saved before the floor was a setting, when it was always half the ceiling.
+                bitrateFloor = values["bitrateFloor"]?.toIntOrNull()
+                    ?: StreamSettings.defaultBitrateFloor(bitrate),
                 adaptiveBitrate = values["adaptiveBitrate"]?.toBooleanStrictOrNull()
                     ?: defaults.adaptiveBitrate,
                 port = values["port"]?.toIntOrNull()

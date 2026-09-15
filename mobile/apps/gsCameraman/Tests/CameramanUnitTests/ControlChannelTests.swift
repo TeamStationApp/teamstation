@@ -17,6 +17,8 @@ struct ControlChannelTests {
     #expect(command("/force-keyframe") == .forceKeyframe)
     #expect(command("/clients") == .clients)
     #expect(command("/reset") == .reset)
+    #expect(command("/show-settings") == .showSettings)
+    #expect(command("/hide-settings") == .hideSettings)
   }
 
   @Test func adaptiveBitrateTakesAnOnValue() {

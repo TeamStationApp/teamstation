@@ -86,7 +86,7 @@ struct StreamStallPolicyTests {
 
   /// The stress run's publish that connected, then sent 3,406 bytes and no media: after a start, no
   /// keyframe ever came out, and both rules measured from events that had not happened.
-  @Test("A stream with no keyframe since it started gets an idle IDR after one GOP")
+  @Test("A stream with no keyframe since it started gets an idle IDR after a GOP and a half")
   func noKeyframeSinceStartForcesIDR() {
     let action = policy.action(
       now: 103,
@@ -156,6 +156,38 @@ struct StreamStallPolicyTests {
       lastResetWall: 195,
       startedWall: 100,
       lastOutputWall: 150
+    )
+    #expect(action == .encodeIdleIDR)
+  }
+
+  /// The stress run of 2026-09-15: frames flowing, the regular keyframe a moment late, and an idle
+  /// IDR that went out beside it with an earlier timestamp.
+  @Test("A keyframe just past one GOP, with frames flowing, is left to the encoder's own schedule")
+  func keyframeJustDueIsLeftToTheEncoder() {
+    let action = policy.action(
+      now: 100,
+      lastKeyframeWall: 97.9,
+      lastCallbackWall: 99.98,
+      pendingEncodes: 1,
+      hasLastFrame: true,
+      lastResetWall: 0,
+      startedWall: 50,
+      lastOutputWall: 99.98
+    )
+    #expect(action == .none)
+  }
+
+  @Test("A keyframe a GOP and a half old gets an idle IDR")
+  func keyframeWellOverdueForcesIDR() {
+    let action = policy.action(
+      now: 100,
+      lastKeyframeWall: 97,
+      lastCallbackWall: 99.98,
+      pendingEncodes: 1,
+      hasLastFrame: true,
+      lastResetWall: 0,
+      startedWall: 50,
+      lastOutputWall: 99.98
     )
     #expect(action == .encodeIdleIDR)
   }

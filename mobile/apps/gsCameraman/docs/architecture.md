@@ -63,8 +63,9 @@ stops reading costs a bounded amount of memory and then a gap, rather than growi
 gives.
 
 **Adaptive bitrate** keeps most links from ever reaching that budget. On by default, it lowers the
-encoder's rate while the link to the weakest playing client backs up, never below half the
-operator's bitrate, and climbs back once the link clears. The operator's bitrate is the ceiling; the
+encoder's rate while the link to the weakest playing client backs up, never below the operator's
+floor (half the bitrate unless they set one), and climbs back once the link clears. The operator's
+bitrate is the ceiling; the
 rate in force is `videoEncoder.rateControl.currentBitrate`, and `dump-state` reports the controller
 under `adaptiveBitrate`.
 

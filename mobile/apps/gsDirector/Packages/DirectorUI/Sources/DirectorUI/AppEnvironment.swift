@@ -1,6 +1,7 @@
 import AVFoundation
 import Foundation
 import Observation
+import os
 // Only the level enum: CameramanCore also has a `ProcessLoad`, which would collide with DirectorPipeline's.
 import enum CameramanCore.ThermalBadgeLevel
 import CameramanRemote
@@ -264,6 +265,9 @@ public final class AppEnvironment {
   /// The named-camera cache, shared with discovery so both agree on which camera is which.
   public let cameras: CameraRegistry
   private let configStore: ConfigStore
+  /// What an export encodes a take with when the take has no encoding of its own: this session's
+  /// settings as they are now. Behind a lock because exports read it off the main actor.
+  private let exportFallbackEncoding: OSAllocatedUnfairLock<TakeEncoding>
   private let stateDumper = StateDumper()
   private var controlServer: ControlServer?
   /// GS Distributor's way in: a loopback server the Mac reaches over the cable.
@@ -397,6 +401,9 @@ public final class AppEnvironment {
     // construction, and a frame gate that only took effect after the operator next opened Settings
     // would be off for the whole of the first session.
     self.router.setLatencyCaps(FrameLatencyGate.Caps(config: session))
+    // The programme clock's rates until a take or a stream says otherwise.
+    self.router.setRecordingRate(session.programFrameRate)
+    self.router.setStreamRate(session.streamFrameRate)
 
     do {
       try DirectorPaths.createAll()
@@ -409,7 +416,9 @@ public final class AppEnvironment {
     }
     self.proxyReader = ProxyReader(index: index)
     self.assembler = SegmentAssembler(index: index)
-    self.exporter = ExportService(index: index)
+    let fallbackEncoding = OSAllocatedUnfairLock(initialState: session.takeEncoding)
+    self.exportFallbackEncoding = fallbackEncoding
+    self.exporter = ExportService(index: index, fallbackEncoding: { fallbackEncoding.withLock { $0 } })
     self.retention = RetentionPolicy(index: index)
 
     telemetry.mutate { [sourceProfile] snapshot in
@@ -570,6 +579,10 @@ public final class AppEnvironment {
     // A new part of the same programme file family. Losing it is not losing the take: the
     // per-camera archives are the part of a game that cannot be made again.
     do {
+      // The take's own programme settings, so a resumed part matches the parts before it.
+      let programme = (try? index.encoding(for: take.recordingID))?.programme ?? config.programEncoding
+      programEncoder.configure(programme)
+      router.setRecordingRate(programme.frameRate)
       try programEncoder.resume(
         startedAt: take.startedAt,
         nextPart: take.nextProgramPart,
@@ -1465,6 +1478,7 @@ public final class AppEnvironment {
       router.add(pipeline)
       try pipeline.start()
       router.audioMixer.start()
+      router.recordingMixer.start()
       router.audioPlayer.start()
       pipelineEndpoints[id] = CameraEndpoint(address: discovered.address)
       telemetry.mutateTile(sourceIndex) { $0.displayName = selection.displayName }
@@ -1623,6 +1637,8 @@ public final class AppEnvironment {
       return
     }
     self.recordingID = recordingID
+    // The encoding this take is recorded with, kept with it for its exports.
+    try? index.saveEncoding(config.takeEncoding, for: recordingID)
     // Anchors belong to this recording until it stops.
     programEncoder.setAnchorRecording(recordingID)
     self.recordingStartedAt = now
@@ -1647,6 +1663,9 @@ public final class AppEnvironment {
     // Losing program output is not a failure of the recording: the per-camera archives are the
     // part of a game that cannot be re-created afterwards.
     do {
+      // The programme settings this take was recorded with, saved above with the take.
+      programEncoder.configure(config.programEncoding)
+      router.setRecordingRate(config.programFrameRate)
       try programEncoder.start(at: now)
       if let filename = programEncoder.outputURL?.lastPathComponent {
         try? index.setProgramFilename(filename, for: recordingID)
@@ -1697,6 +1716,7 @@ public final class AppEnvironment {
     beginLiveSession(streaming: true)
     let url = config.streamURL
     let session = config
+    router.setStreamRate(session.streamFrameRate)
     Task { [weak self] in
       guard let self else { return }
       do {
@@ -1732,6 +1752,7 @@ public final class AppEnvironment {
     // before the stream ended stays in `dump-state` for the rest of the session and reads as a
     // permanent backlog. Measured after a stall: 1013696 bytes, hours after the socket closed.
     telemetry.recordStreamTransport(droppedPackets: 0, queuedBytes: 0)
+    telemetry.recordStreamRate(StreamRateTelemetry())
     streamErrorGate.reset()
   }
 
@@ -1906,10 +1927,23 @@ public final class AppEnvironment {
     proxies.removeAll()
 
     setRecordingStage("finishing program")
+    // The programme shows each moment a display delay after it happened, so at Stop it has not yet
+    // shown the take's last half-second. It keeps recording for that delay, never more than two
+    // seconds, so its file reaches the stop and an export can copy it as it is; the take still ends
+    // at Stop, where the export cuts it. Flushing the archives above usually took longer already.
+    let tail = min(2, max(0, cameras.playout.programMilliseconds / 1_000))
+    let waited = clock.now.seconds - endedAt.seconds
+    if tail > waited {
+      try? await Task.sleep(for: .seconds(tail - waited))
+    }
+    // The recording's mix waits five seconds for late sound. At Stop it stops waiting and hands the
+    // master everything it holds, so the master's sound reaches the end of its picture and Stop
+    // takes no longer than it did.
+    router.recordingMixer.flush(through: clock.now)
     let programEncoder = self.programEncoder
     let programURL = ProgramURL()
     await finishWithDeadline("program", seconds: 45) {
-      await programURL.set(programEncoder.finish(until: endedAt))
+      await programURL.set(programEncoder.finish(until: endedAt + tail))
     }
     if let url = await programURL.value {
       let bytes = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? nil
@@ -3515,6 +3549,8 @@ public final class AppEnvironment {
     session.showDebugHUD = newConfig.showDebugHUD
     let sweptSubnetChanged = config.activeScanSubnets != session.activeScanSubnets
     config = session
+    let fallbackEncoding = session.takeEncoding
+    exportFallbackEncoding.withLock { $0 = fallbackEncoding }
     applyDisplayLatencyCap()
     SubnetScanner.setOverrideSubnets(networkAddresses: session.activeScanSubnets)
     // A new subnet to sweep should be looked at now, not whenever the next sweep comes due.
@@ -3534,6 +3570,17 @@ public final class AppEnvironment {
     if let url = launch.streamURL { config.streamURL = url }
     if let bitrate = launch.programBitrate { config.programBitrate = bitrate }
     if let rate = launch.programFrameRate { config.programFrameRate = rate }
+    if let codec = launch.streamCodec { config.streamCodec = codec }
+    if let resolution = launch.streamResolution { config.streamResolution = resolution }
+    if let rate = launch.streamFrameRate { config.streamFrameRate = rate }
+    if launch.streamBitrateLow != nil || launch.streamBitrateHigh != nil {
+      let range = AppConfig.clampedStreamBitrates(
+        low: launch.streamBitrateLow ?? config.streamBitrateLow,
+        high: launch.streamBitrateHigh ?? config.streamBitrateHigh
+      )
+      config.streamBitrateLow = range.low
+      config.streamBitrateHigh = range.high
+    }
     if let cap = launch.displayLatencyCapMilliseconds {
       config.displayLatencyCapEnabled = cap > 0
       if cap > 0 { config.displayLatencyCapMilliseconds = AppConfig.clampedDisplayLatencyCap(cap) }
@@ -3839,6 +3886,39 @@ public final class AppEnvironment {
   private func startPolling() {
     pollInterval = 0
     schedulePollTimer(Self.livePollInterval)
+    startAnnouncedFrameRateRefresh()
+  }
+
+  /// Asks each GS Cameraman on the board what frame rate it is set to, every so often, so replay
+  /// pacing and the delay line run on the phone's own number rather than one measured from its
+  /// timestamps. See `CameraFrameRateQuery`.
+  @ObservationIgnored private var announcedRateTask: Task<Void, Never>?
+  private static let announcedRateInterval: Duration = .seconds(15)
+
+  private func startAnnouncedFrameRateRefresh() {
+    guard announcedRateTask == nil else { return }
+    announcedRateTask = Task { [weak self] in
+      while !Task.isCancelled {
+        await self?.refreshAnnouncedFrameRates()
+        try? await Task.sleep(for: Self.announcedRateInterval)
+      }
+    }
+  }
+
+  private func refreshAnnouncedFrameRates() async {
+    for pipeline in router.activePipelines {
+      guard controlAdvertisement(for: pipeline.sourceID)?.isControllable == true,
+            let endpoint = controlEndpoint(for: pipeline.sourceID)
+      else { continue }
+      // A phone that misses one query keeps the rate it gave last time.
+      if let rate = await CameraFrameRateQuery.frameRate(
+        host: endpoint.host,
+        port: endpoint.port,
+        path: endpoint.path
+      ) {
+        pipeline.setAnnouncedFrameRate(rate)
+      }
+    }
   }
 
   private func schedulePollTimer(_ interval: TimeInterval) {
@@ -3875,6 +3955,7 @@ public final class AppEnvironment {
       )
     }
     let mix = router.audioMixer.currentStatistics
+    let recordingMix = router.recordingMixer.currentStatistics
     let overlayStatus = webControllers.values.map(\.status).joined(separator: " ")
     let composedFrames = compositor?.frameCount ?? 0
     let discoveryStatus = discovery?.diagnostic ?? ""
@@ -3906,6 +3987,9 @@ public final class AppEnvironment {
       $0.audioMixSeconds = (mix.emittedSeconds * 10).rounded() / 10
       $0.audioMixLateBuffers = mix.lateBuffers
       $0.audioMixFutureBuffers = mix.futureBuffers
+      $0.recordingMixSeconds = (recordingMix.emittedSeconds * 10).rounded() / 10
+      $0.recordingMixLateBuffers = recordingMix.lateBuffers
+      $0.recordingMixFutureBuffers = recordingMix.futureBuffers
       $0.cpuPercent = (cpu * 10).rounded() / 10
       $0.cpuCores = ProcessLoad.coreCount
       $0.availableMemoryMB = ProcessLoad.availableMemoryMB()
@@ -4078,6 +4162,7 @@ public final class AppEnvironment {
           droppedPackets: stream.droppedPackets,
           queuedBytes: stream.queuedBytes
         )
+        telemetry.recordStreamRate(stream.rate)
       }
     }
     applyProgramOverlays()

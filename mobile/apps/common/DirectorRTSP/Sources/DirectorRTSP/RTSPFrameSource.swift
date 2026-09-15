@@ -114,6 +114,16 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
   /// What this camera is actually sending, measured from its own RTP timestamps. Nothing in RTSP
   /// states it, and replay pacing depends on it.
   private var frameRateEstimator = FrameRateEstimator()
+  /// The rate the camera says it is set to. It outranks the measurement: a GS Cameraman states its
+  /// frame rate over its control channel, and a stated rate is exact from the first picture, where a
+  /// measurement needs a window of pictures and can be thrown by a stall.
+  private var announcedFrameRate: Double?
+
+  public func setAnnouncedFrameRate(_ rate: Double?) {
+    lock.lock()
+    announcedFrameRate = rate.flatMap { $0 > 0 && $0.isFinite ? $0 : nil }
+    lock.unlock()
+  }
   private var connectionCount = 0
   private var stats = ReceiveStats()
   private var failedAttempts = 0
@@ -442,7 +452,8 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     resolvedFormat = SourceFormat(
       width: resolvedFormat?.width ?? 0,
       height: resolvedFormat?.height ?? 0,
-      frameRate: frameRateEstimator.frameRate
+      frameRate: announcedFrameRate
+        ?? frameRateEstimator.frameRate
         ?? resolvedFormat?.frameRate
         ?? Self.assumedFrameRate,
       pixelFormat: VideoToolboxDecoder.outputPixelFormat,
@@ -567,7 +578,7 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
   /// How many coded pictures the delay line may hold, at the rate this camera is sending. Called
   /// with `lock` held.
   private func pictureQueueCapacityLocked() -> Int {
-    let rate = frameRateEstimator.frameRate ?? Self.assumedFrameRate
+    let rate = announcedFrameRate ?? frameRateEstimator.frameRate ?? Self.assumedFrameRate
     return Int((rate * Self.pictureQueueSeconds).rounded(.up))
   }
 
@@ -671,7 +682,8 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     resolvedFormat = SourceFormat(
       width: CVPixelBufferGetWidth(pixelBuffer),
       height: CVPixelBufferGetHeight(pixelBuffer),
-      frameRate: frameRateEstimator.frameRate
+      frameRate: announcedFrameRate
+        ?? frameRateEstimator.frameRate
         ?? resolvedFormat?.frameRate
         ?? Self.assumedFrameRate,
       pixelFormat: CVPixelBufferGetPixelFormatType(pixelBuffer),
@@ -707,26 +719,33 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     let decoder = audioDecoder
     let wantsMix = sinks.audio != nil
     let archive = sinks.compressedAudio
+    let recording = sinks.recordingAudio
     let config = audioConfig
     lock.unlock()
 
     for (offset, accessUnit) in depacketizer.accessUnits(from: packet).enumerated() {
       let step = CompressedAudioFrame.framesPerPacket * Int64(offset)
       let rtpTimestamp = packet.timestamp &+ UInt32(truncatingIfNeeded: step)
+      let arrival = clock.now
 
-      // The archive takes the camera's own AAC. The mixer cannot: it sums several cameras at one
-      // rate, so that path still decodes and resamples — but only what reaches the programme, and
-      // never what reaches disk.
-      if let archive, let config {
-        // Through the audio stream's own sender reports, when the camera sends them, at the audio's
-        // sample rate. Without them the archive pins the audio clock to the picture instead.
+      // Through the audio stream's own sender reports, when the camera sends them, at the audio's
+      // sample rate. Without them the archive pins the audio clock to the picture instead, and the
+      // recording's mix places the sound where it arrived.
+      var capture: Double?
+      if let config, archive != nil || recording != nil {
         lock.lock()
-        let capture = clockAudit.captureTimeOnLocalClock(
+        capture = clockAudit.captureTimeOnLocalClock(
           rtpTimestamp: rtpTimestamp,
           ssrc: packet.ssrc,
           clockRate: config.sampleRate
         )
         lock.unlock()
+      }
+
+      // The archive takes the camera's own AAC. The mixer cannot: it sums several cameras at one
+      // rate, so that path still decodes and resamples — but only what reaches the programme, and
+      // never what reaches disk.
+      if let archive, let config {
         archive(
           CompressedAudioFrame(
             sourceID: sourceID,
@@ -738,13 +757,13 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
               value: CMTimeValue(packet.timestamp) + step,
               timescale: CMTimeScale(config.sampleRate)
             ),
-            wallClock: clock.now,
+            wallClock: arrival,
             captureWallClock: capture.map { WallClock(seconds: $0) }
           )
         )
       }
 
-      guard wantsMix, let decoder, let output = decoder.decode(accessUnit) else { continue }
+      guard wantsMix || recording != nil, let decoder, let output = decoder.decode(accessUnit) else { continue }
 
       lock.lock()
       if audioFormatDescription == nil {
@@ -759,6 +778,27 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
       let rate = config?.sampleRate ?? output.sampleRate
       let elapsed = audioTimeline.unwrap(rtpTimestamp)
       let presentationSeconds = rate > 0 ? Double(elapsed) / rate : 0
+      lock.unlock()
+
+      guard
+        let formatDescription,
+        let sampleBuffer = AudioSampleBuilder.makeSampleBuffer(
+          samples: output.samples,
+          formatDescription: formatDescription,
+          presentationTime: CMTime(seconds: presentationSeconds, preferredTimescale: 48_000)
+        )
+      else { continue }
+
+      // The recording's mix waits for sound that arrives late, so it takes it now, stamped with
+      // when it was captured, rather than when the delay line below lets it play.
+      recording?(AudioFrame(
+        sourceID: sourceID,
+        sampleBuffer: sampleBuffer,
+        wallClock: capture.map { WallClock(seconds: $0) } ?? arrival
+      ))
+      guard wantsMix else { continue }
+
+      lock.lock()
       let nowUptime = Self.seconds(.now())
       // The picture's timing when the mix can use it, and the sound's own arrival when it cannot:
       // a picture seconds behind its sound would otherwise leave every sample due where the queue
@@ -771,21 +811,9 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
       if scheduled.reanchored { stats.audioReanchors &+= 1 }
       let due = scheduled.due
       let dueWall = clock.now + (due - nowUptime)
-      lock.unlock()
-
-      guard
-        let formatDescription,
-        let sampleBuffer = AudioSampleBuilder.makeSampleBuffer(
-          samples: output.samples,
-          formatDescription: formatDescription,
-          presentationTime: CMTime(seconds: presentationSeconds, preferredTimescale: 48_000)
-        )
-      else { continue }
-
       // Same delay line as the picture, against the camera's RTP timeline. Stamping arrival time
       // and holding a flat `holdSeconds` stacked every access unit that rode behind a keyframe
       // onto one mix slot, which the operator heard as stutter and pumping.
-      lock.lock()
       audioFrames.enqueue(
         AudioFrame(sourceID: sourceID, sampleBuffer: sampleBuffer, wallClock: dueWall),
         due: due,

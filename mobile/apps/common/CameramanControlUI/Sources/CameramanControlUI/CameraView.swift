@@ -25,15 +25,21 @@ public struct CameraView<Model: CameraControlling, Picture: View>: View {
   /// The picture's frame in the window, safe area included, so the edge bands are measured from
   /// the glass rather than from wherever the safe area happens to start.
   @State private var pictureFrame: CGRect = .zero
-  @State private var isShowingSettings = false
+  /// Whether Settings is up. The phone hands in its own, so its test harness can open and close the
+  /// sheet; a remote screen leaves it to this view.
+  private let settingsShown: Binding<Bool>?
+  @State private var ownSettingsShown = false
+  private var isShowingSettings: Binding<Bool> { settingsShown ?? $ownSettingsShown }
 
   public init(
     model: Model,
     onClose: (() -> Void)? = nil,
+    isShowingSettings: Binding<Bool>? = nil,
     @ViewBuilder picture: @escaping () -> Picture
   ) {
     self.model = model
     self.onClose = onClose
+    self.settingsShown = isShowingSettings
     self.picture = picture
   }
 
@@ -103,7 +109,7 @@ public struct CameraView<Model: CameraControlling, Picture: View>: View {
     .background(.black)
     .contentShape(Rectangle())
     .simultaneousGesture(verticalScrub)
-    .sheet(isPresented: $isShowingSettings) {
+    .sheet(isPresented: isShowingSettings) {
       SettingsView(model: model)
     }
   }
@@ -164,7 +170,7 @@ public struct CameraView<Model: CameraControlling, Picture: View>: View {
 
   private var settingsButton: some View {
     Button {
-      isShowingSettings = true
+      isShowingSettings.wrappedValue = true
     } label: {
       Image(systemName: "gearshape")
         .font(.title2)

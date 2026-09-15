@@ -38,8 +38,12 @@ public struct StreamSettings: Sendable, Codable, Equatable {
   public var frameRate: Double
   public var codec: StreamCodec
   /// The operator's rate, and with `adaptiveBitrate` on, the ceiling: the stream runs at this and
-  /// comes down, never below half of it, only while the link cannot carry it.
+  /// comes down, never below `bitrateFloor`, only while the link cannot carry it.
   public var bitrate: Int
+  /// The lowest rate adaptation may reach, read only while `adaptiveBitrate` is on and never above
+  /// `bitrate`. Half the ceiling unless the operator chose otherwise: an operator who knows the
+  /// network can hold the picture higher, or let a weak link go lower before frames drop.
+  public var bitrateFloor: Int
   /// Lower the rate while the link to a client backs up, instead of dropping frames at the full
   /// rate. On by default; a softer picture for a few seconds beats a frozen one.
   public var adaptiveBitrate: Bool
@@ -69,6 +73,8 @@ public struct StreamSettings: Sendable, Codable, Equatable {
     frameRate: Double = 30,
     codec: StreamCodec = .hevc,
     bitrate: Int = StreamCodec.hevc.defaultBitrate,
+    /// The default floor for `bitrate` when nil.
+    bitrateFloor: Int? = nil,
     adaptiveBitrate: Bool = true,
     port: Int = StreamSettings.defaultPort,
     path: String = StreamSettings.canonicalPath,
@@ -84,7 +90,9 @@ public struct StreamSettings: Sendable, Codable, Equatable {
     self.height = height
     self.frameRate = frameRate
     self.codec = codec
+    let bitrate = min(bitrate, Self.maximumBitrate)
     self.bitrate = bitrate
+    self.bitrateFloor = min(bitrateFloor ?? Self.defaultBitrateFloor(forCeiling: bitrate), bitrate)
     self.adaptiveBitrate = adaptiveBitrate
     self.port = port
     self.path = path
@@ -109,7 +117,13 @@ public struct StreamSettings: Sendable, Codable, Equatable {
     height = try c.decodeIfPresent(Int.self, forKey: .height) ?? d.height
     frameRate = try c.decodeIfPresent(Double.self, forKey: .frameRate) ?? d.frameRate
     codec = try c.decodeIfPresent(StreamCodec.self, forKey: .codec) ?? d.codec
-    bitrate = try c.decodeIfPresent(Int.self, forKey: .bitrate) ?? d.bitrate
+    // A rate saved when the scale reached 50 Mbps comes back at the top of today's.
+    bitrate = min(try c.decodeIfPresent(Int.self, forKey: .bitrate) ?? d.bitrate, Self.maximumBitrate)
+    // Saved before the floor was a setting, when it was always half the ceiling.
+    bitrateFloor = min(
+      try c.decodeIfPresent(Int.self, forKey: .bitrateFloor) ?? Self.defaultBitrateFloor(forCeiling: bitrate),
+      bitrate
+    )
     adaptiveBitrate = try c.decodeIfPresent(Bool.self, forKey: .adaptiveBitrate) ?? d.adaptiveBitrate
     let savedPort = try c.decodeIfPresent(Int.self, forKey: .port) ?? d.port
     port = savedPort == Self.retiredPort ? Self.defaultPort : savedPort
@@ -127,11 +141,44 @@ public struct StreamSettings: Sendable, Codable, Equatable {
 
   public var dimensionsLabel: String { "\(width)x\(height)" }
 
+  /// The lowest rate either end of the bitrate range may be set to, in the Settings sliders and
+  /// over the wire.
+  public static let minimumBitrate = 1_000_000
+
+  /// The highest rate either end of the bitrate range may be set to, in the Settings sliders and
+  /// over the wire. A phone streams to one iPad over shared Wi-Fi, where more than this only costs
+  /// frames, and on a 1–16 scale an everyday 2–8 Mbps range is wide enough to see and drag.
+  public static let maximumBitrate = 16_000_000
+
+  /// Half the ceiling, which is where the floor always sat before it was a setting, but not below
+  /// `minimumBitrate`, and never above the ceiling itself.
+  public static func defaultBitrateFloor(forCeiling ceiling: Int) -> Int {
+    min(ceiling, max(minimumBitrate, ceiling / 2))
+  }
+
   /// Switching codec carries the matching default rate across unless the operator has already
-  /// chosen something other than the outgoing codec's default.
+  /// chosen something other than the outgoing codec's default, and the default floor with it.
   public mutating func setCodec(_ newCodec: StreamCodec) {
-    if bitrate == codec.defaultBitrate { bitrate = newCodec.defaultBitrate }
+    if bitrate == codec.defaultBitrate { setBitrate(newCodec.defaultBitrate) }
     codec = newCodec
+  }
+
+  /// A new rate. A floor still at the old rate's default moves to the new rate's, so an operator who
+  /// never chose a floor keeps getting half of whatever they pick; a floor they did choose stays, and
+  /// comes down only when the rate now sits below it.
+  public mutating func setBitrate(_ newBitrate: Int) {
+    let newBitrate = min(newBitrate, Self.maximumBitrate)
+    if bitrateFloor == Self.defaultBitrateFloor(forCeiling: bitrate) {
+      bitrateFloor = Self.defaultBitrateFloor(forCeiling: newBitrate)
+    }
+    bitrate = newBitrate
+    clampFloorToCeiling()
+  }
+
+  /// Brings the floor down to the rate when it has been left above it: a floor over the ceiling
+  /// means nothing to the controller, and on screen it would read as a range turned inside out.
+  public mutating func clampFloorToCeiling() {
+    bitrateFloor = min(bitrateFloor, bitrate)
   }
 
   /// The launch-argument names for each persisted field, which is how an explicit argument is told
@@ -139,6 +186,7 @@ public struct StreamSettings: Sendable, Codable, Equatable {
   public enum Field: String, Sendable, CaseIterable {
     case codec
     case bitrateMbps
+    case bitrateFloorMbps
     case adaptiveBitrate
     case width
     case height
@@ -161,6 +209,12 @@ public struct StreamSettings: Sendable, Codable, Equatable {
     var merged = self
     if !explicit.contains(.codec) { merged.codec = saved.codec }
     if !explicit.contains(.bitrateMbps) { merged.bitrate = saved.bitrate }
+    // A floor was chosen against its own ceiling. A launch that pins the rate and not the floor
+    // gets the floor that goes with the pinned rate, not one saved against a different rate.
+    if !explicit.contains(.bitrateFloorMbps), !explicit.contains(.bitrateMbps) {
+      merged.bitrateFloor = saved.bitrateFloor
+    }
+    merged.clampFloorToCeiling()
     if !explicit.contains(.adaptiveBitrate) { merged.adaptiveBitrate = saved.adaptiveBitrate }
     if !explicit.contains(.width) { merged.width = saved.width }
     if !explicit.contains(.height) { merged.height = saved.height }

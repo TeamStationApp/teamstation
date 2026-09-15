@@ -27,6 +27,9 @@ public enum ControlCommand: Sendable, Equatable {
   case forceKeyframe
   case clients
   case reset
+  /// Opens or closes Settings, so its screen can be checked without a tap.
+  case showSettings
+  case hideSettings
 }
 
 public enum ControlChannel {
@@ -54,6 +57,8 @@ public enum ControlChannel {
     case "force-keyframe": return .forceKeyframe
     case "clients": return .clients
     case "reset": return .reset
+    case "show-settings": return .showSettings
+    case "hide-settings": return .hideSettings
 
     case "set-zoom":
       guard let displayed = query["displayed"].flatMap(Double.init) else { return nil }

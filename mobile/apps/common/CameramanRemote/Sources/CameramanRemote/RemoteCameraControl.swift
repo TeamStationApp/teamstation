@@ -59,6 +59,13 @@ public final class RemoteCameraControl: CameraControlling {
   @ObservationIgnored private var positionWrittenAt: Date?
   @ObservationIgnored private var nameWrittenAt: Date?
   @ObservationIgnored private var settingsWrittenAt: Date?
+  /// False for a phone that predates the bitrate floor, which answers a `SET` naming it with 451
+  /// and applies nothing else in the request. Its floor is left off the wire rather than costing
+  /// the operator every other change made in the same visit to Settings.
+  @ObservationIgnored private var phoneReportsBitrateFloor = true
+  /// The last `SET` queued; each waits for the one before, so the phone applies changes in the
+  /// order the operator made them.
+  @ObservationIgnored private var lastWrite: Task<Void, Never>?
 
   public init(
     transport: any ParameterTransport,
@@ -118,6 +125,7 @@ public final class RemoteCameraControl: CameraControlling {
     polls += 1
     missedPolls = 0
     isResponding = true
+    phoneReportsBitrateFloor = set[CameraParameterName.bitrateFloorKbps] != nil
     apply(snapshot)
   }
 
@@ -186,31 +194,46 @@ public final class RemoteCameraControl: CameraControlling {
     let target: CameraPosition = position == .back ? .front : .back
     position = target
     positionWrittenAt = Date()
-    Task { await write([ (CameraParameterName.sourcePosition, target.rawValue) ]) }
+    send([ (CameraParameterName.sourcePosition, target.rawValue) ])
   }
 
   public func rename(to name: String) {
     let normalised = DeviceIdentity.normalized(name: name, uuid: cname)
     self.name = normalised
     nameWrittenAt = Date()
-    Task { await write([ (CameraParameterName.deviceName, name) ]) }
+    send([ (CameraParameterName.deviceName, name) ])
   }
 
   /// Done in Settings: only the fields that differ from the phone's last snapshot go, as one
   /// request, so the phone reconfigures once. A visit that changed nothing sends nothing.
   public func apply(_ next: StreamSettings) {
-    let lines = Self.settingsLines(from: settings, to: next)
+    let lines = Self.settingsLines(from: settings, to: next, includingFloor: phoneReportsBitrateFloor)
     guard !lines.isEmpty else { return }
     settings = next
     settingsWrittenAt = Date()
-    Task { await write(lines) }
+    send(lines)
+  }
+
+  /// Queues a `SET` behind the ones already on their way. Two quick changes, such as a flip and a
+  /// rename, otherwise race each other to the phone.
+  private func send(_ lines: [(String, String)]) {
+    let previous = lastWrite
+    lastWrite = Task { [weak self] in
+      await previous?.value
+      await self?.write(lines)
+    }
   }
 
   /// The phone's Settings preview stays on the phone; the remote pill shows the real state only.
   public func previewThermal(_ state: ProcessInfo.ThermalState) {}
 
-  /// `name: value` lines for what changed between two settings, in table order.
-  nonisolated public static func settingsLines(from current: StreamSettings, to next: StreamSettings) -> [(String, String)] {
+  /// `name: value` lines for what changed between two settings, in table order. `includingFloor`
+  /// is false for a phone that does not know the floor's name.
+  nonisolated public static func settingsLines(
+    from current: StreamSettings,
+    to next: StreamSettings,
+    includingFloor: Bool = true
+  ) -> [(String, String)] {
     var lines: [(String, String)] = []
     if next.codec != current.codec {
       lines.append((CameraParameterName.encoding, next.codec.sdpEncodingName))
@@ -223,6 +246,11 @@ public final class RemoteCameraControl: CameraControlling {
     // After the codec line, so an explicit rate wins over the codec default on the phone too.
     if next.bitrate != current.bitrate {
       lines.append((CameraParameterName.bitrateKbps, String(next.bitrate / 1000)))
+    }
+    // After the rate, which the phone judges it against, and which on the phone moves a default
+    // floor with it; the explicit value here then lands on top.
+    if includingFloor, next.bitrateFloor != current.bitrateFloor {
+      lines.append((CameraParameterName.bitrateFloorKbps, String(next.bitrateFloor / 1000)))
     }
     if next.adaptiveBitrate != current.adaptiveBitrate {
       lines.append((CameraParameterName.adaptiveBitrate, next.adaptiveBitrate ? "true" : "false"))
@@ -269,7 +297,9 @@ public final class RemoteCameraControl: CameraControlling {
       position = echoed
     }
     if let echoed = echo[CameraParameterName.deviceName] { name = echoed }
-    if let kbps = echo[CameraParameterName.bitrateKbps].flatMap(Int.init) { settings.bitrate = kbps * 1000 }
+    if let kbps = echo[CameraParameterName.bitrateKbps].flatMap(Int.init) { settings.setBitrate(kbps * 1000) }
+    if let kbps = echo[CameraParameterName.bitrateFloorKbps].flatMap(Int.init) { settings.bitrateFloor = kbps * 1000 }
+    settings.clampFloorToCeiling()
     if let adaptive = echo[CameraParameterName.adaptiveBitrate] { settings.adaptiveBitrate = adaptive == "true" }
     if let encoding = echo[CameraParameterName.encoding], let codec = StreamCodec(sdpEncodingName: encoding) {
       settings.codec = codec

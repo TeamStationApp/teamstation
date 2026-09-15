@@ -42,7 +42,7 @@ public final class WireVideoEncoder: @unchecked Sendable {
   /// Presentation time of the last frame this encoder was told to make a keyframe.
   private var lastForcedKeyframe: CMTime = .invalid
   /// How often a keyframe is demanded, in seconds of presentation time.
-  private let keyframeInterval: Double = 1
+  private let keyframeInterval: Double
 
   /// Optional only because `VTCompressionSessionCreate` needs a pointer to `self` as its callback
   /// context, which is not available until every stored property has a value.
@@ -50,15 +50,19 @@ public final class WireVideoEncoder: @unchecked Sendable {
   private let lock = NSLock()
   private var handler: ((Unit) -> Void)?
 
+  /// `keyframeSeconds` is how far apart keyframes are. An archive's segments are cut on them, so it
+  /// also sets how long a segment runs past its nominal length.
   public init?(
     width: Int,
     height: Int,
     frameRate: Double,
     codec: CompressedFrame.Codec,
-    bitrate: Int = 6_000_000
+    bitrate: Int = 6_000_000,
+    keyframeSeconds: Double = 1
   ) {
     guard codec != .av1 else { return nil }
     self.codec = codec
+    self.keyframeInterval = max(0.1, keyframeSeconds)
 
     var created: VTCompressionSession?
     let status = VTCompressionSessionCreate(
@@ -112,7 +116,7 @@ public final class WireVideoEncoder: @unchecked Sendable {
     VTSessionSetProperty(
       session,
       key: kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration,
-      value: NSNumber(value: 1.0)
+      value: NSNumber(value: keyframeInterval)
     )
     VTSessionSetProperty(
       session,

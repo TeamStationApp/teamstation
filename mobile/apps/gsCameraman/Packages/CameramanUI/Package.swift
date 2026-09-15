@@ -8,6 +8,7 @@ let package = Package(
     .library(name: "CameramanUI", targets: [ "CameramanUI" ])
   ],
   dependencies: [
+    .package(path: "../../../common/AdaptiveBitrate"),
     .package(path: "../../common/CameramanCore"),
     .package(path: "../../common/CameramanControlUI"),
     .package(path: "../CameramanCapture"),
@@ -19,6 +20,7 @@ let package = Package(
     .target(
       name: "CameramanUI",
       dependencies: [
+        "AdaptiveBitrate",
         "CameramanCore",
         "CameramanControlUI",
         "CameramanCapture",

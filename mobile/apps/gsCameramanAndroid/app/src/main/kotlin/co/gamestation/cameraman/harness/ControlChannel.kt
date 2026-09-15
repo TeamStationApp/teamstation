@@ -60,6 +60,9 @@ sealed interface ControlCommand {
     data object ForceKeyframe : ControlCommand
     data object Clients : ControlCommand
     data object Reset : ControlCommand
+    /** Opens or closes Settings, so its screen can be checked without a tap. */
+    data object ShowSettings : ControlCommand
+    data object HideSettings : ControlCommand
 }
 
 object ControlChannel {
@@ -88,6 +91,8 @@ object ControlChannel {
             "force-keyframe" -> ControlCommand.ForceKeyframe
             "clients" -> ControlCommand.Clients
             "reset" -> ControlCommand.Reset
+            "show-settings" -> ControlCommand.ShowSettings
+            "hide-settings" -> ControlCommand.HideSettings
 
             "set-zoom" -> query["displayed"]?.toDoubleOrNull()?.let { ControlCommand.SetZoom(it) }
 

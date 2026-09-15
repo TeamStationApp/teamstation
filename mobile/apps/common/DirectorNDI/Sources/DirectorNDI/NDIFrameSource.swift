@@ -33,8 +33,12 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
   /// transmitting perfectly the whole time.
   private let ndiURL: String
   private let clock: DirectorClock
-  private let encodeCodec: CompressedFrame.Codec
-  private let encodeBitrate: Int
+  /// Where the archive's encoding comes from. Read each time archiving starts rather than once at
+  /// launch, so a take is recorded with the raw camera settings in force when it began.
+  private let archiveEncodingProvider: @Sendable () -> EncodeSettings
+  /// The encoding of the archive being written now.
+  private var archiveEncoding: EncodeSettings
+  private var encodeCodec: CompressedFrame.Codec { archiveEncoding.codec == .h264 ? .h264 : .hevc }
   /// How long a source may deliver nothing before it is reported as silent. Matches the RTSP
   /// path's timeout so an operator reads one number for both transports.
   private static let stallTimeout: TimeInterval = 5
@@ -169,6 +173,24 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
   private var encoderUnavailable = false
   private static let encoderUnavailableReason = "no encoder available for this camera's archive"
   private var decimator = ArchiveDecimator()
+  /// The archive's own clock, at the raw camera frame rate. See `ArchiveTicker`.
+  private var ticker = ArchiveTicker(frameRate: 60)
+  private var archiveTimer: DispatchSourceTimer?
+  /// The newest decoded picture, waiting for the archive's next tick.
+  private struct ArchivePicture {
+    let buffer: CVPixelBuffer
+    /// Wall-clock seconds when it arrived.
+    let arrivedWall: Double
+    /// Its smoothed capture time on our clock, when the sender stamps its frames.
+    let captureWall: Double?
+    let frameID: UInt64
+  }
+  private var archivePicture: ArchivePicture?
+  private var archiveNewest: ArchiveTicker.Picture?
+  private var archiveSequence: UInt64 = 0
+  /// Fits pictures to the raw camera resolution. Nil only if one could not be made, in which case
+  /// the camera's own size is recorded rather than nothing.
+  private var archiveScaler: ArchiveScaler?
   /// Refusals from sessions this camera has already discarded, so the count describes the camera
   /// rather than whichever encoder it happens to be holding.
   private var archiveRefusalsCarried: UInt64 = 0
@@ -208,8 +230,7 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     displayName: String,
     ndiName: String,
     ndiURL: String = "",
-    encodeCodec: CompressedFrame.Codec = .hevc,
-    encodeBitrate: Int = 12_000_000,
+    archiveEncoding: @escaping @Sendable () -> EncodeSettings = { AppConfig().rawCameraEncoding },
     lowBandwidth: Bool = false,
     coordinator: PlayoutCoordinator? = nil,
     clock: DirectorClock = SystemClock()
@@ -226,8 +247,8 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     self.displayName = displayName
     self.ndiName = ndiName
     self.ndiURL = ndiURL
-    self.encodeCodec = encodeCodec
-    self.encodeBitrate = encodeBitrate
+    self.archiveEncodingProvider = archiveEncoding
+    self.archiveEncoding = archiveEncoding()
     self.wantsLowBandwidth = lowBandwidth
     self.clock = clock
     self.receiveClock = NDIReceiveClock(clock: clock)
@@ -578,6 +599,14 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
       self.isArchiving = true
       decimator.reset()
       audioEncoder = WireAudioEncoder(channelCount: 1)
+      archiveEncoding = archiveEncodingProvider()
+      ticker = ArchiveTicker(frameRate: archiveEncoding.frameRate)
+      archivePicture = nil
+      archiveNewest = nil
+      archiveScaler = ArchiveScaler(
+        width: archiveEncoding.resolution.width,
+        height: archiveEncoding.resolution.height
+      )
     } else {
       self.isArchiving = false
       archiveRefused = false
@@ -592,8 +621,14 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
       encoderHeight = 0
       pendingFrames.removeAll()
       decimator.reset()
+      archivePicture = nil
+      archiveNewest = nil
+      archiveScaler = nil
+      archiveTimer?.cancel()
+      archiveTimer = nil
     }
     lock.unlock()
+    if isArchiving { startArchiveTimer() }
     // On the encode queue, so the teardown can never overlap an `encode` in flight on the same
     // session — VideoToolbox does not document that as safe. Asynchronous, because this is also
     // reached from `deinit`, which may itself be running on that queue.
@@ -627,6 +662,10 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     videoEncoder = nil
     audioEncoder = nil
     pendingFrames.removeAll()
+    archiveTimer?.cancel()
+    archiveTimer = nil
+    archivePicture = nil
+    archiveNewest = nil
     sinks = FrameSinks()
     upstreamConnections = 0
     lock.unlock()
@@ -772,15 +811,61 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     stats.publishMilliseconds += (publishElapsed - stats.publishMilliseconds) * 0.1
     lock.unlock()
 
+    // The newest picture waits for the archive's next tick; see `archiveTick`.
     lock.lock()
-    let wantsArchive = isArchiving && sinks.compressed != nil
+    if isArchiving, sinks.compressed != nil {
+      archiveSequence &+= 1
+      archivePicture = ArchivePicture(
+        buffer: pixelBuffer,
+        arrivedWall: picture.wallClock.seconds,
+        // The smoothed capture time, not the raw stamp: a segment's start on the recording's wall
+        // clock comes from its first frame's entry here, and the Cosmo's raw stamps jitter enough
+        // that rec-401's NDI segments started up to 90 ms off the three-second step their frames
+        // kept, which placed alternate segments of the export at visibly different offsets.
+        captureWall: timing.captureWallClock == nil ? nil : smoothedCaptureSeconds,
+        frameID: timing.frameID
+      )
+      archiveNewest = ArchiveTicker.Picture(arrived: arrived, sequence: archiveSequence)
+    }
     lock.unlock()
-    guard wantsArchive else { return }
+  }
 
+  // MARK: - The archive's clock
+
+  /// Starts the archive's own clock at the raw camera frame rate. See `ArchiveTicker`.
+  private func startArchiveTimer() {
     lock.lock()
-    // Decimation ahead of the queue, not behind it: thinning deliberately gives a continuous
-    // half-rate recording, where letting the queue overflow gives a recording missing two frames
-    // in three at unpredictable moments. Both cost the same CPU; only one is a usable angle.
+    archiveTimer?.cancel()
+    let period = DispatchTimeInterval.nanoseconds(
+      Int(1_000_000_000 / Double(max(1, archiveEncoding.frameRate)))
+    )
+    let timer = DispatchSource.makeTimerSource(queue: encodeQueue)
+    timer.schedule(deadline: .now() + period, repeating: period, leeway: .milliseconds(1))
+    timer.setEventHandler { [weak self] in self?.archiveTick() }
+    archiveTimer = timer
+    lock.unlock()
+    timer.resume()
+  }
+
+  /// One tick of the archive's clock, on `encodeQueue`. The newest picture is encoded as the tick's
+  /// frame and stamped with the tick's own time, never with anything measured from the camera, so
+  /// no estimate of the camera's frame rate can reach the recording's timeline.
+  private func archiveTick() {
+    let now = Self.seconds(.now())
+    lock.lock()
+    guard running, isArchiving, sinks.compressed != nil else {
+      lock.unlock()
+      return
+    }
+    guard case let .encode(index, _) = ticker.tick(at: now, newest: archiveNewest),
+          let picture = archivePicture
+    else {
+      lock.unlock()
+      return
+    }
+    // Thinning ahead of the encoder, not behind it: an overloaded archive stays evenly timed at a
+    // fraction of the rate, where letting a queue overflow leaves it missing frames at unpredictable
+    // moments. Both cost the same; only one is a usable angle.
     let backlogFull = encodeBacklog >= Self.maximumEncodeBacklog
     let wanted = decimator.shouldEncode(backlogFull: backlogFull)
     let stride = decimator.stride
@@ -791,15 +876,16 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
       lock.unlock()
       return
     }
-    encodeBacklog += 1
-    stats.archiveBacklog = encodeBacklog
-    // The smoothed capture time, not the raw stamp: a segment's start on the recording's wall clock
-    // comes from its first frame's entry here, and the Cosmo's raw stamps jitter enough that
-    // rec-401's NDI segments started up to 90 ms off the three-second step their frames kept,
-    // which placed alternate segments of the export at visibly different offsets.
-    pendingFrames[timing.presentationTime.value] = PendingFrame(
-      frameID: timing.frameID,
-      captureWallClock: timing.captureWallClock == nil ? nil : WallClock(seconds: smoothedCaptureSeconds)
+    let settings = archiveEncoding
+    let presentationTime = CMTime(value: index, timescale: CMTimeScale(settings.frameRate))
+    // A picture encoded again on a later tick moves on with the tick on the capture timeline, as
+    // the camera's own clock would have while it stalled.
+    let captureWall = picture.captureWall.map {
+      WallClock(seconds: $0 + (clock.now.seconds - picture.arrivedWall))
+    }
+    pendingFrames[presentationTime.value] = PendingFrame(
+      frameID: picture.frameID,
+      captureWallClock: captureWall
     )
     // Bounded so a stalled encoder cannot grow this without limit. Two seconds of 60 fps is far
     // more slack than the encoder ever needs, and the oldest entry is the one whose frame is least
@@ -807,31 +893,36 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     while pendingFrames.count > 128, let oldest = pendingFrames.keys.min() {
       pendingFrames.removeValue(forKey: oldest)
     }
+    encodeBacklog += 1
+    stats.archiveBacklog = encodeBacklog
+    let scaler = archiveScaler
     lock.unlock()
 
-    encodeQueue.async { [weak self] in
-      guard let self else { return }
-      let encoder = self.encoderForArchive(width: width, height: height, rate: rate)
-      // Decimation changes the rate the encoder is actually fed, and VideoToolbox reckons its
-      // keyframe interval against the rate it was told. Without this a decimated archive's
-      // segments stretch past three seconds and stop matching every other source's — measured at
-      // 7.4 s for a stride-4 HEVC archive that should have been cutting at 3.
-      encoder?.setExpectedFrameRate(rate / Double(max(1, stride)))
-      encoder?.encode(
-        pixelBuffer,
-        presentationTime: timing.presentationTime,
-        duration: timing.duration
-      )
-      self.lock.lock()
-      self.encodeBacklog -= 1
-      self.stats.archiveBacklog = self.encodeBacklog
-      self.stats.archiveEncoded += 1
-      self.stats.archiveEncodeRefused = self.archiveRefusalsCarried + (encoder?.refusedFrames ?? 0)
-      if let status = encoder?.lastEncodeStatus, status != noErr {
-        self.stats.archiveEncodeStatus = Int(status)
-      }
-      self.lock.unlock()
+    let scaled = scaler?.scale(picture.buffer) ?? picture.buffer
+    let encoder = encoderForArchive(
+      width: CVPixelBufferGetWidth(scaled),
+      height: CVPixelBufferGetHeight(scaled),
+      rate: Double(settings.frameRate)
+    )
+    // Decimation changes the rate the encoder is actually fed, and VideoToolbox reckons its
+    // keyframe interval against the rate it was told. Without this a decimated archive's segments
+    // stretch past three seconds and stop matching every other source's — measured at 7.4 s for a
+    // stride-4 HEVC archive that should have been cutting at 3.
+    encoder?.setExpectedFrameRate(Double(settings.frameRate) / Double(max(1, stride)))
+    encoder?.encode(
+      scaled,
+      presentationTime: presentationTime,
+      duration: CMTime(value: 1, timescale: CMTimeScale(settings.frameRate))
+    )
+    lock.lock()
+    encodeBacklog -= 1
+    stats.archiveBacklog = encodeBacklog
+    stats.archiveEncoded += 1
+    stats.archiveEncodeRefused = archiveRefusalsCarried + (encoder?.refusedFrames ?? 0)
+    if let status = encoder?.lastEncodeStatus, status != noErr {
+      stats.archiveEncodeStatus = Int(status)
     }
+    lock.unlock()
   }
 
   /// Creates the archive encoder on first need, and replaces it when the camera's geometry moves.
@@ -861,6 +952,7 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
   private func rebuildEncoder(width: Int, height: Int, rate: Double) -> WireVideoEncoder? {
     lock.lock()
     let hadEncoder = videoEncoder != nil
+    let settings = archiveEncoding
     let previous = videoEncoder
     archiveRefusalsCarried += previous?.refusedFrames ?? 0
     videoEncoder = nil
@@ -876,8 +968,9 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
       width: width,
       height: height,
       frameRate: rate,
-      codec: encodeCodec,
-      bitrate: encodeBitrate
+      codec: settings.codec == .h264 ? .h264 : .hevc,
+      bitrate: settings.bitrate,
+      keyframeSeconds: settings.keyframeSeconds
     ) else {
       lock.lock()
       // Sticky, like `archiveRefused`: the next frame's format update would otherwise overwrite
@@ -915,6 +1008,7 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
   private func publish(_ unit: WireVideoEncoder.Unit) {
     lock.lock()
     let handler = sinks.compressed
+    let codec = encodeCodec
     let pending = pendingFrames.removeValue(forKey: unit.presentationTime.value)
     if unit.isKeyframe { stats.archiveKeyframes += 1 }
     lock.unlock()
@@ -922,7 +1016,7 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
 
     handler(CompressedFrame(
       sourceID: sourceID,
-      codec: encodeCodec,
+      codec: codec,
       data: unit.data,
       parameterSets: unit.parameterSets,
       isKeyframe: unit.isKeyframe,
@@ -983,7 +1077,7 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     let isArchiving = self.isArchiving
     lock.unlock()
 
-    if let handler = sinks.audio, let format {
+    if sinks.audio != nil || sinks.recordingAudio != nil, let format {
       let time = receiveClock.audioPresentationTime(
         sampleIndex: start,
         sampleRate: NDIAudioFrameConverter.outputSampleRate
@@ -993,7 +1087,11 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
         formatDescription: format,
         presentationTime: time
       ) {
-        handler(AudioFrame(sourceID: sourceID, sampleBuffer: buffer, wallClock: clock.now))
+        // Placed at its arrival for the screen and the recording alike: an NDI source's sound
+        // waits in no delay line, and carries no capture time of its own.
+        let frame = AudioFrame(sourceID: sourceID, sampleBuffer: buffer, wallClock: clock.now)
+        sinks.audio?(frame)
+        sinks.recordingAudio?(frame)
       }
     }
 

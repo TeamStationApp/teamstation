@@ -41,6 +41,9 @@ public struct RecordingSummary: Sendable, Equatable, Identifiable {
   /// How many times this take has been picked up again after the app stopped running. Zero for a
   /// take that recorded straight through, which is every take made before resuming existed.
   public var resumeCount: Int
+  /// The raw camera and programme encoding the take was recorded with, which its exports use. Nil
+  /// for a take recorded before encodings were kept with their takes.
+  public var encoding: TakeEncoding?
 
   /// How long the take is, from what was actually written.
   ///
@@ -62,7 +65,8 @@ public struct RecordingSummary: Sendable, Equatable, Identifiable {
     programFilename: String?,
     sourceIDs: [SourceID],
     lastSegmentEnd: WallClock? = nil,
-    resumeCount: Int = 0
+    resumeCount: Int = 0,
+    encoding: TakeEncoding? = nil
   ) {
     self.id = id
     self.startedAt = startedAt
@@ -71,6 +75,7 @@ public struct RecordingSummary: Sendable, Equatable, Identifiable {
     self.sourceIDs = sourceIDs
     self.lastSegmentEnd = lastSegmentEnd
     self.resumeCount = resumeCount
+    self.encoding = encoding
   }
 }
 
@@ -155,6 +160,9 @@ public final class ArchiveIndex: @unchecked Sendable {
     try? store.execute("ALTER TABLE recordings ADD COLUMN resume_count INTEGER NOT NULL DEFAULT 0;")
     try? store.execute("ALTER TABLE recordings ADD COLUMN last_resumed_at REAL;")
     try? store.execute("ALTER TABLE recordings ADD COLUMN selections_json TEXT;")
+    // The encoding the take was recorded with, so its exports come out as it was set up rather than
+    // as Settings say on the day of the export.
+    try? store.execute("ALTER TABLE recordings ADD COLUMN encoding_json TEXT;")
     try store.execute("""
       CREATE TABLE IF NOT EXISTS segments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -423,6 +431,30 @@ public final class ArchiveIndex: @unchecked Sendable {
     return text.isEmpty ? nil : Data(text.utf8)
   }
 
+  // MARK: - The encoding a take was recorded with
+
+  public func saveEncoding(_ encoding: TakeEncoding, for id: Int64) throws {
+    let json = try JSONEncoder().encode(encoding)
+    try store.execute(
+      "UPDATE recordings SET encoding_json = ? WHERE id = ?;",
+      [ .text(String(decoding: json, as: UTF8.self)), .integer(id) ]
+    )
+  }
+
+  public func encoding(for id: Int64) throws -> TakeEncoding? {
+    guard let row = try store.query(
+      "SELECT encoding_json FROM recordings WHERE id = ?;",
+      [ .integer(id) ]
+    ).first else { return nil }
+    return Self.takeEncoding(row.values[0] == .null ? nil : row.string(0))
+  }
+
+  /// Nil for a missing or unreadable value: an export falls back to Settings rather than failing.
+  private static func takeEncoding(_ text: String?) -> TakeEncoding? {
+    guard let text, !text.isEmpty else { return nil }
+    return try? JSONDecoder().decode(TakeEncoding.self, from: Data(text.utf8))
+  }
+
   // MARK: - Programme cuts
 
   public struct ProgramCut: Sendable, Equatable {
@@ -507,7 +539,7 @@ public final class ArchiveIndex: @unchecked Sendable {
       SELECT r.id, r.started_at, r.ended_at, r.program_filename,
         (SELECT MAX(s.start_wall + s.duration) FROM segments s
           WHERE s.recording_id = r.id AND s.is_initialization = 0),
-        r.resume_count
+        r.resume_count, r.encoding_json
       FROM recordings r
       ORDER BY r.started_at DESC;
       """
@@ -525,7 +557,8 @@ public final class ArchiveIndex: @unchecked Sendable {
         programFilename: program,
         sourceIDs: try sourceIDs(in: id),
         lastSegmentEnd: lastSegment,
-        resumeCount: Int(row.int(5))
+        resumeCount: Int(row.int(5)),
+        encoding: Self.takeEncoding(row.values[6] == .null ? nil : row.string(6))
       )
     }
   }
@@ -790,6 +823,12 @@ public final class ArchiveIndex: @unchecked Sendable {
 
     /// Wall clock this part's timeline begins at, which is what places it in an export.
     public var partStartWall: WallClock { wall - programSeconds }
+
+    public init(part: Int, programSeconds: Double, wall: WallClock) {
+      self.part = part
+      self.programSeconds = programSeconds
+      self.wall = wall
+    }
   }
 
   @discardableResult
@@ -838,20 +877,35 @@ public final class ArchiveIndex: @unchecked Sendable {
   /// the anchors within a quarter of a second of its earliest tenth -- on a take whose anchors are
   /// all honest, that is nearly all of them.
   public func programPartStarts(recordingID: Int64) throws -> [Int: WallClock] {
+    Self.partStarts(try programAnchors(recordingID: recordingID))
+  }
+
+  /// `programPartStarts` over anchors already read.
+  public static func partStarts(_ anchors: [ProgramAnchor]) -> [Int: WallClock] {
     var starts: [Int: [Double]] = [:]
-    for anchor in try programAnchors(recordingID: recordingID) {
+    for anchor in anchors {
       starts[anchor.part, default: []].append(anchor.partStartWall.seconds)
     }
-    return starts.mapValues { values in
-      let sorted = values.sorted()
-      let floor = sorted[sorted.count / 10]
-      let agreeing = sorted.filter { $0 <= floor + Self.anchorAgreementSeconds }
-      let middle = agreeing.count / 2
-      let median = agreeing.count % 2 == 1
-        ? agreeing[middle]
-        : (agreeing[middle - 1] + agreeing[middle]) / 2
-      return WallClock(seconds: median)
+    return starts.compactMapValues { values in
+      partStart(implied: values).map { WallClock(seconds: $0.seconds) }
     }
+  }
+
+  /// Where one part starts, from the start each of its anchors implies, and how many of those
+  /// anchors agree with it; nil for no anchors.
+  ///
+  /// The median of the anchors within `anchorAgreementSeconds` of the earliest tenth. The count is
+  /// how many were within it, which is every anchor on a take whose anchors all tell the same story.
+  static func partStart(implied values: [Double]) -> (seconds: Double, agreeing: Int)? {
+    guard !values.isEmpty else { return nil }
+    let sorted = values.sorted()
+    let floor = sorted[sorted.count / 10]
+    let agreeing = sorted.filter { $0 <= floor + Self.anchorAgreementSeconds }
+    let middle = agreeing.count / 2
+    let median = agreeing.count % 2 == 1
+      ? agreeing[middle]
+      : (agreeing[middle - 1] + agreeing[middle]) / 2
+    return (median, agreeing.count)
   }
 
   /// How far apart anchors may be and still count as agreeing about where their part starts.
@@ -1309,7 +1363,7 @@ public final class ArchiveIndex: @unchecked Sendable {
   /// has no such recording.
   public func manifest(recordingID: Int64, sourceIDs: [SourceID]) throws -> RecordingManifest? {
     guard let row = try store.query(
-      "SELECT started_at, ended_at, program_filename FROM recordings WHERE id = ?;",
+      "SELECT started_at, ended_at, program_filename, encoding_json FROM recordings WHERE id = ?;",
       [ .integer(recordingID) ]
     ).first else { return nil }
     return RecordingManifest(
@@ -1318,7 +1372,8 @@ public final class ArchiveIndex: @unchecked Sendable {
       endedAt: row.values[1] == .null ? nil : WallClock(seconds: row.double(1)),
       programFilename: row.values[2] == .null ? nil : row.string(2),
       segments: try allSegments(forRecording: recordingID).filter { sourceIDs.contains($0.sourceID) },
-      programAnchors: try programAnchors(recordingID: recordingID)
+      programAnchors: try programAnchors(recordingID: recordingID),
+      encoding: Self.takeEncoding(row.values[3] == .null ? nil : row.string(3))
     )
   }
 
@@ -1332,14 +1387,16 @@ public final class ArchiveIndex: @unchecked Sendable {
       try transaction.execute("DELETE FROM program_anchors WHERE recording_id = ?;", [ id ])
       try transaction.execute(
         """
-        INSERT OR REPLACE INTO recordings (id, started_at, ended_at, program_filename)
-        VALUES (?, ?, ?, ?);
+        INSERT OR REPLACE INTO recordings (id, started_at, ended_at, program_filename, encoding_json)
+        VALUES (?, ?, ?, ?, ?);
         """,
         [
           id,
           .real(manifest.startedAt.seconds),
           manifest.endedAt.map { .real($0.seconds) } ?? .null,
-          manifest.programFilename.map { .text($0) } ?? .null
+          manifest.programFilename.map { .text($0) } ?? .null,
+          (try manifest.encoding.map { String(decoding: try JSONEncoder().encode($0), as: UTF8.self) })
+            .map { .text($0) } ?? .null
         ]
       )
       for segment in manifest.segments {
