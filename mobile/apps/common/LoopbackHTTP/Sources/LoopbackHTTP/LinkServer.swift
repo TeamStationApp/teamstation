@@ -63,7 +63,9 @@ public final class LinkServer: @unchecked Sendable {
         switch state {
         case .ready:
           once.run { continuation.resume(returning: box.listener.port?.rawValue ?? 0) }
-        case .failed(let error):
+        case .failed(let error), .waiting(let error):
+          // A port already taken leaves the listener waiting to retry for ever; the caller hears
+          // of it instead, and can say so.
           once.run { continuation.resume(throwing: error) }
           self?.stop()
         case .cancelled:
