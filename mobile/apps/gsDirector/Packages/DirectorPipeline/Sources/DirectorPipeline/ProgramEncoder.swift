@@ -39,11 +39,11 @@ public final class ProgramEncoder: @unchecked Sendable {
   private var baseAudioTime: CMTime?
   /// End of the last audio sample written; every candidate start is clamped forward to it.
   private var nextAudioTime: CMTime?
-  /// The source's audio clock mapped onto the program timeline by one offset, so real pacing and
-  /// upstream gaps survive. See `SegmentWriter` for why counting samples is only the fallback.
-  private var audioSourceEpoch: CMTime?
-  private var audioTimelineAnchor: CMTime?
-  private var audioClockUnusable = false
+  /// Where the recording's mix goes on this part's timeline; see `RecordingSoundPlacement`.
+  private var soundPlacement = RecordingSoundPlacement()
+  /// This part's programme time less the wall time its picture was captured, from the last frame
+  /// appended: how the capture clock the recording's mix is placed on maps onto the timeline.
+  private var contentOffsetSeconds: Double?
   /// Audio awaiting a writer that is not currently accepting it. Discarding instead of queueing
   /// leaves the audio track short of the video track, which stalls the muxer outright.
   private var pendingAudio: [CMSampleBuffer] = []
@@ -105,8 +105,9 @@ public final class ProgramEncoder: @unchecked Sendable {
   /// not at the resume, so the span before it is measured when it comes.
   private var resumedAwaitingPicture = false
 
-  /// Roughly two seconds of audio at the buffer sizes cameras send.
-  private static let maximumPendingAudio = 200
+  /// Eight seconds of the mix's 20 ms chunks: at Stop the recording's mix hands over the five it
+  /// was still waiting on at once.
+  private static let maximumPendingAudio = 400
 
   /// A buffer's duration, derived from its sample count when the source did not set one.
   private static func audioDuration(of buffer: CMSampleBuffer) -> CMTime {
@@ -359,9 +360,8 @@ public final class ProgramEncoder: @unchecked Sendable {
     self.nextAudioTime = nil
     self.lastTime = .negativeInfinity
     self.writtenFrames = 0
-    self.audioSourceEpoch = nil
-    self.audioTimelineAnchor = nil
-    self.audioClockUnusable = false
+    self.soundPlacement.reset()
+    self.contentOffsetSeconds = nil
     self.pendingAudio.removeAll()
     self.isRunning = true
     self.outputURL = url
@@ -437,8 +437,8 @@ public final class ProgramEncoder: @unchecked Sendable {
     _ = base
     let oneFrame = CMTime(value: 1, timescale: CMTimeScale(max(frameRate, 1)))
     // The programme is what went out, when it went out: each frame is placed on the host clock it
-    // was composed on, since the part began. That is the clock the programme's audio is mixed and
-    // placed on, so picture and sound stay locked however the display delay moves.
+    // was composed on, since the part began. The programme's sound follows the pictures through
+    // `contentOffsetSeconds`, so picture and sound stay locked however the display delay moves.
     //
     // The source's own timestamps only set the spacing between frames, which they do evenly where
     // arrival jitters, and the timeline is steered back to real time a tenth of the error at a
@@ -488,6 +488,7 @@ public final class ProgramEncoder: @unchecked Sendable {
       contentLagSeconds = nowWall - captureWall.seconds
     }
     let contentWall = WallClock(seconds: nowWall - (contentLagSeconds ?? 0))
+    contentOffsetSeconds = time.seconds - contentWall.seconds
     var anchor: (recording: Int64, part: Int, seconds: Double, wall: WallClock)?
     if let recording = anchorRecordingID,
        time.isNumeric,
@@ -547,6 +548,8 @@ public final class ProgramEncoder: @unchecked Sendable {
     drainAudio(limit: 2)
   }
 
+  /// The recording's own mix, stamped with when its sound was captured: it goes beside the picture
+  /// of the same moment, however long the mix waited for it. See `RecordingSoundPlacement`.
   public func append(audio frame: AudioFrame) {
     let duration = Self.audioDuration(of: frame.sampleBuffer)
 
@@ -564,11 +567,19 @@ public final class ProgramEncoder: @unchecked Sendable {
       lock.unlock()
       return
     }
-    guard lastTime.isNumeric, duration.isNumeric, duration > .zero else {
+    guard lastTime.isNumeric, duration.isNumeric, duration > .zero,
+      let contentOffset = contentOffsetSeconds,
+      let seconds = soundPlacement.place(
+        wall: frame.wallClock.seconds,
+        duration: duration.seconds,
+        contentOffset: contentOffset,
+        writtenUntil: nextAudioTime?.seconds
+      )
+    else {
       lock.unlock()
       return
     }
-    let start = audioStartLocked(sourceTime: frame.sampleBuffer.presentationTimeStamp)
+    let start = CMTime(seconds: seconds, preferredTimescale: CMTimeScale(AudioMixer.sampleRate))
     nextAudioTime = CMTimeAdd(start, duration)
     lock.unlock()
 
@@ -596,33 +607,6 @@ public final class ProgramEncoder: @unchecked Sendable {
     lock.unlock()
 
     drainAudio(limit: 8)
-  }
-
-  /// Where the next audio buffer belongs on the program timeline. Called with `lock` held.
-  ///
-  /// Mirrors `SegmentWriter.audioStartLocked`; see there for why each guard exists.
-  private func audioStartLocked(sourceTime: CMTime) -> CMTime {
-    var candidate: CMTime
-    if !audioClockUnusable, sourceTime.isNumeric {
-      if audioSourceEpoch == nil {
-        audioSourceEpoch = sourceTime
-        audioTimelineAnchor = lastTime
-      }
-      let epoch = audioSourceEpoch ?? sourceTime
-      let anchor = audioTimelineAnchor ?? lastTime
-      candidate = CMTimeAdd(anchor, CMTimeSubtract(sourceTime, epoch))
-    } else {
-      candidate = nextAudioTime ?? lastTime
-    }
-
-    let offset = CMTimeSubtract(candidate, lastTime).seconds
-    if !candidate.isNumeric || abs(offset) > 2 {
-      audioClockUnusable = true
-      candidate = nextAudioTime ?? lastTime
-    }
-    if CMTimeSubtract(lastTime, candidate).seconds > 0.5 { candidate = lastTime }
-    if let next = nextAudioTime, candidate < next { candidate = next }
-    return candidate
   }
 
   // The lock cannot be taken directly inside an async function.
@@ -765,9 +749,8 @@ public final class ProgramEncoder: @unchecked Sendable {
     videoInput = nil
     audioInput = nil
     adaptor = nil
-    audioSourceEpoch = nil
-    audioTimelineAnchor = nil
-    audioClockUnusable = false
+    soundPlacement.reset()
+    contentOffsetSeconds = nil
     pendingAudio.removeAll()
   }
 
@@ -887,9 +870,8 @@ public final class ProgramEncoder: @unchecked Sendable {
     part += 1
     pendingRecoveryFill = true
     pendingAudio.removeAll()
-    audioSourceEpoch = nil
-    audioTimelineAnchor = nil
-    audioClockUnusable = false
+    soundPlacement.reset()
+    contentOffsetSeconds = nil
     nextAudioTime = nil
     lock.unlock()
 
