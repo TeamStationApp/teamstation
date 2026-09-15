@@ -1926,10 +1926,19 @@ public final class AppEnvironment {
     proxies.removeAll()
 
     setRecordingStage("finishing program")
+    // The programme shows each moment a display delay after it happened, so at Stop it has not yet
+    // shown the take's last half-second. It keeps recording for that delay, never more than two
+    // seconds, so its file reaches the stop and an export can copy it as it is; the take still ends
+    // at Stop, where the export cuts it. Flushing the archives above usually took longer already.
+    let tail = min(2, max(0, cameras.playout.programMilliseconds / 1_000))
+    let waited = clock.now.seconds - endedAt.seconds
+    if tail > waited {
+      try? await Task.sleep(for: .seconds(tail - waited))
+    }
     let programEncoder = self.programEncoder
     let programURL = ProgramURL()
     await finishWithDeadline("program", seconds: 45) {
-      await programURL.set(programEncoder.finish(until: endedAt))
+      await programURL.set(programEncoder.finish(until: endedAt + tail))
     }
     if let url = await programURL.value {
       let bytes = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? nil
