@@ -138,7 +138,7 @@ struct RecordingsView: View {
           }
           .accessibilityIdentifier("recording-file-\(camera.sourceID.slug)")
         }
-        if let combined = inventory?.combined, combined != .missing || model.settings?.createCombined == true {
+        if let combined = inventory?.combined, combined != .missing || model.settings.createCombined {
           LabeledContent("Combined video") {
             Text(Self.describeCombined(combined))
               .foregroundStyle(.secondary)
@@ -230,7 +230,7 @@ struct RecordingsView: View {
   private func startExport(_ recording: RecordingListing) {
     let tracks = chosenTracks(recording)
     let candidates = CombinedCandidate.all(for: recording, tracks: tracks)
-    if model.settings?.createCombined == true, candidates.count >= 2 {
+    if model.settings.createCombined, candidates.count >= 2 {
       step = .combine(recording: recording, tracks: tracks, candidates: candidates)
     } else {
       proceed(recording, tracks: tracks, combined: nil)
@@ -238,12 +238,12 @@ struct RecordingsView: View {
   }
 
   private func proceed(_ recording: RecordingListing, tracks: [Track], combined: CombinedPlan?) {
-    if model.settings?.peerTube.enabled == true {
+    if model.settings.peerTube.enabled {
       if case .signedIn = model.peerTube {
         step = .upload(recording: recording, tracks: tracks, combined: combined)
         return
       }
-      model.problem = "PeerTube uploads are on, but GS Director is not signed in, so nothing is uploaded."
+      model.problem = "PeerTube uploads are on, but this Mac is not signed in to PeerTube, so nothing is uploaded."
     }
     step = nil
     model.export(recording, tracks: tracks, reprocess: reprocess, combined: combined)

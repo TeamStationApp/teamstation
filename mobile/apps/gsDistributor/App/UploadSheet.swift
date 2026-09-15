@@ -69,7 +69,7 @@ struct UploadSheet: View {
     .padding(24)
     .frame(width: 560)
     .onAppear {
-      choice = (model.settings?.peerTube.uploadChoice ?? UploadChoice())
+      choice = model.settings.peerTube.uploadChoice
         .applied(hasPrimary: hasPrimary, cameras: cameraNames, makesCombined: makesCombined)
       channelID = model.uploadChannelID
       privacy = model.uploadPrivacy

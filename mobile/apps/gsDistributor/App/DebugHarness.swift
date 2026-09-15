@@ -10,7 +10,7 @@ import Network
 /// Cameraman's harnesses, it is never in a release.
 ///
 ///   /dump-state                          what the window is showing, and the export under way
-///   /set-destination?path=/some/folder   this Mac's download folder, saved on the iPad
+///   /set-destination?path=/some/folder   this Mac's download folder, saved here and on the iPad
 ///   /clear-destination                   forget it again
 ///   /export?recording=361&tracks=primary,camera:<source id>[&reprocess=1][&combined=1[&audio=<name>]]
 ///          [&upload=primary,camera:<name>,combined&title=<title>]
@@ -109,7 +109,7 @@ final class DebugHarness {
       let on = query["on"] != "0"
       await model.updateSettings { $0.peerTube.enabled = on }
       await model.loadPeerTube()
-      return [ "ok": model.settings?.peerTube.enabled == on ]
+      return [ "ok": model.settings.peerTube.enabled == on ]
     case "/peertube-signin":
       // The user name and password come from a file, so the password is never on a command line.
       guard let host = query["host"], let path = query["credentials"],
@@ -149,7 +149,7 @@ final class DebugHarness {
       var plan: CombinedPlan?
       if query["combined"] == "1" {
         let candidates = CombinedCandidate.all(for: recording, tracks: tracks)
-        let saved = model.settings?.combinedLayout ?? CombinedLayoutSettings()
+        let saved = model.settings.combinedLayout
         let included = Array(candidates.map(\.name).prefix(CombinedLayoutRules.maximumCameras))
         let assignment = CombinedLayoutRules.assign(included, saved: saved)
         let solo = included.count == 3 ? CombinedGeometry.effectiveSolo(assignment: assignment, saved: saved.solo) : nil
@@ -252,7 +252,6 @@ final class DebugHarness {
           "cameras": recording.cameras.map { [ "name": $0.name, "sourceID": $0.sourceID.rawValue, "bytes": $0.bytes ] as [String: Any] }
         ] as [String: Any]
       },
-      "settingsLoaded": model.settings != nil,
       "destination": model.destination?.path ?? NSNull(),
       "export": export,
       "peerTube": peerTube,
