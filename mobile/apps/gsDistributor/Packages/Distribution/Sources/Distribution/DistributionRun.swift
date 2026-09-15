@@ -355,7 +355,9 @@ public final class DistributionRun {
     )
   }
 
-  /// One file at a time, in the order asked. A file that did not save is not uploaded.
+  /// One file at a time, in the order asked. A file that did not save is not uploaded. Each video's
+  /// original publication date is when its recording started, which is where every file of the
+  /// export starts, so highlights can be timed from the video alone.
   private func uploadAll(_ plan: UploadPlan) async {
     let api = PeerTubeAPI(host: plan.host)
     for track in plan.tracks {
@@ -371,6 +373,7 @@ public final class DistributionRun {
           name: plan.title(for: track),
           channelID: plan.channelID,
           privacy: plan.privacy,
+          originallyPublishedAt: recording.startedAt.date,
           token: plan.token
         ) { sent, total in
           Task { @MainActor in
