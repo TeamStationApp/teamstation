@@ -153,22 +153,9 @@ final class DebugHarness {
       // primary output first), placed as the saved layout places them.
       var plan: CombinedPlan?
       if query["combined"] == "1" {
-        let candidates = CombinedCandidate.all(for: recording, tracks: tracks)
-        let saved = model.settings.combinedLayout
-        let included = Array(candidates.map(\.name).prefix(CombinedLayoutRules.maximumCameras))
-        let assignment = CombinedLayoutRules.assign(included, saved: saved)
-        let solo = included.count == 3 ? CombinedGeometry.effectiveSolo(assignment: assignment, saved: saved.solo) : nil
         // curl's --data-urlencode sends spaces as `+`.
         let audio = query["audio"].map { $0.replacingOccurrences(of: "+", with: " ") }
-        plan = CombinedPlan(
-          inputs: candidates.filter { included.contains($0.name) }.map { (name: $0.name, track: $0.track) },
-          frames: CombinedGeometry.frames(assignment: assignment, solo: solo),
-          audioCamera: CombinedLayoutRules.audioCamera(
-            included: included,
-            withAudio: Set(included),
-            saved: audio ?? saved.audioCamera
-          )
-        )
+        plan = CombinedPlan.automatic(for: recording, tracks: tracks, saved: model.settings.combinedLayout, audioCamera: audio)
       }
       // `upload=primary,camera:<name>,combined&title=<title>` uploads those files, as the title
       // sheet would, to the channel and with the privacy it would start on. Without a title, the

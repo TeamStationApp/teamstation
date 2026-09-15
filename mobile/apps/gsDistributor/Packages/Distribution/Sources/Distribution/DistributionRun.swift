@@ -101,7 +101,8 @@ public final class DistributionRun {
   public let upload: UploadPlan?
   public private(set) var uploadStates: [UploadTrack: UploadState] = [:]
 
-  private let connection: DirectorConnection
+  /// Nil with no iPad attached, which is enough when every file the run needs is already here.
+  private let connection: DirectorConnection?
   private let jobs: JobWatcher
   private let destination: URL
   private let reprocess: Bool
@@ -112,7 +113,7 @@ public final class DistributionRun {
   public init(
     recording: RecordingListing,
     tracks: [Track],
-    connection: DirectorConnection,
+    connection: DirectorConnection?,
     jobs: JobWatcher,
     destination: URL,
     reprocess: Bool = false,
@@ -248,16 +249,23 @@ public final class DistributionRun {
         combinedState = .failed(shortfall)
         return
       }
+    } else if let connection {
+      guard await workWithIPad(toStitch: toStitch, toFetch: toFetch, connection: connection) else { return }
     } else {
-      guard await workWithIPad(toStitch: toStitch, toFetch: toFetch) else { return }
+      // Nothing can come from an iPad that is not there; what is here is still combined and
+      // uploaded as far as it goes.
+      for track in toStitch + toFetch { states[track] = .failed(Self.noIPad) }
     }
     if let combined, !wasCancelled { await renderCombined(combined) }
     if let upload, !wasCancelled { await uploadAll(upload) }
   }
 
+  /// Why a file the iPad would have to provide was not made.
+  public nonisolated static let noIPad = "Not on this Mac, and no iPad is attached to get it from"
+
   /// Stitches `toStitch` on the Mac and the iPad and fetches `toFetch` from the iPad, holding GS
   /// Director's export lock throughout. False when the export stops here.
-  private func workWithIPad(toStitch: [Track], toFetch: [Track]) async -> Bool {
+  private func workWithIPad(toStitch: [Track], toFetch: [Track], connection: DirectorConnection) async -> Bool {
     let needed = toStitch + toFetch
     let scratch = FileManager.default.temporaryDirectory
       .appendingPathComponent("gsDistributor-\(UUID().uuidString)", isDirectory: true)
@@ -275,7 +283,6 @@ public final class DistributionRun {
       return false
     }
     var released = false
-    let connection = self.connection
     // Renewed while the export works with the iPad: GS Director drops a lock left unrenewed, so a
     // Mac that dies mid-export cannot keep it from recording.
     let every = lockRenewal
@@ -317,7 +324,7 @@ public final class DistributionRun {
     }
 
     // Nothing is written until the whole export is known to fit.
-    if let shortfall = await roomShortfall(for: needed, window: window) {
+    if let shortfall = await roomShortfall(for: needed, window: window, connection: connection) {
       for track in needed { states[track] = .failed(shortfall) }
       if combinedState != nil { combinedState = .failed(shortfall) }
       await release()
@@ -404,7 +411,7 @@ public final class DistributionRun {
 
   /// Nil when the export fits on this Mac; otherwise why it does not. An iPad that cannot say how
   /// large the files are is not a reason to stop.
-  private func roomShortfall(for work: [Track], window: ExportWindow) async -> String? {
+  private func roomShortfall(for work: [Track], window: ExportWindow, connection: DirectorConnection) async -> String? {
     var trackBytes: [Int64] = []
     if !work.isEmpty {
       guard let manifest = try? await connection.manifest(recordingID: recording.id, tracks: work) else { return nil }
@@ -560,7 +567,10 @@ public final class DistributionRun {
 
   private func fetch(_ file: RemoteFile, for track: Track) {
     let target = folder.appendingPathComponent(filename(for: track))
-    let connection = self.connection
+    guard let connection = self.connection else {
+      states[track] = .failed(Self.noIPad)
+      return
+    }
     downloads.append(Task { [weak self] in
       do {
         try await connection.download(file, to: target) { received, total in
