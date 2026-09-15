@@ -3547,6 +3547,17 @@ public final class AppEnvironment {
     if let url = launch.streamURL { config.streamURL = url }
     if let bitrate = launch.programBitrate { config.programBitrate = bitrate }
     if let rate = launch.programFrameRate { config.programFrameRate = rate }
+    if let codec = launch.streamCodec { config.streamCodec = codec }
+    if let resolution = launch.streamResolution { config.streamResolution = resolution }
+    if let rate = launch.streamFrameRate { config.streamFrameRate = rate }
+    if launch.streamBitrateLow != nil || launch.streamBitrateHigh != nil {
+      let range = AppConfig.clampedStreamBitrates(
+        low: launch.streamBitrateLow ?? config.streamBitrateLow,
+        high: launch.streamBitrateHigh ?? config.streamBitrateHigh
+      )
+      config.streamBitrateLow = range.low
+      config.streamBitrateHigh = range.high
+    }
     if let cap = launch.displayLatencyCapMilliseconds {
       config.displayLatencyCapEnabled = cap > 0
       if cap > 0 { config.displayLatencyCapMilliseconds = AppConfig.clampedDisplayLatencyCap(cap) }
