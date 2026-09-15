@@ -63,6 +63,9 @@ public final class RemoteCameraControl: CameraControlling {
   /// and applies nothing else in the request. Its floor is left off the wire rather than costing
   /// the operator every other change made in the same visit to Settings.
   @ObservationIgnored private var phoneReportsBitrateFloor = true
+  /// The last `SET` queued; each waits for the one before, so the phone applies changes in the
+  /// order the operator made them.
+  @ObservationIgnored private var lastWrite: Task<Void, Never>?
 
   public init(
     transport: any ParameterTransport,
@@ -191,14 +194,14 @@ public final class RemoteCameraControl: CameraControlling {
     let target: CameraPosition = position == .back ? .front : .back
     position = target
     positionWrittenAt = Date()
-    Task { await write([ (CameraParameterName.sourcePosition, target.rawValue) ]) }
+    send([ (CameraParameterName.sourcePosition, target.rawValue) ])
   }
 
   public func rename(to name: String) {
     let normalised = DeviceIdentity.normalized(name: name, uuid: cname)
     self.name = normalised
     nameWrittenAt = Date()
-    Task { await write([ (CameraParameterName.deviceName, name) ]) }
+    send([ (CameraParameterName.deviceName, name) ])
   }
 
   /// Done in Settings: only the fields that differ from the phone's last snapshot go, as one
@@ -208,7 +211,17 @@ public final class RemoteCameraControl: CameraControlling {
     guard !lines.isEmpty else { return }
     settings = next
     settingsWrittenAt = Date()
-    Task { await write(lines) }
+    send(lines)
+  }
+
+  /// Queues a `SET` behind the ones already on their way. Two quick changes, such as a flip and a
+  /// rename, otherwise race each other to the phone.
+  private func send(_ lines: [(String, String)]) {
+    let previous = lastWrite
+    lastWrite = Task { [weak self] in
+      await previous?.value
+      await self?.write(lines)
+    }
   }
 
   /// The phone's Settings preview stays on the phone; the remote pill shows the real state only.
