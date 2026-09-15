@@ -114,7 +114,7 @@ public enum HTTPResponse: Sendable {
   /// Streamed from disk, honouring the request's `Range`.
   case file(URL, contentType: String)
   /// Newline-delimited JSON events until either side closes.
-  case events(EventHub)
+  case events(any EventSource)
 
   public static func json<Value: Encodable>(_ value: Value, status: Int = 200) -> HTTPResponse {
     let encoder = JSONEncoder()

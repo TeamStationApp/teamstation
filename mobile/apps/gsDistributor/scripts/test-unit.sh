@@ -13,6 +13,7 @@ PACKAGES=(
   "$DISTRIBUTOR_ROOT/Packages/Distribution"
   "$DISTRIBUTOR_ROOT/Packages/CombinedVideo"
   "$APPS/common/DistributorWire"
+  "$APPS/common/LoopbackHTTP"
   "$APPS/common/PeerTubeKit"
   "$APPS/common/DirectorExport"
   "$APPS/gsDirector/Packages/DirectorLink"

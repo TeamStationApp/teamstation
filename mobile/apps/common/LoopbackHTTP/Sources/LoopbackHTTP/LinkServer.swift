@@ -1,19 +1,18 @@
-import DistributorWire
 import Foundation
 import Network
 
-/// A small HTTP/1.1 server bound to loopback.
+/// A small HTTP/1.1 server bound to loopback, so nothing on the Wi-Fi can connect.
 ///
-/// GS Distributor reaches it through usbmuxd, which hands the iPad's side of the cable to
-/// 127.0.0.1, so nothing on the Wi-Fi can connect. Connections stay open between requests.
-/// Files go out one chunk at a time, each sent only once the previous one has been handed to the
-/// network, so serving a 2 GB file costs one chunk of memory rather than two gigabytes.
+/// GS Distributor reaches GS Director's through usbmuxd, which hands the iPad's side of the cable
+/// to 127.0.0.1. Connections stay open between requests. Files go out one chunk at a time, each
+/// sent only once the previous one has been handed to the network, so serving a 2 GB file costs
+/// one chunk of memory rather than two gigabytes.
 public final class LinkServer: @unchecked Sendable {
   public typealias Handler = @Sendable (HTTPRequest) async -> HTTPResponse
 
   public static let fileChunkBytes = 4 << 20
 
-  let queue = DispatchQueue(label: "co.gamestation.director.link")
+  let queue = DispatchQueue(label: "co.gamestation.loopback-http")
   let handler: Handler
   private let requestedPort: UInt16
 
@@ -29,8 +28,9 @@ public final class LinkServer: @unchecked Sendable {
   /// Mac is there.
   private let connectionsChanged: (@Sendable (Int) -> Void)?
 
+  /// `port` 0 takes any free port; `start()` says which.
   public init(
-    port: UInt16 = DistributorProtocol.port,
+    port: UInt16,
     connectionsChanged: (@Sendable (Int) -> Void)? = nil,
     handler: @escaping Handler
   ) {
@@ -116,7 +116,7 @@ final class LinkConnection: @unchecked Sendable {
   private var peerDone = false
   private var closed = false
   private var inFlight = 0
-  private var subscription: (hub: EventHub, id: UUID)?
+  private var subscription: (source: any EventSource, id: UUID)?
 
   init(_ connection: NWConnection, server: LinkServer) {
     self.connection = connection
@@ -192,7 +192,7 @@ final class LinkConnection: @unchecked Sendable {
     case let .file(url, contentType):
       sendFile(url, contentType: contentType, range: request.header("range"), keepAlive: keepAlive)
 
-    case let .events(hub):
+    case let .events(source):
       var head = HTTPHead(status: 200)
       head.set("Content-Type", "application/x-ndjson")
       head.set("Cache-Control", "no-store")
@@ -201,11 +201,11 @@ final class LinkConnection: @unchecked Sendable {
       head.set("X-Content-Type-Options", "nosniff")
       head.set("Connection", "close")
       send(head.data) {}
-      let id = hub.subscribe { [weak self] event in
-        guard let self, let line = try? JSONEncoder().encode(event) else { return }
+      let id = source.subscribe { [weak self] line in
+        guard let self else { return }
         server.queue.async { self.send(line + Data("\n".utf8)) {} }
       }
-      subscription = (hub, id)
+      subscription = (source, id)
     }
   }
 
@@ -314,7 +314,7 @@ final class LinkConnection: @unchecked Sendable {
   func close() {
     guard !closed else { return }
     closed = true
-    if let subscription { subscription.hub.unsubscribe(subscription.id) }
+    if let subscription { subscription.source.unsubscribe(subscription.id) }
     subscription = nil
     connection.cancel()
     server.finished(self)
