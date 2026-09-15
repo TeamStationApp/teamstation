@@ -380,6 +380,8 @@ class ControlChannelTest {
     @Test
     fun `the argument-free commands parse`() {
         assertEquals(ControlCommand.DumpState, command("/dump-state"))
+        assertEquals(ControlCommand.ShowSettings, command("/show-settings"))
+        assertEquals(ControlCommand.HideSettings, command("/hide-settings"))
         assertEquals(ControlCommand.FlipCamera, command("/flip-camera"))
         assertEquals(ControlCommand.ForceKeyframe, command("/force-keyframe"))
         assertEquals(ControlCommand.Clients, command("/clients"))

@@ -171,6 +171,9 @@ class AppEnvironment(
     val serverStatus: StateFlow<RTSPServer.Status> = serverStatusState.asStateFlow()
     val permissions: StateFlow<Permissions> = permissionState.asStateFlow()
 
+    /** Whether Settings is up. Here rather than in the screen so the test harness can open it. */
+    val settingsShown = MutableStateFlow(false)
+
     /** What the overlay pills show. Both are chrome, and both are also in the state dump. */
     val thermalLevel: StateFlow<ThermalBadgeLevel> = thermalLevelState.asStateFlow()
 
@@ -917,6 +920,16 @@ class AppEnvironment(
             configureVideoEncoder(next)
             camera.configure(CameraPosition.BACK, next)
             applyAudio(next)
+            ok()
+        }
+
+        ControlCommand.ShowSettings -> {
+            settingsShown.value = true
+            ok()
+        }
+
+        ControlCommand.HideSettings -> {
+            settingsShown.value = false
             ok()
         }
     }

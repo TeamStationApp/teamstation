@@ -22,6 +22,8 @@ public final class AppEnvironment {
 
   public private(set) var identity: DeviceIdentity
   public var settings: StreamSettings
+  /// Whether Settings is up. Here rather than in the screen so the test harness can open it.
+  public var isShowingSettings = false
   public private(set) var cameraState = CameraSession.State()
   /// Live `ProcessInfo` name (`nominal` / `fair` / `serious` / `critical`). The overlay pill maps
   /// these to Cool / Fair / Warm / Hot the same way GS Director does.
@@ -909,6 +911,14 @@ public final class AppEnvironment {
       noteSettingsApplied()
       reconfigureVideoEncoder(settings)
       camera.configure(position: .back, settings: settings)
+      return ok()
+
+    case .showSettings:
+      isShowingSettings = true
+      return ok()
+
+    case .hideSettings:
+      isShowingSettings = false
       return ok()
     }
   }

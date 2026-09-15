@@ -44,12 +44,13 @@ import co.gamestation.cameraman.ui.theme.MonospaceLabel
 @Composable
 fun RootScreen(environment: AppEnvironment) {
     val permissions by environment.permissions.collectAsStateWithLifecycle()
-    var isShowingSettings by remember { mutableStateOf(false) }
+    // Held by the environment rather than here, so the test harness can open and close Settings.
+    val isShowingSettings by environment.settingsShown.collectAsStateWithLifecycle()
 
     when {
         !permissions.camera -> DiagnosticScreen(environment)
-        isShowingSettings -> SettingsScreen(environment) { isShowingSettings = false }
-        else -> CameraScreen(environment) { isShowingSettings = true }
+        isShowingSettings -> SettingsScreen(environment) { environment.settingsShown.value = false }
+        else -> CameraScreen(environment) { environment.settingsShown.value = true }
     }
 }
 
