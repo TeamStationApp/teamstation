@@ -18,12 +18,13 @@ public final class ProgramEncoder: @unchecked Sendable {
   private var anchorRecordingID: Int64?
   private let telemetry: PipelineTelemetry
   private let converter: PixelConverter
-  private let width: Int
-  private let height: Int
-  private let bitrate: Int
-  private let frameRate: Int
-  private let gopSeconds: Double
-  private let codec: ProgramCodec
+  /// The encoding the current part is written with; see `configure(_:)`.
+  private var width: Int
+  private var height: Int
+  private var bitrate: Int
+  private var frameRate: Int
+  private var gopSeconds: Double
+  private var codec: ProgramCodec
   private let directory: URL
 
   private let lock = NSLock()
@@ -152,6 +153,21 @@ public final class ProgramEncoder: @unchecked Sendable {
     self.gopSeconds = config.gopSeconds
     self.codec = config.programCodec
     self.directory = directory
+  }
+
+  /// The encoding the next part is written with: the take's programme settings, so a take records
+  /// with the settings in force when it began rather than the ones the app was launched with. A part
+  /// already being written keeps what it started with, so this is ignored while running.
+  public func configure(_ encoding: EncodeSettings) {
+    lock.lock()
+    defer { lock.unlock() }
+    guard !isRunning else { return }
+    width = encoding.resolution.width
+    height = encoding.resolution.height
+    bitrate = encoding.bitrate
+    frameRate = encoding.frameRate
+    gopSeconds = encoding.keyframeSeconds
+    codec = encoding.codec
   }
 
   public var frameCount: UInt64 {
