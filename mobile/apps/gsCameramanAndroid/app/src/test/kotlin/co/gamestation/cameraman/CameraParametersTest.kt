@@ -4,6 +4,7 @@ import co.gamestation.cameraman.capture.FormatCatalogue
 import co.gamestation.cameraman.core.BatteryStatus
 import co.gamestation.cameraman.core.CameraLens
 import co.gamestation.cameraman.core.CameraParameterError
+import co.gamestation.cameraman.core.CameraParameterName
 import co.gamestation.cameraman.core.CameraParameterSet
 import co.gamestation.cameraman.core.CameraParameterWrite
 import co.gamestation.cameraman.core.CameraParameters
@@ -234,6 +235,64 @@ class CameraParametersTest {
         assertEquals(false, CameraParameters.settings(write, StreamSettings()).adaptiveBitrate)
         assertEquals(400, failure("videoEncoder.rateControl.adaptive: sometimes\r\n")?.statusCode)
         assertEquals(458, failure("videoEncoder.rateControl.currentBitrate: 1000\r\n")?.statusCode)
+    }
+
+    @Test
+    fun `the bitrate floor is kbps on the wire, writable, and never above the rate it sits under`() {
+        val encoded = CameraParameters.encode(snapshot())
+        // Half the rate by default.
+        assertEquals("2000", encoded["videoEncoder.rateControl.bitrateFloor"])
+        assertTrue(CameraParameterName.bitrateFloorKbps in CameraParameterName.writable)
+
+        val chosen = snapshot(settings = StreamSettings(bitrateFloor = 1_500_000))
+        assertEquals(1_500_000, CameraParameters.decodeSnapshot(CameraParameters.encode(chosen))!!.settings.bitrateFloor)
+
+        var write = set("videoEncoder.rateControl.bitrateFloor: 1500\r\n")
+        assertEquals(1_500_000, write.bitrateFloor)
+        assertTrue(write.touchesSettings)
+        assertEquals(1_500_000, CameraParameters.settings(write, StreamSettings()).bitrateFloor)
+        val applied = CameraParameters.snapshot(write, snapshot())
+        assertEquals("1500", CameraParameters.echo(write, applied)["videoEncoder.rateControl.bitrateFloor"])
+
+        assertEquals(400, failure("videoEncoder.rateControl.bitrateFloor: 900\r\n")?.statusCode)
+        assertEquals(400, failure("videoEncoder.rateControl.bitrateFloor: 50001\r\n")?.statusCode)
+        assertEquals(400, failure("videoEncoder.rateControl.bitrateFloor: some\r\n")?.statusCode)
+        // Above the 4000 kbps rate.
+        val above = failure("videoEncoder.rateControl.bitrateFloor: 5000\r\n")
+        assertEquals(400, above?.statusCode)
+        assertEquals("videoEncoder.rateControl.bitrateFloor", above?.name)
+
+        // Judged on the result: raising both together is fine, in either order on the wire.
+        write = set("videoEncoder.rateControl.bitrateFloor: 5000\r\nvideoEncoder.rateControl.bitrateLimit: 8000\r\n")
+        var next = CameraParameters.settings(write, StreamSettings())
+        assertEquals(8_000_000, next.bitrate)
+        assertEquals(5_000_000, next.bitrateFloor)
+        assertEquals(
+            400,
+            failure("videoEncoder.rateControl.bitrateLimit: 3000\r\nvideoEncoder.rateControl.bitrateFloor: 3500\r\n")?.statusCode
+        )
+
+        // A request naming only the rate is never refused for the floor, which comes down with it.
+        val high = StreamSettings(bitrate = 10_000_000, bitrateFloor = 6_000_000)
+        write = CameraParameters.parseSet("videoEncoder.rateControl.bitrateLimit: 3000\r\n", snapshot(settings = high))
+            .getOrNull()!!
+        next = CameraParameters.settings(write, high)
+        assertEquals(3_000_000, next.bitrate)
+        assertEquals(3_000_000, next.bitrateFloor)
+        // A default floor follows the rate at half.
+        assertEquals(1_500_000, CameraParameters.settings(write, high.copy(bitrateFloor = 5_000_000)).bitrateFloor)
+    }
+
+    @Test
+    fun `a phone that predates the floor is read as adapting down to half its rate`() {
+        val withoutIt = CameraParameterSet()
+        val full = CameraParameters.encode(
+            snapshot(settings = StreamSettings(bitrate = 9_000_000, bitrateFloor = 1_000_000))
+        )
+        for ((name, value) in full.pairs) {
+            if (name != CameraParameterName.bitrateFloorKbps) withoutIt.set(name, value)
+        }
+        assertEquals(4_500_000, CameraParameters.decodeSnapshot(withoutIt)!!.settings.bitrateFloor)
     }
 
     @Test

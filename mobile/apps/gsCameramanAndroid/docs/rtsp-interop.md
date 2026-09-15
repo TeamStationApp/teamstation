@@ -176,7 +176,8 @@ the SOAP stack itself is not implemented. Lenses have no ONVIF standard. `rw` = 
 | `videoEncoder.resolution.width`, `.height` | rw int | with the rate, must name one offered format |
 | `videoEncoder.rateControl.frameRateLimit` | rw number | fps |
 | `videoEncoder.rateControl.bitrateLimit` | rw int | **kbps**, 1000–50000. With `adaptive` on, the ceiling: the stream runs at this and comes down only while a client's link backs up |
-| `videoEncoder.rateControl.adaptive` | rw bool | on by default. Lowers the rate while the link to the weakest playing client backs up, never below half of `bitrateLimit`, and climbs back once it clears. A change is live: nothing restarts. Absent from a phone that predates it, which never adapts |
+| `videoEncoder.rateControl.bitrateFloor` | rw int | **kbps**, 1000–50000 and never above `bitrateLimit`: the lowest rate adaptation may reach. A `SET` naming it is judged against the `bitrateLimit` it leaves; one naming only `bitrateLimit` brings the floor down with it rather than being refused. Half of `bitrateLimit` by default. Absent from a phone that predates it, which adapts down to half of `bitrateLimit` |
+| `videoEncoder.rateControl.adaptive` | rw bool | on by default. Lowers the rate while the link to the weakest playing client backs up, never below `bitrateFloor`, and climbs back once it clears. A change is live: nothing restarts. Absent from a phone that predates it, which never adapts |
 | `videoEncoder.rateControl.currentBitrate` | int | **kbps** the encoder is running at now: `bitrateLimit`, or less while adapting |
 | `videoEncoder.formats` | int | count; then `format.<i>.width`, `.height`, `.frameRate`, `.multiLens` |
 | `audioEncoder.enabled` | rw bool | microphone on/off |

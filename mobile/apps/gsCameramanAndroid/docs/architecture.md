@@ -70,7 +70,8 @@ gives.
 
 **Adaptive bitrate** is the iOS build's, constant for constant (see its `docs/architecture.md`). On
 by default, it lowers the encoder's rate while the link to the weakest playing client backs up,
-never below half the operator's bitrate, and climbs back once the link clears. Changes go to the
+never below the operator's floor (half the bitrate unless they set one), and climbs back once the
+link clears. Changes go to the
 running codec as `PARAMETER_KEY_VIDEO_BITRATE`, so none of them restarts it.
 
 The signal differs in one respect. The writer is credited when `write` returns, which is when bytes
