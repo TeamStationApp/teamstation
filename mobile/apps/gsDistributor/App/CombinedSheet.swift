@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import DirectorCore
 import Distribution
 import DistributorWire
@@ -303,11 +304,30 @@ struct CombinedSheet: View {
     let length = (recording.endedAt ?? recording.startedAt) - recording.startedAt
     let at = length > 0 ? min(10, length / 2) : 10
     for camera in candidates {
-      if let data = await model.still(recordingID: recording.id, camera: camera.stillSource, at: at),
-         let image = NSImage(data: data) {
+      if let image = await localStill(camera, at: at) {
+        stills[camera.name] = image
+      } else if !model.isRecording, !model.isStreaming,
+                let data = await model.still(recordingID: recording.id, camera: camera.stillSource, at: at),
+                let image = NSImage(data: data) {
         stills[camera.name] = image
       }
     }
+  }
+
+  /// A still from the file already on this Mac, so the iPad is asked for nothing it need not do.
+  private func localStill(_ camera: CombinedCandidate, at seconds: Double) async -> NSImage? {
+    guard let destination = model.destination, model.inventory(of: recording)?.files[camera.track]?.isSaved == true else {
+      return nil
+    }
+    let file = DistributionRun.folder(for: recording, in: destination)
+      .appendingPathComponent(DistributionRun.filename(for: camera.track, of: recording))
+    let generator = AVAssetImageGenerator(asset: AVURLAsset(url: file))
+    generator.appliesPreferredTrackTransform = true
+    generator.maximumSize = CGSize(width: 640, height: 360)
+    guard let image = try? await generator.image(at: CMTime(seconds: seconds, preferredTimescale: 600)).image else {
+      return nil
+    }
+    return NSImage(cgImage: image, size: .zero)
   }
 
   private func finish() {

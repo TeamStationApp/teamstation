@@ -29,6 +29,9 @@ stitching between the Mac and the iPad, and stitching with the Director's own co
 3. Pick a recording, tick its files, Export. With the combined video on, lay the cameras out first;
    with PeerTube on, the title comes next (it starts with the date, which can be changed), with the
    channel and privacy, which start on the last ones used (privacy 6 where the instance has it).
+4. Each file shows whether it is already on this Mac. Files already here need nothing from the iPad,
+   so a cut-off export (an upload that failed, a combined video never made) can be picked up with
+   Export even while GS Director records or streams; only fetching and stitching wait for the iPad.
 
 GS Director must be open and in front on the iPad: iOS takes a background app's listener down.
 

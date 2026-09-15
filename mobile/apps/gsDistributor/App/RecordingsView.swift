@@ -115,17 +115,31 @@ struct RecordingsView: View {
     model.recordings.first { $0.id == selectedID }
   }
 
+  /// The take's files with where each one is, so a cut-off export can be picked up from what is
+  /// already on this Mac: files here need nothing from the iPad.
   @ViewBuilder
   private var filesColumn: some View {
     if let recording = selected {
+      let inventory = model.inventory(of: recording)
+      let chosen = chosenTracks(recording)
+      let needsIPad = inventory?.needsIPad(chosen) ?? true
       List {
         if recording.hasPrimary {
-          Toggle("Primary output", isOn: $includesPrimary)
+          Toggle(isOn: $includesPrimary) { fileLabel("Primary output", inventory?.files[.primary]) }
             .accessibilityIdentifier("recording-file-program")
         }
         ForEach(recording.cameras, id: \.sourceID.rawValue) { camera in
-          Toggle(camera.name, isOn: cameraBinding(camera.sourceID))
-            .accessibilityIdentifier("recording-file-\(camera.sourceID.slug)")
+          Toggle(isOn: cameraBinding(camera.sourceID)) {
+            fileLabel(camera.name, inventory?.files[.camera(camera.sourceID)])
+          }
+          .accessibilityIdentifier("recording-file-\(camera.sourceID.slug)")
+        }
+        if let combined = inventory?.combined, combined != .missing || model.settings?.createCombined == true {
+          LabeledContent("Combined video") {
+            Text(Self.describeCombined(combined))
+              .foregroundStyle(.secondary)
+          }
+          .accessibilityIdentifier("recording-combined-state")
         }
       }
       .id(recording.id)
@@ -135,7 +149,9 @@ struct RecordingsView: View {
             Text("This take is still being recorded.")
               .foregroundStyle(.secondary)
           } else if let reason = model.exportBlockedReason {
-            Text(reason)
+            Text(needsIPad
+              ? "\(reason) Untick the files not yet on this Mac to combine and upload the rest."
+              : "Every ticked file is on this Mac, so this runs on the Mac alone.")
               .foregroundStyle(.secondary)
               .accessibilityIdentifier("recordings-export-blocked")
           }
@@ -143,8 +159,8 @@ struct RecordingsView: View {
           Button("Export") { startExport(recording) }
             .keyboardShortcut(.defaultAction)
             .disabled(
-              recording.isLive || chosenTracks(recording).isEmpty || model.isExporting
-                || model.exportBlockedReason != nil
+              recording.isLive || chosen.isEmpty || model.isExporting
+                || (model.exportBlockedReason != nil && needsIPad)
             )
             .accessibilityIdentifier("recordings-export")
         }
@@ -241,6 +257,33 @@ struct RecordingsView: View {
         }
       }
     )
+  }
+
+  private func fileLabel(_ name: String, _ state: ExportInventory.FileState?) -> some View {
+    VStack(alignment: .leading, spacing: 1) {
+      Text(name)
+      if let state {
+        Text(Self.describe(state))
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+    }
+  }
+
+  static func describe(_ state: ExportInventory.FileState) -> String {
+    switch state {
+    case .saved(let bytes): "On this Mac, \(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))"
+    case .interrupted: "Partly downloaded; the rest comes from the iPad"
+    case .missing: "On the iPad"
+    }
+  }
+
+  static func describeCombined(_ state: ExportInventory.FileState) -> String {
+    switch state {
+    case .saved(let bytes): "On this Mac, \(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))"
+    case .interrupted: "Cut off; made again from the saved files"
+    case .missing: "Not made yet"
+    }
   }
 
   // MARK: - Marking

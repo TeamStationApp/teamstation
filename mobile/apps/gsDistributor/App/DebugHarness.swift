@@ -14,6 +14,7 @@ import Network
 ///   /clear-destination                   forget it again
 ///   /export?recording=361&tracks=primary,camera:<source id>[&reprocess=1][&combined=1[&audio=<name>]]
 ///          [&upload=primary,camera:<name>,combined&title=<title>]
+///   /inventory?recording=361             which of its files are already on this Mac
 ///   /cancel                              stop the export under way
 ///   /dismiss-export                      put a finished export's progress away, as Done does
 ///   /peertube-enable?on=1|0              PeerTube uploads on or off
@@ -79,6 +80,24 @@ final class DebugHarness {
       let macID = model.macID
       await model.updateSettings { $0.destinations[macID] = nil }
       return [ "ok": model.destination == nil ]
+    case "/inventory":
+      guard let id = query["recording"].flatMap(Int64.init),
+            let recording = model.recordings.first(where: { $0.id == id }),
+            let inventory = model.inventory(of: recording)
+      else { return [ "ok": false, "error": "unknown recording, or no folder chosen" ] }
+      var files: [String: String] = [:]
+      for (track, state) in inventory.files {
+        switch track {
+        case .primary: files["primary"] = "\(state)"
+        case .camera(let sourceID): files["camera:\(sourceID.rawValue)"] = "\(state)"
+        }
+      }
+      return [
+        "ok": true,
+        "files": files,
+        "combined": "\(inventory.combined)",
+        "allOnMac": !inventory.needsIPad(Array(inventory.files.keys))
+      ]
     case "/cancel":
       model.run?.cancel()
       return [ "ok": model.run?.wasCancelled ?? false ]
