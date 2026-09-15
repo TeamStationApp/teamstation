@@ -64,6 +64,7 @@ data class LaunchConfiguration(
             "rtspPath",
             "codec",
             "bitrateMbps",
+            "bitrateFloorMbps",
             "adaptiveBitrate",
             "width",
             "height",
@@ -101,8 +102,13 @@ data class LaunchConfiguration(
             values["rtspPath"]?.let { settings.path = it }
             values["codec"]?.let { StreamCodec.fromRawValue(it) }?.let { settings.selectCodec(it) }
             values["bitrateMbps"]?.toDoubleOrNull()?.let {
-                settings.bitrate = (it * 1_000_000).toInt()
+                settings.selectBitrate((it * 1_000_000).toInt())
             }
+            // After the rate, which carries a default floor with it that this then replaces.
+            values["bitrateFloorMbps"]?.toDoubleOrNull()?.let {
+                settings.bitrateFloor = (it * 1_000_000).toInt()
+            }
+            settings.clampFloorToCeiling()
             bool(values["adaptiveBitrate"])?.let { settings.adaptiveBitrate = it }
             values["width"]?.toIntOrNull()?.let { settings.width = it }
             values["height"]?.toIntOrNull()?.let { settings.height = it }

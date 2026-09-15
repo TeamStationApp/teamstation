@@ -323,6 +323,7 @@ class AppEnvironment(
             next.height != previous.height ||
             next.frameRate != previous.frameRate ||
             next.bitrate != previous.bitrate ||
+            next.bitrateFloor != previous.bitrateFloor ||
             next.adaptiveBitrate != previous.adaptiveBitrate ||
             next.audioEnabled != previous.audioEnabled ||
             next.audioSampleRate != previous.audioSampleRate
@@ -563,7 +564,7 @@ class AppEnvironment(
             }
         }
         // The new codec starts at the ceiling, so the controller does too.
-        adaptiveBitrate?.configure(settings.bitrate, settings.adaptiveBitrate)
+        adaptiveBitrate?.configure(settings.bitrate, settings.bitrateFloor, settings.adaptiveBitrate)
     }
 
     /**
@@ -573,7 +574,7 @@ class AppEnvironment(
     private fun applyRate(settings: StreamSettings) {
         val loop = adaptiveBitrate
         if (loop != null) {
-            loop.configure(settings.bitrate, settings.adaptiveBitrate)
+            loop.configure(settings.bitrate, settings.bitrateFloor, settings.adaptiveBitrate)
         } else {
             videoEncoder.setBitrate(settings.bitrate)
         }
@@ -670,9 +671,10 @@ class AppEnvironment(
         val settings = stateLock.withLock { publishedSettings }
         adaptiveBitrate = co.gamestation.cameraman.rtsp.AdaptiveBitrateLoop(
             ceiling = settings.bitrate,
+            floor = settings.bitrateFloor,
             sample = { server.sampleCongestion() },
             apply = { videoEncoder.setBitrate(it) }
-        ).also { it.configure(settings.bitrate, settings.adaptiveBitrate) }
+        ).also { it.configure(settings.bitrate, settings.bitrateFloor, settings.adaptiveBitrate) }
     }
 
     private fun startSynthetic(surface: Surface?, settings: StreamSettings) {
@@ -820,7 +822,7 @@ class AppEnvironment(
         is ControlCommand.SetBitrate -> if (command.mbps <= 0) {
             null
         } else {
-            val next = settingsState.value.copy(bitrate = (command.mbps * 1_000_000).toInt())
+            val next = settingsState.value.copy().apply { selectBitrate((command.mbps * 1_000_000).toInt()) }
             settingsState.value = next
             noteSettingsApplied(next)
             applyRate(next)

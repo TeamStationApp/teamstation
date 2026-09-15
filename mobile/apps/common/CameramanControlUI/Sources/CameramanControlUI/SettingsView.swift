@@ -387,7 +387,7 @@ struct SettingsView<Model: CameraControlling>: View {
   private var bitrateBinding: Binding<Double> {
     Binding(
       get: { bitrateMbps },
-      set: { draftSettings.bitrate = Int($0 * 1_000_000) }
+      set: { draftSettings.setBitrate(Int($0 * 1_000_000)) }
     )
   }
 
