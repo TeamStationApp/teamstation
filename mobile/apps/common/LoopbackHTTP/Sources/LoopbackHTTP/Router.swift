@@ -18,7 +18,7 @@ public struct HTTPError: Error, Equatable, Sendable {
 
   /// `{"error": "<code>", "message": "..."}` with the status.
   public var response: HTTPResponse {
-    .json(Body(error: code, message: message), status: status)
+    .apiJSON(Body(error: code, message: message), status: status)
   }
 
   struct Body: Codable {

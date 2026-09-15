@@ -15,10 +15,16 @@ stitching between the Mac and the iPad, and stitching with the Director's own co
   takes the first file, the iPad the second, then whichever is free.
 - **Combined video.** `Packages/CombinedVideo` puts up to four cameras on a 4K canvas as HEVC at
   4 Mb/s per camera, with one camera's sound.
-- **PeerTube.** `../common/PeerTubeKit` signs in (on the iPad, which keeps the tokens in its
-  Keychain) and uploads (from the Mac, resumably, in 8 MiB chunks).
-- **No state on the Mac.** Settings, layouts and the PeerTube sign-in live on the iPad. Windows are
-  not restored.
+- **PeerTube.** `../common/PeerTubeKit` signs in and uploads (from the Mac, resumably, in 8 MiB
+  chunks), each video carrying its recording's start as its original publication date.
+- **Settings and logins on both devices.** The Mac keeps its copy in
+  `~/Library/Application Support/GS Distributor` (`Packages/MacState`) and the logins in its
+  Keychain; GS Director keeps the same on the iPad. They are brought together whenever the iPad is
+  attached, each group from whichever side changed it last, so the Distributor works with the iPad
+  away. Windows are not restored.
+- **REST API.** `Packages/DistributorAPI` serves the Distributor's work as JSON on
+  `127.0.0.1:8771`; see [docs/api.md](docs/api.md), and the `gs-distributor-api` skill for
+  driving it from an agent.
 
 ## Using it
 
@@ -37,6 +43,7 @@ stitching between the Mac and the iPad, and stitching with the Director's own co
    them, instead of using files already here or prepared on the iPad.
 
 GS Director must be open and in front on the iPad: iOS takes a background app's listener down.
+With no iPad the window says so; Settings, and files already on this Mac, still work.
 
 ## Build and test
 
@@ -47,4 +54,8 @@ scripts/package.sh      # builds it for release into a disk image for another Ma
 scripts/test-unit.sh    # swift test for every package the app is built from
 ```
 
-The plan is `~/.cursor/plans/202609131549-gsDistributor.md`.
+A debug build launched with `-harness -noIPad` never touches the cable: the way to see and drive
+the no-iPad window, and the API, while an iPad is plugged in.
+
+The plans are `~/.cursor/plans/202609131549-gsDistributor.md` and, for the API, the Mac's own
+state and highlights, `~/.cursor/plans/202609142144-gsDistributorApiHighlights.md`.
