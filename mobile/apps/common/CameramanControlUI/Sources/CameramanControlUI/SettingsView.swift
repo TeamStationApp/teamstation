@@ -208,10 +208,26 @@ struct SettingsView<Model: CameraControlling>: View {
       Divider().padding(.leading, 16)
       cardRow {
         VStack(alignment: .leading, spacing: 4) {
-          LabeledContent("Bitrate", value: String(format: "%.1f Mbps", bitrateMbps))
+          LabeledContent("Bitrate", value: bitrateLabel)
             .accessibilityIdentifier("settings-bitrate-value")
-          Slider(value: bitrateBinding, in: 1 ... 50, step: 0.5)
-            .accessibilityIdentifier("settings-bitrate")
+          // Swapped in place by the toggle below. Adapting, the operator sets the range the stream
+          // may move in; not adapting, the one rate it runs at, and a floor on screen would be a
+          // setting that does nothing.
+          if draftSettings.adaptiveBitrate {
+            RangeSlider(
+              lower: bitrateFloorBinding,
+              upper: bitrateCeilingBinding,
+              in: 1 ... 50,
+              step: 0.5,
+              tint: .green,
+              lowerIdentifier: "settings-bitrate-low",
+              upperIdentifier: "settings-bitrate-high",
+              valueLabel: { String(format: "%.1f Mbps", $0) }
+            )
+          } else {
+            Slider(value: bitrateBinding, in: 1 ... 50, step: 0.5)
+              .accessibilityIdentifier("settings-bitrate")
+          }
         }
       }
       Divider().padding(.leading, 16)
@@ -219,7 +235,7 @@ struct SettingsView<Model: CameraControlling>: View {
         VStack(alignment: .leading, spacing: 2) {
           Toggle("Adaptive bitrate", isOn: $draftSettings.adaptiveBitrate)
             .accessibilityIdentifier("settings-adaptive-bitrate")
-          Text("Never below half, and only while the network cannot keep up.")
+          Text("Comes down toward the low rate only while the network cannot keep up.")
             .font(.footnote)
             .foregroundStyle(.secondary)
         }
@@ -383,11 +399,40 @@ struct SettingsView<Model: CameraControlling>: View {
   }
 
   private var bitrateMbps: Double { Double(draftSettings.bitrate) / 1_000_000 }
+  private var bitrateFloorMbps: Double { Double(draftSettings.bitrateFloor) / 1_000_000 }
 
+  /// `2.0–8.0 Mbps` while adapting, the floor to the rate; `6.0 Mbps` otherwise.
+  private var bitrateLabel: String {
+    draftSettings.adaptiveBitrate
+      ? String(format: "%.1f–%.1f Mbps", bitrateFloorMbps, bitrateMbps)
+      : String(format: "%.1f Mbps", bitrateMbps)
+  }
+
+  /// The single slider, with adaptation off. `setBitrate`, so a floor the operator never chose keeps
+  /// following the rate at half and turning adaptation on starts from there.
   private var bitrateBinding: Binding<Double> {
     Binding(
       get: { bitrateMbps },
       set: { draftSettings.setBitrate(Int($0 * 1_000_000)) }
+    )
+  }
+
+  /// The range's high end. A plain assignment rather than `setBitrate`: the operator is moving one
+  /// thumb, and the other must stay where they left it.
+  private var bitrateCeilingBinding: Binding<Double> {
+    Binding(
+      get: { bitrateMbps },
+      set: {
+        draftSettings.bitrate = Int($0 * 1_000_000)
+        draftSettings.clampFloorToCeiling()
+      }
+    )
+  }
+
+  private var bitrateFloorBinding: Binding<Double> {
+    Binding(
+      get: { bitrateFloorMbps },
+      set: { draftSettings.bitrateFloor = min(Int($0 * 1_000_000), draftSettings.bitrate) }
     )
   }
 

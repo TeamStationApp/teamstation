@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Box
@@ -34,6 +35,7 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
@@ -385,31 +387,95 @@ private fun VideoCard(
         }
 
         Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+            val mbps = draft.bitrate / 1_000_000.0
+            val floorMbps = draft.bitrateFloor / 1_000_000.0
+            // Two spaces, which the Maestro flows match on: "Bitrate  2.0–8.0 Mbps" while adapting,
+            // the floor to the rate, and "Bitrate  6.0 Mbps" otherwise.
             Text(
-                String.format(Locale.US, "Bitrate  %.1f Mbps", draft.bitrate / 1_000_000.0),
+                if (draft.adaptiveBitrate) {
+                    String.format(Locale.US, "Bitrate  %.1f–%.1f Mbps", floorMbps, mbps)
+                } else {
+                    String.format(Locale.US, "Bitrate  %.1f Mbps", mbps)
+                },
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.testTag("settings-bitrate-value")
             )
-            // Continuous rather than stepped: Material 3 draws a tick for every step, and 97 of
-            // them turned the track into a dotted line that read as a progress bar. The half-megabit
-            // granularity the iOS build steps in is kept by rounding the value instead.
-            Slider(
-                value = (draft.bitrate / 1_000_000.0).toFloat(),
-                onValueChange = { mbps ->
-                    val rounded = (Math.round(mbps * 2f) / 2.0)
-                    onDraftChange(draft.copy().apply { selectBitrate((rounded * 1_000_000).toInt()) })
-                },
-                valueRange = 1f..50f,
-                // The default inactive track is `surfaceContainerHighest`, which against this card's
-                // `surfaceContainer` is very nearly the same colour — the track vanished and the
-                // control read as a stray dot. Naming the roles explicitly is the theming answer.
-                colors = SliderDefaults.colors(
+            // Swapped in place by the switch below. Adapting, the operator sets the range the stream
+            // may move in; not adapting, the one rate it runs at, and a floor on screen would be a
+            // setting that does nothing.
+            //
+            // Both are continuous rather than stepped: Material 3 draws a tick for every step, and 97
+            // of them turned the track into a dotted line that read as a progress bar. The
+            // half-megabit granularity the iOS build steps in is kept by rounding the value instead.
+            if (draft.adaptiveBitrate) {
+                // Green between the thumbs, as on iOS: the range the stream may run in.
+                val colors = SliderDefaults.colors(
                     thumbColor = MaterialTheme.colorScheme.primary,
-                    activeTrackColor = MaterialTheme.colorScheme.primary,
+                    activeTrackColor = MaterialTheme.colorScheme.tertiary,
                     inactiveTrackColor = MaterialTheme.colorScheme.outlineVariant
-                ),
-                modifier = Modifier.testTag("settings-bitrate")
-            )
+                )
+                val lowInteraction = remember { MutableInteractionSource() }
+                val highInteraction = remember { MutableInteractionSource() }
+                RangeSlider(
+                    value = floorMbps.toFloat()..mbps.toFloat(),
+                    onValueChange = { range ->
+                        val high = halfMegabitBits(range.endInclusive)
+                        val low = minOf(halfMegabitBits(range.start), high)
+                        // Set as they are, not through `selectBitrate`: the operator is moving one
+                        // thumb, and the other must stay where they left it.
+                        onDraftChange(draft.copy(bitrate = high, bitrateFloor = low))
+                    },
+                    valueRange = 1f..50f,
+                    colors = colors,
+                    startInteractionSource = lowInteraction,
+                    endInteractionSource = highInteraction,
+                    startThumb = {
+                        SliderDefaults.Thumb(
+                            interactionSource = lowInteraction,
+                            colors = colors,
+                            modifier = Modifier.testTag("settings-bitrate-low")
+                        )
+                    },
+                    endThumb = {
+                        SliderDefaults.Thumb(
+                            interactionSource = highInteraction,
+                            colors = colors,
+                            modifier = Modifier.testTag("settings-bitrate-high")
+                        )
+                    },
+                    // No gap beside the thumbs and no dot at the end. An everyday 2–8 Mbps is a
+                    // short stretch of this track, and Material's gaps swallowed the green between
+                    // the thumbs whole, while the end dot read as where the range stopped.
+                    track = { state ->
+                        SliderDefaults.Track(
+                            rangeSliderState = state,
+                            colors = colors,
+                            drawStopIndicator = null,
+                            thumbTrackGapSize = 0.dp
+                        )
+                    }
+                )
+            } else {
+                Slider(
+                    value = mbps.toFloat(),
+                    onValueChange = { value ->
+                        // `selectBitrate`, so a floor the operator never chose keeps following the
+                        // rate at half and turning adaptation on starts from there.
+                        onDraftChange(draft.copy().apply { selectBitrate(halfMegabitBits(value)) })
+                    },
+                    valueRange = 1f..50f,
+                    // The default inactive track is `surfaceContainerHighest`, which against this
+                    // card's `surfaceContainer` is very nearly the same colour — the track vanished
+                    // and the control read as a stray dot. Naming the roles explicitly is the theming
+                    // answer.
+                    colors = SliderDefaults.colors(
+                        thumbColor = MaterialTheme.colorScheme.primary,
+                        activeTrackColor = MaterialTheme.colorScheme.primary,
+                        inactiveTrackColor = MaterialTheme.colorScheme.outlineVariant
+                    ),
+                    modifier = Modifier.testTag("settings-bitrate")
+                )
+            }
         }
 
         Row(
@@ -421,7 +487,7 @@ private fun VideoCard(
             Column(modifier = Modifier.weight(1f)) {
                 Text("Adaptive bitrate", style = MaterialTheme.typography.bodyMedium)
                 Text(
-                    "Never below half, and only while the network cannot keep up",
+                    "Comes down toward the low rate only while the network cannot keep up",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -434,6 +500,9 @@ private fun VideoCard(
         }
     }
 }
+
+/** A slider's megabits, rounded to the half megabit the iOS build steps in, as bits per second. */
+private fun halfMegabitBits(mbps: Float): Int = (Math.round(mbps * 2f) / 2.0 * 1_000_000).toInt()
 
 /**
  * One row per detected lens. Millimetre labels come from the optics, so each handset lists the
