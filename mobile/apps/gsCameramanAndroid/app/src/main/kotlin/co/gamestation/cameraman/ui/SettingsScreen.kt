@@ -74,10 +74,15 @@ import java.util.Locale
  * changed. A reconfigure that fires because the operator wanted to read the URL would look like the
  * camera glitching.
  *
- * Two columns because the app is landscape-only. A single list on a 411dp-tall window puts
- * everything below the bitrate off the bottom, and a settings screen whose settings have to be
- * scrolled for is one whose settings do not get found — which is not a guess: the resolution list
- * was inline once, and the microphone toggle and the camera's identifier were both unreachable.
+ * Two columns because the app is landscape-only, laid out as the iPhone's landscape sheet
+ * (`CameramanControlUI`'s `SettingsView`) is: video and audio on the left with the name below them,
+ * lenses on the right with the stream below them. One layout on both phones means an operator who
+ * knows one finds everything on the other, and the flows look for the same card in the same place.
+ *
+ * A single list on a 411dp-tall window put everything below the bitrate off the bottom — the
+ * resolution list was inline once, and the microphone toggle and the camera's identifier were both
+ * unreachable. Each column scrolls on its own instead, so both columns start in view and nothing
+ * is more than one short scroll away.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -141,10 +146,10 @@ fun SettingsScreen(environment: AppEnvironment, onDone: () -> Unit) {
                 .padding(horizontal = 14.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            // Three columns, not two. A landscape window is 923dp wide and 411dp tall, so width is
-            // the resource there is plenty of and height is the one that runs out — and a settings
-            // screen whose settings have to be scrolled for is one whose settings do not get found.
-            // Five lens rows earn a column of their own.
+            // The iPhone's landscape arrangement: its first row is video, audio and output beside
+            // lenses, its second is name beside stream. Android has no output card, and here each
+            // column scrolls on its own, so the second row's cards sit at the foot of the column
+            // above them.
             Column(
                 modifier = Modifier
                     .weight(1f)
@@ -160,6 +165,11 @@ fun SettingsScreen(environment: AppEnvironment, onDone: () -> Unit) {
                 AudioCard(
                     audioEnabled = draft.audioEnabled,
                     onAudioChange = { draft = draft.copy(audioEnabled = it) }
+                )
+                NameCard(
+                    draftName = draftName,
+                    onNameChange = { draftName = it },
+                    identifier = identity.cname
                 )
             }
 
@@ -179,17 +189,6 @@ fun SettingsScreen(environment: AppEnvironment, onDone: () -> Unit) {
                     }
                 )
 
-                if (environment.launch.isUITest) {
-                    ThermalTestCard { environment.previewThermal(it) }
-                }
-            }
-
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
                 StreamCard(environment, serverStatus, didCopyURL) {
                     val clipboard =
                         context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
@@ -197,11 +196,11 @@ fun SettingsScreen(environment: AppEnvironment, onDone: () -> Unit) {
                     didCopyURL = true
                 }
 
-                NameCard(
-                    draftName = draftName,
-                    onNameChange = { draftName = it },
-                    identifier = identity.cname
-                )
+                // Test chrome, last: on iOS it is a toolbar button rather than a card, and nothing
+                // an operator sets should sit below it.
+                if (environment.launch.isUITest) {
+                    ThermalTestCard { environment.previewThermal(it) }
+                }
             }
         }
     }
