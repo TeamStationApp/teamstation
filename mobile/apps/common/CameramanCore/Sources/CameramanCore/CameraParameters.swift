@@ -341,7 +341,7 @@ public enum CameraParameters {
   public static let contentType = "text/parameters"
   public static let controlVersion = "params/1"
   public static let minimumBitrateKbps = 1_000
-  public static let maximumBitrateKbps = 50_000
+  public static let maximumBitrateKbps = StreamSettings.maximumBitrate / 1000
 
   // MARK: Encode
 

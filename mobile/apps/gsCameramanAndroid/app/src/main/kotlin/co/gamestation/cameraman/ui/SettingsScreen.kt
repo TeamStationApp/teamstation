@@ -424,7 +424,7 @@ private fun VideoCard(
                         // thumb, and the other must stay where they left it.
                         onDraftChange(draft.copy(bitrate = high, bitrateFloor = low))
                     },
-                    valueRange = 1f..50f,
+                    valueRange = 1f..(co.gamestation.cameraman.core.StreamSettings.maximumBitrate / 1_000_000f),
                     colors = colors,
                     startInteractionSource = lowInteraction,
                     endInteractionSource = highInteraction,
@@ -462,7 +462,7 @@ private fun VideoCard(
                         // rate at half and turning adaptation on starts from there.
                         onDraftChange(draft.copy().apply { selectBitrate(halfMegabitBits(value)) })
                     },
-                    valueRange = 1f..50f,
+                    valueRange = 1f..(co.gamestation.cameraman.core.StreamSettings.maximumBitrate / 1_000_000f),
                     // The default inactive track is `surfaceContainerHighest`, which against this
                     // card's `surfaceContainer` is very nearly the same colour — the track vanished
                     // and the control read as a stray dot. Naming the roles explicitly is the theming

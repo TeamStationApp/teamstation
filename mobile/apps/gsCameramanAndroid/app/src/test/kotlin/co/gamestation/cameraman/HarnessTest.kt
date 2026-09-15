@@ -348,9 +348,9 @@ class LaunchConfigurationTest {
 
     @Test
     fun `an explicit bitrate survives a codec change`() {
-        val settings = StreamSettings.default.copy(bitrate = 20_000_000)
+        val settings = StreamSettings.default.copy(bitrate = 12_000_000)
         settings.selectCodec(StreamCodec.HEVC)
-        assertEquals(20_000_000, settings.bitrate)
+        assertEquals(12_000_000, settings.bitrate)
     }
 
     @Test

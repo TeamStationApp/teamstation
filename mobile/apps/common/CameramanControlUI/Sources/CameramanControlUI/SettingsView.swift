@@ -217,7 +217,7 @@ struct SettingsView<Model: CameraControlling>: View {
             RangeSlider(
               lower: bitrateFloorBinding,
               upper: bitrateCeilingBinding,
-              in: 1 ... 50,
+              in: 1 ... Double(StreamSettings.maximumBitrate) / 1_000_000,
               step: 0.5,
               tint: .green,
               lowerIdentifier: "settings-bitrate-low",
@@ -225,7 +225,7 @@ struct SettingsView<Model: CameraControlling>: View {
               valueLabel: { String(format: "%.1f Mbps", $0) }
             )
           } else {
-            Slider(value: bitrateBinding, in: 1 ... 50, step: 0.5)
+            Slider(value: bitrateBinding, in: 1 ... Double(StreamSettings.maximumBitrate) / 1_000_000, step: 0.5)
               .accessibilityIdentifier("settings-bitrate")
           }
         }
