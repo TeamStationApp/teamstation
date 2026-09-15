@@ -1,4 +1,4 @@
-import CameramanRTSP
+import AdaptiveBitrate
 import Testing
 
 /// The rate the encoder is told, tick by tick, for links that behave the way stadium Wi-Fi does.

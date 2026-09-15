@@ -8,13 +8,14 @@ let package = Package(
     .library(name: "CameramanRTSP", targets: [ "CameramanRTSP" ])
   ],
   dependencies: [
+    .package(path: "../../../common/AdaptiveBitrate"),
     .package(path: "../../common/CameramanCore"),
     .package(path: "../CameramanEncode")
   ],
   targets: [
     .target(
       name: "CameramanRTSP",
-      dependencies: [ "CameramanCore", "CameramanEncode" ],
+      dependencies: [ "AdaptiveBitrate", "CameramanCore", "CameramanEncode" ],
       swiftSettings: [ .swiftLanguageMode(.v6) ]
     )
   ]
