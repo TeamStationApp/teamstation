@@ -1,19 +1,26 @@
 import SwiftUI
 
-/// The window before GS Director is reachable: what to plug in or open.
+/// The window before GS Director is reachable. It says what exporting needs; what needs only this
+/// Mac is there all the same.
 struct ConnectionView: View {
   let model: DistributorModel
+
+  static let notice = "Connect iPad with GS Director in the foreground to export videos."
 
   var body: some View {
     VStack(spacing: 12) {
       switch model.link {
       case .waitingForIPad:
-        ProgressView()
-        Text("Connect your iPad with a USB-C cable and open GS Director")
+        Image(systemName: "ipad.and.arrow.forward")
+          .font(.largeTitle)
+          .foregroundStyle(.secondary)
+        Text(Self.notice)
           .font(.title3)
       case .waitingForDirector(let serial):
-        ProgressView()
-        Text("Open GS Director on the iPad")
+        Image(systemName: "ipad.and.arrow.forward")
+          .font(.largeTitle)
+          .foregroundStyle(.secondary)
+        Text(Self.notice)
           .font(.title3)
         Text("\(model.displayName(of: serial)) is attached, but GS Director is not answering. It must be open and in front.")
           .foregroundStyle(.secondary)

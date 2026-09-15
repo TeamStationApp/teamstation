@@ -39,6 +39,8 @@ packages:
     path: Packages/DirectorClient
   Distribution:
     path: Packages/Distribution
+  MacState:
+    path: Packages/MacState
 
 targets:
   Distributor:
@@ -72,6 +74,8 @@ targets:
         product: DirectorClient
       - package: Distribution
         product: Distribution
+      - package: MacState
+        product: MacState
 
 schemes:
   Distributor:

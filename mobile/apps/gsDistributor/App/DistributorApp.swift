@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// GS Distributor: pulls GS Director's recordings off the iPad over the cable and stitches them
-/// with the Director's own code. Nothing is kept on this Mac between launches; settings live on
-/// the iPad.
+/// with the Director's own code. Its settings and logins are kept on this Mac and on the iPad, so
+/// what needs only the Mac works with the iPad away.
 @main
 struct DistributorApp: App {
   @State private var model: DistributorModel
@@ -29,7 +29,7 @@ struct DistributorApp: App {
           await model.watch()
         }
     }
-    // No saved window state: the Mac keeps nothing of the Distributor's between launches.
+    // Every launch opens on what the cable has now, not on the window as it was left.
     .restorationBehavior(.disabled)
 
     Settings {
@@ -37,6 +37,4 @@ struct DistributorApp: App {
     }
     .restorationBehavior(.disabled)
   }
-
-  @NSApplicationDelegateAdaptor(Forgetting.self) private var forgetting
 }

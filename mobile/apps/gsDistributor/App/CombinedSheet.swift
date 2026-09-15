@@ -295,7 +295,7 @@ struct CombinedSheet: View {
   // MARK: - Start and finish
 
   private func setUp() async {
-    let saved = model.settings?.combinedLayout ?? CombinedLayoutSettings()
+    let saved = model.settings.combinedLayout
     let names = candidates.map(\.name)
     included = CombinedLayoutRules.initialInclusion(exported: names, saved: saved)
     assignment = CombinedLayoutRules.assign(included, saved: saved)
