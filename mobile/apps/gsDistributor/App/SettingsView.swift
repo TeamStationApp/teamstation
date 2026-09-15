@@ -58,7 +58,7 @@ struct SettingsView: View {
       hostDraft = model.settings.peerTube.host ?? ""
       usernameDraft = model.settings.peerTube.username ?? ""
     }
-    .frame(width: 520, height: 480)
+    .frame(width: 560, height: 680)
   }
 
   // MARK: - PeerTube

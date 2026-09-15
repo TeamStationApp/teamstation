@@ -56,6 +56,12 @@ public struct PeerTubeChannelInfo: Codable, Equatable, Sendable {
   public var id: Int
   public var name: String
   public var displayName: String
+
+  public init(id: Int, name: String, displayName: String) {
+    self.id = id
+    self.name = name
+    self.displayName = displayName
+  }
 }
 
 public struct PeerTubeAccountInfo: Equatable, Sendable {
