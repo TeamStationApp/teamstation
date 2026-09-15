@@ -1,29 +1,17 @@
 import DistributorWire
 import Foundation
+// The service's routes take and return these types, so whoever imports DirectorLink gets them.
+@_exported import LoopbackHTTP
 
 /// Fans events out to every open `/v1/events` stream.
-public final class EventHub: @unchecked Sendable {
-  private let lock = NSLock()
-  private var subscribers: [UUID: @Sendable (DistributorEvent) -> Void] = [:]
+public typealias EventHub = JSONEventHub<DistributorEvent>
 
-  public init() {}
-
-  public func publish(_ event: DistributorEvent) {
-    let targets = lock.withLock { Array(subscribers.values) }
-    for target in targets {
-      target(event)
-    }
-  }
-
-  public var subscriberCount: Int { lock.withLock { subscribers.count } }
-
-  func subscribe(_ handler: @escaping @Sendable (DistributorEvent) -> Void) -> UUID {
-    let id = UUID()
-    lock.withLock { subscribers[id] = handler }
-    return id
-  }
-
-  func unsubscribe(_ id: UUID) {
-    _ = lock.withLock { subscribers.removeValue(forKey: id) }
+public extension LinkServer {
+  /// GS Director's link server, on the port GS Distributor looks for.
+  convenience init(
+    connectionsChanged: (@Sendable (Int) -> Void)? = nil,
+    handler: @escaping Handler
+  ) {
+    self.init(port: DistributorProtocol.port, connectionsChanged: connectionsChanged, handler: handler)
   }
 }

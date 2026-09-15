@@ -65,8 +65,8 @@ public final class DistributorService: Sendable {
   private let backend: any DistributorBackend
   private let roots: FileRoots
   private let settings: DistributorSettingsStore
-  /// The PeerTube account GS Director signs in to for GS Distributor. The password goes straight
-  /// to PeerTube and is not kept; the Mac only ever gets access tokens.
+  /// The PeerTube account GS Director signs in to for GS Distributor, with its own tokens; the Mac
+  /// signs in with its own too.
   private let peerTube: PeerTubeAccount
 
   public init(
@@ -189,10 +189,7 @@ public final class DistributorService: Sendable {
         } catch PeerTubeError.otpRequired {
           return .json(PeerTubeSignInResult.otpRequired)
         }
-        var saved = settings.load()
-        saved.peerTube.host = host
-        saved.peerTube.username = signIn.username
-        try settings.save(saved)
+        try rememberPeerTubeAccount(host: host, username: signIn.username)
         return .json(PeerTubeSignInResult.signedIn(account: signIn.username))
 
       case ("GET", "peertube") where route.count == 2 && route[1] == "token":
@@ -229,6 +226,15 @@ public final class DistributorService: Sendable {
     } catch {
       return .error(500, "\(error)")
     }
+  }
+
+  /// Notes the account in the settings, stamped as changed on the iPad.
+  private func rememberPeerTubeAccount(host: String, username: String) throws {
+    let before = settings.load()
+    var saved = before
+    saved.peerTube.host = host
+    saved.peerTube.username = username
+    try settings.save(saved.stampingChanges(from: before, by: SettingsStamp.iPad))
   }
 
   /// `primary,camera:<source id>,…`

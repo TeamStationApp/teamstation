@@ -155,6 +155,62 @@ struct ContinueExportTests {
     #expect(await director.lockRequests == 0)
   }
 
+  @Test("With no iPad attached, an export whose files are all here runs, combined video and all")
+  @MainActor
+  func noIPadAllHere() async throws {
+    let destination = try Self.temporary("no-ipad-all")
+    defer { try? FileManager.default.removeItem(at: destination) }
+    let saved = try Self.place(DistributionRun.filename(for: .primary, of: Self.recording), bytes: 5, in: destination)
+    try Self.place(DistributionRun.filename(for: .camera(Self.camera), of: Self.recording), bytes: 5, in: destination)
+    let combined = try Self.place(DistributionRun.combinedFilename(of: Self.recording), bytes: 7, in: destination)
+
+    let run = DistributionRun(
+      recording: Self.recording,
+      tracks: [ .primary, .camera(Self.camera) ],
+      connection: nil,
+      jobs: JobWatcher(),
+      destination: destination,
+      combined: CombinedPlan.automatic(for: Self.recording, tracks: [ .primary, .camera(Self.camera) ], saved: CombinedLayoutSettings())
+    ) { false }
+    await run.run()
+
+    #expect(run.isFinished)
+    #expect(run.states[.primary] == .done(saved))
+    #expect(run.combinedState == .done(combined))
+  }
+
+  @Test("With no iPad attached, a file not here says so, and what is here stays saved")
+  @MainActor
+  func noIPadFileMissing() async throws {
+    let destination = try Self.temporary("no-ipad-missing")
+    defer { try? FileManager.default.removeItem(at: destination) }
+    let saved = try Self.place(DistributionRun.filename(for: .primary, of: Self.recording), bytes: 5, in: destination)
+
+    let run = DistributionRun(
+      recording: Self.recording,
+      tracks: [ .primary, .camera(Self.camera) ],
+      connection: nil,
+      jobs: JobWatcher(),
+      destination: destination
+    ) { false }
+    await run.run()
+
+    #expect(run.isFinished)
+    #expect(run.states[.primary] == .done(saved))
+    #expect(run.states[.camera(Self.camera)] == .failed(DistributionRun.noIPad))
+  }
+
+  @Test("The automatic combined video takes the primary output first, can be narrowed, and needs two videos")
+  func automaticCombined() throws {
+    let both: [Track] = [ .primary, .camera(Self.camera) ]
+    let plan = try #require(CombinedPlan.automatic(for: Self.recording, tracks: both, saved: CombinedLayoutSettings(), audioCamera: "home"))
+    #expect(plan.inputs.map(\.name) == [ CombinedLayoutRules.primaryOutputName, "home" ])
+    #expect(Set(plan.frames.keys) == [ CombinedLayoutRules.primaryOutputName, "home" ])
+    #expect(plan.audioCamera == "home")
+    #expect(CombinedPlan.automatic(for: Self.recording, tracks: [ .primary ], saved: CombinedLayoutSettings()) == nil)
+    #expect(CombinedPlan.automatic(for: Self.recording, tracks: both, saved: CombinedLayoutSettings(), include: [ "home" ]) == nil)
+  }
+
   @Test("A file still on the iPad waits for it: the lock is refused, and what is already here stays saved")
   @MainActor
   func fileOnIPadWhileRecording() async throws {
