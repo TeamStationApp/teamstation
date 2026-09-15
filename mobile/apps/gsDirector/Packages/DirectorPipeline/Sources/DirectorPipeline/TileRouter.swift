@@ -565,6 +565,27 @@ public final class TileRouter: @unchecked Sendable {
   private var latencyCaps = FrameLatencyGate.Caps()
   public let clock: DirectorClock
 
+  /// The programme's own frame clock; see `ProgrammeClock`. Ticks on `programmeQueue`.
+  private var programmeClock = ProgrammeClock(recordingRate: 30, streamRate: 30)
+  private var recordingRate = 30
+  private var streamRate = 30
+  private var programmeTimer: DispatchSourceTimer?
+  private let programmeQueue = DispatchQueue(
+    label: "co.gamestation.director.programme-clock",
+    qos: .userInteractive
+  )
+  /// The newest composited programme picture, waiting for the programme clock.
+  private struct ProgramPicture {
+    let buffer: CVPixelBuffer
+    /// When the picture on air was captured; nil for a replay.
+    let captureWall: WallClock?
+    let sequence: UInt64
+  }
+  private var programPicture: ProgramPicture?
+  private var programPictureSequence: UInt64 = 0
+  /// The picture the recording last took, so a repeat can be told from a new one.
+  private var lastRecordedSequence: UInt64?
+
   public init(
     telemetry: PipelineTelemetry,
     converter: PixelConverter,
@@ -585,6 +606,79 @@ public final class TileRouter: @unchecked Sendable {
       programEncoder.append(audio: frame)
       programStreamer.append(audio: frame)
       audioPlayer.schedule(frame)
+    }
+    restartProgrammeClock()
+  }
+
+  deinit {
+    programmeTimer?.cancel()
+  }
+
+  // MARK: - The programme clock
+
+  /// The programme master's frame rate, from the take being recorded.
+  public func setRecordingRate(_ rate: Int) {
+    lock.lock()
+    recordingRate = max(1, rate)
+    lock.unlock()
+    restartProgrammeClock()
+  }
+
+  /// The stream's frame rate, from the stream settings.
+  public func setStreamRate(_ rate: Int) {
+    lock.lock()
+    streamRate = max(1, rate)
+    lock.unlock()
+    restartProgrammeClock()
+  }
+
+  private func restartProgrammeClock() {
+    lock.lock()
+    programmeClock = ProgrammeClock(recordingRate: recordingRate, streamRate: streamRate)
+    let rate = programmeClock.rate
+    programmeTimer?.cancel()
+    let period = DispatchTimeInterval.nanoseconds(Int(1_000_000_000 / Double(rate)))
+    let timer = DispatchSource.makeTimerSource(queue: programmeQueue)
+    timer.schedule(deadline: .now() + period, repeating: period, leeway: .milliseconds(1))
+    timer.setEventHandler { [weak self] in self?.programmeTick() }
+    programmeTimer = timer
+    lock.unlock()
+    timer.resume()
+  }
+
+  /// One tick of the programme clock: the newest picture goes to the recording when a recording
+  /// frame falls on this tick, and to the stream on every tick, each stamped with the clock's own
+  /// time. With nothing new since the last tick, the last picture goes again.
+  private func programmeTick() {
+    let now = Double(DispatchTime.now().uptimeNanoseconds) / 1_000_000_000
+    lock.lock()
+    guard let tick = programmeClock.tick(at: now), let picture = programPicture else {
+      lock.unlock()
+      return
+    }
+    let streamRate = programmeClock.streamRate
+    let recordingRate = programmeClock.recordingRate
+    var freshForRecording = false
+    if tick.recordingFrame != nil {
+      freshForRecording = picture.sequence != lastRecordedSequence
+      lastRecordedSequence = picture.sequence
+    }
+    lock.unlock()
+
+    if let frame = tick.recordingFrame, programEncoder.running {
+      // A repeat carries no capture time, so the encoder's anchors borrow the delay it last measured
+      // rather than reading a stall as the programme slipping further and further behind.
+      programEncoder.append(
+        picture.buffer,
+        presentationTime: CMTime(value: frame, timescale: CMTimeScale(recordingRate)),
+        captureWall: freshForRecording ? picture.captureWall : nil
+      )
+    }
+    if let frame = tick.streamFrame, programStreamer.running {
+      programStreamer.append(
+        picture.buffer,
+        presentationTime: CMTime(value: frame, timescale: CMTimeScale(streamRate))
+      )
     }
   }
 
@@ -772,12 +866,14 @@ public final class TileRouter: @unchecked Sendable {
     }
   }
 
-  /// Composites the programme frame and sends it to the preview tile as well as the
-/// file encoder and the RTMP streamer, each only while that output is running.
+  /// Composites a programme picture as it arrives, shows it on the preview tile, and leaves it for
+  /// the programme clock to encode.
   ///
   /// The compositing happens whether or not anything is recording, which is the point of the
   /// preview: the operator has to be able to see overlays sitting over the picture before
-  /// committing it to a file, not discover afterwards that it was mispositioned.
+  /// committing it to a file, not discover afterwards that it was mispositioned. The recording and
+  /// the stream take their frames on the programme clock instead of here, so a camera's delivery —
+  /// bursts, stalls, a frozen feed — never sets their timing.
   private func composeAndEncode(
     _ pixelBuffer: CVPixelBuffer,
     presentationTime: CMTime,
@@ -785,11 +881,9 @@ public final class TileRouter: @unchecked Sendable {
   ) {
     let composed = compositor?.compose(program: pixelBuffer) ?? pixelBuffer
     programRenderer.enqueue(pixelBuffer: composed, presentationTime: presentationTime)
-    if programEncoder.running {
-      programEncoder.append(composed, presentationTime: presentationTime, captureWall: captureWall)
-    }
-    if programStreamer.running {
-      programStreamer.append(composed, presentationTime: presentationTime)
-    }
+    lock.lock()
+    programPictureSequence &+= 1
+    programPicture = ProgramPicture(buffer: composed, captureWall: captureWall, sequence: programPictureSequence)
+    lock.unlock()
   }
 }

@@ -397,6 +397,9 @@ public final class AppEnvironment {
     // construction, and a frame gate that only took effect after the operator next opened Settings
     // would be off for the whole of the first session.
     self.router.setLatencyCaps(FrameLatencyGate.Caps(config: session))
+    // The programme clock's rates until a take or a stream says otherwise.
+    self.router.setRecordingRate(session.programFrameRate)
+    self.router.setStreamRate(session.streamFrameRate)
 
     do {
       try DirectorPaths.createAll()
@@ -570,6 +573,10 @@ public final class AppEnvironment {
     // A new part of the same programme file family. Losing it is not losing the take: the
     // per-camera archives are the part of a game that cannot be made again.
     do {
+      // The take's own programme settings, so a resumed part matches the parts before it.
+      let programme = (try? index.encoding(for: take.recordingID))?.programme ?? config.programEncoding
+      programEncoder.configure(programme)
+      router.setRecordingRate(programme.frameRate)
       try programEncoder.resume(
         startedAt: take.startedAt,
         nextPart: take.nextProgramPart,
@@ -1649,6 +1656,9 @@ public final class AppEnvironment {
     // Losing program output is not a failure of the recording: the per-camera archives are the
     // part of a game that cannot be re-created afterwards.
     do {
+      // The programme settings this take was recorded with, saved above with the take.
+      programEncoder.configure(config.programEncoding)
+      router.setRecordingRate(config.programFrameRate)
       try programEncoder.start(at: now)
       if let filename = programEncoder.outputURL?.lastPathComponent {
         try? index.setProgramFilename(filename, for: recordingID)
@@ -1699,6 +1709,7 @@ public final class AppEnvironment {
     beginLiveSession(streaming: true)
     let url = config.streamURL
     let session = config
+    router.setStreamRate(session.streamFrameRate)
     Task { [weak self] in
       guard let self else { return }
       do {
