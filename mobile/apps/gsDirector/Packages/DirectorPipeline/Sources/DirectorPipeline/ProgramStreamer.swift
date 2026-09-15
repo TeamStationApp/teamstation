@@ -54,6 +54,8 @@ public final class ProgramStreamer: @unchecked Sendable {
   private var sentVideoConfig = false
   private var sentAudioConfig = false
   private var sentMetadata = false
+  /// The timestamp of the last packet of sound sent, so the next is always after it.
+  private var lastAudioTimestamp: UInt32?
   private var clock = StreamEncodeClock()
   /// When this stream started, so the watchdog can tell "no keyframe yet" from "no keyframe for a
   /// while". Zero until `start`.
@@ -159,6 +161,7 @@ public final class ProgramStreamer: @unchecked Sendable {
     sentVideoConfig = false
     sentAudioConfig = false
     sentMetadata = false
+    lastAudioTimestamp = nil
     clock = StreamEncodeClock(frameRate: frameRate, gopSeconds: gopSeconds)
     pacer = StreamFramePacer(frameRate: frameRate)
     aac.reset()
@@ -530,16 +533,37 @@ public final class ProgramStreamer: @unchecked Sendable {
       lock.unlock()
       return
     }
-    let audioTime = clock.timeNow(now: now)
+    let newest = milliseconds(clock.timeNow(now: now))
+    let stamps = Self.audioTimestamps(count: packets.count, newest: newest, after: lastAudioTimestamp)
+    if let last = stamps.last { lastAudioTimestamp = last }
     lock.unlock()
 
-    let timestamp = milliseconds(audioTime)
     if !sentAudio {
-      client.sendAudio(timestampMs: timestamp, tag: FLVTag.audio(packetType: 0, payload: cookie))
+      client.sendAudio(timestampMs: stamps.first ?? newest, tag: FLVTag.audio(packetType: 0, payload: cookie))
     }
-    for packet in packets {
-      client.sendAudio(timestampMs: timestamp, tag: FLVTag.audio(packetType: 1, payload: packet))
+    for (packet, stamp) in zip(packets, stamps) {
+      client.sendAudio(timestampMs: stamp, tag: FLVTag.audio(packetType: 1, payload: packet))
     }
+  }
+
+  /// Timestamps, in milliseconds, for `count` packets of sound made from one buffer of the mix.
+  ///
+  /// One buffer can make several packets, and stamping them all with the moment they were sent put
+  /// two packets on one time, which a server reads as the sound stopping for a moment afterwards.
+  /// They are a packet apart instead, counting back from `newest` for the last of them, and none is
+  /// at or before `previous`, the one sent last: a packet that would be goes a packet after it.
+  static func audioTimestamps(count: Int, newest: UInt32, after previous: UInt32?) -> [UInt32] {
+    let packetMilliseconds = AACPacketizer.packetSeconds * 1000
+    var stamps: [UInt32] = []
+    var last = previous
+    for index in 0 ..< count {
+      let back = Double(count - 1 - index) * packetMilliseconds
+      var stamp = UInt32(max(0, (Double(newest) - back).rounded()))
+      if let last, stamp <= last { stamp = last + UInt32(packetMilliseconds.rounded(.down)) }
+      stamps.append(stamp)
+      last = stamp
+    }
+    return stamps
   }
 
   private func openEncoder() throws {
@@ -872,6 +896,8 @@ final class AACPacketizer: @unchecked Sendable {
   private(set) var audioSpecificConfig = Data([ 0x11, 0x90 ])
   private let channels = 2
   private let frameSamples = 1024
+  /// How long one packet of sound lasts: 1024 frames at 48 kHz.
+  static let packetSeconds = 1024.0 / 48_000
 
   func reset() {
     if let converter { AudioConverterDispose(converter) }
