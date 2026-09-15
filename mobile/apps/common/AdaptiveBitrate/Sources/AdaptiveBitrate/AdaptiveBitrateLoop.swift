@@ -27,16 +27,17 @@ public final class AdaptiveBitrateLoop: @unchecked Sendable {
   private var timer: DispatchSourceTimer?
 
   /// `sample` reports the worst playing client's link since it was last asked; `apply` hands a rate
-  /// to the encoder. Neither may block.
+  /// to the encoder. Neither may block. `tuning` is the controller's, kept across `configure`.
   public init(
     ceiling: Int,
     floor: Int? = nil,
+    tuning: AdaptiveBitrateController.Tuning = .init(),
     sample: @escaping @Sendable (@escaping @Sendable (CongestionSample?) -> Void) -> Void,
     apply: @escaping @Sendable (Int) -> Void
   ) {
     self.sample = sample
     self.apply = apply
-    controller = AdaptiveBitrateController(ceiling: ceiling, floor: floor)
+    controller = AdaptiveBitrateController(ceiling: ceiling, floor: floor, tuning: tuning)
     published = OSAllocatedUnfairLock(initialState: Status(enabled: false, controller: controller.status))
   }
 

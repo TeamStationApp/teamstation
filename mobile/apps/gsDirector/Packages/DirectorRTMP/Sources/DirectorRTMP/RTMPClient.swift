@@ -1,3 +1,4 @@
+import AdaptiveBitrate
 import Darwin
 import Foundation
 import Network
@@ -84,6 +85,8 @@ public final class RTMPClient: @unchecked Sendable {
   /// incremented where the work is submitted and decremented where it completes, so it sees the
   /// backlog in the dispatch queue as well as in the array.
   private var queuedBytes = 0
+  /// Every write in order and how much of it the socket has taken, for the bitrate controller.
+  private var ledger = RTMPSendLedger()
   private var sendBudgetBytes = RTMPClient.defaultSendBudgetBytes
   private var sendTimeoutSeconds: Double = 10
   /// What the video tags carry. Decides what `connect` and `onMetaData` announce, and whether an
@@ -123,6 +126,39 @@ public final class RTMPClient: @unchecked Sendable {
   /// programme bitrate so the budget tracks whatever the operator chose in Settings.
   public static func sendBudget(forBitrate bitrate: Int) -> Int {
     min(max(bitrate / 8, minimumSendBudgetBytes), maximumSendBudgetBytes)
+  }
+
+  /// The bitrate controller's tuning for an RTMP stream: `Tuning.rtmpStream`, which measures
+  /// delivery over half a second and makes the large cut at 200 ms of queue, so the first cut goes
+  /// straight to what the link carries while the queue is still a third of the send budget. The
+  /// budget stays the last resort, for a link that falls faster than any controller can follow.
+  public static let adaptiveBitrateTuning = AdaptiveBitrateController.Tuning.rtmpStream
+
+  /// What the link did since the previous call, in video's terms, for the bitrate controller: the
+  /// age of the oldest write the socket has not taken, the bytes it took and the media bytes
+  /// offered, the kernel's unsent bytes, and the packets the budget shed.
+  public func congestionSample(at now: Double = RTMPClient.monotonicNow()) -> CongestionSample {
+    lock.lock()
+    let fd = socketFD
+    lock.unlock()
+    let backlog = fd >= 0 ? Self.unsentBytes(fd: fd) : nil
+    lock.lock()
+    defer { lock.unlock() }
+    return ledger.sample(at: now, droppedPackets: droppedPackets, transportBacklogBytes: backlog)
+  }
+
+  /// The bytes the kernel holds for the socket that the peer has not acknowledged, from
+  /// `SO_NWRITE`: on TCP, what is queued plus what is in flight. Nil when it cannot be read.
+  static func unsentBytes(fd: Int32) -> Int? {
+    var value: Int32 = 0
+    var length = socklen_t(MemoryLayout<Int32>.size)
+    guard getsockopt(fd, SOL_SOCKET, SO_NWRITE, &value, &length) == 0 else { return nil }
+    return Int(max(0, value))
+  }
+
+  /// Seconds on a clock that does not jump, which the ledger stamps writes with.
+  public static func monotonicNow() -> Double {
+    ProcessInfo.processInfo.systemUptime
   }
 
   private static let commandChunk: UInt32 = 3
@@ -716,6 +752,7 @@ public final class RTMPClient: @unchecked Sendable {
       lock.unlock()
       return .notLive
     }
+    ledger.offered(bytes: payload.count, isAudio: !isVideo)
     let streamID = self.streamID
     let chunkSize = outChunkSize
     let isSequenceHeader = isVideo
@@ -755,6 +792,7 @@ public final class RTMPClient: @unchecked Sendable {
     // so counting any later than this cannot see a backlog at all.
     lock.lock()
     queuedBytes += data.count
+    ledger.submitted(bytes: data.count, at: Self.monotonicNow())
     lock.unlock()
     if DispatchQueue.getSpecific(key: Self.queueKey) != nil {
       enqueueAndFlush(data)
@@ -769,6 +807,7 @@ public final class RTMPClient: @unchecked Sendable {
     // when it ran must not resurrect either.
     guard phase != .failed else {
       queuedBytes = 0
+      ledger.clear()
       lock.unlock()
       return
     }
@@ -839,6 +878,7 @@ public final class RTMPClient: @unchecked Sendable {
     lock.lock()
     bytesSent += UInt64(sent)
     bytesThisWindow += UInt64(sent)
+    ledger.delivered(bytes: sent)
     refreshMegabitsLocked()
     lock.unlock()
   }
@@ -885,6 +925,7 @@ public final class RTMPClient: @unchecked Sendable {
     sendQueue.removeAll()
     isSending = false
     queuedBytes = 0
+    ledger.clear()
     awaitingKeyframe = false
     lock.unlock()
     readSource?.cancel()
@@ -933,6 +974,7 @@ public final class RTMPClient: @unchecked Sendable {
     sendBudgetBytes = budgetBytes
     self.sendTimeoutSeconds = sendTimeoutSeconds
     queuedBytes = 0
+    ledger = RTMPSendLedger()
     droppedPackets = 0
     awaitingKeyframe = false
     lock.unlock()

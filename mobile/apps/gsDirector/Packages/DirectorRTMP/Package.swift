@@ -7,9 +7,15 @@ let package = Package(
   products: [
     .library(name: "DirectorRTMP", targets: [ "DirectorRTMP" ])
   ],
+  dependencies: [
+    // The bitrate controller the stream shares with GS Cameraman's RTSP server; the client measures
+    // the link it judges by.
+    .package(path: "../../../common/AdaptiveBitrate")
+  ],
   targets: [
     .target(
       name: "DirectorRTMP",
+      dependencies: [ "AdaptiveBitrate" ],
       swiftSettings: [ .swiftLanguageMode(.v6) ]
     )
   ]

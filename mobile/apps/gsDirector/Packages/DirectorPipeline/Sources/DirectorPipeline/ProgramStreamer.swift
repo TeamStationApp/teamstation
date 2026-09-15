@@ -1,3 +1,4 @@
+import AdaptiveBitrate
 import AudioToolbox
 import CoreMedia
 import CoreVideo
@@ -16,12 +17,17 @@ import DirectorSources
 /// H.265 goes out in Enhanced RTMP, H.264 in classic FLV with the Baseline profile it always used.
 /// A composite of another size is scaled to the stream's, keeping its shape and letterboxing when the
 /// shapes differ.
+///
+/// The bitrate starts at the high end of the operator's range and moves inside it with the uplink:
+/// the adaptive bitrate controller GS Cameraman uses, fed from the RTMP client's own send queue.
 public final class ProgramStreamer: @unchecked Sendable {
   public struct Metrics: Sendable, Equatable {
     public var megabitsPerSecond: Double = 0
     public var droppedPackets: UInt64 = 0
     /// Bytes queued between this encoder and the socket.
     public var queuedBytes = 0
+    /// The bitrate controller, as it last decided.
+    public var rate = StreamRateTelemetry()
   }
 
   public typealias FailureHandler = @Sendable (String) -> Void
@@ -40,6 +46,8 @@ public final class ProgramStreamer: @unchecked Sendable {
   private var frameRate = 30
   private var gopSeconds = 2.0
   private var client: RTMPClient?
+  /// Moves the bitrate between the low and high settings; runs from `start` to `stop`.
+  private var rateLoop: AdaptiveBitrateLoop?
   private var session: VTCompressionSession?
   private var aac = AACPacketizer()
   private var isRunning = false
@@ -82,13 +90,31 @@ public final class ProgramStreamer: @unchecked Sendable {
   public var metrics: Metrics {
     lock.lock()
     let client = self.client
+    let loop = rateLoop
+    let codec = self.codec
     lock.unlock()
     let raw = client?.metrics ?? .init()
     return Metrics(
       megabitsPerSecond: raw.megabitsPerSecond,
       droppedPackets: raw.droppedPackets,
-      queuedBytes: raw.queuedBytes
+      queuedBytes: raw.queuedBytes,
+      rate: loop.map { Self.rateTelemetry($0.status.controller, codec: codec) } ?? StreamRateTelemetry()
     )
+  }
+
+  static func rateTelemetry(_ status: AdaptiveBitrateController.Status, codec: RTMPVideoCodec) -> StreamRateTelemetry {
+    var rate = StreamRateTelemetry()
+    rate.codec = codec.rawValue
+    rate.bitrate = status.bitrate
+    rate.low = status.floor
+    rate.high = status.ceiling
+    rate.lastDecision = status.lastDecision.rawValue
+    rate.queueMilliseconds = status.queueDelayMilliseconds
+    rate.deliveryBitsPerSecond = status.deliveryBitsPerSecond ?? 0
+    rate.transportBaseMilliseconds = status.transportBaseMilliseconds
+    rate.decreases = status.decreases
+    rate.increases = status.increases
+    return rate
   }
 
   public func start(urlString: String, config: AppConfig, onFailure: FailureHandler?) async throws {
@@ -113,6 +139,7 @@ public final class ProgramStreamer: @unchecked Sendable {
       self?.handleFailure(error.description)
     }
     markStarted(client)
+    startRateLoop(client: client)
     telemetry.recordEncodeSessionChange(delta: 1)
     do {
       try await client.publish(to: url)
@@ -171,6 +198,46 @@ public final class ProgramStreamer: @unchecked Sendable {
     lock.unlock()
   }
 
+  /// Starts the controller at the high bitrate, which is where the session already is. Until the
+  /// publish is live there is no link to judge, and the controller holds.
+  private func startRateLoop(client: RTMPClient) {
+    lock.lock()
+    let high = bitrateHigh
+    let low = bitrateLow
+    lock.unlock()
+    let loop = AdaptiveBitrateLoop(
+      ceiling: high,
+      floor: low,
+      tuning: RTMPClient.adaptiveBitrateTuning,
+      sample: { [weak client] reply in
+        guard let client, client.isLive else {
+          reply(nil)
+          return
+        }
+        reply(client.congestionSample())
+      },
+      apply: { [weak self] rate in self?.applyBitrate(rate) }
+    )
+    lock.lock()
+    rateLoop = loop
+    lock.unlock()
+    loop.configure(ceiling: high, floor: low, enabled: true)
+  }
+
+  /// A rate from the controller, onto the live session: the next frame is coded at it. A session
+  /// the watchdog rebuilds later opens at the same rate.
+  private func applyBitrate(_ rate: Int) {
+    lock.lock()
+    guard isRunning else {
+      lock.unlock()
+      return
+    }
+    bitrate = rate
+    let session = self.session
+    lock.unlock()
+    if let session { Self.setRate(rate, on: session) }
+  }
+
   private func markStarted(_ client: RTMPClient) {
     lock.lock()
     self.client = client
@@ -190,9 +257,12 @@ public final class ProgramStreamer: @unchecked Sendable {
     self.session = nil
     let client = self.client
     self.client = nil
+    let loop = rateLoop
+    rateLoop = nil
     pendingEncodes = 0
     lock.unlock()
     timer?.cancel()
+    loop?.stop()
     if let session {
       VTCompressionSessionCompleteFrames(session, untilPresentationTimeStamp: .invalid)
       VTCompressionSessionInvalidate(session)

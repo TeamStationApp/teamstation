@@ -8,6 +8,7 @@ let package = Package(
     .library(name: "DirectorPipeline", targets: [ "DirectorPipeline" ])
   ],
   dependencies: [
+    .package(path: "../../../common/AdaptiveBitrate"),
     .package(path: "../../common/DirectorCore"),
     .package(path: "../../common/DirectorSources"),
     .package(path: "../DirectorRTMP"),
@@ -16,7 +17,7 @@ let package = Package(
   targets: [
     .target(
       name: "DirectorPipeline",
-      dependencies: [ "DirectorCore", "DirectorSources", "DirectorRTMP", "DirectorTestHarness" ],
+      dependencies: [ "AdaptiveBitrate", "DirectorCore", "DirectorSources", "DirectorRTMP", "DirectorTestHarness" ],
       swiftSettings: [ .swiftLanguageMode(.v6) ]
     )
   ]
