@@ -66,11 +66,17 @@ public struct StreamStallPolicy: Sendable {
 
     // No keyframe since the stream started is overdue the same way a stale one is. Measuring only
     // from the last keyframe left a stream that never produced its first one with no watchdog.
+    //
+    // Overdue means half a GOP past when the encoder's own keyframe was due, not the moment it was
+    // due. At exactly one GOP the watchdog raced a regular keyframe that came a moment late: in the
+    // stress run of 2026-09-15 an IDR of the last picture went out beside the regular keyframe, two
+    // keyframes back to back and a timestamp 12 ms backwards, in a stream that was otherwise healthy.
+    let overdueAfter = gopSeconds * 1.5
     let keyframeOverdue: Bool
     if lastKeyframeWall > 0 {
-      keyframeOverdue = now - lastKeyframeWall >= gopSeconds
+      keyframeOverdue = now - lastKeyframeWall >= overdueAfter
     } else {
-      keyframeOverdue = startedWall > 0 && now - startedWall >= gopSeconds
+      keyframeOverdue = startedWall > 0 && now - startedWall >= overdueAfter
     }
     if hasLastFrame, keyframeOverdue { return .encodeIdleIDR }
 
