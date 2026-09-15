@@ -3,8 +3,8 @@ import Foundation
 /// Chooses the encoder's bitrate from what the link to the weakest client is doing.
 ///
 /// The operator's bitrate is the ceiling. When the link backs up the rate comes down, never below
-/// half the ceiling, and it climbs back once the link has been clean for a while. Below half, a
-/// softer picture stops being a better trade than the dropped frames it is there to prevent.
+/// the floor, and it climbs back once the link has been clean for a while. Below the floor, a softer
+/// picture stops being a better trade than the dropped frames it is there to prevent.
 ///
 /// Every signal is measured on the sender, because nothing comes back from Director: no receiver
 /// reports, and on TCP no loss. The rules and constants are taken from controllers built on the same
@@ -115,7 +115,10 @@ public struct AdaptiveBitrateController: Sendable {
 
   public let tuning: Tuning
   public private(set) var ceiling: Int
-  public var floor: Int { ceiling / 2 }
+  /// The lowest rate a cut may reach: the operator's own low bitrate where there is one, and half
+  /// the ceiling otherwise. Below the floor a softer picture stops being worth the dropped frames it
+  /// would save.
+  public private(set) var floor: Int
   /// Unrounded, so a slow climb is not lost to the quantum.
   private var target: Double
   /// What the encoder was last told.
@@ -139,14 +142,17 @@ public struct AdaptiveBitrateController: Sendable {
 
   public private(set) var status: Status
 
-  public init(ceiling: Int, tuning: Tuning = Tuning()) {
+  /// `floor` defaults to half the ceiling, and is kept between zero and the ceiling.
+  public init(ceiling: Int, floor: Int? = nil, tuning: Tuning = Tuning()) {
     self.tuning = tuning
     self.ceiling = ceiling
+    let floor = min(max(0, floor ?? ceiling / 2), ceiling)
+    self.floor = floor
     target = Double(ceiling)
     bitrate = ceiling
     status = Status(
       ceiling: ceiling,
-      floor: ceiling / 2,
+      floor: floor,
       bitrate: ceiling,
       lastDecision: .hold,
       decreases: 0,
@@ -159,9 +165,9 @@ public struct AdaptiveBitrateController: Sendable {
 
   /// Starts again at `ceiling`, forgetting everything measured. For a new operator rate, and for an
   /// encoder that has been rebuilt at the ceiling. The counts carry over: they describe the session.
-  public mutating func reset(ceiling: Int) {
+  public mutating func reset(ceiling: Int, floor: Int? = nil) {
     let counts = (status.decreases, status.increases)
-    self = AdaptiveBitrateController(ceiling: ceiling, tuning: tuning)
+    self = AdaptiveBitrateController(ceiling: ceiling, floor: floor, tuning: tuning)
     (status.decreases, status.increases) = counts
   }
 
@@ -174,8 +180,9 @@ public struct AdaptiveBitrateController: Sendable {
       // Nobody watching. Held rather than climbed, since there is no link to judge, but not held
       // for ever: a client arriving much later is on a link nothing has been measured about.
       if let last = lastSampleAt, now - last > tuning.idleReset, bitrate != ceiling {
-        let ceiling = ceiling
-        reset(ceiling: ceiling)
+        let (ceiling, floor) = (ceiling, floor)
+        // The operator's floor, not the default: going idle is not a new setting.
+        reset(ceiling: ceiling, floor: floor)
         return ceiling
       }
       return nil
