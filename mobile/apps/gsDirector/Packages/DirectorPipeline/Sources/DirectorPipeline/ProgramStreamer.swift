@@ -74,6 +74,13 @@ public final class ProgramStreamer: @unchecked Sendable {
   private let gopQueue = DispatchQueue(label: "co.gamestation.director.stream.gop")
   private var gopTimer: DispatchSourceTimer?
   private var lastEncodable: CVPixelBuffer?
+  /// Held from stamping a frame's time until the encoder has it, so frames reach the encoder in the
+  /// order they were stamped. The programme clock's frames and the watchdog's idle IDR come from
+  /// different threads, and a frame is stamped under `lock` but scaled and submitted after it: in
+  /// the stress run of 2026-09-15 an idle IDR stamped first was submitted second, and went out
+  /// 12 ms behind the frame before it. Never taken inside `lock`; the encoder's callback takes
+  /// only `lock`, so a submission blocked on a full encoder cannot hold up its own drain.
+  private let submitLock = NSLock()
   private var lastCallbackWall: CFAbsoluteTime = 0
   private var lastProgramFrameWall: CFAbsoluteTime = 0
   private var lastResetWall: CFAbsoluteTime = 0
@@ -336,6 +343,9 @@ public final class ProgramStreamer: @unchecked Sendable {
     forceKey: Bool?,
     isIdle: Bool
   ) {
+    // Frames reach the encoder in the order they are stamped; see `submitLock`.
+    submitLock.lock()
+    defer { submitLock.unlock() }
     lock.lock()
     guard isRunning, let session else {
       lock.unlock()
