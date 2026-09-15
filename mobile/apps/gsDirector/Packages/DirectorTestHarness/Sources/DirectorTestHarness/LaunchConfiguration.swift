@@ -84,6 +84,14 @@ public struct LaunchConfiguration: Sendable, Equatable {
   /// of driving the Settings stepper. Session-only, like `streamURL`.
   public var programBitrate: Int?
   public var programFrameRate: Int?
+  /// Stream encoder overlays, so a run can stream H.264 and H.265, at another size or rate, or in
+  /// another bitrate range, without touching the operator's Settings. Session-only, like
+  /// `streamURL`, and read when the stream starts.
+  public var streamCodec: ProgramCodec?
+  public var streamResolution: ProgramResolution?
+  public var streamFrameRate: Int?
+  public var streamBitrateLow: Int?
+  public var streamBitrateHigh: Int?
   /// How old a picture may be and still be shown, and still be kept. Session-only overlays, so a
   /// run can prove the caps bite without leaving a 10 ms display cap in the operator's Settings.
   /// Zero means off, which is how a run turns a cap back off again.
@@ -176,6 +184,7 @@ public struct LaunchConfiguration: Sendable, Equatable {
     if let value = values["programFrameRate"], let rate = Int(value), rate > 0 {
       configuration.programFrameRate = rate
     }
+    configuration.applyStreamOverlays(values)
     if let value = values["displayLatencyCap"], let cap = Double(value), cap >= 0 {
       configuration.displayLatencyCapMilliseconds = cap
     }
@@ -218,6 +227,7 @@ public struct LaunchConfiguration: Sendable, Equatable {
     if let value = queryItems["programFrameRate"], let rate = Int(value), rate > 0 {
       programFrameRate = rate
     }
+    applyStreamOverlays(queryItems)
     if let value = queryItems["displayLatencyCap"], let cap = Double(value), cap >= 0 {
       displayLatencyCapMilliseconds = cap
     }
@@ -227,6 +237,25 @@ public struct LaunchConfiguration: Sendable, Equatable {
     if let value = queryItems["resumeLimit"], let seconds = Double(value), seconds > 0 {
       resumeDowntimeLimitSeconds = seconds
     }
+  }
+
+  /// `streamCodec` (`h264` or `hevc`), `streamResolution` (`1280x720`), `streamFrameRate`, and
+  /// `streamBitrateLow` / `streamBitrateHigh` in bits per second.
+  mutating func applyStreamOverlays(_ values: [String: String]) {
+    if let raw = values["streamCodec"]?.lowercased() {
+      if let codec = ProgramCodec(rawValue: raw.replacingOccurrences(of: "h265", with: "hevc")) {
+        streamCodec = codec
+      }
+    }
+    if let raw = values["streamResolution"]?.lowercased() {
+      let parts = raw.split(separator: "x").compactMap { Int($0) }
+      if parts.count == 2, parts[0] > 0, parts[1] > 0 {
+        streamResolution = ProgramResolution(width: parts[0], height: parts[1])
+      }
+    }
+    if let value = values["streamFrameRate"], let rate = Int(value), rate > 0 { streamFrameRate = rate }
+    if let value = values["streamBitrateLow"], let rate = Int(value), rate > 0 { streamBitrateLow = rate }
+    if let value = values["streamBitrateHigh"], let rate = Int(value), rate > 0 { streamBitrateHigh = rate }
   }
 
   /// Names of every key understood here, surfaced in the HUD so a failing flow shows what the
@@ -240,7 +269,8 @@ public struct LaunchConfiguration: Sendable, Equatable {
     "rtspTransport", "rtspHosts", "rtspPath", "rtspScan", "streamURL",
     "programBitrate", "programFrameRate", "displayLatencyCap", "diskLatencyCap", "resumeLimit",
     "ndiSources", "ndiExtraIPs", "ndiBandwidth", "ndiLocalSources", "ndiRudp",
-    "sourceEncodeCodec", "sourceEncodeBitrate", "sourceEncodeLimit"
+    "sourceEncodeCodec", "sourceEncodeBitrate", "sourceEncodeLimit",
+    "streamCodec", "streamResolution", "streamFrameRate", "streamBitrateLow", "streamBitrateHigh"
   ]
 
   /// Semicolon as well as comma: Maestro `-e KEY=a,b` keeps only `a`, which left the M4 farm
