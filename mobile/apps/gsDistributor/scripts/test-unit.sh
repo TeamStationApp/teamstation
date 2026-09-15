@@ -12,6 +12,7 @@ PACKAGES=(
   "$DISTRIBUTOR_ROOT/Packages/DirectorClient"
   "$DISTRIBUTOR_ROOT/Packages/Distribution"
   "$DISTRIBUTOR_ROOT/Packages/CombinedVideo"
+  "$DISTRIBUTOR_ROOT/Packages/MacState"
   "$APPS/common/DistributorWire"
   "$APPS/common/LoopbackHTTP"
   "$APPS/common/PeerTubeKit"
