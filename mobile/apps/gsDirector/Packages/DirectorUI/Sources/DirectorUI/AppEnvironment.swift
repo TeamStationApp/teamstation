@@ -1,6 +1,7 @@
 import AVFoundation
 import Foundation
 import Observation
+import os
 // Only the level enum: CameramanCore also has a `ProcessLoad`, which would collide with DirectorPipeline's.
 import enum CameramanCore.ThermalBadgeLevel
 import CameramanRemote
@@ -264,6 +265,9 @@ public final class AppEnvironment {
   /// The named-camera cache, shared with discovery so both agree on which camera is which.
   public let cameras: CameraRegistry
   private let configStore: ConfigStore
+  /// What an export encodes a take with when the take has no encoding of its own: this session's
+  /// settings as they are now. Behind a lock because exports read it off the main actor.
+  private let exportFallbackEncoding: OSAllocatedUnfairLock<TakeEncoding>
   private let stateDumper = StateDumper()
   private var controlServer: ControlServer?
   /// GS Distributor's way in: a loopback server the Mac reaches over the cable.
@@ -412,7 +416,9 @@ public final class AppEnvironment {
     }
     self.proxyReader = ProxyReader(index: index)
     self.assembler = SegmentAssembler(index: index)
-    self.exporter = ExportService(index: index)
+    let fallbackEncoding = OSAllocatedUnfairLock(initialState: session.takeEncoding)
+    self.exportFallbackEncoding = fallbackEncoding
+    self.exporter = ExportService(index: index, fallbackEncoding: { fallbackEncoding.withLock { $0 } })
     self.retention = RetentionPolicy(index: index)
 
     telemetry.mutate { [sourceProfile] snapshot in
@@ -3529,6 +3535,8 @@ public final class AppEnvironment {
     session.showDebugHUD = newConfig.showDebugHUD
     let sweptSubnetChanged = config.activeScanSubnets != session.activeScanSubnets
     config = session
+    let fallbackEncoding = session.takeEncoding
+    exportFallbackEncoding.withLock { $0 = fallbackEncoding }
     applyDisplayLatencyCap()
     SubnetScanner.setOverrideSubnets(networkAddresses: session.activeScanSubnets)
     // A new subnet to sweep should be looked at now, not whenever the next sweep comes due.

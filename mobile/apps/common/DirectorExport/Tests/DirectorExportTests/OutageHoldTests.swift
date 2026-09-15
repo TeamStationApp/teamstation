@@ -7,17 +7,26 @@ import Testing
 
 /// A hold long enough to be a real outage.
 ///
-/// The freeze is one sample stretched over the hole, which is cheap and exact for the gaps the
-/// other tests use — seconds. An app that was shut down and picked up again half an hour later
-/// asks the same mechanism to stretch one picture over half an hour, and "it works for nine
-/// seconds" says nothing about that. This is the case the resume feature makes ordinary.
+/// An app that was shut down and picked up again half an hour later leaves half an hour with no
+/// pictures in every camera, and the export repeats the last picture before the hole as a real frame
+/// at the output's rate all the way across it. That is 54,000 frames here, and "it works for nine
+/// seconds" says nothing about whether half an hour of them comes out right, or in reasonable time.
+/// This is the case the resume feature makes ordinary.
 @Suite("Outage hold", .serialized)
 struct OutageHoldTests {
   private static let width = 320
   private static let height = 240
   private static let fps = 30.0
+  /// Small, so the test measures the cost of a frame rather than of a big one.
+  private static let encoding = EncodeSettings(
+    codec: .h264,
+    resolution: ProgramResolution(width: width, height: height),
+    frameRate: 30,
+    bitrate: 1_000_000,
+    keyframeSeconds: 2
+  )
 
-  @Test("A half-hour hole is held, and the file is as long as the take")
+  @Test("A half-hour hole is repeated frame by frame, the file is as long as the take, and it stays quick")
   func halfAnHourOfHold() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent("outage-hold-\(UUID().uuidString)", isDirectory: true)
@@ -38,22 +47,33 @@ struct OutageHoldTests {
     let destination = root.appendingPathComponent("export.mp4")
 
     let started = Date()
-    try await ArchiveRemux.concatenate(
+    try await ArchiveRemux.stitch(
       files: [before, after],
       fileDurations: [2, 2],
-      targetDuration: takeSeconds,
       startWalls: [takeStart, takeStart + (2 + outage)],
       windowStart: takeStart,
+      length: takeSeconds,
+      settings: Self.encoding,
       destination: destination
     )
     let elapsed = Date().timeIntervalSince(started)
 
     let duration = try await AVURLAsset(url: destination).load(.duration).seconds
-    #expect(abs(duration - takeSeconds) < 2, "exported \(duration)s, expected \(takeSeconds)s")
+    #expect(abs(duration - takeSeconds) < 0.05, "exported \(duration)s, expected \(takeSeconds)s")
 
-    // Stretching one sample is an edit, not thirty minutes of encoding. If this ever becomes a
-    // per-frame fill it will show up here long before it shows up on a recording.
-    #expect(elapsed < 60, "remuxing a half-hour hold took \(elapsed)s")
+    // Real frames all the way across: one sample per frame of the take, none longer than a frame.
+    // A held sample would show up here as one sample half an hour long.
+    let times = try await TestMovie.videoPresentationTimes(of: destination).sorted()
+    #expect(abs(times.count - Int(takeSeconds * Self.fps)) <= 1, "\(times.count) frames")
+    let longest = zip(times, times.dropFirst()).map { $1 - $0 }.max() ?? 0
+    #expect(longest <= 1 / Self.fps + 0.001, "a sample lasts \(longest) s")
+
+    // A repeated picture costs an append and almost no bits. Measured on an M-series Mac, the
+    // 54,000 frames of this take encode in about 10 s (5,000+ fps at this size) and the file is
+    // under 10 MB. A minute leaves room for a slow simulator or a loaded machine, while a stitch
+    // that did per-frame pixel work for a repeat, or re-read the source for each one, runs to
+    // several minutes and fails here long before it shows on a recording.
+    #expect(elapsed < 60, "stitching a half-hour hold took \(elapsed)s")
 
     // The hole holds the picture from before it, at both ends and in the middle, and the file
     // comes back to the second camera's picture afterwards.

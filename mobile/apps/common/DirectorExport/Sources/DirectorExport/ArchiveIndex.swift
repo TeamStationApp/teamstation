@@ -823,6 +823,12 @@ public final class ArchiveIndex: @unchecked Sendable {
 
     /// Wall clock this part's timeline begins at, which is what places it in an export.
     public var partStartWall: WallClock { wall - programSeconds }
+
+    public init(part: Int, programSeconds: Double, wall: WallClock) {
+      self.part = part
+      self.programSeconds = programSeconds
+      self.wall = wall
+    }
   }
 
   @discardableResult
@@ -871,20 +877,35 @@ public final class ArchiveIndex: @unchecked Sendable {
   /// the anchors within a quarter of a second of its earliest tenth -- on a take whose anchors are
   /// all honest, that is nearly all of them.
   public func programPartStarts(recordingID: Int64) throws -> [Int: WallClock] {
+    Self.partStarts(try programAnchors(recordingID: recordingID))
+  }
+
+  /// `programPartStarts` over anchors already read.
+  public static func partStarts(_ anchors: [ProgramAnchor]) -> [Int: WallClock] {
     var starts: [Int: [Double]] = [:]
-    for anchor in try programAnchors(recordingID: recordingID) {
+    for anchor in anchors {
       starts[anchor.part, default: []].append(anchor.partStartWall.seconds)
     }
-    return starts.mapValues { values in
-      let sorted = values.sorted()
-      let floor = sorted[sorted.count / 10]
-      let agreeing = sorted.filter { $0 <= floor + Self.anchorAgreementSeconds }
-      let middle = agreeing.count / 2
-      let median = agreeing.count % 2 == 1
-        ? agreeing[middle]
-        : (agreeing[middle - 1] + agreeing[middle]) / 2
-      return WallClock(seconds: median)
+    return starts.compactMapValues { values in
+      partStart(implied: values).map { WallClock(seconds: $0.seconds) }
     }
+  }
+
+  /// Where one part starts, from the start each of its anchors implies, and how many of those
+  /// anchors agree with it; nil for no anchors.
+  ///
+  /// The median of the anchors within `anchorAgreementSeconds` of the earliest tenth. The count is
+  /// how many were within it, which is every anchor on a take whose anchors all tell the same story.
+  static func partStart(implied values: [Double]) -> (seconds: Double, agreeing: Int)? {
+    guard !values.isEmpty else { return nil }
+    let sorted = values.sorted()
+    let floor = sorted[sorted.count / 10]
+    let agreeing = sorted.filter { $0 <= floor + Self.anchorAgreementSeconds }
+    let middle = agreeing.count / 2
+    let median = agreeing.count % 2 == 1
+      ? agreeing[middle]
+      : (agreeing[middle - 1] + agreeing[middle]) / 2
+    return (median, agreeing.count)
   }
 
   /// How far apart anchors may be and still count as agreeing about where their part starts.

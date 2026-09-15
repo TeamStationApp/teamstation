@@ -111,9 +111,10 @@ struct ArchiveTimelineTests {
     #expect(encoder.outputURLs.count == 2)
 
     let destination = root.appendingPathComponent("out.mp4")
-    try await ArchiveRemux.concatenate(
+    try await ArchiveRemux.stitch(
       files: encoder.outputURLs,
       fileDurations: encoder.outputURLs.map { _ in 0 },
+      settings: .archiveTimelineTest,
       destination: destination
     )
     let duration = try await AVURLAsset(url: destination).load(.duration)
@@ -355,15 +356,27 @@ struct ArchiveTimelineTests {
     #expect(snapshot.dvr.lastError?.contains("program writer") == true)
 
     let destination = root.appendingPathComponent("out.mp4")
-    try await ArchiveRemux.concatenate(
+    try await ArchiveRemux.stitch(
       files: encoder.outputURLs,
       fileDurations: encoder.outputURLs.map { _ in 0 },
-      targetDuration: 9,
+      length: 9,
+      settings: .archiveTimelineTest,
       destination: destination
     )
     let duration = try await AVURLAsset(url: destination).load(.duration)
     #expect(abs(duration.seconds - 9) < 0.6)
   }
+}
+
+extension EncodeSettings {
+  /// The fixtures' own 160x120, so a stitched file's brightness is the fixture's, with no bars.
+  fileprivate static let archiveTimelineTest = EncodeSettings(
+    codec: .h264,
+    resolution: ProgramResolution(width: 160, height: 120),
+    frameRate: 30,
+    bitrate: 1_000_000,
+    keyframeSeconds: 1
+  )
 }
 
 final class FixedClock: DirectorClock, @unchecked Sendable {
@@ -518,9 +531,10 @@ private final class TimelineHarness {
       to: WallClock(seconds: 10_000)
     )
     let destination = root.appendingPathComponent("out.mp4")
-    try await ArchiveRemux.concatenate(
+    try await ArchiveRemux.stitch(
       files: assembly.files,
       fileDurations: assembly.fileDurations,
+      settings: .archiveTimelineTest,
       destination: destination
     )
     return destination

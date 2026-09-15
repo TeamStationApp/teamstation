@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import DirectorCore
 
 /// Small H.264 movies for export tests: real files AVFoundation can remux, made in a few
 /// milliseconds each.
@@ -7,6 +8,15 @@ enum TestMovie {
   static let width = 320
   static let height = 180
   static let fps = 30.0
+
+  /// These movies' own size and rate, so a stitch of them costs as little as a stitch can.
+  static let encoding = EncodeSettings(
+    codec: .h264,
+    resolution: ProgramResolution(width: width, height: height),
+    frameRate: 30,
+    bitrate: 1_000_000,
+    keyframeSeconds: 1
+  )
 
   /// `frames` frames of flat grey at 30 fps, creating the parent directory as needed.
   static func write(to url: URL, frames: Int) async throws {
