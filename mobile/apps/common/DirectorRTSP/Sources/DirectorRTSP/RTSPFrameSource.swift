@@ -114,6 +114,16 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
   /// What this camera is actually sending, measured from its own RTP timestamps. Nothing in RTSP
   /// states it, and replay pacing depends on it.
   private var frameRateEstimator = FrameRateEstimator()
+  /// The rate the camera says it is set to. It outranks the measurement: a GS Cameraman states its
+  /// frame rate over its control channel, and a stated rate is exact from the first picture, where a
+  /// measurement needs a window of pictures and can be thrown by a stall.
+  private var announcedFrameRate: Double?
+
+  public func setAnnouncedFrameRate(_ rate: Double?) {
+    lock.lock()
+    announcedFrameRate = rate.flatMap { $0 > 0 && $0.isFinite ? $0 : nil }
+    lock.unlock()
+  }
   private var connectionCount = 0
   private var stats = ReceiveStats()
   private var failedAttempts = 0
@@ -442,7 +452,8 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     resolvedFormat = SourceFormat(
       width: resolvedFormat?.width ?? 0,
       height: resolvedFormat?.height ?? 0,
-      frameRate: frameRateEstimator.frameRate
+      frameRate: announcedFrameRate
+        ?? frameRateEstimator.frameRate
         ?? resolvedFormat?.frameRate
         ?? Self.assumedFrameRate,
       pixelFormat: VideoToolboxDecoder.outputPixelFormat,
@@ -567,7 +578,7 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
   /// How many coded pictures the delay line may hold, at the rate this camera is sending. Called
   /// with `lock` held.
   private func pictureQueueCapacityLocked() -> Int {
-    let rate = frameRateEstimator.frameRate ?? Self.assumedFrameRate
+    let rate = announcedFrameRate ?? frameRateEstimator.frameRate ?? Self.assumedFrameRate
     return Int((rate * Self.pictureQueueSeconds).rounded(.up))
   }
 
@@ -671,7 +682,8 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     resolvedFormat = SourceFormat(
       width: CVPixelBufferGetWidth(pixelBuffer),
       height: CVPixelBufferGetHeight(pixelBuffer),
-      frameRate: frameRateEstimator.frameRate
+      frameRate: announcedFrameRate
+        ?? frameRateEstimator.frameRate
         ?? resolvedFormat?.frameRate
         ?? Self.assumedFrameRate,
       pixelFormat: CVPixelBufferGetPixelFormatType(pixelBuffer),

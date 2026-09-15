@@ -3841,6 +3841,39 @@ public final class AppEnvironment {
   private func startPolling() {
     pollInterval = 0
     schedulePollTimer(Self.livePollInterval)
+    startAnnouncedFrameRateRefresh()
+  }
+
+  /// Asks each GS Cameraman on the board what frame rate it is set to, every so often, so replay
+  /// pacing and the delay line run on the phone's own number rather than one measured from its
+  /// timestamps. See `CameraFrameRateQuery`.
+  @ObservationIgnored private var announcedRateTask: Task<Void, Never>?
+  private static let announcedRateInterval: Duration = .seconds(15)
+
+  private func startAnnouncedFrameRateRefresh() {
+    guard announcedRateTask == nil else { return }
+    announcedRateTask = Task { [weak self] in
+      while !Task.isCancelled {
+        await self?.refreshAnnouncedFrameRates()
+        try? await Task.sleep(for: Self.announcedRateInterval)
+      }
+    }
+  }
+
+  private func refreshAnnouncedFrameRates() async {
+    for pipeline in router.activePipelines {
+      guard controlAdvertisement(for: pipeline.sourceID)?.isControllable == true,
+            let endpoint = controlEndpoint(for: pipeline.sourceID)
+      else { continue }
+      // A phone that misses one query keeps the rate it gave last time.
+      if let rate = await CameraFrameRateQuery.frameRate(
+        host: endpoint.host,
+        port: endpoint.port,
+        path: endpoint.path
+      ) {
+        pipeline.setAnnouncedFrameRate(rate)
+      }
+    }
   }
 
   private func schedulePollTimer(_ interval: TimeInterval) {

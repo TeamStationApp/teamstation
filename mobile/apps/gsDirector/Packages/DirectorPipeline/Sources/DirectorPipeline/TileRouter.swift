@@ -229,6 +229,14 @@ public final class SourcePipeline: @unchecked Sendable {
     source.setArchiving(sink != nil)
   }
 
+  /// The frame rate the camera says it is set to; see `FrameSource.setAnnouncedFrameRate`.
+  public func setAnnouncedFrameRate(_ rate: Double?) {
+    lock.lock()
+    let source = self.source
+    lock.unlock()
+    source.setAnnouncedFrameRate(rate)
+  }
+
   public func setProxy(_ sink: ProxySink?) {
     lock.lock()
     proxy = sink
