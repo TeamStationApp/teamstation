@@ -51,6 +51,12 @@ struct ProgramStreamerConfigurationTests {
     #expect(RTMPClient.sendBudget(forBitrate: 1_000_000) == 512 * 1024)
   }
 
+  @Test("A second may reach half again the rate, and the next pays it back")
+  func spikeLimits() {
+    // 6 Mbps is 750 000 bytes a second: up to 1 125 000 in any one second, 1 875 000 in any two.
+    #expect(ProgramStreamer.dataRateLimits(forBitrate: 6_000_000) == [ 1_125_000, 1, 1_875_000, 2 ])
+  }
+
   @Test("H.265 keyframes are any IRAP picture; H.264's are type 5")
   func hevcKeyframes() {
     // NAL header byte 0 carries the type in bits 1-6: IDR_W_RADL (19) is 0x26, CRA (21) is 0x2A,
