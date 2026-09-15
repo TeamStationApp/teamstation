@@ -1,5 +1,5 @@
-import DirectorLink
 import Foundation
+import LoopbackHTTP
 import Testing
 
 @Suite("HTTP messages")

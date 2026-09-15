@@ -1,13 +1,21 @@
-import DirectorLink
 import Foundation
+import LoopbackHTTP
 import Testing
+
+/// Connection counts as the server reports them.
+final class CountLog: @unchecked Sendable {
+  private let lock = NSLock()
+  private var log: [Int] = []
+  func append(_ count: Int) { lock.withLock { log.append(count) } }
+  var values: [Int] { lock.withLock { log } }
+}
 
 @Suite("Link server hang-ups", .serialized)
 struct LinkServerHangUpTests {
   @Test("A client hanging up on its event stream no longer counts as connected")
   func eventStreamHangUp() async throws {
     let counts = CountLog()
-    let hub = EventHub()
+    let hub = JSONEventHub<String>()
     let server = LinkServer(port: 0, connectionsChanged: { counts.append($0) }) { request in
       request.path.hasSuffix("/events") ? .events(hub) : .ok
     }

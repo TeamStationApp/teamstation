@@ -13,12 +13,13 @@ let package = Package(
     .package(path: "../../../common/DirectorCore"),
     .package(path: "../../../common/DirectorExport"),
     .package(path: "../../../common/DistributorWire"),
+    .package(path: "../../../common/LoopbackHTTP"),
     .package(path: "../../../common/PeerTubeKit")
   ],
   targets: [
     .target(
       name: "DirectorLink",
-      dependencies: [ "DirectorCore", "DirectorExport", "DistributorWire", "PeerTubeKit" ],
+      dependencies: [ "DirectorCore", "DirectorExport", "DistributorWire", "LoopbackHTTP", "PeerTubeKit" ],
       swiftSettings: [ .swiftLanguageMode(.v6) ]
     ),
     .testTarget(

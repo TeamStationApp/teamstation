@@ -12,6 +12,7 @@ without reaching into another app's `Packages`.
 | `DirectorRTSP` | RTSP client, RTP depacketizers, VideoToolbox decode, AWX browse, subnet probe |
 | `CameramanCore` | Cameraman's pure types: zoom mapping, lenses, stream settings, format catalogue, thermal level, and the `CameraControlling` seam |
 | `CameramanControlUI` | Cameraman's operating screen, Settings sheet, zoom rail, thermal and battery pills, generic over `CameraControlling` |
+| `LoopbackHTTP` | A small HTTP/1.1 server bound to loopback (`LinkServer`), its request parser and responses, and `JSONEventHub` for newline-delimited event streams. GS Director's link to GS Distributor (`DirectorLink`) is built on it |
 | `CameramanRemote` | `RemoteCameraControl`: `CameraControlling` over RTSP `GET_PARAMETER` / `SET_PARAMETER`, polling at 1 Hz with coalesced writes |
 
 Swift module names stay as listed; `CameramanCore` kept its name on the move
