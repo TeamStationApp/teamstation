@@ -15,7 +15,7 @@ appId: co.gamestation.cameraman
 # HEVC is the default: the same picture at two thirds the rate, which is what lets four cameras
 # share a match-day Wi-Fi.
 - assertVisible:
-    text: "Bitrate  4.0 Mbps"
+    text: "Bitrate  2.0–4.0 Mbps"
 
 - tapOn:
     id: "settings-codec-h264"
@@ -36,6 +36,6 @@ appId: co.gamestation.cameraman
 - tapOn:
     id: "settings-codec-hevc"
 - assertVisible:
-    text: "Bitrate  4.0 Mbps"
+    text: "Bitrate  2.0–4.0 Mbps"
 - tapOn:
     id: "settings-done"
