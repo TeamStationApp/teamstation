@@ -45,10 +45,13 @@ struct ProgramStreamerConfigurationTests {
     #expect(streamer.configurationForTesting(config).codec == .h264)
   }
 
-  @Test("The send budget is a second of the high bitrate")
+  @Test("The send buffer holds eight seconds of the high bitrate, with room for its spikes")
   func budgetFromHigh() {
-    #expect(RTMPClient.sendBudget(forBitrate: 6_000_000) == 750_000)
-    #expect(RTMPClient.sendBudget(forBitrate: 1_000_000) == 512 * 1024)
+    #expect(RTMPClient.sendBufferSeconds == 8)
+    // 6 Mbps is 750 000 bytes a second: eight seconds of it at half again the rate.
+    #expect(RTMPClient.sendBudget(forBitrate: 6_000_000) == 9_000_000)
+    #expect(RTMPClient.sendBudget(forBitrate: 10_000_000) == 15_000_000)
+    #expect(RTMPClient.sendBudget(forBitrate: 100_000) == 512 * 1024)
   }
 
   @Test("A second may reach half again the rate, and the next pays it back")

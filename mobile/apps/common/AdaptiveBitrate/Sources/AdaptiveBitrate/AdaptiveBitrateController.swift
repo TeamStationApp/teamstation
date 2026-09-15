@@ -91,27 +91,42 @@ public struct AdaptiveBitrateController: Sendable {
     /// How far back the transport's base delay is remembered: LEDBAT's base delay (RFC 6817) and
     /// BBR's minimum round trip both use a window of about ten seconds.
     public var baseDelayWindow = 10.0
+    /// A link that carried less than this share of the current rate over the delivery window was
+    /// stalled rather than slow, and what it carried says nothing about what it can: a cut then takes
+    /// its fixed step instead of going to the measured rate. Zero, the default, always takes the
+    /// measurement at its word.
+    public var stallShare = 0.0
+    /// Whether a queue the link is already emptying is left alone. The queue's age goes on rising
+    /// after a cut until the backlog from before it has gone, so a sender that cuts on age alone keeps
+    /// cutting a link that now carries more than it is given. Off by default, where a quarter-second
+    /// of queue is itself the problem.
+    public var holdWhileDraining = false
 
     public init() {}
 
-    /// GS Director's RTMP stream, which differs from the defaults in two places, both so the first
-    /// large cut lands sooner and at the right rate.
+    /// GS Director's RTMP stream, which has seconds of room where a camera has a fraction of one.
     ///
-    /// The stream's hard limit is not a viewer's patience but the RTMP client's send budget, about a
-    /// second of the high bitrate, past which video is shed. With a one-second delivery window the
-    /// controller has no delivery rate for its first second, so an emergency then can only take 30%
-    /// off, which on a link carrying half the rate leaves the queue growing until a second cut. Half
-    /// a second of delivery is enough to cut straight to what the link carries, which is OBS's rule,
-    /// and 200 ms of queue is OBS's own threshold.
+    /// Nobody watches the stream against the field: a platform's player sits 5–20 s behind, so the
+    /// RTMP client holds `RTMPClient.sendBufferSeconds` (8 s) of stream before it sheds anything, and
+    /// a dip in the link is better sent late than dropped or coded softer. The thresholds follow that
+    /// room rather than the camera's half-second display: a queue has to reach a second before it is
+    /// trimmed, a second and a half before the rate goes to what the link carries, and five seconds
+    /// before the large cut, which leaves three for the backlog to drain before anything is shed. A
+    /// queue that is merely late costs the viewer nothing; a cut costs them picture for the 10–15 s
+    /// the climb back takes.
     ///
-    /// Measured on 2026-09-14 against a socket read at half the high bitrate (4 Mbps into 2), with the
-    /// RTMP client's real send path, three runs each: the queue peaked at 34% of the budget over a
-    /// Unix socket pair and 38% over loopback TCP, against 46–52% and 65–66% with the defaults, and
-    /// the first cut over TCP came at 2.0 s rather than 2.75 s. Nothing was shed with either.
+    /// A stall, the link carrying almost nothing as Wi-Fi does for a second or three, is not a rate:
+    /// cutting to what it carried would put the stream on the floor for a dip it could have ridden
+    /// out, so below a tenth of the rate the cut takes its fixed step. And once the link carries more
+    /// than the encoder makes, the queue is left to drain.
     public static let rtmpStream: Tuning = {
       var tuning = Tuning()
-      tuning.deliveryWindow = 0.5
-      tuning.emergencyDelay = 0.2
+      tuning.clearDelay = 0.25
+      tuning.growingDelay = 1.0
+      tuning.congestedDelay = 1.5
+      tuning.emergencyDelay = 5.0
+      tuning.stallShare = 0.1
+      tuning.holdWhileDraining = true
       return tuning
     }()
   }
@@ -220,13 +235,14 @@ public struct AdaptiveBitrateController: Sendable {
     let lost = sample.droppedFrames + sample.flushes > 0
     if lost { lastLossAt = now }
 
-    let decision = decide(delay: delay, appDelay: sample.queueDelay, lost: lost, now: now)
+    let decision = decide(delay: delay, appDelay: sample.queueDelay, lost: lost, draining: isDraining(), now: now)
+    let cutDelivery = self.cutDelivery()
     switch decision {
     case .emergency:
-      cut(to: min(target * tuning.emergencyFactor, delivery.map { $0 * tuning.deliveryFactor } ?? .infinity), now: now)
+      cut(to: min(target * tuning.emergencyFactor, cutDelivery.map { $0 * tuning.deliveryFactor } ?? .infinity), now: now)
       lastEmergencyAt = now
     case .congested:
-      cut(to: min(target * tuning.congestedFactor, delivery.map { $0 * tuning.deliveryFactor } ?? .infinity), now: now)
+      cut(to: min(target * tuning.congestedFactor, cutDelivery.map { $0 * tuning.deliveryFactor } ?? .infinity), now: now)
     case .growing:
       cut(to: target * tuning.growingFactor, now: now)
     case .increase:
@@ -259,6 +275,19 @@ public struct AdaptiveBitrateController: Sendable {
   /// bytes that are merely in flight for longer.
   private func isFallingShort(_ sample: CongestionSample) -> Bool {
     if sample.queueDelay > 0.02 { return true }
+    guard let window = windowTotals(), window.offered > 0 else { return false }
+    return Double(window.drained) < Double(window.offered) * tuning.shortfall
+  }
+
+  /// Whether the link carried at least what the encoder offered over the delivery window, so a
+  /// backlog is shrinking on its own.
+  private func isDraining() -> Bool {
+    guard let window = windowTotals(), window.offered > 0 else { return false }
+    return window.drained >= window.offered
+  }
+
+  /// Bytes drained and offered over the delivery window, or nil until the window is covered.
+  private func windowTotals() -> (drained: Int, offered: Int)? {
     var covered = 0.0
     var drained = 0
     var offered = 0
@@ -268,8 +297,15 @@ public struct AdaptiveBitrateController: Sendable {
       offered += entry.offered
       if covered >= tuning.deliveryWindow * 0.95 { break }
     }
-    guard covered >= tuning.deliveryWindow * 0.95, offered > 0 else { return false }
-    return Double(drained) < Double(offered) * tuning.shortfall
+    guard covered >= tuning.deliveryWindow * 0.95 else { return nil }
+    return (drained, offered)
+  }
+
+  /// The delivery rate a cut may go to: the measured one, unless the link was stalled rather than
+  /// slow.
+  private func cutDelivery() -> Double? {
+    guard let delivery = deliveryRate() else { return nil }
+    return delivery < Double(bitrate) * tuning.stallShare ? nil : delivery
   }
 
   /// Bits per second the link carried over the last second, or nil until a full second is measured.
@@ -321,7 +357,7 @@ public struct AdaptiveBitrateController: Sendable {
 
   // MARK: - Deciding
 
-  private func decide(delay: Double, appDelay: Double, lost: Bool, now: Double) -> Decision {
+  private func decide(delay: Double, appDelay: Double, lost: Bool, draining: Bool, now: Double) -> Decision {
     let sinceDecrease = now - lastDecreaseAt
 
     // Each cut is judged against the rate it would leave; one already at the floor has nowhere to go.
@@ -331,10 +367,12 @@ public struct AdaptiveBitrateController: Sendable {
     if canCut, lost || appDelay > tuning.emergencyDelay, now - lastEmergencyAt >= tuning.emergencyHold {
       return .emergency
     }
-    if canCut, congestedTicks >= 2, sinceDecrease >= tuning.decreaseHold {
+    // The smaller steps are for a queue that is still building.
+    let mayTrim = !(tuning.holdWhileDraining && draining)
+    if canCut, mayTrim, congestedTicks >= 2, sinceDecrease >= tuning.decreaseHold {
       return .congested
     }
-    if canCut, delay > tuning.growingDelay, isGrowing, sinceDecrease >= tuning.decreaseHold {
+    if canCut, mayTrim, delay > tuning.growingDelay, isGrowing, sinceDecrease >= tuning.decreaseHold {
       return .growing
     }
     if target < Double(ceiling),
@@ -355,7 +393,7 @@ public struct AdaptiveBitrateController: Sendable {
   private mutating func cut(to rate: Double, now: Double) {
     let next = max(Double(floor), rate)
     guard next < target else { return }
-    lastCongestedRate = min(target, deliveryRate() ?? target)
+    lastCongestedRate = min(target, cutDelivery() ?? target)
     target = next
     lastDecreaseAt = now
     congestedTicks = 0
