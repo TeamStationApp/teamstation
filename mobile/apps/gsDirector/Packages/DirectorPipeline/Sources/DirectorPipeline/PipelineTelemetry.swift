@@ -281,6 +281,9 @@ public struct TileTelemetry: Sendable, Codable, Equatable {
   /// times is explained by this, and a count that climbs steadily is an unstable sender rather
   /// than one that was power-cycled once.
   public var senderClockRestarts: UInt64 = 0
+  /// Times this camera's sound was re-anchored to its arrival because its picture's timing put it
+  /// out of the programme mix's reach. Climbing means the picture is running seconds behind the sound.
+  public var audioReanchors: UInt64 = 0
   /// Pictures not shown because they were older than the display cap. The monitor is worthless
   /// showing action that has already happened, so these are skipped and the last good picture
   /// stays up — and counted, because a bounded latency that reports nothing is indistinguishable

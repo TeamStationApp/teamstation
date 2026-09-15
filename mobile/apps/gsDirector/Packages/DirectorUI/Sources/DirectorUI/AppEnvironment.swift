@@ -11,6 +11,9 @@ import DirectorPipeline
 import DirectorRTMP
 import DirectorSources
 import DirectorTestHarness
+import DirectorLink
+import DistributorWire
+import PeerTubeKit
 import UIKit
 
 /// One-shot latch, so the replay latency is recorded for the first decoded frame and not
@@ -129,8 +132,29 @@ public final class AppEnvironment {
   /// concerned.
   private var rowEndpoints: [SourceID: CameraEndpoint] = [:]
   public private(set) var snapshot = TelemetrySnapshot()
-  public private(set) var isRecording = false
-  public private(set) var isStreaming = false
+  public private(set) var isRecording = false {
+    didSet {
+      guard isRecording != oldValue else { return }
+      // A take starting or stopping changes what GS Distributor may ask the iPad to stitch, and the
+      // recordings it lists.
+      distributorEvents.publish(.recordingStateChanged(isRecording: isRecording))
+      distributorEvents.publish(.recordingsChanged)
+    }
+  }
+  /// GS Distributor is attached by cable and talking to this Director.
+  public private(set) var isMacConnected = false
+  /// GS Distributor's export lease: while it is held, recording and streaming wait, and it is not
+  /// granted while either is on. Dropped when the Mac hands it back, goes away or stops renewing it.
+  private var exportLease = ExportLease()
+  private var exportLeaseWatch: Task<Void, Never>?
+  /// The export GS Distributor is running, if any.
+  public var distributorExport: UUID? { exportLease.id }
+  public private(set) var isStreaming = false {
+    didSet {
+      guard isStreaming != oldValue else { return }
+      distributorEvents.publish(.streamingStateChanged(isStreaming: isStreaming))
+    }
+  }
   public private(set) var streamMegabitsPerSecond = 0.0
   public private(set) var streamDroppedPackets: UInt64 = 0
   public let pictureInPicture = ProgramPictureInPicture()
@@ -242,6 +266,23 @@ public final class AppEnvironment {
   private let configStore: ConfigStore
   private let stateDumper = StateDumper()
   private var controlServer: ControlServer?
+  /// GS Distributor's way in: a loopback server the Mac reaches over the cable.
+  private var linkServer: LinkServer?
+  /// What GS Distributor hears on its event stream; the app publishes its own changes here.
+  private let distributorEvents = EventHub()
+  /// One per launch, so `Hello.sessionID` changes only when the Director restarts; the listener
+  /// in front of it is replaced every time the app comes back to the foreground.
+  @ObservationIgnored
+  private lazy var distributorService: DistributorService = {
+    let roots = FileRoots(.standard)
+    return DistributorService(
+      backend: DistributorLinkBackend(environment: self, index: index, exporter: exporter, roots: roots),
+      roots: roots,
+      settings: DistributorSettingsStore(),
+      peerTube: PeerTubeAccount(storage: KeychainAccountStorage()),
+      events: distributorEvents
+    )
+  }()
 
   private var discovery: SourceDiscovery?
   private var writers: [SourceID: SegmentWriter] = [:]
@@ -454,6 +495,7 @@ public final class AppEnvironment {
     startDiscovery()
     startPolling()
     startControlServer()
+    startLinkServer()
     ensureProductionReady()
     await syncEnabledSources()
     // After the cameras, because the stream carries the programme composite and there is nothing
@@ -802,6 +844,7 @@ public final class AppEnvironment {
     cameraRecords = cameras.records
     refreshDiscovery()
     pushDisplayNamesToTiles()
+    noteRenameInLiveTake(id)
   }
 
   /// The address a cached camera is answering on right now, which is what makes "in use by" in the
@@ -1184,6 +1227,7 @@ public final class AppEnvironment {
        let selection = selections.first(where: { $0.id == id }) {
       telemetry.mutateTile(pipeline.sourceIndex) { $0.displayName = selection.displayName }
     }
+    noteRenameInLiveTake(id)
   }
 
   public var enabledSelections: [SourceSelection] {
@@ -1286,6 +1330,7 @@ public final class AppEnvironment {
   public func handleForeground() {
     isInBackground = false
     syncLiveSessionPresentation()
+    restartLinkServer()
   }
 
   public func handleInactive() {
@@ -1306,6 +1351,9 @@ public final class AppEnvironment {
       publishLiveSessionTelemetry()
       return
     }
+    // Suspended, iOS leaves a listener accepting connections it never answers, and it does not
+    // recover; so it goes down here and comes back in `handleForeground`.
+    stopLinkServer()
     await prepareForSuspension()
     router.audioPlayer.stop()
     pictureInPicture.tearDown()
@@ -1562,6 +1610,10 @@ public final class AppEnvironment {
   /// otherwise a single failure strands live writers that `stopRecording` would refuse to touch.
   public func startRecording() {
     guard !isRecording else { return }
+    guard distributorExport == nil else {
+      statusMessage = "GS Distributor is exporting — record once it has finished"
+      return
+    }
     let now = clock.now
     let recordingID: Int64
     do {
@@ -1636,6 +1688,10 @@ public final class AppEnvironment {
 
   public func startStreaming() {
     guard !isStreaming else { return }
+    guard distributorExport == nil else {
+      statusMessage = "GS Distributor is exporting — stream once it has finished"
+      return
+    }
     streamErrorGate.reset()
     isStreaming = true
     beginLiveSession(streaming: true)
@@ -1760,7 +1816,8 @@ public final class AppEnvironment {
         recordingID: recordingID,
         sourceID: pipeline.sourceID,
         transport: settings.transport,
-        archiving: true
+        archiving: true,
+        cameraName: knownCameraName(for: pipeline.sourceID)
       )
     } catch {
       statusMessage = "\(pipeline.displayName): \(error)"
@@ -1873,6 +1930,9 @@ public final class AppEnvironment {
         try? index.setProgramFilename(names.joined(separator: ","), for: recordingID)
       }
       try? index.endRecording(recordingID, at: endedAt)
+      // The take stopped being live when recording stopped, but only now has an end: without this
+      // GS Distributor keeps the length it read before, and counts it up as if still recording.
+      distributorEvents.publish(.recordingsChanged)
     }
     recordingID = nil
     programEncoder.setAnchorRecording(nil)
@@ -3572,16 +3632,34 @@ public final class AppEnvironment {
     } catch {
       statusMessage = "Delete failed: \(error)"
     }
+    distributorEvents.publish(.recordingsChanged)
   }
 
   public func recordingCameraName(for sourceID: SourceID) -> String {
+    knownCameraName(for: sourceID) ?? sourceID.rawValue
+  }
+
+  /// A recorded camera's name: what the take stored for it, else what it is called now. A camera
+  /// the Director has since forgotten keeps the name it recorded under instead of showing its id.
+  public func recordingCameraName(for sourceID: SourceID, in recordingID: Int64) -> String {
+    if let recorded = try? index.recordedCameraNames(recordingID: recordingID)[sourceID] {
+      return recorded
+    }
+    return recordingCameraName(for: sourceID)
+  }
+
+  /// What the operator calls a camera right now, or nil when it has nothing but its id.
+  private func knownCameraName(for sourceID: SourceID) -> String? {
     if let selection = selections.first(where: { $0.id == sourceID }) {
       return selection.displayName
     }
-    if let record = cameraRecords.first(where: { SourceID($0.id.uuidString) == sourceID }) {
-      return record.name
-    }
-    return sourceID.rawValue
+    return cameraRecords.first(where: { SourceID($0.id.uuidString) == sourceID })?.name
+  }
+
+  /// Keeps the live take's record of a camera's name current when it is renamed mid-take.
+  private func noteRenameInLiveTake(_ sourceID: SourceID) {
+    guard isRecording, let recordingID, let name = knownCameraName(for: sourceID) else { return }
+    try? index.nameSource(recordingID: recordingID, sourceID: sourceID, cameraName: name)
   }
 
   public func shareRecording(
@@ -3668,7 +3746,7 @@ public final class AppEnvironment {
       $0.dvr.lastExportFiles = []
       $0.dvr.lastExportError = nil
     }
-    let cameras = recording.sourceIDs.map { ($0, recordingCameraName(for: $0)) }
+    let cameras = recording.sourceIDs.map { ($0, recordingCameraName(for: $0, in: recording.id)) }
     let includeProgram = recording.programFilename != nil
     let exporter = self.exporter
     Task { [weak self] in
@@ -3903,6 +3981,7 @@ public final class AppEnvironment {
         tile.playoutDepth = receive.playoutDepth
         tile.outOfOrderFrames = receive.outOfOrderFrames
         tile.senderClockRestarts = receive.senderClockRestarts
+        tile.audioReanchors = receive.audioReanchors
         tile.stalledForSeconds = (receive.stalledForSeconds * 10).rounded() / 10
         tile.senderReports = receive.senderReports
         tile.senderReportIntervalSeconds = receive.senderReportIntervalSeconds
@@ -4194,6 +4273,99 @@ public final class AppEnvironment {
       return data
     }
     return Data(#"{"ok":true}"#.utf8)
+  }
+
+  // MARK: - GS Distributor
+
+  /// Starts the server GS Distributor reaches over the cable. It listens on loopback, where usbmuxd
+  /// delivers the Mac's connections, so nothing on the Wi-Fi can reach it.
+  private func startLinkServer() {
+    guard linkServer == nil else { return }
+    let service = distributorService
+    let server = LinkServer(connectionsChanged: { [weak self] count in
+      Task { @MainActor in
+        self?.isMacConnected = count > 0
+        // A Mac that went away mid-export cannot hand the lock back.
+        if count == 0 {
+          self?.exportLease.releaseAll()
+          self?.clearExportRefusal()
+        }
+      }
+    }) { await service.handle($0) }
+    linkServer = server
+    Task { [weak self] in
+      // A restart can find the port still held by the listener it replaced for a moment.
+      for attempt in 1...3 {
+        do {
+          try await server.start()
+          return
+        } catch {
+          guard let self, linkServer === server else { return }
+          if attempt == 3 {
+            linkServer = nil
+            statusMessage = "GS Distributor link unavailable: \(error.localizedDescription)"
+            return
+          }
+          try? await Task.sleep(for: .milliseconds(300))
+        }
+      }
+    }
+  }
+
+  private func stopLinkServer() {
+    guard let server = linkServer else { return }
+    distributorEvents.publish(.directorBackgrounded)
+    server.stop()
+    linkServer = nil
+    isMacConnected = false
+    exportLease.releaseAll()
+  }
+
+  /// GS Distributor starts an export: refused while recording or streaming, and from here until it
+  /// ends neither can start. One Mac at a time; a new export replaces an old one's lease.
+  func beginDistributorExport() throws -> UUID {
+    if isRecording { throw DistributorRefusal.recording }
+    if isStreaming { throw DistributorRefusal.streaming }
+    let id = exportLease.grant()
+    watchExportLease()
+    return id
+  }
+
+  func renewDistributorExport(_ id: UUID) -> Bool {
+    exportLease.renew(id)
+  }
+
+  func endDistributorExport(_ id: UUID) {
+    exportLease.release(id)
+    clearExportRefusal()
+  }
+
+  /// A "record once it has finished" banner outliving the export would say something no longer
+  /// true.
+  private func clearExportRefusal() {
+    guard !exportLease.isHeld, statusMessage?.hasPrefix("GS Distributor is exporting") == true else { return }
+    statusMessage = nil
+  }
+
+  /// Drops the lease if the Mac stops renewing it, so a Mac that crashed or hung mid-export never
+  /// leaves the Director unable to record.
+  private func watchExportLease() {
+    guard exportLeaseWatch == nil else { return }
+    exportLeaseWatch = Task { [weak self] in
+      while let self, exportLease.isHeld {
+        try? await Task.sleep(for: .seconds(5))
+        if exportLease.expire() {
+          statusMessage = "GS Distributor stopped answering — recording and streaming are allowed again"
+        }
+      }
+      self?.exportLeaseWatch = nil
+    }
+  }
+
+  private func restartLinkServer() {
+    linkServer?.stop()
+    linkServer = nil
+    startLinkServer()
   }
 
   private func startControlServer() {

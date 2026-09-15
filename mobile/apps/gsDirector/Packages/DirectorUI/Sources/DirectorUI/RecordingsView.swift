@@ -23,7 +23,29 @@ public struct RecordingsView: View {
     NavigationStack {
       ZStack {
         HStack(spacing: 0) {
-          dateColumn
+          // Select All and Delete sit over the takes they act on, below the title bar.
+          VStack(spacing: 0) {
+            HStack {
+              Button(allEligibleMarked ? "Deselect All" : "Select All") {
+                toggleSelectAll()
+              }
+              .disabled(eligibleIDs.isEmpty)
+              .accessibilityIdentifier("recordings-select-all")
+              Spacer()
+              Button("Delete", role: .destructive) {
+                showDeleteConfirm = true
+              }
+              .disabled(markedIDs.isEmpty)
+              .accessibilityIdentifier("recordings-delete")
+            }
+            .font(.system(size: 15, weight: .semibold))
+            .buttonStyle(.borderless)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            Divider()
+            dateColumn
+          }
+          .frame(minWidth: 280, maxWidth: 360)
           Divider()
           filesColumn
         }
@@ -41,22 +63,6 @@ public struct RecordingsView: View {
       }
       .navigationTitle("Recordings")
       .navigationBarTitleDisplayMode(.inline)
-      .toolbar {
-        ToolbarItem(placement: .cancellationAction) {
-          Button(allEligibleMarked ? "Deselect All" : "Select All") {
-            toggleSelectAll()
-          }
-          .disabled(eligibleIDs.isEmpty)
-          .accessibilityIdentifier("recordings-select-all")
-        }
-        ToolbarItem(placement: .confirmationAction) {
-          Button("Delete") {
-            showDeleteConfirm = true
-          }
-          .disabled(markedIDs.isEmpty)
-          .accessibilityIdentifier("recordings-delete")
-        }
-      }
       .safeAreaInset(edge: .bottom) {
         ModalActionFooter(
           primaryTitle: "DONE",
@@ -132,7 +138,7 @@ public struct RecordingsView: View {
               .accessibilityIdentifier("recording-file-program")
           }
           ForEach(recording.sourceIDs, id: \.rawValue) { sourceID in
-            let name = environment.recordingCameraName(for: sourceID)
+            let name = environment.recordingCameraName(for: sourceID, in: recording.id)
             Toggle(name, isOn: cameraBinding(sourceID))
               .accessibilityIdentifier("recording-file-\(sourceID.slug)")
           }
@@ -361,7 +367,7 @@ public struct RecordingsView: View {
   private func export(_ recording: RecordingSummary) {
     let cameras = recording.sourceIDs
       .filter { selectedCameras.contains($0.rawValue) }
-      .map { ($0, environment.recordingCameraName(for: $0)) }
+      .map { ($0, environment.recordingCameraName(for: $0, in: recording.id)) }
     let includeProgram = selectedProgram && recording.programFilename != nil
     if environment.hasPreparedExport(recording, cameras: cameras, includeProgram: includeProgram) {
       pendingReuse = (recording, cameras, includeProgram)

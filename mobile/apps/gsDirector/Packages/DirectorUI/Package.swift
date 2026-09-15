@@ -9,6 +9,7 @@ let package = Package(
   ],
   dependencies: [
     .package(path: "../../common/DirectorCore"),
+    .package(path: "../../../common/DirectorExport"),
     .package(path: "../../common/DirectorSources"),
     .package(path: "../../common/DirectorRTSP"),
     .package(path: "../../common/CameramanCore"),
@@ -17,13 +18,17 @@ let package = Package(
     .package(path: "../DirectorPipeline"),
     .package(path: "../DirectorDVR"),
     .package(path: "../DirectorRTMP"),
-    .package(path: "../DirectorTestHarness")
+    .package(path: "../DirectorTestHarness"),
+    .package(path: "../DirectorLink"),
+    .package(path: "../../../common/DistributorWire"),
+    .package(path: "../../../common/PeerTubeKit")
   ],
   targets: [
     .target(
       name: "DirectorUI",
       dependencies: [
         "DirectorCore",
+        "DirectorExport",
         "DirectorSources",
         "DirectorRTSP",
         "CameramanCore",
@@ -32,7 +37,10 @@ let package = Package(
         "DirectorPipeline",
         "DirectorDVR",
         "DirectorRTMP",
-        "DirectorTestHarness"
+        "DirectorTestHarness",
+        "DirectorLink",
+        "DistributorWire",
+        "PeerTubeKit"
       ],
       swiftSettings: [ .swiftLanguageMode(.v6) ],
       linkerSettings: [ .linkedFramework("GameController") ]

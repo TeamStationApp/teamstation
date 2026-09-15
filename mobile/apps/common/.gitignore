@@ -1,0 +1,3 @@
+# SwiftPM output from building or testing a shared package on its own (`swift build`, `swift test`).
+.build/
+.swiftpm/
