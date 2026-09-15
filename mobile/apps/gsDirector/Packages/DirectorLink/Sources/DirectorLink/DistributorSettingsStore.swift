@@ -2,8 +2,8 @@ import DirectorCore
 import DistributorWire
 import Foundation
 
-/// GS Distributor's settings, kept by GS Director in their own file beside its own settings.
-/// The Mac holds none of this between launches.
+/// GS Distributor's settings, kept by GS Director in their own file beside its own settings. The
+/// Mac keeps a copy too, and the two are brought together whenever it attaches.
 public final class DistributorSettingsStore: @unchecked Sendable {
   public static var standardURL: URL {
     DirectorPaths.applicationSupport
@@ -41,19 +41,26 @@ public final class DistributorSettingsStore: @unchecked Sendable {
     }
   }
 
-  /// What a Mac's save becomes: everything it sent, except that it may only change its own
-  /// download folder. Other Macs' folders stay as they were.
+  /// What a Mac's save becomes. Each group comes from whichever copy changed it last, so a Mac
+  /// that was away cannot undo a newer change made here or by another Mac; a Mac that stamps
+  /// nothing, from before stamps, has everything it sent taken. Either way a Mac may only change
+  /// its own download folder: other Macs' folders stay as they were.
   public static func merge(
     _ incoming: DistributorSettings,
     into stored: DistributorSettings,
     mac: String?
   ) -> DistributorSettings {
-    var merged = incoming
-    var destinations = stored.destinations
-    if let mac {
-      destinations[mac] = incoming.destinations[mac]
+    let chosen = incoming.stamps.isEmpty ? incoming : incoming.reconciled(with: stored)
+    var merged = chosen
+    merged.destinations = stored.destinations
+    for key in merged.stamps.keys where key.hasPrefix("destination:") {
+      merged.stamps[key] = stored.stamps[key]
     }
-    merged.destinations = destinations
+    if let mac {
+      let key = SettingsGroup.destination(mac: mac).key
+      merged.destinations[mac] = chosen.destinations[mac]
+      merged.stamps[key] = chosen.stamps[key]
+    }
     return merged
   }
 }
