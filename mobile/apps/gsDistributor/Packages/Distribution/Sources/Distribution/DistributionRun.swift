@@ -100,6 +100,8 @@ public final class DistributionRun {
   /// The uploads, when any were asked for.
   public let upload: UploadPlan?
   public private(set) var uploadStates: [UploadTrack: UploadState] = [:]
+  /// The videos the uploads made, for adding highlights to once they are up.
+  public private(set) var uploadedVideos: [UploadTrack: UploadedVideo] = [:]
 
   /// Nil with no iPad attached, which is enough when every file the run needs is already here.
   private let connection: DirectorConnection?
@@ -387,6 +389,7 @@ public final class DistributionRun {
             if case .uploading = self.uploadStates[track] { self.uploadStates[track] = .uploading(sent: sent, total: total) }
           }
         }
+        uploadedVideos[track] = video
         uploadStates[track] = .done(video.shortUUID.flatMap { URL(string: "https://\(plan.host)/w/\($0)") })
       } catch {
         uploadStates[track] = .failed("\(error)")
