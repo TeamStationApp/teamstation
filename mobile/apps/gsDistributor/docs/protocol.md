@@ -35,7 +35,8 @@ foreground, which does not.
 ## Who keeps what
 
 - **The iPad** keeps GS Distributor's settings (`DistributorSettingsStore`, JSON beside the index):
-  a download folder per Mac, the combined-video toggle, layout and sound camera by camera name, and
+  a download folder per Mac, whether the iPad stitches, the combined-video toggle, layout and sound
+  camera by camera name, and
   PeerTube's host, user name, the channel and privacy last uploaded with, and which files to upload.
 - **The iPad's Keychain** keeps the PeerTube account (this device only, after first unlock): the
   instance's OAuth client and the tokens. Never the password. The refresh token never leaves it.

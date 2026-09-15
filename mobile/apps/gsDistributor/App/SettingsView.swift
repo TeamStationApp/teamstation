@@ -34,6 +34,14 @@ struct SettingsView: View {
             }
           }
 
+          Section("Stitching") {
+            Toggle("Enable iPad Stitching", isOn: stitchesOnIPad)
+              .accessibilityIdentifier("settings-ipad-stitching")
+            Text("Off, this Mac stitches every file. Files the iPad has already stitched are still fetched from it.")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          }
+
           Section("Combined video") {
             Toggle("Create a combined video", isOn: createsCombined)
               .accessibilityIdentifier("settings-create-combined")
@@ -140,6 +148,13 @@ struct SettingsView: View {
     Binding(
       get: { model.settings?.createCombined ?? false },
       set: { isOn in Task { await model.updateSettings { $0.createCombined = isOn } } }
+    )
+  }
+
+  private var stitchesOnIPad: Binding<Bool> {
+    Binding(
+      get: { model.settings?.iPadStitching ?? false },
+      set: { isOn in Task { await model.updateSettings { $0.iPadStitching = isOn } } }
     )
   }
 

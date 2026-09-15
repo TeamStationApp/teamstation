@@ -11,6 +11,9 @@ public struct DistributorSettings: Codable, Equatable, Sendable {
   /// folder instead of a path that does not exist on it.
   public var destinations: [String: String]
   public var createCombined: Bool
+  /// Whether the iPad takes a share of an export's stitching. Off, the Mac stitches every file;
+  /// files the iPad already stitched are still fetched from it.
+  public var iPadStitching: Bool
   public var combinedLayout: CombinedLayoutSettings
   public var peerTube: PeerTubeSettings
 
@@ -19,12 +22,14 @@ public struct DistributorSettings: Codable, Equatable, Sendable {
   public init(
     destinations: [String: String] = [:],
     createCombined: Bool = false,
+    iPadStitching: Bool = false,
     combinedLayout: CombinedLayoutSettings = CombinedLayoutSettings(),
     peerTube: PeerTubeSettings = PeerTubeSettings()
   ) {
     self.version = Self.currentVersion
     self.destinations = destinations
     self.createCombined = createCombined
+    self.iPadStitching = iPadStitching
     self.combinedLayout = combinedLayout
     self.peerTube = peerTube
   }
@@ -34,6 +39,7 @@ public struct DistributorSettings: Codable, Equatable, Sendable {
     version = try container.decodeIfPresent(Int.self, forKey: .version) ?? Self.currentVersion
     destinations = try container.decodeIfPresent([String: String].self, forKey: .destinations) ?? [:]
     createCombined = try container.decodeIfPresent(Bool.self, forKey: .createCombined) ?? false
+    iPadStitching = try container.decodeIfPresent(Bool.self, forKey: .iPadStitching) ?? false
     combinedLayout = try container.decodeIfPresent(CombinedLayoutSettings.self, forKey: .combinedLayout)
       ?? CombinedLayoutSettings()
     peerTube = try container.decodeIfPresent(PeerTubeSettings.self, forKey: .peerTube) ?? PeerTubeSettings()

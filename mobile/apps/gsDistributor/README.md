@@ -24,8 +24,9 @@ stitching between the Mac and the iPad, and stitching with the Director's own co
 
 1. Open GS Director on the iPad and plug it into the Mac. GS Distributor finds it; the Director
    shows a MAC pill.
-2. The gear at the top right opens Settings: the folder to save into (this Mac's own), whether to
-   make a combined video, and PeerTube (instance host, then sign in).
+2. The gear at the top right opens Settings: the folder to save into (this Mac's own), whether the
+   iPad shares the stitching ("Enable iPad Stitching", off by default, so the Mac stitches every
+   file), whether to make a combined video, and PeerTube (instance host, then sign in).
 3. Pick a recording, tick its files, Export. With the combined video on, lay the cameras out first;
    with PeerTube on, the title comes next (it starts with the date, which can be changed), with the
    channel and privacy, which start on the last ones used (privacy 6 where the instance has it).
