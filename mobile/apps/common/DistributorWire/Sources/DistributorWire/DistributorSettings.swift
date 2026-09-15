@@ -1,7 +1,8 @@
 import Foundation
 
-/// Everything GS Distributor remembers. It lives on the iPad, inside GS Director; the Mac keeps
-/// nothing between launches.
+/// Everything GS Distributor remembers. The Mac keeps a copy and GS Director keeps one on the
+/// iPad; `reconciled(with:)` brings the two together whenever the iPad is attached, so the
+/// Distributor works with the iPad away and nothing edited meanwhile is lost.
 ///
 /// Every field decodes with a default when it is missing, so settings written by an older build
 /// still load in a newer one.
@@ -16,15 +17,19 @@ public struct DistributorSettings: Codable, Equatable, Sendable {
   public var iPadStitching: Bool
   public var combinedLayout: CombinedLayoutSettings
   public var peerTube: PeerTubeSettings
+  /// When each group last changed and on which device, by `SettingsGroup.key`. A group with no
+  /// stamp has not changed since before stamps were kept.
+  public var stamps: [String: SettingsStamp]
 
-  public static let currentVersion = 1
+  public static let currentVersion = 2
 
   public init(
     destinations: [String: String] = [:],
     createCombined: Bool = false,
     iPadStitching: Bool = false,
     combinedLayout: CombinedLayoutSettings = CombinedLayoutSettings(),
-    peerTube: PeerTubeSettings = PeerTubeSettings()
+    peerTube: PeerTubeSettings = PeerTubeSettings(),
+    stamps: [String: SettingsStamp] = [:]
   ) {
     self.version = Self.currentVersion
     self.destinations = destinations
@@ -32,6 +37,7 @@ public struct DistributorSettings: Codable, Equatable, Sendable {
     self.iPadStitching = iPadStitching
     self.combinedLayout = combinedLayout
     self.peerTube = peerTube
+    self.stamps = stamps
   }
 
   public init(from decoder: Decoder) throws {
@@ -43,6 +49,7 @@ public struct DistributorSettings: Codable, Equatable, Sendable {
     combinedLayout = try container.decodeIfPresent(CombinedLayoutSettings.self, forKey: .combinedLayout)
       ?? CombinedLayoutSettings()
     peerTube = try container.decodeIfPresent(PeerTubeSettings.self, forKey: .peerTube) ?? PeerTubeSettings()
+    stamps = try container.decodeIfPresent([String: SettingsStamp].self, forKey: .stamps) ?? [:]
   }
 }
 
