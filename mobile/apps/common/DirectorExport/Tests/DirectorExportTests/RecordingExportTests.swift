@@ -74,9 +74,10 @@ struct RecordingExportTests {
     try Data(repeating: 0, count: 4096).write(to: second)
 
     await #expect(throws: ArchiveRemux.Error.self) {
-      try await ArchiveRemux.concatenate(
+      try await ArchiveRemux.stitch(
         files: [first, second],
         fileDurations: [0, 0],
+        settings: TestMovie.encoding,
         destination: root.appendingPathComponent("out.mp4")
       )
     }

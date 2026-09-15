@@ -48,9 +48,15 @@ data class StreamSettings(
     var codec: StreamCodec = StreamCodec.HEVC,
     /**
      * The operator's rate, and with [adaptiveBitrate] on, the ceiling: the stream runs at this and
-     * comes down, never below half of it, only while the link cannot carry it.
+     * comes down, never below [bitrateFloor], only while the link cannot carry it.
      */
     var bitrate: Int = StreamCodec.HEVC.defaultBitrate,
+    /**
+     * The lowest rate adaptation may reach, read only while [adaptiveBitrate] is on and never above
+     * [bitrate]. Half the ceiling unless the operator chose otherwise: an operator who knows the
+     * network can hold the picture higher, or let a weak link go lower before frames drop.
+     */
+    var bitrateFloor: Int = defaultBitrateFloor(bitrate),
     /**
      * Lower the rate while the link to a client backs up, instead of dropping frames at the full
      * rate. On by default; a softer picture for a few seconds beats a frozen one.
@@ -78,19 +84,49 @@ data class StreamSettings(
     var cameraPosition: CameraPosition = CameraPosition.BACK,
     var displayedZoom: Double = 1.0
 ) {
+    // Every construction, `copy` included, so a copy that lowers the rate cannot leave the floor
+    // above it.
+    init {
+        // A rate saved when the scale reached 50 Mbps comes back at the top of today's.
+        if (bitrate > maximumBitrate) bitrate = maximumBitrate
+        clampFloorToCeiling()
+    }
+
     val dimensionsLabel: String get() = "${width}x$height"
 
     /**
      * Switching codec carries the matching default rate across unless the operator has already
-     * chosen something other than the outgoing codec's default.
+     * chosen something other than the outgoing codec's default, and the default floor with it.
      *
      * Named `selectCodec` rather than the iOS build's `setCodec`, which on the JVM would be the
      * generated setter for `codec` and would silently replace it — assigning `settings.codec` would
      * then move the bitrate too, which is the opposite of what a plain assignment should do.
      */
     fun selectCodec(newCodec: StreamCodec) {
-        if (bitrate == codec.defaultBitrate) bitrate = newCodec.defaultBitrate
+        if (bitrate == codec.defaultBitrate) selectBitrate(newCodec.defaultBitrate)
         codec = newCodec
+    }
+
+    /**
+     * A new rate. A floor still at the old rate's default moves to the new rate's, so an operator who
+     * never chose a floor keeps getting half of whatever they pick; a floor they did choose stays,
+     * and comes down only when the rate now sits below it.
+     *
+     * The iOS build's `setBitrate`, named for the same reason as [selectCodec].
+     */
+    fun selectBitrate(requested: Int) {
+        val newBitrate = minOf(requested, maximumBitrate)
+        if (bitrateFloor == defaultBitrateFloor(bitrate)) bitrateFloor = defaultBitrateFloor(newBitrate)
+        bitrate = newBitrate
+        clampFloorToCeiling()
+    }
+
+    /**
+     * Brings the floor down to the rate when it has been left above it: a floor over the ceiling
+     * means nothing to the controller, and on screen it would read as a range turned inside out.
+     */
+    fun clampFloorToCeiling() {
+        if (bitrateFloor > bitrate) bitrateFloor = bitrate
     }
 
     /**
@@ -100,6 +136,7 @@ data class StreamSettings(
     enum class Field(val key: String) {
         CODEC("codec"),
         BITRATE_MBPS("bitrateMbps"),
+        BITRATE_FLOOR_MBPS("bitrateFloorMbps"),
         ADAPTIVE_BITRATE("adaptiveBitrate"),
         WIDTH("width"),
         HEIGHT("height"),
@@ -123,6 +160,12 @@ data class StreamSettings(
         val merged = copy()
         if (Field.CODEC !in explicit) merged.codec = saved.codec
         if (Field.BITRATE_MBPS !in explicit) merged.bitrate = saved.bitrate
+        // A floor was chosen against its own ceiling. A launch that pins the rate and not the floor
+        // gets the floor that goes with the pinned rate, not one saved against a different rate.
+        if (Field.BITRATE_FLOOR_MBPS !in explicit && Field.BITRATE_MBPS !in explicit) {
+            merged.bitrateFloor = saved.bitrateFloor
+        }
+        merged.clampFloorToCeiling()
         if (Field.ADAPTIVE_BITRATE !in explicit) merged.adaptiveBitrate = saved.adaptiveBitrate
         if (Field.WIDTH !in explicit) merged.width = saved.width
         if (Field.HEIGHT !in explicit) merged.height = saved.height
@@ -153,6 +196,25 @@ data class StreamSettings(
          * stored request matches what the phone can actually bind.
          */
         const val retiredPort = 554
+
+        /**
+         * The lowest rate either end of the bitrate range may be set to, in the Settings sliders and
+         * over the wire.
+         */
+        const val minimumBitrate = 1_000_000
+
+        /**
+         * The highest rate either end of the bitrate range may be set to, in the Settings sliders and
+         * over the wire. A phone streams to one iPad over shared Wi-Fi, where more than this only
+         * costs frames, and on a 1–16 scale an everyday 2–8 Mbps range is wide enough to see and drag.
+         */
+        const val maximumBitrate = 16_000_000
+
+        /**
+         * Half the ceiling, which is where the floor always sat before it was a setting, but not
+         * below [minimumBitrate], and never above the ceiling itself.
+         */
+        fun defaultBitrateFloor(ceiling: Int): Int = minOf(ceiling, maxOf(minimumBitrate, ceiling / 2))
 
         val default = StreamSettings()
     }

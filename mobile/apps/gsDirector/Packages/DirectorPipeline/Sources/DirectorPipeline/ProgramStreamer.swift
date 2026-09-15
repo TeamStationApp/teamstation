@@ -1,3 +1,4 @@
+import AdaptiveBitrate
 import AudioToolbox
 import CoreMedia
 import CoreVideo
@@ -7,16 +8,26 @@ import DirectorCore
 import DirectorRTMP
 import DirectorSources
 
-/// Encodes the programme composite to H.264 + AAC and publishes it over RTMP.
+/// Encodes the programme composite with the stream's own settings and publishes it over RTMP.
 ///
-/// Recording still uses `ProgramEncoder` (AVAssetWriter, possibly HEVC). This session is a
-/// second encode because classic RTMP/FLV only carries AVC. The two can run at once.
+/// Recording still uses `ProgramEncoder` (AVAssetWriter). This is a second encode, with its own
+/// group in Settings — codec, resolution, frame rate and a low and high bitrate — because what suits
+/// a master on disk and what suits an uplink are different things. The two can run at once.
+///
+/// H.265 goes out in Enhanced RTMP, H.264 in classic FLV with the Baseline profile it always used.
+/// A composite of another size is scaled to the stream's, keeping its shape and letterboxing when the
+/// shapes differ.
+///
+/// The bitrate starts at the high end of the operator's range and moves inside it with the uplink:
+/// the adaptive bitrate controller GS Cameraman uses, fed from the RTMP client's own send queue.
 public final class ProgramStreamer: @unchecked Sendable {
   public struct Metrics: Sendable, Equatable {
     public var megabitsPerSecond: Double = 0
     public var droppedPackets: UInt64 = 0
     /// Bytes queued between this encoder and the socket.
     public var queuedBytes = 0
+    /// The bitrate controller, as it last decided.
+    public var rate = StreamRateTelemetry()
   }
 
   public typealias FailureHandler = @Sendable (String) -> Void
@@ -26,16 +37,25 @@ public final class ProgramStreamer: @unchecked Sendable {
   private let lock = NSLock()
   private var width = 1920
   private var height = 1080
-  private var bitrate = 12_000_000
+  private var codec = RTMPVideoCodec.hevc
+  /// The stream's range. It starts at the high bitrate.
+  private var bitrateLow = 2_000_000
+  private var bitrateHigh = 6_000_000
+  /// What the encoder has been told, which is where a rebuilt session starts too.
+  private var bitrate = 6_000_000
   private var frameRate = 30
   private var gopSeconds = 2.0
   private var client: RTMPClient?
+  /// Moves the bitrate between the low and high settings; runs from `start` to `stop`.
+  private var rateLoop: AdaptiveBitrateLoop?
   private var session: VTCompressionSession?
   private var aac = AACPacketizer()
   private var isRunning = false
   private var sentVideoConfig = false
   private var sentAudioConfig = false
   private var sentMetadata = false
+  /// The timestamp of the last packet of sound sent, so the next is always after it.
+  private var lastAudioTimestamp: UInt32?
   private var clock = StreamEncodeClock()
   /// When this stream started, so the watchdog can tell "no keyframe yet" from "no keyframe for a
   /// while". Zero until `start`.
@@ -54,6 +74,13 @@ public final class ProgramStreamer: @unchecked Sendable {
   private let gopQueue = DispatchQueue(label: "co.gamestation.director.stream.gop")
   private var gopTimer: DispatchSourceTimer?
   private var lastEncodable: CVPixelBuffer?
+  /// Held from stamping a frame's time until the encoder has it, so frames reach the encoder in the
+  /// order they were stamped. The programme clock's frames and the watchdog's idle IDR come from
+  /// different threads, and a frame is stamped under `lock` but scaled and submitted after it: in
+  /// the stress run of 2026-09-15 an idle IDR stamped first was submitted second, and went out
+  /// 12 ms behind the frame before it. Never taken inside `lock`; the encoder's callback takes
+  /// only `lock`, so a submission blocked on a full encoder cannot hold up its own drain.
+  private let submitLock = NSLock()
   private var lastCallbackWall: CFAbsoluteTime = 0
   private var lastProgramFrameWall: CFAbsoluteTime = 0
   private var lastResetWall: CFAbsoluteTime = 0
@@ -72,13 +99,31 @@ public final class ProgramStreamer: @unchecked Sendable {
   public var metrics: Metrics {
     lock.lock()
     let client = self.client
+    let loop = rateLoop
+    let codec = self.codec
     lock.unlock()
     let raw = client?.metrics ?? .init()
     return Metrics(
       megabitsPerSecond: raw.megabitsPerSecond,
       droppedPackets: raw.droppedPackets,
-      queuedBytes: raw.queuedBytes
+      queuedBytes: raw.queuedBytes,
+      rate: loop.map { Self.rateTelemetry($0.status.controller, codec: codec) } ?? StreamRateTelemetry()
     )
+  }
+
+  static func rateTelemetry(_ status: AdaptiveBitrateController.Status, codec: RTMPVideoCodec) -> StreamRateTelemetry {
+    var rate = StreamRateTelemetry()
+    rate.codec = codec.rawValue
+    rate.bitrate = status.bitrate
+    rate.low = status.floor
+    rate.high = status.ceiling
+    rate.lastDecision = status.lastDecision.rawValue
+    rate.queueMilliseconds = status.queueDelayMilliseconds
+    rate.deliveryBitsPerSecond = status.deliveryBitsPerSecond ?? 0
+    rate.transportBaseMilliseconds = status.transportBaseMilliseconds
+    rate.decreases = status.decreases
+    rate.increases = status.increases
+    return rate
   }
 
   public func start(urlString: String, config: AppConfig, onFailure: FailureHandler?) async throws {
@@ -93,13 +138,17 @@ public final class ProgramStreamer: @unchecked Sendable {
 
     try openEncoder()
     let client = RTMPClient()
-    // How far behind the socket may fall before the client sheds media, in the encoder's own
-    // terms: about a second of what this session is actually producing.
-    client.configure(sendBudgetBytes: RTMPClient.sendBudget(forBitrate: config.programBitrate))
+    // How far behind the socket may fall before the client sheds media: `sendBufferSeconds` of the
+    // top of the stream's range, which is the most this session ever produces.
+    client.configure(
+      sendBudgetBytes: RTMPClient.sendBudget(forBitrate: config.streamBitrateHigh),
+      videoCodec: Self.rtmpCodec(config.streamCodec)
+    )
     client.onFailure { [weak self] error in
       self?.handleFailure(error.description)
     }
     markStarted(client)
+    startRateLoop(client: client)
     telemetry.recordEncodeSessionChange(delta: 1)
     do {
       try await client.publish(to: url)
@@ -114,15 +163,12 @@ public final class ProgramStreamer: @unchecked Sendable {
     lock.lock()
     defer { lock.unlock() }
     if isRunning { return false }
-    width = config.programResolution.width
-    height = config.programResolution.height
-    bitrate = config.programBitrate
-    frameRate = config.programFrameRate
-    gopSeconds = config.gopSeconds
+    applyStreamSettings(config)
     self.onFailure = onFailure
     sentVideoConfig = false
     sentAudioConfig = false
     sentMetadata = false
+    lastAudioTimestamp = nil
     clock = StreamEncodeClock(frameRate: frameRate, gopSeconds: gopSeconds)
     pacer = StreamFramePacer(frameRate: frameRate)
     aac.reset()
@@ -136,11 +182,70 @@ public final class ProgramStreamer: @unchecked Sendable {
     return true
   }
 
+  /// The stream group of Settings, and the keyframe interval every encoder shares.
+  private func applyStreamSettings(_ config: AppConfig) {
+    width = config.streamResolution.width
+    height = config.streamResolution.height
+    codec = Self.rtmpCodec(config.streamCodec)
+    bitrateLow = config.streamBitrateLow
+    bitrateHigh = config.streamBitrateHigh
+    bitrate = config.streamBitrateHigh
+    frameRate = max(1, config.streamFrameRate)
+    gopSeconds = config.gopSeconds
+  }
+
+  static func rtmpCodec(_ codec: ProgramCodec) -> RTMPVideoCodec {
+    switch codec {
+    case .h264: .h264
+    case .hevc: .hevc
+    }
+  }
+
   /// Next encoded frame must be an IDR. Cuts and replay otherwise feed mid-GOP P-frames to HLS.
   public func requestKeyframe() {
     lock.lock()
     clock.requestKeyframe()
     lock.unlock()
+  }
+
+  /// Starts the controller at the high bitrate, which is where the session already is. Until the
+  /// publish is live there is no link to judge, and the controller holds.
+  private func startRateLoop(client: RTMPClient) {
+    lock.lock()
+    let high = bitrateHigh
+    let low = bitrateLow
+    lock.unlock()
+    let loop = AdaptiveBitrateLoop(
+      ceiling: high,
+      floor: low,
+      tuning: RTMPClient.adaptiveBitrateTuning,
+      sample: { [weak client] reply in
+        guard let client, client.isLive else {
+          reply(nil)
+          return
+        }
+        reply(client.congestionSample())
+      },
+      apply: { [weak self] rate in self?.applyBitrate(rate) }
+    )
+    lock.lock()
+    rateLoop = loop
+    lock.unlock()
+    loop.configure(ceiling: high, floor: low, enabled: true)
+  }
+
+  /// A rate from the controller, onto the live session: the next frame is coded at it. A session
+  /// the watchdog rebuilds later opens at the same rate.
+  private func applyBitrate(_ rate: Int) {
+    lock.lock()
+    guard isRunning else {
+      lock.unlock()
+      return
+    }
+    bitrate = rate
+    let session = self.session
+    lock.unlock()
+    if let session { Self.setRate(rate, on: session) }
   }
 
   private func markStarted(_ client: RTMPClient) {
@@ -162,9 +267,12 @@ public final class ProgramStreamer: @unchecked Sendable {
     self.session = nil
     let client = self.client
     self.client = nil
+    let loop = rateLoop
+    rateLoop = nil
     pendingEncodes = 0
     lock.unlock()
     timer?.cancel()
+    loop?.stop()
     if let session {
       VTCompressionSessionCompleteFrames(session, untilPresentationTimeStamp: .invalid)
       VTCompressionSessionInvalidate(session)
@@ -179,6 +287,34 @@ public final class ProgramStreamer: @unchecked Sendable {
     lock.unlock()
     guard admitted else { return }
     encode(pixelBuffer, sourceTime: presentationTime, forceKey: nil, isIdle: false)
+  }
+
+  /// What `start` would configure the stream as, without opening an encoder or a socket.
+  struct Configuration: Equatable {
+    var width: Int
+    var height: Int
+    var codec: RTMPVideoCodec
+    var frameRate: Int
+    var bitrate: Int
+    var bitrateLow: Int
+    var bitrateHigh: Int
+    var gopSeconds: Double
+  }
+
+  func configurationForTesting(_ config: AppConfig) -> Configuration {
+    lock.lock()
+    defer { lock.unlock() }
+    applyStreamSettings(config)
+    return Configuration(
+      width: width,
+      height: height,
+      codec: codec,
+      frameRate: frameRate,
+      bitrate: bitrate,
+      bitrateLow: bitrateLow,
+      bitrateHigh: bitrateHigh,
+      gopSeconds: gopSeconds
+    )
   }
 
   var pendingEncodesForTesting: Int {
@@ -207,6 +343,9 @@ public final class ProgramStreamer: @unchecked Sendable {
     forceKey: Bool?,
     isIdle: Bool
   ) {
+    // Frames reach the encoder in the order they are stamped; see `submitLock`.
+    submitLock.lock()
+    defer { submitLock.unlock() }
     lock.lock()
     guard isRunning, let session else {
       lock.unlock()
@@ -235,14 +374,7 @@ public final class ProgramStreamer: @unchecked Sendable {
     telemetry.recordStreamPendingEncodes(pendingEncodes)
     lock.unlock()
 
-    let isEncodable =
-      CVPixelBufferGetPixelFormatType(pixelBuffer) == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
-      && CVPixelBufferGetWidth(pixelBuffer) == width
-      && CVPixelBufferGetHeight(pixelBuffer) == height
-    let encodable = isEncodable
-      ? pixelBuffer
-      : converter.convert(pixelBuffer: pixelBuffer, width: width, height: height)
-    guard let encodable else {
+    guard let encodable = Self.streamPicture(pixelBuffer, width: width, height: height, converter: converter) else {
       lock.lock()
       pendingEncodes = max(0, pendingEncodes - 1)
       telemetry.recordStreamPendingEncodes(pendingEncodes)
@@ -283,6 +415,26 @@ public final class ProgramStreamer: @unchecked Sendable {
       telemetry.recordStreamIdleKeyframe()
     }
     lock.unlock()
+  }
+
+  /// The picture at the stream's size in the encoder's format: passed through when it already is,
+  /// converted when only the format differs, and otherwise scaled to fit with its shape kept.
+  /// VideoToolbox's letterbox paints the bars black (measured: Y 16, CbCr 128), so a pooled buffer's
+  /// last picture cannot show through them.
+  static func streamPicture(
+    _ pixelBuffer: CVPixelBuffer,
+    width: Int,
+    height: Int,
+    converter: PixelConverter
+  ) -> CVPixelBuffer? {
+    let format = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+    let sameSize = CVPixelBufferGetWidth(pixelBuffer) == width && CVPixelBufferGetHeight(pixelBuffer) == height
+    if sameSize {
+      return CVPixelBufferGetPixelFormatType(pixelBuffer) == format
+        ? pixelBuffer
+        : converter.convert(pixelBuffer: pixelBuffer, width: width, height: height)
+    }
+    return converter.scale(pixelBuffer, toWidth: width, height: height, format: format)
   }
 
   private func startGOPWatchdog() {
@@ -391,26 +543,56 @@ public final class ProgramStreamer: @unchecked Sendable {
       lock.unlock()
       return
     }
-    let audioTime = clock.timeNow(now: now)
+    let newest = milliseconds(clock.timeNow(now: now))
+    let stamps = Self.audioTimestamps(count: packets.count, newest: newest, after: lastAudioTimestamp)
+    if let last = stamps.last { lastAudioTimestamp = last }
     lock.unlock()
 
-    let timestamp = milliseconds(audioTime)
     if !sentAudio {
-      client.sendAudio(timestampMs: timestamp, tag: FLVTag.audio(packetType: 0, payload: cookie))
+      client.sendAudio(timestampMs: stamps.first ?? newest, tag: FLVTag.audio(packetType: 0, payload: cookie))
     }
-    for packet in packets {
-      client.sendAudio(timestampMs: timestamp, tag: FLVTag.audio(packetType: 1, payload: packet))
+    for (packet, stamp) in zip(packets, stamps) {
+      client.sendAudio(timestampMs: stamp, tag: FLVTag.audio(packetType: 1, payload: packet))
     }
+  }
+
+  /// Timestamps, in milliseconds, for `count` packets of sound made from one buffer of the mix.
+  ///
+  /// One buffer can make several packets, and stamping them all with the moment they were sent put
+  /// two packets on one time, which a server reads as the sound stopping for a moment afterwards.
+  /// They are a packet apart instead, counting back from `newest` for the last of them, and none is
+  /// at or before `previous`, the one sent last: a packet that would be goes a packet after it.
+  static func audioTimestamps(count: Int, newest: UInt32, after previous: UInt32?) -> [UInt32] {
+    let packetMilliseconds = AACPacketizer.packetSeconds * 1000
+    var stamps: [UInt32] = []
+    var last = previous
+    for index in 0 ..< count {
+      let back = Double(count - 1 - index) * packetMilliseconds
+      var stamp = UInt32(max(0, (Double(newest) - back).rounded()))
+      if let last, stamp <= last { stamp = last + UInt32(packetMilliseconds.rounded(.down)) }
+      stamps.append(stamp)
+      last = stamp
+    }
+    return stamps
   }
 
   private func openEncoder() throws {
     var session: VTCompressionSession?
     let refcon = Unmanaged.passUnretained(self).toOpaque()
+    lock.lock()
+    let width = self.width
+    let height = self.height
+    let codec = self.codec
+    let bitrate = self.bitrate
+    let frameRate = self.frameRate
+    let gopSeconds = self.gopSeconds
+    let maxKeyFrameInterval = clock.maxKeyFrameInterval
+    lock.unlock()
     let status = VTCompressionSessionCreate(
       allocator: kCFAllocatorDefault,
       width: Int32(width),
       height: Int32(height),
-      codecType: kCMVideoCodecType_H264,
+      codecType: codec == .hevc ? kCMVideoCodecType_HEVC : kCMVideoCodecType_H264,
       encoderSpecification: [
         kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder: kCFBooleanTrue
       ] as CFDictionary,
@@ -425,19 +607,17 @@ public final class ProgramStreamer: @unchecked Sendable {
       compressionSessionOut: &session
     )
     guard status == noErr, let session else {
-      throw ProgramStreamerError.encoderUnavailable(status)
+      throw ProgramStreamerError.encoderUnavailable(status, codec: codec)
     }
     VTSessionSetProperty(session, key: kVTCompressionPropertyKey_RealTime, value: kCFBooleanTrue)
+    // Main is what every Enhanced RTMP ingest decodes; Baseline stays H.264's profile because it is
+    // what this stream has always sent, and every ingest takes it.
     VTSessionSetProperty(
       session,
       key: kVTCompressionPropertyKey_ProfileLevel,
-      value: kVTProfileLevel_H264_Baseline_AutoLevel
+      value: codec == .hevc ? kVTProfileLevel_HEVC_Main_AutoLevel : kVTProfileLevel_H264_Baseline_AutoLevel
     )
-    VTSessionSetProperty(
-      session,
-      key: kVTCompressionPropertyKey_AverageBitRate,
-      value: bitrate as CFNumber
-    )
+    Self.setRate(bitrate, on: session)
     VTSessionSetProperty(
       session,
       key: kVTCompressionPropertyKey_ExpectedFrameRate,
@@ -451,7 +631,7 @@ public final class ProgramStreamer: @unchecked Sendable {
     VTSessionSetProperty(
       session,
       key: kVTCompressionPropertyKey_MaxKeyFrameInterval,
-      value: clock.maxKeyFrameInterval as CFNumber
+      value: maxKeyFrameInterval as CFNumber
     )
     VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse)
     VTSessionSetProperty(
@@ -463,6 +643,46 @@ public final class ProgramStreamer: @unchecked Sendable {
     lock.lock()
     self.session = session
     lock.unlock()
+  }
+
+  /// How far above the average the encoder may go over any one second.
+  ///
+  /// `AverageBitRate` alone is a long-run target: VideoToolbox meets it over tens of seconds and lets
+  /// a busy scene run well over it in the meantime, and a second at twice the rate is a second of
+  /// queue on a link sized for the average. The limit keeps any one second within half as much again,
+  /// which leaves room for the keyframe every GOP brings and still bounds what one second can put in
+  /// the send queue.
+  static let dataRateLimitFactor = 1.5
+
+  /// `DataRateLimits` for `bitrate`, as bytes over a window of seconds: any one second up to
+  /// `dataRateLimitFactor` times the rate, and any two seconds up to one such second and one at the
+  /// rate. A second over the rate is paid back in the next, so the stream is never above it for
+  /// longer than a second at a time.
+  static func dataRateLimits(forBitrate bitrate: Int) -> [Double] {
+    let perSecond = Double(bitrate) / 8
+    return [
+      (perSecond * dataRateLimitFactor).rounded(), 1,
+      (perSecond * (dataRateLimitFactor + 1)).rounded(), 2
+    ]
+  }
+
+  /// Gives a session a bitrate. Both properties are live, so this is also how a running session
+  /// changes rate: the next frame is coded at the new one, with no new session and no keyframe.
+  ///
+  /// The status of `DataRateLimits` is not checked. The hardware encoders take it for both codecs,
+  /// but a simulator's software HEVC encoder refuses it with -12900 (property not supported) and
+  /// still honours `AverageBitRate`, which is the property the bitrate controller relies on.
+  static func setRate(_ bitrate: Int, on session: VTCompressionSession) {
+    VTSessionSetProperty(
+      session,
+      key: kVTCompressionPropertyKey_AverageBitRate,
+      value: bitrate as CFNumber
+    )
+    VTSessionSetProperty(
+      session,
+      key: kVTCompressionPropertyKey_DataRateLimits,
+      value: dataRateLimits(forBitrate: bitrate) as CFArray
+    )
   }
 
   private func didEncode(sample: CMSampleBuffer?, status: OSStatus, flags: VTEncodeInfoFlags) {
@@ -493,7 +713,10 @@ public final class ProgramStreamer: @unchecked Sendable {
     else { return }
     let payload = Data(bytes: pointer, count: length)
     let timestamp = milliseconds(CMSampleBufferGetPresentationTimeStamp(encoded))
-    let keyframe = Self.payloadContainsIDR(payload) || isKeyframe(encoded)
+    lock.lock()
+    let codec = self.codec
+    lock.unlock()
+    let keyframe = Self.payloadContainsIDR(payload, codec: codec) || isKeyframe(encoded)
     let now = CFAbsoluteTimeGetCurrent()
 
     lock.lock()
@@ -512,7 +735,7 @@ public final class ProgramStreamer: @unchecked Sendable {
       let width = self.width
       let height = self.height
       let frameRate = self.frameRate
-      let bitrate = self.bitrate
+      let bitrate = self.bitrateHigh
       lock.unlock()
       client.sendMetadata(width: width, height: height, frameRate: frameRate, bitrate: bitrate)
       lock.lock()
@@ -520,20 +743,20 @@ public final class ProgramStreamer: @unchecked Sendable {
     if !sentVideoConfig {
       guard keyframe,
         let format = CMSampleBufferGetFormatDescription(encoded),
-        let record = Self.avcRecord(from: format)
+        let record = Self.decoderConfigurationRecord(from: format, codec: codec)
       else {
         lock.unlock()
         return
       }
       sentVideoConfig = true
       lock.unlock()
-      client.sendVideo(timestampMs: timestamp, tag: FLVTag.video(keyframe: true, packetType: 0, payload: record))
+      client.sendVideo(timestampMs: timestamp, tag: FLVTag.videoSequenceHeader(codec: codec, record: record))
     } else {
       lock.unlock()
     }
     let outcome = client.sendVideo(
       timestampMs: timestamp,
-      tag: FLVTag.video(keyframe: keyframe, packetType: 1, payload: payload)
+      tag: FLVTag.videoFrame(codec: codec, keyframe: keyframe, payload: payload)
     )
     // Only when the client is waiting for a keyframe to resume on. Asking on every over-budget
     // drop would force an IDR per frame while the link is still saturated, which is the opposite
@@ -570,8 +793,10 @@ public final class ProgramStreamer: @unchecked Sendable {
     return false
   }
 
-  /// AVCC length-prefixed NAL units. Type 5 is an IDR, which is what ffmpeg splits HLS on.
-  public static func payloadContainsIDR(_ payload: Data) -> Bool {
+  /// Length-prefixed NAL units. For H.264, type 5 is an IDR, which is what ffmpeg splits HLS on. For
+  /// H.265 it is any IRAP picture, types 16 to 23 (BLA, IDR, CRA), each of which a decoder can start
+  /// on.
+  public static func payloadContainsIDR(_ payload: Data, codec: RTMPVideoCodec = .h264) -> Bool {
     var offset = 0
     while offset + 4 <= payload.count {
       let length = payload.withUnsafeBytes { raw -> Int in
@@ -583,11 +808,51 @@ public final class ProgramStreamer: @unchecked Sendable {
       }
       offset += 4
       guard length > 0, offset + length <= payload.count else { return false }
-      let nalType = payload[offset] & 0x1F
-      if nalType == 5 { return true }
+      switch codec {
+      case .h264:
+        if payload[offset] & 0x1F == 5 { return true }
+      case .hevc:
+        if (16 ... 23).contains((payload[offset] >> 1) & 0x3F) { return true }
+      }
       offset += length
     }
     return false
+  }
+
+  private static func decoderConfigurationRecord(from format: CMFormatDescription, codec: RTMPVideoCodec) -> Data? {
+    switch codec {
+    case .h264: avcRecord(from: format)
+    case .hevc: hevcRecord(from: format)
+    }
+  }
+
+  /// The VPS, SPS and PPS VideoToolbox put in the format description, as an `hvcC` record.
+  private static func hevcRecord(from format: CMFormatDescription) -> Data? {
+    var count = 0
+    var nalLength: Int32 = 0
+    guard CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(
+      format,
+      parameterSetIndex: 0,
+      parameterSetPointerOut: nil,
+      parameterSetSizeOut: nil,
+      parameterSetCountOut: &count,
+      nalUnitHeaderLengthOut: &nalLength
+    ) == noErr, count >= 3 else { return nil }
+    var sets: [Data] = []
+    for index in 0 ..< count {
+      var pointer: UnsafePointer<UInt8>?
+      var size = 0
+      guard CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(
+        format,
+        parameterSetIndex: index,
+        parameterSetPointerOut: &pointer,
+        parameterSetSizeOut: &size,
+        parameterSetCountOut: nil,
+        nalUnitHeaderLengthOut: nil
+      ) == noErr, let pointer else { return nil }
+      sets.append(Data(bytes: pointer, count: size))
+    }
+    return HEVCDecoderConfiguration.record(parameterSets: sets, lengthSize: Int(nalLength))
   }
 
   private static func avcRecord(from format: CMFormatDescription) -> Data? {
@@ -631,11 +896,12 @@ public final class ProgramStreamer: @unchecked Sendable {
 }
 
 public enum ProgramStreamerError: Error, CustomStringConvertible {
-  case encoderUnavailable(OSStatus)
+  case encoderUnavailable(OSStatus, codec: RTMPVideoCodec)
 
   public var description: String {
     switch self {
-    case let .encoderUnavailable(status): "could not start the stream encoder (\(status))"
+    case let .encoderUnavailable(status, codec):
+      "could not start the \(codec.displayName) stream encoder (\(status))"
     }
   }
 }
@@ -647,6 +913,8 @@ final class AACPacketizer: @unchecked Sendable {
   private(set) var audioSpecificConfig = Data([ 0x11, 0x90 ])
   private let channels = 2
   private let frameSamples = 1024
+  /// How long one packet of sound lasts: 1024 frames at 48 kHz.
+  static let packetSeconds = 1024.0 / 48_000
 
   func reset() {
     if let converter { AudioConverterDispose(converter) }

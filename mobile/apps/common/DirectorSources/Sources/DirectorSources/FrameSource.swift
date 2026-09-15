@@ -183,17 +183,24 @@ public struct FrameSinks: Sendable {
   public var audio: AudioFrameHandler?
   public var compressed: CompressedFrameHandler?
   public var compressedAudio: CompressedAudioFrameHandler?
+  /// Decoded sound the moment it arrives, stamped with when it was captured rather than when the
+  /// delay line lets it play, for the recording's own mix. The live mix hears each camera at its
+  /// release; the recording waits for sound that arrives late, so it wants it sooner and placed by
+  /// capture.
+  public var recordingAudio: AudioFrameHandler?
 
   public init(
     pixel: PixelFrameHandler? = nil,
     audio: AudioFrameHandler? = nil,
     compressed: CompressedFrameHandler? = nil,
-    compressedAudio: CompressedAudioFrameHandler? = nil
+    compressedAudio: CompressedAudioFrameHandler? = nil,
+    recordingAudio: AudioFrameHandler? = nil
   ) {
     self.pixel = pixel
     self.audio = audio
     self.compressed = compressed
     self.compressedAudio = compressedAudio
+    self.recordingAudio = recordingAudio
   }
 }
 
@@ -424,12 +431,18 @@ public protocol FrameSource: AnyObject, Sendable {
   ///
   /// Default is a no-op, so only sources that encode need to care.
   func setArchiving(_ isArchiving: Bool)
+
+  /// The frame rate the camera says it is set to, when it says: a GS Cameraman states its rate over
+  /// its control channel. Nil when it does not. Only a source that otherwise has to measure its rate
+  /// cares; the default ignores it.
+  func setAnnouncedFrameRate(_ rate: Double?)
 }
 
 public extension FrameSource {
   var connections: Int { isRunning ? 1 : 0 }
   var receiveStats: ReceiveStats { ReceiveStats() }
   func setArchiving(_ isArchiving: Bool) {}
+  func setAnnouncedFrameRate(_ rate: Double?) {}
 
   func start(onPixelFrame: @escaping PixelFrameHandler) throws {
     try start(sinks: FrameSinks(pixel: onPixelFrame))

@@ -86,6 +86,28 @@ public enum DebugHUDLines {
       .init(id: "hud-stream-encoder-resets", text: "encreset=\(snapshot.streamEncoderResetCount)")
     ])
 
+    // The stream's bitrate controller: codec, the rate now inside the operator's range, the last
+    // decision and the queue and delivery it was made on, how often it has moved, and what the send
+    // budget shed. A stream doing its job moves the first numbers and leaves the last at zero.
+    let rate = snapshot.streamRate
+    rows.append([
+      .init(id: "hud-stream-codec", text: "scodec=\(rate.codec.isEmpty ? "-" : rate.codec)"),
+      .init(id: "hud-stream-bitrate", text: String(format: "sbr=%.1f", Double(rate.bitrate) / 1_000_000)),
+      .init(
+        id: "hud-stream-range",
+        text: String(format: "srange=%.1f-%.1f", Double(rate.low) / 1_000_000, Double(rate.high) / 1_000_000)
+      ),
+      .init(id: "hud-stream-decision", text: "sdec=\(rate.lastDecision.isEmpty ? "-" : rate.lastDecision)"),
+      .init(id: "hud-stream-queue", text: "sq=\(rate.queueMilliseconds)"),
+      .init(
+        id: "hud-stream-delivery",
+        text: String(format: "sdlv=%.1f", Double(rate.deliveryBitsPerSecond) / 1_000_000)
+      ),
+      .init(id: "hud-stream-decreases", text: "scut=\(rate.decreases)"),
+      .init(id: "hud-stream-increases", text: "sup=\(rate.increases)"),
+      .init(id: "hud-stream-dropped", text: "sdrop=\(snapshot.streamDroppedPackets)")
+    ])
+
     var mix: [DebugHUDLine] = [
       .init(id: "hud-overlay", text: "overlay=\(snapshot.overlay.isEmpty ? "off" : snapshot.overlay)"),
       .init(id: "hud-composed", text: "composed=\(snapshot.composedFrames)"),

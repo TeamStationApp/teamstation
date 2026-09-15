@@ -192,7 +192,13 @@ object CameraParameterName {
     const val frameRate = "videoEncoder.rateControl.frameRateLimit"
     const val bitrateKbps = "videoEncoder.rateControl.bitrateLimit"
 
-    /** Whether the phone lowers its rate, never below half of `bitrateLimit`, while a link backs up. */
+    /**
+     * The lowest rate adaptation may reach, in kbps, never above `bitrateLimit`. A phone that
+     * predates it adapts down to half of `bitrateLimit`, and is read as reporting that.
+     */
+    const val bitrateFloorKbps = "videoEncoder.rateControl.bitrateFloor"
+
+    /** Whether the phone lowers its rate, never below `bitrateFloor`, while a link backs up. */
     const val adaptiveBitrate = "videoEncoder.rateControl.adaptive"
 
     /** The rate the encoder is running at, in kbps: `bitrateLimit`, or less while adapting. */
@@ -212,7 +218,7 @@ object CameraParameterName {
 
     val writable: Set<String> = setOf(
         deviceName, sourcePosition, ptzZoom, encoding, width, height, frameRate, bitrateKbps,
-        adaptiveBitrate, audioEnabled, lensDisabled
+        bitrateFloorKbps, adaptiveBitrate, audioEnabled, lensDisabled
     )
 
     /**
@@ -225,8 +231,8 @@ object CameraParameterName {
         sourcePosition, sourceDeviceType,
         zoomMinimumDevice, zoomMaximumDevice, zoomDisplayMultiplier, zoomSwitchOverDevice,
         ptzZoom, ptzZoomDevice,
-        encoding, width, height, frameRate, bitrateKbps, adaptiveBitrate, currentBitrateKbps,
-        formatCount,
+        encoding, width, height, frameRate, bitrateKbps, bitrateFloorKbps, adaptiveBitrate,
+        currentBitrateKbps, formatCount,
         audioEnabled, audioSampleRate,
         lensCount, lensDisabled,
         streamURL, streamClients
@@ -299,6 +305,8 @@ data class CameraParameterWrite(
     val frameRate: Double? = null,
     /** Bits per second, converted from the wire's kbps. */
     val bitrate: Int? = null,
+    /** Bits per second, converted from the wire's kbps. */
+    val bitrateFloor: Int? = null,
     val adaptiveBitrate: Boolean? = null,
     val audioEnabled: Boolean? = null,
     val disabledLensIDs: Set<String>? = null,
@@ -308,7 +316,8 @@ data class CameraParameterWrite(
     val isEmpty: Boolean
         get() = name == null && position == null && displayedZoom == null && codec == null &&
             width == null && height == null && frameRate == null && bitrate == null &&
-            adaptiveBitrate == null && audioEnabled == null && disabledLensIDs == null
+            bitrateFloor == null && adaptiveBitrate == null && audioEnabled == null &&
+            disabledLensIDs == null
 
     /**
      * True when anything in [StreamSettings] is named, i.e. the phone should run one
@@ -316,15 +325,15 @@ data class CameraParameterWrite(
      */
     val touchesSettings: Boolean
         get() = codec != null || width != null || height != null || frameRate != null ||
-            bitrate != null || adaptiveBitrate != null || audioEnabled != null ||
-            disabledLensIDs != null
+            bitrate != null || bitrateFloor != null || adaptiveBitrate != null ||
+            audioEnabled != null || disabledLensIDs != null
 }
 
 object CameraParameters {
     const val contentType = "text/parameters"
     const val controlVersion = "params/1"
     const val minimumBitrateKbps = 1_000
-    const val maximumBitrateKbps = 50_000
+    const val maximumBitrateKbps = StreamSettings.maximumBitrate / 1000
 
     // MARK: - Encode
 
@@ -355,6 +364,7 @@ object CameraParameters {
         set.set(CameraParameterName.height, s.height.toString())
         set.set(CameraParameterName.frameRate, number(s.frameRate))
         set.set(CameraParameterName.bitrateKbps, (s.bitrate / 1000).toString())
+        set.set(CameraParameterName.bitrateFloorKbps, (s.bitrateFloor / 1000).toString())
         set.set(CameraParameterName.adaptiveBitrate, bool(s.adaptiveBitrate))
         set.set(
             CameraParameterName.currentBitrateKbps,
@@ -467,6 +477,9 @@ object CameraParameters {
             frameRate = frameRate,
             codec = codec,
             bitrate = bitrateKbps * 1000,
+            // Absent from a phone that predates the setting, which adapts down to half the rate.
+            bitrateFloor = set[CameraParameterName.bitrateFloorKbps]?.toIntOrNull()?.let { it * 1000 }
+                ?: StreamSettings.defaultBitrateFloor(bitrateKbps * 1000),
             // Absent from a phone that predates adaptation, which never adapts.
             adaptiveBitrate = parseBool(set[CameraParameterName.adaptiveBitrate]) ?: false,
             port = port ?: StreamSettings.defaultPort,
@@ -605,6 +618,14 @@ object CameraParameters {
                     write = write.copy(bitrate = kbps * 1000)
                 }
 
+                CameraParameterName.bitrateFloorKbps -> {
+                    val kbps = value.toIntOrNull() ?: return bad("expected an integer in kbps")
+                    if (kbps !in minimumBitrateKbps..maximumBitrateKbps) {
+                        return bad("expected $minimumBitrateKbps…$maximumBitrateKbps kbps")
+                    }
+                    write = write.copy(bitrateFloor = kbps * 1000)
+                }
+
                 CameraParameterName.adaptiveBitrate -> {
                     val enabled = parseBool(value) ?: return bad("expected true or false")
                     write = write.copy(adaptiveBitrate = enabled)
@@ -666,6 +687,24 @@ object CameraParameters {
             }
         }
 
+        // A named floor is judged against the rate it will sit under, which is the request's own
+        // rate when it names one: raising both in one request is fine even if the new floor is
+        // above the old rate. A request that names only the rate is never refused for the floor,
+        // which comes down with it, so a client that predates the floor can still lower the rate.
+        val floor = write.bitrateFloor
+        if (floor != null) {
+            val ceiling = settings(write, snapshot.settings).bitrate
+            if (floor > ceiling) {
+                return ParameterOutcome.Failure(
+                    CameraParameterError(
+                        CameraParameterError.Kind.BAD_REQUEST,
+                        CameraParameterName.bitrateFloorKbps,
+                        "${floor / 1000} kbps is above the ${ceiling / 1000} kbps bitrateLimit"
+                    )
+                )
+            }
+        }
+
         return ParameterOutcome.Success(write)
     }
 
@@ -680,8 +719,11 @@ object CameraParameters {
         applying.width?.let { next.width = it }
         applying.height?.let { next.height = it }
         applying.frameRate?.let { next.frameRate = it }
-        // After `selectCodec`, so an explicit rate in the same request wins over the codec default.
-        applying.bitrate?.let { next.bitrate = it }
+        // After `selectCodec`, so an explicit rate in the same request wins over the codec default,
+        // and the floor after the rate, so an explicit floor wins over the one the rate carried.
+        applying.bitrate?.let { next.selectBitrate(it) }
+        applying.bitrateFloor?.let { next.bitrateFloor = it }
+        next.clampFloorToCeiling()
         applying.adaptiveBitrate?.let { next.adaptiveBitrate = it }
         applying.audioEnabled?.let { next.audioEnabled = it }
         applying.disabledLensIDs?.let { next.disabledLensIDs = it }

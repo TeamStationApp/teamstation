@@ -10,8 +10,8 @@ import kotlin.math.roundToInt
  * Chooses the encoder's bitrate from what the link to the weakest client is doing.
  *
  * The operator's bitrate is the ceiling. When the link backs up the rate comes down, never below
- * half the ceiling, and it climbs back once the link has been clean for a while. Below half, a
- * softer picture stops being a better trade than the dropped frames it is there to prevent.
+ * the floor, and it climbs back once the link has been clean for a while. Below the floor, a softer
+ * picture stops being a better trade than the dropped frames it is there to prevent.
  *
  * The iOS build's `AdaptiveBitrateController` is the same algorithm with the same constants; the
  * two are tested against the same scenarios. Every signal is measured on the sender, because nothing
@@ -34,7 +34,12 @@ import kotlin.math.roundToInt
  *   the best quality, far more than how often the quality moves. So changes are small and spaced,
  *   and recovery is not slow for its own sake.
  */
-class AdaptiveBitrateController(ceiling: Int, val tuning: Tuning = Tuning()) {
+class AdaptiveBitrateController(
+    ceiling: Int,
+    /** Half the ceiling when null, and kept between zero and the ceiling either way. */
+    floor: Int? = null,
+    val tuning: Tuning = Tuning()
+) {
     enum class Decision(val rawValue: String) {
         HOLD("hold"),
 
@@ -99,7 +104,14 @@ class AdaptiveBitrateController(ceiling: Int, val tuning: Tuning = Tuning()) {
 
     var ceiling: Int = ceiling
         private set
-    val floor: Int get() = ceiling / 2
+
+    /**
+     * The lowest rate a cut may reach: the operator's own low bitrate where there is one, and half
+     * the ceiling otherwise. Below the floor a softer picture stops being worth the dropped frames it
+     * would save.
+     */
+    var floor: Int = floorWithin(ceiling, floor)
+        private set
 
     /** Unrounded, so a slow climb is not lost to the quantum. */
     private var target = ceiling.toDouble()
@@ -127,15 +139,17 @@ class AdaptiveBitrateController(ceiling: Int, val tuning: Tuning = Tuning()) {
      */
     private var lastCongestedRate: Double? = null
 
-    var status = Status(ceiling = ceiling, floor = ceiling / 2, bitrate = ceiling)
+    var status = Status(ceiling = ceiling, floor = this.floor, bitrate = ceiling)
         private set
 
     /**
-     * Starts again at [ceiling], forgetting everything measured. For a new operator rate, and for an
-     * encoder that has been rebuilt at the ceiling. The counts carry over: they describe the session.
+     * Starts again at [ceiling], forgetting everything measured. For a new operator rate or floor,
+     * and for an encoder that has been rebuilt at the ceiling. [floor] is half the new ceiling when
+     * null. The counts carry over: they describe the session.
      */
-    fun reset(ceiling: Int) {
+    fun reset(ceiling: Int, floor: Int? = null) {
         this.ceiling = ceiling
+        this.floor = floorWithin(ceiling, floor)
         target = ceiling.toDouble()
         bitrate = ceiling
         deliveries.clear()
@@ -150,7 +164,7 @@ class AdaptiveBitrateController(ceiling: Int, val tuning: Tuning = Tuning()) {
         lastCongestedRate = null
         status = Status(
             ceiling = ceiling,
-            floor = ceiling / 2,
+            floor = this.floor,
             bitrate = ceiling,
             decreases = status.decreases,
             increases = status.increases
@@ -170,7 +184,7 @@ class AdaptiveBitrateController(ceiling: Int, val tuning: Tuning = Tuning()) {
             // about.
             val last = lastSampleAt
             if (last != null && now - last > tuning.idleReset && bitrate != ceiling) {
-                reset(ceiling)
+                reset(ceiling, floor)
                 return ceiling
             }
             return null
@@ -365,5 +379,9 @@ class AdaptiveBitrateController(ceiling: Int, val tuning: Tuning = Tuning()) {
         bitrate = next
         lastPushAt = now
         return next
+    }
+
+    private companion object {
+        fun floorWithin(ceiling: Int, floor: Int?): Int = min(max(0, floor ?: (ceiling / 2)), ceiling)
     }
 }

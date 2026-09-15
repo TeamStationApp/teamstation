@@ -34,6 +34,8 @@ packages:
     path: Packages/CameramanEncode
   CameramanRTSP:
     path: Packages/CameramanRTSP
+  AdaptiveBitrate:
+    path: ../common/AdaptiveBitrate
   CameramanUI:
     path: Packages/CameramanUI
   CameramanTestHarness:
@@ -74,6 +76,8 @@ targets:
         product: CameramanEncode
       - package: CameramanRTSP
         product: CameramanRTSP
+      - package: AdaptiveBitrate
+        product: AdaptiveBitrate
       - package: CameramanUI
         product: CameramanUI
       - package: CameramanTestHarness
@@ -98,6 +102,8 @@ targets:
         product: CameramanEncode
       - package: CameramanRTSP
         product: CameramanRTSP
+      - package: AdaptiveBitrate
+        product: AdaptiveBitrate
       - package: CameramanUI
         product: CameramanUI
       - package: CameramanTestHarness

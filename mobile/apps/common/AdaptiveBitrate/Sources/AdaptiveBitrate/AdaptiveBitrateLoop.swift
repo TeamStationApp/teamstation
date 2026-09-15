@@ -16,7 +16,7 @@ public final class AdaptiveBitrateLoop: @unchecked Sendable {
   /// follow is wasted; slower lets a Wi-Fi burst reach the drop threshold before anything reacts.
   public static let tickInterval: DispatchTimeInterval = .milliseconds(250)
 
-  private let queue = DispatchQueue(label: "co.gamestation.cameraman.adaptive-bitrate")
+  private let queue = DispatchQueue(label: "co.gamestation.adaptive-bitrate")
   private let sample: @Sendable (@escaping @Sendable (CongestionSample?) -> Void) -> Void
   private let apply: @Sendable (Int) -> Void
   private let published: OSAllocatedUnfairLock<Status>
@@ -27,24 +27,27 @@ public final class AdaptiveBitrateLoop: @unchecked Sendable {
   private var timer: DispatchSourceTimer?
 
   /// `sample` reports the worst playing client's link since it was last asked; `apply` hands a rate
-  /// to the encoder. Neither may block.
+  /// to the encoder. Neither may block. `tuning` is the controller's, kept across `configure`.
   public init(
     ceiling: Int,
+    floor: Int? = nil,
+    tuning: AdaptiveBitrateController.Tuning = .init(),
     sample: @escaping @Sendable (@escaping @Sendable (CongestionSample?) -> Void) -> Void,
     apply: @escaping @Sendable (Int) -> Void
   ) {
     self.sample = sample
     self.apply = apply
-    controller = AdaptiveBitrateController(ceiling: ceiling)
+    controller = AdaptiveBitrateController(ceiling: ceiling, floor: floor, tuning: tuning)
     published = OSAllocatedUnfairLock(initialState: Status(enabled: false, controller: controller.status))
   }
 
   public var status: Status { published.withLock { $0 } }
 
-  /// A new ceiling, or adaptation switched on or off. Either way the rate goes back to the ceiling.
-  public func configure(ceiling: Int, enabled: Bool) {
+  /// A new ceiling or floor, or adaptation switched on or off. Either way the rate goes back to the
+  /// ceiling. `floor` defaults to half the ceiling.
+  public func configure(ceiling: Int, floor: Int? = nil, enabled: Bool) {
     queue.async { [self] in
-      controller.reset(ceiling: ceiling)
+      controller.reset(ceiling: ceiling, floor: floor)
       self.enabled = enabled
       if enabled { startTimer() } else { stopTimer() }
       apply(ceiling)

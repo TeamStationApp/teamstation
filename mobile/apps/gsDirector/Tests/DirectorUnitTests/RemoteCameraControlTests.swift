@@ -147,10 +147,77 @@ struct RemoteCameraControlTests {
     next.audioEnabled = false
     model.apply(next)
     try await Task.sleep(for: .milliseconds(100))
-    #expect(transport.sets == [ "videoEncoder.encoding: H264\r\nvideoEncoder.rateControl.bitrateLimit: 6000\r\naudioEncoder.enabled: false\r\n" ])
+    #expect(transport.sets == [ "videoEncoder.encoding: H264\r\nvideoEncoder.rateControl.bitrateLimit: 6000\r\nvideoEncoder.rateControl.bitrateFloor: 3000\r\naudioEncoder.enabled: false\r\n" ])
     #expect(transport.snapshot.settings.codec == .h264)
     #expect(model.settings.codec == .h264)
     #expect(model.settings.bitrate == 6_000_000)
+    #expect(model.settings.bitrateFloor == 3_000_000)
+  }
+
+  @Test("A floor chosen in Settings goes to the phone and is read back from it")
+  @MainActor
+  func floorRoundTrips() async throws {
+    let transport = ScriptedTransport(snapshot: Self.phone())
+    let model = RemoteCameraControl(transport: transport, animatesChrome: false)
+    await model.poll()
+    #expect(model.settings.bitrateFloor == 2_000_000)
+
+    var next = model.settings
+    next.bitrate = 8_000_000
+    next.bitrateFloor = 5_000_000
+    model.apply(next)
+    try await Task.sleep(for: .milliseconds(100))
+    #expect(transport.sets == [ "videoEncoder.rateControl.bitrateLimit: 8000\r\nvideoEncoder.rateControl.bitrateFloor: 5000\r\n" ])
+    #expect(transport.snapshot.settings.bitrateFloor == 5_000_000)
+    #expect(model.settings.bitrateFloor == 5_000_000)
+
+    // A floor changed on the phone itself shows up on the next poll.
+    transport.snapshot.settings.bitrateFloor = 1_500_000
+    // Past the window in which a local write outranks a poll.
+    try await Task.sleep(for: .milliseconds(1_600))
+    await model.poll()
+    #expect(model.settings.bitrateFloor == 1_500_000)
+  }
+
+  /// A phone in a box that predates the floor: it leaves the name out of `GET *` and refuses a
+  /// `SET` that names it, as an older Cameraman does.
+  final class OlderPhoneTransport: ParameterTransport, @unchecked Sendable {
+    let inner: ScriptedTransport
+    init(snapshot: CameraSnapshot) { inner = ScriptedTransport(snapshot: snapshot) }
+    var state: ParameterTransportState { inner.state }
+    func start() {}
+    func stop() {}
+
+    func get(_ body: String) async throws -> ParameterReply {
+      let reply = try await inner.get(body)
+      let kept = reply.body.components(separatedBy: "\r\n").filter { !$0.hasPrefix(CameraParameterName.bitrateFloorKbps) }
+      return ParameterReply(statusCode: reply.statusCode, reasonPhrase: reply.reasonPhrase, body: kept.joined(separator: "\r\n"))
+    }
+
+    func set(_ body: String) async throws -> ParameterReply {
+      if body.contains(CameraParameterName.bitrateFloorKbps) {
+        return ParameterReply(statusCode: 451, reasonPhrase: "Parameter Not Understood", body: "\(CameraParameterName.bitrateFloorKbps)\r\nunknown parameter\r\n")
+      }
+      return try await inner.set(body)
+    }
+  }
+
+  @Test("A phone that predates the floor is not sent one, so the rest of the change still lands")
+  @MainActor
+  func olderPhoneIsNotSentTheFloor() async throws {
+    let transport = OlderPhoneTransport(snapshot: Self.phone())
+    let model = RemoteCameraControl(transport: transport, animatesChrome: false)
+    await model.poll()
+    #expect(model.settings.bitrateFloor == 2_000_000, "read as half the rate")
+
+    var next = model.settings
+    next.setCodec(.h264)
+    next.bitrateFloor = 1_000_000
+    model.apply(next)
+    try await Task.sleep(for: .milliseconds(100))
+    #expect(transport.inner.sets == [ "videoEncoder.encoding: H264\r\nvideoEncoder.rateControl.bitrateLimit: 6000\r\n" ])
+    #expect(model.lastError == nil)
+    #expect(transport.inner.snapshot.settings.codec == .h264)
   }
 
   @Test("Flip and rename go immediately and show at once")
@@ -220,8 +287,15 @@ struct RemoteCameraControlTests {
     next.bitrate = 2_500_000
     next.disabledLensIDs = [ "b", "a" ]
     let lines = RemoteCameraControl.settingsLines(from: StreamSettings(), to: next)
-    #expect(lines.map(\.0) == [ "videoEncoder.encoding", "videoEncoder.rateControl.bitrateLimit", "lens.disabled" ])
-    #expect(lines.map(\.1) == [ "H264", "2500", "a,b" ])
+    #expect(lines.map(\.0) == [
+      "videoEncoder.encoding", "videoEncoder.rateControl.bitrateLimit", "videoEncoder.rateControl.bitrateFloor",
+      "lens.disabled"
+    ])
+    #expect(lines.map(\.1) == [ "H264", "2500", "3000", "a,b" ])
+    #expect(
+      RemoteCameraControl.settingsLines(from: StreamSettings(), to: next, includingFloor: false).map(\.0)
+        == [ "videoEncoder.encoding", "videoEncoder.rateControl.bitrateLimit", "lens.disabled" ]
+    )
   }
 
   @Test("Adaptive bitrate goes on the wire right after the rate it adapts")

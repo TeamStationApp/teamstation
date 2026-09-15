@@ -3,8 +3,8 @@ import Foundation
 /// Chooses the encoder's bitrate from what the link to the weakest client is doing.
 ///
 /// The operator's bitrate is the ceiling. When the link backs up the rate comes down, never below
-/// half the ceiling, and it climbs back once the link has been clean for a while. Below half, a
-/// softer picture stops being a better trade than the dropped frames it is there to prevent.
+/// the floor, and it climbs back once the link has been clean for a while. Below the floor, a softer
+/// picture stops being a better trade than the dropped frames it is there to prevent.
 ///
 /// Every signal is measured on the sender, because nothing comes back from Director: no receiver
 /// reports, and on TCP no loss. The rules and constants are taken from controllers built on the same
@@ -91,8 +91,44 @@ public struct AdaptiveBitrateController: Sendable {
     /// How far back the transport's base delay is remembered: LEDBAT's base delay (RFC 6817) and
     /// BBR's minimum round trip both use a window of about ten seconds.
     public var baseDelayWindow = 10.0
+    /// A link that carried less than this share of the current rate over the delivery window was
+    /// stalled rather than slow, and what it carried says nothing about what it can: a cut then takes
+    /// its fixed step instead of going to the measured rate. Zero, the default, always takes the
+    /// measurement at its word.
+    public var stallShare = 0.0
+    /// Whether a queue the link is already emptying is left alone. The queue's age goes on rising
+    /// after a cut until the backlog from before it has gone, so a sender that cuts on age alone keeps
+    /// cutting a link that now carries more than it is given. Off by default, where a quarter-second
+    /// of queue is itself the problem.
+    public var holdWhileDraining = false
 
     public init() {}
+
+    /// GS Director's RTMP stream, which has seconds of room where a camera has a fraction of one.
+    ///
+    /// Nobody watches the stream against the field: a platform's player sits 5–20 s behind, so the
+    /// RTMP client holds `RTMPClient.sendBufferSeconds` (8 s) of stream before it sheds anything, and
+    /// a dip in the link is better sent late than dropped or coded softer. The thresholds follow that
+    /// room rather than the camera's half-second display: a queue has to reach a second before it is
+    /// trimmed, a second and a half before the rate goes to what the link carries, and five seconds
+    /// before the large cut, which leaves three for the backlog to drain before anything is shed. A
+    /// queue that is merely late costs the viewer nothing; a cut costs them picture for the 10–15 s
+    /// the climb back takes.
+    ///
+    /// A stall, the link carrying almost nothing as Wi-Fi does for a second or three, is not a rate:
+    /// cutting to what it carried would put the stream on the floor for a dip it could have ridden
+    /// out, so below a tenth of the rate the cut takes its fixed step. And once the link carries more
+    /// than the encoder makes, the queue is left to drain.
+    public static let rtmpStream: Tuning = {
+      var tuning = Tuning()
+      tuning.clearDelay = 0.25
+      tuning.growingDelay = 1.0
+      tuning.congestedDelay = 1.5
+      tuning.emergencyDelay = 5.0
+      tuning.stallShare = 0.1
+      tuning.holdWhileDraining = true
+      return tuning
+    }()
   }
 
   /// What the controller last did and why, for the state dump.
@@ -115,7 +151,10 @@ public struct AdaptiveBitrateController: Sendable {
 
   public let tuning: Tuning
   public private(set) var ceiling: Int
-  public var floor: Int { ceiling / 2 }
+  /// The lowest rate a cut may reach: the operator's own low bitrate where there is one, and half
+  /// the ceiling otherwise. Below the floor a softer picture stops being worth the dropped frames it
+  /// would save.
+  public private(set) var floor: Int
   /// Unrounded, so a slow climb is not lost to the quantum.
   private var target: Double
   /// What the encoder was last told.
@@ -139,14 +178,17 @@ public struct AdaptiveBitrateController: Sendable {
 
   public private(set) var status: Status
 
-  public init(ceiling: Int, tuning: Tuning = Tuning()) {
+  /// `floor` defaults to half the ceiling, and is kept between zero and the ceiling.
+  public init(ceiling: Int, floor: Int? = nil, tuning: Tuning = Tuning()) {
     self.tuning = tuning
     self.ceiling = ceiling
+    let floor = min(max(0, floor ?? ceiling / 2), ceiling)
+    self.floor = floor
     target = Double(ceiling)
     bitrate = ceiling
     status = Status(
       ceiling: ceiling,
-      floor: ceiling / 2,
+      floor: floor,
       bitrate: ceiling,
       lastDecision: .hold,
       decreases: 0,
@@ -159,9 +201,9 @@ public struct AdaptiveBitrateController: Sendable {
 
   /// Starts again at `ceiling`, forgetting everything measured. For a new operator rate, and for an
   /// encoder that has been rebuilt at the ceiling. The counts carry over: they describe the session.
-  public mutating func reset(ceiling: Int) {
+  public mutating func reset(ceiling: Int, floor: Int? = nil) {
     let counts = (status.decreases, status.increases)
-    self = AdaptiveBitrateController(ceiling: ceiling, tuning: tuning)
+    self = AdaptiveBitrateController(ceiling: ceiling, floor: floor, tuning: tuning)
     (status.decreases, status.increases) = counts
   }
 
@@ -174,8 +216,9 @@ public struct AdaptiveBitrateController: Sendable {
       // Nobody watching. Held rather than climbed, since there is no link to judge, but not held
       // for ever: a client arriving much later is on a link nothing has been measured about.
       if let last = lastSampleAt, now - last > tuning.idleReset, bitrate != ceiling {
-        let ceiling = ceiling
-        reset(ceiling: ceiling)
+        let (ceiling, floor) = (ceiling, floor)
+        // The operator's floor, not the default: going idle is not a new setting.
+        reset(ceiling: ceiling, floor: floor)
         return ceiling
       }
       return nil
@@ -192,13 +235,14 @@ public struct AdaptiveBitrateController: Sendable {
     let lost = sample.droppedFrames + sample.flushes > 0
     if lost { lastLossAt = now }
 
-    let decision = decide(delay: delay, appDelay: sample.queueDelay, lost: lost, now: now)
+    let decision = decide(delay: delay, appDelay: sample.queueDelay, lost: lost, draining: isDraining(), now: now)
+    let cutDelivery = self.cutDelivery()
     switch decision {
     case .emergency:
-      cut(to: min(target * tuning.emergencyFactor, delivery.map { $0 * tuning.deliveryFactor } ?? .infinity), now: now)
+      cut(to: min(target * tuning.emergencyFactor, cutDelivery.map { $0 * tuning.deliveryFactor } ?? .infinity), now: now)
       lastEmergencyAt = now
     case .congested:
-      cut(to: min(target * tuning.congestedFactor, delivery.map { $0 * tuning.deliveryFactor } ?? .infinity), now: now)
+      cut(to: min(target * tuning.congestedFactor, cutDelivery.map { $0 * tuning.deliveryFactor } ?? .infinity), now: now)
     case .growing:
       cut(to: target * tuning.growingFactor, now: now)
     case .increase:
@@ -231,6 +275,19 @@ public struct AdaptiveBitrateController: Sendable {
   /// bytes that are merely in flight for longer.
   private func isFallingShort(_ sample: CongestionSample) -> Bool {
     if sample.queueDelay > 0.02 { return true }
+    guard let window = windowTotals(), window.offered > 0 else { return false }
+    return Double(window.drained) < Double(window.offered) * tuning.shortfall
+  }
+
+  /// Whether the link carried at least what the encoder offered over the delivery window, so a
+  /// backlog is shrinking on its own.
+  private func isDraining() -> Bool {
+    guard let window = windowTotals(), window.offered > 0 else { return false }
+    return window.drained >= window.offered
+  }
+
+  /// Bytes drained and offered over the delivery window, or nil until the window is covered.
+  private func windowTotals() -> (drained: Int, offered: Int)? {
     var covered = 0.0
     var drained = 0
     var offered = 0
@@ -240,8 +297,15 @@ public struct AdaptiveBitrateController: Sendable {
       offered += entry.offered
       if covered >= tuning.deliveryWindow * 0.95 { break }
     }
-    guard covered >= tuning.deliveryWindow * 0.95, offered > 0 else { return false }
-    return Double(drained) < Double(offered) * tuning.shortfall
+    guard covered >= tuning.deliveryWindow * 0.95 else { return nil }
+    return (drained, offered)
+  }
+
+  /// The delivery rate a cut may go to: the measured one, unless the link was stalled rather than
+  /// slow.
+  private func cutDelivery() -> Double? {
+    guard let delivery = deliveryRate() else { return nil }
+    return delivery < Double(bitrate) * tuning.stallShare ? nil : delivery
   }
 
   /// Bits per second the link carried over the last second, or nil until a full second is measured.
@@ -293,7 +357,7 @@ public struct AdaptiveBitrateController: Sendable {
 
   // MARK: - Deciding
 
-  private func decide(delay: Double, appDelay: Double, lost: Bool, now: Double) -> Decision {
+  private func decide(delay: Double, appDelay: Double, lost: Bool, draining: Bool, now: Double) -> Decision {
     let sinceDecrease = now - lastDecreaseAt
 
     // Each cut is judged against the rate it would leave; one already at the floor has nowhere to go.
@@ -303,10 +367,12 @@ public struct AdaptiveBitrateController: Sendable {
     if canCut, lost || appDelay > tuning.emergencyDelay, now - lastEmergencyAt >= tuning.emergencyHold {
       return .emergency
     }
-    if canCut, congestedTicks >= 2, sinceDecrease >= tuning.decreaseHold {
+    // The smaller steps are for a queue that is still building.
+    let mayTrim = !(tuning.holdWhileDraining && draining)
+    if canCut, mayTrim, congestedTicks >= 2, sinceDecrease >= tuning.decreaseHold {
       return .congested
     }
-    if canCut, delay > tuning.growingDelay, isGrowing, sinceDecrease >= tuning.decreaseHold {
+    if canCut, mayTrim, delay > tuning.growingDelay, isGrowing, sinceDecrease >= tuning.decreaseHold {
       return .growing
     }
     if target < Double(ceiling),
@@ -327,7 +393,7 @@ public struct AdaptiveBitrateController: Sendable {
   private mutating func cut(to rate: Double, now: Double) {
     let next = max(Double(floor), rate)
     guard next < target else { return }
-    lastCongestedRate = min(target, deliveryRate() ?? target)
+    lastCongestedRate = min(target, cutDelivery() ?? target)
     target = next
     lastDecreaseAt = now
     congestedTicks = 0

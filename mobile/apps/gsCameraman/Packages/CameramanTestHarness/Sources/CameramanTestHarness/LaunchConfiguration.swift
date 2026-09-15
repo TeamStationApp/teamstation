@@ -14,6 +14,7 @@ public struct LaunchConfiguration: Sendable, Equatable {
     "rtspPath",
     "codec",
     "bitrateMbps",
+    "bitrateFloorMbps",
     "adaptiveBitrate",
     "width",
     "height",
@@ -110,8 +111,13 @@ public struct LaunchConfiguration: Sendable, Equatable {
     if let path = values["rtspPath"] { settings.path = path }
     if let codec = values["codec"].flatMap(StreamCodec.init(rawValue:)) { settings.setCodec(codec) }
     if let mbps = values["bitrateMbps"].flatMap(Double.init) {
-      settings.bitrate = Int(mbps * 1_000_000)
+      settings.setBitrate(Int(mbps * 1_000_000))
     }
+    // After the rate, which carries a default floor with it that this then replaces.
+    if let mbps = values["bitrateFloorMbps"].flatMap(Double.init) {
+      settings.bitrateFloor = Int(mbps * 1_000_000)
+    }
+    settings.clampFloorToCeiling()
     if let adaptive = Self.bool(values["adaptiveBitrate"]) { settings.adaptiveBitrate = adaptive }
     if let width = values["width"].flatMap(Int.init) { settings.width = width }
     if let height = values["height"].flatMap(Int.init) { settings.height = height }

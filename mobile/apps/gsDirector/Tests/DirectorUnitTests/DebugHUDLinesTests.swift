@@ -4,6 +4,36 @@ import Testing
 
 @Suite("Debug HUD lines")
 struct DebugHUDLinesTests {
+  @Test("The stream's bitrate controller has a row of its own")
+  func streamRateRow() {
+    var snapshot = TelemetrySnapshot()
+    snapshot.streamRate.codec = "hevc"
+    snapshot.streamRate.bitrate = 4_300_000
+    snapshot.streamRate.low = 2_000_000
+    snapshot.streamRate.high = 6_000_000
+    snapshot.streamRate.lastDecision = "congested"
+    snapshot.streamRate.queueMilliseconds = 180
+    snapshot.streamRate.deliveryBitsPerSecond = 4_120_000
+    snapshot.streamRate.decreases = 3
+    snapshot.streamRate.increases = 1
+    snapshot.streamDroppedPackets = 0
+
+    // Keyed by the first occurrence: two rows already share `hud-program-source`.
+    let texts = Dictionary(
+      DebugHUDLines.make(snapshot).flatMap { $0 }.map { ($0.id, $0.text) },
+      uniquingKeysWith: { first, _ in first }
+    )
+    #expect(texts["hud-stream-codec"] == "scodec=hevc")
+    #expect(texts["hud-stream-bitrate"] == "sbr=4.3")
+    #expect(texts["hud-stream-range"] == "srange=2.0-6.0")
+    #expect(texts["hud-stream-decision"] == "sdec=congested")
+    #expect(texts["hud-stream-queue"] == "sq=180")
+    #expect(texts["hud-stream-delivery"] == "sdlv=4.1")
+    #expect(texts["hud-stream-decreases"] == "scut=3")
+    #expect(texts["hud-stream-increases"] == "sup=1")
+    #expect(texts["hud-stream-dropped"] == "sdrop=0")
+  }
+
   @Test("Every Maestro hud-* identifier is present")
   func identifiersMatchContract() {
     var snapshot = TelemetrySnapshot()

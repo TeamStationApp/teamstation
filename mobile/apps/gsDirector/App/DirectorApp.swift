@@ -52,19 +52,23 @@ struct DirectorApp: App {
 
   /// NDI discovery, and the sources it hands out.
   ///
-  /// The archive codec is read here rather than inside `DirectorNDI` because it is an operator
-  /// setting: the free SDK decodes before we see a frame, so unlike an RTSP camera the codec on
-  /// disk is ours to choose. A launch argument wins for the session, as it does for the programme
-  /// master.
+  /// The archive's encoding comes from here rather than from inside `DirectorNDI` because it is an
+  /// operator setting: the free SDK decodes before we see a frame, so unlike an RTSP camera what is
+  /// on disk is ours to choose. It is read each time a camera starts archiving, so a take records
+  /// with the raw camera settings in force when it began. A launch argument wins for the session,
+  /// as it does for the programme master.
   private static func makeNDIDiscovery(
     launch: LaunchConfiguration,
     coordinator: PlayoutCoordinator
   ) -> SourceDiscovery {
-    let stored = ConfigStore().load()
-    let codec: CompressedFrame.Codec = (launch.sourceEncodeCodec ?? stored.sourceEncodeCodec) == .h264
-      ? .h264
-      : .hevc
-    let bitrate = launch.sourceEncodeBitrate ?? stored.programBitrate
+    let codecOverride = launch.sourceEncodeCodec
+    let bitrateOverride = launch.sourceEncodeBitrate
+    let archiveEncoding: @Sendable () -> EncodeSettings = {
+      var encoding = ConfigStore().load().rawCameraEncoding
+      if let codecOverride { encoding.codec = codecOverride }
+      if let bitrateOverride { encoding.bitrate = bitrateOverride }
+      return encoding
+    }
     if let limit = launch.sourceEncodeLimit {
       NDIArchiveBudget.shared.setCapacity(limit)
     }
@@ -82,8 +86,7 @@ struct DirectorApp: App {
           displayName: discovered.advertisedName,
           ndiName: source.name.full,
           ndiURL: source.url,
-          encodeCodec: codec,
-          encodeBitrate: bitrate,
+          archiveEncoding: archiveEncoding,
           lowBandwidth: launch.ndiBandwidth == "lowest",
           coordinator: coordinator
         )

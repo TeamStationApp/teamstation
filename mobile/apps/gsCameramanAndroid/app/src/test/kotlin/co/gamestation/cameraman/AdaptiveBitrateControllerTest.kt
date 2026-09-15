@@ -213,4 +213,63 @@ class AdaptiveBitrateControllerTest {
         assertEquals(4_000_000, controller.floor)
         assertEquals(1, controller.status.decreases)
     }
+
+    // The floor cases are the iOS `AdaptiveBitrateFloorTests`, number for number.
+
+    /**
+     * One tick of a link carrying [mbps] while the encoder offers far more and frames are being
+     * dropped: the case that cuts hardest.
+     */
+    private fun starved(mbps: Double): CongestionSample {
+        val bytes = (mbps * 1_000_000 / 8 * 0.25).toInt()
+        return CongestionSample(
+            interval = 0.25,
+            queueDelay = 0.5,
+            deliveredBytes = bytes,
+            offeredBytes = bytes * 6,
+            droppedFrames = 1
+        )
+    }
+
+    @Test
+    fun `without a floor of its own the controller comes down no further than half the ceiling`() {
+        val controller = AdaptiveBitrateController(6_000_000)
+        assertEquals(3_000_000, controller.floor)
+        assertEquals(3_000_000, controller.status.floor)
+    }
+
+    @Test
+    fun `a floor from settings is where cuts stop, however little the link carries`() {
+        val controller = AdaptiveBitrateController(6_000_000, floor = 2_000_000)
+        var now = 0.0
+        repeat(40) {
+            now += 0.25
+            controller.update(starved(0.5), now)
+        }
+        assertEquals(2_000_000, controller.bitrate)
+        assertEquals(2_000_000, controller.status.floor)
+    }
+
+    @Test
+    fun `a floor above the ceiling is held at the ceiling`() {
+        val controller = AdaptiveBitrateController(4_000_000, floor = 6_000_000)
+        assertEquals(4_000_000, controller.floor)
+    }
+
+    @Test
+    fun `a reset takes a new floor, or half the new ceiling without one`() {
+        val controller = AdaptiveBitrateController(6_000_000, floor = 2_000_000)
+        controller.reset(8_000_000, floor = 1_000_000)
+        assertEquals(1_000_000, controller.floor)
+        controller.reset(8_000_000)
+        assertEquals(4_000_000, controller.floor)
+    }
+
+    @Test
+    fun `going idle returns to the ceiling and keeps the operator's floor`() {
+        val controller = AdaptiveBitrateController(6_000_000, floor = 2_000_000)
+        controller.update(starved(0.5), 0.0)
+        assertEquals(6_000_000, controller.update(null, 10.25))
+        assertEquals(2_000_000, controller.floor)
+    }
 }

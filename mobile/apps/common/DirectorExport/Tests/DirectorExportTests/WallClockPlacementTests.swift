@@ -9,17 +9,46 @@ import Testing
 /// End-to-end proof that a segment lands where it happened.
 ///
 /// Two real MP4s are encoded with a `FrameMarker` painted into every frame, indexed thirteen
-/// seconds apart with only three seconds of tape in each, remuxed, and then decoded back. Reading
+/// seconds apart with only three seconds of tape in each, stitched, and then decoded back. Reading
 /// the marker out of the exported picture is the only check that cannot be satisfied by bookkeeping:
 /// it says which frame is actually at a given moment of the file.
 @Suite("Wall-clock placement", .serialized)
 struct WallClockPlacementTests {
-  private static let width = 800
-  private static let height = 120
-  private static let fps = 30.0
+  static let width = 800
+  static let height = 120
+  static let fps = 30.0
+
+  /// The fixtures' own size and rate, so a stitched file still carries its markers pixel for pixel.
+  static let encoding = EncodeSettings(
+    codec: .h264,
+    resolution: ProgramResolution(width: width, height: height),
+    frameRate: 30,
+    bitrate: 4_000_000,
+    keyframeSeconds: 1
+  )
+
+  /// A camera's export of `files`, cut to `targetDuration` seconds of window.
+  func stitch(
+    files: [URL],
+    fileDurations: [TimeInterval],
+    targetDuration: TimeInterval,
+    startWalls: [WallClock],
+    windowStart: WallClock,
+    destination: URL
+  ) async throws {
+    try await ArchiveRemux.stitch(
+      files: files,
+      fileDurations: fileDurations,
+      startWalls: startWalls,
+      windowStart: windowStart,
+      length: targetDuration,
+      settings: Self.encoding,
+      destination: destination
+    )
+  }
 
   /// `spacing` is the time between frames, which a runaway clock stretches far past the frame rate.
-  private func markedMovie(
+  func markedMovie(
     at url: URL,
     firstValue: Int,
     frames: Int,
@@ -69,7 +98,7 @@ struct WallClockPlacementTests {
   /// `audioLead` starts the sound that long after the first picture and `audioOverrun` runs it that
   /// long past the last, which is the shape a camera segment really has: its sound begins and ends a
   /// few tens of milliseconds after its picture does.
-  private func markedMovieWithAudio(
+  func markedMovieWithAudio(
     at url: URL,
     firstValue: Int,
     frames: Int,
@@ -201,7 +230,7 @@ struct WallClockPlacementTests {
     }
   }
 
-  private static func paint(value: Int) -> CVPixelBuffer? {
+  static func paint(value: Int) -> CVPixelBuffer? {
     var buffer: CVPixelBuffer?
     CVPixelBufferCreate(
       nil, width, height, kCVPixelFormatType_32BGRA,
@@ -235,7 +264,7 @@ struct WallClockPlacementTests {
   /// through `AVAssetImageGenerator`. The generator hands back a `CGImage`, and redrawing that into
   /// a buffer loses the marker — the cells are read at fixed pixel coordinates, so any resampling
   /// on the way through is fatal to them. This is also closer to what a verifier has to do.
-  private func marker(in url: URL, at seconds: Double) async throws -> Int? {
+  func marker(in url: URL, at seconds: Double) async throws -> Int? {
     let asset = AVURLAsset(url: url)
     guard let track = try await asset.loadTracks(withMediaType: .video).first else { return nil }
     let reader = try AVAssetReader(asset: asset)
@@ -281,7 +310,7 @@ struct WallClockPlacementTests {
     try await markedMovie(at: second, firstValue: 500_000, frames: 90)
 
     let out = root.appendingPathComponent("out.mp4")
-    try await ArchiveRemux.concatenate(
+    try await stitch(
       files: [ first, second ],
       fileDurations: [ 3, 3 ],
       targetDuration: 16,
@@ -307,13 +336,13 @@ struct WallClockPlacementTests {
     #expect(abs((late ?? 0) - expected) <= 2)
   }
 
-  /// A gap holds the picture that was there before it.
+  /// A gap repeats the picture that was there before it, as real frames at the output's rate.
   ///
-  /// Placement alone leaves a real gap as an empty range, and an empty range has no samples at all —
-  /// measured, every probe across the hole decoded nothing. So the freeze is manufactured: the last
-  /// frame before the gap is inserted once and scaled to the length of the hole, which a passthrough
-  /// export honours. One sample, not one per frame, so a 150 s dropout costs a single insertion.
-  @Test("A gap holds the last frame before it, all the way across")
+  /// Placement alone leaves a gap with no pictures at all, and a viewer should see the picture
+  /// freeze rather than the player decide what to show. The freeze was once one sample stretched
+  /// over the hole, which some players hang on; every frame across the hole is its own sample now,
+  /// showing the last picture, and none is longer than a frame.
+  @Test("A gap repeats the last frame before it, frame by frame, all the way across")
   func gapHoldsLastFrame() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent("gapc-\(UUID().uuidString)", isDirectory: true)
@@ -326,7 +355,7 @@ struct WallClockPlacementTests {
     try await markedMovie(at: second, firstValue: 500_000, frames: 90)
 
     let out = root.appendingPathComponent("out.mp4")
-    try await ArchiveRemux.concatenate(
+    try await stitch(
       files: [ first, second ],
       fileDurations: [ 3, 3 ],
       targetDuration: 16,
@@ -347,6 +376,12 @@ struct WallClockPlacementTests {
     // The hold must not run over the segment that follows it.
     let after = try await marker(in: out, at: 14.5)
     #expect(abs((after ?? 0) - ((500_000 + 45) & FrameMarker.maximumValue)) <= 2)
+
+    // One sample per frame of the window, the gap included, and none longer than a frame.
+    let times = try await TestMovie.videoPresentationTimes(of: out).sorted()
+    #expect(abs(times.count - 16 * 30) <= 1, "\(times.count) frames in a 16 s window at 30 fps")
+    let longest = zip(times, times.dropFirst()).map { $1 - $0 }.max() ?? 0
+    #expect(longest <= 1 / Self.fps + 0.001, "a sample lasts \(longest) s")
   }
 
   /// rec-361's home camera after its outage: segments each holding six real pictures, a fifth of a
@@ -375,7 +410,7 @@ struct WallClockPlacementTests {
     walls.append(WallClock(seconds: 1_004))
 
     let out = root.appendingPathComponent("out.mp4")
-    try await ArchiveRemux.concatenate(
+    try await stitch(
       files: files,
       fileDurations: [ 3, 3, 3, 3, 3, 3, 3 ],
       targetDuration: 7,
@@ -424,7 +459,7 @@ struct WallClockPlacementTests {
     // Segments whose recorded length runs past where the next one starts. This is what a camera
     // that misdeclares its frame rate actually writes -- measured at 26 overruns in 986 segments,
     // the worst 104 ms -- and placing them at their true starts makes the ranges overlap.
-    try await ArchiveRemux.concatenate(
+    try await stitch(
       files: files,
       fileDurations: [ 3, 3, 3 ],
       targetDuration: 30,
@@ -475,7 +510,7 @@ struct WallClockPlacementTests {
     }
 
     let out = root.appendingPathComponent("out.mp4")
-    try await ArchiveRemux.concatenate(
+    try await stitch(
       files: files,
       fileDurations: [ 3, 3, 3 ],
       targetDuration: 9,
@@ -507,7 +542,7 @@ struct WallClockPlacementTests {
     try await markedMovie(at: only, firstValue: 7_000, frames: 90)
 
     let out = root.appendingPathComponent("out.mp4")
-    try await ArchiveRemux.concatenate(
+    try await stitch(
       files: [ only ],
       fileDurations: [ 3 ],
       targetDuration: 10,
@@ -538,7 +573,7 @@ struct WallClockPlacementTests {
     try await markedMovieWithAudio(at: part, firstValue: 9_000, frames: 90, audioOverrun: 0.3)
 
     let out = root.appendingPathComponent("out.mp4")
-    try await ArchiveRemux.concatenate(
+    try await stitch(
       files: [ part ],
       fileDurations: [ 0 ],
       targetDuration: 4,
@@ -567,7 +602,7 @@ struct WallClockPlacementTests {
     try await markedMovieWithAudio(at: part, firstValue: 11_000, frames: 90, audioOverrun: 0.3)
 
     let out = root.appendingPathComponent("out.mp4")
-    try await ArchiveRemux.concatenate(
+    try await stitch(
       files: [ part ],
       fileDurations: [ 0 ],
       targetDuration: 4,
@@ -598,7 +633,7 @@ struct WallClockPlacementTests {
 
     let outA = root.appendingPathComponent("outA.mp4")
     let outB = root.appendingPathComponent("outB.mp4")
-    try await ArchiveRemux.concatenate(
+    try await stitch(
       files: [ a1, a2 ],
       fileDurations: [ 3, 3 ],
       targetDuration: 16,
@@ -606,7 +641,7 @@ struct WallClockPlacementTests {
       windowStart: WallClock(seconds: 1_000),
       destination: outA
     )
-    try await ArchiveRemux.concatenate(
+    try await stitch(
       files: [ b1 ],
       fileDurations: [ 3 ],
       targetDuration: 16,

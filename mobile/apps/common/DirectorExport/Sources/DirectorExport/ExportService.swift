@@ -3,10 +3,15 @@ import DirectorCore
 
 /// Post-event export.
 ///
-/// Export is a **stream copy**: the archive was already encoded to the operator's chosen
-/// settings, so re-encoding it would be a second generation of loss for no benefit. Trim
-/// boundaries land on segment edges, which are keyframe edges, so the result is GOP-rounded
-/// without any frame-accurate cutting.
+/// Every camera file is **re-encoded** at the take's raw camera settings: one frame rate, one size,
+/// one codec, whatever each camera actually sent. Frame n of every camera file is the same instant,
+/// `n / frameRate` into the take, so files cut together line up frame for frame, and a camera that
+/// dropped out repeats its last picture as real frames rather than one sample stretched over the
+/// hole. The programme master is copied as it was recorded when it is unbroken, and re-encoded the
+/// same way as a camera when it is not: see `ProgrammeExport`.
+///
+/// The settings are the ones the take was recorded with. A take from before they were kept with it
+/// uses `fallbackEncoding`, which the app that makes the service provides from its own settings.
 public struct ExportService: Sendable {
   public struct Result: Sendable, Equatable {
     public var url: URL
@@ -14,24 +19,38 @@ public struct ExportService: Sendable {
     public var duration: TimeInterval
     public var byteCount: Int64
     public var segmentCount: Int
-    /// How far the requested start had to move back to reach a keyframe.
+    /// How far the file's start is from the requested start. Zero: a re-encoded export starts exactly
+    /// where it was asked to, keyframe or not.
     public var startAdjustment: TimeInterval
   }
 
   private let index: ArchiveIndex
   private let assembler: SegmentAssembler
   private let programDirectory: URL
+  private let fallbackEncoding: @Sendable () -> TakeEncoding
 
+  /// `fallbackEncoding` is asked, at the time of each export, for the encoding of a take that has
+  /// none of its own: GS Director answers with its settings as they are then, GS Distributor with the
+  /// defaults.
   public init(
     index: ArchiveIndex,
     archives: URL = DirectorPaths.archives,
-    programDirectory: URL = DirectorPaths.program
+    programDirectory: URL = DirectorPaths.program,
+    fallbackEncoding: @escaping @Sendable () -> TakeEncoding = { AppConfig().takeEncoding }
   ) {
     self.index = index
     self.assembler = SegmentAssembler(index: index, archives: archives)
     self.programDirectory = programDirectory
+    self.fallbackEncoding = fallbackEncoding
   }
 
+  /// The encoding `recording`'s exports are made with.
+  public func encoding(of recording: RecordingSummary) -> TakeEncoding {
+    recording.encoding ?? fallbackEncoding()
+  }
+
+  /// One camera from `from` to `to`, re-encoded at the raw camera settings of the take it belongs to.
+  /// The file starts at exactly `from`.
   public func export(
     sourceID: SourceID,
     displayName: String,
@@ -51,10 +70,15 @@ public struct ExportService: Sendable {
       from: from,
       to: to
     )
-    try await ArchiveRemux.concatenate(
+    let recordingID = try index.segments(for: sourceID, from: from, to: to).first?.recordingID
+    let recorded = try recordingID.flatMap { id in try index.recordings().first { $0.id == id }?.encoding }
+    try await ArchiveRemux.stitch(
       files: assembly.files,
       fileDurations: assembly.fileDurations,
-      targetDuration: max(0, to - from),
+      startWalls: assembly.startWalls,
+      windowStart: from,
+      length: max(0, to - from),
+      settings: (recorded ?? fallbackEncoding()).rawCamera,
       destination: destination
     )
 
@@ -63,11 +87,11 @@ public struct ExportService: Sendable {
 
     return Result(
       url: destination,
-      startWall: assembly.startWall,
+      startWall: from,
       duration: max(0, to - from),
       byteCount: byteCount,
       segmentCount: assembly.segmentCount,
-      startAdjustment: from - assembly.startWall
+      startAdjustment: 0
     )
   }
 
@@ -131,37 +155,20 @@ public struct ExportService: Sendable {
         progress?(ItemProgress(id: "program", name: "Primary output", fraction: 0))
         if reprocess || !Self.isUsableFile(destination) {
           try? FileManager.default.removeItem(at: destination)
-          if sources.count == 1, duration == nil {
-            try FileManager.default.copyItem(at: sources[0], to: destination)
-          } else {
-            // Placed by wall clock when the programme recorded where it was.
-            //
-            // Without anchors the parts are laid end to end, which is why a stress run found the
-            // cameras exact at every sample and the programme drifting to seven seconds ahead: a
-            // writer that died and was recovered leaves a continuation part, and butting it against
-            // its predecessor discards however long the recovery took. Anchors give each part the
-            // wall clock its own timeline starts at, so a part goes where it happened and the gap
-            // it left is held.
-            let partStarts = (try? index.programPartStarts(recordingID: recording.id)) ?? [:]
-            let startWalls: [WallClock] = partStarts.isEmpty
-              ? []
-              : (1...sources.count).compactMap { partStarts[$0] }
-            try await ArchiveRemux.concatenate(
-              files: sources,
-              fileDurations: sources.map { _ in 0 },
-              // The same window the cameras get, so the programme is the length of the take rather
-              // than the length of whatever survived being written.
-              targetDuration: earliestEnd.map { max(0, $0 - latestStart) } ?? duration,
-              startWalls: startWalls.count == sources.count ? startWalls : [],
-              windowStart: startWalls.count == sources.count ? latestStart : nil,
-              destination: destination,
-              progress: progress.map { report in
-                { @Sendable fraction in
-                  report(ItemProgress(id: "program", name: "Primary output", fraction: fraction))
-                }
+          try await exportProgramme(
+            recording,
+            parts: sources,
+            windowStart: latestStart,
+            // The same window the cameras get, so the programme is the length of the take rather
+            // than the length of whatever survived being written.
+            windowEnd: earliestEnd ?? duration.map { latestStart + $0 },
+            destination: destination,
+            progress: progress.map { report in
+              { @Sendable fraction in
+                report(ItemProgress(id: "program", name: "Primary output", fraction: fraction))
               }
-            )
-          }
+            }
+          )
         }
         urls.append(destination)
         progress?(ItemProgress(id: "program", name: "Primary output", fraction: 1))
@@ -193,12 +200,13 @@ public struct ExportService: Sendable {
           from: from,
           to: to
         )
-        try await ArchiveRemux.concatenate(
+        try await ArchiveRemux.stitch(
           files: assembly.files,
           fileDurations: assembly.fileDurations,
-          targetDuration: max(0, to - from),
           startWalls: assembly.startWalls,
           windowStart: from,
+          length: max(0, to - from),
+          settings: encoding(of: recording).rawCamera,
           destination: destination,
           progress: progress.map { report in
             { @Sendable fraction in
@@ -212,6 +220,62 @@ public struct ExportService: Sendable {
     }
 
     return urls
+  }
+
+  /// The programme master for the window: copied when `ProgrammeExport.plan` finds it unbroken,
+  /// re-encoded at the take's programme settings when it does not.
+  ///
+  /// Re-encoded parts are placed by wall clock when the programme recorded where it was. Without
+  /// anchors they are laid end to end, which is why a stress run found the cameras exact at every
+  /// sample and the programme drifting to seven seconds ahead: a writer that died and was recovered
+  /// leaves a continuation part, and butting it against its predecessor discards however long the
+  /// recovery took. Anchors give each part the wall clock its own timeline starts at, so a part goes
+  /// where it happened and the gap it left repeats its last picture.
+  private func exportProgramme(
+    _ recording: RecordingSummary,
+    parts: [URL],
+    windowStart: WallClock,
+    windowEnd: WallClock?,
+    destination: URL,
+    progress: (@Sendable (Double) -> Void)?
+  ) async throws {
+    let settings = encoding(of: recording).programme
+    let anchors = (try? index.programAnchors(recordingID: recording.id)) ?? []
+    // Only a lone part can be copied, so only a lone part is worth reading through.
+    let reading = parts.count == 1 ? try await ProgrammeExport.read(parts[0]) : nil
+    let plan = ProgrammeExport.plan(
+      partCount: parts.count,
+      resumeCount: recording.resumeCount,
+      anchors: anchors,
+      reading: reading,
+      windowStart: windowStart,
+      windowEnd: windowEnd,
+      frameRate: settings.frameRate
+    )
+    switch plan {
+    case let .copy(partStart):
+      try await ArchiveRemux.copyProgramme(
+        part: parts[0],
+        offset: windowStart - partStart,
+        length: windowEnd.map { max(0, $0 - windowStart) },
+        destination: destination,
+        progress: progress
+      )
+    case .reencode:
+      let partStarts = ArchiveIndex.partStarts(anchors)
+      let startWalls = (1 ... parts.count).compactMap { partStarts[$0] }
+      let placed = startWalls.count == parts.count
+      try await ArchiveRemux.stitch(
+        files: parts,
+        fileDurations: parts.map { _ in 0 },
+        startWalls: placed ? startWalls : [],
+        windowStart: placed ? windowStart : nil,
+        length: windowEnd.map { max(0, $0 - windowStart) },
+        settings: settings,
+        destination: destination,
+        progress: progress
+      )
+    }
   }
 
   /// The window `exportRecording` cuts every file to: the recording's own span or, for a take that

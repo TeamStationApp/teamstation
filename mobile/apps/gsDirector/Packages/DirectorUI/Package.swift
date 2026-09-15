@@ -21,6 +21,7 @@ let package = Package(
     .package(path: "../DirectorTestHarness"),
     .package(path: "../DirectorLink"),
     .package(path: "../../../common/DistributorWire"),
+    .package(path: "../../../common/LoopbackHTTP"),
     .package(path: "../../../common/PeerTubeKit")
   ],
   targets: [
@@ -40,6 +41,10 @@ let package = Package(
         "DirectorTestHarness",
         "DirectorLink",
         "DistributorWire",
+        // AppEnvironment runs the Distributor link's server and event hub itself, so it links them
+        // itself: reached only through DirectorLink, they were missing whenever Xcode built this
+        // package as its own framework, which it does once a test bundle links a package directly.
+        "LoopbackHTTP",
         "PeerTubeKit"
       ],
       swiftSettings: [ .swiftLanguageMode(.v6) ],

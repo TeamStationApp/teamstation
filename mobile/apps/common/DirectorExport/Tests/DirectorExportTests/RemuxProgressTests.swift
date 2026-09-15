@@ -39,24 +39,26 @@ struct RemuxProgressTests {
     try await TestMovie.write(to: second, frames: 90)
 
     let heard = Heard()
-    try await ArchiveRemux.concatenate(
+    try await ArchiveRemux.stitch(
       files: [ first, second ],
       fileDurations: [ 3, 3 ],
-      targetDuration: 10,
       startWalls: [ WallClock(seconds: 1_000), WallClock(seconds: 1_006) ],
       windowStart: WallClock(seconds: 1_000),
+      length: 10,
+      settings: TestMovie.encoding,
       destination: root.appendingPathComponent("out.mp4"),
       progress: { heard.add($0) }
     )
 
     let values = heard.all
-    #expect(!values.isEmpty)
+    // Heard as the frames go in, not only at the end.
+    #expect(values.count > 10)
     #expect(values.last == 1)
     #expect(values.allSatisfy { $0 >= 0 && $0 <= 1 })
     #expect(zip(values, values.dropFirst()).allSatisfy { $0 <= $1 })
   }
 
-  @Test("A single file copied as it is still reports that it finished")
+  @Test("A programme copied as it is reports that it started and that it finished")
   func copyReportsFinished() async throws {
     let root = try temporaryRoot()
     defer { try? FileManager.default.removeItem(at: root) }
@@ -64,13 +66,14 @@ struct RemuxProgressTests {
     try await TestMovie.write(to: only, frames: 30)
 
     let heard = Heard()
-    try await ArchiveRemux.concatenate(
-      files: [ only ],
-      fileDurations: [ 1 ],
+    try await ArchiveRemux.copyProgramme(
+      part: only,
+      offset: 0,
+      length: 1,
       destination: root.appendingPathComponent("copy.mp4"),
       progress: { heard.add($0) }
     )
-    #expect(heard.all == [ 1 ])
+    #expect(heard.all == [ 0, 1 ])
   }
 
   @Test("Each file of a recording export reports its own progress, from 0 to 1")
