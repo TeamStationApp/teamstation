@@ -77,7 +77,7 @@ final class DistributorModel {
   private(set) var isStreaming = false
 
   /// What exporting needs while no GS Director is attached.
-  static let noIPadNotice = "Connect iPad with GS Director in the foreground to export videos."
+  nonisolated static let noIPadNotice = "Connect iPad with GS Director in the foreground to export videos."
 
   /// Why an export that needs the iPad cannot start now, if it cannot. One whose files are all on
   /// this Mac can: the combined video and the uploads need only the Mac.
@@ -210,8 +210,26 @@ final class DistributorModel {
     await reload()
   }
 
+  /// Why an export did not start.
+  enum ExportRefusal: Error, Equatable {
+    case exporting
+    case noDestination
+    case noIPad
+    /// GS Director is recording or streaming, and the export needs a file from it.
+    case directorBusy(String)
+
+    var message: String {
+      switch self {
+      case .exporting: "An export is already under way."
+      case .noDestination: "Choose a folder to save into in Settings first."
+      case .noIPad: DistributorModel.noIPadNotice
+      case .directorBusy(let reason): reason
+      }
+    }
+  }
+
   /// Exports `tracks` of `recording` into this Mac's folder, the Mac and the iPad stitching side by
-  /// side.
+  /// side. What stops it is shown in the window.
   func export(
     _ recording: RecordingListing,
     tracks: [Track],
@@ -219,22 +237,31 @@ final class DistributorModel {
     combined: CombinedPlan? = nil,
     upload: UploadPlan? = nil
   ) {
-    guard !isExporting else { return }
-    guard let destination else {
-      problem = "Choose a folder to save into in Settings first."
-      return
+    do {
+      try startExport(recording, tracks: tracks, reprocess: reprocess, combined: combined, upload: upload)
+    } catch .exporting {
+      // The window offers no second export while one runs.
+    } catch {
+      problem = error.message
     }
+  }
+
+  /// Starts an export and returns it, or says why it cannot start.
+  @discardableResult
+  func startExport(
+    _ recording: RecordingListing,
+    tracks: [Track],
+    reprocess: Bool = false,
+    combined: CombinedPlan? = nil,
+    upload: UploadPlan? = nil
+  ) throws(ExportRefusal) -> DistributionRun {
+    guard !isExporting else { throw .exporting }
+    guard let destination else { throw .noDestination }
     // Files already on this Mac need nothing from the iPad, so only an export that does needs it
     // attached and waits while it records or streams.
     let needsIPad = ExportInventory(recording: recording, destination: destination).needsIPad(tracks, reprocess: reprocess)
-    if needsIPad, connection == nil {
-      problem = Self.noIPadNotice
-      return
-    }
-    if needsIPad, let reason = exportBlockedReason {
-      problem = reason
-      return
-    }
+    if needsIPad, connection == nil { throw .noIPad }
+    if needsIPad, let reason = exportBlockedReason { throw .directorBusy(reason) }
     let run = DistributionRun(
       recording: recording,
       tracks: tracks,
@@ -253,6 +280,7 @@ final class DistributorModel {
       await run.run()
       await reload()
     }
+    return run
   }
 
   /// One frame of a camera, for the combined video's previews; nil when the iPad has none.

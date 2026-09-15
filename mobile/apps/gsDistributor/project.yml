@@ -41,6 +41,10 @@ packages:
     path: Packages/Distribution
   MacState:
     path: Packages/MacState
+  LoopbackHTTP:
+    path: ../common/LoopbackHTTP
+  DistributorAPI:
+    path: Packages/DistributorAPI
 
 targets:
   Distributor:
@@ -76,6 +80,10 @@ targets:
         product: Distribution
       - package: MacState
         product: MacState
+      - package: LoopbackHTTP
+        product: LoopbackHTTP
+      - package: DistributorAPI
+        product: DistributorAPI
 
 schemes:
   Distributor:
