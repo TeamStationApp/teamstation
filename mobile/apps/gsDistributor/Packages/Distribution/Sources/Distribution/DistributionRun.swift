@@ -139,12 +139,17 @@ public final class DistributionRun {
   }
 
   /// The folder this export's files go in.
-  public var folder: URL {
+  public var folder: URL { Self.folder(for: recording, in: destination) }
+
+  /// The name GS Director gives `track`'s file, which is also the name it gets here.
+  public func filename(for track: Track) -> String { Self.filename(for: track, of: recording) }
+
+  /// `<destination>/<yyyy-MM-dd>/`, where `recording`'s files go.
+  public nonisolated static func folder(for recording: RecordingListing, in destination: URL) -> URL {
     destination.appendingPathComponent(PeerTubeTitle.datePrefix(for: recording.startedAt.date), isDirectory: true)
   }
 
-  /// The name GS Director gives `track`'s file, which is also the name it gets here.
-  public func filename(for track: Track) -> String {
+  public nonisolated static func filename(for track: Track, of recording: RecordingListing) -> String {
     switch track {
     case .primary:
       return RecordingExport.programFilename(startedAt: recording.startedAt)
@@ -215,6 +220,45 @@ public final class DistributionRun {
       if wasCancelled { markCancelled() }
       isFinished = true
     }
+    do {
+      try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    } catch {
+      for track in tracks { states[track] = .failed("\(error)") }
+      return
+    }
+
+    // Files already here need nothing; files already stitched on the iPad need only fetching.
+    var toStitch: [Track] = []
+    var toFetch: [Track] = []
+    for track in tracks {
+      let target = folder.appendingPathComponent(filename(for: track))
+      if !reprocess, Self.size(of: target) > 0 {
+        states[track] = .done(target)
+      } else if !reprocess, recording.preparedTracks.contains(track) {
+        toFetch.append(track)
+      } else {
+        toStitch.append(track)
+      }
+    }
+
+    if toStitch.isEmpty && toFetch.isEmpty {
+      // Every file is already here, so the combined video and the uploads need only this Mac: the
+      // iPad is asked for nothing, and this runs while GS Director records or streams.
+      if let shortfall = await roomForCombinedAlone() {
+        combinedState = .failed(shortfall)
+        return
+      }
+    } else {
+      guard await workWithIPad(toStitch: toStitch, toFetch: toFetch) else { return }
+    }
+    if let combined, !wasCancelled { await renderCombined(combined) }
+    if let upload, !wasCancelled { await uploadAll(upload) }
+  }
+
+  /// Stitches `toStitch` on the Mac and the iPad and fetches `toFetch` from the iPad, holding GS
+  /// Director's export lock throughout. False when the export stops here.
+  private func workWithIPad(toStitch: [Track], toFetch: [Track]) async -> Bool {
+    let needed = toStitch + toFetch
     let scratch = FileManager.default.temporaryDirectory
       .appendingPathComponent("gsDistributor-\(UUID().uuidString)", isDirectory: true)
     defer { try? FileManager.default.removeItem(at: scratch) }
@@ -226,9 +270,9 @@ public final class DistributionRun {
     do {
       lock = try await connection.beginExport()
     } catch {
-      for track in tracks { states[track] = .failed("\(error)") }
+      for track in needed { states[track] = .failed("\(error)") }
       if combinedState != nil { combinedState = .failed("\(error)") }
-      return
+      return false
     }
     var released = false
     let connection = self.connection
@@ -261,37 +305,23 @@ public final class DistributionRun {
 
     let window: ExportWindow
     do {
-      try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
       try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
       window = try await connection.manifest(recordingID: recording.id, tracks: []).window
     } catch {
       // A cancelled export's requests fail too; the cancellation says why, not the request.
       if !wasCancelled {
-        for track in tracks { states[track] = .failed("\(error)") }
+        for track in needed { states[track] = .failed("\(error)") }
       }
       await release()
-      return
+      return false
     }
 
-    // Files already here need nothing; files already stitched on the iPad need only fetching.
-    var toStitch: [Track] = []
-    var toFetch: [Track] = []
-    for track in tracks {
-      let target = folder.appendingPathComponent(filename(for: track))
-      if !reprocess, Self.size(of: target) > 0 {
-        states[track] = .done(target)
-      } else if !reprocess, recording.preparedTracks.contains(track) {
-        toFetch.append(track)
-      } else {
-        toStitch.append(track)
-      }
-    }
     // Nothing is written until the whole export is known to fit.
-    if let shortfall = await roomShortfall(for: toStitch + toFetch, window: window) {
-      for track in toStitch + toFetch { states[track] = .failed(shortfall) }
+    if let shortfall = await roomShortfall(for: needed, window: window) {
+      for track in needed { states[track] = .failed(shortfall) }
       if combinedState != nil { combinedState = .failed(shortfall) }
       await release()
-      return
+      return false
     }
     for track in toFetch { fetchPrepared(track) }
     plan = DistributionPlan(tracks: toStitch)
@@ -307,8 +337,22 @@ public final class DistributionRun {
     }
     for download in downloads { await download.value }
     await release()
-    if let combined, !wasCancelled { await renderCombined(combined) }
-    if let upload, !wasCancelled { await uploadAll(upload) }
+    return true
+  }
+
+  /// With every file already here, whether the combined video still to be made fits. Its length
+  /// comes from a saved file, since the iPad is not asked.
+  private func roomForCombinedAlone() async -> String? {
+    guard let combined, Self.size(of: folder.appendingPathComponent(combinedFilename)) == 0,
+          let first = combined.inputs.first, case .done(let url) = states[first.track],
+          let length = try? await AVURLAsset(url: url).load(.duration).seconds
+    else { return nil }
+    return spaceCheck.shortfall(
+      trackBytes: [],
+      combinedBytes: ExportSpace.combinedBytes(seconds: length, cameras: combined.inputs.count),
+      destination: folder,
+      scratch: FileManager.default.temporaryDirectory
+    )
   }
 
   /// One file at a time, in the order asked. A file that did not save is not uploaded.
@@ -374,8 +418,10 @@ public final class DistributionRun {
     )
   }
 
+  public var combinedFilename: String { Self.combinedFilename(of: recording) }
+
   /// `<stamp>-combined.mov`, beside the export's other files.
-  public var combinedFilename: String {
+  public nonisolated static func combinedFilename(of recording: RecordingListing) -> String {
     RecordingExport.programFilename(startedAt: recording.startedAt)
       .replacingOccurrences(of: ".mov", with: "-combined.mov")
   }
@@ -528,7 +574,7 @@ public final class DistributionRun {
     (try? await AVURLAsset(url: url).loadTracks(withMediaType: .audio).isEmpty == false) ?? false
   }
 
-  static func size(of url: URL) -> Int64 {
+  nonisolated static func size(of url: URL) -> Int64 {
     ((try? FileManager.default.attributesOfItem(atPath: url.path)[.size]) as? NSNumber)?.int64Value ?? 0
   }
 }

@@ -43,7 +43,10 @@ foreground, which does not.
 
 ## An export
 
-1. The Mac asks for the take's manifest with no tracks, for the shared window.
+1. Files already on the Mac need nothing. When every chosen file is there, the iPad is asked for
+   nothing (no lock, no manifest) and the export goes straight to steps 4 and 5, even while GS
+   Director records or streams. Otherwise the Mac takes the export lock and asks for the take's
+   manifest with no tracks, for the shared window.
 2. Tracks already stitched on the iPad are downloaded as they are.
 3. The rest are split: the first to the Mac, which fetches the segments and stitches with the same
    `ExportService`; the second to the iPad as a job; then whichever is free takes the next. The iPad

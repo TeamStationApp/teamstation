@@ -66,14 +66,20 @@ final class DistributorModel {
   private(set) var run: DistributionRun?
   /// Whether GS Director is recording right now. While it is, the iPad stitches nothing.
   private(set) var isRecording = false
-  /// Whether GS Director is streaming. No export starts while it records or streams.
+  /// Whether GS Director is streaming. Nothing comes from the iPad while it records or streams.
   private(set) var isStreaming = false
 
-  /// Why an export cannot start now, if it cannot.
+  /// Why an export that needs the iPad cannot start now, if it cannot. One whose files are all on
+  /// this Mac can: the combined video and the uploads need only the Mac.
   var exportBlockedReason: String? {
-    if isRecording { return "GS Director is recording. Export once the take has stopped." }
-    if isStreaming { return "GS Director is streaming. Export once the stream has stopped." }
+    if isRecording { return "GS Director is recording, so nothing can come from the iPad until the take stops." }
+    if isStreaming { return "GS Director is streaming, so nothing can come from the iPad until the stream stops." }
     return nil
+  }
+
+  /// What of `recording`'s export is already in this Mac's folder; nil before a folder is chosen.
+  func inventory(of recording: RecordingListing) -> ExportInventory? {
+    destination.map { ExportInventory(recording: recording, destination: $0) }
   }
   /// The iPad's stitching jobs, matched to their events.
   let jobs = JobWatcher()
@@ -185,12 +191,14 @@ final class DistributorModel {
     upload: UploadPlan? = nil
   ) {
     guard !isExporting, let connection else { return }
-    if let reason = exportBlockedReason {
-      problem = reason
-      return
-    }
     guard let destination else {
       problem = "Choose a folder to save into in Settings first."
+      return
+    }
+    // Files already on this Mac need nothing from the iPad, so only an export that does waits.
+    if let reason = exportBlockedReason,
+       ExportInventory(recording: recording, destination: destination).needsIPad(tracks, reprocess: reprocess) {
+      problem = reason
       return
     }
     let run = DistributionRun(
