@@ -644,9 +644,16 @@ public final class ProgramStreamer: @unchecked Sendable {
   /// the send queue.
   static let dataRateLimitFactor = 1.5
 
-  /// `DataRateLimits` for `bitrate`: bytes per one-second window.
+  /// `DataRateLimits` for `bitrate`, as bytes over a window of seconds: any one second up to
+  /// `dataRateLimitFactor` times the rate, and any two seconds up to one such second and one at the
+  /// rate. A second over the rate is paid back in the next, so the stream is never above it for
+  /// longer than a second at a time.
   static func dataRateLimits(forBitrate bitrate: Int) -> [Double] {
-    [ (Double(bitrate) * dataRateLimitFactor / 8).rounded(), 1 ]
+    let perSecond = Double(bitrate) / 8
+    return [
+      (perSecond * dataRateLimitFactor).rounded(), 1,
+      (perSecond * (dataRateLimitFactor + 1)).rounded(), 2
+    ]
   }
 
   /// Gives a session a bitrate. Both properties are live, so this is also how a running session
