@@ -226,6 +226,62 @@ struct CameraParametersTests {
     #expect(failure("videoEncoder.rateControl.currentBitrate: 1000\r\n")?.statusCode == 458)
   }
 
+  @Test("The bitrate floor is kbps on the wire, writable, and never above the rate it sits under")
+  func bitrateFloor() throws {
+    let encoded = CameraParameters.encode(Self.snapshot())
+    #expect(encoded["videoEncoder.rateControl.bitrateFloor"] == "2000", "half the rate by default")
+    #expect(CameraParameterName.writable.contains(CameraParameterName.bitrateFloorKbps))
+
+    var chosen = Self.snapshot()
+    chosen.settings.bitrateFloor = 1_500_000
+    let decoded = try #require(CameraParameters.decodeSnapshot(CameraParameters.encode(chosen)))
+    #expect(decoded.settings.bitrateFloor == 1_500_000)
+
+    var write = try set("videoEncoder.rateControl.bitrateFloor: 1500\r\n")
+    #expect(write.bitrateFloor == 1_500_000)
+    #expect(write.touchesSettings)
+    #expect(CameraParameters.settings(applying: write, to: StreamSettings()).bitrateFloor == 1_500_000)
+    let applied = CameraParameters.snapshot(applying: write, to: Self.snapshot())
+    #expect(CameraParameters.echo(write, applied: applied)["videoEncoder.rateControl.bitrateFloor"] == "1500")
+
+    #expect(failure("videoEncoder.rateControl.bitrateFloor: 900\r\n")?.statusCode == 400)
+    #expect(failure("videoEncoder.rateControl.bitrateFloor: 50001\r\n")?.statusCode == 400)
+    #expect(failure("videoEncoder.rateControl.bitrateFloor: some\r\n")?.statusCode == 400)
+    let above = failure("videoEncoder.rateControl.bitrateFloor: 5000\r\n")
+    #expect(above?.statusCode == 400, "above the 4000 kbps rate")
+    #expect(above?.name == "videoEncoder.rateControl.bitrateFloor")
+
+    // Judged on the result: raising both together is fine, in either order on the wire.
+    write = try set("videoEncoder.rateControl.bitrateFloor: 5000\r\nvideoEncoder.rateControl.bitrateLimit: 8000\r\n")
+    var next = CameraParameters.settings(applying: write, to: StreamSettings())
+    #expect(next.bitrate == 8_000_000)
+    #expect(next.bitrateFloor == 5_000_000)
+    #expect(failure("videoEncoder.rateControl.bitrateLimit: 3000\r\nvideoEncoder.rateControl.bitrateFloor: 3500\r\n")?.statusCode == 400)
+
+    // A request naming only the rate is never refused for the floor, which comes down with it.
+    var high = StreamSettings(bitrate: 10_000_000, bitrateFloor: 6_000_000)
+    write = try CameraParameters.parseSet(
+      body: "videoEncoder.rateControl.bitrateLimit: 3000\r\n",
+      snapshot: Self.snapshot(settings: high)
+    ).get()
+    next = CameraParameters.settings(applying: write, to: high)
+    #expect(next.bitrate == 3_000_000)
+    #expect(next.bitrateFloor == 3_000_000)
+    // A default floor follows the rate at half.
+    high.bitrateFloor = 5_000_000
+    #expect(CameraParameters.settings(applying: write, to: high).bitrateFloor == 1_500_000)
+  }
+
+  @Test("A phone that predates the floor is read as adapting down to half its rate")
+  func olderPhoneFloor() throws {
+    var withoutIt = CameraParameterSet()
+    for (name, value) in CameraParameters.encode(Self.snapshot(settings: StreamSettings(bitrate: 9_000_000, bitrateFloor: 1_000_000))).pairs
+    where name != CameraParameterName.bitrateFloorKbps {
+      withoutIt.set(name, value)
+    }
+    #expect(try #require(CameraParameters.decodeSnapshot(withoutIt)).settings.bitrateFloor == 4_500_000)
+  }
+
   @Test("Zoom is clamped to the mapping on apply, and non-numbers are 400")
   func zoomClamping() throws {
     let write = try set("ptz.zoom: 40\r\n")
