@@ -183,17 +183,24 @@ public struct FrameSinks: Sendable {
   public var audio: AudioFrameHandler?
   public var compressed: CompressedFrameHandler?
   public var compressedAudio: CompressedAudioFrameHandler?
+  /// Decoded sound the moment it arrives, stamped with when it was captured rather than when the
+  /// delay line lets it play, for the recording's own mix. The live mix hears each camera at its
+  /// release; the recording waits for sound that arrives late, so it wants it sooner and placed by
+  /// capture.
+  public var recordingAudio: AudioFrameHandler?
 
   public init(
     pixel: PixelFrameHandler? = nil,
     audio: AudioFrameHandler? = nil,
     compressed: CompressedFrameHandler? = nil,
-    compressedAudio: CompressedAudioFrameHandler? = nil
+    compressedAudio: CompressedAudioFrameHandler? = nil,
+    recordingAudio: AudioFrameHandler? = nil
   ) {
     self.pixel = pixel
     self.audio = audio
     self.compressed = compressed
     self.compressedAudio = compressedAudio
+    self.recordingAudio = recordingAudio
   }
 }
 

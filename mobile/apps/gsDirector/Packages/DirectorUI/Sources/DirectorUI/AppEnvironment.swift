@@ -1478,6 +1478,7 @@ public final class AppEnvironment {
       router.add(pipeline)
       try pipeline.start()
       router.audioMixer.start()
+      router.recordingMixer.start()
       router.audioPlayer.start()
       pipelineEndpoints[id] = CameraEndpoint(address: discovered.address)
       telemetry.mutateTile(sourceIndex) { $0.displayName = selection.displayName }
@@ -1935,6 +1936,10 @@ public final class AppEnvironment {
     if tail > waited {
       try? await Task.sleep(for: .seconds(tail - waited))
     }
+    // The recording's mix waits five seconds for late sound. At Stop it stops waiting and hands the
+    // master everything it holds, so the master's sound reaches the end of its picture and Stop
+    // takes no longer than it did.
+    router.recordingMixer.flush(through: clock.now)
     let programEncoder = self.programEncoder
     let programURL = ProgramURL()
     await finishWithDeadline("program", seconds: 45) {
@@ -3950,6 +3955,7 @@ public final class AppEnvironment {
       )
     }
     let mix = router.audioMixer.currentStatistics
+    let recordingMix = router.recordingMixer.currentStatistics
     let overlayStatus = webControllers.values.map(\.status).joined(separator: " ")
     let composedFrames = compositor?.frameCount ?? 0
     let discoveryStatus = discovery?.diagnostic ?? ""
@@ -3981,6 +3987,9 @@ public final class AppEnvironment {
       $0.audioMixSeconds = (mix.emittedSeconds * 10).rounded() / 10
       $0.audioMixLateBuffers = mix.lateBuffers
       $0.audioMixFutureBuffers = mix.futureBuffers
+      $0.recordingMixSeconds = (recordingMix.emittedSeconds * 10).rounded() / 10
+      $0.recordingMixLateBuffers = recordingMix.lateBuffers
+      $0.recordingMixFutureBuffers = recordingMix.futureBuffers
       $0.cpuPercent = (cpu * 10).rounded() / 10
       $0.cpuCores = ProcessLoad.coreCount
       $0.availableMemoryMB = ProcessLoad.availableMemoryMB()

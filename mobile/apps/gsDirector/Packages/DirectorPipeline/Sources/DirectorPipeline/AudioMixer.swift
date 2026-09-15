@@ -16,6 +16,11 @@ import DirectorSources
 ///   it — the failure this pipeline has already been bitten by twice.
 /// - A source that stops contributing costs nothing. It simply stops adding to the sum.
 ///
+/// How far behind the live edge is the one difference between the two mixes Director runs. The
+/// live mix is fed sound the delay line has already timed, so it runs a single chunk behind. The
+/// recording's mix is fed sound at its capture time as it arrives, and runs seconds behind so sound
+/// held up on the way still lands in its place.
+///
 /// Mixing is plain summation with a clamp. There is no limiter or automatic gain: with four or five
 /// cameras in one room the sum is dominated by whichever is closest to the action, and quiet
 /// programme audio is easier to fix afterwards than pumping is.
@@ -23,12 +28,13 @@ public final class AudioMixer: @unchecked Sendable {
   public static let sampleRate: Double = 48_000
   public static let channelCount = 2
 
-  /// How far behind the live edge the emitter runs. One mixer chunk, so the ring's live edge is
+  /// How far behind the live edge the live mix emits. One mixer chunk, so the ring's live edge is
   /// complete. Camera jitter is absorbed by the RTP delay line before audio is mixed; a
   /// quarter-second here would play the programme behind the picture.
   public static let mixDelaySeconds = 0.02
-  /// Ring depth. Comfortably longer than the delay so a burst cannot wrap onto unread samples.
-  private static let windowSeconds = 3.0
+  /// The live mix's ring depth. Comfortably longer than the delay so a burst cannot wrap onto
+  /// unread samples.
+  public static let defaultWindowSeconds = 3.0
   private static let chunkSeconds = 0.02
 
   public struct Statistics: Sendable, Equatable {
@@ -42,6 +48,8 @@ public final class AudioMixer: @unchecked Sendable {
 
   private let clock: DirectorClock
   private let onMixed: @Sendable (AudioFrame) -> Void
+  /// How far behind the live edge this mix emits.
+  private let delaySeconds: Double
 
   private let lock = NSLock()
   /// Accumulator in 32-bit so several sources can be summed before clamping once, on the way out.
@@ -59,10 +67,18 @@ public final class AudioMixer: @unchecked Sendable {
   private let queue = DispatchQueue(label: "co.gamestation.director.audiomix")
   private let formatDescription: CMAudioFormatDescription?
 
-  public init(clock: DirectorClock, onMixed: @escaping @Sendable (AudioFrame) -> Void) {
+  /// `delaySeconds` is how far behind the live edge chunks are emitted, and `windowSeconds` how much
+  /// the ring holds, which must be longer.
+  public init(
+    clock: DirectorClock,
+    delaySeconds: Double = AudioMixer.mixDelaySeconds,
+    windowSeconds: Double = AudioMixer.defaultWindowSeconds,
+    onMixed: @escaping @Sendable (AudioFrame) -> Void
+  ) {
     self.clock = clock
     self.onMixed = onMixed
-    capacityFrames = Int(Self.sampleRate * Self.windowSeconds)
+    self.delaySeconds = delaySeconds
+    capacityFrames = Int(Self.sampleRate * max(windowSeconds, delaySeconds + 1))
     chunkFrames = Int(Self.sampleRate * Self.chunkSeconds)
     ring = [Int32](repeating: 0, count: capacityFrames * Self.channelCount)
     formatDescription = AudioSampleBuilder.makeFormatDescription(
@@ -162,10 +178,19 @@ public final class AudioMixer: @unchecked Sendable {
     }
   }
 
-  /// Emits every whole chunk that is now far enough behind the live edge to be complete.
-  private func emitReadyChunks() {
-    let horizon = Int64(((clock.now.seconds - Self.mixDelaySeconds) * Self.sampleRate).rounded())
+  /// Emits everything up to `wall` at once, without waiting out the delay. For the end of a take:
+  /// sound that has not arrived by then is not coming in time to matter.
+  public func flush(through wall: WallClock) {
+    queue.sync { emitChunks(through: Int64((wall.seconds * Self.sampleRate).rounded())) }
+  }
 
+  /// Emits every whole chunk that is now far enough behind the live edge to be complete. The timer
+  /// calls this on `queue`; a test calls it directly with the clock where it wants it.
+  func emitReadyChunks() {
+    emitChunks(through: Int64(((clock.now.seconds - delaySeconds) * Self.sampleRate).rounded()))
+  }
+
+  private func emitChunks(through horizon: Int64) {
     while true {
       lock.lock()
       guard let cursor = emitCursor, cursor + Int64(chunkFrames) <= horizon else {

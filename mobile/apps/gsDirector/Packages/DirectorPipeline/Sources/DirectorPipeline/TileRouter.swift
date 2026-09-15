@@ -45,6 +45,7 @@ public final class SourcePipeline: @unchecked Sendable {
   /// Fired on a programme cut, replay start, or return to live so RTMP can force an IDR.
   public var onProgramDiscontinuity: (@Sendable () -> Void)?
   private var audioSink: (@Sendable (AudioFrame) -> Void)?
+  private var recordingAudioSink: (@Sendable (AudioFrame) -> Void)?
   private var replay: ReplayDecoder?
   private var lastLiveWall: WallClock?
   private var sawAudio = false
@@ -157,7 +158,8 @@ public final class SourcePipeline: @unchecked Sendable {
       pixel: { [weak self] frame in self?.handle(frame) },
       audio: { [weak self] frame in self?.handle(audio: frame) },
       compressed: { [weak self] frame in self?.handle(compressed: frame) },
-      compressedAudio: { [weak self] frame in self?.handle(compressedAudio: frame) }
+      compressedAudio: { [weak self] frame in self?.handle(compressedAudio: frame) },
+      recordingAudio: { [weak self] frame in self?.handle(recordingAudio: frame) }
     )
   }
 
@@ -262,6 +264,14 @@ public final class SourcePipeline: @unchecked Sendable {
     lock.unlock()
   }
 
+  /// Where this camera's sound goes for the recording's own mix: decoded as it arrives and stamped
+  /// with when it was captured.
+  public func setRecordingAudioSink(_ sink: (@Sendable (AudioFrame) -> Void)?) {
+    lock.lock()
+    recordingAudioSink = sink
+    lock.unlock()
+  }
+
   // MARK: - Frame path
 
   /// Backstop for a replay that stopped without telling anyone. See `ReplayWedgePolicy`.
@@ -352,6 +362,13 @@ public final class SourcePipeline: @unchecked Sendable {
     lock.unlock()
     telemetry.mutateTile(sourceIndex) { $0.audioFrames &+= 1 }
     audioSink?(frame)
+  }
+
+  private func handle(recordingAudio frame: AudioFrame) {
+    lock.lock()
+    let sink = recordingAudioSink
+    lock.unlock()
+    sink?(frame)
   }
 
   /// The archive branch. It diverges before conversion, before the renderer and before `state`, so
@@ -551,7 +568,31 @@ public final class TileRouter: @unchecked Sendable {
 
   /// Display layer for the programme preview tile, fed the composited frame.
   public let programRenderer = TileRenderer()
+  /// The live mix: what the stream and the speakers play, each camera's sound as the delay line
+  /// releases it alongside its picture.
   public let audioMixer: AudioMixer
+  /// The recording's own mix, which feeds only the programme master.
+  ///
+  /// The live mix hears each camera half a second after capture, and sound later than that is
+  /// silence on the stream and the speakers: take 365's programme went quiet for 2.7–4.2 s of every
+  /// 4 s while the Pixel's sound came in clumps, though the Pixel's own file kept it. The recording
+  /// is watched afterwards, so its mix places sound by when it was captured and waits
+  /// `recordingMixDelaySeconds` for it. It is a second sum over the same decoded sound, not a
+  /// second encode.
+  public let recordingMixer: AudioMixer
+  /// How long the recording's mix waits for a camera's sound. Five seconds covers the 4 s clumps and
+  /// 2.5 s lateness the stress run gives the Pixel's sound. The programme's writer takes sound this
+  /// far behind its picture without refusing either: measured with its fragmented MP4 on
+  /// 2026-09-15, 0 of 720 pictures and 0 of 600 sound buffers refused at 4 s and at 6 s. A movie
+  /// fragment closes only once every track has reached it, so the master's fragments close this
+  /// much later, and a crash can cost this much more than the three-second fragment it did.
+  public static let recordingMixDelaySeconds: Double = 5
+  /// A camera's recording sound that starts within this of where its last buffer ended is laid
+  /// against it. Each sender report moves the capture mapping by a little, and summing a buffer a
+  /// few samples off would click; the archive snaps the same way.
+  private static let recordingSoundSnapSeconds = 0.02
+  /// Where each camera's recording sound last ended, on the capture clock.
+  private var recordingSoundEnds: [SourceID: Double] = [:]
   public let audioPlayer: ProgramAudioPlayer
   public let waveformMonitor = AudioWaveformMonitor()
 
@@ -602,10 +643,16 @@ public final class TileRouter: @unchecked Sendable {
     self.programStreamer = programStreamer
     let audioPlayer = ProgramAudioPlayer()
     self.audioPlayer = audioPlayer
-    self.audioMixer = AudioMixer(clock: clock) { [programEncoder, programStreamer, audioPlayer] frame in
-      programEncoder.append(audio: frame)
+    self.audioMixer = AudioMixer(clock: clock) { [programStreamer, audioPlayer] frame in
       programStreamer.append(audio: frame)
       audioPlayer.schedule(frame)
+    }
+    self.recordingMixer = AudioMixer(
+      clock: clock,
+      delaySeconds: Self.recordingMixDelaySeconds,
+      windowSeconds: Self.recordingMixDelaySeconds + 5
+    ) { [programEncoder] frame in
+      programEncoder.append(audio: frame)
     }
     restartProgrammeClock()
   }
@@ -767,6 +814,10 @@ public final class TileRouter: @unchecked Sendable {
       pipeline.stop()
     }
     audioMixer.stop()
+    recordingMixer.stop()
+    lock.lock()
+    recordingSoundEnds.removeAll()
+    lock.unlock()
     audioPlayer.stop()
     // Output's TileVideoView stays on screen — the grid is always the root. Detaching its
     // layer here freezes the last frame: SwiftUI will not call updateUIView because
@@ -789,6 +840,7 @@ public final class TileRouter: @unchecked Sendable {
     }
     if remaining.isEmpty {
       audioMixer.stop()
+      recordingMixer.stop()
     }
     if wasProgram {
       selectProgram(sourceIndex: remaining.first?.sourceIndex)
@@ -847,13 +899,41 @@ public final class TileRouter: @unchecked Sendable {
     for pipeline in all {
       let contributes = ids.contains(pipeline.sourceID)
       pipeline.setAudioSink { [weak self] frame in self?.handleTappedAudio(frame) }
+      pipeline.setRecordingAudioSink { [weak self] frame in self?.handleRecordingAudio(frame) }
       telemetry.mutateTile(pipeline.sourceIndex) { $0.contributesAudio = contributes }
     }
     audioMixer.retainContributors(ids)
+    recordingMixer.retainContributors(ids)
   }
 
   public func setInputGains(_ gains: [SourceID: Double]) {
     audioMixer.setInputGains(gains)
+    recordingMixer.setInputGains(gains)
+  }
+
+  /// A contributing camera's sound for the recording's mix, at its capture time.
+  private func handleRecordingAudio(_ frame: AudioFrame) {
+    let samples = CMSampleBufferGetNumSamples(frame.sampleBuffer)
+    let rate = CMSampleBufferGetFormatDescription(frame.sampleBuffer)
+      .flatMap { CMAudioFormatDescriptionGetStreamBasicDescription($0)?.pointee.mSampleRate }
+      ?? AudioMixer.sampleRate
+    let duration = rate > 0 ? Double(samples) / rate : 0
+    lock.lock()
+    guard mixContributorIDs.contains(frame.sourceID) else {
+      lock.unlock()
+      return
+    }
+    var wall = frame.wallClock.seconds
+    if let end = recordingSoundEnds[frame.sourceID], abs(wall - end) < Self.recordingSoundSnapSeconds {
+      wall = end
+    }
+    if duration > 0 { recordingSoundEnds[frame.sourceID] = wall + duration }
+    lock.unlock()
+    recordingMixer.append(AudioFrame(
+      sourceID: frame.sourceID,
+      sampleBuffer: frame.sampleBuffer,
+      wallClock: WallClock(seconds: wall)
+    ))
   }
 
   private func handleTappedAudio(_ frame: AudioFrame) {

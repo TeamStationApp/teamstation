@@ -547,6 +547,11 @@ public struct TelemetrySnapshot: Sendable, Codable, Equatable {
   /// silence in the programme. `future` overran the ring the other way.
   public var audioMixLateBuffers: UInt64 = 0
   public var audioMixFutureBuffers: UInt64 = 0
+  /// The recording's own mix, which waits seconds for late sound. Its `late` is sound that missed
+  /// even that wait: silence in the recording.
+  public var recordingMixSeconds: Double = 0
+  public var recordingMixLateBuffers: UInt64 = 0
+  public var recordingMixFutureBuffers: UInt64 = 0
   public var cpuPercent: Double = 0
   public var cpuCores = 0
   /// What iPadOS will still let this process allocate, which is far below physical RAM.

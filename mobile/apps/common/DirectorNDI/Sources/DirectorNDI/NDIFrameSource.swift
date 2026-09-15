@@ -1077,7 +1077,7 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     let isArchiving = self.isArchiving
     lock.unlock()
 
-    if let handler = sinks.audio, let format {
+    if sinks.audio != nil || sinks.recordingAudio != nil, let format {
       let time = receiveClock.audioPresentationTime(
         sampleIndex: start,
         sampleRate: NDIAudioFrameConverter.outputSampleRate
@@ -1087,7 +1087,11 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
         formatDescription: format,
         presentationTime: time
       ) {
-        handler(AudioFrame(sourceID: sourceID, sampleBuffer: buffer, wallClock: clock.now))
+        // Placed at its arrival for the screen and the recording alike: an NDI source's sound
+        // waits in no delay line, and carries no capture time of its own.
+        let frame = AudioFrame(sourceID: sourceID, sampleBuffer: buffer, wallClock: clock.now)
+        sinks.audio?(frame)
+        sinks.recordingAudio?(frame)
       }
     }
 

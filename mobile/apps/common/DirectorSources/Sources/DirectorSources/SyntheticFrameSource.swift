@@ -199,10 +199,10 @@ public final class SyntheticFrameSource: FrameSource, @unchecked Sendable {
       markerValue: Int(id) & FrameMarker.maximumValue
     ))
 
-    guard sinks.audio != nil || audioEncoder != nil else { return }
+    guard sinks.audio != nil || sinks.recordingAudio != nil || audioEncoder != nil else { return }
     let samples = makeTone(startingAt: audioStart, count: audioCount)
 
-    if let audioHandler = sinks.audio, let audioFormat {
+    if sinks.audio != nil || sinks.recordingAudio != nil, let audioFormat {
       let audioTime = CMTime(
         value: CMTimeValue(audioStart),
         timescale: CMTimeScale(AudioSampleBuilder.sampleRate)
@@ -212,11 +212,10 @@ public final class SyntheticFrameSource: FrameSource, @unchecked Sendable {
         formatDescription: audioFormat,
         presentationTime: audioTime
       ) {
-        audioHandler(AudioFrame(
-          sourceID: sourceID,
-          sampleBuffer: sampleBuffer,
-          wallClock: clock.now
-        ))
+        // Made now, so captured now: the same stamp serves the screen and the recording.
+        let frame = AudioFrame(sourceID: sourceID, sampleBuffer: sampleBuffer, wallClock: clock.now)
+        sinks.audio?(frame)
+        sinks.recordingAudio?(frame)
       }
     }
 

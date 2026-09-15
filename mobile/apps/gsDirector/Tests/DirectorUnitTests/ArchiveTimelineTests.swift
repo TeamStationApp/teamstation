@@ -338,8 +338,9 @@ struct ArchiveTimelineTests {
         formatDescription: format,
         presentationTime: time
       ) {
+        // Stamped with when the sound was captured, which for sound made beside the picture is now.
         encoder.append(
-          audio: AudioFrame(sourceID: SourceID("program"), sampleBuffer: sample, wallClock: origin)
+          audio: AudioFrame(sourceID: SourceID("program"), sampleBuffer: sample, wallClock: WallClock(date: Date()))
         )
       }
       try await Task.sleep(nanoseconds: 20_000_000)
