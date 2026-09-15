@@ -1,5 +1,4 @@
 #if DEBUG
-import AppKit
 import DirectorCore
 import Distribution
 import DistributorWire
@@ -21,7 +20,6 @@ import Network
 ///   /peertube-enable?on=1|0              PeerTube uploads on or off
 ///   /peertube-signin?host=<host>&credentials=<json file with username, password>[&code=<otp>]
 ///   /peertube-channel?name=<channel>     upload to that channel
-///   /show-settings                       open Settings
 @MainActor
 final class DebugHarness {
   static let port: UInt16 = 8768
@@ -142,10 +140,6 @@ final class DebugHarness {
       else { return [ "ok": false, "error": "no channel by that name", "channels": names ] }
       await model.updateSettings { $0.peerTube.channelID = channel.id }
       return [ "ok": model.uploadChannelID == channel.id, "channels": names ]
-    case "/show-settings":
-      NSApp.activate()
-      NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-      return [ "ok": true ]
     case "/export":
       guard let id = query["recording"].flatMap(Int64.init),
             let recording = model.recordings.first(where: { $0.id == id })
