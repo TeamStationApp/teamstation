@@ -6,6 +6,7 @@ import SwiftUI
 @main
 struct DistributorApp: App {
   @State private var model: DistributorModel
+  private let api: APIServer
   #if DEBUG
   private let harness: DebugHarness
   #endif
@@ -13,6 +14,7 @@ struct DistributorApp: App {
   init() {
     let model = DistributorModel()
     _model = State(initialValue: model)
+    api = APIServer(model: model)
     #if DEBUG
     harness = DebugHarness(model: model)
     #endif
@@ -23,6 +25,7 @@ struct DistributorApp: App {
       RootView(model: model)
         .frame(minWidth: 760, minHeight: 460)
         .task {
+          await api.start()
           #if DEBUG
           if DebugHarness.isRequested { harness.start() }
           // `-noIPad` leaves the cable alone, to see and drive the Distributor as it is with no
