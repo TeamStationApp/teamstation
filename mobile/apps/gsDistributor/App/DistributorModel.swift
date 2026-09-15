@@ -76,6 +76,9 @@ final class DistributorModel {
   /// Whether GS Director is streaming. Nothing comes from the iPad while it records or streams.
   private(set) var isStreaming = false
 
+  /// What exporting needs while no GS Director is attached.
+  static let noIPadNotice = "Connect iPad with GS Director in the foreground to export videos."
+
   /// Why an export that needs the iPad cannot start now, if it cannot. One whose files are all on
   /// this Mac can: the combined video and the uploads need only the Mac.
   var exportBlockedReason: String? {
@@ -216,14 +219,19 @@ final class DistributorModel {
     combined: CombinedPlan? = nil,
     upload: UploadPlan? = nil
   ) {
-    guard !isExporting, let connection else { return }
+    guard !isExporting else { return }
     guard let destination else {
       problem = "Choose a folder to save into in Settings first."
       return
     }
-    // Files already on this Mac need nothing from the iPad, so only an export that does waits.
-    if let reason = exportBlockedReason,
-       ExportInventory(recording: recording, destination: destination).needsIPad(tracks, reprocess: reprocess) {
+    // Files already on this Mac need nothing from the iPad, so only an export that does needs it
+    // attached and waits while it records or streams.
+    let needsIPad = ExportInventory(recording: recording, destination: destination).needsIPad(tracks, reprocess: reprocess)
+    if needsIPad, connection == nil {
+      problem = Self.noIPadNotice
+      return
+    }
+    if needsIPad, let reason = exportBlockedReason {
       problem = reason
       return
     }

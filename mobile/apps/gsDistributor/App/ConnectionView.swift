@@ -5,7 +5,7 @@ import SwiftUI
 struct ConnectionView: View {
   let model: DistributorModel
 
-  static let notice = "Connect iPad with GS Director in the foreground to export videos."
+  static let notice = DistributorModel.noIPadNotice
 
   var body: some View {
     VStack(spacing: 12) {
