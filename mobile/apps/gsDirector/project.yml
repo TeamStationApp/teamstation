@@ -25,6 +25,10 @@ settings:
 packages:
   DirectorCore:
     path: ../common/DirectorCore
+  # The archive index and the export that stitches segments into finished files, shared with
+  # GS Distributor on the Mac.
+  DirectorExport:
+    path: ../common/DirectorExport
   DirectorSources:
     path: ../common/DirectorSources
   DirectorPipeline:
@@ -49,6 +53,11 @@ packages:
     path: Packages/DirectorUI
   DirectorTestHarness:
     path: Packages/DirectorTestHarness
+  # GS Distributor: the loopback server the Mac reaches over the cable, and the types both share.
+  DirectorLink:
+    path: Packages/DirectorLink
+  DistributorWire:
+    path: ../common/DistributorWire
 
 targets:
   Director:
@@ -123,10 +132,15 @@ targets:
         # put it in a build phase that has no idea what to do with an .sdp file.
         excludes:
           - Fixtures/**
+      # The export's own tests live in the shared package so `swift test` runs them on the Mac;
+      # compiling them here too runs the same tests on the iPad.
+      - path: ../common/DirectorExport/Tests/DirectorExportTests
     dependencies:
       - target: Director
       - package: DirectorCore
         product: DirectorCore
+      - package: DirectorExport
+        product: DirectorExport
       - package: DirectorSources
         product: DirectorSources
       - package: DirectorPipeline

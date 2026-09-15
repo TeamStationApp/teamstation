@@ -174,6 +174,7 @@ public struct DirectorGridView: View {
       .buttonStyle(.plain)
       .accessibilityIdentifier("settings-button")
 
+      if environment.isMacConnected { macPill }
       archivePill
       programTransportButton(
         isActive: environment.isStreaming,
@@ -212,6 +213,20 @@ public struct DirectorGridView: View {
       .foregroundStyle(.white.opacity(0.85))
   }
 
+  /// GS Distributor is attached by cable. Shown so the operator knows why the iPad is busy, and
+  /// that it must stay open and in front until the Mac has what it needs.
+  private var macPill: some View {
+    Label(environment.distributorExport == nil ? "MAC" : "EXPORTING", systemImage: "cable.connector")
+      .font(.system(size: 11, weight: .heavy, design: .rounded))
+      .tracking(1)
+      .padding(.horizontal, 10)
+      .padding(.vertical, 7)
+      .background(Color.deckPanel, in: RoundedRectangle(cornerRadius: 8))
+      .foregroundStyle(.white.opacity(0.85))
+      .accessibilityIdentifier("mac-pill")
+      .accessibilityLabel("GS Distributor connected")
+  }
+
   /// How many cameras are actually writing, always visible rather than buried in a debug view: an
   /// archive that quietly stopped — a full disk, a writer that failed — has to be something the
   /// operator can see during the game rather than discover after it.
@@ -246,10 +261,14 @@ public struct DirectorGridView: View {
     accessibilityValue: String,
     action: @escaping () -> Void
   ) -> some View {
-    Button(action: action) {
+    // Neither can start while GS Distributor is exporting; one already running can still stop.
+    let blocked = !isActive && environment.distributorExport != nil
+    return Button(action: action) {
       PulsingTransportLabel(isActive: isActive, idleLabel: idleLabel, activeLabel: activeLabel)
     }
     .buttonStyle(.plain)
+    .disabled(blocked)
+    .opacity(blocked ? 0.35 : 1)
     .accessibilityIdentifier(identifier)
     .accessibilityValue(accessibilityValue)
   }

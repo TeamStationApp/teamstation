@@ -9,13 +9,14 @@ let package = Package(
   ],
   dependencies: [
     .package(path: "../../common/DirectorCore"),
+    .package(path: "../../../common/DirectorExport"),
     .package(path: "../../common/DirectorSources"),
     .package(path: "../DirectorPipeline")
   ],
   targets: [
     .target(
       name: "DirectorDVR",
-      dependencies: [ "DirectorCore", "DirectorSources", "DirectorPipeline" ],
+      dependencies: [ "DirectorCore", "DirectorExport", "DirectorSources", "DirectorPipeline" ],
       swiftSettings: [ .swiftLanguageMode(.v6) ]
     )
   ]

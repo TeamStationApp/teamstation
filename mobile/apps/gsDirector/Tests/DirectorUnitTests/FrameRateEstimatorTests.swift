@@ -98,6 +98,24 @@ struct FrameRateEstimatorTests {
     #expect(readings.allSatisfy { $0 == rate }, "read \(Set(readings)) for a \(rate) fps sender")
   }
 
+  /// rec-361: a Cosmo C2 whose HDMI source ran flat for half an hour, stamping with its usual scatter
+  /// on both sides of the hole. The one interval across it read the camera as 1.9 fps for a minute.
+  @Test("A camera that was gone for half an hour reads at its own rate when it comes back")
+  func outageIsNotAFrameInterval() {
+    let intervals = scatteredIntervals(rate: 60, count: 7_200)
+    var estimator = FrameRateEstimator()
+    for interval in intervals.prefix(3_600) { estimator.note(intervalSeconds: interval) }
+    #expect(estimator.frameRate == 60)
+
+    estimator.note(intervalSeconds: 1_828)
+    var readings: [Double] = []
+    for interval in intervals.dropFirst(3_600) {
+      estimator.note(intervalSeconds: interval)
+      if let reading = estimator.frameRate { readings.append(reading) }
+    }
+    #expect(readings.allSatisfy { $0 == 60 }, "read \(Set(readings)) after the outage")
+  }
+
   /// The Cosmo C2 after a power cycle stamped with plain jitter rather than pairs. That passed the
   /// old 25% scatter test as "clean", took the median, and read 59.94 or 60 at random.
   @Test("Jittered stamps read at their real rate, not whichever twin the median lands on", arguments: [60.0, 59.94])
