@@ -174,6 +174,8 @@ final class DistributorLinkBackend: DistributorBackend, @unchecked Sendable {
           jobID: id,
           file: RemoteFile(root: .prepared, path: path, bytes: Self.size(of: url))
         ))
+      } catch is CancellationError {
+        // Cancelled by the Mac, which has already stopped waiting for it: nothing to report.
       } catch {
         events.publish(.jobFailed(jobID: id, reason: "\(error)"))
       }
@@ -181,7 +183,10 @@ final class DistributorLinkBackend: DistributorBackend, @unchecked Sendable {
     jobs.insert(id, task)
   }
 
-  /// The remux itself runs to the end; a cancelled job just reports nothing when it does.
+  /// Stops the job's stitch where it is. The export checks for cancellation between frames and while
+  /// it renders the sound, cancels its readers, writers and export session, and deletes the file it
+  /// was writing, so the iPad is free for other work within moments rather than after the whole file.
+  /// A cancelled job reports nothing.
   func cancelJob(_ id: UUID) async {
     jobs.cancel(id)
   }

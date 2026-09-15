@@ -34,6 +34,9 @@ public struct MacStitcher: Sendable {
   }
 
   /// Returns the stitched file, still inside `scratch`.
+  ///
+  /// Cancelling the task stops the downloads and the stitch where they are, and the work folder goes
+  /// with them: nothing of a cancelled or failed stitch is left in `scratch`.
   public func stitch(
     recording: RecordingListing,
     track: Track,
@@ -42,6 +45,29 @@ public struct MacStitcher: Sendable {
   ) async throws -> URL {
     let response = try await connection.manifest(recordingID: recording.id, tracks: [ track ])
     let root = scratch.appendingPathComponent("stitch-\(UUID().uuidString)", isDirectory: true)
+    do {
+      return try await stitch(
+        recording: recording,
+        track: track,
+        window: window,
+        response: response,
+        in: root,
+        progress: progress
+      )
+    } catch {
+      try? FileManager.default.removeItem(at: root)
+      throw error
+    }
+  }
+
+  private func stitch(
+    recording: RecordingListing,
+    track: Track,
+    window: ExportWindow,
+    response: ManifestResponse,
+    in root: URL,
+    progress: @escaping @Sendable (Stage) -> Void
+  ) async throws -> URL {
     let archives = root.appendingPathComponent("Archives", isDirectory: true)
     let program = root.appendingPathComponent("Program", isDirectory: true)
     let prepared = root.appendingPathComponent("Prepared", isDirectory: true)
@@ -71,12 +97,21 @@ public struct MacStitcher: Sendable {
       while try await group.next() != nil { start() }
     }
 
+    try Task.checkCancellation()
+
     let index = try ArchiveIndex(url: root.appendingPathComponent("index.sqlite"))
     try index.importManifest(response.manifest)
     guard let summary = try index.recordings().first(where: { $0.id == recording.id }) else {
       throw DistributionError.nothingToStitch
     }
-    let exporter = ExportService(index: index, archives: archives, programDirectory: program)
+    // A take carries the encoding it was recorded with; one from before takes did is encoded with
+    // the defaults, since this Mac has no GS Director settings of its own.
+    let exporter = ExportService(
+      index: index,
+      archives: archives,
+      programDirectory: program,
+      fallbackEncoding: { AppConfig().takeEncoding }
+    )
     let cameras: [(sourceID: SourceID, name: String)]
     let includeProgram: Bool
     switch track {
