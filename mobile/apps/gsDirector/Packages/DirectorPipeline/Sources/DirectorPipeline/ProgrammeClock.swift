@@ -19,11 +19,16 @@ public struct ProgrammeClock: Sendable, Equatable {
     public var recordingFrame: Int64?
     /// The stream's frame number, when a stream frame falls on this tick.
     public var streamFrame: Int64?
+    /// Recording frames before `recordingFrame` that a late timer skipped. Each was due a picture,
+    /// and the recording is written on an exact grid, so they are filled rather than left as one
+    /// frame lasting several.
+    public var recordingFramesMissed: Int64
 
-    public init(index: Int64, recordingFrame: Int64?, streamFrame: Int64? = nil) {
+    public init(index: Int64, recordingFrame: Int64?, streamFrame: Int64? = nil, recordingFramesMissed: Int64 = 0) {
       self.index = index
       self.recordingFrame = recordingFrame
       self.streamFrame = streamFrame
+      self.recordingFramesMissed = recordingFramesMissed
     }
   }
 
@@ -44,9 +49,10 @@ public struct ProgrammeClock: Sendable, Equatable {
 
   /// The tick at `now`, or nil when none is due. Tick numbers are the nearest to `now`, so a timer
   /// that fires a little early or late lands on its own tick and one that fires very late skips a
-  /// number rather than stamping a frame at the wrong time. A recording or stream frame falls on the
-  /// first tick at or after its own time, allowing half a tick for the timer being early, so a
-  /// picture is never taken for a frame before that frame's moment.
+  /// number rather than stamping a frame at the wrong time; the recording frames it skipped are
+  /// counted in `recordingFramesMissed`. A recording or stream frame falls on the first tick at or
+  /// after its own time, allowing half a tick for the timer being early, so a picture is never taken
+  /// for a frame before that frame's moment.
   public mutating func tick(at now: Double) -> Tick? {
     let origin = self.origin ?? now
     self.origin = origin
@@ -54,10 +60,13 @@ public struct ProgrammeClock: Sendable, Equatable {
     let index = Int64((elapsed * Double(rate)).rounded())
     guard index > lastTick else { return nil }
     lastTick = index
+    let previousRecordingFrame = lastRecordingFrame
+    let recordingFrame = Self.frame(at: elapsed, rate: recordingRate, tickRate: rate, after: &lastRecordingFrame)
     return Tick(
       index: index,
-      recordingFrame: Self.frame(at: elapsed, rate: recordingRate, tickRate: rate, after: &lastRecordingFrame),
-      streamFrame: Self.frame(at: elapsed, rate: streamRate, tickRate: rate, after: &lastStreamFrame)
+      recordingFrame: recordingFrame,
+      streamFrame: Self.frame(at: elapsed, rate: streamRate, tickRate: rate, after: &lastStreamFrame),
+      recordingFramesMissed: recordingFrame.map { max(0, $0 - previousRecordingFrame - 1) } ?? 0
     )
   }
 

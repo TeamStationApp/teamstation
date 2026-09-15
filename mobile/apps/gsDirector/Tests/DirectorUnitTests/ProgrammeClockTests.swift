@@ -45,6 +45,28 @@ struct ProgrammeClockTests {
     var clock = ProgrammeClock(recordingRate: 30, streamRate: 30)
     #expect(clock.tick(at: 10) == ProgrammeClock.Tick(index: 0, recordingFrame: 0, streamFrame: 0))
     #expect(clock.tick(at: 10 + 0.002) == nil)
-    #expect(clock.tick(at: 10 + 2.0 / 30) == ProgrammeClock.Tick(index: 2, recordingFrame: 2, streamFrame: 2))
+    #expect(
+      clock.tick(at: 10 + 2.0 / 30)
+        == ProgrammeClock.Tick(index: 2, recordingFrame: 2, streamFrame: 2, recordingFramesMissed: 1)
+    )
+  }
+
+  @Test("A late timer says how many recording frames it skipped, so they can be filled")
+  func missedRecordingFrames() {
+    var clock = ProgrammeClock(recordingRate: 60, streamRate: 60)
+    #expect(clock.tick(at: 0)?.recordingFramesMissed == 0)
+    #expect(clock.tick(at: 1.0 / 60)?.recordingFramesMissed == 0)
+    // Four ticks late: frames 2, 3 and 4 were due and never taken.
+    let late = clock.tick(at: 5.0 / 60)
+    #expect(late?.recordingFrame == 5)
+    #expect(late?.recordingFramesMissed == 3)
+    #expect(clock.tick(at: 6.0 / 60)?.recordingFramesMissed == 0)
+  }
+
+  @Test("At a recording rate below the tick rate, only skipped recording frames count as missed")
+  func missedAtLowerRate() {
+    var clock = ProgrammeClock(recordingRate: 30, streamRate: 60)
+    let ticks = run(&clock, seconds: 1)
+    #expect(ticks.allSatisfy { $0.recordingFramesMissed == 0 })
   }
 }

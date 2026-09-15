@@ -713,12 +713,26 @@ public final class TileRouter: @unchecked Sendable {
     lock.unlock()
 
     if let frame = tick.recordingFrame, programEncoder.running {
+      // The recording is written on an exact grid, so frames a late timer skipped are written as
+      // repeats of the newest picture rather than left as one frame lasting several: up to a
+      // quarter-second of them. A longer stall of the clock itself is left to the encoder, which
+      // keeps the timeline on real time across it.
+      let missed = min(tick.recordingFramesMissed, Int64(max(1, recordingRate / 4)))
+      for skipped in stride(from: frame - missed, to: frame, by: 1) {
+        programEncoder.append(
+          picture.buffer,
+          presentationTime: CMTime(value: skipped, timescale: CMTimeScale(recordingRate)),
+          captureWall: nil,
+          onClockGrid: true
+        )
+      }
       // A repeat carries no capture time, so the encoder's anchors borrow the delay it last measured
       // rather than reading a stall as the programme slipping further and further behind.
       programEncoder.append(
         picture.buffer,
         presentationTime: CMTime(value: frame, timescale: CMTimeScale(recordingRate)),
-        captureWall: freshForRecording ? picture.captureWall : nil
+        captureWall: freshForRecording ? picture.captureWall : nil,
+        onClockGrid: true
       )
     }
     if let frame = tick.streamFrame, programStreamer.running {

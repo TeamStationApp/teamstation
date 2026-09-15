@@ -66,12 +66,7 @@ public final class ProgramEncoder: @unchecked Sendable {
   /// so the continuation file can hold the dead interval as black + silence.
   private var lastSourceTime: CMTime?
   private var pendingRecoveryFill = false
-  /// Host time of the first sample of this part, so the bound below is cumulative rather than
-  /// per-frame. Instant replay delivers on the host clock while live delivers on the compositor
-  /// timebase; a single such sample wrote a jump of days into the programme file, and export
-  /// then scored the file unplayable and refused the whole recording with "no files to remux".
-  private var partStartHost: Double?
-  /// Wall clock of the last frame actually placed on the programme timeline.
+  /// Host time of the last frame actually placed on the programme timeline.
   ///
   /// The programme is watched afterwards, so its timeline has to be real time even across a
   /// stall. Without this, a frame arriving on a foreign timebase advanced the file by exactly one
@@ -79,15 +74,15 @@ public final class ProgramEncoder: @unchecked Sendable {
   /// it came from, accumulating at each
   /// stall and never recovering.
   private var lastAppendHost: Double?
-  /// Host time at which this part's programme timeline reads zero. Set at the part's first frame,
-  /// so a continuation after a recovery fill carries on from the held timeline.
-  private var hostOrigin: Double?
-  /// A source step longer than this is not frame spacing; one frame is assumed instead.
-  private static let maximumSourceStep: Double = 0.25
-  /// How far the timeline may stray from real time before it is put straight back.
-  private static let hostReseatSeconds: Double = 0.25
-  /// The fraction of the remaining error each frame takes back.
-  private static let hostSteerGain: Double = 0.1
+  /// Uptime at which this part's grid reads slot zero. Set at the part's first frame, so a
+  /// continuation after a recovery fill carries on from the held timeline.
+  private var hostZero: Double?
+  /// How many frame periods a frame's own slot may stray from real time's before real time's slot
+  /// is used. The programme clock's frames stay within half a frame, since the clock numbers them
+  /// from real time; one and a half keeps a source whose timestamps run fast within a frame of it.
+  private static let gridSlack: Double = 1.5
+  /// The longest fill written frame by frame on the programme's grid; see `fillHold(until:)`.
+  private static let gridFillSeconds: Double = 30
   /// Serialises recover so a failed writer noticed on video and audio at once does not
   /// open two continuation files.
   private var isRecovering = false
@@ -353,9 +348,8 @@ public final class ProgramEncoder: @unchecked Sendable {
     self.audioInput = audioInput
     self.adaptor = adaptor
     self.baseTime = nil
-    self.hostOrigin = nil
-    self.partStartHost = nil
     self.lastAppendHost = nil
+    self.hostZero = nil
     self.baseAudioTime = nil
     self.nextAudioTime = nil
     self.lastTime = .negativeInfinity
@@ -378,8 +372,15 @@ public final class ProgramEncoder: @unchecked Sendable {
 
   /// `pixelBuffer` may be BGRA straight out of the compositor; it is converted once here.
   /// `captureWall` is when the on-air camera captured this picture, for a live frame. Nil for a
-  /// replay frame or a source that does not know.
-  public func append(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime, captureWall: WallClock? = nil) {
+  /// replay frame or a source that does not know. `onClockGrid` says `presentationTime` is the
+  /// programme clock's own frame number, which is trusted as it stands; any other time is checked
+  /// against real time first.
+  public func append(
+    _ pixelBuffer: CVPixelBuffer,
+    presentationTime: CMTime,
+    captureWall: WallClock? = nil,
+    onClockGrid: Bool = false
+  ) {
     lock.lock()
     if poisonFinishing {
       lock.unlock()
@@ -394,6 +395,7 @@ public final class ProgramEncoder: @unchecked Sendable {
       recoverDeadWriter()
       return
     }
+    let continuingAfterRecovery = pendingRecoveryFill
     if pendingRecoveryFill {
       pendingRecoveryFill = false
       let gap = lastSourceTime.map { max(0, CMTimeSubtract(presentationTime, $0).seconds) } ?? 0
@@ -434,41 +436,43 @@ public final class ProgramEncoder: @unchecked Sendable {
       lock.unlock()
       return
     }
-    _ = base
     let oneFrame = CMTime(value: 1, timescale: CMTimeScale(max(frameRate, 1)))
-    // The programme is what went out, when it went out: each frame is placed on the host clock it
-    // was composed on, since the part began. The programme's sound follows the pictures through
-    // `contentOffsetSeconds`, so picture and sound stay locked however the display delay moves.
+    // The programme is what went out, when it went out, on the programme clock's own grid: each
+    // frame goes at the time the clock gave it, counted from the part's first frame, so the master
+    // is an exact constant frame rate and an export can copy it as it is. The clock counts real
+    // time, so a stall of the clock itself advances the timeline by the stall and holds the picture
+    // across it. Camera timestamps never reach here: the clock replaced them after an NDI camera's
+    // ran rec-407's master 9% fast and rec-406's came back from 18 s of nothing one frame on. The
+    // programme's sound follows the pictures through `contentOffsetSeconds`, so picture and sound
+    // stay locked however the display delay moves.
     //
-    // The source's own timestamps only set the spacing between frames, which they do evenly where
-    // arrival jitters, and the timeline is steered back to real time a tenth of the error at a
-    // time. They are not trusted for position: an NDI camera's advance one measured frame period
-    // per frame, so a rate estimate a few percent low ran rec-407's programme master 9% fast for
-    // five minutes, and they need not show an outage at all — rec-406's NDI source came back from 18
-    // s of nothing one frame on, and the picture ran 18.6 s ahead of its sound from then on. Capture
-    // time was tried and is the wrong clock here: it moved the picture 0.47 s ahead of the sound when
-    // the display delay settled after a take began, and copied the Cosmo's paired stamps into the
-    // frame timing as judder. Any error past a quarter of a second is a stall or an outage, and the
-    // timeline goes straight to real time, which holds the picture across it.
-    let nowHost = CFAbsoluteTimeGetCurrent()
-    if partStartHost == nil { partStartHost = nowHost }
+    // Every frame goes in a slot of the part's grid, one frame period apart. A frame on the clock's
+    // grid takes the slot its number names, repeats of numbers a late timer skipped included, since
+    // those arrive together and late by design; only one that goes back, the clock restarted for a
+    // new rate, is placed by real time. Any other frame takes the slot its time names unless that is
+    // more than `gridSlack` frames from real time's slot since the part began, when real time's slot
+    // wins and later frames follow on from it: a source whose own timestamps run fast stays within a
+    // frame of real time. Either way the frame lands exactly on the grid. A frame whose slot is
+    // already written is a second picture in one frame period, a source faster than the grid, and
+    // is left out: the grid holds one picture a slot.
+    let nowHost = ProcessInfo.processInfo.systemUptime
     let hasTimeline = lastTime.isNumeric && lastTime >= .zero
-    if hostOrigin == nil {
-      hostOrigin = nowHost - (hasTimeline ? CMTimeAdd(lastTime, oneFrame).seconds : 0)
+    let rate = Double(max(frameRate, 1))
+    let lastSlot = hasTimeline ? Int64((lastTime.seconds * rate).rounded()) : -1
+    if hostZero == nil { hostZero = nowHost - Double(lastSlot + 1) / rate }
+    let hostSlot = Int64(((nowHost - (hostZero ?? nowHost)) * rate).rounded())
+    let source = CMTimeSubtract(presentationTime, base)
+    var slot = source.isNumeric ? Int64((source.seconds * rate).rounded()) : hostSlot
+    if onClockGrid {
+      if slot <= lastSlot { slot = max(hostSlot, lastSlot + 1) }
+    } else if !continuingAfterRecovery, Double(abs(slot - hostSlot)) > Self.gridSlack {
+      slot = hostSlot
     }
-    let hostSeconds = nowHost - (hostOrigin ?? nowHost)
-    var time: CMTime
-    if hasTimeline {
-      let sourceStep = lastSourceTime.map { CMTimeSubtract(presentationTime, $0).seconds } ?? 0
-      let step = sourceStep > 0 && sourceStep < Self.maximumSourceStep ? sourceStep : oneFrame.seconds
-      let predicted = lastTime.seconds + step
-      let error = hostSeconds - predicted
-      let seconds = abs(error) > Self.hostReseatSeconds ? hostSeconds : predicted + Self.hostSteerGain * error
-      time = CMTime(seconds: seconds, preferredTimescale: 600)
-      if time <= lastTime { time = CMTimeAdd(lastTime, CMTime(value: 1, timescale: 600)) }
-    } else {
-      time = CMTime(seconds: max(0, hostSeconds), preferredTimescale: 600)
+    guard slot > lastSlot else {
+      lock.unlock()
+      return
     }
+    let time = CMTime(value: slot, timescale: CMTimeScale(max(frameRate, 1)))
     // A replay frame's or a recovery's arithmetic on source time stays consistent with where this
     // frame went.
     baseTime = CMTimeSubtract(presentationTime, time)
@@ -907,10 +911,13 @@ public final class ProgramEncoder: @unchecked Sendable {
 
   /// Black + silence from the last written program time (or zero) up to `end` seconds.
   ///
-  /// 10 fps is enough for a hold: duration is the last PTS, and a 45s empty program must
-  /// finish inside the stop-path deadline rather than encode hundreds of duplicate frames.
+  /// A fill of up to `gridFillSeconds` is one frame at a time on the programme's own grid, so the
+  /// stretch is the same constant frame rate as the rest of the file: the tail at Stop and a writer
+  /// recovery's hold. At ten a second, as every fill once was, those left 0.1 s frames in an
+  /// otherwise exact master. A longer fill is a programme that had no picture at all, and stays at
+  /// 10 fps: duration is the last PTS, and a long empty programme must finish inside the stop-path
+  /// deadline rather than encode thousands of duplicate frames.
   private func fillHold(until end: Double) {
-    let step = 0.1
     lock.lock()
     guard isRunning, let writer else {
       lock.unlock()
@@ -920,16 +927,17 @@ public final class ProgramEncoder: @unchecked Sendable {
       writer.startSession(atSourceTime: .zero)
       sessionStarted = true
     }
-    let start = (lastTime.isNumeric && lastTime >= .zero) ? lastTime.seconds + step : 0
+    let frame = CMTime(value: 1, timescale: CMTimeScale(max(frameRate, 1)))
+    let start = (lastTime.isNumeric && lastTime >= .zero) ? CMTimeAdd(lastTime, frame) : .zero
+    let step = end - start.seconds <= Self.gridFillSeconds ? frame : CMTime(value: 1, timescale: 10)
     lock.unlock()
-    guard end - start > 0.0005 else { return }
+    guard end - start.seconds > 0.0005 else { return }
 
     guard let black = programBlackBuffer() else { return }
     var cursor = start
-    while cursor + 0.0005 < end {
-      let time = CMTime(seconds: cursor, preferredTimescale: 600)
-      appendHoldFrame(black, at: time)
-      cursor += step
+    while cursor.seconds + 0.0005 < end {
+      appendHoldFrame(black, at: cursor)
+      cursor = CMTimeAdd(cursor, step)
     }
     appendHoldSilence(until: CMTime(seconds: max(0, end), preferredTimescale: 600))
   }

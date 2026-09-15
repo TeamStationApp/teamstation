@@ -204,7 +204,9 @@ struct ArchiveTimelineTests {
     let times = try await videoSampleTimes(of: try #require(encoder.outputURLs.first))
     let fileSpan = (times.last ?? 0) - (times.first ?? 0)
     let captureSpan = (captures.last ?? 0) - (captures.first ?? 0)
-    #expect(abs(fileSpan - captureSpan) < 0.03, "file spans \(fileSpan) s for \(captureSpan) s of capture")
+    // To the frame: the programme is written on its own grid, 30 a second here, so real time is
+    // exact to one frame period and no closer.
+    #expect(abs(fileSpan - captureSpan) <= 1.0 / 30 + 0.001, "file spans \(fileSpan) s for \(captureSpan) s of capture")
   }
 
   /// What went out is what the programme records: a source that stops delivering for a second is a

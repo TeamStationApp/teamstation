@@ -65,6 +65,9 @@ struct ProgrammeClockRouterTests {
     let steps = try await frameSteps(of: url)
     #expect(steps.count >= 36, "only \(steps.count) frames for about a second and a half at 30 fps")
     #expect((steps.max() ?? 0) < 0.07, "one frame lasted \(steps.max() ?? 0) s")
+    // An exact grid, the fill to the stop included, so an export can copy the master as it is.
+    let offGrid = steps.filter { abs($0 - 1.0 / 30) > 0.0005 }
+    #expect(offGrid.isEmpty, "\(offGrid.count) of \(steps.count) steps off 1/30 s: \(offGrid.prefix(5))")
   }
 
   /// The time from each video sample to the next, in presentation order.
