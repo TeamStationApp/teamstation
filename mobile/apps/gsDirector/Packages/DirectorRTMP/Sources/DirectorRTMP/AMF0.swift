@@ -9,6 +9,8 @@ public enum AMF0: Equatable, Sendable {
   case null
   case undefined
   case ecmaArray([String: AMF0])
+  /// An ordered list. Enhanced RTMP's `fourCcList` in `connect` is one.
+  case strictArray([AMF0])
 
   public var stringValue: String? {
     if case let .string(value) = self { return value }
@@ -79,6 +81,19 @@ public enum AMF0: Equatable, Sendable {
       guard cursor + 4 <= data.count else { return nil }
       cursor += 4
       return readObject(data, cursor: &cursor).map { .ecmaArray($0) }
+    case 0x0a:
+      guard cursor + 4 <= data.count else { return nil }
+      var count = 0
+      for offset in 0 ..< 4 {
+        count = (count << 8) | Int(data[cursor + offset])
+      }
+      cursor += 4
+      var items: [AMF0] = []
+      for _ in 0 ..< count {
+        guard let item = decode(data, cursor: &cursor) else { return nil }
+        items.append(item)
+      }
+      return .strictArray(items)
     case 0x0c:
       guard let string = readString(data, cursor: &cursor, lengthBytes: 4) else { return nil }
       return .string(string)
@@ -109,6 +124,11 @@ public enum AMF0: Equatable, Sendable {
       var count = UInt32(pairs.count).bigEndian
       withUnsafeBytes(of: &count) { data.append(contentsOf: $0) }
       encodePairs(pairs, into: &data)
+    case let .strictArray(items):
+      data.append(0x0A)
+      var count = UInt32(items.count).bigEndian
+      withUnsafeBytes(of: &count) { data.append(contentsOf: $0) }
+      for item in items { item.encode(into: &data) }
     }
   }
 
