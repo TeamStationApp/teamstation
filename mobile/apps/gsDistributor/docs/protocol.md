@@ -23,6 +23,9 @@ foreground, which does not.
 | `GET /v1/recordings/{id}/manifest?tracks=primary,camera:<source id>` | `ManifestResponse`: the index rows the tracks need, the export window every file of the take is cut to, and the files to fetch. 404 for an unknown take |
 | `GET /v1/recordings/{id}/still?camera=<source id>&at=<seconds>` | One JPEG (at most 640×360) of that camera about that far in. 404 when it has no picture there, 400 without a camera |
 | `GET /v1/files/{archives,program,prepared}/<path>` | The file's bytes. Supports `Range: bytes=n-` for resuming. Paths never leave their root |
+| `POST /v1/export-lock` | `ExportLockGranted {lockID}`: GS Director records and streams nothing until it is handed back. 409 while it records or streams |
+| `PUT /v1/export-lock/{lockID}` | 200 while the lock is held; 404 once GS Director has dropped it. Renewed every 10 s: a lock left alone for about half a minute is dropped, so a Mac that dies mid-export cannot keep the iPad from recording |
+| `DELETE /v1/export-lock/{lockID}` | 200. Hands the lock back |
 | `POST /v1/jobs` `JobRequest` | `JobAccepted {jobID}`: the iPad stitches one track. 409 while recording |
 | `DELETE /v1/jobs/{id}` | 200. The job's result is not reported |
 | `GET /v1/events` | Newline-delimited `DistributorEvent`s until the connection drops: job progress, finished (with the `RemoteFile`), failed; recordings changed; recording started or stopped; Director backgrounded |
