@@ -87,6 +87,8 @@ data class StreamSettings(
     // Every construction, `copy` included, so a copy that lowers the rate cannot leave the floor
     // above it.
     init {
+        // A rate saved when the scale reached 50 Mbps comes back at the top of today's.
+        if (bitrate > maximumBitrate) bitrate = maximumBitrate
         clampFloorToCeiling()
     }
 
@@ -112,7 +114,8 @@ data class StreamSettings(
      *
      * The iOS build's `setBitrate`, named for the same reason as [selectCodec].
      */
-    fun selectBitrate(newBitrate: Int) {
+    fun selectBitrate(requested: Int) {
+        val newBitrate = minOf(requested, maximumBitrate)
         if (bitrateFloor == defaultBitrateFloor(bitrate)) bitrateFloor = defaultBitrateFloor(newBitrate)
         bitrate = newBitrate
         clampFloorToCeiling()
@@ -199,6 +202,13 @@ data class StreamSettings(
          * over the wire.
          */
         const val minimumBitrate = 1_000_000
+
+        /**
+         * The highest rate either end of the bitrate range may be set to, in the Settings sliders and
+         * over the wire. A phone streams to one iPad over shared Wi-Fi, where more than this only
+         * costs frames, and on a 1–16 scale an everyday 2–8 Mbps range is wide enough to see and drag.
+         */
+        const val maximumBitrate = 16_000_000
 
         /**
          * Half the ceiling, which is where the floor always sat before it was a setting, but not

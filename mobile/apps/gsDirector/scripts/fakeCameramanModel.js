@@ -170,8 +170,8 @@ class FakeCameramanModel {
         case 'videoEncoder.resolution.width': next.width = Number(value); if (!(next.width > 0)) return bad(name, 'expected a positive integer'); break
         case 'videoEncoder.resolution.height': next.height = Number(value); if (!(next.height > 0)) return bad(name, 'expected a positive integer'); break
         case 'videoEncoder.rateControl.frameRateLimit': next.frameRate = Number(value); if (!(next.frameRate > 0)) return bad(name, 'expected a positive number'); break
-        case 'videoEncoder.rateControl.bitrateLimit': next.bitrateKbps = Number(value); if (!Number.isInteger(next.bitrateKbps) || next.bitrateKbps < 1000 || next.bitrateKbps > 50000) return bad(name, 'expected 1000…50000 kbps'); break
-        case 'videoEncoder.rateControl.bitrateFloor': next.bitrateFloorKbps = Number(value); if (!Number.isInteger(next.bitrateFloorKbps) || next.bitrateFloorKbps < 1000 || next.bitrateFloorKbps > 50000) return bad(name, 'expected 1000…50000 kbps'); break
+        case 'videoEncoder.rateControl.bitrateLimit': next.bitrateKbps = Number(value); if (!Number.isInteger(next.bitrateKbps) || next.bitrateKbps < 1000 || next.bitrateKbps > 16000) return bad(name, 'expected 1000…16000 kbps'); break
+        case 'videoEncoder.rateControl.bitrateFloor': next.bitrateFloorKbps = Number(value); if (!Number.isInteger(next.bitrateFloorKbps) || next.bitrateFloorKbps < 1000 || next.bitrateFloorKbps > 16000) return bad(name, 'expected 1000…16000 kbps'); break
         case 'videoEncoder.rateControl.adaptive': if (!['true', 'false', '1', '0', 'yes', 'no', 'on', 'off'].includes(value.toLowerCase())) return bad(name, 'expected true or false'); next.adaptive = ['true', '1', 'yes', 'on'].includes(value.toLowerCase()); break
         case 'audioEncoder.enabled': if (!['true', 'false', '1', '0', 'yes', 'no', 'on', 'off'].includes(value.toLowerCase())) return bad(name, 'expected true or false'); next.audio = ['true', '1', 'yes', 'on'].includes(value.toLowerCase()); break
         case 'lens.disabled': {

@@ -333,7 +333,7 @@ object CameraParameters {
     const val contentType = "text/parameters"
     const val controlVersion = "params/1"
     const val minimumBitrateKbps = 1_000
-    const val maximumBitrateKbps = 50_000
+    const val maximumBitrateKbps = StreamSettings.maximumBitrate / 1000
 
     // MARK: - Encode
 

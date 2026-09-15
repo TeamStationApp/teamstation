@@ -90,6 +90,7 @@ public struct StreamSettings: Sendable, Codable, Equatable {
     self.height = height
     self.frameRate = frameRate
     self.codec = codec
+    let bitrate = min(bitrate, Self.maximumBitrate)
     self.bitrate = bitrate
     self.bitrateFloor = min(bitrateFloor ?? Self.defaultBitrateFloor(forCeiling: bitrate), bitrate)
     self.adaptiveBitrate = adaptiveBitrate
@@ -116,7 +117,8 @@ public struct StreamSettings: Sendable, Codable, Equatable {
     height = try c.decodeIfPresent(Int.self, forKey: .height) ?? d.height
     frameRate = try c.decodeIfPresent(Double.self, forKey: .frameRate) ?? d.frameRate
     codec = try c.decodeIfPresent(StreamCodec.self, forKey: .codec) ?? d.codec
-    bitrate = try c.decodeIfPresent(Int.self, forKey: .bitrate) ?? d.bitrate
+    // A rate saved when the scale reached 50 Mbps comes back at the top of today's.
+    bitrate = min(try c.decodeIfPresent(Int.self, forKey: .bitrate) ?? d.bitrate, Self.maximumBitrate)
     // Saved before the floor was a setting, when it was always half the ceiling.
     bitrateFloor = min(
       try c.decodeIfPresent(Int.self, forKey: .bitrateFloor) ?? Self.defaultBitrateFloor(forCeiling: bitrate),
@@ -143,6 +145,11 @@ public struct StreamSettings: Sendable, Codable, Equatable {
   /// over the wire.
   public static let minimumBitrate = 1_000_000
 
+  /// The highest rate either end of the bitrate range may be set to, in the Settings sliders and
+  /// over the wire. A phone streams to one iPad over shared Wi-Fi, where more than this only costs
+  /// frames, and on a 1–16 scale an everyday 2–8 Mbps range is wide enough to see and drag.
+  public static let maximumBitrate = 16_000_000
+
   /// Half the ceiling, which is where the floor always sat before it was a setting, but not below
   /// `minimumBitrate`, and never above the ceiling itself.
   public static func defaultBitrateFloor(forCeiling ceiling: Int) -> Int {
@@ -160,6 +167,7 @@ public struct StreamSettings: Sendable, Codable, Equatable {
   /// never chose a floor keeps getting half of whatever they pick; a floor they did choose stays, and
   /// comes down only when the rate now sits below it.
   public mutating func setBitrate(_ newBitrate: Int) {
+    let newBitrate = min(newBitrate, Self.maximumBitrate)
     if bitrateFloor == Self.defaultBitrateFloor(forCeiling: bitrate) {
       bitrateFloor = Self.defaultBitrateFloor(forCeiling: newBitrate)
     }
