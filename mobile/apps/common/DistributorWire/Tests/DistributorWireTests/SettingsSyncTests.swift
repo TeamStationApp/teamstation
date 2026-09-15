@@ -65,6 +65,17 @@ struct SettingsSyncTests {
     #expect(merged.destinations == [ Self.mac: "/Mine", Self.otherMac: "/Other" ])
   }
 
+  @Test("A GS Director that drops groups it does not know cannot take the Mac's away")
+  func olderDirectorAnswer() {
+    let before = DistributorSettings()
+    var mac = before
+    mac.combinedLayout = CombinedLayoutSettings(included: [ "Home", "Away" ], audioCamera: "Home")
+    mac = mac.stampingChanges(from: before, by: Self.mac, at: Self.at(5))
+    // What an older GS Director answers: its own groups, no stamps, nothing it does not know.
+    let answered = DistributorSettings(createCombined: mac.createCombined)
+    #expect(mac.reconciled(with: answered).combinedLayout == mac.combinedLayout)
+  }
+
   @Test("A folder cleared on the Mac stays cleared once brought together")
   func clearedFolder() {
     let ipad = DistributorSettings(destinations: [ Self.mac: "/Old" ])
