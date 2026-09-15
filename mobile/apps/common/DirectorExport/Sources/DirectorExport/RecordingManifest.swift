@@ -18,4 +18,7 @@ public struct RecordingManifest: Sendable, Equatable, Codable {
   /// Every segment row of the chosen cameras, initialisation segments included, ids kept.
   public var segments: [SegmentRecord]
   public var programAnchors: [ArchiveIndex.ProgramAnchor]
+  /// The encoding the take was recorded with, so the Mac encodes its exports the way the iPad would.
+  /// Absent from an iPad that predates it, and from a take recorded before it was kept.
+  public var encoding: TakeEncoding? = nil
 }

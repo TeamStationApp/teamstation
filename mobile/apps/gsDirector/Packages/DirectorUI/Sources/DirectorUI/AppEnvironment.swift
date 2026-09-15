@@ -1623,6 +1623,8 @@ public final class AppEnvironment {
       return
     }
     self.recordingID = recordingID
+    // The encoding this take is recorded with, kept with it for its exports.
+    try? index.saveEncoding(config.takeEncoding, for: recordingID)
     // Anchors belong to this recording until it stops.
     programEncoder.setAnchorRecording(recordingID)
     self.recordingStartedAt = now
