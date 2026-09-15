@@ -13,9 +13,11 @@ settings:
     SWIFT_VERSION: "6.0"
     MACOSX_DEPLOYMENT_TARGET: "15.0"
     DEVELOPMENT_TEAM: G5LQ7MERPK
-    # Signed to run on this Mac. Not sandboxed: usbmuxd's socket is outside any sandbox.
+    # Signed with the team's development identity rather than ad hoc, so every build is the same
+    # app to the Keychain and the logins kept there are read without a prompt. Not sandboxed:
+    # usbmuxd's socket is outside any sandbox.
     CODE_SIGN_STYLE: Manual
-    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_IDENTITY: "Apple Development"
     ENABLE_HARDENED_RUNTIME: YES
     ENABLE_APP_SANDBOX: NO
     ENABLE_USER_SCRIPT_SANDBOXING: NO
