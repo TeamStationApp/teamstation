@@ -114,7 +114,7 @@ public enum HTTPResponse: Sendable {
   /// Streamed from disk, honouring the request's `Range`.
   case file(URL, contentType: String)
   /// Newline-delimited JSON events until either side closes.
-  case events(EventHub)
+  case events(any EventSource)
 
   public static func json<Value: Encodable>(_ value: Value, status: Int = 200) -> HTTPResponse {
     let encoder = JSONEncoder()
@@ -158,14 +158,22 @@ struct HTTPHead {
   static func reason(_ status: Int) -> String {
     switch status {
     case 200: "OK"
+    case 201: "Created"
+    case 202: "Accepted"
+    case 204: "No Content"
     case 206: "Partial Content"
     case 400: "Bad Request"
+    case 401: "Unauthorized"
     case 404: "Not Found"
     case 405: "Method Not Allowed"
     case 409: "Conflict"
+    case 412: "Precondition Failed"
     case 413: "Content Too Large"
     case 416: "Range Not Satisfiable"
+    case 423: "Locked"
     case 500: "Internal Server Error"
+    case 502: "Bad Gateway"
+    case 503: "Service Unavailable"
     default: "Status"
     }
   }

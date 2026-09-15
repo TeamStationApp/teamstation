@@ -23,11 +23,14 @@ foreground, which does not.
 | `GET /v1/recordings/{id}/manifest?tracks=primary,camera:<source id>` | `ManifestResponse`: the index rows the tracks need, the export window every file of the take is cut to, and the files to fetch. 404 for an unknown take |
 | `GET /v1/recordings/{id}/still?camera=<source id>&at=<seconds>` | One JPEG (at most 640×360) of that camera about that far in. 404 when it has no picture there, 400 without a camera |
 | `GET /v1/files/{archives,program,prepared}/<path>` | The file's bytes. Supports `Range: bytes=n-` for resuming. Paths never leave their root |
+| `POST /v1/export-lock` | `ExportLockGranted {lockID}`: GS Director records and streams nothing until it is handed back. 409 while it records or streams |
+| `PUT /v1/export-lock/{lockID}` | 200 while the lock is held; 404 once GS Director has dropped it. Renewed every 10 s: a lock left alone for about half a minute is dropped, so a Mac that dies mid-export cannot keep the iPad from recording |
+| `DELETE /v1/export-lock/{lockID}` | 200. Hands the lock back |
 | `POST /v1/jobs` `JobRequest` | `JobAccepted {jobID}`: the iPad stitches one track. 409 while recording |
 | `DELETE /v1/jobs/{id}` | 200. The job's result is not reported |
 | `GET /v1/events` | Newline-delimited `DistributorEvent`s until the connection drops: job progress, finished (with the `RemoteFile`), failed; recordings changed; recording started or stopped; Director backgrounded |
 | `GET /v1/settings` | `DistributorSettings` |
-| `PUT /v1/settings` `DistributorSettings` + `X-Distributor-Mac: <IOPlatformUUID>` | The merged settings. Only the sending Mac's download folder is taken from the body |
+| `PUT /v1/settings` `DistributorSettings` + `X-Distributor-Mac: <IOPlatformUUID>` | The merged settings: each group from whichever copy changed it last (`SettingsStamp`); a body with no stamps is taken whole. Only the sending Mac's download folder is taken from the body |
 | `POST /v1/peertube/signin` `PeerTubeSignIn` | `PeerTubeSignInResult`: `signedIn(account)` or `otpRequired`. 400 for a missing host or user name, 401 for a refused sign-in or a host that is not PeerTube, 502 when PeerTube cannot be reached |
 | `GET /v1/peertube/token` | `PeerTubeToken`: host, user name, an access token with five minutes or more left, and when it expires. 401 when not signed in |
 | `POST /v1/peertube/signout` | 200. The token is revoked (best effort) and the account forgotten |
@@ -36,11 +39,13 @@ foreground, which does not.
 
 - **The iPad** keeps GS Distributor's settings (`DistributorSettingsStore`, JSON beside the index):
   a download folder per Mac, whether the iPad stitches, the combined-video toggle, layout and sound
-  camera by camera name, and
-  PeerTube's host, user name, the channel and privacy last uploaded with, and which files to upload.
-- **The iPad's Keychain** keeps the PeerTube account (this device only, after first unlock): the
-  instance's OAuth client and the tokens. Never the password. The refresh token never leaves it.
-- **The Mac** keeps nothing between launches.
+  camera by camera name, PeerTube's host, user name, the channel and privacy last uploaded with,
+  and which files to upload. Every group is stamped with when and where it last changed.
+- **The iPad's Keychain** keeps its own PeerTube account (the instance's OAuth client and the
+  tokens), on this device only, after first unlock.
+- **The Mac** keeps its own copy of the settings in `~/Library/Application Support/GS Distributor`,
+  with the last recording list seen from each iPad; its own PeerTube account is in its Keychain. On
+  attaching it brings the settings together (`GET`, then `PUT` when its copy has anything newer).
 
 ## An export
 
@@ -53,5 +58,7 @@ foreground, which does not.
    `ExportService`; the second to the iPad as a job; then whichever is free takes the next. The iPad
    takes nothing new while it records, and a job it refuses with 409 goes back to the Mac.
 4. With a combined video, the Mac renders it from the saved camera files.
-5. With uploads, the Mac uploads each chosen file to PeerTube with a token from `/v1/peertube/token`,
-   fetched again whenever the one it holds has under five minutes left.
+5. With uploads, the Mac uploads each chosen file to PeerTube with its own account's token, or,
+   while it has never signed in itself, one from `/v1/peertube/token`, fetched again whenever the
+   one it holds has under five minutes left. Each upload's original publication date is the
+   recording's start.

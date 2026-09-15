@@ -5,6 +5,7 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 require swift
+require node
 
 APPS="$(cd "$DISTRIBUTOR_ROOT/.." && pwd)"
 PACKAGES=(
@@ -12,7 +13,10 @@ PACKAGES=(
   "$DISTRIBUTOR_ROOT/Packages/DirectorClient"
   "$DISTRIBUTOR_ROOT/Packages/Distribution"
   "$DISTRIBUTOR_ROOT/Packages/CombinedVideo"
+  "$DISTRIBUTOR_ROOT/Packages/MacState"
+  "$DISTRIBUTOR_ROOT/Packages/DistributorAPI"
   "$APPS/common/DistributorWire"
+  "$APPS/common/LoopbackHTTP"
   "$APPS/common/PeerTubeKit"
   "$APPS/common/DirectorExport"
   "$APPS/gsDirector/Packages/DirectorLink"

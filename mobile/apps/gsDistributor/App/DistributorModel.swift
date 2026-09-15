@@ -3,12 +3,15 @@ import DirectorCore
 import Distribution
 import DistributorWire
 import Foundation
+import MacState
 import Observation
 import PeerTubeKit
 import UsbMux
 
 /// Watches the cable for iPads, keeps a connection to GS Director on the chosen one, and holds
-/// what the window shows. Nothing here is saved on the Mac.
+/// what the window shows. The settings are kept on this Mac as well as on the iPad, so
+/// everything that needs only the Mac works with the iPad away; what changes meanwhile reaches the
+/// iPad when it is next attached.
 @MainActor
 @Observable
 final class DistributorModel {
@@ -28,8 +31,9 @@ final class DistributorModel {
   private(set) var recordings: [RecordingListing] = []
   /// Something to tell the user once; the window shows it and clears it.
   var problem: String?
-  /// GS Distributor's settings, read from and saved to the iPad. Nil until GS Director answers.
-  private(set) var settings: DistributorSettings?
+  /// GS Distributor's settings: this Mac's copy, brought together with the iPad's whenever it is
+  /// attached.
+  private(set) var settings: DistributorSettings
 
   enum PeerTubeState: Equatable {
     /// Uploads are off, or nothing has been asked yet.
@@ -54,13 +58,16 @@ final class DistributorModel {
     case failed(String)
   }
 
-  /// The PeerTube account GS Director holds, as far as the Mac knows.
+  /// The PeerTube account this Mac uploads with, as far as it knows.
   private(set) var peerTube: PeerTubeState = .unknown
-  private var peerTubeToken: PeerTubeToken?
+  /// Tokens lent by the iPad's account, used only while this Mac has never signed in itself.
+  private var borrowedToken: PeerTubeToken?
+  /// Whether this Mac has a PeerTube account of its own, so uploads need no iPad.
+  private var hasOwnPeerTubeAccount = false
 
-  /// This Mac's download folder, as the iPad remembers it.
+  /// This Mac's download folder.
   var destination: URL? {
-    settings?.destinations[macID].map { URL(fileURLWithPath: $0, isDirectory: true) }
+    settings.destinations[macID].map { URL(fileURLWithPath: $0, isDirectory: true) }
   }
   /// The export under way or just finished, if any.
   private(set) var run: DistributionRun?
@@ -68,6 +75,9 @@ final class DistributorModel {
   private(set) var isRecording = false
   /// Whether GS Director is streaming. Nothing comes from the iPad while it records or streams.
   private(set) var isStreaming = false
+
+  /// What exporting needs while no GS Director is attached.
+  nonisolated static let noIPadNotice = "Connect iPad with GS Director in the foreground to export videos."
 
   /// Why an export that needs the iPad cannot start now, if it cannot. One whose files are all on
   /// this Mac can: the combined video and the uploads need only the Mac.
@@ -86,21 +96,36 @@ final class DistributorModel {
 
   var isExporting: Bool { run.map { !$0.isFinished } ?? false }
 
-  /// This Mac's hardware UUID, which keys its download folder on the iPad.
+  /// This Mac's hardware UUID, which keys its download folder and stamps its changes.
   let macID = MacIdentity.platformUUID
   private(set) var connection: DirectorConnection?
+
+  /// This Mac's folder of state and its own PeerTube account.
+  let state: MacState
+  let peerTubeAccount: PeerTubeAccount
 
   private let locator = DirectorLocator()
   private var forwarder: LoopbackForwarder?
   private var eventsTask: Task<Void, Never>?
+
+  init(
+    state: MacState = MacState(),
+    peerTubeStorage: any AccountStorage = KeychainAccountStorage(service: "\(MacState.keychainPrefix).peerTubeAccount")
+  ) {
+    self.state = state
+    self.peerTubeAccount = PeerTubeAccount(storage: peerTubeStorage)
+    self.settings = state.settings()
+  }
 
   var chosenDevice: UsbMuxDevice? {
     devices.first { $0.serial == chosenSerial } ?? devices.first
   }
 
   /// Follows iPads coming and going until the window closes, and retries a Director that is not
-  /// answering every couple of seconds.
+  /// answering every couple of seconds. PeerTube is looked at first, since this Mac may upload
+  /// with no iPad at all.
   func watch() async {
+    await loadPeerTube()
     let retries = Task { [weak self] in
       while !Task.isCancelled {
         try? await Task.sleep(for: .seconds(2))
@@ -160,10 +185,14 @@ final class DistributorModel {
     await connect()
   }
 
+  /// Reads the iPad's recordings, and keeps the list on this Mac for when the iPad is away.
   func reload() async {
     guard let connection else { return }
     do {
       recordings = try await connection.recordings()
+      if case .connected(let hello) = link {
+        try? state.saveRecordings(recordings, director: DirectorRecord(directorID: hello.directorID, deviceName: hello.deviceName))
+      }
     } catch {
       problem = "Could not read the iPad's recordings: \(error)"
     }
@@ -181,8 +210,26 @@ final class DistributorModel {
     await reload()
   }
 
+  /// Why an export did not start.
+  enum ExportRefusal: Error, Equatable {
+    case exporting
+    case noDestination
+    case noIPad
+    /// GS Director is recording or streaming, and the export needs a file from it.
+    case directorBusy(String)
+
+    var message: String {
+      switch self {
+      case .exporting: "An export is already under way."
+      case .noDestination: "Choose a folder to save into in Settings first."
+      case .noIPad: DistributorModel.noIPadNotice
+      case .directorBusy(let reason): reason
+      }
+    }
+  }
+
   /// Exports `tracks` of `recording` into this Mac's folder, the Mac and the iPad stitching side by
-  /// side.
+  /// side. What stops it is shown in the window.
   func export(
     _ recording: RecordingListing,
     tracks: [Track],
@@ -190,17 +237,31 @@ final class DistributorModel {
     combined: CombinedPlan? = nil,
     upload: UploadPlan? = nil
   ) {
-    guard !isExporting, let connection else { return }
-    guard let destination else {
-      problem = "Choose a folder to save into in Settings first."
-      return
+    do {
+      try startExport(recording, tracks: tracks, reprocess: reprocess, combined: combined, upload: upload)
+    } catch .exporting {
+      // The window offers no second export while one runs.
+    } catch {
+      problem = error.message
     }
-    // Files already on this Mac need nothing from the iPad, so only an export that does waits.
-    if let reason = exportBlockedReason,
-       ExportInventory(recording: recording, destination: destination).needsIPad(tracks, reprocess: reprocess) {
-      problem = reason
-      return
-    }
+  }
+
+  /// Starts an export and returns it, or says why it cannot start.
+  @discardableResult
+  func startExport(
+    _ recording: RecordingListing,
+    tracks: [Track],
+    reprocess: Bool = false,
+    combined: CombinedPlan? = nil,
+    upload: UploadPlan? = nil
+  ) throws(ExportRefusal) -> DistributionRun {
+    guard !isExporting else { throw .exporting }
+    guard let destination else { throw .noDestination }
+    // Files already on this Mac need nothing from the iPad, so only an export that does needs it
+    // attached and waits while it records or streams.
+    let needsIPad = ExportInventory(recording: recording, destination: destination).needsIPad(tracks, reprocess: reprocess)
+    if needsIPad, connection == nil { throw .noIPad }
+    if needsIPad, let reason = exportBlockedReason { throw .directorBusy(reason) }
     let run = DistributionRun(
       recording: recording,
       tracks: tracks,
@@ -212,13 +273,14 @@ final class DistributorModel {
       upload: upload
     ) { [weak self] in
       guard let self else { return false }
-      return self.connection != nil && !self.isRecording && self.settings?.iPadStitching == true
+      return self.connection != nil && !self.isRecording && self.settings.iPadStitching
     }
     self.run = run
     Task {
       await run.run()
       await reload()
     }
+    return run
   }
 
   /// One frame of a camera, for the combined video's previews; nil when the iPad has none.
@@ -228,14 +290,15 @@ final class DistributorModel {
 
   // MARK: - PeerTube
 
-  /// GS Director signs in; the Mac reads the account's channels and privacy settings, and uploads,
-  /// with access tokens the iPad hands it.
+  /// This Mac signs in to PeerTube with its own account, kept in its Keychain. Until it has one it
+  /// borrows access tokens from the iPad's account while the iPad is attached.
   func loadPeerTube() async {
-    peerTubeToken = nil
-    guard settings?.peerTube.enabled == true, connection != nil else {
+    borrowedToken = nil
+    guard settings.peerTube.enabled else {
       peerTube = .unknown
       return
     }
+    hasOwnPeerTubeAccount = await peerTubeAccount.current != nil
     do {
       let token = try await peerTubeAccessToken()
       let api = PeerTubeAPI(host: token.host)
@@ -256,43 +319,47 @@ final class DistributorModel {
     }
   }
 
-  /// An access token good for five more minutes at least: the one already fetched, else a new one
-  /// from the iPad, which refreshes its own.
+  /// An access token good for five more minutes at least: this Mac's own account's, else one the
+  /// iPad lends, which refreshes its own.
   func peerTubeAccessToken() async throws -> PeerTubeToken {
-    if let token = peerTubeToken, token.expiresAt.timeIntervalSinceNow > 300 { return token }
+    if await peerTubeAccount.current != nil {
+      let token = try await peerTubeAccount.accessToken()
+      return PeerTubeToken(host: token.host, username: token.username, accessToken: token.token, expiresAt: token.expiresAt)
+    }
+    if let token = borrowedToken, token.expiresAt.timeIntervalSinceNow > 300 { return token }
     guard let connection else { throw PeerTubeError.signInAgain }
     guard let token = try await connection.peerTubeToken() else {
       peerTube = .signedOut
       throw PeerTubeError.signInAgain
     }
-    peerTubeToken = token
+    borrowedToken = token
     return token
   }
 
+  /// Signs this Mac in, and notes the account in the settings.
   func signInToPeerTube(host: String, username: String, password: String, code: String?) async -> SignInOutcome {
-    guard let connection else { return .failed("GS Director is not connected.") }
     do {
-      let result = try await connection.peerTubeSignIn(
-        PeerTubeSignIn(host: host, username: username, password: password, otp: code)
-      )
-      switch result {
-      case .otpRequired:
-        return .needsCode
-      case .signedIn:
-        await loadSettings()
-        await loadPeerTube()
-        return .signedIn
-      }
-    } catch DirectorClientError.http(_, let message) {
-      return .failed(message)
+      try await peerTubeAccount.signIn(host: host, username: username, password: password, otp: code)
+    } catch PeerTubeError.otpRequired {
+      return .needsCode
+    } catch let error as PeerTubeError {
+      return .failed(error.description)
     } catch {
-      return .failed("\(error)")
+      return .failed(error.localizedDescription)
     }
+    await updateSettings {
+      $0.peerTube.host = host
+      $0.peerTube.username = username
+    }
+    await loadPeerTube()
+    return .signedIn
   }
 
+  /// Signs this Mac out.
   func signOutOfPeerTube() async {
-    try? await connection?.peerTubeSignOut()
-    peerTubeToken = nil
+    await peerTubeAccount.signOut()
+    borrowedToken = nil
+    hasOwnPeerTubeAccount = false
     peerTube = .signedOut
   }
 
@@ -301,7 +368,7 @@ final class DistributorModel {
   var uploadChannelID: Int? {
     guard case .signedIn(let account) = peerTube else { return nil }
     let ids = account.channels.map(\.id)
-    if let chosen = settings?.peerTube.channelID, ids.contains(chosen) { return chosen }
+    if let chosen = settings.peerTube.channelID, ids.contains(chosen) { return chosen }
     if let latest = account.latestChannelID, ids.contains(latest) { return latest }
     return ids.first
   }
@@ -309,11 +376,11 @@ final class DistributorModel {
   /// The privacy an upload starts on: the one last used, else 6 where the instance has it.
   var uploadPrivacy: Int {
     let offered = if case .signedIn(let account) = peerTube { Array(account.privacies.keys) } else { [Int]() }
-    return PeerTubePrivacy.preferred(chosen: settings?.peerTube.privacy, offered: offered)
+    return PeerTubePrivacy.preferred(chosen: settings.peerTube.privacy, offered: offered)
   }
 
-  /// The uploads for an export of `recording`, to `channelID` with `privacy`; nil when GS Director
-  /// is not signed in or there is no channel.
+  /// The uploads for an export of `recording`, to `channelID` with `privacy`; nil when this Mac is
+  /// not signed in or there is no channel.
   func uploadPlan(
     for recording: RecordingListing,
     title: String,
@@ -322,10 +389,14 @@ final class DistributorModel {
     tracks: [UploadTrack]
   ) -> UploadPlan? {
     guard case .signedIn(let account) = peerTube, let channelID, !tracks.isEmpty else { return nil }
-    // The uploads' own token, kept through GS Director going away and coming back.
+    // The uploads' own token: this Mac's account's whenever it has one, else the iPad's, kept
+    // through GS Director going away and coming back.
     let tokens = UploadTokenSource(
-      held: peerTubeToken,
-      isConnected: { @MainActor [weak self] in self?.connection != nil },
+      held: borrowedToken,
+      isConnected: { @MainActor [weak self] in
+        guard let self else { return false }
+        return self.hasOwnPeerTubeAccount || self.connection != nil
+      },
       fetch: { @MainActor [weak self] in
         guard let self else { throw CancellationError() }
         return try await self.peerTubeAccessToken()
@@ -346,28 +417,46 @@ final class DistributorModel {
     if run?.isFinished == true { run = nil }
   }
 
-  func loadSettings() async {
-    guard let connection else {
-      settings = nil
-      return
-    }
+  // MARK: - Settings
+
+  /// Changes the settings: at once on this Mac, and on the iPad now or when it is next attached.
+  func updateSettings(_ change: (inout DistributorSettings) -> Void) async {
+    var next = settings
+    change(&next)
+    next = next.stampingChanges(from: settings, by: macID)
+    guard next != settings else { return }
+    settings = next
+    saveSettingsHere()
+    await syncSettings()
+  }
+
+  /// Brings this Mac's settings and the iPad's together: each group from whichever changed it last.
+  private func syncSettings() async {
+    guard let connection else { return }
     do {
-      settings = try await connection.settings()
+      let theirs = try await connection.settings()
+      var merged = settings.reconciled(with: theirs)
+      if merged != theirs {
+        // What the iPad kept, brought together with what was sent rather than taken as it is: a
+        // GS Director from before a group existed answers without it.
+        let kept = try await connection.saveSettings(merged)
+        merged = merged.reconciled(with: kept)
+      }
+      settings = merged
+      saveSettingsHere()
+      if case .connected(let hello) = link {
+        try? state.updateJournal { $0.lastSynced[hello.directorID.uuidString] = Date() }
+      }
     } catch {
-      problem = "Could not read the settings on the iPad: \(error)"
+      problem = "Could not bring the settings together with the iPad's: \(error)"
     }
   }
 
-  /// Changes the settings on the iPad. Shown at once; put back as they were if the save fails.
-  func updateSettings(_ change: (inout DistributorSettings) -> Void) async {
-    guard let connection, var next = settings else { return }
-    change(&next)
-    settings = next
+  private func saveSettingsHere() {
     do {
-      settings = try await connection.saveSettings(next)
+      try state.saveSettings(settings)
     } catch {
-      problem = "Could not save the settings on the iPad: \(error)"
-      await loadSettings()
+      problem = "Could not save the settings on this Mac: \(error)"
     }
   }
 
@@ -391,7 +480,7 @@ final class DistributorModel {
       isRecording = hello.isRecording
       isStreaming = hello.isStreaming
       await reload()
-      await loadSettings()
+      await syncSettings()
       await loadPeerTube()
       listen(to: connection)
     } catch {
@@ -437,14 +526,18 @@ final class DistributorModel {
     link = serial.map { .waitingForDirector(serial: $0) } ?? .waitingForIPad
   }
 
+  /// Drops the connection. The settings and this Mac's own PeerTube account carry on; tokens the
+  /// iPad lent do not, so what PeerTube shows is looked at again.
   private func disconnect() {
+    let wasConnected = connection != nil
     eventsTask?.cancel()
     eventsTask = nil
     forwarder?.stop()
     forwarder = nil
     connection = nil
-    settings = nil
-    peerTube = .unknown
-    peerTubeToken = nil
+    borrowedToken = nil
+    if wasConnected {
+      Task { await loadPeerTube() }
+    }
   }
 }

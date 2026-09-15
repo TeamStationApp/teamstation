@@ -2,8 +2,8 @@ import AppKit
 import DistributorWire
 import SwiftUI
 
-/// GS Distributor's settings. They are GS Director's to keep: every change is saved on the iPad,
-/// and with no iPad connected there is nothing to show.
+/// GS Distributor's settings. This Mac keeps them and so does the iPad: a change made with the
+/// iPad away reaches it when it is next attached.
 struct SettingsView: View {
   let model: DistributorModel
 
@@ -17,58 +17,48 @@ struct SettingsView: View {
   @State private var signInProblem: String?
 
   var body: some View {
-    Group {
-      if let settings = model.settings {
-        Form {
-          Section("Downloads") {
-            LabeledContent("Save to") {
-              HStack {
-                Text(model.destination?.path ?? "Not chosen")
-                  .foregroundStyle(destinationExists ? Color.primary : Color.red)
-                  .lineLimit(1)
-                  .truncationMode(.middle)
-                  .accessibilityIdentifier("settings-destination")
-                Button("Choose…") { chooseDestination() }
-                  .accessibilityIdentifier("settings-choose-destination")
-              }
-            }
-          }
-
-          Section("Stitching") {
-            Toggle("Enable iPad Stitching", isOn: stitchesOnIPad)
-              .accessibilityIdentifier("settings-ipad-stitching")
-            Text("Off, this Mac stitches every file. Files the iPad has already stitched are still fetched from it.")
-              .font(.caption)
-              .foregroundStyle(.secondary)
-          }
-
-          Section("Combined video") {
-            Toggle("Create a combined video", isOn: createsCombined)
-              .accessibilityIdentifier("settings-create-combined")
-          }
-
-          Section("PeerTube") {
-            Toggle("Upload to PeerTube", isOn: uploadsToPeerTube)
-              .accessibilityIdentifier("settings-peertube")
-            if settings.peerTube.enabled {
-              peerTubeAccount
-            }
+    Form {
+      Section("Downloads") {
+        LabeledContent("Save to") {
+          HStack {
+            Text(model.destination?.path ?? "Not chosen")
+              .foregroundStyle(destinationExists ? Color.primary : Color.red)
+              .lineLimit(1)
+              .truncationMode(.middle)
+              .accessibilityIdentifier("settings-destination")
+            Button("Choose…") { chooseDestination() }
+              .accessibilityIdentifier("settings-choose-destination")
           }
         }
-        .formStyle(.grouped)
-        .onAppear {
-          hostDraft = settings.peerTube.host ?? ""
-          usernameDraft = settings.peerTube.username ?? ""
+      }
+
+      Section("Stitching") {
+        Toggle("Enable iPad Stitching", isOn: stitchesOnIPad)
+          .accessibilityIdentifier("settings-ipad-stitching")
+        Text("Off, this Mac stitches every file. Files the iPad has already stitched are still fetched from it.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+
+      Section("Combined video") {
+        Toggle("Create a combined video", isOn: createsCombined)
+          .accessibilityIdentifier("settings-create-combined")
+      }
+
+      Section("PeerTube") {
+        Toggle("Upload to PeerTube", isOn: uploadsToPeerTube)
+          .accessibilityIdentifier("settings-peertube")
+        if model.settings.peerTube.enabled {
+          peerTubeAccount
         }
-      } else {
-        ContentUnavailableView(
-          "Connect GS Director",
-          systemImage: "cable.connector",
-          description: Text("GS Distributor's settings are kept on the iPad.")
-        )
       }
     }
-    .frame(width: 520, height: 480)
+    .formStyle(.grouped)
+    .onAppear {
+      hostDraft = model.settings.peerTube.host ?? ""
+      usernameDraft = model.settings.peerTube.username ?? ""
+    }
+    .frame(width: 560, height: 680)
   }
 
   // MARK: - PeerTube
@@ -136,7 +126,7 @@ struct SettingsView: View {
           .disabled(signingIn || usernameDraft.isEmpty || password.isEmpty)
           .accessibilityIdentifier("settings-peertube-signin")
       }
-      Text("GS Director keeps the sign-in. The password is sent to PeerTube once and not stored.")
+      Text("This Mac keeps the login in its Keychain and gives it to the iPad, so either can upload while the other is away.")
         .font(.caption)
         .foregroundStyle(.secondary)
     }
@@ -146,21 +136,21 @@ struct SettingsView: View {
 
   private var createsCombined: Binding<Bool> {
     Binding(
-      get: { model.settings?.createCombined ?? false },
+      get: { model.settings.createCombined },
       set: { isOn in Task { await model.updateSettings { $0.createCombined = isOn } } }
     )
   }
 
   private var stitchesOnIPad: Binding<Bool> {
     Binding(
-      get: { model.settings?.iPadStitching ?? false },
+      get: { model.settings.iPadStitching },
       set: { isOn in Task { await model.updateSettings { $0.iPadStitching = isOn } } }
     )
   }
 
   private var uploadsToPeerTube: Binding<Bool> {
     Binding(
-      get: { model.settings?.peerTube.enabled ?? false },
+      get: { model.settings.peerTube.enabled },
       set: { isOn in
         Task {
           await model.updateSettings { $0.peerTube.enabled = isOn }

@@ -5,30 +5,6 @@ import Distribution
 import DistributorWire
 import SwiftUI
 
-/// One video the combined video can take: a camera of the export, or its primary output.
-struct CombinedCandidate: Hashable {
-  let name: String
-  let track: Track
-  /// What the still route calls it.
-  let stillSource: SourceID
-
-  /// The primary output first, when it is exported, then the exported cameras in the take's order.
-  static func all(for recording: RecordingListing, tracks: [Track]) -> [CombinedCandidate] {
-    var candidates: [CombinedCandidate] = []
-    if recording.hasPrimary, tracks.contains(.primary) {
-      candidates.append(CombinedCandidate(
-        name: CombinedLayoutRules.primaryOutputName,
-        track: .primary,
-        stillSource: SourceID(DistributorProtocol.primaryStillCamera)
-      ))
-    }
-    for camera in recording.cameras where tracks.contains(.camera(camera.sourceID)) {
-      candidates.append(CombinedCandidate(name: camera.name, track: .camera(camera.sourceID), stillSource: camera.sourceID))
-    }
-    return candidates
-  }
-}
-
 /// Chooses and lays out the combined video before an export: which exported files go in (up to
 /// four, the primary output among them if it is exported), whose sound it carries, and where each
 /// sits. The layout is remembered on the iPad by name and put back next time.
@@ -295,7 +271,7 @@ struct CombinedSheet: View {
   // MARK: - Start and finish
 
   private func setUp() async {
-    let saved = model.settings?.combinedLayout ?? CombinedLayoutSettings()
+    let saved = model.settings.combinedLayout
     let names = candidates.map(\.name)
     included = CombinedLayoutRules.initialInclusion(exported: names, saved: saved)
     assignment = CombinedLayoutRules.assign(included, saved: saved)
