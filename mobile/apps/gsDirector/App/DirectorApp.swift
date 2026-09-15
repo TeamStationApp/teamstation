@@ -61,10 +61,10 @@ struct DirectorApp: App {
     coordinator: PlayoutCoordinator
   ) -> SourceDiscovery {
     let stored = ConfigStore().load()
-    let codec: CompressedFrame.Codec = (launch.sourceEncodeCodec ?? stored.sourceEncodeCodec) == .h264
+    let codec: CompressedFrame.Codec = (launch.sourceEncodeCodec ?? stored.rawCameraCodec) == .h264
       ? .h264
       : .hevc
-    let bitrate = launch.sourceEncodeBitrate ?? stored.programBitrate
+    let bitrate = launch.sourceEncodeBitrate ?? stored.rawCameraBitrate
     if let limit = launch.sourceEncodeLimit {
       NDIArchiveBudget.shared.setCapacity(limit)
     }
