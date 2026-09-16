@@ -4,6 +4,7 @@ import type { Kysely } from 'kysely'
 
 import { badRequest, unauthorized } from '../../common/errors'
 import { createEmailCode, verifyEmailCode } from '../auth/emailCodes'
+import { findUserByEmail, primaryEmail } from '../auth/emails'
 import { passwordMatches } from '../auth/passwords'
 import { createSession, revokeSession } from '../auth/sessions'
 import { bearerToken } from '../auth/tokens'
@@ -54,25 +55,14 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
       const body = cleanBody(asPasswordLogin, req.body)
       const email = body.email.trim().toLowerCase()
 
-      const user = await db
-        .selectFrom('users')
-        .select([
-          'id',
-          'display_name',
-          'email',
-          'password_hash',
-          'is_admin',
-          'login_enabled'
-        ])
-        .where(eb => eb.fn('lower', ['email']), '=', email)
-        .executeTakeFirst()
+      const user = await findUserByEmail(db, email)
 
       // The same answer whether the address is unknown, the password is wrong,
       // or the account has no login: none of those should be discoverable.
       const ok =
         user != null &&
-        user.login_enabled &&
-        (await passwordMatches(body.password, user.password_hash))
+        user.loginEnabled &&
+        (await passwordMatches(body.password, user.passwordHash))
       if (!ok || user == null) throw unauthorized('Wrong e-mail or password')
 
       const session = await createSession(db, user.id, req.header('user-agent'))
@@ -82,9 +72,9 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
           expiresAt: session.expiresAt.toISOString(),
           user: {
             id: user.id,
-            displayName: user.display_name,
-            email: user.email ?? undefined,
-            isAdmin: user.is_admin
+            displayName: user.displayName,
+            email: user.email,
+            isAdmin: user.isAdmin
           }
         })
       )
@@ -97,11 +87,7 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
       const body = cleanBody(asCodeRequest, req.body)
       const email = body.email.trim().toLowerCase()
 
-      const user = await db
-        .selectFrom('users')
-        .select(['id'])
-        .where(eb => eb.fn('lower', ['email']), '=', email)
-        .executeTakeFirst()
+      const user = await findUserByEmail(db, email)
 
       // Always the same answer, so this cannot be used to find out who has an
       // account. The code is only made when there is somebody to send it to.
@@ -122,11 +108,7 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
       const good = await verifyEmailCode(db, email, 'login', body.code)
       if (!good) throw unauthorized('That code is wrong or has expired')
 
-      const user = await db
-        .selectFrom('users')
-        .select(['id', 'display_name', 'email', 'is_admin'])
-        .where(eb => eb.fn('lower', ['email']), '=', email)
-        .executeTakeFirst()
+      const user = await findUserByEmail(db, email)
       if (user == null) throw unauthorized('That code is wrong or has expired')
 
       const session = await createSession(db, user.id, req.header('user-agent'))
@@ -136,9 +118,9 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
           expiresAt: session.expiresAt.toISOString(),
           user: {
             id: user.id,
-            displayName: user.display_name,
-            email: user.email ?? undefined,
-            isAdmin: user.is_admin
+            displayName: user.displayName,
+            email: user.email,
+            isAdmin: user.isAdmin
           }
         })
       )
@@ -163,14 +145,14 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
       if (actor == null) throw unauthorized()
       const user = await db
         .selectFrom('users')
-        .select(['id', 'display_name', 'email', 'is_admin'])
+        .select(['id', 'display_name', 'is_admin'])
         .where('id', '=', actor.userId)
         .executeTakeFirst()
       if (user == null) throw unauthorized()
       res.json({
         id: user.id,
         displayName: user.display_name,
-        email: user.email,
+        email: await primaryEmail(db, user.id),
         isAdmin: user.is_admin,
         viaApiToken: actor.apiTokenId != null
       })

@@ -15,14 +15,29 @@ export interface UsersTable {
   display_name: string
   first_name: string | null
   last_name: string | null
-  email: string | null
   username: string | null
   password_hash: string | null
   login_enabled: Generated<boolean>
   is_admin: Generated<boolean>
   avatar_path: string | null
+  /** Set when this account was absorbed by another; it is closed, not deleted. */
+  merged_into: string | null
   created_at: Timestamp
   updated_at: Timestamp
+}
+
+/**
+ * A person's addresses. The identity is `users.id`; an address is an attribute
+ * of it, and unique across the table so a sign-in code reaches one account.
+ */
+export interface UserEmailsTable {
+  id: string
+  user_id: string
+  email: string
+  is_primary: Generated<boolean>
+  verified_at: Timestamp | null
+  source: Generated<'peertube' | 'import' | 'manual'>
+  created_at: Timestamp
 }
 
 export interface UserLinksTable {
@@ -64,6 +79,9 @@ export interface TeamsTable {
   id: string
   name: string
   short_name: string | null
+  /** `external` plays games in a season without being in it. */
+  kind: Generated<'full' | 'external'>
+  created_from: Generated<'import' | 'peertube' | 'manual' | 'videoTitle'>
   sport: Generated<string>
   is_managed: Generated<boolean>
   settings: Generated<Json>
@@ -314,6 +332,7 @@ export interface Database {
   team_season_records: TeamSeasonRecordsTable
   teams: TeamsTable
   user_links: UserLinksTable
+  user_emails: UserEmailsTable
   users: UsersTable
   videos: VideosTable
 }
