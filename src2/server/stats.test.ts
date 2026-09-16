@@ -85,10 +85,10 @@ describe('stats', function () {
       { batterUserId: ROBIN, teamId: 'tem_two', eventType: 'double', rbi: 0 }
     ])
     expect(lines.length).equals(2)
-    expect(lines.map(line => line.teamId).sort()).deep.equals([
-      'tem_one',
-      'tem_two'
-    ])
+    const teams = lines
+      .map(line => line.teamId ?? '')
+      .sort((a, b) => a.localeCompare(b))
+    expect(teams).deep.equals(['tem_one', 'tem_two'])
   })
 
   it('works out the usual rates from the counts', function () {
