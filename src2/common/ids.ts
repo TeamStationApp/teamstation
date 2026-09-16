@@ -22,6 +22,7 @@ export const idPrefixes = {
   team: 'tem',
   teamSeasonRecord: 'tsr',
   user: 'usr',
+  userEmail: 'uem',
   userLink: 'lnk',
   video: 'vid'
 } as const

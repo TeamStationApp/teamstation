@@ -1,4 +1,5 @@
 import { makeId } from '../../common/ids'
+import { addEmail, findUserByEmail } from '../auth/emails'
 import { hashPassword } from '../auth/passwords'
 import { makeDatabase } from '../db/database'
 import { serverConfig } from '../serverConfig'
@@ -23,11 +24,7 @@ async function main(): Promise<void> {
   const db = makeDatabase(serverConfig.databaseUrl)
   try {
     const normalised = email.trim().toLowerCase()
-    const existing = await db
-      .selectFrom('users')
-      .select(['id'])
-      .where(eb => eb.fn('lower', ['email']), '=', normalised)
-      .executeTakeFirst()
+    const existing = await findUserByEmail(db, normalised)
 
     const passwordHash = await hashPassword(password)
     if (existing != null) {
@@ -51,12 +48,12 @@ async function main(): Promise<void> {
       .values({
         id,
         display_name: normalised.split('@')[0],
-        email: normalised,
         password_hash: passwordHash,
         login_enabled: true,
         is_admin: true
       })
       .execute()
+    await addEmail(db, id, normalised, { isPrimary: true, source: 'manual' })
     console.log(`created ${normalised} (${id})`)
   } finally {
     await db.destroy()
