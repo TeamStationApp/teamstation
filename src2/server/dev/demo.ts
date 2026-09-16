@@ -1,6 +1,7 @@
 import { makeId } from '../../common/ids'
 import { createSession } from '../auth/sessions'
 import { makeDatabase } from '../db/database'
+import { rebuildAll } from '../rollups'
 import { serverConfig } from '../serverConfig'
 
 /**
@@ -24,6 +25,8 @@ async function main(): Promise<void> {
   try {
     const leagueId = makeId('league')
     const seasonId = makeId('season')
+    const seasonBId = makeId('season')
+    const gameBId = makeId('game')
     const homeTeamId = makeId('team')
     const awayTeamId = makeId('team')
     const gameId = makeId('game')
@@ -34,16 +37,28 @@ async function main(): Promise<void> {
       .insertInto('leagues')
       .values({ id: leagueId, name: 'Demo League', short_name: 'DEMO' })
       .execute()
+    // Two seasons that overlap in time and share a team, which is the case a
+    // career total has to get right: the same child, two sets of games.
     await db
       .insertInto('seasons')
-      .values({
-        id: seasonId,
-        league_id: leagueId,
-        name: 'Demo 2026',
-        age_group: '11U',
-        year: 2026,
-        term: 'Fall'
-      })
+      .values([
+        {
+          id: seasonId,
+          league_id: leagueId,
+          name: 'Demo Spring 2026',
+          age_group: '11U',
+          year: 2026,
+          term: 'Spring'
+        },
+        {
+          id: seasonBId,
+          league_id: leagueId,
+          name: 'Demo Summer 2026',
+          age_group: '11U',
+          year: 2026,
+          term: 'Summer'
+        }
+      ])
       .execute()
     await db
       .insertInto('teams')
@@ -56,7 +71,9 @@ async function main(): Promise<void> {
       .insertInto('season_teams')
       .values([
         { season_id: seasonId, team_id: homeTeamId },
-        { season_id: seasonId, team_id: awayTeamId }
+        { season_id: seasonId, team_id: awayTeamId },
+        { season_id: seasonBId, team_id: homeTeamId },
+        { season_id: seasonBId, team_id: awayTeamId }
       ])
       .execute()
 
@@ -85,6 +102,7 @@ async function main(): Promise<void> {
         .insertInto('users')
         .values({ id: userId, display_name: displayName })
         .execute()
+
       await db
         .insertInto('memberships')
         .values({
@@ -126,6 +144,35 @@ async function main(): Promise<void> {
       })
       .execute()
 
+    // The same teams play again in the other season, so once plays are posted
+    // to both games a career total has two seasons to add.
+    await db
+      .insertInto('games')
+      .values({
+        id: gameBId,
+        home_team_id: homeTeamId,
+        away_team_id: awayTeamId,
+        season_id: seasonBId,
+        start_at: new Date(startAt.getTime() + 60 * 24 * 3600 * 1000),
+        venue: 'Demo Field',
+        status: 'final'
+      })
+      .execute()
+
+    const rollups = await rebuildAll(db)
+
+    // Somebody who actually batted for the home team: the first name on a
+    // roster may never have come to the plate, and a demo that points at them
+    // looks like the stats are broken when they are merely empty. Null until
+    // plays have been posted and the rollups rebuilt.
+    const topBatter = await db
+      .selectFrom('player_season_stats')
+      .select(['user_id'])
+      .where('team_id', '=', homeTeamId)
+      .orderBy('pa', 'desc')
+      .executeTakeFirst()
+    const samplePlayerId = topBatter?.user_id ?? null
+
     const session = await createSession(db, viewerId, 'demo script')
 
     // Somebody who belongs to nothing, so the access rules can be shown to
@@ -145,6 +192,10 @@ async function main(): Promise<void> {
           strangerToken: strangerSession.token,
           strangerId,
           viewerId,
+          samplePlayerId,
+          seasonBId,
+          gameBId,
+          rollups,
           leagueId,
           seasonId,
           homeTeamId,
