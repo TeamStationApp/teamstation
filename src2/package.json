@@ -14,7 +14,8 @@
     "demo": "node -r sucrase/register server/dev/demo.ts",
     "seed": "node -r sucrase/register server/dev/seed.ts",
     "start": "node -r sucrase/register server/index.ts",
-    "test": "mocha -r sucrase/register --extension ts --spec '**/*.test.ts' --ignore 'node_modules/**' --ignore 'lib/**'"
+    "test": "mocha -r sucrase/register --extension ts --spec '**/*.test.ts' --ignore 'node_modules/**' --ignore 'lib/**'",
+    "typecheck": "tsc -p tsconfig.app.json"
   },
   "dependencies": {
     "bcryptjs": "^3.0.2",

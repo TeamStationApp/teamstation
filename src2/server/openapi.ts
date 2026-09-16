@@ -14,6 +14,27 @@ export interface OpenApiDocument {
   paths: Record<string, unknown>
 }
 
+const teamIdParam = {
+  name: 'teamId',
+  in: 'path',
+  required: true,
+  schema: { type: 'string' }
+}
+
+const gameIdParam = {
+  name: 'gameId',
+  in: 'path',
+  required: true,
+  schema: { type: 'string' }
+}
+
+const userIdParam = {
+  name: 'userId',
+  in: 'path',
+  required: true,
+  schema: { type: 'string' }
+}
+
 const errorResponse = {
   description: 'The one error shape used by every failure',
   content: {
@@ -232,6 +253,159 @@ export function openApiDocument(version: string): OpenApiDocument {
               }
             },
             401: errorResponse
+          }
+        }
+      },
+      '/teams': {
+        get: {
+          summary: 'The teams this person belongs to',
+          security: [{ bearer: [] }],
+          responses: {
+            200: { description: 'Their teams, which may be an empty list' },
+            401: errorResponse
+          }
+        }
+      },
+      '/teams/{teamId}/games': {
+        get: {
+          summary: "A team's games, newest first",
+          description:
+            'Answers 404 rather than 403 for a team the caller may not see, ' +
+            'so that probing cannot reveal which teams exist.',
+          security: [{ bearer: [] }],
+          parameters: [teamIdParam],
+          responses: {
+            200: { description: 'Games, newest first, with a video count' },
+            404: errorResponse
+          }
+        }
+      },
+      '/games/{gameId}': {
+        get: {
+          summary: 'One game and its videos',
+          security: [{ bearer: [] }],
+          parameters: [gameIdParam],
+          responses: {
+            200: { description: 'The game, its score and its videos' },
+            404: errorResponse
+          }
+        }
+      },
+      '/games/{gameId}/box-score': {
+        get: {
+          summary: "A game's batting lines",
+          description: 'Worked out from the stored plays.',
+          security: [{ bearer: [] }],
+          parameters: [gameIdParam],
+          responses: {
+            200: {
+              description: 'A line per batter, with rates worked out on read'
+            },
+            404: errorResponse
+          }
+        }
+      },
+      '/videos/{videoId}/highlights': {
+        get: {
+          summary: 'Where to seek to in this video for each play',
+          description:
+            'Highlights are never stored: they are worked out from the plays ' +
+            'and the current settings on every read, so a corrected lag or a ' +
+            're-synced video fixes them all at once. A highlight is a ' +
+            'timestamp into the full video, never a separate clip. When the ' +
+            "game's plays did not add up to its imported line score, " +
+            '`withheld` is `scoreMismatch` and the list is empty.',
+          security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'videoId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' }
+            }
+          ],
+          responses: {
+            200: { description: 'Highlights in game order, oldest first' },
+            404: errorResponse
+          }
+        }
+      },
+      '/players/{userId}/stats': {
+        get: {
+          summary: "A player's batting by season, and their career",
+          description:
+            'A career is the sum of the season rows, so a player on two teams ' +
+            'in one season keeps them apart. Runs scored, stolen bases and ' +
+            'caught stealing are not reported: they need runner movement from ' +
+            'the game stream, and a figure that cannot be derived honestly is ' +
+            'left out rather than guessed.',
+          security: [{ bearer: [] }],
+          parameters: [userIdParam],
+          responses: {
+            200: { description: 'Season lines and the career total' },
+            404: errorResponse
+          }
+        }
+      },
+      '/players/{userId}/plays': {
+        get: {
+          summary: 'The plays a figure was worked out from',
+          security: [{ bearer: [] }],
+          parameters: [
+            userIdParam,
+            {
+              name: 'seasonId',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'Only this season'
+            },
+            {
+              name: 'eventType',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'Only this kind of play, e.g. `single`'
+            },
+            {
+              name: 'role',
+              in: 'query',
+              schema: {
+                type: 'string',
+                enum: [
+                  'batter',
+                  'pitcher',
+                  'runner',
+                  'scorer',
+                  'fielder',
+                  'catcher'
+                ]
+              },
+              description: 'Only plays where they had this part in it'
+            }
+          ],
+          responses: {
+            200: { description: 'The plays, newest game first' },
+            401: errorResponse
+          }
+        }
+      },
+      '/seasons/{seasonId}/standings': {
+        get: {
+          summary: "A season's table",
+          security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'seasonId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' }
+            }
+          ],
+          responses: {
+            200: {
+              description:
+                'Best record first, run differential as the tie-break'
+            },
+            404: errorResponse
           }
         }
       }
