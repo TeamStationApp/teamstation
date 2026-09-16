@@ -953,15 +953,20 @@ public final class ProgramEncoder: @unchecked Sendable {
     let start = (lastTime.isNumeric && lastTime >= .zero) ? CMTimeAdd(lastTime, frame) : .zero
     let step = end - start.seconds <= Self.gridFillSeconds ? frame : CMTime(value: 1, timescale: 10)
     lock.unlock()
-    guard end - start.seconds > 0.0005 else { return }
 
+    // The sound is filled whichever way the picture goes. The compositor usually carries the picture
+    // to the take's length by itself, so there is nothing to add to it — and when the fill returned
+    // early on that, it took the sound's fill with it and the master ended with its sound short of
+    // its picture.
+    defer { appendHoldSilence(until: CMTime(seconds: max(0, end), preferredTimescale: 600)) }
+
+    guard end - start.seconds > 0.0005 else { return }
     guard let black = programBlackBuffer() else { return }
     var cursor = start
     while cursor.seconds + 0.0005 < end {
       appendHoldFrame(black, at: cursor)
       cursor = CMTimeAdd(cursor, step)
     }
-    appendHoldSilence(until: CMTime(seconds: max(0, end), preferredTimescale: 600))
   }
 
   private func appendHoldFrame(_ pixelBuffer: CVPixelBuffer, at time: CMTime) {
