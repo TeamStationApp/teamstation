@@ -39,6 +39,9 @@ export const enUs = {
   game_highlights: 'Highlights',
   game_box_score: 'Box score',
   game_no_video: 'No video for this game.',
+  game_batting: 'Batting',
+  game_box_score_empty: 'No batting to show for this game yet.',
+  game_at: 'at',
   game_score_mismatch:
     'The plays do not add up to the final score, so highlights are held back until somebody has checked them.',
 
@@ -48,6 +51,7 @@ export const enUs = {
 
   // Box score and stats
   stats_title: 'Stats',
+  stats_player: 'Player',
   stats_season: 'Season',
   stats_career: 'Career',
   stats_plate_appearances: 'PA',

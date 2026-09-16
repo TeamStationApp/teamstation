@@ -6,6 +6,7 @@ import express from 'express'
 import { makeDatabase } from './db/database'
 import { withAudit } from './middleware/withAudit'
 import { withActor } from './middleware/withAuth'
+import { withCors } from './middleware/withCors'
 import { errorHandler, notFoundHandler } from './middleware/withErrors'
 import { openApiDocument } from './openapi'
 import { authRoutes } from './routes/auth'
@@ -67,6 +68,7 @@ function runWorker(): void {
   app.set('trust proxy', 'loopback')
   app.disable('x-powered-by')
   app.use(express.json({ limit: '1mb' }))
+  app.use(withCors(serverConfig.corsOrigins))
 
   // Who is calling, then what they changed, then the routes themselves.
   app.use(withActor(db))

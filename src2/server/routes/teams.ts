@@ -90,12 +90,18 @@ export function teamRoutes(db: Kysely<Database>): Router {
 
       const ids = games.map(game => game.id)
       const videoCounts = await countVideos(db, ids)
+      const names = await teamNames(
+        db,
+        games.flatMap(game => [game.home_team_id, game.away_team_id])
+      )
 
       res.json(
         games.map(game => ({
           id: game.id,
           homeTeamId: game.home_team_id,
           awayTeamId: game.away_team_id,
+          homeTeamName: names.get(game.home_team_id) ?? '',
+          awayTeamName: names.get(game.away_team_id) ?? '',
           seasonId: game.season_id,
           startAt: toIso(game.start_at),
           venue: game.venue,
@@ -153,10 +159,14 @@ export function teamRoutes(db: Kysely<Database>): Router {
         .orderBy('kind')
         .execute()
 
+      const names = await teamNames(db, [game.home_team_id, game.away_team_id])
+
       res.json({
         id: game.id,
         homeTeamId: game.home_team_id,
         awayTeamId: game.away_team_id,
+        homeTeamName: names.get(game.home_team_id) ?? '',
+        awayTeamName: names.get(game.away_team_id) ?? '',
         seasonId: game.season_id,
         startAt: toIso(game.start_at),
         venue: game.venue,
@@ -319,6 +329,25 @@ export function teamRoutes(db: Kysely<Database>): Router {
   )
 
   return router
+}
+
+/**
+ * The names behind a set of team ids. Every screen that shows a game shows who
+ * played, so the name travels with the game rather than costing the app a
+ * second round trip per team.
+ */
+async function teamNames(
+  db: Kysely<Database>,
+  teamIds: string[]
+): Promise<Map<string, string>> {
+  const wanted = [...new Set(teamIds)]
+  if (wanted.length === 0) return new Map()
+  const rows = await db
+    .selectFrom('teams')
+    .select(['id', 'name'])
+    .where('id', 'in', wanted)
+    .execute()
+  return new Map(rows.map(row => [row.id, row.name]))
 }
 
 async function countVideos(

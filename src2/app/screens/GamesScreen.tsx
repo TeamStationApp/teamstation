@@ -99,7 +99,18 @@ export function GamesScreen(props: GamesScreenProps): React.ReactElement {
           }}
         >
           <Text style={styles.date}>{formatDate(game.startAt)}</Text>
-          <Text style={styles.score}>{scoreLine(game)}</Text>
+          <View style={styles.row}>
+            <Text style={styles.teamName} numberOfLines={1}>
+              {game.awayTeamName}
+            </Text>
+            <Text style={styles.score}>{game.awayScore ?? '—'}</Text>
+          </View>
+          <View style={styles.row}>
+            <Text style={styles.teamName} numberOfLines={1}>
+              {game.homeTeamName}
+            </Text>
+            <Text style={styles.score}>{game.homeScore ?? '—'}</Text>
+          </View>
           <View style={styles.row}>
             <Text style={styles.meta}>{statusWord(game.status)}</Text>
             <Text style={styles.meta}>
@@ -120,11 +131,6 @@ function statusWord(status: string): string {
   if (status === 'final') return lstrings.games_final
   if (status === 'inProgress') return lstrings.games_in_progress
   return lstrings.games_scheduled
-}
-
-function scoreLine(game: GameSummary): string {
-  if (game.awayScore == null || game.homeScore == null) return '—'
-  return `${game.awayScore} – ${game.homeScore}`
 }
 
 /** The game's own day, in the reader's locale. */
@@ -164,9 +170,21 @@ const getStyles = cacheStyles((theme: Theme) =>
     score: {
       color: theme.primaryTextColor,
       fontFamily: theme.boldTextFont,
-      fontSize: theme.rem(1.4)
+      fontSize: theme.rem(1.4),
+      textAlign: 'right'
     },
-    row: { flexDirection: 'row', justifyContent: 'space-between' },
+    row: {
+      flexDirection: 'row',
+      alignItems: 'baseline',
+      gap: theme.rem(0.5),
+      justifyContent: 'space-between'
+    },
+    teamName: {
+      color: theme.primaryTextColor,
+      flexShrink: 1,
+      fontFamily: theme.regularTextFont,
+      fontSize: theme.rem(1)
+    },
     meta: {
       color: theme.clearButtonColor,
       fontFamily: theme.regularTextFont,
