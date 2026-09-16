@@ -5,10 +5,12 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View
 } from 'react-native'
 
 import type {
+  BattingRow,
   GameDetail,
   GameStationClient,
   Highlight,
@@ -25,22 +27,31 @@ export interface GameScreenProps {
   mediaBaseUrl: string
 }
 
+/** Wide enough for the highlight list to sit beside the video instead of under it. */
+const SIDE_BY_SIDE_WIDTH = 900
+
+type Tab = 'watch' | 'boxScore'
+
 /**
- * One game: its videos, and the highlights underneath them.
+ * One game: its videos, the highlights beside them, and the box score.
  *
  * A highlight is a **timestamp into the full video**, never a separate clip.
  * Pressing one seeks the player and keeps it playing, which is why the player
- * stays mounted above the list instead of being replaced.
+ * stays mounted while the list scrolls next to it.
  */
 export function GameScreen(props: GameScreenProps): React.ReactElement {
   const { client, gameId, mediaBaseUrl } = props
   const theme = useTheme()
   const styles = getStyles(theme)
+  const { width } = useWindowDimensions()
+  const sideBySide = width >= SIDE_BY_SIDE_WIDTH
 
+  const [tab, setTab] = useState<Tab>('watch')
   const [game, setGame] = useState<GameDetail | undefined>(undefined)
   const [video, setVideo] = useState<VideoSummary | undefined>(undefined)
   const [highlights, setHighlights] = useState<Highlight[]>([])
   const [withheld, setWithheld] = useState<string | null>(null)
+  const [batting, setBatting] = useState<BattingRow[] | undefined>(undefined)
   const [activeEventId, setActiveEventId] = useState<string | undefined>()
   const [error, setError] = useState<string | undefined>(undefined)
   const playerRef = useRef<HTMLVideoElement | null>(null)
@@ -80,6 +91,24 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     }
   }, [client, video])
 
+  // Fetched when the tab is first opened, not with the game: most people come
+  // here to watch, and the box score is a second query against every play.
+  useEffect(() => {
+    if (tab !== 'boxScore' || batting != null) return
+    let live = true
+    client
+      .boxScore(gameId)
+      .then(rows => {
+        if (live) setBatting(rows)
+      })
+      .catch(() => {
+        if (live) setBatting([])
+      })
+    return () => {
+      live = false
+    }
+  }, [batting, client, gameId, tab])
+
   const jumpTo = (highlight: Highlight): void => {
     setActiveEventId(highlight.eventId)
     const player = playerRef.current
@@ -107,8 +136,44 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     )
   }
 
-  return (
-    <ScrollView style={styles.screen}>
+  const scoreboard = (
+    <View style={styles.scoreboard}>
+      <View style={styles.side}>
+        <Text style={styles.teamName} numberOfLines={1}>
+          {game.awayTeamName}
+        </Text>
+        <Text style={styles.teamScore}>{game.awayScore ?? '—'}</Text>
+      </View>
+      <Text style={styles.at}>{lstrings.game_at}</Text>
+      <View style={styles.side}>
+        <Text style={styles.teamScore}>{game.homeScore ?? '—'}</Text>
+        <Text style={styles.teamName} numberOfLines={1}>
+          {game.homeTeamName}
+        </Text>
+      </View>
+    </View>
+  )
+
+  const tabs = (
+    <View style={styles.tabs}>
+      {(['watch', 'boxScore'] as Tab[]).map(name => (
+        <Pressable
+          key={name}
+          style={[styles.tab, name === tab ? styles.tabActive : undefined]}
+          onPress={() => {
+            setTab(name)
+          }}
+        >
+          <Text style={styles.tabText}>
+            {name === 'watch' ? lstrings.game_videos : lstrings.game_box_score}
+          </Text>
+        </Pressable>
+      ))}
+    </View>
+  )
+
+  const player = (
+    <View style={styles.playerColumn}>
       <View style={styles.player}>
         {video == null ? (
           <Text style={styles.message}>{lstrings.game_no_video}</Text>
@@ -127,7 +192,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       </View>
 
       {game.videos.length > 1 ? (
-        <View style={styles.tabs}>
+        <View style={styles.videoPicker}>
           {game.videos.map(item => (
             <Pressable
               key={item.id}
@@ -139,14 +204,17 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
                 setVideo(item)
               }}
             >
-              <Text style={styles.tabText}>{item.kind}</Text>
+              <Text style={styles.tabText}>{item.title}</Text>
             </Pressable>
           ))}
         </View>
       ) : null}
+    </View>
+  )
 
+  const highlightList = (
+    <View style={sideBySide ? styles.listColumn : undefined}>
       <Text style={styles.heading}>{lstrings.game_highlights}</Text>
-
       {withheld === 'scoreMismatch' ? (
         <Text style={styles.warning}>{lstrings.game_score_mismatch}</Text>
       ) : highlights.length === 0 ? (
@@ -180,8 +248,118 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           </Pressable>
         ))
       )}
+    </View>
+  )
+
+  return (
+    <ScrollView style={styles.screen}>
+      {scoreboard}
+      {tabs}
+      {tab === 'watch' ? (
+        <View style={sideBySide ? styles.watchWide : undefined}>
+          {player}
+          {highlightList}
+        </View>
+      ) : (
+        <BoxScore game={game} rows={batting} theme={theme} />
+      )}
     </ScrollView>
   )
+}
+
+interface BoxScoreProps {
+  game: GameDetail
+  /** `undefined` while it is still loading. */
+  rows: BattingRow[] | undefined
+  theme: Theme
+}
+
+/**
+ * Batting, one table per side.
+ *
+ * There is no runs column and no line score: a run cannot be worked out from
+ * the plays alone, so showing one would mean inventing it. Only what the plays
+ * actually say is here.
+ */
+function BoxScore(props: BoxScoreProps): React.ReactElement {
+  const { game, rows, theme } = props
+  const styles = getStyles(theme)
+
+  if (rows == null) {
+    return (
+      <View style={styles.centre}>
+        <ActivityIndicator color={theme.primaryTextColor} />
+      </View>
+    )
+  }
+  if (rows.length === 0) {
+    return <Text style={styles.message}>{lstrings.game_box_score_empty}</Text>
+  }
+
+  const sides = [
+    { teamId: game.awayTeamId, name: game.awayTeamName },
+    { teamId: game.homeTeamId, name: game.homeTeamName }
+  ]
+
+  return (
+    <View style={styles.boxScore}>
+      {sides.map(side => {
+        // Best day first, which is who somebody is looking for.
+        const lines = rows
+          .filter(row => row.teamId === side.teamId)
+          .sort((a, b) => (b.h !== a.h ? b.h - a.h : b.pa - a.pa))
+        if (lines.length === 0) return null
+        return (
+          <View key={side.teamId} style={styles.table}>
+            <Text style={styles.heading}>
+              {lstrings.game_batting} — {side.name}
+            </Text>
+            <View style={[styles.tableRow, styles.tableHead]}>
+              <Text style={[styles.cellName, styles.cellHead]}>
+                {lstrings.stats_player}
+              </Text>
+              {statColumns.map(column => (
+                <Text key={column.label} style={[styles.cell, styles.cellHead]}>
+                  {column.label}
+                </Text>
+              ))}
+            </View>
+            {lines.map(line => (
+              <View key={line.userId} style={styles.tableRow}>
+                <Text style={styles.cellName} numberOfLines={1}>
+                  {line.displayName ?? ''}
+                </Text>
+                {statColumns.map(column => (
+                  <Text key={column.label} style={styles.cell}>
+                    {column.value(line)}
+                  </Text>
+                ))}
+              </View>
+            ))}
+          </View>
+        )
+      })}
+      <Text style={styles.footnote}>{lstrings.stats_runs_not_counted}</Text>
+    </View>
+  )
+}
+
+const statColumns: Array<{
+  label: string
+  value: (row: BattingRow) => string
+}> = [
+  { label: lstrings.stats_at_bats, value: row => String(row.ab) },
+  { label: lstrings.stats_hits, value: row => String(row.h) },
+  { label: lstrings.stats_runs_batted_in, value: row => String(row.rbi) },
+  { label: lstrings.stats_walks, value: row => String(row.bb) },
+  { label: lstrings.stats_strikeouts, value: row => String(row.k) },
+  { label: lstrings.stats_average, value: row => average(row.rates.avg) }
+]
+
+/** `.667`, in the way a box score writes it: no leading zero. */
+export function average(value: number | undefined): string {
+  if (value == null) return lstrings.stats_no_average
+  return value.toFixed(3).replace(/^0/, '')
 }
 
 /** `M:SS`, or `H:MM:SS` once a game runs past the hour. */
@@ -206,17 +384,58 @@ const getStyles = cacheStyles((theme: Theme) =>
       backgroundColor: theme.backgroundColor,
       padding: theme.rem(1)
     },
+    scoreboard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: theme.rem(1),
+      paddingHorizontal: theme.rem(0.75),
+      paddingVertical: theme.rem(0.5)
+    },
+    side: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'baseline',
+      gap: theme.rem(0.75)
+    },
+    teamName: {
+      color: theme.primaryTextColor,
+      flexShrink: 1,
+      fontFamily: theme.semiBoldTextFont,
+      fontSize: theme.rem(1.1)
+    },
+    teamScore: {
+      color: theme.primaryTextColor,
+      fontFamily: theme.boldTextFont,
+      fontSize: theme.rem(1.6)
+    },
+    at: {
+      color: theme.clearButtonColor,
+      fontFamily: theme.regularTextFont,
+      fontSize: theme.rem(0.85)
+    },
+    // The video is the tallest thing on the page, so it is capped: a 16:9 box
+    // across a desktop window would push the highlights off the bottom.
+    watchWide: { flexDirection: 'row', alignItems: 'flex-start' },
+    playerColumn: { flex: 2, maxWidth: theme.rem(45) },
+    listColumn: { flex: 1, minWidth: theme.rem(16) },
+    tabs: {
+      flexDirection: 'row',
+      gap: theme.rem(0.5),
+      paddingHorizontal: theme.rem(0.75),
+      paddingBottom: theme.rem(0.5)
+    },
+    videoPicker: {
+      flexDirection: 'row',
+      gap: theme.rem(0.5),
+      padding: theme.rem(0.5)
+    },
     player: {
       width: '100%',
       aspectRatio: 16 / 9,
       backgroundColor: theme.videoBackgroundColor,
       alignItems: 'center',
       justifyContent: 'center'
-    },
-    tabs: {
-      flexDirection: 'row',
-      gap: theme.rem(0.5),
-      padding: theme.rem(0.5)
     },
     tab: {
       backgroundColor: theme.inactiveBackgroundColor,
@@ -262,6 +481,41 @@ const getStyles = cacheStyles((theme: Theme) =>
       fontSize: theme.rem(0.95)
     },
     scoring: { color: theme.scoringPlayColor },
+    boxScore: { maxWidth: theme.rem(34), paddingBottom: theme.rem(1) },
+    table: { paddingBottom: theme.rem(0.5) },
+    tableRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginHorizontal: theme.rem(0.75),
+      paddingVertical: theme.rem(0.3)
+    },
+    tableHead: {
+      borderBottomColor: theme.defaultBorderColor,
+      borderBottomWidth: 1
+    },
+    cellName: {
+      color: theme.primaryTextColor,
+      flex: 1,
+      fontFamily: theme.regularTextFont,
+      fontSize: theme.rem(0.9)
+    },
+    cell: {
+      color: theme.primaryTextColor,
+      fontFamily: theme.regularTextFont,
+      fontSize: theme.rem(0.9),
+      minWidth: theme.rem(2.6),
+      textAlign: 'right'
+    },
+    cellHead: {
+      color: theme.clearButtonColor,
+      fontFamily: theme.semiBoldTextFont
+    },
+    footnote: {
+      color: theme.clearButtonColor,
+      fontFamily: theme.regularTextFont,
+      fontSize: theme.rem(0.8),
+      padding: theme.rem(0.75)
+    },
     warning: {
       color: theme.warningColor,
       fontFamily: theme.regularTextFont,

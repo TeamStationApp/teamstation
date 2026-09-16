@@ -90,7 +90,9 @@ function titleFor(route: Route, session: Session | undefined): string {
   if (session == null) return lstrings.login_title
   if (route.name === 'teams') return lstrings.teams_title
   if (route.name === 'games') return route.team.name
-  return lstrings.game_highlights
+  // The matchup, so a game is identified by who played it rather than by the
+  // name of the tab that happens to be open.
+  return `${route.game.awayTeamName} ${lstrings.game_at} ${route.game.homeTeamName}`
 }
 
 interface ShellProps {

@@ -66,7 +66,10 @@ export const asServerConfig = asObject({
   sessionSecret: asOptional(asString, ''),
 
   /** Origins the app may call the API from. */
-  corsOrigins: asOptional(asArray(asString), ['http://localhost:8081']),
+  corsOrigins: asOptional(asArray(asString), [
+    'http://localhost:8080',
+    'http://127.0.0.1:8080'
+  ]),
 
   /** Log every request. Noisy, but useful while tube2 is still new. */
   logRequests: asOptional(asBoolean, true)
