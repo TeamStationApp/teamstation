@@ -151,6 +151,40 @@ export const asPlayback = asObject({
 })
 export type Playback = ReturnType<typeof asPlayback>
 
+export const asSeasonSummary = asObject({
+  id: asString,
+  /** Null until somebody creates a league and moves this season into it. */
+  leagueId: asNullable(asString),
+  name: asString,
+  year: asNumber,
+  term: asNullable(asString),
+  ageGroup: asNullable(asString),
+  teams: asNumber,
+  games: asNumber,
+  videos: asNumber
+})
+export type SeasonSummary = ReturnType<typeof asSeasonSummary>
+
+export const asSeasonGame = asObject({
+  id: asString,
+  homeTeamId: asString,
+  awayTeamId: asString,
+  homeTeamName: asString,
+  awayTeamName: asString,
+  /** An opponent from outside the season: no roster, no team page. */
+  homeTeamExternal: asBoolean,
+  awayTeamExternal: asBoolean,
+  seasonId: asNullable(asString),
+  startAt: asNullable(asString),
+  venue: asNullable(asString),
+  status: asString,
+  homeScore: asNullable(asNumber),
+  awayScore: asNullable(asNumber),
+  ingestStatus: asString,
+  videoCount: asNumber
+})
+export type SeasonGame = ReturnType<typeof asSeasonGame>
+
 export const asSession = asObject({
   token: asString,
   expiresAt: asString,
@@ -213,6 +247,27 @@ export class GameStationClient {
 
   async teams(): Promise<TeamSummary[]> {
     return await this.request('GET', '/teams', asArray(asTeamSummary))
+  }
+
+  /** The seasons this person can see, which is what home leads with. */
+  async seasons(): Promise<SeasonSummary[]> {
+    return await this.request('GET', '/seasons', asArray(asSeasonSummary))
+  }
+
+  async seasonGames(seasonId: string): Promise<SeasonGame[]> {
+    return await this.request(
+      'GET',
+      `/seasons/${encodeURIComponent(seasonId)}/games`,
+      asArray(asSeasonGame)
+    )
+  }
+
+  async seasonTeams(seasonId: string): Promise<TeamSummary[]> {
+    return await this.request(
+      'GET',
+      `/seasons/${encodeURIComponent(seasonId)}/teams`,
+      asArray(asTeamSummary)
+    )
   }
 
   async teamGames(teamId: string): Promise<GameSummary[]> {
