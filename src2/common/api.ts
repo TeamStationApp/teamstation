@@ -138,6 +138,17 @@ export const asStandingsRow = asObject({
 })
 export type StandingsRow = ReturnType<typeof asStandingsRow>
 
+export const asPlayback = asObject({
+  videoId: asString,
+  storage: asString,
+  /** `null` when the row exists but its files do not. */
+  url: asNullable(asString),
+  expiresAt: asNullable(asString),
+  durationSec: asNullable(asNumber),
+  unavailable: asBoolean
+})
+export type Playback = ReturnType<typeof asPlayback>
+
 export const asSession = asObject({
   token: asString,
   expiresAt: asString,
@@ -223,6 +234,21 @@ export class GameStationClient {
       'GET',
       `/videos/${encodeURIComponent(videoId)}/highlights`,
       asHighlightsResponse
+    )
+  }
+
+  /**
+   * Where to play a video from, and for how long that answer is good.
+   *
+   * The app never builds a media URL itself: the server decides, because only
+   * it knows whether the video is on its own disk, still in PeerTube's tree or
+   * finished in the Space, and it checks membership while it is looking.
+   */
+  async playback(videoId: string): Promise<Playback> {
+    return await this.request(
+      'GET',
+      `/videos/${encodeURIComponent(videoId)}/playback`,
+      asPlayback
     )
   }
 

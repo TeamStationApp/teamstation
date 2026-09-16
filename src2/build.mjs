@@ -14,7 +14,6 @@ import { copyFile, mkdir } from 'fs/promises'
  */
 const serve = process.argv.includes('--serve')
 const apiBaseUrl = process.env.GS_API_BASE_URL ?? 'http://127.0.0.1:9100/api/v1'
-const mediaBaseUrl = process.env.GS_MEDIA_BASE_URL ?? '/media'
 
 const options = {
   entryPoints: ['app/web/index.tsx'],
@@ -32,8 +31,7 @@ const options = {
       serve ? 'development' : 'production'
     ),
     __DEV__: serve ? 'true' : 'false',
-    GS_API_BASE_URL: JSON.stringify(apiBaseUrl),
-    GS_MEDIA_BASE_URL: JSON.stringify(mediaBaseUrl)
+    GS_API_BASE_URL: JSON.stringify(apiBaseUrl)
   },
   loader: { '.png': 'dataurl', '.jpg': 'dataurl', '.svg': 'dataurl' }
 }
