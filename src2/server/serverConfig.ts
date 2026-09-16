@@ -51,14 +51,16 @@ export const asServerConfig = asObject({
       region: asOptional(asString, 'sfo3'),
       bucket: asOptional(asString, 'gamestation'),
       accessKeyId: asOptional(asString, ''),
-      secretAccessKey: asOptional(asString, '')
+      secretAccessKey: asOptional(asString, ''),
+      pathStyle: asOptional(asBoolean, false)
     }),
     {
       endpoint: 'https://sfo3.digitaloceanspaces.com',
       region: 'sfo3',
       bucket: 'gamestation',
       accessKeyId: '',
-      secretAccessKey: ''
+      secretAccessKey: '',
+      pathStyle: false
     }
   ),
 

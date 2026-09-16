@@ -94,6 +94,7 @@ function runWorker(): void {
     mediaRoot: serverConfig.mediaDir,
     mediaSecret,
     publicUrl: serverConfig.publicUrl,
+    space: serverConfig.space,
     workDir: serverConfig.workDir
   }
   const app = express()

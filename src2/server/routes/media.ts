@@ -4,13 +4,24 @@ import type { Kysely } from 'kysely'
 import { notFound, unauthorized } from '../../common/errors'
 import { canSeeGame, visibleScopes } from '../access'
 import type { Database } from '../db/database'
+import { VIDEO_FILE } from '../media/ffmpeg'
 import { locateVideo, locateVideoFile } from '../media/locations'
 import type { MediaContext } from '../media/mediaContext'
 import {
   MEDIA_TOKEN_TTL_SEC,
   mediaUrlPath,
-  verifyMediaPath
+  signQueryToken,
+  verifyMediaPath,
+  verifyQueryToken
 } from '../media/mediaTokens'
+import { presignGetUrl } from '../media/presign'
+import {
+  PlaylistCache,
+  rewriteMasterPlaylist,
+  rewriteMediaPlaylist,
+  spaceConfigured,
+  spaceKey
+} from '../media/spacesHls'
 import { ensureStill } from '../media/stills'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
@@ -27,8 +38,13 @@ export function mediaRoutes(
   db: Kysely<Database>,
   options: MediaContext
 ): Router {
-  const { ffmpegPath, mediaRoot, mediaSecret, publicUrl, workDir } = options
+  const { ffmpegPath, mediaRoot, mediaSecret, publicUrl, space, workDir } =
+    options
   const router = Router()
+  const playlists = new PlaylistCache({
+    space,
+    expiresSec: MEDIA_TOKEN_TTL_SEC
+  })
 
   router.get(
     '/videos/:videoId/playback',
@@ -81,8 +97,14 @@ export function mediaRoutes(
       const url =
         video.storage === 'spaces'
           ? // The API serves these playlists itself, rewriting the media entry
-            // to a presigned URL so the bytes come from the Space directly.
-            `${publicUrl}/api/v1/videos/${videoId}/hls/${location.master}`
+            // to a presigned URL so the bytes come from the Space directly. A
+            // `<video>` element cannot send a bearer token, so the permission
+            // rides in the query string.
+            `${publicUrl}/api/v1/videos/${videoId}/hls/master.m3u8?t=${signQueryToken(
+              mediaSecret,
+              hlsSubject(videoId),
+              now
+            )}`
           : publicUrl +
             mediaUrlPath(mediaSecret, location.dir, location.master, now)
 
@@ -146,7 +168,59 @@ export function mediaRoutes(
     })
   )
 
+  /**
+   * The two playlists of a video that lives in the Space.
+   *
+   * Not behind `requireActor`: a player cannot send a header, so the token in
+   * the query is the check. It was minted by `/playback`, which is where
+   * membership was tested.
+   */
+  router.get(
+    '/videos/:videoId/hls/:file',
+    withAsync(async (req, res) => {
+      const videoId = pathParam(req.params.videoId)
+      const file = pathParam(req.params.file)
+      const token = typeof req.query.t === 'string' ? req.query.t : ''
+
+      if (!verifyQueryToken(mediaSecret, hlsSubject(videoId), token)) {
+        // 403, not 404: the player is told to fetch a fresh playback URL and
+        // resume, rather than to give up on the video.
+        res.status(403).end()
+        return
+      }
+      if (file !== 'master.m3u8' && file !== 'video.m3u8') throw notFound()
+      if (!spaceConfigured(space)) throw notFound()
+
+      const body = await playlists.get(videoId, file)
+      if (body == null) throw notFound()
+
+      res.type('application/vnd.apple.mpegurl')
+      res.setHeader('cache-control', 'private, max-age=3600')
+
+      if (file === 'master.m3u8') {
+        // The variant keeps the same token; a relative URI would lose it.
+        const variant = `${publicUrl}/api/v1/videos/${videoId}/hls/video.m3u8?t=${token}`
+        res.send(rewriteMasterPlaylist(body, variant))
+        return
+      }
+
+      // One presigned URL covers the whole file, at every byte range, which is
+      // what makes seeking work without a signature per seek.
+      const signed = presignGetUrl({
+        ...space,
+        key: spaceKey(videoId, VIDEO_FILE),
+        expiresSec: MEDIA_TOKEN_TTL_SEC
+      })
+      res.send(rewriteMediaPlaylist(body, VIDEO_FILE, signed))
+    })
+  )
+
   return router
+}
+
+/** What an HLS token is signed against: this video's playlists, and no other. */
+function hlsSubject(videoId: string): string {
+  return `hls:${videoId}`
 }
 
 /**

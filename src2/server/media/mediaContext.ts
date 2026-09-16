@@ -1,3 +1,5 @@
+import type { SpaceSettings } from './spacesHls'
+
 /**
  * What a route needs in order to hand out media: where the files are, the key
  * that signs access to them, and the build that takes a still.
@@ -16,4 +18,6 @@ export interface MediaContext {
   mediaSecret: string
   /** The origin URLs are built against, e.g. `https://tube2.gamestation.co`. */
   publicUrl: string
+  /** The bucket finished videos live in. Empty until one is configured. */
+  space: SpaceSettings
 }

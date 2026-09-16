@@ -1,0 +1,135 @@
+import { createHash, createHmac } from 'node:crypto'
+
+/**
+ * A presigned GET URL for an S3-compatible object store.
+ *
+ * DigitalOcean Spaces speaks S3, so this is AWS Signature Version 4 with
+ * `s3` as the service and the Space's region. It is computed locally and
+ * involves no request to the Space at all: the signature is a function of the
+ * key, the time and the secret, nothing more.
+ *
+ * `Range` is deliberately not part of the signature, which is what lets a
+ * player seek: one signed URL serves every byte range of the video.
+ */
+
+const ALGORITHM = 'AWS4-HMAC-SHA256'
+const UNSIGNED_PAYLOAD = 'UNSIGNED-PAYLOAD'
+
+export interface PresignOptions {
+  /** e.g. `https://sfo3.digitaloceanspaces.com`. */
+  endpoint: string
+  region: string
+  bucket: string
+  accessKeyId: string
+  secretAccessKey: string
+  /** The object's key within the bucket, without a leading slash. */
+  key: string
+  /** How long the URL stays good for. */
+  expiresSec: number
+  /** Defaults to now. */
+  now?: Date
+  /**
+   * Put the bucket in the host rather than the path. This is what AWS and
+   * Spaces both want; path style exists for test doubles that cannot do
+   * wildcard DNS.
+   */
+  pathStyle?: boolean
+}
+
+export function presignGetUrl(options: PresignOptions): string {
+  const {
+    endpoint,
+    region,
+    bucket,
+    accessKeyId,
+    secretAccessKey,
+    key,
+    expiresSec,
+    now = new Date(),
+    pathStyle = false
+  } = options
+
+  const url = new URL(endpoint)
+  const host = pathStyle ? url.host : `${bucket}.${url.host}`
+  const path = pathStyle ? `/${bucket}/${encodeKey(key)}` : `/${encodeKey(key)}`
+
+  const amzDate = amzTimestamp(now)
+  const dateStamp = amzDate.slice(0, 8)
+  const scope = `${dateStamp}/${region}/s3/aws4_request`
+
+  // The query must be sorted by key, and each part encoded the strict way.
+  const query = new Map<string, string>([
+    ['X-Amz-Algorithm', ALGORITHM],
+    ['X-Amz-Credential', `${accessKeyId}/${scope}`],
+    ['X-Amz-Date', amzDate],
+    ['X-Amz-Expires', String(expiresSec)],
+    ['X-Amz-SignedHeaders', 'host']
+  ])
+  const canonicalQuery = [...query.entries()]
+    .map(([name, value]) => [rfc3986(name), rfc3986(value)] as const)
+    .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+    .map(([name, value]) => `${name}=${value}`)
+    .join('&')
+
+  const canonicalRequest = [
+    'GET',
+    path,
+    canonicalQuery,
+    `host:${host}\n`,
+    'host',
+    UNSIGNED_PAYLOAD
+  ].join('\n')
+
+  const stringToSign = [
+    ALGORITHM,
+    amzDate,
+    scope,
+    sha256Hex(canonicalRequest)
+  ].join('\n')
+
+  const signature = hmac(
+    signingKey(secretAccessKey, dateStamp, region),
+    stringToSign
+  ).toString('hex')
+
+  return `${url.protocol}//${host}${path}?${canonicalQuery}&X-Amz-Signature=${signature}`
+}
+
+/** `20130524T000000Z`. */
+function amzTimestamp(when: Date): string {
+  return when
+    .toISOString()
+    .replace(/[-:]/g, '')
+    .replace(/\.\d{3}/, '')
+}
+
+/** The key, with each path segment encoded but the slashes left alone. */
+function encodeKey(key: string): string {
+  return key.split('/').map(rfc3986).join('/')
+}
+
+/**
+ * `encodeURIComponent` leaves `!'()*` alone; AWS wants them encoded, and wants
+ * nothing else encoded that it does not ask for.
+ */
+function rfc3986(value: string): string {
+  return encodeURIComponent(value).replace(
+    /[!'()*]/g,
+    c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`
+  )
+}
+
+function signingKey(secret: string, dateStamp: string, region: string): Buffer {
+  const date = hmac(Buffer.from(`AWS4${secret}`, 'utf8'), dateStamp)
+  const regional = hmac(date, region)
+  const service = hmac(regional, 's3')
+  return hmac(service, 'aws4_request')
+}
+
+function hmac(key: Buffer, data: string): Buffer {
+  return createHmac('sha256', key).update(data, 'utf8').digest()
+}
+
+function sha256Hex(data: string): string {
+  return createHash('sha256').update(data, 'utf8').digest('hex')
+}
