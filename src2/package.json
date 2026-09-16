@@ -1,0 +1,36 @@
+{
+  "name": "gamestation2",
+  "version": "0.1.0",
+  "private": true,
+  "description": "GameStation 2.0 — video server and app, replacing PeerTube at tube.gamestation.co",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.server.json",
+    "clean": "rimraf lib",
+    "lint": "eslint .",
+    "migrate": "node -r sucrase/register migrate/cli.ts",
+    "start": "node -r sucrase/register server/index.ts",
+    "test": "mocha -r sucrase/register --extension ts --spec '**/*.test.ts' --ignore 'node_modules/**' --ignore 'lib/**'"
+  },
+  "dependencies": {
+    "cleaner-config": "^0.1.10",
+    "cleaners": "^0.3.9",
+    "express": "^5.1.0",
+    "kysely": "^0.29.6",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@types/chai": "^4.3.20",
+    "@types/express": "^5.0.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^24.3.1",
+    "@types/pg": "^8.11.10",
+    "chai": "^4.5.0",
+    "mocha": "^10.8.2",
+    "rimraf": "^6.0.1",
+    "sucrase": "^3.35.0",
+    "typescript": "^5.6.3"
+  }
+}
