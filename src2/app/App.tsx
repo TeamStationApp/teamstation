@@ -3,15 +3,16 @@ import { Pressable, StyleSheet, Text, View } from 'react-native'
 
 import {
   GameStationClient,
-  type GameSummary,
+  type SeasonSummary,
   type Session,
   type TeamSummary
 } from '../common/api'
 import { lstrings } from './locales/strings'
 import { GameScreen } from './screens/GameScreen'
 import { GamesScreen } from './screens/GamesScreen'
+import { HomeScreen } from './screens/HomeScreen'
 import { LoginScreen } from './screens/LoginScreen'
-import { TeamsScreen } from './screens/TeamsScreen'
+import { SeasonScreen } from './screens/SeasonScreen'
 import { cacheStyles, ThemeProvider, useTheme } from './theme/ThemeContext'
 import type { Theme } from './theme/types'
 
@@ -20,9 +21,10 @@ export interface AppProps {
 }
 
 type Route =
-  | { name: 'teams' }
+  | { name: 'home' }
+  | { name: 'season'; season: SeasonSummary }
   | { name: 'games'; team: TeamSummary }
-  | { name: 'game'; team: TeamSummary; game: GameSummary }
+  | { name: 'game'; title: string; gameId: string }
 
 /**
  * Sign in, then teams, then that team's games, then one game with its videos
@@ -38,7 +40,7 @@ export function App(props: AppProps): React.ReactElement {
     [apiBaseUrl]
   )
   const [session, setSession] = useState<Session | undefined>(undefined)
-  const [stack, setStack] = useState<Route[]>([{ name: 'teams' }])
+  const [stack, setStack] = useState<Route[]>([{ name: 'home' }])
   const route = stack[stack.length - 1]
 
   const push = (next: Route): void => {
@@ -57,9 +59,27 @@ export function App(props: AppProps): React.ReactElement {
       >
         {session == null ? (
           <LoginScreen client={client} onSignedIn={setSession} />
-        ) : route.name === 'teams' ? (
-          <TeamsScreen
+        ) : route.name === 'home' ? (
+          <HomeScreen
             client={client}
+            onOpenTeam={team => {
+              push({ name: 'games', team })
+            }}
+            onOpenSeason={season => {
+              push({ name: 'season', season })
+            }}
+          />
+        ) : route.name === 'season' ? (
+          <SeasonScreen
+            client={client}
+            season={route.season}
+            onOpenGame={game => {
+              push({
+                name: 'game',
+                gameId: game.id,
+                title: `${game.awayTeamName} ${lstrings.game_at} ${game.homeTeamName}`
+              })
+            }}
             onOpenTeam={team => {
               push({ name: 'games', team })
             }}
@@ -69,11 +89,15 @@ export function App(props: AppProps): React.ReactElement {
             client={client}
             team={route.team}
             onOpenGame={game => {
-              push({ name: 'game', team: route.team, game })
+              push({
+                name: 'game',
+                gameId: game.id,
+                title: `${game.awayTeamName} ${lstrings.game_at} ${game.homeTeamName}`
+              })
             }}
           />
         ) : (
-          <GameScreen client={client} gameId={route.game.id} />
+          <GameScreen client={client} gameId={route.gameId} />
         )}
       </Shell>
     </ThemeProvider>
@@ -82,11 +106,12 @@ export function App(props: AppProps): React.ReactElement {
 
 function titleFor(route: Route, session: Session | undefined): string {
   if (session == null) return lstrings.login_title
-  if (route.name === 'teams') return lstrings.teams_title
+  if (route.name === 'home') return lstrings.home_title
+  if (route.name === 'season') return route.season.name
   if (route.name === 'games') return route.team.name
   // The matchup, so a game is identified by who played it rather than by the
   // name of the tab that happens to be open.
-  return `${route.game.awayTeamName} ${lstrings.game_at} ${route.game.homeTeamName}`
+  return route.title
 }
 
 interface ShellProps {

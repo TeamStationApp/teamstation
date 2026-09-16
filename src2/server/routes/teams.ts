@@ -32,10 +32,13 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
       if (actor == null) throw unauthorized()
       const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
 
+      // External teams are opponents, not teams anybody belongs to: they
+      // appear on a game and nowhere else, admin or not.
       const teams = scopes.isAdmin
         ? await db
             .selectFrom('teams')
             .select(['id', 'name', 'short_name', 'logo_path'])
+            .where('kind', '=', 'full')
             .orderBy('name')
             .execute()
         : scopes.teamIds.size === 0
@@ -44,6 +47,7 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
               .selectFrom('teams')
               .select(['id', 'name', 'short_name', 'logo_path'])
               .where('id', 'in', [...scopes.teamIds])
+              .where('kind', '=', 'full')
               .orderBy('name')
               .execute()
 

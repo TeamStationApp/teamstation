@@ -15,6 +15,7 @@ import { authRoutes } from './routes/auth'
 import { devMediaRoutes } from './routes/devMedia'
 import { healthRoutes } from './routes/health'
 import { mediaAuthRoute, mediaRoutes } from './routes/media'
+import { seasonRoutes } from './routes/seasons'
 import { statsRoutes } from './routes/stats'
 import { teamRoutes } from './routes/teams'
 import { serverConfig } from './serverConfig'
@@ -113,6 +114,7 @@ function runWorker(): void {
   })
   app.use('/api/v1', healthRoutes(db, VERSION))
   app.use('/api/v1', authRoutes(db, { sendCode }))
+  app.use('/api/v1', seasonRoutes(db))
   app.use('/api/v1', teamRoutes(db, mediaContext))
   app.use('/api/v1', statsRoutes(db))
   app.use('/api/v1', mediaRoutes(db, mediaContext))

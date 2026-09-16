@@ -21,6 +21,21 @@ export const enUs = {
   login_wrong: 'That e-mail address or password is wrong.',
   login_code_wrong: 'That code is wrong or has expired.',
 
+  // Home
+  home_title: 'GameStation',
+  home_your_teams: 'Your teams',
+  home_seasons: 'Seasons',
+  home_nothing_yet:
+    'You do not have access to anything yet. When somebody adds you to a team or a season, it will appear here.',
+
+  // Seasons
+  season_schedule: 'Schedule',
+  season_teams: 'Teams',
+  season_standings: 'Standings',
+  season_no_games: 'No games yet.',
+  season_counts: '%s teams · %s games · %s videos',
+  season_no_video: 'no video',
+
   // Teams
   teams_title: 'Teams',
   teams_none: 'You are not on a team yet.',
