@@ -46,15 +46,36 @@ export async function visibleScopes(
     .execute()
   const teamIds = new Set(memberships.map(row => row.team_id))
 
+  // Belonging to a season is its own thing: PeerTube's channel allow-list
+  // brought people who are on no team but may watch everything in the
+  // season, and a season member sees every team in it.
+  const seasonMemberships = await db
+    .selectFrom('season_members')
+    .select(['season_id'])
+    .where('user_id', '=', userId)
+    .execute()
+  const memberSeasonIds = seasonMemberships.map(row => row.season_id)
+
+  if (memberSeasonIds.length > 0) {
+    const inThose = await db
+      .selectFrom('season_teams')
+      .select(['team_id'])
+      .where('season_id', 'in', memberSeasonIds)
+      .execute()
+    for (const row of inThose) teamIds.add(row.team_id)
+  }
+
   if (teamIds.size === 0) {
-    return { teamIds, seasonIds: new Set(), isAdmin }
+    return { teamIds, seasonIds: new Set(memberSeasonIds), isAdmin }
   }
 
   // Seasons this user's teams play in, with the season's and league's setting.
   const rows = await db
     .selectFrom('season_teams')
     .innerJoin('seasons', 'seasons.id', 'season_teams.season_id')
-    .innerJoin('leagues', 'leagues.id', 'seasons.league_id')
+    // Left, not inner: a season imported before its league exists still
+    // grants what its own setting says.
+    .leftJoin('leagues', 'leagues.id', 'seasons.league_id')
     .select([
       'seasons.id as seasonId',
       'seasons.league_id as leagueId',
@@ -64,7 +85,7 @@ export async function visibleScopes(
     .where('season_teams.team_id', 'in', [...teamIds])
     .execute()
 
-  const seasonIds = new Set<string>()
+  const seasonIds = new Set<string>(memberSeasonIds)
   const openLeagueIds = new Set<string>()
   for (const row of rows) {
     if (row.seasonAccess === 'season') seasonIds.add(row.seasonId)
