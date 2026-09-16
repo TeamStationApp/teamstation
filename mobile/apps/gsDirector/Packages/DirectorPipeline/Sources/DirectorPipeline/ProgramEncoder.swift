@@ -683,16 +683,25 @@ public final class ProgramEncoder: @unchecked Sendable {
     }
   }
 
-  public func finish(until wall: WallClock? = nil) async -> URL? {
-    // Before the writer is taken away, or the tail of the audio track is discarded. Waiting matters
-    // here: a writer that is not accepting audio at this instant usually is a moment later, and
-    // giving up on the first refusal truncates the track. See `SegmentWriter.finish`.
-    let deadline = Date().addingTimeInterval(2)
+  /// Drains queued sound, waiting for the writer to accept more, up to `seconds`.
+  ///
+  /// `drainAudio` returns at the first refusal by design — it runs on tile frame-delivery threads
+  /// and must not block them. At Stop there is no such thread to protect, and giving up on the
+  /// first refusal is exactly what truncates the track.
+  private func drainAudioUntilEmpty(seconds: Double) async {
+    let deadline = Date().addingTimeInterval(seconds)
     while true {
       drainAudio(limit: .max)
       if pendingAudioCount() == 0 || Date() >= deadline { break }
       try? await Task.sleep(nanoseconds: 20_000_000)
     }
+  }
+
+  public func finish(until wall: WallClock? = nil) async -> URL? {
+    // Before the writer is taken away, or the tail of the audio track is discarded. Waiting matters
+    // here: a writer that is not accepting audio at this instant usually is a moment later, and
+    // giving up on the first refusal truncates the track. See `SegmentWriter.finish`.
+    await drainAudioUntilEmpty(seconds: 2)
 
     if writerIsDead() {
       recoverDeadWriter()
@@ -700,6 +709,19 @@ public final class ProgramEncoder: @unchecked Sendable {
 
     if let wall, let origin = startedAt {
       fillHold(until: max(0, wall.seconds - origin.seconds - previousPartsSeconds()))
+      // `fillHold` queues the tail's silence and drains once. One drain stops at the first refusal,
+      // and the tail is hundreds of buffers — the length of the mix's wait for late sound — so a
+      // single pass routinely leaves most of them behind, and taking the writer next discards them.
+      // That is how every master in the 2026-09-16 soak ended with its picture at the take's length
+      // and its sound seven to ten seconds short of it. Wait for them the same way as above.
+      await drainAudioUntilEmpty(seconds: 10)
+    }
+
+    // What is still queued here cannot be written: the inputs are about to be marked finished. It
+    // is silent truncation, so it is counted rather than left to be found in an export months later.
+    let stranded = pendingAudioCount()
+    if stranded > 0 {
+      telemetry.recordError("program finish left \(stranded) audio buffers unwritten")
     }
 
     guard let pending = takeWriterForFinish() else { return nil }
