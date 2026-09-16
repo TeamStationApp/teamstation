@@ -10,6 +10,7 @@ import { errorHandler, notFoundHandler } from './middleware/withErrors'
 import { openApiDocument } from './openapi'
 import { authRoutes } from './routes/auth'
 import { healthRoutes } from './routes/health'
+import { teamRoutes } from './routes/teams'
 import { serverConfig } from './serverConfig'
 
 const VERSION = '0.1.0'
@@ -75,6 +76,7 @@ function runWorker(): void {
   })
   app.use('/api/v1', healthRoutes(db, VERSION))
   app.use('/api/v1', authRoutes(db, { sendCode }))
+  app.use('/api/v1', teamRoutes(db))
 
   app.use(notFoundHandler)
   app.use(errorHandler)
