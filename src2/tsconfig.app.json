@@ -1,7 +1,10 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "noEmit": true
+    "noEmit": true,
+    // The app runs in a browser, so it gets the DOM as well as the language
+    // library. The server config deliberately does not.
+    "lib": ["es2023", "dom", "dom.iterable"]
   },
   "include": ["app/**/*.ts", "app/**/*.tsx", "common/**/*.ts"]
 }
