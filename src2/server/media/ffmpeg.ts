@@ -18,7 +18,10 @@ const run = promisify(execFile)
  */
 export interface FfmpegBuild {
   path: string
+  /** Exactly what the build reports, e.g. `n9.0.1-30-g9258bacca5-20260915`. */
   version: string
+  /** The upstream release inside it, e.g. `9.0.1`. */
+  release: string
 }
 
 export async function probeFfmpeg(path: string): Promise<FfmpegBuild> {
@@ -27,7 +30,21 @@ export async function probeFfmpeg(path: string): Promise<FfmpegBuild> {
   if (match?.[1] == null) {
     throw new Error(`Could not read a version from ${path}`)
   }
-  return { path, version: match[1] }
+  return { path, version: match[1], release: releaseOf(match[1]) }
+}
+
+/**
+ * The upstream release inside a build's version string.
+ *
+ * A distribution reports `9.0.1`, while the pinned static build reports
+ * `n9.0.1-30-g9258bacca5-20260915`: the same FFmpeg, plus the commits since
+ * the tag and the build date. The integrity pin is the sha256 in
+ * `ffmpeg.json`; this is what decides whether the *release* is the one the
+ * contract suite was written against.
+ */
+export function releaseOf(version: string): string {
+  const match = /^n?(\d+\.\d+(?:\.\d+)?)/.exec(version)
+  return match?.[1] ?? version
 }
 
 /** Throws unless the build on disk is exactly the pinned one. */
@@ -36,7 +53,7 @@ export async function assertPinnedFfmpeg(
   expected: string
 ): Promise<FfmpegBuild> {
   const build = await probeFfmpeg(path)
-  if (build.version !== expected) {
+  if (build.release !== releaseOf(expected)) {
     throw new Error(
       `FFmpeg at ${path} is ${build.version}, but this server is pinned to ${expected}`
     )

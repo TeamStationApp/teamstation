@@ -19,7 +19,7 @@
     "start": "node -r sucrase/register server/index.ts",
     "start.web": "node build.mjs --serve",
     "test": "mocha -r sucrase/register --extension ts --spec '**/*.test.ts' --ignore 'node_modules/**' --ignore 'lib/**'",
-    "typecheck": "tsc -p tsconfig.app.json"
+    "typecheck": "tsc -p tsconfig.app.json && tsc -p tsconfig.server.json --noEmit"
   },
   "dependencies": {
     "bcryptjs": "^3.0.2",
