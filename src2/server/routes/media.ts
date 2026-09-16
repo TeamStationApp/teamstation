@@ -4,23 +4,16 @@ import type { Kysely } from 'kysely'
 import { notFound, unauthorized } from '../../common/errors'
 import { canSeeGame, visibleScopes } from '../access'
 import type { Database } from '../db/database'
-import { locateVideo } from '../media/locations'
+import { locateVideo, locateVideoFile } from '../media/locations'
+import type { MediaContext } from '../media/mediaContext'
 import {
   MEDIA_TOKEN_TTL_SEC,
   mediaUrlPath,
   verifyMediaPath
 } from '../media/mediaTokens'
+import { ensureStill } from '../media/stills'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
-
-export interface MediaRouteOptions {
-  /** Caddy's media root, for finding a video's directory. */
-  mediaRoot: string
-  /** Signs the `/media` tokens. The same secret Caddy's forward_auth checks. */
-  mediaSecret: string
-  /** The origin playback URLs are built against, e.g. `https://tube2…`. */
-  publicUrl: string
-}
 
 /**
  * Playback URLs, and the check behind them.
@@ -32,9 +25,9 @@ export interface MediaRouteOptions {
  */
 export function mediaRoutes(
   db: Kysely<Database>,
-  options: MediaRouteOptions
+  options: MediaContext
 ): Router {
-  const { mediaRoot, mediaSecret, publicUrl } = options
+  const { ffmpegPath, mediaRoot, mediaSecret, publicUrl, workDir } = options
   const router = Router()
 
   router.get(
@@ -104,6 +97,55 @@ export function mediaRoutes(
     })
   )
 
+  router.get(
+    '/videos/:videoId/still',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const videoId = pathParam(req.params.videoId)
+      const atSec = secondsParam(req.query.t)
+      const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
+
+      const video = await db
+        .selectFrom('videos')
+        .innerJoin('games', 'games.id', 'videos.game_id')
+        .select([
+          'videos.storage as storage',
+          'videos.hidden as hidden',
+          'games.home_team_id as homeTeamId',
+          'games.away_team_id as awayTeamId',
+          'games.season_id as seasonId'
+        ])
+        .where('videos.id', '=', videoId)
+        .executeTakeFirst()
+      if (video == null || video.hidden) throw notFound()
+      if (!canSeeGame(scopes, video)) throw notFound()
+
+      const videoPath = await locateVideoFile({
+        mediaRoot,
+        storage: video.storage,
+        videoId
+      })
+      if (videoPath == null) throw notFound()
+
+      const still = await ensureStill({
+        ffmpegPath,
+        videoPath,
+        workDir,
+        videoId,
+        atSec
+      }).catch(() => undefined)
+      if (still == null) throw notFound()
+
+      // Stills never change for a given second, so they cache hard; the token
+      // on the URL is what limits who can ask.
+      res.setHeader('cache-control', 'private, max-age=86400')
+      res.type('image/jpeg')
+      res.sendFile(still)
+    })
+  )
+
   return router
 }
 
@@ -128,6 +170,14 @@ export function mediaAuthRoute(mediaSecret: string): Router {
   })
 
   return router
+}
+
+/** `?t=` in seconds. Anything that is not a number starts at the beginning. */
+function secondsParam(value: unknown): number {
+  if (typeof value !== 'string') return 0
+  const seconds = Number(value)
+  if (!Number.isFinite(seconds) || seconds < 0) return 0
+  return seconds
 }
 
 function pathParam(value: string | string[] | undefined): string {

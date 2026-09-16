@@ -5,6 +5,10 @@ import { notFound, unauthorized } from '../../common/errors'
 import { canSeeGame, canSeeTeam, visibleScopes } from '../access'
 import type { Database } from '../db/database'
 import { computeHighlights } from '../highlights'
+import { locateVideoFile } from '../media/locations'
+import type { MediaContext } from '../media/mediaContext'
+import { mediaUrlPath } from '../media/mediaTokens'
+import { stillSecond, warmStills } from '../media/stills'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import { highlightSettings } from '../settings'
@@ -17,7 +21,7 @@ import { battingLines, battingRates } from '../stats'
  * Anything the caller may not see answers **404**, never 403, so that probing
  * cannot reveal that a team, game or video exists.
  */
-export function teamRoutes(db: Kysely<Database>): Router {
+export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
   const router = Router()
 
   router.get(
@@ -206,6 +210,7 @@ export function teamRoutes(db: Kysely<Database>): Router {
         .select([
           'videos.id as id',
           'videos.game_id as gameId',
+          'videos.storage as storage',
           'videos.start_at as startAt',
           'videos.sync_offset_sec as syncOffsetSec',
           'videos.duration_sec as durationSec',
@@ -264,7 +269,32 @@ export function teamRoutes(db: Kysely<Database>): Router {
         settings
       )
 
-      res.json({ withheld: null, highlights })
+      // A still is one frame of the video at the moment of the play, served
+      // from the work directory like any other media: `<sec>.jpg` under this
+      // video's own still directory, behind the same signed token.
+      const stillDir = `work/stills/${videoId}`
+      const now = Date.now()
+      const withStills = highlights.map(highlight => ({
+        ...highlight,
+        stillUrl:
+          media.publicUrl +
+          mediaUrlPath(
+            media.mediaSecret,
+            stillDir,
+            `${stillSecond(highlight.playOffsetSec)}.jpg`,
+            now
+          )
+      }))
+
+      res.json({ withheld: null, highlights: withStills })
+
+      // Answered first, then the frames are cut. The plan has ingest pre-warm
+      // these; until a game can be ingested with its video already in place,
+      // opening the list is what warms it, and a still that is not ready yet
+      // is a missing thumbnail rather than a slow response.
+      warmVideoStills(media, video.storage, videoId, highlights).catch(
+        () => undefined
+      )
     })
   )
 
@@ -348,6 +378,35 @@ async function teamNames(
     .where('id', 'in', wanted)
     .execute()
   return new Map(rows.map(row => [row.id, row.name]))
+}
+
+/**
+ * Cuts the stills a highlight list will ask for. Nothing awaits this and
+ * nothing fails because of it.
+ */
+async function warmVideoStills(
+  media: MediaContext,
+  storage: 'peertube' | 'local' | 'spaces',
+  videoId: string,
+  highlights: Array<{ playOffsetSec: number }>
+): Promise<void> {
+  try {
+    const videoPath = await locateVideoFile({
+      mediaRoot: media.mediaRoot,
+      storage,
+      videoId
+    })
+    if (videoPath == null) return
+    await warmStills({
+      ffmpegPath: media.ffmpegPath,
+      videoPath,
+      workDir: media.workDir,
+      videoId,
+      seconds: highlights.map(highlight => highlight.playOffsetSec)
+    })
+  } catch {
+    // A thumbnail that is not there is not worth reporting as an error.
+  }
 }
 
 async function countVideos(

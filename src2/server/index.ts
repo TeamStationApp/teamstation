@@ -5,6 +5,7 @@ import { availableParallelism } from 'node:os'
 import express from 'express'
 
 import { makeDatabase } from './db/database'
+import type { MediaContext } from './media/mediaContext'
 import { withAudit } from './middleware/withAudit'
 import { withActor } from './middleware/withAuth'
 import { withCors } from './middleware/withCors'
@@ -88,6 +89,13 @@ function runPrimary(workerCount: number): void {
 function runWorker(): void {
   const db = makeDatabase(serverConfig.databaseUrl)
   const mediaSecret = resolveMediaSecret()
+  const mediaContext: MediaContext = {
+    ffmpegPath: serverConfig.ffmpegPath,
+    mediaRoot: serverConfig.mediaDir,
+    mediaSecret,
+    publicUrl: serverConfig.publicUrl,
+    workDir: serverConfig.workDir
+  }
   const app = express()
 
   app.set('trust proxy', 'loopback')
@@ -104,16 +112,9 @@ function runWorker(): void {
   })
   app.use('/api/v1', healthRoutes(db, VERSION))
   app.use('/api/v1', authRoutes(db, { sendCode }))
-  app.use('/api/v1', teamRoutes(db))
+  app.use('/api/v1', teamRoutes(db, mediaContext))
   app.use('/api/v1', statsRoutes(db))
-  app.use(
-    '/api/v1',
-    mediaRoutes(db, {
-      mediaRoot: serverConfig.mediaDir,
-      mediaSecret,
-      publicUrl: serverConfig.publicUrl
-    })
-  )
+  app.use('/api/v1', mediaRoutes(db, mediaContext))
 
   // What Caddy's forward_auth calls. Not under /api/v1: it is not a public
   // endpoint, and Caddy is the only thing that should ever reach it.

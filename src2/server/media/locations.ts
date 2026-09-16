@@ -18,6 +18,34 @@ export interface VideoLocation {
   master: string
 }
 
+/** The single fragmented MP4 a still is taken from, absolute on disk. */
+export async function locateVideoFile(
+  options: LocateOptions
+): Promise<string | undefined> {
+  const { mediaRoot, storage } = options
+  if (storage === 'spaces') {
+    // The bytes are in the bucket. A still from there means reading byte
+    // ranges through a presigned URL, which is not built yet, so this says
+    // plainly that it cannot rather than pointing at a file that is not here.
+    return undefined
+  }
+
+  const location = await locateVideo(options)
+  if (location == null) return undefined
+  const dir = join(mediaRoot, location.dir)
+
+  if (storage === 'local') {
+    const path = join(dir, 'video.mp4')
+    return (await exists(path)) ? path : undefined
+  }
+
+  // PeerTube names its file after the video, like its playlist.
+  const names = await readdir(dir).catch(() => [])
+  const fragmented = names.filter(name => name.endsWith('-fragmented.mp4'))
+  if (fragmented.length === 1) return join(dir, fragmented[0])
+  return undefined
+}
+
 export type VideoStorage = 'peertube' | 'local' | 'spaces'
 
 export interface LocateOptions {
