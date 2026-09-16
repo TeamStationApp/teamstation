@@ -196,6 +196,14 @@ export function statsRoutes(db: Kysely<Database>): Router {
         query = query.where('events.event_type', '=', eventType)
       }
 
+      // Opening a batting figure should show the plays that figure came from,
+      // not every play the player was anywhere near, so the role can be
+      // narrowed. Anything unrecognised is ignored rather than rejected.
+      const role = req.query.role
+      if (typeof role === 'string' && isPlayerRole(role)) {
+        query = query.where('event_players.role', '=', role)
+      }
+
       const rows = await query.orderBy('games.start_at', 'desc').execute()
 
       // The same rule as everywhere else, applied row by row: a play is
@@ -233,4 +241,20 @@ export function statsRoutes(db: Kysely<Database>): Router {
 function pathParam(value: string | string[] | undefined): string {
   if (typeof value !== 'string' || value === '') throw notFound()
   return value
+}
+
+/** The roles a play can tag somebody in, as the schema's check constraint has them. */
+const PLAYER_ROLES = [
+  'batter',
+  'pitcher',
+  'runner',
+  'scorer',
+  'fielder',
+  'catcher'
+] as const
+
+type PlayerRole = (typeof PLAYER_ROLES)[number]
+
+function isPlayerRole(value: string): value is PlayerRole {
+  return (PLAYER_ROLES as readonly string[]).includes(value)
 }
