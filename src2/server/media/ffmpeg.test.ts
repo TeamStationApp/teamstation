@@ -1,6 +1,6 @@
 import { expect } from 'chai'
 import { execFile } from 'child_process'
-import { mkdtemp, readFile, rm, writeFile } from 'fs/promises'
+import { mkdtemp, readFile, rm } from 'fs/promises'
 import { after, before, describe, it } from 'mocha'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -86,11 +86,6 @@ describe('ffmpeg contract', function () {
     expect(args[args.indexOf('-tag:v') + 1]).equals('hvc1')
   })
 
-  it('writes segments through a temporary file', function () {
-    const args = remuxToHlsArgs({ input: 'in.mp4', outDir: '/tmp/out' })
-    expect(args[args.indexOf('-hls_flags') + 1]).contains('temp_file')
-  })
-
   it('remuxes real HEVC to fMP4 HLS without re-encoding it', async function () {
     if (!hasHevc) this.skip()
     const source = join(workDir, 'source.mp4')
@@ -124,27 +119,38 @@ describe('ffmpeg contract', function () {
 
     await remuxToHls(ffmpegPath, { input: source, outDir: workDir })
 
-    const playlist = await readFile(join(workDir, 'master.m3u8'), 'utf8')
-    expect(playlist).contains('#EXTM3U')
-    expect(playlist).contains('init.mp4')
-    expect(playlist).contains('.m4s')
+    // One fragmented MP4 and a byte-range playlist, not a directory of
+    // segments: the Space needs one presigned URL per video, and a still is
+    // taken by seeking inside one file.
+    const media = await readFile(join(workDir, 'video.m3u8'), 'utf8')
+    expect(media).contains('#EXTM3U')
+    expect(media).contains('#EXT-X-MAP:URI="video.mp4"')
+    expect(media).contains('#EXT-X-BYTERANGE:')
+    expect(media).does.not.contain('.m4s')
+    // The temporary name must never reach the playlist.
+    expect(media).does.not.contain('.tmp')
 
-    // A fragmented segment carries no `moov`, so it cannot be read on its own.
-    // A player fetches `init.mp4` first and then the segments; joining the two
-    // is the same thing, and it proves the init and the fragment agree.
-    const joined = join(workDir, 'joined.mp4')
-    await writeFile(
-      joined,
-      Buffer.concat([
-        await readFile(join(workDir, 'init.mp4')),
-        await readFile(join(workDir, 'segment00000.m4s'))
-      ])
+    const master = await readFile(join(workDir, 'master.m3u8'), 'utf8')
+    expect(master).contains('video.m3u8')
+    // Safari decides whether to attempt HEVC from this attribute.
+    expect(master).contains('CODECS="hvc1.')
+
+    // The whole video is one readable file, so it probes on its own.
+    const after = await probeVideoStream(
+      ffprobePath,
+      join(workDir, 'video.mp4')
     )
-    const after = await probeVideoStream(ffprobePath, joined)
     // The picture must be untouched: same codec, same size, hvc1 tag intact.
     expect(after.codecName).equals('hevc')
     expect(after.codecTag).equals('hvc1')
     expect(after.width).equals(before.width)
     expect(after.height).equals(before.height)
+  })
+
+  it('never writes the temporary name into a single-file playlist', function () {
+    const args = remuxToHlsArgs({ input: 'in.mp4', outDir: '/tmp/out' })
+    const flags = args[args.indexOf('-hls_flags') + 1]
+    expect(flags).contains('single_file')
+    expect(flags).does.not.contain('temp_file')
   })
 })
