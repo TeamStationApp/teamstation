@@ -683,6 +683,13 @@ public final class ProgramEncoder: @unchecked Sendable {
     }
   }
 
+  /// Where the picture and the sound have each reached on the part's own timeline.
+  private func trackEnds() -> (picture: Double, sound: Double) {
+    lock.lock()
+    defer { lock.unlock() }
+    return (lastTime.isNumeric ? lastTime.seconds : -1, nextAudioTime?.seconds ?? -1)
+  }
+
   /// Drains queued sound, waiting for the writer to accept more, up to `seconds`.
   ///
   /// `drainAudio` returns at the first refusal by design — it runs on tile frame-delivery threads
@@ -708,13 +715,23 @@ public final class ProgramEncoder: @unchecked Sendable {
     }
 
     if let wall, let origin = startedAt {
-      fillHold(until: max(0, wall.seconds - origin.seconds - previousPartsSeconds()))
+      let target = max(0, wall.seconds - origin.seconds - previousPartsSeconds())
+      let (pictureAt, soundAt) = trackEnds()
+      let queuedBefore = pendingAudioCount()
+      fillHold(until: target)
       // `fillHold` queues the tail's silence and drains once. One drain stops at the first refusal,
       // and the tail is hundreds of buffers — the length of the mix's wait for late sound — so a
       // single pass routinely leaves most of them behind, and taking the writer next discards them.
       // That is how every master in the 2026-09-16 soak ended with its picture at the take's length
       // and its sound seven to ten seconds short of it. Wait for them the same way as above.
       await drainAudioUntilEmpty(seconds: 10)
+      let soundAfter = trackEnds().sound
+      telemetry.recordProgramFinish(
+        String(
+          format: "target %.3f picture %.3f sound %.3f->%.3f queued %d->%d",
+          target, pictureAt, soundAt, soundAfter, queuedBefore, pendingAudioCount()
+        )
+      )
     }
 
     // What is still queued here cannot be written: the inputs are about to be marked finished. It

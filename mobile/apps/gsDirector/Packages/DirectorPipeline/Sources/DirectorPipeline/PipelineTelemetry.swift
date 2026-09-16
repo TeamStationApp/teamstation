@@ -396,6 +396,10 @@ public struct DVRTelemetry: Sendable, Codable, Equatable {
   /// finalise, and knowing whether that is 2s or 25s is the difference between a tuning decision
   /// and a bug hunt.
   public var lastFlushSeconds = ""
+  /// What the last programme finish had to work with: where the picture and the sound had reached,
+  /// what length the fill was asked for, and what was still queued. A master whose sound stops short
+  /// of its picture is invisible until an export months later, so the stop leaves its numbers here.
+  public var lastProgramFinish = ""
   /// Filename and byte count of the last program master file, so a flow can tell the difference
   /// between "program encoding ran" and "program encoding produced a file".
   public var programOutput = ""
@@ -1043,6 +1047,12 @@ public final class PipelineTelemetry: @unchecked Sendable {
     lock.lock()
     state.sessions.encodeFailures += 1
     state.sessions.lastEncodeErrorCode = code
+    lock.unlock()
+  }
+
+  public func recordProgramFinish(_ detail: String) {
+    lock.lock()
+    state.dvr.lastProgramFinish = detail
     lock.unlock()
   }
 
