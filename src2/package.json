@@ -11,6 +11,7 @@
     "clean": "rimraf lib",
     "lint": "eslint .",
     "migrate": "node -r sucrase/register migrate/cli.ts",
+    "seed": "node -r sucrase/register server/dev/seed.ts",
     "start": "node -r sucrase/register server/index.ts",
     "test": "mocha -r sucrase/register --extension ts --spec '**/*.test.ts' --ignore 'node_modules/**' --ignore 'lib/**'"
   },

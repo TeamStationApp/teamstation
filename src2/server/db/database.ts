@@ -21,8 +21,8 @@ export interface UsersTable {
   login_enabled: Generated<boolean>
   is_admin: Generated<boolean>
   avatar_path: string | null
-  created_at: Generated<Timestamp>
-  updated_at: Generated<Timestamp>
+  created_at: Timestamp
+  updated_at: Timestamp
 }
 
 export interface UserLinksTable {
@@ -31,7 +31,7 @@ export interface UserLinksTable {
   related_user_id: string
   kind: 'guardian' | 'family' | 'other'
   can_manage: Generated<boolean>
-  created_at: Generated<Timestamp>
+  created_at: Timestamp
 }
 
 export interface LeaguesTable {
@@ -42,8 +42,8 @@ export interface LeaguesTable {
   logo_path: string | null
   notes: string | null
   spectator_access: Generated<'team' | 'league'>
-  created_at: Generated<Timestamp>
-  updated_at: Generated<Timestamp>
+  created_at: Timestamp
+  updated_at: Timestamp
 }
 
 export interface SeasonsTable {
@@ -56,8 +56,8 @@ export interface SeasonsTable {
   starts_on: string | null
   ends_on: string | null
   spectator_access: Generated<'team' | 'season'>
-  created_at: Generated<Timestamp>
-  updated_at: Generated<Timestamp>
+  created_at: Timestamp
+  updated_at: Timestamp
 }
 
 export interface TeamsTable {
@@ -70,14 +70,14 @@ export interface TeamsTable {
   logo_path: string | null
   primary_color: string | null
   secondary_color: string | null
-  created_at: Generated<Timestamp>
-  updated_at: Generated<Timestamp>
+  created_at: Timestamp
+  updated_at: Timestamp
 }
 
 export interface SeasonTeamsTable {
   season_id: string
   team_id: string
-  joined_at: Generated<Timestamp>
+  joined_at: Timestamp
 }
 
 export interface MembershipsTable {
@@ -89,7 +89,7 @@ export interface MembershipsTable {
   is_spectator: Generated<boolean>
   jersey: string | null
   positions: Generated<string[]>
-  joined_at: Generated<Timestamp>
+  joined_at: Timestamp
   granted_by_link_id: string | null
 }
 
@@ -100,7 +100,7 @@ export interface AdminRolesTable {
   scope_id: string
   role: Generated<'admin'>
   granted_by: string | null
-  granted_at: Generated<Timestamp>
+  granted_at: Timestamp
 }
 
 export interface ExternalIdsTable {
@@ -110,7 +110,7 @@ export interface ExternalIdsTable {
   system: string
   kind: string
   external_id: string
-  created_at: Generated<Timestamp>
+  created_at: Timestamp
 }
 
 export interface GamesTable {
@@ -128,8 +128,8 @@ export interface GamesTable {
   boxscore: Json | null
   ingest_status: Generated<'none' | 'ok' | 'scoreMismatch' | 'error'>
   ingest_message: string | null
-  created_at: Generated<Timestamp>
-  updated_at: Generated<Timestamp>
+  created_at: Timestamp
+  updated_at: Timestamp
 }
 
 export interface VideosTable {
@@ -161,8 +161,8 @@ export interface VideosTable {
   legacy_description: string | null
   published_at: Timestamp | null
   hidden: Generated<boolean>
-  created_at: Generated<Timestamp>
-  updated_at: Generated<Timestamp>
+  created_at: Timestamp
+  updated_at: Timestamp
 }
 
 export interface EventsTable {
@@ -185,8 +185,8 @@ export interface EventsTable {
   hidden: Generated<boolean>
   title_override: string | null
   time_nudge_sec: Generated<number>
-  created_at: Generated<Timestamp>
-  updated_at: Generated<Timestamp>
+  created_at: Timestamp
+  updated_at: Timestamp
 }
 
 export interface EventPlayersTable {
@@ -203,7 +203,7 @@ export interface AuthSessionsTable {
   user_id: string
   token_hash: string
   user_agent: string | null
-  created_at: Generated<Timestamp>
+  created_at: Timestamp
   last_used_at: Timestamp | null
   expires_at: Timestamp
   revoked_at: Timestamp | null
@@ -215,7 +215,7 @@ export interface ApiTokensTable {
   label: string
   token_hash: string
   scopes: Generated<string[]>
-  created_at: Generated<Timestamp>
+  created_at: Timestamp
   last_used_at: Timestamp | null
   expires_at: Timestamp | null
   revoked_at: Timestamp | null
@@ -227,14 +227,14 @@ export interface EmailCodesTable {
   code_hash: string
   purpose: 'login' | 'verify' | 'reset'
   attempts: Generated<number>
-  created_at: Generated<Timestamp>
+  created_at: Timestamp
   expires_at: Timestamp
   consumed_at: Timestamp | null
 }
 
 export interface AuditLogTable {
   id: string
-  at: Generated<Timestamp>
+  at: Timestamp
   actor_user_id: string | null
   api_token_id: string | null
   method: string
@@ -248,7 +248,7 @@ export interface AuditLogTable {
 export interface SystemSettingsTable {
   key: string
   value: Json
-  updated_at: Generated<Timestamp>
+  updated_at: Timestamp
   updated_by: string | null
 }
 
@@ -280,7 +280,7 @@ export interface PlayerSeasonStatsTable {
   field_po: Generated<number>
   field_a: Generated<number>
   field_e: Generated<number>
-  computed_at: Generated<Timestamp>
+  computed_at: Timestamp
 }
 
 export interface TeamSeasonRecordsTable {
@@ -292,7 +292,7 @@ export interface TeamSeasonRecordsTable {
   t: Generated<number>
   runs_for: Generated<number>
   runs_against: Generated<number>
-  computed_at: Generated<Timestamp>
+  computed_at: Timestamp
 }
 
 export interface Database {
