@@ -68,7 +68,11 @@ export async function visibleScopes(
   const openLeagueIds = new Set<string>()
   for (const row of rows) {
     if (row.seasonAccess === 'season') seasonIds.add(row.seasonId)
-    if (row.leagueAccess === 'league') openLeagueIds.add(row.leagueId)
+    // A season with no league yet — the migration imports them that way, and
+    // Paul attaches them afterwards — simply has no league to inherit from.
+    if (row.leagueAccess === 'league' && row.leagueId != null) {
+      openLeagueIds.add(row.leagueId)
+    }
   }
 
   // A league that has opened itself up brings every one of its seasons, not

@@ -63,7 +63,8 @@ export interface LeaguesTable {
 
 export interface SeasonsTable {
   id: string
-  league_id: string
+  /** Null until somebody creates a league and moves this season into it. */
+  league_id: string | null
   name: string
   age_group: string | null
   year: number
