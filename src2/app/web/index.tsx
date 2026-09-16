@@ -12,15 +12,12 @@ import { App } from '../App'
  * on a phone.
  */
 declare const GS_API_BASE_URL: string
-declare const GS_MEDIA_BASE_URL: string
 
 const apiBaseUrl =
   typeof GS_API_BASE_URL === 'string' ? GS_API_BASE_URL : '/api/v1'
-const mediaBaseUrl =
-  typeof GS_MEDIA_BASE_URL === 'string' ? GS_MEDIA_BASE_URL : '/media'
 
 function Root(): React.ReactElement {
-  return <App apiBaseUrl={apiBaseUrl} mediaBaseUrl={mediaBaseUrl} />
+  return <App apiBaseUrl={apiBaseUrl} />
 }
 
 AppRegistry.registerComponent('GameStation', () => Root)

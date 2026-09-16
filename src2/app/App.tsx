@@ -17,7 +17,6 @@ import type { Theme } from './theme/types'
 
 export interface AppProps {
   apiBaseUrl?: string
-  mediaBaseUrl?: string
 }
 
 type Route =
@@ -33,7 +32,6 @@ type Route =
  */
 export function App(props: AppProps): React.ReactElement {
   const apiBaseUrl = props.apiBaseUrl ?? '/api/v1'
-  const mediaBaseUrl = props.mediaBaseUrl ?? '/media'
 
   const client = useMemo(
     () => new GameStationClient({ baseUrl: apiBaseUrl }),
@@ -75,11 +73,7 @@ export function App(props: AppProps): React.ReactElement {
             }}
           />
         ) : (
-          <GameScreen
-            client={client}
-            gameId={route.game.id}
-            mediaBaseUrl={mediaBaseUrl}
-          />
+          <GameScreen client={client} gameId={route.game.id} />
         )}
       </Shell>
     </ThemeProvider>

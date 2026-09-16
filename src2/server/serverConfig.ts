@@ -65,6 +65,19 @@ export const asServerConfig = asObject({
   /** Signing key for session tokens. Generated on first run if left empty. */
   sessionSecret: asOptional(asString, ''),
 
+  /** Signs `/media` playback tokens. The reverse proxy has them checked. */
+  mediaSecret: asOptional(asString, ''),
+
+  /** The origin playback URLs are built against. */
+  publicUrl: asOptional(asString, 'http://127.0.0.1:9100'),
+
+  /**
+   * Serve `/media` from Node. **Development only**: in production a proxy serves
+   * those bytes, and turning this on would put every segment of every video
+   * through the API.
+   */
+  serveMediaLocally: asOptional(asBoolean, false),
+
   /** Origins the app may call the API from. */
   corsOrigins: asOptional(asArray(asString), [
     'http://localhost:8080',

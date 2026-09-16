@@ -1,4 +1,5 @@
 import cluster from 'node:cluster'
+import { randomBytes } from 'node:crypto'
 import { availableParallelism } from 'node:os'
 
 import express from 'express'
@@ -10,12 +11,33 @@ import { withCors } from './middleware/withCors'
 import { errorHandler, notFoundHandler } from './middleware/withErrors'
 import { openApiDocument } from './openapi'
 import { authRoutes } from './routes/auth'
+import { devMediaRoutes } from './routes/devMedia'
 import { healthRoutes } from './routes/health'
+import { mediaAuthRoute, mediaRoutes } from './routes/media'
 import { statsRoutes } from './routes/stats'
 import { teamRoutes } from './routes/teams'
 import { serverConfig } from './serverConfig'
 
 const VERSION = '0.1.0'
+const MEDIA_SECRET_ENV = 'GS_MEDIA_SECRET'
+
+/**
+ * The key that signs `/media` tokens.
+ *
+ * Every worker has to agree on it, or a playlist minted by one worker would be
+ * refused by the next, so the primary generates it before forking and the
+ * workers inherit it. A generated one does not survive a restart, which only
+ * means playback URLs issued before it stop verifying; the player asks for a
+ * fresh one on a 403 and resumes where it was. Production sets `mediaSecret`.
+ */
+function resolveMediaSecret(): string {
+  if (serverConfig.mediaSecret !== '') return serverConfig.mediaSecret
+  const inherited = process.env[MEDIA_SECRET_ENV]
+  if (inherited != null && inherited !== '') return inherited
+  const generated = randomBytes(32).toString('base64url')
+  process.env[MEDIA_SECRET_ENV] = generated
+  return generated
+}
 
 /**
  * Delivers a sign-in code. There is no mail relay yet — M4 adds one —
@@ -34,6 +56,8 @@ async function sendCode(email: string, code: string): Promise<void> {
  * process there is.
  */
 function runPrimary(workerCount: number): void {
+  // Before forking, so every worker inherits the same one.
+  resolveMediaSecret()
   console.log(`gamestation ${VERSION}: forking ${workerCount} workers`)
   for (let i = 0; i < workerCount; i++) cluster.fork()
 
@@ -63,6 +87,7 @@ function runPrimary(workerCount: number): void {
 
 function runWorker(): void {
   const db = makeDatabase(serverConfig.databaseUrl)
+  const mediaSecret = resolveMediaSecret()
   const app = express()
 
   app.set('trust proxy', 'loopback')
@@ -81,6 +106,23 @@ function runWorker(): void {
   app.use('/api/v1', authRoutes(db, { sendCode }))
   app.use('/api/v1', teamRoutes(db))
   app.use('/api/v1', statsRoutes(db))
+  app.use(
+    '/api/v1',
+    mediaRoutes(db, {
+      mediaRoot: serverConfig.mediaDir,
+      mediaSecret,
+      publicUrl: serverConfig.publicUrl
+    })
+  )
+
+  // What the reverse proxy's auth check calls. Not under /api/v1: it is not a
+  // public endpoint, and the proxy is the only thing that should ever reach it.
+  app.use(mediaAuthRoute(mediaSecret))
+
+  // Development only; the reverse proxy serves these bytes in production.
+  if (serverConfig.serveMediaLocally) {
+    app.use(devMediaRoutes(serverConfig.mediaDir, mediaSecret))
+  }
 
   app.use(notFoundHandler)
   app.use(errorHandler)

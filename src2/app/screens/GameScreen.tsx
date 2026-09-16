@@ -14,17 +14,17 @@ import type {
   GameDetail,
   GameStationClient,
   Highlight,
+  Playback,
   VideoSummary
 } from '../../common/api'
 import { lstrings } from '../locales/strings'
+import { attachHls } from '../player/attachHls'
 import { cacheStyles, useTheme } from '../theme/ThemeContext'
 import type { Theme } from '../theme/types'
 
 export interface GameScreenProps {
   client: GameStationClient
   gameId: string
-  /** Where this server serves HLS from, e.g. `https://tube2.…/media`. */
-  mediaBaseUrl: string
 }
 
 /** Wide enough for the highlight list to sit beside the video instead of under it. */
@@ -40,7 +40,7 @@ type Tab = 'watch' | 'boxScore'
  * stays mounted while the list scrolls next to it.
  */
 export function GameScreen(props: GameScreenProps): React.ReactElement {
-  const { client, gameId, mediaBaseUrl } = props
+  const { client, gameId } = props
   const theme = useTheme()
   const styles = getStyles(theme)
   const { width } = useWindowDimensions()
@@ -52,6 +52,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   const [highlights, setHighlights] = useState<Highlight[]>([])
   const [withheld, setWithheld] = useState<string | null>(null)
   const [batting, setBatting] = useState<BattingRow[] | undefined>(undefined)
+  const [playback, setPlayback] = useState<Playback | undefined>(undefined)
   const [activeEventId, setActiveEventId] = useState<string | undefined>()
   const [error, setError] = useState<string | undefined>(undefined)
   const playerRef = useRef<HTMLVideoElement | null>(null)
@@ -91,6 +92,25 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     }
   }, [client, video])
 
+  // The app never builds a media URL: the server knows where the video is and
+  // checks membership while it looks, so asking is the only way to find out.
+  useEffect(() => {
+    if (video == null) return
+    let live = true
+    setPlayback(undefined)
+    client
+      .playback(video.id)
+      .then(found => {
+        if (live) setPlayback(found)
+      })
+      .catch(() => {
+        if (live) setPlayback(undefined)
+      })
+    return () => {
+      live = false
+    }
+  }, [client, video])
+
   // Fetched when the tab is first opened, not with the game: most people come
   // here to watch, and the box score is a second query against every play.
   useEffect(() => {
@@ -108,6 +128,13 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       live = false
     }
   }, [batting, client, gameId, tab])
+
+  const playbackUrl = playback?.url ?? null
+  useEffect(() => {
+    const element = playerRef.current
+    if (element == null || playbackUrl == null) return
+    return attachHls(element, playbackUrl)
+  }, [playbackUrl])
 
   const jumpTo = (highlight: Highlight): void => {
     setActiveEventId(highlight.eventId)
@@ -177,6 +204,12 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       <View style={styles.player}>
         {video == null ? (
           <Text style={styles.message}>{lstrings.game_no_video}</Text>
+        ) : playback == null ? (
+          <ActivityIndicator color={theme.primaryTextColor} />
+        ) : playback.url == null ? (
+          // The row says there is a video and its files are not there. Saying
+          // so beats a player that shows black and never explains itself.
+          <Text style={styles.message}>{lstrings.game_video_unavailable}</Text>
         ) : (
           // Web only for now. A raw video element is right here: react-native-web
           // renders to the DOM, and the browser's own player is what gives us
@@ -186,7 +219,6 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
             style={{ width: '100%', height: '100%', backgroundColor: '#000' }}
             controls
             playsInline
-            src={`${mediaBaseUrl}/${video.id}/master.m3u8`}
           />
         )}
       </View>
