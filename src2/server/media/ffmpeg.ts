@@ -1,5 +1,10 @@
+import { open, readFile, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+
 import { execFile } from 'child_process'
 import { promisify } from 'util'
+
+import { codecsAttribute, codecsFromInit } from './codecString'
 
 const run = promisify(execFile)
 
@@ -54,13 +59,16 @@ export async function ffmpegEncoders(path: string): Promise<Set<string>> {
 
 export interface RemuxOptions {
   input: string
-  /** Directory the playlist and segments are written into. */
+  /** Directory the playlist and the video file are written into. */
   outDir: string
-  /** Name of the playlist, without a directory. */
-  playlistName?: string
   /** Seconds per segment. Shorter seeks faster and costs more requests. */
   segmentSeconds?: number
 }
+
+/** What the remux writes, and what everything downstream expects to find. */
+export const MASTER_PLAYLIST = 'master.m3u8'
+export const MEDIA_PLAYLIST = 'video.m3u8'
+export const VIDEO_FILE = 'video.mp4'
 
 /**
  * The arguments that turn a recording into HLS without re-encoding it.
@@ -68,17 +76,19 @@ export interface RemuxOptions {
  * - `-c copy` is the whole point: no transcode, ever.
  * - `-tag:v hvc1` makes HEVC play in Safari and on Apple hardware. Without it
  *   the track is tagged `hev1` and Safari refuses it.
- * - fMP4 segments, so one file format covers HEVC and H.264 alike.
- * - `-hls_flags temp_file` writes each segment aside and renames it, so a
- *   viewer never fetches a half-written segment during a live stream.
+ * - fMP4, so one file format covers HEVC and H.264 alike.
+ * - `single_file` writes **one** fragmented MP4 with a byte-range playlist,
+ *   the shape PeerTube already uses. It is what lets a video in the Space
+ *   need one presigned URL instead of one per segment, and it is what lets a
+ *   still be taken by seeking inside a single file.
+ *
+ * `temp_file` is deliberately absent. It is for live, where a viewer must not
+ * fetch a half-written segment — and combined with `single_file` it writes the
+ * *temporary* name into the playlist, leaving every entry pointing at a
+ * `video.mp4.tmp` that is renamed away the moment the remux finishes.
  */
 export function remuxToHlsArgs(options: RemuxOptions): string[] {
-  const {
-    input,
-    outDir,
-    playlistName = 'master.m3u8',
-    segmentSeconds = 6
-  } = options
+  const { input, outDir, segmentSeconds = 6 } = options
   return [
     '-hide_banner',
     '-loglevel',
@@ -98,12 +108,12 @@ export function remuxToHlsArgs(options: RemuxOptions): string[] {
     '-hls_segment_type',
     'fmp4',
     '-hls_flags',
-    'temp_file+independent_segments',
-    '-hls_fmp4_init_filename',
-    'init.mp4',
+    'single_file+independent_segments',
     '-hls_segment_filename',
-    `${outDir}/segment%05d.m4s`,
-    `${outDir}/${playlistName}`
+    `${outDir}/${VIDEO_FILE}`,
+    '-master_pl_name',
+    MASTER_PLAYLIST,
+    `${outDir}/${MEDIA_PLAYLIST}`
   ]
 }
 
@@ -112,6 +122,50 @@ export async function remuxToHls(
   options: RemuxOptions
 ): Promise<void> {
   await run(ffmpegPath, remuxToHlsArgs(options), { maxBuffer: 1 << 22 })
+  await addCodecsToMaster(options.outDir)
+}
+
+/**
+ * Puts the real `CODECS` into the master playlist.
+ *
+ * FFmpeg writes BANDWIDTH and RESOLUTION but no CODECS when it is only copying
+ * streams, because it never parses the extradata it passes through. Safari
+ * decides whether to attempt an HEVC stream from that attribute, so the value
+ * is read out of the file itself and inserted into the line FFmpeg wrote,
+ * leaving its own measurements alone.
+ */
+export async function addCodecsToMaster(outDir: string): Promise<void> {
+  const masterPath = join(outDir, MASTER_PLAYLIST)
+  const [master, head] = await Promise.all([
+    readFile(masterPath, 'utf8'),
+    readInitBytes(join(outDir, VIDEO_FILE))
+  ])
+
+  const codecs = codecsAttribute(codecsFromInit(head))
+  if (codecs === '') return
+
+  const updated = master.replace(
+    /^#EXT-X-STREAM-INF:(?!.*CODECS=)(.*)$/m,
+    (line, attributes: string) =>
+      `#EXT-X-STREAM-INF:${attributes},CODECS="${codecs}"`
+  )
+  if (updated !== master) await writeFile(masterPath, updated)
+}
+
+/**
+ * The start of the file, which is where the init segment is in fMP4 — enough
+ * to hold the `moov` any remux of ours produces, without reading a file that
+ * may be gigabytes.
+ */
+async function readInitBytes(path: string): Promise<Buffer> {
+  const handle = await open(path, 'r')
+  try {
+    const buffer = Buffer.alloc(64 * 1024)
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0)
+    return buffer.subarray(0, bytesRead)
+  } finally {
+    await handle.close()
+  }
 }
 
 export interface ProbedStream {
