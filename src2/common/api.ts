@@ -88,7 +88,9 @@ export const asHighlight = asObject({
   startOffsetSec: asNumber,
   playOffsetSec: asNumber,
   eventType: asNullable(asString),
-  isScoringPlay: asBoolean
+  isScoringPlay: asBoolean,
+  /** One frame of the video at the moment of the play. */
+  stillUrl: asString
 })
 export type Highlight = ReturnType<typeof asHighlight>
 

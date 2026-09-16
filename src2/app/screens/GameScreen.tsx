@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import {
   ActivityIndicator,
+  Image,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -265,6 +266,13 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
               jumpTo(highlight)
             }}
           >
+            <Image
+              // One frame of the play. It may not be cut yet the first time a
+              // game is opened, in which case nothing is drawn and the row is
+              // otherwise unchanged.
+              source={{ uri: highlight.stillUrl }}
+              style={styles.still}
+            />
             <Text style={styles.timecode}>
               {timecode(highlight.startOffsetSec)}
             </Text>
@@ -500,6 +508,12 @@ const getStyles = cacheStyles((theme: Theme) =>
       paddingVertical: theme.rem(0.5)
     },
     highlightActive: { backgroundColor: theme.highlightRowActiveBackground },
+    still: {
+      aspectRatio: 16 / 9,
+      backgroundColor: theme.videoBackgroundColor,
+      borderRadius: theme.rem(0.2),
+      width: theme.rem(5)
+    },
     timecode: {
       color: theme.clearButtonColor,
       fontFamily: theme.semiBoldTextFont,
