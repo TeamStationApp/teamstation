@@ -106,6 +106,37 @@ export function verifyMediaPath(
   return { ok: true, media }
 }
 
+/**
+ * A token for a URL the API itself serves, rather than one the proxy serves.
+ *
+ * A `<video>` element cannot send an Authorization header, so the playlists
+ * the API serves out of the Space carry their permission in the query string.
+ * Same key, same expiry, different shape: `<expires>.<signature>`.
+ */
+export function signQueryToken(
+  secret: string,
+  subject: string,
+  nowMs: number = Date.now(),
+  ttlSec: number = MEDIA_TOKEN_TTL_SEC
+): string {
+  const expires = Math.floor(nowMs / 1000) + ttlSec
+  return `${expires}.${signature(secret, expires, subject)}`
+}
+
+export function verifyQueryToken(
+  secret: string,
+  subject: string,
+  token: unknown,
+  nowMs: number = Date.now()
+): boolean {
+  if (typeof token !== 'string') return false
+  const dot = token.indexOf('.')
+  if (dot <= 0) return false
+  const expires = Number(token.slice(0, dot))
+  if (!Number.isInteger(expires) || expires * 1000 <= nowMs) return false
+  return matches(signature(secret, expires, subject), token.slice(dot + 1))
+}
+
 function signature(secret: string, expires: number, dir: string): string {
   return createHmac('sha256', secret)
     .update(`${expires}/${dir}`)
