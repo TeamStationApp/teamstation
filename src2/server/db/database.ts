@@ -93,6 +93,19 @@ export interface TeamsTable {
   updated_at: Timestamp
 }
 
+/**
+ * Belonging to a season without being on a team in it. A season member sees
+ * every team in the season; being on a team is separate and stronger.
+ */
+export interface SeasonMembersTable {
+  id: string
+  user_id: string
+  season_id: string
+  role: Generated<'spectator' | 'member'>
+  source: Generated<'peertube' | 'import' | 'manual'>
+  joined_at: Timestamp
+}
+
 export interface SeasonTeamsTable {
   season_id: string
   team_id: string
@@ -327,6 +340,7 @@ export interface Database {
   leagues: LeaguesTable
   memberships: MembershipsTable
   player_season_stats: PlayerSeasonStatsTable
+  season_members: SeasonMembersTable
   season_teams: SeasonTeamsTable
   seasons: SeasonsTable
   system_settings: SystemSettingsTable
