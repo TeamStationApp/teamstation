@@ -1,3 +1,4 @@
+import type { Stats } from 'node:fs'
 import { readdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 
@@ -40,7 +41,7 @@ export async function locateVideoFile(
   }
 
   // PeerTube names its file after the video, like its playlist.
-  const names = await readdir(dir).catch(() => [])
+  const names = await readdir(dir).catch((): string[] => [])
   const fragmented = names.filter(name => name.endsWith('-fragmented.mp4'))
   if (fragmented.length === 1) return join(dir, fragmented[0])
   return undefined
@@ -127,7 +128,7 @@ async function locatePeertube(
 export async function findMaster(
   absoluteDir: string
 ): Promise<string | undefined> {
-  const names = await readdir(absoluteDir).catch(() => [])
+  const names = await readdir(absoluteDir).catch((): string[] => [])
   const masters = names.filter(name => name.endsWith('-master.m3u8'))
   if (masters.length === 1) return masters[0]
   if (masters.length === 0 && names.includes('master.m3u8')) {
@@ -140,9 +141,7 @@ async function exists(path: string): Promise<boolean> {
   return (await statOrUndefined(path)) != null
 }
 
-async function statOrUndefined(
-  path: string
-): Promise<Awaited<ReturnType<typeof stat>> | undefined> {
+async function statOrUndefined(path: string): Promise<Stats | undefined> {
   try {
     return await stat(path)
   } catch {

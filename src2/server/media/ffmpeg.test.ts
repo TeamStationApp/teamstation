@@ -12,6 +12,7 @@ import {
   ffmpegEncoders,
   probeFfmpeg,
   probeVideoStream,
+  releaseOf,
   remuxToHls,
   remuxToHlsArgs
 } from './ffmpeg'
@@ -58,6 +59,17 @@ describe('ffmpeg contract', function () {
       serverConfig.ffmpegVersion
     )
     expect(build.version).equals(serverConfig.ffmpegVersion)
+  })
+
+  it('reads the upstream release out of any build string', function () {
+    // The static build the server runs, and what a distribution reports.
+    expect(releaseOf('n9.0.1-30-g9258bacca5-20260915')).equals('9.0.1')
+    expect(releaseOf('9.0.1')).equals('9.0.1')
+    expect(releaseOf('n9.0')).equals('9.0')
+    expect(releaseOf('6.1.1-3ubuntu5')).equals('6.1.1')
+    // Nothing recognisable is passed through, so the comparison still fails
+    // rather than quietly matching.
+    expect(releaseOf('not-a-version')).equals('not-a-version')
   })
 
   it('refuses a build that is not the pinned one', async function () {
