@@ -64,6 +64,33 @@ export const asServerConfig = asObject({
     }
   ),
 
+  /**
+   * Where sign-in codes are sent from. Empty means nothing is sent, and the
+   * code is only written to the log — which is fine in development and is a
+   * locked door in production, since 34 of the migrated accounts have no
+   * password and a code is their only way in.
+   */
+  smtp: asOptional(
+    asObject({
+      host: asOptional(asString, ''),
+      port: asOptional(asNumber, 587),
+      secure: asOptional(asBoolean, false),
+      user: asOptional(asString, ''),
+      password: asOptional(asString, ''),
+      fromAddress: asOptional(asString, ''),
+      fromName: asOptional(asString, 'GameStation')
+    }),
+    {
+      host: '',
+      port: 587,
+      secure: false,
+      user: '',
+      password: '',
+      fromAddress: '',
+      fromName: 'GameStation'
+    }
+  ),
+
   /** Signing key for session tokens. Generated on first run if left empty. */
   sessionSecret: asOptional(asString, ''),
 
@@ -90,6 +117,7 @@ export const asServerConfig = asObject({
   logRequests: asOptional(asBoolean, true)
 })
 export type ServerConfig = ReturnType<typeof asServerConfig>
+export type SmtpSettings = ServerConfig['smtp']
 
 export const serverConfig: ServerConfig = makeConfig(
   asServerConfig,

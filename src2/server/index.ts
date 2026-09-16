@@ -5,6 +5,7 @@ import { availableParallelism } from 'node:os'
 import express from 'express'
 
 import { makeDatabase } from './db/database'
+import { mailConfigured, sendSignInCode } from './email/sendMail'
 import type { MediaContext } from './media/mediaContext'
 import { withAudit } from './middleware/withAudit'
 import { withActor } from './middleware/withAuth'
@@ -42,13 +43,28 @@ function resolveMediaSecret(): string {
 }
 
 /**
- * Delivers a sign-in code. There is no SMTP yet — M4 copies PeerTube's
- * settings — so for now it logs the code and says plainly that it did, rather
- * than pretending to have sent mail.
+ * Delivers a sign-in code.
+ *
+ * With no relay configured it logs the code and says so plainly, rather than
+ * pretending to have sent mail. With one, a failure is **thrown**: the caller
+ * answers 202 either way so that asking cannot reveal who has an account, but
+ * a send that failed must show up in the log rather than leaving somebody
+ * waiting for a message that was never going to arrive.
  */
 async function sendCode(email: string, code: string): Promise<void> {
-  console.log(`[no mail configured] sign-in code for ${email}: ${code}`)
-  await Promise.resolve()
+  if (!mailConfigured(serverConfig.smtp)) {
+    console.log(`[no mail configured] sign-in code for ${email}: ${code}`)
+    return
+  }
+  try {
+    const sent = await sendSignInCode(serverConfig.smtp, email, code)
+    console.log(
+      `sign-in code sent to ${email}: ${sent.accepted} accepted, id ${sent.messageId}`
+    )
+  } catch (error) {
+    // Logged loudly and swallowed: the reply must look the same either way.
+    console.error(`FAILED to send a sign-in code to ${email}: ${String(error)}`)
+  }
 }
 
 /**
