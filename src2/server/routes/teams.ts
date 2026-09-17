@@ -2,6 +2,7 @@ import { Router } from 'express'
 import type { Kysely } from 'kysely'
 
 import { notFound, unauthorized } from '../../common/errors'
+import { shortNames } from '../../common/names'
 import { canSeeGame, canSeeTeam, visibleScopes } from '../access'
 import type { Database } from '../db/database'
 import { computeHighlights } from '../highlights'
@@ -330,6 +331,8 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
         .select([
           'memberships.user_id as userId',
           'users.display_name as displayName',
+          'users.first_name as firstName',
+          'users.last_name as lastName',
           'users.avatar_path as avatarPath',
           'memberships.jersey as jersey',
           'memberships.positions as positions',
@@ -342,10 +345,21 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
         .orderBy('users.display_name')
         .execute()
 
+      // First name, last initial, worked out across the whole roster so two
+      // children called Jensen do not both come out `Jensen P`.
+      const names = shortNames(
+        rows.map(row => ({
+          id: row.userId,
+          firstName: row.firstName,
+          lastName: row.lastName,
+          displayName: row.displayName
+        }))
+      )
+
       res.json(
         rows.map(row => ({
           userId: row.userId,
-          displayName: row.displayName,
+          shortName: names.get(row.userId) ?? row.displayName,
           avatarUrl: imageUrl(media.space, row.avatarPath),
           jersey: row.jersey,
           positions: row.positions,
@@ -387,7 +401,9 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
           'event_players.team_id as teamId',
           'events.event_type as eventType',
           'events.rbi as rbi',
-          'users.display_name as displayName'
+          'users.display_name as displayName',
+          'users.first_name as firstName',
+          'users.last_name as lastName'
         ])
         .where('event_players.team_id', '=', teamId)
         .where('event_players.role', '=', 'batter')
@@ -395,7 +411,14 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
         query = query.where('games.season_id', '=', seasonId)
       const rows = await query.execute()
 
-      const names = new Map(rows.map(row => [row.userId, row.displayName]))
+      const names = shortNames(
+        rows.map(row => ({
+          id: row.userId,
+          firstName: row.firstName,
+          lastName: row.lastName,
+          displayName: row.displayName
+        }))
+      )
       const lines = battingLines(
         rows.map(row => ({
           batterUserId: row.userId,
@@ -408,7 +431,7 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
       res.json(
         lines.map(line => ({
           ...line,
-          displayName: names.get(line.userId) ?? 'Unknown',
+          shortName: names.get(line.userId) ?? 'Unknown',
           rates: battingRates(line)
         }))
       )
@@ -449,13 +472,22 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
           'event_players.team_id as teamId',
           'events.event_type as eventType',
           'events.rbi as rbi',
-          'users.display_name as displayName'
+          'users.display_name as displayName',
+          'users.first_name as firstName',
+          'users.last_name as lastName'
         ])
         .where('events.game_id', '=', gameId)
         .where('event_players.role', '=', 'batter')
         .execute()
 
-      const names = new Map(rows.map(row => [row.userId, row.displayName]))
+      const names = shortNames(
+        rows.map(row => ({
+          id: row.userId,
+          firstName: row.firstName,
+          lastName: row.lastName,
+          displayName: row.displayName
+        }))
+      )
       const lines = battingLines(
         rows.map(row => ({
           batterUserId: row.userId,
@@ -468,7 +500,7 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
       res.json(
         lines.map(line => ({
           ...line,
-          displayName: names.get(line.userId) ?? 'Unknown',
+          shortName: names.get(line.userId) ?? 'Unknown',
           rates: battingRates(line)
         }))
       )

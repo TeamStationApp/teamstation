@@ -198,7 +198,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                 <View key={person.userId}>
                   {index > 0 && <View style={styles.divider} />}
                   <ListRow
-                    title={person.displayName}
+                    title={person.shortName}
                     subtitle={
                       person.positions.length > 0
                         ? person.positions.join(' · ')
@@ -206,7 +206,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                           ? 'Player'
                           : 'Coach'
                     }
-                    emblem={initialsOf(person.displayName)}
+                    emblem={initialsOf(person.shortName)}
                     emblemUri={person.avatarUrl}
                     emblemShape="circle"
                     badgeLabel={
@@ -299,7 +299,7 @@ function BattingTable(props: { rows: BattingRow[] }): React.ReactElement {
       {sorted.map(row => (
         <View key={row.userId} style={styles.tableRow}>
           <Text style={styles.cellName} numberOfLines={1}>
-            {row.displayName ?? 'Unknown'}
+            {row.shortName ?? 'Unknown'}
           </Text>
           <Text style={styles.cell}>{row.pa}</Text>
           <Text style={styles.cell}>{row.ab}</Text>

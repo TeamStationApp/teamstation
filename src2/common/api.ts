@@ -121,7 +121,8 @@ const asRates = asObject({
 
 export const asBattingRow = asObject({
   userId: asString,
-  displayName: asOptional(asString),
+  /** First name, last initial. Never the whole name. */
+  shortName: asOptional(asString),
   teamId: asNullable(asString),
   pa: asNumber,
   ab: asNumber,
@@ -140,7 +141,12 @@ export type BattingRow = ReturnType<typeof asBattingRow>
 
 export const asRosterEntry = asObject({
   userId: asString,
-  displayName: asString,
+  /**
+   * First name, last initial. The field is named for what it is so a full
+   * name cannot be shipped here by accident — the compiler visits every call
+   * site, where a reviewer might not.
+   */
+  shortName: asString,
   avatarUrl: asOptional(asNullable(asString), null),
   jersey: asNullable(asString),
   positions: asArray(asString),
