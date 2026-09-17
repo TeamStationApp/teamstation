@@ -20,6 +20,7 @@ import type {
 import { PillTabs, Scoreboard, Screen, VideoPoster } from '../components'
 import { highlightColumnsFor } from '../layout/grid'
 import { lstrings } from '../locales/strings'
+import { sameMoment } from '../player/angleSwitch'
 import { attachHls } from '../player/attachHls'
 import { cacheStyles, useTheme } from '../theme/ThemeContext'
 import type { Theme } from '../theme/types'
@@ -31,6 +32,19 @@ export interface GameScreenProps {
 }
 
 type Tab = 'watch' | 'boxScore'
+
+/**
+ * What a video is called on the picker.
+ *
+ * Never its file name. `2026-05-16 Hawks vs Bay Stars raw` is a file on a
+ * disk, not a thing a parent would say. What matters to somebody choosing is
+ * whether they are about to see one view or several.
+ */
+function angleName(video: VideoSummary): string {
+  return video.numCameras > 1
+    ? lstrings.video_multi_angle
+    : lstrings.video_primary
+}
 
 /** How long a chosen highlight's full account stays under the video. */
 const DESCRIPTION_SECONDS = 90
@@ -150,6 +164,32 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     if (element == null || playbackUrl == null) return
     return attachHls(element, playbackUrl)
   }, [playbackUrl])
+
+  /**
+   * The other recording, from the same moment, still playing.
+   *
+   * Not a copy of `currentTime`: the two recordings do not have to have
+   * started at the same instant, so the position is converted through wall
+   * clock. The restore waits for `loadedmetadata` because a seek issued
+   * before the manifest has loaded is silently ignored by some browsers.
+   */
+  const switchAngle = (next: VideoSummary): void => {
+    const player = playerRef.current
+    const current = video
+    if (player == null || current == null || next.id === current.id) {
+      setVideo(next)
+      return
+    }
+    const target = sameMoment(current, next, player.currentTime)
+    const wasPlaying = player.paused === false
+    setVideo(next)
+    const restore = (): void => {
+      player.removeEventListener('loadedmetadata', restore)
+      player.currentTime = target
+      if (wasPlaying) player.play().catch(() => undefined)
+    }
+    player.addEventListener('loadedmetadata', restore)
+  }
 
   const jumpTo = (highlight: Highlight): void => {
     setActiveEventId(highlight.eventId)
@@ -276,13 +316,13 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
                 item.id === video?.id ? styles.tabActive : undefined
               ]}
               onPress={() => {
-                setVideo(item)
+                switchAngle(item)
               }}
             >
               <Text style={styles.tabText}>
                 {item.status === 'ready'
-                  ? item.title
-                  : `${item.title} ${lstrings.game_video_gone_suffix}`}
+                  ? angleName(item)
+                  : `${angleName(item)} ${lstrings.game_video_gone_suffix}`}
               </Text>
             </Pressable>
           ))}

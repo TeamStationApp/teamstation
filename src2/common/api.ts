@@ -77,11 +77,18 @@ export type GameSummary = ReturnType<typeof asGameSummary>
 
 export const asVideoSummary = asObject({
   id: asString,
+  /**
+   * How many cameras the recording holds. One unless something said otherwise.
+   * A count, not a type: a game's videos are otherwise independent.
+   */
+  numCameras: asOptional(asNumber, 1),
   kind: asString,
   title: asString,
   status: asString,
   storage: asString,
   startAt: asNullable(asString),
+  /** This recording's own clock correction, for switching angle in step. */
+  syncOffsetSec: asOptional(asNumber, 0),
   durationSec: asNullable(asNumber),
   width: asNullable(asNumber),
   height: asNullable(asNumber),

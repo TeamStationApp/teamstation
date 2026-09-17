@@ -52,6 +52,8 @@ export const enUs = {
   // One game
   game_videos: 'Videos',
   game_highlights: 'Highlights',
+  video_primary: 'Primary',
+  video_multi_angle: 'Multi-angle',
   videos_count_one: '%s video',
   videos_count_many: '%s videos',
   game_box_score: 'Box score',
