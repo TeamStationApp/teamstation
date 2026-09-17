@@ -389,16 +389,20 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   if (tab === 'watch') {
     return (
       <View style={styles.screen}>
-        <Screen wide scroll={false} contentStyle={styles.fixed}>
+        {/*
+          A plain View, not a `Screen`: `Screen` fills whatever it is given,
+          and two of them in a column each took half the height — which
+          squeezed the 16:9 player into a strip across the top. This one is
+          sized by its contents, and the list below takes what is left.
+        */}
+        <View style={styles.fixed}>
           {scoreboard}
           {tabs}
           {player}
           {description}
-        </Screen>
+        </View>
         <ScrollView style={styles.scroller}>
-          <Screen wide scroll={false}>
-            {highlightList}
-          </Screen>
+          <View style={styles.scrolled}>{highlightList}</View>
         </ScrollView>
       </View>
     )
@@ -570,10 +574,16 @@ const getStyles = cacheStyles((theme: Theme) =>
     // squeezed the player, which clipped the video to its top third.
     fixed: {
       flexShrink: 0,
+      paddingHorizontal: theme.rem(theme.spaceLgRem * 0.8),
+      paddingTop: theme.rem(theme.spaceLgRem),
       paddingBottom: theme.rem(theme.spaceSmRem),
       gap: theme.rem(theme.spaceMdRem)
     },
     scroller: { flex: 1 },
+    scrolled: {
+      paddingHorizontal: theme.rem(theme.spaceLgRem * 0.8),
+      paddingBottom: theme.rem(theme.spaceLgRem)
+    },
     hero: {
       backgroundColor: theme.cardBackgroundColor,
       borderRadius: theme.rem(theme.radiusRem),
