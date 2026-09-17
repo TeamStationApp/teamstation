@@ -67,7 +67,12 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       .then(found => {
         if (!live) return
         setGame(found)
-        setVideo(found.videos[0])
+        // A video whose file has gone is still listed — it is part of the
+        // game's record and saying so is better than pretending it never
+        // existed — but it is never the one opened by default.
+        setVideo(
+          found.videos.find(item => item.status === 'ready') ?? found.videos[0]
+        )
       })
       .catch(() => {
         if (live) setError(lstrings.common_not_found)
@@ -227,7 +232,11 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
                 setVideo(item)
               }}
             >
-              <Text style={styles.tabText}>{item.title}</Text>
+              <Text style={styles.tabText}>
+                {item.status === 'ready'
+                  ? item.title
+                  : `${item.title} ${lstrings.game_video_gone_suffix}`}
+              </Text>
             </Pressable>
           ))}
         </View>
