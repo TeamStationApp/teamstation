@@ -135,7 +135,7 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
                 {index > 0 && <View style={styles.divider} />}
                 <ListRow
                   title={team.name}
-                  subtitle={team.shortName ?? undefined}
+                  subtitle={subtitleFor(team)}
                   emblem={initialsOf(team.name)}
                   emblemUri={team.logoUrl}
                   onPress={() => {
@@ -190,6 +190,20 @@ function mostRecentlyPlayed(games: SeasonGame[]): SeasonGame | undefined {
     .filter(game => game.awayScore != null && game.startAt != null)
     .sort((a, b) => (a.startAt ?? '').localeCompare(b.startAt ?? ''))
   return played[played.length - 1]
+}
+
+/** `NPLL Spring 2026 · 12–3`, or whichever half of that we know. */
+function subtitleFor(team: TeamSummary): string | undefined {
+  const parts: string[] = []
+  if (team.record?.seasonName != null) parts.push(team.record.seasonName)
+  else if (team.shortName != null) parts.push(team.shortName)
+  if (team.record != null) {
+    const { w, l, t } = team.record
+    // An en dash: it is a record, not a range of numbers, and the hyphen is
+    // visibly too short beside the numerals at this weight.
+    parts.push(t > 0 ? `${w}–${l}–${t}` : `${w}–${l}`)
+  }
+  return parts.length === 0 ? undefined : parts.join(' · ')
 }
 
 const getStyles = cacheStyles((theme: Theme) => ({

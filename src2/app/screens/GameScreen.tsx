@@ -196,6 +196,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     )
   }
 
+  const line = game.linescore
   const scoreboard = (
     <View style={styles.hero}>
       <Scoreboard
@@ -206,6 +207,18 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         status={gameStatusLine(game)}
         winner={winnerOf(game)}
       />
+      {line != null && (
+        // Runs, hits and errors. The inning-by-inning grid belongs on a page
+        // of its own; a card has room for the summary and not for both.
+        <View style={styles.linescore}>
+          <Text style={styles.lineText}>
+            {`${game.awayTeamName}  ${line.away.r}R · ${line.away.h}H · ${line.away.e}E`}
+          </Text>
+          <Text style={styles.lineText}>
+            {`${game.homeTeamName}  ${line.home.r}R · ${line.home.h}H · ${line.home.e}E`}
+          </Text>
+        </View>
+      )}
     </View>
   )
 
@@ -520,6 +533,18 @@ const getStyles = cacheStyles((theme: Theme) =>
       borderWidth: 1,
       borderColor: theme.defaultBorderColor,
       overflow: 'hidden'
+    },
+    linescore: {
+      borderTopWidth: 1,
+      borderTopColor: theme.defaultBorderColor,
+      paddingHorizontal: theme.rem(theme.spaceMdRem),
+      paddingVertical: theme.rem(theme.spaceSmRem),
+      gap: theme.rem(0.125)
+    },
+    lineText: {
+      color: theme.secondaryTextColor,
+      fontFamily: theme.semiBoldTextFont,
+      fontSize: theme.rem(0.8125)
     },
     description: {
       backgroundColor: theme.highlightRowBackground,

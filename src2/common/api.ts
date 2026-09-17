@@ -33,7 +33,26 @@ export const asTeamSummary = asObject({
    * Signed and short-lived. The app never builds one: only the server knows
    * where a picture lives and who may see it.
    */
-  logoUrl: asOptional(asNullable(asString), null)
+  logoUrl: asOptional(asNullable(asString), null),
+  /**
+   * The team's record in its most recent season, counted from the plays.
+   *
+   * Per season, never across all time: seasons overlap, so a child on a spring
+   * team and an all-stars team at once would have one combined record that
+   * means nothing. Null for a team that has not played — `0–0` is a claim
+   * about games that were played, and there were none.
+   */
+  record: asOptional(
+    asNullable(
+      asObject({
+        w: asNumber,
+        l: asNumber,
+        t: asNumber,
+        seasonName: asNullable(asString)
+      })
+    ),
+    null
+  )
 })
 export type TeamSummary = ReturnType<typeof asTeamSummary>
 
@@ -70,6 +89,14 @@ export const asVideoSummary = asObject({
 })
 export type VideoSummary = ReturnType<typeof asVideoSummary>
 
+const asLineScoreSide = asObject({
+  /** Runs in each inning, first inning first. */
+  runs: asArray(asNumber),
+  r: asNumber,
+  h: asNumber,
+  e: asNumber
+})
+
 export const asGameDetail = asObject({
   id: asString,
   homeTeamId: asString,
@@ -84,6 +111,22 @@ export const asGameDetail = asObject({
   awayScore: asNullable(asNumber),
   ingestStatus: asString,
   ingestMessage: asNullable(asString),
+  /**
+   * Runs, hits and errors per side, counted from the plays.
+   *
+   * The runs come from the same shared counter the final score does, so the
+   * two cannot disagree. An error is charged to the side that made it, which
+   * is the fielding side.
+   */
+  linescore: asOptional(
+    asNullable(
+      asObject({
+        away: asLineScoreSide,
+        home: asLineScoreSide
+      })
+    ),
+    null
+  ),
   videos: asArray(asVideoSummary)
 })
 export type GameDetail = ReturnType<typeof asGameDetail>
