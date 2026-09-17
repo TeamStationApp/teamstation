@@ -101,14 +101,61 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
               .orderBy('teams.name')
               .execute()
 
+      // A record is per season, counted from the plays — never copied from an
+      // import, whose own figures are a check and not a source. The most recent
+      // season is the one a team page shows.
+      const records =
+        teams.length === 0
+          ? []
+          : await db
+              .selectFrom('team_season_records')
+              .leftJoin(
+                'seasons',
+                'seasons.id',
+                'team_season_records.season_id'
+              )
+              .select([
+                'team_season_records.team_id as teamId',
+                'team_season_records.w as w',
+                'team_season_records.l as l',
+                'team_season_records.t as t',
+                'seasons.name as seasonName',
+                'seasons.year as seasonYear'
+              ])
+              .where(
+                'team_season_records.team_id',
+                'in',
+                teams.map(team => team.id)
+              )
+              .execute()
+      const newest = new Map<string, (typeof records)[number]>()
+      for (const row of records) {
+        const held = newest.get(row.teamId)
+        if (held == null || (row.seasonYear ?? 0) > (held.seasonYear ?? 0)) {
+          newest.set(row.teamId, row)
+        }
+      }
+
       res.json(
-        teams.map(team => ({
-          id: team.id,
-          name: team.name,
-          shortName: team.short_name,
-          logoPath: team.logo_path,
-          logoUrl: imageUrl(media.space, team.logo_path)
-        }))
+        teams.map(team => {
+          const record = newest.get(team.id)
+          return {
+            id: team.id,
+            name: team.name,
+            shortName: team.short_name,
+            logoPath: team.logo_path,
+            logoUrl: imageUrl(media.space, team.logo_path),
+            record:
+              record == null || record.w + record.l + record.t === 0
+                ? null
+                : {
+                    w: record.w,
+                    l: record.l,
+                    t: record.t,
+                    seasonName: record.seasonName
+                  }
+          }
+        })
       )
     })
   )
@@ -234,6 +281,7 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
         awayScore: game.away_score,
         ingestStatus: game.ingest_status,
         ingestMessage: game.ingest_message,
+        linescore: game.linescore,
         videos: videos.map(video => ({
           id: video.id,
           kind: video.kind,
