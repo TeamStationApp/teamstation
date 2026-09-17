@@ -106,6 +106,13 @@ public final class ProgramEncoder: @unchecked Sendable {
   private var audioQueueDrops = 0
   /// Sound the placement accepted that never reached the queue.
   private var audioPlacedNotQueued = 0
+  /// Where the last buffer the writer accepted ends, and how many it took. Reset with the part, so
+  /// this is about the part being finished and not something an earlier one left behind.
+  private var acceptedAudioEnd = -1.0
+  private var acceptedAudioCount = 0
+  /// How much sound the writer has taken, summed as it takes it. The track is laid contiguously, so
+  /// this is where it ends — and it is what the hold at Stop has to fill from.
+  private var writtenAudioEnd = 0.0
   /// The finish's own numbers, kept so what the file turned out to hold can be added to them.
   private var lastProgramFinishDetail = ""
 
@@ -362,6 +369,9 @@ public final class ProgramEncoder: @unchecked Sendable {
     self.hostZero = nil
     self.baseAudioTime = nil
     self.nextAudioTime = nil
+    self.acceptedAudioEnd = -1
+    self.acceptedAudioCount = 0
+    self.writtenAudioEnd = 0
     self.lastTime = .negativeInfinity
     self.writtenFrames = 0
     self.soundPlacement.reset()
@@ -707,13 +717,55 @@ public final class ProgramEncoder: @unchecked Sendable {
       // the queue and never reached the file. The writer's own idea of where the sound had got to
       // went on advancing, which is why a master could report its sound past its picture and still
       // export short.
-      if !audioInput.append(buffer) {
-        lock.lock()
+      let accepted = audioInput.append(buffer)
+      let end = CMTimeAdd(
+        CMSampleBufferGetPresentationTimeStamp(buffer),
+        CMSampleBufferGetDuration(buffer)
+      )
+      lock.lock()
+      if accepted {
+        if end.isNumeric { acceptedAudioEnd = max(acceptedAudioEnd, end.seconds) }
+        acceptedAudioCount += 1
+        let span = CMSampleBufferGetDuration(buffer)
+        if span.isNumeric, span > .zero { writtenAudioEnd += span.seconds }
+      } else {
         audioAppendFailures += 1
-        lock.unlock()
       }
+      lock.unlock()
       drained += 1
     }
+  }
+
+  /// What the finished part's sound track actually holds: how many samples, and the span they cover.
+  ///
+  /// Read with `AVAssetReader` rather than trusted from the track's `timeRange`, because the whole
+  /// question is whether the samples handed to the writer are in the file.
+  private static func soundSamples(of url: URL) async -> (count: Int, first: Double, last: Double) {
+    let asset = AVURLAsset(url: url)
+    guard let track = try? await asset.loadTracks(withMediaType: .audio).first,
+          let reader = try? AVAssetReader(asset: asset)
+    else { return (-1, -1, -1) }
+    let output = AVAssetReaderTrackOutput(track: track, outputSettings: nil)
+    output.alwaysCopiesSampleData = false
+    guard reader.canAdd(output) else { return (-1, -1, -1) }
+    reader.add(output)
+    reader.startReading()
+    var count = 0
+    var first = -1.0
+    var last = -1.0
+    while let sample = output.copyNextSampleBuffer() {
+      let n = CMSampleBufferGetNumSamples(sample)
+      guard n > 0 else { continue }
+      let pts = CMSampleBufferGetPresentationTimeStamp(sample)
+      let duration = CMSampleBufferGetDuration(sample)
+      if pts.isNumeric {
+        if first < 0 { first = pts.seconds }
+        let end = duration.isNumeric ? CMTimeAdd(pts, duration) : pts
+        last = max(last, end.seconds)
+      }
+      count += 1
+    }
+    return (count, first, last)
   }
 
   /// Where each track of a finished part ends, -1 when there is no such track.
@@ -742,6 +794,12 @@ public final class ProgramEncoder: @unchecked Sendable {
     lock.lock()
     defer { lock.unlock() }
     return audioQueueDrops
+  }
+
+  private func accepted() -> (end: Double, count: Int) {
+    lock.lock()
+    defer { lock.unlock() }
+    return (acceptedAudioEnd, acceptedAudioCount)
   }
 
   private func placedNotQueued() -> Int {
@@ -794,9 +852,9 @@ public final class ProgramEncoder: @unchecked Sendable {
       await drainAudioUntilEmpty(seconds: 10)
       let soundAfter = trackEnds().sound
       lastProgramFinishDetail = String(
-        format: "target %.3f picture %.3f sound %.3f->%.3f queued %d->%d refused %d dropped %d lost %d",
+        format: "target %.3f picture %.3f sound %.3f->%.3f queued %d->%d refused %d dropped %d lost %d accepted %d to %.3f",
         target, pictureAt, soundAt, soundAfter, queuedBefore, pendingAudioCount(), appendFailures(),
-        queueDrops(), placedNotQueued()
+        queueDrops(), placedNotQueued(), accepted().count, accepted().end
       )
       telemetry.recordProgramFinish(lastProgramFinishDetail)
     }
@@ -835,8 +893,14 @@ public final class ProgramEncoder: @unchecked Sendable {
     if let url = pending.url {
       (picture, sound) = await Self.writtenSeconds(of: url)
     }
+    var samples = (count: -1, first: -1.0, last: -1.0)
+    if let url = pending.url {
+      samples = await Self.soundSamples(of: url)
+    }
     telemetry.recordProgramFinish(
-      lastProgramFinishDetail + String(format: " ends picture %.3f sound %.3f", picture, sound)
+      lastProgramFinishDetail
+        + String(format: " ends picture %.3f sound %.3f", picture, sound)
+        + String(format: " | in file %d samples %.3f..%.3f", samples.count, samples.first, samples.last)
     )
     if picture > 0, sound > 0, sound < picture - 0.25 {
       telemetry.recordError(
@@ -1000,6 +1064,9 @@ public final class ProgramEncoder: @unchecked Sendable {
     soundPlacement.reset()
     contentOffsetSeconds = nil
     nextAudioTime = nil
+    acceptedAudioEnd = -1
+    acceptedAudioCount = 0
+    writtenAudioEnd = 0
     lock.unlock()
 
     telemetry.recordEncodeSessionChange(delta: -1)
@@ -1059,7 +1126,17 @@ public final class ProgramEncoder: @unchecked Sendable {
     // to the take's length by itself, so there is nothing to add to it — and when the fill returned
     // early on that, it took the sound's fill with it and the master ended with its sound short of
     // its picture.
-    defer { appendHoldSilence(until: CMTime(seconds: max(0, end), preferredTimescale: 600)) }
+    // To the take's length or the last picture, whichever is later. The compositor can carry the
+    // picture a frame or two past the window the stop asks for, and sound that stops at the window
+    // is still short of the picture beside it.
+    defer {
+      lock.lock()
+      let pictureEnd = lastTime.isNumeric && lastTime >= .zero ? CMTimeAdd(lastTime, frame).seconds : 0
+      lock.unlock()
+      appendHoldSilence(
+        until: CMTime(seconds: max(0, max(end, pictureEnd)), preferredTimescale: 600)
+      )
+    }
 
     guard end - start.seconds > 0.0005 else { return }
     guard let black = programBlackBuffer() else { return }
@@ -1112,13 +1189,16 @@ public final class ProgramEncoder: @unchecked Sendable {
         )
       )
     else { return }
+    // From where the sound actually reaches, not from where placement has got to. The two are not
+    // the same: placement is wall-anchored and steps over the chunks the mix never delivered, while
+    // the track is laid contiguously, so its end is the sound that arrived and nothing more. Filling
+    // from placement, the hold reads itself as already past the take and adds nothing — measured at
+    // 0.25% of every take's length, which is nine seconds of a one-hour master.
     lock.lock()
-    let existing = nextAudioTime
+    let written = writtenAudioEnd
     lock.unlock()
-    var cursor: CMTime = .zero
-    if let existing, existing.isNumeric, existing > .zero {
-      cursor = existing
-    }
+    var cursor = CMTime(seconds: max(0, written), preferredTimescale: CMTimeScale(AudioMixer.sampleRate))
+    if cursor < .zero { cursor = .zero }
     guard cursor < end else { return }
     let zeros = [Int16](repeating: 0, count: frames * channels)
     while cursor < end {
