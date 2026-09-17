@@ -35,7 +35,7 @@ type TabId = 'videos' | 'schedule' | 'roster' | 'stats'
 const TABS = [
   { id: 'videos' as const, label: 'Videos' },
   { id: 'schedule' as const, label: 'Schedule' },
-  { id: 'roster' as const, label: 'Roster' },
+  { id: 'roster' as const, label: 'Team' },
   { id: 'stats' as const, label: 'Stats' }
 ]
 
@@ -188,41 +188,56 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
       )}
 
       {!loading && tab === 'roster' && (
-        <View style={styles.section}>
-          <SectionHeader title="Roster" note={`${roster.length} people`} />
-          {roster.length === 0 ? (
+        <>
+          {roster.length === 0 && (
             <Empty text="Nobody has been added to this team yet." />
-          ) : (
-            <Card>
-              {roster.map((person, index) => (
-                <View key={person.userId}>
-                  {index > 0 && <View style={styles.divider} />}
-                  <ListRow
-                    title={person.shortName}
-                    subtitle={
-                      person.positions.length > 0
-                        ? person.positions.join(' · ')
-                        : person.isPlayer
-                          ? 'Player'
-                          : 'Coach'
-                    }
-                    emblem={initialsOf(person.shortName)}
-                    emblemUri={person.avatarUrl}
-                    emblemShape="circle"
-                    badgeLabel={
-                      person.isPlayer
-                        ? person.jersey == null
-                          ? undefined
-                          : `#${person.jersey}`
-                        : 'Staff'
-                    }
-                    badgeTone="neutral"
-                  />
-                </View>
-              ))}
-            </Card>
           )}
-        </View>
+          {/*
+            Coaches, then players, then the people who can see the team
+            without being on it — however they were given the right, on the
+            team, its season or its league. The server decides who is in which
+            group; this only draws them in order.
+          */}
+          {(
+            [
+              ['coach', 'Coaches'],
+              ['player', 'Players'],
+              ['follower', 'Followers']
+            ] as const
+          ).map(([group, heading]) => {
+            const people = roster.filter(person => person.group === group)
+            if (people.length === 0) return null
+            return (
+              <View key={group} style={styles.section}>
+                <SectionHeader title={heading} note={String(people.length)} />
+                <Card>
+                  {people.map((person, index) => (
+                    <View key={person.userId}>
+                      {index > 0 && <View style={styles.divider} />}
+                      <ListRow
+                        title={person.shortName}
+                        subtitle={
+                          person.positions.length > 0
+                            ? person.positions.join(' · ')
+                            : undefined
+                        }
+                        emblem={initialsOf(person.shortName)}
+                        emblemUri={person.avatarUrl}
+                        emblemShape="circle"
+                        badgeLabel={
+                          person.jersey == null
+                            ? undefined
+                            : `#${person.jersey}`
+                        }
+                        badgeTone="neutral"
+                      />
+                    </View>
+                  ))}
+                </Card>
+              </View>
+            )
+          })}
+        </>
       )}
 
       {!loading && tab === 'stats' && (

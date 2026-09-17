@@ -151,7 +151,9 @@ export const asRosterEntry = asObject({
   jersey: asNullable(asString),
   positions: asArray(asString),
   isPlayer: asBoolean,
-  role: asString
+  role: asString,
+  /** `coach`, `player` or `follower` — the section they are listed under. */
+  group: asOptional(asString, 'player')
 })
 export type RosterEntry = ReturnType<typeof asRosterEntry>
 
