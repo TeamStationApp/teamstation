@@ -49,7 +49,10 @@ export function parseRoute(path: string, search = ''): Route {
     case 'videos':
       return { name: 'videos', when: whenOf(query.get('when'), 'past') }
     case 'schedule':
-      return { name: 'schedule', when: whenOf(query.get('when'), 'upcoming') }
+      // Past, like the videos list: both open on what has happened, and a
+      // schedule address that said `upcoming` put the filter back every time
+      // somebody followed one.
+      return { name: 'schedule', when: whenOf(query.get('when'), 'past') }
     case 'account':
       return { name: 'account' }
     case 'sign-in':
@@ -87,7 +90,7 @@ export function routePath(route: Route): string {
     case 'videos':
       return route.when === 'past' ? '/videos' : `/videos?when=${route.when}`
     case 'schedule':
-      return route.when === 'upcoming'
+      return route.when === 'past'
         ? '/schedule'
         : `/schedule?when=${route.when}`
     case 'account':

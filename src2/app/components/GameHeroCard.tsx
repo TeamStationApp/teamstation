@@ -27,8 +27,8 @@ export interface GameHeroCardProps {
   compact?: boolean
   /** Runs, hits and errors per side, when they have been counted. */
   linescore?: {
-    away: { r: number; h: number; e: number }
-    home: { r: number; h: number; e: number }
+    away: { r: number; h: number | null; e: number | null }
+    home: { r: number; h: number | null; e: number | null }
   } | null
   /** `VEEH FIELD · WED, MAY 13`, above the score. */
   meta?: string
@@ -75,12 +75,8 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
   const line =
     linescore == null ? null : (
       <View style={styles.line}>
-        <Text style={styles.lineText}>
-          {`${awayName}  ${linescore.away.r}R · ${linescore.away.h}H · ${linescore.away.e}E`}
-        </Text>
-        <Text style={styles.lineText}>
-          {`${homeName}  ${linescore.home.r}R · ${linescore.home.h}H · ${linescore.home.e}E`}
-        </Text>
+        <Text style={styles.lineText}>{lineFor(awayName, linescore.away)}</Text>
+        <Text style={styles.lineText}>{lineFor(homeName, linescore.home)}</Text>
       </View>
     )
 
@@ -140,6 +136,23 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
       {line}
     </View>
   )
+}
+
+/**
+ * `Hawks  4R · 7H · 1E`, leaving out what the plays cannot say.
+ *
+ * A game with only a final score on it has no hits *recorded*, which is not
+ * the same as no hits. Printing `0H` there would be a claim about the game
+ * rather than about our records.
+ */
+function lineFor(
+  name: string,
+  side: { r: number; h: number | null; e: number | null }
+): string {
+  const parts = [`${side.r}R`]
+  if (side.h != null) parts.push(`${side.h}H`)
+  if (side.e != null) parts.push(`${side.e}E`)
+  return `${name}  ${parts.join(' · ')}`
 }
 
 function ScoreLine(props: {

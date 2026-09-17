@@ -25,6 +25,23 @@ export function shortDate(iso: string | null): string {
   })
 }
 
+/**
+ * `May 20`, without the weekday.
+ *
+ * On a phone the row has about 140px for its third line, and `Sun, Sep 13 ·
+ * 12:30 PM · 3 videos` needs 212. The weekday is the part a reader can most
+ * afford to lose: the date is right there beside it.
+ */
+export function shortDateNoWeekday(iso: string | null): string {
+  if (iso == null) return 'Date to be confirmed'
+  const when = new Date(iso)
+  if (Number.isNaN(when.getTime())) return 'Date to be confirmed'
+  return when.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric'
+  })
+}
+
 /** `10:00 AM`, or nothing when the game has no time. */
 export function shortTime(iso: string | null): string {
   if (iso == null) return ''

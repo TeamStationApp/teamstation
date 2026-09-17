@@ -104,8 +104,9 @@ const asLineScoreSide = asObject({
   /** Runs in each inning, first inning first. */
   runs: asArray(asNumber),
   r: asNumber,
-  h: asNumber,
-  e: asNumber
+  /** Null when the plays cannot say — which is not the same as none. */
+  h: asNullable(asNumber),
+  e: asNullable(asNumber)
 })
 
 export const asGameDetail = asObject({

@@ -42,6 +42,7 @@ describe('addresses', function () {
       { name: 'home' },
       { name: 'videos', when: 'past' },
       { name: 'videos', when: 'all' },
+      { name: 'schedule', when: 'past' },
       { name: 'schedule', when: 'upcoming' },
       { name: 'account' },
       { name: 'season', seasonId: 'sea_1' },
@@ -55,6 +56,24 @@ describe('addresses', function () {
   it('falls back to the home screen rather than a blank page', function () {
     expect(parseRoute('/nonsense')).deep.equals({ name: 'home' })
     expect(parseRoute('/teams')).deep.equals({ name: 'home' })
+  })
+
+  it('opens a schedule on what has happened, like the videos list', function () {
+    expect(parseRoute('/schedule')).deep.equals({
+      name: 'schedule',
+      when: 'past'
+    })
+  })
+
+  it('keeps a filter that was asked for', function () {
+    expect(parseRoute('/schedule', 'when=upcoming')).deep.equals({
+      name: 'schedule',
+      when: 'upcoming'
+    })
+    expect(parseRoute('/videos', 'when=all')).deep.equals({
+      name: 'videos',
+      when: 'all'
+    })
   })
 
   it('ignores a filter it does not recognise', function () {

@@ -62,7 +62,7 @@ export function GameRow(props: GameRowProps): React.ReactElement {
         uri={posterUrl}
         time={length}
         showPlay={posterUrl != null}
-        width={narrow ? 4.25 : 7}
+        width={narrow ? 5 : 7}
       />
       <View style={styles.text}>
         <Text style={styles.team} numberOfLines={1}>
