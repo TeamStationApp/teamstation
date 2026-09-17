@@ -17,7 +17,7 @@ import type {
   Playback,
   VideoSummary
 } from '../../common/api'
-import { PillTabs, Scoreboard, Screen, VideoPoster } from '../components'
+import { GameHeroCard, PillTabs, Screen, VideoPoster } from '../components'
 import { highlightColumnsFor } from '../layout/grid'
 import { lstrings } from '../locales/strings'
 import { sameMoment } from '../player/angleSwitch'
@@ -40,6 +40,11 @@ type Tab = 'watch' | 'boxScore'
  * disk, not a thing a parent would say. What matters to somebody choosing is
  * whether they are about to see one view or several.
  */
+/** The frame the card shows: the video being watched, else the first one. */
+function posterFor(game: GameDetail): string | null {
+  return game.videos[0]?.posterUrl ?? null
+}
+
 function angleName(video: VideoSummary): string {
   return video.numCameras > 1
     ? lstrings.video_multi_angle
@@ -239,30 +244,20 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     )
   }
 
-  const line = game.linescore
   const scoreboard = (
-    <View style={styles.hero}>
-      <Scoreboard
-        awayName={game.awayTeamName}
-        homeName={game.homeTeamName}
-        awayScore={game.awayScore}
-        homeScore={game.homeScore}
-        status={gameStatusLine(game)}
-        winner={winnerOf(game)}
-      />
-      {line != null && (
-        // Runs, hits and errors. The inning-by-inning grid belongs on a page
-        // of its own; a card has room for the summary and not for both.
-        <View style={styles.linescore}>
-          <Text style={styles.lineText}>
-            {`${game.awayTeamName}  ${line.away.r}R · ${line.away.h}H · ${line.away.e}E`}
-          </Text>
-          <Text style={styles.lineText}>
-            {`${game.homeTeamName}  ${line.home.r}R · ${line.home.h}H · ${line.home.e}E`}
-          </Text>
-        </View>
-      )}
-    </View>
+    <GameHeroCard
+      awayName={game.awayTeamName}
+      homeName={game.homeTeamName}
+      awayScore={game.awayScore}
+      homeScore={game.homeScore}
+      status={gameStatusLine(game)}
+      winner={winnerOf(game)}
+      posterUrl={posterFor(game)}
+      linescore={game.linescore}
+      onPlay={() => {
+        playerRef.current?.play().catch(() => undefined)
+      }}
+    />
   )
 
   const tabs = (

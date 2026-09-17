@@ -92,7 +92,9 @@ export const asVideoSummary = asObject({
   durationSec: asNullable(asNumber),
   width: asNullable(asNumber),
   height: asNullable(asNumber),
-  codecs: asNullable(asString)
+  codecs: asNullable(asString),
+  /** A frame of this video, signed and short-lived. */
+  posterUrl: asOptional(asNullable(asString), null)
 })
 export type VideoSummary = ReturnType<typeof asVideoSummary>
 
