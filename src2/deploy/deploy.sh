@@ -41,7 +41,7 @@ if [ "${GS_DEPLOY_REEXEC:-}" != "1" ]; then
   GS_DEPLOY_REEXEC=1 exec "$SELF_COPY" "$@"
 fi
 
-BRANCH="${GS_DEPLOY_BRANCH:-paul/gameStationDeploy}"
+BRANCH="${GS_DEPLOY_BRANCH:-deploy}"
 ROOT=/srv/gamestation
 REPO="$ROOT/repo"
 VERSIONS="$ROOT/versions"
