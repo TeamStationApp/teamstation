@@ -131,6 +131,13 @@ npm ci --no-audit --fund=false
 npm run build        # tsc  → lib/
 npm run build.web    # esbuild → dist/
 
+# What is running, written where the server can read it. Without this the
+# health endpoint reported a bare `0.1.0` and the only way to tell one deploy
+# from the next was the hash in the app bundle's file name.
+cat > "$TARGET/build.json" <<JSON
+{"version": "$VERSION", "commit": "$SHA", "deployedAt": "$(date -Iseconds)"}
+JSON
+
 # The secrets live once, outside every version, and are symlinked in. A version
 # directory can then be deleted without taking the configuration with it.
 ln -sfn "$ROOT/serverConfig.json" "$TARGET/serverConfig.json"
