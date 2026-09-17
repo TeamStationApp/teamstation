@@ -23,6 +23,24 @@ set -euo pipefail
 #   deploy.sh <ref>        deploy a particular commit or tag
 #   deploy.sh --rollback   go back to the previous version
 
+# Run from a copy, before anything touches the clone.
+#
+# Bash reads a script as it executes it, a chunk at a time, keeping its place by
+# byte offset. This script lives in the repository it is about to hard-reset, so
+# updating the deploy script would rewrite this file underneath the running
+# process and bash would carry on reading at the old offset into new bytes. The
+# first time it mattered, the reset brought in a version that extracted an extra
+# directory, the already-running copy did not have that line, and the deploy
+# failed on a missing file that was sitting right there in the commit.
+#
+# Copying and re-execing costs nothing and makes the running script immutable
+# for the rest of the run.
+SELF_COPY=/tmp/gsDeploy.running.sh
+if [ "${GS_DEPLOY_REEXEC:-}" != "1" ]; then
+  install -m 0755 "$0" "$SELF_COPY"
+  GS_DEPLOY_REEXEC=1 exec "$SELF_COPY" "$@"
+fi
+
 BRANCH="${GS_DEPLOY_BRANCH:-paul/gameStationDeploy}"
 ROOT=/srv/gamestation
 REPO="$ROOT/repo"
