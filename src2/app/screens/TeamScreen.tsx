@@ -44,20 +44,34 @@ export interface TeamScreenProps {
   ) => void
   /** Which section to open on, from the address. */
   initialTab?: string
-  /** Tells the shell which section is showing, so the address can say so. */
-  onTab?: (tab: string) => void
+  /**
+   * Tells the shell which section is showing, so the address can say so.
+   *
+   * `correcting` is set when the screen is answering a `?tab=` it could not
+   * honour: the address said one thing and the screen is showing another, so
+   * the entry is corrected rather than a new one added.
+   */
+  onTab?: (tab: string, correcting?: boolean) => void
 }
 
-type TabId = 'videos' | 'schedule' | 'roster' | 'stats'
+type TabId = 'videos' | 'schedule' | 'team' | 'stats'
 
+/**
+ * The section a `?tab=` names, or the one this screen opens on.
+ *
+ * `roster` is taken as `team` because that is what the pill said when the
+ * address was first written down, and a link somebody sent should not stop
+ * working because the word on the button changed.
+ */
 function tabOf(id: string | undefined): TabId {
+  if (id === 'roster') return 'team'
   return TABS.some(item => item.id === id) ? (id as TabId) : 'videos'
 }
 
 const TABS = [
   { id: 'videos' as const, label: 'Videos' },
   { id: 'schedule' as const, label: 'Schedule' },
-  { id: 'roster' as const, label: 'Team' },
+  { id: 'team' as const, label: 'Team' },
   { id: 'stats' as const, label: 'Stats' }
 ]
 
@@ -87,6 +101,15 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
   const [place, setPlace] = useState<number | undefined>(undefined)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | undefined>(undefined)
+
+  // An address that names a section this screen does not have showed the
+  // default while still claiming the other one. Say what is actually on
+  // screen, correcting the entry rather than adding one.
+  useEffect(() => {
+    if (initialTab != null && initialTab !== tab) onTab?.(tab, true)
+    // Once, against the address the screen opened on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -209,7 +232,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
         </View>
       )}
 
-      {!loading && tab === 'roster' && (
+      {!loading && tab === 'team' && (
         <>
           {roster.length === 0 && (
             <Empty text="Nobody has been added to this team yet." />

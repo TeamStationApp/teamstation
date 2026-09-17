@@ -46,7 +46,7 @@ describe('addresses', function () {
       { name: 'schedule', when: 'upcoming' },
       { name: 'account' },
       { name: 'team', teamId: 'tea_1', tab: 'stats' },
-      { name: 'season', seasonId: 'sea_1', tab: 'standings' },
+      { name: 'season', seasonId: 'sea_1', tab: 'standings', when: 'all' },
       { name: 'league', leagueId: 'lea_1' }
     ]
     for (const route of routes) {
@@ -63,7 +63,16 @@ describe('addresses', function () {
     expect(parseRoute('/seasons/sea_1', '?tab=standings')).deep.equals({
       name: 'season',
       seasonId: 'sea_1',
-      tab: 'standings'
+      tab: 'standings',
+      when: undefined
+    })
+    expect(
+      parseRoute('/seasons/sea_1', '?tab=schedule&when=upcoming')
+    ).deep.equals({
+      name: 'season',
+      seasonId: 'sea_1',
+      tab: 'schedule',
+      when: 'upcoming'
     })
     expect(
       routePath({ name: 'season', seasonId: 'sea_1', tab: 'teams' })

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ActivityIndicator, Image, View } from 'react-native'
+import { ActivityIndicator, Image, Text, View } from 'react-native'
 
 import {
   GameStationClient,
@@ -9,6 +9,7 @@ import {
 } from '../common/api'
 import gsLogo from './assets/gsLogo.png'
 import { AppHeader, AppNav, type NavTabId, useBreakpoint } from './components'
+import { lstrings } from './locales/strings'
 import type { Route, When } from './navigation/routes'
 import {
   currentRoute,
@@ -35,7 +36,7 @@ export interface AppProps {
 
 /** A screen pushed on top of a tab, rather than one of the tabs itself. */
 type Pushed =
-  | { name: 'season'; season: SeasonSummary; tab?: string }
+  | { name: 'season'; season: SeasonSummary; tab?: string; when?: When }
   | { name: 'team'; team: TeamSummary; tab?: string }
   | {
       name: 'game'
@@ -140,7 +141,7 @@ function Shell(props: AppProps): React.ReactElement {
       const seasons = await client.seasons()
       const season = seasons.find(item => item.id === route.seasonId)
       if (live && season != null) {
-        push({ name: 'season', season, tab: route.tab })
+        push({ name: 'season', season, tab: route.tab, when: route.when })
       }
     }
     find().catch(() => undefined)
@@ -201,7 +202,8 @@ function Shell(props: AppProps): React.ReactElement {
     push({ name: 'game', gameId, title, ...options })
   }
   /** A section change on the team or season screen, into the address. */
-  const setTopTab = (next: string): void => {
+  const setTopTab = (next: string, correcting = false): void => {
+    if (correcting) inPlace.current = true
     setStacks(current => {
       const held = current[tab]
       const last = held[held.length - 1]
@@ -237,6 +239,15 @@ function Shell(props: AppProps): React.ReactElement {
             style={styles.bootMark}
           />
           <ActivityIndicator color={theme.secondaryTextColor} />
+          {/*
+            Words, not just a spinner. A screen reader has nothing to say
+            about an `ActivityIndicator`, so the whole page announced itself
+            as empty; `aria-live` means the wait is spoken rather than
+            silently endured.
+          */}
+          <Text accessibilityLiveRegion="polite" style={styles.bootMessage}>
+            {lstrings.common_loading}
+          </Text>
         </View>
       )
     }
@@ -300,6 +311,18 @@ function Shell(props: AppProps): React.ReactElement {
         onOpenTeam={openTeam}
         initialTab={top.tab}
         onTab={setTopTab}
+        initialWhen={top.when}
+        onWhen={next => {
+          setStacks(current => {
+            const held = current[tab]
+            const last = held[held.length - 1]
+            if (last?.name !== 'season' || last.when === next) return current
+            return {
+              ...current,
+              [tab]: [...held.slice(0, -1), { ...last, when: next }]
+            }
+          })
+        }}
       />
     ) : top.name === 'game' ? (
       <GameScreen
@@ -437,7 +460,12 @@ function routeOf(tab: NavTabId, top: Pushed | undefined, when?: When): Route {
       return { name: 'team', teamId: top.team.id, tab: top.tab }
     }
     if (top.name === 'season') {
-      return { name: 'season', seasonId: top.season.id, tab: top.tab }
+      return {
+        name: 'season',
+        seasonId: top.season.id,
+        tab: top.tab,
+        when: top.when
+      }
     }
     if (top.name === 'account') return { name: 'account' }
     return {
@@ -480,6 +508,11 @@ const getStyles = cacheStyles((theme: Theme) => ({
     width: theme.rem(3),
     height: theme.rem(3),
     resizeMode: 'contain'
+  },
+  bootMessage: {
+    color: theme.secondaryTextColor,
+    fontFamily: theme.regularTextFont,
+    fontSize: theme.rem(0.875)
   },
   appRow: {
     flex: 1,

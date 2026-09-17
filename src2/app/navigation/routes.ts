@@ -19,7 +19,7 @@ export type Route =
   | { name: 'schedule'; when: When }
   | { name: 'account' }
   | { name: 'team'; teamId: string; tab?: string }
-  | { name: 'season'; seasonId: string; tab?: string }
+  | { name: 'season'; seasonId: string; tab?: string; when?: When }
   | { name: 'league'; leagueId: string }
   | {
       name: 'game'
@@ -65,7 +65,11 @@ export function parseRoute(path: string, search = ''): Route {
       return {
         name: 'season',
         seasonId: id,
-        tab: query.get('tab') ?? undefined
+        tab: query.get('tab') ?? undefined,
+        when:
+          query.get('when') == null
+            ? undefined
+            : whenOf(query.get('when'), 'past')
       }
     case 'leagues':
       if (id == null) return { name: 'home' }
@@ -103,10 +107,14 @@ export function routePath(route: Route): string {
       return route.tab == null
         ? `/teams/${route.teamId}`
         : `/teams/${route.teamId}?tab=${route.tab}`
-    case 'season':
-      return route.tab == null
+    case 'season': {
+      const bits: string[] = []
+      if (route.tab != null) bits.push(`tab=${route.tab}`)
+      if (route.when != null) bits.push(`when=${route.when}`)
+      return bits.length === 0
         ? `/seasons/${route.seasonId}`
-        : `/seasons/${route.seasonId}?tab=${route.tab}`
+        : `/seasons/${route.seasonId}?${bits.join('&')}`
+    }
     case 'league':
       return `/leagues/${route.leagueId}`
     case 'game': {
