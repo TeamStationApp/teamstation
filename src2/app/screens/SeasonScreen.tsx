@@ -171,7 +171,7 @@ export function SeasonScreen(props: SeasonScreenProps): React.ReactElement {
           setTab(next)
           onTab?.(next)
         }}
-        stretch
+        size="compact"
         accessibilityLabel="Season sections"
       />
 

@@ -189,7 +189,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
           setTab(next)
           onTab?.(next)
         }}
-        stretch
+        size="compact"
         accessibilityLabel="Team sections"
       />
 

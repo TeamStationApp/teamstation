@@ -529,6 +529,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         setTab(next)
         onTab?.(next)
       }}
+      size="compact"
       accessibilityLabel="Game sections"
     />
   )
@@ -566,26 +567,33 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         )}
       </View>
 
+      {/*
+        The same strip as everywhere else, rather than a fourth hand-drawn
+        version of it. This one had square corners, its own colours and a
+        target the size of the pill; as `PillTabs` it takes the one pill size
+        Paul chose, fully rounded, and gets a 48px target and a `tab` role
+        with it.
+      */}
       {game.videos.length > 1 ? (
         <View style={styles.videoPicker}>
-          {game.videos.map(item => (
-            <Pressable
-              key={item.id}
-              style={[
-                styles.tab,
-                item.id === video?.id ? styles.tabActive : undefined
-              ]}
-              onPress={() => {
-                switchAngle(item)
-              }}
-            >
-              <Text style={styles.tabText}>
-                {item.status === 'ready'
-                  ? (pickerNames.get(item.id) ?? angleName(item))
-                  : `${pickerNames.get(item.id) ?? angleName(item)} ${lstrings.game_video_gone_suffix}`}
-              </Text>
-            </Pressable>
-          ))}
+          <PillTabs
+            tabs={game.videos.map(item => {
+              const name = pickerNames.get(item.id) ?? angleName(item)
+              return {
+                id: item.id,
+                label:
+                  item.status === 'ready'
+                    ? name
+                    : `${name} ${lstrings.game_video_gone_suffix}`
+              }
+            })}
+            selected={video?.id ?? ''}
+            onSelect={id => {
+              const item = game.videos.find(one => one.id === id)
+              if (item != null) switchAngle(item)
+            }}
+            accessibilityLabel="Camera angles"
+          />
         </View>
       ) : null}
     </View>
@@ -898,9 +906,8 @@ const getStyles = cacheStyles((theme: Theme) =>
       paddingBottom: theme.rem(0.5)
     },
     videoPicker: {
-      flexDirection: 'row',
-      gap: theme.rem(0.5),
-      padding: theme.rem(0.5)
+      paddingHorizontal: theme.rem(0.5),
+      paddingVertical: theme.rem(0.25)
     },
     // Its height is set from the window; the width follows, so a 16:9 picture
     // is letterboxed inside rather than dictating how tall the box is.
@@ -909,18 +916,6 @@ const getStyles = cacheStyles((theme: Theme) =>
       backgroundColor: theme.videoBackgroundColor,
       alignItems: 'center',
       justifyContent: 'center'
-    },
-    tab: {
-      backgroundColor: theme.inactiveBackgroundColor,
-      borderRadius: theme.rem(0.3),
-      paddingHorizontal: theme.rem(0.75),
-      paddingVertical: theme.rem(0.35)
-    },
-    tabActive: { backgroundColor: theme.primaryButtonColor },
-    tabText: {
-      color: theme.buttonTextColor,
-      fontFamily: theme.regularTextFont,
-      fontSize: theme.rem(0.85)
     },
     heading: {
       color: theme.primaryTextColor,

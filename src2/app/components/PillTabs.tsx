@@ -2,7 +2,6 @@ import React from 'react'
 import { Pressable, ScrollView, Text, View } from 'react-native'
 
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { useBreakpoint } from './useBreakpoint'
 
 export interface PillTab<Id extends string = string> {
   id: Id
@@ -16,19 +15,12 @@ export interface PillTabsProps<Id extends string = string> {
   selected: Id
   onSelect: (id: Id) => void
   /**
-   * `compact` paints a smaller pill. It does **not** shrink the target: the
-   * pressable keeps its height and the pill is drawn inside it.
+   * `compact` is the size, everywhere. It does **not** shrink the target: the
+   * pressable keeps its 48px height and the pill is drawn inside it.
+   *
+   * `regular` is kept only so the difference has a name; nothing uses it.
    */
   size?: 'regular' | 'compact'
-  /**
-   * Share the row out evenly **when the row is a phone's width**. Wider than
-   * that it is ignored and the pills size to their text: four tabs sharing a
-   * 1100px column are 270px slabs, which is not the control Paul approved on
-   * a phone — it is a different one that happens to have the same words on
-   * it. The filter strips never stretch, so this also stops the same
-   * `Past / Upcoming / All` row being drawn two ways on two screens.
-   */
-  stretch?: boolean
   accessibilityLabel?: string
 }
 
@@ -44,21 +36,26 @@ export interface PillTabsProps<Id extends string = string> {
  * It scrolls sideways rather than wrapping or shrinking. Four tabs fit a phone;
  * a fifth would either wrap to a second line that looks like a mistake, or
  * squeeze the labels until they truncate. Scrolling keeps every tab the same
- * size and full-width targets on a desktop, where `stretch` shares the row out
- * instead.
+ * size whatever the window is doing.
+ *
+ * **One size, everywhere.** Paul picked the videos list's filter on
+ * 2026-09-17 and asked for that exact pill on the team and season sections and
+ * on a game's two halves. There was a `stretch` that shared a row out across
+ * the width; nothing uses it now, so it is gone rather than left to be
+ * rediscovered. A row that fills its width is a different control, and having
+ * both was how the season page ended up drawing its sections and its filter
+ * the same shape.
  */
 export function PillTabs<Id extends string = string>(
   props: PillTabsProps<Id>
 ): React.ReactElement {
-  const { tabs, selected, onSelect, size = 'regular' } = props
+  const { tabs, selected, onSelect, size = 'compact' } = props
   const compact = size === 'compact'
-  const narrow = useBreakpoint() === 'phone'
-  const stretch = props.stretch === true && narrow
   const theme = useTheme()
   const styles = getStyles(theme)
 
   const row = (
-    <View style={[styles.row, stretch && styles.rowStretch]}>
+    <View style={styles.row}>
       {tabs.map(tab => {
         const isSelected = tab.id === selected
         return (
@@ -72,7 +69,6 @@ export function PillTabs<Id extends string = string>(
             }}
             style={({ pressed }) => [
               styles.target,
-              stretch && styles.pillStretch,
               pressed && !isSelected && styles.targetPressed
             ]}
           >
@@ -80,7 +76,6 @@ export function PillTabs<Id extends string = string>(
               style={[
                 styles.pill,
                 compact && styles.pillCompact,
-                stretch && styles.pillFill,
                 isSelected ? styles.pillActive : styles.pillIdle
               ]}
             >
@@ -111,10 +106,6 @@ export function PillTabs<Id extends string = string>(
     </View>
   )
 
-  // Stretched, the row already fits by construction, and a ScrollView would
-  // stop it filling the width.
-  if (stretch) return row
-
   return (
     <ScrollView
       horizontal
@@ -136,9 +127,6 @@ const getStyles = cacheStyles((theme: Theme) => ({
     flexDirection: 'row',
     alignItems: 'center',
     gap: theme.rem(theme.spaceSmRem)
-  },
-  rowStretch: {
-    width: '100%'
   },
   // What the finger gets: 48 tall, which the spec asks for so a tab can be hit
   // one-handed while somebody is also holding a scorebook. It is transparent —
@@ -163,12 +151,6 @@ const getStyles = cacheStyles((theme: Theme) => ({
   pillCompact: {
     minHeight: theme.rem(2.25),
     paddingHorizontal: theme.rem(theme.spaceMdRem)
-  },
-  pillStretch: {
-    flex: 1
-  },
-  pillFill: {
-    paddingHorizontal: theme.rem(theme.spaceSmRem)
   },
   pillIdle: {
     backgroundColor: theme.pillBackground
