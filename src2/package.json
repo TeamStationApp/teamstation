@@ -2,7 +2,7 @@
   "name": "gamestation2",
   "version": "0.1.0",
   "private": true,
-  "description": "GameStation 2.0 — video server and app, replacing PeerTube at tube.gamestation.co",
+  "description": "GameStation 2.0 \u2014 video server and app, replacing PeerTube at tube.gamestation.co",
   "engines": {
     "node": ">=24.0.0"
   },
@@ -19,7 +19,8 @@
     "start": "node -r sucrase/register server/index.ts",
     "start.web": "node build.mjs --serve",
     "test": "mocha -r sucrase/register --extension ts --spec '**/*.test.ts' --ignore 'node_modules/**' --ignore 'lib/**'",
-    "typecheck": "tsc -p tsconfig.app.json && tsc -p tsconfig.server.json --noEmit"
+    "typecheck": "tsc -p tsconfig.app.json && tsc -p tsconfig.server.json --noEmit",
+    "merge-team": "node -r sucrase/register server/dev/mergeTeam.ts"
   },
   "dependencies": {
     "bcryptjs": "^3.0.2",

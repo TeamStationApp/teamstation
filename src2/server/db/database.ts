@@ -86,6 +86,8 @@ export interface TeamsTable {
   sport: Generated<string>
   is_managed: Generated<boolean>
   settings: Generated<Json>
+  /** The team this turned out to be, when two rows were one real team. */
+  merged_into: string | null
   logo_path: string | null
   primary_color: string | null
   secondary_color: string | null
