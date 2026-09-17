@@ -11,7 +11,13 @@
  * the important ones is how `Van Der Berg` becomes `VB` on one screen.
  */
 export function initialsOf(name: string): string {
-  const words = name.split(/[\s-]+/).filter(word => word.length > 0)
+  const words = name
+    .split(/[\s-]+/)
+    // A word has to start with a letter or a digit to have an initial.
+    // `Badgers (Ripken)` was coming out `B(`, because a bracket is the first
+    // character of a word as far as a split on spaces is concerned.
+    .map(word => word.replace(/^[^\p{L}\p{N}]+/u, ''))
+    .filter(word => word.length > 0)
   return words
     .slice(0, 2)
     .map(word => word[0]?.toUpperCase() ?? '')

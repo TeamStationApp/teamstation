@@ -23,3 +23,14 @@ describe('initials', function () {
     expect(initialsOf('de la Cruz')).equals('DL')
   })
 })
+
+describe('initials of an awkward name', function () {
+  it('skips a bracket rather than treating it as a letter', function () {
+    expect(initialsOf('Badgers (Ripken)')).equals('BR')
+    expect(initialsOf('Bay Stars (Mize)')).equals('BS')
+  })
+
+  it('manages a name that is all punctuation', function () {
+    expect(initialsOf('--- ---')).equals('')
+  })
+})
