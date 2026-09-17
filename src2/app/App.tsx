@@ -44,6 +44,9 @@ type Pushed =
       tab?: 'watch' | 'boxScore'
       /** Start the video rather than waiting to be asked. */
       autoPlay?: boolean
+      /** Which video, and where in it, from a link to a moment. */
+      videoId?: string
+      at?: number
     }
   | { name: 'account' }
 
@@ -146,9 +149,12 @@ function Shell(props: AppProps): React.ReactElement {
   // landing on `/` and resolving it does not leave a step for Back to find.
   const firstRender = useRef(true)
   useEffect(() => {
+    // Not while signed out: rewriting the address to `/` before the password
+    // field has even been typed into throws away the link that brought them.
+    if (session == null) return
     showRoute(routeOf(tab, top), firstRender.current)
     firstRender.current = false
-  }, [tab, top])
+  }, [session, tab, top])
 
   const goToRoute = useCallback((route: Route): void => {
     const next = tabOf(route)
@@ -242,6 +248,19 @@ function Shell(props: AppProps): React.ReactElement {
         gameId={top.gameId}
         initialTab={top.tab}
         autoPlay={top.autoPlay}
+        initialVideoId={top.videoId}
+        startAtSec={top.at}
+        onMoment={(videoId, atSec) => {
+          setStacks(current => {
+            const held = current[tab]
+            const last = held[held.length - 1]
+            if (last?.name !== 'game') return current
+            return {
+              ...current,
+              [tab]: [...held.slice(0, -1), { ...last, videoId, at: atSec }]
+            }
+          })
+        }}
         onTitle={title => {
           setStacks(current => {
             const held = current[tab]
@@ -326,7 +345,9 @@ function stackFor(route: Route): Partial<Record<NavTabId, Pushed[]>> {
           gameId: route.gameId,
           title: '',
           tab: route.tab,
-          autoPlay: route.at != null
+          autoPlay: route.at != null,
+          videoId: route.videoId,
+          at: route.at
         }
       ]
     }
@@ -361,7 +382,8 @@ function routeOf(tab: NavTabId, top: Pushed | undefined): Route {
       name: 'game',
       gameId: top.gameId,
       tab: top.tab,
-      at: top.autoPlay === true ? undefined : undefined
+      videoId: top.videoId,
+      at: top.at
     }
   }
   if (tab === 'videos') return { name: 'videos', when: 'past' }
