@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Dimensions } from 'react-native'
+import { Dimensions, type ScaledSize } from 'react-native'
 
 /**
  * How wide the window is, in the three sizes the layout actually changes at.
@@ -28,9 +28,12 @@ export function useBreakpoint(): Breakpoint {
   )
 
   useEffect(() => {
-    const subscription = Dimensions.addEventListener('change', ({ window }) => {
-      setBreakpoint(breakpointFor(window.width))
-    })
+    const subscription = Dimensions.addEventListener(
+      'change',
+      ({ window }: { window: ScaledSize }) => {
+        setBreakpoint(breakpointFor(window.width))
+      }
+    )
     return () => {
       subscription.remove()
     }

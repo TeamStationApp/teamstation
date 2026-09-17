@@ -2,6 +2,13 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": true,
+    // The app is bundled by esbuild, so resolve the way a bundler does. This
+    // is not a preference: react-native 0.87 declares its types *only* inside
+    // its `exports` map, which Node10 resolution ignores, so every
+    // `from 'react-native'` was an implicit any. It passed anyway on machines
+    // that happened to have an older react-native in the repository root, and
+    // failed on a fresh clone — src2 reaching outside itself again.
+    "moduleResolution": "bundler",
     // The app runs in a browser, so it gets the DOM as well as the language
     // library. The server config deliberately does not.
     "lib": ["es2023", "dom", "dom.iterable"]
