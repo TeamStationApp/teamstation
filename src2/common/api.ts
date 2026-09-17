@@ -364,11 +364,25 @@ export class GameStationClient {
     if (body !== undefined) headers['content-type'] = 'application/json'
     if (this.token != null) headers.authorization = `Bearer ${this.token}`
 
-    const response = await this.doFetch(`${this.baseUrl}${path}`, {
-      method,
-      headers,
-      body: body === undefined ? undefined : JSON.stringify(body)
-    })
+    // `fetch` rejects with a bare TypeError when the request never leaves the
+    // device — no data, aeroplane mode, a captive portal at the field. Safari
+    // words that "Load failed", Chrome "Failed to fetch", and either one
+    // reaching a parent reads as "the site is broken" when the site is fine.
+    // The distinction is worth keeping: this app is used on a phone at the edge
+    // of a ball field, where no signal is the ordinary case, not the exception.
+    let response: Response
+    try {
+      response = await this.doFetch(`${this.baseUrl}${path}`, {
+        method,
+        headers,
+        body: body === undefined ? undefined : JSON.stringify(body)
+      })
+    } catch (caught: unknown) {
+      throw new HttpError(
+        'offline',
+        'Cannot reach GameStation. Check your connection and try again.'
+      )
+    }
 
     const text = await response.text()
     if (!response.ok) throw errorFrom(response.status, text)
