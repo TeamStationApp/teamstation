@@ -388,9 +388,15 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   }, [chosen])
 
   if (error != null) {
+    // A heading and a reason, not a full stop on its own. A deep link to a
+    // game that has gone is the commonest way to land here, and `Not found.`
+    // centred in an empty screen reads as the app having broken rather than
+    // as an answer. The chevron in the header is the way out, so there is no
+    // button here to duplicate it.
     return (
       <View style={styles.centre}>
-        <Text style={styles.message}>{error}</Text>
+        <Text style={styles.messageHeading}>{error}</Text>
+        <Text style={styles.message}>{lstrings.common_not_found_detail}</Text>
       </View>
     )
   }
@@ -894,10 +900,18 @@ const getStyles = cacheStyles((theme: Theme) =>
       fontSize: theme.rem(0.9),
       padding: theme.rem(0.75)
     },
-    message: {
+    messageHeading: {
       color: theme.primaryTextColor,
+      fontFamily: theme.semiBoldTextFont,
+      fontSize: theme.rem(1.25),
+      fontWeight: '600',
+      textAlign: 'center'
+    },
+    message: {
+      color: theme.secondaryTextColor,
       fontFamily: theme.regularTextFont,
       fontSize: theme.rem(1),
+      maxWidth: theme.rem(22),
       padding: theme.rem(0.75),
       textAlign: 'center'
     }
