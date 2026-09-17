@@ -240,6 +240,12 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       <Text style={styles.heading}>{lstrings.game_highlights}</Text>
       {withheld === 'scoreMismatch' ? (
         <Text style={styles.warning}>{lstrings.game_score_mismatch}</Text>
+      ) : withheld === 'scoredAfterRecording' ? (
+        <Text style={styles.message}>{lstrings.highlights_scored_after}</Text>
+      ) : withheld === 'noPlayTimes' ? (
+        <Text style={styles.message}>{lstrings.highlights_no_play_times}</Text>
+      ) : withheld === 'noVideoStart' ? (
+        <Text style={styles.message}>{lstrings.highlights_no_video_start}</Text>
       ) : highlights.length === 0 ? (
         <Text style={styles.message}>{lstrings.highlights_none}</Text>
       ) : (

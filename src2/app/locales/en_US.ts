@@ -64,6 +64,18 @@ export const enUs = {
   // Highlights
   highlight_jump: 'Jump to this play',
   highlights_none: 'No highlights for this video.',
+  /**
+   * Some games were scored from the recording afterwards, sometimes days
+   * later. The plays are real and the box score is right; the tap times just
+   * say when somebody sat down with the video, so nothing can place them on
+   * it. Said plainly, because an empty list with no reason reads as a fault.
+   */
+  highlights_scored_after:
+    'This game was scored after the video was recorded, so the plays cannot be placed on it. The box score and stats are still complete.',
+  highlights_no_play_times:
+    'This game\u2019s plays have no times recorded, so they cannot be placed on the video.',
+  highlights_no_video_start:
+    'This video has no start time recorded, so plays cannot be placed on it.',
 
   // Box score and stats
   stats_title: 'Stats',

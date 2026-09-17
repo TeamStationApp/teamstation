@@ -290,7 +290,10 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
           )
       }))
 
-      res.json({ withheld: null, highlights: withStills })
+      res.json({
+        withheld: whyEmpty(highlights, events, video),
+        highlights: withStills
+      })
 
       // Answered first, then the frames are cut. The plan has ingest pre-warm
       // these; until a game can be ingested with its video already in place,
@@ -553,4 +556,30 @@ function toIso(value: Date | string | null): string | null {
   return value instanceof Date
     ? value.toISOString()
     : new Date(value).toISOString()
+}
+
+/**
+ * Why a game with plays produced no seek points.
+ *
+ * An empty list with no explanation reads as a broken feature. It usually is
+ * not: a highlight is placed by subtracting the video's start from the moment
+ * the scorekeeper tapped, and some games were scored **from the video
+ * afterwards**, sometimes days later. Those taps are real and their plays,
+ * box score and stats are all perfectly good — the taps simply say when
+ * somebody sat down with the recording, not when the ball was hit. Nothing
+ * can recover the original timing, so the screen should say so plainly rather
+ * than imply the video is missing something.
+ */
+function whyEmpty(
+  highlights: unknown[],
+  events: Array<{ start_time: unknown }>,
+  video: { startAt: unknown; durationSec: number | null }
+): string | null {
+  if (highlights.length > 0) return null
+  if (events.length === 0) return null
+
+  const timed = events.filter(event => event.start_time != null)
+  if (timed.length === 0) return 'noPlayTimes'
+  if (video.startAt == null) return 'noVideoStart'
+  return 'scoredAfterRecording'
 }
