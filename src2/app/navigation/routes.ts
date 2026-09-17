@@ -104,13 +104,20 @@ export function routePath(route: Route): string {
     case 'account':
       return '/account'
     case 'team':
-      return route.tab == null
+      return route.tab == null || route.tab === 'videos'
         ? `/teams/${route.teamId}`
         : `/teams/${route.teamId}?tab=${route.tab}`
     case 'season': {
+      // Only what is not the default, the same rule `/videos` follows. The
+      // season page used to write `?when=past` where the schedule wrote
+      // nothing, which is two answers to one question.
       const bits: string[] = []
-      if (route.tab != null) bits.push(`tab=${route.tab}`)
-      if (route.when != null) bits.push(`when=${route.when}`)
+      if (route.tab != null && route.tab !== 'schedule') {
+        bits.push(`tab=${route.tab}`)
+      }
+      if (route.when != null && route.when !== 'past') {
+        bits.push(`when=${route.when}`)
+      }
       return bits.length === 0
         ? `/seasons/${route.seasonId}`
         : `/seasons/${route.seasonId}?${bits.join('&')}`

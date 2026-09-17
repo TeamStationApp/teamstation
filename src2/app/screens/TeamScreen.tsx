@@ -33,6 +33,7 @@ import {
   shortDateNoWeekday,
   shortTime
 } from './format'
+import { gamesFor } from './whenFilter'
 
 export interface TeamScreenProps {
   client: GameStationClient
@@ -151,7 +152,12 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
   }, [client, team.id])
 
   const withVideo = games.filter(game => game.videoCount > 0)
-  const upcoming = games.filter(game => game.awayScore == null)
+  // The same rule as the schedule and the season page, not a fourth copy of
+  // it. Counting the unscored ones made a February fixture nobody ever scored
+  // one of the games still to play, on both sides' pages — and the list below
+  // sorts it to the bottom as a past game, so the screen disagreed with its
+  // own header.
+  const upcoming = gamesFor(games, 'upcoming')
 
   return (
     <Screen>
