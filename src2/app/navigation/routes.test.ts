@@ -45,12 +45,29 @@ describe('addresses', function () {
       { name: 'schedule', when: 'past' },
       { name: 'schedule', when: 'upcoming' },
       { name: 'account' },
-      { name: 'season', seasonId: 'sea_1' },
+      { name: 'team', teamId: 'tea_1', tab: 'stats' },
+      { name: 'season', seasonId: 'sea_1', tab: 'standings' },
       { name: 'league', leagueId: 'lea_1' }
     ]
     for (const route of routes) {
       expect(roundTrip(route), routePath(route)).deep.equals(route)
     }
+  })
+
+  it('keeps the section a team or season link asked for', function () {
+    expect(parseRoute('/teams/tea_1', '?tab=stats')).deep.equals({
+      name: 'team',
+      teamId: 'tea_1',
+      tab: 'stats'
+    })
+    expect(parseRoute('/seasons/sea_1', '?tab=standings')).deep.equals({
+      name: 'season',
+      seasonId: 'sea_1',
+      tab: 'standings'
+    })
+    expect(
+      routePath({ name: 'season', seasonId: 'sea_1', tab: 'teams' })
+    ).equals('/seasons/sea_1?tab=teams')
   })
 
   it('falls back to the home screen rather than a blank page', function () {

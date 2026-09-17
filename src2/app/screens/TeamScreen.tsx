@@ -42,9 +42,17 @@ export interface TeamScreenProps {
     title: string,
     options?: { tab?: 'watch' | 'boxScore'; autoPlay?: boolean }
   ) => void
+  /** Which section to open on, from the address. */
+  initialTab?: string
+  /** Tells the shell which section is showing, so the address can say so. */
+  onTab?: (tab: string) => void
 }
 
 type TabId = 'videos' | 'schedule' | 'roster' | 'stats'
+
+function tabOf(id: string | undefined): TabId {
+  return TABS.some(item => item.id === id) ? (id as TabId) : 'videos'
+}
 
 const TABS = [
   { id: 'videos' as const, label: 'Videos' },
@@ -66,11 +74,11 @@ const TABS = [
  * instant, which is what makes a tab strip feel like one screen.
  */
 export function TeamScreen(props: TeamScreenProps): React.ReactElement {
-  const { client, team, onOpenGame } = props
+  const { client, team, onOpenGame, initialTab, onTab } = props
   const theme = useTheme()
   const styles = getStyles(theme)
 
-  const [tab, setTab] = useState<TabId>('videos')
+  const [tab, setTab] = useState<TabId>(tabOf(initialTab))
   const [games, setGames] = useState<GameSummary[]>([])
   const [roster, setRoster] = useState<RosterEntry[]>([])
   const [batting, setBatting] = useState<BattingRow[]>([])
@@ -148,7 +156,10 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
       <PillTabs
         tabs={TABS}
         selected={tab}
-        onSelect={setTab}
+        onSelect={next => {
+          setTab(next)
+          onTab?.(next)
+        }}
         stretch
         accessibilityLabel="Team sections"
       />
