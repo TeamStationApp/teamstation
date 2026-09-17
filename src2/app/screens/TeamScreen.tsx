@@ -225,9 +225,11 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                         emblemUri={person.avatarUrl}
                         emblemShape="circle"
                         badgeLabel={
-                          person.jersey == null
+                          // An empty string is not a jersey number. Without
+                          // this the badge reads as a bare `#`.
+                          person.jersey == null || person.jersey.trim() === ''
                             ? undefined
-                            : `#${person.jersey}`
+                            : `#${person.jersey.trim()}`
                         }
                         badgeTone="neutral"
                       />
