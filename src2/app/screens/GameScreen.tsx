@@ -40,11 +40,6 @@ type Tab = 'watch' | 'boxScore'
  * disk, not a thing a parent would say. What matters to somebody choosing is
  * whether they are about to see one view or several.
  */
-/** The frame the card shows: the video being watched, else the first one. */
-function posterFor(game: GameDetail): string | null {
-  return game.videos[0]?.posterUrl ?? null
-}
-
 function angleName(video: VideoSummary): string {
   return video.numCameras > 1
     ? lstrings.video_multi_angle
@@ -252,7 +247,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       homeScore={game.homeScore}
       status={gameStatusLine(game)}
       winner={winnerOf(game)}
-      posterUrl={posterFor(game)}
+      compact
       linescore={game.linescore}
       onPlay={() => {
         playerRef.current?.play().catch(() => undefined)
