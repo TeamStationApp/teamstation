@@ -796,6 +796,13 @@ public final class ProgramEncoder: @unchecked Sendable {
     return audioQueueDrops
   }
 
+  /// The floor the hold fills from: the sound the writer has taken, summed as it took it.
+  private func writtenSoundEnd() -> Double {
+    lock.lock()
+    defer { lock.unlock() }
+    return writtenAudioEnd
+  }
+
   private func accepted() -> (end: Double, count: Int) {
     lock.lock()
     defer { lock.unlock() }
@@ -852,9 +859,9 @@ public final class ProgramEncoder: @unchecked Sendable {
       await drainAudioUntilEmpty(seconds: 10)
       let soundAfter = trackEnds().sound
       lastProgramFinishDetail = String(
-        format: "target %.3f picture %.3f sound %.3f->%.3f queued %d->%d refused %d dropped %d lost %d accepted %d to %.3f",
+        format: "target %.3f picture %.3f sound %.3f->%.3f queued %d->%d refused %d dropped %d lost %d accepted %d to %.3f written %.3f",
         target, pictureAt, soundAt, soundAfter, queuedBefore, pendingAudioCount(), appendFailures(),
-        queueDrops(), placedNotQueued(), accepted().count, accepted().end
+        queueDrops(), placedNotQueued(), accepted().count, accepted().end, writtenSoundEnd()
       )
       telemetry.recordProgramFinish(lastProgramFinishDetail)
     }
