@@ -129,7 +129,14 @@ function runWorker(): void {
     res.json(openApiDocument(VERSION))
   })
   app.use('/api/v1', healthRoutes(db, VERSION))
-  app.use('/api/v1', authRoutes(db, { sendCode, space: serverConfig.space }))
+  app.use(
+    '/api/v1',
+    authRoutes(db, {
+      sendCode,
+      space: serverConfig.space,
+      publicUrl: serverConfig.publicUrl
+    })
+  )
   app.use('/api/v1', seasonRoutes(db))
   app.use('/api/v1', teamRoutes(db, mediaContext))
   app.use('/api/v1', statsRoutes(db))

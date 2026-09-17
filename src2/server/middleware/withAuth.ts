@@ -3,7 +3,7 @@ import type { Kysely } from 'kysely'
 
 import { forbidden, unauthorized } from '../../common/errors'
 import { type Actor, actorForToken } from '../auth/sessions'
-import { bearerToken } from '../auth/tokens'
+import { sessionToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 
 declare module 'express-serve-static-core' {
@@ -20,7 +20,10 @@ declare module 'express-serve-static-core' {
  */
 export function withActor(db: Kysely<Database>): RequestHandler {
   return (req, res, next) => {
-    const token = bearerToken(req.header('authorization'))
+    const token = sessionToken(
+      req.header('authorization'),
+      req.header('cookie')
+    )
     if (token == null) {
       next()
       return
