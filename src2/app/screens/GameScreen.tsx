@@ -46,6 +46,35 @@ function angleName(video: VideoSummary): string {
     : lstrings.video_primary
 }
 
+/**
+ * Names for the picker, numbered only where they would otherwise repeat.
+ *
+ * Until a recording has been looked at it counts as one camera, so a game with
+ * three of them offered `Primary`, `Primary` and `Primary` — three buttons
+ * that all claim to be the same thing. Numbering them says what is true: we
+ * have three and do not yet know what they are.
+ */
+function angleNames(videos: VideoSummary[]): Map<string, string> {
+  const counts = new Map<string, number>()
+  for (const video of videos) {
+    const name = angleName(video)
+    counts.set(name, (counts.get(name) ?? 0) + 1)
+  }
+  const seen = new Map<string, number>()
+  const out = new Map<string, string>()
+  for (const video of videos) {
+    const name = angleName(video)
+    if ((counts.get(name) ?? 0) < 2) {
+      out.set(video.id, name)
+      continue
+    }
+    const nth = (seen.get(name) ?? 0) + 1
+    seen.set(name, nth)
+    out.set(video.id, `${name} ${nth}`)
+  }
+  return out
+}
+
 /** How long a chosen highlight's full account stays under the video. */
 const DESCRIPTION_SECONDS = 90
 
@@ -239,6 +268,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     )
   }
 
+  const pickerNames = angleNames(game.videos)
   const scoreboard = (
     <GameHeroCard
       awayName={game.awayTeamName}
@@ -314,8 +344,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
             >
               <Text style={styles.tabText}>
                 {item.status === 'ready'
-                  ? angleName(item)
-                  : `${angleName(item)} ${lstrings.game_video_gone_suffix}`}
+                  ? (pickerNames.get(item.id) ?? angleName(item))
+                  : `${pickerNames.get(item.id) ?? angleName(item)} ${lstrings.game_video_gone_suffix}`}
               </Text>
             </Pressable>
           ))}
