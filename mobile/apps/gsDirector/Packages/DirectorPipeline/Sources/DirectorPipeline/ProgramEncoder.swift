@@ -102,10 +102,17 @@ public final class ProgramEncoder: @unchecked Sendable {
   /// Sound buffers the writer refused. Counted because losing them silently is indistinguishable
   /// from never having recorded them.
   private var audioAppendFailures = 0
+  /// Sound dropped because the queue was full. Silent loss until it is counted.
+  private var audioQueueDrops = 0
+  /// Sound the placement accepted that never reached the queue.
+  private var audioPlacedNotQueued = 0
+  /// The finish's own numbers, kept so what the file turned out to hold can be added to them.
+  private var lastProgramFinishDetail = ""
 
   /// Eight seconds of the mix's 20 ms chunks: at Stop the recording's mix hands over the five it
   /// was still waiting on at once.
   private static let maximumPendingAudio = 400
+
 
   /// A buffer's duration, derived from its sample count when the source did not set one.
   private static func audioDuration(of buffer: CMSampleBuffer) -> CMTime {
@@ -587,11 +594,13 @@ public final class ProgramEncoder: @unchecked Sendable {
       return
     }
     let start = CMTime(seconds: seconds, preferredTimescale: CMTimeScale(AudioMixer.sampleRate))
-    nextAudioTime = CMTimeAdd(start, duration)
     lock.unlock()
 
     let shifted = start
-    guard shifted.isNumeric, shifted >= .zero else { return }
+    guard shifted.isNumeric, shifted >= .zero else {
+      lock.lock(); audioPlacedNotQueued += 1; lock.unlock()
+      return
+    }
     var timing = CMSampleTimingInfo(
       duration: duration,
       presentationTimeStamp: shifted,
@@ -604,12 +613,25 @@ public final class ProgramEncoder: @unchecked Sendable {
       sampleTimingEntryCount: 1,
       sampleTimingArray: &timing,
       sampleBufferOut: &retimed
-    ) == noErr, let retimed else { return }
+    ) == noErr, let retimed else {
+      lock.lock(); audioPlacedNotQueued += 1; lock.unlock()
+      return
+    }
 
     lock.lock()
+    // Only now: the sound is in the queue, so this is where the track has reached. Advancing it at
+    // placement counted sound that the two returns above can still throw away, and the hold at Stop
+    // reads it as the floor — so an overstated floor told the hold there was nothing left to fill
+    // and the master ended with its sound short of its picture.
+    nextAudioTime = CMTimeAdd(start, duration)
     pendingAudio.append(retimed)
     if pendingAudio.count > Self.maximumPendingAudio {
-      pendingAudio.removeFirst(pendingAudio.count - Self.maximumPendingAudio)
+      // Dropping the oldest keeps the queue bounded, but the sound in them is gone and the
+      // placement has already counted it, so `nextAudioTime` walks ahead of what the file holds
+      // and the hold at Stop then believes there is nothing left to fill.
+      let lost = pendingAudio.count - Self.maximumPendingAudio
+      audioQueueDrops += lost
+      pendingAudio.removeFirst(lost)
     }
     lock.unlock()
 
@@ -694,10 +716,38 @@ public final class ProgramEncoder: @unchecked Sendable {
     }
   }
 
+  /// Where each track of a finished part ends, -1 when there is no such track.
+  ///
+  /// The end, not the duration: the sound track starts later than the picture — the mix's first
+  /// buffer lands after the first frame — so comparing durations makes a sound track that outlasts
+  /// its picture look half a second short.
+  private static func writtenSeconds(of url: URL) async -> (picture: Double, sound: Double) {
+    let asset = AVURLAsset(url: url)
+    func end(_ type: AVMediaType) async -> Double {
+      guard let track = try? await asset.loadTracks(withMediaType: type).first,
+            let range = try? await track.load(.timeRange)
+      else { return -1 }
+      return range.end.seconds
+    }
+    return (await end(.video), await end(.audio))
+  }
+
   private func appendFailures() -> Int {
     lock.lock()
     defer { lock.unlock() }
     return audioAppendFailures
+  }
+
+  private func queueDrops() -> Int {
+    lock.lock()
+    defer { lock.unlock() }
+    return audioQueueDrops
+  }
+
+  private func placedNotQueued() -> Int {
+    lock.lock()
+    defer { lock.unlock() }
+    return audioPlacedNotQueued
   }
 
   /// Where the picture and the sound have each reached on the part's own timeline.
@@ -743,12 +793,12 @@ public final class ProgramEncoder: @unchecked Sendable {
       // and its sound seven to ten seconds short of it. Wait for them the same way as above.
       await drainAudioUntilEmpty(seconds: 10)
       let soundAfter = trackEnds().sound
-      telemetry.recordProgramFinish(
-        String(
-          format: "target %.3f picture %.3f sound %.3f->%.3f queued %d->%d refused %d",
-          target, pictureAt, soundAt, soundAfter, queuedBefore, pendingAudioCount(), appendFailures()
-        )
+      lastProgramFinishDetail = String(
+        format: "target %.3f picture %.3f sound %.3f->%.3f queued %d->%d refused %d dropped %d lost %d",
+        target, pictureAt, soundAt, soundAfter, queuedBefore, pendingAudioCount(), appendFailures(),
+        queueDrops(), placedNotQueued()
       )
+      telemetry.recordProgramFinish(lastProgramFinishDetail)
     }
 
     // What is still queued here cannot be written: the inputs are about to be marked finished. It
@@ -775,6 +825,23 @@ public final class ProgramEncoder: @unchecked Sendable {
       let detail = Self.describe(pending.writer.error)
       telemetry.recordError("program master did not finalise: \(detail)")
       telemetry.mutate { $0.dvr.lastError = "program master did not finalise: \(detail)" }
+    }
+
+    // What the file actually holds, not what the encoder believes it wrote. `nextAudioTime` is where
+    // the next buffer would go, which is not evidence that the ones before it landed, and a master
+    // whose sound falls short of its picture is the one fault nothing downstream can repair.
+    var picture = -1.0
+    var sound = -1.0
+    if let url = pending.url {
+      (picture, sound) = await Self.writtenSeconds(of: url)
+    }
+    telemetry.recordProgramFinish(
+      lastProgramFinishDetail + String(format: " ends picture %.3f sound %.3f", picture, sound)
+    )
+    if picture > 0, sound > 0, sound < picture - 0.25 {
+      telemetry.recordError(
+        String(format: "program master sound %.3f s short of its picture", picture - sound)
+      )
     }
 
     clearWriter()
