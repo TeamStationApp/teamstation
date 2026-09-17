@@ -48,6 +48,12 @@ export interface GameScreenProps {
    * shared link showed anybody who followed it.
    */
   onTitle?: (title: string) => void
+  /** Which of the game's videos to open, from the address. */
+  initialVideoId?: string
+  /** Where in it to start, in seconds, from the address. */
+  startAtSec?: number
+  /** Tells the shell where the reader now is, so the address can say so. */
+  onMoment?: (videoId: string, atSec: number) => void
 }
 
 type Tab = 'watch' | 'boxScore'
@@ -111,7 +117,16 @@ const DESCRIPTION_SECONDS = 90
  * to the bottom of a long game does not take the video off the screen.
  */
 export function GameScreen(props: GameScreenProps): React.ReactElement {
-  const { client, gameId, initialTab, autoPlay = false, onTitle } = props
+  const {
+    client,
+    gameId,
+    initialTab,
+    autoPlay = false,
+    onTitle,
+    initialVideoId,
+    startAtSec,
+    onMoment
+  } = props
   const theme = useTheme()
   const styles = getStyles(theme)
   const { height, width } = useWindowDimensions()
@@ -162,6 +177,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   >(undefined)
   const [error, setError] = useState<string | undefined>(undefined)
   const playerRef = useRef<HTMLVideoElement | null>(null)
+  /** So a link's moment is honoured once, not on every re-attach. */
+  const startedFromLink = useRef(false)
 
   useEffect(() => {
     let live = true
@@ -175,7 +192,10 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         // existed — but it is never the one opened by default.
         onTitle?.(`${found.awayTeamName} @ ${found.homeTeamName}`)
         setVideo(
-          found.videos.find(item => item.status === 'ready') ?? found.videos[0]
+          // The address names one, when somebody followed a link to a moment.
+          found.videos.find(item => item.id === initialVideoId) ??
+            found.videos.find(item => item.status === 'ready') ??
+            found.videos[0]
         )
       })
       .catch(() => {
@@ -263,6 +283,19 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       return detach
     }
 
+    // A link to a moment: start there, and start playing, because that is
+    // what the person who sent the link meant by sending it.
+    if (startAtSec != null && startAtSec > 0 && !startedFromLink.current) {
+      startedFromLink.current = true
+      const jump = (): void => {
+        element.currentTime = startAtSec
+        element.play().catch(() => undefined)
+      }
+      if (element.readyState >= 1) jump()
+      else element.addEventListener('loadedmetadata', jump, { once: true })
+      return detach
+    }
+
     if (autoPlay) {
       // The tap that opened this screen is a gesture the browser counts, so an
       // unmuted start is allowed. If it refuses anyway the controls are right
@@ -274,7 +307,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       start()
     }
     return detach
-  }, [autoPlay, playbackUrl, resumeAt, video?.id])
+  }, [autoPlay, playbackUrl, resumeAt, startAtSec, video?.id])
 
   /**
    * The other recording, from the same moment, still playing.
@@ -306,6 +339,10 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   const jumpTo = (highlight: Highlight): void => {
     setActiveEventId(highlight.eventId)
     setChosen(highlight)
+    // The address follows, so the moment somebody is looking at is the moment
+    // they can send to somebody else.
+    if (video != null)
+      onMoment?.(video.id, Math.round(highlight.startOffsetSec))
     const player = playerRef.current
     if (player == null) return
     // Seek and keep playing: the point is to watch on from here, not to show
