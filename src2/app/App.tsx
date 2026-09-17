@@ -332,6 +332,17 @@ function Shell(props: AppProps): React.ReactElement {
         autoPlay={top.autoPlay}
         initialVideoId={top.videoId}
         startAtSec={top.at}
+        onTab={next => {
+          setStacks(current => {
+            const held = current[tab]
+            const last = held[held.length - 1]
+            if (last?.name !== 'game' || last.tab === next) return current
+            return {
+              ...current,
+              [tab]: [...held.slice(0, -1), { ...last, tab: next }]
+            }
+          })
+        }}
         onMoment={(videoId, atSec) => {
           inPlace.current = true
           setStacks(current => {
