@@ -10,12 +10,11 @@ import type {
 import {
   Button,
   Card,
+  GameHeroCard,
   initialsOf,
   ListRow,
-  Scoreboard,
   Screen,
-  SectionHeader,
-  VideoPoster
+  SectionHeader
 } from '../components'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { gameStatusLine, matchupLines, shortDate, winnerOf } from './format'
@@ -103,37 +102,18 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
               {shortDate(recent.startAt)}
               {recent.venue == null ? '' : ` · ${recent.venue}`}
             </Text>
-            {recent.posterUrl != null ? (
-              // The video's own frame, with the score over a gradient. A dark
-              // panel says the same thing and shows nothing of the game.
-              <VideoPoster
-                uri={recent.posterUrl}
-                size="hero"
-                showPlay
-                onPlay={() => {
-                  onOpenGame(recent.id, matchup(recent))
-                }}
-              >
-                <Text style={styles.posterTeams} numberOfLines={1}>
-                  {`${recent.awayTeamName} ${recent.awayScore ?? ''}`.trim()}
-                </Text>
-                <Text style={styles.posterTeams} numberOfLines={1}>
-                  {`${recent.homeTeamName} ${recent.homeScore ?? ''}`.trim()}
-                </Text>
-                <Text style={styles.posterStatus}>
-                  {gameStatusLine(recent)}
-                </Text>
-              </VideoPoster>
-            ) : (
-              <Scoreboard
-                awayName={recent.awayTeamName}
-                homeName={recent.homeTeamName}
-                awayScore={recent.awayScore}
-                homeScore={recent.homeScore}
-                status={gameStatusLine(recent)}
-                winner={winnerOf(recent)}
-              />
-            )}
+            <GameHeroCard
+              awayName={recent.awayTeamName}
+              homeName={recent.homeTeamName}
+              awayScore={recent.awayScore}
+              homeScore={recent.homeScore}
+              status={gameStatusLine(recent)}
+              winner={winnerOf(recent)}
+              posterUrl={recent.posterUrl}
+              onPlay={() => {
+                onOpenGame(recent.id, matchup(recent))
+              }}
+            />
             {/*
               Two buttons, not one. There was no way to reach a box score from
               this screen at all: a game that was scored and never filmed had
@@ -256,19 +236,6 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   gameCard: {
     gap: theme.rem(theme.spaceMdRem)
-  },
-  posterTeams: {
-    color: '#ffffff',
-    fontFamily: theme.semiBoldTextFont,
-    fontSize: theme.rem(1),
-    fontWeight: '700'
-  },
-  posterStatus: {
-    color: '#ffffff',
-    fontFamily: theme.semiBoldTextFont,
-    fontSize: theme.rem(0.75),
-    letterSpacing: theme.rem(0.04),
-    opacity: 0.85
   },
   actions: {
     flexDirection: 'row',

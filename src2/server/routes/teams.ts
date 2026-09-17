@@ -10,6 +10,7 @@ import { imageUrl } from '../media/imageUrls'
 import { locateVideoFile } from '../media/locations'
 import type { MediaContext } from '../media/mediaContext'
 import { mediaUrlPath } from '../media/mediaTokens'
+import { posterUrl, warmPosters } from '../media/posters'
 import { stillSecond, warmStills } from '../media/stills'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
@@ -269,6 +270,19 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
 
       const names = await teamNames(db, [game.home_team_id, game.away_team_id])
 
+      // The frames the card and the picker are about to ask for.
+      warmPosters(
+        media,
+        videos
+          .filter(video => video.status === 'ready')
+          .map(video => ({
+            gameId,
+            videoId: video.id,
+            storage: video.storage,
+            durationSec: video.duration_sec
+          }))
+      ).catch(() => undefined)
+
       res.json({
         id: game.id,
         homeTeamId: game.home_team_id,
@@ -288,6 +302,8 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
           id: video.id,
           numCameras: video.num_cameras,
           syncOffsetSec: video.sync_offset_sec,
+          posterUrl:
+            video.status === 'ready' ? posterUrl(media, video.id) : null,
           kind: video.kind,
           title: video.title,
           status: video.status,
