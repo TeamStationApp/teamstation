@@ -1,5 +1,5 @@
 import { build, context } from 'esbuild'
-import { copyFile, mkdir } from 'fs/promises'
+import { mkdir, readFile, rm, writeFile } from 'fs/promises'
 
 /**
  * Bundles the web app.
@@ -44,7 +44,14 @@ if (!serve && /\/\/(127\.0\.0\.1|localhost|\[::1\])/.test(apiBaseUrl)) {
 
 const options = {
   entryPoints: ['app/web/index.tsx'],
-  outfile: 'dist/app.js',
+  // A content hash in the name, for production only. Without it the bundle is
+  // always `/app.js`, and a browser that has cached one has no way to learn
+  // there is a newer one — Paul's phone loaded the page twice after a fix was
+  // deployed and never asked for the script at all. A name that changes when
+  // the bytes change makes a stale copy impossible rather than unlikely.
+  ...(serve
+    ? { outfile: 'dist/app.js' }
+    : { outdir: 'dist', entryNames: 'app-[hash]' }),
   bundle: true,
   format: 'iife',
   target: ['es2021'],
@@ -64,15 +71,44 @@ const options = {
 }
 
 await mkdir('dist', { recursive: true })
-await copyFile('app/web/index.html', 'dist/index.html')
+const template = await readFile('app/web/index.html', 'utf8')
 
 if (serve) {
+  await writeFile('dist/index.html', template)
   const ctx = await context(options)
   await ctx.watch()
   const { hosts, port } = await ctx.serve({ servedir: 'dist', port: 8080 })
   console.log(`app on http://${hosts[0] ?? '127.0.0.1'}:${port}`)
   console.log(`talking to ${apiBaseUrl}`)
 } else {
-  await build(options)
-  console.log('built dist/app.js')
+  // Old hashed bundles would otherwise pile up, one per deploy, for ever.
+  for (const name of await readdirSafe('dist')) {
+    if (/^app-[A-Z0-9]+\.js(\.map)?$/i.test(name)) await rm(`dist/${name}`)
+  }
+
+  const result = await build({ ...options, metafile: true })
+  const script = Object.keys(result.metafile.outputs).find(
+    name => name.endsWith('.js') && !name.endsWith('.map')
+  )
+  if (script == null) throw new Error('esbuild produced no script')
+  const file = script.replace(/^dist\//, '')
+
+  // The page names the bundle, so the page must not be cached even briefly —
+  // that is what its `no-cache` header is for. It is small and it is the
+  // only thing that has to be fetched to learn the current bundle's name.
+  await writeFile(
+    'dist/index.html',
+    template.replace('src="/app.js"', `src="/${file}"`)
+  )
+  console.log(`built dist/${file}`)
+}
+
+/** `readdir`, treating a missing directory as empty. */
+async function readdirSafe(dir) {
+  const { readdir } = await import('fs/promises')
+  try {
+    return await readdir(dir)
+  } catch {
+    return []
+  }
 }
