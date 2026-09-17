@@ -2,6 +2,7 @@ import type { ErrorRequestHandler, RequestHandler, Response } from 'express'
 
 import {
   type ApiError,
+  badRequest,
   HttpError,
   notFound,
   toApiError
@@ -38,6 +39,14 @@ export const notFoundHandler: RequestHandler = (req, res) => {
  * unplanned error is not fit to show a user and may name a file or a password.
  */
 export const errorHandler: ErrorRequestHandler = (error, req, res, next) => {
+  // A body express could not parse is the caller's mistake, not ours. It
+  // arrives as a SyntaxError carrying a status, and without this it fell
+  // through to `internal` — so a stray comma answered 500 and said "Something
+  // went wrong", which sends whoever is integrating to look at the wrong end.
+  if (isBadJson(error)) {
+    sendError(res, badRequest('That request body is not valid JSON'))
+    return
+  }
   if (!(error instanceof HttpError)) {
     console.error(`${req.method} ${req.path}`, error)
   }
@@ -46,4 +55,13 @@ export const errorHandler: ErrorRequestHandler = (error, req, res, next) => {
     return
   }
   sendError(res, error)
+}
+
+/** express.json() rejects an unparseable body with a 400-carrying SyntaxError. */
+function isBadJson(error: unknown): boolean {
+  return (
+    error instanceof SyntaxError &&
+    'status' in error &&
+    (error as { status?: number }).status === 400
+  )
 }

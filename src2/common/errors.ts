@@ -14,6 +14,12 @@ import {
  * rejects a request body, and is absent otherwise.
  */
 export const asErrorCode = asValue(
+  /**
+   * The request never left the device. Not a server answer at all — no server
+   * can send this — but it travels as one so a caller has a single shape to
+   * branch on rather than a status number and a bare TypeError.
+   */
+  'offline',
   'badRequest',
   'unauthorized',
   'forbidden',
@@ -49,6 +55,8 @@ export const wasApiError = uncleaner(asApiError)
 
 /** The HTTP status each code answers with. */
 export const errorStatus: Record<ErrorCode, number> = {
+  // 0, the way a browser reports a request that never got a response.
+  offline: 0,
   badRequest: 400,
   unauthorized: 401,
   forbidden: 403,

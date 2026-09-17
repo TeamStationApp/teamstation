@@ -12,11 +12,28 @@ import {
 } from './errors'
 
 describe('errors', function () {
-  it('gives every code an HTTP status', function () {
+  /**
+   * Every code a *server* can answer with is a real failure status. `offline`
+   * is the exception and deliberately so: it is raised on the device when a
+   * request never left it, so there is no response and no status to report. It
+   * travels as an error code anyway, so that a caller has one shape to branch
+   * on instead of a status number in some cases and a bare TypeError in others.
+   */
+  it('gives every code a server can send an HTTP status', function () {
     for (const [code, status] of Object.entries(errorStatus)) {
       expect(status, `${code} has no status`).is.a('number')
+      if (code === 'offline') {
+        expect(status, 'offline is not a response').equals(0)
+        continue
+      }
       expect(status, `${code} status ${status}`).is.within(400, 599)
     }
+  })
+
+  it('reports offline as its own thing, not as a server failure', function () {
+    const error = new HttpError('offline', 'Cannot reach GameStation.')
+    expect(error.status).equals(0)
+    expect(toApiError(error).code).equals('offline')
   })
 
   it('round-trips through the cleaner', function () {
