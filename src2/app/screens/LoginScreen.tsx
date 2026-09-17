@@ -97,6 +97,15 @@ export function LoginScreen(props: LoginScreenProps): React.ReactElement {
           keyboardType="email-address"
           autoComplete="email"
           autoFocus
+          // Enter submits, which is what a keyboard's "go" key is for and what
+          // anybody who has typed an address into a form expects. Noticed
+          // because a browser test pressed it and nothing happened.
+          onSubmitEditing={() => {
+            if (!canSend) return
+            if (method === 'password') signInWithPassword()
+            else if (codeSent) signInWithCode()
+            else sendCode()
+          }}
         />
 
         {method === 'password' && (
