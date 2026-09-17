@@ -1,203 +1,237 @@
 import React, { useEffect, useState } from 'react'
-import {
-  ActivityIndicator,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  useWindowDimensions,
-  View
-} from 'react-native'
+import { Text, View } from 'react-native'
 
 import type {
   GameStationClient,
+  SeasonGame,
   SeasonSummary,
   TeamSummary
 } from '../../common/api'
-import { cardSize } from '../layout/grid'
-import { lstrings, sprintf } from '../locales/strings'
-import { cacheStyles, useTheme } from '../theme/ThemeContext'
-import type { Theme } from '../theme/types'
+import {
+  Button,
+  Card,
+  ListRow,
+  Scoreboard,
+  Screen,
+  SectionHeader
+} from '../components'
+import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { gameStatusLine, shortDate, winnerOf } from './format'
 
 export interface HomeScreenProps {
   client: GameStationClient
   onOpenTeam: (team: TeamSummary) => void
   onOpenSeason: (season: SeasonSummary) => void
+  onOpenGame: (gameId: string, title: string) => void
 }
 
 /**
- * Your teams, then the seasons you can see.
+ * The first screen: the last game played, the teams you belong to, and the
+ * seasons you may watch.
  *
- * Teams first because that is why somebody opened the app — a parent wants
- * their child's team, not a league table. Seasons below, because belonging to
- * a season grants every team in it: 16 of the migrated people are in a season
- * and on no team at all, and a team-only screen would show them nothing.
- *
- * A block with nothing in it is left out rather than drawn empty.
+ * Teams above seasons, on Paul's instruction. Being *on* a team is a stronger
+ * thing than being allowed to watch a season, and the person opening this app
+ * is usually looking for one child's team — so the teams are the first thing
+ * under the thumb, and the seasons are there for the wider wander.
  */
 export function HomeScreen(props: HomeScreenProps): React.ReactElement {
-  const { client, onOpenTeam, onOpenSeason } = props
-  const theme = useTheme()
-  const styles = getStyles(theme)
-  const { width } = useWindowDimensions()
-  const grid = cardSize({
-    width,
-    gutter: theme.rem(theme.gridGutterRem),
-    maxCardWidth: theme.rem(26)
-  })
+  const { client, onOpenTeam, onOpenSeason, onOpenGame } = props
+  const styles = getStyles(useTheme())
 
-  const [teams, setTeams] = useState<TeamSummary[] | undefined>(undefined)
-  const [seasons, setSeasons] = useState<SeasonSummary[] | undefined>(undefined)
+  const [teams, setTeams] = useState<TeamSummary[]>([])
+  const [seasons, setSeasons] = useState<SeasonSummary[]>([])
+  const [recent, setRecent] = useState<SeasonGame | undefined>(undefined)
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | undefined>(undefined)
 
   useEffect(() => {
-    let live = true
-    Promise.all([client.teams(), client.seasons()])
-      .then(([foundTeams, foundSeasons]) => {
-        if (!live) return
-        setTeams(foundTeams)
-        setSeasons(foundSeasons)
+    let cancelled = false
+    const load = async (): Promise<void> => {
+      const [loadedTeams, loadedSeasons] = await Promise.all([
+        client.teams(),
+        client.seasons()
+      ])
+      if (cancelled) return
+      setTeams(loadedTeams)
+      setSeasons(loadedSeasons)
+
+      // The most recently finished game across the seasons on offer. One extra
+      // request, and only for the newest season: a parent opening the app
+      // almost always wants the game that just happened.
+      const newest = loadedSeasons[0]
+      if (newest != null) {
+        const games = await client.seasonGames(newest.id)
+        if (cancelled) return
+        setRecent(mostRecentlyPlayed(games))
+      }
+    }
+    load()
+      .catch((caught: unknown) => {
+        if (!cancelled) {
+          setError(caught instanceof Error ? caught.message : 'Cannot load')
+        }
       })
-      .catch(() => {
-        if (live) setError(lstrings.common_not_found)
+      .finally(() => {
+        if (!cancelled) setLoading(false)
       })
     return () => {
-      live = false
+      cancelled = true
     }
   }, [client])
 
-  if (error != null) {
+  if (loading) {
     return (
-      <View style={styles.centre}>
-        <Text style={styles.message}>{error}</Text>
-      </View>
+      <Screen>
+        <Text style={styles.muted}>Loading…</Text>
+      </Screen>
     )
   }
-  if (teams == null || seasons == null) {
-    return (
-      <View style={styles.centre}>
-        <ActivityIndicator color={theme.primaryTextColor} />
-      </View>
-    )
-  }
-  if (teams.length === 0 && seasons.length === 0) {
-    return (
-      <View style={styles.centre}>
-        <Text style={styles.message}>{lstrings.home_nothing_yet}</Text>
-      </View>
-    )
-  }
+
+  const nothing = teams.length === 0 && seasons.length === 0
 
   return (
-    <ScrollView
-      style={styles.screen}
-      contentContainerStyle={{ padding: grid.gutter / 2 }}
-    >
-      {teams.length > 0 ? (
-        <>
-          <Text style={styles.heading}>{lstrings.home_your_teams}</Text>
-          <View style={styles.grid}>
-            {teams.map(team => (
-              <Pressable
-                key={team.id}
-                style={[
-                  styles.teamCard,
-                  { width: grid.cardWidth, margin: grid.gutter / 2 }
-                ]}
-                onPress={() => {
-                  onOpenTeam(team)
-                }}
-              >
-                <Text style={styles.teamName}>{team.name}</Text>
-              </Pressable>
-            ))}
-          </View>
-        </>
-      ) : null}
+    <Screen>
+      {error != null && <Text style={styles.error}>{error}</Text>}
 
-      {seasons.length > 0 ? (
-        <>
-          <Text style={styles.heading}>{lstrings.home_seasons}</Text>
-          <View style={styles.grid}>
-            {seasons.map(season => (
-              <Pressable
-                key={season.id}
-                style={[
-                  styles.seasonCard,
-                  { width: grid.cardWidth, margin: grid.gutter / 2 }
-                ]}
-                onPress={() => {
-                  onOpenSeason(season)
-                }}
-              >
-                <Text style={styles.seasonName}>{season.name}</Text>
-                <Text style={styles.counts}>
-                  {sprintf(
-                    lstrings.season_counts,
-                    String(season.teams),
-                    String(season.games),
-                    String(season.videos)
-                  )}
-                </Text>
-              </Pressable>
+      {recent != null && (
+        <View style={styles.section}>
+          <SectionHeader title="Recent game" />
+          <Card style={styles.gameCard}>
+            <Text style={styles.gameMeta}>
+              {shortDate(recent.startAt)}
+              {recent.venue == null ? '' : ` · ${recent.venue}`}
+            </Text>
+            <Scoreboard
+              awayName={recent.awayTeamName}
+              homeName={recent.homeTeamName}
+              awayScore={recent.awayScore}
+              homeScore={recent.homeScore}
+              status={gameStatusLine(recent)}
+              winner={winnerOf(recent)}
+            />
+            <Button
+              label={
+                recent.videoCount > 0 ? 'Watch replay' : 'Box score & plays'
+              }
+              block
+              onPress={() => {
+                onOpenGame(
+                  recent.id,
+                  `${recent.awayTeamName} at ${recent.homeTeamName}`
+                )
+              }}
+            />
+          </Card>
+        </View>
+      )}
+
+      {teams.length > 0 && (
+        <View style={styles.section}>
+          <SectionHeader title="Your teams" note={String(teams.length)} />
+          <Card>
+            {teams.map((team, index) => (
+              <View key={team.id}>
+                {index > 0 && <View style={styles.divider} />}
+                <ListRow
+                  title={team.name}
+                  subtitle={team.shortName ?? undefined}
+                  emblem={initialsOf(team.name)}
+                  onPress={() => {
+                    onOpenTeam(team)
+                  }}
+                />
+              </View>
             ))}
-          </View>
-        </>
-      ) : null}
-    </ScrollView>
+          </Card>
+        </View>
+      )}
+
+      {seasons.length > 0 && (
+        <View style={styles.section}>
+          <SectionHeader title="Seasons" note="Current & past" />
+          <Card>
+            {seasons.map((season, index) => (
+              <View key={season.id}>
+                {index > 0 && <View style={styles.divider} />}
+                <ListRow
+                  title={season.name}
+                  subtitle={`${season.teams} teams · ${season.games} games · ${season.videos} videos`}
+                  emblem="▦"
+                  badgeLabel={season.term ?? undefined}
+                  badgeTone="neutral"
+                  onPress={() => {
+                    onOpenSeason(season)
+                  }}
+                />
+              </View>
+            ))}
+          </Card>
+        </View>
+      )}
+
+      {nothing && (
+        <Card>
+          <Text style={styles.emptyTitle}>Nothing to watch yet</Text>
+          <Text style={styles.muted}>
+            Your account is not on a team or in a season yet. Ask your league
+            administrator to add you, and this screen will fill in.
+          </Text>
+        </Card>
+      )}
+    </Screen>
   )
 }
 
-const getStyles = cacheStyles((theme: Theme) =>
-  StyleSheet.create({
-    screen: { flex: 1, backgroundColor: theme.backgroundColor },
-    centre: {
-      flex: 1,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: theme.backgroundColor,
-      padding: theme.rem(1.5)
-    },
-    grid: { flexDirection: 'row', flexWrap: 'wrap' },
-    heading: {
-      color: theme.primaryTextColor,
-      fontFamily: theme.boldTextFont,
-      fontSize: theme.rem(1.1),
-      paddingHorizontal: theme.rem(0.75),
-      paddingTop: theme.rem(0.75),
-      paddingBottom: theme.rem(0.25)
-    },
-    teamCard: {
-      backgroundColor: theme.primaryButtonColor,
-      borderRadius: theme.rem(0.5),
-      padding: theme.rem(1)
-    },
-    teamName: {
-      color: theme.buttonTextColor,
-      fontFamily: theme.semiBoldTextFont,
-      fontSize: theme.rem(1.1)
-    },
-    seasonCard: {
-      backgroundColor: theme.cardBackgroundDark,
-      borderRadius: theme.rem(0.5),
-      padding: theme.rem(1),
-      gap: theme.rem(0.35)
-    },
-    seasonName: {
-      color: theme.primaryTextColor,
-      fontFamily: theme.semiBoldTextFont,
-      fontSize: theme.rem(1.05)
-    },
-    counts: {
-      color: theme.clearButtonColor,
-      fontFamily: theme.regularTextFont,
-      fontSize: theme.rem(0.85)
-    },
-    message: {
-      color: theme.primaryTextColor,
-      fontFamily: theme.regularTextFont,
-      fontSize: theme.rem(1),
-      textAlign: 'center'
-    }
-  })
-)
+/** The newest game that has actually been played, by start time. */
+function mostRecentlyPlayed(games: SeasonGame[]): SeasonGame | undefined {
+  const played = games
+    .filter(game => game.awayScore != null && game.startAt != null)
+    .sort((a, b) => (a.startAt ?? '').localeCompare(b.startAt ?? ''))
+  return played[played.length - 1]
+}
+
+/** `Alta Hawks` → `AH`, for the leading tile when a team has no logo yet. */
+function initialsOf(name: string): string {
+  const words = name.split(/[\s-]+/).filter(word => word.length > 0)
+  return words
+    .slice(0, 2)
+    .map(word => word[0]?.toUpperCase() ?? '')
+    .join('')
+}
+
+const getStyles = cacheStyles((theme: Theme) => ({
+  section: {
+    gap: theme.rem(theme.spaceMdRem)
+  },
+  gameCard: {
+    gap: theme.rem(theme.spaceMdRem)
+  },
+  gameMeta: {
+    fontFamily: theme.semiBoldTextFont,
+    fontSize: theme.rem(0.75),
+    fontWeight: '700',
+    letterSpacing: theme.rem(0.04),
+    color: theme.secondaryTextColor
+  },
+  divider: {
+    height: 1,
+    backgroundColor: theme.defaultBorderColor
+  },
+  muted: {
+    fontFamily: theme.regularTextFont,
+    fontSize: theme.rem(0.9375),
+    color: theme.secondaryTextColor
+  },
+  emptyTitle: {
+    fontFamily: theme.semiBoldTextFont,
+    fontSize: theme.rem(1.125),
+    fontWeight: '600',
+    color: theme.primaryTextColor,
+    marginBottom: theme.rem(theme.spaceSmRem)
+  },
+  error: {
+    fontFamily: theme.regularTextFont,
+    fontSize: theme.rem(0.875),
+    color: theme.dangerColor
+  }
+}))

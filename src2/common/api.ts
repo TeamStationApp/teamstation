@@ -126,6 +126,16 @@ export const asBattingRow = asObject({
 })
 export type BattingRow = ReturnType<typeof asBattingRow>
 
+export const asRosterEntry = asObject({
+  userId: asString,
+  displayName: asString,
+  jersey: asNullable(asString),
+  positions: asArray(asString),
+  isPlayer: asBoolean,
+  role: asString
+})
+export type RosterEntry = ReturnType<typeof asRosterEntry>
+
 export const asStandingsRow = asObject({
   teamId: asString,
   teamName: asString,
@@ -313,6 +323,25 @@ export class GameStationClient {
     return await this.request(
       'GET',
       `/games/${encodeURIComponent(gameId)}/box-score`,
+      asArray(asBattingRow)
+    )
+  }
+
+  async roster(teamId: string): Promise<RosterEntry[]> {
+    return await this.request(
+      'GET',
+      `/teams/${encodeURIComponent(teamId)}/roster`,
+      asArray(asRosterEntry)
+    )
+  }
+
+  /** A team's batting for a season, or across every season when unset. */
+  async teamStats(teamId: string, seasonId?: string): Promise<BattingRow[]> {
+    const query =
+      seasonId == null ? '' : `?seasonId=${encodeURIComponent(seasonId)}`
+    return await this.request(
+      'GET',
+      `/teams/${encodeURIComponent(teamId)}/stats${query}`,
       asArray(asBattingRow)
     )
   }

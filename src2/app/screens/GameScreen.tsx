@@ -18,10 +18,12 @@ import type {
   Playback,
   VideoSummary
 } from '../../common/api'
+import { PillTabs, Scoreboard } from '../components'
 import { lstrings } from '../locales/strings'
 import { attachHls } from '../player/attachHls'
 import { cacheStyles, useTheme } from '../theme/ThemeContext'
 import type { Theme } from '../theme/types'
+import { gameStatusLine, winnerOf } from './format'
 
 export interface GameScreenProps {
   client: GameStationClient
@@ -165,39 +167,27 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   }
 
   const scoreboard = (
-    <View style={styles.scoreboard}>
-      <View style={styles.side}>
-        <Text style={styles.teamName} numberOfLines={1}>
-          {game.awayTeamName}
-        </Text>
-        <Text style={styles.teamScore}>{game.awayScore ?? '—'}</Text>
-      </View>
-      <Text style={styles.at}>{lstrings.game_at}</Text>
-      <View style={styles.side}>
-        <Text style={styles.teamScore}>{game.homeScore ?? '—'}</Text>
-        <Text style={styles.teamName} numberOfLines={1}>
-          {game.homeTeamName}
-        </Text>
-      </View>
-    </View>
+    <Scoreboard
+      awayName={game.awayTeamName}
+      homeName={game.homeTeamName}
+      awayScore={game.awayScore}
+      homeScore={game.homeScore}
+      status={gameStatusLine(game)}
+      winner={winnerOf(game)}
+    />
   )
 
   const tabs = (
-    <View style={styles.tabs}>
-      {(['watch', 'boxScore'] as Tab[]).map(name => (
-        <Pressable
-          key={name}
-          style={[styles.tab, name === tab ? styles.tabActive : undefined]}
-          onPress={() => {
-            setTab(name)
-          }}
-        >
-          <Text style={styles.tabText}>
-            {name === 'watch' ? lstrings.game_videos : lstrings.game_box_score}
-          </Text>
-        </Pressable>
-      ))}
-    </View>
+    <PillTabs
+      tabs={[
+        { id: 'watch', label: lstrings.game_videos },
+        { id: 'boxScore', label: lstrings.game_box_score }
+      ]}
+      selected={tab}
+      onSelect={setTab}
+      stretch
+      accessibilityLabel="Game sections"
+    />
   )
 
   const player = (

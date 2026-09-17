@@ -2,6 +2,7 @@ import React from 'react'
 import { Pressable, Text, View } from 'react-native'
 
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { Icon, type IconName } from './Icon'
 
 export interface AppHeaderProps {
   title: string
@@ -9,7 +10,7 @@ export interface AppHeaderProps {
   overline?: string
   onBack?: () => void
   /** Up to two actions at the right. */
-  actions?: Array<{ label: string; glyph: string; onPress: () => void }>
+  actions?: Array<{ label: string; icon: IconName; onPress: () => void }>
 }
 
 /**
@@ -22,7 +23,8 @@ export interface AppHeaderProps {
  */
 export function AppHeader(props: AppHeaderProps): React.ReactElement {
   const { title, overline, onBack, actions = [] } = props
-  const styles = getStyles(useTheme())
+  const theme = useTheme()
+  const styles = getStyles(theme)
 
   return (
     <View style={styles.header}>
@@ -33,7 +35,7 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
           onPress={onBack}
           style={({ pressed }) => [styles.back, pressed && styles.pressed]}
         >
-          <Text style={styles.backGlyph}>‹</Text>
+          <Icon name="chevron_left" color={theme.headerTextColor} />
           <Text style={styles.backLabel}>Back</Text>
         </Pressable>
       )}
@@ -60,7 +62,7 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
             }}
             style={({ pressed }) => [styles.action, pressed && styles.pressed]}
           >
-            <Text style={styles.actionGlyph}>{action.glyph}</Text>
+            <Icon name={action.icon} color={theme.headerTextColor} />
           </Pressable>
         ))}
       </View>
@@ -86,11 +88,6 @@ const getStyles = cacheStyles((theme: Theme) => ({
     gap: theme.rem(0.125),
     paddingRight: theme.rem(theme.spaceSmRem),
     minHeight: theme.rem(2.75)
-  },
-  backGlyph: {
-    fontFamily: theme.regularTextFont,
-    fontSize: theme.rem(1.5),
-    color: theme.headerTextColor
   },
   backLabel: {
     fontFamily: theme.semiBoldTextFont,
@@ -126,10 +123,6 @@ const getStyles = cacheStyles((theme: Theme) => ({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: theme.radiusPill
-  },
-  actionGlyph: {
-    fontSize: theme.rem(1.125),
-    color: theme.headerTextColor
   },
   pressed: {
     opacity: 0.6

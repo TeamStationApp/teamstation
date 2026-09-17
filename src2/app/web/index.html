@@ -23,6 +23,17 @@
       href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap"
     />
 
+    <!--
+      Material Symbols, which the designs are drawn with. Icons were stood in
+      for with punctuation at first and it showed: a chevron set as `›` is
+      whatever the text font happens to have, which in Space Grotesk is a blunt
+      angle bracket rather than the hairline the design uses.
+    -->
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0&display=block"
+    />
+
     <style>
       /* The app paints its own background; this stops a flash before it
          mounts, and keeps the page from scrolling behind a full-height app. */
@@ -36,6 +47,16 @@
       }
       #root {
         display: flex;
+      }
+
+      /* React Native Web renders TextInput as a real <input>, which brings the
+         browser's own focus ring with it — a blue outline drawn on top of the
+         forest border the theme means to show. The theme's focus state is the
+         border, so the outline is simply in the way. */
+      input:focus,
+      textarea:focus,
+      [tabindex]:focus {
+        outline: none;
       }
     </style>
   </head>

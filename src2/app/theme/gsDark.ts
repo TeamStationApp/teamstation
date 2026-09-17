@@ -141,5 +141,5 @@ export const gsDark: Theme = {
   spaceLgRem: 1.25,
   spaceXlRem: 2,
 
-  maxContentWidthRem: 75
+  maxContentWidthRem: 60
 }
