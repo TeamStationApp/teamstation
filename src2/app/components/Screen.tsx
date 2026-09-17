@@ -8,6 +8,14 @@ export interface ScreenProps {
   children: React.ReactNode
   /** Off for a screen that manages its own scrolling, such as the player. */
   scroll?: boolean
+  /**
+   * Keep the margins and drop the reading-width cap.
+   *
+   * The cap exists so a line of text is not the width of a monitor. A video is
+   * not a line of text: capping it letterboxes the one thing the screen is
+   * for, with grey either side.
+   */
+  wide?: boolean
   contentStyle?: StyleProp<ViewStyle>
 }
 
@@ -25,7 +33,7 @@ export interface ScreenProps {
  * columns itself. Margins widen a step on a tablet, per the spec's 24px.
  */
 export function Screen(props: ScreenProps): React.ReactElement {
-  const { children, scroll = true, contentStyle } = props
+  const { children, scroll = true, wide = false, contentStyle } = props
   const theme = useTheme()
   const styles = getStyles(theme)
   const breakpoint = useBreakpoint()
@@ -35,6 +43,7 @@ export function Screen(props: ScreenProps): React.ReactElement {
       style={[
         styles.column,
         breakpoint !== 'phone' && styles.columnWide,
+        wide && styles.columnFull,
         contentStyle
       ]}
     >
@@ -72,5 +81,8 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   columnWide: {
     paddingHorizontal: theme.rem(theme.spaceLgRem * 1.2)
+  },
+  columnFull: {
+    maxWidth: '100%'
   }
 }))

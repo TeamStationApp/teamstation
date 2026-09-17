@@ -31,6 +31,8 @@ export interface Highlight {
   eventId: string
   atBatIndex: number
   title: string
+  /** The whole sentence, for the panel under the video. */
+  description: string | null
   /** Where the player should seek to, in seconds from the video's start. */
   startOffsetSec: number
   /** Where the play itself is, for a still or a marker. */
@@ -85,6 +87,7 @@ export function computeHighlights(
       eventId: event.id,
       atBatIndex: event.atBatIndex,
       title: titleFor(event),
+      description: event.description,
       startOffsetSec: Math.max(0, startOffsetSec),
       playOffsetSec,
       eventType: event.eventType,

@@ -60,3 +60,19 @@ export function cardPosition(
     column: index % columns
   }
 }
+
+/**
+ * How many columns a list of highlights gets.
+ *
+ * Not `columnsFor`: that is the rule for cards, which are far wider than a
+ * highlight row, so the two would either cramp the cards or waste the list.
+ * Derived from the width available against a sensible minimum rather than from
+ * the breakpoint alone, so a narrow window with no rail does not get three
+ * squeezed columns.
+ */
+export function highlightColumnsFor(width: number): number {
+  const MIN = 288
+  if (width < 600) return 1
+  const fits = Math.floor(width / MIN)
+  return Math.max(1, Math.min(4, fits))
+}

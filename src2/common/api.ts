@@ -97,7 +97,12 @@ export const asHighlight = asObject({
   eventType: asNullable(asString),
   isScoringPlay: asBoolean,
   /** One frame of the video at the moment of the play. */
-  stillUrl: asString
+  stillUrl: asString,
+  /**
+   * The whole sentence, for the panel under the video. The list draws `title`;
+   * only that panel draws this.
+   */
+  description: asOptional(asNullable(asString), null)
 })
 export type Highlight = ReturnType<typeof asHighlight>
 

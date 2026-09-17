@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import {
   ActivityIndicator,
-  Image,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -18,7 +17,8 @@ import type {
   Playback,
   VideoSummary
 } from '../../common/api'
-import { PillTabs, Scoreboard } from '../components'
+import { PillTabs, Scoreboard, Screen, VideoPoster } from '../components'
+import { highlightColumnsFor } from '../layout/grid'
 import { lstrings } from '../locales/strings'
 import { attachHls } from '../player/attachHls'
 import { cacheStyles, useTheme } from '../theme/ThemeContext'
@@ -30,24 +30,30 @@ export interface GameScreenProps {
   gameId: string
 }
 
-/** Wide enough for the highlight list to sit beside the video instead of under it. */
-const SIDE_BY_SIDE_WIDTH = 900
-
 type Tab = 'watch' | 'boxScore'
 
+/** How long a chosen highlight's full account stays under the video. */
+const DESCRIPTION_SECONDS = 90
+
 /**
- * One game: its videos, the highlights beside them, and the box score.
+ * One game: its videos, the highlights under them, and the box score.
  *
  * A highlight is a **timestamp into the full video**, never a separate clip.
- * Pressing one seeks the player and keeps it playing, which is why the player
- * stays mounted while the list scrolls next to it.
+ * Pressing one seeks the player and keeps it playing.
+ *
+ * The video takes the whole width and the highlights go underneath it. They
+ * used to share the width on a wide window, which put the one thing the screen
+ * exists for into a column with something else beside it.
+ *
+ * The player does not scroll. It is pegged above a list that does, so reading
+ * to the bottom of a long game does not take the video off the screen.
  */
 export function GameScreen(props: GameScreenProps): React.ReactElement {
   const { client, gameId } = props
   const theme = useTheme()
   const styles = getStyles(theme)
   const { width } = useWindowDimensions()
-  const sideBySide = width >= SIDE_BY_SIDE_WIDTH
+  const columns = highlightColumnsFor(width)
 
   const [tab, setTab] = useState<Tab>('watch')
   const [game, setGame] = useState<GameDetail | undefined>(undefined)
@@ -57,6 +63,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   const [batting, setBatting] = useState<BattingRow[] | undefined>(undefined)
   const [playback, setPlayback] = useState<Playback | undefined>(undefined)
   const [activeEventId, setActiveEventId] = useState<string | undefined>()
+  const [chosen, setChosen] = useState<Highlight | undefined>(undefined)
   const [error, setError] = useState<string | undefined>(undefined)
   const playerRef = useRef<HTMLVideoElement | null>(null)
 
@@ -146,6 +153,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
 
   const jumpTo = (highlight: Highlight): void => {
     setActiveEventId(highlight.eventId)
+    setChosen(highlight)
     const player = playerRef.current
     if (player == null) return
     // Seek and keep playing: the point is to watch on from here, not to show
@@ -155,6 +163,23 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     // the seek has already happened, so that refusal is not worth reporting.
     player.play().catch(() => undefined)
   }
+
+  // The chosen play's full account clears itself a minute and a half after the
+  // moment it seeks to — measured in **played** time, not wall clock. A timer
+  // would run down while the video is paused and the description would be gone
+  // by the time anybody looked back at it.
+  useEffect(() => {
+    const player = playerRef.current
+    if (player == null || chosen == null) return
+    const onTime = (): void => {
+      const since = player.currentTime - chosen.startOffsetSec
+      if (since < 0 || since > DESCRIPTION_SECONDS) setChosen(undefined)
+    }
+    player.addEventListener('timeupdate', onTime)
+    return () => {
+      player.removeEventListener('timeupdate', onTime)
+    }
+  }, [chosen])
 
   if (error != null) {
     return (
@@ -172,14 +197,16 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   }
 
   const scoreboard = (
-    <Scoreboard
-      awayName={game.awayTeamName}
-      homeName={game.homeTeamName}
-      awayScore={game.awayScore}
-      homeScore={game.homeScore}
-      status={gameStatusLine(game)}
-      winner={winnerOf(game)}
-    />
+    <View style={styles.hero}>
+      <Scoreboard
+        awayName={game.awayTeamName}
+        homeName={game.homeTeamName}
+        awayScore={game.awayScore}
+        homeScore={game.homeScore}
+        status={gameStatusLine(game)}
+        winner={winnerOf(game)}
+      />
+    </View>
   )
 
   const tabs = (
@@ -195,8 +222,15 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     />
   )
 
+  const description =
+    chosen?.description == null || chosen.description === '' ? null : (
+      <View style={styles.description}>
+        <Text style={styles.descriptionText}>{chosen.description}</Text>
+      </View>
+    )
+
   const player = (
-    <View style={styles.playerColumn}>
+    <View>
       <View style={styles.player}>
         {video == null ? (
           <Text style={styles.message}>{lstrings.game_no_video}</Text>
@@ -245,7 +279,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   )
 
   const highlightList = (
-    <View style={sideBySide ? styles.listColumn : undefined}>
+    <View>
       <Text style={styles.heading}>{lstrings.game_highlights}</Text>
       {withheld === 'scoreMismatch' ? (
         <Text style={styles.warning}>{lstrings.game_score_mismatch}</Text>
@@ -258,56 +292,69 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       ) : highlights.length === 0 ? (
         <Text style={styles.message}>{lstrings.highlights_none}</Text>
       ) : (
-        highlights.map(highlight => (
-          <Pressable
-            key={highlight.eventId}
-            style={[
-              styles.highlight,
-              highlight.eventId === activeEventId
-                ? styles.highlightActive
-                : undefined
-            ]}
-            onPress={() => {
-              jumpTo(highlight)
-            }}
-          >
-            <Image
-              // One frame of the play. It may not be cut yet the first time a
-              // game is opened, in which case nothing is drawn and the row is
-              // otherwise unchanged.
-              source={{ uri: highlight.stillUrl }}
-              style={styles.still}
-            />
-            <Text style={styles.timecode}>
-              {timecode(highlight.startOffsetSec)}
-            </Text>
-            <Text
+        <View style={styles.grid}>
+          {highlights.map(highlight => (
+            <Pressable
+              key={highlight.eventId}
               style={[
-                styles.highlightTitle,
-                highlight.isScoringPlay ? styles.scoring : undefined
+                styles.highlight,
+                { width: `${100 / columns}%` },
+                highlight.eventId === activeEventId
+                  ? styles.highlightActive
+                  : undefined
               ]}
-              numberOfLines={2}
+              onPress={() => {
+                jumpTo(highlight)
+              }}
             >
-              {highlight.title}
-            </Text>
-          </Pressable>
-        ))
+              <VideoPoster
+                uri={highlight.stillUrl}
+                time={timecode(highlight.startOffsetSec)}
+              />
+              <Text
+                style={[
+                  styles.highlightTitle,
+                  highlight.isScoringPlay ? styles.scoring : undefined
+                ]}
+                numberOfLines={1}
+              >
+                {highlight.title}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
       )}
     </View>
   )
 
+  // Two regions, not one scroll view: the card, the pills and the player are
+  // fixed, and the highlights scroll underneath them. Reading to the bottom of
+  // a long game must not take the video off the screen.
+  if (tab === 'watch') {
+    return (
+      <View style={styles.screen}>
+        <Screen wide scroll={false} contentStyle={styles.fixed}>
+          {scoreboard}
+          {tabs}
+          {player}
+          {description}
+        </Screen>
+        <ScrollView style={styles.scroller}>
+          <Screen wide scroll={false}>
+            {highlightList}
+          </Screen>
+        </ScrollView>
+      </View>
+    )
+  }
+
   return (
     <ScrollView style={styles.screen}>
-      {scoreboard}
-      {tabs}
-      {tab === 'watch' ? (
-        <View style={sideBySide ? styles.watchWide : undefined}>
-          {player}
-          {highlightList}
-        </View>
-      ) : (
+      <Screen wide scroll={false}>
+        {scoreboard}
+        {tabs}
         <BoxScore game={game} rows={batting} theme={theme} />
-      )}
+      </Screen>
     </ScrollView>
   )
 }
@@ -461,9 +508,33 @@ const getStyles = cacheStyles((theme: Theme) =>
     },
     // The video is the tallest thing on the page, so it is capped: a 16:9 box
     // across a desktop window would push the highlights off the bottom.
-    watchWide: { flexDirection: 'row', alignItems: 'flex-start' },
-    playerColumn: { flex: 2, maxWidth: theme.rem(45) },
-    listColumn: { flex: 1, minWidth: theme.rem(16) },
+    // The card, the pills and the player. Fixed, so the list scrolls under it.
+    fixed: {
+      paddingBottom: theme.rem(theme.spaceSmRem),
+      gap: theme.rem(theme.spaceMdRem)
+    },
+    scroller: { flex: 1 },
+    hero: {
+      backgroundColor: theme.cardBackgroundColor,
+      borderRadius: theme.rem(theme.radiusRem),
+      borderWidth: 1,
+      borderColor: theme.defaultBorderColor,
+      overflow: 'hidden'
+    },
+    description: {
+      backgroundColor: theme.highlightRowBackground,
+      borderRadius: theme.rem(theme.radiusRem),
+      padding: theme.rem(theme.spaceMdRem)
+    },
+    descriptionText: {
+      color: theme.primaryTextColor,
+      fontFamily: theme.regularTextFont,
+      fontSize: theme.rem(0.9375)
+    },
+    grid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap'
+    },
     tabs: {
       flexDirection: 'row',
       gap: theme.rem(0.5),
@@ -501,30 +572,18 @@ const getStyles = cacheStyles((theme: Theme) =>
       paddingHorizontal: theme.rem(0.75),
       paddingTop: theme.rem(0.75)
     },
+    // A frame, then the words. The time used to hold open a column of its own
+    // between them, which read as a gap because the text in it was drawn in a
+    // colour that is transparent.
     highlight: {
       flexDirection: 'row',
       alignItems: 'center',
-      backgroundColor: theme.highlightRowBackground,
-      borderRadius: theme.rem(0.3),
       gap: theme.rem(0.75),
-      marginHorizontal: theme.rem(0.75),
-      marginTop: theme.rem(0.35),
-      paddingHorizontal: theme.rem(0.75),
-      paddingVertical: theme.rem(0.5)
+      paddingHorizontal: theme.rem(0.375),
+      paddingVertical: theme.rem(0.375)
     },
     highlightActive: { backgroundColor: theme.highlightRowActiveBackground },
-    still: {
-      aspectRatio: 16 / 9,
-      backgroundColor: theme.videoBackgroundColor,
-      borderRadius: theme.rem(0.2),
-      width: theme.rem(5)
-    },
-    timecode: {
-      color: theme.secondaryTextColor,
-      fontFamily: theme.semiBoldTextFont,
-      fontSize: theme.rem(0.85),
-      minWidth: theme.rem(3)
-    },
+
     highlightTitle: {
       color: theme.primaryTextColor,
       flex: 1,

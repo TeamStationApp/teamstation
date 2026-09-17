@@ -1,7 +1,12 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { cardPosition, cardSize, columnsForWidth } from './grid'
+import {
+  cardPosition,
+  cardSize,
+  columnsForWidth,
+  highlightColumnsFor
+} from './grid'
 
 describe('grid', function () {
   it('gives a narrow window a single column', function () {
@@ -50,5 +55,25 @@ describe('grid', function () {
   it('puts everything in one column when there is only one', function () {
     expect(cardPosition(0, 1)).deep.equals({ row: 0, column: 0 })
     expect(cardPosition(5, 1)).deep.equals({ row: 5, column: 0 })
+  })
+})
+
+describe('highlight columns', function () {
+  it('is a single column on a phone', function () {
+    expect(highlightColumnsFor(390)).equals(1)
+    expect(highlightColumnsFor(599)).equals(1)
+  })
+
+  it('widens as the width allows', function () {
+    expect(highlightColumnsFor(800)).equals(2)
+    expect(highlightColumnsFor(1280)).equals(4)
+  })
+
+  it('never goes past four, however wide the monitor', function () {
+    expect(highlightColumnsFor(2560)).equals(4)
+  })
+
+  it('never returns nothing', function () {
+    expect(highlightColumnsFor(0)).equals(1)
   })
 })
