@@ -50,7 +50,9 @@ export const asGameSummary = asObject({
   homeScore: asNullable(asNumber),
   awayScore: asNullable(asNumber),
   ingestStatus: asString,
-  videoCount: asNumber
+  videoCount: asNumber,
+  /** The longest video of the game, for the length on a thumbnail. */
+  durationSec: asOptional(asNullable(asNumber), null)
 })
 export type GameSummary = ReturnType<typeof asGameSummary>
 
@@ -197,7 +199,9 @@ export const asSeasonGame = asObject({
   homeScore: asNullable(asNumber),
   awayScore: asNullable(asNumber),
   ingestStatus: asString,
-  videoCount: asNumber
+  videoCount: asNumber,
+  /** The longest video of the game, for the length on a thumbnail. */
+  durationSec: asOptional(asNullable(asNumber), null)
 })
 export type SeasonGame = ReturnType<typeof asSeasonGame>
 

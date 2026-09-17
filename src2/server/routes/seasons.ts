@@ -160,6 +160,9 @@ export function seasonRoutes(db: Kysely<Database>): Router {
           'games.ingest_status as ingestStatus'
         ])
         .select(eb => eb.fn.count<number>('videos.id').as('videoCount'))
+        // The longest video of the game: on a multi-camera game that is the
+        // full broadcast rather than whichever clip happens to sort first.
+        .select(eb => eb.fn.max('videos.duration_sec').as('durationSec'))
         .where('games.season_id', '=', seasonId)
         .groupBy([
           'games.id',
@@ -188,7 +191,9 @@ export function seasonRoutes(db: Kysely<Database>): Router {
           homeScore: game.homeScore,
           awayScore: game.awayScore,
           ingestStatus: game.ingestStatus,
-          videoCount: Number(game.videoCount)
+          videoCount: Number(game.videoCount),
+          durationSec:
+            game.durationSec == null ? null : Number(game.durationSec)
         }))
       )
     })

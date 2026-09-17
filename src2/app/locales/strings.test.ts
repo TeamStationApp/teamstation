@@ -2,7 +2,13 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { enUs } from './en_US'
-import { lstrings, plural, selectLocale, sprintf } from './strings'
+import {
+  lstrings,
+  plural,
+  selectLocale,
+  sprintf,
+  videoCountLabel
+} from './strings'
 
 describe('locales', function () {
   it('starts out as the English master', function () {
@@ -52,5 +58,18 @@ describe('locales', function () {
     expect(plural(1, one, other)).equals('1 video')
     expect(plural(3, one, other)).equals('3 videos')
     expect(plural(0, one, other)).equals('0 videos')
+  })
+})
+
+describe('how many videos', function () {
+  it('says one video, and two videos', function () {
+    expect(videoCountLabel(1)).equals('1 video')
+    expect(videoCountLabel(2)).equals('2 videos')
+    expect(videoCountLabel(12)).equals('12 videos')
+  })
+
+  it('says nothing at all for none', function () {
+    expect(videoCountLabel(0)).equals('')
+    expect(videoCountLabel(-1)).equals('')
   })
 })

@@ -13,6 +13,7 @@ export { Badge, type BadgeTone } from './Badge'
 export { Button, type ButtonKind } from './Button'
 export { Card } from './Card'
 export { Emblem, type EmblemProps } from './Emblem'
+export { GameRow, type GameRowProps } from './GameRow'
 export { Icon, type IconName } from './Icon'
 export { initialsOf } from './initials'
 export { ListRow } from './ListRow'
@@ -22,6 +23,7 @@ export { Screen } from './Screen'
 export { SectionHeader } from './SectionHeader'
 export { type Stat, StatGrid } from './StatGrid'
 export { TextField } from './TextField'
+export { VideoPoster, type VideoPosterProps } from './VideoPoster'
 export {
   type Breakpoint,
   breakpointFor,

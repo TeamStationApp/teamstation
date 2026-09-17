@@ -2,9 +2,10 @@ import React, { useEffect, useState } from 'react'
 import { Text, View } from 'react-native'
 
 import type { GameStationClient, SeasonGame } from '../../common/api'
-import { Card, ListRow, PillTabs, Screen, SectionHeader } from '../components'
+import { Card, GameRow, PillTabs, Screen, SectionHeader } from '../components'
+import { videoCountLabel } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { shortDate, shortTime } from './format'
+import { clock, matchupLines, shortDate, shortTime } from './format'
 
 export interface GamesFeedScreenProps {
   client: GameStationClient
@@ -85,7 +86,12 @@ export function GamesFeedScreen(
 
   return (
     <Screen>
-      <PillTabs tabs={WHEN_TABS} selected={when} onSelect={setWhen} stretch />
+      <PillTabs
+        tabs={WHEN_TABS}
+        selected={when}
+        onSelect={setWhen}
+        size="compact"
+      />
 
       <SectionHeader
         title={mode === 'videos' ? 'Game videos' : 'Schedule'}
@@ -105,29 +111,40 @@ export function GamesFeedScreen(
         </Card>
       )}
 
-      {sorted.map(game => (
-        <Card key={game.id}>
-          <ListRow
-            title={`${game.awayTeamName} at ${game.homeTeamName}`}
-            subtitle={`${shortDate(game.startAt)}${
-              game.venue == null ? '' : ` · ${game.venue}`
-            }${game.videoCount > 0 ? ` · ${game.videoCount} video` : ''}`}
-            emblem={game.videoCount > 0 ? '▶' : '⚾'}
-            badgeLabel={
-              game.awayScore == null
-                ? shortTime(game.startAt)
-                : `${game.awayScore}–${game.homeScore}`
-            }
-            badgeTone={game.awayScore == null ? 'neutral' : 'win'}
-            onPress={() => {
-              onOpenGame(
-                game.id,
-                `${game.awayTeamName} at ${game.homeTeamName}`
-              )
-            }}
-          />
-        </Card>
-      ))}
+      {sorted.map(game => {
+        const lines = matchupLines(game)
+        // The time used to be the badge, which made an unplayed game look as
+        // though it had a result. It belongs on the detail line with the date.
+        const detail = [
+          shortDate(game.startAt),
+          shortTime(game.startAt),
+          videoCountLabel(game.videoCount)
+        ]
+          .filter(part => part !== '')
+          .join(' · ')
+        return (
+          <Card key={game.id}>
+            <GameRow
+              first={lines.first}
+              second={lines.second}
+              detail={detail}
+              venue={game.venue}
+              length={
+                game.durationSec == null ? undefined : clock(game.durationSec)
+              }
+              badgeLabel={
+                game.awayScore == null
+                  ? undefined
+                  : `${game.awayScore}–${game.homeScore}`
+              }
+              badgeTone="neutral"
+              onPress={() => {
+                onOpenGame(game.id, `${lines.first} ${lines.second}`)
+              }}
+            />
+          </Card>
+        )
+      })}
       <View />
     </Screen>
   )
