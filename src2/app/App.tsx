@@ -36,7 +36,15 @@ export interface AppProps {
 type Pushed =
   | { name: 'season'; season: SeasonSummary }
   | { name: 'team'; team: TeamSummary }
-  | { name: 'game'; gameId: string; title: string }
+  | {
+      name: 'game'
+      gameId: string
+      title: string
+      /** Which half of the game screen to open on. */
+      tab?: 'watch' | 'boxScore'
+      /** Start the video rather than waiting to be asked. */
+      autoPlay?: boolean
+    }
   | { name: 'account' }
 
 /**
@@ -107,8 +115,12 @@ function Shell(props: AppProps): React.ReactElement {
     setStacks(current => ({ ...current, [tab]: current[tab].slice(0, -1) }))
   }
 
-  const openGame = (gameId: string, title: string): void => {
-    push({ name: 'game', gameId, title })
+  const openGame = (
+    gameId: string,
+    title: string,
+    options: { tab?: 'watch' | 'boxScore'; autoPlay?: boolean } = {}
+  ): void => {
+    push({ name: 'game', gameId, title, ...options })
   }
   const openTeam = (team: TeamSummary): void => {
     push({ name: 'team', team })
@@ -164,7 +176,12 @@ function Shell(props: AppProps): React.ReactElement {
         onOpenTeam={openTeam}
       />
     ) : top.name === 'game' ? (
-      <GameScreen client={client} gameId={top.gameId} />
+      <GameScreen
+        client={client}
+        gameId={top.gameId}
+        initialTab={top.tab}
+        autoPlay={top.autoPlay}
+      />
     ) : null
 
   const header = (
@@ -234,7 +251,12 @@ function routeOf(tab: NavTabId, top: Pushed | undefined): Route {
       return { name: 'season', seasonId: top.season.id }
     }
     if (top.name === 'account') return { name: 'account' }
-    return { name: 'game', gameId: top.gameId }
+    return {
+      name: 'game',
+      gameId: top.gameId,
+      tab: top.tab,
+      at: top.autoPlay === true ? undefined : undefined
+    }
   }
   if (tab === 'videos') return { name: 'videos', when: 'past' }
   if (tab === 'schedule') return { name: 'schedule', when: 'upcoming' }

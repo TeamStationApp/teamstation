@@ -218,6 +218,95 @@ export function seasonRoutes(
     })
   )
 
+  /**
+   * The most recent game the signed-in person can see, anywhere.
+   *
+   * The home screen used to take the first season it was handed and look
+   * inside that one, which showed a game from June while there were games in
+   * September: the newest season is not the season with the newest game, and
+   * somebody on several teams has games in more than one.
+   */
+  router.get(
+    '/games/recent',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
+      if (!scopes.isAdmin && scopes.seasonIds.size === 0) {
+        res.json(null)
+        return
+      }
+
+      let query = db
+        .selectFrom('games')
+        .innerJoin('teams as home', 'home.id', 'games.home_team_id')
+        .innerJoin('teams as away', 'away.id', 'games.away_team_id')
+        .leftJoin('videos', 'videos.game_id', 'games.id')
+        .select([
+          'games.id as id',
+          'games.home_team_id as homeTeamId',
+          'games.away_team_id as awayTeamId',
+          'home.name as homeTeamName',
+          'away.name as awayTeamName',
+          'home.kind as homeTeamKind',
+          'away.kind as awayTeamKind',
+          'games.season_id as seasonId',
+          'games.start_at as startAt',
+          'games.venue as venue',
+          'games.status as status',
+          'games.home_score as homeScore',
+          'games.away_score as awayScore',
+          'games.ingest_status as ingestStatus'
+        ])
+        .select(eb => eb.fn.count<number>('videos.id').as('videoCount'))
+        .select(eb => eb.fn.max('videos.duration_sec').as('durationSec'))
+        // Played, which is what `recent` means here: a fixture nobody turned
+        // up to is not the game somebody opened the app to see.
+        .where('games.home_score', 'is not', null)
+        .groupBy([
+          'games.id',
+          'home.name',
+          'away.name',
+          'home.kind',
+          'away.kind'
+        ])
+        .orderBy('games.start_at', 'desc')
+        .limit(1)
+      if (!scopes.isAdmin) {
+        query = query.where('games.season_id', 'in', [...scopes.seasonIds])
+      }
+      const game = await query.executeTakeFirst()
+      if (game == null) {
+        res.json(null)
+        return
+      }
+
+      const posters = await postersFor(db, [game.id])
+      const poster = posters.get(game.id)
+      res.json({
+        id: game.id,
+        homeTeamId: game.homeTeamId,
+        awayTeamId: game.awayTeamId,
+        homeTeamName: game.homeTeamName,
+        awayTeamName: game.awayTeamName,
+        homeTeamExternal: game.homeTeamKind === 'external',
+        awayTeamExternal: game.awayTeamKind === 'external',
+        seasonId: game.seasonId,
+        startAt: toIso(game.startAt),
+        venue: game.venue,
+        status: game.status,
+        homeScore: game.homeScore,
+        awayScore: game.awayScore,
+        ingestStatus: game.ingestStatus,
+        videoCount: Number(game.videoCount),
+        durationSec: game.durationSec == null ? null : Number(game.durationSec),
+        posterUrl: poster == null ? null : posterUrl(media, poster.videoId)
+      })
+      if (poster != null) warmPosters(media, [poster]).catch(() => undefined)
+    })
+  )
+
   return router
 }
 

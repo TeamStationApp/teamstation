@@ -24,11 +24,16 @@ import { sameMoment } from '../player/angleSwitch'
 import { attachHls } from '../player/attachHls'
 import { cacheStyles, useTheme } from '../theme/ThemeContext'
 import type { Theme } from '../theme/types'
-import { gameStatusLine, winnerOf } from './format'
+import { gameStatusLine, shortDate, winnerOf } from './format'
 
 export interface GameScreenProps {
   client: GameStationClient
   gameId: string
+  /** Which half to open on. A `Box Score` button means the box score. */
+  initialTab?: Tab
+  /** Start the video. Arriving here by pressing `Watch Replay` is a gesture a
+   * browser accepts, which is what makes an unmuted autoplay legal. */
+  autoPlay?: boolean
 }
 
 type Tab = 'watch' | 'boxScore'
@@ -92,7 +97,7 @@ const DESCRIPTION_SECONDS = 90
  * to the bottom of a long game does not take the video off the screen.
  */
 export function GameScreen(props: GameScreenProps): React.ReactElement {
-  const { client, gameId } = props
+  const { client, gameId, initialTab, autoPlay = false } = props
   const theme = useTheme()
   const styles = getStyles(theme)
   const { height, width } = useWindowDimensions()
@@ -101,7 +106,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   // enough that the highlights under it are visibly a list.
   const playerMaxHeight = Math.round(height * 0.6)
 
-  const [tab, setTab] = useState<Tab>('watch')
+  const [tab, setTab] = useState<Tab>(initialTab ?? 'watch')
   const [game, setGame] = useState<GameDetail | undefined>(undefined)
   const [video, setVideo] = useState<VideoSummary | undefined>(undefined)
   const [highlights, setHighlights] = useState<Highlight[]>([])
@@ -194,8 +199,19 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   useEffect(() => {
     const element = playerRef.current
     if (element == null || playbackUrl == null) return
-    return attachHls(element, playbackUrl)
-  }, [playbackUrl])
+    const detach = attachHls(element, playbackUrl)
+    if (autoPlay) {
+      // The tap that opened this screen is a gesture the browser counts, so an
+      // unmuted start is allowed. If it refuses anyway the controls are right
+      // there, and saying so would be noise.
+      const start = (): void => {
+        element.play().catch(() => undefined)
+      }
+      element.addEventListener('loadedmetadata', start, { once: true })
+      start()
+    }
+    return detach
+  }, [autoPlay, playbackUrl])
 
   /**
    * The other recording, from the same moment, still playing.
@@ -278,6 +294,9 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       status={gameStatusLine(game)}
       winner={winnerOf(game)}
       compact
+      meta={[game.venue, shortDate(game.startAt)]
+        .filter(part => part != null && part !== '')
+        .join(' · ')}
       linescore={game.linescore}
       onPlay={() => {
         playerRef.current?.play().catch(() => undefined)
@@ -293,7 +312,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       ]}
       selected={tab}
       onSelect={setTab}
-      stretch
+      size="compact"
       accessibilityLabel="Game sections"
     />
   )

@@ -174,9 +174,10 @@ function toOffset(
  *
  * Two reasons not to. **Nobody to name**: if we cannot say who did it, a row
  * saying `Ground out` is a thumbnail with no reason to press it. And **an
- * opponent nobody runs**: a player on a team invented from a name typed into
- * somebody else's schedule is not a person we can show, and a real team in the
- * league is.
+ * opponent nobody runs**: a team invented from a name typed into somebody
+ * else's schedule, which nobody has claimed. Both of those at once — a real
+ * team in the league is shown whether or not anybody has been recorded as
+ * running it.
  */
 function worthShowing(
   outcome: CreditedOutcome,
@@ -187,8 +188,10 @@ function worthShowing(
   if (outcome.teamId == null) return true
   const standing = teams.get(outcome.teamId)
   if (standing == null) return true
-  if (standing.isExternal) return false
-  return standing.hasOwner
+  // Both conditions, not either. A team that plays in the league is shown
+  // whether or not anybody has been recorded as running it — and on real data
+  // nobody has, so `external || !hasOwner` dropped every highlight in the app.
+  return !(standing.isExternal && !standing.hasOwner)
 }
 
 /**

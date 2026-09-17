@@ -27,7 +27,11 @@ import { resultFor, shortDate, shortTime } from './format'
 export interface TeamScreenProps {
   client: GameStationClient
   team: TeamSummary
-  onOpenGame: (gameId: string, title: string) => void
+  onOpenGame: (
+    gameId: string,
+    title: string,
+    options?: { tab?: 'watch' | 'boxScore'; autoPlay?: boolean }
+  ) => void
 }
 
 type TabId = 'videos' | 'schedule' | 'roster' | 'stats'

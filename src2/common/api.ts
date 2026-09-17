@@ -351,6 +351,11 @@ export class GameStationClient {
     )
   }
 
+  /** The newest played game anywhere this person can see, or null. */
+  async recentGame(): Promise<SeasonGame | null> {
+    return await this.request('GET', '/games/recent', asNullable(asSeasonGame))
+  }
+
   async seasonTeams(seasonId: string): Promise<TeamSummary[]> {
     return await this.request(
       'GET',

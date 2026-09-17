@@ -291,6 +291,33 @@ describe('what a highlight is called, and whether it is shown at all', function 
     expect(found).deep.equals([])
   })
 
+  it('keeps a real team whether or not anybody is recorded as running it', function () {
+    // The version of this that read `external || no owner` dropped every
+    // highlight in the app, because no team has an owner on real data.
+    const found = computeHighlights(
+      [
+        {
+          ...base,
+          id: 'e1',
+          startTime: at(600),
+          credits: [
+            {
+              eventType: 'single',
+              label: 'Single: Jensen P',
+              credit: credit('Jensen P'),
+              teamId: 'tem_real',
+              creditUserId: null
+            }
+          ]
+        }
+      ],
+      video,
+      settings,
+      new Map([['tem_real', { isExternal: false, hasOwner: false }]])
+    )
+    expect(found).to.have.length(1)
+  })
+
   it('keeps a play credited to a real team in the league', function () {
     const found = computeHighlights(
       [
