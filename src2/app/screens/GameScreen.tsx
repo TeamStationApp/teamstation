@@ -54,6 +54,15 @@ export interface GameScreenProps {
   startAtSec?: number
   /** Tells the shell where the reader now is, so the address can say so. */
   onMoment?: (videoId: string, atSec: number) => void
+  /**
+   * Tells the shell which half is showing.
+   *
+   * The `Box Score` button on the home card set this through the address and
+   * the pill did not, so opening the box score from the button could be
+   * linked and reloaded while opening it from the pill could not — the same
+   * destination, two different addresses.
+   */
+  onTab?: (tab: Tab) => void
 }
 
 type Tab = 'watch' | 'boxScore'
@@ -125,7 +134,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     onTitle,
     initialVideoId,
     startAtSec,
-    onMoment
+    onMoment,
+    onTab
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -484,7 +494,10 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         { id: 'boxScore', label: lstrings.game_box_score }
       ]}
       selected={tab}
-      onSelect={setTab}
+      onSelect={next => {
+        setTab(next)
+        onTab?.(next)
+      }}
       accessibilityLabel="Game sections"
     />
   )

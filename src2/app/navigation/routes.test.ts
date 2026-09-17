@@ -79,6 +79,25 @@ describe('addresses', function () {
     ).equals('/seasons/sea_1?tab=teams')
   })
 
+  it('carries the half of a game screen that is showing', function () {
+    // The pill and the home card's button reach the same place, so they must
+    // leave the same address behind: one of them wrote it and the other did
+    // not, and a box score opened by pill could not be linked or reloaded.
+    expect(
+      routePath({ name: 'game', gameId: 'gam_1', tab: 'boxScore' })
+    ).equals('/games/gam_1?tab=boxScore')
+    expect(routePath({ name: 'game', gameId: 'gam_1', tab: 'watch' })).equals(
+      '/games/gam_1'
+    )
+    expect(parseRoute('/games/gam_1', '?tab=boxScore')).deep.equals({
+      name: 'game',
+      gameId: 'gam_1',
+      tab: 'boxScore',
+      videoId: undefined,
+      at: undefined
+    })
+  })
+
   it('falls back to the home screen rather than a blank page', function () {
     expect(parseRoute('/nonsense')).deep.equals({ name: 'home' })
     expect(parseRoute('/teams')).deep.equals({ name: 'home' })
