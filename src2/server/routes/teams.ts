@@ -297,11 +297,35 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
           'title_override',
           'time_nudge_sec',
           'hidden',
-          'is_scoring_play'
+          'is_scoring_play',
+          'credits'
         ])
         .where('game_id', '=', video.gameId)
         .orderBy('at_bat_index')
         .execute()
+
+      // Which teams a highlight may name. An opponent invented from a name on
+      // somebody else's schedule is not somebody we can put on a screen.
+      const teamRows = await db
+        .selectFrom('teams')
+        .leftJoin('memberships', join =>
+          join
+            .onRef('memberships.team_id', '=', 'teams.id')
+            .on('memberships.role', 'in', ['owner', 'manager'])
+        )
+        .select(['teams.id as id', 'teams.kind as kind'])
+        .select(eb => eb.fn.count<number>('memberships.id').as('owners'))
+        .groupBy(['teams.id', 'teams.kind'])
+        .execute()
+      const teams = new Map(
+        teamRows.map(row => [
+          row.id,
+          {
+            isExternal: row.kind === 'external',
+            hasOwner: Number(row.owners) > 0
+          }
+        ])
+      )
 
       const settings = await highlightSettings(db)
       const highlights = computeHighlights(
@@ -314,14 +338,16 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
           titleOverride: row.title_override,
           timeNudgeSec: row.time_nudge_sec,
           hidden: row.hidden,
-          isScoringPlay: row.is_scoring_play
+          isScoringPlay: row.is_scoring_play,
+          credits: (row.credits ?? []) as never
         })),
         {
           startAt: video.startAt == null ? null : new Date(video.startAt),
           syncOffsetSec: video.syncOffsetSec,
           durationSec: video.durationSec
         },
-        settings
+        settings,
+        teams
       )
 
       // A still is one frame of the video at the moment of the play, served
