@@ -5,6 +5,7 @@ import { notFound, unauthorized } from '../../common/errors'
 import { shortNames } from '../../common/names'
 import { canSeeGame, canSeeTeam, visibleScopes } from '../access'
 import type { Database } from '../db/database'
+import { isRealVideo } from '../db/realVideos'
 import { withDropped } from '../highlights'
 import { imageUrl } from '../media/imageUrls'
 import { locateVideoFile } from '../media/locations'
@@ -271,6 +272,7 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
         ])
         .where('game_id', '=', gameId)
         .where('hidden', '=', false)
+        .where(isRealVideo)
         .orderBy('kind')
         .execute()
 
@@ -821,6 +823,7 @@ async function countVideos(
     .select(['game_id'])
     .where('game_id', 'in', gameIds)
     .where('hidden', '=', false)
+    .where(isRealVideo)
     .execute()
   const counts = new Map<string, number>()
   for (const row of rows) {

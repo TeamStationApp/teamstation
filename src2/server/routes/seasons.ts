@@ -4,6 +4,7 @@ import type { Kysely } from 'kysely'
 import { notFound, unauthorized } from '../../common/errors'
 import { visibleScopes } from '../access'
 import type { Database } from '../db/database'
+import { isRealVideo } from '../db/realVideos'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
 import { postersFor, posterUrl, warmPosters } from '../media/posters'
@@ -76,7 +77,9 @@ export function seasonRoutes(
 
         const gameRows = await db
           .selectFrom('games')
-          .leftJoin('videos', 'videos.game_id', 'games.id')
+          .leftJoin('videos', join =>
+            join.onRef('videos.game_id', '=', 'games.id').on(isRealVideo)
+          )
           .select(['games.season_id as seasonId', 'games.id as gameId'])
           .select(eb => eb.fn.count<number>('videos.id').as('videoCount'))
           .where('games.season_id', 'in', ids)
@@ -173,7 +176,9 @@ export function seasonRoutes(
         .selectFrom('games')
         .innerJoin('teams as home', 'home.id', 'games.home_team_id')
         .innerJoin('teams as away', 'away.id', 'games.away_team_id')
-        .leftJoin('videos', 'videos.game_id', 'games.id')
+        .leftJoin('videos', join =>
+          join.onRef('videos.game_id', '=', 'games.id').on(isRealVideo)
+        )
         .select([
           'games.id as id',
           'games.home_team_id as homeTeamId',
@@ -269,7 +274,9 @@ export function seasonRoutes(
         .selectFrom('games')
         .innerJoin('teams as home', 'home.id', 'games.home_team_id')
         .innerJoin('teams as away', 'away.id', 'games.away_team_id')
-        .leftJoin('videos', 'videos.game_id', 'games.id')
+        .leftJoin('videos', join =>
+          join.onRef('videos.game_id', '=', 'games.id').on(isRealVideo)
+        )
         .select([
           'games.id as id',
           'games.home_team_id as homeTeamId',
