@@ -39,18 +39,66 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
       const teams = scopes.isAdmin
         ? await db
             .selectFrom('teams')
-            .select(['id', 'name', 'short_name', 'logo_path'])
-            .where('kind', '=', 'full')
-            .orderBy('name')
+            .leftJoin('games', join =>
+              join.on(eb =>
+                eb.or([
+                  eb('games.home_team_id', '=', eb.ref('teams.id')),
+                  eb('games.away_team_id', '=', eb.ref('teams.id'))
+                ])
+              )
+            )
+            .select([
+              'teams.id as id',
+              'teams.name as name',
+              'teams.short_name as short_name',
+              'teams.logo_path as logo_path'
+            ])
+            .select(eb => eb.fn.max('games.start_at').as('lastPlayedAt'))
+            .where('teams.kind', '=', 'full')
+            .groupBy([
+              'teams.id',
+              'teams.name',
+              'teams.short_name',
+              'teams.logo_path'
+            ])
+            .orderBy('lastPlayedAt', ob => ob.desc().nullsLast())
+            .orderBy('teams.name')
             .execute()
         : scopes.teamIds.size === 0
           ? []
           : await db
               .selectFrom('teams')
-              .select(['id', 'name', 'short_name', 'logo_path'])
-              .where('id', 'in', [...scopes.teamIds])
-              .where('kind', '=', 'full')
-              .orderBy('name')
+              .leftJoin('games', join =>
+                join.on(eb =>
+                  eb.or([
+                    eb('games.home_team_id', '=', eb.ref('teams.id')),
+                    eb('games.away_team_id', '=', eb.ref('teams.id'))
+                  ])
+                )
+              )
+              .select([
+                'teams.id as id',
+                'teams.name as name',
+                'teams.short_name as short_name',
+                'teams.logo_path as logo_path'
+              ])
+              .select(eb => eb.fn.max('games.start_at').as('lastPlayedAt'))
+              .where('teams.id', 'in', [...scopes.teamIds])
+              .where('teams.kind', '=', 'full')
+              .groupBy([
+                'teams.id',
+                'teams.name',
+                'teams.short_name',
+                'teams.logo_path'
+              ])
+              // A team has no season of its own to sort by — only a season
+              // does — so the honest ordering is when it last played. The team
+              // somebody is here to look at is almost always the one that
+              // played last night. A team that has never played has no date,
+              // and sorts to the bottom rather than to the top, which is where
+              // SQL puts a null by default on a descending sort.
+              .orderBy('lastPlayedAt', ob => ob.desc().nullsLast())
+              .orderBy('teams.name')
               .execute()
 
       res.json(
