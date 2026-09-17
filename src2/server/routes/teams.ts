@@ -302,6 +302,112 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
     })
   )
 
+  /**
+   * Who is on a team.
+   *
+   * Players first and then everybody else, because the roster screen is read
+   * by parents looking for one child. A person with no jersey still belongs on
+   * the list — a late addition has a name before it has a number.
+   */
+  router.get(
+    '/teams/:teamId/roster',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const teamId = pathParam(req.params.teamId)
+      const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
+      if (!canSeeTeam(scopes, teamId)) throw notFound()
+
+      const rows = await db
+        .selectFrom('memberships')
+        .innerJoin('users', 'users.id', 'memberships.user_id')
+        .select([
+          'memberships.user_id as userId',
+          'users.display_name as displayName',
+          'memberships.jersey as jersey',
+          'memberships.positions as positions',
+          'memberships.is_player as isPlayer',
+          'memberships.role as role'
+        ])
+        .where('memberships.team_id', '=', teamId)
+        .where('users.merged_into', 'is', null)
+        .orderBy('memberships.is_player', 'desc')
+        .orderBy('users.display_name')
+        .execute()
+
+      res.json(
+        rows.map(row => ({
+          userId: row.userId,
+          displayName: row.displayName,
+          jersey: row.jersey,
+          positions: row.positions,
+          isPlayer: row.isPlayer,
+          role: row.role
+        }))
+      )
+    })
+  )
+
+  /**
+   * A team's batting across a season.
+   *
+   * Worked out from the stored plays with the same `battingLines` the box score
+   * uses, rather than read from the season rollup table. The rollup is a cache
+   * that a re-ingest can leave behind; the plays are what everything else is
+   * derived from, so a figure here and a figure in a box score cannot disagree.
+   */
+  router.get(
+    '/teams/:teamId/stats',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const teamId = pathParam(req.params.teamId)
+      const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
+      if (!canSeeTeam(scopes, teamId)) throw notFound()
+
+      const seasonId =
+        typeof req.query.seasonId === 'string' ? req.query.seasonId : undefined
+
+      let query = db
+        .selectFrom('event_players')
+        .innerJoin('events', 'events.id', 'event_players.event_id')
+        .innerJoin('games', 'games.id', 'events.game_id')
+        .innerJoin('users', 'users.id', 'event_players.user_id')
+        .select([
+          'event_players.user_id as userId',
+          'event_players.team_id as teamId',
+          'events.event_type as eventType',
+          'events.rbi as rbi',
+          'users.display_name as displayName'
+        ])
+        .where('event_players.team_id', '=', teamId)
+        .where('event_players.role', '=', 'batter')
+      if (seasonId != null)
+        query = query.where('games.season_id', '=', seasonId)
+      const rows = await query.execute()
+
+      const names = new Map(rows.map(row => [row.userId, row.displayName]))
+      const lines = battingLines(
+        rows.map(row => ({
+          batterUserId: row.userId,
+          teamId: row.teamId,
+          eventType: row.eventType ?? 'unknown',
+          rbi: row.rbi
+        }))
+      )
+
+      res.json(
+        lines.map(line => ({
+          ...line,
+          displayName: names.get(line.userId) ?? 'Unknown',
+          rates: battingRates(line)
+        }))
+      )
+    })
+  )
+
   router.get(
     '/games/:gameId/box-score',
     requireActor,

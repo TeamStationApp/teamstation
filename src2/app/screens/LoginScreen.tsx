@@ -1,34 +1,42 @@
 import React, { useState } from 'react'
-import {
-  ActivityIndicator,
-  Pressable,
-  StyleSheet,
-  Text,
-  TextInput,
-  View
-} from 'react-native'
+import { Text, View } from 'react-native'
 
 import type { GameStationClient, Session } from '../../common/api'
-import { HttpError } from '../../common/errors'
-import { lstrings } from '../locales/strings'
-import { cacheStyles, useTheme } from '../theme/ThemeContext'
-import type { Theme } from '../theme/types'
+import { Button, Card, Screen, TextField } from '../components'
+import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
 export interface LoginScreenProps {
   client: GameStationClient
   onSignedIn: (session: Session) => void
 }
 
+/** Which of the two ways in the form is currently offering. */
+type Method = 'code' | 'password'
+
 /**
- * Two ways in: a password, or a code by e-mail. The code screen only appears
- * once a code has actually been asked for, so nobody is told to check their
- * inbox for something that was never sent.
+ * Sign in.
+ *
+ * E-mail first, on Paul's instruction and against the drawn design, which put
+ * the password field up front with "E-mail me a code instead" underneath. Of
+ * the sixty people imported from PeerTube, thirty-four have no password at all
+ * — for most of this audience the code *is* the way in, and a password field
+ * they cannot fill is an obstacle placed before the thing that works.
+ *
+ * So: one address field, a large "Send me a sign-in code", and a quieter "Use
+ * a password instead" that swaps a password field into the same space and
+ * turns the button into "Sign in". Nothing is hidden behind a second screen,
+ * and the address typed carries across the swap.
+ *
+ * The same words come back for an unknown address as for a known one, so the
+ * form cannot be used to find out who has an account. The server behaves the
+ * same way, including how it counts attempts against a limit.
  */
 export function LoginScreen(props: LoginScreenProps): React.ReactElement {
   const { client, onSignedIn } = props
-  const styles = getStyles(useTheme())
   const theme = useTheme()
+  const styles = getStyles(theme)
 
+  const [method, setMethod] = useState<Method>('code')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [code, setCode] = useState('')
@@ -37,12 +45,12 @@ export function LoginScreen(props: LoginScreenProps): React.ReactElement {
   const [error, setError] = useState<string | undefined>(undefined)
 
   const run = (work: () => Promise<void>): void => {
-    setBusy(true)
     setError(undefined)
+    setBusy(true)
     work()
       .catch((caught: unknown) => {
         setError(
-          caught instanceof HttpError ? caught.message : lstrings.common_retry
+          caught instanceof Error ? caught.message : 'Something went wrong'
         )
       })
       .finally(() => {
@@ -50,156 +58,161 @@ export function LoginScreen(props: LoginScreenProps): React.ReactElement {
       })
   }
 
-  const signInWithPassword = (): void => {
+  const sendCode = (): void => {
     run(async () => {
-      onSignedIn(await client.signInWithPassword(email, password))
-    })
-  }
-
-  const askForCode = (): void => {
-    run(async () => {
-      await client.requestEmailCode(email)
+      await client.requestEmailCode(email.trim())
       setCodeSent(true)
     })
   }
 
   const signInWithCode = (): void => {
     run(async () => {
-      onSignedIn(await client.signInWithCode(email, code))
+      onSignedIn(await client.signInWithCode(email.trim(), code.trim()))
     })
   }
 
-  return (
-    <View style={styles.screen}>
-      <View style={styles.card}>
-        <Text style={styles.title}>{lstrings.login_title}</Text>
+  const signInWithPassword = (): void => {
+    run(async () => {
+      onSignedIn(await client.signInWithPassword(email.trim(), password))
+    })
+  }
 
-        <TextInput
-          style={styles.input}
+  const canSend = email.trim().length > 3
+
+  return (
+    <Screen contentStyle={styles.centre}>
+      <Card style={styles.card}>
+        <View style={styles.heading}>
+          <Text style={styles.title}>Sign in to GameStation</Text>
+          <Text style={styles.subtitle}>
+            Watch live games, multi-angle replays and follow your teams
+          </Text>
+        </View>
+
+        <TextField
+          label="E-mail address"
           value={email}
           onChangeText={setEmail}
-          placeholder={lstrings.login_email}
-          placeholderTextColor={theme.placeholderTextColor}
-          autoCapitalize="none"
+          placeholder="parent@example.com"
           keyboardType="email-address"
-          inputMode="email"
+          autoComplete="email"
+          autoFocus
         />
 
-        {codeSent ? (
-          <>
-            <Text style={styles.hint}>{lstrings.login_code_sent}</Text>
-            <TextInput
-              style={styles.input}
-              value={code}
-              onChangeText={setCode}
-              placeholder={lstrings.login_code}
-              placeholderTextColor={theme.placeholderTextColor}
-              keyboardType="number-pad"
-              inputMode="numeric"
-              maxLength={6}
-            />
-            <Pressable
-              style={styles.primaryButton}
-              onPress={signInWithCode}
-              disabled={busy}
-            >
-              <Text style={styles.primaryButtonText}>
-                {lstrings.login_submit}
-              </Text>
-            </Pressable>
-          </>
-        ) : (
-          <>
-            <TextInput
-              style={styles.input}
-              value={password}
-              onChangeText={setPassword}
-              placeholder={lstrings.login_password}
-              placeholderTextColor={theme.placeholderTextColor}
-              secureTextEntry
-            />
-            <Pressable
-              style={styles.primaryButton}
-              onPress={signInWithPassword}
-              disabled={busy}
-            >
-              <Text style={styles.primaryButtonText}>
-                {lstrings.login_submit}
-              </Text>
-            </Pressable>
-            <Pressable onPress={askForCode} disabled={busy}>
-              <Text style={styles.linkText}>{lstrings.login_send_code}</Text>
-            </Pressable>
-          </>
+        {method === 'password' && (
+          <TextField
+            label="Password"
+            value={password}
+            onChangeText={setPassword}
+            secure
+            autoComplete="current-password"
+            onSubmitEditing={signInWithPassword}
+          />
         )}
 
-        {busy ? <ActivityIndicator color={theme.primaryTextColor} /> : null}
-        {error != null ? <Text style={styles.error}>{error}</Text> : null}
-      </View>
-    </View>
+        {method === 'code' && codeSent && (
+          <TextField
+            label="Sign-in code"
+            value={code}
+            onChangeText={setCode}
+            placeholder="123456"
+            keyboardType="number-pad"
+            autoComplete="one-time-code"
+            autoFocus
+            onSubmitEditing={signInWithCode}
+          />
+        )}
+
+        {error != null && <Text style={styles.error}>{error}</Text>}
+
+        {method === 'password' ? (
+          <Button
+            label="Sign in"
+            block
+            busy={busy}
+            disabled={!canSend || password === ''}
+            onPress={signInWithPassword}
+          />
+        ) : codeSent ? (
+          <Button
+            label="Sign in"
+            block
+            busy={busy}
+            disabled={code.trim().length < 4}
+            onPress={signInWithCode}
+          />
+        ) : (
+          <Button
+            label="Send me a sign-in code"
+            block
+            busy={busy}
+            disabled={!canSend}
+            onPress={sendCode}
+          />
+        )}
+
+        {method === 'code' && codeSent && (
+          <Text style={styles.sent}>
+            If that address has an account, a six-digit code is on its way. It
+            lasts ten minutes.
+          </Text>
+        )}
+
+        <Button
+          kind="text"
+          label={
+            method === 'code' ? 'Use a password instead' : 'Use a sign-in code'
+          }
+          onPress={() => {
+            setError(undefined)
+            setCodeSent(false)
+            setCode('')
+            setPassword('')
+            setMethod(method === 'code' ? 'password' : 'code')
+          }}
+        />
+      </Card>
+    </Screen>
   )
 }
 
-const getStyles = cacheStyles((theme: Theme) =>
-  StyleSheet.create({
-    screen: {
-      flex: 1,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: theme.backgroundColor,
-      padding: theme.rem(1)
-    },
-    card: {
-      width: '100%',
-      maxWidth: theme.rem(22),
-      backgroundColor: theme.cardBackgroundDark,
-      borderRadius: theme.rem(0.5),
-      padding: theme.rem(1.25),
-      gap: theme.rem(0.75)
-    },
-    title: {
-      color: theme.primaryTextColor,
-      fontFamily: theme.primaryTextFont,
-      fontSize: theme.rem(theme.primaryTextFontSizeRem),
-      marginBottom: theme.rem(0.5)
-    },
-    input: {
-      backgroundColor: theme.inputBackgroundColor,
-      borderColor: theme.inputBorderColor,
-      borderWidth: 1,
-      borderRadius: theme.rem(0.35),
-      color: theme.inputTextColor,
-      fontFamily: theme.regularTextFont,
-      fontSize: theme.rem(1),
-      paddingHorizontal: theme.rem(0.65),
-      paddingVertical: theme.rem(0.55)
-    },
-    primaryButton: {
-      alignItems: 'center',
-      backgroundColor: theme.primaryButtonColor,
-      borderRadius: theme.rem(0.35),
-      paddingVertical: theme.rem(0.65)
-    },
-    primaryButtonText: {
-      color: theme.buttonTextColor,
-      fontFamily: theme.semiBoldTextFont,
-      fontSize: theme.rem(1)
-    },
-    linkText: {
-      color: theme.clearButtonColor,
-      fontFamily: theme.regularTextFont,
-      fontSize: theme.rem(0.9),
-      textAlign: 'center'
-    },
-    hint: {
-      color: theme.primaryTextColor,
-      fontFamily: theme.regularTextFont,
-      fontSize: theme.rem(0.9)
-    },
-    error: {
-      color: theme.dangerColor,
-      fontFamily: theme.regularTextFont,
-      fontSize: theme.rem(0.9)
-    }
-  })
-)
+const getStyles = cacheStyles((theme: Theme) => ({
+  centre: {
+    flex: 1,
+    justifyContent: 'center',
+    maxWidth: theme.rem(28)
+  },
+  card: {
+    gap: theme.rem(theme.spaceLgRem),
+    padding: theme.rem(theme.spaceXlRem)
+  },
+  heading: {
+    alignItems: 'center',
+    gap: theme.rem(theme.spaceSmRem)
+  },
+  title: {
+    fontFamily: theme.boldTextFont,
+    fontSize: theme.rem(1.75),
+    fontWeight: '700',
+    letterSpacing: theme.rem(-0.02),
+    textAlign: 'center',
+    color: theme.primaryTextColor
+  },
+  subtitle: {
+    fontFamily: theme.regularTextFont,
+    fontSize: theme.rem(0.9375),
+    textAlign: 'center',
+    color: theme.secondaryTextColor
+  },
+  sent: {
+    fontFamily: theme.regularTextFont,
+    fontSize: theme.rem(0.8125),
+    textAlign: 'center',
+    color: theme.secondaryTextColor
+  },
+  error: {
+    fontFamily: theme.regularTextFont,
+    fontSize: theme.rem(0.875),
+    color: theme.dangerColor
+  }
+}))

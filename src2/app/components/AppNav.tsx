@@ -2,6 +2,7 @@ import React from 'react'
 import { Pressable, Text, View } from 'react-native'
 
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { Icon, type IconName } from './Icon'
 import { useBreakpoint } from './useBreakpoint'
 
 export type NavTabId = 'home' | 'videos' | 'schedule' | 'account'
@@ -9,7 +10,7 @@ export type NavTabId = 'home' | 'videos' | 'schedule' | 'account'
 export interface NavTab {
   id: NavTabId
   label: string
-  glyph: string
+  icon: IconName
 }
 
 /**
@@ -23,10 +24,10 @@ export interface NavTab {
  * built. Account has to exist — signing out has to live somewhere.
  */
 export const NAV_TABS: NavTab[] = [
-  { id: 'home', label: 'Home', glyph: '⌂' },
-  { id: 'videos', label: 'Videos', glyph: '▶' },
-  { id: 'schedule', label: 'Schedule', glyph: '▦' },
-  { id: 'account', label: 'Account', glyph: '☺' }
+  { id: 'home', label: 'Home', icon: 'home' },
+  { id: 'videos', label: 'Videos', icon: 'smart_display' },
+  { id: 'schedule', label: 'Schedule', icon: 'event' },
+  { id: 'account', label: 'Account', icon: 'account_circle' }
 ]
 
 export interface AppNavProps {
@@ -72,14 +73,10 @@ export function AppNav(props: AppNavProps): React.ReactElement {
               pressed && styles.pressed
             ]}
           >
-            <Text
-              style={[
-                styles.glyph,
-                isSelected ? styles.selectedText : styles.idleText
-              ]}
-            >
-              {tab.glyph}
-            </Text>
+            <Icon
+              name={tab.icon}
+              color={isSelected ? theme.navActiveColor : theme.navInactiveColor}
+            />
             <Text
               style={[
                 isRail ? styles.labelRail : styles.labelBar,
@@ -135,9 +132,6 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   pressed: {
     opacity: 0.6
-  },
-  glyph: {
-    fontSize: theme.rem(1.125)
   },
   labelBar: {
     fontFamily: theme.semiBoldTextFont,

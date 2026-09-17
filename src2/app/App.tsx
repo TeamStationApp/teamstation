@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react'
-import { Pressable, StyleSheet, Text, View } from 'react-native'
+import { View } from 'react-native'
 
 import {
   GameStationClient,
@@ -7,167 +7,197 @@ import {
   type Session,
   type TeamSummary
 } from '../common/api'
-import { lstrings } from './locales/strings'
+import { AppHeader, AppNav, type NavTabId, useBreakpoint } from './components'
+import { AccountScreen } from './screens/AccountScreen'
 import { GameScreen } from './screens/GameScreen'
-import { GamesScreen } from './screens/GamesScreen'
+import { GamesFeedScreen } from './screens/GamesFeedScreen'
 import { HomeScreen } from './screens/HomeScreen'
 import { LoginScreen } from './screens/LoginScreen'
 import { SeasonScreen } from './screens/SeasonScreen'
-import { cacheStyles, ThemeProvider, useTheme } from './theme/ThemeContext'
-import type { Theme } from './theme/types'
+import { TeamScreen } from './screens/TeamScreen'
+import {
+  cacheStyles,
+  type Theme,
+  ThemeProvider,
+  useTheme
+} from './theme/ThemeContext'
 
 export interface AppProps {
   apiBaseUrl?: string
 }
 
-type Route =
-  | { name: 'home' }
+/** A screen pushed on top of a tab, rather than one of the tabs itself. */
+type Pushed =
   | { name: 'season'; season: SeasonSummary }
-  | { name: 'games'; team: TeamSummary }
-  | { name: 'game'; title: string; gameId: string }
+  | { name: 'team'; team: TeamSummary }
+  | { name: 'game'; gameId: string; title: string }
 
 /**
- * Sign in, then teams, then that team's games, then one game with its videos
- * and highlights. The navigation is a plain stack held in state: with four
- * screens and web only for now, a router would be more moving parts than the
- * app has screens.
+ * Four destinations, each with its own stack.
+ *
+ * Per-tab stacks rather than one shared one: opening a team from Home and then
+ * switching to Schedule and back should land where it was left, which is what
+ * every app with a tab bar does and what people expect without being told. One
+ * shared stack would either lose the place or carry a team screen into a tab
+ * it does not belong to.
+ *
+ * Still a plain object in state rather than a router. There are seven screens
+ * and no deep links yet; a router would be more moving parts than the app has
+ * places to go. When URLs matter — and for a video anyone wants to send to a
+ * grandparent, they will — this is the one thing to replace.
  */
 export function App(props: AppProps): React.ReactElement {
+  return (
+    <ThemeProvider>
+      <Shell apiBaseUrl={props.apiBaseUrl} />
+    </ThemeProvider>
+  )
+}
+
+function Shell(props: AppProps): React.ReactElement {
   const apiBaseUrl = props.apiBaseUrl ?? '/api/v1'
+  const theme = useTheme()
+  const styles = getStyles(theme)
+  const isRail = useBreakpoint() !== 'phone'
 
   const client = useMemo(
     () => new GameStationClient({ baseUrl: apiBaseUrl }),
     [apiBaseUrl]
   )
   const [session, setSession] = useState<Session | undefined>(undefined)
-  const [stack, setStack] = useState<Route[]>([{ name: 'home' }])
-  const route = stack[stack.length - 1]
+  const [tab, setTab] = useState<NavTabId>('home')
+  const [stacks, setStacks] = useState<Record<NavTabId, Pushed[]>>({
+    home: [],
+    videos: [],
+    schedule: [],
+    account: []
+  })
 
-  const push = (next: Route): void => {
-    setStack(current => [...current, next])
+  const stack = stacks[tab]
+  const top = stack[stack.length - 1]
+
+  const push = (next: Pushed): void => {
+    setStacks(current => ({ ...current, [tab]: [...current[tab], next] }))
   }
   const pop = (): void => {
-    setStack(current => (current.length > 1 ? current.slice(0, -1) : current))
+    setStacks(current => ({ ...current, [tab]: current[tab].slice(0, -1) }))
+  }
+
+  const openGame = (gameId: string, title: string): void => {
+    push({ name: 'game', gameId, title })
+  }
+  const openTeam = (team: TeamSummary): void => {
+    push({ name: 'team', team })
+  }
+  const openSeason = (season: SeasonSummary): void => {
+    push({ name: 'season', season })
+  }
+
+  if (session == null) {
+    return (
+      <View style={styles.app}>
+        <AppHeader title="Sign in" overline="GameStation" />
+        <LoginScreen client={client} onSignedIn={setSession} />
+      </View>
+    )
+  }
+
+  const body =
+    top == null ? (
+      tab === 'home' ? (
+        <HomeScreen
+          client={client}
+          onOpenTeam={openTeam}
+          onOpenSeason={openSeason}
+          onOpenGame={openGame}
+        />
+      ) : tab === 'videos' ? (
+        <GamesFeedScreen client={client} mode="videos" onOpenGame={openGame} />
+      ) : tab === 'schedule' ? (
+        <GamesFeedScreen
+          client={client}
+          mode="schedule"
+          onOpenGame={openGame}
+        />
+      ) : (
+        <AccountScreen
+          session={session}
+          onSignOut={() => {
+            client.signOut().catch(() => undefined)
+            setSession(undefined)
+            setStacks({ home: [], videos: [], schedule: [], account: [] })
+            setTab('home')
+          }}
+        />
+      )
+    ) : top.name === 'team' ? (
+      <TeamScreen client={client} team={top.team} onOpenGame={openGame} />
+    ) : top.name === 'season' ? (
+      <SeasonScreen
+        client={client}
+        season={top.season}
+        onOpenGame={openGame}
+        onOpenTeam={openTeam}
+      />
+    ) : (
+      <GameScreen client={client} gameId={top.gameId} />
+    )
+
+  const header = (
+    <AppHeader
+      title={titleFor(tab, top)}
+      overline={top == null ? 'GameStation' : undefined}
+      onBack={stack.length > 0 ? pop : undefined}
+    />
+  )
+
+  // The rail sits beside the content on a wide window and the bar sits under
+  // it on a phone, so the two arrangements are a row and a column of the same
+  // two pieces.
+  if (isRail) {
+    return (
+      <View style={styles.appRow}>
+        <AppNav selected={tab} onSelect={setTab} />
+        <View style={styles.pane}>
+          {header}
+          {body}
+        </View>
+      </View>
+    )
   }
 
   return (
-    <ThemeProvider>
-      <Shell
-        title={titleFor(route, session)}
-        canGoBack={stack.length > 1 && session != null}
-        onBack={pop}
-      >
-        {session == null ? (
-          <LoginScreen client={client} onSignedIn={setSession} />
-        ) : route.name === 'home' ? (
-          <HomeScreen
-            client={client}
-            onOpenTeam={team => {
-              push({ name: 'games', team })
-            }}
-            onOpenSeason={season => {
-              push({ name: 'season', season })
-            }}
-          />
-        ) : route.name === 'season' ? (
-          <SeasonScreen
-            client={client}
-            season={route.season}
-            onOpenGame={game => {
-              push({
-                name: 'game',
-                gameId: game.id,
-                title: `${game.awayTeamName} ${lstrings.game_at} ${game.homeTeamName}`
-              })
-            }}
-            onOpenTeam={team => {
-              push({ name: 'games', team })
-            }}
-          />
-        ) : route.name === 'games' ? (
-          <GamesScreen
-            client={client}
-            team={route.team}
-            onOpenGame={game => {
-              push({
-                name: 'game',
-                gameId: game.id,
-                title: `${game.awayTeamName} ${lstrings.game_at} ${game.homeTeamName}`
-              })
-            }}
-          />
-        ) : (
-          <GameScreen client={client} gameId={route.gameId} />
-        )}
-      </Shell>
-    </ThemeProvider>
-  )
-}
-
-function titleFor(route: Route, session: Session | undefined): string {
-  if (session == null) return lstrings.login_title
-  if (route.name === 'home') return lstrings.home_title
-  if (route.name === 'season') return route.season.name
-  if (route.name === 'games') return route.team.name
-  // The matchup, so a game is identified by who played it rather than by the
-  // name of the tab that happens to be open.
-  return route.title
-}
-
-interface ShellProps {
-  title: string
-  canGoBack: boolean
-  onBack: () => void
-  children: React.ReactNode
-}
-
-function Shell(props: ShellProps): React.ReactElement {
-  const styles = getStyles(useTheme())
-  return (
-    <View style={styles.shell}>
-      <View style={styles.bar}>
-        {props.canGoBack ? (
-          <Pressable onPress={props.onBack} style={styles.back}>
-            <Text style={styles.backText}>{lstrings.common_back}</Text>
-          </Pressable>
-        ) : null}
-        <Text style={styles.title} numberOfLines={1}>
-          {props.title}
-        </Text>
-      </View>
-      <View style={styles.body}>{props.children}</View>
+    <View style={styles.app}>
+      {header}
+      {body}
+      <AppNav selected={tab} onSelect={setTab} />
     </View>
   )
 }
 
-const getStyles = cacheStyles((theme: Theme) =>
-  StyleSheet.create({
-    shell: { flex: 1, backgroundColor: theme.backgroundColor },
-    bar: {
-      alignItems: 'center',
-      backgroundColor: theme.cardBackgroundDark,
-      flexDirection: 'row',
-      gap: theme.rem(0.75),
-      paddingHorizontal: theme.rem(0.75),
-      paddingVertical: theme.rem(0.6)
-    },
-    back: {
-      backgroundColor: theme.inactiveBackgroundColor,
-      borderRadius: theme.rem(0.3),
-      paddingHorizontal: theme.rem(0.6),
-      paddingVertical: theme.rem(0.3)
-    },
-    backText: {
-      color: theme.buttonTextColor,
-      fontFamily: theme.regularTextFont,
-      fontSize: theme.rem(0.85)
-    },
-    title: {
-      color: theme.primaryTextColor,
-      flex: 1,
-      fontFamily: theme.boldTextFont,
-      fontSize: theme.rem(1.1)
-    },
-    body: { flex: 1 }
-  })
-)
+function titleFor(tab: NavTabId, top: Pushed | undefined): string {
+  if (top != null) {
+    if (top.name === 'team') return top.team.name
+    if (top.name === 'season') return top.season.name
+    return top.title
+  }
+  if (tab === 'home') return 'GameStation'
+  if (tab === 'videos') return 'Videos'
+  if (tab === 'schedule') return 'Schedule'
+  return 'Account'
+}
+
+const getStyles = cacheStyles((theme: Theme) => ({
+  app: {
+    flex: 1,
+    backgroundColor: theme.backgroundColor
+  },
+  appRow: {
+    flex: 1,
+    flexDirection: 'row',
+    backgroundColor: theme.backgroundColor
+  },
+  pane: {
+    flex: 1
+  }
+}))

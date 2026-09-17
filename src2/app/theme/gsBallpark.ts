@@ -172,6 +172,9 @@ export const gsBallpark: Theme = {
   spaceLgRem: 1.25,
   spaceXlRem: 2,
 
-  // The container never grows past this, however wide the window.
-  maxContentWidthRem: 75
+  // The container never grows past this, however wide the window. 60rem is
+  // 960px: wide enough for a box score to breathe, narrow enough that a list
+  // row does not put a team's name and its chevron a screen apart. Tried at 75
+  // first, and that is exactly what it did.
+  maxContentWidthRem: 60
 }

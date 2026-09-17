@@ -3,6 +3,7 @@ import { Pressable, Text, View } from 'react-native'
 
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Badge, type BadgeTone } from './Badge'
+import { Icon } from './Icon'
 
 export interface ListRowProps {
   title: string
@@ -25,7 +26,8 @@ export interface ListRowProps {
  */
 export function ListRow(props: ListRowProps): React.ReactElement {
   const { title, subtitle, emblem, badgeLabel, badgeTone, onPress } = props
-  const styles = getStyles(useTheme())
+  const theme = useTheme()
+  const styles = getStyles(theme)
 
   const content = (
     <>
@@ -45,7 +47,9 @@ export function ListRow(props: ListRowProps): React.ReactElement {
         )}
       </View>
       {badgeLabel != null && <Badge label={badgeLabel} tone={badgeTone} />}
-      {onPress != null && <Text style={styles.chevron}>›</Text>}
+      {onPress != null && (
+        <Icon name="chevron_right" color={theme.secondaryTextColor} />
+      )}
     </>
   )
 
@@ -101,11 +105,6 @@ const getStyles = cacheStyles((theme: Theme) => ({
   subtitle: {
     fontFamily: theme.regularTextFont,
     fontSize: theme.rem(0.875),
-    color: theme.secondaryTextColor
-  },
-  chevron: {
-    fontFamily: theme.regularTextFont,
-    fontSize: theme.rem(1.5),
     color: theme.secondaryTextColor
   }
 }))
