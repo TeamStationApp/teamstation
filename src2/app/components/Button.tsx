@@ -99,7 +99,10 @@ const getStyles = cacheStyles((theme: Theme) => ({
     flexDirection: 'row',
     gap: theme.rem(theme.spaceXsRem),
     minHeight: theme.rem(3),
-    paddingHorizontal: theme.rem(theme.spaceLgRem),
+    // Small enough that two of these side by side on a phone fit their labels.
+    // `Watch Replay` was coming out `Watch Rep…`, which is a worse answer than
+    // a narrower gap either side of it.
+    paddingHorizontal: theme.rem(theme.spaceMdRem),
     borderRadius: theme.rem(theme.radiusRem),
     alignItems: 'center',
     justifyContent: 'center',
