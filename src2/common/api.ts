@@ -71,7 +71,9 @@ export const asGameSummary = asObject({
   ingestStatus: asString,
   videoCount: asNumber,
   /** The longest video of the game, for the length on a thumbnail. */
-  durationSec: asOptional(asNullable(asNumber), null)
+  durationSec: asOptional(asNullable(asNumber), null),
+  /** A frame of the game's video, signed and short-lived. */
+  posterUrl: asOptional(asNullable(asString), null)
 })
 export type GameSummary = ReturnType<typeof asGameSummary>
 
@@ -120,6 +122,9 @@ export const asGameDetail = asObject({
   awayScore: asNullable(asNumber),
   ingestStatus: asString,
   ingestMessage: asNullable(asString),
+  /** Each side's record in this game's season, `12–3`. */
+  awayRecord: asOptional(asNullable(asString), null),
+  homeRecord: asOptional(asNullable(asString), null),
   /**
    * Runs, hits and errors per side, counted from the plays.
    *
@@ -272,17 +277,20 @@ export const asSeasonGame = asObject({
 })
 export type SeasonGame = ReturnType<typeof asSeasonGame>
 
+export const asSessionUser = asObject({
+  id: asString,
+  displayName: asString,
+  email: asOptional(asString),
+  isAdmin: asBoolean,
+  /** Signed and short-lived, for the picture in the header. */
+  avatarUrl: asOptional(asNullable(asString), null)
+})
+export type SessionUser = ReturnType<typeof asSessionUser>
+
 export const asSession = asObject({
   token: asString,
   expiresAt: asString,
-  user: asObject({
-    id: asString,
-    displayName: asString,
-    email: asOptional(asString),
-    isAdmin: asBoolean,
-    /** Signed and short-lived, for the picture in the header. */
-    avatarUrl: asOptional(asNullable(asString), null)
-  })
+  user: asSessionUser
 })
 export type Session = ReturnType<typeof asSession>
 
@@ -349,6 +357,22 @@ export class GameStationClient {
       `/seasons/${encodeURIComponent(seasonId)}/games`,
       asArray(asSeasonGame)
     )
+  }
+
+  /**
+   * Who the cookie says you are, or null.
+   *
+   * The session is in an `HttpOnly` cookie the app cannot read, so asking the
+   * server is the only way to know whether somebody is signed in. Without
+   * this a reload showed the sign-in screen with a live session sitting in
+   * the jar, and every link landed there instead of where it pointed.
+   */
+  async whoAmI(): Promise<SessionUser | null> {
+    try {
+      return await this.request('GET', '/auth/me', asSessionUser)
+    } catch {
+      return null
+    }
   }
 
   /** The newest played game anywhere this person can see, or null. */

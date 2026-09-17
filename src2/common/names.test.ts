@@ -82,3 +82,12 @@ describe('a list of names', function () {
     expect(names.get('2')).equals('Jordan P')
   })
 })
+
+describe('the same person listed twice', function () {
+  it('is one person, not a collision with themselves', function () {
+    const twice = person('1', 'Henry', 'Hicks')
+    const names = shortNames([twice, twice, person('2', 'Casey', 'Mize')])
+    expect(names.get('1')).equals('Henry H')
+    expect(names.get('2')).equals('Casey M')
+  })
+})

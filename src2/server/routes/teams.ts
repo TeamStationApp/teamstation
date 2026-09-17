@@ -10,7 +10,7 @@ import { imageUrl } from '../media/imageUrls'
 import { locateVideoFile } from '../media/locations'
 import type { MediaContext } from '../media/mediaContext'
 import { mediaUrlPath } from '../media/mediaTokens'
-import { posterUrl, warmPosters } from '../media/posters'
+import { postersFor, posterUrl, warmPosters } from '../media/posters'
 import { stillSecond, warmStills } from '../media/stills'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
@@ -197,6 +197,7 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
 
       const ids = games.map(game => game.id)
       const videoCounts = await countVideos(db, ids)
+      const teamPosters = await postersFor(db, ids)
       const names = await teamNames(
         db,
         games.flatMap(game => [game.home_team_id, game.away_team_id])
@@ -216,7 +217,12 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
           homeScore: game.home_score,
           awayScore: game.away_score,
           ingestStatus: game.ingest_status,
-          videoCount: videoCounts.get(game.id) ?? 0
+          videoCount: videoCounts.get(game.id) ?? 0,
+          durationSec: teamPosters.get(game.id)?.durationSec ?? null,
+          posterUrl: (() => {
+            const poster = teamPosters.get(game.id)
+            return poster == null ? null : posterUrl(media, poster.videoId)
+          })()
         }))
       )
     })
@@ -270,6 +276,23 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
 
       const names = await teamNames(db, [game.home_team_id, game.away_team_id])
 
+      // Each side's record in the season this game was played in.
+      const recordRows = await db
+        .selectFrom('team_season_records')
+        .select(['team_id', 'w', 'l', 't'])
+        .where('team_id', 'in', [game.home_team_id, game.away_team_id])
+        .where(eb =>
+          game.season_id == null
+            ? eb('season_id', 'is', null)
+            : eb('season_id', '=', game.season_id)
+        )
+        .execute()
+      const recordOf = (teamId: string): string | null => {
+        const row = recordRows.find(item => item.team_id === teamId)
+        if (row == null || row.w + row.l + row.t === 0) return null
+        return row.t > 0 ? `${row.w}–${row.l}–${row.t}` : `${row.w}–${row.l}`
+      }
+
       // The frames the card and the picker are about to ask for.
       warmPosters(
         media,
@@ -297,6 +320,8 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
         awayScore: game.away_score,
         ingestStatus: game.ingest_status,
         ingestMessage: game.ingest_message,
+        awayRecord: recordOf(game.away_team_id),
+        homeRecord: recordOf(game.home_team_id),
         linescore: game.linescore,
         videos: videos.map(video => ({
           id: video.id,

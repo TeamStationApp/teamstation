@@ -12,6 +12,7 @@ import type {
 import {
   Badge,
   Card,
+  GameRow,
   Icon,
   initialsOf,
   ListRow,
@@ -21,8 +22,9 @@ import {
   type Stat,
   StatGrid
 } from '../components'
+import { videoCountLabel } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { resultFor, shortDate, shortTime } from './format'
+import { clock, matchupLines, resultFor, shortDate, shortTime } from './format'
 
 export interface TeamScreenProps {
   client: GameStationClient
@@ -270,26 +272,40 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
 function GameCard(props: {
   game: GameSummary
   teamId: string
-  onOpen: (gameId: string, title: string) => void
+  onOpen: (
+    gameId: string,
+    title: string,
+    options?: { tab?: 'watch' | 'boxScore'; autoPlay?: boolean }
+  ) => void
 }): React.ReactElement {
   const { game, teamId, onOpen } = props
   const styles = getStyles(useTheme())
   const result = resultFor(game, teamId)
-  const away = game.awayTeamId === teamId
-  const opponent = away ? game.homeTeamName : game.awayTeamName
+  // The same row the videos list uses, written from this team's point of view.
+  const lines = matchupLines(game, teamId)
+  const detail = [
+    shortDate(game.startAt),
+    shortTime(game.startAt),
+    videoCountLabel(game.videoCount)
+  ]
+    .filter(part => part !== '')
+    .join(' · ')
 
   return (
     <Card>
-      <ListRow
-        title={`${away ? 'at' : 'vs'} ${opponent}`}
-        subtitle={`${shortDate(game.startAt)}${
-          game.venue == null ? '' : ` · ${game.venue}`
-        }${game.videoCount > 0 ? ` · ${game.videoCount} video` : ''}`}
-        emblem={away ? '→' : '⌂'}
-        badgeLabel={result?.label ?? shortTime(game.startAt)}
+      <GameRow
+        first={lines.first}
+        second={lines.second}
+        detail={detail}
+        venue={game.venue}
+        posterUrl={game.posterUrl}
+        length={game.durationSec == null ? undefined : clock(game.durationSec)}
+        badgeLabel={result?.label}
         badgeTone={result?.tone ?? 'neutral'}
         onPress={() => {
-          onOpen(game.id, `${game.awayTeamName} at ${game.homeTeamName}`)
+          onOpen(game.id, `${lines.first} ${lines.second}`, {
+            autoPlay: game.videoCount > 0
+          })
         }}
       />
       {game.ingestStatus === 'scoreMismatch' && (
