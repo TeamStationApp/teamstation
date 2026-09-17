@@ -99,6 +99,9 @@ public final class ProgramEncoder: @unchecked Sendable {
   /// A resumed part whose first picture has not arrived yet. Its timeline begins with that picture,
   /// not at the resume, so the span before it is measured when it comes.
   private var resumedAwaitingPicture = false
+  /// Sound buffers the writer refused. Counted because losing them silently is indistinguishable
+  /// from never having recorded them.
+  private var audioAppendFailures = 0
 
   /// Eight seconds of the mix's 20 ms chunks: at Stop the recording's mix hands over the five it
   /// was still waiting on at once.
@@ -678,9 +681,23 @@ public final class ProgramEncoder: @unchecked Sendable {
       }
       let buffer = pendingAudio.removeFirst()
       lock.unlock()
-      audioInput.append(buffer)
+      // The video path has always read this result; sound threw it away, so a refused buffer left
+      // the queue and never reached the file. The writer's own idea of where the sound had got to
+      // went on advancing, which is why a master could report its sound past its picture and still
+      // export short.
+      if !audioInput.append(buffer) {
+        lock.lock()
+        audioAppendFailures += 1
+        lock.unlock()
+      }
       drained += 1
     }
+  }
+
+  private func appendFailures() -> Int {
+    lock.lock()
+    defer { lock.unlock() }
+    return audioAppendFailures
   }
 
   /// Where the picture and the sound have each reached on the part's own timeline.
@@ -728,8 +745,8 @@ public final class ProgramEncoder: @unchecked Sendable {
       let soundAfter = trackEnds().sound
       telemetry.recordProgramFinish(
         String(
-          format: "target %.3f picture %.3f sound %.3f->%.3f queued %d->%d",
-          target, pictureAt, soundAt, soundAfter, queuedBefore, pendingAudioCount()
+          format: "target %.3f picture %.3f sound %.3f->%.3f queued %d->%d refused %d",
+          target, pictureAt, soundAt, soundAfter, queuedBefore, pendingAudioCount(), appendFailures()
         )
       )
     }
