@@ -12,8 +12,8 @@ import type {
 import {
   Badge,
   Card,
+  Emblem,
   GameRow,
-  Icon,
   initialsOf,
   ListRow,
   PillTabs,
@@ -67,6 +67,8 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
   const [roster, setRoster] = useState<RosterEntry[]>([])
   const [batting, setBatting] = useState<BattingRow[]>([])
   const [standing, setStanding] = useState<StandingsRow | undefined>(undefined)
+  /** Where this team sits in its season, 1 for first. */
+  const [place, setPlace] = useState<number | undefined>(undefined)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | undefined>(undefined)
 
@@ -89,6 +91,11 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
       setRoster(loadedRoster)
       setBatting(loadedBatting)
       setStanding(standings.find(row => row.teamId === team.id))
+      // The position is the row's place in the standings the server already
+      // sorted. Working it out again here is how two screens come to disagree
+      // about who is top.
+      const at = standings.findIndex(row => row.teamId === team.id)
+      setPlace(at < 0 ? undefined : at + 1)
     }
     load()
       .catch((caught: unknown) => {
@@ -111,16 +118,11 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
     <Screen>
       <Card style={styles.identity}>
         <View style={styles.identityTop}>
-          <View style={styles.crest}>
-            {team.shortName == null ? (
-              <Icon
-                name="sports_baseball"
-                color={theme.scoreboardAccentColor}
-              />
-            ) : (
-              <Text style={styles.crestText}>{team.shortName}</Text>
-            )}
-          </View>
+          <Emblem
+            uri={team.logoUrl}
+            fallback={initialsOf(team.name)}
+            size={3.5}
+          />
           <View style={styles.identityText}>
             <Text style={styles.teamName}>{team.name}</Text>
             {standing != null && (
@@ -131,12 +133,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
               </Text>
             )}
           </View>
-          {standing != null && (
-            <Badge
-              label={`${standing.runDifferential >= 0 ? '+' : ''}${standing.runDifferential} run diff`}
-              tone={standing.runDifferential >= 0 ? 'win' : 'loss'}
-            />
-          )}
+          {place != null && <Badge label={placeLabel(place)} tone="honour" />}
         </View>
       </Card>
 
@@ -267,6 +264,22 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
       )}
     </Screen>
   )
+}
+
+/** `1st Place`, `2nd Place`, `11th Place`. */
+function placeLabel(place: number): string {
+  const rest = place % 100
+  const suffix =
+    rest >= 11 && rest <= 13
+      ? 'th'
+      : place % 10 === 1
+        ? 'st'
+        : place % 10 === 2
+          ? 'nd'
+          : place % 10 === 3
+            ? 'rd'
+            : 'th'
+  return `${place}${suffix} Place`
 }
 
 function GameCard(props: {

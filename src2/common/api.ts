@@ -125,6 +125,9 @@ export const asGameDetail = asObject({
   /** Each side's record in this game's season, `12–3`. */
   awayRecord: asOptional(asNullable(asString), null),
   homeRecord: asOptional(asNullable(asString), null),
+  /** Each side's mark, signed and short-lived. */
+  awayLogoUrl: asOptional(asNullable(asString), null),
+  homeLogoUrl: asOptional(asNullable(asString), null),
   /**
    * Runs, hits and errors per side, counted from the plays.
    *

@@ -360,6 +360,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       compact
       awayRecord={game.awayRecord}
       homeRecord={game.homeRecord}
+      awayLogoUrl={game.awayLogoUrl}
+      homeLogoUrl={game.homeLogoUrl}
       meta={[game.venue, shortDate(game.startAt)]
         .filter(part => part != null && part !== '')
         .join(' · ')}
@@ -482,7 +484,10 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
                   styles.highlightTitle,
                   highlight.isScoringPlay ? styles.scoring : undefined
                 ]}
-                numberOfLines={1}
+                // Two lines in a grid cell: `Ground out: Benjamin W (2B) to
+                // Isaac D (1B)` needs more than twice the width a quarter of a
+                // desktop gives it, and a cut label names nobody.
+                numberOfLines={2}
               >
                 {highlight.title}
               </Text>

@@ -2,6 +2,8 @@ import React from 'react'
 import { Text, View } from 'react-native'
 
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { Emblem } from './Emblem'
+import { initialsOf } from './initials'
 import { VideoPoster } from './VideoPoster'
 
 export interface GameHeroCardProps {
@@ -33,6 +35,9 @@ export interface GameHeroCardProps {
   /** `12–3`, under each team's name. */
   awayRecord?: string | null
   homeRecord?: string | null
+  /** Each side's mark, beside its name. */
+  awayLogoUrl?: string | null
+  homeLogoUrl?: string | null
 }
 
 /**
@@ -61,7 +66,9 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
     linescore,
     meta,
     awayRecord,
-    homeRecord
+    homeRecord,
+    awayLogoUrl,
+    homeLogoUrl
   } = props
   const styles = getStyles(useTheme())
 
@@ -97,6 +104,7 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
             name={awayName}
             score={awayScore}
             record={awayRecord}
+            logoUrl={awayLogoUrl}
             note="Away"
             won={winner === 'away'}
           />
@@ -105,6 +113,7 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
             name={homeName}
             score={homeScore}
             record={homeRecord}
+            logoUrl={homeLogoUrl}
             note="Home"
             won={winner === 'home'}
             alignEnd
@@ -137,14 +146,17 @@ function ScoreLine(props: {
   name: string
   score: number | null
   record?: string | null
+  logoUrl?: string | null
   note: string
   won: boolean
   alignEnd?: boolean
 }): React.ReactElement {
-  const { name, score, record, note, won, alignEnd = false } = props
+  const { name, score, record, logoUrl, note, won, alignEnd = false } = props
   const styles = getStyles(useTheme())
+  const mark = <Emblem uri={logoUrl} fallback={initialsOf(name)} size={2} />
   return (
     <View style={[styles.side, alignEnd && styles.sideEnd]}>
+      {!alignEnd && mark}
       <View style={[styles.sideText, alignEnd && styles.sideTextEnd]}>
         <Text style={styles.sideName} numberOfLines={1}>
           {name}
@@ -157,6 +169,7 @@ function ScoreLine(props: {
       <Text style={[styles.sideScore, won && styles.sideScoreWon]}>
         {score ?? '–'}
       </Text>
+      {alignEnd && mark}
     </View>
   )
 }
