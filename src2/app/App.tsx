@@ -31,9 +31,10 @@ type Pushed =
   | { name: 'season'; season: SeasonSummary }
   | { name: 'team'; team: TeamSummary }
   | { name: 'game'; gameId: string; title: string }
+  | { name: 'account' }
 
 /**
- * Four destinations, each with its own stack.
+ * Three destinations, each with its own stack.
  *
  * Per-tab stacks rather than one shared one: opening a team from Home and then
  * switching to Schedule and back should land where it was left, which is what
@@ -69,8 +70,7 @@ function Shell(props: AppProps): React.ReactElement {
   const [stacks, setStacks] = useState<Record<NavTabId, Pushed[]>>({
     home: [],
     videos: [],
-    schedule: [],
-    account: []
+    schedule: []
   })
 
   const stack = stacks[tab]
@@ -113,23 +113,23 @@ function Shell(props: AppProps): React.ReactElement {
         />
       ) : tab === 'videos' ? (
         <GamesFeedScreen client={client} mode="videos" onOpenGame={openGame} />
-      ) : tab === 'schedule' ? (
+      ) : (
         <GamesFeedScreen
           client={client}
           mode="schedule"
           onOpenGame={openGame}
         />
-      ) : (
-        <AccountScreen
-          session={session}
-          onSignOut={() => {
-            client.signOut().catch(() => undefined)
-            setSession(undefined)
-            setStacks({ home: [], videos: [], schedule: [], account: [] })
-            setTab('home')
-          }}
-        />
       )
+    ) : top.name === 'account' ? (
+      <AccountScreen
+        session={session}
+        onSignOut={() => {
+          client.signOut().catch(() => undefined)
+          setSession(undefined)
+          setStacks({ home: [], videos: [], schedule: [] })
+          setTab('home')
+        }}
+      />
     ) : top.name === 'team' ? (
       <TeamScreen client={client} team={top.team} onOpenGame={openGame} />
     ) : top.name === 'season' ? (
@@ -139,15 +139,26 @@ function Shell(props: AppProps): React.ReactElement {
         onOpenGame={openGame}
         onOpenTeam={openTeam}
       />
-    ) : (
+    ) : top.name === 'game' ? (
       <GameScreen client={client} gameId={top.gameId} />
-    )
+    ) : null
 
   const header = (
     <AppHeader
       title={titleFor(tab, top)}
-      overline={top == null ? 'GameStation' : undefined}
+      overline="GameStation"
       onBack={stack.length > 0 ? pop : undefined}
+      account={
+        top?.name === 'account'
+          ? undefined
+          : {
+              name: session.user.displayName,
+              avatarUrl: session.user.avatarUrl,
+              onPress: () => {
+                push({ name: 'account' })
+              }
+            }
+      }
     />
   )
 
@@ -177,16 +188,23 @@ function Shell(props: AppProps): React.ReactElement {
   )
 }
 
-function titleFor(tab: NavTabId, top: Pushed | undefined): string {
+/**
+ * The name of the screen you are on, never the name of the app.
+ *
+ * Home is `Your Home` rather than `GameStation`, which the header already says
+ * on the line above: the two together read `GAMESTATION / GameStation`, which
+ * tells you nothing twice.
+ */
+export function titleFor(tab: NavTabId, top: Pushed | undefined): string {
   if (top != null) {
     if (top.name === 'team') return top.team.name
     if (top.name === 'season') return top.season.name
+    if (top.name === 'account') return 'Account'
     return top.title
   }
-  if (tab === 'home') return 'GameStation'
   if (tab === 'videos') return 'Videos'
   if (tab === 'schedule') return 'Schedule'
-  return 'Account'
+  return 'Your Home'
 }
 
 const getStyles = cacheStyles((theme: Theme) => ({
