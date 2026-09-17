@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Pressable,
@@ -207,6 +207,25 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   >(undefined)
   const [error, setError] = useState<string | undefined>(undefined)
   const playerRef = useRef<HTMLVideoElement | null>(null)
+  /**
+   * The same element, as state, so that a **new** one is an event.
+   *
+   * A ref changing is invisible to React, and the box score unmounts the
+   * player: coming back mounted a fresh `<video>` with the same chosen video,
+   * so the attach effect — which fires only when the source changes — never
+   * ran and the new element was never handed a manifest. It sat at
+   * `readyState 0` with no source, and a highlight tap moved its timecode and
+   * reported itself playing, so nothing on screen said anything was wrong.
+   *
+   * Attaching when the element is new *as well as* when the source is keeps
+   * both halves: the narrow rule that stopped the restarts, and a player that
+   * works after every mount.
+   */
+  const [playerNode, setPlayerNode] = useState<HTMLVideoElement | null>(null)
+  const takePlayer = useCallback((node: HTMLVideoElement | null): void => {
+    playerRef.current = node
+    setPlayerNode(node)
+  }, [])
   /** So a link's moment is honoured once, not on every re-attach. */
   const startedFromLink = useRef(false)
 
@@ -330,7 +349,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   placeFor.current = { videoId: video?.id, playbackFor }
 
   useEffect(() => {
-    const element = playerRef.current
+    const element = playerNode
     if (element == null || playbackUrl == null) return
     const detach = attachHls(element, playbackUrl)
 
@@ -374,7 +393,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       start()
     }
     return detach
-  }, [playbackUrl])
+  }, [playbackUrl, playerNode])
 
   /**
    * The other recording, from the same moment, still playing.
@@ -495,6 +514,18 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       ]}
       selected={tab}
       onSelect={next => {
+        // Leaving the video unmounts it, so where it had got to is written
+        // down here and picked up by the attach that follows the remount.
+        // Without this you came back to the start of the game, which is a
+        // poor reward for having looked at the box score.
+        const player = playerRef.current
+        if (next !== 'watch' && player != null && video != null) {
+          setResumeAt({
+            videoId: video.id,
+            sec: player.currentTime,
+            playing: player.paused === false
+          })
+        }
         setTab(next)
         onTab?.(next)
       }}
@@ -527,7 +558,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           // renders to the DOM, and the browser's own player is what gives us
           // hardware decoding for HEVC and H.264 alike.
           <video
-            ref={playerRef}
+            ref={takePlayer}
             style={{ width: '100%', height: '100%', backgroundColor: '#000' }}
             controls
             playsInline
