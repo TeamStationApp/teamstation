@@ -455,7 +455,7 @@ const getStyles = cacheStyles((theme: Theme) =>
       fontSize: theme.rem(1.6)
     },
     at: {
-      color: theme.clearButtonColor,
+      color: theme.secondaryTextColor,
       fontFamily: theme.regularTextFont,
       fontSize: theme.rem(0.85)
     },
@@ -520,7 +520,7 @@ const getStyles = cacheStyles((theme: Theme) =>
       width: theme.rem(5)
     },
     timecode: {
-      color: theme.clearButtonColor,
+      color: theme.secondaryTextColor,
       fontFamily: theme.semiBoldTextFont,
       fontSize: theme.rem(0.85),
       minWidth: theme.rem(3)
@@ -558,11 +558,11 @@ const getStyles = cacheStyles((theme: Theme) =>
       textAlign: 'right'
     },
     cellHead: {
-      color: theme.clearButtonColor,
+      color: theme.secondaryTextColor,
       fontFamily: theme.semiBoldTextFont
     },
     footnote: {
-      color: theme.clearButtonColor,
+      color: theme.secondaryTextColor,
       fontFamily: theme.regularTextFont,
       fontSize: theme.rem(0.8),
       padding: theme.rem(0.75)
