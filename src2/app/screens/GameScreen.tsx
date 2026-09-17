@@ -66,8 +66,11 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   const { client, gameId } = props
   const theme = useTheme()
   const styles = getStyles(theme)
-  const { width } = useWindowDimensions()
+  const { height, width } = useWindowDimensions()
   const columns = highlightColumnsFor(width)
+  // Six tenths of the window: enough that the video is the screen, and little
+  // enough that the highlights under it are visibly a list.
+  const playerMaxHeight = Math.round(height * 0.6)
 
   const [tab, setTab] = useState<Tab>('watch')
   const [game, setGame] = useState<GameDetail | undefined>(undefined)
@@ -284,7 +287,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
 
   const player = (
     <View>
-      <View style={styles.player}>
+      <View style={[styles.player, { maxHeight: playerMaxHeight }]}>
         {video == null ? (
           <Text style={styles.message}>{lstrings.game_no_video}</Text>
         ) : playback == null ? (
@@ -562,7 +565,11 @@ const getStyles = cacheStyles((theme: Theme) =>
     // The video is the tallest thing on the page, so it is capped: a 16:9 box
     // across a desktop window would push the highlights off the bottom.
     // The card, the pills and the player. Fixed, so the list scrolls under it.
+    // A flex item shrinks by default, and this one holds a 16:9 box. Without
+    // `flexShrink: 0` the scrolling list below took the space it wanted and
+    // squeezed the player, which clipped the video to its top third.
     fixed: {
+      flexShrink: 0,
       paddingBottom: theme.rem(theme.spaceSmRem),
       gap: theme.rem(theme.spaceMdRem)
     },
@@ -611,9 +618,12 @@ const getStyles = cacheStyles((theme: Theme) =>
       gap: theme.rem(0.5),
       padding: theme.rem(0.5)
     },
+    // Capped against the window, so a short one still shows some list to
+    // scroll rather than one video and nothing else.
     player: {
       width: '100%',
       aspectRatio: 16 / 9,
+      alignSelf: 'center',
       backgroundColor: theme.videoBackgroundColor,
       alignItems: 'center',
       justifyContent: 'center'
