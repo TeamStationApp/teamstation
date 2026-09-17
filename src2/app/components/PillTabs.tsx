@@ -2,6 +2,7 @@ import React from 'react'
 import { Pressable, ScrollView, Text, View } from 'react-native'
 
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { useBreakpoint } from './useBreakpoint'
 
 export interface PillTab<Id extends string = string> {
   id: Id
@@ -19,7 +20,14 @@ export interface PillTabsProps<Id extends string = string> {
    * pressable keeps its height and the pill is drawn inside it.
    */
   size?: 'regular' | 'compact'
-  /** Fills the width and shares it evenly. Off, the pills size to their text. */
+  /**
+   * Share the row out evenly **when the row is a phone's width**. Wider than
+   * that it is ignored and the pills size to their text: four tabs sharing a
+   * 1100px column are 270px slabs, which is not the control Paul approved on
+   * a phone — it is a different one that happens to have the same words on
+   * it. The filter strips never stretch, so this also stops the same
+   * `Past / Upcoming / All` row being drawn two ways on two screens.
+   */
   stretch?: boolean
   accessibilityLabel?: string
 }
@@ -42,8 +50,10 @@ export interface PillTabsProps<Id extends string = string> {
 export function PillTabs<Id extends string = string>(
   props: PillTabsProps<Id>
 ): React.ReactElement {
-  const { tabs, selected, onSelect, stretch = false, size = 'regular' } = props
+  const { tabs, selected, onSelect, size = 'regular' } = props
   const compact = size === 'compact'
+  const narrow = useBreakpoint() === 'phone'
+  const stretch = props.stretch === true && narrow
   const theme = useTheme()
   const styles = getStyles(theme)
 
