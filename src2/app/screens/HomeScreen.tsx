@@ -17,7 +17,7 @@ import {
   SectionHeader
 } from '../components'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { gameStatusLine, shortDate, winnerOf } from './format'
+import { gameStatusLine, matchupLines, shortDate, winnerOf } from './format'
 
 export interface HomeScreenProps {
   client: GameStationClient
@@ -110,18 +110,32 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
               status={gameStatusLine(recent)}
               winner={winnerOf(recent)}
             />
-            <Button
-              label={
-                recent.videoCount > 0 ? 'Watch replay' : 'Box score & plays'
-              }
-              block
-              onPress={() => {
-                onOpenGame(
-                  recent.id,
-                  `${recent.awayTeamName} at ${recent.homeTeamName}`
-                )
-              }}
-            />
+            {/*
+              Two buttons, not one. There was no way to reach a box score from
+              this screen at all: a game that was scored and never filmed had
+              nothing to press.
+            */}
+            <View style={styles.actions}>
+              {recent.videoCount > 0 && (
+                <Button
+                  label="Watch Replay"
+                  icon="play_arrow"
+                  style={styles.action}
+                  onPress={() => {
+                    onOpenGame(recent.id, matchup(recent))
+                  }}
+                />
+              )}
+              <Button
+                label="Box Score"
+                icon="format_list_bulleted"
+                kind="secondary"
+                style={styles.action}
+                onPress={() => {
+                  onOpenGame(recent.id, matchup(recent))
+                }}
+              />
+            </View>
           </Card>
         </View>
       )}
@@ -192,6 +206,12 @@ function mostRecentlyPlayed(games: SeasonGame[]): SeasonGame | undefined {
   return played[played.length - 1]
 }
 
+/** `AAA Hawks @ Black Sox`, the way the row in a list reads. */
+function matchup(game: SeasonGame): string {
+  const lines = matchupLines(game)
+  return `${lines.first} ${lines.second}`
+}
+
 /** `NPLL Spring 2026 · 12–3`, or whichever half of that we know. */
 function subtitleFor(team: TeamSummary): string | undefined {
   const parts: string[] = []
@@ -212,6 +232,13 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   gameCard: {
     gap: theme.rem(theme.spaceMdRem)
+  },
+  actions: {
+    flexDirection: 'row',
+    gap: theme.rem(theme.spaceSmRem)
+  },
+  action: {
+    flex: 1
   },
   gameMeta: {
     fontFamily: theme.semiBoldTextFont,
