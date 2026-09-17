@@ -197,6 +197,8 @@ export interface VideosTable {
     | null
   sync_offset_sec: Generated<number>
   duration_sec: number | null
+  /** How many cameras the recording holds. One unless something says else. */
+  num_cameras: Generated<number>
   width: number | null
   height: number | null
   codecs: string | null

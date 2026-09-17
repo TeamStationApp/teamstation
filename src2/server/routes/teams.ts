@@ -258,7 +258,9 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
           'duration_sec',
           'width',
           'height',
-          'codecs'
+          'codecs',
+          'num_cameras',
+          'sync_offset_sec'
         ])
         .where('game_id', '=', gameId)
         .where('hidden', '=', false)
@@ -284,6 +286,8 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
         linescore: game.linescore,
         videos: videos.map(video => ({
           id: video.id,
+          numCameras: video.num_cameras,
+          syncOffsetSec: video.sync_offset_sec,
           kind: video.kind,
           title: video.title,
           status: video.status,
