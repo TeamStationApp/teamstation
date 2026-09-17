@@ -66,7 +66,8 @@ describe('highlight columns', function () {
 
   it('widens as the width allows', function () {
     expect(highlightColumnsFor(800)).equals(2)
-    expect(highlightColumnsFor(1280)).equals(4)
+    expect(highlightColumnsFor(1280)).equals(3)
+    expect(highlightColumnsFor(1600)).equals(4)
   })
 
   it('never goes past four, however wide the monitor', function () {

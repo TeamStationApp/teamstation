@@ -2,10 +2,23 @@ import React, { useEffect, useState } from 'react'
 import { Text, View } from 'react-native'
 
 import type { GameStationClient, SeasonGame } from '../../common/api'
-import { Card, GameRow, PillTabs, Screen, SectionHeader } from '../components'
+import {
+  Card,
+  GameRow,
+  PillTabs,
+  Screen,
+  SectionHeader,
+  useBreakpoint
+} from '../components'
 import { videoCountLabel } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { clock, matchupLines, shortDate, shortTime } from './format'
+import {
+  clock,
+  matchupLines,
+  shortDate,
+  shortDateNoWeekday,
+  shortTime
+} from './format'
 
 export interface GamesFeedScreenProps {
   client: GameStationClient
@@ -13,6 +26,8 @@ export interface GamesFeedScreenProps {
   mode: 'videos' | 'schedule'
   /** The filter the address asked for, if any. */
   initialWhen?: When
+  /** Tells the shell, so the address can say which filter is showing. */
+  onWhenChange?: (when: When) => void
   onOpenGame: (
     gameId: string,
     title: string,
@@ -43,8 +58,9 @@ const WHEN_TABS = [
 export function GamesFeedScreen(
   props: GamesFeedScreenProps
 ): React.ReactElement {
-  const { client, mode, initialWhen, onOpenGame } = props
+  const { client, mode, initialWhen, onWhenChange, onOpenGame } = props
   const styles = getStyles(useTheme())
+  const narrow = useBreakpoint() === 'phone'
 
   // Both lists open on what has happened. A schedule of fixtures is the
   // rarer question; what somebody opens the app for is the game just played.
@@ -101,7 +117,10 @@ export function GamesFeedScreen(
       <PillTabs
         tabs={WHEN_TABS}
         selected={when}
-        onSelect={setWhen}
+        onSelect={next => {
+          setWhen(next)
+          onWhenChange?.(next)
+        }}
         size="compact"
       />
 
@@ -128,7 +147,7 @@ export function GamesFeedScreen(
         // The time used to be the badge, which made an unplayed game look as
         // though it had a result. It belongs on the detail line with the date.
         const detail = [
-          shortDate(game.startAt),
+          narrow ? shortDateNoWeekday(game.startAt) : shortDate(game.startAt),
           shortTime(game.startAt),
           videoCountLabel(game.videoCount)
         ]

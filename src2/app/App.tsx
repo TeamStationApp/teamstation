@@ -8,7 +8,7 @@ import {
   type TeamSummary
 } from '../common/api'
 import { AppHeader, AppNav, type NavTabId, useBreakpoint } from './components'
-import type { Route } from './navigation/routes'
+import type { Route, When } from './navigation/routes'
 import {
   currentRoute,
   showRoute,
@@ -87,6 +87,12 @@ function Shell(props: AppProps): React.ReactElement {
   // the sign-in screen in the meantime is what made every link useless: the
   // cookie was there, nothing read it, and the address was thrown away.
   const [askedAboutSession, setAskedAboutSession] = useState(false)
+  // The chosen filter belongs to the shell, because the shell is what writes
+  // the address. Left in the screen, the rewrite stripped `?when=` the moment
+  // the screen mounted.
+  const [when, setWhen] = useState<When | undefined>(() =>
+    whenOf(currentRoute())
+  )
   // The address bar is the state, not a copy of it: the app starts on
   // whatever was linked to, and every move writes the new address.
   const [tab, setTab] = useState<NavTabId>(() => tabOf(currentRoute()))
@@ -152,9 +158,9 @@ function Shell(props: AppProps): React.ReactElement {
     // Not while signed out: rewriting the address to `/` before the password
     // field has even been typed into throws away the link that brought them.
     if (session == null) return
-    showRoute(routeOf(tab, top), firstRender.current)
+    showRoute(routeOf(tab, top, when), firstRender.current)
     firstRender.current = false
-  }, [session, tab, top])
+  }, [session, tab, top, when])
 
   const goToRoute = useCallback((route: Route): void => {
     const next = tabOf(route)
@@ -212,14 +218,16 @@ function Shell(props: AppProps): React.ReactElement {
         <GamesFeedScreen
           client={client}
           mode="videos"
-          initialWhen={whenOf(currentRoute())}
+          initialWhen={when}
+          onWhenChange={setWhen}
           onOpenGame={openGame}
         />
       ) : (
         <GamesFeedScreen
           client={client}
           mode="schedule"
-          initialWhen={whenOf(currentRoute())}
+          initialWhen={when}
+          onWhenChange={setWhen}
           onOpenGame={openGame}
         />
       )
@@ -371,7 +379,7 @@ function tabOf(route: Route): NavTabId {
 }
 
 /** The address of wherever the app currently is. */
-function routeOf(tab: NavTabId, top: Pushed | undefined): Route {
+function routeOf(tab: NavTabId, top: Pushed | undefined, when?: When): Route {
   if (top != null) {
     if (top.name === 'team') return { name: 'team', teamId: top.team.id }
     if (top.name === 'season') {
@@ -386,8 +394,8 @@ function routeOf(tab: NavTabId, top: Pushed | undefined): Route {
       at: top.at
     }
   }
-  if (tab === 'videos') return { name: 'videos', when: 'past' }
-  if (tab === 'schedule') return { name: 'schedule', when: 'upcoming' }
+  if (tab === 'videos') return { name: 'videos', when: when ?? 'past' }
+  if (tab === 'schedule') return { name: 'schedule', when: when ?? 'past' }
   return { name: 'home' }
 }
 

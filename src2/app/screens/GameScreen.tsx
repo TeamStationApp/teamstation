@@ -150,7 +150,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   const columnWidth = Math.max(240, width - railWidth - 36)
   const playerHeight = Math.max(
     150,
-    Math.min(Math.round(height * 0.46), Math.round((columnWidth * 9) / 16))
+    Math.min(Math.round(height * 0.58), Math.round((columnWidth * 9) / 16))
   )
   const playerWidth = Math.min(columnWidth, Math.round((playerHeight * 16) / 9))
 
@@ -162,6 +162,15 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   const [dropped, setDropped] = useState(0)
   const [batting, setBatting] = useState<BattingRow[] | undefined>(undefined)
   const [playback, setPlayback] = useState<Playback | undefined>(undefined)
+  /**
+   * Which video the current playback URL belongs to.
+   *
+   * Without this the resume after an angle switch was applied to the *old*
+   * source: the video had already changed but its URL had not been fetched
+   * yet, so the effect ran, seeked the source still attached, and cleared the
+   * resume — and by the time the new one loaded there was nothing left.
+   */
+  const [playbackFor, setPlaybackFor] = useState<string | undefined>(undefined)
   const [activeEventId, setActiveEventId] = useState<string | undefined>()
   const [chosen, setChosen] = useState<Highlight | undefined>(undefined)
   /**
@@ -232,12 +241,16 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   // checks membership while it looks, so asking is the only way to find out.
   useEffect(() => {
     if (video == null) return
+    const forVideoId = video.id
     let live = true
     setPlayback(undefined)
+    setPlaybackFor(undefined)
     client
-      .playback(video.id)
+      .playback(forVideoId)
       .then(found => {
-        if (live) setPlayback(found)
+        if (!live) return
+        setPlayback(found)
+        setPlaybackFor(forVideoId)
       })
       .catch(() => {
         if (live) setPlayback(undefined)
@@ -272,7 +285,11 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     const detach = attachHls(element, playbackUrl)
 
     // Picking up where the other angle was, once the new source is attached.
-    if (resumeAt != null && resumeAt.videoId === video?.id) {
+    if (
+      resumeAt != null &&
+      resumeAt.videoId === video?.id &&
+      playbackFor === video.id
+    ) {
       const resume = (): void => {
         element.currentTime = resumeAt.sec
         if (resumeAt.playing) element.play().catch(() => undefined)
@@ -307,7 +324,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       start()
     }
     return detach
-  }, [autoPlay, playbackUrl, resumeAt, startAtSec, video?.id])
+  }, [autoPlay, playbackFor, playbackUrl, resumeAt, startAtSec, video?.id])
 
   /**
    * The other recording, from the same moment, still playing.
@@ -547,14 +564,22 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           squeezed the 16:9 player into a strip across the top. This one is
           sized by its contents, and the list below takes what is left.
         */}
+        {/*
+          Only the player is pinned. The card was pinned with it and took
+          310px of a 720px window between them, which left the highlight list
+          nothing to show — and the card is the part you read once and stop
+          needing, so it scrolls with the list.
+        */}
         <View style={styles.fixed}>
-          {scoreboard}
           {tabs}
           {player}
           {description}
         </View>
         <ScrollView style={styles.scroller}>
-          <View style={styles.scrolled}>{highlightList}</View>
+          <View style={styles.scrolled}>
+            {scoreboard}
+            {highlightList}
+          </View>
         </ScrollView>
       </View>
     )
@@ -734,7 +759,9 @@ const getStyles = cacheStyles((theme: Theme) =>
     scroller: { flex: 1 },
     scrolled: {
       paddingHorizontal: theme.rem(theme.spaceLgRem * 0.8),
-      paddingBottom: theme.rem(theme.spaceLgRem)
+      paddingTop: theme.rem(theme.spaceSmRem),
+      paddingBottom: theme.rem(theme.spaceLgRem),
+      gap: theme.rem(theme.spaceMdRem)
     },
     hero: {
       backgroundColor: theme.cardBackgroundColor,

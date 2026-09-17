@@ -17,11 +17,18 @@ import {
   PillTabs,
   Screen,
   SectionHeader,
-  StatGrid
+  StatGrid,
+  useBreakpoint
 } from '../components'
 import { videoCountLabel } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { clock, matchupLines, shortDate, shortTime } from './format'
+import {
+  clock,
+  matchupLines,
+  shortDate,
+  shortDateNoWeekday,
+  shortTime
+} from './format'
 
 export interface SeasonScreenProps {
   client: GameStationClient
@@ -64,6 +71,7 @@ const WHEN_TABS = [
 export function SeasonScreen(props: SeasonScreenProps): React.ReactElement {
   const { client, season, onOpenGame, onOpenTeam } = props
   const styles = getStyles(useTheme())
+  const narrow = useBreakpoint() === 'phone'
 
   const [tab, setTab] = useState<TabId>('schedule')
   const [when, setWhen] = useState<When>('past')
@@ -152,7 +160,9 @@ export function SeasonScreen(props: SeasonScreenProps): React.ReactElement {
             shown.map(game => {
               const lines = matchupLines(game)
               const detail = [
-                shortDate(game.startAt),
+                narrow
+                  ? shortDateNoWeekday(game.startAt)
+                  : shortDate(game.startAt),
                 shortTime(game.startAt),
                 videoCountLabel(game.videoCount)
               ]

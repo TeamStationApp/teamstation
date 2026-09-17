@@ -20,11 +20,19 @@ import {
   Screen,
   SectionHeader,
   type Stat,
-  StatGrid
+  StatGrid,
+  useBreakpoint
 } from '../components'
 import { videoCountLabel } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { clock, matchupLines, resultFor, shortDate, shortTime } from './format'
+import {
+  clock,
+  matchupLines,
+  resultFor,
+  shortDate,
+  shortDateNoWeekday,
+  shortTime
+} from './format'
 
 export interface TeamScreenProps {
   client: GameStationClient
@@ -293,11 +301,12 @@ function GameCard(props: {
 }): React.ReactElement {
   const { game, teamId, onOpen } = props
   const styles = getStyles(useTheme())
+  const narrow = useBreakpoint() === 'phone'
   const result = resultFor(game, teamId)
   // The same row the videos list uses, written from this team's point of view.
   const lines = matchupLines(game, teamId)
   const detail = [
-    shortDate(game.startAt),
+    narrow ? shortDateNoWeekday(game.startAt) : shortDate(game.startAt),
     shortTime(game.startAt),
     videoCountLabel(game.videoCount)
   ]

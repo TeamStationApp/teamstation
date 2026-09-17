@@ -71,7 +71,10 @@ export function cardPosition(
  * squeezed columns.
  */
 export function highlightColumnsFor(width: number): number {
-  const MIN = 288
+  // 380, not 288. A label like `Ground out: Benito W (2B) to Isaac D (1B)`
+  // needs about that much even across two lines, and a fourth column at 1280
+  // cut every fielding play's second name off.
+  const MIN = 380
   if (width < 600) return 1
   const fits = Math.floor(width / MIN)
   return Math.max(1, Math.min(4, fits))
