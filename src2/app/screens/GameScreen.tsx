@@ -419,7 +419,7 @@ function BoxScore(props: BoxScoreProps): React.ReactElement {
             {lines.map(line => (
               <View key={line.userId} style={styles.tableRow}>
                 <Text style={styles.cellName} numberOfLines={1}>
-                  {line.displayName ?? ''}
+                  {line.shortName ?? ''}
                 </Text>
                 {statColumns.map(column => (
                   <Text key={column.label} style={styles.cell}>

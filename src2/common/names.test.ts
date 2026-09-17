@@ -1,0 +1,84 @@
+import { expect } from 'chai'
+import { describe, it } from 'mocha'
+
+import { shortName, shortNames } from './names'
+
+const person = (
+  id: string,
+  firstName: string,
+  lastName: string
+): {
+  id: string
+  firstName: string
+  lastName: string
+  displayName: string
+} => ({
+  id,
+  firstName,
+  lastName,
+  displayName: `${firstName} ${lastName}`.trim()
+})
+
+describe('how a name is written', function () {
+  it('is the first name and the last initial', function () {
+    expect(shortName(person('1', 'Jordan', 'Pujols'))).equals('Jordan P')
+  })
+
+  it('keeps a one-letter surname whole', function () {
+    expect(shortName(person('1', 'Jordan', 'P'))).equals('Jordan P')
+  })
+
+  it('manages a person with only one name', function () {
+    expect(shortName(person('1', 'Casey', ''))).equals('Casey')
+    expect(shortName(person('1', '', 'Mize'))).equals('Mize')
+  })
+
+  it('splits a display name when the halves are missing', function () {
+    expect(shortName({ id: '1', displayName: 'Childe Harold Janvrin' })).equals(
+      'Childe J'
+    )
+  })
+
+  it('leaves an empty name empty rather than inventing one', function () {
+    expect(shortName({ id: '1', displayName: '' })).equals('')
+  })
+})
+
+describe('a list of names', function () {
+  it('leaves names that do not collide alone', function () {
+    const names = shortNames([
+      person('1', 'Jordan', 'Pujols'),
+      person('2', 'Casey', 'Mize')
+    ])
+    expect(names.get('1')).equals('Jordan P')
+    expect(names.get('2')).equals('Casey M')
+  })
+
+  it('takes another letter when two would read the same', function () {
+    const names = shortNames([
+      person('1', 'Jordan', 'Pujols'),
+      person('2', 'Jordan', 'Palmeiro')
+    ])
+    expect(names.get('1')).equals('Jordan Pu')
+    expect(names.get('2')).equals('Jordan Pa')
+  })
+
+  it('takes as many letters as it needs', function () {
+    const names = shortNames([
+      person('1', 'Jordan', 'Palmeiro'),
+      person('2', 'Jordan', 'Palms')
+    ])
+    // `Palm` is still shared, so it takes one more: `Palme` and `Palms`.
+    expect(names.get('1')).equals('Jordan Palme')
+    expect(names.get('2')).equals('Jordan Palms')
+  })
+
+  it('does not invent a difference between two of the same name', function () {
+    const names = shortNames([
+      person('1', 'Jordan', 'Pujols'),
+      person('2', 'Jordan', 'Pujols')
+    ])
+    expect(names.get('1')).equals('Jordan P')
+    expect(names.get('2')).equals('Jordan P')
+  })
+})
