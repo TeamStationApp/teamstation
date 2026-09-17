@@ -129,6 +129,7 @@ export function GamesFeedScreen(
               second={lines.second}
               detail={detail}
               venue={game.venue}
+              posterUrl={game.posterUrl}
               length={
                 game.durationSec == null ? undefined : clock(game.durationSec)
               }

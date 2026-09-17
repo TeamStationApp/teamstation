@@ -4,6 +4,8 @@ import type { Kysely } from 'kysely'
 import { notFound, unauthorized } from '../../common/errors'
 import { visibleScopes } from '../access'
 import type { Database } from '../db/database'
+import type { MediaContext } from '../media/mediaContext'
+import { postersFor, posterUrl, warmPosters } from '../media/posters'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 
@@ -17,7 +19,10 @@ import { withAsync } from '../middleware/withErrors'
  * An **external team** — an opponent from outside the season — is deliberately
  * absent from `/seasons/:id/teams`. It appears on a game, and nowhere else.
  */
-export function seasonRoutes(db: Kysely<Database>): Router {
+export function seasonRoutes(
+  db: Kysely<Database>,
+  media: MediaContext
+): Router {
   const router = Router()
 
   router.get(
@@ -175,6 +180,12 @@ export function seasonRoutes(db: Kysely<Database>): Router {
         .orderBy('games.start_at', 'desc')
         .execute()
 
+      const posters = await postersFor(
+        db,
+        games.map(game => game.id)
+      )
+      const now = Date.now()
+
       res.json(
         games.map(game => ({
           id: game.id,
@@ -193,9 +204,17 @@ export function seasonRoutes(db: Kysely<Database>): Router {
           ingestStatus: game.ingestStatus,
           videoCount: Number(game.videoCount),
           durationSec:
-            game.durationSec == null ? null : Number(game.durationSec)
+            game.durationSec == null ? null : Number(game.durationSec),
+          posterUrl:
+            posters.get(game.id) == null
+              ? null
+              : posterUrl(media, posters.get(game.id)!.videoId, undefined, now)
         }))
       )
+
+      // Cut after the answer has gone out. The first person to open a list
+      // starts the work and sees plain plates; everybody after sees pictures.
+      warmPosters(media, [...posters.values()]).catch(() => undefined)
     })
   )
 

@@ -264,7 +264,9 @@ export const asSeasonGame = asObject({
   ingestStatus: asString,
   videoCount: asNumber,
   /** The longest video of the game, for the length on a thumbnail. */
-  durationSec: asOptional(asNullable(asNumber), null)
+  durationSec: asOptional(asNullable(asNumber), null),
+  /** A frame of the game's video, signed and short-lived. */
+  posterUrl: asOptional(asNullable(asString), null)
 })
 export type SeasonGame = ReturnType<typeof asSeasonGame>
 
