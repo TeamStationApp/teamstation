@@ -26,4 +26,11 @@ const rootTag = document.getElementById('root')
 if (rootTag == null) {
   throw new Error('The page has no #root for the app to render into')
 }
-AppRegistry.runApplication('GameStation', { rootTag })
+// `runApplication` is typed for the native runtime, where `rootTag` is an
+// opaque number. On web, react-native-web wants the DOM element itself — the
+// same call, a different contract, and the types describe only one of them.
+// Stated once here rather than leaving the module untyped, as it was for as
+// long as react-native silently resolved to `any`.
+AppRegistry.runApplication('GameStation', {
+  rootTag
+} as unknown as Parameters<typeof AppRegistry.runApplication>[1])
