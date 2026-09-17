@@ -17,7 +17,18 @@ export interface GameHeroCardProps {
   winner?: 'away' | 'home'
   /** A frame of the game's video. Absent until one has been cut. */
   posterUrl?: string | null
-  onPlay?: () => void
+  /**
+   * Play the game in the card, silently, instead of showing a still.
+   *
+   * The score, the two teams and `FINAL` stay drawn over it, and the frame
+   * clips it to the card's corners, so the card looks the same — it just
+   * moves.
+   *
+   * There is no play button on this card. It plays by itself, so a button
+   * offering to start it would be describing something that already happened;
+   * sound is what `Watch Replay` underneath is for.
+   */
+  videoUrl?: string | null
   /**
    * Draw the score plainly instead of over a picture.
    *
@@ -62,7 +73,7 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
     status,
     winner,
     posterUrl,
-    onPlay,
+    videoUrl,
     compact = false,
     linescore,
     meta,
@@ -126,7 +137,7 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
 
   return (
     <View style={styles.card}>
-      <VideoPoster uri={posterUrl} size="hero" showPlay onPlay={onPlay}>
+      <VideoPoster uri={posterUrl} videoUrl={videoUrl} size="hero">
         <View style={styles.over}>
           <Text style={styles.team} numberOfLines={1}>
             {`${awayName} ${awayScore ?? ''}`.trim()}

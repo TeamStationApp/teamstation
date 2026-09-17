@@ -46,8 +46,36 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
   const [teams, setTeams] = useState<TeamSummary[]>([])
   const [seasons, setSeasons] = useState<SeasonSummary[]>([])
   const [recent, setRecent] = useState<SeasonGame | undefined>(undefined)
+  const [recentUrl, setRecentUrl] = useState<string | undefined>(undefined)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | undefined>(undefined)
+
+  /**
+   * The recent game's own video, so the card moves rather than sitting there.
+   *
+   * Two extra requests, and both are cheap: the game to find a playable
+   * recording, then its signed URL. It is deliberately *after* the screen has
+   * drawn — the poster is already showing, so this only ever improves what is
+   * on screen and never delays it.
+   */
+  useEffect(() => {
+    if (recent == null || recent.videoCount < 1) return
+    let cancelled = false
+    const find = async (): Promise<void> => {
+      const detail = await client.game(recent.id)
+      const playable = detail.videos.find(item => item.status === 'ready')
+      if (cancelled || playable == null) return
+      const playback = await client.playback(playable.id)
+      if (cancelled || playback.url == null) return
+      setRecentUrl(playback.url)
+    }
+    // A card that does not move is the whole of the failure, and the poster
+    // already says what the game was.
+    find().catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [client, recent])
 
   useEffect(() => {
     let cancelled = false
@@ -111,9 +139,7 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
               status={gameStatusLine(recent)}
               winner={winnerOf(recent)}
               posterUrl={recent.posterUrl}
-              onPlay={() => {
-                onOpenGame(recent.id, matchup(recent), { autoPlay: true })
-              }}
+              videoUrl={recentUrl}
             />
             {/*
               Two buttons, not one. There was no way to reach a box score from
