@@ -1,0 +1,56 @@
+{
+  "name": "gamestation2",
+  "version": "0.1.0",
+  "private": true,
+  "description": "GameStation 2.0 \u2014 video server and app, replacing PeerTube at tube.gamestation.co",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.server.json",
+    "build.web": "node build.mjs",
+    "clean": "rimraf lib",
+    "demo": "node -r sucrase/register server/dev/demo.ts",
+    "fake-space": "node -r sucrase/register server/dev/fakeSpace.ts",
+    "lint": "eslint .",
+    "migrate": "node -r sucrase/register migrate/cli.ts",
+    "sample-video": "node -r sucrase/register server/dev/makeSampleVideo.ts",
+    "seed": "node -r sucrase/register server/dev/seed.ts",
+    "start": "node -r sucrase/register server/index.ts",
+    "start.web": "node build.mjs --serve",
+    "test": "mocha -r sucrase/register --extension ts --spec '**/*.test.ts' --ignore 'node_modules/**' --ignore 'lib/**'",
+    "typecheck": "tsc -p tsconfig.app.json && tsc -p tsconfig.server.json --noEmit",
+    "merge-team": "node -r sucrase/register server/dev/mergeTeam.ts"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.2",
+    "cleaner-config": "^0.1.10",
+    "cleaners": "^0.3.9",
+    "express": "^5.1.0",
+    "hls.js": "^1.7.3",
+    "kysely": "^0.29.6",
+    "nodemailer": "^10.0.10",
+    "pg": "^8.13.1",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-native": "^0.87.1",
+    "react-native-patina": "^0.2.0",
+    "react-native-web": "^0.21.2"
+  },
+  "devDependencies": {
+    "@types/chai": "^4.3.20",
+    "@types/express": "^5.0.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^24.3.1",
+    "@types/nodemailer": "^8.0.2",
+    "@types/pg": "^8.11.10",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "chai": "^4.5.0",
+    "esbuild": "^0.28.2",
+    "mocha": "^12.0.1",
+    "rimraf": "^6.0.1",
+    "sucrase": "^3.35.0",
+    "typescript": "^5.6.3"
+  }
+}

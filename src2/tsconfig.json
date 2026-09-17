@@ -1,0 +1,39 @@
+{
+  // Self-contained, deliberately. `src2` is its own project — its own
+  // package.json, its own lockfile, its own node_modules — and it used to
+  // inherit from a tsconfig at the repository root, one directory above the
+  // package. That worked in a checkout and nowhere else: built from
+  // this directory alone, the parent was absent and TypeScript silently fell
+  // back to its defaults. `strict` went off with it, and Kysely decides which
+  // columns may be omitted from an insert by asking whether `undefined` is
+  // assignable, which without `strictNullChecks` is always true — so every
+  // column with a default became required and the build failed on eighteen
+  // files at once, none of which were the problem. Nothing here may depend on a
+  // file outside this package.
+  "compilerOptions": {
+    "target": "es2022",
+    "lib": ["es2023"],
+    "types": ["node"],
+    "module": "esnext",
+    "moduleResolution": "node",
+    "outDir": "lib",
+    "rootDir": ".",
+
+    // Kysely's optional-column inference rests on this one. Turning it off does
+    // not loosen a check here, it breaks a type.
+    "strict": true,
+
+    "allowJs": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true,
+    "noFallthroughCasesInSwitch": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": false,
+    "jsx": "react-jsx"
+  },
+  "include": ["**/*.ts", "**/*.tsx"],
+  "exclude": ["lib", "node_modules"]
+}
