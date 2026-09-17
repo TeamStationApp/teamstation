@@ -153,24 +153,26 @@ function Shell(props: AppProps): React.ReactElement {
 
   // The rail sits beside the content on a wide window and the bar sits under
   // it on a phone, so the two arrangements are a row and a column of the same
-  // two pieces.
-  if (isRail) {
-    return (
-      <View style={styles.appRow}>
-        <AppNav selected={tab} onSelect={setTab} />
-        <View style={styles.pane}>
-          {header}
-          {body}
-        </View>
-      </View>
-    )
-  }
-
+  // two pieces — and they are written as one tree whose axis changes, never as
+  // two trees.
+  //
+  // Two `return`s here, one per arrangement, look equivalent and are not:
+  // React reconciles children by position, so crossing the threshold put an
+  // `AppHeader` where an `AppNav` had been and unmounted everything below it.
+  // The video element went with it, which is why dragging a window across
+  // 1024px stopped playback dead. A breakpoint may change styles and may
+  // change how many columns a grid has. It may not change the shape of the
+  // tree above something stateful.
+  //
+  // `column-reverse` keeps the navigation first in the tree, where it reads
+  // before the content, while drawing it under the pane on a phone.
   return (
-    <View style={styles.app}>
-      {header}
-      {body}
+    <View style={isRail ? styles.appRow : styles.appColumn}>
       <AppNav selected={tab} onSelect={setTab} />
+      <View style={styles.pane}>
+        {header}
+        {body}
+      </View>
     </View>
   )
 }
@@ -195,6 +197,11 @@ const getStyles = cacheStyles((theme: Theme) => ({
   appRow: {
     flex: 1,
     flexDirection: 'row',
+    backgroundColor: theme.backgroundColor
+  },
+  appColumn: {
+    flex: 1,
+    flexDirection: 'column-reverse',
     backgroundColor: theme.backgroundColor
   },
   pane: {
