@@ -5,6 +5,7 @@ import { notFound, unauthorized } from '../../common/errors'
 import { canSeeGame, canSeeTeam, visibleScopes } from '../access'
 import type { Database } from '../db/database'
 import { computeHighlights } from '../highlights'
+import { imageUrl } from '../media/imageUrls'
 import { locateVideoFile } from '../media/locations'
 import type { MediaContext } from '../media/mediaContext'
 import { mediaUrlPath } from '../media/mediaTokens'
@@ -56,7 +57,8 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
           id: team.id,
           name: team.name,
           shortName: team.short_name,
-          logoPath: team.logo_path
+          logoPath: team.logo_path,
+          logoUrl: imageUrl(media.space, team.logo_path)
         }))
       )
     })
@@ -328,6 +330,7 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
         .select([
           'memberships.user_id as userId',
           'users.display_name as displayName',
+          'users.avatar_path as avatarPath',
           'memberships.jersey as jersey',
           'memberships.positions as positions',
           'memberships.is_player as isPlayer',
@@ -343,6 +346,7 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
         rows.map(row => ({
           userId: row.userId,
           displayName: row.displayName,
+          avatarUrl: imageUrl(media.space, row.avatarPath),
           jersey: row.jersey,
           positions: row.positions,
           isPlayer: row.isPlayer,

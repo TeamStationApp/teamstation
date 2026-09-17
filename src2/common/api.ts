@@ -28,7 +28,12 @@ export const asTeamSummary = asObject({
   id: asString,
   name: asString,
   shortName: asNullable(asString),
-  logoPath: asNullable(asString)
+  logoPath: asNullable(asString),
+  /**
+   * Signed and short-lived. The app never builds one: only the server knows
+   * where a picture lives and who may see it.
+   */
+  logoUrl: asOptional(asNullable(asString), null)
 })
 export type TeamSummary = ReturnType<typeof asTeamSummary>
 
@@ -129,6 +134,7 @@ export type BattingRow = ReturnType<typeof asBattingRow>
 export const asRosterEntry = asObject({
   userId: asString,
   displayName: asString,
+  avatarUrl: asOptional(asNullable(asString), null),
   jersey: asNullable(asString),
   positions: asArray(asString),
   isPlayer: asBoolean,

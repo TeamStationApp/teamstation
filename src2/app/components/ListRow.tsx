@@ -3,6 +3,7 @@ import { Pressable, Text, View } from 'react-native'
 
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Badge, type BadgeTone } from './Badge'
+import { Emblem } from './Emblem'
 import { Icon } from './Icon'
 
 export interface ListRowProps {
@@ -10,6 +11,10 @@ export interface ListRowProps {
   subtitle?: string
   /** A short glyph or initials in the leading tile. */
   emblem?: string
+  /** A picture for the leading tile. The glyph is what shows without one. */
+  emblemUri?: string | null
+  /** A face is a circle; everything else is a soft square. */
+  emblemShape?: 'rounded' | 'circle'
   badgeLabel?: string
   badgeTone?: BadgeTone
   onPress?: () => void
@@ -25,16 +30,23 @@ export interface ListRowProps {
  * row that goes nowhere does not advertise that it does.
  */
 export function ListRow(props: ListRowProps): React.ReactElement {
-  const { title, subtitle, emblem, badgeLabel, badgeTone, onPress } = props
+  const {
+    title,
+    subtitle,
+    emblem,
+    emblemUri,
+    emblemShape,
+    badgeLabel,
+    badgeTone,
+    onPress
+  } = props
   const theme = useTheme()
   const styles = getStyles(theme)
 
   const content = (
     <>
       {emblem != null && (
-        <View style={styles.emblem}>
-          <Text style={styles.emblemText}>{emblem}</Text>
-        </View>
+        <Emblem uri={emblemUri} fallback={emblem} shape={emblemShape} />
       )}
       <View style={styles.text}>
         <Text style={styles.title} numberOfLines={1}>
