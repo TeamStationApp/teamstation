@@ -1,7 +1,7 @@
 import { createHash, createHmac } from 'node:crypto'
 
 /**
- * A presigned GET URL for an S3-compatible object store.
+ * A presigned URL for an S3-compatible object store.
  *
  * DigitalOcean Spaces speaks S3, so this is AWS Signature Version 4 with
  * `s3` as the service and the Space's region. It is computed locally and
@@ -10,12 +10,21 @@ import { createHash, createHmac } from 'node:crypto'
  *
  * `Range` is deliberately not part of the signature, which is what lets a
  * player seek: one signed URL serves every byte range of the video.
+ *
+ * `PUT` signs the same way, so uploading needs no second implementation and
+ * no SDK. The payload is unsigned either way, so a body of any size can be
+ * streamed against a signature computed before a byte of it is read.
  */
 
 const ALGORITHM = 'AWS4-HMAC-SHA256'
 const UNSIGNED_PAYLOAD = 'UNSIGNED-PAYLOAD'
 
 export interface PresignOptions {
+  /**
+   * The verb the URL is good for. A signature covers the method, so a URL
+   * signed for `GET` cannot be used to write. Defaults to `GET`.
+   */
+  method?: 'GET' | 'PUT'
   /** e.g. `https://sfo3.digitaloceanspaces.com`. */
   endpoint: string
   region: string
@@ -38,6 +47,7 @@ export interface PresignOptions {
 
 export function presignGetUrl(options: PresignOptions): string {
   const {
+    method = 'GET',
     endpoint,
     region,
     bucket,
@@ -72,7 +82,7 @@ export function presignGetUrl(options: PresignOptions): string {
     .join('&')
 
   const canonicalRequest = [
-    'GET',
+    method,
     path,
     canonicalQuery,
     `host:${host}\n`,
