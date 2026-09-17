@@ -62,7 +62,7 @@ export function GameRow(props: GameRowProps): React.ReactElement {
         uri={posterUrl}
         time={length}
         showPlay={posterUrl != null}
-        width={narrow ? 5 : 7}
+        width={narrow ? 4.25 : 7}
       />
       <View style={styles.text}>
         <Text style={styles.team} numberOfLines={1}>
@@ -81,7 +81,12 @@ export function GameRow(props: GameRowProps): React.ReactElement {
         )}
       </View>
       {badgeLabel != null && <Badge label={badgeLabel} tone={badgeTone} />}
-      {onPress != null && (
+      {/*
+        No chevron on a phone. The whole row is the target, the thumbnail
+        already says it opens something, and those twenty pixels are the
+        difference between reading the opponent's name and reading half of it.
+      */}
+      {onPress != null && !narrow && (
         <Icon name="chevron_right" color={theme.secondaryTextColor} />
       )}
     </>
@@ -105,7 +110,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: theme.rem(theme.spaceMdRem),
+    gap: theme.rem(theme.spaceSmRem),
     paddingVertical: theme.rem(theme.spaceSmRem)
   },
   pressed: {

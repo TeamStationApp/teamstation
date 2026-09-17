@@ -287,6 +287,17 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
             : eb('season_id', '=', game.season_id)
         )
         .execute()
+      const logos = await db
+        .selectFrom('teams')
+        .select(['id', 'logo_path'])
+        .where('id', 'in', [game.home_team_id, game.away_team_id])
+        .execute()
+      const logoOf = (teamId: string): string | null =>
+        imageUrl(
+          media.space,
+          logos.find(row => row.id === teamId)?.logo_path ?? null
+        )
+
       const recordOf = (teamId: string): string | null => {
         const row = recordRows.find(item => item.team_id === teamId)
         if (row == null || row.w + row.l + row.t === 0) return null
@@ -322,6 +333,8 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
         ingestMessage: game.ingest_message,
         awayRecord: recordOf(game.away_team_id),
         homeRecord: recordOf(game.home_team_id),
+        awayLogoUrl: logoOf(game.away_team_id),
+        homeLogoUrl: logoOf(game.home_team_id),
         linescore: game.linescore,
         videos: videos.map(video => ({
           id: video.id,
