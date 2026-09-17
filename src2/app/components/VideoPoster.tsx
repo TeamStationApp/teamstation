@@ -2,6 +2,7 @@ import React from 'react'
 import { Image, Pressable, Text, View } from 'react-native'
 
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { Icon } from './Icon'
 
 export interface VideoPosterProps {
   /** A frame of the video. Absent until one has been cut. */
@@ -51,6 +52,7 @@ export function VideoPoster(props: VideoPosterProps): React.ReactElement {
   const theme = useTheme()
   const styles = getStyles(theme)
   const hero = size === 'hero'
+  const hasPicture = uri != null && uri !== ''
 
   return (
     <View
@@ -60,20 +62,30 @@ export function VideoPoster(props: VideoPosterProps): React.ReactElement {
         !hero && width != null ? { width: theme.rem(width) } : undefined
       ]}
     >
-      {uri != null && uri !== '' && (
+      {hasPicture ? (
         <Image
           accessibilityIgnoresInvertColors
           source={{ uri }}
           style={styles.picture}
         />
+      ) : (
+        // A game with no video still gets a row, and the dark video colour
+        // with nothing on it is a black slab that reads as a failed image.
+        // A pale tile with a quiet film mark says *there is no video here*.
+        <View style={styles.blank}>
+          <Icon name="videocam" color={theme.secondaryTextColor} />
+        </View>
       )}
 
-      <View
-        // The bottom fifth for a thumbnail, which carries four characters; the
-        // bottom third for a hero, which carries two teams and two scores.
-        style={[styles.gradient, hero ? styles.gradientHero : undefined]}
-        pointerEvents="none"
-      />
+      {hasPicture && (
+        <View
+          // The bottom fifth for a thumbnail, which carries four characters;
+          // the bottom third for a hero, which carries two teams and two
+          // scores.
+          style={[styles.gradient, hero ? styles.gradientHero : undefined]}
+          pointerEvents="none"
+        />
+      )}
 
       {children != null && (
         <View style={[styles.overlay, hero && styles.overlayHero]}>
@@ -118,6 +130,16 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   frameThumb: {
     width: theme.rem(7)
+  },
+  blank: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: theme.containerBackgroundColor
   },
   picture: {
     position: 'absolute',
