@@ -5,7 +5,7 @@ import { notFound, unauthorized } from '../../common/errors'
 import { shortNames } from '../../common/names'
 import { canSeeGame, canSeeTeam, visibleScopes } from '../access'
 import type { Database } from '../db/database'
-import { computeHighlights } from '../highlights'
+import { withDropped } from '../highlights'
 import { imageUrl } from '../media/imageUrls'
 import { locateVideoFile } from '../media/locations'
 import type { MediaContext } from '../media/mediaContext'
@@ -421,7 +421,7 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
       )
 
       const settings = await highlightSettings(db)
-      const highlights = computeHighlights(
+      const computed = withDropped(
         events.map(row => ({
           id: row.id,
           atBatIndex: row.at_bat_index,
@@ -445,6 +445,7 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
         settings,
         teams
       )
+      const highlights = computed.highlights
 
       // A still is one frame of the video at the moment of the play, served
       // from the work directory like any other media: `<sec>.jpg` under this
@@ -465,6 +466,9 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
 
       res.json({
         withheld: whyEmpty(highlights, events, video),
+        // How many plays were left out because nobody could be named on them.
+        // An empty list can then say which kind of empty it is.
+        droppedCount: computed.dropped,
         highlights: withStills
       })
 

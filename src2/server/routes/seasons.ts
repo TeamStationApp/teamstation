@@ -4,6 +4,7 @@ import type { Kysely } from 'kysely'
 import { notFound, unauthorized } from '../../common/errors'
 import { visibleScopes } from '../access'
 import type { Database } from '../db/database'
+import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
 import { postersFor, posterUrl, warmPosters } from '../media/posters'
 import { requireActor } from '../middleware/withAuth'
@@ -128,7 +129,33 @@ export function seasonRoutes(
         .orderBy('teams.name')
         .execute()
 
-      res.json(teams)
+      // A record and a signed logo URL, the same as `/teams` gives. Without
+      // the URL the app correctly falls back to initials — it never builds an
+      // image address itself — so the logos simply never appeared here.
+      const records = await db
+        .selectFrom('team_season_records')
+        .select(['team_id', 'w', 'l', 't'])
+        .where('season_id', '=', seasonId)
+        .execute()
+
+      res.json(
+        teams.map(team => {
+          const record = records.find(row => row.team_id === team.id)
+          return {
+            ...team,
+            logoUrl: imageUrl(media.space, team.logoPath),
+            record:
+              record == null || record.w + record.l + record.t === 0
+                ? null
+                : {
+                    w: record.w,
+                    l: record.l,
+                    t: record.t,
+                    seasonName: null
+                  }
+          }
+        })
+      )
     })
   )
 

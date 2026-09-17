@@ -11,6 +11,8 @@ export interface GamesFeedScreenProps {
   client: GameStationClient
   /** `videos` shows only what was recorded; `schedule` shows everything. */
   mode: 'videos' | 'schedule'
+  /** The filter the address asked for, if any. */
+  initialWhen?: When
   onOpenGame: (
     gameId: string,
     title: string,
@@ -41,12 +43,12 @@ const WHEN_TABS = [
 export function GamesFeedScreen(
   props: GamesFeedScreenProps
 ): React.ReactElement {
-  const { client, mode, onOpenGame } = props
+  const { client, mode, initialWhen, onOpenGame } = props
   const styles = getStyles(useTheme())
 
   // Both lists open on what has happened. A schedule of fixtures is the
   // rarer question; what somebody opens the app for is the game just played.
-  const [when, setWhen] = useState<When>('past')
+  const [when, setWhen] = useState<When>(initialWhen ?? 'past')
   const [games, setGames] = useState<SeasonGame[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | undefined>(undefined)

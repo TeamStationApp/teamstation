@@ -94,7 +94,24 @@ export function computeHighlights(
   settings: HighlightSettings,
   teams = new Map<string, TeamStanding>()
 ): Highlight[] {
-  if (video.startAt == null) return []
+  return withDropped(events, video, settings, teams).highlights
+}
+
+/**
+ * The same, and how many plays were left out because nobody could be named.
+ *
+ * `No highlights` and `no highlights we can name` are different things, and a
+ * game against an opponent we know nothing about looks broken without the
+ * distinction.
+ */
+export function withDropped(
+  events: HighlightEvent[],
+  video: HighlightVideo,
+  settings: HighlightSettings,
+  teams = new Map<string, TeamStanding>()
+): { highlights: Highlight[]; dropped: number } {
+  let dropped = 0
+  if (video.startAt == null) return { highlights: [], dropped }
   const videoStartMs = video.startAt.getTime()
 
   const highlights: Highlight[] = []
@@ -126,6 +143,7 @@ export function computeHighlights(
         : credited.filter(outcome => worthShowing(outcome, teams))
     // Nobody to name, on a play somebody has looked at. Not shown.
     if (credited != null && shown.length === 0 && event.titleOverride == null) {
+      if (credited.length > 0) dropped += 1
       continue
     }
 
@@ -147,7 +165,7 @@ export function computeHighlights(
   }
 
   highlights.sort((a, b) => a.atBatIndex - b.atBatIndex)
-  return highlights
+  return { highlights, dropped }
 }
 
 export function leadFor(
