@@ -199,7 +199,7 @@ export function SeasonScreen(props: SeasonScreenProps): React.ReactElement {
                 {index > 0 && <View style={styles.divider} />}
                 <ListRow
                   title={team.name}
-                  subtitle={team.shortName ?? undefined}
+                  subtitle={teamSubtitle(team)}
                   emblem={initialsOf(team.name)}
                   emblemUri={team.logoUrl}
                   onPress={() => {
@@ -258,6 +258,15 @@ export function SeasonScreen(props: SeasonScreenProps): React.ReactElement {
       )}
     </Screen>
   )
+}
+
+/** `12–3`, or the short name when there is no record yet. */
+function teamSubtitle(team: TeamSummary): string | undefined {
+  if (team.record != null) {
+    const { w, l, t } = team.record
+    return t > 0 ? `${w}–${l}–${t}` : `${w}–${l}`
+  }
+  return team.shortName ?? undefined
 }
 
 const getStyles = cacheStyles((theme: Theme) => ({

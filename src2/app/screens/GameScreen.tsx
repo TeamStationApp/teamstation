@@ -17,7 +17,13 @@ import type {
   Playback,
   VideoSummary
 } from '../../common/api'
-import { GameHeroCard, PillTabs, Screen, VideoPoster } from '../components'
+import {
+  GameHeroCard,
+  PillTabs,
+  Screen,
+  useBreakpoint,
+  VideoPoster
+} from '../components'
 import { highlightColumnsFor } from '../layout/grid'
 import { lstrings } from '../locales/strings'
 import { sameMoment } from '../player/angleSwitch'
@@ -34,6 +40,14 @@ export interface GameScreenProps {
   /** Start the video. Arriving here by pressing `Watch Replay` is a gesture a
    * browser accepts, which is what makes an unmuted autoplay legal. */
   autoPlay?: boolean
+  /**
+   * Tells the shell what this game is called once it is known.
+   *
+   * A game opened from a pasted link has no title to put in the header, so
+   * without this the header read the literal word `Game` — which is what a
+   * shared link showed anybody who followed it.
+   */
+  onTitle?: (title: string) => void
 }
 
 type Tab = 'watch' | 'boxScore'
@@ -97,11 +111,12 @@ const DESCRIPTION_SECONDS = 90
  * to the bottom of a long game does not take the video off the screen.
  */
 export function GameScreen(props: GameScreenProps): React.ReactElement {
-  const { client, gameId, initialTab, autoPlay = false } = props
+  const { client, gameId, initialTab, autoPlay = false, onTitle } = props
   const theme = useTheme()
   const styles = getStyles(theme)
   const { height, width } = useWindowDimensions()
   const columns = highlightColumnsFor(width)
+  const isRail = useBreakpoint() !== 'phone'
   // Sized from the window's height, not its width.
   //
   // `aspectRatio` beats `maxHeight` in react-native-web: a 16:9 box told to be
@@ -110,24 +125,40 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   // highlight list measured nothing at all. Giving it a height and letting the
   // width follow is the way round that holds.
   //
-  // The fraction has to leave room for what is above it as well: the card
-  // grew a date, two records and a line score, and at 720 high a 52% player
-  // pushed the list off the bottom again. 42% plus a floor keeps a screenful
-  // of window showing some list at every size worth having.
-  const playerHeight = Math.max(160, Math.round(height * 0.42))
+  // Both constraints at once. A 16:9 box that only obeys the window came out
+  // 358 by 354 on a phone — nearly square — so the picture letterboxed inside
+  // it and 43% of the box was black bar, which is exactly the room the
+  // highlight list needed. And a box that only obeys the width fills a short
+  // window to the bottom. So: as tall as the fraction allows, no taller than
+  // 16:9 of the space it has, and the width follows the height.
+  const railWidth = isRail ? 176 : 0
+  const columnWidth = Math.max(240, width - railWidth - 36)
+  const playerHeight = Math.max(
+    150,
+    Math.min(Math.round(height * 0.46), Math.round((columnWidth * 9) / 16))
+  )
+  const playerWidth = Math.min(columnWidth, Math.round((playerHeight * 16) / 9))
 
   const [tab, setTab] = useState<Tab>(initialTab ?? 'watch')
   const [game, setGame] = useState<GameDetail | undefined>(undefined)
   const [video, setVideo] = useState<VideoSummary | undefined>(undefined)
   const [highlights, setHighlights] = useState<Highlight[]>([])
   const [withheld, setWithheld] = useState<string | null>(null)
+  const [dropped, setDropped] = useState(0)
   const [batting, setBatting] = useState<BattingRow[] | undefined>(undefined)
   const [playback, setPlayback] = useState<Playback | undefined>(undefined)
   const [activeEventId, setActiveEventId] = useState<string | undefined>()
   const [chosen, setChosen] = useState<Highlight | undefined>(undefined)
-  /** Where to pick up after the source changes, for an angle switch. */
+  /**
+   * Where to pick up after the source changes, for an angle switch.
+   *
+   * Tagged with the video it belongs to. Without that it was applied to
+   * whichever source happened to be attached — the *old* one, because the new
+   * playback URL is fetched a moment later — and cleared, so by the time the
+   * new video loaded there was nothing left to restore and it started at zero.
+   */
   const [resumeAt, setResumeAt] = useState<
-    { sec: number; playing: boolean } | undefined
+    { videoId: string; sec: number; playing: boolean } | undefined
   >(undefined)
   const [error, setError] = useState<string | undefined>(undefined)
   const playerRef = useRef<HTMLVideoElement | null>(null)
@@ -142,6 +173,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         // A video whose file has gone is still listed — it is part of the
         // game's record and saying so is better than pretending it never
         // existed — but it is never the one opened by default.
+        onTitle?.(`${found.awayTeamName} @ ${found.homeTeamName}`)
         setVideo(
           found.videos.find(item => item.status === 'ready') ?? found.videos[0]
         )
@@ -152,6 +184,9 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     return () => {
       live = false
     }
+    // `onTitle` is a fresh closure on each render of the shell, so including
+    // it here would refetch the game in a loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, gameId])
 
   useEffect(() => {
@@ -162,6 +197,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       .then(found => {
         if (!live) return
         setHighlights(found.highlights)
+        setDropped(found.droppedCount)
         setWithheld(found.withheld)
       })
       .catch(() => {
@@ -216,7 +252,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     const detach = attachHls(element, playbackUrl)
 
     // Picking up where the other angle was, once the new source is attached.
-    if (resumeAt != null) {
+    if (resumeAt != null && resumeAt.videoId === video?.id) {
       const resume = (): void => {
         element.currentTime = resumeAt.sec
         if (resumeAt.playing) element.play().catch(() => undefined)
@@ -238,7 +274,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       start()
     }
     return detach
-  }, [autoPlay, playbackUrl, resumeAt])
+  }, [autoPlay, playbackUrl, resumeAt, video?.id])
 
   /**
    * The other recording, from the same moment, still playing.
@@ -260,6 +296,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     // the video re-runs `attachHls`, which resets the element *after* the
     // listener has fired, so the seek was being undone a moment later.
     setResumeAt({
+      videoId: next.id,
       sec: sameMoment(current, next, player.currentTime),
       playing: player.paused === false
     })
@@ -354,7 +391,9 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
 
   const player = (
     <View>
-      <View style={[styles.player, { height: playerHeight }]}>
+      <View
+        style={[styles.player, { height: playerHeight, width: playerWidth }]}
+      >
         {video == null ? (
           <Text style={styles.message}>{lstrings.game_no_video}</Text>
         ) : playback == null ? (
@@ -413,7 +452,11 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       ) : withheld === 'noVideoStart' ? (
         <Text style={styles.message}>{lstrings.highlights_no_video_start}</Text>
       ) : highlights.length === 0 ? (
-        <Text style={styles.message}>{lstrings.highlights_none}</Text>
+        <Text style={styles.message}>
+          {dropped > 0
+            ? lstrings.highlights_none_named
+            : lstrings.highlights_none}
+        </Text>
       ) : (
         <View style={styles.grid}>
           {highlights.map(highlight => (
@@ -698,7 +741,6 @@ const getStyles = cacheStyles((theme: Theme) =>
     // Its height is set from the window; the width follows, so a 16:9 picture
     // is letterboxed inside rather than dictating how tall the box is.
     player: {
-      width: '100%',
       alignSelf: 'center',
       backgroundColor: theme.videoBackgroundColor,
       alignItems: 'center',

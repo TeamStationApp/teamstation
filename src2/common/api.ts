@@ -165,6 +165,8 @@ export type Highlight = ReturnType<typeof asHighlight>
 
 export const asHighlightsResponse = asObject({
   withheld: asNullable(asString),
+  /** Plays left out because nobody could be named on them. */
+  droppedCount: asOptional(asNumber, 0),
   highlights: asArray(asHighlight)
 })
 export type HighlightsResponse = ReturnType<typeof asHighlightsResponse>

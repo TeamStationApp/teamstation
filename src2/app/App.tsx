@@ -113,6 +113,32 @@ function Shell(props: AppProps): React.ReactElement {
     }
   }, [client])
 
+  // A team or a season link carries only an id, and the screens want the whole
+  // summary to draw a header. Resolve it once, on arrival, rather than landing
+  // on the home screen and rewriting the address — which threw the link away.
+  useEffect(() => {
+    const route = currentRoute()
+    if (route.name !== 'team' && route.name !== 'season') return
+    let live = true
+    const find = async (): Promise<void> => {
+      if (route.name === 'team') {
+        const teams = await client.teams()
+        const team = teams.find(item => item.id === route.teamId)
+        if (live && team != null) push({ name: 'team', team })
+        return
+      }
+      const seasons = await client.seasons()
+      const season = seasons.find(item => item.id === route.seasonId)
+      if (live && season != null) push({ name: 'season', season })
+    }
+    find().catch(() => undefined)
+    return () => {
+      live = false
+    }
+    // Once, on the address the app opened on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [client])
+
   const stack = stacks[tab]
   const top = stack[stack.length - 1]
 
@@ -177,11 +203,17 @@ function Shell(props: AppProps): React.ReactElement {
           onOpenGame={openGame}
         />
       ) : tab === 'videos' ? (
-        <GamesFeedScreen client={client} mode="videos" onOpenGame={openGame} />
+        <GamesFeedScreen
+          client={client}
+          mode="videos"
+          initialWhen={whenOf(currentRoute())}
+          onOpenGame={openGame}
+        />
       ) : (
         <GamesFeedScreen
           client={client}
           mode="schedule"
+          initialWhen={whenOf(currentRoute())}
           onOpenGame={openGame}
         />
       )
@@ -210,6 +242,19 @@ function Shell(props: AppProps): React.ReactElement {
         gameId={top.gameId}
         initialTab={top.tab}
         autoPlay={top.autoPlay}
+        onTitle={title => {
+          setStacks(current => {
+            const held = current[tab]
+            const last = held[held.length - 1]
+            if (last?.name !== 'game' || last.title === title) {
+              return current
+            }
+            return {
+              ...current,
+              [tab]: [...held.slice(0, -1), { ...last, title }]
+            }
+          })
+        }}
       />
     ) : null
 
@@ -288,6 +333,13 @@ function stackFor(route: Route): Partial<Record<NavTabId, Pushed[]>> {
   }
   if (route.name === 'account') return { [tab]: [{ name: 'account' }] }
   return {}
+}
+
+/** The filter an address asks for, if it asks for one. */
+function whenOf(route: Route): 'upcoming' | 'past' | 'all' | undefined {
+  return route.name === 'videos' || route.name === 'schedule'
+    ? route.when
+    : undefined
 }
 
 /** Which tab an address belongs to. */

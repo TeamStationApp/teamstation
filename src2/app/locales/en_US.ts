@@ -70,6 +70,8 @@ export const enUs = {
   // Highlights
   highlight_jump: 'Jump to this play',
   highlights_none: 'No highlights for this video.',
+  highlights_none_named:
+    'No highlights we can name for this video. The plays are there, but the players on them are not in our records.',
   /**
    * Some games were scored from the recording afterwards, sometimes days
    * later. The plays are real and the box score is right; the tap times just
