@@ -55,6 +55,8 @@ export const enUs = {
   game_box_score: 'Box score',
   game_no_video: 'No video for this game.',
   game_video_unavailable: 'This video is not available right now.',
+  /** Marks a video in the picker whose file is no longer on the server. */
+  game_video_gone_suffix: '(unavailable)',
   game_batting: 'Batting',
   game_box_score_empty: 'No batting to show for this game yet.',
   game_at: 'at',
