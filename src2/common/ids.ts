@@ -18,6 +18,7 @@ export const idPrefixes = {
   league: 'lea',
   membership: 'mem',
   playerSeasonStats: 'pss',
+  rateEvent: 'rte',
   season: 'sea',
   seasonMember: 'smb',
   team: 'tem',
