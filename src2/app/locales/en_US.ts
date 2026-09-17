@@ -116,7 +116,9 @@ export const enUs = {
   common_back: 'Back',
   common_retry: 'Try again',
   common_loading: 'Loading…',
-  common_not_found: 'Not found.',
+  common_not_found: 'That game is not here',
+  common_not_found_detail:
+    'It may have been removed, or the link may be for a game you cannot see.',
   common_offline: 'You appear to be offline.'
 }
 

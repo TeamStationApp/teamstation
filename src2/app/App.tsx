@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { View } from 'react-native'
+import { ActivityIndicator, Image, View } from 'react-native'
 
 import {
   GameStationClient,
@@ -7,6 +7,7 @@ import {
   type Session,
   type TeamSummary
 } from '../common/api'
+import gsLogo from './assets/gsLogo.png'
 import { AppHeader, AppNav, type NavTabId, useBreakpoint } from './components'
 import type { Route, When } from './navigation/routes'
 import {
@@ -194,9 +195,24 @@ function Shell(props: AppProps): React.ReactElement {
   }
 
   if (session == null) {
-    // Nothing at all until the question is answered: a flash of the sign-in
-    // screen is how a link to a game becomes a link to the sign-in screen.
-    if (!askedAboutSession) return <View style={styles.app} />
+    // The sign-in screen must not be drawn until the question is answered: a
+    // flash of it is how a link to a game becomes a link to the sign-in
+    // screen. The mark and a spinner rather than a blank page, because on a
+    // slow connection the wait is seconds long and an empty window reads as
+    // the app having failed to start.
+    if (!askedAboutSession) {
+      return (
+        <View style={[styles.app, styles.booting]}>
+          <Image
+            accessibilityIgnoresInvertColors
+            accessibilityLabel="GameStation"
+            source={{ uri: gsLogo }}
+            style={styles.bootMark}
+          />
+          <ActivityIndicator color={theme.secondaryTextColor} />
+        </View>
+      )
+    }
     return (
       <View style={styles.app}>
         <AppHeader title="Sign in" overline="GameStation" />
@@ -416,6 +432,16 @@ const getStyles = cacheStyles((theme: Theme) => ({
   app: {
     flex: 1,
     backgroundColor: theme.backgroundColor
+  },
+  booting: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: theme.rem(theme.spaceMdRem)
+  },
+  bootMark: {
+    width: theme.rem(3),
+    height: theme.rem(3),
+    resizeMode: 'contain'
   },
   appRow: {
     flex: 1,
