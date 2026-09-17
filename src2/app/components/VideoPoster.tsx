@@ -1,12 +1,22 @@
-import React from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Image, Pressable, Text, View } from 'react-native'
 
+import { attachHls } from '../player/attachHls'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Icon } from './Icon'
 
 export interface VideoPosterProps {
   /** A frame of the video. Absent until one has been cut. */
   uri?: string | null
+  /**
+   * Play the video itself in the frame, silently.
+   *
+   * The home card does this: the game is already on screen, so it moves.
+   * Muted because a browser will refuse an unmuted autoplay without a gesture,
+   * and because a page that starts talking the moment it loads is rude — the
+   * sound is what `Watch Replay` is for.
+   */
+  videoUrl?: string | null
   /** `1:24:10` for a whole video, or where a highlight seeks to. */
   time?: string
   /**
@@ -42,6 +52,7 @@ export interface VideoPosterProps {
 export function VideoPoster(props: VideoPosterProps): React.ReactElement {
   const {
     uri,
+    videoUrl,
     time,
     showPlay = false,
     onPlay,
@@ -53,6 +64,34 @@ export function VideoPoster(props: VideoPosterProps): React.ReactElement {
   const styles = getStyles(theme)
   const hero = size === 'hero'
   const hasPicture = uri != null && uri !== ''
+  const [moving, setMoving] = useState(false)
+  const teardown = useRef<(() => void) | undefined>(undefined)
+
+  // The poster stays underneath until there are frames to cover it, so the
+  // card never flashes empty while the first segment loads.
+  const playInFrame = useCallback(
+    (element: HTMLVideoElement | null): void => {
+      if (element == null || videoUrl == null || videoUrl === '') return
+      const detach = attachHls(element, videoUrl)
+      const start = (): void => {
+        setMoving(true)
+        element.play().catch(() => {
+          // Refused even muted. The poster is already there, so there is
+          // nothing to say and nothing to put right.
+          setMoving(false)
+        })
+      }
+      element.addEventListener('loadeddata', start, { once: true })
+      teardown.current = () => {
+        element.removeEventListener('loadeddata', start)
+        detach()
+      }
+    },
+    [videoUrl]
+  )
+  useEffect(() => {
+    return () => teardown.current?.()
+  }, [])
 
   return (
     <View
@@ -77,7 +116,34 @@ export function VideoPoster(props: VideoPosterProps): React.ReactElement {
         </View>
       )}
 
-      {hasPicture && (
+      {videoUrl != null && videoUrl !== '' && (
+        // After the poster so it covers it, and before the gradient and the
+        // score so those stay on top of both. Clipped to the card's rounded
+        // corners by the frame's `overflow: hidden`, exactly like the picture
+        // it replaces.
+        //
+        // Web only, like the gradient below and for the same reason: there is
+        // no React Native video primitive here, and the browser's own player
+        // is what decodes HEVC.
+        <video
+          ref={playInFrame}
+          muted
+          playsInline
+          style={{
+            position: 'absolute',
+            left: 0,
+            top: 0,
+            width: '100%',
+            height: '100%',
+            objectFit: 'cover',
+            // Faded in only once there are frames, so the card never flashes
+            // empty over the poster while the first segment loads.
+            opacity: moving ? 1 : 0
+          }}
+        />
+      )}
+
+      {(hasPicture || moving) && (
         <View
           // The bottom fifth for a thumbnail, which carries four characters;
           // the bottom third for a hero, which carries two teams and two
@@ -97,7 +163,7 @@ export function VideoPoster(props: VideoPosterProps): React.ReactElement {
         <Text style={[styles.time, hero && styles.timeHero]}>{time}</Text>
       )}
 
-      {showPlay && (
+      {showPlay && !moving && (
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Play"

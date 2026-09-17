@@ -500,9 +500,6 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         .filter(part => part != null && part !== '')
         .join(' · ')}
       linescore={game.linescore}
-      onPlay={() => {
-        playerRef.current?.play().catch(() => undefined)
-      }}
     />
   )
 
