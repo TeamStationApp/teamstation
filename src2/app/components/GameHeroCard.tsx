@@ -4,6 +4,7 @@ import { Text, View } from 'react-native'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Emblem } from './Emblem'
 import { initialsOf } from './initials'
+import { useBreakpoint } from './useBreakpoint'
 import { VideoPoster } from './VideoPoster'
 
 export interface GameHeroCardProps {
@@ -71,6 +72,7 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
     homeLogoUrl
   } = props
   const styles = getStyles(useTheme())
+  const narrow = useBreakpoint() === 'phone'
 
   const line =
     linescore == null ? null : (
@@ -95,7 +97,7 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
             </View>
           </View>
         )}
-        <View style={styles.plain}>
+        <View style={[styles.plain, narrow && styles.plainStacked]}>
           <ScoreLine
             name={awayName}
             score={awayScore}
@@ -103,6 +105,7 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
             logoUrl={awayLogoUrl}
             note="Away"
             won={winner === 'away'}
+            stacked={narrow}
           />
           {meta == null && <Text style={styles.plainStatus}>{status}</Text>}
           <ScoreLine
@@ -112,7 +115,8 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
             logoUrl={homeLogoUrl}
             note="Home"
             won={winner === 'home'}
-            alignEnd
+            alignEnd={!narrow}
+            stacked={narrow}
           />
         </View>
         {line}
@@ -163,14 +167,40 @@ function ScoreLine(props: {
   note: string
   won: boolean
   alignEnd?: boolean
+  /** One side per line rather than two across, on a phone. */
+  stacked?: boolean
 }): React.ReactElement {
-  const { name, score, record, logoUrl, note, won, alignEnd = false } = props
+  const {
+    name,
+    score,
+    record,
+    logoUrl,
+    note,
+    won,
+    alignEnd = false,
+    stacked = false
+  } = props
   const styles = getStyles(useTheme())
   const mark = <Emblem uri={logoUrl} fallback={initialsOf(name)} size={2} />
   return (
-    <View style={[styles.side, alignEnd && styles.sideEnd]}>
+    <View
+      style={[
+        styles.side,
+        alignEnd && styles.sideEnd,
+        // `flex: 1` is flex-basis 0 as well, which in a column measures the
+        // *height* — the two sides would collapse. Stacked, each is simply
+        // as tall as it is.
+        stacked && styles.sideStacked
+      ]}
+    >
       {!alignEnd && mark}
-      <View style={[styles.sideText, alignEnd && styles.sideTextEnd]}>
+      <View
+        style={[
+          styles.sideText,
+          alignEnd && styles.sideTextEnd,
+          stacked && styles.sideTextStacked
+        ]}
+      >
         <Text style={styles.sideName} numberOfLines={1}>
           {name}
           {won ? ' ★' : ''}
@@ -240,6 +270,15 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontWeight: '700',
     letterSpacing: theme.rem(0.04)
   },
+  // Two sides across a 390px phone left `Lake Mu…` against `Badgers (…` —
+  // both names cut, and the full ones legible in the line score directly
+  // below. Stacked they each get the whole width, away over home, which is
+  // the order every other list on the screen uses.
+  plainStacked: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    gap: theme.rem(theme.spaceSmRem)
+  },
   plain: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -276,6 +315,16 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   sideEnd: {
     justifyContent: 'flex-end'
+  },
+  sideStacked: {
+    flexGrow: 0,
+    flexShrink: 0,
+    flexBasis: 'auto'
+  },
+  sideTextStacked: {
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: 0
   },
   sideName: {
     color: theme.primaryTextColor,
