@@ -19,7 +19,7 @@ export type Route =
   | { name: 'schedule'; when: When }
   | { name: 'account' }
   | { name: 'team'; teamId: string; tab?: string }
-  | { name: 'season'; seasonId: string }
+  | { name: 'season'; seasonId: string; tab?: string }
   | { name: 'league'; leagueId: string }
   | {
       name: 'game'
@@ -62,7 +62,11 @@ export function parseRoute(path: string, search = ''): Route {
       return { name: 'team', teamId: id, tab: query.get('tab') ?? undefined }
     case 'seasons':
       if (id == null) return { name: 'home' }
-      return { name: 'season', seasonId: id }
+      return {
+        name: 'season',
+        seasonId: id,
+        tab: query.get('tab') ?? undefined
+      }
     case 'leagues':
       if (id == null) return { name: 'home' }
       return { name: 'league', leagueId: id }
@@ -100,7 +104,9 @@ export function routePath(route: Route): string {
         ? `/teams/${route.teamId}`
         : `/teams/${route.teamId}?tab=${route.tab}`
     case 'season':
-      return `/seasons/${route.seasonId}`
+      return route.tab == null
+        ? `/seasons/${route.seasonId}`
+        : `/seasons/${route.seasonId}?tab=${route.tab}`
     case 'league':
       return `/leagues/${route.leagueId}`
     case 'game': {

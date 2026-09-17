@@ -39,9 +39,17 @@ export interface SeasonScreenProps {
     options?: { tab?: 'watch' | 'boxScore'; autoPlay?: boolean }
   ) => void
   onOpenTeam: (team: TeamSummary) => void
+  /** Which section to open on, from the address. */
+  initialTab?: string
+  /** Tells the shell which section is showing, so the address can say so. */
+  onTab?: (tab: string) => void
 }
 
 type TabId = 'schedule' | 'teams' | 'standings'
+
+function tabOf(id: string | undefined): TabId {
+  return TABS.some(item => item.id === id) ? (id as TabId) : 'schedule'
+}
 type When = 'past' | 'upcoming' | 'all'
 
 const TABS = [
@@ -69,11 +77,11 @@ const WHEN_TABS = [
  * sits between them and the lower one never carries the screen's own sections.
  */
 export function SeasonScreen(props: SeasonScreenProps): React.ReactElement {
-  const { client, season, onOpenGame, onOpenTeam } = props
+  const { client, season, onOpenGame, onOpenTeam, initialTab, onTab } = props
   const styles = getStyles(useTheme())
   const narrow = useBreakpoint() === 'phone'
 
-  const [tab, setTab] = useState<TabId>('schedule')
+  const [tab, setTab] = useState<TabId>(tabOf(initialTab))
   const [when, setWhen] = useState<When>('past')
   const [games, setGames] = useState<SeasonGame[]>([])
   const [teams, setTeams] = useState<TeamSummary[]>([])
@@ -135,7 +143,10 @@ export function SeasonScreen(props: SeasonScreenProps): React.ReactElement {
       <PillTabs
         tabs={TABS}
         selected={tab}
-        onSelect={setTab}
+        onSelect={next => {
+          setTab(next)
+          onTab?.(next)
+        }}
         stretch
         accessibilityLabel="Season sections"
       />

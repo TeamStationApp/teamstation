@@ -279,33 +279,62 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   }, [batting, client, gameId, tab])
 
   const playbackUrl = playback?.url ?? null
+
+  /**
+   * What the playhead should do the next time a source is attached.
+   *
+   * Refs, not dependencies, and that is the whole point. This lived in the
+   * attach effect's dependency array and cost two bugs at once, because
+   * re-running the effect calls `attachHls` again and an element handed a
+   * fresh manifest goes back to zero:
+   *
+   * - Tapping a highlight writes `?t=` to the address, which comes back down
+   *   as `startAtSec`. The first tap worked only by accident — it took the
+   *   link branch below — and every tap after it re-attached the source and
+   *   dropped the reader at the start of the game.
+   * - The angle switch's own `setResumeAt(undefined)`, at the end of a
+   *   successful resume, re-ran the effect and undid the resume it had just
+   *   finished.
+   *
+   * Reading them through refs means the source is attached exactly when the
+   * source changes, and nothing else can reach in and restart it.
+   */
+  const resumeAtRef = useRef(resumeAt)
+  resumeAtRef.current = resumeAt
+  const startAtSecRef = useRef(startAtSec)
+  startAtSecRef.current = startAtSec
+  const autoPlayRef = useRef(autoPlay)
+  autoPlayRef.current = autoPlay
+  const placeFor = useRef<{ videoId?: string; playbackFor?: string }>({})
+  placeFor.current = { videoId: video?.id, playbackFor }
+
   useEffect(() => {
     const element = playerRef.current
     if (element == null || playbackUrl == null) return
     const detach = attachHls(element, playbackUrl)
 
+    const resume = resumeAtRef.current
+    const { videoId, playbackFor: forId } = placeFor.current
+
     // Picking up where the other angle was, once the new source is attached.
-    if (
-      resumeAt != null &&
-      resumeAt.videoId === video?.id &&
-      playbackFor === video.id
-    ) {
-      const resume = (): void => {
-        element.currentTime = resumeAt.sec
-        if (resumeAt.playing) element.play().catch(() => undefined)
+    if (resume != null && resume.videoId === videoId && forId === videoId) {
+      const apply = (): void => {
+        element.currentTime = resume.sec
+        if (resume.playing) element.play().catch(() => undefined)
         setResumeAt(undefined)
       }
-      if (element.readyState >= 1) resume()
-      else element.addEventListener('loadedmetadata', resume, { once: true })
+      if (element.readyState >= 1) apply()
+      else element.addEventListener('loadedmetadata', apply, { once: true })
       return detach
     }
 
     // A link to a moment: start there, and start playing, because that is
     // what the person who sent the link meant by sending it.
-    if (startAtSec != null && startAtSec > 0 && !startedFromLink.current) {
+    const linkAt = startAtSecRef.current
+    if (linkAt != null && linkAt > 0 && !startedFromLink.current) {
       startedFromLink.current = true
       const jump = (): void => {
-        element.currentTime = startAtSec
+        element.currentTime = linkAt
         element.play().catch(() => undefined)
       }
       if (element.readyState >= 1) jump()
@@ -313,7 +342,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       return detach
     }
 
-    if (autoPlay) {
+    if (autoPlayRef.current) {
       // The tap that opened this screen is a gesture the browser counts, so an
       // unmuted start is allowed. If it refuses anyway the controls are right
       // there, and saying so would be noise.
@@ -324,7 +353,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       start()
     }
     return detach
-  }, [autoPlay, playbackFor, playbackUrl, resumeAt, startAtSec, video?.id])
+  }, [playbackUrl])
 
   /**
    * The other recording, from the same moment, still playing.
@@ -345,12 +374,17 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     // new source. Listening for `loadedmetadata` here does not work: changing
     // the video re-runs `attachHls`, which resets the element *after* the
     // listener has fired, so the seek was being undone a moment later.
+    const sec = sameMoment(current, next, player.currentTime)
     setResumeAt({
       videoId: next.id,
-      sec: sameMoment(current, next, player.currentTime),
+      sec,
       playing: player.paused === false
     })
     setVideo(next)
+    // The address names the angle, so it has to follow the angle. Without
+    // this it went on naming the one you switched away from, and copying the
+    // link mid-game handed somebody a different camera.
+    onMoment?.(next.id, Math.round(sec))
   }
 
   const jumpTo = (highlight: Highlight): void => {

@@ -35,8 +35,8 @@ export interface AppProps {
 
 /** A screen pushed on top of a tab, rather than one of the tabs itself. */
 type Pushed =
-  | { name: 'season'; season: SeasonSummary }
-  | { name: 'team'; team: TeamSummary }
+  | { name: 'season'; season: SeasonSummary; tab?: string }
+  | { name: 'team'; team: TeamSummary; tab?: string }
   | {
       name: 'game'
       gameId: string
@@ -134,12 +134,14 @@ function Shell(props: AppProps): React.ReactElement {
       if (route.name === 'team') {
         const teams = await client.teams()
         const team = teams.find(item => item.id === route.teamId)
-        if (live && team != null) push({ name: 'team', team })
+        if (live && team != null) push({ name: 'team', team, tab: route.tab })
         return
       }
       const seasons = await client.seasons()
       const season = seasons.find(item => item.id === route.seasonId)
-      if (live && season != null) push({ name: 'season', season })
+      if (live && season != null) {
+        push({ name: 'season', season, tab: route.tab })
+      }
     }
     find().catch(() => undefined)
     return () => {
@@ -155,12 +157,23 @@ function Shell(props: AppProps): React.ReactElement {
   // Keep the address saying where we are. `replace` on the first render so
   // landing on `/` and resolving it does not leave a step for Back to find.
   const firstRender = useRef(true)
+  /**
+   * The next address change is a position, not a place.
+   *
+   * Moving the video writes `?t=` to the address, and pushing a step for each
+   * one made Back walk the plays: watch twenty highlights and Back needs
+   * twenty presses to leave the game. Where you are in a video is a property
+   * of the screen you are already on, so it corrects the entry rather than
+   * adding one.
+   */
+  const inPlace = useRef(false)
   useEffect(() => {
     // Not while signed out: rewriting the address to `/` before the password
     // field has even been typed into throws away the link that brought them.
     if (session == null) return
-    showRoute(routeOf(tab, top, when), firstRender.current)
+    showRoute(routeOf(tab, top, when), firstRender.current || inPlace.current)
     firstRender.current = false
+    inPlace.current = false
   }, [session, tab, top, when])
 
   const goToRoute = useCallback((route: Route): void => {
@@ -187,6 +200,20 @@ function Shell(props: AppProps): React.ReactElement {
   ): void => {
     push({ name: 'game', gameId, title, ...options })
   }
+  /** A section change on the team or season screen, into the address. */
+  const setTopTab = (next: string): void => {
+    setStacks(current => {
+      const held = current[tab]
+      const last = held[held.length - 1]
+      if (last?.name !== 'team' && last?.name !== 'season') return current
+      if (last.tab === next) return current
+      return {
+        ...current,
+        [tab]: [...held.slice(0, -1), { ...last, tab: next }]
+      }
+    })
+  }
+
   const openTeam = (team: TeamSummary): void => {
     push({ name: 'team', team })
   }
@@ -258,13 +285,21 @@ function Shell(props: AppProps): React.ReactElement {
         }}
       />
     ) : top.name === 'team' ? (
-      <TeamScreen client={client} team={top.team} onOpenGame={openGame} />
+      <TeamScreen
+        client={client}
+        team={top.team}
+        onOpenGame={openGame}
+        initialTab={top.tab}
+        onTab={setTopTab}
+      />
     ) : top.name === 'season' ? (
       <SeasonScreen
         client={client}
         season={top.season}
         onOpenGame={openGame}
         onOpenTeam={openTeam}
+        initialTab={top.tab}
+        onTab={setTopTab}
       />
     ) : top.name === 'game' ? (
       <GameScreen
@@ -275,6 +310,7 @@ function Shell(props: AppProps): React.ReactElement {
         initialVideoId={top.videoId}
         startAtSec={top.at}
         onMoment={(videoId, atSec) => {
+          inPlace.current = true
           setStacks(current => {
             const held = current[tab]
             const last = held[held.length - 1]
@@ -397,9 +433,11 @@ function tabOf(route: Route): NavTabId {
 /** The address of wherever the app currently is. */
 function routeOf(tab: NavTabId, top: Pushed | undefined, when?: When): Route {
   if (top != null) {
-    if (top.name === 'team') return { name: 'team', teamId: top.team.id }
+    if (top.name === 'team') {
+      return { name: 'team', teamId: top.team.id, tab: top.tab }
+    }
     if (top.name === 'season') {
-      return { name: 'season', seasonId: top.season.id }
+      return { name: 'season', seasonId: top.season.id, tab: top.tab }
     }
     if (top.name === 'account') return { name: 'account' }
     return {
