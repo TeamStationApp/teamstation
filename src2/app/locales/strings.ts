@@ -61,3 +61,8 @@ export function videoCountLabel(count: number): string {
   if (count <= 0) return ''
   return plural(count, lstrings.videos_count_one, lstrings.videos_count_many)
 }
+
+/** `1 game`, `11 games` — the count beside a list of them. */
+export function gameCountLabel(count: number): string {
+  return plural(count, lstrings.games_count_one, lstrings.games_count_many)
+}

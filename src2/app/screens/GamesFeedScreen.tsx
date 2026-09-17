@@ -10,7 +10,7 @@ import {
   SectionHeader,
   useBreakpoint
 } from '../components'
-import { videoCountLabel } from '../locales/strings'
+import { gameCountLabel, videoCountLabel } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import {
   clock,
@@ -126,7 +126,7 @@ export function GamesFeedScreen(
 
       <SectionHeader
         title={mode === 'videos' ? 'Game videos' : 'Schedule'}
-        note={`${sorted.length} games`}
+        note={gameCountLabel(sorted.length)}
       />
 
       {error != null && <Text style={styles.error}>{error}</Text>}

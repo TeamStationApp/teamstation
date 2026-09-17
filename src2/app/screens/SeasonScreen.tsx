@@ -20,7 +20,7 @@ import {
   StatGrid,
   useBreakpoint
 } from '../components'
-import { videoCountLabel } from '../locales/strings'
+import { gameCountLabel, videoCountLabel } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import {
   clock,
@@ -59,7 +59,7 @@ const TABS = [
 ]
 
 const WHEN_TABS = [
-  { id: 'past' as const, label: 'Past games' },
+  { id: 'past' as const, label: 'Past' },
   { id: 'upcoming' as const, label: 'Upcoming' },
   { id: 'all' as const, label: 'All' }
 ]
@@ -162,7 +162,7 @@ export function SeasonScreen(props: SeasonScreenProps): React.ReactElement {
             onSelect={setWhen}
             stretch
           />
-          <SectionHeader title="Schedule" note={`${shown.length} games`} />
+          <SectionHeader title="Schedule" note={gameCountLabel(shown.length)} />
           {shown.length === 0 ? (
             <Card>
               <Text style={styles.muted}>Nothing here yet.</Text>

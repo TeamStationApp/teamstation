@@ -56,6 +56,8 @@ export const enUs = {
   video_multi_angle: 'Multi-angle',
   videos_count_one: '%s video',
   videos_count_many: '%s videos',
+  games_count_one: '%s game',
+  games_count_many: '%s games',
   game_box_score: 'Box score',
   game_no_video: 'No video for this game.',
   game_video_unavailable: 'This video is not available right now.',
