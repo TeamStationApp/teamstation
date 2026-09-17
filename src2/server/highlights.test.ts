@@ -12,7 +12,8 @@ import type { HighlightSettings } from './settings'
 const settings: HighlightSettings = {
   lagSec: 8,
   leadSec: 30,
-  leadSecByEventType: { strikeout: 10 }
+  leadSecByEventType: { strikeout: 10 },
+  mergeWithinSec: 5
 }
 
 const videoStart = new Date('2026-05-01T18:00:00.000Z')
@@ -146,5 +147,184 @@ describe('highlights', function () {
     const [normal] = computeHighlights([event()], video, settings)
     const [corrected] = computeHighlights([event()], video, slower)
     expect(normal.playOffsetSec - corrected.playOffsetSec).equals(12)
+  })
+})
+
+describe('what a highlight is called, and whether it is shown at all', function () {
+  const at = (sec: number): Date => new Date(videoStart.getTime() + sec * 1000)
+  const base = {
+    atBatIndex: 1,
+    eventType: 'single',
+    description: 'Jensen Puey singles on a ground ball.',
+    titleOverride: null,
+    timeNudgeSec: 0,
+    hidden: false,
+    isScoringPlay: false
+  }
+  const credit = (
+    name: string,
+    role = 'batter'
+  ): { name: string; role: string; position: null } => ({
+    name,
+    role,
+    position: null
+  })
+
+  it('reads as the event and the player who did it well', function () {
+    const [one] = computeHighlights(
+      [
+        {
+          ...base,
+          id: 'e1',
+          startTime: at(600),
+          credits: [
+            {
+              eventType: 'single',
+              label: 'Single: Jensen P',
+              credit: credit('Jensen P'),
+              teamId: null,
+              creditUserId: null
+            }
+          ]
+        }
+      ],
+      video,
+      settings
+    )
+    expect(one?.title).equals('Single: Jensen P')
+  })
+
+  it('joins a hit and the run it drove in into one line', function () {
+    const [one] = computeHighlights(
+      [
+        {
+          ...base,
+          id: 'e1',
+          startTime: at(600),
+          credits: [
+            {
+              eventType: 'single',
+              label: 'Single: Jensen P',
+              credit: credit('Jensen P'),
+              teamId: null,
+              creditUserId: null
+            },
+            {
+              eventType: 'run',
+              label: 'Run: Harlow P',
+              credit: credit('Harlow P', 'runner'),
+              teamId: null,
+              creditUserId: null
+            }
+          ]
+        }
+      ],
+      video,
+      settings
+    )
+    expect(one?.title).equals('Single: Jensen P · Run: Harlow P')
+    expect(one?.isScoringPlay, 'a run makes it a scoring play').equals(true)
+  })
+
+  it('does not name the same player twice on a home run', function () {
+    const [one] = computeHighlights(
+      [
+        {
+          ...base,
+          id: 'e1',
+          startTime: at(600),
+          credits: [
+            {
+              eventType: 'home_run',
+              label: 'Home run: Harlow P',
+              credit: credit('Harlow P'),
+              teamId: null,
+              creditUserId: null
+            },
+            {
+              eventType: 'run',
+              label: 'Run: Harlow P',
+              credit: credit('Harlow P', 'runner'),
+              teamId: null,
+              creditUserId: null
+            }
+          ]
+        }
+      ],
+      video,
+      settings
+    )
+    expect(one?.title).equals('Home run: Harlow P')
+  })
+
+  it('shows nothing for a play nobody can be named on', function () {
+    const found = computeHighlights(
+      [{ ...base, id: 'e1', startTime: at(600), credits: [] }],
+      video,
+      settings
+    )
+    expect(found).deep.equals([])
+  })
+
+  it('drops a play credited to an opponent nobody runs', function () {
+    const found = computeHighlights(
+      [
+        {
+          ...base,
+          id: 'e1',
+          startTime: at(600),
+          credits: [
+            {
+              eventType: 'single',
+              label: 'Single: Jensen P',
+              credit: credit('Jensen P'),
+              teamId: 'tem_outside',
+              creditUserId: null
+            }
+          ]
+        }
+      ],
+      video,
+      settings,
+      new Map([['tem_outside', { isExternal: true, hasOwner: false }]])
+    )
+    expect(found).deep.equals([])
+  })
+
+  it('keeps a play credited to a real team in the league', function () {
+    const found = computeHighlights(
+      [
+        {
+          ...base,
+          id: 'e1',
+          startTime: at(600),
+          credits: [
+            {
+              eventType: 'single',
+              label: 'Single: Jensen P',
+              credit: credit('Jensen P'),
+              teamId: 'tem_real',
+              creditUserId: null
+            }
+          ]
+        }
+      ],
+      video,
+      settings,
+      new Map([['tem_real', { isExternal: false, hasOwner: true }]])
+    )
+    expect(found).to.have.length(1)
+  })
+
+  it('leaves a game ingested before credits existed alone', function () {
+    // `undefined` is not `[]`: nobody has looked at this play yet, so it keeps
+    // its old wording rather than vanishing until an import is re-run.
+    const found = computeHighlights(
+      [{ ...base, id: 'e1', startTime: at(600) }],
+      video,
+      settings
+    )
+    expect(found).to.have.length(1)
+    expect(found[0]?.title).equals('Jensen Puey singles on a ground ball.')
   })
 })

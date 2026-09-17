@@ -8,6 +8,7 @@ import { migration006SeasonMembers } from './006seasonMembers'
 import { migration007RateLimits } from './007rateLimits'
 import { migration008MergedTeams } from './008mergedTeams'
 import { migration009Images } from './009images'
+import { migration010Credits } from './010credits'
 
 /** Every migration, in the order they were written. */
 export const migrations: Migration[] = [
@@ -19,5 +20,6 @@ export const migrations: Migration[] = [
   migration006SeasonMembers,
   migration007RateLimits,
   migration008MergedTeams,
-  migration009Images
+  migration009Images,
+  migration010Credits
 ]

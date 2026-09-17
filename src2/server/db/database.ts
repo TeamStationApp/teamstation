@@ -228,6 +228,8 @@ export interface EventsTable {
   away_score: number | null
   home_score: number | null
   gumbo: Json
+  /** Credited outcomes, one play yielding one or more. See `010credits`. */
+  credits: Json | null
   source: Generated<'external' | 'manual'>
   hidden: Generated<boolean>
   title_override: string | null
