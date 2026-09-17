@@ -100,3 +100,35 @@ export function clock(seconds: number): string {
     ? `${hours}:${pad(minutes)}:${pad(secs)}`
     : `${minutes}:${pad(secs)}`
 }
+
+/**
+ * How the two teams of a game are written on one row.
+ *
+ * `@` means the home side is second; `vs` means the first side is at home.
+ * That is how a score is read aloud, and it saves a reader from having to
+ * already know that the away team conventionally comes first.
+ *
+ * With a `fromTeamId` the row is written from that team's point of view, which
+ * is what a team's own page wants. Without one — the all-seasons feed, the
+ * schedule — there is no side to take, so it states the fixture: away first.
+ *
+ * One helper rather than a format at each call site, because that is how the
+ * same game ends up written two ways on two screens.
+ */
+export function matchupLines(
+  game: {
+    homeTeamId: string
+    awayTeamId: string
+    homeTeamName: string
+    awayTeamName: string
+  },
+  fromTeamId?: string
+): { first: string; second: string } {
+  if (fromTeamId === game.homeTeamId) {
+    return { first: game.homeTeamName, second: `vs ${game.awayTeamName}` }
+  }
+  if (fromTeamId === game.awayTeamId) {
+    return { first: game.awayTeamName, second: `@ ${game.homeTeamName}` }
+  }
+  return { first: game.awayTeamName, second: `@ ${game.homeTeamName}` }
+}

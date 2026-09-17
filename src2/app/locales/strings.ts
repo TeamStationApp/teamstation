@@ -49,3 +49,15 @@ export function sprintf(
 export function plural(count: number, one: string, other: string): string {
   return count === 1 ? sprintf(one, count) : sprintf(other, count)
 }
+
+/**
+ * `1 video`, `2 videos`, and nothing at all for none.
+ *
+ * Here rather than at a call site, because a plural is a property of the
+ * language and a `+ 's'` in a screen is a decision that a translator cannot
+ * reach. English needs two forms; a language that needs more adds them here.
+ */
+export function videoCountLabel(count: number): string {
+  if (count <= 0) return ''
+  return plural(count, lstrings.videos_count_one, lstrings.videos_count_many)
+}
