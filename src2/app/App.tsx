@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { View } from 'react-native'
 
 import {
@@ -8,6 +8,12 @@ import {
   type TeamSummary
 } from '../common/api'
 import { AppHeader, AppNav, type NavTabId, useBreakpoint } from './components'
+import type { Route } from './navigation/routes'
+import {
+  currentRoute,
+  showRoute,
+  useBrowserBack
+} from './navigation/useAddressBar'
 import { AccountScreen } from './screens/AccountScreen'
 import { GameScreen } from './screens/GameScreen'
 import { GamesFeedScreen } from './screens/GamesFeedScreen'
@@ -66,7 +72,9 @@ function Shell(props: AppProps): React.ReactElement {
     [apiBaseUrl]
   )
   const [session, setSession] = useState<Session | undefined>(undefined)
-  const [tab, setTab] = useState<NavTabId>('home')
+  // The address bar is the state, not a copy of it: the app starts on
+  // whatever was linked to, and every move writes the new address.
+  const [tab, setTab] = useState<NavTabId>(() => tabOf(currentRoute()))
   const [stacks, setStacks] = useState<Record<NavTabId, Pushed[]>>({
     home: [],
     videos: [],
@@ -75,6 +83,22 @@ function Shell(props: AppProps): React.ReactElement {
 
   const stack = stacks[tab]
   const top = stack[stack.length - 1]
+
+  // Keep the address saying where we are. `replace` on the first render so
+  // landing on `/` and resolving it does not leave a step for Back to find.
+  const firstRender = useRef(true)
+  useEffect(() => {
+    showRoute(routeOf(tab, top), firstRender.current)
+    firstRender.current = false
+  }, [tab, top])
+
+  const goToRoute = useCallback((route: Route): void => {
+    // Back and Forward move between tabs; walking a pushed stack back is what
+    // the header's own chevron does, and doing both here would fight it.
+    setTab(tabOf(route))
+    setStacks(current => ({ ...current, [tabOf(route)]: [] }))
+  }, [])
+  useBrowserBack(goToRoute)
 
   const push = (next: Pushed): void => {
     setStacks(current => ({ ...current, [tab]: [...current[tab], next] }))
@@ -195,7 +219,29 @@ function Shell(props: AppProps): React.ReactElement {
  * on the line above: the two together read `GAMESTATION / GameStation`, which
  * tells you nothing twice.
  */
-export function titleFor(tab: NavTabId, top: Pushed | undefined): string {
+export /** Which tab an address belongs to. */
+function tabOf(route: Route): NavTabId {
+  if (route.name === 'videos') return 'videos'
+  if (route.name === 'schedule') return 'schedule'
+  return 'home'
+}
+
+/** The address of wherever the app currently is. */
+function routeOf(tab: NavTabId, top: Pushed | undefined): Route {
+  if (top != null) {
+    if (top.name === 'team') return { name: 'team', teamId: top.team.id }
+    if (top.name === 'season') {
+      return { name: 'season', seasonId: top.season.id }
+    }
+    if (top.name === 'account') return { name: 'account' }
+    return { name: 'game', gameId: top.gameId }
+  }
+  if (tab === 'videos') return { name: 'videos', when: 'past' }
+  if (tab === 'schedule') return { name: 'schedule', when: 'upcoming' }
+  return { name: 'home' }
+}
+
+function titleFor(tab: NavTabId, top: Pushed | undefined): string {
   if (top != null) {
     if (top.name === 'team') return top.team.name
     if (top.name === 'season') return top.season.name
