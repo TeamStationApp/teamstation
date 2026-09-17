@@ -28,6 +28,11 @@ export interface GameHeroCardProps {
     away: { r: number; h: number; e: number }
     home: { r: number; h: number; e: number }
   } | null
+  /** `VALE FIELD · WED, MAY 13`, above the score. */
+  meta?: string
+  /** `12–3`, under each team's name. */
+  awayRecord?: string | null
+  homeRecord?: string | null
 }
 
 /**
@@ -53,7 +58,10 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
     posterUrl,
     onPlay,
     compact = false,
-    linescore
+    linescore,
+    meta,
+    awayRecord,
+    homeRecord
   } = props
   const styles = getStyles(useTheme())
 
@@ -74,16 +82,30 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
     // nothing else on it, and against a pale background it reads as a hole.
     return (
       <View style={styles.card}>
+        {meta != null && meta !== '' && (
+          <View style={styles.meta}>
+            <Text style={styles.metaText} numberOfLines={1}>
+              {meta.toUpperCase()}
+            </Text>
+            <View style={styles.statusChip}>
+              <Text style={styles.statusChipText}>{status}</Text>
+            </View>
+          </View>
+        )}
         <View style={styles.plain}>
           <ScoreLine
             name={awayName}
             score={awayScore}
+            record={awayRecord}
+            note="Away"
             won={winner === 'away'}
           />
-          <Text style={styles.plainStatus}>{status}</Text>
+          {meta == null && <Text style={styles.plainStatus}>{status}</Text>}
           <ScoreLine
             name={homeName}
             score={homeScore}
+            record={homeRecord}
+            note="Home"
             won={winner === 'home'}
             alignEnd
           />
@@ -114,18 +136,27 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
 function ScoreLine(props: {
   name: string
   score: number | null
+  record?: string | null
+  note: string
   won: boolean
   alignEnd?: boolean
 }): React.ReactElement {
-  const { name, score, won, alignEnd = false } = props
+  const { name, score, record, note, won, alignEnd = false } = props
   const styles = getStyles(useTheme())
   return (
     <View style={[styles.side, alignEnd && styles.sideEnd]}>
-      <Text style={styles.sideName} numberOfLines={1}>
-        {name}
-        {won ? ' ★' : ''}
+      <View style={[styles.sideText, alignEnd && styles.sideTextEnd]}>
+        <Text style={styles.sideName} numberOfLines={1}>
+          {name}
+          {won ? ' ★' : ''}
+        </Text>
+        <Text style={styles.sideNote} numberOfLines={1}>
+          {record == null || record === '' ? note : `${note} · ${record}`}
+        </Text>
+      </View>
+      <Text style={[styles.sideScore, won && styles.sideScoreWon]}>
+        {score ?? '–'}
       </Text>
-      <Text style={styles.sideScore}>{score ?? '–'}</Text>
     </View>
   )
 }
@@ -154,12 +185,56 @@ const getStyles = cacheStyles((theme: Theme) => ({
     letterSpacing: theme.rem(0.04),
     opacity: 0.85
   },
+  meta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: theme.rem(theme.spaceSmRem),
+    paddingHorizontal: theme.rem(theme.spaceMdRem),
+    paddingTop: theme.rem(theme.spaceMdRem)
+  },
+  metaText: {
+    flexShrink: 1,
+    color: theme.secondaryTextColor,
+    fontFamily: theme.semiBoldTextFont,
+    fontSize: theme.rem(0.6875),
+    fontWeight: '700',
+    letterSpacing: theme.rem(0.0625)
+  },
+  statusChip: {
+    backgroundColor: theme.containerBackgroundColor,
+    borderRadius: theme.radiusPill,
+    paddingHorizontal: theme.rem(theme.spaceSmRem),
+    paddingVertical: theme.rem(0.125)
+  },
+  statusChipText: {
+    color: theme.activeColor,
+    fontFamily: theme.semiBoldTextFont,
+    fontSize: theme.rem(0.6875),
+    fontWeight: '700',
+    letterSpacing: theme.rem(0.04)
+  },
   plain: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: theme.rem(theme.spaceMdRem),
     paddingHorizontal: theme.rem(theme.spaceMdRem),
     paddingVertical: theme.rem(theme.spaceMdRem)
+  },
+  sideText: {
+    flexShrink: 1,
+    gap: theme.rem(0.0625)
+  },
+  sideTextEnd: {
+    alignItems: 'flex-end'
+  },
+  sideNote: {
+    color: theme.secondaryTextColor,
+    fontFamily: theme.regularTextFont,
+    fontSize: theme.rem(0.75)
+  },
+  sideScoreWon: {
+    color: theme.activeColor
   },
   plainStatus: {
     color: theme.secondaryTextColor,
@@ -170,7 +245,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
   side: {
     flex: 1,
     flexDirection: 'row',
-    alignItems: 'baseline',
+    alignItems: 'center',
     gap: theme.rem(theme.spaceSmRem)
   },
   sideEnd: {

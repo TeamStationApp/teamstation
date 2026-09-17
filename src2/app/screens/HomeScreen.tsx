@@ -23,7 +23,11 @@ export interface HomeScreenProps {
   client: GameStationClient
   onOpenTeam: (team: TeamSummary) => void
   onOpenSeason: (season: SeasonSummary) => void
-  onOpenGame: (gameId: string, title: string) => void
+  onOpenGame: (
+    gameId: string,
+    title: string,
+    options?: { tab?: 'watch' | 'boxScore'; autoPlay?: boolean }
+  ) => void
 }
 
 /**
@@ -56,15 +60,12 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
       setTeams(loadedTeams)
       setSeasons(loadedSeasons)
 
-      // The most recently finished game across the seasons on offer. One extra
-      // request, and only for the newest season: a parent opening the app
-      // almost always wants the game that just happened.
-      const newest = loadedSeasons[0]
-      if (newest != null) {
-        const games = await client.seasonGames(newest.id)
-        if (cancelled) return
-        setRecent(mostRecentlyPlayed(games))
-      }
+      // The most recently played game anywhere this person can see. It used
+      // to look inside the first season it was handed, which showed a game
+      // from June while there were games in September.
+      const newest = await client.recentGame()
+      if (cancelled) return
+      setRecent(newest ?? undefined)
     }
     load()
       .catch((caught: unknown) => {
@@ -111,7 +112,7 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
               winner={winnerOf(recent)}
               posterUrl={recent.posterUrl}
               onPlay={() => {
-                onOpenGame(recent.id, matchup(recent))
+                onOpenGame(recent.id, matchup(recent), { autoPlay: true })
               }}
             />
             {/*
@@ -126,7 +127,7 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
                   icon="play_arrow"
                   style={styles.action}
                   onPress={() => {
-                    onOpenGame(recent.id, matchup(recent))
+                    onOpenGame(recent.id, matchup(recent), { autoPlay: true })
                   }}
                 />
               )}
@@ -136,7 +137,7 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
                 kind="secondary"
                 style={styles.action}
                 onPress={() => {
-                  onOpenGame(recent.id, matchup(recent))
+                  onOpenGame(recent.id, matchup(recent), { tab: 'boxScore' })
                 }}
               />
             </View>
@@ -200,14 +201,6 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
       )}
     </Screen>
   )
-}
-
-/** The newest game that has actually been played, by start time. */
-function mostRecentlyPlayed(games: SeasonGame[]): SeasonGame | undefined {
-  const played = games
-    .filter(game => game.awayScore != null && game.startAt != null)
-    .sort((a, b) => (a.startAt ?? '').localeCompare(b.startAt ?? ''))
-  return played[played.length - 1]
 }
 
 /** `Alta Hawks @ Bay Stars`, the way the row in a list reads. */

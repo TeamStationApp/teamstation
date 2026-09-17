@@ -23,7 +23,11 @@ import { shortDate, shortTime } from './format'
 export interface SeasonScreenProps {
   client: GameStationClient
   season: SeasonSummary
-  onOpenGame: (gameId: string, title: string) => void
+  onOpenGame: (
+    gameId: string,
+    title: string,
+    options?: { tab?: 'watch' | 'boxScore'; autoPlay?: boolean }
+  ) => void
   onOpenTeam: (team: TeamSummary) => void
 }
 

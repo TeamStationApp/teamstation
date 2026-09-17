@@ -11,14 +11,18 @@ export interface GamesFeedScreenProps {
   client: GameStationClient
   /** `videos` shows only what was recorded; `schedule` shows everything. */
   mode: 'videos' | 'schedule'
-  onOpenGame: (gameId: string, title: string) => void
+  onOpenGame: (
+    gameId: string,
+    title: string,
+    options?: { tab?: 'watch' | 'boxScore'; autoPlay?: boolean }
+  ) => void
 }
 
 type When = 'upcoming' | 'past' | 'all'
 
 const WHEN_TABS = [
-  { id: 'upcoming' as const, label: 'Upcoming' },
   { id: 'past' as const, label: 'Past' },
+  { id: 'upcoming' as const, label: 'Upcoming' },
   { id: 'all' as const, label: 'All' }
 ]
 
@@ -40,9 +44,9 @@ export function GamesFeedScreen(
   const { client, mode, onOpenGame } = props
   const styles = getStyles(useTheme())
 
-  const [when, setWhen] = useState<When>(
-    mode === 'videos' ? 'past' : 'upcoming'
-  )
+  // Both lists open on what has happened. A schedule of fixtures is the
+  // rarer question; what somebody opens the app for is the game just played.
+  const [when, setWhen] = useState<When>('past')
   const [games, setGames] = useState<SeasonGame[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | undefined>(undefined)
@@ -73,8 +77,14 @@ export function GamesFeedScreen(
   }, [client])
 
   const pool = mode === 'videos' ? games.filter(g => g.videoCount > 0) : games
-  const played = pool.filter(game => game.awayScore != null)
-  const upcoming = pool.filter(game => game.awayScore == null)
+  // A game is upcoming if it has not happened *yet*. A fixture that was never
+  // scored does not stay upcoming for ever: the schedule was offering a game
+  // from February as something still to come.
+  const now = Date.now()
+  const isAhead = (game: SeasonGame): boolean =>
+    game.startAt != null && Date.parse(game.startAt) > now
+  const played = pool.filter(game => game.awayScore != null || !isAhead(game))
+  const upcoming = pool.filter(game => game.awayScore == null && isAhead(game))
   const shown = when === 'past' ? played : when === 'upcoming' ? upcoming : pool
 
   // Newest first looking back, soonest first looking forward: in both cases
@@ -140,7 +150,12 @@ export function GamesFeedScreen(
               }
               badgeTone="neutral"
               onPress={() => {
-                onOpenGame(game.id, `${lines.first} ${lines.second}`)
+                // Tapping a video starts it. Somebody pressing a row with a
+                // picture and a length on it has asked to watch, not to read
+                // about it.
+                onOpenGame(game.id, `${lines.first} ${lines.second}`, {
+                  autoPlay: game.videoCount > 0
+                })
               }}
             />
           </Card>
