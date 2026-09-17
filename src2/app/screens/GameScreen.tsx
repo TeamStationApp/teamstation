@@ -109,7 +109,12 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   // 720 the player was 594 tall, the card and pills took the rest, and the
   // highlight list measured nothing at all. Giving it a height and letting the
   // width follow is the way round that holds.
-  const playerHeight = Math.max(180, Math.round(height * 0.52))
+  //
+  // The fraction has to leave room for what is above it as well: the card
+  // grew a date, two records and a line score, and at 720 high a 52% player
+  // pushed the list off the bottom again. 42% plus a floor keeps a screenful
+  // of window showing some list at every size worth having.
+  const playerHeight = Math.max(160, Math.round(height * 0.42))
 
   const [tab, setTab] = useState<Tab>(initialTab ?? 'watch')
   const [game, setGame] = useState<GameDetail | undefined>(undefined)
