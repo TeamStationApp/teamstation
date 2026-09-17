@@ -19,6 +19,7 @@ import {
   shortDateNoWeekday,
   shortTime
 } from './format'
+import { gamesFor, type When } from './whenFilter'
 
 export interface GamesFeedScreenProps {
   client: GameStationClient
@@ -34,8 +35,6 @@ export interface GamesFeedScreenProps {
     options?: { tab?: 'watch' | 'boxScore'; autoPlay?: boolean }
   ) => void
 }
-
-type When = 'upcoming' | 'past' | 'all'
 
 const WHEN_TABS = [
   { id: 'past' as const, label: 'Past' },
@@ -95,22 +94,7 @@ export function GamesFeedScreen(
   }, [client])
 
   const pool = mode === 'videos' ? games.filter(g => g.videoCount > 0) : games
-  // A game is upcoming if it has not happened *yet*. A fixture that was never
-  // scored does not stay upcoming for ever: the schedule was offering a game
-  // from February as something still to come.
-  const now = Date.now()
-  const isAhead = (game: SeasonGame): boolean =>
-    game.startAt != null && Date.parse(game.startAt) > now
-  const played = pool.filter(game => game.awayScore != null || !isAhead(game))
-  const upcoming = pool.filter(game => game.awayScore == null && isAhead(game))
-  const shown = when === 'past' ? played : when === 'upcoming' ? upcoming : pool
-
-  // Newest first looking back, soonest first looking forward: in both cases
-  // the game nearest to now is at the top.
-  const sorted = [...shown].sort((a, b) => {
-    const order = (a.startAt ?? '').localeCompare(b.startAt ?? '')
-    return when === 'upcoming' ? order : -order
-  })
+  const sorted = gamesFor(pool, when)
 
   return (
     <Screen>
