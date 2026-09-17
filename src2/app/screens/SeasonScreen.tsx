@@ -29,6 +29,7 @@ import {
   shortDateNoWeekday,
   shortTime
 } from './format'
+import { gamesFor, type When } from './whenFilter'
 
 export interface SeasonScreenProps {
   client: GameStationClient
@@ -60,8 +61,6 @@ type TabId = 'schedule' | 'teams' | 'standings'
 function tabOf(id: string | undefined): TabId {
   return TABS.some(item => item.id === id) ? (id as TabId) : 'schedule'
 }
-type When = 'past' | 'upcoming' | 'all'
-
 const TABS = [
   { id: 'schedule' as const, label: 'Schedule' },
   { id: 'teams' as const, label: 'Teams' },
@@ -144,10 +143,7 @@ export function SeasonScreen(props: SeasonScreenProps): React.ReactElement {
     }
   }, [client, season.id])
 
-  const played = games.filter(game => game.awayScore != null)
-  const upcoming = games.filter(game => game.awayScore == null)
-  const shown =
-    when === 'past' ? played : when === 'upcoming' ? upcoming : games
+  const shown = gamesFor(games, when)
 
   return (
     <Screen>
