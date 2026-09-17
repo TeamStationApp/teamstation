@@ -107,6 +107,15 @@ export const notFound = (message = 'Not found'): HttpError =>
 export const conflict = (message: string, details?: unknown): HttpError =>
   new HttpError('conflict', message, details)
 
+/**
+ * Too many attempts. `retryAfterSec` is carried in `details` so a client can
+ * say how long rather than asking the person to guess.
+ */
+export const rateLimited = (
+  message: string,
+  retryAfterSec: number
+): HttpError => new HttpError('rateLimited', message, { retryAfterSec })
+
 /** Turns anything at all into the one shape, without leaking internals. */
 export function toApiError(error: unknown): ApiError {
   if (error instanceof HttpError) return error.toApiError()

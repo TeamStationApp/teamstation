@@ -264,6 +264,14 @@ export interface EmailCodesTable {
   consumed_at: Timestamp | null
 }
 
+export interface RateEventsTable {
+  id: string
+  scope: string
+  key: string
+  /** `Timestamp` already allows undefined on insert, which the default fills. */
+  at: Timestamp
+}
+
 export interface AuditLogTable {
   id: string
   at: Timestamp
@@ -333,6 +341,7 @@ export interface Database {
   audit_log: AuditLogTable
   auth_sessions: AuthSessionsTable
   email_codes: EmailCodesTable
+  rate_events: RateEventsTable
   event_players: EventPlayersTable
   events: EventsTable
   external_ids: ExternalIdsTable
