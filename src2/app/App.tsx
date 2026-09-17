@@ -80,14 +80,38 @@ function Shell(props: AppProps): React.ReactElement {
     [apiBaseUrl]
   )
   const [session, setSession] = useState<Session | undefined>(undefined)
+  // Until we have asked, we do not know whether anybody is signed in. Showing
+  // the sign-in screen in the meantime is what made every link useless: the
+  // cookie was there, nothing read it, and the address was thrown away.
+  const [askedAboutSession, setAskedAboutSession] = useState(false)
   // The address bar is the state, not a copy of it: the app starts on
   // whatever was linked to, and every move writes the new address.
   const [tab, setTab] = useState<NavTabId>(() => tabOf(currentRoute()))
-  const [stacks, setStacks] = useState<Record<NavTabId, Pushed[]>>({
-    home: [],
-    videos: [],
-    schedule: []
+  // The address the app was opened on decides what is on the stack, so a link
+  // to a game opens that game rather than the screen behind it.
+  const [stacks, setStacks] = useState<Record<NavTabId, Pushed[]>>(() => {
+    const opened = stackFor(currentRoute())
+    return { home: [], videos: [], schedule: [], ...opened }
   })
+
+  // The session lives in an `HttpOnly` cookie this code cannot read, so the
+  // only way to know is to ask.
+  useEffect(() => {
+    let live = true
+    client
+      .whoAmI()
+      .then(user => {
+        if (!live) return
+        if (user != null) setSession({ token: '', expiresAt: '', user })
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (live) setAskedAboutSession(true)
+      })
+    return () => {
+      live = false
+    }
+  }, [client])
 
   const stack = stacks[tab]
   const top = stack[stack.length - 1]
@@ -101,10 +125,12 @@ function Shell(props: AppProps): React.ReactElement {
   }, [tab, top])
 
   const goToRoute = useCallback((route: Route): void => {
-    // Back and Forward move between tabs; walking a pushed stack back is what
-    // the header's own chevron does, and doing both here would fight it.
-    setTab(tabOf(route))
-    setStacks(current => ({ ...current, [tabOf(route)]: [] }))
+    const next = tabOf(route)
+    setTab(next)
+    setStacks(current => ({
+      ...current,
+      [next]: stackFor(route)[next] ?? []
+    }))
   }, [])
   useBrowserBack(goToRoute)
 
@@ -130,6 +156,9 @@ function Shell(props: AppProps): React.ReactElement {
   }
 
   if (session == null) {
+    // Nothing at all until the question is answered: a flash of the sign-in
+    // screen is how a link to a game becomes a link to the sign-in screen.
+    if (!askedAboutSession) return <View style={styles.app} />
     return (
       <View style={styles.app}>
         <AppHeader title="Sign in" overline="GameStation" />
@@ -236,7 +265,32 @@ function Shell(props: AppProps): React.ReactElement {
  * on the line above: the two together read `GAMESTATION / GameStation`, which
  * tells you nothing twice.
  */
-export /** Which tab an address belongs to. */
+export /**
+ * What a link opens on top of its tab.
+ *
+ * A team or a season needs more than its id to draw a header, so the screen is
+ * pushed with what the address carries and fills the rest in itself.
+ */
+function stackFor(route: Route): Partial<Record<NavTabId, Pushed[]>> {
+  const tab = tabOf(route)
+  if (route.name === 'game') {
+    return {
+      [tab]: [
+        {
+          name: 'game',
+          gameId: route.gameId,
+          title: '',
+          tab: route.tab,
+          autoPlay: route.at != null
+        }
+      ]
+    }
+  }
+  if (route.name === 'account') return { [tab]: [{ name: 'account' }] }
+  return {}
+}
+
+/** Which tab an address belongs to. */
 function tabOf(route: Route): NavTabId {
   if (route.name === 'videos') return 'videos'
   if (route.name === 'schedule') return 'schedule'
@@ -268,7 +322,8 @@ function titleFor(tab: NavTabId, top: Pushed | undefined): string {
     if (top.name === 'team') return top.team.name
     if (top.name === 'season') return top.season.name
     if (top.name === 'account') return 'Account'
-    return top.title
+    // A game opened from a link has no title until it has loaded.
+    return top.title === '' ? 'Game' : top.title
   }
   if (tab === 'videos') return 'Videos'
   if (tab === 'schedule') return 'Schedule'

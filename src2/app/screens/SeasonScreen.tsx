@@ -11,14 +11,17 @@ import type {
 import {
   Badge,
   Card,
+  GameRow,
+  initialsOf,
   ListRow,
   PillTabs,
   Screen,
   SectionHeader,
   StatGrid
 } from '../components'
+import { videoCountLabel } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { shortDate, shortTime } from './format'
+import { clock, matchupLines, shortDate, shortTime } from './format'
 
 export interface SeasonScreenProps {
   client: GameStationClient
@@ -146,29 +149,43 @@ export function SeasonScreen(props: SeasonScreenProps): React.ReactElement {
               <Text style={styles.muted}>Nothing here yet.</Text>
             </Card>
           ) : (
-            shown.map(game => (
-              <Card key={game.id}>
-                <ListRow
-                  title={`${game.awayTeamName} at ${game.homeTeamName}`}
-                  subtitle={`${shortDate(game.startAt)}${
-                    game.venue == null ? '' : ` · ${game.venue}`
-                  }`}
-                  emblem="⚾"
-                  badgeLabel={
-                    game.awayScore == null
-                      ? shortTime(game.startAt)
-                      : `${game.awayScore}–${game.homeScore}`
-                  }
-                  badgeTone={game.awayScore == null ? 'neutral' : 'win'}
-                  onPress={() => {
-                    onOpenGame(
-                      game.id,
-                      `${game.awayTeamName} at ${game.homeTeamName}`
-                    )
-                  }}
-                />
-              </Card>
-            ))
+            shown.map(game => {
+              const lines = matchupLines(game)
+              const detail = [
+                shortDate(game.startAt),
+                shortTime(game.startAt),
+                videoCountLabel(game.videoCount)
+              ]
+                .filter(part => part !== '')
+                .join(' · ')
+              return (
+                <Card key={game.id}>
+                  <GameRow
+                    first={lines.first}
+                    second={lines.second}
+                    detail={detail}
+                    venue={game.venue}
+                    posterUrl={game.posterUrl}
+                    length={
+                      game.durationSec == null
+                        ? undefined
+                        : clock(game.durationSec)
+                    }
+                    badgeLabel={
+                      game.awayScore == null
+                        ? undefined
+                        : `${game.awayScore}–${game.homeScore}`
+                    }
+                    badgeTone="neutral"
+                    onPress={() => {
+                      onOpenGame(game.id, `${lines.first} ${lines.second}`, {
+                        autoPlay: game.videoCount > 0
+                      })
+                    }}
+                  />
+                </Card>
+              )
+            })
           )}
         </View>
       )}
@@ -183,7 +200,8 @@ export function SeasonScreen(props: SeasonScreenProps): React.ReactElement {
                 <ListRow
                   title={team.name}
                   subtitle={team.shortName ?? undefined}
-                  emblem="⚾"
+                  emblem={initialsOf(team.name)}
+                  emblemUri={team.logoUrl}
                   onPress={() => {
                     onOpenTeam(team)
                   }}

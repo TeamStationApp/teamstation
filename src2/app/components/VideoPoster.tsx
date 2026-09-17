@@ -16,6 +16,8 @@ export interface VideoPosterProps {
   onPlay?: () => void
   /** A hero fills a card; a thumb sits at the front of a row. */
   size?: 'hero' | 'thumb'
+  /** How wide a thumb is, in rem. Narrower on a phone, where words are short. */
+  width?: number
   /** Laid over the gradient at the bottom left: a score, a title. */
   children?: React.ReactNode
 }
@@ -43,6 +45,7 @@ export function VideoPoster(props: VideoPosterProps): React.ReactElement {
     showPlay = false,
     onPlay,
     size = 'thumb',
+    width,
     children
   } = props
   const theme = useTheme()
@@ -50,7 +53,13 @@ export function VideoPoster(props: VideoPosterProps): React.ReactElement {
   const hero = size === 'hero'
 
   return (
-    <View style={[styles.frame, hero ? styles.frameHero : styles.frameThumb]}>
+    <View
+      style={[
+        styles.frame,
+        hero ? styles.frameHero : styles.frameThumb,
+        !hero && width != null ? { width: theme.rem(width) } : undefined
+      ]}
+    >
       {uri != null && uri !== '' && (
         <Image
           accessibilityIgnoresInvertColors

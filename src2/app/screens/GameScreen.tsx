@@ -102,9 +102,14 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   const styles = getStyles(theme)
   const { height, width } = useWindowDimensions()
   const columns = highlightColumnsFor(width)
-  // Six tenths of the window: enough that the video is the screen, and little
-  // enough that the highlights under it are visibly a list.
-  const playerMaxHeight = Math.round(height * 0.6)
+  // Sized from the window's height, not its width.
+  //
+  // `aspectRatio` beats `maxHeight` in react-native-web: a 16:9 box told to be
+  // 100% wide takes the height that implies and ignores the cap, so at 1280 by
+  // 720 the player was 594 tall, the card and pills took the rest, and the
+  // highlight list measured nothing at all. Giving it a height and letting the
+  // width follow is the way round that holds.
+  const playerHeight = Math.max(180, Math.round(height * 0.52))
 
   const [tab, setTab] = useState<Tab>(initialTab ?? 'watch')
   const [game, setGame] = useState<GameDetail | undefined>(undefined)
@@ -115,6 +120,10 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   const [playback, setPlayback] = useState<Playback | undefined>(undefined)
   const [activeEventId, setActiveEventId] = useState<string | undefined>()
   const [chosen, setChosen] = useState<Highlight | undefined>(undefined)
+  /** Where to pick up after the source changes, for an angle switch. */
+  const [resumeAt, setResumeAt] = useState<
+    { sec: number; playing: boolean } | undefined
+  >(undefined)
   const [error, setError] = useState<string | undefined>(undefined)
   const playerRef = useRef<HTMLVideoElement | null>(null)
 
@@ -200,6 +209,19 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     const element = playerRef.current
     if (element == null || playbackUrl == null) return
     const detach = attachHls(element, playbackUrl)
+
+    // Picking up where the other angle was, once the new source is attached.
+    if (resumeAt != null) {
+      const resume = (): void => {
+        element.currentTime = resumeAt.sec
+        if (resumeAt.playing) element.play().catch(() => undefined)
+        setResumeAt(undefined)
+      }
+      if (element.readyState >= 1) resume()
+      else element.addEventListener('loadedmetadata', resume, { once: true })
+      return detach
+    }
+
     if (autoPlay) {
       // The tap that opened this screen is a gesture the browser counts, so an
       // unmuted start is allowed. If it refuses anyway the controls are right
@@ -211,7 +233,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       start()
     }
     return detach
-  }, [autoPlay, playbackUrl])
+  }, [autoPlay, playbackUrl, resumeAt])
 
   /**
    * The other recording, from the same moment, still playing.
@@ -228,15 +250,15 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       setVideo(next)
       return
     }
-    const target = sameMoment(current, next, player.currentTime)
-    const wasPlaying = player.paused === false
+    // Worked out before the swap, and handed to the effect that attaches the
+    // new source. Listening for `loadedmetadata` here does not work: changing
+    // the video re-runs `attachHls`, which resets the element *after* the
+    // listener has fired, so the seek was being undone a moment later.
+    setResumeAt({
+      sec: sameMoment(current, next, player.currentTime),
+      playing: player.paused === false
+    })
     setVideo(next)
-    const restore = (): void => {
-      player.removeEventListener('loadedmetadata', restore)
-      player.currentTime = target
-      if (wasPlaying) player.play().catch(() => undefined)
-    }
-    player.addEventListener('loadedmetadata', restore)
   }
 
   const jumpTo = (highlight: Highlight): void => {
@@ -294,6 +316,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       status={gameStatusLine(game)}
       winner={winnerOf(game)}
       compact
+      awayRecord={game.awayRecord}
+      homeRecord={game.homeRecord}
       meta={[game.venue, shortDate(game.startAt)]
         .filter(part => part != null && part !== '')
         .join(' · ')}
@@ -312,7 +336,6 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       ]}
       selected={tab}
       onSelect={setTab}
-      size="compact"
       accessibilityLabel="Game sections"
     />
   )
@@ -326,7 +349,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
 
   const player = (
     <View>
-      <View style={[styles.player, { maxHeight: playerMaxHeight }]}>
+      <View style={[styles.player, { height: playerHeight }]}>
         {video == null ? (
           <Text style={styles.message}>{lstrings.game_no_video}</Text>
         ) : playback == null ? (
@@ -667,11 +690,10 @@ const getStyles = cacheStyles((theme: Theme) =>
       gap: theme.rem(0.5),
       padding: theme.rem(0.5)
     },
-    // Capped against the window, so a short one still shows some list to
-    // scroll rather than one video and nothing else.
+    // Its height is set from the window; the width follows, so a 16:9 picture
+    // is letterboxed inside rather than dictating how tall the box is.
     player: {
       width: '100%',
-      aspectRatio: 16 / 9,
       alignSelf: 'center',
       backgroundColor: theme.videoBackgroundColor,
       alignItems: 'center',

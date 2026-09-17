@@ -4,6 +4,7 @@ import { Pressable, Text, View } from 'react-native'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Badge, type BadgeTone } from './Badge'
 import { Icon } from './Icon'
+import { useBreakpoint } from './useBreakpoint'
 import { VideoPoster } from './VideoPoster'
 
 export interface GameRowProps {
@@ -50,10 +51,19 @@ export function GameRow(props: GameRowProps): React.ReactElement {
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
+  // A phone has about 300px for the whole row. A 7rem thumbnail left the words
+  // roughly a hundred, which truncated the opponent and the date together —
+  // the thing three lines were meant to stop.
+  const narrow = useBreakpoint() === 'phone'
 
   const content = (
     <>
-      <VideoPoster uri={posterUrl} time={length} showPlay={posterUrl != null} />
+      <VideoPoster
+        uri={posterUrl}
+        time={length}
+        showPlay={posterUrl != null}
+        width={narrow ? 5 : 7}
+      />
       <View style={styles.text}>
         <Text style={styles.team} numberOfLines={1}>
           {first}
