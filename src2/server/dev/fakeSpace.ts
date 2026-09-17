@@ -1,5 +1,5 @@
 import { createReadStream } from 'node:fs'
-import { stat } from 'node:fs/promises'
+import { mkdir, stat, writeFile } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { createServer } from 'node:http'
 import { join } from 'node:path'
@@ -40,7 +40,7 @@ async function handle(
   // request header, and the three headers a player reads back off a partial
   // response. Without these, hls.js cannot fetch a byte range at all.
   res.setHeader('access-control-allow-origin', '*')
-  res.setHeader('access-control-allow-methods', 'GET,HEAD')
+  res.setHeader('access-control-allow-methods', 'GET,HEAD,PUT')
   res.setHeader('access-control-allow-headers', 'range')
   res.setHeader(
     'access-control-expose-headers',
@@ -59,18 +59,33 @@ async function handle(
   }
   const key = decodeURIComponent(url.pathname.slice(prefix.length))
 
-  // `videos/<id>/<file>` maps onto the work directory's own layout.
-  const match = /^videos\/([^/]+)\/([^/]+)$/.exec(key)
-  if (match == null) {
+  // Two layouts live in the bucket: `videos/<id>/<file>` for a recording, and
+  // `images/<kind>/<id>/<file>` for a mark or a face. Both map onto the work
+  // directory, so what the importer wrote can be looked at with an image
+  // viewer rather than only through a signature.
+  const videoMatch = /^videos\/([^/]+)\/([^/]+)$/.exec(key)
+  const imageMatch = /^images\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(key)
+  if (videoMatch == null && imageMatch == null) {
     res.writeHead(404).end('no such key')
     return
   }
-  const [, videoId, file] = match
+  const file = videoMatch != null ? videoMatch[2] : imageMatch![3]
+  const path =
+    videoMatch != null
+      ? join(serverConfig.workDir, 'videos', videoMatch[1], file)
+      : join(
+          serverConfig.workDir,
+          'images',
+          imageMatch![1],
+          imageMatch![2],
+          file
+        )
 
   const expires = Number(url.searchParams.get('X-Amz-Expires') ?? '0')
   const signedAt = url.searchParams.get('X-Amz-Date') ?? ''
   const expected = presignGetUrl({
     ...space,
+    method: req.method === 'PUT' ? 'PUT' : 'GET',
     key,
     expiresSec: expires,
     now: parseAmzDate(signedAt)
@@ -82,7 +97,18 @@ async function handle(
     return
   }
 
-  const path = join(serverConfig.workDir, 'videos', videoId, file)
+  // A presigned PUT writes the object, so an import can be run end to end
+  // against this without a network or a bill. The signature covers the verb,
+  // so a URL signed to read cannot be used to write.
+  if (req.method === 'PUT') {
+    const chunks: Buffer[] = []
+    for await (const chunk of req) chunks.push(chunk as Buffer)
+    await mkdir(join(path, '..'), { recursive: true })
+    await writeFile(path, Buffer.concat(chunks))
+    res.writeHead(200).end()
+    return
+  }
+
   const info = await stat(path).catch(() => undefined)
   if (info == null) {
     res.writeHead(404).end('no such object')
@@ -116,6 +142,7 @@ async function handle(
 function contentType(file: string): string {
   if (file.endsWith('.m3u8')) return 'application/vnd.apple.mpegurl'
   if (file.endsWith('.mp4')) return 'video/mp4'
+  if (file.endsWith('.png')) return 'image/png'
   return 'application/octet-stream'
 }
 
