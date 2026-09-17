@@ -1,0 +1,13 @@
+# Secrets, written by cleaner-config on first run
+serverConfig.json
+clientConfig.json
+
+# Build output
+lib/
+dist/
+node_modules/
+
+# Expo and Metro
+.expo/
+web-build/
+.metro-health-check*
