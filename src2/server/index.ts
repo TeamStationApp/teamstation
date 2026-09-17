@@ -137,7 +137,7 @@ function runWorker(): void {
       publicUrl: serverConfig.publicUrl
     })
   )
-  app.use('/api/v1', seasonRoutes(db))
+  app.use('/api/v1', seasonRoutes(db, mediaContext))
   app.use('/api/v1', teamRoutes(db, mediaContext))
   app.use('/api/v1', statsRoutes(db))
   app.use('/api/v1', mediaRoutes(db, mediaContext))
