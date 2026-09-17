@@ -2,7 +2,7 @@
   "name": "gamestation2",
   "version": "0.1.0",
   "private": true,
-  "description": "GameStation 2.0 \u2014 video server and app, replacing PeerTube at tube.gamestation.co",
+  "description": "GameStation 2.0 — video server and app, replacing PeerTube at tube.gamestation.co",
   "engines": {
     "node": ">=24.0.0"
   },
@@ -33,6 +33,7 @@
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "react-native": "^0.87.1",
+    "react-native-patina": "^0.2.0",
     "react-native-web": "^0.21.2"
   },
   "devDependencies": {

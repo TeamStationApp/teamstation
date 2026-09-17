@@ -41,7 +41,11 @@ export interface Theme {
 
   // Buttons
   primaryButtonColor: string
+  primaryButtonPressedColor: string
   secondaryButtonColor: string
+  secondaryButtonPressedColor: string
+  secondaryButtonBorderColor: string
+  secondaryButtonTextColor: string
   buttonGrayColor: string
   clearButtonColor: string
   buttonTextColor: string
@@ -49,6 +53,7 @@ export interface Theme {
   // Inputs
   inputBackgroundColor: string
   inputBorderColor: string
+  inputFocusBorderColor: string
   inputTextColor: string
 
   // Status
@@ -56,6 +61,42 @@ export interface Theme {
   successColor: string
   warningColor: string
   dangerColor: string
+  liveColor: string
+  scheduledColor: string
+
+  /**
+   * Badges. A result badge is read at a glance down a list of games, so a win
+   * and a loss differ in hue and not only in wording.
+   */
+  winBadgeBackground: string
+  winBadgeTextColor: string
+  lossBadgeBackground: string
+  lossBadgeTextColor: string
+  honourBadgeBackground: string
+  honourBadgeTextColor: string
+  neutralBadgeBackground: string
+  neutralBadgeTextColor: string
+
+  /** The pill tab strip, which repeats on nearly every screen. */
+  pillBackground: string
+  pillPressedBackground: string
+  pillTextColor: string
+  pillActiveBackground: string
+  pillActiveTextColor: string
+
+  // The header, and the navigation that becomes a sidebar on a wide screen.
+  headerBackgroundColor: string
+  headerBorderColor: string
+  headerTextColor: string
+  navBackgroundColor: string
+  navActiveColor: string
+  navInactiveColor: string
+
+  /** The dark scoreboard panel a game's score is set on. */
+  scoreboardBackground: string
+  scoreboardTextColor: string
+  scoreboardMutedTextColor: string
+  scoreboardAccentColor: string
 
   // The watch path's own names
   highlightRowBackground: string
@@ -68,4 +109,25 @@ export interface Theme {
   backgroundGradientColors: string[]
   backgroundGradientStart: ThemeGradientPoint
   backgroundGradientEnd: ThemeGradientPoint
+
+  // Shape and rhythm. Kept here for the same reason as the colours: a corner
+  // radius repeated as a number in twelve screens is twelve places to miss.
+  radiusSmallRem: number
+  radiusRem: number
+  radiusLargeRem: number
+  /** Fully round, for tabs and status badges. Not a rem — it is a sentinel. */
+  radiusPill: number
+
+  spaceXsRem: number
+  spaceSmRem: number
+  spaceMdRem: number
+  spaceLgRem: number
+  spaceXlRem: number
+
+  /**
+   * How wide the content may grow. The designs are all drawn at phone width;
+   * on a desktop a line of text that runs the full window is unreadable, so
+   * the container stops here and centres.
+   */
+  maxContentWidthRem: number
 }

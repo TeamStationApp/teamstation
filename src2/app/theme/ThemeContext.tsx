@@ -1,49 +1,41 @@
-import React, { createContext, useContext, useMemo } from 'react'
+import { cacheStyles, makeThemeContext } from 'react-native-patina'
 
-import { gsDark } from './gsDark'
+import { gsBallpark } from './gsBallpark'
 import type { Theme } from './types'
 
+export type { Theme }
+export { cacheStyles }
+
 /**
- * The theme a screen reads, in the shape edge-react-gui uses: a provider at
- * the root, a `useTheme` hook, and `cacheStyles` so a stylesheet is built once
- * per theme rather than on every render.
+ * The theme a screen reads.
  *
- * No screen imports `gsDark` directly. Swapping themes later is a change here.
- */
-const ThemeContext = createContext<Theme>(gsDark)
-
-export interface ThemeProviderProps {
-  theme?: Theme
-  children: React.ReactNode
-}
-
-export function ThemeProvider(props: ThemeProviderProps): React.ReactElement {
-  const { theme = gsDark, children } = props
-  const value = useMemo(() => theme, [theme])
-  return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>
-}
-
-export function useTheme(): Theme {
-  return useContext(ThemeContext)
-}
-
-/**
- * Builds a stylesheet from a theme, once per theme.
+ * This was a hand-written copy of patina's shape — a context, a `useTheme`, a
+ * `cacheStyles` built on a WeakMap. It is the real thing now, which is what
+ * the rest of Paul's work uses, so there is one set of behaviours to know
+ * rather than two that merely resemble each other.
  *
  *   const getStyles = cacheStyles((theme: Theme) => ({ … }))
  *   const styles = getStyles(useTheme())
  *
- * A `WeakMap` means a theme that falls out of use takes its styles with it.
+ * `gsBallpark` is the default: the light Organic Ballpark Classic theme the
+ * designs are drawn in. `gsDark` is still here and still complete, because a
+ * theme framework carrying one theme is a framework nobody has tested — and
+ * the second theme is what proves no screen has quietly spelled out a colour.
+ *
+ * Switch with `changeTheme(gsDark)`; every screen follows without re-rendering
+ * from the root, because patina notifies rather than re-parents.
  */
-export function cacheStyles<T extends object>(
-  build: (theme: Theme) => T
-): (theme: Theme) => T {
-  const cache = new WeakMap<Theme, T>()
-  return (theme: Theme): T => {
-    const cached = cache.get(theme)
-    if (cached != null) return cached
-    const styles = build(theme)
-    cache.set(theme, styles)
-    return styles
-  }
+export interface ThemeProps {
+  theme: Theme
 }
+
+const themeContext = makeThemeContext<Theme>(gsBallpark)
+
+export const {
+  ThemeProvider,
+  useTheme,
+  withTheme,
+  changeTheme,
+  getTheme,
+  watchTheme
+} = themeContext

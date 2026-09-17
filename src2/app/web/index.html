@@ -6,10 +6,25 @@
       name="viewport"
       content="width=device-width, initial-scale=1, viewport-fit=cover"
     />
-    <meta name="color-scheme" content="dark" />
+    <meta name="color-scheme" content="light" />
+    <meta name="theme-color" content="#2B4221" />
     <title>GameStation</title>
+
+    <!--
+      Space Grotesk, the one family the app uses. The theme's font stack falls
+      back to the system sans, so a blocked or slow font request costs the
+      lettering and nothing else — the layout is unchanged because the metrics
+      are close enough not to reflow.
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap"
+    />
+
     <style>
-      /* The app paints its own background; this stops a white flash before it
+      /* The app paints its own background; this stops a flash before it
          mounts, and keeps the page from scrolling behind a full-height app. */
       html,
       body,
@@ -17,7 +32,7 @@
         height: 100%;
         margin: 0;
         padding: 0;
-        background-color: #1f2418;
+        background-color: #f5f7f1;
       }
       #root {
         display: flex;

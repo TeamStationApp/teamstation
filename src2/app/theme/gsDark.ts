@@ -70,19 +70,53 @@ export const gsDark: Theme = {
   semiBoldTextFont: palette.quicksandSemiBold,
 
   primaryButtonColor: palette.gsMediumOlive,
+  primaryButtonPressedColor: palette.gsDarkOlive,
   secondaryButtonColor: palette.gsLightOlive,
+  secondaryButtonPressedColor: palette.gsDarkOlive,
+  secondaryButtonBorderColor: palette.gsAccentGreen,
+  secondaryButtonTextColor: palette.gsVeryDarkGreen,
   buttonGrayColor: palette.gsAccentGreen,
   clearButtonColor: palette.gsPaleGreen,
   buttonTextColor: palette.gsBeige,
 
   inputBackgroundColor: palette.white,
   inputBorderColor: palette.gsMediumOlive,
+  inputFocusBorderColor: palette.gsAccentGreen,
   inputTextColor: palette.gsVeryDarkGreen,
 
   activeColor: palette.coralRed,
   successColor: palette.gsLightOlive,
   warningColor: palette.amber,
   dangerColor: palette.coralRed,
+  liveColor: palette.coralRed,
+  scheduledColor: palette.gsMediumOlive,
+
+  winBadgeBackground: palette.gsDarkOlive,
+  winBadgeTextColor: palette.gsPaleGreen,
+  lossBadgeBackground: palette.gsDarkOlive,
+  lossBadgeTextColor: palette.amber,
+  honourBadgeBackground: palette.gsDarkOlive,
+  honourBadgeTextColor: palette.gold,
+  neutralBadgeBackground: palette.gsDarkOlive,
+  neutralBadgeTextColor: palette.gsPaleGreen,
+
+  pillBackground: palette.gsDarkOlive,
+  pillPressedBackground: palette.gsMediumOlive,
+  pillTextColor: palette.gsBeige,
+  pillActiveBackground: palette.gsLightOlive,
+  pillActiveTextColor: palette.gsVeryDarkGreen,
+
+  headerBackgroundColor: palette.gsVeryDarkGreen,
+  headerBorderColor: palette.gsDarkOlive,
+  headerTextColor: palette.gsBeige,
+  navBackgroundColor: palette.gsVeryDarkGreen,
+  navActiveColor: palette.gsAccentGreen,
+  navInactiveColor: palette.gsMediumOlive,
+
+  scoreboardBackground: palette.black,
+  scoreboardTextColor: palette.gsBeige,
+  scoreboardMutedTextColor: palette.gsAccentGreen,
+  scoreboardAccentColor: palette.gsAccentGreen,
 
   // The watch path
   highlightRowBackground: palette.gsDarkOlive,
@@ -94,5 +128,18 @@ export const gsDark: Theme = {
   shadowColor: palette.black,
   backgroundGradientColors: [palette.gsVeryDarkGreen, palette.gsDarkOlive],
   backgroundGradientStart: { x: 0, y: 0 },
-  backgroundGradientEnd: { x: 1, y: 1 }
+  backgroundGradientEnd: { x: 1, y: 1 },
+
+  radiusSmallRem: 0.25,
+  radiusRem: 0.5,
+  radiusLargeRem: 1,
+  radiusPill: 9999,
+
+  spaceXsRem: 0.25,
+  spaceSmRem: 0.5,
+  spaceMdRem: 0.875,
+  spaceLgRem: 1.25,
+  spaceXlRem: 2,
+
+  maxContentWidthRem: 75
 }
