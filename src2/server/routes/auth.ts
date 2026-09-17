@@ -15,6 +15,8 @@ import {
 import { createSession, revokeSession } from '../auth/sessions'
 import { bearerToken } from '../auth/tokens'
 import type { Database } from '../db/database'
+import { imageUrl } from '../media/imageUrls'
+import type { SpaceSettings } from '../media/spacesHls'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 
@@ -50,6 +52,8 @@ export interface AuthOptions {
    * logs, so the flow can be exercised without a mail server.
    */
   sendCode: (email: string, code: string) => Promise<void>
+  /** Signs the picture in the header. Absent until a Space is configured. */
+  space?: SpaceSettings
 }
 
 /**
@@ -93,6 +97,17 @@ function rulesFor(
 export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
   const router = Router()
 
+  /** The signed-in person's own picture, for the header. */
+  const avatarFor = async (userId: string): Promise<string | null> => {
+    if (options.space == null) return null
+    const row = await db
+      .selectFrom('users')
+      .select('avatar_path')
+      .where('id', '=', userId)
+      .executeTakeFirst()
+    return imageUrl(options.space, row?.avatar_path ?? null)
+  }
+
   router.post(
     '/auth/password',
     withAsync(async (req, res) => {
@@ -130,7 +145,8 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
             id: user.id,
             displayName: user.displayName,
             email: user.email,
-            isAdmin: user.isAdmin
+            isAdmin: user.isAdmin,
+            avatarUrl: await avatarFor(user.id)
           }
         })
       )
@@ -198,7 +214,8 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
             id: user.id,
             displayName: user.displayName,
             email: user.email,
-            isAdmin: user.isAdmin
+            isAdmin: user.isAdmin,
+            avatarUrl: await avatarFor(user.id)
           }
         })
       )
@@ -223,7 +240,7 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
       if (actor == null) throw unauthorized()
       const user = await db
         .selectFrom('users')
-        .select(['id', 'display_name', 'is_admin'])
+        .select(['id', 'display_name', 'is_admin', 'avatar_path'])
         .where('id', '=', actor.userId)
         .executeTakeFirst()
       if (user == null) throw unauthorized()
@@ -232,6 +249,10 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
         displayName: user.display_name,
         email: await primaryEmail(db, user.id),
         isAdmin: user.is_admin,
+        avatarUrl:
+          options.space == null
+            ? null
+            : imageUrl(options.space, user.avatar_path),
         viaApiToken: actor.apiTokenId != null
       })
     })

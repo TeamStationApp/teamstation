@@ -5,7 +5,7 @@ import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Icon, type IconName } from './Icon'
 import { useBreakpoint } from './useBreakpoint'
 
-export type NavTabId = 'home' | 'videos' | 'schedule' | 'account'
+export type NavTabId = 'home' | 'videos' | 'schedule'
 
 export interface NavTab {
   id: NavTabId
@@ -14,20 +14,25 @@ export interface NavTab {
 }
 
 /**
- * The four places the app goes.
+ * The three places the app goes.
  *
  * The designs disagreed: the home screen drew Teams / Videos / Schedule /
  * Seasons, the team hub drew Team Hub / Live Cams / League / Account. Picking
  * one meant deciding what the app is, so: Home carries both the teams and the
  * seasons, which is what Paul asked for on that screen, so a separate Seasons
  * tab would lead to the half of a screen the user just left. Live Cams is not
- * built. Account has to exist — signing out has to live somewhere.
+ * built.
+ *
+ * Account is **not** here. It is reached by tapping your own picture at the
+ * top right, which is where every application with a signed-in person puts it,
+ * and which frees a quarter of the bar for the three things you actually move
+ * between. Signing out still lives on that screen; it is simply not a
+ * destination you navigate to as often as the ones that are left.
  */
 export const NAV_TABS: NavTab[] = [
   { id: 'home', label: 'Home', icon: 'home' },
   { id: 'videos', label: 'Videos', icon: 'smart_display' },
-  { id: 'schedule', label: 'Schedule', icon: 'event' },
-  { id: 'account', label: 'Account', icon: 'account_circle' }
+  { id: 'schedule', label: 'Schedule', icon: 'event' }
 ]
 
 export interface AppNavProps {
@@ -40,7 +45,7 @@ export interface AppNavProps {
  *
  * A bar pinned to the bottom of a desktop window is a phone idiom stranded on
  * a monitor: it is a mile from the content, and it wastes the one axis a
- * desktop has spare. The rail keeps the same four destinations in the same
+ * desktop has spare. The rail keeps the same three destinations in the same
  * order, so there is nothing new to learn, and it can afford to show the label
  * beside the glyph rather than under it.
  */

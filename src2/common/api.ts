@@ -208,7 +208,9 @@ export const asSession = asObject({
     id: asString,
     displayName: asString,
     email: asOptional(asString),
-    isAdmin: asBoolean
+    isAdmin: asBoolean,
+    /** Signed and short-lived, for the picture in the header. */
+    avatarUrl: asOptional(asNullable(asString), null)
   })
 })
 export type Session = ReturnType<typeof asSession>
