@@ -13,6 +13,7 @@ import {
   Badge,
   Card,
   Icon,
+  initialsOf,
   ListRow,
   PillTabs,
   Screen,
@@ -205,8 +206,16 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                           ? 'Player'
                           : 'Coach'
                     }
-                    emblem={person.jersey ?? '–'}
-                    badgeLabel={person.isPlayer ? undefined : 'Staff'}
+                    emblem={initialsOf(person.displayName)}
+                    emblemUri={person.avatarUrl}
+                    emblemShape="circle"
+                    badgeLabel={
+                      person.isPlayer
+                        ? person.jersey == null
+                          ? undefined
+                          : `#${person.jersey}`
+                        : 'Staff'
+                    }
                     badgeTone="neutral"
                   />
                 </View>

@@ -2,7 +2,14 @@ import React from 'react'
 import { Text, View } from 'react-native'
 
 import type { Session } from '../../common/api'
-import { Button, Card, ListRow, Screen, SectionHeader } from '../components'
+import {
+  Button,
+  Card,
+  initialsOf,
+  ListRow,
+  Screen,
+  SectionHeader
+} from '../components'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
 export interface AccountScreenProps {
@@ -65,14 +72,6 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
       </Text>
     </Screen>
   )
-}
-
-function initialsOf(name: string): string {
-  const words = name.split(/\s+/).filter(word => word.length > 0)
-  return words
-    .slice(0, 2)
-    .map(word => word[0]?.toUpperCase() ?? '')
-    .join('')
 }
 
 const getStyles = cacheStyles((theme: Theme) => ({

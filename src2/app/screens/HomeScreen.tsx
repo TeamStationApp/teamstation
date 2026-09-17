@@ -10,6 +10,7 @@ import type {
 import {
   Button,
   Card,
+  initialsOf,
   ListRow,
   Scoreboard,
   Screen,
@@ -136,6 +137,7 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
                   title={team.name}
                   subtitle={team.shortName ?? undefined}
                   emblem={initialsOf(team.name)}
+                  emblemUri={team.logoUrl}
                   onPress={() => {
                     onOpenTeam(team)
                   }}
@@ -188,15 +190,6 @@ function mostRecentlyPlayed(games: SeasonGame[]): SeasonGame | undefined {
     .filter(game => game.awayScore != null && game.startAt != null)
     .sort((a, b) => (a.startAt ?? '').localeCompare(b.startAt ?? ''))
   return played[played.length - 1]
-}
-
-/** `AAA Hawks` → `AH`, for the leading tile when a team has no logo yet. */
-function initialsOf(name: string): string {
-  const words = name.split(/[\s-]+/).filter(word => word.length > 0)
-  return words
-    .slice(0, 2)
-    .map(word => word[0]?.toUpperCase() ?? '')
-    .join('')
 }
 
 const getStyles = cacheStyles((theme: Theme) => ({
