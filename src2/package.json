@@ -12,6 +12,7 @@
     "camera-sweep": "node -r sucrase/register server/dev/cameraSweep.ts",
     "clean": "rimraf lib",
     "demo": "node -r sucrase/register server/dev/demo.ts",
+    "duplicate-people": "node -r sucrase/register server/dev/duplicatePeople.ts",
     "fake-space": "node -r sucrase/register server/dev/fakeSpace.ts",
     "lint": "eslint .",
     "merge-team": "node -r sucrase/register server/dev/mergeTeam.ts",
