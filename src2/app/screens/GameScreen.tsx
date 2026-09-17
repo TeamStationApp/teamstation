@@ -146,11 +146,22 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   // highlight list needed. And a box that only obeys the width fills a short
   // window to the bottom. So: as tall as the fraction allows, no taller than
   // 16:9 of the space it has, and the width follows the height.
+  //
+  // The card is pinned above the player, which Paul chose on 2026-09-17 over
+  // the video-first arrangement, with a later pass to optimise it. That costs
+  // the player the card's height, so the fraction is taken from what is left
+  // rather than from the window: at 720 the header, the card and the pills
+  // are about 270px, and 0.58 of the whole window would leave the highlight
+  // list nothing at all.
   const railWidth = isRail ? 176 : 0
   const columnWidth = Math.max(240, width - railWidth - 36)
+  const PINNED_ABOVE = 270
   const playerHeight = Math.max(
     150,
-    Math.min(Math.round(height * 0.58), Math.round((columnWidth * 9) / 16))
+    Math.min(
+      Math.round((height - PINNED_ABOVE) * 0.62),
+      Math.round((columnWidth * 9) / 16)
+    )
   )
   const playerWidth = Math.min(columnWidth, Math.round((playerHeight * 16) / 9))
 
@@ -605,21 +616,21 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           sized by its contents, and the list below takes what is left.
         */}
         {/*
-          Only the player is pinned. The card was pinned with it and took
-          310px of a 720px window between them, which left the highlight list
-          nothing to show — and the card is the part you read once and stop
-          needing, so it scrolls with the list.
+          The card sits at the top, above the video, which is where the plan
+          and the design both put it (§4, §17) and what Paul chose on
+          2026-09-17. It has to be pinned to be above a pinned player, so it
+          and the player share the fixed region and only the highlights
+          scroll. That costs the video some height on a short window; a later
+          pass is to optimise it.
         */}
         <View style={styles.fixed}>
+          {scoreboard}
           {tabs}
           {player}
           {description}
         </View>
         <ScrollView style={styles.scroller}>
-          <View style={styles.scrolled}>
-            {scoreboard}
-            {highlightList}
-          </View>
+          <View style={styles.scrolled}>{highlightList}</View>
         </ScrollView>
       </View>
     )
