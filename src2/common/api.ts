@@ -450,6 +450,11 @@ export class GameStationClient {
       response = await this.doFetch(`${this.baseUrl}${path}`, {
         method,
         headers,
+        // The session lives in an `HttpOnly` cookie, which this code cannot
+        // read and therefore cannot put in a header. `include` is what sends
+        // it when the app and the API are different origins, as they are in
+        // development.
+        credentials: 'include',
         body: body === undefined ? undefined : JSON.stringify(body)
       })
     } catch (caught: unknown) {

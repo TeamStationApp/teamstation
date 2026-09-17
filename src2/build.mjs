@@ -77,7 +77,13 @@ if (serve) {
   await writeFile('dist/index.html', template)
   const ctx = await context(options)
   await ctx.watch()
-  const { hosts, port } = await ctx.serve({ servedir: 'dist', port: 8080 })
+  // Without the fallback every address but `/` answers 404 on a reload, which
+  // is every address the app hands out.
+  const { hosts, port } = await ctx.serve({
+    servedir: 'dist',
+    fallback: 'dist/index.html',
+    port: 8080
+  })
   console.log(`app on http://${hosts[0] ?? '127.0.0.1'}:${port}`)
   console.log(`talking to ${apiBaseUrl}`)
 } else {
