@@ -127,9 +127,11 @@ const options = {
     ),
     __DEV__: serve ? 'true' : 'false',
     GS_API_BASE_URL: JSON.stringify(apiBaseUrl),
-    // Worklets are compiled to code that reaches for `global`, which is what a
-    // React Native runtime calls it and no browser does. Without this the
-    // bundle throws `global is not defined` before it draws anything.
+    // `global` is what a React Native runtime calls it and no browser does.
+    // Worklets are compiled to code that reaches for it, and React Native Web
+    // reaches for it too — stopping an `Animated` timing calls
+    // `global.cancelAnimationFrame`. Either way the bundle throws
+    // `global is not defined` and takes the screen with it.
     global: 'globalThis'
   },
   loader: { '.png': 'dataurl', '.jpg': 'dataurl', '.svg': 'dataurl' }
@@ -160,7 +162,10 @@ if (serve) {
   const { hosts, port } = await ctx.serve({
     servedir: 'dist',
     fallback: 'dist/index.html',
-    port: 8080
+    // Overridable because two worktrees are often being served at once, and
+    // the second one silently failing to bind is a confusing way to spend ten
+    // minutes. `GS_API_BASE_URL` moves the API port to match.
+    port: Number(process.env.GS_SERVE_PORT ?? 8080)
   })
   console.log(`app on http://${hosts[0] ?? '127.0.0.1'}:${port}`)
   console.log(`talking to ${apiBaseUrl}`)

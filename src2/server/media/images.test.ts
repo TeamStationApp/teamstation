@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createServer, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -14,6 +14,7 @@ import {
   imagePathPrefix,
   normaliseImage,
   putObject,
+  putObjectFile,
   sha256Of,
   storeImage
 } from './images'
@@ -156,6 +157,11 @@ describe('stored images', function () {
       pathStyle: true
     }
     const written = new Map<string, Buffer>()
+    /** How each request was framed, which is what S3 is strict about. */
+    const framing = new Map<
+      string,
+      { contentLength?: string; transferEncoding?: string }
+    >()
 
     before(async function () {
       server = createServer((req, res) => {
@@ -164,10 +170,21 @@ describe('stored images', function () {
           res.end()
           return
         }
+        const path = (req.url ?? '').split('?')[0] ?? ''
+        framing.set(path, {
+          contentLength: req.headers['content-length'],
+          transferEncoding: req.headers['transfer-encoding']
+        })
+        if (path.includes('refused')) {
+          // A Space refuses a bad signature at once, without reading the body,
+          // and hangs up. The sender sees a broken pipe; the answer is this.
+          res.statusCode = 403
+          res.end('<Error><Code>AccessDenied</Code></Error>')
+          return
+        }
         const chunks: Buffer[] = []
         req.on('data', chunk => chunks.push(chunk as Buffer))
         req.on('end', () => {
-          const path = (req.url ?? '').split('?')[0] ?? ''
           written.set(path, Buffer.concat(chunks))
           res.statusCode = 200
           res.end()
@@ -195,6 +212,59 @@ describe('stored images', function () {
       })
       const path = '/example-media-bkt/images/team/tem_1/abcd1234-96.png'
       expect(written.get(path)?.toString()).equals('bytes')
+    })
+
+    it('sends a file as a sized PUT, not a chunked one', async function () {
+      // Eight megabytes: more than one write, so the framing is the request's
+      // own and not something a single small body made true by accident.
+      const source = join(dir, 'video.mp4')
+      const bytes = Buffer.alloc(8 * 1024 * 1024, 7)
+      await writeFile(source, bytes)
+
+      await putObjectFile({
+        space,
+        key: 'videos/vid_1/video.mp4',
+        path: source,
+        contentType: 'video/mp4'
+      })
+
+      const path = '/example-media-bkt/videos/vid_1/video.mp4'
+      expect(written.get(path)?.length, 'every byte arrived').equals(
+        bytes.length
+      )
+      expect(sha256Of(written.get(path) ?? Buffer.alloc(0))).equals(
+        sha256Of(bytes)
+      )
+      expect(framing.get(path)?.contentLength, 'the length is stated').equals(
+        String(bytes.length)
+      )
+      expect(
+        framing.get(path)?.transferEncoding,
+        'S3 refuses a chunked body against a presigned signature'
+      ).equals(undefined)
+    })
+
+    it('reports what the Space said when it refuses mid-send', async function () {
+      const source = join(dir, 'refused.mp4')
+      await writeFile(source, Buffer.alloc(8 * 1024 * 1024, 3))
+      let message = ''
+      const started = Date.now()
+      try {
+        await putObjectFile({
+          space,
+          key: 'videos/vid_refused/video.mp4',
+          path: source,
+          contentType: 'video/mp4'
+        })
+      } catch (error) {
+        message = error instanceof Error ? error.message : String(error)
+      }
+      expect(message, 'the refusal, not the broken pipe').contains('403')
+      expect(message).contains('AccessDenied')
+      // It is reported when it is said, not when the abandoned write finally
+      // times out — which is five seconds later, and would be five seconds per
+      // file of a game that is never going to upload.
+      expect(Date.now() - started, 'reported at once').lessThan(2000)
     })
 
     it('uploads every size and reports where the row should point', async function () {

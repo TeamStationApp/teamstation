@@ -227,12 +227,16 @@ export function SeasonScreen(props: SeasonScreenProps): React.ReactElement {
                         ? undefined
                         : clock(game.durationSec)
                     }
+                    // A game being played now says so instead of showing a
+                    // score that is still changing.
                     badgeLabel={
-                      game.awayScore == null
-                        ? undefined
-                        : `${game.awayScore}–${game.homeScore}`
+                      game.isLive
+                        ? 'live'
+                        : game.awayScore == null
+                          ? undefined
+                          : `${game.awayScore}–${game.homeScore}`
                     }
-                    badgeTone="neutral"
+                    badgeTone={game.isLive ? 'live' : 'neutral'}
                     onPress={() => {
                       onOpenGame(game.id, `${lines.first} ${lines.second}`, {
                         autoPlay: game.videoCount > 0

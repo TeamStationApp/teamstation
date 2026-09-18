@@ -22,7 +22,8 @@ let package = Package(
     .package(path: "../DirectorLink"),
     .package(path: "../../../common/DistributorWire"),
     .package(path: "../../../common/LoopbackHTTP"),
-    .package(path: "../../../common/PeerTubeKit")
+    .package(path: "../../../common/PeerTubeKit"),
+    .package(path: "../../../common/GameStationKit")
   ],
   targets: [
     .target(
@@ -45,7 +46,8 @@ let package = Package(
         // itself: reached only through DirectorLink, they were missing whenever Xcode built this
         // package as its own framework, which it does once a test bundle links a package directly.
         "LoopbackHTTP",
-        "PeerTubeKit"
+        "PeerTubeKit",
+        "GameStationKit"
       ],
       swiftSettings: [ .swiftLanguageMode(.v6) ],
       linkerSettings: [ .linkedFramework("GameController") ]

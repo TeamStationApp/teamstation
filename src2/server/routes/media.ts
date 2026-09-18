@@ -1,8 +1,11 @@
+import { rm } from 'node:fs/promises'
+import { join } from 'node:path'
+
 import { Router } from 'express'
 import type { Kysely } from 'kysely'
 
-import { notFound, unauthorized } from '../../common/errors'
-import { canSeeGame, visibleScopes } from '../access'
+import { badRequest, notFound, unauthorized } from '../../common/errors'
+import { adminScopes, canSeeGame, visibleScopes } from '../access'
 import type { Database } from '../db/database'
 import { VIDEO_FILE } from '../media/ffmpeg'
 import { locateVideo, locateVideoFile } from '../media/locations'
@@ -22,7 +25,9 @@ import {
   spaceConfigured,
   spaceKey
 } from '../media/spacesHls'
+import { deleteVideoFromSpace } from '../media/spacesVideo'
 import { ensureStill } from '../media/stills'
+import { setAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 
@@ -212,6 +217,115 @@ export function mediaRoutes(
         expiresSec: MEDIA_TOKEN_TTL_SEC
       })
       res.send(rewriteMediaPlaylist(body, VIDEO_FILE, signed))
+    })
+  )
+
+  /**
+   * Deletes a video, its files, and what the Space is being paid to hold.
+   *
+   * Nothing removed a video before. Deleting one in GameStation — which was
+   * not possible either — would have left every byte of it in the bucket
+   * being paid for, and a stream somebody started to test the URL leaves a
+   * recording of a car park that nobody wants and nobody could get rid of.
+   *
+   * Who may: whoever runs one of the game's teams, and the person whose camera
+   * made it. The second is the addition. A key is a person's, so the recording
+   * it produced is theirs to withdraw — somebody who streamed to the wrong
+   * game should not have to find an administrator to undo it.
+   *
+   * Legacy videos are refused. Those live in PeerTube's tree, which this
+   * server reads and does not own, and removing the row while the file stays
+   * would be the worst of both.
+   */
+  router.delete(
+    '/videos/:videoId',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const videoId = pathParam(req.params.videoId)
+
+      const video = await db
+        .selectFrom('videos')
+        .leftJoin('games', 'games.id', 'videos.game_id')
+        .select([
+          'videos.id as id',
+          'videos.title as title',
+          'videos.kind as kind',
+          'videos.storage as storage',
+          'videos.status as status',
+          'games.id as gameId',
+          'games.home_team_id as homeTeamId',
+          'games.away_team_id as awayTeamId'
+        ])
+        .where('videos.id', '=', videoId)
+        .executeTakeFirst()
+      if (video == null) throw notFound()
+
+      // Every camera that produced this video, so the person who owns one can
+      // delete it and so a running one can stop this before it starts.
+      const cameras = await db
+        .selectFrom('live_streams')
+        .select(['id', 'user_id', 'state'])
+        .where('video_id', '=', videoId)
+        .execute()
+
+      const scopes = await adminScopes(db, actor.userId, actor.isAdmin)
+      const runsTheGame =
+        scopes.isAdmin ||
+        (video.homeTeamId != null && scopes.teamIds.has(video.homeTeamId)) ||
+        (video.awayTeamId != null && scopes.teamIds.has(video.awayTeamId))
+      const isMine = cameras.some(row => row.user_id === actor.userId)
+      // 404 rather than 403: whether a video exists is not something to
+      // confirm to somebody who may not touch it.
+      if (!runsTheGame && !isMine) throw notFound()
+
+      if (video.storage === 'peertube') {
+        throw badRequest(
+          'That recording came from the old server, which this one only reads. It cannot be deleted here.'
+        )
+      }
+      if (cameras.some(row => row.state === 'publishing')) {
+        throw badRequest(
+          'Something is still streaming into that recording. End the camera first.'
+        )
+      }
+
+      // The Space first. If it fails the row stays, and the delete can be
+      // tried again; doing it the other way round loses the only record of
+      // which objects were the video's, and they are then paid for for ever.
+      let removedFromSpace = 0
+      if (spaceConfigured(space)) {
+        const { deleted } = await deleteVideoFromSpace({ space, videoId })
+        removedFromSpace = deleted
+      }
+
+      const local = join(mediaRoot, 'work', 'videos', videoId)
+      await rm(local, { recursive: true, force: true })
+
+      // The cameras keep their rows — they are the record that a key existed —
+      // and simply stop pointing at a video that is gone.
+      if (cameras.length > 0) {
+        await db
+          .updateTable('live_streams')
+          .set({ video_id: null, updated_at: new Date() })
+          .where('video_id', '=', videoId)
+          .execute()
+      }
+      await db.deleteFrom('videos').where('id', '=', videoId).execute()
+
+      setAudit(res.locals, {
+        entityType: 'video',
+        entityId: videoId,
+        before: {
+          title: video.title,
+          kind: video.kind,
+          storage: video.storage,
+          gameId: video.gameId
+        },
+        after: { removedFromSpace }
+      })
+      res.json({ id: videoId, removedFromSpace })
     })
   )
 

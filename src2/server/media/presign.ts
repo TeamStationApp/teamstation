@@ -22,9 +22,10 @@ const UNSIGNED_PAYLOAD = 'UNSIGNED-PAYLOAD'
 export interface PresignOptions {
   /**
    * The verb the URL is good for. A signature covers the method, so a URL
-   * signed for `GET` cannot be used to write. Defaults to `GET`.
+   * signed for `GET` cannot be used to write, nor to delete. Defaults to
+   * `GET`.
    */
-  method?: 'GET' | 'PUT'
+  method?: 'GET' | 'PUT' | 'DELETE'
   /** e.g. `https://sfo3.digitaloceanspaces.com`. */
   endpoint: string
   region: string
@@ -35,6 +36,14 @@ export interface PresignOptions {
   key: string
   /** How long the URL stays good for. */
   expiresSec: number
+  /**
+   * Extra query parameters, which are **signed with the rest**.
+   *
+   * What listing a prefix needs — `list-type` and `prefix` — and the reason
+   * they cannot simply be appended to the returned URL: the signature covers
+   * the canonical query, so a parameter added afterwards invalidates it.
+   */
+  query?: Record<string, string>
   /** Defaults to now. */
   now?: Date
   /**
@@ -55,6 +64,7 @@ export function presignGetUrl(options: PresignOptions): string {
     secretAccessKey,
     key,
     expiresSec,
+    query: extra = {},
     now = new Date(),
     pathStyle = false
   } = options
@@ -73,7 +83,8 @@ export function presignGetUrl(options: PresignOptions): string {
     ['X-Amz-Credential', `${accessKeyId}/${scope}`],
     ['X-Amz-Date', amzDate],
     ['X-Amz-Expires', String(expiresSec)],
-    ['X-Amz-SignedHeaders', 'host']
+    ['X-Amz-SignedHeaders', 'host'],
+    ...Object.entries(extra)
   ])
   const canonicalQuery = [...query.entries()]
     .map(([name, value]) => [rfc3986(name), rfc3986(value)] as const)

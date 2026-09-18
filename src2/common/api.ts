@@ -325,9 +325,142 @@ export const asSeasonGame = asObject({
   /** The longest video of the game, for the length on a thumbnail. */
   durationSec: asOptional(asNullable(asNumber), null),
   /** A frame of the game's video, signed and short-lived. */
-  posterUrl: asOptional(asNullable(asString), null)
+  posterUrl: asOptional(asNullable(asString), null),
+  /** Being played, and being streamed, right now. */
+  isLive: asOptional(asBoolean, false)
 })
 export type SeasonGame = ReturnType<typeof asSeasonGame>
+
+/**
+ * A live stream's own state, as the ingest last reported it.
+ *
+ * `label` never carries a stream key — the ingest strips it before the status
+ * is written down — so this whole object is safe on a screen and in a log.
+ */
+export const asLiveOutputStatus = asObject({
+  kind: asString,
+  label: asString,
+  state: asString,
+  lastError: asOptional(asString),
+  bytesWritten: asNumber,
+  bytesPerSecond: asNumber,
+  /** How much video this output has written. The HLS leg's real measure. */
+  recordedSec: asOptional(asNumber),
+  restartCount: asNumber
+})
+export type LiveOutputStatus = ReturnType<typeof asLiveOutputStatus>
+
+export const asLiveStatus = asObject({
+  liveStreamId: asString,
+  ingress: asObject({
+    publishing: asBoolean,
+    receivingPackets: asBoolean,
+    bytesReceived: asNumber,
+    bytesPerSecond: asNumber
+  }),
+  outputs: asArray(asLiveOutputStatus)
+})
+export type LiveStatus = ReturnType<typeof asLiveStatus>
+
+/**
+ * A game's live stream.
+ *
+ * `url` is present only in the reply to a request that asked for it by name —
+ * creating the stream, revealing it, rotating it. Every other reply carries
+ * `keyPrefix` and nothing that can publish.
+ */
+export const asLiveStream = asObject({
+  id: asString,
+  gameId: asString,
+  /** Whose camera it is, and what they are called. */
+  userId: asString,
+  ownerName: asString,
+  /** Which of that person's four, and what they call it. */
+  slot: asNumber,
+  label: asString,
+  keyPrefix: asString,
+  state: asString,
+  opensAt: asString,
+  /** When somebody ended it. Null while it is still good: it has no clock. */
+  closesAt: asNullable(asString),
+  videoId: asOptional(asNullable(asString), null),
+  lastError: asOptional(asNullable(asString), null),
+  status: asOptional(asNullable(asLiveStatus), null),
+  /**
+   * Only ever in the reply to a request that asked for it by name, and only
+   * ever to the person the key belongs to.
+   */
+  url: asOptional(asString)
+})
+export type LiveStream = ReturnType<typeof asLiveStream>
+
+/**
+ * Everything pointed at one game, split by whether it is yours.
+ *
+ * `mine` carries what a person may act on; `others` says who else is streaming
+ * this game and what their camera is doing, and never carries a key. That
+ * division is the point of the whole shape: a key publishes video as somebody,
+ * so it is theirs and not the team's.
+ */
+export const asGameLiveStreams = asObject({
+  gameId: asString,
+  mine: asArray(asLiveStream),
+  others: asArray(asLiveStream),
+  /** How many more cameras this person may add to this game. */
+  canAdd: asNumber,
+  maxCameras: asNumber
+})
+export type GameLiveStreams = ReturnType<typeof asGameLiveStreams>
+
+/** What a delete answers with: which video went, and what left the Space. */
+export const asDeletedVideo = asObject({
+  id: asString,
+  removedFromSpace: asOptional(asNumber, 0)
+})
+export type DeletedVideo = ReturnType<typeof asDeletedVideo>
+
+/**
+ * A game GS Director can be pointed at.
+ *
+ * The icons are the two teams' marks, which the picker draws on either side of
+ * the row; the names read `<away> at <home>`, the way the game is spoken of.
+ */
+export const asDirectorEvent = asObject({
+  gameId: asString,
+  startAt: asString,
+  venue: asNullable(asString),
+  homeTeamName: asString,
+  awayTeamName: asString,
+  homeLogoUrl: asNullable(asString),
+  awayLogoUrl: asNullable(asString),
+  /** `none` until the game has been given a stream. */
+  liveState: asString
+})
+export type DirectorEvent = ReturnType<typeof asDirectorEvent>
+
+/** What a Director gets when it takes a game: the URL, key and all. */
+export const asDirectorClaim = asObject({
+  gameId: asString,
+  url: asString,
+  opensAt: asNullable(asString),
+  closesAt: asNullable(asString)
+})
+export type DirectorClaim = ReturnType<typeof asDirectorClaim>
+
+/** A game being played right now that this person may watch. */
+export const asLiveNow = asObject({
+  /** The angle to lead with: the one that started most recently. */
+  videoId: asString,
+  gameId: asString,
+  title: asString,
+  homeTeamName: asString,
+  awayTeamName: asString,
+  startedAt: asNullable(asString),
+  gameStartAt: asString,
+  /** How many cameras are on this game right now. Usually one. */
+  angles: asOptional(asNumber, 1)
+})
+export type LiveNow = ReturnType<typeof asLiveNow>
 
 export const asSessionUser = asObject({
   id: asString,
@@ -532,6 +665,113 @@ export class GameStationClient {
       'GET',
       `/videos/${encodeURIComponent(videoId)}/playback`,
       asPlayback
+    )
+  }
+
+  /** What is live right now. Empty on the ordinary day, which is most of them. */
+  async liveNow(): Promise<LiveNow[]> {
+    return await this.request('GET', '/live', asArray(asLiveNow))
+  }
+
+  /** Every camera pointed at this game: mine whole, everybody else's named. */
+  async liveStreams(gameId: string): Promise<GameLiveStreams> {
+    return await this.request(
+      'GET',
+      `/games/${encodeURIComponent(gameId)}/live-streams`,
+      asGameLiveStreams
+    )
+  }
+
+  /** Another camera of my own on this game, up to the fourth. */
+  async addLiveStream(gameId: string, label?: string): Promise<LiveStream> {
+    return await this.request(
+      'POST',
+      `/games/${encodeURIComponent(gameId)}/live-streams`,
+      asLiveStream,
+      label == null ? {} : { label }
+    )
+  }
+
+  /** Asks for one of my URLs again, key and all. Recorded in the audit log. */
+  async revealLiveStream(
+    gameId: string,
+    streamId: string
+  ): Promise<LiveStream> {
+    return await this.request(
+      'POST',
+      `/games/${encodeURIComponent(gameId)}/live-streams/${encodeURIComponent(streamId)}/reveal`,
+      asLiveStream,
+      {}
+    )
+  }
+
+  /** A new key for one of my cameras. The old one stops working at once. */
+  async rotateLiveStream(
+    gameId: string,
+    streamId: string
+  ): Promise<LiveStream> {
+    return await this.request(
+      'POST',
+      `/games/${encodeURIComponent(gameId)}/live-streams/${encodeURIComponent(streamId)}/rotate`,
+      asLiveStream,
+      {}
+    )
+  }
+
+  /** Renames one of my cameras. */
+  async updateLiveStream(
+    gameId: string,
+    streamId: string,
+    change: { label?: string }
+  ): Promise<LiveStream> {
+    return await this.request(
+      'PATCH',
+      `/games/${encodeURIComponent(gameId)}/live-streams/${encodeURIComponent(streamId)}`,
+      asLiveStream,
+      change
+    )
+  }
+
+  /**
+   * Takes one of my cameras off this game altogether.
+   *
+   * Ending a camera stops it; this removes it. Somebody who added a fourth by
+   * mistake wants the row gone and the slot back, not a row that says "ended"
+   * for ever.
+   */
+  async removeLiveStream(
+    gameId: string,
+    streamId: string
+  ): Promise<GameLiveStreams> {
+    return await this.request(
+      'DELETE',
+      `/games/${encodeURIComponent(gameId)}/live-streams/${encodeURIComponent(streamId)}`,
+      asGameLiveStreams
+    )
+  }
+
+  /**
+   * Deletes a recording, its files, and what the Space holds of it.
+   *
+   * For whoever runs the game, and for the person whose camera made it — a
+   * stream started to check a URL leaves a recording of a car park, and the
+   * person who made it should not need an administrator to remove it.
+   */
+  async deleteVideo(videoId: string): Promise<{ id: string }> {
+    return await this.request(
+      'DELETE',
+      `/videos/${encodeURIComponent(videoId)}`,
+      asDeletedVideo
+    )
+  }
+
+  /** Ends a camera now: its key stops working and its video is closed. */
+  async endLiveStream(gameId: string, streamId: string): Promise<LiveStream> {
+    return await this.request(
+      'POST',
+      `/games/${encodeURIComponent(gameId)}/live-streams/${encodeURIComponent(streamId)}/end`,
+      asLiveStream,
+      {}
     )
   }
 

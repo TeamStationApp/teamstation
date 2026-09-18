@@ -159,6 +159,69 @@ describe('ffmpeg contract', function () {
     expect(after.height).equals(before.height)
   })
 
+  /**
+   * The onward leg, which is a `-c copy` of the same HEVC picture into an
+   * FLV stream. FFmpeg only learned to do that with enhanced RTMP; a build
+   * without it refuses with "Video codec hevc not compatible with flv" and an
+   * onward push dies the first time a stream is given a destination. Pinning
+   * the build is what makes that impossible, and this is what would notice a
+   * bump that took it away.
+   */
+  it('muxes HEVC into FLV, which is what the onward push is', async function () {
+    if (!hasHevc) this.skip()
+    const source = join(workDir, 'flvSource.mp4')
+    await run(
+      ffmpegPath,
+      [
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-f',
+        'lavfi',
+        '-i',
+        'testsrc2=size=320x240:rate=30',
+        '-t',
+        '2',
+        '-c:v',
+        'libx265',
+        '-x265-params',
+        'log-level=none',
+        '-tag:v',
+        'hvc1',
+        '-pix_fmt',
+        'yuv420p',
+        source
+      ],
+      { maxBuffer: 1 << 22 }
+    )
+
+    const flv = join(workDir, 'onward.flv')
+    await run(
+      ffmpegPath,
+      [
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-y',
+        '-i',
+        source,
+        '-c',
+        'copy',
+        '-f',
+        'flv',
+        flv
+      ],
+      { maxBuffer: 1 << 22 }
+    )
+
+    // Read back out of the FLV: the picture crossed unchanged and is still
+    // HEVC, so what goes onward is the same picture GameStation recorded.
+    const carried = await probeVideoStream(ffprobePath, flv)
+    expect(carried.codecName).equals('hevc')
+    expect(carried.width).equals(320)
+    expect(carried.height).equals(240)
+  })
+
   it('never writes the temporary name into a single-file playlist', function () {
     const args = remuxToHlsArgs({ input: 'in.mp4', outDir: '/tmp/out' })
     const flags = args[args.indexOf('-hls_flags') + 1]
