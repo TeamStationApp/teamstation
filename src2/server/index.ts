@@ -57,6 +57,15 @@ function versionOf(): string {
 }
 
 const VERSION = versionOf()
+
+/**
+ * How long a stop may take before it is taken rather than waited for.
+ *
+ * systemd's own TimeoutStopSec is 90 seconds and every one of them is a 502,
+ * so this has to be far below it: a deploy should cost a blink, not a minute
+ * and a half.
+ */
+const FORCE_STOP_MS = 10_000
 const MEDIA_SECRET_ENV = 'GS_MEDIA_SECRET'
 
 /**
@@ -116,7 +125,14 @@ function runPrimary(workerCount: number): void {
 
   let stopping = false
   cluster.on('exit', (worker, code, signal) => {
-    if (stopping) return
+    if (stopping) {
+      // The last worker out turns the lights off. Without this the primary
+      // signalled its workers and then sat there for ever: systemd waited the
+      // full TimeoutStopSec on every deploy, SIGKILLed it, and each of those
+      // ninety seconds was a 502 for anybody using the site.
+      if (Object.keys(cluster.workers ?? {}).length === 0) process.exit(0)
+      return
+    }
     console.error(
       `worker ${worker.process.pid ?? '?'} exited (${signal ?? code}), replacing it`
     )
@@ -124,11 +140,23 @@ function runPrimary(workerCount: number): void {
   })
 
   const stop = (signal: string): void => {
+    if (stopping) return
     stopping = true
-    console.log(`${signal}: stopping workers`)
-    for (const worker of Object.values(cluster.workers ?? {})) {
-      worker?.kill(signal)
-    }
+    const workers = Object.values(cluster.workers ?? {})
+    console.log(`${signal}: stopping ${workers.length} workers`)
+    if (workers.length === 0) process.exit(0)
+    for (const worker of workers) worker?.kill(signal)
+
+    // A worker finishing a request deserves a moment; one that is wedged must
+    // not hold a deploy open. Ten seconds, then take it.
+    const forced = setTimeout(() => {
+      console.error(`${signal}: workers did not stop in time, forcing`)
+      for (const worker of Object.values(cluster.workers ?? {})) {
+        worker?.process.kill('SIGKILL')
+      }
+      process.exit(1)
+    }, FORCE_STOP_MS)
+    forced.unref()
   }
   process.on('SIGTERM', () => {
     stop('SIGTERM')
@@ -199,8 +227,24 @@ function runWorker(): void {
     }
   )
 
+  let closing = false
   const shutdown = (): void => {
+    if (closing) return
+    closing = true
+
+    // `server.close` waits for every open connection to end, and a browser's
+    // keep-alive connection sits open and idle for minutes after the page has
+    // finished loading. Closing the idle ones is what lets a worker that is
+    // doing nothing actually stop; without it the wait is not for work, it is
+    // for a socket nobody is using.
+    server.closeIdleConnections()
+    const forced = setTimeout(() => {
+      server.closeAllConnections()
+    }, FORCE_STOP_MS / 2)
+    forced.unref()
+
     server.close(() => {
+      clearTimeout(forced)
       db.destroy().then(
         () => process.exit(0),
         () => process.exit(1)
