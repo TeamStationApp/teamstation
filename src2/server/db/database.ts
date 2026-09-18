@@ -281,6 +281,15 @@ export interface EmailCodesTable {
   created_at: Timestamp
   expires_at: Timestamp
   consumed_at: Timestamp | null
+  /** The link in the same e-mail. One sign-in, two doors. */
+  token_hash: string | null
+  /** Where the sign-in was asked for, so the link comes back to it. */
+  origin: Generated<'web' | 'ios' | 'android'>
+  /** Where the person was going before they were asked to sign in. */
+  next_path: string | null
+  /** Held by the machine that asked, so it can finish a sign-in done elsewhere. */
+  client_secret_hash: string | null
+  approved_at: Timestamp | null
 }
 
 export interface RateEventsTable {
