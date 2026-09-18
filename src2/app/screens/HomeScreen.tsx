@@ -344,7 +344,6 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
           </Text>
         </Card>
       )}
-
     </Screen>
   )
 }
