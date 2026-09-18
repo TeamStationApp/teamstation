@@ -1,0 +1,15 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["TEAMID.co.gamestation.app"],
+        "components": [
+          {
+            "/": "/signin/*",
+            "comment": "the sign-in link from the e-mail"
+          }
+        ]
+      }
+    ]
+  }
+}
