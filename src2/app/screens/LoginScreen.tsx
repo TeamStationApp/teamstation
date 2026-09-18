@@ -1,9 +1,10 @@
-import React, { useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { Text, View } from 'react-native'
 
-import type { GameStationClient, Session } from '../../common/api'
+import type { GameStationClient, Session, SignInWait } from '../../common/api'
 import { Button, Card, Screen, TextField } from '../components'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { rememberRequest } from './SignInLinkScreen'
 
 export interface LoginScreenProps {
   client: GameStationClient
@@ -41,6 +42,14 @@ export function LoginScreen(props: LoginScreenProps): React.ReactElement {
   const [password, setPassword] = useState('')
   const [code, setCode] = useState('')
   const [codeSent, setCodeSent] = useState(false)
+  /**
+   * The sign-in this screen is waiting on.
+   *
+   * Kept so that tapping the button in the e-mail on another machine finishes
+   * the sign-in here: this client polls with a secret only it holds, and the
+   * moment the link is spent anywhere it gets its own session.
+   */
+  const waiting = useRef<SignInWait | undefined>(undefined)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | undefined>(undefined)
 
@@ -60,10 +69,38 @@ export function LoginScreen(props: LoginScreenProps): React.ReactElement {
 
   const sendCode = (): void => {
     run(async () => {
-      await client.requestEmailCode(email.trim())
+      const wait = await client.requestEmailCode(email.trim(), {
+        origin: 'web'
+      })
+      waiting.current = wait
+      // So that the link in the mail, opened in this browser, is one tap: a
+      // request this browser made is a request a person made.
+      rememberRequest(wait.requestId)
       setCodeSent(true)
     })
   }
+
+  // While the code screen is up, ask every few seconds whether the sign-in has
+  // been approved somewhere else — which is what a tap on the e-mail's button
+  // from a laptop, or from the phone app, amounts to.
+  useEffect(() => {
+    if (!codeSent) return
+    let live = true
+    const timer = setInterval(() => {
+      const wait = waiting.current
+      if (wait == null) return
+      client
+        .claimSignIn(wait)
+        .then(session => {
+          if (live && session != null) onSignedIn(session)
+        })
+        .catch(() => undefined)
+    }, 3000)
+    return () => {
+      live = false
+      clearInterval(timer)
+    }
+  }, [client, codeSent, onSignedIn])
 
   const signInWithCode = (): void => {
     run(async () => {

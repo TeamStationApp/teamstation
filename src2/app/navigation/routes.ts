@@ -30,6 +30,15 @@ export type Route =
       at?: number
     }
   | { name: 'signIn'; next?: string }
+  /**
+   * The link from the sign-in e-mail.
+   *
+   * Loading it does nothing on its own: the page comes up and the app decides
+   * whether to spend the token, which is what keeps a mail scanner — which
+   * follows links and runs no scripts — from burning a sign-in before it is
+   * read.
+   */
+  | { name: 'signInLink'; token: string; requestId?: string }
 
 const WHENS = new Set<string>(['upcoming', 'past', 'all'])
 
@@ -57,6 +66,13 @@ export function parseRoute(path: string, search = ''): Route {
       return { name: 'account' }
     case 'sign-in':
       return { name: 'signIn', next: safeNext(query.get('next')) }
+    case 'signin':
+      if (id == null) return { name: 'signIn' }
+      return {
+        name: 'signInLink',
+        token: id,
+        requestId: query.get('r') ?? undefined
+      }
     case 'teams':
       if (id == null) return { name: 'home' }
       return { name: 'team', teamId: id, tab: query.get('tab') ?? undefined }
@@ -103,6 +119,8 @@ export function routePath(route: Route): string {
         : `/schedule?when=${route.when}`
     case 'account':
       return '/account'
+    case 'signInLink':
+      return `/signin/${route.token}`
     case 'team':
       return route.tab == null || route.tab === 'videos'
         ? `/teams/${route.teamId}`
