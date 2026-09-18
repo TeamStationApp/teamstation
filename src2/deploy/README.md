@@ -49,6 +49,65 @@ ssh root@tube.gamestation.co git -C /srv/gamestation/repo log --oneline -1
    to the previous version automatically** and the deploy fails loudly.
 7. Removes all but the newest five builds.
 
+## Caddy must not cache a playlist
+
+`/media/*` is served by Caddy, and everything under it used to carry
+`Cache-Control: private, max-age=3600`. That is right for a segment, which
+never changes once written and is the big file — and wrong for the playlist,
+which a live game rewrites every few seconds for hours. Cached, the player
+re-fetches it, is handed the copy it already had, and runs out of segments:
+a live game plays for as long as it had been running when somebody opened it
+and then stops, looking exactly like a recording that ends early.
+
+So the media block splits the two:
+
+```caddyfile
+@playlist path *.m3u8
+header @playlist Content-Type application/vnd.apple.mpegurl
+header @playlist Cache-Control "no-store"
+@segment not path *.m3u8
+header @segment Cache-Control "private, max-age=3600"
+```
+
+**The Caddyfile lives on the box and not in this repository**, so nothing
+enforces this. `server/routes/devMedia.ts` does the same thing for development
+and does have a comment; if the two ever disagree, this is the one that decides
+what a viewer sees.
+
+## What live streaming needs on the box
+
+**None of this has been done on the server yet** — it is written here because
+the code is ready and the box is not, and because every one of these is a thing
+that fails quietly rather than loudly.
+
+1. **A port open for the ingest.** The RTMP listener binds `live.port` (1936
+   while PeerTube still holds 1935). Both the droplet firewall and `ufw` have to
+   allow it inbound; nothing else on the box listens there.
+2. **`live.publicUrl` in `serverConfig.json`** — `rtmp://live.gamestation.co:1936`
+   or whichever name the DNS gets. Without it a stream URL names the bind
+   address, which is right on a laptop and useless to somebody with an encoder.
+3. **`mediaSecret` set.** Without it the server generates one at boot, and every playback URL
+   already in somebody's player dies the moment the server restarts — which during a game means
+   every viewer's picture stops at once, a few minutes into a deploy nobody thought was risky. It
+   costs one line of config and never has to change.
+4. **`sessionSecret` set.** It seals the stream keys. An empty one means no
+   key can be issued, which the API now says in a sentence — and changing it
+   later makes every key unreadable, so they would have to be issued again
+   rather than recovered.
+5. **A DNS record for the ingest name**, if it is to be its own name rather than
+   `tube.gamestation.co`. Nothing in the code cares which; the URL is built from
+   the setting.
+6. **Disk.** A three-hour game at 3 Mbit is about **4 GB** — measured: 25 min 39 s
+   at 1.5 Mbit came to 565 MiB. The segments and the finished recording sit side
+   by side from the moment the remux starts until the local copy is swept six
+   hours later, so the peak is **twice** that, and the copy in the Space is a
+   third. `live.freeDiskFloorGb` (10 by default) refuses a new stream rather
+   than filling the volume mid-game; it wants to be comfortably more than two
+   games. The work volume should have room for a weekend, not one game.
+
+The ingest runs in **one** process — the cluster primary — so nothing changes
+about the systemd unit. It is off entirely when `live.enabled` is false.
+
 ## Going back
 
 ```sh
