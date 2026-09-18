@@ -8,6 +8,11 @@ import express from 'express'
 
 import { makeDatabase } from './db/database'
 import { mailConfigured, sendSignInCode } from './email/sendMail'
+import {
+  type LiveControllerOptions,
+  startLiveController,
+  stopLiveController
+} from './live/controller'
 import type { MediaContext } from './media/mediaContext'
 import { withAudit } from './middleware/withAudit'
 import { withActor } from './middleware/withAuth'
@@ -17,6 +22,8 @@ import { openApiDocument } from './openapi'
 import { authRoutes } from './routes/auth'
 import { devMediaRoutes } from './routes/devMedia'
 import { healthRoutes } from './routes/health'
+import type { LiveRouteOptions } from './routes/live'
+import { liveRoutes } from './routes/live'
 import { mediaAuthRoute, mediaRoutes } from './routes/media'
 import { seasonRoutes } from './routes/seasons'
 import { statsRoutes } from './routes/stats'
@@ -119,6 +126,84 @@ async function sendCode(
 }
 
 /**
+ * The live ingest runs in exactly one process.
+ *
+ * It binds an RTMP port and holds the ffmpeg children writing a game's HLS, so
+ * a second copy would fight the first for both. Clustered, that process is the
+ * primary, which listens for nothing else; unclustered, it is the one process
+ * there is. Every API worker reaches a stream by writing its row — see
+ * `server/live/controller.ts`.
+ */
+function liveControllerOptions(
+  db: ReturnType<typeof makeDatabase>
+): LiveControllerOptions {
+  return {
+    db,
+    live: serverConfig.live,
+    ffmpegPath: serverConfig.ffmpegPath,
+    mediaRoot: serverConfig.mediaDir,
+    workDir: serverConfig.workDir,
+    sessionSecret: serverConfig.sessionSecret,
+    space: serverConfig.space
+  }
+}
+
+function liveRouteOptions(): LiveRouteOptions {
+  let fallbackHost = serverConfig.listenHost
+  try {
+    fallbackHost = new URL(serverConfig.publicUrl).hostname
+  } catch {
+    // A publicUrl that is not a URL is a configuration mistake worth surviving:
+    // the stream URL then names the bind address, which is wrong but visible.
+  }
+  return {
+    live: serverConfig.live,
+    sessionSecret: serverConfig.sessionSecret,
+    fallbackHost
+  }
+}
+
+/**
+ * Stills are written to `workDir` and served from `mediaDir/work`.
+ *
+ * Nothing makes those the same place, and when they are not, every thumbnail
+ * in the app is a plain plate and nothing anywhere says why — the still is cut,
+ * filed, and then looked for somewhere else. It costs one comparison at boot to
+ * say so out loud.
+ */
+function checkStillsAreReachable(): void {
+  const wanted = path.join(serverConfig.mediaDir, 'work')
+  if (path.resolve(serverConfig.workDir) === path.resolve(wanted)) return
+  console.error(
+    `workDir is ${serverConfig.workDir} but stills are served from ${wanted}: ` +
+      'no thumbnail will be found. One of the two settings is wrong.'
+  )
+}
+
+function startLive(db: ReturnType<typeof makeDatabase>): void {
+  if (!serverConfig.live.enabled) {
+    console.log('live ingest is switched off (live.enabled is false)')
+    return
+  }
+  if (serverConfig.sessionSecret === '') {
+    console.error('live ingest disabled: sessionSecret is not set')
+    return
+  }
+  if (serverConfig.live.publicUrl === '') {
+    // Said at the top of the log rather than discovered by an operator whose
+    // stream URL names 0.0.0.0. It is the one live setting with no sensible
+    // default: only the deployment knows what the ingest is called from
+    // outside.
+    console.error(
+      'live.publicUrl is not set: stream URLs will name the bind address, ' +
+        'which nobody outside this machine can publish to'
+    )
+  }
+  const started = startLiveController(liveControllerOptions(db))
+  if (!started) console.error('live ingest did not start')
+}
+
+/**
  * The primary forks one worker per CPU and replaces any that dies; the workers
  * share the listening socket, so a slow request on one never blocks another.
  * Set `clusterWorkers` to 1 when debugging, so breakpoints land in the only
@@ -127,6 +212,9 @@ async function sendCode(
 function runPrimary(workerCount: number): void {
   // Before forking, so every worker inherits the same one.
   resolveMediaSecret()
+  checkStillsAreReachable()
+  const liveDb = makeDatabase(serverConfig.databaseUrl)
+  startLive(liveDb)
   console.log(`gamestation ${VERSION}: forking ${workerCount} workers`)
   for (let i = 0; i < workerCount; i++) cluster.fork()
 
@@ -149,6 +237,7 @@ function runPrimary(workerCount: number): void {
   const stop = (signal: string): void => {
     if (stopping) return
     stopping = true
+    stopLiveController()
     const workers = Object.values(cluster.workers ?? {})
     console.log(`${signal}: stopping ${workers.length} workers`)
     if (workers.length === 0) process.exit(0)
@@ -211,6 +300,7 @@ function runWorker(): void {
   app.use('/api/v1', teamRoutes(db, mediaContext))
   app.use('/api/v1', statsRoutes(db))
   app.use('/api/v1', mediaRoutes(db, mediaContext))
+  app.use('/api/v1', liveRoutes(db, liveRouteOptions()))
 
   // What the reverse proxy's auth check calls. Not under /api/v1: it is not a
   // public endpoint, and the proxy is the only thing that should ever reach it.
@@ -234,10 +324,14 @@ function runWorker(): void {
     }
   )
 
+  // Unclustered — one process, which is both the API and the ingest.
+  if (cluster.isPrimary) startLive(db)
+
   let closing = false
   const shutdown = (): void => {
     if (closing) return
     closing = true
+    stopLiveController()
 
     // `server.close` waits for every open connection to end, and a browser's
     // keep-alive connection sits open and idle for minutes after the page has
