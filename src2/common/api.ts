@@ -495,6 +495,58 @@ export const asMaybeSession = asEither(
   asSession
 )
 
+/** One invite code, as the panel that made it shows it. */
+export const asInvite = asObject({
+  id: asString,
+  code: asString,
+  /** The address to send somebody, built by the server. */
+  url: asString,
+  scopeType: asValue('league', 'season', 'team'),
+  scopeId: asString,
+  label: asNullable(asString),
+  maxUses: asNullable(asNumber),
+  uses: asNumber,
+  expiresAt: asNullable(asString),
+  revokedAt: asNullable(asString),
+  createdAt: asString,
+  /** Why it no longer works, or null while it does. */
+  problem: asNullable(asValue('revoked', 'expired', 'exhausted'))
+})
+export type Invite = ReturnType<typeof asInvite>
+
+export const asInviteList = asObject({
+  /** False for somebody who can see the page but does not administer it. */
+  canInvite: asBoolean,
+  invites: asArray(asInvite)
+})
+export type InviteList = ReturnType<typeof asInviteList>
+
+/** What is behind a code, for the screen its link opens. */
+export const asInviteInfo = asObject({
+  code: asString,
+  valid: asBoolean,
+  problem: asNullable(asValue('revoked', 'expired', 'exhausted')),
+  scope: asObject({
+    kind: asValue('league', 'season', 'team'),
+    id: asString,
+    name: asString
+  }),
+  signedIn: asBoolean,
+  /** True when they already have what it offers, which is not a failure. */
+  alreadyIn: asBoolean
+})
+export type InviteInfo = ReturnType<typeof asInviteInfo>
+
+export const asRedeemed = asObject({
+  granted: asBoolean,
+  scope: asObject({
+    kind: asValue('league', 'season', 'team'),
+    id: asString,
+    name: asString
+  })
+})
+export type Redeemed = ReturnType<typeof asRedeemed>
+
 export interface ClientOptions {
   baseUrl: string
   token?: string
@@ -807,6 +859,74 @@ export class GameStationClient {
       'GET',
       `/seasons/${encodeURIComponent(seasonId)}/standings`,
       asArray(asStandingsRow)
+    )
+  }
+
+  /** The invite codes for one league, season or team. */
+  async invites(
+    scopeType: 'league' | 'season' | 'team',
+    scopeId: string
+  ): Promise<InviteList> {
+    return await this.request(
+      'GET',
+      `/invites?scopeType=${scopeType}&scopeId=${encodeURIComponent(scopeId)}`,
+      asInviteList
+    )
+  }
+
+  async createInvite(options: {
+    scopeType: 'league' | 'season' | 'team'
+    scopeId: string
+    code?: string
+    label?: string
+    maxUses?: number
+    expiresAt?: string
+  }): Promise<Invite> {
+    return await this.request('POST', '/invites', asInvite, options)
+  }
+
+  /** Stops an invite. The row stays, so who came in through it still reads. */
+  async revokeInvite(inviteId: string): Promise<void> {
+    await this.request(
+      'DELETE',
+      `/invites/${encodeURIComponent(inviteId)}`,
+      asUnknownOk
+    )
+  }
+
+  /** What a code is worth, asked before anybody signs in. */
+  async inviteInfo(code: string): Promise<InviteInfo> {
+    return await this.request(
+      'GET',
+      `/join/${encodeURIComponent(code)}`,
+      asInviteInfo
+    )
+  }
+
+  /** Take up the invite as whoever is signed in now. */
+  async redeemInvite(code: string): Promise<Redeemed> {
+    return await this.request(
+      'POST',
+      `/join/${encodeURIComponent(code)}/redeem`,
+      asRedeemed,
+      {}
+    )
+  }
+
+  /**
+   * Asks for a sign-in code that carries the invite, which is what lets
+   * somebody with no account come in through one: the account is made when
+   * that code is typed or its link opened, not now.
+   */
+  async requestInviteCode(
+    code: string,
+    options: { email: string; displayName?: string; next?: string }
+  ): Promise<SignInWait> {
+    return await this.request(
+      'POST',
+      `/join/${encodeURIComponent(code)}/email-code`,
+      asSignInWait,
+      { ...options, origin: 'web' }
     )
   }
 

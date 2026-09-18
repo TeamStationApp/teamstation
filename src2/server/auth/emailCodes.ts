@@ -31,7 +31,17 @@ export async function createEmailCode(
   db: Kysely<Database>,
   email: string,
   purpose: CodePurpose,
-  options: { origin?: SignInOrigin; next?: string | null } = {}
+  options: {
+    origin?: SignInOrigin
+    next?: string | null
+    /**
+     * An invite this sign-in carries, which is what lets it make an account.
+     * Whichever door the person comes back through finds it on the row.
+     */
+    inviteId?: string | null
+    /** What an account made by that invite will be called. */
+    displayName?: string | null
+  } = {}
 ): Promise<SignInRequest> {
   const normalised = email.trim().toLowerCase()
   const now = new Date()
@@ -61,6 +71,8 @@ export async function createEmailCode(
       client_secret_hash: hashEmailCode(clientSecret),
       origin: options.origin ?? 'web',
       next_path: options.next ?? null,
+      invite_id: options.inviteId ?? null,
+      display_name: options.displayName ?? null,
       purpose,
       expires_at: expiresAt
     })
@@ -73,6 +85,9 @@ export interface LinkClaim {
   email: string
   next: string | null
   origin: SignInOrigin
+  /** Set when this sign-in was asked for from an invite. */
+  inviteId: string | null
+  displayName: string | null
 }
 
 /**
@@ -90,7 +105,16 @@ export async function claimSignInLink(
   const now = new Date()
   const row = await db
     .selectFrom('email_codes')
-    .select(['id', 'email', 'expires_at', 'consumed_at', 'next_path', 'origin'])
+    .select([
+      'id',
+      'email',
+      'expires_at',
+      'consumed_at',
+      'next_path',
+      'origin',
+      'invite_id',
+      'display_name'
+    ])
     .where('token_hash', '=', hashEmailCode(token.trim()))
     .where('purpose', '=', 'login')
     .executeTakeFirst()
@@ -106,7 +130,13 @@ export async function claimSignInLink(
     .where('consumed_at', 'is', null)
     .execute()
 
-  return { email: row.email, next: row.next_path, origin: row.origin }
+  return {
+    email: row.email,
+    next: row.next_path,
+    origin: row.origin,
+    inviteId: row.invite_id,
+    displayName: row.display_name
+  }
 }
 
 /**
@@ -120,10 +150,23 @@ export async function claimApprovedRequest(
   db: Kysely<Database>,
   id: string,
   clientSecret: string
-): Promise<{ email: string; next: string | null } | null> {
+): Promise<{
+  email: string
+  next: string | null
+  inviteId: string | null
+  displayName: string | null
+} | null> {
   const row = await db
     .selectFrom('email_codes')
-    .select(['id', 'email', 'approved_at', 'client_secret_hash', 'next_path'])
+    .select([
+      'id',
+      'email',
+      'approved_at',
+      'client_secret_hash',
+      'next_path',
+      'invite_id',
+      'display_name'
+    ])
     .where('id', '=', id)
     .executeTakeFirst()
   if (row?.approved_at == null) return null
@@ -131,35 +174,54 @@ export async function claimApprovedRequest(
   if (!tokensMatch(row.client_secret_hash, hashEmailCode(clientSecret))) {
     return null
   }
-  return { email: row.email, next: row.next_path }
+  return {
+    email: row.email,
+    next: row.next_path,
+    inviteId: row.invite_id,
+    displayName: row.display_name
+  }
+}
+
+/** What a spent code carried, beyond the fact that it was right. */
+export interface CodeClaim {
+  inviteId: string | null
+  displayName: string | null
 }
 
 /**
  * Checks a code and consumes it on success. A wrong guess counts against the
  * code, and the code dies after five, so a six-digit secret cannot be walked
- * through. Returns false for expired, consumed, exhausted and wrong alike.
+ * through. Returns null for expired, consumed, exhausted and wrong alike, and
+ * on success whatever the sign-in was asked for with.
  */
 export async function verifyEmailCode(
   db: Kysely<Database>,
   email: string,
   purpose: CodePurpose,
   code: string
-): Promise<boolean> {
+): Promise<CodeClaim | null> {
   const normalised = email.trim().toLowerCase()
   const now = new Date()
 
   const row = await db
     .selectFrom('email_codes')
-    .select(['id', 'code_hash', 'attempts', 'expires_at'])
+    .select([
+      'id',
+      'code_hash',
+      'attempts',
+      'expires_at',
+      'invite_id',
+      'display_name'
+    ])
     .where('email', '=', normalised)
     .where('purpose', '=', purpose)
     .where('consumed_at', 'is', null)
     .orderBy('created_at', 'desc')
     .executeTakeFirst()
 
-  if (row == null) return false
-  if (new Date(row.expires_at).getTime() <= now.getTime()) return false
-  if (row.attempts >= MAX_ATTEMPTS) return false
+  if (row == null) return null
+  if (new Date(row.expires_at).getTime() <= now.getTime()) return null
+  if (row.attempts >= MAX_ATTEMPTS) return null
 
   if (row.code_hash !== hashEmailCode(code.trim())) {
     await db
@@ -167,7 +229,7 @@ export async function verifyEmailCode(
       .set({ attempts: row.attempts + 1 })
       .where('id', '=', row.id)
       .execute()
-    return false
+    return null
   }
 
   await db
@@ -175,5 +237,5 @@ export async function verifyEmailCode(
     .set({ consumed_at: now, approved_at: now })
     .where('id', '=', row.id)
     .execute()
-  return true
+  return { inviteId: row.invite_id, displayName: row.display_name }
 }

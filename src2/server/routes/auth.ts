@@ -12,6 +12,7 @@ import {
   type SignInRequest,
   verifyEmailCode
 } from '../auth/emailCodes'
+import type { FoundUser } from '../auth/emails'
 import { findUserByEmail, primaryEmail } from '../auth/emails'
 import { passwordMatches } from '../auth/passwords'
 import {
@@ -23,6 +24,7 @@ import {
 import { createSession, revokeSession } from '../auth/sessions'
 import { makeToken, SESSION_COOKIE, sessionToken } from '../auth/tokens'
 import type { Database } from '../db/database'
+import { settleInviteSignIn } from '../invites/joining'
 import { imageUrl } from '../media/imageUrls'
 import type { SpaceSettings } from '../media/spacesHls'
 import { requireActor } from '../middleware/withAuth'
@@ -220,6 +222,29 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
   const router = Router()
   const secureCookie = options.publicUrl?.startsWith('http://') !== true
 
+  /**
+   * Who this sign-in is for — making the account first when it came from an
+   * invite and there is nobody there yet.
+   *
+   * Every way of finishing a sign-in comes through here, because a person who
+   * asked on a phone may well finish on a laptop, and the account must be
+   * made exactly once no matter which of the three arrives. An address that
+   * already has an account is simply found, invite or not.
+   */
+  const userForSignIn = async (
+    email: string,
+    claim: { inviteId: string | null; displayName: string | null }
+  ): Promise<FoundUser | undefined> => {
+    if (claim.inviteId != null) {
+      await settleInviteSignIn(db, {
+        email,
+        inviteId: claim.inviteId,
+        displayName: claim.displayName
+      })
+    }
+    return await findUserByEmail(db, email)
+  }
+
   /** The signed-in person's own picture, for the header. */
   const avatarFor = async (userId: string): Promise<string | null> => {
     if (options.space == null) return null
@@ -339,9 +364,9 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
       // A code already dies after five wrong guesses. This is the bound across
       // *codes*: without it, a guesser could ask for a new one every five tries
       // and keep going, which is the same attack wearing a hat.
-      const good = await verifyEmailCode(db, email, 'login', body.code)
-      const user = good ? await findUserByEmail(db, email) : null
-      if (!good || user == null) {
+      const claim = await verifyEmailCode(db, email, 'login', body.code)
+      const user = claim == null ? null : await userForSignIn(email, claim)
+      if (claim == null || user == null) {
         await recordAttempts(db, rules)
         throw unauthorized('That code is wrong or has expired')
       }
@@ -389,7 +414,8 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
       await checkLimits(db, rules)
 
       const claim = await claimSignInLink(db, body.token)
-      const user = claim == null ? null : await findUserByEmail(db, claim.email)
+      const user =
+        claim == null ? null : await userForSignIn(claim.email, claim)
       if (claim == null || user == null) {
         await recordAttempts(db, rules)
         throw unauthorized('That link is no longer good')
@@ -434,7 +460,7 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
         res.status(202).json({ ready: false })
         return
       }
-      const user = await findUserByEmail(db, claim.email)
+      const user = await userForSignIn(claim.email, claim)
       if (user == null) throw unauthorized('That sign-in is no longer good')
 
       const session = await createSession(

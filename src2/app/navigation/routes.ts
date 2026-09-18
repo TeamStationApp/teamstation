@@ -31,6 +31,16 @@ export type Route =
     }
   | { name: 'signIn'; next?: string }
   /**
+   * An invite link, `/i/<code>`.
+   *
+   * The address PeerTube's invite links already use, kept exactly: the codes
+   * on this site were handed out as `tube.gamestation.co/i/demo2026` and are
+   * in mailboxes and team sheets that nobody can edit. A screen at the same
+   * path is the only way those keep working the day GameStation takes the
+   * domain over.
+   */
+  | { name: 'join'; code: string }
+  /**
    * The link from the sign-in e-mail.
    *
    * Loading it does nothing on its own: the page comes up and the app decides
@@ -66,6 +76,16 @@ export function parseRoute(path: string, search = ''): Route {
       return { name: 'account' }
     case 'sign-in':
       return { name: 'signIn', next: safeNext(query.get('next')) }
+    case 'i':
+      if (id == null) return { name: 'home' }
+      return { name: 'join', code: id }
+    case 'video-channels':
+    case 'c':
+      // PeerTube's longer form, `/c/invite/<code>`, which its own sign-in and
+      // registration screens redirected through. Read, never written: one
+      // address is enough to hand out.
+      if (parts[1] !== 'invite' || parts[2] == null) return { name: 'home' }
+      return { name: 'join', code: parts[2] }
     case 'signin':
       if (id == null) return { name: 'signIn' }
       return {
@@ -152,6 +172,8 @@ export function routePath(route: Route): string {
         ? `/games/${route.gameId}`
         : `/games/${route.gameId}?${text}`
     }
+    case 'join':
+      return `/i/${route.code}`
     case 'signIn':
       return route.next == null
         ? '/sign-in'

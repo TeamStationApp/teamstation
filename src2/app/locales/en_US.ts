@@ -115,6 +115,53 @@ export const enUs = {
   standings_runs_for: 'RF',
   standings_runs_against: 'RA',
 
+  // Invites
+  invite_title: 'Invite people',
+  invite_detail:
+    'Anybody with the link can watch %s. They will be asked for their name and e-mail address.',
+  invite_none: 'No invite links yet.',
+  invite_create: 'Create an invite link',
+  invite_code_label: 'Code (optional)',
+  invite_code_placeholder: 'fall26',
+  invite_label_label: 'What it is for (optional)',
+  invite_label_placeholder: 'Parents',
+  invite_submit: 'Create',
+  invite_cancel: 'Cancel',
+  invite_copy: 'Copy link',
+  invite_copied: 'Copied',
+  invite_revoke: 'Stop this link',
+  invite_uses_none: 'Never used',
+  invite_uses_one: 'Used once',
+  invite_uses_many: 'Used %s times',
+  invite_revoked: 'Stopped',
+  invite_expired: 'Expired',
+  invite_exhausted: 'All used up',
+
+  // Coming in through an invite
+  join_header: 'Invitation',
+  join_loading: 'Checking that invite…',
+  join_unknown: 'That invite link is not good',
+  join_unknown_detail:
+    'It may have been stopped, or the address may have been copied out of an e-mail with a piece missing.',
+  join_dead: 'That invite link is no longer good',
+  join_title: 'You have been invited',
+  join_scope_team: 'You are invited to watch %s',
+  join_scope_season: 'You are invited to watch the whole %s season',
+  join_scope_league: 'You are invited to watch everything in %s',
+  join_name: 'Your name',
+  join_name_placeholder: 'Alex Rivera',
+  join_email: 'E-mail address',
+  join_email_placeholder: 'parent@example.com',
+  join_send_code: 'Send me a sign-in code',
+  join_code: 'Sign-in code',
+  join_code_sent:
+    'A six-digit code is on its way. It lasts ten minutes, and the link in the same message works too.',
+  join_finish: 'Join',
+  join_accept: 'Accept the invitation',
+  join_already: 'You can already watch %s.',
+  join_welcome: 'You are in. %s is on your home screen.',
+  join_open: 'Have a look',
+
   // Shared
   common_back: 'Back',
   common_retry: 'Try again',

@@ -121,6 +121,20 @@ export interface SeasonMembersTable {
   joined_at: Timestamp
 }
 
+/**
+ * Belonging to a **league**, which is how a league-scoped invite means
+ * anything: a league member sees every season of it, including the ones it
+ * does not have yet.
+ */
+export interface LeagueMembersTable {
+  id: string
+  user_id: string
+  league_id: string
+  role: Generated<'spectator' | 'member'>
+  source: Generated<'peertube' | 'import' | 'manual'>
+  joined_at: Timestamp
+}
+
 export interface SeasonTeamsTable {
   season_id: string
   team_id: string
@@ -292,6 +306,35 @@ export interface LoginRequestsTable {
   consumed_at: Timestamp | null
 }
 
+/**
+ * A standing offer to let somebody in, made by an administrator of the league,
+ * season or team it names.
+ */
+export interface InvitesTable {
+  id: string
+  code: string
+  scope_type: 'league' | 'season' | 'team'
+  scope_id: string
+  created_by: string | null
+  label: string | null
+  /** Null for an invite that never runs out of uses, which is the usual one. */
+  max_uses: number | null
+  uses: Generated<number>
+  expires_at: Timestamp | null
+  revoked_at: Timestamp | null
+  source: Generated<'peertube' | 'manual'>
+  created_at: Timestamp
+}
+
+/** Who redeemed which invite, and whether that is where their account began. */
+export interface InviteRedemptionsTable {
+  id: string
+  invite_id: string
+  user_id: string
+  created_account: Generated<boolean>
+  redeemed_at: Timestamp
+}
+
 export interface EmailCodesTable {
   id: string
   email: string
@@ -310,6 +353,10 @@ export interface EmailCodesTable {
   /** Held by the machine that asked, so it can finish a sign-in done elsewhere. */
   client_secret_hash: string | null
   approved_at: Timestamp | null
+  /** The invite this sign-in carries, so finishing it also lets them in. */
+  invite_id: string | null
+  /** What an account made by that invite will be called. */
+  display_name: string | null
 }
 
 export interface RateEventsTable {
@@ -431,6 +478,9 @@ export interface Database {
   events: EventsTable
   external_ids: ExternalIdsTable
   games: GamesTable
+  invite_redemptions: InviteRedemptionsTable
+  invites: InvitesTable
+  league_members: LeagueMembersTable
   leagues: LeaguesTable
   live_streams: LiveStreamsTable
   login_requests: LoginRequestsTable

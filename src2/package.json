@@ -15,6 +15,7 @@
     "demo": "node -r sucrase/register server/dev/demo.ts",
     "duplicate-people": "node -r sucrase/register server/dev/duplicatePeople.ts",
     "fake-space": "node -r sucrase/register server/dev/fakeSpace.ts",
+    "import-invites": "node -r sucrase/register server/dev/importInvites.ts",
     "lint": "eslint .",
     "merge-team": "node -r sucrase/register server/dev/mergeTeam.ts",
     "migrate": "node -r sucrase/register migrate/cli.ts",

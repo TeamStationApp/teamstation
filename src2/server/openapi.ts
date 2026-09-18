@@ -42,7 +42,6 @@ const videoIdParam = {
   schema: { type: 'string' }
 }
 
-
 const userIdParam = {
   name: 'userId',
   in: 'path',
@@ -163,6 +162,57 @@ export function openApiDocument(version: string): OpenApiDocument {
               type: 'string',
               description: 'The whole thing, key and all, for pasting'
             }
+          }
+        },
+        Invite: {
+          type: 'object',
+          required: ['id', 'code', 'url', 'scopeType', 'scopeId', 'uses'],
+          description:
+            'A standing offer to let somebody watch a league, a season or a ' +
+            'team. `url` is the address to hand out, which is the same ' +
+            '`/i/<code>` path PeerTube used so that links already in ' +
+            'mailboxes keep working.',
+          properties: {
+            id: { type: 'string' },
+            code: { type: 'string' },
+            url: { type: 'string' },
+            scopeType: { type: 'string', enum: ['league', 'season', 'team'] },
+            scopeId: { type: 'string' },
+            label: { type: ['string', 'null'] },
+            maxUses: { type: ['integer', 'null'] },
+            uses: { type: 'integer' },
+            expiresAt: { type: ['string', 'null'], format: 'date-time' },
+            revokedAt: { type: ['string', 'null'], format: 'date-time' },
+            createdAt: { type: 'string', format: 'date-time' },
+            problem: {
+              type: ['string', 'null'],
+              enum: ['revoked', 'expired', 'exhausted', null],
+              description: 'Why it no longer works, or null while it does'
+            }
+          }
+        },
+        InviteInfo: {
+          type: 'object',
+          required: ['code', 'valid', 'scope', 'signedIn', 'alreadyIn'],
+          description: 'What is behind a code, for the screen its link opens.',
+          properties: {
+            code: { type: 'string' },
+            valid: { type: 'boolean' },
+            problem: {
+              type: ['string', 'null'],
+              enum: ['revoked', 'expired', 'exhausted', null]
+            },
+            scope: {
+              type: 'object',
+              required: ['kind', 'id', 'name'],
+              properties: {
+                kind: { type: 'string', enum: ['league', 'season', 'team'] },
+                id: { type: 'string' },
+                name: { type: 'string' }
+              }
+            },
+            signedIn: { type: 'boolean' },
+            alreadyIn: { type: 'boolean' }
           }
         },
         Session: {
@@ -576,6 +626,261 @@ export function openApiDocument(version: string): OpenApiDocument {
             },
             401: errorResponse,
             404: errorResponse
+          }
+        }
+      },
+      '/invites': {
+        get: {
+          summary: 'The invite codes for one league, season or team',
+          description:
+            'Answers `canInvite: false` with an empty list for somebody who ' +
+            'can see the page but does not administer it, so the panel ' +
+            'simply does not draw itself.',
+          security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'scopeType',
+              in: 'query',
+              required: true,
+              schema: { type: 'string', enum: ['league', 'season', 'team'] }
+            },
+            {
+              name: 'scopeId',
+              in: 'query',
+              required: true,
+              schema: { type: 'string' }
+            }
+          ],
+          responses: {
+            200: {
+              description: 'What may be done here, and what is already made',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['canInvite', 'invites'],
+                    properties: {
+                      canInvite: { type: 'boolean' },
+                      invites: {
+                        type: 'array',
+                        items: { $ref: '#/components/schemas/Invite' }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            400: errorResponse,
+            401: errorResponse
+          }
+        },
+        post: {
+          summary: 'Make an invite code',
+          description:
+            'Administrators only, of the very league, season or team named ' +
+            '— and rights inherit downwards, so a league administrator may ' +
+            'invite to any of its teams. A code of your own is allowed; ' +
+            'left out, one is generated.',
+          security: [{ bearer: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['scopeType', 'scopeId'],
+                  properties: {
+                    scopeType: {
+                      type: 'string',
+                      enum: ['league', 'season', 'team']
+                    },
+                    scopeId: { type: 'string' },
+                    code: { type: 'string' },
+                    label: { type: 'string' },
+                    maxUses: { type: 'integer', minimum: 1 },
+                    expiresAt: { type: 'string', format: 'date-time' }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            201: {
+              description: 'The invite, with the address to hand out',
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/Invite' }
+                }
+              }
+            },
+            400: errorResponse,
+            401: errorResponse,
+            404: errorResponse,
+            409: errorResponse
+          }
+        }
+      },
+      '/invites/{id}': {
+        delete: {
+          summary: 'Stop an invite code',
+          description:
+            'The row stays, so who came in through it can still be read.',
+          security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'id',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' }
+            }
+          ],
+          responses: {
+            204: { description: 'Stopped' },
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/join/{code}': {
+        get: {
+          summary: 'What an invite code is worth',
+          description:
+            'Answered whether or not anybody is signed in: somebody with no ' +
+            'account has to be told what they are being invited to before ' +
+            'they hand over an address. An unknown code answers 404.',
+          parameters: [
+            {
+              name: 'code',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' }
+            }
+          ],
+          responses: {
+            200: {
+              description: 'The invitation',
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/InviteInfo' }
+                }
+              }
+            },
+            404: errorResponse
+          }
+        }
+      },
+      '/join/{code}/redeem': {
+        post: {
+          summary: 'Take up an invitation as whoever is signed in',
+          description:
+            '`granted` is false when they already had the access, which is ' +
+            'not a failure and does not cost the invite a use.',
+          security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'code',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' }
+            }
+          ],
+          responses: {
+            200: {
+              description: 'What they were let into',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['granted', 'scope'],
+                    properties: {
+                      granted: { type: 'boolean' },
+                      scope: {
+                        type: 'object',
+                        properties: {
+                          kind: {
+                            type: 'string',
+                            enum: ['league', 'season', 'team']
+                          },
+                          id: { type: 'string' },
+                          name: { type: 'string' }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            400: errorResponse,
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/join/{code}/email-code': {
+        post: {
+          summary: 'Ask for a sign-in code that carries this invitation',
+          description:
+            'The way somebody with no account comes in through a link. The ' +
+            'account is made when that code is typed or its link opened — ' +
+            'never here — so an address nobody can read gets nowhere. The ' +
+            'answer is the same whether or not the address already has an ' +
+            'account.',
+          parameters: [
+            {
+              name: 'code',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' }
+            }
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['email'],
+                  properties: {
+                    email: { type: 'string' },
+                    displayName: {
+                      type: 'string',
+                      description: 'What an account made by this will be called'
+                    },
+                    origin: {
+                      type: 'string',
+                      enum: ['web', 'ios', 'android']
+                    },
+                    next: { type: 'string' }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            202: {
+              description: 'The sign-in this client is now waiting on',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['sent', 'requestId', 'clientSecret'],
+                    properties: {
+                      sent: { type: 'boolean' },
+                      requestId: { type: 'string' },
+                      clientSecret: {
+                        type: 'string',
+                        description:
+                          'Held by this client, so a link opened elsewhere ' +
+                          'can finish the sign-in it is waiting on'
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            400: errorResponse,
+            404: errorResponse,
+            429: errorResponse
           }
         }
       },

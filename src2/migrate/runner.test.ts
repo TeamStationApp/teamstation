@@ -75,7 +75,10 @@ describe('migrations', function () {
       'events',
       'event_players',
       'audit_log',
-      'system_settings'
+      'system_settings',
+      'invites',
+      'invite_redemptions',
+      'league_members'
     ]) {
       expect(names.has(table), `missing table ${table}`).equals(true)
     }
