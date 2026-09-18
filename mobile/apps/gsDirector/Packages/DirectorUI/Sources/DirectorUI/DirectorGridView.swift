@@ -122,7 +122,11 @@ public struct DirectorGridView: View {
           .accessibilityIdentifier("header-stream-mbps")
           .accessibilityLabel("\(String(format: "%.2f", environment.streamMegabitsPerSecond)) megabits per second")
 
-        Text("Dropped packets: \(environment.streamDroppedPackets)")
+        // `DP:`, not "Dropped packets:". The header is the one row that has to
+        // hold everything at once, and two words were costing more of it than
+        // they were worth beside a number that is nearly always 0. What it is
+        // spoken as keeps the whole phrase.
+        Text("DP: \(environment.streamDroppedPackets)")
           .font(.system(size: 13, weight: .semibold, design: .rounded))
           .monospacedDigit()
           .foregroundStyle(.white.opacity(0.9))
@@ -175,7 +179,6 @@ public struct DirectorGridView: View {
       .accessibilityIdentifier("settings-button")
 
       if environment.isMacConnected { macPill }
-      archivePill
       programTransportButton(
         isActive: environment.isStreaming,
         idleLabel: "STREAM",
@@ -225,32 +228,6 @@ public struct DirectorGridView: View {
       .foregroundStyle(.white.opacity(0.85))
       .accessibilityIdentifier("mac-pill")
       .accessibilityLabel("GS Distributor connected")
-  }
-
-  /// How many cameras are actually writing, always visible rather than buried in a debug view: an
-  /// archive that quietly stopped — a full disk, a writer that failed — has to be something the
-  /// operator can see during the game rather than discover after it.
-  private var archivePill: some View {
-    let tiles = environment.snapshot.tiles.filter { $0.sourceID != nil }
-    let writing = tiles.filter(\.isArchiving).count
-    let complete = writing == tiles.count
-    let label = environment.isRecording ? "REC \(writing)/\(tiles.count)" : "READY"
-    return Text(label)
-      .font(.system(size: 11, weight: .heavy, design: .rounded))
-      .tracking(1)
-      .padding(.horizontal, 10)
-      .padding(.vertical, 7)
-      .background(
-        complete ? Color.deckPanel : Color.replayAmber,
-        in: RoundedRectangle(cornerRadius: 8)
-      )
-      .foregroundStyle(complete ? .white.opacity(0.55) : .black)
-      .accessibilityIdentifier("archive-pill")
-      .accessibilityValue(
-        environment.isRecording
-          ? "\(writing) of \(tiles.count) cameras archiving their own stream"
-          : "Not recording"
-      )
   }
 
   private func programTransportButton(
