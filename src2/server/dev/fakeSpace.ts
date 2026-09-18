@@ -1,8 +1,9 @@
-import { createReadStream } from 'node:fs'
-import { mkdir, stat, writeFile } from 'node:fs/promises'
+import { createReadStream, createWriteStream } from 'node:fs'
+import { mkdir, stat } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { createServer } from 'node:http'
 import { join } from 'node:path'
+import { pipeline } from 'node:stream/promises'
 
 import { presignGetUrl } from '../media/presign'
 import { serverConfig } from '../serverConfig'
@@ -25,6 +26,16 @@ import { serverConfig } from '../serverConfig'
 const PORT = 9199
 
 const space = serverConfig.space
+
+/**
+ * Where the stand-in keeps what has been "uploaded".
+ *
+ * Its own directory, not `workDir`: the work directory is the server's, and
+ * the two would write to the same `videos/<id>/` path — the Space's copy of a
+ * game landing on top of the local one it was copied from.
+ */
+const spaceDir =
+  process.env.GS_FAKE_SPACE_DIR ?? join(serverConfig.workDir, 'space')
 
 const server = createServer((req, res) => {
   handle(req, res).catch(() => {
@@ -72,14 +83,8 @@ async function handle(
   const file = videoMatch != null ? videoMatch[2] : imageMatch![3]
   const path =
     videoMatch != null
-      ? join(serverConfig.workDir, 'videos', videoMatch[1], file)
-      : join(
-          serverConfig.workDir,
-          'images',
-          imageMatch![1],
-          imageMatch![2],
-          file
-        )
+      ? join(spaceDir, 'videos', videoMatch[1], file)
+      : join(spaceDir, 'images', imageMatch![1], imageMatch![2], file)
 
   const expires = Number(url.searchParams.get('X-Amz-Expires') ?? '0')
   const signedAt = url.searchParams.get('X-Amz-Date') ?? ''
@@ -101,10 +106,11 @@ async function handle(
   // against this without a network or a bill. The signature covers the verb,
   // so a URL signed to read cannot be used to write.
   if (req.method === 'PUT') {
-    const chunks: Buffer[] = []
-    for await (const chunk of req) chunks.push(chunk as Buffer)
+    // Written a block at a time, like the real thing and unlike a test double
+    // that holds the object in memory: a game's `video.mp4` is gigabytes, and
+    // a stand-in that cannot take one is no rehearsal at all.
     await mkdir(join(path, '..'), { recursive: true })
-    await writeFile(path, Buffer.concat(chunks))
+    await pipeline(req, createWriteStream(path))
     res.writeHead(200).end()
     return
   }
@@ -156,5 +162,5 @@ function parseAmzDate(value: string): Date {
 
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`a stand-in Space on http://127.0.0.1:${PORT}/${space.bucket}/`)
-  console.log(`serving ${serverConfig.workDir}/videos, signatures enforced`)
+  console.log(`serving ${spaceDir}/videos, signatures enforced`)
 })
