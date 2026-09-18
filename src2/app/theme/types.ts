@@ -89,6 +89,20 @@ export interface Theme {
   headerBorderColor: string
   headerTextColor: string
   navBackgroundColor: string
+  /**
+   * The glass: a translucent fill with the content blurred behind it.
+   *
+   * Three tokens rather than a colour, because the fallback where a browser
+   * cannot blur has to be a different, opaque colour — a tint that reads well
+   * over a blur is unreadable over a photograph.
+   */
+  /** The mark's two fills: the ring and blade, and the body of the G. */
+  markArcColor: string
+  markBodyColor: string
+  glassBackgroundColor: string
+  glassFallbackColor: string
+  glassBorderColor: string
+  glassBlur: string
   navActiveColor: string
   navInactiveColor: string
 

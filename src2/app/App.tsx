@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ActivityIndicator, Image, Text, View } from 'react-native'
+import { GestureHandlerRootView } from 'react-native-gesture-handler'
 
 import {
   GameStationClient,
@@ -8,7 +9,14 @@ import {
   type TeamSummary
 } from '../common/api'
 import gsLogo from './assets/gsLogo.png'
-import { AppHeader, AppNav, type NavTabId, useBreakpoint } from './components'
+import {
+  AppHeader,
+  AppNav,
+  HeaderSlotProvider,
+  type NavTabId,
+  useBreakpoint,
+  useHandoffSlot
+} from './components'
 import { lstrings } from './locales/strings'
 import type { Route, When } from './navigation/routes'
 import {
@@ -22,6 +30,7 @@ import { GamesFeedScreen } from './screens/GamesFeedScreen'
 import { HomeScreen } from './screens/HomeScreen'
 import { LoginScreen } from './screens/LoginScreen'
 import { SeasonScreen } from './screens/SeasonScreen'
+import { SignInLinkScreen } from './screens/SignInLinkScreen'
 import { TeamScreen } from './screens/TeamScreen'
 import {
   cacheStyles,
@@ -78,7 +87,17 @@ function Shell(props: AppProps): React.ReactElement {
   const apiBaseUrl = props.apiBaseUrl ?? '/api/v1'
   const theme = useTheme()
   const styles = getStyles(theme)
-  const isRail = useBreakpoint() !== 'phone'
+  // One boundary, the one that already existed: below it the three
+  // destinations float over the content, above it they sit in the header and
+  // there is no sidebar at all.
+  const isWide = useBreakpoint() !== 'phone'
+  // Measured rather than repeated. The content's top padding and the pegged
+  // player both have to clear the header, and a second copy of its height is a
+  // second thing to forget.
+  const [headerHeight, setHeaderHeight] = useState(48)
+  // What the screen on top has handed up: a team's name, a row of filter
+  // pills, a game's score. The header draws it and never anything else.
+  const { handoff, setHandoff } = useHandoffSlot()
 
   const client = useMemo(
     () => new GameStationClient({ baseUrl: apiBaseUrl }),
@@ -251,10 +270,23 @@ function Shell(props: AppProps): React.ReactElement {
         </View>
       )
     }
+    // A link from the sign-in e-mail lands here, signed out, which is the
+    // whole point of it. It spends the token only when it can tell a person is
+    // behind the request.
+    const route = currentRoute()
     return (
       <View style={styles.app}>
-        <AppHeader title="Sign in" overline="GameStation" />
-        <LoginScreen client={client} onSignedIn={setSession} />
+        <AppHeader title="Sign in" showMark />
+        {route.name === 'signInLink' ? (
+          <SignInLinkScreen
+            client={client}
+            token={route.token}
+            requestId={route.requestId}
+            onSignedIn={setSession}
+          />
+        ) : (
+          <LoginScreen client={client} onSignedIn={setSession} />
+        )}
       </View>
     )
   }
@@ -374,7 +406,18 @@ function Shell(props: AppProps): React.ReactElement {
   const header = (
     <AppHeader
       title={titleFor(tab, top)}
-      overline="GameStation"
+      // The mark on every screen that is a destination in its own right —
+      // home, and the two lists — and on none that was pushed on top of one,
+      // where the chevron and what scrolled up into the header say where you
+      // are.
+      showMark={top == null}
+      handoff={handoff}
+      onHeight={setHeaderHeight}
+      nav={
+        isWide ? (
+          <AppNav mode="header" selected={tab} onSelect={setTab} />
+        ) : undefined
+      }
       onBack={stack.length > 0 ? pop : undefined}
       account={
         top?.name === 'account'
@@ -390,29 +433,33 @@ function Shell(props: AppProps): React.ReactElement {
     />
   )
 
-  // The rail sits beside the content on a wide window and the bar sits under
-  // it on a phone, so the two arrangements are a row and a column of the same
-  // two pieces — and they are written as one tree whose axis changes, never as
-  // two trees.
+  // The header is glass and sits **over** the content, so the page moves under
+  // it; the body therefore starts at the top of the window and is padded down
+  // by the header's measured height.
   //
-  // Two `return`s here, one per arrangement, look equivalent and are not:
-  // React reconciles children by position, so crossing the threshold put an
-  // `AppHeader` where an `AppNav` had been and unmounted everything below it.
-  // The video element went with it, which is why dragging a window across
-  // 1024px stopped playback dead. A breakpoint may change styles and may
-  // change how many columns a grid has. It may not change the shape of the
-  // tree above something stateful.
-  //
-  // `column-reverse` keeps the navigation first in the tree, where it reads
-  // before the content, while drawing it under the pane on a phone.
+  // Both children carry a key, and that is not decoration. React reconciles
+  // children by position, so a tree that is `[nav, pane]` on a phone and
+  // `[pane]` on a desktop would match the pane against the nav when the window
+  // crossed the boundary and unmount everything below it — the `<video>`
+  // element with it, which is what used to stop playback dead mid-drag. Keyed,
+  // the pane is matched to the pane and nothing below it notices.
   return (
-    <View style={isRail ? styles.appRow : styles.appColumn}>
-      <AppNav selected={tab} onSelect={setTab} />
-      <View style={styles.pane}>
-        {header}
-        {body}
+    <GestureHandlerRootView style={styles.root}>
+      <View style={styles.app}>
+        <View key="pane" style={styles.pane}>
+          <HeaderSlotProvider
+            headerHeight={headerHeight}
+            onHandoff={setHandoff}
+          >
+            <View style={styles.body}>{body}</View>
+          </HeaderSlotProvider>
+          <View style={styles.headerLayer}>{header}</View>
+        </View>
+        {!isWide && (
+          <AppNav key="nav" mode="floating" selected={tab} onSelect={setTab} />
+        )}
       </View>
-    </View>
+    </GestureHandlerRootView>
   )
 }
 
@@ -492,17 +539,22 @@ function routeOf(tab: NavTabId, top: Pushed | undefined, when?: When): Route {
   return { name: 'home' }
 }
 
-function titleFor(tab: NavTabId, top: Pushed | undefined): string {
+/**
+ * What the header says, where it says anything at all.
+ *
+ * A team, a game and the two lists say nothing: the team's name is on the card
+ * below, the game's score is on its hero card, and the lists carry their filter
+ * pills, which name the list better than the word `Videos` does. Each of those
+ * hands its own content up as it scrolls away.
+ */
+function titleFor(tab: NavTabId, top: Pushed | undefined): string | undefined {
   if (top != null) {
-    if (top.name === 'team') return top.team.name
     if (top.name === 'season') return top.season.name
     if (top.name === 'account') return 'Account'
-    // A game opened from a link has no title until it has loaded.
-    return top.title === '' ? 'Game' : top.title
+    return undefined
   }
-  if (tab === 'videos') return 'Videos'
-  if (tab === 'schedule') return 'Schedule'
-  return 'Your Home'
+  if (tab === 'home') return 'Your Home'
+  return undefined
 }
 
 const getStyles = cacheStyles((theme: Theme) => ({
@@ -525,17 +577,22 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontFamily: theme.regularTextFont,
     fontSize: theme.rem(0.875)
   },
-  appRow: {
-    flex: 1,
-    flexDirection: 'row',
-    backgroundColor: theme.backgroundColor
-  },
-  appColumn: {
-    flex: 1,
-    flexDirection: 'column-reverse',
-    backgroundColor: theme.backgroundColor
+  root: {
+    flex: 1
   },
   pane: {
     flex: 1
+  },
+  body: {
+    flex: 1
+  },
+  // Over the content rather than above it, which is the whole point of glass:
+  // there has to be something behind it to blur.
+  headerLayer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 4
   }
 }))
