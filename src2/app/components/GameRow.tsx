@@ -62,7 +62,7 @@ export function GameRow(props: GameRowProps): React.ReactElement {
         uri={posterUrl}
         time={length}
         showPlay={posterUrl != null}
-        width={narrow ? 5 : 7}
+        fillHeight
       />
       <View style={styles.text}>
         <Text style={styles.team} numberOfLines={1}>
@@ -109,9 +109,14 @@ export function GameRow(props: GameRowProps): React.ReactElement {
 const getStyles = cacheStyles((theme: Theme) => ({
   row: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: theme.rem(theme.spaceSmRem),
-    paddingVertical: theme.rem(theme.spaceSmRem)
+    // Stretch, so the picture takes the height of the row rather than being
+    // sized by its width and leaving the rest of the row empty beside it.
+    alignItems: 'stretch',
+    gap: theme.rem(theme.spaceSmRem)
+    // No padding of its own. Every row of this kind sits in a `Card`, whose
+    // padding is already the margin on all four sides; adding more here made
+    // the space above and below twice the space to the left, which is the
+    // thing the eye notices.
   },
   pressed: {
     backgroundColor: theme.highlightRowActiveBackground
