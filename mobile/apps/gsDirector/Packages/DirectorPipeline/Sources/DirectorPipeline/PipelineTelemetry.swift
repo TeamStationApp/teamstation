@@ -624,6 +624,15 @@ public struct TelemetrySnapshot: Sendable, Codable, Equatable {
   /// Media tags the RTMP client shed because the socket was behind. Climbing means the uplink
   /// cannot carry the configured bitrate; a stall that reports zero here is the 2026-09-05 bug.
   public var streamDroppedPackets: UInt64 = 0
+  /// Times the publish dropped, and times it was dialled again after one. A stream that ends and
+  /// stays ended shows in neither the keyframe count nor the dropped-packet count — both simply
+  /// stop moving — so the operator's health check needs a number that goes up when it happens.
+  public var streamDisconnects: UInt64 = 0
+  public var streamReconnects: UInt64 = 0
+  /// Why the publish last dropped, and how long ago, so a stream that is off says why without
+  /// anyone having to catch the toast.
+  public var streamLastDisconnect = ""
+  public var streamLastDisconnectAt: Double = 0
   /// Bytes waiting between the encoder and the socket. Pinned near the budget is a stalled peer.
   public var streamQueuedBytes = 0
   /// The stream's bitrate controller. Cleared when the stream stops.
@@ -1047,6 +1056,22 @@ public final class PipelineTelemetry: @unchecked Sendable {
     lock.lock()
     state.sessions.encodeFailures += 1
     state.sessions.lastEncodeErrorCode = code
+    lock.unlock()
+  }
+
+  /// The publish dropped. `detail` is what the client said about it.
+  public func recordStreamDisconnect(_ detail: String) {
+    lock.lock()
+    state.streamDisconnects += 1
+    state.streamLastDisconnect = detail
+    state.streamLastDisconnectAt = Date().timeIntervalSince1970
+    lock.unlock()
+  }
+
+  /// The publish was dialled again after a drop.
+  public func recordStreamReconnect() {
+    lock.lock()
+    state.streamReconnects += 1
     lock.unlock()
   }
 
