@@ -28,6 +28,21 @@ const gameIdParam = {
   schema: { type: 'string' }
 }
 
+const streamIdParam = {
+  name: 'streamId',
+  in: 'path',
+  required: true,
+  schema: { type: 'string' }
+}
+
+const videoIdParam = {
+  name: 'videoId',
+  in: 'path',
+  required: true,
+  schema: { type: 'string' }
+}
+
+
 const userIdParam = {
   name: 'userId',
   in: 'path',
@@ -103,6 +118,51 @@ export function openApiDocument(version: string): OpenApiDocument {
             displayName: { type: 'string' },
             email: { type: ['string', 'null'] },
             isAdmin: { type: 'boolean' }
+          }
+        },
+        LiveStream: {
+          type: 'object',
+          required: ['gameId', 'exists'],
+          description:
+            'A game\u2019s live stream. `url` is present only in the reply to ' +
+            'a request that asked for it by name \u2014 creating, revealing ' +
+            'or rotating \u2014 because it carries the key, and anybody ' +
+            'holding that can publish video into this game.',
+          properties: {
+            gameId: { type: 'string' },
+            exists: { type: 'boolean' },
+            id: { type: 'string' },
+            teamId: { type: 'string' },
+            keyPrefix: {
+              type: 'string',
+              description:
+                'Enough to tell two keys apart, far too little to use'
+            },
+            state: {
+              type: 'string',
+              enum: ['idle', 'publishing', 'ended', 'revoked']
+            },
+            opensAt: { type: 'string', format: 'date-time' },
+            closesAt: {
+              type: ['string', 'null'],
+              format: 'date-time',
+              description:
+                'When somebody ended it. Null while it is still good — a key ' +
+                'has no clock at either end, so it can be tried before the ' +
+                'game and after it.'
+            },
+            videoId: { type: ['string', 'null'] },
+            lastError: { type: ['string', 'null'] },
+            status: {
+              type: ['object', 'null'],
+              description:
+                'What the ingest last reported: the stream arriving, and each ' +
+                'leg it is being sent to. Never carries a key.'
+            },
+            url: {
+              type: 'string',
+              description: 'The whole thing, key and all, for pasting'
+            }
           }
         },
         Session: {
@@ -384,6 +444,367 @@ export function openApiDocument(version: string): OpenApiDocument {
           ],
           responses: {
             200: { description: 'The plays, newest game first' },
+            401: errorResponse
+          }
+        }
+      },
+      '/seasons': {
+        get: {
+          summary: 'The seasons you may watch',
+          security: [{ bearer: [] }],
+          responses: {
+            200: {
+              description:
+                'Being in a season grants every team in it; being on a team ' +
+                'is separate and stronger'
+            },
+            401: errorResponse
+          }
+        }
+      },
+      '/seasons/{seasonId}/teams': {
+        get: {
+          summary: "A season's teams",
+          security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'seasonId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' }
+            }
+          ],
+          responses: {
+            200: { description: 'Every team playing in it' },
+            404: errorResponse
+          }
+        }
+      },
+      '/seasons/{seasonId}/games': {
+        get: {
+          summary: "A season's schedule",
+          security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'seasonId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' }
+            },
+            {
+              name: 'when',
+              in: 'query',
+              schema: { type: 'string', enum: ['past', 'upcoming'] },
+              description: 'Which half of the schedule. Both, when unset'
+            }
+          ],
+          responses: {
+            200: { description: 'Newest first' },
+            404: errorResponse
+          }
+        }
+      },
+      '/games/recent': {
+        get: {
+          summary: 'The newest played game anywhere you can see',
+          description:
+            'What the home screen leads with. Null when there is none.',
+          security: [{ bearer: [] }],
+          responses: {
+            200: { description: 'One game, or null' },
+            401: errorResponse
+          }
+        }
+      },
+      '/teams/{teamId}/roster': {
+        get: {
+          summary: "A team's players, coaches and followers",
+          description:
+            'Names are a first name and a last initial: a full name is not ' +
+            'something this API hands out about a child.',
+          security: [{ bearer: [] }],
+          parameters: [teamIdParam],
+          responses: {
+            200: { description: 'The roster, coaches first' },
+            404: errorResponse
+          }
+        }
+      },
+      '/teams/{teamId}/stats': {
+        get: {
+          summary: "A team's batting",
+          security: [{ bearer: [] }],
+          parameters: [
+            teamIdParam,
+            {
+              name: 'seasonId',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'One season, or every season when unset'
+            }
+          ],
+          responses: {
+            200: { description: 'A row per player' },
+            404: errorResponse
+          }
+        }
+      },
+      '/live': {
+        get: {
+          summary: 'The games being played right now that you may watch',
+          security: [{ bearer: [] }],
+          responses: {
+            200: {
+              description:
+                'Newest first, and empty on every day when nothing is on'
+            },
+            401: errorResponse
+          }
+        }
+      },
+      '/games/{gameId}/live-streams': {
+        get: {
+          summary: 'Every camera pointed at this game',
+          description:
+            'Split into `mine` and `others`. A key is a person\u2019s: their own ' +
+            'cameras come back whole enough to act on, and everybody ' +
+            'else\u2019s are named — whose, what it is called, what it is doing ' +
+            '— and never carry a key.',
+          security: [{ bearer: [] }],
+          parameters: [gameIdParam],
+          responses: {
+            200: {
+              description: 'Mine, theirs, and how many more I may add',
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/LiveStream' }
+                }
+              }
+            },
+            404: errorResponse
+          }
+        },
+        post: {
+          summary: 'Another camera of my own on this game',
+          description:
+            'Up to four per person per game. The slot is the lowest I do not ' +
+            'already hold, so ending one and asking again gives that number ' +
+            'back rather than counting upwards.',
+          security: [{ bearer: [] }],
+          parameters: [gameIdParam],
+          requestBody: {
+            required: false,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { label: { type: 'string' } }
+                }
+              }
+            }
+          },
+          responses: {
+            201: {
+              description: 'Created, with the URL and its key',
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/LiveStream' }
+                }
+              }
+            },
+            200: { description: 'The one that won a race for the same slot' },
+            400: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/videos/{videoId}': {
+        delete: {
+          summary: 'Delete a recording, its files, and its copy in the Space',
+          description:
+            'For whoever runs the game, and for the person whose camera made ' +
+            'it. Refused while something is still streaming into it, and ' +
+            'refused for a legacy recording, which lives in a tree this ' +
+            'server reads and does not own.',
+          security: [{ bearer: [] }],
+          parameters: [videoIdParam],
+          responses: {
+            200: {
+              description: 'What went, and how much of it left the Space',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      id: { type: 'string' },
+                      removedFromSpace: { type: 'integer' }
+                    }
+                  }
+                }
+              }
+            },
+            400: errorResponse,
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/games/{gameId}/live-streams/{streamId}': {
+        delete: {
+          summary: 'Take one of my cameras off this game',
+          description:
+            'Not the same as ending it. Ending stops a camera; this removes ' +
+            'it and gives its number back. Mine only, and refused while it ' +
+            'is streaming. An empty recording goes with it; one that holds ' +
+            'video stays, and is deleted on its own.',
+          security: [{ bearer: [] }],
+          parameters: [gameIdParam, streamIdParam],
+          responses: {
+            200: {
+              description: 'What is left pointed at this game',
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/LiveStream' }
+                }
+              }
+            },
+            400: errorResponse,
+            401: errorResponse,
+            404: errorResponse
+          }
+        },
+        patch: {
+          summary: 'Rename one of my cameras',
+          security: [{ bearer: [] }],
+          parameters: [gameIdParam, streamIdParam],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    label: { type: 'string' }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            200: { description: 'The camera as it now stands' },
+            400: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/games/{gameId}/live-streams/{streamId}/reveal': {
+        post: {
+          summary: 'Show one of my URLs again, key and all',
+          description:
+            'Mine only — somebody else\u2019s key is answered 404, because it ' +
+            'publishes video as them. Written to the audit log every time.',
+          security: [{ bearer: [] }],
+          parameters: [gameIdParam, streamIdParam],
+          responses: {
+            200: { description: 'The camera, with its URL' },
+            400: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/games/{gameId}/live-streams/{streamId}/rotate': {
+        post: {
+          summary: 'Replace one of my keys. The old one stops at once',
+          security: [{ bearer: [] }],
+          parameters: [gameIdParam, streamIdParam],
+          responses: {
+            200: { description: 'The camera, with its new URL' },
+            404: errorResponse
+          }
+        }
+      },
+      '/games/{gameId}/live-streams/{streamId}/end': {
+        post: {
+          summary: 'End one camera now',
+          description:
+            'Mine, or anybody\u2019s if I run the team: a stream on their game ' +
+            'that should not be there is theirs to stop. Closes the window ' +
+            'rather than the playlist — only the ingest may touch a file its ' +
+            'own ffmpeg is writing, and it notices within the second.',
+          security: [{ bearer: [] }],
+          parameters: [gameIdParam, streamIdParam],
+          responses: {
+            200: { description: 'The camera, ending' },
+            404: errorResponse
+          }
+        }
+      },
+      '/auth/link/verify': {
+        post: {
+          summary: 'Spend the link from the e-mail',
+          description:
+            'Never reached by a bare page load: the address opens the app, ' +
+            'which asks for this once it can tell a person is behind the ' +
+            'request. A mail scanner follows links and runs no scripts.',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['token'],
+                  properties: { token: { type: 'string' } }
+                }
+              }
+            }
+          },
+          responses: {
+            200: {
+              description: 'A session',
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/Session' }
+                }
+              }
+            },
+            401: errorResponse
+          }
+        }
+      },
+      '/auth/request/claim': {
+        post: {
+          summary: 'What the client that asked for the sign-in is waiting on',
+          description:
+            'Tap the link on a laptop while GS Director is still waiting, and ' +
+            'this is how the iPad finds out: it polls with a secret only it ' +
+            'holds. `deviceName` asks for a session that lasts a season and ' +
+            'is named, which is what a Director wants and a browser does not.',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['requestId', 'clientSecret'],
+                  properties: {
+                    requestId: { type: 'string' },
+                    clientSecret: { type: 'string' },
+                    deviceName: { type: 'string' }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            200: {
+              description: 'A session',
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/Session' }
+                }
+              }
+            },
+            202: { description: 'Still waiting, which is the ordinary answer' },
             401: errorResponse
           }
         }

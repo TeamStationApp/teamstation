@@ -41,8 +41,15 @@ export function devMediaRoutes(mediaRoot: string, mediaSecret: string): Router {
 
     if (result.media.rest.endsWith('.m3u8')) {
       res.type('application/vnd.apple.mpegurl')
+      // A live playlist is rewritten every few seconds for hours. Cached, the
+      // player re-fetches it, is handed the copy it already had, and runs out
+      // of segments — which looks exactly like a recording that ends early,
+      // and is what a live game did until this line existed.
+      res.setHeader('cache-control', 'no-store')
+    } else {
+      // Segments never change once written, and they are the big files.
+      res.setHeader('cache-control', 'private, max-age=3600')
     }
-    res.setHeader('cache-control', 'private, max-age=3600')
     // `sendFile` answers Range requests, which is how a player seeks.
     res.sendFile(file, error => {
       if (error != null && !res.headersSent) res.status(404).end()
