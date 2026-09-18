@@ -7,9 +7,11 @@ import type {
   ScopePerson
 } from '../../common/api'
 import {
+  adminLabel,
   Button,
   Card,
   InvitePanel,
+  RoleModal,
   Screen,
   SectionHeader,
   TextField
@@ -59,6 +61,7 @@ export function ManageScreen(props: ManageScreenProps): React.ReactElement {
   const [refused, setRefused] = useState(false)
   const [email, setEmail] = useState('')
   const [filter, setFilter] = useState('')
+  const [changing, setChanging] = useState<ScopePerson | undefined>(undefined)
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<string | undefined>(undefined)
   const [error, setError] = useState<string | undefined>(undefined)
@@ -160,6 +163,9 @@ export function ManageScreen(props: ManageScreenProps): React.ReactElement {
       run(async () => {
         await client.removePerson(scopeKind, scopeId, person.userId)
       })
+    },
+    onChangeRole: (person: ScopePerson) => {
+      setChanging(person)
     }
   }
 
@@ -218,6 +224,9 @@ export function ManageScreen(props: ManageScreenProps): React.ReactElement {
                 <Text style={[styles.when, styles.headText]}>
                   {lstrings.manage_last_login}
                 </Text>
+                <Text style={[styles.actions, styles.headText]}>
+                  {lstrings.role_change}
+                </Text>
                 <View style={styles.actions} />
               </View>
 
@@ -245,6 +254,7 @@ export function ManageScreen(props: ManageScreenProps): React.ReactElement {
                   <Text style={[styles.when, styles.muted]}>
                     {lstrings.manage_never}
                   </Text>
+                  <View style={styles.actions} />
                   <View style={styles.actions} />
                 </View>
               ))}
@@ -299,6 +309,25 @@ export function ManageScreen(props: ManageScreenProps): React.ReactElement {
         scopeName={page.scope.name}
       />
 
+      {changing != null && (
+        <RoleModal
+          displayName={changing.displayName}
+          scopeKind={scopeKind}
+          scopeName={page.scope.name}
+          role={roleAt(changing, scopeId)}
+          busy={busy}
+          onClose={() => {
+            setChanging(undefined)
+          }}
+          onSave={role => {
+            const who = changing
+            setChanging(undefined)
+            run(async () => {
+              await client.setRole(scopeKind, scopeId, who.userId, role)
+            })
+          }}
+        />
+      )}
     </Screen>
   )
 }
@@ -309,6 +338,11 @@ function labelFor(column: 'team' | 'season' | 'league'): string {
   return lstrings.manage_via_league
 }
 
+/** What somebody is at this one level, which is all this page may change. */
+function roleAt(person: ScopePerson, scopeId: string): 'admin' | 'member' {
+  return person.adminOf.some(role => role.id === scopeId) ? 'admin' : 'member'
+}
+
 /** One person, with a tick under every level their access comes through. */
 function PersonRow(props: {
   person: ScopePerson
@@ -316,8 +350,9 @@ function PersonRow(props: {
   scopeKind: 'league' | 'season' | 'team'
   busy: boolean
   onRemove: (person: ScopePerson) => void
+  onChangeRole: (person: ScopePerson) => void
 }): React.ReactElement {
-  const { person, columns, scopeKind, busy, onRemove } = props
+  const { person, columns, scopeKind, busy, onRemove, onChangeRole } = props
   const styles = getStyles(useTheme())
 
   const grantsFor = (
@@ -331,6 +366,9 @@ function PersonRow(props: {
   // Only what this administrator administers is theirs to take away. The rest
   // is shown, ticked, and left alone.
   const holdsHere = grantsFor(scopeKind).length > 0
+  // A role belongs to somebody who can sign in. An account with no address
+  // cannot, so there is nothing to make an administrator of.
+  const canHoldRole = person.emails.length > 0
   const roles = rolesOf(person)
 
   return (
@@ -386,6 +424,18 @@ function PersonRow(props: {
           )}
       </View>
       <View style={styles.actions}>
+        {canHoldRole && (
+          <Button
+            label={lstrings.role_change}
+            kind="text"
+            disabled={busy}
+            onPress={() => {
+              onChangeRole(person)
+            }}
+          />
+        )}
+      </View>
+      <View style={styles.actions}>
         {holdsHere && (
           <Button
             label={lstrings.manage_remove}
@@ -416,12 +466,7 @@ function rolesOf(
   const lines: Array<{ text: string; isAdmin: boolean }> = []
   for (const role of person.adminOf) {
     lines.push({
-      text: sprintf(
-        lstrings.manage_role_line,
-        labelFor(role.kind),
-        lstrings.manage_role_admin,
-        role.name
-      ),
+      text: `${adminLabel(role.kind)} · ${role.name}`,
       isAdmin: true
     })
   }

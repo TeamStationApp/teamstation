@@ -1118,6 +1118,52 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/manage/{scopeType}/{scopeId}/people/{userId}/role': {
+        put: {
+          summary: 'Make somebody an administrator of this level, or a member',
+          description:
+            'Only at the level named: a team page makes team administrators ' +
+            'and nothing wider. Either answer leaves them able to watch, ' +
+            'because an administrator of something they cannot see is a ' +
+            'state nobody asks for on purpose. Nobody may demote themselves.',
+          security: [{ bearer: [] }],
+          parameters: [scopeTypeParam, scopeIdParam, userIdParam],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['role'],
+                  properties: {
+                    role: { type: 'string', enum: ['admin', 'member'] }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            200: {
+              description: 'What they are now',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['userId', 'role'],
+                    properties: {
+                      userId: { type: 'string' },
+                      role: { type: 'string', enum: ['admin', 'member'] }
+                    }
+                  }
+                }
+              }
+            },
+            400: errorResponse,
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
       '/live': {
         get: {
           summary: 'The games being played right now that you may watch',
