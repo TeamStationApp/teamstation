@@ -11,25 +11,56 @@ import type {
 import {
   Badge,
   Card,
+  GameRow,
+  initialsOf,
   ListRow,
   PillTabs,
   Screen,
   SectionHeader,
-  StatGrid
+  StatGrid,
+  useBreakpoint
 } from '../components'
+import { gameCountLabel, videoCountLabel } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { shortDate, shortTime } from './format'
+import {
+  clock,
+  matchupLines,
+  shortDate,
+  shortDateNoWeekday,
+  shortTime
+} from './format'
+import { gamesFor, type When } from './whenFilter'
 
 export interface SeasonScreenProps {
   client: GameStationClient
   season: SeasonSummary
-  onOpenGame: (gameId: string, title: string) => void
+  onOpenGame: (
+    gameId: string,
+    title: string,
+    options?: { tab?: 'watch' | 'boxScore'; autoPlay?: boolean }
+  ) => void
   onOpenTeam: (team: TeamSummary) => void
+  /** Which section to open on, from the address. */
+  initialTab?: string
+  /**
+   * Tells the shell which section is showing, so the address can say so.
+   *
+   * `correcting` is set when the screen is answering a `?tab=` it could not
+   * honour: the address said one thing and the screen is showing another, so
+   * the entry is corrected rather than a new one added.
+   */
+  onTab?: (tab: string, correcting?: boolean) => void
+  /** Which games the schedule is filtered to, from the address. */
+  initialWhen?: When
+  /** Tells the shell which filter is showing. */
+  onWhen?: (when: When) => void
 }
 
 type TabId = 'schedule' | 'teams' | 'standings'
-type When = 'past' | 'upcoming' | 'all'
 
+function tabOf(id: string | undefined): TabId {
+  return TABS.some(item => item.id === id) ? (id as TabId) : 'schedule'
+}
 const TABS = [
   { id: 'schedule' as const, label: 'Schedule' },
   { id: 'teams' as const, label: 'Teams' },
@@ -37,7 +68,7 @@ const TABS = [
 ]
 
 const WHEN_TABS = [
-  { id: 'past' as const, label: 'Past games' },
+  { id: 'past' as const, label: 'Past' },
   { id: 'upcoming' as const, label: 'Upcoming' },
   { id: 'all' as const, label: 'All' }
 ]
@@ -55,16 +86,35 @@ const WHEN_TABS = [
  * sits between them and the lower one never carries the screen's own sections.
  */
 export function SeasonScreen(props: SeasonScreenProps): React.ReactElement {
-  const { client, season, onOpenGame, onOpenTeam } = props
+  const {
+    client,
+    season,
+    onOpenGame,
+    onOpenTeam,
+    initialTab,
+    onTab,
+    initialWhen,
+    onWhen
+  } = props
   const styles = getStyles(useTheme())
+  const narrow = useBreakpoint() === 'phone'
 
-  const [tab, setTab] = useState<TabId>('schedule')
-  const [when, setWhen] = useState<When>('past')
+  const [tab, setTab] = useState<TabId>(tabOf(initialTab))
+  const [when, setWhen] = useState<When>(initialWhen ?? 'past')
   const [games, setGames] = useState<SeasonGame[]>([])
   const [teams, setTeams] = useState<TeamSummary[]>([])
   const [standings, setStandings] = useState<StandingsRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | undefined>(undefined)
+
+  // An address that names a section this screen does not have showed the
+  // default while still claiming the other one. Say what is actually on
+  // screen, correcting the entry rather than adding one.
+  useEffect(() => {
+    if (initialTab != null && initialTab !== tab) onTab?.(tab, true)
+    // Once, against the address the screen opened on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -93,10 +143,7 @@ export function SeasonScreen(props: SeasonScreenProps): React.ReactElement {
     }
   }, [client, season.id])
 
-  const played = games.filter(game => game.awayScore != null)
-  const upcoming = games.filter(game => game.awayScore == null)
-  const shown =
-    when === 'past' ? played : when === 'upcoming' ? upcoming : games
+  const shown = gamesFor(games, when)
 
   return (
     <Screen>
@@ -120,8 +167,11 @@ export function SeasonScreen(props: SeasonScreenProps): React.ReactElement {
       <PillTabs
         tabs={TABS}
         selected={tab}
-        onSelect={setTab}
-        stretch
+        onSelect={next => {
+          setTab(next)
+          onTab?.(next)
+        }}
+        size="compact"
         accessibilityLabel="Season sections"
       />
 
@@ -130,41 +180,68 @@ export function SeasonScreen(props: SeasonScreenProps): React.ReactElement {
 
       {!loading && tab === 'schedule' && (
         <View style={styles.section}>
+          {/*
+            Compact and natural width, exactly as the videos list and the
+            schedule draw it. Stretched and full size it was painted the same
+            as the section row above it, so `Schedule · Teams · Standings`
+            over `Past · Upcoming · All` read as one six-item control with two
+            things selected.
+          */}
           <PillTabs
             tabs={WHEN_TABS}
             selected={when}
-            onSelect={setWhen}
-            stretch
+            onSelect={next => {
+              setWhen(next)
+              onWhen?.(next)
+            }}
+            size="compact"
+            accessibilityLabel="Which games"
           />
-          <SectionHeader title="Schedule" note={`${shown.length} games`} />
+          <SectionHeader title="Schedule" note={gameCountLabel(shown.length)} />
           {shown.length === 0 ? (
             <Card>
               <Text style={styles.muted}>Nothing here yet.</Text>
             </Card>
           ) : (
-            shown.map(game => (
-              <Card key={game.id}>
-                <ListRow
-                  title={`${game.awayTeamName} at ${game.homeTeamName}`}
-                  subtitle={`${shortDate(game.startAt)}${
-                    game.venue == null ? '' : ` · ${game.venue}`
-                  }`}
-                  emblem="⚾"
-                  badgeLabel={
-                    game.awayScore == null
-                      ? shortTime(game.startAt)
-                      : `${game.awayScore}–${game.homeScore}`
-                  }
-                  badgeTone={game.awayScore == null ? 'neutral' : 'win'}
-                  onPress={() => {
-                    onOpenGame(
-                      game.id,
-                      `${game.awayTeamName} at ${game.homeTeamName}`
-                    )
-                  }}
-                />
-              </Card>
-            ))
+            shown.map(game => {
+              const lines = matchupLines(game)
+              const detail = [
+                narrow
+                  ? shortDateNoWeekday(game.startAt)
+                  : shortDate(game.startAt),
+                shortTime(game.startAt),
+                videoCountLabel(game.videoCount)
+              ]
+                .filter(part => part !== '')
+                .join(' · ')
+              return (
+                <Card key={game.id}>
+                  <GameRow
+                    first={lines.first}
+                    second={lines.second}
+                    detail={detail}
+                    venue={game.venue}
+                    posterUrl={game.posterUrl}
+                    length={
+                      game.durationSec == null
+                        ? undefined
+                        : clock(game.durationSec)
+                    }
+                    badgeLabel={
+                      game.awayScore == null
+                        ? undefined
+                        : `${game.awayScore}–${game.homeScore}`
+                    }
+                    badgeTone="neutral"
+                    onPress={() => {
+                      onOpenGame(game.id, `${lines.first} ${lines.second}`, {
+                        autoPlay: game.videoCount > 0
+                      })
+                    }}
+                  />
+                </Card>
+              )
+            })
           )}
         </View>
       )}
@@ -178,8 +255,9 @@ export function SeasonScreen(props: SeasonScreenProps): React.ReactElement {
                 {index > 0 && <View style={styles.divider} />}
                 <ListRow
                   title={team.name}
-                  subtitle={team.shortName ?? undefined}
-                  emblem="⚾"
+                  subtitle={teamSubtitle(team)}
+                  emblem={initialsOf(team.name)}
+                  emblemUri={team.logoUrl}
                   onPress={() => {
                     onOpenTeam(team)
                   }}
@@ -236,6 +314,15 @@ export function SeasonScreen(props: SeasonScreenProps): React.ReactElement {
       )}
     </Screen>
   )
+}
+
+/** `12–3`, or the short name when there is no record yet. */
+function teamSubtitle(team: TeamSummary): string | undefined {
+  if (team.record != null) {
+    const { w, l, t } = team.record
+    return t > 0 ? `${w}–${l}–${t}` : `${w}–${l}`
+  }
+  return team.shortName ?? undefined
 }
 
 const getStyles = cacheStyles((theme: Theme) => ({

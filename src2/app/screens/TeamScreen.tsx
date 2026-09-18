@@ -12,29 +12,67 @@ import type {
 import {
   Badge,
   Card,
-  Icon,
+  Emblem,
+  GameRow,
+  initialsOf,
   ListRow,
   PillTabs,
   Screen,
   SectionHeader,
   type Stat,
-  StatGrid
+  StatGrid,
+  useBreakpoint
 } from '../components'
+import { videoCountLabel } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { resultFor, shortDate, shortTime } from './format'
+import {
+  clock,
+  matchupLines,
+  resultFor,
+  shortDate,
+  shortDateNoWeekday,
+  shortTime
+} from './format'
+import { gamesFor } from './whenFilter'
 
 export interface TeamScreenProps {
   client: GameStationClient
   team: TeamSummary
-  onOpenGame: (gameId: string, title: string) => void
+  onOpenGame: (
+    gameId: string,
+    title: string,
+    options?: { tab?: 'watch' | 'boxScore'; autoPlay?: boolean }
+  ) => void
+  /** Which section to open on, from the address. */
+  initialTab?: string
+  /**
+   * Tells the shell which section is showing, so the address can say so.
+   *
+   * `correcting` is set when the screen is answering a `?tab=` it could not
+   * honour: the address said one thing and the screen is showing another, so
+   * the entry is corrected rather than a new one added.
+   */
+  onTab?: (tab: string, correcting?: boolean) => void
 }
 
-type TabId = 'videos' | 'schedule' | 'roster' | 'stats'
+type TabId = 'videos' | 'schedule' | 'team' | 'stats'
+
+/**
+ * The section a `?tab=` names, or the one this screen opens on.
+ *
+ * `roster` is taken as `team` because that is what the pill said when the
+ * address was first written down, and a link somebody sent should not stop
+ * working because the word on the button changed.
+ */
+function tabOf(id: string | undefined): TabId {
+  if (id === 'roster') return 'team'
+  return TABS.some(item => item.id === id) ? (id as TabId) : 'videos'
+}
 
 const TABS = [
   { id: 'videos' as const, label: 'Videos' },
   { id: 'schedule' as const, label: 'Schedule' },
-  { id: 'roster' as const, label: 'Roster' },
+  { id: 'team' as const, label: 'Team' },
   { id: 'stats' as const, label: 'Stats' }
 ]
 
@@ -51,17 +89,28 @@ const TABS = [
  * instant, which is what makes a tab strip feel like one screen.
  */
 export function TeamScreen(props: TeamScreenProps): React.ReactElement {
-  const { client, team, onOpenGame } = props
+  const { client, team, onOpenGame, initialTab, onTab } = props
   const theme = useTheme()
   const styles = getStyles(theme)
 
-  const [tab, setTab] = useState<TabId>('videos')
+  const [tab, setTab] = useState<TabId>(tabOf(initialTab))
   const [games, setGames] = useState<GameSummary[]>([])
   const [roster, setRoster] = useState<RosterEntry[]>([])
   const [batting, setBatting] = useState<BattingRow[]>([])
   const [standing, setStanding] = useState<StandingsRow | undefined>(undefined)
+  /** Where this team sits in its season, 1 for first. */
+  const [place, setPlace] = useState<number | undefined>(undefined)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | undefined>(undefined)
+
+  // An address that names a section this screen does not have showed the
+  // default while still claiming the other one. Say what is actually on
+  // screen, correcting the entry rather than adding one.
+  useEffect(() => {
+    if (initialTab != null && initialTab !== tab) onTab?.(tab, true)
+    // Once, against the address the screen opened on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -82,6 +131,11 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
       setRoster(loadedRoster)
       setBatting(loadedBatting)
       setStanding(standings.find(row => row.teamId === team.id))
+      // The position is the row's place in the standings the server already
+      // sorted. Working it out again here is how two screens come to disagree
+      // about who is top.
+      const at = standings.findIndex(row => row.teamId === team.id)
+      setPlace(at < 0 ? undefined : at + 1)
     }
     load()
       .catch((caught: unknown) => {
@@ -98,22 +152,22 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
   }, [client, team.id])
 
   const withVideo = games.filter(game => game.videoCount > 0)
-  const upcoming = games.filter(game => game.awayScore == null)
+  // The same rule as the schedule and the season page, not a fourth copy of
+  // it. Counting the unscored ones made a February fixture nobody ever scored
+  // one of the games still to play, on both sides' pages — and the list below
+  // sorts it to the bottom as a past game, so the screen disagreed with its
+  // own header.
+  const upcoming = gamesFor(games, 'upcoming')
 
   return (
     <Screen>
       <Card style={styles.identity}>
         <View style={styles.identityTop}>
-          <View style={styles.crest}>
-            {team.shortName == null ? (
-              <Icon
-                name="sports_baseball"
-                color={theme.scoreboardAccentColor}
-              />
-            ) : (
-              <Text style={styles.crestText}>{team.shortName}</Text>
-            )}
-          </View>
+          <Emblem
+            uri={team.logoUrl}
+            fallback={initialsOf(team.name)}
+            size={3.5}
+          />
           <View style={styles.identityText}>
             <Text style={styles.teamName}>{team.name}</Text>
             {standing != null && (
@@ -124,20 +178,18 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
               </Text>
             )}
           </View>
-          {standing != null && (
-            <Badge
-              label={`${standing.runDifferential >= 0 ? '+' : ''}${standing.runDifferential} run diff`}
-              tone={standing.runDifferential >= 0 ? 'win' : 'loss'}
-            />
-          )}
+          {place != null && <Badge label={placeLabel(place)} tone="honour" />}
         </View>
       </Card>
 
       <PillTabs
         tabs={TABS}
         selected={tab}
-        onSelect={setTab}
-        stretch
+        onSelect={next => {
+          setTab(next)
+          onTab?.(next)
+        }}
+        size="compact"
         accessibilityLabel="Team sections"
       />
 
@@ -186,34 +238,59 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
         </View>
       )}
 
-      {!loading && tab === 'roster' && (
-        <View style={styles.section}>
-          <SectionHeader title="Roster" note={`${roster.length} people`} />
-          {roster.length === 0 ? (
+      {!loading && tab === 'team' && (
+        <>
+          {roster.length === 0 && (
             <Empty text="Nobody has been added to this team yet." />
-          ) : (
-            <Card>
-              {roster.map((person, index) => (
-                <View key={person.userId}>
-                  {index > 0 && <View style={styles.divider} />}
-                  <ListRow
-                    title={person.displayName}
-                    subtitle={
-                      person.positions.length > 0
-                        ? person.positions.join(' · ')
-                        : person.isPlayer
-                          ? 'Player'
-                          : 'Coach'
-                    }
-                    emblem={person.jersey ?? '–'}
-                    badgeLabel={person.isPlayer ? undefined : 'Staff'}
-                    badgeTone="neutral"
-                  />
-                </View>
-              ))}
-            </Card>
           )}
-        </View>
+          {/*
+            Coaches, then players, then the people who can see the team
+            without being on it — however they were given the right, on the
+            team, its season or its league. The server decides who is in which
+            group; this only draws them in order.
+          */}
+          {(
+            [
+              ['coach', 'Coaches'],
+              ['player', 'Players'],
+              ['follower', 'Followers']
+            ] as const
+          ).map(([group, heading]) => {
+            const people = roster.filter(person => person.group === group)
+            if (people.length === 0) return null
+            return (
+              <View key={group} style={styles.section}>
+                <SectionHeader title={heading} note={String(people.length)} />
+                <Card>
+                  {people.map((person, index) => (
+                    <View key={person.userId}>
+                      {index > 0 && <View style={styles.divider} />}
+                      <ListRow
+                        title={person.shortName}
+                        subtitle={
+                          person.positions.length > 0
+                            ? person.positions.join(' · ')
+                            : undefined
+                        }
+                        emblem={initialsOf(person.shortName)}
+                        emblemUri={person.avatarUrl}
+                        emblemShape="circle"
+                        badgeLabel={
+                          // An empty string is not a jersey number. Without
+                          // this the badge reads as a bare `#`.
+                          person.jersey == null || person.jersey.trim() === ''
+                            ? undefined
+                            : `#${person.jersey.trim()}`
+                        }
+                        badgeTone="neutral"
+                      />
+                    </View>
+                  ))}
+                </Card>
+              </View>
+            )
+          })}
+        </>
       )}
 
       {!loading && tab === 'stats' && (
@@ -237,29 +314,60 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
   )
 }
 
+/** `1st Place`, `2nd Place`, `11th Place`. */
+function placeLabel(place: number): string {
+  const rest = place % 100
+  const suffix =
+    rest >= 11 && rest <= 13
+      ? 'th'
+      : place % 10 === 1
+        ? 'st'
+        : place % 10 === 2
+          ? 'nd'
+          : place % 10 === 3
+            ? 'rd'
+            : 'th'
+  return `${place}${suffix} Place`
+}
+
 function GameCard(props: {
   game: GameSummary
   teamId: string
-  onOpen: (gameId: string, title: string) => void
+  onOpen: (
+    gameId: string,
+    title: string,
+    options?: { tab?: 'watch' | 'boxScore'; autoPlay?: boolean }
+  ) => void
 }): React.ReactElement {
   const { game, teamId, onOpen } = props
   const styles = getStyles(useTheme())
+  const narrow = useBreakpoint() === 'phone'
   const result = resultFor(game, teamId)
-  const away = game.awayTeamId === teamId
-  const opponent = away ? game.homeTeamName : game.awayTeamName
+  // The same row the videos list uses, written from this team's point of view.
+  const lines = matchupLines(game, teamId)
+  const detail = [
+    narrow ? shortDateNoWeekday(game.startAt) : shortDate(game.startAt),
+    shortTime(game.startAt),
+    videoCountLabel(game.videoCount)
+  ]
+    .filter(part => part !== '')
+    .join(' · ')
 
   return (
     <Card>
-      <ListRow
-        title={`${away ? 'at' : 'vs'} ${opponent}`}
-        subtitle={`${shortDate(game.startAt)}${
-          game.venue == null ? '' : ` · ${game.venue}`
-        }${game.videoCount > 0 ? ` · ${game.videoCount} video` : ''}`}
-        emblem={away ? '→' : '⌂'}
-        badgeLabel={result?.label ?? shortTime(game.startAt)}
+      <GameRow
+        first={lines.first}
+        second={lines.second}
+        detail={detail}
+        venue={game.venue}
+        posterUrl={game.posterUrl}
+        length={game.durationSec == null ? undefined : clock(game.durationSec)}
+        badgeLabel={result?.label}
         badgeTone={result?.tone ?? 'neutral'}
         onPress={() => {
-          onOpen(game.id, `${game.awayTeamName} at ${game.homeTeamName}`)
+          onOpen(game.id, `${lines.first} ${lines.second}`, {
+            autoPlay: game.videoCount > 0
+          })
         }}
       />
       {game.ingestStatus === 'scoreMismatch' && (
@@ -290,7 +398,7 @@ function BattingTable(props: { rows: BattingRow[] }): React.ReactElement {
       {sorted.map(row => (
         <View key={row.userId} style={styles.tableRow}>
           <Text style={styles.cellName} numberOfLines={1}>
-            {row.displayName ?? 'Unknown'}
+            {row.shortName ?? 'Unknown'}
           </Text>
           <Text style={styles.cell}>{row.pa}</Text>
           <Text style={styles.cell}>{row.ab}</Text>

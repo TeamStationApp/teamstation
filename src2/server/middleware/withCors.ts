@@ -15,6 +15,11 @@ export function withCors(allowedOrigins: string[]): RequestHandler {
     const origin = req.header('origin')
     if (origin != null && allowed.has(origin)) {
       res.setHeader('access-control-allow-origin', origin)
+      // The session cookie only travels cross-origin with this, and it is
+      // legal only because the origin is echoed one at a time rather than
+      // being `*`. In production the app and the API share an origin and none
+      // of this applies; in development they are :8080 and :9100.
+      res.setHeader('access-control-allow-credentials', 'true')
       res.setHeader('vary', 'origin')
       res.setHeader(
         'access-control-allow-headers',

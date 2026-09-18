@@ -8,6 +8,7 @@ import {
 } from 'react-native'
 
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { Icon, type IconName } from './Icon'
 
 export type ButtonKind = 'primary' | 'secondary' | 'text'
 
@@ -19,6 +20,8 @@ export interface ButtonProps {
   busy?: boolean
   /** Fills the row it is in. Primary actions in the designs always do. */
   block?: boolean
+  /** Drawn before the label. */
+  icon?: IconName
   style?: StyleProp<ViewStyle>
 }
 
@@ -38,6 +41,7 @@ export function Button(props: ButtonProps): React.ReactElement {
     disabled = false,
     busy = false,
     block = false,
+    icon,
     style
   } = props
   const theme = useTheme()
@@ -66,9 +70,25 @@ export function Button(props: ButtonProps): React.ReactElement {
           }
         />
       ) : (
-        <Text numberOfLines={1} style={[styles.label, styles[`${kind}Label`]]}>
-          {label}
-        </Text>
+        <>
+          {icon != null && (
+            <Icon
+              name={icon}
+              size={1.125}
+              color={
+                kind === 'primary'
+                  ? theme.buttonTextColor
+                  : theme.primaryTextColor
+              }
+            />
+          )}
+          <Text
+            numberOfLines={1}
+            style={[styles.label, styles[`${kind}Label`]]}
+          >
+            {label}
+          </Text>
+        </>
       )}
     </Pressable>
   )
@@ -76,8 +96,13 @@ export function Button(props: ButtonProps): React.ReactElement {
 
 const getStyles = cacheStyles((theme: Theme) => ({
   base: {
+    flexDirection: 'row',
+    gap: theme.rem(theme.spaceXsRem),
     minHeight: theme.rem(3),
-    paddingHorizontal: theme.rem(theme.spaceLgRem),
+    // Small enough that two of these side by side on a phone fit their labels.
+    // `Watch Replay` was coming out `Watch Rep…`, which is a worse answer than
+    // a narrower gap either side of it.
+    paddingHorizontal: theme.rem(theme.spaceMdRem),
     borderRadius: theme.rem(theme.radiusRem),
     alignItems: 'center',
     justifyContent: 'center',

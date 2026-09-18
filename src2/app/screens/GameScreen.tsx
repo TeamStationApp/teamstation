@@ -1,7 +1,6 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import {
   ActivityIndicator,
-  Image,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -18,47 +17,217 @@ import type {
   Playback,
   VideoSummary
 } from '../../common/api'
-import { PillTabs, Scoreboard } from '../components'
+import {
+  GameHeroCard,
+  PillTabs,
+  Screen,
+  useBreakpoint,
+  VideoPoster
+} from '../components'
+import { highlightColumnsFor } from '../layout/grid'
 import { lstrings } from '../locales/strings'
+import { sameMoment } from '../player/angleSwitch'
 import { attachHls } from '../player/attachHls'
 import { cacheStyles, useTheme } from '../theme/ThemeContext'
 import type { Theme } from '../theme/types'
-import { gameStatusLine, winnerOf } from './format'
+import { gameStatusLine, shortDate, winnerOf } from './format'
 
 export interface GameScreenProps {
   client: GameStationClient
   gameId: string
+  /** Which half to open on. A `Box Score` button means the box score. */
+  initialTab?: Tab
+  /** Start the video. Arriving here by pressing `Watch Replay` is a gesture a
+   * browser accepts, which is what makes an unmuted autoplay legal. */
+  autoPlay?: boolean
+  /**
+   * Tells the shell what this game is called once it is known.
+   *
+   * A game opened from a pasted link has no title to put in the header, so
+   * without this the header read the literal word `Game` — which is what a
+   * shared link showed anybody who followed it.
+   */
+  onTitle?: (title: string) => void
+  /** Which of the game's videos to open, from the address. */
+  initialVideoId?: string
+  /** Where in it to start, in seconds, from the address. */
+  startAtSec?: number
+  /** Tells the shell where the reader now is, so the address can say so. */
+  onMoment?: (videoId: string, atSec: number) => void
+  /**
+   * Tells the shell which half is showing.
+   *
+   * The `Box Score` button on the home card set this through the address and
+   * the pill did not, so opening the box score from the button could be
+   * linked and reloaded while opening it from the pill could not — the same
+   * destination, two different addresses.
+   */
+  onTab?: (tab: Tab) => void
 }
-
-/** Wide enough for the highlight list to sit beside the video instead of under it. */
-const SIDE_BY_SIDE_WIDTH = 900
 
 type Tab = 'watch' | 'boxScore'
 
 /**
- * One game: its videos, the highlights beside them, and the box score.
+ * What a video is called on the picker.
+ *
+ * Never its file name. `2026-05-16 Hawks vs Bay Stars raw` is a file on a
+ * disk, not a thing a parent would say. What matters to somebody choosing is
+ * whether they are about to see one view or several.
+ */
+function angleName(video: VideoSummary): string {
+  return video.numCameras > 1
+    ? lstrings.video_multi_angle
+    : lstrings.video_primary
+}
+
+/**
+ * Names for the picker, numbered only where they would otherwise repeat.
+ *
+ * Until a recording has been looked at it counts as one camera, so a game with
+ * three of them offered `Primary`, `Primary` and `Primary` — three buttons
+ * that all claim to be the same thing. Numbering them says what is true: we
+ * have three and do not yet know what they are.
+ */
+function angleNames(videos: VideoSummary[]): Map<string, string> {
+  const counts = new Map<string, number>()
+  for (const video of videos) {
+    const name = angleName(video)
+    counts.set(name, (counts.get(name) ?? 0) + 1)
+  }
+  const seen = new Map<string, number>()
+  const out = new Map<string, string>()
+  for (const video of videos) {
+    const name = angleName(video)
+    if ((counts.get(name) ?? 0) < 2) {
+      out.set(video.id, name)
+      continue
+    }
+    const nth = (seen.get(name) ?? 0) + 1
+    seen.set(name, nth)
+    out.set(video.id, `${name} ${nth}`)
+  }
+  return out
+}
+
+/** How long a chosen highlight's full account stays under the video. */
+const DESCRIPTION_SECONDS = 90
+
+/**
+ * One game: its videos, the highlights under them, and the box score.
  *
  * A highlight is a **timestamp into the full video**, never a separate clip.
- * Pressing one seeks the player and keeps it playing, which is why the player
- * stays mounted while the list scrolls next to it.
+ * Pressing one seeks the player and keeps it playing.
+ *
+ * The video takes the whole width and the highlights go underneath it. They
+ * used to share the width on a wide window, which put the one thing the screen
+ * exists for into a column with something else beside it.
+ *
+ * The player does not scroll. It is pegged above a list that does, so reading
+ * to the bottom of a long game does not take the video off the screen.
  */
 export function GameScreen(props: GameScreenProps): React.ReactElement {
-  const { client, gameId } = props
+  const {
+    client,
+    gameId,
+    initialTab,
+    autoPlay = false,
+    onTitle,
+    initialVideoId,
+    startAtSec,
+    onMoment,
+    onTab
+  } = props
   const theme = useTheme()
   const styles = getStyles(theme)
-  const { width } = useWindowDimensions()
-  const sideBySide = width >= SIDE_BY_SIDE_WIDTH
+  const { height, width } = useWindowDimensions()
+  const columns = highlightColumnsFor(width)
+  const isRail = useBreakpoint() !== 'phone'
+  // Sized from the window's height, not its width.
+  //
+  // `aspectRatio` beats `maxHeight` in react-native-web: a 16:9 box told to be
+  // 100% wide takes the height that implies and ignores the cap, so at 1280 by
+  // 720 the player was 594 tall, the card and pills took the rest, and the
+  // highlight list measured nothing at all. Giving it a height and letting the
+  // width follow is the way round that holds.
+  //
+  // Both constraints at once. A 16:9 box that only obeys the window came out
+  // 358 by 354 on a phone — nearly square — so the picture letterboxed inside
+  // it and 43% of the box was black bar, which is exactly the room the
+  // highlight list needed. And a box that only obeys the width fills a short
+  // window to the bottom. So: as tall as the fraction allows, no taller than
+  // 16:9 of the space it has, and the width follows the height.
+  //
+  // The card is pinned above the player, which Paul chose on 2026-09-17 over
+  // the video-first arrangement, with a later pass to optimise it. That costs
+  // the player the card's height, so the fraction is taken from what is left
+  // rather than from the window: at 720 the header, the card and the pills
+  // are about 270px, and 0.58 of the whole window would leave the highlight
+  // list nothing at all.
+  const railWidth = isRail ? 176 : 0
+  const columnWidth = Math.max(240, width - railWidth - 36)
+  const PINNED_ABOVE = 270
+  const playerHeight = Math.max(
+    150,
+    Math.min(
+      Math.round((height - PINNED_ABOVE) * 0.62),
+      Math.round((columnWidth * 9) / 16)
+    )
+  )
+  const playerWidth = Math.min(columnWidth, Math.round((playerHeight * 16) / 9))
 
-  const [tab, setTab] = useState<Tab>('watch')
+  const [tab, setTab] = useState<Tab>(initialTab ?? 'watch')
   const [game, setGame] = useState<GameDetail | undefined>(undefined)
   const [video, setVideo] = useState<VideoSummary | undefined>(undefined)
   const [highlights, setHighlights] = useState<Highlight[]>([])
   const [withheld, setWithheld] = useState<string | null>(null)
+  const [dropped, setDropped] = useState(0)
   const [batting, setBatting] = useState<BattingRow[] | undefined>(undefined)
   const [playback, setPlayback] = useState<Playback | undefined>(undefined)
+  /**
+   * Which video the current playback URL belongs to.
+   *
+   * Without this the resume after an angle switch was applied to the *old*
+   * source: the video had already changed but its URL had not been fetched
+   * yet, so the effect ran, seeked the source still attached, and cleared the
+   * resume — and by the time the new one loaded there was nothing left.
+   */
+  const [playbackFor, setPlaybackFor] = useState<string | undefined>(undefined)
   const [activeEventId, setActiveEventId] = useState<string | undefined>()
+  const [chosen, setChosen] = useState<Highlight | undefined>(undefined)
+  /**
+   * Where to pick up after the source changes, for an angle switch.
+   *
+   * Tagged with the video it belongs to. Without that it was applied to
+   * whichever source happened to be attached — the *old* one, because the new
+   * playback URL is fetched a moment later — and cleared, so by the time the
+   * new video loaded there was nothing left to restore and it started at zero.
+   */
+  const [resumeAt, setResumeAt] = useState<
+    { videoId: string; sec: number; playing: boolean } | undefined
+  >(undefined)
   const [error, setError] = useState<string | undefined>(undefined)
   const playerRef = useRef<HTMLVideoElement | null>(null)
+  /**
+   * The same element, as state, so that a **new** one is an event.
+   *
+   * A ref changing is invisible to React, and the box score unmounts the
+   * player: coming back mounted a fresh `<video>` with the same chosen video,
+   * so the attach effect — which fires only when the source changes — never
+   * ran and the new element was never handed a manifest. It sat at
+   * `readyState 0` with no source, and a highlight tap moved its timecode and
+   * reported itself playing, so nothing on screen said anything was wrong.
+   *
+   * Attaching when the element is new *as well as* when the source is keeps
+   * both halves: the narrow rule that stopped the restarts, and a player that
+   * works after every mount.
+   */
+  const [playerNode, setPlayerNode] = useState<HTMLVideoElement | null>(null)
+  const takePlayer = useCallback((node: HTMLVideoElement | null): void => {
+    playerRef.current = node
+    setPlayerNode(node)
+  }, [])
+  /** So a link's moment is honoured once, not on every re-attach. */
+  const startedFromLink = useRef(false)
 
   useEffect(() => {
     let live = true
@@ -70,8 +239,12 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         // A video whose file has gone is still listed — it is part of the
         // game's record and saying so is better than pretending it never
         // existed — but it is never the one opened by default.
+        onTitle?.(`${found.awayTeamName} @ ${found.homeTeamName}`)
         setVideo(
-          found.videos.find(item => item.status === 'ready') ?? found.videos[0]
+          // The address names one, when somebody followed a link to a moment.
+          found.videos.find(item => item.id === initialVideoId) ??
+            found.videos.find(item => item.status === 'ready') ??
+            found.videos[0]
         )
       })
       .catch(() => {
@@ -80,6 +253,9 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     return () => {
       live = false
     }
+    // `onTitle` is a fresh closure on each render of the shell, so including
+    // it here would refetch the game in a loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, gameId])
 
   useEffect(() => {
@@ -90,6 +266,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       .then(found => {
         if (!live) return
         setHighlights(found.highlights)
+        setDropped(found.droppedCount)
         setWithheld(found.withheld)
       })
       .catch(() => {
@@ -104,12 +281,16 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   // checks membership while it looks, so asking is the only way to find out.
   useEffect(() => {
     if (video == null) return
+    const forVideoId = video.id
     let live = true
     setPlayback(undefined)
+    setPlaybackFor(undefined)
     client
-      .playback(video.id)
+      .playback(forVideoId)
       .then(found => {
-        if (live) setPlayback(found)
+        if (!live) return
+        setPlayback(found)
+        setPlaybackFor(forVideoId)
       })
       .catch(() => {
         if (live) setPlayback(undefined)
@@ -138,14 +319,121 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   }, [batting, client, gameId, tab])
 
   const playbackUrl = playback?.url ?? null
+
+  /**
+   * What the playhead should do the next time a source is attached.
+   *
+   * Refs, not dependencies, and that is the whole point. This lived in the
+   * attach effect's dependency array and cost two bugs at once, because
+   * re-running the effect calls `attachHls` again and an element handed a
+   * fresh manifest goes back to zero:
+   *
+   * - Tapping a highlight writes `?t=` to the address, which comes back down
+   *   as `startAtSec`. The first tap worked only by accident — it took the
+   *   link branch below — and every tap after it re-attached the source and
+   *   dropped the reader at the start of the game.
+   * - The angle switch's own `setResumeAt(undefined)`, at the end of a
+   *   successful resume, re-ran the effect and undid the resume it had just
+   *   finished.
+   *
+   * Reading them through refs means the source is attached exactly when the
+   * source changes, and nothing else can reach in and restart it.
+   */
+  const resumeAtRef = useRef(resumeAt)
+  resumeAtRef.current = resumeAt
+  const startAtSecRef = useRef(startAtSec)
+  startAtSecRef.current = startAtSec
+  const autoPlayRef = useRef(autoPlay)
+  autoPlayRef.current = autoPlay
+  const placeFor = useRef<{ videoId?: string; playbackFor?: string }>({})
+  placeFor.current = { videoId: video?.id, playbackFor }
+
   useEffect(() => {
-    const element = playerRef.current
+    const element = playerNode
     if (element == null || playbackUrl == null) return
-    return attachHls(element, playbackUrl)
-  }, [playbackUrl])
+    const detach = attachHls(element, playbackUrl)
+
+    const resume = resumeAtRef.current
+    const { videoId, playbackFor: forId } = placeFor.current
+
+    // Picking up where the other angle was, once the new source is attached.
+    if (resume != null && resume.videoId === videoId && forId === videoId) {
+      const apply = (): void => {
+        element.currentTime = resume.sec
+        if (resume.playing) element.play().catch(() => undefined)
+        setResumeAt(undefined)
+      }
+      if (element.readyState >= 1) apply()
+      else element.addEventListener('loadedmetadata', apply, { once: true })
+      return detach
+    }
+
+    // A link to a moment: start there, and start playing, because that is
+    // what the person who sent the link meant by sending it.
+    const linkAt = startAtSecRef.current
+    if (linkAt != null && linkAt > 0 && !startedFromLink.current) {
+      startedFromLink.current = true
+      const jump = (): void => {
+        element.currentTime = linkAt
+        element.play().catch(() => undefined)
+      }
+      if (element.readyState >= 1) jump()
+      else element.addEventListener('loadedmetadata', jump, { once: true })
+      return detach
+    }
+
+    if (autoPlayRef.current) {
+      // The tap that opened this screen is a gesture the browser counts, so an
+      // unmuted start is allowed. If it refuses anyway the controls are right
+      // there, and saying so would be noise.
+      const start = (): void => {
+        element.play().catch(() => undefined)
+      }
+      element.addEventListener('loadedmetadata', start, { once: true })
+      start()
+    }
+    return detach
+  }, [playbackUrl, playerNode])
+
+  /**
+   * The other recording, from the same moment, still playing.
+   *
+   * Not a copy of `currentTime`: the two recordings do not have to have
+   * started at the same instant, so the position is converted through wall
+   * clock. The restore waits for `loadedmetadata` because a seek issued
+   * before the manifest has loaded is silently ignored by some browsers.
+   */
+  const switchAngle = (next: VideoSummary): void => {
+    const player = playerRef.current
+    const current = video
+    if (player == null || current == null || next.id === current.id) {
+      setVideo(next)
+      return
+    }
+    // Worked out before the swap, and handed to the effect that attaches the
+    // new source. Listening for `loadedmetadata` here does not work: changing
+    // the video re-runs `attachHls`, which resets the element *after* the
+    // listener has fired, so the seek was being undone a moment later.
+    const sec = sameMoment(current, next, player.currentTime)
+    setResumeAt({
+      videoId: next.id,
+      sec,
+      playing: player.paused === false
+    })
+    setVideo(next)
+    // The address names the angle, so it has to follow the angle. Without
+    // this it went on naming the one you switched away from, and copying the
+    // link mid-game handed somebody a different camera.
+    onMoment?.(next.id, Math.round(sec))
+  }
 
   const jumpTo = (highlight: Highlight): void => {
     setActiveEventId(highlight.eventId)
+    setChosen(highlight)
+    // The address follows, so the moment somebody is looking at is the moment
+    // they can send to somebody else.
+    if (video != null)
+      onMoment?.(video.id, Math.round(highlight.startOffsetSec))
     const player = playerRef.current
     if (player == null) return
     // Seek and keep playing: the point is to watch on from here, not to show
@@ -156,10 +444,33 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     player.play().catch(() => undefined)
   }
 
+  // The chosen play's full account clears itself a minute and a half after the
+  // moment it seeks to — measured in **played** time, not wall clock. A timer
+  // would run down while the video is paused and the description would be gone
+  // by the time anybody looked back at it.
+  useEffect(() => {
+    const player = playerRef.current
+    if (player == null || chosen == null) return
+    const onTime = (): void => {
+      const since = player.currentTime - chosen.startOffsetSec
+      if (since < 0 || since > DESCRIPTION_SECONDS) setChosen(undefined)
+    }
+    player.addEventListener('timeupdate', onTime)
+    return () => {
+      player.removeEventListener('timeupdate', onTime)
+    }
+  }, [chosen])
+
   if (error != null) {
+    // A heading and a reason, not a full stop on its own. A deep link to a
+    // game that has gone is the commonest way to land here, and `Not found.`
+    // centred in an empty screen reads as the app having broken rather than
+    // as an answer. The chevron in the header is the way out, so there is no
+    // button here to duplicate it.
     return (
       <View style={styles.centre}>
-        <Text style={styles.message}>{error}</Text>
+        <Text style={styles.messageHeading}>{error}</Text>
+        <Text style={styles.message}>{lstrings.common_not_found_detail}</Text>
       </View>
     )
   }
@@ -171,14 +482,24 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     )
   }
 
+  const pickerNames = angleNames(game.videos)
   const scoreboard = (
-    <Scoreboard
+    <GameHeroCard
       awayName={game.awayTeamName}
       homeName={game.homeTeamName}
       awayScore={game.awayScore}
       homeScore={game.homeScore}
       status={gameStatusLine(game)}
       winner={winnerOf(game)}
+      compact
+      awayRecord={game.awayRecord}
+      homeRecord={game.homeRecord}
+      awayLogoUrl={game.awayLogoUrl}
+      homeLogoUrl={game.homeLogoUrl}
+      meta={[game.venue, shortDate(game.startAt)]
+        .filter(part => part != null && part !== '')
+        .join(' · ')}
+      linescore={game.linescore}
     />
   )
 
@@ -189,15 +510,39 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         { id: 'boxScore', label: lstrings.game_box_score }
       ]}
       selected={tab}
-      onSelect={setTab}
-      stretch
+      onSelect={next => {
+        // Leaving the video unmounts it, so where it had got to is written
+        // down here and picked up by the attach that follows the remount.
+        // Without this you came back to the start of the game, which is a
+        // poor reward for having looked at the box score.
+        const player = playerRef.current
+        if (next !== 'watch' && player != null && video != null) {
+          setResumeAt({
+            videoId: video.id,
+            sec: player.currentTime,
+            playing: player.paused === false
+          })
+        }
+        setTab(next)
+        onTab?.(next)
+      }}
+      size="compact"
       accessibilityLabel="Game sections"
     />
   )
 
+  const description =
+    chosen?.description == null || chosen.description === '' ? null : (
+      <View style={styles.description}>
+        <Text style={styles.descriptionText}>{chosen.description}</Text>
+      </View>
+    )
+
   const player = (
-    <View style={styles.playerColumn}>
-      <View style={styles.player}>
+    <View>
+      <View
+        style={[styles.player, { height: playerHeight, width: playerWidth }]}
+      >
         {video == null ? (
           <Text style={styles.message}>{lstrings.game_no_video}</Text>
         ) : playback == null ? (
@@ -211,7 +556,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           // renders to the DOM, and the browser's own player is what gives us
           // hardware decoding for HEVC and H.264 alike.
           <video
-            ref={playerRef}
+            ref={takePlayer}
             style={{ width: '100%', height: '100%', backgroundColor: '#000' }}
             controls
             playsInline
@@ -219,33 +564,40 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         )}
       </View>
 
+      {/*
+        The same strip as everywhere else, rather than a fourth hand-drawn
+        version of it. This one had square corners, its own colours and a
+        target the size of the pill; as `PillTabs` it takes the one pill size
+        Paul chose, fully rounded, and gets a 48px target and a `tab` role
+        with it.
+      */}
       {game.videos.length > 1 ? (
         <View style={styles.videoPicker}>
-          {game.videos.map(item => (
-            <Pressable
-              key={item.id}
-              style={[
-                styles.tab,
-                item.id === video?.id ? styles.tabActive : undefined
-              ]}
-              onPress={() => {
-                setVideo(item)
-              }}
-            >
-              <Text style={styles.tabText}>
-                {item.status === 'ready'
-                  ? item.title
-                  : `${item.title} ${lstrings.game_video_gone_suffix}`}
-              </Text>
-            </Pressable>
-          ))}
+          <PillTabs
+            tabs={game.videos.map(item => {
+              const name = pickerNames.get(item.id) ?? angleName(item)
+              return {
+                id: item.id,
+                label:
+                  item.status === 'ready'
+                    ? name
+                    : `${name} ${lstrings.game_video_gone_suffix}`
+              }
+            })}
+            selected={video?.id ?? ''}
+            onSelect={id => {
+              const item = game.videos.find(one => one.id === id)
+              if (item != null) switchAngle(item)
+            }}
+            accessibilityLabel="Camera angles"
+          />
         </View>
       ) : null}
     </View>
   )
 
   const highlightList = (
-    <View style={sideBySide ? styles.listColumn : undefined}>
+    <View>
       <Text style={styles.heading}>{lstrings.game_highlights}</Text>
       {withheld === 'scoreMismatch' ? (
         <Text style={styles.warning}>{lstrings.game_score_mismatch}</Text>
@@ -256,58 +608,90 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       ) : withheld === 'noVideoStart' ? (
         <Text style={styles.message}>{lstrings.highlights_no_video_start}</Text>
       ) : highlights.length === 0 ? (
-        <Text style={styles.message}>{lstrings.highlights_none}</Text>
+        <Text style={styles.message}>
+          {dropped > 0
+            ? lstrings.highlights_none_named
+            : lstrings.highlights_none}
+        </Text>
       ) : (
-        highlights.map(highlight => (
-          <Pressable
-            key={highlight.eventId}
-            style={[
-              styles.highlight,
-              highlight.eventId === activeEventId
-                ? styles.highlightActive
-                : undefined
-            ]}
-            onPress={() => {
-              jumpTo(highlight)
-            }}
-          >
-            <Image
-              // One frame of the play. It may not be cut yet the first time a
-              // game is opened, in which case nothing is drawn and the row is
-              // otherwise unchanged.
-              source={{ uri: highlight.stillUrl }}
-              style={styles.still}
-            />
-            <Text style={styles.timecode}>
-              {timecode(highlight.startOffsetSec)}
-            </Text>
-            <Text
+        <View style={styles.grid}>
+          {highlights.map(highlight => (
+            <Pressable
+              key={highlight.eventId}
               style={[
-                styles.highlightTitle,
-                highlight.isScoringPlay ? styles.scoring : undefined
+                styles.highlight,
+                { width: `${100 / columns}%` },
+                highlight.eventId === activeEventId
+                  ? styles.highlightActive
+                  : undefined
               ]}
-              numberOfLines={2}
+              onPress={() => {
+                jumpTo(highlight)
+              }}
             >
-              {highlight.title}
-            </Text>
-          </Pressable>
-        ))
+              <VideoPoster
+                uri={highlight.stillUrl}
+                time={timecode(highlight.startOffsetSec)}
+              />
+              <Text
+                style={[
+                  styles.highlightTitle,
+                  highlight.isScoringPlay ? styles.scoring : undefined
+                ]}
+                // Two lines in a grid cell: `Ground out: Benito W (2B) to
+                // Isaac D (1B)` needs more than twice the width a quarter of a
+                // desktop gives it, and a cut label names nobody.
+                numberOfLines={2}
+              >
+                {highlight.title}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
       )}
     </View>
   )
 
+  // Two regions, not one scroll view: the card, the pills and the player are
+  // fixed, and the highlights scroll underneath them. Reading to the bottom of
+  // a long game must not take the video off the screen.
+  if (tab === 'watch') {
+    return (
+      <View style={styles.screen}>
+        {/*
+          A plain View, not a `Screen`: `Screen` fills whatever it is given,
+          and two of them in a column each took half the height — which
+          squeezed the 16:9 player into a strip across the top. This one is
+          sized by its contents, and the list below takes what is left.
+        */}
+        {/*
+          The card sits at the top, above the video, which is where the plan
+          and the design both put it (§4, §17) and what Paul chose on
+          2026-09-17. It has to be pinned to be above a pinned player, so it
+          and the player share the fixed region and only the highlights
+          scroll. That costs the video some height on a short window; a later
+          pass is to optimise it.
+        */}
+        <View style={styles.fixed}>
+          {scoreboard}
+          {tabs}
+          {player}
+          {description}
+        </View>
+        <ScrollView style={styles.scroller}>
+          <View style={styles.scrolled}>{highlightList}</View>
+        </ScrollView>
+      </View>
+    )
+  }
+
   return (
     <ScrollView style={styles.screen}>
-      {scoreboard}
-      {tabs}
-      {tab === 'watch' ? (
-        <View style={sideBySide ? styles.watchWide : undefined}>
-          {player}
-          {highlightList}
-        </View>
-      ) : (
+      <Screen wide scroll={false}>
+        {scoreboard}
+        {tabs}
         <BoxScore game={game} rows={batting} theme={theme} />
-      )}
+      </Screen>
     </ScrollView>
   )
 }
@@ -372,7 +756,7 @@ function BoxScore(props: BoxScoreProps): React.ReactElement {
             {lines.map(line => (
               <View key={line.userId} style={styles.tableRow}>
                 <Text style={styles.cellName} numberOfLines={1}>
-                  {line.displayName ?? ''}
+                  {line.shortName ?? ''}
                 </Text>
                 {statColumns.map(column => (
                   <Text key={column.label} style={styles.cell}>
@@ -455,15 +839,63 @@ const getStyles = cacheStyles((theme: Theme) =>
       fontSize: theme.rem(1.6)
     },
     at: {
-      color: theme.clearButtonColor,
+      color: theme.secondaryTextColor,
       fontFamily: theme.regularTextFont,
       fontSize: theme.rem(0.85)
     },
     // The video is the tallest thing on the page, so it is capped: a 16:9 box
     // across a desktop window would push the highlights off the bottom.
-    watchWide: { flexDirection: 'row', alignItems: 'flex-start' },
-    playerColumn: { flex: 2, maxWidth: theme.rem(45) },
-    listColumn: { flex: 1, minWidth: theme.rem(16) },
+    // The card, the pills and the player. Fixed, so the list scrolls under it.
+    // A flex item shrinks by default, and this one holds a 16:9 box. Without
+    // `flexShrink: 0` the scrolling list below took the space it wanted and
+    // squeezed the player, which clipped the video to its top third.
+    fixed: {
+      flexShrink: 0,
+      paddingHorizontal: theme.rem(theme.spaceLgRem * 0.8),
+      paddingTop: theme.rem(theme.spaceLgRem),
+      paddingBottom: theme.rem(theme.spaceSmRem),
+      gap: theme.rem(theme.spaceMdRem)
+    },
+    scroller: { flex: 1 },
+    scrolled: {
+      paddingHorizontal: theme.rem(theme.spaceLgRem * 0.8),
+      paddingTop: theme.rem(theme.spaceSmRem),
+      paddingBottom: theme.rem(theme.spaceLgRem),
+      gap: theme.rem(theme.spaceMdRem)
+    },
+    hero: {
+      backgroundColor: theme.cardBackgroundColor,
+      borderRadius: theme.rem(theme.radiusRem),
+      borderWidth: 1,
+      borderColor: theme.defaultBorderColor,
+      overflow: 'hidden'
+    },
+    linescore: {
+      borderTopWidth: 1,
+      borderTopColor: theme.defaultBorderColor,
+      paddingHorizontal: theme.rem(theme.spaceMdRem),
+      paddingVertical: theme.rem(theme.spaceSmRem),
+      gap: theme.rem(0.125)
+    },
+    lineText: {
+      color: theme.secondaryTextColor,
+      fontFamily: theme.semiBoldTextFont,
+      fontSize: theme.rem(0.8125)
+    },
+    description: {
+      backgroundColor: theme.highlightRowBackground,
+      borderRadius: theme.rem(theme.radiusRem),
+      padding: theme.rem(theme.spaceMdRem)
+    },
+    descriptionText: {
+      color: theme.primaryTextColor,
+      fontFamily: theme.regularTextFont,
+      fontSize: theme.rem(0.9375)
+    },
+    grid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap'
+    },
     tabs: {
       flexDirection: 'row',
       gap: theme.rem(0.5),
@@ -471,28 +903,16 @@ const getStyles = cacheStyles((theme: Theme) =>
       paddingBottom: theme.rem(0.5)
     },
     videoPicker: {
-      flexDirection: 'row',
-      gap: theme.rem(0.5),
-      padding: theme.rem(0.5)
+      paddingHorizontal: theme.rem(0.5),
+      paddingVertical: theme.rem(0.25)
     },
+    // Its height is set from the window; the width follows, so a 16:9 picture
+    // is letterboxed inside rather than dictating how tall the box is.
     player: {
-      width: '100%',
-      aspectRatio: 16 / 9,
+      alignSelf: 'center',
       backgroundColor: theme.videoBackgroundColor,
       alignItems: 'center',
       justifyContent: 'center'
-    },
-    tab: {
-      backgroundColor: theme.inactiveBackgroundColor,
-      borderRadius: theme.rem(0.3),
-      paddingHorizontal: theme.rem(0.75),
-      paddingVertical: theme.rem(0.35)
-    },
-    tabActive: { backgroundColor: theme.primaryButtonColor },
-    tabText: {
-      color: theme.buttonTextColor,
-      fontFamily: theme.regularTextFont,
-      fontSize: theme.rem(0.85)
     },
     heading: {
       color: theme.primaryTextColor,
@@ -501,30 +921,18 @@ const getStyles = cacheStyles((theme: Theme) =>
       paddingHorizontal: theme.rem(0.75),
       paddingTop: theme.rem(0.75)
     },
+    // A frame, then the words. The time used to hold open a column of its own
+    // between them, which read as a gap because the text in it was drawn in a
+    // colour that is transparent.
     highlight: {
       flexDirection: 'row',
       alignItems: 'center',
-      backgroundColor: theme.highlightRowBackground,
-      borderRadius: theme.rem(0.3),
       gap: theme.rem(0.75),
-      marginHorizontal: theme.rem(0.75),
-      marginTop: theme.rem(0.35),
-      paddingHorizontal: theme.rem(0.75),
-      paddingVertical: theme.rem(0.5)
+      paddingHorizontal: theme.rem(0.375),
+      paddingVertical: theme.rem(0.375)
     },
     highlightActive: { backgroundColor: theme.highlightRowActiveBackground },
-    still: {
-      aspectRatio: 16 / 9,
-      backgroundColor: theme.videoBackgroundColor,
-      borderRadius: theme.rem(0.2),
-      width: theme.rem(5)
-    },
-    timecode: {
-      color: theme.clearButtonColor,
-      fontFamily: theme.semiBoldTextFont,
-      fontSize: theme.rem(0.85),
-      minWidth: theme.rem(3)
-    },
+
     highlightTitle: {
       color: theme.primaryTextColor,
       flex: 1,
@@ -558,11 +966,11 @@ const getStyles = cacheStyles((theme: Theme) =>
       textAlign: 'right'
     },
     cellHead: {
-      color: theme.clearButtonColor,
+      color: theme.secondaryTextColor,
       fontFamily: theme.semiBoldTextFont
     },
     footnote: {
-      color: theme.clearButtonColor,
+      color: theme.secondaryTextColor,
       fontFamily: theme.regularTextFont,
       fontSize: theme.rem(0.8),
       padding: theme.rem(0.75)
@@ -573,10 +981,18 @@ const getStyles = cacheStyles((theme: Theme) =>
       fontSize: theme.rem(0.9),
       padding: theme.rem(0.75)
     },
-    message: {
+    messageHeading: {
       color: theme.primaryTextColor,
+      fontFamily: theme.semiBoldTextFont,
+      fontSize: theme.rem(1.25),
+      fontWeight: '600',
+      textAlign: 'center'
+    },
+    message: {
+      color: theme.secondaryTextColor,
       fontFamily: theme.regularTextFont,
       fontSize: theme.rem(1),
+      maxWidth: theme.rem(22),
       padding: theme.rem(0.75),
       textAlign: 'center'
     }

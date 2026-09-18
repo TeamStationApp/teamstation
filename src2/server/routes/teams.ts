@@ -2,12 +2,16 @@ import { Router } from 'express'
 import type { Kysely } from 'kysely'
 
 import { notFound, unauthorized } from '../../common/errors'
+import { shortNames } from '../../common/names'
 import { canSeeGame, canSeeTeam, visibleScopes } from '../access'
 import type { Database } from '../db/database'
-import { computeHighlights } from '../highlights'
+import { isRealVideo } from '../db/realVideos'
+import { withDropped } from '../highlights'
+import { imageUrl } from '../media/imageUrls'
 import { locateVideoFile } from '../media/locations'
 import type { MediaContext } from '../media/mediaContext'
 import { mediaUrlPath } from '../media/mediaTokens'
+import { postersFor, posterUrl, warmPosters } from '../media/posters'
 import { stillSecond, warmStills } from '../media/stills'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
@@ -37,27 +41,123 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
       const teams = scopes.isAdmin
         ? await db
             .selectFrom('teams')
-            .select(['id', 'name', 'short_name', 'logo_path'])
-            .where('kind', '=', 'full')
-            .orderBy('name')
+            .leftJoin('games', join =>
+              join.on(eb =>
+                eb.or([
+                  eb('games.home_team_id', '=', eb.ref('teams.id')),
+                  eb('games.away_team_id', '=', eb.ref('teams.id'))
+                ])
+              )
+            )
+            .select([
+              'teams.id as id',
+              'teams.name as name',
+              'teams.short_name as short_name',
+              'teams.logo_path as logo_path'
+            ])
+            .select(eb => eb.fn.max('games.start_at').as('lastPlayedAt'))
+            .where('teams.kind', '=', 'full')
+            .groupBy([
+              'teams.id',
+              'teams.name',
+              'teams.short_name',
+              'teams.logo_path'
+            ])
+            .orderBy('lastPlayedAt', ob => ob.desc().nullsLast())
+            .orderBy('teams.name')
             .execute()
         : scopes.teamIds.size === 0
           ? []
           : await db
               .selectFrom('teams')
-              .select(['id', 'name', 'short_name', 'logo_path'])
-              .where('id', 'in', [...scopes.teamIds])
-              .where('kind', '=', 'full')
-              .orderBy('name')
+              .leftJoin('games', join =>
+                join.on(eb =>
+                  eb.or([
+                    eb('games.home_team_id', '=', eb.ref('teams.id')),
+                    eb('games.away_team_id', '=', eb.ref('teams.id'))
+                  ])
+                )
+              )
+              .select([
+                'teams.id as id',
+                'teams.name as name',
+                'teams.short_name as short_name',
+                'teams.logo_path as logo_path'
+              ])
+              .select(eb => eb.fn.max('games.start_at').as('lastPlayedAt'))
+              .where('teams.id', 'in', [...scopes.teamIds])
+              .where('teams.kind', '=', 'full')
+              .groupBy([
+                'teams.id',
+                'teams.name',
+                'teams.short_name',
+                'teams.logo_path'
+              ])
+              // A team has no season of its own to sort by — only a season
+              // does — so the honest ordering is when it last played. The team
+              // somebody is here to look at is almost always the one that
+              // played last night. A team that has never played has no date,
+              // and sorts to the bottom rather than to the top, which is where
+              // SQL puts a null by default on a descending sort.
+              .orderBy('lastPlayedAt', ob => ob.desc().nullsLast())
+              .orderBy('teams.name')
               .execute()
 
+      // A record is per season, counted from the plays — never copied from an
+      // import, whose own figures are a check and not a source. The most recent
+      // season is the one a team page shows.
+      const records =
+        teams.length === 0
+          ? []
+          : await db
+              .selectFrom('team_season_records')
+              .leftJoin(
+                'seasons',
+                'seasons.id',
+                'team_season_records.season_id'
+              )
+              .select([
+                'team_season_records.team_id as teamId',
+                'team_season_records.w as w',
+                'team_season_records.l as l',
+                'team_season_records.t as t',
+                'seasons.name as seasonName',
+                'seasons.year as seasonYear'
+              ])
+              .where(
+                'team_season_records.team_id',
+                'in',
+                teams.map(team => team.id)
+              )
+              .execute()
+      const newest = new Map<string, (typeof records)[number]>()
+      for (const row of records) {
+        const held = newest.get(row.teamId)
+        if (held == null || (row.seasonYear ?? 0) > (held.seasonYear ?? 0)) {
+          newest.set(row.teamId, row)
+        }
+      }
+
       res.json(
-        teams.map(team => ({
-          id: team.id,
-          name: team.name,
-          shortName: team.short_name,
-          logoPath: team.logo_path
-        }))
+        teams.map(team => {
+          const record = newest.get(team.id)
+          return {
+            id: team.id,
+            name: team.name,
+            shortName: team.short_name,
+            logoPath: team.logo_path,
+            logoUrl: imageUrl(media.space, team.logo_path),
+            record:
+              record == null || record.w + record.l + record.t === 0
+                ? null
+                : {
+                    w: record.w,
+                    l: record.l,
+                    t: record.t,
+                    seasonName: record.seasonName
+                  }
+          }
+        })
       )
     })
   )
@@ -98,6 +198,7 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
 
       const ids = games.map(game => game.id)
       const videoCounts = await countVideos(db, ids)
+      const teamPosters = await postersFor(db, ids)
       const names = await teamNames(
         db,
         games.flatMap(game => [game.home_team_id, game.away_team_id])
@@ -117,7 +218,12 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
           homeScore: game.home_score,
           awayScore: game.away_score,
           ingestStatus: game.ingest_status,
-          videoCount: videoCounts.get(game.id) ?? 0
+          videoCount: videoCounts.get(game.id) ?? 0,
+          durationSec: teamPosters.get(game.id)?.durationSec ?? null,
+          posterUrl: (() => {
+            const poster = teamPosters.get(game.id)
+            return poster == null ? null : posterUrl(media, poster.videoId)
+          })()
         }))
       )
     })
@@ -160,14 +266,58 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
           'duration_sec',
           'width',
           'height',
-          'codecs'
+          'codecs',
+          'num_cameras',
+          'sync_offset_sec'
         ])
         .where('game_id', '=', gameId)
         .where('hidden', '=', false)
+        .where(isRealVideo)
         .orderBy('kind')
         .execute()
 
       const names = await teamNames(db, [game.home_team_id, game.away_team_id])
+
+      // Each side's record in the season this game was played in.
+      const recordRows = await db
+        .selectFrom('team_season_records')
+        .select(['team_id', 'w', 'l', 't'])
+        .where('team_id', 'in', [game.home_team_id, game.away_team_id])
+        .where(eb =>
+          game.season_id == null
+            ? eb('season_id', 'is', null)
+            : eb('season_id', '=', game.season_id)
+        )
+        .execute()
+      const logos = await db
+        .selectFrom('teams')
+        .select(['id', 'logo_path'])
+        .where('id', 'in', [game.home_team_id, game.away_team_id])
+        .execute()
+      const logoOf = (teamId: string): string | null =>
+        imageUrl(
+          media.space,
+          logos.find(row => row.id === teamId)?.logo_path ?? null
+        )
+
+      const recordOf = (teamId: string): string | null => {
+        const row = recordRows.find(item => item.team_id === teamId)
+        if (row == null || row.w + row.l + row.t === 0) return null
+        return row.t > 0 ? `${row.w}–${row.l}–${row.t}` : `${row.w}–${row.l}`
+      }
+
+      // The frames the card and the picker are about to ask for.
+      warmPosters(
+        media,
+        videos
+          .filter(video => video.status === 'ready')
+          .map(video => ({
+            gameId,
+            videoId: video.id,
+            storage: video.storage,
+            durationSec: video.duration_sec
+          }))
+      ).catch(() => undefined)
 
       res.json({
         id: game.id,
@@ -183,8 +333,17 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
         awayScore: game.away_score,
         ingestStatus: game.ingest_status,
         ingestMessage: game.ingest_message,
+        awayRecord: recordOf(game.away_team_id),
+        homeRecord: recordOf(game.home_team_id),
+        awayLogoUrl: logoOf(game.away_team_id),
+        homeLogoUrl: logoOf(game.home_team_id),
+        linescore: game.linescore,
         videos: videos.map(video => ({
           id: video.id,
+          numCameras: video.num_cameras,
+          syncOffsetSec: video.sync_offset_sec,
+          posterUrl:
+            video.status === 'ready' ? posterUrl(media, video.id) : null,
           kind: video.kind,
           title: video.title,
           status: video.status,
@@ -246,14 +405,38 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
           'title_override',
           'time_nudge_sec',
           'hidden',
-          'is_scoring_play'
+          'is_scoring_play',
+          'credits'
         ])
         .where('game_id', '=', video.gameId)
         .orderBy('at_bat_index')
         .execute()
 
+      // Which teams a highlight may name. An opponent invented from a name on
+      // somebody else's schedule is not somebody we can put on a screen.
+      const teamRows = await db
+        .selectFrom('teams')
+        .leftJoin('memberships', join =>
+          join
+            .onRef('memberships.team_id', '=', 'teams.id')
+            .on('memberships.role', 'in', ['owner', 'manager'])
+        )
+        .select(['teams.id as id', 'teams.kind as kind'])
+        .select(eb => eb.fn.count<number>('memberships.id').as('owners'))
+        .groupBy(['teams.id', 'teams.kind'])
+        .execute()
+      const teams = new Map(
+        teamRows.map(row => [
+          row.id,
+          {
+            isExternal: row.kind === 'external',
+            hasOwner: Number(row.owners) > 0
+          }
+        ])
+      )
+
       const settings = await highlightSettings(db)
-      const highlights = computeHighlights(
+      const computed = withDropped(
         events.map(row => ({
           id: row.id,
           atBatIndex: row.at_bat_index,
@@ -263,15 +446,21 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
           titleOverride: row.title_override,
           timeNudgeSec: row.time_nudge_sec,
           hidden: row.hidden,
-          isScoringPlay: row.is_scoring_play
+          isScoringPlay: row.is_scoring_play,
+          // `?? []` here would be a bug: it turns "nobody has looked at this
+          // play yet" into "nobody did anything worth watching", and every
+          // game ingested before credits existed would lose its highlights.
+          credits: (row.credits ?? undefined) as never
         })),
         {
           startAt: video.startAt == null ? null : new Date(video.startAt),
           syncOffsetSec: video.syncOffsetSec,
           durationSec: video.durationSec
         },
-        settings
+        settings,
+        teams
       )
+      const highlights = computed.highlights
 
       // A still is one frame of the video at the moment of the play, served
       // from the work directory like any other media: `<sec>.jpg` under this
@@ -292,6 +481,9 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
 
       res.json({
         withheld: whyEmpty(highlights, events, video),
+        // How many plays were left out because nobody could be named on them.
+        // An empty list can then say which kind of empty it is.
+        droppedCount: computed.dropped,
         highlights: withStills
       })
 
@@ -328,6 +520,9 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
         .select([
           'memberships.user_id as userId',
           'users.display_name as displayName',
+          'users.first_name as firstName',
+          'users.last_name as lastName',
+          'users.avatar_path as avatarPath',
           'memberships.jersey as jersey',
           'memberships.positions as positions',
           'memberships.is_player as isPlayer',
@@ -335,20 +530,98 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
         ])
         .where('memberships.team_id', '=', teamId)
         .where('users.merged_into', 'is', null)
-        .orderBy('memberships.is_player', 'desc')
         .orderBy('users.display_name')
         .execute()
 
-      res.json(
+      // Everybody who may see this team but is not on it: the right can be
+      // given on the team, on its season or on its league, and from the team
+      // page's point of view all three are the same thing — somebody who
+      // follows it. Gathered separately because they have no membership row.
+      const followerRows = await db
+        .selectFrom('season_members')
+        .innerJoin('users', 'users.id', 'season_members.user_id')
+        .innerJoin(
+          'season_teams',
+          'season_teams.season_id',
+          'season_members.season_id'
+        )
+        .select([
+          'users.id as userId',
+          'users.display_name as displayName',
+          'users.first_name as firstName',
+          'users.last_name as lastName',
+          'users.avatar_path as avatarPath'
+        ])
+        .where('season_teams.team_id', '=', teamId)
+        .where('users.merged_into', 'is', null)
+        .distinct()
+        .execute()
+
+      // First name, last initial, worked out across the whole roster so two
+      // children called Jordan do not both come out `Jordan P`.
+      const names = shortNames(
         rows.map(row => ({
-          userId: row.userId,
-          displayName: row.displayName,
-          jersey: row.jersey,
-          positions: row.positions,
-          isPlayer: row.isPlayer,
-          role: row.role
+          id: row.userId,
+          firstName: row.firstName,
+          lastName: row.lastName,
+          displayName: row.displayName
         }))
       )
+
+      const onTheTeam = new Set(rows.map(row => row.userId))
+      const followers = followerRows.filter(row => !onTheTeam.has(row.userId))
+      const followerNames = shortNames(
+        followers.map(row => ({
+          id: row.userId,
+          firstName: row.firstName,
+          lastName: row.lastName,
+          displayName: row.displayName
+        }))
+      )
+
+      // Coaches, then players, then followers. A person appears once, in the
+      // first group that fits: somebody who coaches and is also a parent is a
+      // coach, which is what they are here for.
+      const group = (row: (typeof rows)[number]): string =>
+        row.role === 'owner' || row.role === 'manager'
+          ? 'coach'
+          : row.isPlayer
+            ? 'player'
+            : 'follower'
+      const order = { coach: 0, player: 1, follower: 2 }
+
+      res.json([
+        ...rows
+          .map(row => ({
+            userId: row.userId,
+            shortName: names.get(row.userId) ?? row.displayName,
+            avatarUrl: imageUrl(media.space, row.avatarPath),
+            jersey: row.jersey,
+            positions: row.positions,
+            isPlayer: row.isPlayer,
+            role: row.role,
+            group: group(row)
+          }))
+          .sort((a, b) => {
+            const byGroup =
+              order[a.group as keyof typeof order] -
+              order[b.group as keyof typeof order]
+            if (byGroup !== 0) return byGroup
+            return a.shortName.localeCompare(b.shortName)
+          }),
+        ...followers
+          .map(row => ({
+            userId: row.userId,
+            shortName: followerNames.get(row.userId) ?? row.displayName,
+            avatarUrl: imageUrl(media.space, row.avatarPath),
+            jersey: null,
+            positions: [] as string[],
+            isPlayer: false,
+            role: 'member',
+            group: 'follower'
+          }))
+          .sort((a, b) => a.shortName.localeCompare(b.shortName))
+      ])
     })
   )
 
@@ -383,7 +656,9 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
           'event_players.team_id as teamId',
           'events.event_type as eventType',
           'events.rbi as rbi',
-          'users.display_name as displayName'
+          'users.display_name as displayName',
+          'users.first_name as firstName',
+          'users.last_name as lastName'
         ])
         .where('event_players.team_id', '=', teamId)
         .where('event_players.role', '=', 'batter')
@@ -391,7 +666,14 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
         query = query.where('games.season_id', '=', seasonId)
       const rows = await query.execute()
 
-      const names = new Map(rows.map(row => [row.userId, row.displayName]))
+      const names = shortNames(
+        rows.map(row => ({
+          id: row.userId,
+          firstName: row.firstName,
+          lastName: row.lastName,
+          displayName: row.displayName
+        }))
+      )
       const lines = battingLines(
         rows.map(row => ({
           batterUserId: row.userId,
@@ -404,7 +686,7 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
       res.json(
         lines.map(line => ({
           ...line,
-          displayName: names.get(line.userId) ?? 'Unknown',
+          shortName: names.get(line.userId) ?? 'Unknown',
           rates: battingRates(line)
         }))
       )
@@ -445,13 +727,22 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
           'event_players.team_id as teamId',
           'events.event_type as eventType',
           'events.rbi as rbi',
-          'users.display_name as displayName'
+          'users.display_name as displayName',
+          'users.first_name as firstName',
+          'users.last_name as lastName'
         ])
         .where('events.game_id', '=', gameId)
         .where('event_players.role', '=', 'batter')
         .execute()
 
-      const names = new Map(rows.map(row => [row.userId, row.displayName]))
+      const names = shortNames(
+        rows.map(row => ({
+          id: row.userId,
+          firstName: row.firstName,
+          lastName: row.lastName,
+          displayName: row.displayName
+        }))
+      )
       const lines = battingLines(
         rows.map(row => ({
           batterUserId: row.userId,
@@ -464,7 +755,7 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
       res.json(
         lines.map(line => ({
           ...line,
-          displayName: names.get(line.userId) ?? 'Unknown',
+          shortName: names.get(line.userId) ?? 'Unknown',
           rates: battingRates(line)
         }))
       )
@@ -532,6 +823,7 @@ async function countVideos(
     .select(['game_id'])
     .where('game_id', 'in', gameIds)
     .where('hidden', '=', false)
+    .where(isRealVideo)
     .execute()
   const counts = new Map<string, number>()
   for (const row of rows) {

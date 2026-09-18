@@ -4,6 +4,10 @@ import type { Kysely } from 'kysely'
 import { notFound, unauthorized } from '../../common/errors'
 import { visibleScopes } from '../access'
 import type { Database } from '../db/database'
+import { isRealVideo } from '../db/realVideos'
+import { imageUrl } from '../media/imageUrls'
+import type { MediaContext } from '../media/mediaContext'
+import { postersFor, posterUrl, warmPosters } from '../media/posters'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 
@@ -17,7 +21,10 @@ import { withAsync } from '../middleware/withErrors'
  * An **external team** — an opponent from outside the season — is deliberately
  * absent from `/seasons/:id/teams`. It appears on a game, and nowhere else.
  */
-export function seasonRoutes(db: Kysely<Database>): Router {
+export function seasonRoutes(
+  db: Kysely<Database>,
+  media: MediaContext
+): Router {
   const router = Router()
 
   router.get(
@@ -70,7 +77,9 @@ export function seasonRoutes(db: Kysely<Database>): Router {
 
         const gameRows = await db
           .selectFrom('games')
-          .leftJoin('videos', 'videos.game_id', 'games.id')
+          .leftJoin('videos', join =>
+            join.onRef('videos.game_id', '=', 'games.id').on(isRealVideo)
+          )
           .select(['games.season_id as seasonId', 'games.id as gameId'])
           .select(eb => eb.fn.count<number>('videos.id').as('videoCount'))
           .where('games.season_id', 'in', ids)
@@ -123,7 +132,33 @@ export function seasonRoutes(db: Kysely<Database>): Router {
         .orderBy('teams.name')
         .execute()
 
-      res.json(teams)
+      // A record and a signed logo URL, the same as `/teams` gives. Without
+      // the URL the app correctly falls back to initials — it never builds an
+      // image address itself — so the logos simply never appeared here.
+      const records = await db
+        .selectFrom('team_season_records')
+        .select(['team_id', 'w', 'l', 't'])
+        .where('season_id', '=', seasonId)
+        .execute()
+
+      res.json(
+        teams.map(team => {
+          const record = records.find(row => row.team_id === team.id)
+          return {
+            ...team,
+            logoUrl: imageUrl(media.space, team.logoPath),
+            record:
+              record == null || record.w + record.l + record.t === 0
+                ? null
+                : {
+                    w: record.w,
+                    l: record.l,
+                    t: record.t,
+                    seasonName: null
+                  }
+          }
+        })
+      )
     })
   )
 
@@ -141,7 +176,9 @@ export function seasonRoutes(db: Kysely<Database>): Router {
         .selectFrom('games')
         .innerJoin('teams as home', 'home.id', 'games.home_team_id')
         .innerJoin('teams as away', 'away.id', 'games.away_team_id')
-        .leftJoin('videos', 'videos.game_id', 'games.id')
+        .leftJoin('videos', join =>
+          join.onRef('videos.game_id', '=', 'games.id').on(isRealVideo)
+        )
         .select([
           'games.id as id',
           'games.home_team_id as homeTeamId',
@@ -160,6 +197,9 @@ export function seasonRoutes(db: Kysely<Database>): Router {
           'games.ingest_status as ingestStatus'
         ])
         .select(eb => eb.fn.count<number>('videos.id').as('videoCount'))
+        // The longest video of the game: on a multi-camera game that is the
+        // full broadcast rather than whichever clip happens to sort first.
+        .select(eb => eb.fn.max('videos.duration_sec').as('durationSec'))
         .where('games.season_id', '=', seasonId)
         .groupBy([
           'games.id',
@@ -171,6 +211,12 @@ export function seasonRoutes(db: Kysely<Database>): Router {
         // Newest first: last night's game is the one people look for.
         .orderBy('games.start_at', 'desc')
         .execute()
+
+      const posters = await postersFor(
+        db,
+        games.map(game => game.id)
+      )
+      const now = Date.now()
 
       res.json(
         games.map(game => ({
@@ -188,9 +234,110 @@ export function seasonRoutes(db: Kysely<Database>): Router {
           homeScore: game.homeScore,
           awayScore: game.awayScore,
           ingestStatus: game.ingestStatus,
-          videoCount: Number(game.videoCount)
+          videoCount: Number(game.videoCount),
+          durationSec:
+            game.durationSec == null ? null : Number(game.durationSec),
+          posterUrl:
+            posters.get(game.id) == null
+              ? null
+              : posterUrl(media, posters.get(game.id)!.videoId, undefined, now)
         }))
       )
+
+      // Cut after the answer has gone out. The first person to open a list
+      // starts the work and sees plain plates; everybody after sees pictures.
+      warmPosters(media, [...posters.values()]).catch(() => undefined)
+    })
+  )
+
+  /**
+   * The most recent game the signed-in person can see, anywhere.
+   *
+   * The home screen used to take the first season it was handed and look
+   * inside that one, which showed a game from June while there were games in
+   * September: the newest season is not the season with the newest game, and
+   * somebody on several teams has games in more than one.
+   */
+  router.get(
+    '/games/recent',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
+      if (!scopes.isAdmin && scopes.seasonIds.size === 0) {
+        res.json(null)
+        return
+      }
+
+      let query = db
+        .selectFrom('games')
+        .innerJoin('teams as home', 'home.id', 'games.home_team_id')
+        .innerJoin('teams as away', 'away.id', 'games.away_team_id')
+        .leftJoin('videos', join =>
+          join.onRef('videos.game_id', '=', 'games.id').on(isRealVideo)
+        )
+        .select([
+          'games.id as id',
+          'games.home_team_id as homeTeamId',
+          'games.away_team_id as awayTeamId',
+          'home.name as homeTeamName',
+          'away.name as awayTeamName',
+          'home.kind as homeTeamKind',
+          'away.kind as awayTeamKind',
+          'games.season_id as seasonId',
+          'games.start_at as startAt',
+          'games.venue as venue',
+          'games.status as status',
+          'games.home_score as homeScore',
+          'games.away_score as awayScore',
+          'games.ingest_status as ingestStatus'
+        ])
+        .select(eb => eb.fn.count<number>('videos.id').as('videoCount'))
+        .select(eb => eb.fn.max('videos.duration_sec').as('durationSec'))
+        // Played, which is what `recent` means here: a fixture nobody turned
+        // up to is not the game somebody opened the app to see.
+        .where('games.home_score', 'is not', null)
+        .groupBy([
+          'games.id',
+          'home.name',
+          'away.name',
+          'home.kind',
+          'away.kind'
+        ])
+        .orderBy('games.start_at', 'desc')
+        .limit(1)
+      if (!scopes.isAdmin) {
+        query = query.where('games.season_id', 'in', [...scopes.seasonIds])
+      }
+      const game = await query.executeTakeFirst()
+      if (game == null) {
+        res.json(null)
+        return
+      }
+
+      const posters = await postersFor(db, [game.id])
+      const poster = posters.get(game.id)
+      res.json({
+        id: game.id,
+        homeTeamId: game.homeTeamId,
+        awayTeamId: game.awayTeamId,
+        homeTeamName: game.homeTeamName,
+        awayTeamName: game.awayTeamName,
+        homeTeamExternal: game.homeTeamKind === 'external',
+        awayTeamExternal: game.awayTeamKind === 'external',
+        seasonId: game.seasonId,
+        startAt: toIso(game.startAt),
+        venue: game.venue,
+        status: game.status,
+        homeScore: game.homeScore,
+        awayScore: game.awayScore,
+        ingestStatus: game.ingestStatus,
+        videoCount: Number(game.videoCount),
+        durationSec: game.durationSec == null ? null : Number(game.durationSec),
+        posterUrl: poster == null ? null : posterUrl(media, poster.videoId)
+      })
+      if (poster != null) warmPosters(media, [poster]).catch(() => undefined)
     })
   )
 

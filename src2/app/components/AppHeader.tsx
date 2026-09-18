@@ -1,28 +1,44 @@
 import React from 'react'
-import { Pressable, Text, View } from 'react-native'
+import { Image, Pressable, Text, View } from 'react-native'
 
+import gsLogo from '../assets/gsLogo.png'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { Icon, type IconName } from './Icon'
+import { Emblem } from './Emblem'
+import { Icon } from './Icon'
 
 export interface AppHeaderProps {
+  /** The name of the screen you are on. */
   title: string
-  /** Set above the title in small caps, e.g. GAMESTATION. */
+  /** Set above the title in small caps. Always `GameStation`. */
   overline?: string
   onBack?: () => void
-  /** Up to two actions at the right. */
-  actions?: Array<{ label: string; icon: IconName; onPress: () => void }>
+  /** The signed-in person, drawn at the right and opening their account. */
+  account?: {
+    name: string
+    avatarUrl?: string | null
+    onPress: () => void
+  }
 }
 
 /**
- * The bar at the top of every screen: back, title, actions.
+ * The bar at the top of every screen.
  *
- * It stays put while the content scrolls, which is what the designs show, and
- * it is the only place a screen's name is written — the title is not repeated
- * as a heading below, because on a phone that costs a third of the first
- * screenful to say the same word twice.
+ * Left to right: the back chevron when there is somewhere to go back to, the
+ * GameStation mark, the two-line title, and the signed-in person's picture.
+ *
+ * The chevron and the mark sit together rather than taking turns — the mark is
+ * how you know which app this is, and losing it one screen deep is how an app
+ * stops feeling like one thing. The word "Back" is gone with it: the glyph is
+ * understood, and the label only took room from the title. It stays as the
+ * accessibility name, so nothing is lost to a screen reader.
+ *
+ * The title is left-justified rather than centred. Centring looked tidy with
+ * nothing either side of it and stopped being tidy the moment there was a mark
+ * on one side and a face on the other, because the text then sat off-centre
+ * against whichever was wider.
  */
 export function AppHeader(props: AppHeaderProps): React.ReactElement {
-  const { title, overline, onBack, actions = [] } = props
+  const { title, overline, onBack, account } = props
   const theme = useTheme()
   const styles = getStyles(theme)
 
@@ -36,9 +52,15 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
           style={({ pressed }) => [styles.back, pressed && styles.pressed]}
         >
           <Icon name="chevron_left" color={theme.headerTextColor} />
-          <Text style={styles.backLabel}>Back</Text>
         </Pressable>
       )}
+
+      <Image
+        accessibilityIgnoresInvertColors
+        accessibilityLabel="GameStation"
+        source={{ uri: gsLogo }}
+        style={styles.mark}
+      />
 
       <View style={styles.titles}>
         {overline != null && (
@@ -51,23 +73,34 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
         </Text>
       </View>
 
-      <View style={styles.actions}>
-        {actions.map(action => (
-          <Pressable
-            key={action.label}
-            accessibilityRole="button"
-            accessibilityLabel={action.label}
-            onPress={() => {
-              action.onPress()
-            }}
-            style={({ pressed }) => [styles.action, pressed && styles.pressed]}
-          >
-            <Icon name={action.icon} color={theme.headerTextColor} />
-          </Pressable>
-        ))}
-      </View>
+      {account != null && (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Account, ${account.name}`}
+          onPress={() => {
+            account.onPress()
+          }}
+          style={({ pressed }) => [styles.account, pressed && styles.pressed]}
+        >
+          <Emblem
+            uri={account.avatarUrl}
+            fallback={initials(account.name)}
+            shape="circle"
+            size={2.25}
+          />
+        </Pressable>
+      )}
     </View>
   )
+}
+
+/** Local rather than imported, to keep the header free of a component cycle. */
+function initials(name: string): string {
+  const words = name.split(/[\s-]+/).filter(word => word.length > 0)
+  return words
+    .slice(0, 2)
+    .map(word => word[0]?.toUpperCase() ?? '')
+    .join('')
 }
 
 const getStyles = cacheStyles((theme: Theme) => ({
@@ -75,7 +108,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
     flexDirection: 'row',
     alignItems: 'center',
     gap: theme.rem(theme.spaceSmRem),
-    minHeight: theme.rem(3.5),
+    minHeight: theme.rem(3.75),
     paddingHorizontal: theme.rem(theme.spaceMdRem),
     paddingVertical: theme.rem(theme.spaceSmRem),
     backgroundColor: theme.headerBackgroundColor,
@@ -83,21 +116,22 @@ const getStyles = cacheStyles((theme: Theme) => ({
     borderBottomColor: theme.headerBorderColor
   },
   back: {
-    flexDirection: 'row',
+    // A glyph is narrow; the target is not. 44pt is the floor for something
+    // this often-used and this close to the edge of the screen.
+    minWidth: theme.rem(2.75),
+    minHeight: theme.rem(2.75),
     alignItems: 'center',
-    gap: theme.rem(0.125),
-    paddingRight: theme.rem(theme.spaceSmRem),
-    minHeight: theme.rem(2.75)
+    justifyContent: 'center',
+    marginLeft: theme.rem(-theme.spaceSmRem)
   },
-  backLabel: {
-    fontFamily: theme.semiBoldTextFont,
-    fontSize: theme.rem(1),
-    fontWeight: '600',
-    color: theme.headerTextColor
+  mark: {
+    width: theme.rem(2),
+    height: theme.rem(2),
+    resizeMode: 'contain'
   },
   titles: {
     flex: 1,
-    alignItems: 'center'
+    alignItems: 'flex-start'
   },
   overline: {
     fontFamily: theme.semiBoldTextFont,
@@ -108,21 +142,15 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   title: {
     fontFamily: theme.boldTextFont,
-    fontSize: theme.rem(1.25),
+    fontSize: theme.rem(1.5),
     fontWeight: '700',
     color: theme.headerTextColor
   },
-  actions: {
-    flexDirection: 'row',
+  account: {
+    minWidth: theme.rem(2.75),
+    minHeight: theme.rem(2.75),
     alignItems: 'center',
-    gap: theme.rem(theme.spaceXsRem)
-  },
-  action: {
-    width: theme.rem(2.75),
-    height: theme.rem(2.75),
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: theme.radiusPill
+    justifyContent: 'center'
   },
   pressed: {
     opacity: 0.6

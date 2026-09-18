@@ -60,3 +60,22 @@ export function cardPosition(
     column: index % columns
   }
 }
+
+/**
+ * How many columns a list of highlights gets.
+ *
+ * Not `columnsFor`: that is the rule for cards, which are far wider than a
+ * highlight row, so the two would either cramp the cards or waste the list.
+ * Derived from the width available against a sensible minimum rather than from
+ * the breakpoint alone, so a narrow window with no rail does not get three
+ * squeezed columns.
+ */
+export function highlightColumnsFor(width: number): number {
+  // 380, not 288. A label like `Ground out: Benito W (2B) to Isaac D (1B)`
+  // needs about that much even across two lines, and a fourth column at 1280
+  // cut every fielding play's second name off.
+  const MIN = 380
+  if (width < 600) return 1
+  const fits = Math.floor(width / MIN)
+  return Math.max(1, Math.min(4, fits))
+}

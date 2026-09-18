@@ -1,6 +1,8 @@
 import cluster from 'node:cluster'
 import { randomBytes } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { availableParallelism } from 'node:os'
+import path from 'node:path'
 
 import express from 'express'
 
@@ -21,7 +23,40 @@ import { statsRoutes } from './routes/stats'
 import { teamRoutes } from './routes/teams'
 import { serverConfig } from './serverConfig'
 
-const VERSION = '0.1.0'
+/**
+ * What is actually running, not just what the package says.
+ *
+ * A build drops a `build.json` beside itself with its full version.
+ * Reporting a bare `0.1.0` meant a reviewer had to infer "the build
+ * changed" from the hash in the bundle's file name, five rounds running — the
+ * one number that would have answered it for certain was already being
+ * generated and then thrown away.
+ *
+ * No file — a checkout, a test, a laptop — and it is the package version,
+ * which is the honest answer there.
+ */
+function versionOf(): string {
+  for (const at of [
+    path.join(process.cwd(), 'build.json'),
+    path.join(__dirname, '..', '..', 'build.json')
+  ]) {
+    try {
+      const read: unknown = JSON.parse(readFileSync(at, 'utf8'))
+      if (
+        typeof read === 'object' &&
+        read !== null &&
+        typeof (read as { version?: unknown }).version === 'string'
+      ) {
+        return (read as { version: string }).version
+      }
+    } catch {
+      // The next place, then the package version.
+    }
+  }
+  return '0.1.0'
+}
+
+const VERSION = versionOf()
 const MEDIA_SECRET_ENV = 'GS_MEDIA_SECRET'
 
 /**
@@ -129,8 +164,15 @@ function runWorker(): void {
     res.json(openApiDocument(VERSION))
   })
   app.use('/api/v1', healthRoutes(db, VERSION))
-  app.use('/api/v1', authRoutes(db, { sendCode }))
-  app.use('/api/v1', seasonRoutes(db))
+  app.use(
+    '/api/v1',
+    authRoutes(db, {
+      sendCode,
+      space: serverConfig.space,
+      publicUrl: serverConfig.publicUrl
+    })
+  )
+  app.use('/api/v1', seasonRoutes(db, mediaContext))
   app.use('/api/v1', teamRoutes(db, mediaContext))
   app.use('/api/v1', statsRoutes(db))
   app.use('/api/v1', mediaRoutes(db, mediaContext))
