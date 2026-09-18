@@ -6,6 +6,7 @@ import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Button } from './Button'
 import { Card } from './Card'
+import { Icon } from './Icon'
 import { SectionHeader } from './SectionHeader'
 import { TextField } from './TextField'
 
@@ -35,7 +36,8 @@ export interface InvitePanelProps {
  */
 export function InvitePanel(props: InvitePanelProps): React.ReactElement {
   const { client, scopeType, scopeId, scopeName } = props
-  const styles = getStyles(useTheme())
+  const theme = useTheme()
+  const styles = getStyles(theme)
 
   const [canInvite, setCanInvite] = useState(false)
   const [invites, setInvites] = useState<Invite[]>([])
@@ -114,14 +116,26 @@ export function InvitePanel(props: InvitePanelProps): React.ReactElement {
 
         {invites.map(invite => (
           <View key={invite.id} style={styles.invite}>
+            {/* The copy glyph leads, so the row says what pressing it does
+                before anybody has to guess that an address is a button. */}
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={`Copy the invite link ${invite.code}`}
+              style={({ pressed }) => [styles.linkRow, pressed && styles.faded]}
               onPress={() => {
                 copyToClipboard(invite.url)
                 setCopied(invite.id)
               }}
             >
+              <Icon
+                name="content_copy"
+                size={1}
+                color={
+                  invite.problem == null
+                    ? theme.activeColor
+                    : theme.secondaryTextColor
+                }
+              />
               <Text
                 style={[
                   styles.url,
@@ -239,6 +253,14 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   invite: {
     gap: theme.rem(theme.spaceXsRem)
+  },
+  linkRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.rem(theme.spaceSmRem)
+  },
+  faded: {
+    opacity: 0.6
   },
   inviteFoot: {
     flexDirection: 'row',

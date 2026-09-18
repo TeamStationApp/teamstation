@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { Pressable, Text, TextInput, View } from 'react-native'
 
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { Icon } from './Icon'
 
 export interface TextFieldProps {
   label: string
@@ -24,6 +25,11 @@ export interface TextFieldProps {
  * The label sits above rather than floating inside: a placeholder that doubles
  * as a label disappears exactly when somebody needs it, which on a sign-in form
  * being filled in one-handed at a ball field is most of the time.
+ *
+ * A field with something in it carries a × to empty it. It appears only when
+ * there is something to clear, so an empty form is not a row of buttons that
+ * do nothing, and it is a disc rather than a bare glyph because a bare × over
+ * a typed address reads as part of the text.
  */
 export function TextField(props: TextFieldProps): React.ReactElement {
   const {
@@ -58,31 +64,46 @@ export function TextField(props: TextFieldProps): React.ReactElement {
           </Pressable>
         )}
       </View>
-      <TextInput
-        accessibilityLabel={label}
-        value={value}
-        onChangeText={onChangeText}
-        placeholder={placeholder}
-        placeholderTextColor={theme.placeholderTextColor}
-        secureTextEntry={secure}
-        autoFocus={autoFocus}
-        autoCapitalize="none"
-        autoCorrect={false}
-        keyboardType={keyboardType}
-        autoComplete={autoComplete}
-        onSubmitEditing={onSubmitEditing}
-        onFocus={() => {
-          setFocused(true)
-        }}
-        onBlur={() => {
-          setFocused(false)
-        }}
-        style={[
-          styles.input,
-          focused && styles.inputFocused,
-          error != null && styles.inputError
-        ]}
-      />
+      <View style={styles.inputRow}>
+        <TextInput
+          accessibilityLabel={label}
+          value={value}
+          onChangeText={onChangeText}
+          placeholder={placeholder}
+          placeholderTextColor={theme.placeholderTextColor}
+          secureTextEntry={secure}
+          autoFocus={autoFocus}
+          autoCapitalize="none"
+          autoCorrect={false}
+          keyboardType={keyboardType}
+          autoComplete={autoComplete}
+          onSubmitEditing={onSubmitEditing}
+          onFocus={() => {
+            setFocused(true)
+          }}
+          onBlur={() => {
+            setFocused(false)
+          }}
+          style={[
+            styles.input,
+            value !== '' && styles.inputWithClear,
+            focused && styles.inputFocused,
+            error != null && styles.inputError
+          ]}
+        />
+        {value !== '' && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Clear ${label}`}
+            onPress={() => {
+              onChangeText('')
+            }}
+            style={({ pressed }) => [styles.clear, pressed && styles.pressed]}
+          >
+            <Icon name="close" size={0.875} color={theme.clearIconColor} />
+          </Pressable>
+        )}
+      </View>
       {error != null && <Text style={styles.error}>{error}</Text>}
     </View>
   )
@@ -110,6 +131,22 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontWeight: '600',
     color: theme.activeColor
   },
+  inputRow: {
+    justifyContent: 'center'
+  },
+  clear: {
+    position: 'absolute',
+    right: theme.rem(theme.spaceSmRem),
+    width: theme.rem(1.375),
+    height: theme.rem(1.375),
+    borderRadius: theme.rem(0.6875),
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: theme.clearIconBackgroundColor
+  },
+  pressed: {
+    opacity: 0.6
+  },
   input: {
     minHeight: theme.rem(3),
     paddingHorizontal: theme.rem(theme.spaceMdRem),
@@ -120,6 +157,10 @@ const getStyles = cacheStyles((theme: Theme) => ({
     color: theme.inputTextColor,
     fontFamily: theme.regularTextFont,
     fontSize: theme.rem(1)
+  },
+  inputWithClear: {
+    // Room for the disc, so a long address does not run under it.
+    paddingRight: theme.rem(2.5)
   },
   inputFocused: {
     borderWidth: 2,
