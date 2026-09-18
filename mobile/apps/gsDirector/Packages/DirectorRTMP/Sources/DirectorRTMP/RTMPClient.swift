@@ -74,7 +74,7 @@ public final class RTMPClient: @unchecked Sendable {
   private var windowStarted = CFAbsoluteTimeGetCurrent()
   private var megabitsPerSecond: Double = 0
   private var droppedPackets: UInt64 = 0
-  private var sendQueue: [Data] = []
+  private var sendQueue: [Queued] = []
   private var isSending = false
   /// Bytes written but not yet on the wire, wherever they are parked.
   ///
@@ -85,6 +85,19 @@ public final class RTMPClient: @unchecked Sendable {
   /// incremented where the work is submitted and decremented where it completes, so it sees the
   /// backlog in the dispatch queue as well as in the array.
   private var queuedBytes = 0
+
+  /// One whole RTMP message waiting for the socket, with what the shed policy needs to judge it.
+  ///
+  /// `RTMPChunk.encode` writes a full header for every message and fmt 3 only to continue that same
+  /// message, so nothing here is encoded against anything else and a message can be thrown away
+  /// without the receiver losing its place.
+  private struct Queued {
+    var data: Data
+    var submittedAt: Double
+    var isVideo: Bool
+    var isKeyframe: Bool
+    var isSequenceHeader: Bool
+  }
   /// Every write in order and how much of it the socket has taken, for the bitrate controller.
   private var ledger = RTMPSendLedger()
   private var sendBudgetBytes = RTMPClient.defaultSendBudgetBytes
@@ -769,68 +782,116 @@ public final class RTMPClient: @unchecked Sendable {
     let isSequenceHeader = isVideo
       ? FLVTag.isVideoSequenceHeader(payload)
       : FLVTag.isAudioSequenceHeader(payload)
-    if !isSequenceHeader {
-      if queuedBytes > sendBudgetBytes || ledger.queueDelay(at: Self.monotonicNow()) > bufferSeconds {
-        droppedPackets += 1
-        if isVideo { awaitingKeyframe = true }
-        lock.unlock()
-        return .droppedOverBudget
-      }
-      if isVideo, awaitingKeyframe {
-        guard FLVTag.isVideoKeyframe(payload) else {
-          droppedPackets += 1
-          lock.unlock()
-          return .droppedAwaitingKeyframe
-        }
-        awaitingKeyframe = false
-      }
-    }
+    let isKeyframe = isVideo && FLVTag.isVideoKeyframe(payload)
     lock.unlock()
     write(
       RTMPChunk.encode(
         RTMPMessage(streamID: streamID, type: type, timestamp: timestamp, payload: payload),
         chunkStreamID: chunkStreamID,
         chunkSize: chunkSize
-      )
+      ),
+      isVideo: isVideo,
+      isKeyframe: isKeyframe,
+      isSequenceHeader: isSequenceHeader
     )
     return .sent
   }
 
+  /// Throws the oldest waiting messages away until the queue fits the budget again.
+  ///
+  /// The oldest, not the newest. A link that carries less than the programme cannot deliver
+  /// everything, and holding the old frames to send the new ones late puts the stream further behind
+  /// the game with every second — permanently, once the buffer fills. Dropping from the front costs
+  /// the viewer a jump forward and leaves them near live, which is what a game wants; the take's
+  /// own recording keeps what the stream skipped.
+  ///
+  /// Sequence headers are never thrown away: they are the decoder's only key to what follows. What
+  /// is left has to start on a keyframe, so whole groups go rather than the front of one, and the
+  /// ingest gets pictures it can decode instead of a run of references to frames it never saw.
+  ///
+  /// Called with the lock held.
+  /// Whether the first picture still queued is one the ingest can decode on its own. For the tests
+  /// that hold the shed policy to leaving a decodable queue behind.
+  var firstQueuedVideoIsKeyframeForTesting: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    guard let first = sendQueue.first(where: { $0.isVideo && !$0.isSequenceHeader }) else { return true }
+    return first.isKeyframe
+  }
+
+  private func shedOldestLocked() {
+    let now = Self.monotonicNow()
+    func overBudget() -> Bool {
+      queuedBytes > sendBudgetBytes || ledger.queueDelay(at: now) > bufferSeconds
+    }
+    guard overBudget() else { return }
+    var shed = false
+    while overBudget(), sendQueue.contains(where: { !$0.isSequenceHeader }) {
+      guard let index = sendQueue.firstIndex(where: { !$0.isSequenceHeader }) else { break }
+      queuedBytes = max(0, queuedBytes - sendQueue[index].data.count)
+      sendQueue.remove(at: index)
+      droppedPackets += 1
+      shed = true
+    }
+    // Leave the queue starting on a picture the ingest can decode.
+    if shed {
+      while let first = sendQueue.firstIndex(where: { $0.isVideo && !$0.isSequenceHeader }),
+            !sendQueue[first].isKeyframe {
+        queuedBytes = max(0, queuedBytes - sendQueue[first].data.count)
+        sendQueue.remove(at: first)
+        droppedPackets += 1
+      }
+      ledger.resetWaiting(
+        bytes: sendQueue.map { $0.data.count },
+        since: sendQueue.map { $0.submittedAt }
+      )
+    }
+  }
+
+  /// Control writes — handshake, acknowledgements, the publish itself — are never shed.
   private func write(_ data: Data) {
+    write(data, isVideo: false, isKeyframe: false, isSequenceHeader: true)
+  }
+
+  private func write(_ data: Data, isVideo: Bool, isKeyframe: Bool, isSequenceHeader: Bool) {
     guard !data.isEmpty else { return }
     // Counted here, at submission, rather than on the serial queue. A chunk submitted while the
     // sender is blocked never reaches `sendQueue` — it waits as a pending `queue.async` block —
     // so counting any later than this cannot see a backlog at all.
+    let now = Self.monotonicNow()
+    let item = Queued(
+      data: data,
+      submittedAt: now,
+      isVideo: isVideo,
+      isKeyframe: isKeyframe,
+      isSequenceHeader: isSequenceHeader
+    )
+    // Queued here, under the lock, rather than from the sender's queue. While the socket is blocked
+    // the serial queue is blocked with it, so anything handed to it waits as a pending block that
+    // nothing can look at or throw away — the backlog would be invisible and unbounded. Holding it
+    // here is what lets the oldest of it be shed.
     lock.lock()
-    queuedBytes += data.count
-    ledger.submitted(bytes: data.count, at: Self.monotonicNow())
-    lock.unlock()
-    if DispatchQueue.getSpecific(key: Self.queueKey) != nil {
-      enqueueAndFlush(data)
-    } else {
-      queue.async { self.enqueueAndFlush(data) }
-    }
-  }
-
-  private func enqueueAndFlush(_ data: Data) {
-    lock.lock()
-    // `fail()` dropped the backlog and zeroed the counter. A block that was already in flight
-    // when it ran must not resurrect either.
     guard phase != .failed else {
       queuedBytes = 0
       ledger.clear()
       lock.unlock()
       return
     }
-    sendQueue.append(data)
+    queuedBytes += data.count
+    ledger.submitted(bytes: data.count, at: now)
+    sendQueue.append(item)
+    shedOldestLocked()
     let sending = isSending
     if !sending { isSending = true }
     lock.unlock()
-    if !sending { flush() }
+    guard !sending else { return }
+    if DispatchQueue.getSpecific(key: Self.queueKey) != nil {
+      flush()
+    } else {
+      queue.async { self.flush() }
+    }
   }
 
-  /// Drains the queue in a loop. This used to recurse, which was safe only while the queue could
-  /// never hold more than one item; a real backlog would have overflowed the stack.
   private func flush() {
     while true {
       lock.lock()
@@ -839,7 +900,7 @@ public final class RTMPClient: @unchecked Sendable {
         lock.unlock()
         return
       }
-      let data = sendQueue.removeFirst()
+      let data = sendQueue.removeFirst().data
       let fd = socketFD
       lock.unlock()
       guard fd >= 0 else {

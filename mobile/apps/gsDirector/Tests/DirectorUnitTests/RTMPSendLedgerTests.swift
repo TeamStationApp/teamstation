@@ -68,16 +68,17 @@ struct RTMPSendLedgerTests {
 
     // Far more than the peer will take, so writes wait and then the budget sheds.
     let tag = FLVTag.videoFrame(codec: .hevc, keyframe: false, payload: Data(repeating: 7, count: 8 * 1024))
+    // Every tag is taken: the queue sheds its own oldest rather than refusing what is offered.
     var sent = 0
     for _ in 0 ..< 40 where client.sendVideo(timestampMs: 0, tag: tag) == .sent {
       sent += 1
     }
+    #expect(sent == 40)
     let audio = FLVTag.audio(packetType: 1, payload: Data(repeating: 3, count: 64))
     // Wait long enough for the oldest write to have an age worth reading.
     usleep(100_000)
     let sample = client.congestionSample(at: RTMPClient.monotonicNow())
     #expect(sample.offeredBytes == 40 * tag.count)
-    #expect(sample.droppedFrames == 40 - sent)
     #expect(sample.droppedFrames > 0)
     #expect(sample.queueDelay >= 0.09)
     // A Unix socket pair keeps nothing unsent in the sender's kernel buffer.
@@ -94,8 +95,9 @@ struct RTMPSendLedgerTests {
     let drained = client.congestionSample(at: RTMPClient.monotonicNow())
     #expect(drained.queueDelay < 0.05)
     #expect(drained.offeredBytes == 0)
-    // What the socket took, less the audio offered in the interval: at least the video that was queued.
-    #expect(drained.deliveredBytes >= sent * tag.count - 64 * 1024)
+    // What the socket took, less the audio offered in the interval: the tags that were not shed.
+    let survived = 40 - Int(sample.droppedFrames)
+    #expect(drained.deliveredBytes >= max(0, survived * tag.count - 64 * 1024))
     #expect(drained.droppedFrames == 0)
   }
 }

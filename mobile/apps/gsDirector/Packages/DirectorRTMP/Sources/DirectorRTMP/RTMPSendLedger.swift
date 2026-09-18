@@ -65,6 +65,18 @@ struct RTMPSendLedger {
     }
   }
 
+  /// What is still waiting, after the queue has thrown some of it away.
+  ///
+  /// The shed writes are never delivered, so their entries would otherwise sit at the head forever
+  /// and `queueDelay` would climb without end — which is itself what triggers shedding. Rebuilding
+  /// from what is actually still queued keeps the delay honest. The write in flight is not in the
+  /// list and is left out; it is about to finish or fail either way.
+  mutating func resetWaiting(bytes: [Int], since: [Double]) {
+    waitingBytes = bytes
+    waitingSince = since
+    head = 0
+  }
+
   /// The connection is gone and every write with it.
   mutating func clear() {
     waitingSince.removeAll()
