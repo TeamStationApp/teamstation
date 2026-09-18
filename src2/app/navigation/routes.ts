@@ -21,6 +21,11 @@ export type Route =
   | { name: 'team'; teamId: string; tab?: string }
   | { name: 'season'; seasonId: string; tab?: string; when?: When }
   | { name: 'league'; leagueId: string }
+  /**
+   * The page behind the gear on a team, season or league card: who can see
+   * this, who may change it, and the invite links that let more people in.
+   */
+  | { name: 'manage'; scopeKind: 'league' | 'season' | 'team'; scopeId: string }
   | {
       name: 'game'
       gameId: string
@@ -95,9 +100,15 @@ export function parseRoute(path: string, search = ''): Route {
       }
     case 'teams':
       if (id == null) return { name: 'home' }
+      if (parts[2] === 'manage') {
+        return { name: 'manage', scopeKind: 'team', scopeId: id }
+      }
       return { name: 'team', teamId: id, tab: query.get('tab') ?? undefined }
     case 'seasons':
       if (id == null) return { name: 'home' }
+      if (parts[2] === 'manage') {
+        return { name: 'manage', scopeKind: 'season', scopeId: id }
+      }
       return {
         name: 'season',
         seasonId: id,
@@ -109,6 +120,9 @@ export function parseRoute(path: string, search = ''): Route {
       }
     case 'leagues':
       if (id == null) return { name: 'home' }
+      if (parts[2] === 'manage') {
+        return { name: 'manage', scopeKind: 'league', scopeId: id }
+      }
       return { name: 'league', leagueId: id }
     case 'games': {
       if (id == null) return { name: 'home' }
@@ -162,6 +176,8 @@ export function routePath(route: Route): string {
     }
     case 'league':
       return `/leagues/${route.leagueId}`
+    case 'manage':
+      return `/${route.scopeKind}s/${route.scopeId}/manage`
     case 'game': {
       const query = new URLSearchParams()
       if (route.tab === 'boxScore') query.set('tab', 'boxScore')

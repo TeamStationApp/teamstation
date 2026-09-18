@@ -35,6 +35,8 @@ export interface Invite {
   expiresAt: Date | null
   revokedAt: Date | null
   createdAt: Date
+  /** The one person it was made out to, or null for a link anybody may use. */
+  forEmail: string | null
 }
 
 /** Why an invite cannot be redeemed, or null when it can. */
@@ -50,7 +52,8 @@ const FIELDS = [
   'uses',
   'expires_at',
   'revoked_at',
-  'created_at'
+  'created_at',
+  'for_email'
 ] as const
 
 interface InviteFields {
@@ -64,6 +67,7 @@ interface InviteFields {
   expires_at: Date | string | null
   revoked_at: Date | string | null
   created_at: Date | string
+  for_email: string | null
 }
 
 const asDate = (value: Date | string | null): Date | null =>
@@ -80,7 +84,8 @@ function shape(row: InviteFields): Invite {
     uses: row.uses,
     expiresAt: asDate(row.expires_at),
     revokedAt: asDate(row.revoked_at),
-    createdAt: asDate(row.created_at) ?? new Date()
+    createdAt: asDate(row.created_at) ?? new Date(),
+    forEmail: row.for_email
   }
 }
 
@@ -216,6 +221,8 @@ export interface NewInvite {
   source?: 'peertube' | 'manual'
   uses?: number
   createdAt?: Date
+  /** Made out to one address, mailed to it, and good for one use. */
+  forEmail?: string
 }
 
 export async function createInvite(
@@ -238,6 +245,7 @@ export async function createInvite(
     uses: invite.uses ?? 0,
     expires_at: invite.expiresAt ?? null,
     source: invite.source ?? 'manual',
+    for_email: invite.forEmail ?? null,
     ...(invite.createdAt == null ? {} : { created_at: invite.createdAt })
   }
   await db.insertInto('invites').values(row).execute()

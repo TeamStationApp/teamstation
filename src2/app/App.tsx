@@ -18,7 +18,7 @@ import {
   useBreakpoint,
   useHandoffSlot
 } from './components'
-import { lstrings } from './locales/strings'
+import { lstrings, sprintf } from './locales/strings'
 import type { Route, When } from './navigation/routes'
 import {
   currentRoute,
@@ -30,6 +30,7 @@ import { GameScreen } from './screens/GameScreen'
 import { GamesFeedScreen } from './screens/GamesFeedScreen'
 import { HomeScreen } from './screens/HomeScreen'
 import { JoinScreen } from './screens/JoinScreen'
+import { ManageScreen } from './screens/ManageScreen'
 import { LoginScreen } from './screens/LoginScreen'
 import { SeasonScreen } from './screens/SeasonScreen'
 import { SignInLinkScreen } from './screens/SignInLinkScreen'
@@ -62,6 +63,14 @@ type Pushed =
       at?: number
     }
   | { name: 'account' }
+  /** The page behind the gear on a team, season or league card. */
+  | {
+      name: 'manage'
+      scopeKind: 'league' | 'season' | 'team'
+      scopeId: string
+      /** What it is called, once the page has said so. */
+      title?: string
+    }
 
 /**
  * Three destinations, each with its own stack.
@@ -283,6 +292,13 @@ function Shell(props: AppProps): React.ReactElement {
   const openTeam = (team: TeamSummary): void => {
     push({ name: 'team', team })
   }
+  /** The gear on a team, season or league card. */
+  const openManage = (
+    scopeKind: 'league' | 'season' | 'team',
+    scopeId: string
+  ): void => {
+    push({ name: 'manage', scopeKind, scopeId })
+  }
   const openSeason = (season: SeasonSummary): void => {
     push({ name: 'season', season })
   }
@@ -403,6 +419,9 @@ function Shell(props: AppProps): React.ReactElement {
         client={client}
         team={top.team}
         onOpenGame={openGame}
+        onManage={() => {
+          openManage('team', top.team.id)
+        }}
         initialTab={top.tab}
         onTab={setTopTab}
       />
@@ -412,6 +431,9 @@ function Shell(props: AppProps): React.ReactElement {
         season={top.season}
         onOpenGame={openGame}
         onOpenTeam={openTeam}
+        onManage={() => {
+          openManage('season', top.season.id)
+        }}
         initialTab={top.tab}
         onTab={setTopTab}
         initialWhen={top.when}
@@ -423,6 +445,24 @@ function Shell(props: AppProps): React.ReactElement {
             return {
               ...current,
               [tab]: [...held.slice(0, -1), { ...last, when: next }]
+            }
+          })
+        }}
+      />
+    ) : top.name === 'manage' ? (
+      <ManageScreen
+        client={client}
+        scopeKind={top.scopeKind}
+        scopeId={top.scopeId}
+        meUserId={session.user.id}
+        onTitle={title => {
+          setStacks(current => {
+            const held = current[tab]
+            const last = held[held.length - 1]
+            if (last?.name !== 'manage' || last.title === title) return current
+            return {
+              ...current,
+              [tab]: [...held.slice(0, -1), { ...last, title }]
             }
           })
         }}
@@ -565,6 +605,17 @@ function stackFor(route: Route): Partial<Record<NavTabId, Pushed[]>> {
     }
   }
   if (route.name === 'account') return { [tab]: [{ name: 'account' }] }
+  if (route.name === 'manage') {
+    return {
+      [tab]: [
+        {
+          name: 'manage',
+          scopeKind: route.scopeKind,
+          scopeId: route.scopeId
+        }
+      ]
+    }
+  }
   return {}
 }
 
@@ -597,6 +648,13 @@ function routeOf(tab: NavTabId, top: Pushed | undefined, when?: When): Route {
       }
     }
     if (top.name === 'account') return { name: 'account' }
+    if (top.name === 'manage') {
+      return {
+        name: 'manage',
+        scopeKind: top.scopeKind,
+        scopeId: top.scopeId
+      }
+    }
     return {
       name: 'game',
       gameId: top.gameId,
@@ -622,6 +680,11 @@ function titleFor(tab: NavTabId, top: Pushed | undefined): string | undefined {
   if (top != null) {
     if (top.name === 'season') return top.season.name
     if (top.name === 'account') return 'Account'
+    if (top.name === 'manage') {
+      return top.title == null
+        ? lstrings.manage_open
+        : sprintf(lstrings.manage_title, top.title)
+    }
     return undefined
   }
   if (tab === 'home') return 'Your Home'

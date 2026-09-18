@@ -17,6 +17,7 @@ import {
   HandoffView,
   initialsOf,
   ListRow,
+  ManageGear,
   PillTabs,
   Screen,
   SectionHeader,
@@ -42,6 +43,8 @@ import { gamesFor } from './whenFilter'
 export interface TeamScreenProps {
   client: GameStationClient
   team: TeamSummary
+  /** The gear in the card's corner, for somebody who administers this team. */
+  onManage?: () => void
   onOpenGame: (
     gameId: string,
     title: string,
@@ -93,7 +96,7 @@ const TABS = [
  * instant, which is what makes a tab strip feel like one screen.
  */
 export function TeamScreen(props: TeamScreenProps): React.ReactElement {
-  const { client, team, onOpenGame, initialTab, onTab } = props
+  const { client, team, onOpenGame, initialTab, onTab, onManage } = props
   const theme = useTheme()
   const styles = getStyles(theme)
 
@@ -219,6 +222,22 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
           </View>
           {place != null && <Badge label={placeLabel(place)} tone="honour" />}
         </View>
+        {/*
+          The bottom right corner, floated rather than laid out: in the flow
+          it pushed the card taller and left a band of empty space under the
+          content, which reads as the page having lost its rhythm. The place
+          pill keeps the top right, and the two never share a corner.
+        */}
+        {onManage != null && (
+          <View style={styles.gearCorner}>
+            <ManageGear
+              client={client}
+              scopeType="team"
+              scopeId={team.id}
+              onPress={onManage}
+            />
+          </View>
+        )}
       </Card>
 
       <PillTabs
@@ -521,6 +540,11 @@ const getStyles = cacheStyles((theme: Theme) => ({
     flexDirection: 'row',
     alignItems: 'center',
     gap: theme.rem(theme.spaceMdRem)
+  },
+  gearCorner: {
+    position: 'absolute',
+    right: theme.rem(theme.spaceMdRem),
+    bottom: theme.rem(theme.spaceMdRem)
   },
   crest: {
     width: theme.rem(3.25),

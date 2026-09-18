@@ -9,6 +9,7 @@ import { authRoutes } from './routes/auth'
 import { directorRoutes } from './routes/director'
 import { healthRoutes } from './routes/health'
 import { inviteRoutes } from './routes/invites'
+import { manageRoutes } from './routes/manage'
 import { liveRoutes } from './routes/live'
 import { mediaRoutes } from './routes/media'
 import { seasonRoutes } from './routes/seasons'
@@ -99,7 +100,8 @@ describe('the API document', function () {
       ...routesOf(mediaRoutes(db, media)),
       ...routesOf(liveRoutes(db, live)),
       ...routesOf(directorRoutes(db, live)),
-      ...routesOf(inviteRoutes(db, { sendCode: async () => undefined }))
+      ...routesOf(inviteRoutes(db, { sendCode: async () => undefined })),
+      ...routesOf(manageRoutes(db, { sendInvite: async () => undefined }))
     ]
 
     const documented = new Set<string>()
@@ -126,7 +128,8 @@ describe('the API document', function () {
       ...routesOf(mediaRoutes(db, media)),
       ...routesOf(liveRoutes(db, live)),
       ...routesOf(directorRoutes(db, live)),
-      ...routesOf(inviteRoutes(db, { sendCode: async () => undefined }))
+      ...routesOf(inviteRoutes(db, { sendCode: async () => undefined })),
+      ...routesOf(manageRoutes(db, { sendInvite: async () => undefined }))
     ])
 
     const paths = openApiDocument('0.0.0').paths

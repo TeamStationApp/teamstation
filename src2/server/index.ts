@@ -7,7 +7,11 @@ import path from 'node:path'
 import express from 'express'
 
 import { makeDatabase } from './db/database'
-import { mailConfigured, sendSignInCode } from './email/sendMail'
+import {
+  mailConfigured,
+  sendInvitation,
+  sendSignInCode
+} from './email/sendMail'
 import {
   type LiveControllerOptions,
   startLiveController,
@@ -24,6 +28,7 @@ import { devMediaRoutes } from './routes/devMedia'
 import { directorRoutes } from './routes/director'
 import { healthRoutes } from './routes/health'
 import { inviteRoutes } from './routes/invites'
+import { manageRoutes } from './routes/manage'
 import type { LiveRouteOptions } from './routes/live'
 import { liveRoutes } from './routes/live'
 import { mediaAuthRoute, mediaRoutes } from './routes/media'
@@ -125,6 +130,29 @@ async function sendCode(
     // Logged loudly and swallowed: the reply must look the same either way.
     console.error(`FAILED to send a sign-in code to ${email}: ${String(error)}`)
   }
+}
+
+/**
+ * Delivers an invitation an administrator addressed to somebody.
+ *
+ * Logged rather than sent with no relay configured, the same as a sign-in
+ * code — and unlike that one it is **thrown** on failure, because the person
+ * who typed the address is standing there waiting to be told whether it went.
+ */
+async function sendInvite(
+  email: string,
+  invitation: { scopeName: string; invitedBy: string; link: string }
+): Promise<void> {
+  if (!mailConfigured(serverConfig.smtp)) {
+    console.log(
+      `[no mail configured] invitation for ${email}: ${invitation.link}`
+    )
+    return
+  }
+  const sent = await sendInvitation(serverConfig.smtp, email, invitation)
+  console.log(
+    `invitation sent to ${email}: ${sent.accepted} accepted, id ${sent.messageId}`
+  )
 }
 
 /**
@@ -301,6 +329,10 @@ function runWorker(): void {
   app.use(
     '/api/v1',
     inviteRoutes(db, { sendCode, publicUrl: serverConfig.publicUrl })
+  )
+  app.use(
+    '/api/v1',
+    manageRoutes(db, { sendInvite, publicUrl: serverConfig.publicUrl })
   )
   app.use('/api/v1', seasonRoutes(db, mediaContext))
   app.use('/api/v1', teamRoutes(db, mediaContext))

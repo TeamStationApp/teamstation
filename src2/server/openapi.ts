@@ -58,6 +58,26 @@ const errorResponse = {
   }
 }
 
+/** The three path pieces the manage page's endpoints share. */
+const scopeTypeParam = {
+  name: 'scopeType',
+  in: 'path',
+  required: true,
+  schema: { type: 'string', enum: ['league', 'season', 'team'] }
+}
+const scopeIdParam = {
+  name: 'scopeId',
+  in: 'path',
+  required: true,
+  schema: { type: 'string' }
+}
+/** Anything with an id and a name, which is how the tree is drawn. */
+const namedThing = {
+  type: 'object',
+  required: ['id', 'name'],
+  properties: { id: { type: 'string' }, name: { type: 'string' } }
+}
+
 export function openApiDocument(version: string): OpenApiDocument {
   return {
     openapi: '3.1.0',
@@ -213,6 +233,116 @@ export function openApiDocument(version: string): OpenApiDocument {
             },
             signedIn: { type: 'boolean' },
             alreadyIn: { type: 'boolean' }
+          }
+        },
+        ScopePerson: {
+          type: 'object',
+          required: ['userId', 'displayName', 'emails', 'createdAt'],
+          description:
+            'One person with access, and every level it comes through. Never ' +
+            'the strongest grant alone: somebody often holds two, and an ' +
+            'administrator who removes one and sees nothing change has been ' +
+            'told a half-truth.',
+          properties: {
+            userId: { type: 'string' },
+            displayName: { type: 'string' },
+            emails: { type: 'array', items: { type: 'string' } },
+            teams: {
+              type: 'array',
+              items: { $ref: '#/components/schemas/ScopeGrant' }
+            },
+            seasons: {
+              type: 'array',
+              items: { $ref: '#/components/schemas/ScopeGrant' }
+            },
+            leagues: {
+              type: 'array',
+              items: { $ref: '#/components/schemas/ScopeGrant' }
+            },
+            adminOf: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    enum: ['league', 'season', 'team']
+                  },
+                  id: { type: 'string' },
+                  name: { type: 'string' }
+                }
+              }
+            },
+            createdAt: { type: 'string', format: 'date-time' },
+            lastSignInAt: {
+              type: ['string', 'null'],
+              format: 'date-time',
+              description: 'Null for an account nobody has ever used'
+            },
+            lastSeenAt: {
+              type: ['string', 'null'],
+              format: 'date-time',
+              description:
+                'The last request on any of their sessions, which is later ' +
+                'than the sign-in for anybody who stays signed in'
+            }
+          }
+        },
+        ScopeGrant: {
+          type: 'object',
+          required: ['id', 'name', 'role'],
+          properties: {
+            id: { type: 'string' },
+            name: { type: 'string' },
+            role: { type: 'string' }
+          }
+        },
+        PendingPerson: {
+          type: 'object',
+          required: ['inviteId', 'email', 'code', 'invitedAt'],
+          description:
+            'Somebody invited by address who has not opened the link yet.',
+          properties: {
+            inviteId: { type: 'string' },
+            email: { type: 'string' },
+            code: { type: 'string' },
+            invitedAt: { type: 'string', format: 'date-time' }
+          }
+        },
+        ManagePage: {
+          type: 'object',
+          required: ['scope', 'tree', 'people', 'pending', 'invites'],
+          properties: {
+            scope: {
+              type: 'object',
+              properties: {
+                kind: { type: 'string', enum: ['league', 'season', 'team'] },
+                id: { type: 'string' },
+                name: { type: 'string' }
+              }
+            },
+            tree: {
+              type: 'object',
+              description:
+                'The levels around this one, named, so a tick can say which',
+              properties: {
+                leagues: { type: 'array', items: namedThing },
+                seasons: { type: 'array', items: namedThing },
+                teams: { type: 'array', items: namedThing }
+              }
+            },
+            people: {
+              type: 'array',
+              items: { $ref: '#/components/schemas/ScopePerson' }
+            },
+            pending: {
+              type: 'array',
+              items: { $ref: '#/components/schemas/PendingPerson' }
+            },
+            invites: {
+              type: 'array',
+              items: { $ref: '#/components/schemas/Invite' }
+            }
           }
         },
         Session: {
@@ -881,6 +1011,110 @@ export function openApiDocument(version: string): OpenApiDocument {
             400: errorResponse,
             404: errorResponse,
             429: errorResponse
+          }
+        }
+      },
+      '/manage/{scopeType}/{scopeId}': {
+        get: {
+          summary: 'Who can see this, and how',
+          description:
+            'The page behind the gear on a team, season or league card. ' +
+            '`tree` names the levels around this one, so a tick in the ' +
+            'people table can say which season or league it stands for. ' +
+            'Answers 404 to anybody who does not administer the scope.',
+          security: [{ bearer: [] }],
+          parameters: [scopeTypeParam, scopeIdParam],
+          responses: {
+            200: {
+              description: 'The people, the pending invitations and the links',
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/ManagePage' }
+                }
+              }
+            },
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/manage/{scopeType}/{scopeId}/people': {
+        post: {
+          summary: 'Add one person by address',
+          description:
+            'An address that already has an account is given the access at ' +
+            'once. Any other is sent an invitation made out to it, good for ' +
+            'one use; the account is still made by the sign-in that follows.',
+          security: [{ bearer: [] }],
+          parameters: [scopeTypeParam, scopeIdParam],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['email'],
+                  properties: { email: { type: 'string' } }
+                }
+              }
+            }
+          },
+          responses: {
+            201: {
+              description: 'Added, or invited',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['added'],
+                    properties: {
+                      added: { type: 'boolean' },
+                      person: {
+                        type: 'object',
+                        properties: {
+                          userId: { type: 'string' },
+                          displayName: { type: 'string' },
+                          email: { type: 'string' }
+                        }
+                      },
+                      invited: {
+                        $ref: '#/components/schemas/PendingPerson'
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            400: errorResponse,
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/manage/{scopeType}/{scopeId}/people/{userId}': {
+        delete: {
+          summary: 'Take away what this level grants',
+          description:
+            'Only this level. A team administrator cannot remove the season ' +
+            'membership that also lets somebody watch, which is not theirs ' +
+            'and would drop that person from every other team in it.',
+          security: [{ bearer: [] }],
+          parameters: [scopeTypeParam, scopeIdParam, userIdParam],
+          responses: {
+            200: {
+              description: 'Whether there was anything here to remove',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['removed'],
+                    properties: { removed: { type: 'boolean' } }
+                  }
+                }
+              }
+            },
+            401: errorResponse,
+            404: errorResponse
           }
         }
       },

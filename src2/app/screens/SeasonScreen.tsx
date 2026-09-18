@@ -14,6 +14,7 @@ import {
   GameRow,
   initialsOf,
   ListRow,
+  ManageGear,
   PillTabs,
   Screen,
   SectionHeader,
@@ -40,6 +41,8 @@ export interface SeasonScreenProps {
     options?: { tab?: 'watch' | 'boxScore'; autoPlay?: boolean }
   ) => void
   onOpenTeam: (team: TeamSummary) => void
+  /** The gear in the card's corner, for an administrator of this season. */
+  onManage?: () => void
   /** Which section to open on, from the address. */
   initialTab?: string
   /**
@@ -94,7 +97,8 @@ export function SeasonScreen(props: SeasonScreenProps): React.ReactElement {
     initialTab,
     onTab,
     initialWhen,
-    onWhen
+    onWhen,
+    onManage
   } = props
   const styles = getStyles(useTheme())
   const narrow = useBreakpoint() === 'phone'
@@ -148,7 +152,22 @@ export function SeasonScreen(props: SeasonScreenProps): React.ReactElement {
   return (
     <Screen>
       <Card style={styles.identity}>
-        <Text style={styles.seasonName}>{season.name}</Text>
+        {/*
+          On the name's own row. A season's card has no place pill to make
+          room for, and anywhere lower costs the card a line of height for a
+          single glyph.
+        */}
+        <View style={styles.identityTop}>
+          <Text style={styles.seasonName}>{season.name}</Text>
+          {onManage != null && (
+            <ManageGear
+              client={client}
+              scopeType="season"
+              scopeId={season.id}
+              onPress={onManage}
+            />
+          )}
+        </View>
         <Text style={styles.seasonMeta}>
           {season.year}
           {season.term == null ? '' : ` · ${season.term}`}
@@ -330,6 +349,12 @@ function teamSubtitle(team: TeamSummary): string | undefined {
 }
 
 const getStyles = cacheStyles((theme: Theme) => ({
+  identityTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: theme.rem(theme.spaceSmRem)
+  },
   section: {
     gap: theme.rem(theme.spaceMdRem)
   },
@@ -337,6 +362,8 @@ const getStyles = cacheStyles((theme: Theme) => ({
     gap: theme.rem(theme.spaceMdRem)
   },
   seasonName: {
+    // Flexed, so a long name wraps rather than pushing the gear off the card.
+    flex: 1,
     fontFamily: theme.boldTextFont,
     fontSize: theme.rem(1.5),
     fontWeight: '700',
