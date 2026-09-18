@@ -103,7 +103,8 @@ public final class RTMPClient: @unchecked Sendable {
   private var sendBudgetBytes = RTMPClient.defaultSendBudgetBytes
   /// How long the oldest write may wait before media is shed.
   private var bufferSeconds = RTMPClient.sendBufferSeconds
-  private var sendTimeoutSeconds: Double = 10
+  private var sendTimeoutSeconds: Double = 2
+  private var stallDeadline: Double = RTMPClient.stallDeadlineSeconds
   /// What the video tags carry. Decides what `connect` and `onMetaData` announce, and whether an
   /// early refusal is explained as the server not taking the codec.
   private var videoCodec = RTMPVideoCodec.h264
@@ -132,18 +133,25 @@ public final class RTMPClient: @unchecked Sendable {
 
   /// How long the stream may wait for the link before it sheds anything. Nobody watches the stream
   /// against the field — a platform's player sits 5–20 s behind — so a dip in the link is better
-  /// sent late than dropped. Eight seconds stays inside the 10 s a single send may block before the
-  /// peer counts as gone, so a link that comes back is always given its backlog.
-  public static let sendBufferSeconds: Double = 8
+  /// sent late than dropped, and half a minute covers every squeeze this rig has produced.
+  ///
+  /// This is no longer tied to how long one send may block: a send that times out is backpressure,
+  /// not a dead peer, so the buffer is free to be as deep as the memory allows. `stallDeadlineSeconds`
+  /// is what decides the peer is gone, and it is longer than this so the buffer is spent first.
+  public static let sendBufferSeconds: Double = 30
+
+  /// How long one write may make no progress at all before the peer counts as gone. Longer than the
+  /// send buffer, so a link that comes back is always given its backlog first.
+  public static let stallDeadlineSeconds: Double = 45
   /// What a client holds before `configure` gives it a budget of its own.
   static let defaultSendBudgetBytes = 1_500_000
   static let minimumSendBudgetBytes = 512 * 1024
-  static let maximumSendBudgetBytes = 32 * 1024 * 1024
+  static let maximumSendBudgetBytes = 64 * 1024 * 1024
 
   /// The send buffer's size in bytes, a memory ceiling beside its age limit: `sendBufferSeconds` of
-  /// the high bitrate, with room for the encoder's one-second spikes to half again the rate. 9 MB at
-  /// 6 Mbps, 15 MB at the 10 Mbps top of Settings. `ProgramStreamer` passes its configured high
-  /// bitrate so the budget tracks whatever the operator chose.
+  /// the high bitrate, with room for the encoder's one-second spikes to half again the rate. 22 MB
+  /// at 4 Mbps, 34 MB at 6 Mbps, 56 MB at the 10 Mbps top of Settings. `ProgramStreamer` passes its
+  /// configured high bitrate so the budget tracks whatever the operator chose.
   public static func sendBudget(forBitrate bitrate: Int) -> Int {
     let bytes = Int(Double(bitrate) / 8 * sendBufferSeconds * 1.5)
     return min(max(bytes, minimumSendBudgetBytes), maximumSendBudgetBytes)
@@ -208,7 +216,7 @@ public final class RTMPClient: @unchecked Sendable {
   public func configure(
     sendBudgetBytes: Int,
     bufferSeconds: Double = RTMPClient.sendBufferSeconds,
-    sendTimeoutSeconds: Double = 10,
+    sendTimeoutSeconds: Double = 2,
     videoCodec: RTMPVideoCodec = .h264
   ) {
     lock.lock()
@@ -924,22 +932,35 @@ public final class RTMPClient: @unchecked Sendable {
     // does not record which server a take was streaming to.
     lock.lock()
     let peerLabel = url.map { "\($0.host):\($0.port)" } ?? "stream server"
+    let stallSeconds = stallDeadline
     lock.unlock()
     return data.withUnsafeBytes { raw -> RTMPClientError? in
       guard let base = raw.baseAddress else { return nil }
       var offset = 0
+      var noProgressSince: Double?
       while offset < raw.count {
         let sent = Darwin.send(fd, base + offset, raw.count - offset, 0)
         if sent < 0 {
           if errno == EINTR { continue }
-          // `SO_SNDTIMEO` expires as EAGAIN. A peer that accepts the connection and then stops
-          // reading is exactly the case that used to grow the heap until malloc failed.
+          // `SO_SNDTIMEO` expires as EAGAIN. That is a link carrying less than the programme, not a
+          // peer that has gone: the queue behind this write is being shed to fit meanwhile, so
+          // waiting costs bounded memory. Only a write that makes no progress at all for longer
+          // than the buffer it is holding up counts the peer as gone. Treating the first timeout as
+          // a disconnect is what ended two streams on the rig and left them off for the rest of the
+          // session.
           if errno == EAGAIN || errno == EWOULDBLOCK {
-            return .disconnected("\(peerLabel) stopped accepting data")
+            let now = Self.monotonicNow()
+            let since = noProgressSince ?? now
+            noProgressSince = since
+            if now - since >= stallSeconds {
+              return .disconnected("\(peerLabel) stopped accepting data")
+            }
+            continue
           }
           return .disconnected("socket write failed (\(errno))")
         }
         offset += sent
+        noProgressSince = nil
         account(sent: sent)
       }
       return nil
@@ -1036,8 +1057,12 @@ public final class RTMPClient: @unchecked Sendable {
     fd: Int32,
     budgetBytes: Int,
     bufferSeconds: Double = RTMPClient.sendBufferSeconds,
-    sendTimeoutSeconds: Double = 10
+    sendTimeoutSeconds: Double = 2,
+    stallDeadlineSeconds: Double = RTMPClient.stallDeadlineSeconds
   ) {
+    lock.lock()
+    stallDeadline = max(stallDeadlineSeconds, 0)
+    lock.unlock()
     // The same options `openSocket` sets. Without `SO_NOSIGPIPE` a test that closes the peer
     // takes the whole test process down with SIGPIPE instead of seeing EPIPE.
     var noSig = Int32(1)

@@ -126,7 +126,15 @@ struct RTMPBackpressureTests {
     let pair = SocketPair()
     defer { pair.close() }
     let client = RTMPClient()
-    client.attachForTesting(fd: pair.client, budgetBytes: 8 * 1024 * 1024, sendTimeoutSeconds: 0.5)
+    // A send that times out is backpressure, so what makes the peer dead is a write that makes no
+    // progress at all for longer than the buffer it is holding up. Shortened here so the test does
+    // not wait the real three quarters of a minute.
+    client.attachForTesting(
+      fd: pair.client,
+      budgetBytes: 8 * 1024 * 1024,
+      sendTimeoutSeconds: 0.2,
+      stallDeadlineSeconds: 1
+    )
     let failure = Box<RTMPClientError?>(nil)
     client.onFailure { error in failure.value = error }
     defer { client.stop() }
