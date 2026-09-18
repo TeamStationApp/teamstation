@@ -1,95 +1,132 @@
 import React from 'react'
-import { Image, Pressable, Text, View } from 'react-native'
+import { Pressable, Text, View } from 'react-native'
 
-import gsLogo from '../assets/gsLogo.png'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Emblem } from './Emblem'
+import { glassStyle } from './glass'
+import { GsMark } from './GsMark'
 import { Icon } from './Icon'
 
 export interface AppHeaderProps {
-  /** The name of the screen you are on. */
-  title: string
-  /** Set above the title in small caps. Always `GameStation`. */
-  overline?: string
+  /** The name of the screen, centred. Absent on screens that say it below. */
+  title?: string
+  /** Home only. Everywhere else the screen says what it is. */
+  showMark?: boolean
   onBack?: () => void
+  /**
+   * What has scrolled out of view, handed up to the header.
+   *
+   * A team's name, a list's filter pills, a game's score. It takes the middle
+   * when it is there, because it is the same information the title would have
+   * carried and never both at once.
+   */
+  handoff?: React.ReactNode
+  /** The three destinations, on a wide window. */
+  nav?: React.ReactNode
   /** The signed-in person, drawn at the right and opening their account. */
   account?: {
     name: string
     avatarUrl?: string | null
     onPress: () => void
   }
+  /** Measured by the shell, which needs the height for everything it overlays. */
+  onHeight?: (height: number) => void
 }
 
 /**
- * The bar at the top of every screen.
+ * The bar at the top of every screen, and it says as little as possible.
  *
- * Left to right: the back chevron when there is somewhere to go back to, the
- * GameStation mark, the two-line title, and the signed-in person's picture.
+ * It used to say `GAMESTATION` and then the name of the screen underneath,
+ * which on the home screen meant reading the name of the app twice on a screen
+ * that already has the mark in the corner. Now: the mark on home only, the
+ * screen's name centred where a screen has one to give, and otherwise nothing
+ * at all until something scrolls up into it.
  *
- * The chevron and the mark sit together rather than taking turns — the mark is
- * how you know which app this is, and losing it one screen deep is how an app
- * stops feeling like one thing. The word "Back" is gone with it: the glyph is
- * understood, and the label only took room from the title. It stays as the
- * accessibility name, so nothing is lost to a screen reader.
- *
- * The title is left-justified rather than centred. Centring looked tidy with
- * nothing either side of it and stopped being tidy the moment there was a mark
- * on one side and a face on the other, because the text then sat off-centre
- * against whichever was wider.
+ * It is glass, and it sits **over** the content rather than above it, so the
+ * page moves under it. Everything that has to clear it — the content's top
+ * padding, the pegged player — measures `onHeight` rather than repeating a
+ * number that would then have to be kept in step.
  */
 export function AppHeader(props: AppHeaderProps): React.ReactElement {
-  const { title, overline, onBack, account } = props
+  const {
+    title,
+    showMark = false,
+    onBack,
+    handoff,
+    nav,
+    account,
+    onHeight
+  } = props
   const theme = useTheme()
   const styles = getStyles(theme)
 
   return (
-    <View style={styles.header}>
-      {onBack != null && (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Back"
-          onPress={onBack}
-          style={({ pressed }) => [styles.back, pressed && styles.pressed]}
-        >
-          <Icon name="chevron_left" color={theme.headerTextColor} />
-        </Pressable>
-      )}
-
-      <Image
-        accessibilityIgnoresInvertColors
-        accessibilityLabel="GameStation"
-        source={{ uri: gsLogo }}
-        style={styles.mark}
-      />
-
-      <View style={styles.titles}>
-        {overline != null && (
-          <Text style={styles.overline} numberOfLines={1}>
-            {overline.toUpperCase()}
-          </Text>
+    <View
+      style={[styles.header, glassStyle(theme)]}
+      onLayout={event => {
+        onHeight?.(event.nativeEvent.layout.height)
+      }}
+    >
+      {/*
+        Three columns of equal weight, so the middle is centred in the header
+        rather than in the space left over. With `flex: 1` on the title alone
+        it drifted as the left side changed — a chevron on one screen, a mark
+        on another, neither on a third.
+      */}
+      {/*
+        Left-justified, beside the mark, which is where every other title in
+        the app sits. Centring it looked tidy in isolation and broke the one
+        line everything else is aligned to.
+      */}
+      <View style={styles.side}>
+        {onBack != null && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Back"
+            onPress={onBack}
+            style={({ pressed }) => [styles.back, pressed && styles.pressed]}
+          >
+            {/* `size` is in rem, like every other size in the app: 2.5 is
+                double the 1.25 default. */}
+            <Icon
+              name="chevron_left"
+              size={2.5}
+              color={theme.headerTextColor}
+            />
+          </Pressable>
         )}
-        <Text style={styles.title} numberOfLines={1}>
-          {title}
-        </Text>
+        {showMark && <GsMark size={1.75} />}
+        {handoff != null ? (
+          <View style={styles.handoffLeft}>{handoff}</View>
+        ) : (
+          title != null && (
+            <Text style={styles.title} numberOfLines={1}>
+              {title}
+            </Text>
+          )
+        )}
       </View>
 
-      {account != null && (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`Account, ${account.name}`}
-          onPress={() => {
-            account.onPress()
-          }}
-          style={({ pressed }) => [styles.account, pressed && styles.pressed]}
-        >
-          <Emblem
-            uri={account.avatarUrl}
-            fallback={initials(account.name)}
-            shape="circle"
-            size={2.25}
-          />
-        </Pressable>
-      )}
+      <View style={[styles.side, styles.sideEnd]}>
+        {nav}
+        {account != null && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Account, ${account.name}`}
+            onPress={() => {
+              account.onPress()
+            }}
+            style={({ pressed }) => [styles.account, pressed && styles.pressed]}
+          >
+            <Emblem
+              uri={account.avatarUrl}
+              fallback={initials(account.name)}
+              shape="circle"
+              size={2}
+            />
+          </Pressable>
+        )}
+      </View>
     </View>
   )
 }
@@ -107,42 +144,55 @@ const getStyles = cacheStyles((theme: Theme) => ({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: theme.rem(theme.spaceSmRem),
-    minHeight: theme.rem(3.75),
-    paddingHorizontal: theme.rem(theme.spaceMdRem),
-    paddingVertical: theme.rem(theme.spaceSmRem),
-    backgroundColor: theme.headerBackgroundColor,
+    // A fifth shorter than it was. That height goes to the content, which is
+    // what a phone is short of.
+    //
+    // Fixed, not a minimum: everything downstream measures this — the content's
+    // top padding, the pegged player, and the point at which a screen hands its
+    // own content up here. A header that grew when it took a row of pills made
+    // that hand-over point move as the copy arrived, so the copy never quite
+    // left again: a ghost of it sat here at ten per cent for ever.
+    height: theme.rem(3),
+    overflow: 'hidden',
+    paddingHorizontal: theme.rem(theme.spaceSmRem),
     borderBottomWidth: 1,
-    borderBottomColor: theme.headerBorderColor
+    borderBottomColor: theme.glassBorderColor
+  },
+  side: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.rem(theme.spaceXsRem),
+    minWidth: theme.rem(3)
+  },
+  sideEnd: {
+    // Only as wide as the face and the icons in it. Everything else in the
+    // header belongs to whatever the screen has handed up — a game's two team
+    // names need the room far more than the empty half of a row does.
+    flexGrow: 0,
+    flexShrink: 0,
+    flexBasis: 'auto',
+    justifyContent: 'flex-end'
+  },
+
+  handoffLeft: {
+    flex: 1,
+    justifyContent: 'center'
   },
   back: {
-    // A glyph is narrow; the target is not. 44pt is the floor for something
-    // this often-used and this close to the edge of the screen.
-    minWidth: theme.rem(2.75),
-    minHeight: theme.rem(2.75),
+    // The glyph doubled, and the target is the whole height of the header and
+    // as wide as it is tall. It sits at the edge of a phone, which is where a
+    // thumb is least accurate.
+    minWidth: theme.rem(3),
+    minHeight: theme.rem(3),
     alignItems: 'center',
     justifyContent: 'center',
-    marginLeft: theme.rem(-theme.spaceSmRem)
-  },
-  mark: {
-    width: theme.rem(2),
-    height: theme.rem(2),
-    resizeMode: 'contain'
-  },
-  titles: {
-    flex: 1,
-    alignItems: 'flex-start'
-  },
-  overline: {
-    fontFamily: theme.semiBoldTextFont,
-    fontSize: theme.rem(0.6875),
-    fontWeight: '700',
-    letterSpacing: theme.rem(0.0625),
-    color: theme.activeColor
+    marginLeft: theme.rem(-theme.spaceXsRem)
   },
   title: {
+    flexShrink: 1,
     fontFamily: theme.boldTextFont,
-    fontSize: theme.rem(1.5),
+    fontSize: theme.rem(1.125),
     fontWeight: '700',
     color: theme.headerTextColor
   },

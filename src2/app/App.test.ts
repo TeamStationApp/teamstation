@@ -12,22 +12,46 @@ import { join } from 'path'
  * took the playing `<video>` with it: dragging a browser window across that
  * width stopped the video dead.
  *
- * The invariant is that the layout is one tree whose axis changes. Rendering
- * the app at two widths and comparing node identity would state that
+ * The invariant is that a breakpoint may change styles, and may change where a
+ * stateless thing is drawn, but may not change the position of the tree above
+ * something stateful. The navigation moves between the header and a floating
+ * capsule, which is allowed because it holds nothing; the pane holding the body
+ * is rendered once, unconditionally, and keyed, so React matches it to itself
+ * across the change instead of matching it against whatever used to be first.
+ *
+ * Rendering the app at two widths and comparing node identity would state that
  * directly, but needs a React renderer this project does not carry — and the
- * mistake has a reliable fingerprint: the same component written twice, once
- * per arrangement. That is what this looks for.
+ * mistake has a reliable fingerprint in the source.
  */
 describe('app layout', function () {
   const source = readFileSync(join(__dirname, 'App.tsx'), 'utf8')
 
-  it('renders the navigation exactly once, whatever the width', function () {
-    const uses = source.match(/<AppNav\b/g) ?? []
-    expect(uses.length, 'AppNav is written once, in one tree').equals(1)
+  it('renders the body exactly once, whatever the width', function () {
+    const uses = source.match(/\{body\}/g) ?? []
+    expect(uses.length, 'the body is written once, in one tree').equals(1)
   })
 
-  it('changes the axis rather than the arrangement', function () {
-    expect(source).contains('column-reverse')
-    expect(source).contains('isRail ? styles.appRow : styles.appColumn')
+  it('keys both children of the root, so neither can take the other s place', function () {
+    expect(source).contains('key="pane"')
+    expect(source).contains('key="nav"')
+  })
+
+  it('renders the pane unconditionally', function () {
+    // Inside a branch it could be unmounted by a width change, which is
+    // exactly the bug this file exists for.
+    expect(source).match(/<View key="pane" style={styles\.pane}>/)
+  })
+
+  it('draws the header over the content rather than above it', function () {
+    // Glass needs something behind it to blur, so the content runs the full
+    // height of the window and clears the header with padding instead.
+    expect(source).contains('styles.headerLayer')
+    expect(source).contains('<HeaderSlotProvider')
+    const screen = readFileSync(
+      join(__dirname, 'components/Screen.tsx'),
+      'utf8'
+    )
+    // One measured number, read from the slot rather than copied.
+    expect(screen).contains('paddingTop: headerHeight')
   })
 })

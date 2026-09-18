@@ -13,7 +13,11 @@ export { Badge, type BadgeTone } from './Badge'
 export { Button, type ButtonKind } from './Button'
 export { Card } from './Card'
 export { Emblem, type EmblemProps } from './Emblem'
-export { GameHeroCard, type GameHeroCardProps } from './GameHeroCard'
+export {
+  GameHeroCard,
+  type TeamStatLine,
+  type GameHeroCardProps
+} from './GameHeroCard'
 export { GameRow, type GameRowProps } from './GameRow'
 export { Icon, type IconName } from './Icon'
 export { initialsOf } from './initials'
@@ -31,3 +35,13 @@ export {
   columnsFor,
   useBreakpoint
 } from './useBreakpoint'
+export {
+  HeaderSlotProvider,
+  useHandoffSlot,
+  useHeaderHandoff,
+  useHeaderSlot
+} from './headerSlot'
+export { HandoffView } from './HandoffView'
+export { useHandoff, useHandoffStyle } from './useHandoff'
+export { GsMark } from './GsMark'
+export { glassStyle, webStyle } from './glass'

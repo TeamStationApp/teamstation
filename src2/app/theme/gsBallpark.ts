@@ -139,6 +139,12 @@ export const gsBallpark: Theme = {
   headerBorderColor: palette.fieldLine,
   headerTextColor: palette.bark,
   navBackgroundColor: palette.white,
+  markArcColor: '#658139',
+  markBodyColor: '#334423',
+  glassBackgroundColor: 'rgba(255, 255, 255, 0.55)',
+  glassFallbackColor: palette.white,
+  glassBorderColor: 'rgba(43, 45, 38, 0.10)',
+  glassBlur: 'blur(24px) saturate(200%)',
   navActiveColor: palette.forest,
   navInactiveColor: palette.moss,
 

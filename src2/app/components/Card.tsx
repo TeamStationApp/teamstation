@@ -10,6 +10,8 @@ export interface CardProps {
   /** A left edge in the accent colour, marking a row worth noticing. */
   accent?: boolean
   style?: StyleProp<ViewStyle>
+  /** So a screen can watch where this card is as the page scrolls. */
+  ref?: (node: unknown) => void
 }
 
 /**
@@ -19,10 +21,11 @@ export interface CardProps {
  * where half of these screens are read.
  */
 export function Card(props: CardProps): React.ReactElement {
-  const { children, flush = false, accent = false, style } = props
+  const { children, flush = false, accent = false, style, ref } = props
   const styles = getStyles(useTheme())
   return (
     <View
+      ref={ref}
       style={[
         styles.card,
         !flush && styles.padded,

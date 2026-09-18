@@ -15,11 +15,13 @@ describe('grid', function () {
     expect(columnsForWidth(639)).equals(1)
   })
 
-  it('widens in steps', function () {
+  it('widens in steps, and stops at four', function () {
     expect(columnsForWidth(640)).equals(2)
-    expect(columnsForWidth(1000)).equals(3)
-    expect(columnsForWidth(1400)).equals(4)
-    expect(columnsForWidth(2560)).equals(5)
+    expect(columnsForWidth(1040)).equals(3)
+    expect(columnsForWidth(1440)).equals(4)
+    // A fifth column makes a row narrower than the two lines of team names it
+    // has to hold; a wide window is for seeing more games, not smaller ones.
+    expect(columnsForWidth(2560)).equals(4)
   })
 
   it('never returns fewer than one column, even at zero width', function () {
@@ -28,10 +30,10 @@ describe('grid', function () {
   })
 
   it('fits the cards inside the window with even gutters', function () {
-    const { columns, cardWidth, gutter } = cardSize({ width: 1000, gutter: 12 })
+    const { columns, cardWidth, gutter } = cardSize({ width: 1040, gutter: 12 })
     expect(columns).equals(3)
     // Three cards and four gutters must not exceed the window.
-    expect(cardWidth * columns + gutter * (columns + 1)).is.at.most(1000)
+    expect(cardWidth * columns + gutter * (columns + 1)).is.at.most(1040)
   })
 
   it('does not let one card fill a very wide window', function () {
@@ -64,14 +66,17 @@ describe('highlight columns', function () {
     expect(highlightColumnsFor(599)).equals(1)
   })
 
-  it('widens as the width allows', function () {
+  it('widens to two once there is room for two readable rows', function () {
     expect(highlightColumnsFor(800)).equals(2)
-    expect(highlightColumnsFor(1280)).equals(3)
-    expect(highlightColumnsFor(1600)).equals(4)
+    expect(highlightColumnsFor(999)).equals(2)
   })
 
-  it('never goes past four, however wide the monitor', function () {
-    expect(highlightColumnsFor(2560)).equals(4)
+  it('never goes past two, however wide the monitor', function () {
+    // Beyond a thousand pixels the highlights move to their own column on the
+    // right, which is one row wide; a third column under the video would be a
+    // wall of short labels, and is not what YouTube fits there either.
+    expect(highlightColumnsFor(1280)).equals(2)
+    expect(highlightColumnsFor(2560)).equals(2)
   })
 
   it('never returns nothing', function () {

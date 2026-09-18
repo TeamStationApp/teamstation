@@ -95,13 +95,20 @@ function resolveMediaSecret(): string {
  * a send that failed must show up in the log rather than leaving somebody
  * waiting for a message that was never going to arrive.
  */
-async function sendCode(email: string, code: string): Promise<void> {
+async function sendCode(
+  email: string,
+  code: string,
+  link?: string
+): Promise<void> {
   if (!mailConfigured(serverConfig.smtp)) {
-    console.log(`[no mail configured] sign-in code for ${email}: ${code}`)
+    console.log(
+      `[no mail configured] sign-in code for ${email}: ${code}` +
+        (link == null ? '' : `\n[no mail configured] link: ${link}`)
+    )
     return
   }
   try {
-    const sent = await sendSignInCode(serverConfig.smtp, email, code)
+    const sent = await sendSignInCode(serverConfig.smtp, email, code, link)
     console.log(
       `sign-in code sent to ${email}: ${sent.accepted} accepted, id ${sent.messageId}`
     )
