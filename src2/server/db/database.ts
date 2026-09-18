@@ -182,7 +182,7 @@ export interface GamesTable {
 export interface VideosTable {
   id: string
   game_id: string | null
-  kind: 'program' | 'combined'
+  kind: 'program' | 'combined' | 'live'
   title: string
   storage: 'peertube' | 'local' | 'spaces'
   status: Generated<'live' | 'processing' | 'ready' | 'unavailable' | 'error'>
@@ -254,6 +254,8 @@ export interface AuthSessionsTable {
   user_id: string
   token_hash: string
   user_agent: string | null
+  /** What this session is, when it is a thing rather than a browser tab. */
+  device_name: string | null
   created_at: Timestamp
   last_used_at: Timestamp | null
   expires_at: Timestamp
@@ -270,6 +272,24 @@ export interface ApiTokensTable {
   last_used_at: Timestamp | null
   expires_at: Timestamp | null
   revoked_at: Timestamp | null
+}
+
+/**
+ * An attempt to sign in by following a link.
+ *
+ * The token is hashed: a stolen database cannot be used to walk in. `purpose`
+ * says where the link leads — the website, or the page that hands a sign-in
+ * back to GS Director.
+ */
+export interface LoginRequestsTable {
+  id: string
+  email: string
+  purpose: 'web' | 'device'
+  token_hash: string
+  device_name: string | null
+  created_at: Timestamp
+  expires_at: Timestamp
+  consumed_at: Timestamp | null
 }
 
 export interface EmailCodesTable {
@@ -318,6 +338,43 @@ export interface SystemSettingsTable {
   value: Json
   updated_at: Timestamp
   updated_by: string | null
+}
+
+/**
+ * A destination a game can be streamed to.
+ *
+ * `key_hash` is what a publish is checked against; `key_cipher` is the sealed
+ * key itself, because this secret is meant to be read back and pasted into
+ * streaming software. `status` is the ingest's own snapshot, written on a
+ * timer: the API never talks to the ingest process, it reads this row.
+ */
+export interface LiveStreamsTable {
+  id: string
+  game_id: string
+  team_id: string
+  /** Whose key this is. A key publishes video as somebody. */
+  user_id: string
+  /** Which of that person's four cameras for this game. */
+  slot: Generated<number>
+  /** What the camera is called. `Camera <slot>` where nobody has said. */
+  label: string | null
+  key_hash: string
+  key_prefix: string
+  key_cipher: string
+  state: Generated<'idle' | 'publishing' | 'ended' | 'revoked'>
+  opens_at: Timestamp
+  /** When somebody ended this key. Null until they do: it is not on a clock. */
+  closes_at: Timestamp | null
+  video_id: string | null
+  status: Json | null
+  status_at: Timestamp | null
+  last_error: string | null
+  first_published_at: Timestamp | null
+  last_published_at: Timestamp | null
+  ended_at: Timestamp | null
+  created_by: string | null
+  created_at: Timestamp
+  updated_at: Timestamp
 }
 
 export interface PlayerSeasonStatsTable {
@@ -375,6 +432,8 @@ export interface Database {
   external_ids: ExternalIdsTable
   games: GamesTable
   leagues: LeaguesTable
+  live_streams: LiveStreamsTable
+  login_requests: LoginRequestsTable
   memberships: MembershipsTable
   player_season_stats: PlayerSeasonStatsTable
   season_members: SeasonMembersTable
