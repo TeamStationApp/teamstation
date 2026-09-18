@@ -549,6 +549,36 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/director/events/{gameId}/stream': {
+        get: {
+          summary: 'What this Director\u2019s camera on a game is doing',
+          description:
+            'Asked when a publish fails: the ingest writes why on the row, ' +
+            'and that sentence beats the socket\u2019s, which can only say ' +
+            'that a connection closed.',
+          security: [{ bearer: [] }],
+          parameters: [gameIdParam],
+          responses: {
+            200: {
+              description: 'The state of this account\u2019s camera',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      gameId: { type: 'string' },
+                      state: { type: 'string' },
+                      lastError: { type: ['string', 'null'] }
+                    }
+                  }
+                }
+              }
+            },
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
       '/live': {
         get: {
           summary: 'The games being played right now that you may watch',
@@ -735,6 +765,37 @@ export function openApiDocument(version: string): OpenApiDocument {
           parameters: [gameIdParam, streamIdParam],
           responses: {
             200: { description: 'The camera, ending' },
+            404: errorResponse
+          }
+        }
+      },
+      '/director/events': {
+        get: {
+          summary: 'The next ten games of the teams you run',
+          description:
+            'Soonest first, reaching two hours backwards \u2014 a one o\u2019clock ' +
+            'game somebody starts filming at ten past three is still the game ' +
+            'they mean.',
+          security: [{ bearer: [] }],
+          responses: {
+            200: {
+              description: 'At most ten, each with both teams\u2019 marks'
+            },
+            401: errorResponse
+          }
+        }
+      },
+      '/director/events/{gameId}/claim': {
+        post: {
+          summary: 'Take a game, and get the URL to publish it to',
+          security: [{ bearer: [] }],
+          parameters: [gameIdParam],
+          responses: {
+            200: {
+              description:
+                'The URL with its key, which the operator never sees or types'
+            },
+            400: errorResponse,
             404: errorResponse
           }
         }

@@ -7,6 +7,10 @@ private enum SettingsCover: String, Identifiable {
   case remoteEditor
   case newTemplate
   case newRemote
+  /// The games this Director may film, to choose the stream's destination from.
+  case eventPicker
+  /// Signing in to the GameStation account whose games the picker lists.
+  case gameStationSignIn
 
   var id: String { rawValue }
 }
@@ -43,6 +47,14 @@ public struct SettingsView: View {
         }
         .id(cover.id)
       }
+    }
+    .task {
+      // Who this Director is signed in to GameStation as. Asked here rather
+      // than at launch: nothing before this screen needs it — the chosen
+      // game's URL comes out of the keychain — and a network call on the
+      // launch path is a call made at a ball field with no signal, in front
+      // of the watchdog.
+      await environment.gameStation.restore()
     }
     .animation(StackedScene.animation, value: cover)
     .alert(
@@ -288,16 +300,25 @@ public struct SettingsView: View {
         }
 
         Section {
-          ClearableTextField(
-            text: $draft.streamURL,
-            clearIdentifier: "settings-stream-url-clear",
-            clearLabel: "Clear stream URL"
-          ) {
-            TextField("rtmp://host:1935/live/key", text: $draft.streamURL)
-              .keyboardType(.URL)
-              .textInputAutocapitalization(.never)
-              .autocorrectionDisabled()
-              .accessibilityIdentifier("settings-stream-url")
+          // Two destinations, one chosen. The event row is first because it is
+          // the one somebody uses every week; the typed URL is what a one-off
+          // to somebody else's service needs, and it keeps working exactly as
+          // it did for every Director that already has one.
+          streamEventRow
+
+          HStack(spacing: 12) {
+            destinationButton(.url, label: "Use a stream URL")
+            ClearableTextField(
+              text: $draft.streamURL,
+              clearIdentifier: "settings-stream-url-clear",
+              clearLabel: "Clear stream URL"
+            ) {
+              TextField("rtmp://host:1935/live/key", text: $draft.streamURL)
+                .keyboardType(.URL)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .accessibilityIdentifier("settings-stream-url")
+            }
           }
 
           Picker("Codec", selection: $draft.streamCodec) {
@@ -325,10 +346,11 @@ public struct SettingsView: View {
           Text("Programme master stream")
         } footer: {
           Text("""
-          The RTMP URL the Stream button publishes the programme to, and how that stream is \
-          encoded. The bitrate starts at the high point and comes down towards the low one while \
-          the network cannot keep up, rather than drop frames. HEVC needs a service that takes \
-          Enhanced RTMP; choose H.264 for one that does not.
+          Where the Stream button publishes the programme, and how that stream is encoded. Pick a \
+          GameStation event and the app holds its address for you; the URL below is for streaming \
+          somewhere else. The bitrate starts at the high point and comes down towards the low one \
+          while the network cannot keep up, rather than drop frames. HEVC needs a service that \
+          takes Enhanced RTMP; choose H.264 for one that does not.
           """)
         }
 
@@ -508,6 +530,113 @@ public struct SettingsView: View {
     environment.endEditingRemoteTemplate()
   }
 
+  // MARK: - Where the stream goes
+
+  /// The row that stands for "a game on GameStation".
+  ///
+  /// Tapping the row opens the list; tapping the radio to its left chooses this
+  /// as the destination. Two targets in one row, deliberately: picking a game
+  /// and deciding to stream to it are separate decisions, and somebody opening
+  /// the list to see what is on should not have their destination changed by
+  /// looking.
+  @ViewBuilder
+  private var streamEventRow: some View {
+    let chosen = environment.gameStation.chosen
+    VStack(alignment: .leading, spacing: 8) {
+      HStack(spacing: 12) {
+        destinationButton(.event, label: "Use a GameStation event")
+        Button {
+          cover = environment.gameStation.isSignedIn
+            ? .eventPicker
+            : .gameStationSignIn
+        } label: {
+          HStack {
+            VStack(alignment: .leading, spacing: 2) {
+              Text(
+                environment.gameStation.isSignedIn
+                  ? "Select GameStation event"
+                  : "Sign in to GameStation"
+              )
+              .foregroundStyle(.primary)
+              if let chosen {
+                Text(chosen.title)
+                  .font(.caption)
+                  .foregroundStyle(.secondary)
+              }
+            }
+            Spacer()
+            Image(systemName: "chevron.right")
+              .font(.footnote.weight(.semibold))
+              .foregroundStyle(.tertiary)
+          }
+          .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("settings-stream-event-row")
+      }
+
+      // Signing in was reachable only while signed *out*: the row above turned
+      // into the event picker the moment it succeeded, and the screen holding
+      // Sign out had no other door. So whoever signed in on this iPad was the
+      // account it streamed as until somebody deleted the app.
+      if environment.gameStation.isSignedIn {
+        Button {
+          cover = .gameStationSignIn
+        } label: {
+          HStack {
+            Text(
+              environment.gameStation.user?.email
+                ?? environment.gameStation.user?.displayName
+                ?? "GameStation account"
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            Spacer()
+            Image(systemName: "chevron.right")
+              .font(.caption2.weight(.semibold))
+              .foregroundStyle(.tertiary)
+          }
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("settings-gamestation-account")
+      }
+
+      if let message = environment.gameStation.lastError {
+        Text(message)
+          .font(.caption)
+          .foregroundStyle(.red)
+      }
+    }
+  }
+
+  /// The radio that says which destination the Stream button uses.
+  private func destinationButton(
+    _ destination: StreamDestination,
+    label: String
+  ) -> some View {
+    Button {
+      draft.streamDestination = destination
+    } label: {
+      Image(
+        systemName: draft.streamDestination == destination
+          ? "largecircle.fill.circle"
+          : "circle"
+      )
+      .font(.title3)
+      .foregroundStyle(draft.streamDestination == destination ? Color.accentColor : .secondary)
+    }
+    .buttonStyle(.plain)
+    .accessibilityLabel(label)
+    .accessibilityAddTraits(
+      draft.streamDestination == destination ? [.isSelected] : []
+    )
+    .accessibilityIdentifier(
+      destination == .event
+        ? "settings-stream-destination-event"
+        : "settings-stream-destination-url"
+    )
+  }
+
   @ViewBuilder
   private func settingsCover(_ item: SettingsCover) -> some View {
     switch item {
@@ -516,6 +645,12 @@ public struct SettingsView: View {
         .environment(environment)
     case .remoteEditor:
       RemoteControlEditorView(onClose: dismissCover)
+        .environment(environment)
+    case .eventPicker:
+      GameStationEventPicker(onChosen: dismissCover, onCancel: dismissCover)
+        .environment(environment)
+    case .gameStationSignIn:
+      GameStationSignIn(onClose: dismissCover)
         .environment(environment)
     case .newRemote:
       NewTemplateSheet(

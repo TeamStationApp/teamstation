@@ -6,6 +6,7 @@ import type { Database } from './db/database'
 import type { MediaContext } from './media/mediaContext'
 import { openApiDocument } from './openapi'
 import { authRoutes } from './routes/auth'
+import { directorRoutes } from './routes/director'
 import { healthRoutes } from './routes/health'
 import { liveRoutes } from './routes/live'
 import { mediaRoutes } from './routes/media'
@@ -95,7 +96,8 @@ describe('the API document', function () {
       ...routesOf(teamRoutes(db, media)),
       ...routesOf(statsRoutes(db)),
       ...routesOf(mediaRoutes(db, media)),
-      ...routesOf(liveRoutes(db, live))
+      ...routesOf(liveRoutes(db, live)),
+      ...routesOf(directorRoutes(db, live))
     ]
 
     const documented = new Set<string>()
@@ -120,7 +122,8 @@ describe('the API document', function () {
       ...routesOf(teamRoutes(db, media)),
       ...routesOf(statsRoutes(db)),
       ...routesOf(mediaRoutes(db, media)),
-      ...routesOf(liveRoutes(db, live))
+      ...routesOf(liveRoutes(db, live)),
+      ...routesOf(directorRoutes(db, live))
     ])
 
     const paths = openApiDocument('0.0.0').paths

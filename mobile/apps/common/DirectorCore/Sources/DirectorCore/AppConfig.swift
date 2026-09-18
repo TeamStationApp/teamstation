@@ -38,6 +38,14 @@ public struct ProgramResolution: Hashable, Sendable, Codable {
 /// - **Programme master recording** (`program…`): the master, which is a composite and has to be
 ///   encoded whatever the cameras are, and a programme export that has to be re-encoded.
 /// - **Programme master stream** (`stream…`): the live RTMP stream, which has its own encoder.
+/// Where the Stream button sends the programme.
+public enum StreamDestination: String, Codable, Sendable, CaseIterable {
+  /// The RTMP URL the operator typed. What every Director did before events existed.
+  case url
+  /// A game picked from GameStation, whose stream URL the app holds and never shows.
+  case event
+}
+
 public struct AppConfig: Hashable, Sendable, Codable {
   public var programCodec: ProgramCodec
   /// Codec for an NDI camera's archive and every exported camera file.
@@ -123,6 +131,14 @@ public struct AppConfig: Hashable, Sendable, Codable {
   /// RTMP publish URL for the programme output. Empty means streaming is off until the operator
   /// enters one. Not a launch-only flag: it has to still be there tomorrow.
   public var streamURL: String
+  /// Which of the two destinations the Stream button publishes to.
+  ///
+  /// Defaults to the typed URL, so every Director that already has one keeps behaving exactly as
+  /// it did. Choosing a GameStation event is the other way, and the app never shows that URL: the
+  /// event *is* the destination, and its key lives in the keychain with the account.
+  public var streamDestination: StreamDestination
+  /// Where GameStation is, for signing in and listing events. Changed only when the site moves.
+  public var gameStationURL: String
   /// Sweep a different /24 for cameras instead of this iPad's own, for a bench where the cameras sit
   /// behind a traffic shaper on another subnet. Off for normal use.
   public var subnetScanOverrideEnabled: Bool
@@ -193,6 +209,8 @@ public struct AppConfig: Hashable, Sendable, Codable {
     diskLatencyCapMilliseconds: Double = AppConfig.diskLatencyCapDefaultMilliseconds,
     replaySlowMotionRate: Double = AppConfig.replaySlowMotionRateDefault,
     streamURL: String = "",
+    streamDestination: StreamDestination = .url,
+    gameStationURL: String = "https://tube2.gamestation.co",
     subnetScanOverrideEnabled: Bool = false,
     subnetScanOverride: String = "",
     resumeDowntimeLimitSeconds: Double = AppConfig.resumeDowntimeLimitDefaultSeconds
@@ -224,6 +242,8 @@ public struct AppConfig: Hashable, Sendable, Codable {
     self.diskLatencyCapMilliseconds = Self.clampedDiskLatencyCap(diskLatencyCapMilliseconds)
     self.replaySlowMotionRate = Self.clampedReplaySlowMotionRate(replaySlowMotionRate)
     self.streamURL = streamURL
+    self.streamDestination = streamDestination
+    self.gameStationURL = gameStationURL
     self.subnetScanOverrideEnabled = subnetScanOverrideEnabled
     self.subnetScanOverride = subnetScanOverride
     self.resumeDowntimeLimitSeconds = Self.clampedResumeDowntimeLimit(resumeDowntimeLimitSeconds)
@@ -438,6 +458,16 @@ public struct AppConfig: Hashable, Sendable, Codable {
       ) ?? fallback.replaySlowMotionRate,
       streamURL: try container.decodeIfPresent(String.self, forKey: .streamURL)
         ?? fallback.streamURL,
+      // `try?`, unlike every other field here, because this one is an enum: a
+      // value that is not one of its cases throws rather than returning nil,
+      // and one unreadable key must not cost somebody every other setting in
+      // the file.
+      streamDestination: (try? container.decodeIfPresent(
+        StreamDestination.self,
+        forKey: .streamDestination
+      )) as? StreamDestination ?? fallback.streamDestination,
+      gameStationURL: try container.decodeIfPresent(String.self, forKey: .gameStationURL)
+        ?? fallback.gameStationURL,
       subnetScanOverrideEnabled: try container.decodeIfPresent(
         Bool.self,
         forKey: .subnetScanOverrideEnabled

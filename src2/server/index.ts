@@ -21,6 +21,7 @@ import { errorHandler, notFoundHandler } from './middleware/withErrors'
 import { openApiDocument } from './openapi'
 import { authRoutes } from './routes/auth'
 import { devMediaRoutes } from './routes/devMedia'
+import { directorRoutes } from './routes/director'
 import { healthRoutes } from './routes/health'
 import type { LiveRouteOptions } from './routes/live'
 import { liveRoutes } from './routes/live'
@@ -301,6 +302,16 @@ function runWorker(): void {
   app.use('/api/v1', statsRoutes(db))
   app.use('/api/v1', mediaRoutes(db, mediaContext))
   app.use('/api/v1', liveRoutes(db, liveRouteOptions()))
+  app.use(
+    '/api/v1',
+    directorRoutes(db, {
+      ...liveRouteOptions(),
+      space: serverConfig.space,
+      // What a camera claimed by a Director is called, so a coach with an iPad
+      // and a laptop pointed at one game can tell which row is which.
+      deviceLabel: 'GS Director'
+    })
+  )
 
   // What Caddy's forward_auth calls. Not under /api/v1: it is not a public
   // endpoint, and Caddy is the only thing that should ever reach it.

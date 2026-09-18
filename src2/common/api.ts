@@ -419,6 +419,34 @@ export const asDeletedVideo = asObject({
 })
 export type DeletedVideo = ReturnType<typeof asDeletedVideo>
 
+/**
+ * A game GS Director can be pointed at.
+ *
+ * The icons are the two teams' marks, which the picker draws on either side of
+ * the row; the names read `<away> at <home>`, the way the game is spoken of.
+ */
+export const asDirectorEvent = asObject({
+  gameId: asString,
+  startAt: asString,
+  venue: asNullable(asString),
+  homeTeamName: asString,
+  awayTeamName: asString,
+  homeLogoUrl: asNullable(asString),
+  awayLogoUrl: asNullable(asString),
+  /** `none` until the game has been given a stream. */
+  liveState: asString
+})
+export type DirectorEvent = ReturnType<typeof asDirectorEvent>
+
+/** What a Director gets when it takes a game: the URL, key and all. */
+export const asDirectorClaim = asObject({
+  gameId: asString,
+  url: asString,
+  opensAt: asNullable(asString),
+  closesAt: asNullable(asString)
+})
+export type DirectorClaim = ReturnType<typeof asDirectorClaim>
+
 /** A game being played right now that this person may watch. */
 export const asLiveNow = asObject({
   /** The angle to lead with: the one that started most recently. */
