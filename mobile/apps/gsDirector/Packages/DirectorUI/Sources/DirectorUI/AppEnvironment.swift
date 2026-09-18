@@ -150,6 +150,11 @@ public final class AppEnvironment {
   private var exportLeaseWatch: Task<Void, Never>?
   /// The export GS Distributor is running, if any.
   public var distributorExport: UUID? { exportLease.id }
+  /// Whether the operator wants the programme streaming. `isStreaming` says whether it is going out
+  /// right now; this says whether it should be, which is what tells a drop from a Stop.
+  private var streamWanted = false
+  private var streamRetryDelay: Double = 3
+
   public private(set) var isStreaming = false {
     didSet {
       guard isStreaming != oldValue else { return }
@@ -1712,8 +1717,26 @@ public final class AppEnvironment {
       return
     }
     streamErrorGate.reset()
+    streamWanted = true
+    streamRetryDelay = Self.firstStreamRetrySeconds
     isStreaming = true
     beginLiveSession(streaming: true)
+    dialStream()
+  }
+
+  /// How long to wait before dialling the ingest again, and how far that backs off. A squeezed
+  /// uplink comes back in seconds, so the first retry is quick; an ingest that is down stays down,
+  /// so the wait grows rather than hammering it for the rest of a game.
+  static let firstStreamRetrySeconds: Double = 3
+  static let longestStreamRetrySeconds: Double = 30
+
+  /// Opens the publish, and puts it back when it drops on its own.
+  ///
+  /// A drop is not a stop. The send times out whenever the uplink carries less than the programme
+  /// for longer than the socket allows — measured on the rig, a 1.2 Mbit cap under a 4 Mbps
+  /// programme ends the publish in about twenty seconds — and before this the stream stayed off for
+  /// the rest of the session, with the operator's only warning a toast they had to be watching for.
+  private func dialStream() {
     let url = config.streamURL
     let session = config
     router.setStreamRate(session.streamFrameRate)
@@ -1722,20 +1745,45 @@ public final class AppEnvironment {
       do {
         try await self.programStreamer.start(urlString: url, config: session) { [weak self] message in
           Task { @MainActor in
-            self?.reportStreamError(message)
-            await self?.stopStreaming()
+            self?.handleStreamDrop(message)
           }
         }
       } catch {
         await MainActor.run {
-          self.reportStreamError(Self.streamErrorMessage(error))
-          self.isStreaming = false
+          self.handleStreamDrop(Self.streamErrorMessage(error))
         }
       }
     }
   }
 
+  /// The publish dropped by itself. Counted, said once, and dialled again while the operator still
+  /// wants it — a URL that cannot be parsed is not worth retrying, so that one stops.
+  private func handleStreamDrop(_ message: String) {
+    reportStreamError(message)
+    telemetry.recordStreamDisconnect(message)
+    programStreamer.stop()
+    streamMegabitsPerSecond = 0
+    guard streamWanted, !message.contains("stream URL") else {
+      isStreaming = false
+      endLiveSession(streaming: true)
+      return
+    }
+    let delay = streamRetryDelay
+    streamRetryDelay = min(delay * 2, Self.longestStreamRetrySeconds)
+    Task { [weak self] in
+      try? await Task.sleep(for: .seconds(delay))
+      await MainActor.run {
+        guard let self, self.streamWanted else { return }
+        self.telemetry.recordStreamReconnect()
+        self.streamErrorGate.reset()
+        self.isStreaming = true
+        self.dialStream()
+      }
+    }
+  }
+
   public func stopStreaming() async {
+    streamWanted = false
     guard isStreaming || programStreamer.running else {
       isStreaming = false
       endLiveSession(streaming: true)
