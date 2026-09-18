@@ -2,6 +2,7 @@ import React from 'react'
 import { type StyleProp, View, type ViewStyle } from 'react-native'
 import Animated from 'react-native-reanimated'
 
+import { edgeMarginRem } from '../layout/margins'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { useHeaderSlot } from './headerSlot'
 import { useBreakpoint } from './useBreakpoint'
@@ -110,12 +111,14 @@ const getStyles = cacheStyles((theme: Theme) => ({
   column: {
     width: '100%',
     maxWidth: theme.rem(theme.maxContentWidthRem),
-    paddingHorizontal: theme.rem(theme.spaceLgRem * 0.8),
+    // The margin the header uses too, so the mark in the corner lines up with
+    // the first card underneath it.
+    paddingHorizontal: theme.rem(edgeMarginRem(theme, 'phone')),
     paddingVertical: theme.rem(theme.spaceLgRem),
     gap: theme.rem(theme.spaceLgRem)
   },
   columnWide: {
-    paddingHorizontal: theme.rem(theme.spaceLgRem * 1.2)
+    paddingHorizontal: theme.rem(edgeMarginRem(theme, 'tablet'))
   },
   columnFull: {
     maxWidth: '100%'
