@@ -100,14 +100,31 @@ export const asVideoSummary = asObject({
 })
 export type VideoSummary = ReturnType<typeof asVideoSummary>
 
-const asLineScoreSide = asObject({
+export const asLineScoreSide = asObject({
   /** Runs in each inning, first inning first. */
   runs: asArray(asNumber),
   r: asNumber,
   /** Null when the plays cannot say — which is not the same as none. */
   h: asNullable(asNumber),
-  e: asNullable(asNumber)
+  e: asNullable(asNumber),
+  /**
+   * Walks, and the batters of this side who struck out, and its home runs.
+   *
+   * Optional because a game ingested before they were counted has a line score
+   * without them, and `null` there means "not counted" rather than "none" —
+   * the card draws nothing rather than claiming a no-hitter.
+   *
+   * A side's **defensive** strikeouts are not stored: they are the other
+   * side's `k`, and counting the same thing twice is how two numbers that must
+   * agree end up disagreeing.
+   */
+  bb: asOptional(asNullable(asNumber), null),
+  k: asOptional(asNullable(asNumber), null),
+  hr: asOptional(asNullable(asNumber), null),
+  hbp: asOptional(asNullable(asNumber), null)
 })
+
+export type LineScoreSide = ReturnType<typeof asLineScoreSide>
 
 export const asGameDetail = asObject({
   id: asString,
@@ -198,9 +215,38 @@ export const asBattingRow = asObject({
   k: asNumber,
   hbp: asNumber,
   rbi: asNumber,
-  rates: asRates
+  rates: asRates,
+  /**
+   * This player's average for the season so far, up to and including this
+   * game — not the afternoon's. Null where they have no at-bats to average.
+   */
+  seasonAvg: asOptional(asNullable(asNumber), null)
 })
 export type BattingRow = ReturnType<typeof asBattingRow>
+
+/** One pitcher's line. No earned runs: the plays cannot tell them apart. */
+export const asPitchingRow = asObject({
+  userId: asString,
+  shortName: asOptional(asString),
+  teamId: asNullable(asString),
+  /** `5.2`, the way it is always written. */
+  ip: asString,
+  outs: asNumber,
+  bf: asNumber,
+  h: asNumber,
+  r: asNumber,
+  bb: asNumber,
+  k: asNumber,
+  hr: asNumber,
+  hbp: asNumber
+})
+export type PitchingRow = ReturnType<typeof asPitchingRow>
+
+export const asBoxScore = asObject({
+  batting: asArray(asBattingRow),
+  pitching: asArray(asPitchingRow)
+})
+export type BoxScore = ReturnType<typeof asBoxScore>
 
 export const asRosterEntry = asObject({
   userId: asString,
@@ -300,6 +346,22 @@ export const asSession = asObject({
 })
 export type Session = ReturnType<typeof asSession>
 
+/** The sign-in a client is waiting on, and the secret that makes it its own. */
+export const asSignInWait = asObject({
+  requestId: asString,
+  clientSecret: asString
+})
+export type SignInWait = ReturnType<typeof asSignInWait>
+
+/**
+ * Either a session, or `ready: false` — waiting is the ordinary answer here
+ * and not a failure, so it is a shape rather than a status code.
+ */
+export const asMaybeSession = asEither(
+  asObject({ ready: asValue(false) }),
+  asSession
+)
+
 export interface ClientOptions {
   baseUrl: string
   token?: string
@@ -327,9 +389,49 @@ export class GameStationClient {
     return session
   }
 
-  /** Always succeeds, whether or not the address has an account. */
-  async requestEmailCode(email: string): Promise<void> {
-    await this.request('POST', '/auth/email-code', asUnknownOk, { email })
+  /**
+   * Always succeeds, whether or not the address has an account.
+   *
+   * What comes back is the sign-in this client is now waiting on: an id, and a
+   * secret that proves the wait is its own. Both are useless until somebody
+   * opens the link in the mail or types the code, which is what lets a link
+   * tapped on a laptop finish a sign-in a phone started.
+   */
+  async requestEmailCode(
+    email: string,
+    options: { origin?: 'web' | 'ios' | 'android'; next?: string } = {}
+  ): Promise<SignInWait> {
+    return await this.request('POST', '/auth/email-code', asSignInWait, {
+      email,
+      origin: options.origin ?? 'web',
+      next: options.next
+    })
+  }
+
+  /** Spend the link from the e-mail. Never happens on a bare page load. */
+  async signInWithLink(token: string): Promise<Session> {
+    const session = await this.request('POST', '/auth/link/verify', asSession, {
+      token
+    })
+    this.token = session.token
+    return session
+  }
+
+  /**
+   * Has the sign-in this client asked for been approved somewhere else?
+   *
+   * `undefined` means not yet, which is the ordinary answer and not an error.
+   */
+  async claimSignIn(wait: SignInWait): Promise<Session | undefined> {
+    const answer = await this.request(
+      'POST',
+      '/auth/request/claim',
+      asMaybeSession,
+      { requestId: wait.requestId, clientSecret: wait.clientSecret }
+    )
+    if (!('token' in answer)) return undefined
+    this.token = answer.token
+    return answer
   }
 
   async signInWithCode(email: string, code: string): Promise<Session> {
@@ -433,11 +535,11 @@ export class GameStationClient {
     )
   }
 
-  async boxScore(gameId: string): Promise<BattingRow[]> {
+  async boxScore(gameId: string): Promise<BoxScore> {
     return await this.request(
       'GET',
       `/games/${encodeURIComponent(gameId)}/box-score`,
-      asArray(asBattingRow)
+      asBoxScore
     )
   }
 

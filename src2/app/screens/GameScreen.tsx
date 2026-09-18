@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Pressable,
@@ -8,26 +8,39 @@ import {
   useWindowDimensions,
   View
 } from 'react-native'
+import Animated from 'react-native-reanimated'
 
 import type {
   BattingRow,
+  BoxScore as BoxScoreData,
   GameDetail,
   GameStationClient,
   Highlight,
+  LineScoreSide,
+  PitchingRow,
   Playback,
   VideoSummary
 } from '../../common/api'
 import {
   GameHeroCard,
+  glassStyle,
+  HandoffView,
   PillTabs,
   Screen,
-  useBreakpoint,
-  VideoPoster
+  type TeamStatLine,
+  useHandoff,
+  useHeaderHandoff,
+  useHeaderSlot,
+  VideoPoster,
+  webStyle
 } from '../components'
 import { highlightColumnsFor } from '../layout/grid'
+import { PHONE_MARGIN, watchLayout, type WatchMode } from '../layout/watch'
 import { lstrings } from '../locales/strings'
 import { sameMoment } from '../player/angleSwitch'
 import { attachHls } from '../player/attachHls'
+import { PlayerSurface } from '../player/PlayerSurface'
+import { useVideoAspect } from '../player/useVideoAspect'
 import { cacheStyles, useTheme } from '../theme/ThemeContext'
 import type { Theme } from '../theme/types'
 import { gameStatusLine, shortDate, winnerOf } from './format'
@@ -84,7 +97,7 @@ function angleName(video: VideoSummary): string {
  * Names for the picker, numbered only where they would otherwise repeat.
  *
  * Until a recording has been looked at it counts as one camera, so a game with
- * three of them offered `Primary`, `Primary` and `Primary` — three buttons
+ * three of them offered `Video`, `Video` and `Video` — three buttons
  * that all claim to be the same thing. Numbering them says what is true: we
  * have three and do not yet know what they are.
  */
@@ -108,6 +121,76 @@ function angleNames(videos: VideoSummary[]): Map<string, string> {
   }
   return out
 }
+
+/**
+ * The card's two stat lines, from the line score the plays produced.
+ *
+ * A side's defensive strikeouts are the other side's batters struck out, so
+ * they are read across rather than counted again — the two lines of the card
+ * check each other, and there is nothing new to store.
+ *
+ * `null` on a side means the plays were never counted. That is not none, and
+ * the card draws nothing for it rather than a row of zeroes.
+ */
+function teamStatsOf(
+  linescore: GameDetail['linescore']
+): { away: TeamStatLine | null; home: TeamStatLine | null } | null {
+  if (linescore == null) return null
+  const side = (
+    own: LineScoreSide,
+    other: LineScoreSide
+  ): TeamStatLine | null => {
+    if (own.h == null || own.bb == null || own.k == null || own.hr == null) {
+      return null
+    }
+    return {
+      h: own.h,
+      bb: own.bb,
+      k: own.k,
+      hr: own.hr,
+      e: own.e ?? 0,
+      kDef: other.k ?? 0
+    }
+  }
+  return {
+    away: side(linescore.away, linescore.home),
+    home: side(linescore.home, linescore.away)
+  }
+}
+
+/**
+ * One side of the score, as the header draws it: the name, cut with an
+ * ellipsis, and the number hard against the right.
+ *
+ * Fixed widths on both halves, so the block does not resize as the scroll
+ * carries it in, and a 4 does not make the names wider than a 12 does.
+ */
+function ScoreRow(props: {
+  name: string
+  score: number | null
+  theme: Theme
+}): React.ReactElement {
+  const { name, score, theme } = props
+  const styles = getStyles(theme)
+  return (
+    <View style={styles.headerScoreRow}>
+      <Text style={styles.headerScoreName} numberOfLines={1}>
+        {name}
+      </Text>
+      <Text style={styles.headerScoreValue}>{score ?? '–'}</Text>
+    </View>
+  )
+}
+
+/**
+ * How wide the header's copy of the score is allowed to be.
+ *
+ * Half of an iPhone 16 Pro, and the same number of pixels on every device: a
+ * block that took a share of the width put the score against the right edge of
+ * a desktop, a foot from the names it belongs to. Fixed, the two stay together
+ * and the names still have room for most of what a team is called.
+ */
+const HEADER_SCORE_WIDTH = 201
 
 /** How long a chosen highlight's full account stays under the video. */
 const DESCRIPTION_SECONDS = 90
@@ -140,40 +223,9 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   const theme = useTheme()
   const styles = getStyles(theme)
   const { height, width } = useWindowDimensions()
-  const columns = highlightColumnsFor(width)
-  const isRail = useBreakpoint() !== 'phone'
-  // Sized from the window's height, not its width.
-  //
-  // `aspectRatio` beats `maxHeight` in react-native-web: a 16:9 box told to be
-  // 100% wide takes the height that implies and ignores the cap, so at 1280 by
-  // 720 the player was 594 tall, the card and pills took the rest, and the
-  // highlight list measured nothing at all. Giving it a height and letting the
-  // width follow is the way round that holds.
-  //
-  // Both constraints at once. A 16:9 box that only obeys the window came out
-  // 358 by 354 on a phone — nearly square — so the picture letterboxed inside
-  // it and 43% of the box was black bar, which is exactly the room the
-  // highlight list needed. And a box that only obeys the width fills a short
-  // window to the bottom. So: as tall as the fraction allows, no taller than
-  // 16:9 of the space it has, and the width follows the height.
-  //
-  // The card is pinned above the player, which Paul chose on 2026-09-17 over
-  // the video-first arrangement, with a later pass to optimise it. That costs
-  // the player the card's height, so the fraction is taken from what is left
-  // rather than from the window: at 720 the header, the card and the pills
-  // are about 270px, and 0.58 of the whole window would leave the highlight
-  // list nothing at all.
-  const railWidth = isRail ? 176 : 0
-  const columnWidth = Math.max(240, width - railWidth - 36)
-  const PINNED_ABOVE = 270
-  const playerHeight = Math.max(
-    150,
-    Math.min(
-      Math.round((height - PINNED_ABOVE) * 0.62),
-      Math.round((columnWidth * 9) / 16)
-    )
-  )
-  const playerWidth = Math.min(columnWidth, Math.round((playerHeight * 16) / 9))
+  // One measured number: the header overlays the content, so the card clears
+  // it with padding and the pegged player sticks below it.
+  const { headerHeight } = useHeaderSlot()
 
   const [tab, setTab] = useState<Tab>(initialTab ?? 'watch')
   const [game, setGame] = useState<GameDetail | undefined>(undefined)
@@ -181,7 +233,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   const [highlights, setHighlights] = useState<Highlight[]>([])
   const [withheld, setWithheld] = useState<string | null>(null)
   const [dropped, setDropped] = useState(0)
-  const [batting, setBatting] = useState<BattingRow[] | undefined>(undefined)
+  const [box, setBox] = useState<BoxScoreData | undefined>(undefined)
   const [playback, setPlayback] = useState<Playback | undefined>(undefined)
   /**
    * Which video the current playback URL belongs to.
@@ -206,7 +258,89 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     { videoId: string; sec: number; playing: boolean } | undefined
   >(undefined)
   const [error, setError] = useState<string | undefined>(undefined)
+
+  // The card's own content goes up into the header as the card scrolls away:
+  // the away team over the home team, small, with their scores beside them.
+  // The header carries nothing for this screen otherwise — the card says it
+  // all while it is on the screen.
+  // Half way down the card, because that is where the names and the scores
+  // are: anchored at its bottom the copy arrived in the header well after the
+  // words it copies had gone under it.
+  const handoff = useHandoff(headerHeight, 0.5)
+  /**
+   * The highlights column runs to the bottom of the window, wherever it starts.
+   *
+   * A fixed height cut it off at the picture's lower edge while the card was
+   * still on screen, so the rows ended in mid-air and the last of them could
+   * not be reached until the card had gone. Its height is set from where it
+   * actually is, on every scroll, which is cheap next to what the browser is
+   * already doing to scroll.
+   */
+  const listRef = useRef<HTMLElement | null>(null)
+  /**
+   * How far the section pills push the highlights down.
+   *
+   * Beside the video the list should be clipped by the bottom of the card, not
+   * by the top of the picture: rows that vanish at the picture's top edge look
+   * cut off, because there is nothing there to be cut off *by*. The pills sit
+   * between the two and are only as wide as the left column, so the list is
+   * pulled up past them into the empty space beside them.
+   */
+  const [tabsHeight, setTabsHeight] = useState(0)
+  const fitList = useCallback(() => {
+    const node = listRef.current
+    if (node == null || typeof node.getBoundingClientRect !== 'function') return
+    const room = window.innerHeight - node.getBoundingClientRect().top
+    node.style.maxHeight = `${Math.max(120, Math.round(room))}px`
+  }, [])
+  const handleWatchScroll = useCallback(() => {
+    handoff.handleScroll()
+    fitList()
+  }, [fitList, handoff])
+  const progress = handoff.progress
+  const headerScore = useMemo(
+    () =>
+      game == null ? null : (
+        <HandoffView progress={progress} style={styles.headerScore}>
+          <ScoreRow
+            name={game.awayTeamName}
+            score={game.awayScore}
+            theme={theme}
+          />
+          <ScoreRow
+            name={game.homeTeamName}
+            score={game.homeScore}
+            theme={theme}
+          />
+        </HandoffView>
+      ),
+    [game, progress, styles.headerScore, theme]
+  )
+  useHeaderHandoff(headerScore)
+
   const playerRef = useRef<HTMLVideoElement | null>(null)
+
+  // The box takes the video's own shape, read from the file, so there is
+  // nothing left over for a black bar to fill. Until the browser knows, 16:9.
+  const aspect = useVideoAspect(playerRef, video?.id)
+  const mode = useRef<WatchMode>('stacked')
+  const layout = watchLayout({
+    width,
+    height,
+    // The header, the card and the pills all sit above the picture.
+    chromeHeight: headerHeight + 180,
+    aspect,
+    previous: mode.current
+  })
+  mode.current = layout.mode
+  const sideBySide = layout.mode === 'sideBySide'
+  // From the list's own width, not the window's: beside the video the list is
+  // 402px wide and takes one column, and asking the window would have given it
+  // two squeezed into that.
+  const columns = highlightColumnsFor(
+    sideBySide ? layout.sideWidth : width - 2 * 16
+  )
+
   /**
    * The same element, as state, so that a **new** one is an event.
    *
@@ -303,20 +437,20 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   // Fetched when the tab is first opened, not with the game: most people come
   // here to watch, and the box score is a second query against every play.
   useEffect(() => {
-    if (tab !== 'boxScore' || batting != null) return
+    if (tab !== 'boxScore' || box != null) return
     let live = true
     client
       .boxScore(gameId)
       .then(rows => {
-        if (live) setBatting(rows)
+        if (live) setBox(rows)
       })
       .catch(() => {
-        if (live) setBatting([])
+        if (live) setBox({ batting: [], pitching: [] })
       })
     return () => {
       live = false
     }
-  }, [batting, client, gameId, tab])
+  }, [box, client, gameId, tab])
 
   const playbackUrl = playback?.url ?? null
 
@@ -496,10 +630,9 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       homeRecord={game.homeRecord}
       awayLogoUrl={game.awayLogoUrl}
       homeLogoUrl={game.homeLogoUrl}
-      meta={[game.venue, shortDate(game.startAt)]
-        .filter(part => part != null && part !== '')
-        .join(' · ')}
-      linescore={game.linescore}
+      date={shortDate(game.startAt)}
+      venue={game.venue ?? undefined}
+      teamStats={teamStatsOf(game.linescore)}
     />
   )
 
@@ -533,15 +666,26 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
 
   const description =
     chosen?.description == null || chosen.description === '' ? null : (
-      <View style={styles.description}>
+      // The same card as the angle names above it, and the same glass: the
+      // two belong to the picture and sit under it, and a solid white panel
+      // the width of the column read as a different kind of thing entirely.
+      <View
+        style={[
+          styles.description,
+          glassStyle(theme),
+          { width: layout.videoWidth }
+        ]}
+      >
         <Text style={styles.descriptionText}>{chosen.description}</Text>
       </View>
     )
 
   const player = (
-    <View>
-      <View
-        style={[styles.player, { height: playerHeight, width: playerWidth }]}
+    <View style={styles.playerBlock}>
+      <PlayerSurface
+        videoRef={playerRef}
+        width={layout.videoWidth}
+        height={layout.videoHeight}
       >
         {video == null ? (
           <Text style={styles.message}>{lstrings.game_no_video}</Text>
@@ -555,6 +699,9 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           // Web only for now. A raw video element is right here: react-native-web
           // renders to the DOM, and the browser's own player is what gives us
           // hardware decoding for HEVC and H.264 alike.
+          // The browser's own controls stay: they scrub, mute and go
+          // fullscreen well, and the gesture layer is cut around them rather
+          // than replacing them.
           <video
             ref={takePlayer}
             style={{ width: '100%', height: '100%', backgroundColor: '#000' }}
@@ -562,7 +709,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
             playsInline
           />
         )}
-      </View>
+      </PlayerSurface>
 
       {/*
         The same strip as everywhere else, rather than a fourth hand-drawn
@@ -572,7 +719,16 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         with it.
       */}
       {game.videos.length > 1 ? (
-        <View style={styles.videoPicker}>
+        // Its own card, the width of the picture, sitting just under it: glass,
+        // so the highlights passing beneath the pegged block are blurred rather
+        // than hidden or sharp.
+        <View
+          style={[
+            styles.videoPicker,
+            glassStyle(theme),
+            { width: layout.videoWidth }
+          ]}
+        >
           <PillTabs
             tabs={game.videos.map(item => {
               const name = pickerNames.get(item.id) ?? angleName(item)
@@ -656,32 +812,106 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   // fixed, and the highlights scroll underneath them. Reading to the bottom of
   // a long game must not take the video off the screen.
   if (tab === 'watch') {
+    // One container, three children, always in this order. Stacked it is a
+    // column that scrolls, with the player pegged under the header once the
+    // card has gone by; side by side it is a wrapping row, where the card
+    // takes the full width and the player and the list share the line below.
+    //
+    // The same parent and the same children in both, because the `<video>`
+    // must not move in the tree: a layout that swapped one structure for
+    // another would remount it and stop playback dead the moment a window
+    // crossed the boundary.
     return (
-      <View style={styles.screen}>
+      <Animated.ScrollView
+        style={styles.watch}
+        onScroll={handleWatchScroll}
+        scrollEventThrottle={16}
+        contentContainerStyle={[
+          styles.watchContent,
+          sideBySide ? styles.watchSplit : styles.watchStacked
+        ]}
+      >
+        <View style={[styles.head, { paddingTop: headerHeight }]}>
+          {/*
+            The card alone is what hands its score up, not the block it shares
+            with the pills: measured across both, the score only arrived once
+            the pills had gone under too, which is long after the thing it is a
+            copy of has left the screen.
+          */}
+          <View ref={handoff.ref}>{scoreboard}</View>
+          <View
+            onLayout={event => {
+              setTabsHeight(event.nativeEvent.layout.height)
+            }}
+          >
+            {tabs}
+          </View>
+        </View>
+
         {/*
-          A plain View, not a `Screen`: `Screen` fills whatever it is given,
-          and two of them in a column each took half the height — which
-          squeezed the 16:9 player into a strip across the top. This one is
-          sized by its contents, and the list below takes what is left.
+          A plain div, not a `View`: `position: sticky` is a web value React
+          Native has no name for, and react-native-web drops it on the way
+          through style validation — the block simply scrolled away, which
+          looks like a working peg right up until the card has gone. The app
+          already renders DOM where it must, and this is the same seam.
         */}
-        {/*
-          The card sits at the top, above the video, which is where the plan
-          and the design both put it (§4, §17) and what Paul chose on
-          2026-09-17. It has to be pinned to be above a pinned player, so it
-          and the player share the fixed region and only the highlights
-          scroll. That costs the video some height on a short window; a later
-          pass is to optimise it.
-        */}
-        <View style={styles.fixed}>
-          {scoreboard}
-          {tabs}
+        <div
+          style={{
+            // A raw div is content-box by default, unlike everything React
+            // Native renders: without this the padding is added to the width
+            // and the block runs past the edge of the screen.
+            boxSizing: 'border-box',
+            position: 'sticky',
+            top: headerHeight,
+            zIndex: 2,
+            alignSelf: 'flex-start',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: sideBySide ? 'flex-start' : 'center',
+            paddingLeft: sideBySide ? theme.rem(theme.spaceMdRem) : 0,
+            width: sideBySide ? undefined : '100%'
+            // Nothing painted here. The picture is opaque on its own and the
+            // card below it is the glass; a tint on this block as well stacked
+            // with the card's and turned it solid.
+          }}
+        >
           {player}
           {description}
-        </View>
-        <ScrollView style={styles.scroller}>
-          <View style={styles.scrolled}>{highlightList}</View>
-        </ScrollView>
-      </View>
+        </div>
+
+        {/*
+          Its own scroller beside the video, bounded by the window: the page
+          stops scrolling once the card has gone, and the list carries on
+          against a video that has stopped moving.
+        */}
+        <div
+          ref={node => {
+            listRef.current = node
+            // Once it exists, and again whenever the layout changes under it.
+            if (node != null) requestAnimationFrame(fitList)
+          }}
+          style={{
+            boxSizing: 'border-box',
+            flexGrow: sideBySide ? 0 : 1,
+            width: sideBySide ? layout.sideWidth : '100%',
+            // The same inset as the picture, so a row and the picture share
+            // their left and right edges and nothing appears beside the card
+            // that is pegged over them.
+            paddingLeft: sideBySide ? 0 : PHONE_MARGIN,
+            paddingRight: sideBySide
+              ? theme.rem(theme.spaceMdRem)
+              : PHONE_MARGIN,
+            // A starting value only; `fitList` measures the real one.
+            maxHeight: sideBySide ? height - headerHeight : undefined,
+            marginTop: sideBySide
+              ? -(tabsHeight + theme.rem(theme.spaceSmRem))
+              : 0,
+            overflowY: sideBySide ? 'auto' : 'visible'
+          }}
+        >
+          {highlightList}
+        </div>
+      </Animated.ScrollView>
     )
   }
 
@@ -690,7 +920,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       <Screen wide scroll={false}>
         {scoreboard}
         {tabs}
-        <BoxScore game={game} rows={batting} theme={theme} />
+        <BoxScore game={game} box={box} theme={theme} sideBySide={sideBySide} />
       </Screen>
     </ScrollView>
   )
@@ -699,81 +929,257 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
 interface BoxScoreProps {
   game: GameDetail
   /** `undefined` while it is still loading. */
-  rows: BattingRow[] | undefined
+  box: BoxScoreData | undefined
   theme: Theme
+  /** Away and home side by side, rather than one at a time. */
+  sideBySide: boolean
 }
 
 /**
- * Batting, one table per side.
+ * The box score: the innings across the top, then each side's batting and
+ * pitching.
  *
- * There is no runs column and no line score: a run cannot be worked out from
- * the plays alone, so showing one would mean inventing it. Only what the plays
- * actually say is here.
+ * Away on the left and home on the right, the same way round as the card above
+ * — and the same way round as every scoreboard ever printed. On a phone there
+ * is no room for two columns, so the four tables run one under another, home
+ * first, which is a scroll rather than four decisions.
+ *
+ * A side whose players were never imported has no lines to show. That is
+ * common: an opponent invented from a name on somebody else's schedule has no
+ * roster here, and its plays name nobody. The totals from the plays are still
+ * true, so the line score above stands, and the table says plainly why it is
+ * empty rather than showing nothing at all.
  */
 function BoxScore(props: BoxScoreProps): React.ReactElement {
-  const { game, rows, theme } = props
+  const { game, box, theme, sideBySide } = props
   const styles = getStyles(theme)
 
-  if (rows == null) {
+  if (box == null) {
     return (
       <View style={styles.centre}>
         <ActivityIndicator color={theme.primaryTextColor} />
       </View>
     )
   }
-  if (rows.length === 0) {
-    return <Text style={styles.message}>{lstrings.game_box_score_empty}</Text>
-  }
 
   const sides = [
-    { teamId: game.awayTeamId, name: game.awayTeamName },
-    { teamId: game.homeTeamId, name: game.homeTeamName }
-  ]
+    { key: 'away', teamId: game.awayTeamId, name: game.awayTeamName },
+    { key: 'home', teamId: game.homeTeamId, name: game.homeTeamName }
+  ] as const
+
+  const tables = (side: (typeof sides)[number]): React.ReactElement => {
+    const batting = box.batting.filter(row => row.teamId === side.teamId)
+    const pitching = box.pitching.filter(row => row.teamId === side.teamId)
+    return (
+      <View style={styles.boxSide}>
+        <BattingTable name={side.name} rows={batting} theme={theme} />
+        <PitchingTable name={side.name} rows={pitching} theme={theme} />
+      </View>
+    )
+  }
 
   return (
     <View style={styles.boxScore}>
-      {sides.map(side => {
-        // Best day first, which is who somebody is looking for.
-        const lines = rows
-          .filter(row => row.teamId === side.teamId)
-          .sort((a, b) => (b.h !== a.h ? b.h - a.h : b.pa - a.pa))
-        if (lines.length === 0) return null
-        return (
-          <View key={side.teamId} style={styles.table}>
-            <Text style={styles.heading}>
-              {lstrings.game_batting} — {side.name}
-            </Text>
-            <View style={[styles.tableRow, styles.tableHead]}>
-              <Text style={[styles.cellName, styles.cellHead]}>
-                {lstrings.stats_player}
-              </Text>
-              {statColumns.map(column => (
-                <Text key={column.label} style={[styles.cell, styles.cellHead]}>
-                  {column.label}
-                </Text>
-              ))}
+      <LineScore game={game} theme={theme} />
+
+      {sideBySide ? (
+        <View style={styles.boxColumns}>
+          {sides.map(side => (
+            <View key={side.key} style={styles.boxColumn}>
+              {tables(side)}
             </View>
-            {lines.map(line => (
-              <View key={line.userId} style={styles.tableRow}>
-                <Text style={styles.cellName} numberOfLines={1}>
-                  {line.shortName ?? ''}
-                </Text>
-                {statColumns.map(column => (
-                  <Text key={column.label} style={styles.cell}>
-                    {column.value(line)}
-                  </Text>
-                ))}
-              </View>
-            ))}
-          </View>
-        )
-      })}
-      <Text style={styles.footnote}>{lstrings.stats_runs_not_counted}</Text>
+          ))}
+        </View>
+      ) : (
+        // One long column rather than a row of pills. Four tables of nine
+        // rows is a scroll, not a decision, and a pill for each is four taps
+        // to read what one thumb can.
+        <View style={styles.boxSide}>
+          {[...sides].reverse().map(side => (
+            <View key={side.key}>{tables(side)}</View>
+          ))}
+        </View>
+      )}
     </View>
   )
 }
 
-const statColumns: Array<{
+/**
+ * Runs by inning, the way a scoreboard draws them, with the totals at the end.
+ *
+ * Hits and errors sit beside the runs because that is where fifty years of
+ * scoreboards have put them; home runs and hit batters follow, since both are
+ * counted from the plays and neither fits in a batting table without crowding
+ * the columns that matter.
+ */
+function LineScore(props: {
+  game: GameDetail
+  theme: Theme
+}): React.ReactElement | null {
+  const { game, theme } = props
+  const styles = getStyles(theme)
+  const line = game.linescore
+  if (line == null) return null
+
+  const innings = Math.max(line.away.runs.length, line.home.runs.length)
+  const sides = [
+    { name: game.awayTeamName, side: line.away },
+    { name: game.homeTeamName, side: line.home }
+  ]
+  // Runs, hits, errors and home runs. A hit batter belongs in the pitcher's
+  // line and the batter's, not up here beside the innings.
+  const totals = ['R', 'H', 'E', 'HR']
+
+  return (
+    // Seven innings and five totals is wider than a phone. It scrolls sideways
+    // rather than being cut off at the runs column, which is the half somebody
+    // opened the box score for.
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      style={styles.lineScore}
+      contentContainerStyle={styles.lineScoreContent}
+    >
+      <View style={[styles.tableRow, styles.tableHead]}>
+        <Text style={[styles.cellName, styles.cellHead]} numberOfLines={1} />
+        {Array.from({ length: innings }, (unused, index) => (
+          <Text key={index} style={[styles.cell, styles.cellHead]}>
+            {index + 1}
+          </Text>
+        ))}
+        {totals.map(label => (
+          <Text key={label} style={[styles.cell, styles.cellHead]}>
+            {label}
+          </Text>
+        ))}
+      </View>
+      {sides.map(({ name, side }) => (
+        <View key={name} style={styles.tableRow}>
+          <Text style={styles.cellName} numberOfLines={1}>
+            {name}
+          </Text>
+          {Array.from({ length: innings }, (unused, index) => (
+            <Text key={index} style={styles.cell}>
+              {side.runs[index] ?? '–'}
+            </Text>
+          ))}
+          <Text style={[styles.cell, styles.cellStrong]}>{side.r}</Text>
+          <Text style={styles.cell}>{side.h ?? '–'}</Text>
+          <Text style={styles.cell}>{side.e ?? '–'}</Text>
+          <Text style={styles.cell}>{side.hr ?? '–'}</Text>
+        </View>
+      ))}
+    </ScrollView>
+  )
+}
+
+function BattingTable(props: {
+  name: string
+  rows: BattingRow[]
+  theme: Theme
+}): React.ReactElement {
+  const { name, rows, theme } = props
+  const styles = getStyles(theme)
+  // Best day first, which is who somebody is looking for.
+  const lines = [...rows].sort((a, b) =>
+    b.h !== a.h ? b.h - a.h : b.pa - a.pa
+  )
+  return (
+    <View style={styles.table}>
+      <Text style={styles.heading}>
+        {lstrings.game_batting} — {name}
+      </Text>
+      {lines.length === 0 ? (
+        <Text style={styles.message}>{lstrings.box_no_roster}</Text>
+      ) : (
+        <>
+          <View style={[styles.tableRow, styles.tableHead]}>
+            <Text style={[styles.cellName, styles.cellHead]}>
+              {lstrings.stats_player}
+            </Text>
+            {battingColumns.map(column => (
+              <Text key={column.label} style={[styles.cell, styles.cellHead]}>
+                {column.label}
+              </Text>
+            ))}
+          </View>
+          {lines.map(line => (
+            <View key={line.userId} style={styles.tableRow}>
+              <Text style={styles.cellName} numberOfLines={1}>
+                {line.shortName ?? ''}
+              </Text>
+              {battingColumns.map(column => (
+                <Text key={column.label} style={styles.cell}>
+                  {column.value(line)}
+                </Text>
+              ))}
+            </View>
+          ))}
+        </>
+      )}
+    </View>
+  )
+}
+
+function PitchingTable(props: {
+  name: string
+  rows: PitchingRow[]
+  theme: Theme
+}): React.ReactElement {
+  const { name, rows, theme } = props
+  const styles = getStyles(theme)
+  return (
+    <View style={styles.table}>
+      <Text style={styles.heading}>
+        {lstrings.game_pitching} — {name}
+      </Text>
+      {rows.length === 0 ? (
+        <Text style={styles.message}>{lstrings.box_no_roster}</Text>
+      ) : (
+        <>
+          <View style={[styles.tableRow, styles.tableHead]}>
+            <Text style={[styles.cellName, styles.cellHead]}>
+              {lstrings.stats_player}
+            </Text>
+            {pitchingColumns.map(column => (
+              <Text key={column.label} style={[styles.cell, styles.cellHead]}>
+                {column.label}
+              </Text>
+            ))}
+          </View>
+          {rows.map(line => (
+            <View key={line.userId} style={styles.tableRow}>
+              <Text style={styles.cellName} numberOfLines={1}>
+                {line.shortName ?? ''}
+              </Text>
+              {pitchingColumns.map(column => (
+                <Text key={column.label} style={styles.cell}>
+                  {column.value(line)}
+                </Text>
+              ))}
+            </View>
+          ))}
+        </>
+      )}
+    </View>
+  )
+}
+
+const pitchingColumns: Array<{
+  label: string
+  value: (row: PitchingRow) => string
+}> = [
+  { label: 'IP', value: row => row.ip },
+  { label: 'BF', value: row => String(row.bf) },
+  { label: 'H', value: row => String(row.h) },
+  { label: 'R', value: row => String(row.r) },
+  { label: 'BB', value: row => String(row.bb) },
+  { label: 'K', value: row => String(row.k) },
+  { label: 'HR', value: row => String(row.hr) },
+  { label: 'HBP', value: row => String(row.hbp) }
+]
+
+const battingColumns: Array<{
   label: string
   value: (row: BattingRow) => string
 }> = [
@@ -782,7 +1188,15 @@ const statColumns: Array<{
   { label: lstrings.stats_runs_batted_in, value: row => String(row.rbi) },
   { label: lstrings.stats_walks, value: row => String(row.bb) },
   { label: lstrings.stats_strikeouts, value: row => String(row.k) },
-  { label: lstrings.stats_average, value: row => average(row.rates.avg) }
+  { label: 'HR', value: row => String(row.hr) },
+  { label: 'HBP', value: row => String(row.hbp) },
+  {
+    // The season's, not the afternoon's: three at-bats say nothing about a
+    // hitter, and the number beside a name is read as what kind of hitter
+    // they are.
+    label: lstrings.stats_average,
+    value: row => (row.seasonAvg == null ? '–' : average(row.seasonAvg))
+  }
 ]
 
 /** `.667`, in the way a box score writes it: no leading zero. */
@@ -883,9 +1297,12 @@ const getStyles = cacheStyles((theme: Theme) =>
       fontSize: theme.rem(0.8125)
     },
     description: {
-      backgroundColor: theme.highlightRowBackground,
+      marginTop: theme.rem(theme.spaceXsRem),
       borderRadius: theme.rem(theme.radiusRem),
-      padding: theme.rem(theme.spaceMdRem)
+      borderWidth: 1,
+      borderColor: theme.glassBorderColor,
+      paddingHorizontal: theme.rem(theme.spaceSmRem),
+      paddingVertical: theme.rem(theme.spaceSmRem)
     },
     descriptionText: {
       color: theme.primaryTextColor,
@@ -903,11 +1320,107 @@ const getStyles = cacheStyles((theme: Theme) =>
       paddingBottom: theme.rem(0.5)
     },
     videoPicker: {
-      paddingHorizontal: theme.rem(0.5),
-      paddingVertical: theme.rem(0.25)
+      marginTop: theme.rem(theme.spaceXsRem),
+      paddingHorizontal: theme.rem(theme.spaceSmRem),
+      paddingVertical: theme.rem(theme.spaceXsRem),
+      borderRadius: theme.rem(theme.radiusRem),
+      borderWidth: 1,
+      borderColor: theme.glassBorderColor
     },
     // Its height is set from the window; the width follows, so a 16:9 picture
     // is letterboxed inside rather than dictating how tall the box is.
+    // The header's copy of the card: away over home, small, and never wider than
+    // about seventy per cent of the bar.
+    headerScore: {
+      width: '100%',
+      maxWidth: HEADER_SCORE_WIDTH,
+      alignSelf: 'flex-start'
+    },
+    headerScoreRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.rem(theme.spaceSmRem)
+    },
+    headerScoreName: {
+      flexShrink: 1,
+      color: theme.headerTextColor,
+      fontFamily: theme.semiBoldTextFont,
+      fontSize: theme.rem(0.75),
+      fontWeight: '600'
+    },
+    headerScoreValue: {
+      marginLeft: 'auto',
+      minWidth: theme.rem(1.25),
+      textAlign: 'right',
+      color: theme.headerTextColor,
+      fontFamily: theme.boldTextFont,
+      fontSize: theme.rem(0.75),
+      fontWeight: '700'
+    },
+    playerBlock: {
+      alignItems: 'center'
+    },
+    watch: {
+      flex: 1,
+      backgroundColor: theme.backgroundColor
+    },
+    watchContent: {
+      // No padding here: the picture is edge to edge on a phone, so the
+      // margins belong to the pieces either side of it rather than to the
+      // column they share.
+      paddingBottom: theme.rem(4.5),
+      gap: theme.rem(theme.spaceSmRem)
+    },
+    watchStacked: {
+      flexDirection: 'column'
+    },
+    // A wrapping row: the card takes the whole width and forces the wrap, then
+    // the player and the list share the line under it.
+    watchSplit: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      alignItems: 'flex-start',
+      columnGap: theme.rem(1.5)
+    },
+    head: {
+      width: '100%',
+      paddingHorizontal: theme.rem(theme.spaceMdRem),
+      gap: theme.rem(theme.spaceSmRem)
+    },
+    playerColumn: {
+      gap: theme.rem(theme.spaceSmRem)
+    },
+    // Pegged under the header in both layouts, once the card and the pills
+    // have gone by. `sticky` is a web position React Native has no name for;
+    // this app renders to the DOM, and `webStyle` is the one place that cast
+    // lives.
+    pegged: {
+      ...webStyle({ position: 'sticky' }),
+      zIndex: 2,
+      // Opaque, or the highlights show through as they pass underneath.
+      backgroundColor: theme.backgroundColor
+    },
+    playerColumnStacked: {
+      width: '100%',
+      alignItems: 'center'
+    },
+    playerColumnSplit: {
+      flexShrink: 1,
+      paddingLeft: theme.rem(theme.spaceMdRem)
+    },
+    listColumn: {
+      flexGrow: 1
+    },
+    listColumnStacked: {
+      width: '100%',
+      paddingHorizontal: theme.rem(theme.spaceMdRem)
+    },
+    listColumnSplit: {
+      flexGrow: 0,
+      paddingRight: theme.rem(theme.spaceMdRem),
+      // Its own scroller: the highlights move beside a video that does not.
+      ...webStyle({ overflowY: 'auto' })
+    },
     player: {
       alignSelf: 'center',
       backgroundColor: theme.videoBackgroundColor,
@@ -940,8 +1453,51 @@ const getStyles = cacheStyles((theme: Theme) =>
       fontSize: theme.rem(0.95)
     },
     scoring: { color: theme.scoringPlayColor },
-    boxScore: { maxWidth: theme.rem(34), paddingBottom: theme.rem(1) },
-    table: { paddingBottom: theme.rem(0.5) },
+    boxSide: {
+      gap: theme.rem(theme.spaceMdRem)
+    },
+    boxColumns: {
+      width: '100%',
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: theme.rem(theme.spaceLgRem)
+    },
+    boxColumn: {
+      flex: 1,
+      // Or the wider of the two tables spills over the other.
+      overflow: 'hidden',
+      // Zero basis in a row measures the width, which is what is wanted here:
+      // two even columns, away on the left and home on the right, the same way
+      // round as the card above them.
+      flexBasis: 0,
+      minWidth: 0
+    },
+    lineScore: {
+      flexGrow: 0,
+      borderWidth: 1,
+      borderColor: theme.defaultBorderColor,
+      borderRadius: theme.rem(theme.radiusRem),
+      backgroundColor: theme.cardBackgroundColor,
+      paddingHorizontal: theme.rem(theme.spaceSmRem),
+      paddingVertical: theme.rem(theme.spaceXsRem)
+    },
+    lineScoreContent: {
+      flexDirection: 'column'
+    },
+    cellStrong: {
+      fontFamily: theme.boldTextFont,
+      fontWeight: '700',
+      color: theme.primaryTextColor
+    },
+    boxScore: {
+      // No cap: the whole point of a wide window here is two sides at once,
+      // and a reading-width cap made for a line of text held both tables to
+      // half of one column.
+      width: '100%',
+      gap: theme.rem(theme.spaceMdRem),
+      paddingBottom: theme.rem(1)
+    },
+    table: { paddingBottom: theme.rem(0.5), overflow: 'hidden' },
     tableRow: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -954,15 +1510,24 @@ const getStyles = cacheStyles((theme: Theme) =>
     },
     cellName: {
       color: theme.primaryTextColor,
-      flex: 1,
+      // Takes what is left and gives it up first: eight stat columns beside a
+      // long name is what ran one table over the top of the next.
+      flexGrow: 1,
+      flexShrink: 1,
+      flexBasis: 0,
+      minWidth: theme.rem(3.5),
       fontFamily: theme.regularTextFont,
       fontSize: theme.rem(0.9)
     },
     cell: {
       color: theme.primaryTextColor,
       fontFamily: theme.regularTextFont,
-      fontSize: theme.rem(0.9),
-      minWidth: theme.rem(2.6),
+      fontSize: theme.rem(0.8125),
+      // Fixed, so the columns of two tables beside each other line up and
+      // neither can push the other out of its half.
+      width: theme.rem(2.1),
+      flexGrow: 0,
+      flexShrink: 0,
       textAlign: 'right'
     },
     cellHead: {
