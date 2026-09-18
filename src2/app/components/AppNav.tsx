@@ -1,9 +1,9 @@
 import React from 'react'
-import { Pressable, Text, View } from 'react-native'
+import { Pressable, View } from 'react-native'
 
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { glassStyle } from './glass'
 import { Icon, type IconName } from './Icon'
-import { useBreakpoint } from './useBreakpoint'
 
 export type NavTabId = 'home' | 'videos' | 'schedule'
 
@@ -35,30 +35,40 @@ export const NAV_TABS: NavTab[] = [
   { id: 'schedule', label: 'Schedule', icon: 'event' }
 ]
 
+export type NavMode = 'floating' | 'header'
+
 export interface AppNavProps {
   selected: NavTabId
   onSelect: (id: NavTabId) => void
+  /** A capsule floating over the content, or a row inside the header. */
+  mode: NavMode
 }
 
 /**
- * A bottom bar on a phone, a left rail on anything wider.
+ * Three icons, and no words.
  *
- * A bar pinned to the bottom of a desktop window is a phone idiom stranded on
- * a monitor: it is a mile from the content, and it wastes the one axis a
- * desktop has spare. The rail keeps the same three destinations in the same
- * order, so there is nothing new to learn, and it can afford to show the label
- * beside the glyph rather than under it.
+ * On a narrow screen they float over the content in a capsule rather than
+ * partitioning it with a bar; on a wide one the same three sit in the header
+ * beside the account picture, and there is no sidebar at all. A rail cost 176
+ * pixels of every wide window to say three words that three glyphs say.
+ *
+ * The labels are gone from the paint and kept for the screen reader. Three
+ * glyphs that never move are learned in a day; what a person actually needs
+ * naming is the screen they are on, which the header says.
  */
 export function AppNav(props: AppNavProps): React.ReactElement {
-  const { selected, onSelect } = props
+  const { selected, onSelect, mode } = props
   const theme = useTheme()
   const styles = getStyles(theme)
-  const isRail = useBreakpoint() !== 'phone'
+  const floating = mode === 'floating'
 
   return (
     <View
       accessibilityRole="tablist"
-      style={[styles.container, isRail ? styles.rail : styles.bar]}
+      style={[
+        styles.container,
+        floating ? [styles.floating, glassStyle(theme)] : styles.inHeader
+      ]}
     >
       {NAV_TABS.map(tab => {
         const isSelected = tab.id === selected
@@ -71,25 +81,27 @@ export function AppNav(props: AppNavProps): React.ReactElement {
             onPress={() => {
               onSelect(tab.id)
             }}
-            style={({ pressed }) => [
-              styles.item,
-              isRail ? styles.itemRail : styles.itemBar,
-              isSelected && isRail && styles.itemRailSelected,
-              pressed && styles.pressed
-            ]}
+            style={({ pressed }) => [styles.item, pressed && styles.pressed]}
           >
-            <Icon
-              name={tab.icon}
-              color={isSelected ? theme.navActiveColor : theme.navInactiveColor}
-            />
-            <Text
+            {/*
+              The target and the paint are different boxes. The target is 44pt
+              wherever it is; the disc behind the selected icon is the size of
+              the account picture beside it in the header, and the full target
+              in the capsule, where there is nothing to match.
+            */}
+            <View
               style={[
-                isRail ? styles.labelRail : styles.labelBar,
-                isSelected ? styles.selectedText : styles.idleText
+                floating ? styles.discFloating : styles.discInHeader,
+                isSelected && styles.discSelected
               ]}
             >
-              {tab.label}
-            </Text>
+              <Icon
+                name={tab.icon}
+                color={
+                  isSelected ? theme.navActiveColor : theme.navInactiveColor
+                }
+              />
+            </View>
           </Pressable>
         )
       })}
@@ -99,59 +111,62 @@ export function AppNav(props: AppNavProps): React.ReactElement {
 
 const getStyles = cacheStyles((theme: Theme) => ({
   container: {
-    backgroundColor: theme.navBackgroundColor,
-    borderColor: theme.headerBorderColor
-  },
-  bar: {
     flexDirection: 'row',
-    borderTopWidth: 1,
-    paddingBottom: theme.rem(theme.spaceXsRem)
+    alignItems: 'center'
   },
-  rail: {
-    flexDirection: 'column',
-    borderRightWidth: 1,
-    width: theme.rem(11),
-    paddingTop: theme.rem(theme.spaceLgRem),
+  floating: {
+    // Over the content, not beside it: a bar across the bottom of a phone is a
+    // strip of chrome under the thing somebody came to look at.
+    position: 'absolute',
+    bottom: theme.rem(1),
+    alignSelf: 'center',
+    // Half again on the gap: with no labels between them the three glyphs read
+    // as one shape at the spacing the rest of the app uses.
+    gap: theme.rem(theme.spaceXsRem * 1.5),
     paddingHorizontal: theme.rem(theme.spaceSmRem),
+    paddingVertical: theme.rem(0.1875),
+    borderRadius: theme.rem(2),
+    borderWidth: 1,
+    borderColor: theme.glassBorderColor,
+    shadowColor: '#000000',
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    zIndex: 5
+  },
+  inHeader: {
     gap: theme.rem(theme.spaceXsRem)
   },
   item: {
+    // The paint shrank when the labels went; the target did not. A thumb at a
+    // ball field, often one-handed, is the thing being designed for.
+    minWidth: theme.rem(2.75),
+    minHeight: theme.rem(2.75),
     alignItems: 'center',
     justifyContent: 'center'
   },
-  itemBar: {
-    flex: 1,
-    minHeight: theme.rem(3.25),
-    gap: theme.rem(0.125)
+  discFloating: {
+    width: theme.rem(2.75),
+    height: theme.rem(2.75),
+    borderRadius: theme.rem(1.375),
+    alignItems: 'center',
+    justifyContent: 'center'
   },
-  itemRail: {
-    flexDirection: 'row',
-    justifyContent: 'flex-start',
-    gap: theme.rem(theme.spaceMdRem),
-    minHeight: theme.rem(3),
-    paddingHorizontal: theme.rem(theme.spaceMdRem),
-    borderRadius: theme.rem(theme.radiusRem)
+  discInHeader: {
+    // The account picture's size, so the row reads as one line of circles
+    // rather than three large ones and a small one.
+    width: theme.rem(2),
+    height: theme.rem(2),
+    borderRadius: theme.rem(1),
+    alignItems: 'center',
+    justifyContent: 'center'
   },
-  itemRailSelected: {
+  discSelected: {
+    // With no label to bolden, the selected tab needs to differ by more than a
+    // shade of grey.
     backgroundColor: theme.containerBackgroundColor
   },
   pressed: {
     opacity: 0.6
-  },
-  labelBar: {
-    fontFamily: theme.semiBoldTextFont,
-    fontSize: theme.rem(0.6875),
-    fontWeight: '600'
-  },
-  labelRail: {
-    fontFamily: theme.semiBoldTextFont,
-    fontSize: theme.rem(0.9375),
-    fontWeight: '600'
-  },
-  idleText: {
-    color: theme.navInactiveColor
-  },
-  selectedText: {
-    color: theme.navActiveColor
   }
 }))
