@@ -7,7 +7,12 @@ import type { Database } from '../db/database'
 import { isRealVideo } from '../db/realVideos'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
-import { postersFor, posterUrl, warmPosters } from '../media/posters'
+import {
+  posterSecond,
+  postersFor,
+  posterUrl,
+  warmPosters
+} from '../media/posters'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 
@@ -200,6 +205,15 @@ export function seasonRoutes(
         // The longest video of the game: on a multi-camera game that is the
         // full broadcast rather than whichever clip happens to sort first.
         .select(eb => eb.fn.max('videos.duration_sec').as('durationSec'))
+        // Whether any of its videos is arriving now. The same join already
+        // being made for the count, so a live game costs nothing to spot.
+        .select(eb =>
+          eb.fn
+            .max(
+              eb.case().when('videos.status', '=', 'live').then(1).else(0).end()
+            )
+            .as('liveNow')
+        )
         .where('games.season_id', '=', seasonId)
         .groupBy([
           'games.id',
@@ -219,29 +233,38 @@ export function seasonRoutes(
       const now = Date.now()
 
       res.json(
-        games.map(game => ({
-          id: game.id,
-          homeTeamId: game.homeTeamId,
-          awayTeamId: game.awayTeamId,
-          homeTeamName: game.homeTeamName,
-          awayTeamName: game.awayTeamName,
-          homeTeamExternal: game.homeTeamKind === 'external',
-          awayTeamExternal: game.awayTeamKind === 'external',
-          seasonId: game.seasonId,
-          startAt: toIso(game.startAt),
-          venue: game.venue,
-          status: game.status,
-          homeScore: game.homeScore,
-          awayScore: game.awayScore,
-          ingestStatus: game.ingestStatus,
-          videoCount: Number(game.videoCount),
-          durationSec:
-            game.durationSec == null ? null : Number(game.durationSec),
-          posterUrl:
-            posters.get(game.id) == null
-              ? null
-              : posterUrl(media, posters.get(game.id)!.videoId, undefined, now)
-        }))
+        games.map(game => {
+          const poster = posters.get(game.id)
+          return {
+            id: game.id,
+            homeTeamId: game.homeTeamId,
+            awayTeamId: game.awayTeamId,
+            homeTeamName: game.homeTeamName,
+            awayTeamName: game.awayTeamName,
+            homeTeamExternal: game.homeTeamKind === 'external',
+            awayTeamExternal: game.awayTeamKind === 'external',
+            seasonId: game.seasonId,
+            startAt: toIso(game.startAt),
+            venue: game.venue,
+            status: game.status,
+            homeScore: game.homeScore,
+            awayScore: game.awayScore,
+            ingestStatus: game.ingestStatus,
+            videoCount: Number(game.videoCount),
+            durationSec:
+              game.durationSec == null ? null : Number(game.durationSec),
+            posterUrl:
+              poster == null
+                ? null
+                : posterUrl(
+                    media,
+                    poster.videoId,
+                    posterSecond(poster.durationSec),
+                    now
+                  ),
+            isLive: Number(game.liveNow) === 1
+          }
+        })
       )
 
       // Cut after the answer has gone out. The first person to open a list
@@ -335,7 +358,10 @@ export function seasonRoutes(
         ingestStatus: game.ingestStatus,
         videoCount: Number(game.videoCount),
         durationSec: game.durationSec == null ? null : Number(game.durationSec),
-        posterUrl: poster == null ? null : posterUrl(media, poster.videoId)
+        posterUrl:
+          poster == null
+            ? null
+            : posterUrl(media, poster.videoId, posterSecond(poster.durationSec))
       })
       if (poster != null) warmPosters(media, [poster]).catch(() => undefined)
     })

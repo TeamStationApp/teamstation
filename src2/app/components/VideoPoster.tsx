@@ -17,6 +17,8 @@ export interface VideoPosterProps {
    * sound is what `Watch Replay` is for.
    */
   videoUrl?: string | null
+  /** The player has stopped trying; the URL is the thing left to doubt. */
+  onVideoGone?: () => void
   /** `1:24:10` for a whole video, or where a highlight seeks to. */
   time?: string
   /**
@@ -62,6 +64,7 @@ export function VideoPoster(props: VideoPosterProps): React.ReactElement {
   const {
     uri,
     videoUrl,
+    onVideoGone,
     time,
     showPlay = false,
     onPlay,
@@ -82,8 +85,9 @@ export function VideoPoster(props: VideoPosterProps): React.ReactElement {
   const playInFrame = useCallback(
     (element: HTMLVideoElement | null): void => {
       if (element == null || videoUrl == null || videoUrl === '') return
-      const detach = attachHls(element, videoUrl)
+      const detach = attachHls(element, videoUrl, onVideoGone)
       const start = (): void => {
+        if (element.paused !== true) return
         setMoving(true)
         element.play().catch(() => {
           // Refused even muted. The poster is already there, so there is
@@ -91,13 +95,19 @@ export function VideoPoster(props: VideoPosterProps): React.ReactElement {
           setMoving(false)
         })
       }
-      element.addEventListener('loadeddata', start, { once: true })
+      // `canplay` rather than `loadeddata` once, because a live game watched
+      // from a card is watched through whatever the network does to it: a
+      // stall pauses the element, and nothing here would ever start it again.
+      // There are no controls on this one, so there is no one to overrule.
+      element.addEventListener('canplay', start)
+      element.addEventListener('loadeddata', start)
       teardown.current = () => {
+        element.removeEventListener('canplay', start)
         element.removeEventListener('loadeddata', start)
         detach()
       }
     },
-    [videoUrl]
+    [videoUrl, onVideoGone]
   )
   useEffect(() => {
     return () => teardown.current?.()

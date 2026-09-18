@@ -25,8 +25,10 @@ import {
   GameHeroCard,
   glassStyle,
   HandoffView,
+  LivePill,
   PillTabs,
   Screen,
+  StreamPanel,
   type TeamStatLine,
   useHandoff,
   useHeaderHandoff,
@@ -88,6 +90,14 @@ type Tab = 'watch' | 'boxScore'
  * whether they are about to see one view or several.
  */
 function angleName(video: VideoSummary): string {
+  // A live stream's camera has a name its owner gave it — `Behind the plate` —
+  // and the video carries it after the em dash. That beats `Primary 2` by a
+  // mile for choosing between four angles of one game.
+  const named = video.title.split(' — ')
+  if (named.length > 1) {
+    const last = named[named.length - 1].trim()
+    if (last !== '') return last
+  }
   return video.numCameras > 1
     ? lstrings.video_multi_angle
     : lstrings.video_primary
@@ -244,6 +254,15 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    * resume — and by the time the new one loaded there was nothing left.
    */
   const [playbackFor, setPlaybackFor] = useState<string | undefined>(undefined)
+  /**
+   * Bumped when the player gives up on the address it was given.
+   *
+   * A playback URL carries a token, and a token can run out or be made
+   * worthless by the server restarting — during a live game, the moment that
+   * happens every watching player stops. Asking again is the whole of the
+   * cure, and this is what makes the asking happen.
+   */
+  const [addressAttempt, setAddressAttempt] = useState(0)
   const [activeEventId, setActiveEventId] = useState<string | undefined>()
   const [chosen, setChosen] = useState<Highlight | undefined>(undefined)
   /**
@@ -377,6 +396,9 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         setVideo(
           // The address names one, when somebody followed a link to a moment.
           found.videos.find(item => item.id === initialVideoId) ??
+            // A game being played right now opens on the game being played
+            // right now, ahead of anything already recorded of it.
+            found.videos.find(item => item.status === 'live') ??
             found.videos.find(item => item.status === 'ready') ??
             found.videos[0]
         )
@@ -409,7 +431,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     return () => {
       live = false
     }
-  }, [client, video])
+  }, [client, video, addressAttempt])
 
   // The app never builds a media URL: the server knows where the video is and
   // checks membership while it looks, so asking is the only way to find out.
@@ -485,7 +507,9 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   useEffect(() => {
     const element = playerNode
     if (element == null || playbackUrl == null) return
-    const detach = attachHls(element, playbackUrl)
+    const detach = attachHls(element, playbackUrl, () => {
+      setAddressAttempt(attempt => attempt + 1)
+    })
 
     const resume = resumeAtRef.current
     const { videoId, playbackFor: forId } = placeFor.current
@@ -680,6 +704,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       </View>
     )
 
+  const isLive = video?.status === 'live'
   const player = (
     <View style={styles.playerBlock}>
       <PlayerSurface
@@ -687,6 +712,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         width={layout.videoWidth}
         height={layout.videoHeight}
       >
+        {isLive && <LivePill />}
         {video == null ? (
           <Text style={styles.message}>{lstrings.game_no_video}</Text>
         ) : playback == null ? (
@@ -735,7 +761,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
               return {
                 id: item.id,
                 label:
-                  item.status === 'ready'
+                  item.status === 'ready' || item.status === 'live'
                     ? name
                     : `${name} ${lstrings.game_video_gone_suffix}`
               }
@@ -910,6 +936,11 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           }}
         >
           {highlightList}
+          {/*
+            Under the highlights, and only for the people who run the team:
+            everybody else is answered `404` and sees nothing here at all.
+          */}
+          <StreamPanel client={client} gameId={gameId} />
         </div>
       </Animated.ScrollView>
     )
