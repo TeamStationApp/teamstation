@@ -22,14 +22,23 @@ export interface NewSession {
   expiresAt: Date
 }
 
+export interface SessionOptions {
+  /** How long it lasts. A browser gets a month; a Director gets a season. */
+  days?: number
+  /** What this session is, when it is a thing rather than a browser tab. */
+  deviceName?: string
+}
+
 export async function createSession(
   db: Kysely<Database>,
   userId: string,
-  userAgent: string | undefined
+  userAgent: string | undefined,
+  options: SessionOptions = {}
 ): Promise<NewSession> {
   const token = makeToken()
   const sessionId = makeId('authSession')
-  const expiresAt = new Date(Date.now() + SESSION_DAYS * 24 * 3600 * 1000)
+  const days = options.days ?? SESSION_DAYS
+  const expiresAt = new Date(Date.now() + days * 24 * 3600 * 1000)
 
   await db
     .insertInto('auth_sessions')
@@ -38,6 +47,7 @@ export async function createSession(
       user_id: userId,
       token_hash: hashToken(token),
       user_agent: userAgent ?? null,
+      device_name: options.deviceName ?? null,
       expires_at: expiresAt
     })
     .execute()

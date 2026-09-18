@@ -23,12 +23,19 @@ import type { Database } from './database'
  * `duration_sec > 0` is the test rather than the title, because the titles are
  * whatever somebody typed into PeerTube and the next one will be called
  * something else.
+ *
+ * A stream **being received right now** is the third case, and it is real: it
+ * has no duration yet, because it is still happening. Only this server's own
+ * live ingest ever writes `status = 'live'`; every imported row arrives as
+ * `ready` and is marked unavailable later if its files turn out to be missing,
+ * so nothing legacy comes back through this door.
  */
 export function isRealVideo(
   eb: ExpressionBuilder<Database, 'videos'>
 ): ExpressionWrapper<Database, 'videos', SqlBool> {
   return eb.or([
     eb('videos.status', '=', 'ready'),
+    eb('videos.status', '=', 'live'),
     eb('videos.duration_sec', '>', 0)
   ])
 }

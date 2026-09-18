@@ -1,8 +1,12 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { createReadStream } from 'node:fs'
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { request as httpRequest } from 'node:http'
+import { request as httpsRequest } from 'node:https'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { pipeline } from 'node:stream/promises'
 import { promisify } from 'node:util'
 
 import { presignGetUrl } from './presign'
@@ -170,21 +174,8 @@ export async function putObject(options: {
   contentType: string
 }): Promise<void> {
   const { space, key, body, contentType } = options
-  if (!spaceConfigured(space)) throw new Error('No Space is configured')
 
-  const url = presignGetUrl({
-    method: 'PUT',
-    endpoint: space.endpoint,
-    region: space.region,
-    bucket: space.bucket,
-    accessKeyId: space.accessKeyId,
-    secretAccessKey: space.secretAccessKey,
-    key,
-    expiresSec: 300,
-    pathStyle: space.pathStyle
-  })
-
-  const response = await fetch(url, {
+  const response = await fetch(signedPutUrl(space, key), {
     method: 'PUT',
     body: new Uint8Array(body),
     headers: { 'content-type': contentType }
@@ -195,6 +186,121 @@ export async function putObject(options: {
       `Upload of ${key} answered ${response.status} ${detail.slice(0, 200)}`
     )
   }
+}
+
+/** How long a stalled upload waits before it is given up on. */
+const IDLE_LIMIT_MS = 60_000
+
+/**
+ * Writes a **file** into the Space, a block at a time.
+ *
+ * Same signature, same verb, different plumbing, and the difference matters:
+ * a three-hour game is a single `video.mp4` of several gigabytes on a box with
+ * less memory than that. `putObject` reads its argument whole, which is right
+ * for a 30 KB team mark and fatal here.
+ *
+ * It is `node:http` rather than `fetch` because that is the only one of the
+ * two that actually streams. Measured against a sink that read deliberately
+ * slowly, 400 MB cost 1.6 GB of resident memory through `fetch` with a buffer,
+ * 490 MB through `fetch` with a web stream — it holds the body whether or not
+ * anybody is reading it — and 138 MB here, nearly all of that the interpreter
+ * itself. The length is sent up front, from `stat`, so the request is a
+ * plain sized PUT: chunked encoding is what a presigned S3 signature refuses.
+ */
+export async function putObjectFile(options: {
+  space: SpaceSettings
+  key: string
+  path: string
+  contentType: string
+}): Promise<void> {
+  const { space, key, path, contentType } = options
+  const url = new URL(signedPutUrl(space, key))
+  const info = await stat(path)
+
+  const send = url.protocol === 'https:' ? httpsRequest : httpRequest
+  const request = send({
+    protocol: url.protocol,
+    hostname: url.hostname,
+    port: url.port === '' ? undefined : url.port,
+    method: 'PUT',
+    path: `${url.pathname}${url.search}`,
+    headers: {
+      'content-type': contentType,
+      'content-length': String(info.size)
+    }
+  })
+
+  // A minute of nothing at all on the socket — not a minute in total, which a
+  // gigabyte legitimately takes. Without this a Space that accepts the
+  // connection and then goes quiet holds the upload for ever, and the sweep
+  // that would have tried again is waiting behind it.
+  request.setTimeout(IDLE_LIMIT_MS, () => {
+    request.destroy(new Error('The Space stopped answering'))
+  })
+
+  const answered = new Promise<{ status: number; detail: string }>(
+    (resolve, reject) => {
+      request.once('response', response => {
+        response.setEncoding('utf8')
+        let detail = ''
+        response.on('data', (chunk: string) => {
+          // Enough of the refusal to read; the rest is XML boilerplate.
+          if (detail.length < 400) detail += chunk
+        })
+        response.on('end', () => {
+          resolve({ status: response.statusCode ?? 0, detail })
+        })
+        response.on('error', reject)
+      })
+      request.once('error', reject)
+    }
+  )
+
+  // The answer is listened for *while* the file goes out, not after it. A
+  // Space that refuses — a stale signature, a bucket over quota — says so in
+  // milliseconds and then simply stops reading, and a sender that waited for
+  // its own write to finish would sit there for the socket's timeout with the
+  // refusal already in hand. Measured: the 403 at 12 ms, the write giving up
+  // at 6 s.
+  let sendFailed: Error | undefined
+  const sending = pipeline(createReadStream(path), request).catch(
+    (error: unknown) => {
+      sendFailed = error instanceof Error ? error : new Error(String(error))
+    }
+  )
+  const result = await Promise.race([
+    answered,
+    sending.then(async () => await answered)
+  ])
+
+  if (result.status < 200 || result.status > 299) {
+    // No sense pushing the rest of a three-hour game at something that has
+    // already said no.
+    request.destroy()
+    throw new Error(
+      `Upload of ${key} answered ${result.status} ${result.detail.slice(0, 200)}`
+    )
+  }
+
+  // A yes before the last byte went out is not a yes to the whole file.
+  await sending
+  if (sendFailed != null) throw sendFailed
+}
+
+/** The one presigned `PUT` both uploaders write against. */
+function signedPutUrl(space: SpaceSettings, key: string): string {
+  if (!spaceConfigured(space)) throw new Error('No Space is configured')
+  return presignGetUrl({
+    method: 'PUT',
+    endpoint: space.endpoint,
+    region: space.region,
+    bucket: space.bucket,
+    accessKeyId: space.accessKeyId,
+    secretAccessKey: space.secretAccessKey,
+    key,
+    expiresSec: 300,
+    pathStyle: space.pathStyle
+  })
 }
 
 export interface StoredImage {

@@ -31,6 +31,7 @@ export type IconName =
   | 'star'
   | 'table_chart'
   | 'videocam'
+  | 'refresh'
 
 export interface IconProps {
   name: IconName

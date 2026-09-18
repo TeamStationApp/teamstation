@@ -67,3 +67,55 @@ struct AppConfigDefaultsTests {
     #expect(config.activeScanSubnets.isEmpty)
   }
 }
+
+@Suite("Where the Stream button publishes")
+struct StreamDestinationTests {
+  @Test("A Director that has always typed a URL keeps typing one")
+  func defaultsToTheTypedURL() {
+    // Every Director already in the field has a URL in Settings and no idea
+    // what a GameStation event is. Anything but `.url` here would move where
+    // their Stream button publishes the next time they open the app.
+    #expect(AppConfig().streamDestination == .url)
+    #expect(AppConfig().gameStationURL == "https://tube2.gamestation.co")
+  }
+
+  @Test("A settings file written before events existed reads as the typed URL")
+  func olderConfigsKeepTheirURL() throws {
+    let old = try JSONDecoder().decode(
+      AppConfig.self,
+      from: Data(#"{"streamURL":"rtmp://host:1935/live/key"}"#.utf8)
+    )
+    #expect(old.streamDestination == .url)
+    #expect(old.streamURL == "rtmp://host:1935/live/key")
+    #expect(old.gameStationURL == "https://tube2.gamestation.co")
+  }
+
+  @Test("The choice and the address both survive a save")
+  func destinationPersists() throws {
+    var config = AppConfig()
+    config.streamDestination = .event
+    config.gameStationURL = "http://127.0.0.1:9111"
+    config.streamURL = "rtmp://host:1935/live/key"
+
+    let saved = try JSONDecoder().decode(
+      AppConfig.self,
+      from: JSONEncoder().encode(config)
+    )
+    #expect(saved.streamDestination == .event)
+    #expect(saved.gameStationURL == "http://127.0.0.1:9111")
+    // The typed URL is kept while the event is chosen: switching back should
+    // not mean typing it again.
+    #expect(saved.streamURL == "rtmp://host:1935/live/key")
+  }
+
+  @Test("An unreadable choice falls back rather than failing the whole file")
+  func nonsenseDestinationFallsBack() throws {
+    // One bad key must not cost somebody every other setting they have.
+    let odd = try JSONDecoder().decode(
+      AppConfig.self,
+      from: Data(#"{"streamDestination":"carrier-pigeon","programBitrate":9000000}"#.utf8)
+    )
+    #expect(odd.streamDestination == .url)
+    #expect(odd.programBitrate == 9_000_000)
+  }
+}

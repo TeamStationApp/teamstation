@@ -11,6 +11,11 @@ import { migration009Images } from './009images'
 import { migration010Credits } from './010credits'
 import { migration011Cameras } from './011cameras'
 import { migration012SignInLinks } from './012signInLinks'
+import { migration013Live } from './013live'
+import { migration014LiveIndex } from './014liveIndex'
+import { migration015LiveStreamOwners } from './015liveStreamOwners'
+import { migration017OpenFromIssue } from './017openFromIssue'
+import { migration018NoLateBound } from './018noLateBound'
 
 /** Every migration, in the order they were written. */
 export const migrations: Migration[] = [
@@ -25,5 +30,10 @@ export const migrations: Migration[] = [
   migration009Images,
   migration010Credits,
   migration011Cameras,
-  migration012SignInLinks
+  migration012SignInLinks,
+  migration013Live,
+  migration014LiveIndex,
+  migration015LiveStreamOwners,
+  migration017OpenFromIssue,
+  migration018NoLateBound
 ]

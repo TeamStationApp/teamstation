@@ -14,6 +14,7 @@ import DirectorSources
 import DirectorTestHarness
 import DirectorLink
 import DistributorWire
+import GameStationKit
 import PeerTubeKit
 import UIKit
 
@@ -132,6 +133,14 @@ public final class AppEnvironment {
   /// behind — and a row that cannot find its endpoint stops being a camera as far as the UI is
   /// concerned.
   private var rowEndpoints: [SourceID: CameraEndpoint] = [:]
+  /// The GameStation account this Director is signed in to, and the game it is
+  /// pointed at. Built once, from the configured address; changing that address
+  /// in Settings signs the app out, because a token is only good on the server
+  /// that issued it.
+  /// `@ObservationIgnored` because the account is itself observable: what the
+  /// screens watch is the state inside it, and the reference never changes.
+  @ObservationIgnored
+  public private(set) lazy var gameStation: GameStationAccount = makeAccount()
   public private(set) var snapshot = TelemetrySnapshot()
   public private(set) var isRecording = false {
     didSet {
@@ -631,7 +640,7 @@ public final class AppEnvironment {
   /// was streaming, and the operator would have seen the same thing.
   private func applyResumedStream(_ resume: LiveSessionResume?) {
     guard let resume, case let .resume(_, streaming) = resume.outcome, streaming else { return }
-    guard !config.streamURL.isEmpty else {
+    guard !streamDestinationURL.isEmpty else {
       reportStreamError("Stream not resumed — no destination configured")
       // And stop saying it was streaming, or every launch from here on tries again and fails the
       // same way.
@@ -1710,10 +1719,44 @@ public final class AppEnvironment {
     }
   }
 
+  // MARK: - GameStation
+
+  private func makeAccount() -> GameStationAccount {
+    GameStationAccount(
+      serverURL: URL(string: config.gameStationURL)
+        ?? URL(string: "https://tube2.gamestation.co")!,
+      deviceName: UIDevice.current.name
+    )
+  }
+
+  /// Where the Stream button publishes.
+  ///
+  /// Either the URL the operator typed, or the game they picked — whose URL
+  /// this app holds and never shows, because the event *is* the destination as
+  /// far as anybody using it is concerned.
+  public var streamDestinationURL: String {
+    switch config.streamDestination {
+    case .url: return config.streamURL
+    case .event: return gameStation.chosen?.streamURL ?? ""
+    }
+  }
+
   public func startStreaming() {
     guard !isStreaming else { return }
     guard distributorExport == nil else {
       statusMessage = "GS Distributor is exporting — stream once it has finished"
+      return
+    }
+    let url = streamDestinationURL
+    guard !url.isEmpty else {
+      // Chosen an event and not yet taken it — signed out, or the list was
+      // never opened. Saying which of the two destinations is empty is the
+      // difference between a fixable message and a shrug.
+      reportStreamError(
+        config.streamDestination == .event
+          ? "Pick a GameStation event in Settings first"
+          : "No stream URL set in Settings"
+      )
       return
     }
     streamErrorGate.reset()
@@ -1737,20 +1780,39 @@ public final class AppEnvironment {
   /// programme ends the publish in about twenty seconds — and before this the stream stayed off for
   /// the rest of the session, with the operator's only warning a toast they had to be watching for.
   private func dialStream() {
-    let url = config.streamURL
     let session = config
+    let destination = config.streamDestination
     router.setStreamRate(session.streamFrameRate)
     Task { [weak self] in
       guard let self else { return }
+      // A key can have been rotated since the game was picked — on the website,
+      // or by another Director taking the same game — and the first anybody
+      // would know is a stream that will not start at the first pitch. Asked
+      // again here, where it is about to be used, and on every redial with it:
+      // offline, the cached address is what there is and it is usually right.
+      if destination == .event {
+        await self.gameStation.refreshChosen()
+      }
+      let publishTo = self.streamDestinationURL
       do {
-        try await self.programStreamer.start(urlString: url, config: session) { [weak self] message in
+        try await self.programStreamer.start(urlString: publishTo, config: session) { [weak self] message in
           Task { @MainActor in
             self?.handleStreamDrop(message)
           }
         }
       } catch {
+        // GameStation knows better than the socket does why a publish to one
+        // of its games will not start, and it has already written the reason
+        // on the game's row. Asked only for a game we picked, and only when
+        // the dial failed, so the ordinary path costs nothing.
+        var message = Self.streamErrorMessage(error)
+        if destination == .event,
+          let said = await self.gameStation.reasonForRefusal()
+        {
+          message = said
+        }
         await MainActor.run {
-          self.handleStreamDrop(Self.streamErrorMessage(error))
+          self.handleStreamDrop(message)
         }
       }
     }

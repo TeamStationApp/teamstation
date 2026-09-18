@@ -11,7 +11,12 @@ import { imageUrl } from '../media/imageUrls'
 import { locateVideoFile } from '../media/locations'
 import type { MediaContext } from '../media/mediaContext'
 import { mediaUrlPath } from '../media/mediaTokens'
-import { postersFor, posterUrl, warmPosters } from '../media/posters'
+import {
+  posterSecond,
+  postersFor,
+  posterUrl,
+  warmPosters
+} from '../media/posters'
 import { stillSecond, warmStills } from '../media/stills'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
@@ -227,7 +232,13 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
           durationSec: teamPosters.get(game.id)?.durationSec ?? null,
           posterUrl: (() => {
             const poster = teamPosters.get(game.id)
-            return poster == null ? null : posterUrl(media, poster.videoId)
+            return poster == null
+              ? null
+              : posterUrl(
+                  media,
+                  poster.videoId,
+                  posterSecond(poster.durationSec)
+                )
           })()
         }))
       )
@@ -348,7 +359,9 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
           numCameras: video.num_cameras,
           syncOffsetSec: video.sync_offset_sec,
           posterUrl:
-            video.status === 'ready' ? posterUrl(media, video.id) : null,
+            video.status === 'ready'
+              ? posterUrl(media, video.id, posterSecond(video.duration_sec))
+              : null,
           kind: video.kind,
           title: video.title,
           status: video.status,

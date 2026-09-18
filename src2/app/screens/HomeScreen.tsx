@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { Text, View } from 'react-native'
 
 import type {
   GameStationClient,
+  LiveNow,
   SeasonGame,
   SeasonSummary,
   TeamSummary
@@ -13,8 +14,10 @@ import {
   GameHeroCard,
   initialsOf,
   ListRow,
+  LivePill,
   Screen,
-  SectionHeader
+  SectionHeader,
+  VideoPoster
 } from '../components'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { gameStatusLine, matchupLines, shortDate, winnerOf } from './format'
@@ -46,6 +49,10 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
   const [teams, setTeams] = useState<TeamSummary[]>([])
   const [seasons, setSeasons] = useState<SeasonSummary[]>([])
   const [recent, setRecent] = useState<SeasonGame | undefined>(undefined)
+  const [live, setLive] = useState<LiveNow[]>([])
+  const [liveUrl, setLiveUrl] = useState<string | undefined>(undefined)
+  /** Which game `liveUrl` belongs to, so it is not asked for twice. */
+  const playing = useRef<string | undefined>(undefined)
   const [recentUrl, setRecentUrl] = useState<string | undefined>(undefined)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | undefined>(undefined)
@@ -63,7 +70,9 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
     let cancelled = false
     const find = async (): Promise<void> => {
       const detail = await client.game(recent.id)
-      const playable = detail.videos.find(item => item.status === 'ready')
+      const playable = detail.videos.find(
+        item => item.status === 'ready' || item.status === 'live'
+      )
       if (cancelled || playable == null) return
       const playback = await client.playback(playable.id)
       if (cancelled || playback.url == null) return
@@ -76,6 +85,49 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
       cancelled = true
     }
   }, [client, recent])
+
+  /**
+   * What is on right now, asked for every time this screen opens.
+   *
+   * Nothing is live on almost every day of the year, and the answer then is an
+   * empty list and an empty block. It is asked first all the same: a game that
+   * is happening is the only thing on this screen that will not still be true
+   * in an hour.
+   */
+  useEffect(() => {
+    let cancelled = false
+    const look = async (): Promise<void> => {
+      const now = await client.liveNow()
+      if (cancelled) return
+      setLive(now)
+      const first = now[0]
+      if (first == null) {
+        playing.current = undefined
+        setLiveUrl(undefined)
+        return
+      }
+      // The URL carries a token minted for this request, so asking again for
+      // the game already playing would hand the player a different address for
+      // the same stream — and it would tear the stream down and start it
+      // again, every half minute, in front of somebody watching.
+      if (playing.current === first.videoId) return
+      const playback = await client.playback(first.videoId)
+      if (cancelled || playback.url == null) return
+      playing.current = first.videoId
+      setLiveUrl(playback.url)
+    }
+    look().catch(() => undefined)
+    // A game starts while somebody has the page open — which is the whole
+    // point of a live block — so it is looked at again on a slow timer rather
+    // than only when the screen is opened.
+    const timer = setInterval(() => {
+      look().catch(() => undefined)
+    }, 30_000)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [client])
 
   useEffect(() => {
     let cancelled = false
@@ -122,6 +174,73 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
   return (
     <Screen>
       {error != null && <Text style={styles.error}>{error}</Text>}
+
+      {live.length > 0 && (
+        <View style={styles.section}>
+          <SectionHeader title="Live now" />
+          <Card style={styles.gameCard}>
+            <View style={styles.livePoster}>
+              <LivePill />
+              <VideoPoster
+                size="hero"
+                videoUrl={liveUrl}
+                onVideoGone={() => {
+                  // The player has given up on that address. Forgetting which
+                  // game it belonged to is all it takes: the next look asks
+                  // for a fresh one, which is what a server restarted mid-game
+                  // leaves everybody needing.
+                  playing.current = undefined
+                  setLiveUrl(undefined)
+                }}
+              />
+            </View>
+            <Text style={styles.gameMeta}>
+              {live[0].awayTeamName} at {live[0].homeTeamName}
+              {live[0].startedAt == null
+                ? ''
+                : ` · started ${startedAtLabel(live[0].startedAt)}`}
+              {live[0].angles > 1 ? ` · ${live[0].angles} cameras` : ''}
+            </Text>
+            <Button
+              label="Watch live"
+              icon="play_arrow"
+              onPress={() => {
+                onOpenGame(live[0].gameId, liveTitle(live[0]), {
+                  autoPlay: true
+                })
+              }}
+            />
+          </Card>
+
+          {/*
+            Two games at once is rare and it does happen — a family with a
+            child on each of two teams, on a Saturday. The first plays in the
+            card; the rest are rows, because two streams playing at once on one
+            screen is nobody's idea of a home page.
+          */}
+          {live.slice(1).map(game => (
+            <Card key={game.videoId}>
+              <ListRow
+                title={liveTitle(game)}
+                subtitle={[
+                  game.startedAt == null
+                    ? undefined
+                    : `started ${startedAtLabel(game.startedAt)}`,
+                  game.angles > 1 ? `${game.angles} cameras` : undefined
+                ]
+                  .filter(part => part != null)
+                  .join(' · ')}
+                emblem={initialsOf(game.homeTeamName)}
+                badgeLabel="live"
+                badgeTone="live"
+                onPress={() => {
+                  onOpenGame(game.gameId, liveTitle(game), { autoPlay: true })
+                }}
+              />
+            </Card>
+          ))}
+        </View>
+      )}
 
       {recent != null && (
         <View style={styles.section}>
@@ -229,6 +348,18 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
   )
 }
 
+/** `AAA Hawks @ Black Sox`, for the screen a live game opens on. */
+function liveTitle(game: LiveNow): string {
+  return `${game.awayTeamName} @ ${game.homeTeamName}`
+}
+
+/** `3:18 pm`, in the reader's own clock. */
+function startedAtLabel(startedAt: string): string {
+  return new Date(startedAt)
+    .toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+    .toLowerCase()
+}
+
 /** `AAA Hawks @ Black Sox`, the way the row in a list reads. */
 function matchup(game: SeasonGame): string {
   const lines = matchupLines(game)
@@ -255,6 +386,9 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   gameCard: {
     gap: theme.rem(theme.spaceMdRem)
+  },
+  livePoster: {
+    position: 'relative'
   },
   actions: {
     flexDirection: 'row',

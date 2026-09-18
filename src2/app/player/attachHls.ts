@@ -1,6 +1,25 @@
 import Hls from 'hls.js'
 
 /**
+ * Whether a stumble in the stream should be followed by playing again.
+ *
+ * Three things have to be true at once, and the third is the one that keeps
+ * this honest: **a pause the viewer asked for is left alone.** Only a pause
+ * that arrived while a recovery was in flight is the recovery's doing, and only
+ * that one is undone.
+ */
+export function shouldResumeAfterRecovery(state: {
+  /** A recovery is in flight, so a pause now was not the viewer's. */
+  recovering: boolean
+  /** What the viewer last asked for. */
+  wantsToPlay: boolean
+  /** What the element is actually doing. */
+  paused: boolean
+}): boolean {
+  return state.recovering && state.wantsToPlay && state.paused
+}
+
+/**
  * Points a `<video>` at an HLS playlist, whichever way this browser needs.
  *
  * Safari plays HLS itself, and does it with hardware decoding on iOS and the
@@ -12,7 +31,17 @@ import Hls from 'hls.js'
  * Returns the teardown, which the caller must run: hls.js holds a worker and
  * buffers ahead, and leaking one per visited game would eat the tab.
  */
-export function attachHls(video: HTMLVideoElement, url: string): () => void {
+export function attachHls(
+  video: HTMLVideoElement,
+  url: string,
+  /**
+   * Called once when the player has stopped trying. The address itself is the
+   * likeliest thing left to be wrong — a playback token that ran out, or one
+   * minted by a server that has since restarted — and only the caller can ask
+   * for a new one.
+   */
+  onGiveUp?: () => void
+): () => void {
   // Media Source first, which is the order hls.js itself recommends, and not
   // `canPlayType`: Chrome answers `maybe` for HLS whether or not it can
   // actually play it, so that answer decides nothing. Anything without Media
@@ -36,9 +65,113 @@ export function attachHls(video: HTMLVideoElement, url: string): () => void {
     // is no point buffering minutes ahead of a position about to change.
     maxBufferLength: 30
   })
+
+  /**
+   * A live game is watched while it is being written, and the writer is
+   * allowed to stumble: a segment named in the playlist can be a moment from
+   * existing, a reconnect restarts the writer, a phone at a field loses the
+   * network for a minute. hls.js stops dead on a fatal error unless it is told
+   * to carry on, and a player that stopped dead looks to a parent like a game
+   * that ended.
+   *
+   * So it is tried again, waiting longer each time up to ten seconds, for as
+   * long as five minutes — long enough to ride out a field losing its signal
+   * between innings, and short enough that a token which has genuinely run out
+   * is not retried for the rest of the afternoon. It is never destroyed here:
+   * that empties the frame and sends the position back to nought, which is a
+   * worse thing to be looking at than a picture that has stopped.
+   */
+  const patience = 5 * 60_000
+  let firstFailureAt = 0
+  let gaveUp = false
+  let wait = 1000
+  let timer: ReturnType<typeof setTimeout> | undefined
+
+  /**
+   * Whether the viewer wants this playing, so a recovery can put it back.
+   *
+   * `recoverMediaError` detaches the media element and attaches it again, and
+   * detaching calls `load()` — which resets the element, and a reset element is
+   * **paused**. Nothing put it back, so a stumble in the stream stopped the
+   * picture and left it stopped until somebody pressed play. On a game being
+   * watched by a parent that is indistinguishable from the game ending.
+   *
+   * A pause the viewer asked for still has to be honoured, so the two are kept
+   * apart: a pause that arrives while a recovery is in flight is the recovery's
+   * doing, and any other is theirs.
+   */
+  let wantsToPlay = video.paused !== true
+  let recovering = false
+  const onPlay = (): void => {
+    wantsToPlay = true
+  }
+  const onPause = (): void => {
+    if (!recovering) wantsToPlay = false
+  }
+  video.addEventListener('play', onPlay)
+  video.addEventListener('pause', onPause)
+
+  /** Puts it back to playing, if that is what it was doing. */
+  const resume = (): void => {
+    if (!recovering) return
+    const wanted = shouldResumeAfterRecovery({
+      recovering,
+      wantsToPlay,
+      paused: video.paused
+    })
+    recovering = false
+    if (!wanted) return
+    // A promise, and a rejected one is not an error worth showing: an autoplay
+    // policy that refuses here would have refused the first play too.
+    video.play().catch(() => undefined)
+  }
+
+  hls.on(Hls.Events.ERROR, (event, data) => {
+    if (!data.fatal) return
+    if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+      recovering = true
+      hls.recoverMediaError()
+      return
+    }
+    if (data.type !== Hls.ErrorTypes.NETWORK_ERROR) {
+      hls.stopLoad()
+      return
+    }
+    const now = Date.now()
+    if (firstFailureAt === 0) firstFailureAt = now
+    if (now - firstFailureAt > patience) {
+      hls.stopLoad()
+      if (!gaveUp) {
+        gaveUp = true
+        onGiveUp?.()
+      }
+      return
+    }
+    if (timer != null) return
+    recovering = true
+    timer = setTimeout(() => {
+      timer = undefined
+      wait = Math.min(wait * 2, 10_000)
+      hls.startLoad()
+    }, wait)
+  })
+  // Anything that loads is proof the trouble has passed, so the next one
+  // starts from a short wait again rather than from wherever this one ended.
+  hls.on(Hls.Events.FRAG_LOADED, () => {
+    firstFailureAt = 0
+    wait = 1000
+  })
+  // Buffered, not merely loaded: there are now pictures to show, which is the
+  // moment it is worth asking the element to play them again.
+  hls.on(Hls.Events.FRAG_BUFFERED, resume)
+  hls.on(Hls.Events.MEDIA_ATTACHED, resume)
+
   hls.loadSource(url)
   hls.attachMedia(video)
   return () => {
+    if (timer != null) clearTimeout(timer)
+    video.removeEventListener('play', onPlay)
+    video.removeEventListener('pause', onPause)
     hls.destroy()
   }
 }

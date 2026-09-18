@@ -223,12 +223,16 @@ export function GamesFeedScreen(
                       ? undefined
                       : clock(game.durationSec)
                   }
+                  // A game being played now says so instead of showing a
+                  // score that is still changing.
                   badgeLabel={
-                    game.awayScore == null
-                      ? undefined
-                      : `${game.awayScore}–${game.homeScore}`
+                    game.isLive
+                      ? 'live'
+                      : game.awayScore == null
+                        ? undefined
+                        : `${game.awayScore}–${game.homeScore}`
                   }
-                  badgeTone="neutral"
+                  badgeTone={game.isLive ? 'live' : 'neutral'}
                   onPress={() => {
                     // Tapping a video starts it. Somebody pressing a row with a
                     // picture and a length on it has asked to watch, not to read

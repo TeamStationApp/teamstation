@@ -16,6 +16,19 @@ import { stillSecond, warmStills } from './stills'
  */
 const POSTER_SECOND = 150
 
+/**
+ * The second a list's picture is taken from.
+ *
+ * A hundred and fifty seconds in is two and a half minutes of baseball, which
+ * is past the warm-up and into the first inning. A video shorter than five
+ * minutes has no such second, so it gives up its middle instead — and the URL
+ * a list asks for has to agree with the frame that was cut, which is the whole
+ * reason this is a function rather than a number written twice.
+ */
+export function posterSecond(durationSec: number | null | undefined): number {
+  return Math.min(POSTER_SECOND, (durationSec ?? 600) / 2)
+}
+
 /** Where a video's stills live, under the work directory. */
 export function stillDirFor(videoId: string): string {
   return `work/stills/${videoId}`
@@ -117,7 +130,7 @@ export async function warmPosters(
         videoPath,
         workDir: media.workDir,
         videoId: poster.videoId,
-        seconds: [Math.min(POSTER_SECOND, (poster.durationSec ?? 600) / 2)]
+        seconds: [posterSecond(poster.durationSec)]
       })
     } catch {
       // Nothing to say: the card draws its plate and the list is unaffected.

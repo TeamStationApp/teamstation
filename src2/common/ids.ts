@@ -16,6 +16,8 @@ export const idPrefixes = {
   externalId: 'ext',
   game: 'gam',
   league: 'lea',
+  liveStream: 'liv',
+  loginRequest: 'lgr',
   membership: 'mem',
   playerSeasonStats: 'pss',
   rateEvent: 'rte',
