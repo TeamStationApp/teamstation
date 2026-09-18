@@ -1,5 +1,6 @@
+import babel from '@babel/core'
 import { build, context } from 'esbuild'
-import { mkdir, readFile, rm, writeFile } from 'fs/promises'
+import { copyFile, mkdir, readFile, rm, writeFile } from 'fs/promises'
 
 /**
  * Bundles the web app.
@@ -42,7 +43,50 @@ if (!serve && /\/\/(127\.0\.0\.1|localhost|\[::1\])/.test(apiBaseUrl)) {
   )
 }
 
+/**
+ * Reanimated's worklets, and nothing else.
+ *
+ * Reanimated compiles the functions that run on the animation thread with a
+ * Babel plugin, and its own documentation says the build without that plugin is
+ * possible on the web and is not the configuration they test. esbuild cannot run
+ * Babel plugins, so Babel goes in front of it — but only over this app's own
+ * `.tsx`, never `node_modules`, and only with the two syntax plugins it needs to
+ * parse the file.
+ *
+ * Syntax plugins rather than a preset on purpose: the plugin then hands back
+ * TypeScript and JSX untouched apart from the worklets it rewrote, so esbuild
+ * still does the actual transform at its own speed. A full `@babel/preset-*`
+ * pass here would transpile everything twice and cost far more than it does.
+ */
+const worklets = {
+  name: 'reanimated-worklets',
+  setup(pluginBuild) {
+    // `.tsx?`, not `.tsx`: a hook file is plain TypeScript and is exactly where
+    // a shared worklet ends up, so a filter that missed it left
+    // `useAnimatedStyle` uncompiled and every screen using it blank.
+    pluginBuild.onLoad({ filter: /app\/.*\.tsx?$/ }, async args => {
+      const source = await readFile(args.path, 'utf8')
+      // Only files that mention Reanimated can contain a worklet, and the check
+      // costs nothing next to parsing a file that cannot.
+      if (!/react-native-reanimated|['"]worklet['"]/.test(source)) return null
+      const result = await babel.transformAsync(source, {
+        filename: args.path,
+        babelrc: false,
+        configFile: false,
+        sourceMaps: 'inline',
+        plugins: [
+          ['@babel/plugin-syntax-typescript', { isTSX: true }],
+          '@babel/plugin-syntax-jsx',
+          'react-native-worklets/plugin'
+        ]
+      })
+      return { contents: result.code, loader: 'tsx' }
+    })
+  }
+}
+
 const options = {
+  plugins: [worklets],
   entryPoints: ['app/web/index.tsx'],
   // A content hash in the name, for production only. Without it the bundle is
   // always `/app.js`, and a browser that has cached one has no way to learn
@@ -56,6 +100,23 @@ const options = {
   format: 'iife',
   target: ['es2021'],
   jsx: 'automatic',
+  // React Native packages ship platform variants as `.web.js` beside `.js` and
+  // expect the bundler to prefer them; Metro and webpack are configured for it
+  // and esbuild is not, out of the box. Without this, Gesture Handler resolves
+  // its native file and asks for `react-native/Libraries/...` internals that
+  // react-native-web does not have, and the build fails on two imports that
+  // have nothing to do with anything we wrote.
+  resolveExtensions: [
+    '.web.tsx',
+    '.web.ts',
+    '.web.jsx',
+    '.web.js',
+    '.tsx',
+    '.ts',
+    '.jsx',
+    '.js',
+    '.json'
+  ],
   sourcemap: true,
   minify: !serve,
   logLevel: 'info',
@@ -65,13 +126,30 @@ const options = {
       serve ? 'development' : 'production'
     ),
     __DEV__: serve ? 'true' : 'false',
-    GS_API_BASE_URL: JSON.stringify(apiBaseUrl)
+    GS_API_BASE_URL: JSON.stringify(apiBaseUrl),
+    // Worklets are compiled to code that reaches for `global`, which is what a
+    // React Native runtime calls it and no browser does. Without this the
+    // bundle throws `global is not defined` before it draws anything.
+    global: 'globalThis'
   },
   loader: { '.png': 'dataurl', '.jpg': 'dataurl', '.svg': 'dataurl' }
 }
 
 await mkdir('dist', { recursive: true })
 const template = await readFile('app/web/index.html', 'utf8')
+
+/**
+ * The two files Apple and Google fetch to decide whether a link may open the
+ * app. They are built rather than placed on the server: a deploy replaces the
+ * versions directory wholesale, so a hand-placed copy is one deploy from gone.
+ */
+async function copyWellKnown() {
+  await mkdir('dist/.well-known', { recursive: true })
+  for (const name of ['apple-app-site-association', 'assetlinks.json']) {
+    await copyFile(`app/web/.well-known/${name}`, `dist/.well-known/${name}`)
+  }
+}
+await copyWellKnown()
 
 if (serve) {
   await writeFile('dist/index.html', template)
