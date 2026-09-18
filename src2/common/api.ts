@@ -547,6 +547,88 @@ export const asRedeemed = asObject({
 })
 export type Redeemed = ReturnType<typeof asRedeemed>
 
+/** One thing somebody belongs to, and what they are in it. */
+export const asScopeGrant = asObject({
+  id: asString,
+  name: asString,
+  role: asString
+})
+export type ScopeGrant = ReturnType<typeof asScopeGrant>
+
+export const asNamed = asObject({ id: asString, name: asString })
+
+/**
+ * One person with access, and every level it comes through.
+ *
+ * Never the strongest grant alone: a coach whose own child is on the roster
+ * and who also joined the league holds two, and an administrator who removes
+ * one and sees nothing change has been told a half-truth.
+ */
+export const asScopePerson = asObject({
+  userId: asString,
+  displayName: asString,
+  emails: asArray(asString),
+  teams: asArray(asScopeGrant),
+  seasons: asArray(asScopeGrant),
+  leagues: asArray(asScopeGrant),
+  adminOf: asArray(
+    asObject({
+      kind: asValue('league', 'season', 'team'),
+      id: asString,
+      name: asString
+    })
+  ),
+  /** When the account was made. */
+  createdAt: asString,
+  /**
+   * When they last signed in, and when they were last here.
+   *
+   * Both, because a session lasts a month and a device's half a year: one
+   * sign-in in March and every game watched since would otherwise read as
+   * six months away. Null for an account nobody has ever used.
+   */
+  lastSignInAt: asNullable(asString),
+  lastSeenAt: asNullable(asString)
+})
+export type ScopePerson = ReturnType<typeof asScopePerson>
+
+/** Somebody invited by address who has not opened the link yet. */
+export const asPendingPerson = asObject({
+  inviteId: asString,
+  email: asString,
+  code: asString,
+  invitedAt: asString
+})
+export type PendingPerson = ReturnType<typeof asPendingPerson>
+
+/** Everything the page behind the gear draws, in one answer. */
+export const asManagePage = asObject({
+  scope: asObject({
+    kind: asValue('league', 'season', 'team'),
+    id: asString,
+    name: asString
+  }),
+  /** The levels around this one, named, so a tick can say which it is. */
+  tree: asObject({
+    leagues: asArray(asNamed),
+    seasons: asArray(asNamed),
+    teams: asArray(asNamed)
+  }),
+  people: asArray(asScopePerson),
+  pending: asArray(asPendingPerson),
+  invites: asArray(asInvite)
+})
+export type ManagePage = ReturnType<typeof asManagePage>
+
+export const asAddedPerson = asObject({
+  added: asBoolean,
+  person: asOptional(
+    asObject({ userId: asString, displayName: asString, email: asString })
+  ),
+  invited: asOptional(asPendingPerson)
+})
+export type AddedPerson = ReturnType<typeof asAddedPerson>
+
 export interface ClientOptions {
   baseUrl: string
   token?: string
@@ -927,6 +1009,48 @@ export class GameStationClient {
       `/join/${encodeURIComponent(code)}/email-code`,
       asSignInWait,
       { ...options, origin: 'web' }
+    )
+  }
+
+  /** Everything the page behind the gear needs, in one call. */
+  async managePage(
+    kind: 'league' | 'season' | 'team',
+    id: string
+  ): Promise<ManagePage> {
+    return await this.request(
+      'GET',
+      `/manage/${kind}/${encodeURIComponent(id)}`,
+      asManagePage
+    )
+  }
+
+  /**
+   * Add one person by address: straight in if they have an account, and an
+   * invitation in the post if they do not.
+   */
+  async addPerson(
+    kind: 'league' | 'season' | 'team',
+    id: string,
+    email: string
+  ): Promise<AddedPerson> {
+    return await this.request(
+      'POST',
+      `/manage/${kind}/${encodeURIComponent(id)}/people`,
+      asAddedPerson,
+      { email }
+    )
+  }
+
+  /** Take away what this level grants, and only that. */
+  async removePerson(
+    kind: 'league' | 'season' | 'team',
+    id: string,
+    userId: string
+  ): Promise<{ removed: boolean }> {
+    return await this.request(
+      'DELETE',
+      `/manage/${kind}/${encodeURIComponent(id)}/people/${encodeURIComponent(userId)}`,
+      asObject({ removed: asBoolean })
     )
   }
 

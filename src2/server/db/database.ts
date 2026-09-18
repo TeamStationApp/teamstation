@@ -324,6 +324,8 @@ export interface InvitesTable {
   revoked_at: Timestamp | null
   source: Generated<'peertube' | 'manual'>
   created_at: Timestamp
+  /** Set when the invitation was made out to one address and mailed to it. */
+  for_email: string | null
 }
 
 /** Who redeemed which invite, and whether that is where their account began. */

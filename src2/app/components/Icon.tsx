@@ -32,6 +32,7 @@ export type IconName =
   | 'table_chart'
   | 'videocam'
   | 'refresh'
+  | 'settings'
 
 export interface IconProps {
   name: IconName
