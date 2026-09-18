@@ -1,0 +1,419 @@
+import { randomBytes } from 'node:crypto'
+
+import type { Kysely } from 'kysely'
+
+import { badRequest, conflict } from '../../common/errors'
+import { makeId } from '../../common/ids'
+import type { AdminScopes } from '../access'
+import type { Database } from '../db/database'
+
+/**
+ * Invite codes: who may make one, what one is worth, and what redeeming does.
+ *
+ * An invite is scoped to a league, a season or a team, and may only be made by
+ * somebody who administers that scope — which, because rights inherit
+ * downwards, means a league admin can invite to any of its teams and a team
+ * admin only to their own.
+ *
+ * Redeeming grants **watching**, never editing: a team invite makes a
+ * spectator of that team, a season invite a member of that season, a league
+ * invite a member of that league. Somebody who already has stronger access —
+ * a coach, a parent on the roster — keeps it: redeeming is a floor, not a
+ * setting.
+ */
+
+export type InviteScopeType = 'league' | 'season' | 'team'
+
+export interface Invite {
+  id: string
+  code: string
+  scopeType: InviteScopeType
+  scopeId: string
+  label: string | null
+  maxUses: number | null
+  uses: number
+  expiresAt: Date | null
+  revokedAt: Date | null
+  createdAt: Date
+}
+
+/** Why an invite cannot be redeemed, or null when it can. */
+export type InviteProblem = 'revoked' | 'expired' | 'exhausted'
+
+const FIELDS = [
+  'id',
+  'code',
+  'scope_type',
+  'scope_id',
+  'label',
+  'max_uses',
+  'uses',
+  'expires_at',
+  'revoked_at',
+  'created_at'
+] as const
+
+interface InviteFields {
+  id: string
+  code: string
+  scope_type: InviteScopeType
+  scope_id: string
+  label: string | null
+  max_uses: number | null
+  uses: number
+  expires_at: Date | string | null
+  revoked_at: Date | string | null
+  created_at: Date | string
+}
+
+const asDate = (value: Date | string | null): Date | null =>
+  value == null ? null : new Date(value)
+
+function shape(row: InviteFields): Invite {
+  return {
+    id: row.id,
+    code: row.code,
+    scopeType: row.scope_type,
+    scopeId: row.scope_id,
+    label: row.label,
+    maxUses: row.max_uses,
+    uses: row.uses,
+    expiresAt: asDate(row.expires_at),
+    revokedAt: asDate(row.revoked_at),
+    createdAt: asDate(row.created_at) ?? new Date()
+  }
+}
+
+/**
+ * The alphabet a generated code is drawn from.
+ *
+ * No `0`, `O`, `1`, `l` or `I`: a code is read off one screen and typed into
+ * another, often by somebody holding a phone in a car park, and the pairs that
+ * look alike are the ones that come back as "the link doesn't work". An
+ * administrator who wants `tforce26` types it in instead, which is why a
+ * custom code is allowed at all.
+ */
+const ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789'
+const GENERATED_LENGTH = 8
+
+export function makeInviteCode(): string {
+  const bytes = randomBytes(GENERATED_LENGTH)
+  let code = ''
+  for (const byte of bytes) code += ALPHABET[byte % ALPHABET.length]
+  return code
+}
+
+/**
+ * A code somebody typed, checked before it goes anywhere near the database.
+ *
+ * Kept to what survives a URL, an e-mail client's line wrapping and being read
+ * aloud. The length floor is what stops a two-character code that anybody
+ * could guess by trying every pair.
+ */
+const CODE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{3,63}$/
+
+export function cleanInviteCode(raw: string): string {
+  const code = raw.trim()
+  if (!CODE_PATTERN.test(code)) {
+    throw badRequest(
+      'A code is 4 to 64 letters, digits, dots, dashes or underscores'
+    )
+  }
+  return code
+}
+
+/** Whether this person may make invites at all, which puts the panel on screen. */
+export function mayInvite(scopes: AdminScopes): boolean {
+  return (
+    scopes.isAdmin ||
+    scopes.leagueIds.size > 0 ||
+    scopes.seasonIds.size > 0 ||
+    scopes.teamIds.size > 0
+  )
+}
+
+/** Whether this person administers one particular league, season or team. */
+export function mayInviteTo(
+  scopes: AdminScopes,
+  scopeType: InviteScopeType,
+  scopeId: string
+): boolean {
+  if (scopes.isAdmin) return true
+  if (scopeType === 'league') return scopes.leagueIds.has(scopeId)
+  if (scopeType === 'season') return scopes.seasonIds.has(scopeId)
+  return scopes.teamIds.has(scopeId)
+}
+
+/** What the thing being invited to is called, or undefined if there is no such thing. */
+export async function scopeName(
+  db: Kysely<Database>,
+  scopeType: InviteScopeType,
+  scopeId: string
+): Promise<string | undefined> {
+  const table =
+    scopeType === 'league'
+      ? 'leagues'
+      : scopeType === 'season'
+        ? 'seasons'
+        : 'teams'
+  const row = await db
+    .selectFrom(table)
+    .select(['name'])
+    .where('id', '=', scopeId)
+    .executeTakeFirst()
+  return row?.name
+}
+
+export async function findInviteByCode(
+  db: Kysely<Database>,
+  code: string
+): Promise<Invite | undefined> {
+  const wanted = code.trim().toLowerCase()
+  if (wanted === '') return undefined
+  const row = await db
+    .selectFrom('invites')
+    .select(FIELDS)
+    .where(eb => eb.fn('lower', ['code']), '=', wanted)
+    .executeTakeFirst()
+  return row == null ? undefined : shape(row as InviteFields)
+}
+
+export async function findInviteById(
+  db: Kysely<Database>,
+  id: string
+): Promise<Invite | undefined> {
+  const row = await db
+    .selectFrom('invites')
+    .select(FIELDS)
+    .where('id', '=', id)
+    .executeTakeFirst()
+  return row == null ? undefined : shape(row as InviteFields)
+}
+
+/** Why this invite is no good, or null when it is. */
+export function inviteProblem(
+  invite: Invite,
+  now: Date = new Date()
+): InviteProblem | null {
+  if (invite.revokedAt != null) return 'revoked'
+  if (invite.expiresAt != null && invite.expiresAt.getTime() <= now.getTime()) {
+    return 'expired'
+  }
+  if (invite.maxUses != null && invite.uses >= invite.maxUses)
+    return 'exhausted'
+  return null
+}
+
+export interface NewInvite {
+  scopeType: InviteScopeType
+  scopeId: string
+  /** Null for one that came across from PeerTube, where nobody is recorded. */
+  createdBy: string | null
+  code?: string
+  label?: string
+  maxUses?: number
+  expiresAt?: Date
+  source?: 'peertube' | 'manual'
+  uses?: number
+  createdAt?: Date
+}
+
+export async function createInvite(
+  db: Kysely<Database>,
+  invite: NewInvite
+): Promise<Invite> {
+  const code =
+    invite.code == null ? makeInviteCode() : cleanInviteCode(invite.code)
+  const taken = await findInviteByCode(db, code)
+  if (taken != null) throw conflict('That code is already in use')
+
+  const row = {
+    id: makeId('invite'),
+    code,
+    scope_type: invite.scopeType,
+    scope_id: invite.scopeId,
+    created_by: invite.createdBy,
+    label: invite.label ?? null,
+    max_uses: invite.maxUses ?? null,
+    uses: invite.uses ?? 0,
+    expires_at: invite.expiresAt ?? null,
+    source: invite.source ?? 'manual',
+    ...(invite.createdAt == null ? {} : { created_at: invite.createdAt })
+  }
+  await db.insertInto('invites').values(row).execute()
+  const made = await findInviteById(db, row.id)
+  if (made == null) throw new Error('The invite was written but cannot be read')
+  return made
+}
+
+/** Every invite for one scope, newest first. Revoked ones stay, greyed out. */
+export async function listInvites(
+  db: Kysely<Database>,
+  scopeType: InviteScopeType,
+  scopeId: string
+): Promise<Invite[]> {
+  const rows = await db
+    .selectFrom('invites')
+    .select(FIELDS)
+    .where('scope_type', '=', scopeType)
+    .where('scope_id', '=', scopeId)
+    .orderBy('created_at', 'desc')
+    .execute()
+  return rows.map(row => shape(row as InviteFields))
+}
+
+/**
+ * Stops an invite without deleting it.
+ *
+ * Deleting would take the redemptions with it, and "how did this person get
+ * in" is a question that outlives the invite that answered it.
+ */
+export async function revokeInvite(
+  db: Kysely<Database>,
+  id: string
+): Promise<void> {
+  await db
+    .updateTable('invites')
+    .set({ revoked_at: new Date() })
+    .where('id', '=', id)
+    .where('revoked_at', 'is', null)
+    .execute()
+}
+
+/** Whether this person already has what the invite offers. */
+export async function alreadyInScope(
+  db: Kysely<Database>,
+  invite: Invite,
+  userId: string
+): Promise<boolean> {
+  if (invite.scopeType === 'team') {
+    const row = await db
+      .selectFrom('memberships')
+      .select(['id'])
+      .where('user_id', '=', userId)
+      .where('team_id', '=', invite.scopeId)
+      .executeTakeFirst()
+    return row != null
+  }
+  if (invite.scopeType === 'season') {
+    const row = await db
+      .selectFrom('season_members')
+      .select(['id'])
+      .where('user_id', '=', userId)
+      .where('season_id', '=', invite.scopeId)
+      .executeTakeFirst()
+    return row != null
+  }
+  const row = await db
+    .selectFrom('league_members')
+    .select(['id'])
+    .where('user_id', '=', userId)
+    .where('league_id', '=', invite.scopeId)
+    .executeTakeFirst()
+  return row != null
+}
+
+export interface Redemption {
+  /** False when this person already had the access, which is not a failure. */
+  granted: boolean
+  scopeType: InviteScopeType
+  scopeId: string
+}
+
+/**
+ * Spends the invite for one person.
+ *
+ * A second redemption by the same person is not an error and does not count
+ * against the uses — a link sits in a mailbox and gets opened twice, and
+ * charging for that would exhaust an invite nobody used twice over. Somebody
+ * who already belongs keeps the membership they have: this only ever adds one
+ * that was missing.
+ */
+export async function redeemInvite(
+  db: Kysely<Database>,
+  invite: Invite,
+  userId: string,
+  options: { createdAccount?: boolean } = {}
+): Promise<Redemption> {
+  const problem = inviteProblem(invite)
+  if (problem != null) throw badRequest(`That invite is ${problem}`)
+
+  return await db.transaction().execute(async trx => {
+    const recorded = await trx
+      .insertInto('invite_redemptions')
+      .values({
+        id: makeId('inviteRedemption'),
+        invite_id: invite.id,
+        user_id: userId,
+        created_account: options.createdAccount ?? false
+      })
+      .onConflict(oc => oc.columns(['invite_id', 'user_id']).doNothing())
+      .returning(['id'])
+      .executeTakeFirst()
+
+    const granted = await grant(trx, invite, userId)
+
+    if (recorded != null) {
+      await trx
+        .updateTable('invites')
+        .set(eb => ({ uses: eb('uses', '+', 1) }))
+        .where('id', '=', invite.id)
+        .execute()
+    }
+
+    return { granted, scopeType: invite.scopeType, scopeId: invite.scopeId }
+  })
+}
+
+/** Writes the one row the scope calls for, or leaves a stronger one alone. */
+async function grant(
+  trx: Kysely<Database>,
+  invite: Invite,
+  userId: string
+): Promise<boolean> {
+  if (invite.scopeType === 'team') {
+    const added = await trx
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        user_id: userId,
+        team_id: invite.scopeId,
+        role: 'member',
+        is_spectator: true
+      })
+      .onConflict(oc => oc.columns(['user_id', 'team_id']).doNothing())
+      .returning(['id'])
+      .executeTakeFirst()
+    return added != null
+  }
+
+  if (invite.scopeType === 'season') {
+    const added = await trx
+      .insertInto('season_members')
+      .values({
+        id: makeId('seasonMember'),
+        user_id: userId,
+        season_id: invite.scopeId,
+        role: 'spectator',
+        source: 'manual'
+      })
+      .onConflict(oc => oc.columns(['user_id', 'season_id']).doNothing())
+      .returning(['id'])
+      .executeTakeFirst()
+    return added != null
+  }
+
+  const added = await trx
+    .insertInto('league_members')
+    .values({
+      id: makeId('leagueMember'),
+      user_id: userId,
+      league_id: invite.scopeId,
+      role: 'spectator',
+      source: 'manual'
+    })
+    .onConflict(oc => oc.columns(['user_id', 'league_id']).doNothing())
+    .returning(['id'])
+    .executeTakeFirst()
+  return added != null
+}

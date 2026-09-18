@@ -20,6 +20,7 @@ export {
 } from './GameHeroCard'
 export { GameRow, type GameRowProps } from './GameRow'
 export { Icon, type IconName } from './Icon'
+export { InvitePanel, type InvitePanelProps } from './InvitePanel'
 export { initialsOf } from './initials'
 export { ListRow } from './ListRow'
 export { LivePill, type LivePillProps } from './LivePill'

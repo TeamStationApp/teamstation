@@ -23,6 +23,7 @@ import { authRoutes } from './routes/auth'
 import { devMediaRoutes } from './routes/devMedia'
 import { directorRoutes } from './routes/director'
 import { healthRoutes } from './routes/health'
+import { inviteRoutes } from './routes/invites'
 import type { LiveRouteOptions } from './routes/live'
 import { liveRoutes } from './routes/live'
 import { mediaAuthRoute, mediaRoutes } from './routes/media'
@@ -296,6 +297,10 @@ function runWorker(): void {
       space: serverConfig.space,
       publicUrl: serverConfig.publicUrl
     })
+  )
+  app.use(
+    '/api/v1',
+    inviteRoutes(db, { sendCode, publicUrl: serverConfig.publicUrl })
   )
   app.use('/api/v1', seasonRoutes(db, mediaContext))
   app.use('/api/v1', teamRoutes(db, mediaContext))

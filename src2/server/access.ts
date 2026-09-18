@@ -56,6 +56,29 @@ export async function visibleScopes(
     .execute()
   const memberSeasonIds = seasonMemberships.map(row => row.season_id)
 
+  // Belonging to a league is the same idea one level up, and is what a
+  // league-scoped invite grants. Read as the league's seasons rather than
+  // stored as them: a season created next spring is in the league the moment
+  // it exists, which a list written down on the day somebody joined would
+  // never catch up with.
+  const leagueMemberships = await db
+    .selectFrom('league_members')
+    .select(['league_id'])
+    .where('user_id', '=', userId)
+    .execute()
+  if (leagueMemberships.length > 0) {
+    const inThose = await db
+      .selectFrom('seasons')
+      .select(['id'])
+      .where(
+        'league_id',
+        'in',
+        leagueMemberships.map(row => row.league_id)
+      )
+      .execute()
+    for (const row of inThose) memberSeasonIds.push(row.id)
+  }
+
   if (memberSeasonIds.length > 0) {
     const inThose = await db
       .selectFrom('season_teams')
