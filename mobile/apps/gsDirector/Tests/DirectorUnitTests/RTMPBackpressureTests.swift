@@ -48,42 +48,39 @@ struct RTMPBackpressureTests {
     }
     #expect(client.sendVideo(timestampMs: 0, tag: videoTag(keyframe: false, bytes: 32)) == .sent)
     usleep(400_000)
-    #expect(client.sendVideo(timestampMs: 0, tag: videoTag(keyframe: false, bytes: 32)) == .droppedOverBudget)
+    // The newest is always taken; what has been waiting longer than the buffer is what goes.
+    let before = client.metrics.droppedPackets
+    #expect(client.sendVideo(timestampMs: 0, tag: videoTag(keyframe: false, bytes: 32)) == .sent)
+    #expect(client.metrics.droppedPackets > before)
     #expect(client.metrics.queuedBytes < 1024 * 1024)
   }
 
-  @Test("Video resumes on a keyframe rather than mid-GOP")
-  func resumesOnKeyframe() {
+  @Test("What survives a shed starts on a keyframe")
+  func shedLeavesAKeyframeAtTheFront() {
     let pair = SocketPair()
     defer { pair.close() }
     let client = RTMPClient()
     client.attachForTesting(fd: pair.client, budgetBytes: Self.budget)
     defer { client.stop() }
 
-    var sawOverBudget = false
-    for _ in 0 ..< 200 where !sawOverBudget {
-      if client.sendVideo(timestampMs: 0, tag: videoTag(keyframe: false, bytes: 8 * 1024))
-        == .droppedOverBudget
-      {
-        sawOverBudget = true
+    // Groups of one keyframe and three P-frames, far more than the budget holds, so the oldest
+    // groups are thrown away while the newest keep arriving.
+    for group in 0 ..< 60 {
+      client.sendVideo(timestampMs: UInt32(group * 4), tag: videoTag(keyframe: true, bytes: 8 * 1024))
+      for frame in 1 ... 3 {
+        client.sendVideo(
+          timestampMs: UInt32(group * 4 + frame),
+          tag: videoTag(keyframe: false, bytes: 8 * 1024)
+        )
       }
     }
-    #expect(sawOverBudget)
+    #expect(client.metrics.droppedPackets > 0)
+    // Every tag offered was taken: the queue sheds its own oldest rather than refusing the newest.
+    #expect(client.sendVideo(timestampMs: 9_999, tag: videoTag(keyframe: false, bytes: 32)) == .sent)
 
-    // Still over budget, so a P-frame is refused for the keyframe reason rather than admitted.
-    #expect(
-      client.sendVideo(timestampMs: 0, tag: videoTag(keyframe: false, bytes: 32))
-        != .sent
-    )
-
-    // Drain, then the next P-frame is still refused until a keyframe has gone through.
-    pair.drain(untilQueuedFallsBelow: Self.budget, of: client)
-    #expect(
-      client.sendVideo(timestampMs: 0, tag: videoTag(keyframe: false, bytes: 32))
-        == .droppedAwaitingKeyframe
-    )
-    #expect(client.sendVideo(timestampMs: 0, tag: videoTag(keyframe: true, bytes: 32)) == .sent)
-    #expect(client.sendVideo(timestampMs: 0, tag: videoTag(keyframe: false, bytes: 32)) == .sent)
+    // A P-frame whose group has been thrown away cannot be decoded, so the first picture still
+    // queued has to be a keyframe.
+    #expect(client.firstQueuedVideoIsKeyframeForTesting)
   }
 
   @Test("Sequence headers are never shed")
@@ -114,15 +111,10 @@ struct RTMPBackpressureTests {
     client.attachForTesting(fd: pair.client, budgetBytes: Self.budget)
     defer { client.stop() }
 
-    var sawOverBudget = false
-    for _ in 0 ..< 200 where !sawOverBudget {
-      if client.sendVideo(timestampMs: 0, tag: videoTag(keyframe: false, bytes: 8 * 1024))
-        == .droppedOverBudget
-      {
-        sawOverBudget = true
-      }
+    for _ in 0 ..< 200 {
+      client.sendVideo(timestampMs: 0, tag: videoTag(keyframe: false, bytes: 8 * 1024))
     }
-    #expect(sawOverBudget)
+    #expect(client.metrics.droppedPackets > 0)
 
     pair.drain(untilQueuedFallsBelow: Self.budget, of: client)
     // AAC frames decode independently, so there is nothing to wait for.
@@ -134,7 +126,15 @@ struct RTMPBackpressureTests {
     let pair = SocketPair()
     defer { pair.close() }
     let client = RTMPClient()
-    client.attachForTesting(fd: pair.client, budgetBytes: 8 * 1024 * 1024, sendTimeoutSeconds: 0.5)
+    // A send that times out is backpressure, so what makes the peer dead is a write that makes no
+    // progress at all for longer than the buffer it is holding up. Shortened here so the test does
+    // not wait the real three quarters of a minute.
+    client.attachForTesting(
+      fd: pair.client,
+      budgetBytes: 8 * 1024 * 1024,
+      sendTimeoutSeconds: 0.2,
+      stallDeadlineSeconds: 1
+    )
     let failure = Box<RTMPClientError?>(nil)
     client.onFailure { error in failure.value = error }
     defer { client.stop() }

@@ -45,13 +45,19 @@ struct ProgramStreamerConfigurationTests {
     #expect(streamer.configurationForTesting(config).codec == .h264)
   }
 
-  @Test("The send buffer holds eight seconds of the high bitrate, with room for its spikes")
+  @Test("The send buffer holds half a minute of the high bitrate, with room for its spikes")
   func budgetFromHigh() {
-    #expect(RTMPClient.sendBufferSeconds == 8)
-    // 6 Mbps is 750 000 bytes a second: eight seconds of it at half again the rate.
-    #expect(RTMPClient.sendBudget(forBitrate: 6_000_000) == 9_000_000)
-    #expect(RTMPClient.sendBudget(forBitrate: 10_000_000) == 15_000_000)
-    #expect(RTMPClient.sendBudget(forBitrate: 100_000) == 512 * 1024)
+    #expect(RTMPClient.sendBufferSeconds == 30)
+    // 6 Mbps is 750 000 bytes a second: half a minute of it at half again the rate.
+    #expect(RTMPClient.sendBudget(forBitrate: 6_000_000) == 33_750_000)
+    // The top of Settings is not clamped: this exact figure is the whole half minute, so the
+    // ceiling really is above it.
+    #expect(RTMPClient.sendBudget(forBitrate: 10_000_000) == 56_250_000)
+    // Half a minute of even a very low rate is past the floor, so nothing is clamped up to it now.
+    #expect(RTMPClient.sendBudget(forBitrate: 100_000) == 562_500)
+    // A write is given longer than the buffer before the peer counts as gone, so the buffer is
+    // spent before the stream is given up on.
+    #expect(RTMPClient.stallDeadlineSeconds > RTMPClient.sendBufferSeconds)
   }
 
   @Test("A second may reach half again the rate, and the next pays it back")
