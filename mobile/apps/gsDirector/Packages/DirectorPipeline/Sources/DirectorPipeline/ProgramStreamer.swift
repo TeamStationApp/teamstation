@@ -55,7 +55,10 @@ public final class ProgramStreamer: @unchecked Sendable {
   private var sentAudioConfig = false
   private var sentMetadata = false
   /// The timestamp of the last packet of sound sent, so the next is always after it.
-  private var lastAudioTimestamp: UInt32?
+  /// Where the sound's own clock started, in wall-clock milliseconds.
+  private var audioEpochMs: UInt32?
+  /// How many AAC packets have gone out, which is that clock.
+  private var audioPacketsSent = 0
   private var clock = StreamEncodeClock()
   /// When this stream started, so the watchdog can tell "no keyframe yet" from "no keyframe for a
   /// while". Zero until `start`.
@@ -168,7 +171,8 @@ public final class ProgramStreamer: @unchecked Sendable {
     sentVideoConfig = false
     sentAudioConfig = false
     sentMetadata = false
-    lastAudioTimestamp = nil
+    audioEpochMs = nil
+    audioPacketsSent = 0
     clock = StreamEncodeClock(frameRate: frameRate, gopSeconds: gopSeconds)
     pacer = StreamFramePacer(frameRate: frameRate)
     aac.reset()
@@ -544,8 +548,12 @@ public final class ProgramStreamer: @unchecked Sendable {
       return
     }
     let newest = milliseconds(clock.timeNow(now: now))
-    let stamps = Self.audioTimestamps(count: packets.count, newest: newest, after: lastAudioTimestamp)
-    if let last = stamps.last { lastAudioTimestamp = last }
+    // The wall clock is read once, for the first packet of the stream. After that the sound keeps
+    // its own time: reading the clock again every buffer is what made the stamps wander.
+    if audioEpochMs == nil { audioEpochMs = newest }
+    let epoch = audioEpochMs ?? newest
+    let stamps = Self.audioTimestamps(count: packets.count, from: audioPacketsSent, epoch: epoch)
+    audioPacketsSent += packets.count
     lock.unlock()
 
     if !sentAudio {
@@ -556,24 +564,34 @@ public final class ProgramStreamer: @unchecked Sendable {
     }
   }
 
-  /// Timestamps, in milliseconds, for `count` packets of sound made from one buffer of the mix.
+  /// Timestamps, in milliseconds, for `count` packets of sound, counted on the sound's own clock.
   ///
-  /// One buffer can make several packets, and stamping them all with the moment they were sent put
-  /// two packets on one time, which a server reads as the sound stopping for a moment afterwards.
-  /// They are a packet apart instead, counting back from `newest` for the last of them, and none is
-  /// at or before `previous`, the one sent last: a packet that would be goes a packet after it.
-  static func audioTimestamps(count: Int, newest: UInt32, after previous: UInt32?) -> [UInt32] {
+  /// An AAC packet is 1024 samples, which at 48 kHz is **21.333 ms** — a duration that cannot be
+  /// written in the whole milliseconds RTMP carries. So it is counted rather than measured: the
+  /// packet's index times its true length, rounded only at the last moment. The error stays under
+  /// half a millisecond for ever and never accumulates, and the stamps say exactly as much time as
+  /// the samples contain.
+  ///
+  /// It used to read a wall clock for every buffer and space the packets backwards from it, with a
+  /// floor of `packetMilliseconds.rounded(.down)` — 21 ms — to stop two landing on one time. Both
+  /// halves were wrong in the same direction: the floor is a third of a millisecond short of a real
+  /// packet, and the wall clock jitters against the sound card's. What came out was runs of 19.5 to
+  /// 20.5 ms with a 40 ms jump every third of a second to catch up, measured off the wire: 96 jumps
+  /// in 30 seconds.
+  ///
+  /// RTMP tolerates that, which is why an RTMP-only destination sounded fine. fMP4 does not. There
+  /// a packet's declared duration *is* its length, so a track claiming 20 ms for 21.333 ms of sound
+  /// slips against its own audio, and the jumps become holes — a squeal that grows louder the
+  /// longer the stream runs, which is exactly what it did.
+  ///
+  /// `epoch` is the wall-clock millisecond the first packet went out, which is what keeps sound
+  /// lined up with the picture; everything after it is counted, not measured.
+  static func audioTimestamps(count: Int, from index: Int, epoch: UInt32) -> [UInt32] {
     let packetMilliseconds = AACPacketizer.packetSeconds * 1000
-    var stamps: [UInt32] = []
-    var last = previous
-    for index in 0 ..< count {
-      let back = Double(count - 1 - index) * packetMilliseconds
-      var stamp = UInt32(max(0, (Double(newest) - back).rounded()))
-      if let last, stamp <= last { stamp = last + UInt32(packetMilliseconds.rounded(.down)) }
-      stamps.append(stamp)
-      last = stamp
+    return (0 ..< count).map { offset in
+      let ahead = (Double(index + offset) * packetMilliseconds).rounded()
+      return epoch &+ UInt32(max(0, ahead))
     }
-    return stamps
   }
 
   private func openEncoder() throws {
