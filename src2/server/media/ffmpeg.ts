@@ -231,3 +231,38 @@ export async function probeVideoStream(
     height: stream.height
   }
 }
+
+/**
+ * How long a finished recording runs, read from the file rather than counted.
+ *
+ * Asked of a live stream's playlist after it has been closed, where the answer
+ * is the sum of its segments and nothing on the row knows it yet. A playlist
+ * still being written has no honest duration, so this is only ever called once
+ * the `EXT-X-ENDLIST` is there.
+ */
+export async function probeDuration(
+  ffprobePath: string,
+  file: string
+): Promise<number> {
+  const { stdout } = await run(
+    ffprobePath,
+    [
+      '-v',
+      'error',
+      '-show_entries',
+      'format=duration',
+      '-of',
+      'default=nw=1:nk=1',
+      file
+    ],
+    { maxBuffer: 1 << 20 }
+  )
+  const seconds = Number.parseFloat(stdout.trim())
+  if (!Number.isFinite(seconds)) throw new Error(`No duration in ${file}`)
+  return seconds
+}
+
+/** The ffprobe beside a given ffmpeg. They are shipped and pinned together. */
+export function ffprobeFor(ffmpegPath: string): string {
+  return ffmpegPath.replace(/ffmpeg(\.exe)?$/, 'ffprobe$1')
+}
