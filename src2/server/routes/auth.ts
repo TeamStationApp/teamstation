@@ -3,7 +3,15 @@ import { type Response, Router } from 'express'
 import type { Kysely } from 'kysely'
 
 import { badRequest, unauthorized } from '../../common/errors'
-import { createEmailCode, verifyEmailCode } from '../auth/emailCodes'
+import { makeId } from '../../common/ids'
+import {
+  claimApprovedRequest,
+  claimSignInLink,
+  createEmailCode,
+  type SignInOrigin,
+  type SignInRequest,
+  verifyEmailCode
+} from '../auth/emailCodes'
 import { findUserByEmail, primaryEmail } from '../auth/emails'
 import { passwordMatches } from '../auth/passwords'
 import {
@@ -13,7 +21,7 @@ import {
   recordAttempts
 } from '../auth/rateLimit'
 import { createSession, revokeSession } from '../auth/sessions'
-import { SESSION_COOKIE, sessionToken } from '../auth/tokens'
+import { makeToken, SESSION_COOKIE, sessionToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { imageUrl } from '../media/imageUrls'
 import type { SpaceSettings } from '../media/spacesHls'
@@ -26,13 +34,55 @@ const asPasswordLogin = asObject({
 })
 
 const asCodeRequest = asObject({
-  email: asString
+  email: asString,
+  /**
+   * Where the sign-in was asked for, so the link comes back to it.
+   *
+   * There is no phone app yet. Recording this now is what stops every link
+   * having to be reissued the day there is one.
+   */
+  origin: asOptional(asSignInOrigin, 'web'),
+  /** Where they were going before they were asked to sign in. */
+  next: asOptional(asString)
+})
+
+const asLinkLogin = asObject({
+  token: asString
+})
+
+const asRequestClaim = asObject({
+  requestId: asString,
+  clientSecret: asString
 })
 
 const asCodeLogin = asObject({
   email: asString,
   code: asString
 })
+
+/** One of the three places a sign-in can start. */
+function asSignInOrigin(raw: unknown): SignInOrigin {
+  if (raw === 'ios' || raw === 'android' || raw === 'web') return raw
+  throw new TypeError('Expected web, ios or android')
+}
+
+/**
+ * The address in the e-mail.
+ *
+ * Always an ordinary `https://` link on our own domain, never a scheme of our
+ * own: mail clients hide or strip what they do not know, and a link that
+ * cannot open on a laptop is a dead end. With the app installed the operating
+ * system hands this same address to it; without, it opens the browser, which
+ * is the right answer in both cases.
+ */
+function signInLink(
+  publicUrl: string | undefined,
+  token: string,
+  requestId: string
+): string {
+  const base = (publicUrl ?? '').replace(/\/$/, '')
+  return `${base}/signin/${token}?r=${requestId}`
+}
 
 /** What a successful sign-in returns. Cleaned on the way out as well as in. */
 const asSession = asObject({
@@ -51,7 +101,7 @@ export interface AuthOptions {
    * Delivers a sign-in code. In production this is SMTP; in development it
    * logs, so the flow can be exercised without a mail server.
    */
-  sendCode: (email: string, code: string) => Promise<void>
+  sendCode: (email: string, code: string, link?: string) => Promise<void>
   /** Signs the picture in the header. Absent until a Space is configured. */
   space?: SpaceSettings
   /** Decides whether the session cookie may be marked `Secure`. */
@@ -227,11 +277,28 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
 
       // Always the same answer, so this cannot be used to find out who has an
       // account. The code is only made when there is somebody to send it to.
+      // The reply carries the request either way, so that a client waiting on
+      // it behaves identically whether or not the address has an account.
+      let request: SignInRequest | null = null
       if (user != null) {
-        const { code } = await createEmailCode(db, email, 'login')
-        await options.sendCode(email, code)
+        request = await createEmailCode(db, email, 'login', {
+          origin: body.origin,
+          next: body.next
+        })
+        await options.sendCode(
+          email,
+          request.code,
+          signInLink(options.publicUrl, request.token, request.id)
+        )
       }
-      res.status(202).json({ sent: true })
+      res.status(202).json({
+        sent: true,
+        // Named for what they are: the request this client is waiting on, and
+        // the secret that proves the wait is its own. Both are useless without
+        // somebody opening the link or typing the code.
+        requestId: request?.id ?? makeId('emailCode'),
+        clientSecret: request?.clientSecret ?? makeToken()
+      })
     })
   )
 
@@ -257,6 +324,92 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
         await recordAttempts(db, rules)
         throw unauthorized('That code is wrong or has expired')
       }
+
+      const session = await createSession(db, user.id, req.header('user-agent'))
+      setSessionCookie(res, session.token, session.expiresAt, secureCookie)
+      res.json(
+        asSession({
+          token: session.token,
+          expiresAt: session.expiresAt.toISOString(),
+          user: {
+            id: user.id,
+            displayName: user.displayName,
+            email: user.email,
+            isAdmin: user.isAdmin,
+            avatarUrl: await avatarFor(user.id)
+          }
+        })
+      )
+    })
+  )
+
+  /**
+   * Spend the link from the e-mail.
+   *
+   * A `POST`, and never a `GET`: the address in the e-mail loads the app, and
+   * the app asks for this once a person is behind it. Mail scanners follow
+   * links and run no scripts, so a sign-in cannot be burnt before it is read.
+   */
+  router.post(
+    '/auth/link/verify',
+    withAsync(async (req, res) => {
+      const body = cleanBody(asLinkLogin, req.body)
+      const rules = rulesFor(
+        LIMITS.verifyByAddress,
+        LIMITS.verifyByClient,
+        body.token.slice(0, 16),
+        clientIp(req)
+      )
+      await checkLimits(db, rules)
+
+      const claim = await claimSignInLink(db, body.token)
+      const user = claim == null ? null : await findUserByEmail(db, claim.email)
+      if (claim == null || user == null) {
+        await recordAttempts(db, rules)
+        throw unauthorized('That link is no longer good')
+      }
+
+      const session = await createSession(db, user.id, req.header('user-agent'))
+      setSessionCookie(res, session.token, session.expiresAt, secureCookie)
+      res.json(
+        asSession({
+          token: session.token,
+          expiresAt: session.expiresAt.toISOString(),
+          user: {
+            id: user.id,
+            displayName: user.displayName,
+            email: user.email,
+            isAdmin: user.isAdmin,
+            avatarUrl: await avatarFor(user.id)
+          }
+        })
+      )
+    })
+  )
+
+  /**
+   * What the client that asked is waiting for.
+   *
+   * Tap the link on a laptop while the phone is still waiting, and this is how
+   * the phone finds out and carries on: it polls with a secret only it holds,
+   * and gets its own session once the request has been approved anywhere.
+   */
+  router.post(
+    '/auth/request/claim',
+    withAsync(async (req, res) => {
+      const body = cleanBody(asRequestClaim, req.body)
+      const claim = await claimApprovedRequest(
+        db,
+        body.requestId,
+        body.clientSecret
+      )
+      if (claim == null) {
+        // Not an error: waiting is the normal state of this endpoint.
+        res.status(202).json({ ready: false })
+        return
+      }
+      const user = await findUserByEmail(db, claim.email)
+      if (user == null) throw unauthorized('That sign-in is no longer good')
 
       const session = await createSession(db, user.id, req.header('user-agent'))
       setSessionCookie(res, session.token, session.expiresAt, secureCookie)

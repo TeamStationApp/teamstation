@@ -1,7 +1,9 @@
 import React from 'react'
-import { ScrollView, type StyleProp, View, type ViewStyle } from 'react-native'
+import { type StyleProp, View, type ViewStyle } from 'react-native'
+import Animated from 'react-native-reanimated'
 
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { useHeaderSlot } from './headerSlot'
 import { useBreakpoint } from './useBreakpoint'
 
 export interface ScreenProps {
@@ -17,6 +19,13 @@ export interface ScreenProps {
    */
   wide?: boolean
   contentStyle?: StyleProp<ViewStyle>
+  /**
+   * From `useHandoff`, when this screen hands something up to the header.
+   *
+   * An animated handler rather than a plain one: it runs on the animation
+   * thread, so a list that scrolls does not re-render React to move a label.
+   */
+  onScroll?: Parameters<typeof Animated.ScrollView>[0]['onScroll']
 }
 
 /**
@@ -33,16 +42,27 @@ export interface ScreenProps {
  * columns itself. Margins widen a step on a tablet, per the spec's 24px.
  */
 export function Screen(props: ScreenProps): React.ReactElement {
-  const { children, scroll = true, wide = false, contentStyle } = props
+  const {
+    children,
+    scroll = true,
+    wide = false,
+    contentStyle,
+    onScroll
+  } = props
   const theme = useTheme()
   const styles = getStyles(theme)
   const breakpoint = useBreakpoint()
+  // The header is glass and overlays the content, so the content starts at the
+  // top of the window and is pushed down by the height the header measured.
+  // Anything else and there would be nothing behind the glass to blur.
+  const { headerHeight } = useHeaderSlot()
 
   const inner = (
     <View
       style={[
         styles.column,
         breakpoint !== 'phone' && styles.columnWide,
+        breakpoint === 'phone' && styles.clearOfNav,
         wide && styles.columnFull,
         contentStyle
       ]}
@@ -51,15 +71,24 @@ export function Screen(props: ScreenProps): React.ReactElement {
     </View>
   )
 
-  if (!scroll) return <View style={styles.fill}>{inner}</View>
+  if (!scroll) {
+    return (
+      <View style={[styles.fill, { paddingTop: headerHeight }]}>{inner}</View>
+    )
+  }
 
   return (
-    <ScrollView
+    <Animated.ScrollView
       style={styles.fill}
-      contentContainerStyle={styles.scrollContent}
+      onScroll={onScroll}
+      scrollEventThrottle={16}
+      contentContainerStyle={[
+        styles.scrollContent,
+        { paddingTop: headerHeight }
+      ]}
     >
       {inner}
-    </ScrollView>
+    </Animated.ScrollView>
   )
 }
 
@@ -71,6 +100,12 @@ const getStyles = cacheStyles((theme: Theme) => ({
   scrollContent: {
     flexGrow: 1,
     alignItems: 'center'
+  },
+  // The three destinations float over the content now rather than sitting in a
+  // bar beneath it, so the last row of a list has to clear the capsule. Without
+  // this the bottom team on the home screen reads through frosted glass.
+  clearOfNav: {
+    paddingBottom: theme.rem(4.5)
   },
   column: {
     width: '100%',

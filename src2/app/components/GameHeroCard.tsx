@@ -37,13 +37,22 @@ export interface GameHeroCardProps {
    * you came for pushed off the bottom of the window.
    */
   compact?: boolean
-  /** Runs, hits and errors per side, when they have been counted. */
-  linescore?: {
-    away: { r: number; h: number | null; e: number | null }
-    home: { r: number; h: number | null; e: number | null }
+  /**
+   * What each side did, counted from the plays.
+   *
+   * Not the runs: the score is a few lines up in numerals twice this size, so
+   * a card that repeats it has spent a line saying nothing. Null on a side
+   * means the plays were never counted, which is not the same as none — that
+   * side gets no line rather than a row of zeroes.
+   */
+  teamStats?: {
+    away: TeamStatLine | null
+    home: TeamStatLine | null
   } | null
-  /** `VALE FIELD · WED, MAY 13`, above the score. */
-  meta?: string
+  /** `WED, MAY 13`, on its own line above the ground. */
+  date?: string
+  /** `VALE FIELD`, under the date, where we know it. */
+  venue?: string
   /** `12–3`, under each team's name. */
   awayRecord?: string | null
   homeRecord?: string | null
@@ -64,6 +73,18 @@ export interface GameHeroCardProps {
  * panel says the score plainly where an empty grey rectangle would say
  * nothing at all.
  */
+/** One side's half of the card's stat block. */
+export interface TeamStatLine {
+  h: number
+  bb: number
+  /** This side's batters who struck out. */
+  k: number
+  hr: number
+  e: number
+  /** The strikeouts this side's pitching earned — the other side's `k`. */
+  kDef: number
+}
+
 export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
   const {
     awayName,
@@ -75,8 +96,9 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
     posterUrl,
     videoUrl,
     compact = false,
-    linescore,
-    meta,
+    teamStats,
+    date,
+    venue,
     awayRecord,
     homeRecord,
     awayLogoUrl,
@@ -84,12 +106,15 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
   } = props
   const styles = getStyles(useTheme())
   const narrow = useBreakpoint() === 'phone'
+  const hasMeta =
+    (date != null && date !== '') || (venue != null && venue !== '')
 
   const line =
-    linescore == null ? null : (
+    teamStats == null ||
+    (teamStats.away == null && teamStats.home == null) ? null : (
       <View style={styles.line}>
-        <Text style={styles.lineText}>{lineFor(awayName, linescore.away)}</Text>
-        <Text style={styles.lineText}>{lineFor(homeName, linescore.home)}</Text>
+        <StatLines name={awayName} stats={teamStats.away} />
+        <StatLines name={homeName} stats={teamStats.home} />
       </View>
     )
 
@@ -98,11 +123,26 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
     // nothing else on it, and against a pale background it reads as a hole.
     return (
       <View style={styles.card}>
-        {meta != null && meta !== '' && (
+        {hasMeta && (
           <View style={styles.meta}>
-            <Text style={styles.metaText} numberOfLines={1}>
-              {meta.toUpperCase()}
-            </Text>
+            {/*
+              The date on its own line above the ground, rather than the two
+              run together with a dot between them: a long field name on a
+              phone truncated the date off the end of the line, which is the
+              half somebody is actually looking for.
+            */}
+            <View style={styles.metaLines}>
+              {date != null && date !== '' && (
+                <Text style={styles.metaText} numberOfLines={1}>
+                  {date.toUpperCase()}
+                </Text>
+              )}
+              {venue != null && venue !== '' && (
+                <Text style={styles.metaVenue} numberOfLines={1}>
+                  {venue.toUpperCase()}
+                </Text>
+              )}
+            </View>
             <View style={styles.statusChip}>
               <Text style={styles.statusChipText}>{status}</Text>
             </View>
@@ -118,7 +158,7 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
             won={winner === 'away'}
             stacked={narrow}
           />
-          {meta == null && <Text style={styles.plainStatus}>{status}</Text>}
+          {!hasMeta && <Text style={styles.plainStatus}>{status}</Text>}
           <ScoreLine
             name={homeName}
             score={homeScore}
@@ -160,14 +200,42 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
  * the same as no hits. Printing `0H` there would be a claim about the game
  * rather than about our records.
  */
-function lineFor(
-  name: string,
-  side: { r: number; h: number | null; e: number | null }
-): string {
-  const parts = [`${side.r}R`]
-  if (side.h != null) parts.push(`${side.h}H`)
-  if (side.e != null) parts.push(`${side.e}E`)
-  return `${name}  ${parts.join(' · ')}`
+/**
+ * One side, in two lines: what it did at the plate, then what it did in the
+ * field.
+ *
+ * `Def:` names the second line because the two carry the same letter for
+ * different things — a side's own batters who struck out, and the strikeouts
+ * its pitching earned. Without the label they read as a contradiction.
+ */
+function StatLines(props: {
+  name: string
+  stats: TeamStatLine | null
+}): React.ReactElement | null {
+  const { name, stats } = props
+  const styles = getStyles(useTheme())
+  if (stats == null) return null
+  // One line, not two: batting, then what the same side did in the field. A
+  // second line per side made the card half as tall again for four numbers.
+  const batting = [
+    `${stats.h} H`,
+    `${stats.bb} BB`,
+    `${stats.k} K`,
+    `${stats.hr} HR`
+  ].join(' · ')
+  return (
+    <View style={styles.statLine}>
+      <Text style={styles.statName} numberOfLines={1}>
+        {name}
+      </Text>
+      <Text style={styles.statValues} numberOfLines={1}>
+        {batting}
+        {' · '}
+        <Text style={styles.statLabel}>Def:</Text>
+        {` ${stats.e} E · ${stats.kDef} K`}
+      </Text>
+    </View>
+  )
 }
 
 function ScoreLine(props: {
@@ -192,38 +260,53 @@ function ScoreLine(props: {
     stacked = false
   } = props
   const styles = getStyles(useTheme())
-  const mark = <Emblem uri={logoUrl} fallback={initialsOf(name)} size={2} />
+  // Only where there is a picture. A circle of initials beside a name that is
+  // written out in full next to it says the same thing twice, in the place a
+  // photograph would have gone.
+  const mark =
+    logoUrl == null || logoUrl === '' ? null : (
+      <Emblem uri={logoUrl} fallback={initialsOf(name)} size={2} />
+    )
+
+  // Stacked — a phone — each side is one line: the name at the left margin and
+  // the score hard against the right, which is how a score is read.
+  if (stacked) {
+    return (
+      <View style={[styles.side, styles.sideStacked, styles.sideRow]}>
+        {mark}
+        <View style={styles.sideRowText}>
+          <Text style={styles.sideName} numberOfLines={1}>
+            {name}
+            {won ? ' ★' : ''}
+          </Text>
+          <Text style={styles.sideNote} numberOfLines={1}>
+            {record == null || record === '' ? note : `${note} · ${record}`}
+          </Text>
+        </View>
+        <Text style={[styles.sideScore, won && styles.sideScoreWon]}>
+          {score ?? '–'}
+        </Text>
+      </View>
+    )
+  }
+
+  // Side by side — the two teams face each other across the card, so each is a
+  // column: the mark and the name, the score under them, and the record last.
   return (
-    <View
-      style={[
-        styles.side,
-        alignEnd && styles.sideEnd,
-        // `flex: 1` is flex-basis 0 as well, which in a column measures the
-        // *height* — the two sides would collapse. Stacked, each is simply
-        // as tall as it is.
-        stacked && styles.sideStacked
-      ]}
-    >
-      {!alignEnd && mark}
-      <View
-        style={[
-          styles.sideText,
-          alignEnd && styles.sideTextEnd,
-          stacked && styles.sideTextStacked
-        ]}
-      >
+    <View style={[styles.side, alignEnd && styles.sideEnd]}>
+      <View style={[styles.sideNameRow, alignEnd && styles.sideNameRowEnd]}>
+        {mark}
         <Text style={styles.sideName} numberOfLines={1}>
           {name}
           {won ? ' ★' : ''}
-        </Text>
-        <Text style={styles.sideNote} numberOfLines={1}>
-          {record == null || record === '' ? note : `${note} · ${record}`}
         </Text>
       </View>
       <Text style={[styles.sideScore, won && styles.sideScoreWon]}>
         {score ?? '–'}
       </Text>
-      {alignEnd && mark}
+      <Text style={styles.sideNote} numberOfLines={1}>
+        {record == null || record === '' ? note : `${note} · ${record}`}
+      </Text>
     </View>
   )
 }
@@ -234,7 +317,14 @@ const getStyles = cacheStyles((theme: Theme) => ({
     borderRadius: theme.rem(theme.radiusRem),
     borderWidth: 1,
     borderColor: theme.defaultBorderColor,
-    overflow: 'hidden'
+    overflow: 'hidden',
+    // Heavier than an ordinary card's. This one is the thing the screen is
+    // about, and on the game screen the list passes underneath it — a shadow
+    // is what says *underneath* rather than *cut off*.
+    shadowColor: theme.shadowColor,
+    shadowOpacity: 1,
+    shadowRadius: theme.rem(0.75),
+    shadowOffset: { width: 0, height: theme.rem(0.25) }
   },
   over: {
     gap: theme.rem(0.0625)
@@ -320,23 +410,40 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   side: {
     flex: 1,
+    // A column now: the score on top, the name and the record under it.
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: theme.rem(0.125)
+  },
+  sideEnd: {
+    alignItems: 'flex-end'
+  },
+  sideNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.rem(theme.spaceXsRem)
+  },
+  sideNameRowEnd: {
+    flexDirection: 'row-reverse'
+  },
+  // `flex: 1` is flex-basis 0 as well, and in a column that measures the
+  // *height*: the side would collapse to the height of the score and the name
+  // would overflow it. Stacked, each side is simply as tall as it is.
+  sideRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: theme.rem(theme.spaceSmRem)
   },
-  sideEnd: {
-    justifyContent: 'flex-end'
+  sideRowText: {
+    flexShrink: 1,
+    flexGrow: 1
   },
   sideStacked: {
     flexGrow: 0,
     flexShrink: 0,
     flexBasis: 'auto'
   },
-  sideTextStacked: {
-    flexGrow: 1,
-    flexShrink: 1,
-    flexBasis: 0
-  },
+
   sideName: {
     color: theme.primaryTextColor,
     flexShrink: 1,
@@ -347,7 +454,8 @@ const getStyles = cacheStyles((theme: Theme) => ({
   sideScore: {
     color: theme.primaryTextColor,
     fontFamily: theme.boldTextFont,
-    fontSize: theme.rem(1.75),
+    fontSize: theme.rem(2),
+    lineHeight: theme.rem(2.25),
     fontWeight: '700'
   },
   line: {
@@ -361,5 +469,42 @@ const getStyles = cacheStyles((theme: Theme) => ({
     color: theme.secondaryTextColor,
     fontFamily: theme.semiBoldTextFont,
     fontSize: theme.rem(0.8125)
+  },
+  statLine: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: theme.rem(theme.spaceSmRem)
+  },
+  statName: {
+    // The numbers are the point of the line; the name is there to say which
+    // side they belong to and gives way first.
+    flexShrink: 1,
+    maxWidth: '40%',
+    color: theme.primaryTextColor,
+    fontFamily: theme.semiBoldTextFont,
+    fontSize: theme.rem(0.8125),
+    fontWeight: '600'
+  },
+  statValues: {
+    flexGrow: 1,
+    flexShrink: 0,
+    textAlign: 'right',
+    color: theme.secondaryTextColor,
+    fontFamily: theme.semiBoldTextFont,
+    fontSize: theme.rem(0.8125)
+  },
+  statLabel: {
+    color: theme.secondaryTextColor,
+    fontFamily: theme.semiBoldTextFont,
+    fontWeight: '700'
+  },
+  metaLines: {
+    flexShrink: 1
+  },
+  metaVenue: {
+    color: theme.secondaryTextColor,
+    fontFamily: theme.semiBoldTextFont,
+    fontSize: theme.rem(0.6875),
+    letterSpacing: theme.rem(0.04)
   }
 }))

@@ -44,7 +44,9 @@ export interface SentMail {
 export async function sendSignInCode(
   smtp: SmtpSettings,
   to: string,
-  code: string
+  code: string,
+  /** The one-tap link, when there is somewhere for it to land. */
+  link?: string
 ): Promise<SentMail> {
   const info = await transporterFor(smtp).sendMail({
     from:
@@ -56,6 +58,9 @@ export async function sendSignInCode(
     // The code is in the subject as well as the body: on a phone that is
     // often all somebody needs to see, without opening anything.
     text: [
+      ...(link == null
+        ? []
+        : ['Tap to sign in:', link, '', 'Or type the code instead.', '']),
       `Your GameStation sign-in code is ${code}.`,
       '',
       'It is good for the next 15 minutes and can be used once.',
@@ -64,7 +69,8 @@ export async function sendSignInCode(
       'your address by mistake, and without the code nothing happens.'
     ].join('\n'),
     html: [
-      '<p>Your GameStation sign-in code is:</p>',
+      ...(link == null ? [] : [signInButton(link)]),
+      '<p>Or use this code:</p>',
       `<p style="font-size:28px;letter-spacing:4px;font-family:monospace"><strong>${code}</strong></p>`,
       '<p>It is good for the next 15 minutes and can be used once.</p>',
       '<p style="color:#666">If you did not ask to sign in, you can ignore this —',
@@ -76,6 +82,26 @@ export async function sendSignInCode(
     accepted: Array.isArray(info.accepted) ? info.accepted.length : 0,
     messageId: String(info.messageId ?? '')
   }
+}
+
+/**
+ * The green button, in the markup that survives a mail client.
+ *
+ * A table and a background colour on the cell, not a styled `<a>`: Outlook
+ * drops padding and background from an anchor and leaves a bare blue link. The
+ * address is printed underneath as text as well, because some clients eat
+ * buttons and a sign-in that cannot be reached is worse than an ugly one.
+ */
+function signInButton(link: string): string {
+  return [
+    '<table role="presentation" cellpadding="0" cellspacing="0" border="0">',
+    '<tr><td align="center" bgcolor="#334423" style="border-radius:8px">',
+    `<a href="${link}" style="display:inline-block;padding:14px 28px;`,
+    'font-family:Helvetica,Arial,sans-serif;font-size:16px;font-weight:bold;',
+    'color:#ffffff;text-decoration:none">Sign in to GameStation</a>',
+    '</td></tr></table>',
+    `<p style="color:#666;font-size:12px">Or paste this address: ${link}</p>`
+  ].join('')
 }
 
 /** Proves the relay will take a message, without sending one. */

@@ -52,7 +52,7 @@ export const enUs = {
   // One game
   game_videos: 'Videos',
   game_highlights: 'Highlights',
-  video_primary: 'Primary',
+  video_primary: 'Video',
   video_multi_angle: 'Multi-angle',
   videos_count_one: '%s video',
   videos_count_many: '%s videos',
@@ -89,6 +89,9 @@ export const enUs = {
 
   // Box score and stats
   stats_title: 'Stats',
+  game_pitching: 'Pitching',
+  box_no_roster:
+    'No individual lines for this side: its players are not known here.',
   stats_player: 'Player',
   stats_season: 'Season',
   stats_career: 'Career',
@@ -103,8 +106,6 @@ export const enUs = {
   stats_slugging: 'SLG',
   stats_no_average: '—',
   stats_show_plays: 'Show the plays behind this',
-  stats_runs_not_counted:
-    'Runs scored, stolen bases and caught stealing come from an import, because the plays alone do not say who moved where.',
 
   // Standings
   standings_title: 'Standings',

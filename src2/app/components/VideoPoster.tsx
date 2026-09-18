@@ -29,6 +29,15 @@ export interface VideoPosterProps {
   size?: 'hero' | 'thumb'
   /** How wide a thumb is, in rem. Narrower on a phone, where words are short. */
   width?: number
+  /**
+   * Take the height of the row and let the width follow from 16:9.
+   *
+   * A thumbnail sized by its width leaves the rest of the row's height empty
+   * beside it, which is what made these look small for the tiles they sit in.
+   * Sized by the height, the picture fills the row and the margins above and
+   * below it are the row's own padding.
+   */
+  fillHeight?: boolean
   /** Laid over the gradient at the bottom left: a score, a title. */
   children?: React.ReactNode
 }
@@ -58,6 +67,7 @@ export function VideoPoster(props: VideoPosterProps): React.ReactElement {
     onPlay,
     size = 'thumb',
     width,
+    fillHeight = false,
     children
   } = props
   const theme = useTheme()
@@ -98,7 +108,10 @@ export function VideoPoster(props: VideoPosterProps): React.ReactElement {
       style={[
         styles.frame,
         hero ? styles.frameHero : styles.frameThumb,
-        !hero && width != null ? { width: theme.rem(width) } : undefined
+        !hero && fillHeight ? styles.frameFill : undefined,
+        !hero && !fillHeight && width != null
+          ? { width: theme.rem(width) }
+          : undefined
       ]}
     >
       {hasPicture ? (
@@ -190,6 +203,11 @@ const getStyles = cacheStyles((theme: Theme) => ({
     borderRadius: theme.rem(theme.radiusRem),
     backgroundColor: theme.videoBackgroundColor,
     overflow: 'hidden'
+  },
+  frameFill: {
+    // The width follows from `aspectRatio`, which is on `frame`.
+    height: '100%',
+    alignSelf: 'stretch'
   },
   frameHero: {
     width: '100%'

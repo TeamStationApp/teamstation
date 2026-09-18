@@ -7,12 +7,18 @@
  * reading order is newest to oldest — which is how somebody looks for last
  * night's game.
  */
+/**
+ * How many videos fit across, by the width they have to share.
+ *
+ * Four is the ceiling: a fifth column makes each row narrower than the two
+ * lines of team names it has to hold, and the point of a wide window is to see
+ * more games at once rather than to see the same ones smaller.
+ */
 export const GRID_BREAKPOINTS = [
   { minWidth: 0, columns: 1 },
   { minWidth: 640, columns: 2 },
-  { minWidth: 1000, columns: 3 },
-  { minWidth: 1400, columns: 4 },
-  { minWidth: 1900, columns: 5 }
+  { minWidth: 1040, columns: 3 },
+  { minWidth: 1440, columns: 4 }
 ]
 
 export function columnsForWidth(width: number): number {
@@ -72,10 +78,13 @@ export function cardPosition(
  */
 export function highlightColumnsFor(width: number): number {
   // 380, not 288. A label like `Ground out: Benito W (2B) to Isaac D (1B)`
-  // needs about that much even across two lines, and a fourth column at 1280
-  // cut every fielding play's second name off.
+  // needs about that much even across two lines.
   const MIN = 380
   if (width < 600) return 1
-  const fits = Math.floor(width / MIN)
-  return Math.max(1, Math.min(4, fits))
+  // Two is the ceiling, which is what YouTube fits under its player, and mostly
+  // academic: the widest the stacked layout ever gets is just under a thousand
+  // pixels, where two is what fits anyway. Above that the highlights move to a
+  // 402px column on the right, which is one row wide and asks this same
+  // function for its own count.
+  return Math.max(1, Math.min(2, Math.floor(width / MIN)))
 }
