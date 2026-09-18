@@ -495,6 +495,140 @@ export const asMaybeSession = asEither(
   asSession
 )
 
+/** One invite code, as the panel that made it shows it. */
+export const asInvite = asObject({
+  id: asString,
+  code: asString,
+  /** The address to send somebody, built by the server. */
+  url: asString,
+  scopeType: asValue('league', 'season', 'team'),
+  scopeId: asString,
+  label: asNullable(asString),
+  maxUses: asNullable(asNumber),
+  uses: asNumber,
+  expiresAt: asNullable(asString),
+  revokedAt: asNullable(asString),
+  createdAt: asString,
+  /** Why it no longer works, or null while it does. */
+  problem: asNullable(asValue('revoked', 'expired', 'exhausted'))
+})
+export type Invite = ReturnType<typeof asInvite>
+
+export const asInviteList = asObject({
+  /** False for somebody who can see the page but does not administer it. */
+  canInvite: asBoolean,
+  invites: asArray(asInvite)
+})
+export type InviteList = ReturnType<typeof asInviteList>
+
+/** What is behind a code, for the screen its link opens. */
+export const asInviteInfo = asObject({
+  code: asString,
+  valid: asBoolean,
+  problem: asNullable(asValue('revoked', 'expired', 'exhausted')),
+  scope: asObject({
+    kind: asValue('league', 'season', 'team'),
+    id: asString,
+    name: asString
+  }),
+  signedIn: asBoolean,
+  /** True when they already have what it offers, which is not a failure. */
+  alreadyIn: asBoolean
+})
+export type InviteInfo = ReturnType<typeof asInviteInfo>
+
+export const asRedeemed = asObject({
+  granted: asBoolean,
+  scope: asObject({
+    kind: asValue('league', 'season', 'team'),
+    id: asString,
+    name: asString
+  })
+})
+export type Redeemed = ReturnType<typeof asRedeemed>
+
+/** One thing somebody belongs to, and what they are in it. */
+export const asScopeGrant = asObject({
+  id: asString,
+  name: asString,
+  role: asString
+})
+export type ScopeGrant = ReturnType<typeof asScopeGrant>
+
+export const asNamed = asObject({ id: asString, name: asString })
+
+/**
+ * One person with access, and every level it comes through.
+ *
+ * Never the strongest grant alone: a coach whose own child is on the roster
+ * and who also joined the league holds two, and an administrator who removes
+ * one and sees nothing change has been told a half-truth.
+ */
+export const asScopePerson = asObject({
+  userId: asString,
+  displayName: asString,
+  emails: asArray(asString),
+  teams: asArray(asScopeGrant),
+  seasons: asArray(asScopeGrant),
+  leagues: asArray(asScopeGrant),
+  adminOf: asArray(
+    asObject({
+      kind: asValue('league', 'season', 'team'),
+      id: asString,
+      name: asString
+    })
+  ),
+  /** When the account was made. */
+  createdAt: asString,
+  /**
+   * When they last signed in, and when they were last here.
+   *
+   * Both, because a session lasts a month and a device's half a year: one
+   * sign-in in March and every game watched since would otherwise read as
+   * six months away. Null for an account nobody has ever used.
+   */
+  lastSignInAt: asNullable(asString),
+  lastSeenAt: asNullable(asString)
+})
+export type ScopePerson = ReturnType<typeof asScopePerson>
+
+/** Somebody invited by address who has not opened the link yet. */
+export const asPendingPerson = asObject({
+  inviteId: asString,
+  email: asString,
+  code: asString,
+  invitedAt: asString
+})
+export type PendingPerson = ReturnType<typeof asPendingPerson>
+
+/** Everything the page behind the gear draws, in one answer. */
+export const asManagePage = asObject({
+  scope: asObject({
+    kind: asValue('league', 'season', 'team'),
+    id: asString,
+    name: asString
+  }),
+  /** The levels around this one, named, so a tick can say which it is. */
+  tree: asObject({
+    leagues: asArray(asNamed),
+    seasons: asArray(asNamed),
+    teams: asArray(asNamed)
+  }),
+  people: asArray(asScopePerson),
+  pending: asArray(asPendingPerson),
+  invites: asArray(asInvite)
+})
+export type ManagePage = ReturnType<typeof asManagePage>
+
+export const asAddedPerson = asObject({
+  added: asBoolean,
+  person: asOptional(
+    asObject({ userId: asString, displayName: asString, email: asString })
+  ),
+  invited: asOptional(asPendingPerson)
+})
+export type AddedPerson = ReturnType<typeof asAddedPerson>
+
 export interface ClientOptions {
   baseUrl: string
   token?: string
@@ -807,6 +941,137 @@ export class GameStationClient {
       'GET',
       `/seasons/${encodeURIComponent(seasonId)}/standings`,
       asArray(asStandingsRow)
+    )
+  }
+
+  /** The invite codes for one league, season or team. */
+  async invites(
+    scopeType: 'league' | 'season' | 'team',
+    scopeId: string
+  ): Promise<InviteList> {
+    return await this.request(
+      'GET',
+      `/invites?scopeType=${scopeType}&scopeId=${encodeURIComponent(scopeId)}`,
+      asInviteList
+    )
+  }
+
+  async createInvite(options: {
+    scopeType: 'league' | 'season' | 'team'
+    scopeId: string
+    code?: string
+    label?: string
+    maxUses?: number
+    expiresAt?: string
+  }): Promise<Invite> {
+    return await this.request('POST', '/invites', asInvite, options)
+  }
+
+  /** Stops an invite. The row stays, so who came in through it still reads. */
+  async revokeInvite(inviteId: string): Promise<void> {
+    await this.request(
+      'DELETE',
+      `/invites/${encodeURIComponent(inviteId)}`,
+      asUnknownOk
+    )
+  }
+
+  /** What a code is worth, asked before anybody signs in. */
+  async inviteInfo(code: string): Promise<InviteInfo> {
+    return await this.request(
+      'GET',
+      `/join/${encodeURIComponent(code)}`,
+      asInviteInfo
+    )
+  }
+
+  /** Take up the invite as whoever is signed in now. */
+  async redeemInvite(code: string): Promise<Redeemed> {
+    return await this.request(
+      'POST',
+      `/join/${encodeURIComponent(code)}/redeem`,
+      asRedeemed,
+      {}
+    )
+  }
+
+  /**
+   * Asks for a sign-in code that carries the invite, which is what lets
+   * somebody with no account come in through one: the account is made when
+   * that code is typed or its link opened, not now.
+   */
+  async requestInviteCode(
+    code: string,
+    options: { email: string; displayName?: string; next?: string }
+  ): Promise<SignInWait> {
+    return await this.request(
+      'POST',
+      `/join/${encodeURIComponent(code)}/email-code`,
+      asSignInWait,
+      { ...options, origin: 'web' }
+    )
+  }
+
+  /** Everything the page behind the gear needs, in one call. */
+  async managePage(
+    kind: 'league' | 'season' | 'team',
+    id: string
+  ): Promise<ManagePage> {
+    return await this.request(
+      'GET',
+      `/manage/${kind}/${encodeURIComponent(id)}`,
+      asManagePage
+    )
+  }
+
+  /**
+   * Add one person by address: straight in if they have an account, and an
+   * invitation in the post if they do not.
+   */
+  async addPerson(
+    kind: 'league' | 'season' | 'team',
+    id: string,
+    email: string
+  ): Promise<AddedPerson> {
+    return await this.request(
+      'POST',
+      `/manage/${kind}/${encodeURIComponent(id)}/people`,
+      asAddedPerson,
+      { email }
+    )
+  }
+
+  /** Take away what this level grants, and only that. */
+  async removePerson(
+    kind: 'league' | 'season' | 'team',
+    id: string,
+    userId: string
+  ): Promise<{ removed: boolean }> {
+    return await this.request(
+      'DELETE',
+      `/manage/${kind}/${encodeURIComponent(id)}/people/${encodeURIComponent(userId)}`,
+      asObject({ removed: asBoolean })
+    )
+  }
+
+  /**
+   * What somebody is at this level: its administrator, or one of its people.
+   *
+   * Scoped to the level being managed and no other, which is why the screen
+   * can say "team admin" rather than "admin" and mean it. Either answer
+   * leaves them able to watch.
+   */
+  async setRole(
+    kind: 'league' | 'season' | 'team',
+    id: string,
+    userId: string,
+    role: 'admin' | 'member'
+  ): Promise<void> {
+    await this.request(
+      'PUT',
+      `/manage/${kind}/${encodeURIComponent(id)}/people/${encodeURIComponent(userId)}/role`,
+      asObject({ userId: asString, role: asString }),
+      { role }
     )
   }
 

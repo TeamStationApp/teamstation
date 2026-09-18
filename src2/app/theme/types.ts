@@ -44,10 +44,12 @@ export interface Theme {
   primaryButtonPressedColor: string
   secondaryButtonColor: string
   secondaryButtonPressedColor: string
-  secondaryButtonBorderColor: string
   secondaryButtonTextColor: string
   buttonGrayColor: string
   clearButtonColor: string
+  /** The disc behind the × that empties a field, and the × itself. */
+  clearIconBackgroundColor: string
+  clearIconColor: string
   buttonTextColor: string
 
   // Inputs
@@ -120,6 +122,12 @@ export interface Theme {
   gridGutterRem: number
 
   shadowColor: string
+  /**
+   * The lift under a button or a pill. Stronger than `shadowColor`, which is
+   * for large surfaces: the same 10% that reads on a card the width of the
+   * screen is invisible under something three centimetres wide.
+   */
+  buttonShadowColor: string
   backgroundGradientColors: string[]
   backgroundGradientStart: ThemeGradientPoint
   backgroundGradientEnd: ThemeGradientPoint

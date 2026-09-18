@@ -28,6 +28,7 @@ const palette = {
   gold: '#DAA520',
 
   blackOp30: 'rgba(0, 0, 0, .3)',
+  blackOp35: 'rgba(0, 0, 0, .35)',
   blackOp70: 'rgba(0, 0, 0, .7)',
 
   helveticaNeue: 'Helvetica Neue, Arial, sans-serif',
@@ -73,10 +74,11 @@ export const gsDark: Theme = {
   primaryButtonPressedColor: palette.gsDarkOlive,
   secondaryButtonColor: palette.gsLightOlive,
   secondaryButtonPressedColor: palette.gsDarkOlive,
-  secondaryButtonBorderColor: palette.gsAccentGreen,
   secondaryButtonTextColor: palette.gsVeryDarkGreen,
   buttonGrayColor: palette.gsAccentGreen,
   clearButtonColor: palette.gsPaleGreen,
+  clearIconBackgroundColor: palette.gsMediumOlive,
+  clearIconColor: palette.white,
   buttonTextColor: palette.gsBeige,
 
   inputBackgroundColor: palette.white,
@@ -134,6 +136,7 @@ export const gsDark: Theme = {
   gridGutterRem: 0.75,
 
   shadowColor: palette.black,
+  buttonShadowColor: palette.blackOp35,
   backgroundGradientColors: [palette.gsVeryDarkGreen, palette.gsDarkOlive],
   backgroundGradientStart: { x: 0, y: 0 },
   backgroundGradientEnd: { x: 1, y: 1 },

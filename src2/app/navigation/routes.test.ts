@@ -47,11 +47,34 @@ describe('addresses', function () {
       { name: 'account' },
       { name: 'team', teamId: 'tea_1', tab: 'stats' },
       { name: 'season', seasonId: 'sea_1', tab: 'standings', when: 'all' },
-      { name: 'league', leagueId: 'lea_1' }
+      { name: 'league', leagueId: 'lea_1' },
+      { name: 'join', code: 'demo2026' }
     ]
     for (const route of routes) {
       expect(roundTrip(route), routePath(route)).deep.equals(route)
     }
+  })
+
+  it('reads an invite link at the address PeerTube used', function () {
+    // These links are already out there — `tube.gamestation.co/i/demo2026` is
+    // in mailboxes and on a team sheet — so the path is not ours to change.
+    expect(parseRoute('/i/demo2026')).deep.equals({
+      name: 'join',
+      code: 'demo2026'
+    })
+    expect(routePath({ name: 'join', code: 'demo2026' })).equals('/i/demo2026')
+    // PeerTube's longer form is read as well, because its own sign-in and
+    // registration screens sent people through it.
+    expect(parseRoute('/c/invite/demo2026')).deep.equals({
+      name: 'join',
+      code: 'demo2026'
+    })
+    expect(parseRoute('/video-channels/invite/demo2026')).deep.equals({
+      name: 'join',
+      code: 'demo2026'
+    })
+    // And a bare `/i` is not an invitation to anything.
+    expect(parseRoute('/i')).deep.equals({ name: 'home' })
   })
 
   it('keeps the section a team or season link asked for', function () {

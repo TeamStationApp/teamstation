@@ -42,7 +42,6 @@ const videoIdParam = {
   schema: { type: 'string' }
 }
 
-
 const userIdParam = {
   name: 'userId',
   in: 'path',
@@ -57,6 +56,26 @@ const errorResponse = {
       schema: { $ref: '#/components/schemas/ApiError' }
     }
   }
+}
+
+/** The three path pieces the manage page's endpoints share. */
+const scopeTypeParam = {
+  name: 'scopeType',
+  in: 'path',
+  required: true,
+  schema: { type: 'string', enum: ['league', 'season', 'team'] }
+}
+const scopeIdParam = {
+  name: 'scopeId',
+  in: 'path',
+  required: true,
+  schema: { type: 'string' }
+}
+/** Anything with an id and a name, which is how the tree is drawn. */
+const namedThing = {
+  type: 'object',
+  required: ['id', 'name'],
+  properties: { id: { type: 'string' }, name: { type: 'string' } }
 }
 
 export function openApiDocument(version: string): OpenApiDocument {
@@ -162,6 +181,167 @@ export function openApiDocument(version: string): OpenApiDocument {
             url: {
               type: 'string',
               description: 'The whole thing, key and all, for pasting'
+            }
+          }
+        },
+        Invite: {
+          type: 'object',
+          required: ['id', 'code', 'url', 'scopeType', 'scopeId', 'uses'],
+          description:
+            'A standing offer to let somebody watch a league, a season or a ' +
+            'team. `url` is the address to hand out, which is the same ' +
+            '`/i/<code>` path PeerTube used so that links already in ' +
+            'mailboxes keep working.',
+          properties: {
+            id: { type: 'string' },
+            code: { type: 'string' },
+            url: { type: 'string' },
+            scopeType: { type: 'string', enum: ['league', 'season', 'team'] },
+            scopeId: { type: 'string' },
+            label: { type: ['string', 'null'] },
+            maxUses: { type: ['integer', 'null'] },
+            uses: { type: 'integer' },
+            expiresAt: { type: ['string', 'null'], format: 'date-time' },
+            revokedAt: { type: ['string', 'null'], format: 'date-time' },
+            createdAt: { type: 'string', format: 'date-time' },
+            problem: {
+              type: ['string', 'null'],
+              enum: ['revoked', 'expired', 'exhausted', null],
+              description: 'Why it no longer works, or null while it does'
+            }
+          }
+        },
+        InviteInfo: {
+          type: 'object',
+          required: ['code', 'valid', 'scope', 'signedIn', 'alreadyIn'],
+          description: 'What is behind a code, for the screen its link opens.',
+          properties: {
+            code: { type: 'string' },
+            valid: { type: 'boolean' },
+            problem: {
+              type: ['string', 'null'],
+              enum: ['revoked', 'expired', 'exhausted', null]
+            },
+            scope: {
+              type: 'object',
+              required: ['kind', 'id', 'name'],
+              properties: {
+                kind: { type: 'string', enum: ['league', 'season', 'team'] },
+                id: { type: 'string' },
+                name: { type: 'string' }
+              }
+            },
+            signedIn: { type: 'boolean' },
+            alreadyIn: { type: 'boolean' }
+          }
+        },
+        ScopePerson: {
+          type: 'object',
+          required: ['userId', 'displayName', 'emails', 'createdAt'],
+          description:
+            'One person with access, and every level it comes through. Never ' +
+            'the strongest grant alone: somebody often holds two, and an ' +
+            'administrator who removes one and sees nothing change has been ' +
+            'told a half-truth.',
+          properties: {
+            userId: { type: 'string' },
+            displayName: { type: 'string' },
+            emails: { type: 'array', items: { type: 'string' } },
+            teams: {
+              type: 'array',
+              items: { $ref: '#/components/schemas/ScopeGrant' }
+            },
+            seasons: {
+              type: 'array',
+              items: { $ref: '#/components/schemas/ScopeGrant' }
+            },
+            leagues: {
+              type: 'array',
+              items: { $ref: '#/components/schemas/ScopeGrant' }
+            },
+            adminOf: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    enum: ['league', 'season', 'team']
+                  },
+                  id: { type: 'string' },
+                  name: { type: 'string' }
+                }
+              }
+            },
+            createdAt: { type: 'string', format: 'date-time' },
+            lastSignInAt: {
+              type: ['string', 'null'],
+              format: 'date-time',
+              description: 'Null for an account nobody has ever used'
+            },
+            lastSeenAt: {
+              type: ['string', 'null'],
+              format: 'date-time',
+              description:
+                'The last request on any of their sessions, which is later ' +
+                'than the sign-in for anybody who stays signed in'
+            }
+          }
+        },
+        ScopeGrant: {
+          type: 'object',
+          required: ['id', 'name', 'role'],
+          properties: {
+            id: { type: 'string' },
+            name: { type: 'string' },
+            role: { type: 'string' }
+          }
+        },
+        PendingPerson: {
+          type: 'object',
+          required: ['inviteId', 'email', 'code', 'invitedAt'],
+          description:
+            'Somebody invited by address who has not opened the link yet.',
+          properties: {
+            inviteId: { type: 'string' },
+            email: { type: 'string' },
+            code: { type: 'string' },
+            invitedAt: { type: 'string', format: 'date-time' }
+          }
+        },
+        ManagePage: {
+          type: 'object',
+          required: ['scope', 'tree', 'people', 'pending', 'invites'],
+          properties: {
+            scope: {
+              type: 'object',
+              properties: {
+                kind: { type: 'string', enum: ['league', 'season', 'team'] },
+                id: { type: 'string' },
+                name: { type: 'string' }
+              }
+            },
+            tree: {
+              type: 'object',
+              description:
+                'The levels around this one, named, so a tick can say which',
+              properties: {
+                leagues: { type: 'array', items: namedThing },
+                seasons: { type: 'array', items: namedThing },
+                teams: { type: 'array', items: namedThing }
+              }
+            },
+            people: {
+              type: 'array',
+              items: { $ref: '#/components/schemas/ScopePerson' }
+            },
+            pending: {
+              type: 'array',
+              items: { $ref: '#/components/schemas/PendingPerson' }
+            },
+            invites: {
+              type: 'array',
+              items: { $ref: '#/components/schemas/Invite' }
             }
           }
         },
@@ -574,6 +754,411 @@ export function openApiDocument(version: string): OpenApiDocument {
                 }
               }
             },
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/invites': {
+        get: {
+          summary: 'The invite codes for one league, season or team',
+          description:
+            'Answers `canInvite: false` with an empty list for somebody who ' +
+            'can see the page but does not administer it, so the panel ' +
+            'simply does not draw itself.',
+          security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'scopeType',
+              in: 'query',
+              required: true,
+              schema: { type: 'string', enum: ['league', 'season', 'team'] }
+            },
+            {
+              name: 'scopeId',
+              in: 'query',
+              required: true,
+              schema: { type: 'string' }
+            }
+          ],
+          responses: {
+            200: {
+              description: 'What may be done here, and what is already made',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['canInvite', 'invites'],
+                    properties: {
+                      canInvite: { type: 'boolean' },
+                      invites: {
+                        type: 'array',
+                        items: { $ref: '#/components/schemas/Invite' }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            400: errorResponse,
+            401: errorResponse
+          }
+        },
+        post: {
+          summary: 'Make an invite code',
+          description:
+            'Administrators only, of the very league, season or team named ' +
+            '— and rights inherit downwards, so a league administrator may ' +
+            'invite to any of its teams. A code of your own is allowed; ' +
+            'left out, one is generated.',
+          security: [{ bearer: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['scopeType', 'scopeId'],
+                  properties: {
+                    scopeType: {
+                      type: 'string',
+                      enum: ['league', 'season', 'team']
+                    },
+                    scopeId: { type: 'string' },
+                    code: { type: 'string' },
+                    label: { type: 'string' },
+                    maxUses: { type: 'integer', minimum: 1 },
+                    expiresAt: { type: 'string', format: 'date-time' }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            201: {
+              description: 'The invite, with the address to hand out',
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/Invite' }
+                }
+              }
+            },
+            400: errorResponse,
+            401: errorResponse,
+            404: errorResponse,
+            409: errorResponse
+          }
+        }
+      },
+      '/invites/{id}': {
+        delete: {
+          summary: 'Stop an invite code',
+          description:
+            'The row stays, so who came in through it can still be read.',
+          security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'id',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' }
+            }
+          ],
+          responses: {
+            204: { description: 'Stopped' },
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/join/{code}': {
+        get: {
+          summary: 'What an invite code is worth',
+          description:
+            'Answered whether or not anybody is signed in: somebody with no ' +
+            'account has to be told what they are being invited to before ' +
+            'they hand over an address. An unknown code answers 404.',
+          parameters: [
+            {
+              name: 'code',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' }
+            }
+          ],
+          responses: {
+            200: {
+              description: 'The invitation',
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/InviteInfo' }
+                }
+              }
+            },
+            404: errorResponse
+          }
+        }
+      },
+      '/join/{code}/redeem': {
+        post: {
+          summary: 'Take up an invitation as whoever is signed in',
+          description:
+            '`granted` is false when they already had the access, which is ' +
+            'not a failure and does not cost the invite a use.',
+          security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'code',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' }
+            }
+          ],
+          responses: {
+            200: {
+              description: 'What they were let into',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['granted', 'scope'],
+                    properties: {
+                      granted: { type: 'boolean' },
+                      scope: {
+                        type: 'object',
+                        properties: {
+                          kind: {
+                            type: 'string',
+                            enum: ['league', 'season', 'team']
+                          },
+                          id: { type: 'string' },
+                          name: { type: 'string' }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            400: errorResponse,
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/join/{code}/email-code': {
+        post: {
+          summary: 'Ask for a sign-in code that carries this invitation',
+          description:
+            'The way somebody with no account comes in through a link. The ' +
+            'account is made when that code is typed or its link opened — ' +
+            'never here — so an address nobody can read gets nowhere. The ' +
+            'answer is the same whether or not the address already has an ' +
+            'account.',
+          parameters: [
+            {
+              name: 'code',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' }
+            }
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['email'],
+                  properties: {
+                    email: { type: 'string' },
+                    displayName: {
+                      type: 'string',
+                      description: 'What an account made by this will be called'
+                    },
+                    origin: {
+                      type: 'string',
+                      enum: ['web', 'ios', 'android']
+                    },
+                    next: { type: 'string' }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            202: {
+              description: 'The sign-in this client is now waiting on',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['sent', 'requestId', 'clientSecret'],
+                    properties: {
+                      sent: { type: 'boolean' },
+                      requestId: { type: 'string' },
+                      clientSecret: {
+                        type: 'string',
+                        description:
+                          'Held by this client, so a link opened elsewhere ' +
+                          'can finish the sign-in it is waiting on'
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            400: errorResponse,
+            404: errorResponse,
+            429: errorResponse
+          }
+        }
+      },
+      '/manage/{scopeType}/{scopeId}': {
+        get: {
+          summary: 'Who can see this, and how',
+          description:
+            'The page behind the gear on a team, season or league card. ' +
+            '`tree` names the levels around this one, so a tick in the ' +
+            'people table can say which season or league it stands for. ' +
+            'Answers 404 to anybody who does not administer the scope.',
+          security: [{ bearer: [] }],
+          parameters: [scopeTypeParam, scopeIdParam],
+          responses: {
+            200: {
+              description: 'The people, the pending invitations and the links',
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/ManagePage' }
+                }
+              }
+            },
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/manage/{scopeType}/{scopeId}/people': {
+        post: {
+          summary: 'Add one person by address',
+          description:
+            'An address that already has an account is given the access at ' +
+            'once. Any other is sent an invitation made out to it, good for ' +
+            'one use; the account is still made by the sign-in that follows.',
+          security: [{ bearer: [] }],
+          parameters: [scopeTypeParam, scopeIdParam],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['email'],
+                  properties: { email: { type: 'string' } }
+                }
+              }
+            }
+          },
+          responses: {
+            201: {
+              description: 'Added, or invited',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['added'],
+                    properties: {
+                      added: { type: 'boolean' },
+                      person: {
+                        type: 'object',
+                        properties: {
+                          userId: { type: 'string' },
+                          displayName: { type: 'string' },
+                          email: { type: 'string' }
+                        }
+                      },
+                      invited: {
+                        $ref: '#/components/schemas/PendingPerson'
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            400: errorResponse,
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/manage/{scopeType}/{scopeId}/people/{userId}': {
+        delete: {
+          summary: 'Take away what this level grants',
+          description:
+            'Only this level. A team administrator cannot remove the season ' +
+            'membership that also lets somebody watch, which is not theirs ' +
+            'and would drop that person from every other team in it.',
+          security: [{ bearer: [] }],
+          parameters: [scopeTypeParam, scopeIdParam, userIdParam],
+          responses: {
+            200: {
+              description: 'Whether there was anything here to remove',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['removed'],
+                    properties: { removed: { type: 'boolean' } }
+                  }
+                }
+              }
+            },
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/manage/{scopeType}/{scopeId}/people/{userId}/role': {
+        put: {
+          summary: 'Make somebody an administrator of this level, or a member',
+          description:
+            'Only at the level named: a team page makes team administrators ' +
+            'and nothing wider. Either answer leaves them able to watch, ' +
+            'because an administrator of something they cannot see is a ' +
+            'state nobody asks for on purpose. Nobody may demote themselves.',
+          security: [{ bearer: [] }],
+          parameters: [scopeTypeParam, scopeIdParam, userIdParam],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['role'],
+                  properties: {
+                    role: { type: 'string', enum: ['admin', 'member'] }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            200: {
+              description: 'What they are now',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['userId', 'role'],
+                    properties: {
+                      userId: { type: 'string' },
+                      role: { type: 'string', enum: ['admin', 'member'] }
+                    }
+                  }
+                }
+              }
+            },
+            400: errorResponse,
             401: errorResponse,
             404: errorResponse
           }

@@ -53,6 +53,7 @@ const palette = {
   crimsonPale: '#FFDAD6',
 
   shadow: 'rgba(28, 35, 24, 0.10)',
+  buttonShadow: 'rgba(28, 35, 24, 0.24)',
   scrim: 'rgba(26, 33, 22, 0.55)',
 
   /**
@@ -99,10 +100,11 @@ export const gsBallpark: Theme = {
   primaryButtonPressedColor: palette.forestPressed,
   secondaryButtonColor: palette.cream,
   secondaryButtonPressedColor: palette.creamPressed,
-  secondaryButtonBorderColor: palette.sage,
   secondaryButtonTextColor: palette.bark,
   buttonGrayColor: palette.stone,
   clearButtonColor: palette.transparent,
+  clearIconBackgroundColor: palette.ash,
+  clearIconColor: palette.white,
   buttonTextColor: palette.white,
 
   // Inputs
@@ -164,6 +166,7 @@ export const gsBallpark: Theme = {
   gridGutterRem: 1,
 
   shadowColor: palette.shadow,
+  buttonShadowColor: palette.buttonShadow,
   backgroundGradientColors: [palette.bone, palette.bone],
   backgroundGradientStart: { x: 0, y: 0 },
   backgroundGradientEnd: { x: 0, y: 1 },

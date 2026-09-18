@@ -20,9 +20,17 @@ export {
 } from './GameHeroCard'
 export { GameRow, type GameRowProps } from './GameRow'
 export { Icon, type IconName } from './Icon'
+export { InvitePanel, type InvitePanelProps } from './InvitePanel'
 export { initialsOf } from './initials'
 export { ListRow } from './ListRow'
+export { ManageGear, type ManageGearProps } from './ManageGear'
 export { LivePill, type LivePillProps } from './LivePill'
+export {
+  adminLabel,
+  memberLabel,
+  RoleModal,
+  type RoleModalProps
+} from './RoleModal'
 export { PillTabs, type PillTab } from './PillTabs'
 export { Scoreboard } from './Scoreboard'
 export { Screen } from './Screen'

@@ -121,7 +121,10 @@ export function PillTabs<Id extends string = string>(
 
 const getStyles = cacheStyles((theme: Theme) => ({
   scrollContent: {
-    paddingHorizontal: theme.rem(theme.spaceXsRem)
+    paddingHorizontal: theme.rem(theme.spaceXsRem),
+    // Room for the shadow. Without it the strip's own overflow cuts the lift
+    // off square, which looks like a rendering fault rather than a shadow.
+    paddingVertical: theme.rem(theme.spaceXsRem)
   },
   row: {
     flexDirection: 'row',
@@ -146,7 +149,14 @@ const getStyles = cacheStyles((theme: Theme) => ({
     gap: theme.rem(theme.spaceXsRem),
     minHeight: theme.rem(3),
     paddingHorizontal: theme.rem(theme.spaceLgRem),
-    borderRadius: theme.radiusPill
+    borderRadius: theme.radiusPill,
+    // The same lift a button has, smaller to match the smaller shape: these
+    // are buttons too, and a flat one beside a raised one reads as disabled.
+    shadowColor: theme.buttonShadowColor,
+    shadowOpacity: 1,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2
   },
   pillCompact: {
     minHeight: theme.rem(2.25),

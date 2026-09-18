@@ -42,6 +42,24 @@ export function shortDateNoWeekday(iso: string | null): string {
   })
 }
 
+/**
+ * `May 20, 2026` — a date on a record rather than on a fixture.
+ *
+ * With the year, and an em dash for nothing: "when was this account made" and
+ * "when did they last sign in" are answered across years, and a missing
+ * answer means never rather than "to be confirmed".
+ */
+export function calendarDate(iso: string | null): string {
+  if (iso == null) return '\u2014'
+  const when = new Date(iso)
+  if (Number.isNaN(when.getTime())) return '\u2014'
+  return when.toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric'
+  })
+}
+
 /** `10:00 AM`, or nothing when the game has no time. */
 export function shortTime(iso: string | null): string {
   if (iso == null) return ''
