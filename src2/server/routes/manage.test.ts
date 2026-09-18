@@ -357,4 +357,81 @@ describe('the manage page', function () {
     expect(pending.map(row => row.email)).contains('newcomer@example.com')
   })
 
+  it('makes somebody an administrator of this level, and unmakes them', async function () {
+    if (db == null) this.skip()
+    const made = await ask(
+      '/manage/season/sea_spring/people/usr_coach/role',
+      BOSS,
+      'PUT',
+      { role: 'admin' }
+    )
+    expect(made.status).equals(200)
+    expect(made.body.role).equals('admin')
+
+    // Which is the whole point: the coach can now manage the season.
+    const page = await ask('/manage/season/sea_spring', COACH)
+    expect(page.status).equals(200)
+    // And can see it. An administrator with no membership administers
+    // something they cannot watch, which is nobody's intention.
+    const membership = await db
+      .selectFrom('season_members')
+      .select(['id'])
+      .where('user_id', '=', 'usr_coach')
+      .where('season_id', '=', 'sea_spring')
+      .executeTakeFirst()
+    expect(membership == null).equals(false)
+
+    const back = await ask(
+      '/manage/season/sea_spring/people/usr_coach/role',
+      BOSS,
+      'PUT',
+      { role: 'member' }
+    )
+    expect(back.status).equals(200)
+    const after = await ask('/manage/season/sea_spring', COACH)
+    expect(after.status).equals(404)
+  })
+
+  it('only ever changes the level whose page it is', async function () {
+    if (db == null) this.skip()
+    // The coach administers their own team and nothing above it, so the
+    // season's page is the door they might try.
+    const refused = await ask(
+      '/manage/season/sea_spring/people/usr_coach/role',
+      COACH,
+      'PUT',
+      { role: 'admin' }
+    )
+    expect(refused.status).equals(404)
+
+    // On their own team's page it works, and what it writes is a *team* role.
+    const made = await ask(
+      '/manage/team/tem_hawks/people/usr_parent/role',
+      COACH,
+      'PUT',
+      { role: 'admin' }
+    )
+    expect(made.status).equals(200)
+    const roles = await db
+      .selectFrom('admin_roles')
+      .select(['scope_type', 'scope_id'])
+      .where('user_id', '=', 'usr_parent')
+      .execute()
+    expect(roles.map(row => `${row.scope_type}:${row.scope_id}`)).deep.equals([
+      'team:tem_hawks'
+    ])
+  })
+
+  it('will not let an administrator demote themselves', async function () {
+    if (db == null) this.skip()
+    const refused = await ask(
+      '/manage/season/sea_spring/people/usr_boss/role',
+      BOSS,
+      'PUT',
+      { role: 'member' }
+    )
+    expect(refused.status).equals(400)
+    const page = await ask('/manage/season/sea_spring', BOSS)
+    expect(page.status).equals(200)
+  })
 })

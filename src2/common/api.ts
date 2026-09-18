@@ -1054,6 +1054,27 @@ export class GameStationClient {
     )
   }
 
+  /**
+   * What somebody is at this level: its administrator, or one of its people.
+   *
+   * Scoped to the level being managed and no other, which is why the screen
+   * can say "team admin" rather than "admin" and mean it. Either answer
+   * leaves them able to watch.
+   */
+  async setRole(
+    kind: 'league' | 'season' | 'team',
+    id: string,
+    userId: string,
+    role: 'admin' | 'member'
+  ): Promise<void> {
+    await this.request(
+      'PUT',
+      `/manage/${kind}/${encodeURIComponent(id)}/people/${encodeURIComponent(userId)}/role`,
+      asObject({ userId: asString, role: asString }),
+      { role }
+    )
+  }
+
   private async request<T>(
     method: string,
     path: string,

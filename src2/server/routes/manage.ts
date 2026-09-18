@@ -52,6 +52,10 @@ const asPersonByEmail = asObject({
   displayName: asOptional(asString)
 })
 
+const asRoleChange = asObject({
+  role: asValue('admin', 'member')
+})
+
 export interface ManageRouteOptions {
   /** Delivers an invitation. Swapped out in tests. */
   sendInvite: (
@@ -216,6 +220,61 @@ export function manageRoutes(
         after: { removed: gone.removed }
       })
       res.json(gone)
+    })
+  )
+
+  /**
+   * What one person is at this level: its administrator, or one of its people.
+   *
+   * Only ever at **this** level. A team's page can make somebody a team
+   * administrator and nothing else; the season's page is where a season
+   * administrator is made. That is the same rule the rest of this file
+   * follows, and it is what stops a team's manager quietly gaining the run of
+   * the league by promoting themselves somewhere the page never showed.
+   *
+   * Either answer leaves them able to watch: an administrator with no
+   * membership administers something they cannot see, which is a state nobody
+   * asks for on purpose.
+   */
+  router.put(
+    '/manage/:scopeType/:scopeId/people/:userId/role',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const scopeType = asScopeType(req.params.scopeType)
+      const scopeId = pathParam(req.params.scopeId)
+      const userId = pathParam(req.params.userId)
+      await mustAdminister(actor.userId, actor.isAdmin, scopeType, scopeId)
+      const body = cleanBody(asRoleChange, req.body)
+
+      // Nobody demotes themselves: it is the one change that cannot be undone
+      // from the screen it was made on.
+      if (userId === actor.userId && body.role === 'member') {
+        throw badRequest('You cannot remove yourself as an administrator')
+      }
+
+      const person = await db
+        .selectFrom('users')
+        .select(['id'])
+        .where('id', '=', userId)
+        .where('merged_into', 'is', null)
+        .executeTakeFirst()
+      if (person == null) throw notFound()
+
+      await addToScope(db, scopeType, scopeId, userId)
+      if (body.role === 'admin') {
+        await addAdmin(db, scopeType, scopeId, userId, actor.userId)
+      } else {
+        await removeAdmin(db, scopeType, scopeId, userId)
+      }
+
+      setAudit(res.locals, {
+        entityType: 'adminRole',
+        entityId: userId,
+        after: { scopeType, scopeId, role: body.role }
+      })
+      res.json({ userId, role: body.role })
     })
   )
 

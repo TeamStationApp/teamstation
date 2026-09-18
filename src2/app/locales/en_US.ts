@@ -182,6 +182,21 @@ export const enUs = {
   manage_refused: 'You do not administer this.',
   manage_open: 'Manage',
 
+  // Changing what somebody is at one level
+  role_change: 'Change role',
+  role_title: 'Change role for %s',
+  role_scope: 'At %s, and nowhere else.',
+  role_team_admin: 'Team admin',
+  role_team_member: 'Team member',
+  role_season_admin: 'Season admin',
+  role_season_member: 'Season member',
+  role_league_admin: 'League admin',
+  role_league_member: 'League member',
+  role_admin_detail:
+    'Can invite people to %s, remove them, and change what everybody here is.',
+  role_member_detail: 'Can watch %s. Cannot change anything.',
+  role_save: 'Save',
+  role_cancel: 'Cancel',
   manage_no_address_header: 'No address on file',
 
   // Coming in through an invite
