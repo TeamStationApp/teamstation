@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { Text, View } from 'react-native'
 
 import type {
@@ -14,6 +14,7 @@ import {
   Card,
   Emblem,
   GameRow,
+  HandoffView,
   initialsOf,
   ListRow,
   PillTabs,
@@ -21,7 +22,10 @@ import {
   SectionHeader,
   type Stat,
   StatGrid,
-  useBreakpoint
+  useBreakpoint,
+  useHandoff,
+  useHeaderHandoff,
+  useHeaderSlot
 } from '../components'
 import { videoCountLabel } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -93,6 +97,41 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
   const theme = useTheme()
   const styles = getStyles(theme)
 
+  // The team's name slides up into the header as its card goes under, and
+  // comes back down when it returns. The header carries no title for this
+  // screen otherwise: the name is on the card a few pixels below it.
+  const { headerHeight } = useHeaderSlot()
+  const handoff = useHandoff(headerHeight)
+  const progress = handoff.progress
+  useHeaderHandoff(
+    useMemo(
+      () => (
+        <HandoffView progress={progress} style={styles.headerHandoff}>
+          {/*
+            The mark comes up with the name. There is a gap between the chevron
+            and the name the width of one, and a team is easier to recognise by
+            its badge than by the first twenty characters of its name.
+          */}
+          <Emblem
+            uri={team.logoUrl}
+            fallback={initialsOf(team.name)}
+            size={1.75}
+          />
+          <Text style={styles.headerName} numberOfLines={1}>
+            {team.name}
+          </Text>
+        </HandoffView>
+      ),
+      [
+        progress,
+        styles.headerHandoff,
+        styles.headerName,
+        team.logoUrl,
+        team.name
+      ]
+    )
+  )
+
   const [tab, setTab] = useState<TabId>(tabOf(initialTab))
   const [games, setGames] = useState<GameSummary[]>([])
   const [roster, setRoster] = useState<RosterEntry[]>([])
@@ -160,8 +199,8 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
   const upcoming = gamesFor(games, 'upcoming')
 
   return (
-    <Screen>
-      <Card style={styles.identity}>
+    <Screen onScroll={handoff.handleScroll}>
+      <Card style={styles.identity} ref={handoff.ref}>
         <View style={styles.identityTop}>
           <Emblem
             uri={team.logoUrl}
@@ -460,6 +499,18 @@ function seasonStats(standing: StandingsRow | undefined): Stat[] {
 }
 
 const getStyles = cacheStyles((theme: Theme) => ({
+  headerHandoff: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.rem(theme.spaceXsRem)
+  },
+  headerName: {
+    fontFamily: theme.boldTextFont,
+    fontSize: theme.rem(1.0625),
+    fontWeight: '700',
+    color: theme.headerTextColor,
+    textAlign: 'center'
+  },
   section: {
     gap: theme.rem(theme.spaceMdRem)
   },
