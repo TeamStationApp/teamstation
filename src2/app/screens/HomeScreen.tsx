@@ -10,19 +10,24 @@ import type {
 import {
   Button,
   Card,
+  GameHeroCard,
+  initialsOf,
   ListRow,
-  Scoreboard,
   Screen,
   SectionHeader
 } from '../components'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { gameStatusLine, shortDate, winnerOf } from './format'
+import { gameStatusLine, matchupLines, shortDate, winnerOf } from './format'
 
 export interface HomeScreenProps {
   client: GameStationClient
   onOpenTeam: (team: TeamSummary) => void
   onOpenSeason: (season: SeasonSummary) => void
-  onOpenGame: (gameId: string, title: string) => void
+  onOpenGame: (
+    gameId: string,
+    title: string,
+    options?: { tab?: 'watch' | 'boxScore'; autoPlay?: boolean }
+  ) => void
 }
 
 /**
@@ -41,8 +46,36 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
   const [teams, setTeams] = useState<TeamSummary[]>([])
   const [seasons, setSeasons] = useState<SeasonSummary[]>([])
   const [recent, setRecent] = useState<SeasonGame | undefined>(undefined)
+  const [recentUrl, setRecentUrl] = useState<string | undefined>(undefined)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | undefined>(undefined)
+
+  /**
+   * The recent game's own video, so the card moves rather than sitting there.
+   *
+   * Two extra requests, and both are cheap: the game to find a playable
+   * recording, then its signed URL. It is deliberately *after* the screen has
+   * drawn — the poster is already showing, so this only ever improves what is
+   * on screen and never delays it.
+   */
+  useEffect(() => {
+    if (recent == null || recent.videoCount < 1) return
+    let cancelled = false
+    const find = async (): Promise<void> => {
+      const detail = await client.game(recent.id)
+      const playable = detail.videos.find(item => item.status === 'ready')
+      if (cancelled || playable == null) return
+      const playback = await client.playback(playable.id)
+      if (cancelled || playback.url == null) return
+      setRecentUrl(playback.url)
+    }
+    // A card that does not move is the whole of the failure, and the poster
+    // already says what the game was.
+    find().catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [client, recent])
 
   useEffect(() => {
     let cancelled = false
@@ -55,15 +88,12 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
       setTeams(loadedTeams)
       setSeasons(loadedSeasons)
 
-      // The most recently finished game across the seasons on offer. One extra
-      // request, and only for the newest season: a parent opening the app
-      // almost always wants the game that just happened.
-      const newest = loadedSeasons[0]
-      if (newest != null) {
-        const games = await client.seasonGames(newest.id)
-        if (cancelled) return
-        setRecent(mostRecentlyPlayed(games))
-      }
+      // The most recently played game anywhere this person can see. It used
+      // to look inside the first season it was handed, which showed a game
+      // from June while there were games in September.
+      const newest = await client.recentGame()
+      if (cancelled) return
+      setRecent(newest ?? undefined)
     }
     load()
       .catch((caught: unknown) => {
@@ -101,26 +131,42 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
               {shortDate(recent.startAt)}
               {recent.venue == null ? '' : ` · ${recent.venue}`}
             </Text>
-            <Scoreboard
+            <GameHeroCard
               awayName={recent.awayTeamName}
               homeName={recent.homeTeamName}
               awayScore={recent.awayScore}
               homeScore={recent.homeScore}
               status={gameStatusLine(recent)}
               winner={winnerOf(recent)}
+              posterUrl={recent.posterUrl}
+              videoUrl={recentUrl}
             />
-            <Button
-              label={
-                recent.videoCount > 0 ? 'Watch replay' : 'Box score & plays'
-              }
-              block
-              onPress={() => {
-                onOpenGame(
-                  recent.id,
-                  `${recent.awayTeamName} at ${recent.homeTeamName}`
-                )
-              }}
-            />
+            {/*
+              Two buttons, not one. There was no way to reach a box score from
+              this screen at all: a game that was scored and never filmed had
+              nothing to press.
+            */}
+            <View style={styles.actions}>
+              {recent.videoCount > 0 && (
+                <Button
+                  label="Watch Replay"
+                  icon="play_arrow"
+                  style={styles.action}
+                  onPress={() => {
+                    onOpenGame(recent.id, matchup(recent), { autoPlay: true })
+                  }}
+                />
+              )}
+              <Button
+                label="Box Score"
+                icon="format_list_bulleted"
+                kind="secondary"
+                style={styles.action}
+                onPress={() => {
+                  onOpenGame(recent.id, matchup(recent), { tab: 'boxScore' })
+                }}
+              />
+            </View>
           </Card>
         </View>
       )}
@@ -134,8 +180,9 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
                 {index > 0 && <View style={styles.divider} />}
                 <ListRow
                   title={team.name}
-                  subtitle={team.shortName ?? undefined}
+                  subtitle={subtitleFor(team)}
                   emblem={initialsOf(team.name)}
+                  emblemUri={team.logoUrl}
                   onPress={() => {
                     onOpenTeam(team)
                   }}
@@ -182,21 +229,24 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
   )
 }
 
-/** The newest game that has actually been played, by start time. */
-function mostRecentlyPlayed(games: SeasonGame[]): SeasonGame | undefined {
-  const played = games
-    .filter(game => game.awayScore != null && game.startAt != null)
-    .sort((a, b) => (a.startAt ?? '').localeCompare(b.startAt ?? ''))
-  return played[played.length - 1]
+/** `AAA Hawks @ Black Sox`, the way the row in a list reads. */
+function matchup(game: SeasonGame): string {
+  const lines = matchupLines(game)
+  return `${lines.first} ${lines.second}`
 }
 
-/** `AAA Hawks` → `AH`, for the leading tile when a team has no logo yet. */
-function initialsOf(name: string): string {
-  const words = name.split(/[\s-]+/).filter(word => word.length > 0)
-  return words
-    .slice(0, 2)
-    .map(word => word[0]?.toUpperCase() ?? '')
-    .join('')
+/** `NPLL Spring 2026 · 12–3`, or whichever half of that we know. */
+function subtitleFor(team: TeamSummary): string | undefined {
+  const parts: string[] = []
+  if (team.record?.seasonName != null) parts.push(team.record.seasonName)
+  else if (team.shortName != null) parts.push(team.shortName)
+  if (team.record != null) {
+    const { w, l, t } = team.record
+    // An en dash: it is a record, not a range of numbers, and the hyphen is
+    // visibly too short beside the numerals at this weight.
+    parts.push(t > 0 ? `${w}–${l}–${t}` : `${w}–${l}`)
+  }
+  return parts.length === 0 ? undefined : parts.join(' · ')
 }
 
 const getStyles = cacheStyles((theme: Theme) => ({
@@ -205,6 +255,13 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   gameCard: {
     gap: theme.rem(theme.spaceMdRem)
+  },
+  actions: {
+    flexDirection: 'row',
+    gap: theme.rem(theme.spaceSmRem)
+  },
+  action: {
+    flex: 1
   },
   gameMeta: {
     fontFamily: theme.semiBoldTextFont,

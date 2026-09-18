@@ -23,6 +23,8 @@ export type IconName =
   | 'sports_baseball'
   | 'stadium'
   | 'play_circle'
+  | 'play_arrow'
+  | 'format_list_bulleted'
   | 'bookmark'
   | 'share'
   | 'mail'

@@ -25,6 +25,23 @@ export function shortDate(iso: string | null): string {
   })
 }
 
+/**
+ * `May 20`, without the weekday.
+ *
+ * On a phone the row has about 140px for its third line, and `Sun, Sep 13 ·
+ * 12:30 PM · 3 videos` needs 212. The weekday is the part a reader can most
+ * afford to lose: the date is right there beside it.
+ */
+export function shortDateNoWeekday(iso: string | null): string {
+  if (iso == null) return 'Date to be confirmed'
+  const when = new Date(iso)
+  if (Number.isNaN(when.getTime())) return 'Date to be confirmed'
+  return when.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric'
+  })
+}
+
 /** `10:00 AM`, or nothing when the game has no time. */
 export function shortTime(iso: string | null): string {
   if (iso == null) return ''
@@ -99,4 +116,36 @@ export function clock(seconds: number): string {
   return hours > 0
     ? `${hours}:${pad(minutes)}:${pad(secs)}`
     : `${minutes}:${pad(secs)}`
+}
+
+/**
+ * How the two teams of a game are written on one row.
+ *
+ * `@` means the home side is second; `vs` means the first side is at home.
+ * That is how a score is read aloud, and it saves a reader from having to
+ * already know that the away team conventionally comes first.
+ *
+ * With a `fromTeamId` the row is written from that team's point of view, which
+ * is what a team's own page wants. Without one — the all-seasons feed, the
+ * schedule — there is no side to take, so it states the fixture: away first.
+ *
+ * One helper rather than a format at each call site, because that is how the
+ * same game ends up written two ways on two screens.
+ */
+export function matchupLines(
+  game: {
+    homeTeamId: string
+    awayTeamId: string
+    homeTeamName: string
+    awayTeamName: string
+  },
+  fromTeamId?: string
+): { first: string; second: string } {
+  if (fromTeamId === game.homeTeamId) {
+    return { first: game.homeTeamName, second: `vs ${game.awayTeamName}` }
+  }
+  if (fromTeamId === game.awayTeamId) {
+    return { first: game.awayTeamName, second: `@ ${game.homeTeamName}` }
+  }
+  return { first: game.awayTeamName, second: `@ ${game.homeTeamName}` }
 }

@@ -2,22 +2,43 @@ import React, { useEffect, useState } from 'react'
 import { Text, View } from 'react-native'
 
 import type { GameStationClient, SeasonGame } from '../../common/api'
-import { Card, ListRow, PillTabs, Screen, SectionHeader } from '../components'
+import {
+  Card,
+  GameRow,
+  PillTabs,
+  Screen,
+  SectionHeader,
+  useBreakpoint
+} from '../components'
+import { gameCountLabel, videoCountLabel } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { shortDate, shortTime } from './format'
+import {
+  clock,
+  matchupLines,
+  shortDate,
+  shortDateNoWeekday,
+  shortTime
+} from './format'
+import { gamesFor, type When } from './whenFilter'
 
 export interface GamesFeedScreenProps {
   client: GameStationClient
   /** `videos` shows only what was recorded; `schedule` shows everything. */
   mode: 'videos' | 'schedule'
-  onOpenGame: (gameId: string, title: string) => void
+  /** The filter the address asked for, if any. */
+  initialWhen?: When
+  /** Tells the shell, so the address can say which filter is showing. */
+  onWhenChange?: (when: When) => void
+  onOpenGame: (
+    gameId: string,
+    title: string,
+    options?: { tab?: 'watch' | 'boxScore'; autoPlay?: boolean }
+  ) => void
 }
 
-type When = 'upcoming' | 'past' | 'all'
-
 const WHEN_TABS = [
-  { id: 'upcoming' as const, label: 'Upcoming' },
   { id: 'past' as const, label: 'Past' },
+  { id: 'upcoming' as const, label: 'Upcoming' },
   { id: 'all' as const, label: 'All' }
 ]
 
@@ -36,12 +57,13 @@ const WHEN_TABS = [
 export function GamesFeedScreen(
   props: GamesFeedScreenProps
 ): React.ReactElement {
-  const { client, mode, onOpenGame } = props
+  const { client, mode, initialWhen, onWhenChange, onOpenGame } = props
   const styles = getStyles(useTheme())
+  const narrow = useBreakpoint() === 'phone'
 
-  const [when, setWhen] = useState<When>(
-    mode === 'videos' ? 'past' : 'upcoming'
-  )
+  // Both lists open on what has happened. A schedule of fixtures is the
+  // rarer question; what somebody opens the app for is the game just played.
+  const [when, setWhen] = useState<When>(initialWhen ?? 'past')
   const [games, setGames] = useState<SeasonGame[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | undefined>(undefined)
@@ -72,24 +94,23 @@ export function GamesFeedScreen(
   }, [client])
 
   const pool = mode === 'videos' ? games.filter(g => g.videoCount > 0) : games
-  const played = pool.filter(game => game.awayScore != null)
-  const upcoming = pool.filter(game => game.awayScore == null)
-  const shown = when === 'past' ? played : when === 'upcoming' ? upcoming : pool
-
-  // Newest first looking back, soonest first looking forward: in both cases
-  // the game nearest to now is at the top.
-  const sorted = [...shown].sort((a, b) => {
-    const order = (a.startAt ?? '').localeCompare(b.startAt ?? '')
-    return when === 'upcoming' ? order : -order
-  })
+  const sorted = gamesFor(pool, when)
 
   return (
     <Screen>
-      <PillTabs tabs={WHEN_TABS} selected={when} onSelect={setWhen} stretch />
+      <PillTabs
+        tabs={WHEN_TABS}
+        selected={when}
+        onSelect={next => {
+          setWhen(next)
+          onWhenChange?.(next)
+        }}
+        size="compact"
+      />
 
       <SectionHeader
         title={mode === 'videos' ? 'Game videos' : 'Schedule'}
-        note={`${sorted.length} games`}
+        note={gameCountLabel(sorted.length)}
       />
 
       {error != null && <Text style={styles.error}>{error}</Text>}
@@ -105,29 +126,46 @@ export function GamesFeedScreen(
         </Card>
       )}
 
-      {sorted.map(game => (
-        <Card key={game.id}>
-          <ListRow
-            title={`${game.awayTeamName} at ${game.homeTeamName}`}
-            subtitle={`${shortDate(game.startAt)}${
-              game.venue == null ? '' : ` · ${game.venue}`
-            }${game.videoCount > 0 ? ` · ${game.videoCount} video` : ''}`}
-            emblem={game.videoCount > 0 ? '▶' : '⚾'}
-            badgeLabel={
-              game.awayScore == null
-                ? shortTime(game.startAt)
-                : `${game.awayScore}–${game.homeScore}`
-            }
-            badgeTone={game.awayScore == null ? 'neutral' : 'win'}
-            onPress={() => {
-              onOpenGame(
-                game.id,
-                `${game.awayTeamName} at ${game.homeTeamName}`
-              )
-            }}
-          />
-        </Card>
-      ))}
+      {sorted.map(game => {
+        const lines = matchupLines(game)
+        // The time used to be the badge, which made an unplayed game look as
+        // though it had a result. It belongs on the detail line with the date.
+        const detail = [
+          narrow ? shortDateNoWeekday(game.startAt) : shortDate(game.startAt),
+          shortTime(game.startAt),
+          videoCountLabel(game.videoCount)
+        ]
+          .filter(part => part !== '')
+          .join(' · ')
+        return (
+          <Card key={game.id}>
+            <GameRow
+              first={lines.first}
+              second={lines.second}
+              detail={detail}
+              venue={game.venue}
+              posterUrl={game.posterUrl}
+              length={
+                game.durationSec == null ? undefined : clock(game.durationSec)
+              }
+              badgeLabel={
+                game.awayScore == null
+                  ? undefined
+                  : `${game.awayScore}–${game.homeScore}`
+              }
+              badgeTone="neutral"
+              onPress={() => {
+                // Tapping a video starts it. Somebody pressing a row with a
+                // picture and a length on it has asked to watch, not to read
+                // about it.
+                onOpenGame(game.id, `${lines.first} ${lines.second}`, {
+                  autoPlay: game.videoCount > 0
+                })
+              }}
+            />
+          </Card>
+        )
+      })}
       <View />
     </Screen>
   )

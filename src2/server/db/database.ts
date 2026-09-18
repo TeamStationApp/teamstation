@@ -20,6 +20,9 @@ export interface UsersTable {
   login_enabled: Generated<boolean>
   is_admin: Generated<boolean>
   avatar_path: string | null
+  avatar_sha256: string | null
+  avatar_source: string | null
+  avatar_updated_at: Timestamp | null
   /** Set when this account was absorbed by another; it is closed, not deleted. */
   merged_into: string | null
   created_at: Timestamp
@@ -55,6 +58,9 @@ export interface LeaguesTable {
   short_name: string | null
   website: string | null
   logo_path: string | null
+  logo_sha256: string | null
+  logo_source: string | null
+  logo_updated_at: Timestamp | null
   notes: string | null
   spectator_access: Generated<'team' | 'league'>
   created_at: Timestamp
@@ -67,6 +73,10 @@ export interface SeasonsTable {
   league_id: string | null
   name: string
   age_group: string | null
+  logo_path: string | null
+  logo_sha256: string | null
+  logo_source: string | null
+  logo_updated_at: Timestamp | null
   year: number
   term: string | null
   starts_on: string | null
@@ -89,6 +99,9 @@ export interface TeamsTable {
   /** The team this turned out to be, when two rows were one real team. */
   merged_into: string | null
   logo_path: string | null
+  logo_sha256: string | null
+  logo_source: string | null
+  logo_updated_at: Timestamp | null
   primary_color: string | null
   secondary_color: string | null
   created_at: Timestamp
@@ -184,6 +197,8 @@ export interface VideosTable {
     | null
   sync_offset_sec: Generated<number>
   duration_sec: number | null
+  /** How many cameras the recording holds. One unless something says else. */
+  num_cameras: Generated<number>
   width: number | null
   height: number | null
   codecs: string | null
@@ -215,6 +230,8 @@ export interface EventsTable {
   away_score: number | null
   home_score: number | null
   gumbo: Json
+  /** Credited outcomes, one play yielding one or more. See `010credits`. */
+  credits: Json | null
   source: Generated<'external' | 'manual'>
   hidden: Generated<boolean>
   title_override: string | null

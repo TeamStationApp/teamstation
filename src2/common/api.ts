@@ -28,7 +28,31 @@ export const asTeamSummary = asObject({
   id: asString,
   name: asString,
   shortName: asNullable(asString),
-  logoPath: asNullable(asString)
+  logoPath: asNullable(asString),
+  /**
+   * Signed and short-lived. The app never builds one: only the server knows
+   * where a picture lives and who may see it.
+   */
+  logoUrl: asOptional(asNullable(asString), null),
+  /**
+   * The team's record in its most recent season, counted from the plays.
+   *
+   * Per season, never across all time: seasons overlap, so a child on a spring
+   * team and an all-stars team at once would have one combined record that
+   * means nothing. Null for a team that has not played — `0–0` is a claim
+   * about games that were played, and there were none.
+   */
+  record: asOptional(
+    asNullable(
+      asObject({
+        w: asNumber,
+        l: asNumber,
+        t: asNumber,
+        seasonName: asNullable(asString)
+      })
+    ),
+    null
+  )
 })
 export type TeamSummary = ReturnType<typeof asTeamSummary>
 
@@ -45,23 +69,45 @@ export const asGameSummary = asObject({
   homeScore: asNullable(asNumber),
   awayScore: asNullable(asNumber),
   ingestStatus: asString,
-  videoCount: asNumber
+  videoCount: asNumber,
+  /** The longest video of the game, for the length on a thumbnail. */
+  durationSec: asOptional(asNullable(asNumber), null),
+  /** A frame of the game's video, signed and short-lived. */
+  posterUrl: asOptional(asNullable(asString), null)
 })
 export type GameSummary = ReturnType<typeof asGameSummary>
 
 export const asVideoSummary = asObject({
   id: asString,
+  /**
+   * How many cameras the recording holds. One unless something said otherwise.
+   * A count, not a type: a game's videos are otherwise independent.
+   */
+  numCameras: asOptional(asNumber, 1),
   kind: asString,
   title: asString,
   status: asString,
   storage: asString,
   startAt: asNullable(asString),
+  /** This recording's own clock correction, for switching angle in step. */
+  syncOffsetSec: asOptional(asNumber, 0),
   durationSec: asNullable(asNumber),
   width: asNullable(asNumber),
   height: asNullable(asNumber),
-  codecs: asNullable(asString)
+  codecs: asNullable(asString),
+  /** A frame of this video, signed and short-lived. */
+  posterUrl: asOptional(asNullable(asString), null)
 })
 export type VideoSummary = ReturnType<typeof asVideoSummary>
+
+const asLineScoreSide = asObject({
+  /** Runs in each inning, first inning first. */
+  runs: asArray(asNumber),
+  r: asNumber,
+  /** Null when the plays cannot say — which is not the same as none. */
+  h: asNullable(asNumber),
+  e: asNullable(asNumber)
+})
 
 export const asGameDetail = asObject({
   id: asString,
@@ -77,6 +123,28 @@ export const asGameDetail = asObject({
   awayScore: asNullable(asNumber),
   ingestStatus: asString,
   ingestMessage: asNullable(asString),
+  /** Each side's record in this game's season, `12–3`. */
+  awayRecord: asOptional(asNullable(asString), null),
+  homeRecord: asOptional(asNullable(asString), null),
+  /** Each side's mark, signed and short-lived. */
+  awayLogoUrl: asOptional(asNullable(asString), null),
+  homeLogoUrl: asOptional(asNullable(asString), null),
+  /**
+   * Runs, hits and errors per side, counted from the plays.
+   *
+   * The runs come from the same shared counter the final score does, so the
+   * two cannot disagree. An error is charged to the side that made it, which
+   * is the fielding side.
+   */
+  linescore: asOptional(
+    asNullable(
+      asObject({
+        away: asLineScoreSide,
+        home: asLineScoreSide
+      })
+    ),
+    null
+  ),
   videos: asArray(asVideoSummary)
 })
 export type GameDetail = ReturnType<typeof asGameDetail>
@@ -90,12 +158,19 @@ export const asHighlight = asObject({
   eventType: asNullable(asString),
   isScoringPlay: asBoolean,
   /** One frame of the video at the moment of the play. */
-  stillUrl: asString
+  stillUrl: asString,
+  /**
+   * The whole sentence, for the panel under the video. The list draws `title`;
+   * only that panel draws this.
+   */
+  description: asOptional(asNullable(asString), null)
 })
 export type Highlight = ReturnType<typeof asHighlight>
 
 export const asHighlightsResponse = asObject({
   withheld: asNullable(asString),
+  /** Plays left out because nobody could be named on them. */
+  droppedCount: asOptional(asNumber, 0),
   highlights: asArray(asHighlight)
 })
 export type HighlightsResponse = ReturnType<typeof asHighlightsResponse>
@@ -109,7 +184,8 @@ const asRates = asObject({
 
 export const asBattingRow = asObject({
   userId: asString,
-  displayName: asOptional(asString),
+  /** First name, last initial. Never the whole name. */
+  shortName: asOptional(asString),
   teamId: asNullable(asString),
   pa: asNumber,
   ab: asNumber,
@@ -128,11 +204,19 @@ export type BattingRow = ReturnType<typeof asBattingRow>
 
 export const asRosterEntry = asObject({
   userId: asString,
-  displayName: asString,
+  /**
+   * First name, last initial. The field is named for what it is so a full
+   * name cannot be shipped here by accident — the compiler visits every call
+   * site, where a reviewer might not.
+   */
+  shortName: asString,
+  avatarUrl: asOptional(asNullable(asString), null),
   jersey: asNullable(asString),
   positions: asArray(asString),
   isPlayer: asBoolean,
-  role: asString
+  role: asString,
+  /** `coach`, `player` or `follower` — the section they are listed under. */
+  group: asOptional(asString, 'player')
 })
 export type RosterEntry = ReturnType<typeof asRosterEntry>
 
@@ -191,19 +275,28 @@ export const asSeasonGame = asObject({
   homeScore: asNullable(asNumber),
   awayScore: asNullable(asNumber),
   ingestStatus: asString,
-  videoCount: asNumber
+  videoCount: asNumber,
+  /** The longest video of the game, for the length on a thumbnail. */
+  durationSec: asOptional(asNullable(asNumber), null),
+  /** A frame of the game's video, signed and short-lived. */
+  posterUrl: asOptional(asNullable(asString), null)
 })
 export type SeasonGame = ReturnType<typeof asSeasonGame>
+
+export const asSessionUser = asObject({
+  id: asString,
+  displayName: asString,
+  email: asOptional(asString),
+  isAdmin: asBoolean,
+  /** Signed and short-lived, for the picture in the header. */
+  avatarUrl: asOptional(asNullable(asString), null)
+})
+export type SessionUser = ReturnType<typeof asSessionUser>
 
 export const asSession = asObject({
   token: asString,
   expiresAt: asString,
-  user: asObject({
-    id: asString,
-    displayName: asString,
-    email: asOptional(asString),
-    isAdmin: asBoolean
-  })
+  user: asSessionUser
 })
 export type Session = ReturnType<typeof asSession>
 
@@ -270,6 +363,27 @@ export class GameStationClient {
       `/seasons/${encodeURIComponent(seasonId)}/games`,
       asArray(asSeasonGame)
     )
+  }
+
+  /**
+   * Who the cookie says you are, or null.
+   *
+   * The session is in an `HttpOnly` cookie the app cannot read, so asking the
+   * server is the only way to know whether somebody is signed in. Without
+   * this a reload showed the sign-in screen with a live session sitting in
+   * the jar, and every link landed there instead of where it pointed.
+   */
+  async whoAmI(): Promise<SessionUser | null> {
+    try {
+      return await this.request('GET', '/auth/me', asSessionUser)
+    } catch {
+      return null
+    }
+  }
+
+  /** The newest played game anywhere this person can see, or null. */
+  async recentGame(): Promise<SeasonGame | null> {
+    return await this.request('GET', '/games/recent', asNullable(asSeasonGame))
   }
 
   async seasonTeams(seasonId: string): Promise<TeamSummary[]> {
@@ -375,6 +489,11 @@ export class GameStationClient {
       response = await this.doFetch(`${this.baseUrl}${path}`, {
         method,
         headers,
+        // The session lives in an `HttpOnly` cookie, which this code cannot
+        // read and therefore cannot put in a header. `include` is what sends
+        // it when the app and the API are different origins, as they are in
+        // development.
+        credentials: 'include',
         body: body === undefined ? undefined : JSON.stringify(body)
       })
     } catch (caught: unknown) {

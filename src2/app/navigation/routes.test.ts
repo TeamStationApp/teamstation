@@ -1,0 +1,150 @@
+import { expect } from 'chai'
+import { describe, it } from 'mocha'
+
+import { parseRoute, type Route, routePath, safeNext } from './routes'
+
+/** Every route survives being written down and read back. */
+const roundTrip = (route: Route): Route => {
+  const [pathname, search] = routePath(route).split('?')
+  return parseRoute(pathname ?? '/', search ?? '')
+}
+
+describe('addresses', function () {
+  it('reads the home screen from the root', function () {
+    expect(parseRoute('/')).deep.equals({ name: 'home' })
+    expect(parseRoute('')).deep.equals({ name: 'home' })
+  })
+
+  it('carries a game, its video and the moment in it', function () {
+    expect(parseRoute('/games/gam_1', 'video=vid_2&t=734')).deep.equals({
+      name: 'game',
+      gameId: 'gam_1',
+      tab: 'watch',
+      videoId: 'vid_2',
+      at: 734
+    })
+  })
+
+  it('writes that address back exactly', function () {
+    expect(
+      routePath({
+        name: 'game',
+        gameId: 'gam_1',
+        tab: 'watch',
+        videoId: 'vid_2',
+        at: 734
+      })
+    ).equals('/games/gam_1?video=vid_2&t=734')
+  })
+
+  it('round-trips every kind of screen', function () {
+    const routes: Route[] = [
+      { name: 'home' },
+      { name: 'videos', when: 'past' },
+      { name: 'videos', when: 'all' },
+      { name: 'schedule', when: 'past' },
+      { name: 'schedule', when: 'upcoming' },
+      { name: 'account' },
+      { name: 'team', teamId: 'tea_1', tab: 'stats' },
+      { name: 'season', seasonId: 'sea_1', tab: 'standings', when: 'all' },
+      { name: 'league', leagueId: 'lea_1' }
+    ]
+    for (const route of routes) {
+      expect(roundTrip(route), routePath(route)).deep.equals(route)
+    }
+  })
+
+  it('keeps the section a team or season link asked for', function () {
+    expect(parseRoute('/teams/tea_1', '?tab=stats')).deep.equals({
+      name: 'team',
+      teamId: 'tea_1',
+      tab: 'stats'
+    })
+    expect(parseRoute('/seasons/sea_1', '?tab=standings')).deep.equals({
+      name: 'season',
+      seasonId: 'sea_1',
+      tab: 'standings',
+      when: undefined
+    })
+    expect(
+      parseRoute('/seasons/sea_1', '?tab=schedule&when=upcoming')
+    ).deep.equals({
+      name: 'season',
+      seasonId: 'sea_1',
+      tab: 'schedule',
+      when: 'upcoming'
+    })
+    expect(
+      routePath({ name: 'season', seasonId: 'sea_1', tab: 'teams' })
+    ).equals('/seasons/sea_1?tab=teams')
+  })
+
+  it('carries the half of a game screen that is showing', function () {
+    // The pill and the home card's button reach the same place, so they must
+    // leave the same address behind: one of them wrote it and the other did
+    // not, and a box score opened by pill could not be linked or reloaded.
+    expect(
+      routePath({ name: 'game', gameId: 'gam_1', tab: 'boxScore' })
+    ).equals('/games/gam_1?tab=boxScore')
+    expect(routePath({ name: 'game', gameId: 'gam_1', tab: 'watch' })).equals(
+      '/games/gam_1'
+    )
+    expect(parseRoute('/games/gam_1', '?tab=boxScore')).deep.equals({
+      name: 'game',
+      gameId: 'gam_1',
+      tab: 'boxScore',
+      videoId: undefined,
+      at: undefined
+    })
+  })
+
+  it('falls back to the home screen rather than a blank page', function () {
+    expect(parseRoute('/nonsense')).deep.equals({ name: 'home' })
+    expect(parseRoute('/teams')).deep.equals({ name: 'home' })
+  })
+
+  it('opens a schedule on what has happened, like the videos list', function () {
+    expect(parseRoute('/schedule')).deep.equals({
+      name: 'schedule',
+      when: 'past'
+    })
+  })
+
+  it('keeps a filter that was asked for', function () {
+    expect(parseRoute('/schedule', 'when=upcoming')).deep.equals({
+      name: 'schedule',
+      when: 'upcoming'
+    })
+    expect(parseRoute('/videos', 'when=all')).deep.equals({
+      name: 'videos',
+      when: 'all'
+    })
+  })
+
+  it('ignores a filter it does not recognise', function () {
+    expect(parseRoute('/videos', 'when=sideways')).deep.equals({
+      name: 'videos',
+      when: 'past'
+    })
+  })
+})
+
+describe('where sign-in sends you afterwards', function () {
+  it('accepts a path on this site', function () {
+    expect(safeNext('/games/gam_1')).equals('/games/gam_1')
+  })
+
+  it('refuses another site', function () {
+    // `//evil.example` is a protocol-relative URL: without this, somebody who
+    // has just typed their password is sent somewhere else entirely.
+    expect(safeNext('//evil.example')).equals(undefined)
+    expect(safeNext('https://evil.example')).equals(undefined)
+    expect(safeNext('javascript:alert(1)')).equals(undefined)
+    expect(safeNext('/\\evil.example')).equals(undefined)
+  })
+
+  it('refuses nothing at all', function () {
+    expect(safeNext(null)).equals(undefined)
+    expect(safeNext('')).equals(undefined)
+  })
+})

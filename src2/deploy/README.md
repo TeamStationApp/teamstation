@@ -9,18 +9,32 @@ ssh root@tube.gamestation.co /srv/gamestation/repo/src2/deploy/deploy.sh
 
 ## The deploy branch
 
-`paul/gameStationDeploy` is what the server follows. It is a fast-forward of
-whatever is being released — normally `paul/gameStation2` — and moving it is
-the act of deploying:
+**`deploy` is what the server follows, and it is whatever is on the server.**
+Moving it is the act of deploying:
 
 ```sh
-git push origin paul/gameStation2:paul/gameStationDeploy
+git push --force-with-lease origin <your-branch>:deploy
 ssh root@tube.gamestation.co /srv/gamestation/repo/src2/deploy/deploy.sh
 ```
 
 Keeping it separate from the working branch means a push to the branch you are
 working on is not a release, and the commit that is live can always be read off
 one ref.
+
+### One server, so one agent at a time
+
+There is a single box, so `deploy` is a single seat. An agent takes it to try
+something on real data before merging to master, and while it holds the seat
+nobody else pushes to `deploy` — a second agent doing so silently replaces
+what the first is testing, and neither of them sees it happen.
+
+So `deploy` is force-pushed, not fast-forwarded: it follows one branch at a
+time rather than accumulating everybody's. **Ask Paul who holds it before
+pushing.** The commit that is live is the answer to who had it last:
+
+```sh
+ssh root@tube.gamestation.co git -C /srv/gamestation/repo log --oneline -1
+```
 
 ## What a deploy does
 
@@ -75,7 +89,7 @@ Host github.com
   IdentitiesOnly yes
 CONF
 
-git clone --branch paul/gameStationDeploy \
+git clone --branch deploy \
   git@github.com:paullinator/gamestation.git /srv/gamestation/repo
 ```
 

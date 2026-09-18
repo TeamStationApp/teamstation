@@ -6,6 +6,7 @@ import {
   hashToken,
   makeEmailCode,
   makeToken,
+  sessionToken,
   tokensMatch
 } from './tokens'
 
@@ -65,5 +66,30 @@ describe('tokens', function () {
     }
     // A uniform draw over a million values should rarely repeat in 2000 tries.
     expect(seen.size).is.greaterThan(1900)
+  })
+})
+
+describe('which credential a request carries', function () {
+  it('takes the bearer header when there is one', function () {
+    expect(sessionToken('Bearer abc', 'gs_session=xyz')).equals('abc')
+  })
+
+  it('falls back to the cookie, which is how the web app signs in', function () {
+    expect(sessionToken(undefined, 'gs_session=xyz')).equals('xyz')
+  })
+
+  it('finds its cookie among others', function () {
+    expect(
+      sessionToken(undefined, 'other=1; gs_session=xyz; another=2')
+    ).equals('xyz')
+  })
+
+  it('is not fooled by a cookie whose name merely contains ours', function () {
+    expect(sessionToken(undefined, 'not_gs_session=xyz')).equals(undefined)
+  })
+
+  it('has nothing when there is nothing', function () {
+    expect(sessionToken(undefined, undefined)).equals(undefined)
+    expect(sessionToken(undefined, 'gs_session=')).equals(undefined)
   })
 })

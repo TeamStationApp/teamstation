@@ -14,8 +14,13 @@ export interface PillTabsProps<Id extends string = string> {
   tabs: Array<PillTab<Id>>
   selected: Id
   onSelect: (id: Id) => void
-  /** Fills the width and shares it evenly. Off, the pills size to their text. */
-  stretch?: boolean
+  /**
+   * `compact` is the size, everywhere. It does **not** shrink the target: the
+   * pressable keeps its 48px height and the pill is drawn inside it.
+   *
+   * `regular` is kept only so the difference has a name; nothing uses it.
+   */
+  size?: 'regular' | 'compact'
   accessibilityLabel?: string
 }
 
@@ -31,18 +36,26 @@ export interface PillTabsProps<Id extends string = string> {
  * It scrolls sideways rather than wrapping or shrinking. Four tabs fit a phone;
  * a fifth would either wrap to a second line that looks like a mistake, or
  * squeeze the labels until they truncate. Scrolling keeps every tab the same
- * size and full-width targets on a desktop, where `stretch` shares the row out
- * instead.
+ * size whatever the window is doing.
+ *
+ * **One size, everywhere.** Paul picked the videos list's filter on
+ * 2026-09-17 and asked for that exact pill on the team and season sections and
+ * on a game's two halves. There was a `stretch` that shared a row out across
+ * the width; nothing uses it now, so it is gone rather than left to be
+ * rediscovered. A row that fills its width is a different control, and having
+ * both was how the season page ended up drawing its sections and its filter
+ * the same shape.
  */
 export function PillTabs<Id extends string = string>(
   props: PillTabsProps<Id>
 ): React.ReactElement {
-  const { tabs, selected, onSelect, stretch = false } = props
+  const { tabs, selected, onSelect, size = 'compact' } = props
+  const compact = size === 'compact'
   const theme = useTheme()
   const styles = getStyles(theme)
 
   const row = (
-    <View style={[styles.row, stretch && styles.rowStretch]}>
+    <View style={styles.row}>
       {tabs.map(tab => {
         const isSelected = tab.id === selected
         return (
@@ -55,40 +68,43 @@ export function PillTabs<Id extends string = string>(
               onSelect(tab.id)
             }}
             style={({ pressed }) => [
-              styles.pill,
-              stretch && styles.pillStretch,
-              isSelected ? styles.pillActive : styles.pillIdle,
-              pressed && !isSelected && styles.pillPressed
+              styles.target,
+              pressed && !isSelected && styles.targetPressed
             ]}
           >
-            <Text
-              numberOfLines={1}
+            <View
               style={[
-                styles.label,
-                isSelected ? styles.labelActive : styles.labelIdle
+                styles.pill,
+                compact && styles.pillCompact,
+                isSelected ? styles.pillActive : styles.pillIdle
               ]}
             >
-              {tab.label}
-            </Text>
-            {tab.badge != null && (
               <Text
+                numberOfLines={1}
                 style={[
-                  styles.badge,
-                  isSelected ? styles.labelActive : styles.badgeIdle
+                  styles.label,
+                  compact && styles.labelCompact,
+                  isSelected ? styles.labelActive : styles.labelIdle
                 ]}
               >
-                {tab.badge}
+                {tab.label}
               </Text>
-            )}
+              {tab.badge != null && (
+                <Text
+                  style={[
+                    styles.badge,
+                    isSelected ? styles.labelActive : styles.badgeIdle
+                  ]}
+                >
+                  {tab.badge}
+                </Text>
+              )}
+            </View>
           </Pressable>
         )
       })}
     </View>
   )
-
-  // Stretched, the row already fits by construction, and a ScrollView would
-  // stop it filling the width.
-  if (stretch) return row
 
   return (
     <ScrollView
@@ -112,23 +128,29 @@ const getStyles = cacheStyles((theme: Theme) => ({
     alignItems: 'center',
     gap: theme.rem(theme.spaceSmRem)
   },
-  rowStretch: {
-    width: '100%'
+  // What the finger gets: 48 tall, which the spec asks for so a tab can be hit
+  // one-handed while somebody is also holding a scorebook. It is transparent —
+  // shrinking the pill is a drawing decision and must not shrink this.
+  target: {
+    minHeight: theme.rem(3),
+    justifyContent: 'center'
   },
+  targetPressed: {
+    opacity: 0.85
+  },
+  // What the eye gets.
   pill: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: theme.rem(theme.spaceXsRem),
-    // 48 tall, which the spec asks for so a tab can be hit one-handed while
-    // somebody is also holding a scorebook.
     minHeight: theme.rem(3),
     paddingHorizontal: theme.rem(theme.spaceLgRem),
     borderRadius: theme.radiusPill
   },
-  pillStretch: {
-    flex: 1,
-    paddingHorizontal: theme.rem(theme.spaceSmRem)
+  pillCompact: {
+    minHeight: theme.rem(2.25),
+    paddingHorizontal: theme.rem(theme.spaceMdRem)
   },
   pillIdle: {
     backgroundColor: theme.pillBackground
@@ -143,6 +165,9 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontFamily: theme.semiBoldTextFont,
     fontSize: theme.rem(0.9375),
     fontWeight: '600'
+  },
+  labelCompact: {
+    fontSize: theme.rem(0.875)
   },
   labelIdle: {
     color: theme.pillTextColor

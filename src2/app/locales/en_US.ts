@@ -52,6 +52,12 @@ export const enUs = {
   // One game
   game_videos: 'Videos',
   game_highlights: 'Highlights',
+  video_primary: 'Primary',
+  video_multi_angle: 'Multi-angle',
+  videos_count_one: '%s video',
+  videos_count_many: '%s videos',
+  games_count_one: '%s game',
+  games_count_many: '%s games',
   game_box_score: 'Box score',
   game_no_video: 'No video for this game.',
   game_video_unavailable: 'This video is not available right now.',
@@ -66,6 +72,8 @@ export const enUs = {
   // Highlights
   highlight_jump: 'Jump to this play',
   highlights_none: 'No highlights for this video.',
+  highlights_none_named:
+    'No highlights we can name for this video. The plays are there, but the players on them are not in our records.',
   /**
    * Some games were scored from the recording afterwards, sometimes days
    * later. The plays are real and the box score is right; the tap times just
@@ -110,7 +118,9 @@ export const enUs = {
   common_back: 'Back',
   common_retry: 'Try again',
   common_loading: 'Loading…',
-  common_not_found: 'Not found.',
+  common_not_found: 'That game is not here',
+  common_not_found_detail:
+    'It may have been removed, or the link may be for a game you cannot see.',
   common_offline: 'You appear to be offline.'
 }
 

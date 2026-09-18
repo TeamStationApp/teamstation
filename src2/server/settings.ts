@@ -16,12 +16,23 @@ export interface HighlightSettings {
   leadSec: number
   /** Exceptions by GUMBO event type, e.g. a shorter lead for a strikeout. */
   leadSecByEventType: Record<string, number>
+  /**
+   * How close two outcomes of a play have to be logged to count as one moment.
+   *
+   * Often a hit and the run it drove in are genuinely one thing — a walk that
+   * forces a runner home, a single scoring from third — and the scorekeeper
+   * taps once, or twice within a second. Two rows there is two thumbnails of
+   * the same piece of video. Further apart, they are separate moments and get
+   * a row each.
+   */
+  mergeWithinSec: number
 }
 
 export const defaultHighlightSettings: HighlightSettings = {
   lagSec: 8,
   leadSec: 30,
-  leadSecByEventType: { strikeout: 10 }
+  leadSecByEventType: { strikeout: 10 },
+  mergeWithinSec: 5
 }
 
 const asLeadMap = asObject(asNumber)
@@ -29,7 +40,8 @@ const asLeadMap = asObject(asNumber)
 export const asHighlightSettings = asObject({
   lagSec: asNumber,
   leadSec: asNumber,
-  leadSecByEventType: asLeadMap
+  leadSecByEventType: asLeadMap,
+  mergeWithinSec: asNumber
 })
 
 const CACHE_MS = 30000
@@ -76,6 +88,10 @@ export async function highlightSettings(
     leadSecByEventType: leadMapOr(
       byKey.get('highlights.leadSecByEventType'),
       defaultHighlightSettings.leadSecByEventType
+    ),
+    mergeWithinSec: numberOr(
+      byKey.get('highlights.mergeWithinSec'),
+      defaultHighlightSettings.mergeWithinSec
     )
   }
 
