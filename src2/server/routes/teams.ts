@@ -16,7 +16,12 @@ import { stillSecond, warmStills } from '../media/stills'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import { highlightSettings } from '../settings'
-import { battingLines, battingRates } from '../stats'
+import {
+  battingLines,
+  battingRates,
+  inningsPitched,
+  pitchingLines
+} from '../stats'
 
 /**
  * The watch path: teams, then that team's games newest first, then one game
@@ -752,13 +757,85 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
         }))
       )
 
-      res.json(
-        lines.map(line => ({
-          ...line,
-          shortName: names.get(line.userId) ?? 'Unknown',
-          rates: battingRates(line)
+      // The pitching half, from the plays that name a pitcher. Runs allowed
+      // come from the score either side of the play; there is no earned-run
+      // column, because telling an earned run from an unearned one means
+      // replaying the inning without the error, which the plays do not
+      // describe, and an ERA we invented is worse than none.
+      const pitchRows = await db
+        .selectFrom('event_players')
+        .innerJoin('events', 'events.id', 'event_players.event_id')
+        .innerJoin('users', 'users.id', 'event_players.user_id')
+        .select([
+          'event_players.user_id as userId',
+          'event_players.team_id as teamId',
+          'events.event_type as eventType',
+          'events.at_bat_index as atBatIndex',
+          'users.display_name as displayName',
+          'users.first_name as firstName',
+          'users.last_name as lastName'
+        ])
+        .where('events.game_id', '=', gameId)
+        .where('event_players.role', '=', 'pitcher')
+        .orderBy('events.at_bat_index')
+        .execute()
+
+      // Runs on a play are the change in the batting side's score across it.
+      const scores = await db
+        .selectFrom('events')
+        .select(['at_bat_index', 'away_score', 'home_score', 'half_inning'])
+        .where('game_id', '=', gameId)
+        .orderBy('at_bat_index')
+        .execute()
+      const runsByIndex = new Map<number, number>()
+      let lastAway = 0
+      let lastHome = 0
+      for (const row of scores) {
+        const away = row.away_score ?? lastAway
+        const home = row.home_score ?? lastHome
+        const scored =
+          row.half_inning === 'bottom' ? home - lastHome : away - lastAway
+        runsByIndex.set(row.at_bat_index, Math.max(0, scored))
+        lastAway = away
+        lastHome = home
+      }
+
+      const pitchNames = shortNames(
+        pitchRows.map(row => ({
+          id: row.userId,
+          firstName: row.firstName,
+          lastName: row.lastName,
+          displayName: row.displayName
         }))
       )
+      const pitching = pitchingLines(
+        pitchRows.map(row => ({
+          pitcherUserId: row.userId,
+          teamId: row.teamId,
+          eventType: row.eventType ?? 'unknown',
+          runsScored: runsByIndex.get(row.atBatIndex) ?? 0
+        }))
+      ).map(line => ({
+        ...line,
+        shortName: pitchNames.get(line.userId) ?? 'Unknown',
+        ip: inningsPitched(line.outs)
+      }))
+
+      // The average beside a name is read as what kind of hitter somebody is,
+      // so it is their season to date rather than their afternoon: three
+      // at-bats say nothing, and a box score has always printed the running
+      // figure.
+      const seasonAvg = await averagesToDate(db, gameId, game.season_id)
+
+      res.json({
+        batting: lines.map(line => ({
+          ...line,
+          shortName: names.get(line.userId) ?? 'Unknown',
+          rates: battingRates(line),
+          seasonAvg: seasonAvg.get(line.userId) ?? null
+        })),
+        pitching
+      })
     })
   )
 
@@ -874,4 +951,75 @@ function whyEmpty(
   if (timed.length === 0) return 'noPlayTimes'
   if (video.startAt == null) return 'noVideoStart'
   return 'scoredAfterRecording'
+}
+
+/**
+ * Each batter's average for the season, up to and including this game.
+ *
+ * The average printed beside a name in a box score is read as what kind of
+ * hitter somebody is, and one afternoon does not say. So it is counted over
+ * every game of the same season up to this one — and where a game belongs to
+ * no season, over every game those teams have played, which is the only honest
+ * answer available for a one-off.
+ */
+async function averagesToDate(
+  db: Kysely<Database>,
+  gameId: string,
+  seasonId: string | null
+): Promise<Map<string, number>> {
+  const game = await db
+    .selectFrom('games')
+    .select(['start_at', 'home_team_id', 'away_team_id'])
+    .where('id', '=', gameId)
+    .executeTakeFirst()
+  if (game == null) return new Map()
+
+  let query = db
+    .selectFrom('event_players')
+    .innerJoin('events', 'events.id', 'event_players.event_id')
+    .innerJoin('games', 'games.id', 'events.game_id')
+    .select([
+      'event_players.user_id as userId',
+      'events.event_type as eventType',
+      'events.rbi as rbi',
+      'event_players.team_id as teamId'
+    ])
+    .where('event_players.role', '=', 'batter')
+
+  query =
+    seasonId == null
+      ? query.where(eb =>
+          eb.or([
+            eb('games.home_team_id', 'in', [
+              game.home_team_id,
+              game.away_team_id
+            ]),
+            eb('games.away_team_id', 'in', [
+              game.home_team_id,
+              game.away_team_id
+            ])
+          ])
+        )
+      : query.where('games.season_id', '=', seasonId)
+
+  // Up to and including this one, by when it was played. A game with no date
+  // cannot be placed in the order, so it counts only for its own box score.
+  if (game.start_at != null) {
+    query = query.where('games.start_at', '<=', game.start_at)
+  }
+
+  const rows = await query.execute()
+  const lines = battingLines(
+    rows.map(row => ({
+      batterUserId: row.userId,
+      teamId: row.teamId,
+      eventType: row.eventType ?? 'unknown',
+      rbi: row.rbi
+    }))
+  )
+  const out = new Map<string, number>()
+  for (const line of lines) {
+    if (line.ab > 0) out.set(line.userId, line.h / line.ab)
+  }
+  return out
 }
