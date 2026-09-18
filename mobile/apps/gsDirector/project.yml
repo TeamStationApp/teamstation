@@ -52,6 +52,8 @@ packages:
     path: ../common/CameramanRemote
   DirectorRTMP:
     path: Packages/DirectorRTMP
+  GameStationKit:
+    path: ../common/GameStationKit
   DirectorUI:
     path: Packages/DirectorUI
   DirectorTestHarness:
@@ -103,6 +105,8 @@ targets:
         product: DirectorRTMP
       - package: DirectorUI
         product: DirectorUI
+      - package: GameStationKit
+        product: GameStationKit
       - package: DirectorTestHarness
         product: DirectorTestHarness
 
@@ -168,6 +172,8 @@ targets:
         product: DirectorTestHarness
       - package: DirectorUI
         product: DirectorUI
+      - package: GameStationKit
+        product: GameStationKit
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: co.gamestation.director.unittests

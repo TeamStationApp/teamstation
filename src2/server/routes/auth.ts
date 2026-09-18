@@ -52,13 +52,34 @@ const asLinkLogin = asObject({
 
 const asRequestClaim = asObject({
   requestId: asString,
-  clientSecret: asString
+  clientSecret: asString,
+  /** Set by a device signing itself in, and it is what it will be called. */
+  deviceName: asOptional(asString)
 })
 
 const asCodeLogin = asObject({
   email: asString,
-  code: asString
+  code: asString,
+  deviceName: asOptional(asString)
 })
+
+/**
+ * How long a session lasts.
+ *
+ * A browser gets the ordinary month. A **device** — GS Director, signed in
+ * once indoors and then used every weekend from a field where fixing it is
+ * the last thing anybody wants to be doing — gets a season, and is named, so
+ * a list of them reads like a list of iPads rather than of user agents.
+ */
+const DEVICE_SESSION_DAYS = 180
+
+function sessionOptionsFor(deviceName: string | undefined): {
+  days?: number
+  deviceName?: string
+} {
+  if (deviceName == null || deviceName.trim() === '') return {}
+  return { days: DEVICE_SESSION_DAYS, deviceName: deviceName.trim() }
+}
 
 /** One of the three places a sign-in can start. */
 function asSignInOrigin(raw: unknown): SignInOrigin {
@@ -325,7 +346,12 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
         throw unauthorized('That code is wrong or has expired')
       }
 
-      const session = await createSession(db, user.id, req.header('user-agent'))
+      const session = await createSession(
+        db,
+        user.id,
+        req.header('user-agent'),
+        sessionOptionsFor(body.deviceName)
+      )
       setSessionCookie(res, session.token, session.expiresAt, secureCookie)
       res.json(
         asSession({
@@ -411,7 +437,12 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
       const user = await findUserByEmail(db, claim.email)
       if (user == null) throw unauthorized('That sign-in is no longer good')
 
-      const session = await createSession(db, user.id, req.header('user-agent'))
+      const session = await createSession(
+        db,
+        user.id,
+        req.header('user-agent'),
+        sessionOptionsFor(body.deviceName)
+      )
       setSessionCookie(res, session.token, session.expiresAt, secureCookie)
       res.json(
         asSession({
