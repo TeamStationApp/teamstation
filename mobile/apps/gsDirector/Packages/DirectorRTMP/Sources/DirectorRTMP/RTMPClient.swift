@@ -74,7 +74,7 @@ public final class RTMPClient: @unchecked Sendable {
   private var windowStarted = CFAbsoluteTimeGetCurrent()
   private var megabitsPerSecond: Double = 0
   private var droppedPackets: UInt64 = 0
-  private var sendQueue: [Data] = []
+  private var sendQueue: [Queued] = []
   private var isSending = false
   /// Bytes written but not yet on the wire, wherever they are parked.
   ///
@@ -85,12 +85,26 @@ public final class RTMPClient: @unchecked Sendable {
   /// incremented where the work is submitted and decremented where it completes, so it sees the
   /// backlog in the dispatch queue as well as in the array.
   private var queuedBytes = 0
+
+  /// One whole RTMP message waiting for the socket, with what the shed policy needs to judge it.
+  ///
+  /// `RTMPChunk.encode` writes a full header for every message and fmt 3 only to continue that same
+  /// message, so nothing here is encoded against anything else and a message can be thrown away
+  /// without the receiver losing its place.
+  private struct Queued {
+    var data: Data
+    var submittedAt: Double
+    var isVideo: Bool
+    var isKeyframe: Bool
+    var isSequenceHeader: Bool
+  }
   /// Every write in order and how much of it the socket has taken, for the bitrate controller.
   private var ledger = RTMPSendLedger()
   private var sendBudgetBytes = RTMPClient.defaultSendBudgetBytes
   /// How long the oldest write may wait before media is shed.
   private var bufferSeconds = RTMPClient.sendBufferSeconds
-  private var sendTimeoutSeconds: Double = 10
+  private var sendTimeoutSeconds: Double = 2
+  private var stallDeadline: Double = RTMPClient.stallDeadlineSeconds
   /// What the video tags carry. Decides what `connect` and `onMetaData` announce, and whether an
   /// early refusal is explained as the server not taking the codec.
   private var videoCodec = RTMPVideoCodec.h264
@@ -119,18 +133,25 @@ public final class RTMPClient: @unchecked Sendable {
 
   /// How long the stream may wait for the link before it sheds anything. Nobody watches the stream
   /// against the field — a platform's player sits 5–20 s behind — so a dip in the link is better
-  /// sent late than dropped. Eight seconds stays inside the 10 s a single send may block before the
-  /// peer counts as gone, so a link that comes back is always given its backlog.
-  public static let sendBufferSeconds: Double = 8
+  /// sent late than dropped, and half a minute covers every squeeze this rig has produced.
+  ///
+  /// This is no longer tied to how long one send may block: a send that times out is backpressure,
+  /// not a dead peer, so the buffer is free to be as deep as the memory allows. `stallDeadlineSeconds`
+  /// is what decides the peer is gone, and it is longer than this so the buffer is spent first.
+  public static let sendBufferSeconds: Double = 30
+
+  /// How long one write may make no progress at all before the peer counts as gone. Longer than the
+  /// send buffer, so a link that comes back is always given its backlog first.
+  public static let stallDeadlineSeconds: Double = 45
   /// What a client holds before `configure` gives it a budget of its own.
   static let defaultSendBudgetBytes = 1_500_000
   static let minimumSendBudgetBytes = 512 * 1024
-  static let maximumSendBudgetBytes = 32 * 1024 * 1024
+  static let maximumSendBudgetBytes = 64 * 1024 * 1024
 
   /// The send buffer's size in bytes, a memory ceiling beside its age limit: `sendBufferSeconds` of
-  /// the high bitrate, with room for the encoder's one-second spikes to half again the rate. 9 MB at
-  /// 6 Mbps, 15 MB at the 10 Mbps top of Settings. `ProgramStreamer` passes its configured high
-  /// bitrate so the budget tracks whatever the operator chose.
+  /// the high bitrate, with room for the encoder's one-second spikes to half again the rate. 22 MB
+  /// at 4 Mbps, 34 MB at 6 Mbps, 56 MB at the 10 Mbps top of Settings. `ProgramStreamer` passes its
+  /// configured high bitrate so the budget tracks whatever the operator chose.
   public static func sendBudget(forBitrate bitrate: Int) -> Int {
     let bytes = Int(Double(bitrate) / 8 * sendBufferSeconds * 1.5)
     return min(max(bytes, minimumSendBudgetBytes), maximumSendBudgetBytes)
@@ -195,7 +216,7 @@ public final class RTMPClient: @unchecked Sendable {
   public func configure(
     sendBudgetBytes: Int,
     bufferSeconds: Double = RTMPClient.sendBufferSeconds,
-    sendTimeoutSeconds: Double = 10,
+    sendTimeoutSeconds: Double = 2,
     videoCodec: RTMPVideoCodec = .h264
   ) {
     lock.lock()
@@ -769,68 +790,116 @@ public final class RTMPClient: @unchecked Sendable {
     let isSequenceHeader = isVideo
       ? FLVTag.isVideoSequenceHeader(payload)
       : FLVTag.isAudioSequenceHeader(payload)
-    if !isSequenceHeader {
-      if queuedBytes > sendBudgetBytes || ledger.queueDelay(at: Self.monotonicNow()) > bufferSeconds {
-        droppedPackets += 1
-        if isVideo { awaitingKeyframe = true }
-        lock.unlock()
-        return .droppedOverBudget
-      }
-      if isVideo, awaitingKeyframe {
-        guard FLVTag.isVideoKeyframe(payload) else {
-          droppedPackets += 1
-          lock.unlock()
-          return .droppedAwaitingKeyframe
-        }
-        awaitingKeyframe = false
-      }
-    }
+    let isKeyframe = isVideo && FLVTag.isVideoKeyframe(payload)
     lock.unlock()
     write(
       RTMPChunk.encode(
         RTMPMessage(streamID: streamID, type: type, timestamp: timestamp, payload: payload),
         chunkStreamID: chunkStreamID,
         chunkSize: chunkSize
-      )
+      ),
+      isVideo: isVideo,
+      isKeyframe: isKeyframe,
+      isSequenceHeader: isSequenceHeader
     )
     return .sent
   }
 
+  /// Throws the oldest waiting messages away until the queue fits the budget again.
+  ///
+  /// The oldest, not the newest. A link that carries less than the programme cannot deliver
+  /// everything, and holding the old frames to send the new ones late puts the stream further behind
+  /// the game with every second — permanently, once the buffer fills. Dropping from the front costs
+  /// the viewer a jump forward and leaves them near live, which is what a game wants; the take's
+  /// own recording keeps what the stream skipped.
+  ///
+  /// Sequence headers are never thrown away: they are the decoder's only key to what follows. What
+  /// is left has to start on a keyframe, so whole groups go rather than the front of one, and the
+  /// ingest gets pictures it can decode instead of a run of references to frames it never saw.
+  ///
+  /// Called with the lock held.
+  /// Whether the first picture still queued is one the ingest can decode on its own. For the tests
+  /// that hold the shed policy to leaving a decodable queue behind.
+  var firstQueuedVideoIsKeyframeForTesting: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    guard let first = sendQueue.first(where: { $0.isVideo && !$0.isSequenceHeader }) else { return true }
+    return first.isKeyframe
+  }
+
+  private func shedOldestLocked() {
+    let now = Self.monotonicNow()
+    func overBudget() -> Bool {
+      queuedBytes > sendBudgetBytes || ledger.queueDelay(at: now) > bufferSeconds
+    }
+    guard overBudget() else { return }
+    var shed = false
+    while overBudget(), sendQueue.contains(where: { !$0.isSequenceHeader }) {
+      guard let index = sendQueue.firstIndex(where: { !$0.isSequenceHeader }) else { break }
+      queuedBytes = max(0, queuedBytes - sendQueue[index].data.count)
+      sendQueue.remove(at: index)
+      droppedPackets += 1
+      shed = true
+    }
+    // Leave the queue starting on a picture the ingest can decode.
+    if shed {
+      while let first = sendQueue.firstIndex(where: { $0.isVideo && !$0.isSequenceHeader }),
+            !sendQueue[first].isKeyframe {
+        queuedBytes = max(0, queuedBytes - sendQueue[first].data.count)
+        sendQueue.remove(at: first)
+        droppedPackets += 1
+      }
+      ledger.resetWaiting(
+        bytes: sendQueue.map { $0.data.count },
+        since: sendQueue.map { $0.submittedAt }
+      )
+    }
+  }
+
+  /// Control writes — handshake, acknowledgements, the publish itself — are never shed.
   private func write(_ data: Data) {
+    write(data, isVideo: false, isKeyframe: false, isSequenceHeader: true)
+  }
+
+  private func write(_ data: Data, isVideo: Bool, isKeyframe: Bool, isSequenceHeader: Bool) {
     guard !data.isEmpty else { return }
     // Counted here, at submission, rather than on the serial queue. A chunk submitted while the
     // sender is blocked never reaches `sendQueue` — it waits as a pending `queue.async` block —
     // so counting any later than this cannot see a backlog at all.
+    let now = Self.monotonicNow()
+    let item = Queued(
+      data: data,
+      submittedAt: now,
+      isVideo: isVideo,
+      isKeyframe: isKeyframe,
+      isSequenceHeader: isSequenceHeader
+    )
+    // Queued here, under the lock, rather than from the sender's queue. While the socket is blocked
+    // the serial queue is blocked with it, so anything handed to it waits as a pending block that
+    // nothing can look at or throw away — the backlog would be invisible and unbounded. Holding it
+    // here is what lets the oldest of it be shed.
     lock.lock()
-    queuedBytes += data.count
-    ledger.submitted(bytes: data.count, at: Self.monotonicNow())
-    lock.unlock()
-    if DispatchQueue.getSpecific(key: Self.queueKey) != nil {
-      enqueueAndFlush(data)
-    } else {
-      queue.async { self.enqueueAndFlush(data) }
-    }
-  }
-
-  private func enqueueAndFlush(_ data: Data) {
-    lock.lock()
-    // `fail()` dropped the backlog and zeroed the counter. A block that was already in flight
-    // when it ran must not resurrect either.
     guard phase != .failed else {
       queuedBytes = 0
       ledger.clear()
       lock.unlock()
       return
     }
-    sendQueue.append(data)
+    queuedBytes += data.count
+    ledger.submitted(bytes: data.count, at: now)
+    sendQueue.append(item)
+    shedOldestLocked()
     let sending = isSending
     if !sending { isSending = true }
     lock.unlock()
-    if !sending { flush() }
+    guard !sending else { return }
+    if DispatchQueue.getSpecific(key: Self.queueKey) != nil {
+      flush()
+    } else {
+      queue.async { self.flush() }
+    }
   }
 
-  /// Drains the queue in a loop. This used to recurse, which was safe only while the queue could
-  /// never hold more than one item; a real backlog would have overflowed the stack.
   private func flush() {
     while true {
       lock.lock()
@@ -839,7 +908,7 @@ public final class RTMPClient: @unchecked Sendable {
         lock.unlock()
         return
       }
-      let data = sendQueue.removeFirst()
+      let data = sendQueue.removeFirst().data
       let fd = socketFD
       lock.unlock()
       guard fd >= 0 else {
@@ -863,22 +932,35 @@ public final class RTMPClient: @unchecked Sendable {
     // does not record which server a take was streaming to.
     lock.lock()
     let peerLabel = url.map { "\($0.host):\($0.port)" } ?? "stream server"
+    let stallSeconds = stallDeadline
     lock.unlock()
     return data.withUnsafeBytes { raw -> RTMPClientError? in
       guard let base = raw.baseAddress else { return nil }
       var offset = 0
+      var noProgressSince: Double?
       while offset < raw.count {
         let sent = Darwin.send(fd, base + offset, raw.count - offset, 0)
         if sent < 0 {
           if errno == EINTR { continue }
-          // `SO_SNDTIMEO` expires as EAGAIN. A peer that accepts the connection and then stops
-          // reading is exactly the case that used to grow the heap until malloc failed.
+          // `SO_SNDTIMEO` expires as EAGAIN. That is a link carrying less than the programme, not a
+          // peer that has gone: the queue behind this write is being shed to fit meanwhile, so
+          // waiting costs bounded memory. Only a write that makes no progress at all for longer
+          // than the buffer it is holding up counts the peer as gone. Treating the first timeout as
+          // a disconnect is what ended two streams on the rig and left them off for the rest of the
+          // session.
           if errno == EAGAIN || errno == EWOULDBLOCK {
-            return .disconnected("\(peerLabel) stopped accepting data")
+            let now = Self.monotonicNow()
+            let since = noProgressSince ?? now
+            noProgressSince = since
+            if now - since >= stallSeconds {
+              return .disconnected("\(peerLabel) stopped accepting data")
+            }
+            continue
           }
           return .disconnected("socket write failed (\(errno))")
         }
         offset += sent
+        noProgressSince = nil
         account(sent: sent)
       }
       return nil
@@ -975,8 +1057,12 @@ public final class RTMPClient: @unchecked Sendable {
     fd: Int32,
     budgetBytes: Int,
     bufferSeconds: Double = RTMPClient.sendBufferSeconds,
-    sendTimeoutSeconds: Double = 10
+    sendTimeoutSeconds: Double = 2,
+    stallDeadlineSeconds: Double = RTMPClient.stallDeadlineSeconds
   ) {
+    lock.lock()
+    stallDeadline = max(stallDeadlineSeconds, 0)
+    lock.unlock()
     // The same options `openSocket` sets. Without `SO_NOSIGPIPE` a test that closes the peer
     // takes the whole test process down with SIGPIPE instead of seeing EPIPE.
     var noSig = Int32(1)
