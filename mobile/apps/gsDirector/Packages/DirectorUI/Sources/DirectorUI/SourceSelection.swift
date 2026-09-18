@@ -13,6 +13,11 @@ public struct SourceSelection: Identifiable, Hashable, Sendable, Codable {
   /// Whether this source's audio is mixed into the program output. Independent of `isEnabled`
   /// because the two decisions are genuinely separate: a wide shot may be the picture you never cut
   /// to and the only microphone worth hearing.
+  ///
+  /// Off until the operator asks for it. Which microphones are in the programme is a decision
+  /// somebody makes once and expects to hold, and a camera arriving in the mix unasked is how a
+  /// crowd, a dugout or a phone left face-down on a table gets into a game nobody was listening to
+  /// at the time. See `SourceAudioRules` for how that decision then outlives the row it was made on.
   public var usesAudio: Bool
   /// Input volume for this camera's native audio, 0...1. Fifty percent is unity into the mix;
   /// 100 percent is twice as loud and can clip.
@@ -34,7 +39,7 @@ public struct SourceSelection: Identifiable, Hashable, Sendable, Codable {
     advertisedName: String,
     customName: String? = nil,
     isEnabled: Bool = false,
-    usesAudio: Bool = true,
+    usesAudio: Bool = false,
     inputGain: Double = SourceSelectionRules.defaultInputGain,
     sourceIndex: Int? = nil,
     isPresent: Bool = true,
@@ -57,9 +62,10 @@ public struct SourceSelection: Identifiable, Hashable, Sendable, Codable {
     case tileIndex, linkedControlID
   }
 
-  /// Selections saved before `usesAudio` existed decode with audio on, matching the old behaviour
-  /// where the program source's audio was always taken. Missing `inputGain` is 50 percent, which is
-  /// unity. `tileIndex` is the pre-rename slot key.
+  /// Selections saved before `usesAudio` existed decode with audio on — not off, as a camera
+  /// discovered today does. They are an iPad that was already mixing those cameras, back when the
+  /// program source's audio was always taken, and an upgrade must not silence a rig mid-season.
+  /// Missing `inputGain` is 50 percent, which is unity. `tileIndex` is the pre-rename slot key.
   public init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     self.init(
