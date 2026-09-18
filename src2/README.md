@@ -48,3 +48,39 @@ npm test
 
 Configuration is written by `cleaner-config` to `src2/serverConfig.json` on
 first run; it is gitignored, and every field has a default.
+
+## Live streaming
+
+A game can be given a stream URL with its key in it — `rtmp://host:1936/live/…`
+— which is pasted into streaming software or picked from a list by GS Director.
+One stream arrives and goes two ways at once: this machine's own HLS, and,
+when the game says so, onward to another RTMP destination. Both legs are
+`-c copy`.
+
+| Piece | Where |
+| --- | --- |
+| The RTMP ingest and the split | `server/live/splitter.ts` — node-media-server, one ffmpeg child per leg |
+| What keeps it in step with the database | `server/live/controller.ts` |
+| Keys, their window, and sealing | `server/live/streamKeys.ts`, `server/live/secrets.ts` |
+| Turning a finished stream into a recording | `server/live/finishVideo.ts` |
+| The Space, and proving the copy arrived | `server/media/spacesVideo.ts` |
+
+Three things are worth knowing before changing any of it:
+
+- **The ingest runs in exactly one process** — the cluster primary, or the
+  single process when `clusterWorkers` is 1. It binds a port and holds the
+  ffmpeg children, and a second copy would fight the first for both. The API
+  never calls it: an endpoint writes the `live_streams` row and the controller
+  acts on it within the second.
+- **A video's `kind` is `live` for ever**, including long after the stream has
+  finished and become an ordinary recording. `status` is what moves: `live`,
+  then `processing`, then `ready`.
+- **Keys are sealed, not hashed.** Unlike a session token, a stream key exists
+  to be read back and pasted, so `live_streams` keeps both a hash (to check an
+  incoming publish against) and a sealed copy (to show again). Changing
+  `sessionSecret` makes the sealed copies unreadable, which means rotating
+  every key rather than recovering them.
+
+Locally, `npm run fake-space` stands in for the DigitalOcean Space with
+signatures enforced, so the whole path — live, ended, packed up, uploaded,
+verified, swept — runs on one machine with no network and no bill.

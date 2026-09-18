@@ -40,8 +40,10 @@ const palette = {
   moss: '#5C6B55',
   ash: '#788272',
 
-  // Status. Clay is the live/active indicator, gold the honours.
+  // Status. Clay is the active indicator, gold the honours, and live is red —
+  // the one colour a parent glancing at a screen reads without being taught it.
   clay: '#BC4A24',
+  liveRed: '#D22B2B',
   gold: '#D4A017',
   amberPale: '#FDF6E3',
   amberInk: '#8A6100',
@@ -114,7 +116,7 @@ export const gsBallpark: Theme = {
   successColor: palette.winInk,
   warningColor: palette.gold,
   dangerColor: palette.crimson,
-  liveColor: palette.clay,
+  liveColor: palette.liveRed,
   scheduledColor: palette.ash,
 
   // Badges: a win, a loss, and an honour such as 1st place.
