@@ -21,6 +21,11 @@ export type Route =
   | { name: 'team'; teamId: string; tab?: string }
   | { name: 'season'; seasonId: string; tab?: string; when?: When }
   | { name: 'league'; leagueId: string }
+  /**
+   * The page behind the gear on a team, season or league card: who can see
+   * this, who may change it, and the invite links that let more people in.
+   */
+  | { name: 'manage'; scopeKind: 'league' | 'season' | 'team'; scopeId: string }
   | {
       name: 'game'
       gameId: string
@@ -30,6 +35,16 @@ export type Route =
       at?: number
     }
   | { name: 'signIn'; next?: string }
+  /**
+   * An invite link, `/i/<code>`.
+   *
+   * The address PeerTube's invite links already use, kept exactly: the codes
+   * on this site were handed out as `tube.gamestation.co/i/tforce26` and are
+   * in mailboxes and team sheets that nobody can edit. A screen at the same
+   * path is the only way those keep working the day GameStation takes the
+   * domain over.
+   */
+  | { name: 'join'; code: string }
   /**
    * The link from the sign-in e-mail.
    *
@@ -66,6 +81,16 @@ export function parseRoute(path: string, search = ''): Route {
       return { name: 'account' }
     case 'sign-in':
       return { name: 'signIn', next: safeNext(query.get('next')) }
+    case 'i':
+      if (id == null) return { name: 'home' }
+      return { name: 'join', code: id }
+    case 'video-channels':
+    case 'c':
+      // PeerTube's longer form, `/c/invite/<code>`, which its own sign-in and
+      // registration screens redirected through. Read, never written: one
+      // address is enough to hand out.
+      if (parts[1] !== 'invite' || parts[2] == null) return { name: 'home' }
+      return { name: 'join', code: parts[2] }
     case 'signin':
       if (id == null) return { name: 'signIn' }
       return {
@@ -75,9 +100,15 @@ export function parseRoute(path: string, search = ''): Route {
       }
     case 'teams':
       if (id == null) return { name: 'home' }
+      if (parts[2] === 'manage') {
+        return { name: 'manage', scopeKind: 'team', scopeId: id }
+      }
       return { name: 'team', teamId: id, tab: query.get('tab') ?? undefined }
     case 'seasons':
       if (id == null) return { name: 'home' }
+      if (parts[2] === 'manage') {
+        return { name: 'manage', scopeKind: 'season', scopeId: id }
+      }
       return {
         name: 'season',
         seasonId: id,
@@ -89,6 +120,9 @@ export function parseRoute(path: string, search = ''): Route {
       }
     case 'leagues':
       if (id == null) return { name: 'home' }
+      if (parts[2] === 'manage') {
+        return { name: 'manage', scopeKind: 'league', scopeId: id }
+      }
       return { name: 'league', leagueId: id }
     case 'games': {
       if (id == null) return { name: 'home' }
@@ -142,6 +176,8 @@ export function routePath(route: Route): string {
     }
     case 'league':
       return `/leagues/${route.leagueId}`
+    case 'manage':
+      return `/${route.scopeKind}s/${route.scopeId}/manage`
     case 'game': {
       const query = new URLSearchParams()
       if (route.tab === 'boxScore') query.set('tab', 'boxScore')
@@ -152,6 +188,8 @@ export function routePath(route: Route): string {
         ? `/games/${route.gameId}`
         : `/games/${route.gameId}?${text}`
     }
+    case 'join':
+      return `/i/${route.code}`
     case 'signIn':
       return route.next == null
         ? '/sign-in'

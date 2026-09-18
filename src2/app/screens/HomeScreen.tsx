@@ -268,7 +268,7 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
             <View style={styles.actions}>
               {recent.videoCount > 0 && (
                 <Button
-                  label="Watch Replay"
+                  label="Watch"
                   icon="play_arrow"
                   style={styles.action}
                   onPress={() => {

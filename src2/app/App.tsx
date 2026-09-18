@@ -4,6 +4,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler'
 
 import {
   GameStationClient,
+  type InviteInfo,
   type SeasonSummary,
   type Session,
   type TeamSummary
@@ -17,7 +18,7 @@ import {
   useBreakpoint,
   useHandoffSlot
 } from './components'
-import { lstrings } from './locales/strings'
+import { lstrings, sprintf } from './locales/strings'
 import type { Route, When } from './navigation/routes'
 import {
   currentRoute,
@@ -28,6 +29,8 @@ import { AccountScreen } from './screens/AccountScreen'
 import { GameScreen } from './screens/GameScreen'
 import { GamesFeedScreen } from './screens/GamesFeedScreen'
 import { HomeScreen } from './screens/HomeScreen'
+import { JoinScreen } from './screens/JoinScreen'
+import { ManageScreen } from './screens/ManageScreen'
 import { LoginScreen } from './screens/LoginScreen'
 import { SeasonScreen } from './screens/SeasonScreen'
 import { SignInLinkScreen } from './screens/SignInLinkScreen'
@@ -60,6 +63,14 @@ type Pushed =
       at?: number
     }
   | { name: 'account' }
+  /** The page behind the gear on a team, season or league card. */
+  | {
+      name: 'manage'
+      scopeKind: 'league' | 'season' | 'team'
+      scopeId: string
+      /** What it is called, once the page has said so. */
+      title?: string
+    }
 
 /**
  * Three destinations, each with its own stack.
@@ -114,6 +125,19 @@ function Shell(props: AppProps): React.ReactElement {
   const [when, setWhen] = useState<When | undefined>(() =>
     whenOf(currentRoute())
   )
+  /**
+   * The invite code in the address, if the app was opened on one.
+   *
+   * Held apart from the tabs and their stacks, because an invitation is not a
+   * place inside the app: it is a door in front of it, and the same door
+   * whether the person arrives signed in, signed out, or with no account at
+   * all. While it is up, the address is left exactly as it arrived — rewriting
+   * `/i/tforce26` to `/` is how a link becomes unusable on a reload.
+   */
+  const [joining, setJoining] = useState<string | undefined>(() => {
+    const route = currentRoute()
+    return route.name === 'join' ? route.code : undefined
+  })
   // The address bar is the state, not a copy of it: the app starts on
   // whatever was linked to, and every move writes the new address.
   const [tab, setTab] = useState<NavTabId>(() => tabOf(currentRoute()))
@@ -191,12 +215,15 @@ function Shell(props: AppProps): React.ReactElement {
     // Not while signed out: rewriting the address to `/` before the password
     // field has even been typed into throws away the link that brought them.
     if (session == null) return
+    // Nor while an invitation is open, for the same reason.
+    if (joining != null) return
     showRoute(routeOf(tab, top, when), firstRender.current || inPlace.current)
     firstRender.current = false
     inPlace.current = false
-  }, [session, tab, top, when])
+  }, [joining, session, tab, top, when])
 
   const goToRoute = useCallback((route: Route): void => {
+    setJoining(route.name === 'join' ? route.code : undefined)
     const next = tabOf(route)
     setTab(next)
     setStacks(current => ({
@@ -235,8 +262,42 @@ function Shell(props: AppProps): React.ReactElement {
     })
   }
 
+  /**
+   * Leaving the invitation for the thing it was an invitation to.
+   *
+   * The lists are asked again rather than trusted from before: the team or
+   * season that was just granted was not in them a moment ago, which is the
+   * whole reason this screen was on.
+   */
+  const openFromInvite = (scope: InviteInfo['scope']): void => {
+    setJoining(undefined)
+    const find = async (): Promise<void> => {
+      if (scope.kind === 'team') {
+        const teams = await client.teams()
+        const team = teams.find(item => item.id === scope.id)
+        if (team != null) push({ name: 'team', team })
+        return
+      }
+      if (scope.kind === 'season') {
+        const seasons = await client.seasons()
+        const season = seasons.find(item => item.id === scope.id)
+        if (season != null) push({ name: 'season', season })
+      }
+      // A league has no screen of its own yet, so home — which now lists the
+      // seasons it brought with it — is where to land.
+    }
+    find().catch(() => undefined)
+  }
+
   const openTeam = (team: TeamSummary): void => {
     push({ name: 'team', team })
+  }
+  /** The gear on a team, season or league card. */
+  const openManage = (
+    scopeKind: 'league' | 'season' | 'team',
+    scopeId: string
+  ): void => {
+    push({ name: 'manage', scopeKind, scopeId })
   }
   const openSeason = (season: SeasonSummary): void => {
     push({ name: 'season', season })
@@ -276,8 +337,19 @@ function Shell(props: AppProps): React.ReactElement {
     const route = currentRoute()
     return (
       <View style={styles.app}>
-        <AppHeader title="Sign in" showMark />
-        {route.name === 'signInLink' ? (
+        <AppHeader
+          title={route.name === 'join' ? lstrings.join_header : 'Sign in'}
+          showMark
+        />
+        {route.name === 'join' ? (
+          <JoinScreen
+            client={client}
+            code={route.code}
+            signedIn={false}
+            onSignedIn={setSession}
+            onOpen={openFromInvite}
+          />
+        ) : route.name === 'signInLink' ? (
           <SignInLinkScreen
             client={client}
             token={route.token}
@@ -287,6 +359,21 @@ function Shell(props: AppProps): React.ReactElement {
         ) : (
           <LoginScreen client={client} onSignedIn={setSession} />
         )}
+      </View>
+    )
+  }
+
+  if (joining != null) {
+    return (
+      <View style={styles.app}>
+        <AppHeader title={lstrings.join_header} showMark />
+        <JoinScreen
+          client={client}
+          code={joining}
+          signedIn
+          onSignedIn={setSession}
+          onOpen={openFromInvite}
+        />
       </View>
     )
   }
@@ -332,6 +419,9 @@ function Shell(props: AppProps): React.ReactElement {
         client={client}
         team={top.team}
         onOpenGame={openGame}
+        onManage={() => {
+          openManage('team', top.team.id)
+        }}
         initialTab={top.tab}
         onTab={setTopTab}
       />
@@ -341,6 +431,9 @@ function Shell(props: AppProps): React.ReactElement {
         season={top.season}
         onOpenGame={openGame}
         onOpenTeam={openTeam}
+        onManage={() => {
+          openManage('season', top.season.id)
+        }}
         initialTab={top.tab}
         onTab={setTopTab}
         initialWhen={top.when}
@@ -352,6 +445,24 @@ function Shell(props: AppProps): React.ReactElement {
             return {
               ...current,
               [tab]: [...held.slice(0, -1), { ...last, when: next }]
+            }
+          })
+        }}
+      />
+    ) : top.name === 'manage' ? (
+      <ManageScreen
+        client={client}
+        scopeKind={top.scopeKind}
+        scopeId={top.scopeId}
+        meUserId={session.user.id}
+        onTitle={title => {
+          setStacks(current => {
+            const held = current[tab]
+            const last = held[held.length - 1]
+            if (last?.name !== 'manage' || last.title === title) return current
+            return {
+              ...current,
+              [tab]: [...held.slice(0, -1), { ...last, title }]
             }
           })
         }}
@@ -494,6 +605,17 @@ function stackFor(route: Route): Partial<Record<NavTabId, Pushed[]>> {
     }
   }
   if (route.name === 'account') return { [tab]: [{ name: 'account' }] }
+  if (route.name === 'manage') {
+    return {
+      [tab]: [
+        {
+          name: 'manage',
+          scopeKind: route.scopeKind,
+          scopeId: route.scopeId
+        }
+      ]
+    }
+  }
   return {}
 }
 
@@ -526,6 +648,13 @@ function routeOf(tab: NavTabId, top: Pushed | undefined, when?: When): Route {
       }
     }
     if (top.name === 'account') return { name: 'account' }
+    if (top.name === 'manage') {
+      return {
+        name: 'manage',
+        scopeKind: top.scopeKind,
+        scopeId: top.scopeId
+      }
+    }
     return {
       name: 'game',
       gameId: top.gameId,
@@ -551,6 +680,11 @@ function titleFor(tab: NavTabId, top: Pushed | undefined): string | undefined {
   if (top != null) {
     if (top.name === 'season') return top.season.name
     if (top.name === 'account') return 'Account'
+    if (top.name === 'manage') {
+      return top.title == null
+        ? lstrings.manage_open
+        : sprintf(lstrings.manage_title, top.title)
+    }
     return undefined
   }
   if (tab === 'home') return 'Your Home'

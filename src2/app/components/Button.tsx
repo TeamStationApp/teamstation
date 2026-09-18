@@ -27,8 +27,14 @@ export interface ButtonProps {
 
 /**
  * Three kinds, which is all the designs used once the duplicates were folded
- * together: a solid forest primary, a pale bordered secondary, and plain text
- * for the quiet alternative under a primary.
+ * together: a solid forest primary, a pale secondary, and plain text for the
+ * quiet alternative under a primary.
+ *
+ * Fully rounded, with no outline and a soft shadow. An outlined rectangle is
+ * what a button looked like when it had to be told apart from the page it sat
+ * on; here the shape and the lift do that, and the border was only adding a
+ * hard edge to a card that has none. Text buttons keep neither: they are a
+ * word you can press, not an object.
  *
  * Minimum 48 high throughout, per the spec: these are pressed one-handed, often
  * outdoors, sometimes by somebody holding something else.
@@ -57,8 +63,10 @@ export function Button(props: ButtonProps): React.ReactElement {
       style={({ pressed }) => [
         styles.base,
         styles[kind],
+        kind !== 'text' && styles.raised,
         block && styles.block,
         pressed && !inert && styles[`${kind}Pressed`],
+        pressed && !inert && kind !== 'text' && styles.lowered,
         inert && styles.inert,
         style
       ]}
@@ -99,15 +107,30 @@ const getStyles = cacheStyles((theme: Theme) => ({
     flexDirection: 'row',
     gap: theme.rem(theme.spaceXsRem),
     minHeight: theme.rem(3),
-    // Small enough that two of these side by side on a phone fit their labels.
-    // `Watch Replay` was coming out `Watch Rep…`, which is a worse answer than
-    // a narrower gap either side of it.
+    // Small enough that two of these side by side on a phone fit their
+    // labels. A pill spends more of its width on the curve than a rounded
+    // rectangle did, so this is the padding that stops `Box Score` coming out
+    // `Box Sc…` beside another button.
     paddingHorizontal: theme.rem(theme.spaceMdRem),
-    borderRadius: theme.rem(theme.radiusRem),
+    // Half the height: a pill at any label length, without a magic number
+    // that stops being half the day the height changes.
+    borderRadius: theme.rem(1.5),
     alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: 'transparent'
+    justifyContent: 'center'
+  },
+  /** The lift, on everything but a text button. */
+  raised: {
+    shadowColor: theme.buttonShadowColor,
+    shadowOpacity: 1,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 3
+  },
+  /** Pressed, it settles: the shadow tightens rather than disappearing. */
+  lowered: {
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 1
   },
   block: {
     alignSelf: 'stretch'
@@ -126,8 +149,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
   primaryLabel: { color: theme.buttonTextColor },
 
   secondary: {
-    backgroundColor: theme.secondaryButtonColor,
-    borderColor: theme.secondaryButtonBorderColor
+    backgroundColor: theme.secondaryButtonColor
   },
   secondaryPressed: { backgroundColor: theme.secondaryButtonPressedColor },
   secondaryLabel: { color: theme.secondaryButtonTextColor },

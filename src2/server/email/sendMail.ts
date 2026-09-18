@@ -89,6 +89,50 @@ export async function sendSignInCode(
 }
 
 /**
+ * An invitation, addressed to one person by an administrator.
+ *
+ * Says who invited them and to what, because an unexplained link asking for
+ * an e-mail address is exactly what a parent has been told to ignore. The
+ * address is printed as text under the button for the clients that eat
+ * buttons, the same as the sign-in mail.
+ */
+export async function sendInvitation(
+  smtp: SmtpSettings,
+  to: string,
+  invitation: { scopeName: string; invitedBy: string; link: string }
+): Promise<SentMail> {
+  const { scopeName, invitedBy, link } = invitation
+  const info = await transporterFor(smtp).sendMail({
+    from:
+      smtp.fromName === ''
+        ? smtp.fromAddress
+        : `${smtp.fromName} <${smtp.fromAddress}>`,
+    to,
+    subject: `${invitedBy} has invited you to watch ${scopeName}`,
+    text: [
+      `${invitedBy} has invited you to watch ${scopeName} on GameStation.`,
+      '',
+      'Open this to accept:',
+      link,
+      '',
+      'You will be asked for your name and e-mail address, and sent a code',
+      'to prove the address is yours. Nothing happens until you do.'
+    ].join('\n'),
+    html: [
+      `<p><strong>${invitedBy}</strong> has invited you to watch`,
+      `<strong>${scopeName}</strong> on GameStation.</p>`,
+      inviteButton(link),
+      '<p style="color:#666">You will be asked for your name and e-mail',
+      'address, and sent a code to prove the address is yours.</p>'
+    ].join('\n')
+  })
+  return {
+    accepted: Array.isArray(info.accepted) ? info.accepted.length : 0,
+    messageId: String(info.messageId ?? '')
+  }
+}
+
+/**
  * The green button, in the markup that survives a mail client.
  *
  * A table and a background colour on the cell, not a styled `<a>`: Outlook
@@ -111,4 +155,17 @@ function signInButton(link: string): string {
 /** Proves the relay will take a message, without sending one. */
 export async function verifyMail(smtp: SmtpSettings): Promise<boolean> {
   return await transporterFor(smtp).verify()
+}
+
+/** The same button, worded for an invitation rather than a sign-in. */
+function inviteButton(link: string): string {
+  return [
+    '<table role="presentation" cellpadding="0" cellspacing="0" border="0">',
+    '<tr><td align="center" bgcolor="#334423" style="border-radius:8px">',
+    `<a href="${link}" style="display:inline-block;padding:14px 28px;`,
+    'font-family:Helvetica,Arial,sans-serif;font-size:16px;font-weight:bold;',
+    'color:#ffffff;text-decoration:none">Accept the invitation</a>',
+    '</td></tr></table>',
+    `<p style="color:#666;font-size:12px">Or paste this address: ${link}</p>`
+  ].join('')
 }
