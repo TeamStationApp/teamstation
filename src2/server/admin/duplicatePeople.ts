@@ -153,7 +153,9 @@ export async function findDuplicatePeople(
       if (matches.length > 1) {
         // Two children called Jensen, one of whom has not batted. Nothing here
         // can say which the bare row belongs to, so neither is touched.
-        ambiguous.push(`${one.displayName} on ${teamId}`)
+        ambiguous.push(
+          `${one.displayName} on ${teamId}: more than one name it could be`
+        )
         continue
       }
       const match = matches[0]

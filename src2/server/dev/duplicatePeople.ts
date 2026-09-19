@@ -26,7 +26,8 @@ async function main(): Promise<void> {
       )
     }
     for (const note of ambiguous) {
-      console.log(`?     ${note}: more than one match, left alone`)
+      // The note says why; a second reason pasted on the end said it twice.
+      console.log(`?     ${note}`)
     }
     console.log(
       `\n${pairs.filter(p => p.action === 'drop').length} to drop, ` +
