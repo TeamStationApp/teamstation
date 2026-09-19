@@ -50,6 +50,7 @@ async function main(): Promise<void> {
     ])
 
     let opened = 0
+    const split = new Set<string>()
     for (const [survivor, ids] of people) {
       const clash = ids.some(a => ids.some(b => together.has(`${a}|${b}`)))
       if (!clash) continue
@@ -63,6 +64,7 @@ async function main(): Promise<void> {
           'two of these were in one game together'
       )
       opened += ids.length - 1
+      split.add(survivor)
       if (!apply) continue
       await db
         .updateTable('users')
@@ -73,8 +75,13 @@ async function main(): Promise<void> {
     }
 
     // --- 2. the name the survivor should be under -------------------------
+    //
+    // Not for a group that has just been opened back up: those rows are their
+    // own people again, and giving one of them the other's surname is the
+    // mistake being undone.
     let renamed = 0
     for (const [survivor, ids] of people) {
+      if (split.has(survivor)) continue
       for (const id of ids) {
         if (id === survivor) continue
         if (!apply) {
