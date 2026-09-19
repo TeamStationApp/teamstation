@@ -76,7 +76,7 @@ struct StreamDestinationTests {
     // what a GameStation event is. Anything but `.url` here would move where
     // their Stream button publishes the next time they open the app.
     #expect(AppConfig().streamDestination == .url)
-    #expect(AppConfig().gameStationURL == "https://tube2.gamestation.co")
+    #expect(AppConfig().gameStationURL == "https://gamestation.co")
   }
 
   @Test("A settings file written before events existed reads as the typed URL")
@@ -87,7 +87,25 @@ struct StreamDestinationTests {
     )
     #expect(old.streamDestination == .url)
     #expect(old.streamURL == "rtmp://host:1935/live/key")
-    #expect(old.gameStationURL == "https://tube2.gamestation.co")
+    #expect(old.gameStationURL == "https://gamestation.co")
+  }
+
+  @Test("A Director still pointed at the old site is moved to the new one")
+  func theMovedSiteIsFollowed() throws {
+    // PeerTube answers `/api/v1` on the old address, with a 400 and an empty
+    // body, so a Director left on it fails in a way nobody can read.
+    let moved = try JSONDecoder().decode(
+      AppConfig.self,
+      from: Data(#"{"gameStationURL":"https://tube2.gamestation.co"}"#.utf8)
+    )
+    #expect(moved.gameStationURL == "https://gamestation.co")
+
+    // An address somebody typed is theirs, and is left alone.
+    let typed = try JSONDecoder().decode(
+      AppConfig.self,
+      from: Data(#"{"gameStationURL":"http://127.0.0.1:9111"}"#.utf8)
+    )
+    #expect(typed.gameStationURL == "http://127.0.0.1:9111")
   }
 
   @Test("The choice and the address both survive a save")

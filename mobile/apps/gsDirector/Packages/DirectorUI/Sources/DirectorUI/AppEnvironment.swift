@@ -1784,7 +1784,7 @@ public final class AppEnvironment {
   private func makeAccount() -> GameStationAccount {
     GameStationAccount(
       serverURL: URL(string: config.gameStationURL)
-        ?? URL(string: "https://tube2.gamestation.co")!,
+        ?? URL(string: AppConfig.gameStationURLDefault)!,
       deviceName: UIDevice.current.name
     )
   }
