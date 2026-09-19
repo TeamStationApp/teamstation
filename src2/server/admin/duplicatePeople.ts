@@ -66,38 +66,49 @@ export interface DuplicatePair {
 }
 
 /**
- * Pairs on one team whose first names match and whose surnames are the same
- * name written to different lengths: `Adrian` and `Adrian Hardy`, `Findon R`
- * and `Findon Rogers`, `aiden` and `aiden michels`.
+ * Pairs on one team whose names are the same name written to different
+ * lengths: `Adrian` and `Adrian Hardy`, `Findon R` and `Findon Rogers`, `Dom`
+ * and `Dominick Vela`, `aiden` and `aiden michels`.
  *
  * The short one came from a video title or a schedule, where somebody typed a
  * name by hand and stopped; the long one came from an imported roster, with
- * a jersey, a person id and a face. One rule covers both shapes, because a
- * missing surname and a surname cut to its initial are the same thing
- * happening.
+ * a jersey, a person id and a face. One rule covers every shape, because a
+ * missing surname, a surname cut to its initial and a first name stopped early
+ * are the same thing happening.
  *
  * Deliberately narrow all the same. Two real children can share a first name —
- * the Black Sox have two boys called Ben, in shirts 2 and 5 — so surnames of
- * **equal** length never pair, and a short name that fits **more than one**
- * longer one is ambiguous and is listed rather than guessed at.
+ * the Black Sox have two boys called Ben, in shirts 2 and 5 — so a row that is
+ * no shorter than the other never pairs with it, a short first name must have
+ * no surname of its own to claim, and a name that fits **more than one** longer
+ * one is ambiguous and is listed rather than guessed at.
+ *
+ * A nickname is not a truncation, and this cannot see one: `Toby` is not the
+ * start of `Tobias`, and inventing a table of nicknames would be guessing at
+ * children by their names, which is the one thing this must not do.
  */
 export function isShortFormOf(
   short: { firstName: string; lastName: string },
   long: { firstName: string; lastName: string }
 ): boolean {
-  const first = (a: string): string => a.trim().toLowerCase()
-  if (
-    first(short.firstName) === '' ||
-    first(short.firstName) !== first(long.firstName)
-  ) {
-    return false
-  }
-  const a = first(short.lastName)
-  const b = first(long.lastName)
-  // Strictly shorter, or two rows of the same name would each be the other's
-  // short form and both would be closed into nothing.
-  return a.length < b.length && b.startsWith(a)
+  const tidy = (a: string): string => a.trim().toLowerCase()
+  const firstShort = tidy(short.firstName)
+  const firstLong = tidy(long.firstName)
+  if (firstShort === '') return false
+
+  // Either half can be the one that was cut short, and only one of them.
+  const sameFirst = firstShort === firstLong
+  const shorterFirst =
+    firstShort.length < firstLong.length && firstLong.startsWith(firstShort)
+  if (!sameFirst && !shorterFirst) return false
+
+  const a = tidy(short.lastName)
+  const b = tidy(long.lastName)
+  if (!b.startsWith(a)) return false
+  // A first name stopped early has to have stopped there: `Dom Ruiz` is not a
+  // short way of writing `Dominick Vela`.
+  return sameFirst ? a.length < b.length : a === ''
 }
+
 export async function findDuplicatePeople(
   db: Kysely<Database>
 ): Promise<{ pairs: DuplicatePair[]; ambiguous: string[] }> {

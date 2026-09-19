@@ -286,18 +286,26 @@ export async function survivorsOf(
 }
 
 /**
- * Pairs who were both in the same game, which is two children.
+ * Pairs who were on the field at the same time, which is two children.
  *
  * The strongest evidence there is against a merge, and it comes from the play
- * itself rather than from a name. One child is one person on a field: two rows
- * that were both named on a play in one game are two boys.
+ * itself rather than from a name. One child is one person: two rows named on
+ * plays in **the same half-inning** were both out there at once.
  *
- * Every part counts, not just batting. `Lincoln` batted four times while
- * `Lincoln Skipper` fielded in the same game with no stat line at all, and a
- * test that only read plate appearances made them one child. The one shape
- * this still allows is a scorer re-adding somebody mid-season — `Adrian Hardy`
- * has a new row that bats and an old one with an empty line, and the two are
- * never named on a play together.
+ * The half-inning is what makes this sharp rather than merely broad. A scorer
+ * re-adding somebody mid-season leaves two rows in one game — the old one
+ * fields early, the new one bats later — and they are never in the same half.
+ * `Jameson Kerins` was *pitching* in the top of the second while `Jameson`
+ * fielded behind him, which no child can do; `Lucas` and `Lucas Flores` never
+ * share a half, and a game where one holds an empty line beside the other is
+ * the re-added shape rather than two boys.
+ *
+ * A number settles nothing here, whatever it looks like: eleven numbers on the
+ * server are worn by two different children on one team.
+ *
+ * The figures are asked as well, because a game whose plays we never tagged
+ * has no half-innings to compare — two rows that both batted in one game are
+ * two boys however little else we hold.
  *
  * Returned as a set of `a|b` pairs, both ways round, so a caller can ask about
  * a candidate without another query. Ask about **every** pair in a group and
@@ -321,14 +329,20 @@ export async function bothPlayedTogether(
   }
 
   // Everybody named on a play, in any part: batting, pitching, fielding, on
-  // base. This is the one that catches a boy who only took the field.
+  // base — gathered per half-inning, which is the window a child can only be
+  // in one place in.
   for (const row of await db
     .selectFrom('event_players')
     .innerJoin('events', 'events.id', 'event_players.event_id')
-    .select(['events.game_id as gameId', 'event_players.user_id as userId'])
+    .select([
+      'events.game_id as gameId',
+      'events.inning as inning',
+      'events.half_inning as half',
+      'event_players.user_id as userId'
+    ])
     .where('event_players.user_id', 'in', wanted)
     .execute()) {
-    note(row.gameId, row.userId)
+    note(`${row.gameId} ${row.inning ?? ''} ${row.half ?? ''}`, row.userId)
   }
 
   // And anybody with a figure in a game, for a game whose plays we never

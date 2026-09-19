@@ -35,6 +35,32 @@ describe('two rows for one child', function () {
     )
   })
 
+  it('knows a first name somebody stopped typing', function () {
+    // `Dom` on the Black Sox beside `Dominick Vela`, both in #12, and the
+    // short row has no surname at all to go on.
+    expect(
+      isShortFormOf(
+        { firstName: 'Dom', lastName: '' },
+        { firstName: 'Dominick', lastName: 'Vela' }
+      )
+    ).equals(true)
+    // But not when the short row claims a surname of its own: that is a
+    // different child with a shorter first name.
+    expect(
+      isShortFormOf(
+        { firstName: 'Dom', lastName: 'Ruiz' },
+        { firstName: 'Dominick', lastName: 'Vela' }
+      )
+    ).equals(false)
+    // And a nickname is not a truncation. `Toby` is nobody's prefix.
+    expect(
+      isShortFormOf(
+        { firstName: 'Toby', lastName: '' },
+        { firstName: 'Tobias', lastName: 'Minami' }
+      )
+    ).equals(false)
+  })
+
   it('does not pair two rows of the same name', function () {
     // The Black Sox have two boys called Ben, in shirts 2 and 5. Neither is
     // the other's short form, or both would be closed into nothing.
