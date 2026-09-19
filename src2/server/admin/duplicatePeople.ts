@@ -156,8 +156,6 @@ export async function findSamePersonAcrossTeams(
   const rows = await db
     .selectFrom('users')
     .leftJoin('event_players', 'event_players.user_id', 'users.id')
-    .leftJoin('memberships', 'memberships.user_id', 'users.id')
-    .leftJoin('teams', 'teams.id', 'memberships.team_id')
     .select([
       'users.id as userId',
       'users.first_name as firstName',
@@ -166,12 +164,26 @@ export async function findSamePersonAcrossTeams(
     .select(eb =>
       eb.fn.count<number>('event_players.id').distinct().as('plays')
     )
-    .select(eb => eb.fn.max('teams.name').as('teamName'))
     .where('users.merged_into', 'is', null)
     .where('users.first_name', 'is not', null)
     .where('users.last_name', 'is not', null)
     .groupBy(['users.id', 'users.first_name', 'users.last_name'])
     .execute()
+
+  // Every team each row is on, not one of them: the whole design rests on a
+  // person reading this list and recognising a child, and "Bandits" beside a
+  // row that is also on the Hawks is not enough to recognise anybody by.
+  const teamsByUser = new Map<string, string[]>()
+  for (const row of await db
+    .selectFrom('memberships')
+    .innerJoin('teams', 'teams.id', 'memberships.team_id')
+    .select(['memberships.user_id as userId', 'teams.name as teamName'])
+    .where('teams.merged_into', 'is', null)
+    .execute()) {
+    const held = teamsByUser.get(row.userId) ?? []
+    if (!held.includes(row.teamName)) held.push(row.teamName)
+    teamsByUser.set(row.userId, held)
+  }
 
   const byName = new Map<string, typeof rows>()
   for (const row of rows) {
@@ -195,7 +207,7 @@ export async function findSamePersonAcrossTeams(
       members: sorted.map(row => ({
         userId: row.userId,
         plays: Number(row.plays),
-        teams: row.teamName == null ? [] : [row.teamName]
+        teams: teamsByUser.get(row.userId) ?? []
       }))
     })
   }
