@@ -276,6 +276,10 @@ public final class AppEnvironment {
   /// this one is written against `SourceDiscovery` alone.
   private let discoveryFactory: (@Sendable (SourceKind) -> SourceDiscovery?)?
   private let selectionStore: SourceSelectionStore
+  /// Audio decisions kept under the camera's own identifier rather than under the row's, so a
+  /// camera that comes back as a new row does not come back in the mix. See `SourceAudioRules`.
+  private let audioStore: SourceAudioStore
+  private var audioSettings: [String: SourceAudioSetting] = [:]
   /// The named-camera cache, shared with discovery so both agree on which camera is which.
   public let cameras: CameraRegistry
   private let configStore: ConfigStore
@@ -380,6 +384,7 @@ public final class AppEnvironment {
     self.sourceProfile = Self.resolveSourceProfile(launch: launch, config: session)
 
     self.selectionStore = SourceSelectionStore(store: configStore)
+    self.audioStore = SourceAudioStore()
     self.layoutStore = SourceLayoutStore(store: configStore)
     self.programSourceStore = ProgramSourceStore(store: configStore)
     // The app target passes the same registry it gave to discovery; anything without a transport
@@ -465,12 +470,21 @@ public final class AppEnvironment {
     }
     if launch.clearState {
       selectionStore.clear()
+      audioStore.clear()
       layoutStore.clear()
       programSourceStore.clear()
       cameras.clear()
       telemetry.reset()
     }
-    selections = SourceSelectionRules.normalizingLinks(selectionStore.load())
+    audioSettings = audioStore.load()
+    let restoredSelections = SourceSelectionRules.normalizingLinks(selectionStore.load())
+    // The list first, because an iPad already in use has every audio decision the operator has ever
+    // made in it and nothing in the audio store yet; then the store over the top, which is what
+    // makes the decisions outlive the rows they were made on.
+    let known = audioSettings
+    SourceAudioRules.seeding(from: restoredSelections, into: &audioSettings, key: audioKey(for:))
+    if audioSettings != known { audioStore.save(audioSettings) }
+    selections = SourceAudioRules.applying(audioSettings, to: restoredSelections, key: audioKey(for:))
     sourceLayout = layoutStore.load()
     preferredProgramSourceID = programSourceStore.load()
     cameraRecords = cameras.records
@@ -570,11 +584,19 @@ public final class AppEnvironment {
       let restored = try? JSONDecoder().decode([SourceSelection].self, from: data),
       !restored.isEmpty
     {
-      selections = SourceSelectionRules.normalizingLinks(restored)
+      // Which cameras and which tiles, but not the mix: the take's snapshot is as old as the take,
+      // and an operator who muted a camera an hour into it — or after it — meant that and not the
+      // grid it was recording with.
+      selections = SourceAudioRules.applying(
+        audioSettings,
+        to: SourceSelectionRules.normalizingLinks(restored),
+        key: audioKey(for:)
+      )
       selectionStore.save(selections)
       // Already what the take has on record, so the first discovery sweep after this does not
-      // write it straight back.
-      lastGridSnapshot = data
+      // write it straight back — unless the mix above corrected it, which the take should have.
+      let corrected = try? JSONEncoder().encode(selections)
+      lastGridSnapshot = corrected == data ? data : nil
     }
     if let source = take.programSource {
       preferredProgramSourceID = source
@@ -780,7 +802,14 @@ public final class AppEnvironment {
   }
 
   private func applyDiscovery(_ discovered: [DiscoveredSource]) {
-    selections = SourceSelectionRules.merge(existing: selections, discovered: discovered)
+    // Through the audio store, because a sighting can be a row the list has never held: a camera
+    // that renamed itself, or one whose identity only hardened after this launch started. Merged
+    // in it arrives with the defaults, and "audio on" is the default.
+    selections = SourceAudioRules.applying(
+      audioSettings,
+      to: SourceSelectionRules.merge(existing: selections, discovered: discovered),
+      key: audioKey(for:)
+    )
     selectionStore.save(selections)
     refreshGridSnapshot()
     cameraRecords = cameras.records
@@ -924,6 +953,8 @@ public final class AppEnvironment {
   public func clearCameraMemory() {
     cameras.clear()
     selectionStore.clear()
+    audioStore.clear()
+    audioSettings = [:]
     programSourceStore.clear()
     preferredProgramSourceID = nil
     selections = []
@@ -973,10 +1004,14 @@ public final class AppEnvironment {
     // Rows keyed by the old identity are dropped rather than left behind: after a rebinding they
     // describe a camera that is now on another row. Limited to the transports that answered, or
     // the ones that cannot answer at all lose every camera they had found.
-    selections = SourceSelectionRules.merging(
-      existing: selections,
-      discovered: republished,
-      limitedTo: Set(republished.map(\.kind))
+    selections = SourceAudioRules.applying(
+      audioSettings,
+      to: SourceSelectionRules.merging(
+        existing: selections,
+        discovered: republished,
+        limitedTo: Set(republished.map(\.kind))
+      ),
+      key: audioKey(for:)
     )
     selectionStore.save(selections)
     refreshGridSnapshot()
@@ -1545,6 +1580,7 @@ public final class AppEnvironment {
 
   public func setUsesAudio(_ usesAudio: Bool, for id: SourceID) {
     SourceSelectionRules.setUsesAudio(usesAudio, for: id, in: &selections)
+    rememberAudio(for: id)
     selectionStore.save(selections)
     refreshGridSnapshot()
     applyAudioContributors()
@@ -1552,9 +1588,33 @@ public final class AppEnvironment {
 
   public func setInputGain(_ gain: Double, for id: SourceID) {
     SourceSelectionRules.setInputGain(gain, for: id, in: &selections)
+    rememberAudio(for: id)
     selectionStore.save(selections)
     refreshGridSnapshot()
     applyInputGains()
+  }
+
+  /// The camera one row is about, found from the row's own id rather than from its address: at
+  /// launch nothing has been discovered yet and no row has an address, and that is exactly when
+  /// the remembered decisions have to be readable.
+  private func cameraRecord(for selection: SourceSelection) -> CameraRecord? {
+    guard let uuid = UUID(uuidString: selection.id.rawValue) else { return nil }
+    return cameras.record(id: uuid)
+  }
+
+  private func audioKey(for selection: SourceSelection) -> String? {
+    SourceAudioRules.key(for: selection, record: cameraRecord(for: selection))
+  }
+
+  /// Files the decision the operator just made under the camera it was made about.
+  ///
+  /// The fader calls this for every point of a drag, so an unchanged value writes nothing.
+  private func rememberAudio(for id: SourceID) {
+    guard let selection = selections.first(where: { $0.id == id }) else { return }
+    let known = audioSettings
+    SourceAudioRules.remembering(selection, in: &audioSettings, key: audioKey(for:))
+    guard audioSettings != known else { return }
+    audioStore.save(audioSettings)
   }
 
   private func applyInputGains() {
