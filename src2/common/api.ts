@@ -301,7 +301,12 @@ export const asSeasonSummary = asObject({
   ageGroup: asNullable(asString),
   teams: asNumber,
   games: asNumber,
-  videos: asNumber
+  videos: asNumber,
+  /**
+   * The season's mark, from the organisation it was imported from. Signed and
+   * short-lived, like every other picture the app is given.
+   */
+  logoUrl: asOptional(asNullable(asString), null)
 })
 export type SeasonSummary = ReturnType<typeof asSeasonSummary>
 

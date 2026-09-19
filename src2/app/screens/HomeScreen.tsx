@@ -323,6 +323,7 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
                   title={season.name}
                   subtitle={`${season.teams} teams · ${season.games} games · ${season.videos} videos`}
                   emblem="▦"
+                  emblemUri={season.logoUrl}
                   badgeLabel={season.term ?? undefined}
                   badgeTone="neutral"
                   onPress={() => {
