@@ -1,4 +1,5 @@
 import { findSamePersonAcrossTeams } from '../admin/duplicatePeople'
+import { closeInto, tidyClosedRows } from '../admin/people'
 import { makeDatabase } from '../db/database'
 import { serverConfig } from '../serverConfig'
 
@@ -41,15 +42,17 @@ async function main(): Promise<void> {
     for (const group of groups) {
       for (const member of group.members) {
         if (member.userId === group.keepUserId) continue
-        await db
-          .updateTable('users')
-          .set({ merged_into: group.keepUserId })
-          .where('id', '=', member.userId)
-          .execute()
+        await closeInto(db, member.userId, group.keepUserId)
         closed += 1
       }
     }
-    console.log(`closed ${closed} rows into ${groups.length} people`)
+    // And anything an earlier run left behind, which is how a roster loses a
+    // child: the row was closed and its membership was not moved with it.
+    const tidied = await tidyClosedRows(db)
+    console.log(
+      `closed ${closed} rows into ${groups.length} people` +
+        (tidied > 0 ? `, and moved ${tidied} stranded memberships` : '')
+    )
   } finally {
     await db.destroy()
   }

@@ -7,7 +7,7 @@ import { makeId } from '../../common/ids'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import type { Database } from '../db/database'
-import { onePerson } from './people'
+import { closeInto, onePerson, tidyClosedRows } from './people'
 
 const adminUrl =
   process.env.GS_TEST_DATABASE_URL ?? 'postgres://localhost:5432/postgres'
@@ -86,5 +86,104 @@ describe('one person, however many rows', function () {
     if (db == null) this.skip()
     const person = await onePerson(db, stranger)
     expect(person.userIds).deep.equals([stranger])
+  })
+
+  it('takes the closed row’s team with it', async function () {
+    if (db == null) this.skip()
+    const hawks = makeId('team')
+    const ravens = makeId('team')
+    const mover = makeId('user')
+    await db
+      .insertInto('teams')
+      .values([
+        { id: hawks, name: 'Hawks' },
+        { id: ravens, name: 'Ravens' }
+      ])
+      .execute()
+    await db
+      .insertInto('users')
+      .values({ id: mover, display_name: 'Miles Mikolas' })
+      .execute()
+    await db
+      .insertInto('memberships')
+      .values([
+        { id: makeId('membership'), team_id: hawks, user_id: survivor },
+        { id: makeId('membership'), team_id: ravens, user_id: mover }
+      ])
+      .execute()
+
+    await closeInto(db, mover, survivor)
+
+    // The child still plays for the Ravens, and a roster asks for people who
+    // are still open — so the membership has to move or the team loses them.
+    const teams = await db
+      .selectFrom('memberships')
+      .select(['team_id'])
+      .where('user_id', '=', survivor)
+      .execute()
+    expect(teams.map(row => row.team_id).sort()).deep.equals(
+      [hawks, ravens].sort()
+    )
+  })
+
+  it('drops a second row on a team the survivor is already on', async function () {
+    if (db == null) this.skip()
+    const team = await db
+      .selectFrom('memberships')
+      .select(['team_id'])
+      .where('user_id', '=', survivor)
+      .executeTakeFirstOrThrow()
+    const twin = makeId('user')
+    await db
+      .insertInto('users')
+      .values({ id: twin, display_name: 'Miles Mikolas' })
+      .execute()
+    await db
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        team_id: team.team_id,
+        user_id: twin
+      })
+      .execute()
+
+    await closeInto(db, twin, survivor)
+
+    const rows = await db
+      .selectFrom('memberships')
+      .select(['id'])
+      .where('team_id', '=', team.team_id)
+      .execute()
+    expect(rows.length).equals(1)
+  })
+
+  it('moves what an earlier merge left behind', async function () {
+    if (db == null) this.skip()
+    const team = makeId('team')
+    const stranded = makeId('user')
+    await db.insertInto('teams').values({ id: team, name: 'Badgers' }).execute()
+    // Closed the way the first merge did it: the row was closed and its
+    // membership was not moved with it.
+    await db
+      .insertInto('users')
+      .values({
+        id: stranded,
+        display_name: 'Jordan Pujols',
+        merged_into: survivor
+      })
+      .execute()
+    await db
+      .insertInto('memberships')
+      .values({ id: makeId('membership'), team_id: team, user_id: stranded })
+      .execute()
+
+    expect(await tidyClosedRows(db)).greaterThan(0)
+
+    const moved = await db
+      .selectFrom('memberships')
+      .select(['user_id'])
+      .where('team_id', '=', team)
+      .executeTakeFirstOrThrow()
+    expect(moved.user_id).equals(survivor)
   })
 })

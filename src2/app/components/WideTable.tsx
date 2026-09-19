@@ -15,9 +15,11 @@ export interface WideTableProps {
  * the batting average, which is the one people look for — was quietly cut off
  * at the edge of the card with no way to reach it.
  *
- * The whole table scrolls, the name column with it. Freezing the name would
- * read better and cannot be done without splitting every row in two, which
- * costs the row its single press target and the page the thing a name is for.
+ * The name column is pinned while the figures slide under it, so a row
+ * scrolled to its last column is still somebody's. That is `position: sticky`
+ * on the name cell — a position React Native has no name for, which is what
+ * `webStyle` is for — rather than a second column beside the scroll, because
+ * splitting every row in two would cost the row its single press target.
  */
 export function WideTable(props: WideTableProps): React.ReactElement {
   const styles = getStyles(useTheme())

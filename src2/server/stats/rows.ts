@@ -1,5 +1,6 @@
 import type { Kysely } from 'kysely'
 
+import { survivorsOf } from '../admin/people'
 import type { Database } from '../db/database'
 import type { StatRow } from '../stats'
 
@@ -124,5 +125,17 @@ export async function statRows(
     )
   }
 
-  return await query.execute()
+  const rows = await query.execute()
+
+  // Whoever each row's id has since become. A person merged from two rows is
+  // one line in a team's table and one average in a box score, not two, and
+  // this is the one place that has to know it.
+  const survivors = await survivorsOf(
+    db,
+    rows.map(row => row.userId)
+  )
+  return rows.map(row => ({
+    ...row,
+    userId: survivors.get(row.userId) ?? row.userId
+  }))
 }
