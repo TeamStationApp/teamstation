@@ -7,7 +7,12 @@ import { makeId } from '../../common/ids'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import type { Database } from '../db/database'
-import { closeInto, onePerson, tidyClosedRows } from './people'
+import {
+  bothPlayedTogether,
+  closeInto,
+  onePerson,
+  tidyClosedRows
+} from './people'
 
 const adminUrl =
   process.env.GS_TEST_DATABASE_URL ?? 'postgres://localhost:5432/postgres'
@@ -199,6 +204,53 @@ describe('one person, however many rows', function () {
       .where('team_id', '=', team.team_id)
       .execute()
     expect(rows.length).equals(1)
+  })
+
+  it('knows two rows that both took a turn in one game', async function () {
+    if (db == null) this.skip()
+    const team = makeId('team')
+    const game = makeId('game')
+    const one = makeId('user')
+    const other = makeId('user')
+    const benched = makeId('user')
+    await db.insertInto('teams').values({ id: team, name: 'Widows' }).execute()
+    await db
+      .insertInto('users')
+      .values([
+        { id: one, display_name: 'Rowan' },
+        { id: other, display_name: 'Rowan Wick' },
+        { id: benched, display_name: 'Rowan W' }
+      ])
+      .execute()
+    await db
+      .insertInto('games')
+      .values({
+        id: game,
+        home_team_id: team,
+        away_team_id: team,
+        start_at: new Date('2026-02-21T18:00:00Z')
+      })
+      .execute()
+    await db
+      .insertInto('game_player_stats')
+      .values([
+        { id: makeId('gamePlayerStats'), game_id: game, user_id: one, pa: 1 },
+        { id: makeId('gamePlayerStats'), game_id: game, user_id: other, pa: 3 },
+        // Entered in the lineup and never up: that is one child written twice,
+        // not two children, so it is not evidence against a merge.
+        {
+          id: makeId('gamePlayerStats'),
+          game_id: game,
+          user_id: benched,
+          pa: 0
+        }
+      ])
+      .execute()
+
+    const together = await bothPlayedTogether(db, [one, other, benched])
+    expect(together.has(`${one}|${other}`)).equals(true)
+    expect(together.has(`${other}|${one}`)).equals(true)
+    expect(together.has(`${one}|${benched}`)).equals(false)
   })
 
   it('moves what an earlier merge left behind', async function () {

@@ -220,3 +220,45 @@ export async function survivorsOf(
   }
   return survivors
 }
+
+/**
+ * Pairs who both took their turn in the same game, which is two children.
+ *
+ * The strongest evidence there is against a merge, and it comes from the
+ * figures rather than from a name. One child cannot bat twice in one lineup —
+ * and where they *were* entered twice, one of the two entries has nothing
+ * beside it, which is why this asks for a plate appearance or an out on both
+ * sides rather than merely a row.
+ *
+ * Returned as a set of `a|b` pairs, both ways round, so a caller can ask about
+ * a candidate without another query.
+ */
+export async function bothPlayedTogether(
+  db: Kysely<Database>,
+  userIds: string[]
+): Promise<Set<string>> {
+  const together = new Set<string>()
+  if (userIds.length < 2) return together
+
+  const rows = await db
+    .selectFrom('game_player_stats')
+    .select(['game_id', 'user_id', 'pa', 'pitch_outs'])
+    .where('user_id', 'in', [...new Set(userIds)])
+    .execute()
+
+  const byGame = new Map<string, string[]>()
+  for (const row of rows) {
+    if (row.pa === 0 && row.pitch_outs === 0) continue
+    const held = byGame.get(row.game_id) ?? []
+    held.push(row.user_id)
+    byGame.set(row.game_id, held)
+  }
+  for (const players of byGame.values()) {
+    for (const one of players) {
+      for (const other of players) {
+        if (one !== other) together.add(`${one}|${other}`)
+      }
+    }
+  }
+  return together
+}
