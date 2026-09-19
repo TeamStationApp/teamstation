@@ -1,4 +1,5 @@
 import { findDuplicatePeople } from '../admin/duplicatePeople'
+import { closeInto } from '../admin/people'
 import { makeDatabase } from '../db/database'
 import { serverConfig } from '../serverConfig'
 
@@ -45,16 +46,10 @@ async function main(): Promise<void> {
         pair.otherPlays <= pair.keepPlays ? pair.otherUserId : pair.keepUserId
       const keeping =
         closing === pair.otherUserId ? pair.keepUserId : pair.otherUserId
-      await db
-        .updateTable('users')
-        .set({ merged_into: keeping })
-        .where('id', '=', closing)
-        .execute()
-      await db
-        .deleteFrom('memberships')
-        .where('user_id', '=', closing)
-        .where('team_id', '=', pair.teamId)
-        .execute()
+      // `closeInto` takes the teams with the person. Setting `merged_into` by
+      // hand and deleting the membership is what took 31 children off six
+      // rosters, because every roster asks for people who are still open.
+      await closeInto(db, closing, keeping)
     }
     console.log(`closed ${pairs.length}`)
   } finally {
