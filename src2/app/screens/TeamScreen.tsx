@@ -50,6 +50,15 @@ export interface TeamScreenProps {
     title: string,
     options?: { tab?: 'watch' | 'boxScore'; autoPlay?: boolean }
   ) => void
+  /**
+   * A name on the roster. The team travels with it, so the player's stats open
+   * on this team rather than on a career total nobody asked for.
+   */
+  onOpenPlayer?: (
+    userId: string,
+    name: string,
+    from?: { seasonId?: string; teamId?: string }
+  ) => void
   /** Which section to open on, from the address. */
   initialTab?: string
   /**
@@ -96,7 +105,15 @@ const TABS = [
  * instant, which is what makes a tab strip feel like one screen.
  */
 export function TeamScreen(props: TeamScreenProps): React.ReactElement {
-  const { client, team, onOpenGame, initialTab, onTab, onManage } = props
+  const {
+    client,
+    team,
+    onOpenGame,
+    onOpenPlayer,
+    initialTab,
+    onTab,
+    onManage
+  } = props
   const theme = useTheme()
   const styles = getStyles(theme)
 
@@ -333,14 +350,22 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                         emblem={initialsOf(person.shortName)}
                         emblemUri={person.avatarUrl}
                         emblemShape="circle"
-                        badgeLabel={
+                        trailing={
                           // An empty string is not a jersey number. Without
-                          // this the badge reads as a bare `#`.
+                          // this the row reads as a bare `#`.
                           person.jersey == null || person.jersey.trim() === ''
                             ? undefined
                             : `#${person.jersey.trim()}`
                         }
-                        badgeTone="neutral"
+                        onPress={
+                          onOpenPlayer == null
+                            ? undefined
+                            : () => {
+                                onOpenPlayer(person.userId, person.shortName, {
+                                  teamId: team.id
+                                })
+                              }
+                        }
                       />
                     </View>
                   ))}

@@ -18,6 +18,8 @@ import { migration017OpenFromIssue } from './017openFromIssue'
 import { migration018NoLateBound } from './018noLateBound'
 import { migration019Invites } from './019invites'
 import { migration020InviteEmails } from './020inviteEmails'
+import { migration021BatsThrows } from './021batsThrows'
+import { migration022CreditIndex } from './022creditIndex'
 
 /** Every migration, in the order they were written. */
 export const migrations: Migration[] = [
@@ -39,5 +41,7 @@ export const migrations: Migration[] = [
   migration017OpenFromIssue,
   migration018NoLateBound,
   migration019Invites,
-  migration020InviteEmails
+  migration020InviteEmails,
+  migration021BatsThrows,
+  migration022CreditIndex
 ]

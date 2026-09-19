@@ -83,6 +83,12 @@ export interface GameScreenProps {
   onTab?: (tab: Tab) => void
   /** Opens one of the two teams, from its name or its mark on the card. */
   onOpenTeam?: (team: TeamSummary) => void
+  /** Opens one player, from their line in the box score. */
+  onOpenPlayer?: (
+    userId: string,
+    name: string,
+    from?: { seasonId?: string; teamId?: string }
+  ) => void
 }
 
 type Tab = 'watch' | 'boxScore'
@@ -234,7 +240,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     startAtSec,
     onMoment,
     onTab,
-    onOpenTeam
+    onOpenTeam,
+    onOpenPlayer
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -1102,7 +1109,13 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       <Screen wide scroll={false}>
         {scoreboard}
         {tabs}
-        <BoxScore game={game} box={box} theme={theme} sideBySide={sideBySide} />
+        <BoxScore
+          game={game}
+          box={box}
+          theme={theme}
+          sideBySide={sideBySide}
+          onOpenPlayer={onOpenPlayer}
+        />
       </Screen>
     </ScrollView>
   )
@@ -1115,6 +1128,16 @@ interface BoxScoreProps {
   theme: Theme
   /** Away and home side by side, rather than one at a time. */
   sideBySide: boolean
+  /**
+   * Opening a line. The game's season and the side that line belongs to go
+   * with it, so the player's stats open on the season being read rather than
+   * on a career total nobody asked for.
+   */
+  onOpenPlayer?: (
+    userId: string,
+    name: string,
+    from?: { seasonId?: string; teamId?: string }
+  ) => void
 }
 
 /**
@@ -1133,7 +1156,7 @@ interface BoxScoreProps {
  * empty rather than showing nothing at all.
  */
 function BoxScore(props: BoxScoreProps): React.ReactElement {
-  const { game, box, theme, sideBySide } = props
+  const { game, box, theme, sideBySide, onOpenPlayer } = props
   const styles = getStyles(theme)
 
   if (box == null) {
@@ -1152,10 +1175,29 @@ function BoxScore(props: BoxScoreProps): React.ReactElement {
   const tables = (side: (typeof sides)[number]): React.ReactElement => {
     const batting = box.batting.filter(row => row.teamId === side.teamId)
     const pitching = box.pitching.filter(row => row.teamId === side.teamId)
+    const open =
+      onOpenPlayer == null
+        ? undefined
+        : (userId: string, name: string) => {
+            onOpenPlayer(userId, name, {
+              seasonId: game.seasonId ?? undefined,
+              teamId: side.teamId
+            })
+          }
     return (
       <View style={styles.boxSide}>
-        <BattingTable name={side.name} rows={batting} theme={theme} />
-        <PitchingTable name={side.name} rows={pitching} theme={theme} />
+        <BattingTable
+          name={side.name}
+          rows={batting}
+          theme={theme}
+          onOpenPlayer={open}
+        />
+        <PitchingTable
+          name={side.name}
+          rows={pitching}
+          theme={theme}
+          onOpenPlayer={open}
+        />
       </View>
     )
   }
@@ -1255,12 +1297,59 @@ function LineScore(props: {
   )
 }
 
+/**
+ * One person's line, in any of the four tables.
+ *
+ * The whole row is the target rather than the name: a name is a few characters
+ * at one end of a row read on a phone at the edge of a field, and the rest of
+ * the row is the part the thumb actually lands on.
+ */
+function StatRow(props: {
+  name: string
+  cells: string[]
+  theme: Theme
+  onPress?: () => void
+}): React.ReactElement {
+  const { name, cells, theme, onPress } = props
+  const styles = getStyles(theme)
+  const content = (
+    <>
+      <Text style={styles.cellName} numberOfLines={1}>
+        {name}
+      </Text>
+      {cells.map((value, index) => (
+        <Text key={index} style={styles.cell}>
+          {value}
+        </Text>
+      ))}
+    </>
+  )
+  if (onPress == null) {
+    return <View style={[styles.tableRow, styles.playerRow]}>{content}</View>
+  }
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={name}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.tableRow,
+        styles.playerRow,
+        pressed && styles.playerRowPressed
+      ]}
+    >
+      {content}
+    </Pressable>
+  )
+}
+
 function BattingTable(props: {
   name: string
   rows: BattingRow[]
   theme: Theme
+  onOpenPlayer?: (userId: string, name: string) => void
 }): React.ReactElement {
-  const { name, rows, theme } = props
+  const { name, rows, theme, onOpenPlayer } = props
   const styles = getStyles(theme)
   // Best day first, which is who somebody is looking for.
   const lines = [...rows].sort((a, b) =>
@@ -1286,16 +1375,19 @@ function BattingTable(props: {
             ))}
           </View>
           {lines.map(line => (
-            <View key={line.userId} style={styles.tableRow}>
-              <Text style={styles.cellName} numberOfLines={1}>
-                {line.shortName ?? ''}
-              </Text>
-              {battingColumns.map(column => (
-                <Text key={column.label} style={styles.cell}>
-                  {column.value(line)}
-                </Text>
-              ))}
-            </View>
+            <StatRow
+              key={line.userId}
+              name={line.shortName ?? ''}
+              cells={battingColumns.map(column => column.value(line))}
+              theme={theme}
+              onPress={
+                onOpenPlayer == null
+                  ? undefined
+                  : () => {
+                      onOpenPlayer(line.userId, line.shortName ?? '')
+                    }
+              }
+            />
           ))}
         </>
       )}
@@ -1307,8 +1399,9 @@ function PitchingTable(props: {
   name: string
   rows: PitchingRow[]
   theme: Theme
+  onOpenPlayer?: (userId: string, name: string) => void
 }): React.ReactElement {
-  const { name, rows, theme } = props
+  const { name, rows, theme, onOpenPlayer } = props
   const styles = getStyles(theme)
   return (
     <View style={styles.table}>
@@ -1330,16 +1423,19 @@ function PitchingTable(props: {
             ))}
           </View>
           {rows.map(line => (
-            <View key={line.userId} style={styles.tableRow}>
-              <Text style={styles.cellName} numberOfLines={1}>
-                {line.shortName ?? ''}
-              </Text>
-              {pitchingColumns.map(column => (
-                <Text key={column.label} style={styles.cell}>
-                  {column.value(line)}
-                </Text>
-              ))}
-            </View>
+            <StatRow
+              key={line.userId}
+              name={line.shortName ?? ''}
+              cells={pitchingColumns.map(column => column.value(line))}
+              theme={theme}
+              onPress={
+                onOpenPlayer == null
+                  ? undefined
+                  : () => {
+                      onOpenPlayer(line.userId, line.shortName ?? '')
+                    }
+              }
+            />
           ))}
         </>
       )}
@@ -1700,6 +1796,16 @@ const getStyles = cacheStyles((theme: Theme) =>
     tableHead: {
       borderBottomColor: theme.defaultBorderColor,
       borderBottomWidth: 1
+    },
+    // A line about a person, which opens their page. The head row and the
+    // line score keep the tighter `tableRow`: neither is a target, and
+    // growing them would spend the height these rows just took.
+    playerRow: {
+      minHeight: theme.rem(2.75),
+      paddingVertical: theme.rem(theme.spaceSmRem)
+    },
+    playerRowPressed: {
+      backgroundColor: theme.highlightRowActiveBackground
     },
     cellName: {
       color: theme.primaryTextColor,

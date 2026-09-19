@@ -208,3 +208,37 @@ export function canSeeTeam(scopes: VisibleScopes, teamId: string): boolean {
 export function canManageTeam(scopes: AdminScopes, teamId: string): boolean {
   return scopes.isAdmin || scopes.teamIds.has(teamId)
 }
+
+/**
+ * Whether somebody may **change** a player's name — and so be shown it in full.
+ *
+ * The app draws `Jordan P` and nothing else, on every screen, for everybody.
+ * There is no viewer who gets the whole name because of who they are: these
+ * are children, and a full name on a page a hundred parents can open is a
+ * decision nobody made. The one place the surname appears is the field you
+ * type it into, which is a different thing from a page you read.
+ *
+ * So this is an *editing* right, not a viewing one, and it is narrow by
+ * Paul's instruction of 2026-09-19: a site administrator, a parent — a
+ * `user_links` row of kind `guardian` or `family` — or the player themselves,
+ * whose own name is their own business. A coach is deliberately not on this
+ * list, and neither is a season or league administrator.
+ */
+export async function mayEditName(
+  db: Kysely<Database>,
+  actorUserId: string,
+  playerUserId: string,
+  about: { isAdmin: boolean }
+): Promise<boolean> {
+  if (about.isAdmin) return true
+  if (actorUserId === playerUserId) return true
+
+  const parent = await db
+    .selectFrom('user_links')
+    .select(['id'])
+    .where('user_id', '=', actorUserId)
+    .where('related_user_id', '=', playerUserId)
+    .where('kind', 'in', ['guardian', 'family'])
+    .executeTakeFirst()
+  return parent != null
+}

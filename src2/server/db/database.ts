@@ -23,6 +23,11 @@ export interface UsersTable {
   avatar_sha256: string | null
   avatar_source: string | null
   avatar_updated_at: Timestamp | null
+  /** Which side they bat from, as a scorecard writes it. Null when nobody said. */
+  bats: 'left' | 'right' | 'switch' | null
+  throws: 'left' | 'right' | null
+  /** Where the two above came from, so an import never overwrites a person. */
+  bats_source: 'import' | 'manual' | null
   /** Set when this account was absorbed by another; it is closed, not deleted. */
   merged_into: string | null
   created_at: Timestamp

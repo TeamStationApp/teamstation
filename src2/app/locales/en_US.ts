@@ -87,6 +87,18 @@ export const enUs = {
   highlights_no_video_start:
     'This video has no start time recorded, so plays cannot be placed on it.',
 
+  // One player
+  player_videos: 'Videos',
+  player_stats: 'Stats',
+  player_sections: 'Player sections',
+  player_cannot_load: 'Cannot load this player.',
+  player_videos_empty: 'No highlights of this player yet.',
+  player_videos_none_recorded:
+    'None of this player\u2019s games were recorded, so there is nothing to watch yet.',
+  player_show_more: 'Show more',
+  player_loading: 'Loading\u2026',
+  player_stats_empty: 'No stats for this player yet.',
+
   // Box score and stats
   stats_title: 'Stats',
   game_pitching: 'Pitching',
