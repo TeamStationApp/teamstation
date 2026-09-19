@@ -16,7 +16,7 @@ export interface MediaContext {
   ffmpegPath: string
   /** Signs the `/media` tokens. The same key Caddy's forward_auth checks. */
   mediaSecret: string
-  /** The origin URLs are built against, e.g. `https://tube2.gamestation.co`. */
+  /** The origin URLs are built against, e.g. `https://gamestation.co`. */
   publicUrl: string
   /** The bucket finished videos live in. Empty until one is configured. */
   space: SpaceSettings

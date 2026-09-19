@@ -4,7 +4,7 @@ The server fetches a branch and builds it. Nothing is copied from a laptop, so
 a deploy depends on a commit and not on the state of whoever ran it.
 
 ```sh
-ssh root@tube.gamestation.co /srv/gamestation/repo/src2/deploy/deploy.sh
+ssh root@gamestation.co /srv/gamestation/repo/src2/deploy/deploy.sh
 ```
 
 ## The deploy branch
@@ -14,7 +14,7 @@ Moving it is the act of deploying:
 
 ```sh
 git push --force-with-lease origin <your-branch>:deploy
-ssh root@tube.gamestation.co /srv/gamestation/repo/src2/deploy/deploy.sh
+ssh root@gamestation.co /srv/gamestation/repo/src2/deploy/deploy.sh
 ```
 
 Keeping it separate from the working branch means a push to the branch you are
@@ -33,7 +33,7 @@ time rather than accumulating everybody's. **Ask Paul who holds it before
 pushing.** The commit that is live is the answer to who had it last:
 
 ```sh
-ssh root@tube.gamestation.co git -C /srv/gamestation/repo log --oneline -1
+ssh root@gamestation.co git -C /srv/gamestation/repo log --oneline -1
 ```
 
 ## What a deploy does
@@ -111,13 +111,13 @@ about the systemd unit. It is off entirely when `live.enabled` is false.
 ## Going back
 
 ```sh
-ssh root@tube.gamestation.co /srv/gamestation/repo/src2/deploy/deploy.sh --rollback
+ssh root@gamestation.co /srv/gamestation/repo/src2/deploy/deploy.sh --rollback
 ```
 
 Or deploy any commit by name:
 
 ```sh
-ssh root@tube.gamestation.co /srv/gamestation/repo/src2/deploy/deploy.sh 6c38532a
+ssh root@gamestation.co /srv/gamestation/repo/src2/deploy/deploy.sh 6c38532a
 ```
 
 A rollback only moves the symlink; it does not undo a migration. Migrations are
