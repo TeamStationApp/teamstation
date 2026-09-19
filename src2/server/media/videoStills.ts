@@ -1,4 +1,4 @@
-import { locateVideoFile } from './locations'
+import { videoFrameSource } from './locations'
 import type { MediaContext } from './mediaContext'
 import { warmStills } from './stills'
 
@@ -16,15 +16,16 @@ export async function warmVideoStills(
   highlights: Array<{ playOffsetSec: number }>
 ): Promise<void> {
   try {
-    const videoPath = await locateVideoFile({
+    const source = await videoFrameSource({
       mediaRoot: media.mediaRoot,
+      space: media.space,
       storage,
       videoId
     })
-    if (videoPath == null) return
+    if (source == null) return
     await warmStills({
       ffmpegPath: media.ffmpegPath,
-      videoPath,
+      source,
       workDir: media.workDir,
       videoId,
       seconds: highlights.map(highlight => highlight.playOffsetSec)

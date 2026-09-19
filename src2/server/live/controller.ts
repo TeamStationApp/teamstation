@@ -810,12 +810,10 @@ async function putAway(
 /**
  * Cuts the frame a list will ask for, while the file is still here.
  *
- * Nothing can cut a still out of a video in the Space — that would mean
- * reading byte ranges from the bucket, and nothing does — so once the local
- * copy is swept, six hours from now, this game's picture is whatever was cut
- * before then. A game nobody happens to open in those six hours would have a
- * plain plate in every list for ever. One frame, cut once, at the second the
- * poster asks for.
+ * A still can be had from the Space afterwards, so this is no longer the only
+ * chance at one. It is still the cheap chance: the file is on this disk for
+ * another six hours, and one local seek now saves the first person to open a
+ * list from waiting on a fragment coming back over the network.
  */
 async function keepAPicture(
   current: LiveControllerOptions,
@@ -826,7 +824,7 @@ async function keepAPicture(
   try {
     await ensureStill({
       ffmpegPath: current.ffmpegPath,
-      videoPath: join(dir, VIDEO_FILE),
+      source: { kind: 'file', path: join(dir, VIDEO_FILE) },
       workDir: current.workDir,
       videoId,
       atSec: posterSecond(durationSec)

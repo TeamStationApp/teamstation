@@ -1,7 +1,7 @@
 import type { Kysely } from 'kysely'
 
 import type { Database } from '../db/database'
-import { locateVideoFile } from './locations'
+import { videoFrameSource } from './locations'
 import type { MediaContext } from './mediaContext'
 import { mediaUrlPath } from './mediaTokens'
 import { stillSecond, warmStills } from './stills'
@@ -119,15 +119,16 @@ export async function warmPosters(
 ): Promise<void> {
   for (const poster of posters) {
     try {
-      const videoPath = await locateVideoFile({
+      const source = await videoFrameSource({
         mediaRoot: media.mediaRoot,
+        space: media.space,
         storage: poster.storage,
         videoId: poster.videoId
       })
-      if (videoPath == null) continue
+      if (source == null) continue
       await warmStills({
         ffmpegPath: media.ffmpegPath,
-        videoPath,
+        source,
         workDir: media.workDir,
         videoId: poster.videoId,
         seconds: [posterSecond(poster.durationSec)]
