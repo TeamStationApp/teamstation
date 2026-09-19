@@ -1,7 +1,8 @@
 # GameStation 2.0 (`src2/`)
 
-The video server and app that replace PeerTube at tube.gamestation.co, and that
-will later absorb the scoreboard, dashboard and splitter. Plan:
+The video server and app behind gamestation.co, and that will later absorb the
+scoreboard, dashboard and splitter. It took over from PeerTube on 2026-09-18.
+Plan:
 `agent-notes`.
 
 This is a **peer of `src/`, not a part of it**. It has its own `package.json`,
