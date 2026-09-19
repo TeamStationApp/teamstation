@@ -35,7 +35,9 @@ import { mediaAuthRoute, mediaRoutes } from './routes/media'
 import { seasonRoutes } from './routes/seasons'
 import { statsRoutes } from './routes/stats'
 import { teamRoutes } from './routes/teams'
+import { livingWorkers } from './livingWorkers'
 import { serverConfig } from './serverConfig'
+import { stopWorker } from './stopWorker'
 
 /**
  * What is actually running, not just what the package says.
@@ -80,6 +82,26 @@ const VERSION = versionOf()
  * and a half.
  */
 const FORCE_STOP_MS = 10_000
+
+/**
+ * A worker's own budget, which has to finish inside `FORCE_STOP_MS`.
+ *
+ * The primary's force is for a worker that cannot answer at all — a stopped
+ * process, a wedged event loop. Anything a worker can decide for itself it
+ * decides before then, so the ordinary path is a worker that left cleanly and
+ * a primary that never had to take anything.
+ */
+const WORKER_STOP_MS = 6_000
+const WORKER_CUT_CONNECTIONS_MS = 3_000
+
+/**
+ * How often the primary looks again for workers that have gone.
+ *
+ * A worker's exit is an edge, and a stop that decides on the edge alone has
+ * nothing to fall back on when it misses one. Looking again costs a quarter of
+ * a second in the case that used to cost ten.
+ */
+const WORKER_SWEEP_MS = 250
 const MEDIA_SECRET_ENV = 'GS_MEDIA_SECRET'
 
 /**
@@ -249,13 +271,28 @@ function runPrimary(workerCount: number): void {
   for (let i = 0; i < workerCount; i++) cluster.fork()
 
   let stopping = false
+
+  /**
+   * The last worker out turns the lights off. Without this the primary
+   * signalled its workers and then sat there for ever: the service manager waited
+   * out its whole stop timeout on every deploy, SIGKILLed it, and each of those ninety
+   * seconds was a 502 for anybody using the site.
+   *
+   * `noticedBy` is in the log so the two ways of getting here can be told
+   * apart. A stop that only ever finishes on the sweep is a stop whose exit
+   * events are arriving too early to be believed.
+   */
+  const finishIfEveryWorkerHasGone = (noticedBy: string): void => {
+    if (livingWorkers(cluster.workers).length > 0) return
+    if (noticedBy !== 'exit') {
+      console.log(`every worker has gone, noticed by the ${noticedBy}`)
+    }
+    process.exit(0)
+  }
+
   cluster.on('exit', (worker, code, signal) => {
     if (stopping) {
-      // The last worker out turns the lights off. Without this the primary
-      // signalled its workers and then sat there for ever: the service manager waited
-      // out its whole stop timeout on every deploy, SIGKILLed it, and each of those
-      // ninety seconds was a 502 for anybody using the site.
-      if (Object.keys(cluster.workers ?? {}).length === 0) process.exit(0)
+      finishIfEveryWorkerHasGone('exit')
       return
     }
     console.error(
@@ -268,17 +305,25 @@ function runPrimary(workerCount: number): void {
     if (stopping) return
     stopping = true
     stopLiveController()
-    const workers = Object.values(cluster.workers ?? {})
+    const workers = livingWorkers(cluster.workers)
     console.log(`${signal}: stopping ${workers.length} workers`)
     if (workers.length === 0) process.exit(0)
-    for (const worker of workers) worker?.kill(signal)
+    for (const worker of workers) worker.kill(signal)
+
+    // Looking again, because a worker that has already gone sends no further
+    // exit event and the primary would otherwise wait out its whole budget
+    // over an empty process table.
+    const sweep = setInterval(() => {
+      finishIfEveryWorkerHasGone('sweep')
+    }, WORKER_SWEEP_MS)
+    sweep.unref()
 
     // A worker finishing a request deserves a moment; one that is wedged must
     // not hold a deploy open. Ten seconds, then take it.
     const forced = setTimeout(() => {
       console.error(`${signal}: workers did not stop in time, forcing`)
-      for (const worker of Object.values(cluster.workers ?? {})) {
-        worker?.process.kill('SIGKILL')
+      for (const worker of livingWorkers(cluster.workers)) {
+        worker.process.kill('SIGKILL')
       }
       process.exit(1)
     }, FORCE_STOP_MS)
@@ -380,24 +425,15 @@ function runWorker(): void {
     if (closing) return
     closing = true
     stopLiveController()
-
-    // `server.close` waits for every open connection to end, and a browser's
-    // keep-alive connection sits open and idle for minutes after the page has
-    // finished loading. Closing the idle ones is what lets a worker that is
-    // doing nothing actually stop; without it the wait is not for work, it is
-    // for a socket nobody is using.
-    server.closeIdleConnections()
-    const forced = setTimeout(() => {
-      server.closeAllConnections()
-    }, FORCE_STOP_MS / 2)
-    forced.unref()
-
-    server.close(() => {
-      clearTimeout(forced)
-      db.destroy().then(
-        () => process.exit(0),
-        () => process.exit(1)
-      )
+    stopWorker({
+      server,
+      destroyDatabase: async () => await db.destroy(),
+      cutConnectionsMs: WORKER_CUT_CONNECTIONS_MS,
+      deadlineMs: WORKER_STOP_MS,
+      exit: code => process.exit(code),
+      log: message => {
+        console.error(`worker ${process.pid}: ${message}`)
+      }
     })
   }
   process.on('SIGTERM', shutdown)
