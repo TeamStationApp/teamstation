@@ -19,6 +19,7 @@ import type {
   LineScoreSide,
   PitchingRow,
   Playback,
+  TeamSummary,
   VideoSummary
 } from '../../common/api'
 import {
@@ -26,6 +27,7 @@ import {
   glassStyle,
   HandoffView,
   LivePill,
+  NAV_CLEARANCE_REM,
   PillTabs,
   Screen,
   StreamPanel,
@@ -46,6 +48,7 @@ import { useVideoAspect } from '../player/useVideoAspect'
 import { cacheStyles, useTheme } from '../theme/ThemeContext'
 import type { Theme } from '../theme/types'
 import { gameStatusLine, shortDate, winnerOf } from './format'
+import { openableTeams as teamsWithAPage } from './openableTeams'
 
 export interface GameScreenProps {
   client: GameStationClient
@@ -78,6 +81,8 @@ export interface GameScreenProps {
    * destination, two different addresses.
    */
   onTab?: (tab: Tab) => void
+  /** Opens one of the two teams, from its name or its mark on the card. */
+  onOpenTeam?: (team: TeamSummary) => void
 }
 
 type Tab = 'watch' | 'boxScore'
@@ -228,7 +233,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     initialVideoId,
     startAtSec,
     onMoment,
-    onTab
+    onTab,
+    onOpenTeam
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -244,6 +250,18 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   const [withheld, setWithheld] = useState<string | null>(null)
   const [dropped, setDropped] = useState(0)
   const [box, setBox] = useState<BoxScoreData | undefined>(undefined)
+  /**
+   * The two sides' teams, where they are ones that can actually be opened.
+   *
+   * Looked up ahead of the tap rather than on it: a name that answers a press
+   * by doing nothing, a beat later, is worse than one that never answered. A
+   * side missing from here is left un-pressable — an opponent from outside the
+   * season has no page, and neither has a team in a season this person is not
+   * in.
+   */
+  const [openableTeams, setOpenableTeams] = useState<Map<string, TeamSummary>>(
+    () => new Map()
+  )
   const [playback, setPlayback] = useState<Playback | undefined>(undefined)
   /**
    * Which video the current playback URL belongs to.
@@ -306,17 +324,36 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    * pulled up past them into the empty space beside them.
    */
   const [tabsHeight, setTabsHeight] = useState(0)
+  /**
+   * How tall the camera-angle buttons are, so the picture can leave room.
+   *
+   * Measured rather than guessed at, because it is nothing at all on the games
+   * with one camera and the picture on a phone held sideways has no height to
+   * spare for a number that is wrong.
+   */
+  const [pickerHeight, setPickerHeight] = useState(0)
+  /**
+   * Whether the window is short, readable from a callback.
+   *
+   * The layout is worked out further down, after the video's shape is known,
+   * so the scroll handler cannot close over it. A ref rather than state: it is
+   * read on scroll and never rendered from.
+   */
+  const shortWindow = useRef(false)
   const fitList = useCallback(() => {
     const node = listRef.current
     if (node == null || typeof node.getBoundingClientRect !== 'function') return
     const room = window.innerHeight - node.getBoundingClientRect().top
     node.style.maxHeight = `${Math.max(120, Math.round(room))}px`
   }, [])
-  const handleWatchScroll = useCallback(() => {
-    handoff.handleScroll()
-    fitList()
-  }, [fitList, handoff])
   const progress = handoff.progress
+  const handleWatchScroll = useCallback(() => {
+    // Short, the card is never drawn, so there is nothing to hand over and
+    // nothing to measure: the header simply holds the score.
+    if (shortWindow.current) progress.value = 1
+    else handoff.handleScroll()
+    fitList()
+  }, [fitList, handoff, progress])
   const headerScore = useMemo(
     () =>
       game == null ? null : (
@@ -346,13 +383,42 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   const layout = watchLayout({
     width,
     height,
-    // The header, the card and the pills all sit above the picture.
-    chromeHeight: headerHeight + 180,
+    // The header is what the picture pegs under; the card and the section
+    // pills scroll away above it.
+    chromeHeight: headerHeight,
+    // The camera-angle buttons are pegged with the picture and have to stay
+    // on the screen with it. Twice the small space as well: `onLayout`
+    // measures the card and not the margin above it, and the second keeps the
+    // card's lower edge off the bottom of the window rather than on it.
+    belowVideo:
+      (game?.videos.length ?? 0) > 1
+        ? pickerHeight + 2 * theme.rem(theme.spaceXsRem)
+        : 0,
     aspect,
     previous: mode.current
   })
   mode.current = layout.mode
   const sideBySide = layout.mode === 'sideBySide'
+  // A phone held sideways. The picture is as tall as the window allows and no
+  // taller, so there is nothing under it to peg a description to.
+  const short = layout.short
+  shortWindow.current = short
+  useEffect(() => {
+    // A short window may never scroll at all — everything that moves is
+    // inside the column — so the header is told once rather than waiting for
+    // a hand-over that will not come. Turned upright again, the card is back
+    // and the measurement decides, from where the page actually is.
+    if (short) {
+      progress.value = 1
+      return
+    }
+    const frame = requestAnimationFrame(() => {
+      handoff.handleScroll()
+    })
+    return () => {
+      cancelAnimationFrame(frame)
+    }
+  }, [handoff, progress, short])
   // From the list's own width, not the window's: beside the video the list is
   // 402px wide and takes one column, and asking the window would have given it
   // two squeezed into that.
@@ -413,6 +479,32 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     // it here would refetch the game in a loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, gameId])
+
+  const seasonId = game?.seasonId
+  const awayTeamId = game?.awayTeamId
+  const homeTeamId = game?.homeTeamId
+  useEffect(() => {
+    if (awayTeamId == null || homeTeamId == null) return
+    let live = true
+    const load = async (): Promise<void> => {
+      // Both lists: your own teams, which you can always open, and the rest of
+      // the season, which a season you are allowed to watch lets you open too.
+      // An opponent from outside the season is in neither, which is the whole
+      // point — it has no page.
+      const lists = await Promise.all([
+        client.teams().catch(() => []),
+        seasonId == null
+          ? Promise.resolve([])
+          : client.seasonTeams(seasonId).catch(() => [])
+      ])
+      if (!live) return
+      setOpenableTeams(teamsWithAPage(lists, [awayTeamId, homeTeamId]))
+    }
+    load().catch(() => undefined)
+    return () => {
+      live = false
+    }
+  }, [awayTeamId, client, homeTeamId, seasonId])
 
   useEffect(() => {
     if (video == null) return
@@ -641,6 +733,20 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   }
 
   const pickerNames = angleNames(game.videos)
+  /**
+   * A side's name and mark answer a press, where there is a page behind them.
+   *
+   * `undefined` rather than a handler that does nothing, so the card can tell
+   * a name that opens something from one that is only a name.
+   */
+  const openSide = (teamId: string): (() => void) | undefined => {
+    const team = openableTeams.get(teamId)
+    if (team == null || onOpenTeam == null) return undefined
+    return () => {
+      onOpenTeam(team)
+    }
+  }
+
   const scoreboard = (
     <GameHeroCard
       awayName={game.awayTeamName}
@@ -657,6 +763,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       date={shortDate(game.startAt)}
       venue={game.venue ?? undefined}
       teamStats={teamStatsOf(game.linescore)}
+      onOpenAwayTeam={openSide(game.awayTeamId)}
+      onOpenHomeTeam={openSide(game.homeTeamId)}
     />
   )
 
@@ -697,7 +805,9 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         style={[
           styles.description,
           glassStyle(theme),
-          { width: layout.videoWidth }
+          // Beside the picture on a short window it is in the list's column
+          // and takes its width; everywhere else it is the picture's own.
+          short ? styles.descriptionInList : { width: layout.videoWidth }
         ]}
       >
         <Text style={styles.descriptionText}>{chosen.description}</Text>
@@ -754,6 +864,9 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
             glassStyle(theme),
             { width: layout.videoWidth }
           ]}
+          onLayout={event => {
+            setPickerHeight(event.nativeEvent.layout.height)
+          }}
         >
           <PillTabs
             tabs={game.videos.map(item => {
@@ -834,6 +947,28 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     </View>
   )
 
+  const sections = (
+    <View
+      onLayout={event => {
+        setTabsHeight(event.nativeEvent.layout.height)
+      }}
+    >
+      {tabs}
+    </View>
+  )
+  const head = (
+    <>
+      {/*
+        The card alone is what hands its score up, not the block it shares
+        with the pills: measured across both, the score only arrived once the
+        pills had gone under too, which is long after the thing it is a copy
+        of has left the screen.
+      */}
+      <View ref={handoff.ref}>{scoreboard}</View>
+      {sections}
+    </>
+  )
+
   // Two regions, not one scroll view: the card, the pills and the player are
   // fixed, and the highlights scroll underneath them. Reading to the bottom of
   // a long game must not take the video off the screen.
@@ -854,25 +989,23 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         scrollEventThrottle={16}
         contentContainerStyle={[
           styles.watchContent,
-          sideBySide ? styles.watchSplit : styles.watchStacked
+          sideBySide ? styles.watchSplit : styles.watchStacked,
+          // The header is glass and overlays this, so everything starts below
+          // it. On the container rather than on the card, because on a short
+          // window the card is not the first thing here — the picture is.
+          { paddingTop: headerHeight }
         ]}
       >
-        <View style={[styles.head, { paddingTop: headerHeight }]}>
-          {/*
-            The card alone is what hands its score up, not the block it shares
-            with the pills: measured across both, the score only arrived once
-            the pills had gone under too, which is long after the thing it is a
-            copy of has left the screen.
-          */}
-          <View ref={handoff.ref}>{scoreboard}</View>
-          <View
-            onLayout={event => {
-              setTabsHeight(event.nativeEvent.layout.height)
-            }}
-          >
-            {tabs}
-          </View>
-        </View>
+        {/*
+          The card and the sections, above everything on a window with the
+          height for them.
+
+          Short, they are in the column on the right instead. A band across
+          the top costs a phone held sideways half of what it has, and the
+          picture — the thing the screen is for — would start below the fold
+          and need scrolling to before it could be seen at all.
+        */}
+        {short ? null : <View style={styles.head}>{head}</View>}
 
         {/*
           A plain div, not a `View`: `position: sticky` is a web value React
@@ -902,7 +1035,13 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           }}
         >
           {player}
-          {description}
+          {/*
+            Under the picture, unless there is no `under`: on a phone held
+            sideways the picture already reaches the bottom of the window, so
+            the description goes into the column that scrolls instead of off
+            the end of the one that does not.
+          */}
+          {short ? null : description}
         </div>
 
         {/*
@@ -929,12 +1068,24 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
               : PHONE_MARGIN,
             // A starting value only; `fitList` measures the real one.
             maxHeight: sideBySide ? height - headerHeight : undefined,
-            marginTop: sideBySide
-              ? -(tabsHeight + theme.rem(theme.spaceSmRem))
-              : 0,
+            // Pulled up past the section pills into the empty space beside
+            // them. Short, the pills are in this column rather than beside
+            // it, so there is nothing to pull past.
+            marginTop:
+              sideBySide && !short
+                ? -(tabsHeight + theme.rem(theme.spaceSmRem))
+                : 0,
             overflowY: sideBySide ? 'auto' : 'visible'
           }}
         >
+          {/*
+            The sections only. The card itself is not drawn on a short window
+            — a column narrow enough to sit beside the picture is narrower
+            than two team names laid out either side of a score, and the
+            header is already holding that score in full.
+          */}
+          {short ? <View style={styles.columnHead}>{sections}</View> : null}
+          {short ? description : null}
           {highlightList}
           {/*
             Under the highlights, and only for the people who run the team:
@@ -1335,6 +1486,12 @@ const getStyles = cacheStyles((theme: Theme) =>
       paddingHorizontal: theme.rem(theme.spaceSmRem),
       paddingVertical: theme.rem(theme.spaceSmRem)
     },
+    // In the highlights' column it takes the column, and stands off the
+    // picture beside it by the same gap the column's own rows do.
+    descriptionInList: {
+      width: '100%',
+      marginBottom: theme.rem(theme.spaceSmRem)
+    },
     descriptionText: {
       color: theme.primaryTextColor,
       fontFamily: theme.regularTextFont,
@@ -1399,7 +1556,7 @@ const getStyles = cacheStyles((theme: Theme) =>
       // No padding here: the picture is edge to edge on a phone, so the
       // margins belong to the pieces either side of it rather than to the
       // column they share.
-      paddingBottom: theme.rem(4.5),
+      paddingBottom: theme.rem(NAV_CLEARANCE_REM),
       gap: theme.rem(theme.spaceSmRem)
     },
     watchStacked: {
@@ -1417,6 +1574,11 @@ const getStyles = cacheStyles((theme: Theme) =>
       width: '100%',
       paddingHorizontal: theme.rem(theme.spaceMdRem),
       gap: theme.rem(theme.spaceSmRem)
+    },
+    // The same pieces, stacked in the column on the right on a short window.
+    columnHead: {
+      gap: theme.rem(theme.spaceSmRem),
+      marginBottom: theme.rem(theme.spaceSmRem)
     },
     playerColumn: {
       gap: theme.rem(theme.spaceSmRem)

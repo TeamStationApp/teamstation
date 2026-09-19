@@ -8,7 +8,7 @@
  * thing that keeps the next screen looking like the last one.
  */
 export { AppHeader, type AppHeaderProps } from './AppHeader'
-export { AppNav, NAV_TABS, type NavTabId } from './AppNav'
+export { AppNav, NAV_CLEARANCE_REM, NAV_TABS, type NavTabId } from './AppNav'
 export { Badge, type BadgeTone } from './Badge'
 export { Button, type ButtonKind } from './Button'
 export { Card } from './Card'
