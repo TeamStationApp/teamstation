@@ -26,7 +26,9 @@ import {
   useBreakpoint,
   useHandoff,
   useHeaderHandoff,
-  useHeaderSlot
+  useHeaderSlot,
+  webStyle,
+  WideTable
 } from '../components'
 import { videoCountLabel } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -469,9 +471,11 @@ function BattingTable(props: { rows: BattingRow[] }): React.ReactElement {
   const sorted = [...rows].sort((a, b) => b.pa - a.pa)
 
   return (
-    <View>
+    <WideTable>
       <View style={[styles.tableRow, styles.tableHead]}>
-        <Text style={[styles.cellName, styles.cellHead]}>Player</Text>
+        <Text style={[styles.cellName, styles.cellHead, styles.cellNameHead]}>
+          Player
+        </Text>
         <Text style={[styles.cell, styles.cellHead]}>PA</Text>
         <Text style={[styles.cell, styles.cellHead]}>AB</Text>
         <Text style={[styles.cell, styles.cellHead]}>H</Text>
@@ -492,7 +496,7 @@ function BattingTable(props: { rows: BattingRow[] }): React.ReactElement {
           <Text style={styles.cell}>{rate(row.rates.avg)}</Text>
         </View>
       ))}
-    </View>
+    </WideTable>
   )
 }
 
@@ -624,8 +628,20 @@ const getStyles = cacheStyles((theme: Theme) => ({
     letterSpacing: theme.rem(0.05),
     color: theme.secondaryTextColor
   },
+  /** The pinned name cell in the head row, which sits on the head's tint. */
+  cellNameHead: {
+    backgroundColor: theme.containerBackgroundColor
+  },
   cellName: {
-    flex: 1,
+    // Wide enough for a name first, then greedy for what a wide window has
+    // left over, and never shrinking below the two. Pinned as well, so a row
+    // scrolled to its last column is still somebody's — `sticky` is a position
+    // React Native has no name for, and this app renders to the DOM.
+    flexBasis: theme.rem(7),
+    flexGrow: 1,
+    flexShrink: 0,
+    ...webStyle({ position: 'sticky', left: 0, zIndex: 1 }),
+    backgroundColor: theme.cardBackgroundColor,
     fontFamily: theme.regularTextFont,
     fontSize: theme.rem(0.875),
     color: theme.primaryTextColor
