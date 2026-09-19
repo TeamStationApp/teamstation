@@ -22,7 +22,8 @@ async function main(): Promise<void> {
     for (const pair of pairs) {
       console.log(
         `${pair.action.padEnd(5)} ${pair.otherName} (${pair.otherPlays} plays)` +
-          ` -> ${pair.keepName} (${pair.keepPlays} plays)`
+          ` -> ${pair.keepName} (${pair.keepPlays} plays)` +
+          (pair.why === 'shirt' ? ' — same shirt, never played' : '')
       )
     }
     for (const note of ambiguous) {
