@@ -6,9 +6,9 @@ import { shortNames } from '../../common/names'
 import { canSeeGame, canSeeTeam, visibleScopes } from '../access'
 import type { Database } from '../db/database'
 import { isRealVideo } from '../db/realVideos'
+import { teamNames, teamStandings } from '../db/teamLookups'
 import { withDropped } from '../highlights'
 import { imageUrl } from '../media/imageUrls'
-import { locateVideoFile } from '../media/locations'
 import type { MediaContext } from '../media/mediaContext'
 import { mediaUrlPath } from '../media/mediaTokens'
 import {
@@ -17,7 +17,8 @@ import {
   posterUrl,
   warmPosters
 } from '../media/posters'
-import { stillSecond, warmStills } from '../media/stills'
+import { stillSecond } from '../media/stills'
+import { warmVideoStills } from '../media/videoStills'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import { highlightSettings } from '../settings'
@@ -430,28 +431,7 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
         .orderBy('at_bat_index')
         .execute()
 
-      // Which teams a highlight may name. An opponent invented from a name on
-      // somebody else's schedule is not somebody we can put on a screen.
-      const teamRows = await db
-        .selectFrom('teams')
-        .leftJoin('memberships', join =>
-          join
-            .onRef('memberships.team_id', '=', 'teams.id')
-            .on('memberships.role', 'in', ['owner', 'manager'])
-        )
-        .select(['teams.id as id', 'teams.kind as kind'])
-        .select(eb => eb.fn.count<number>('memberships.id').as('owners'))
-        .groupBy(['teams.id', 'teams.kind'])
-        .execute()
-      const teams = new Map(
-        teamRows.map(row => [
-          row.id,
-          {
-            isExternal: row.kind === 'external',
-            hasOwner: Number(row.owners) > 0
-          }
-        ])
-      )
+      const teams = await teamStandings(db)
 
       const settings = await highlightSettings(db)
       const computed = withDropped(
@@ -853,54 +833,6 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
   )
 
   return router
-}
-
-/**
- * The names behind a set of team ids. Every screen that shows a game shows who
- * played, so the name travels with the game rather than costing the app a
- * second round trip per team.
- */
-async function teamNames(
-  db: Kysely<Database>,
-  teamIds: string[]
-): Promise<Map<string, string>> {
-  const wanted = [...new Set(teamIds)]
-  if (wanted.length === 0) return new Map()
-  const rows = await db
-    .selectFrom('teams')
-    .select(['id', 'name'])
-    .where('id', 'in', wanted)
-    .execute()
-  return new Map(rows.map(row => [row.id, row.name]))
-}
-
-/**
- * Cuts the stills a highlight list will ask for. Nothing awaits this and
- * nothing fails because of it.
- */
-async function warmVideoStills(
-  media: MediaContext,
-  storage: 'peertube' | 'local' | 'spaces',
-  videoId: string,
-  highlights: Array<{ playOffsetSec: number }>
-): Promise<void> {
-  try {
-    const videoPath = await locateVideoFile({
-      mediaRoot: media.mediaRoot,
-      storage,
-      videoId
-    })
-    if (videoPath == null) return
-    await warmStills({
-      ffmpegPath: media.ffmpegPath,
-      videoPath,
-      workDir: media.workDir,
-      videoId,
-      seconds: highlights.map(highlight => highlight.playOffsetSec)
-    })
-  } catch {
-    // A thumbnail that is not there is not worth reporting as an error.
-  }
 }
 
 async function countVideos(

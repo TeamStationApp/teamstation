@@ -477,6 +477,16 @@ function Shell(props: AppProps): React.ReactElement {
         title={top.title}
         initialTab={top.tab}
         onTab={setTopTab}
+        onOpenMoment={(gameId, videoId, atSec, title) => {
+          push({
+            name: 'game',
+            gameId,
+            title,
+            videoId,
+            at: atSec,
+            autoPlay: true
+          })
+        }}
       />
     ) : top.name === 'team' ? (
       <TeamScreen
