@@ -138,6 +138,12 @@ public struct AppConfig: Hashable, Sendable, Codable {
   /// event *is* the destination, and its key lives in the keychain with the account.
   public var streamDestination: StreamDestination
   /// Where GameStation is, for signing in and listing events. Changed only when the site moves.
+  ///
+  /// It moved on 2026-09-18: GameStation answers on `gamestation.co`, and
+  /// `tube2.gamestation.co` is PeerTube now. A Director still holding the old
+  /// address does not fail in any way an operator could read — PeerTube
+  /// answers `/api/v1` too, with a 400 and an empty body — so a saved copy of
+  /// it is read as the new one rather than left to be puzzled over.
   public var gameStationURL: String
   /// Sweep a different /24 for cameras instead of this iPad's own, for a bench where the cameras sit
   /// behind a traffic shaper on another subnet. Off for normal use.
@@ -181,6 +187,22 @@ public struct AppConfig: Hashable, Sendable, Codable {
   public static let resumeDowntimeLimitMinimumSeconds: Double = 60
   public static let resumeDowntimeLimitMaximumSeconds: Double = 86_400
 
+  /// Where the site is.
+  public static let gameStationURLDefault = "https://gamestation.co"
+
+  /// Where it used to be, until 2026-09-18. `tube2.gamestation.co` is PeerTube
+  /// now, and PeerTube answers `/api/v1` — with a 400 and an empty body, which
+  /// is a failure nobody can act on — so the old address is read as the new one
+  /// rather than reaching something that cannot ever serve this app.
+  static let gameStationURLBeforeTheMove = "https://tube2.gamestation.co"
+
+  /// A saved address, with the one that moved translated. Nil in, nil out, so
+  /// a config that never had the key still falls back to the default.
+  static func movedSiteAddress(_ saved: String?) -> String? {
+    guard let saved else { return nil }
+    return saved == gameStationURLBeforeTheMove ? gameStationURLDefault : saved
+  }
+
   /// The defaults are a new install's. A saved config keeps every value it has; see `init(from:)`.
   public init(
     programCodec: ProgramCodec = .hevc,
@@ -210,7 +232,7 @@ public struct AppConfig: Hashable, Sendable, Codable {
     replaySlowMotionRate: Double = AppConfig.replaySlowMotionRateDefault,
     streamURL: String = "",
     streamDestination: StreamDestination = .url,
-    gameStationURL: String = "https://tube2.gamestation.co",
+    gameStationURL: String = AppConfig.gameStationURLDefault,
     subnetScanOverrideEnabled: Bool = false,
     subnetScanOverride: String = "",
     resumeDowntimeLimitSeconds: Double = AppConfig.resumeDowntimeLimitDefaultSeconds
@@ -466,8 +488,9 @@ public struct AppConfig: Hashable, Sendable, Codable {
         StreamDestination.self,
         forKey: .streamDestination
       )) as? StreamDestination ?? fallback.streamDestination,
-      gameStationURL: try container.decodeIfPresent(String.self, forKey: .gameStationURL)
-        ?? fallback.gameStationURL,
+      gameStationURL: AppConfig.movedSiteAddress(
+        try container.decodeIfPresent(String.self, forKey: .gameStationURL)
+      ) ?? fallback.gameStationURL,
       subnetScanOverrideEnabled: try container.decodeIfPresent(
         Bool.self,
         forKey: .subnetScanOverrideEnabled
