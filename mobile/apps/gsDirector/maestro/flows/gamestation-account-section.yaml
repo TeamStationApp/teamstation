@@ -1,0 +1,29 @@
+# The GameStation account, at the top of Settings and on its own.
+#
+# No `clearState`: this runs against the iPad as the operator left it, because
+# the thing under test is a saved address being followed to the site's new name.
+appId: co.gamestation.director
+---
+- launchApp:
+    appId: co.gamestation.director
+    arguments:
+      uiTest: true
+
+- tapOn:
+    id: 'start-directing'
+- tapOn:
+    id: 'settings-button'
+
+# First thing on the screen, without scrolling.
+- assertVisible:
+    id: 'settings-gamestation-account'
+- takeScreenshot: /tmp/dirShots/settingsTop
+
+# The streaming section is the next one down, and still holds both destinations.
+- assertVisible:
+    id: 'settings-stream-destination-event'
+- assertVisible:
+    id: 'settings-stream-destination-url'
+- assertVisible:
+    id: 'settings-stream-event-row'
+- takeScreenshot: /tmp/dirShots/settingsStream
