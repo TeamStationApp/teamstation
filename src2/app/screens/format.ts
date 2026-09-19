@@ -190,3 +190,28 @@ function handLabel(hand: 'left' | 'right' | 'switch'): string {
   if (hand === 'switch') return 'L/R'
   return hand === 'left' ? 'L' : 'R'
 }
+
+/**
+ * A date and the exact time of day, to the second: `Sat, Jun 22 2026 · 4:47:13 PM`.
+ *
+ * The seconds are the point. A highlight list is a list of moments, and two
+ * plays in the same at-bat are a minute apart; a time without seconds makes
+ * them look like the same one.
+ */
+export function exactDateTime(iso: string | null): string {
+  if (iso == null) return ''
+  const when = new Date(iso)
+  if (Number.isNaN(when.getTime())) return ''
+  const day = when.toLocaleDateString(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric'
+  })
+  const time = when.toLocaleTimeString(undefined, {
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit'
+  })
+  return `${day} · ${time}`
+}

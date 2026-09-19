@@ -68,6 +68,15 @@ export interface Highlight {
   startOffsetSec: number
   /** Where the play itself is, for a still or a marker. */
   playOffsetSec: number
+  /**
+   * When the play happened, by the clock on the wall.
+   *
+   * The corrected moment, not the scorekeeper's tap: the same arithmetic the
+   * offsets above are worked out from. A player's own page prints this beside
+   * the highlight, and printing it from the raw tap would put a time on the
+   * screen a second or two adrift from the frame the video seeks to.
+   */
+  playAt: Date
   eventType: string | null
   isScoringPlay: boolean
 }
@@ -155,6 +164,7 @@ export function withDropped(
       eventId: event.id,
       atBatIndex: event.atBatIndex,
       title: label,
+      playAt: new Date(playMs),
       description: event.description,
       startOffsetSec: Math.max(0, startOffsetSec),
       playOffsetSec,

@@ -1,10 +1,16 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { Text, View } from 'react-native'
 
-import type { GameStationClient, PlayerDetail } from '../../common/api'
+import type {
+  GameStationClient,
+  PlayerDetail,
+  PlayerHighlight
+} from '../../common/api'
 import {
+  Button,
   Card,
   Emblem,
+  GameRow,
   HandoffView,
   initialsOf,
   PillTabs,
@@ -15,7 +21,7 @@ import {
 } from '../components'
 import { lstrings } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { battingLine } from './format'
+import { battingLine, exactDateTime } from './format'
 
 export interface PlayerScreenProps {
   client: GameStationClient
@@ -25,6 +31,13 @@ export interface PlayerScreenProps {
   /** Which tab to open on, from the address. */
   initialTab?: 'videos' | 'stats'
   onTab?: (tab: 'videos' | 'stats', correcting?: boolean) => void
+  /** Opens the game's video at the moment of one of their highlights. */
+  onOpenMoment?: (
+    gameId: string,
+    videoId: string,
+    atSec: number,
+    title: string
+  ) => void
 }
 
 const TABS = [
@@ -45,13 +58,20 @@ const TABS = [
  * sends one; this screen never has both to choose between.
  */
 export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
-  const { client, userId, title, initialTab, onTab } = props
+  const { client, userId, title, initialTab, onTab, onOpenMoment } = props
   const theme = useTheme()
   const styles = getStyles(theme)
 
   const [player, setPlayer] = useState<PlayerDetail | undefined>(undefined)
   const [tab, setTab] = useState<'videos' | 'stats'>(initialTab ?? 'videos')
   const [error, setError] = useState<string | undefined>(undefined)
+  const [highlights, setHighlights] = useState<PlayerHighlight[]>([])
+  const [nextBefore, setNextBefore] = useState<string | undefined>(undefined)
+  const [withoutVideo, setWithoutVideo] = useState(0)
+  const [loadingVideos, setLoadingVideos] = useState(true)
+  /** The page being asked for. Undefined is the first one. */
+  const [before, setBefore] = useState<string | undefined>(undefined)
+
   // The name slides up into the header as the card goes under it, the way a
   // team's does. Until the request lands, the name the tapped row showed is
   // what goes up there: it is the same name, and a header that appears half a
@@ -101,6 +121,35 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
     }
   }, [client, userId])
 
+  // Their highlights, a page at a time. Every play they are credited on,
+  // across every game and every team — the Videos tab is never filtered.
+  useEffect(() => {
+    let cancelled = false
+    setLoadingVideos(true)
+    client
+      .playerHighlights(userId, { before })
+      .then(page => {
+        if (cancelled) return
+        // Appended rather than replaced: `Show more` is another page of the
+        // same list, not a new one.
+        setHighlights(held =>
+          before == null ? page.highlights : [...held, ...page.highlights]
+        )
+        setNextBefore(page.nextBefore ?? undefined)
+        setWithoutVideo(held => (before == null ? 0 : held) + page.withoutVideo)
+      })
+      .catch(() => {
+        // The hero card and the stats are still worth showing without them.
+        if (!cancelled) setNextBefore(undefined)
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingVideos(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [client, userId, before])
+
   const handedness = player == null ? undefined : battingLine(player)
 
   return (
@@ -141,9 +190,49 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
       {error != null && <Text style={styles.error}>{error}</Text>}
 
       {tab === 'videos' && (
-        <Card>
-          <Text style={styles.muted}>{lstrings.player_videos_empty}</Text>
-        </Card>
+        <View style={styles.section}>
+          {loadingVideos && highlights.length === 0 && (
+            <Card>
+              <Text style={styles.muted}>{lstrings.player_loading}</Text>
+            </Card>
+          )}
+          {!loadingVideos && highlights.length === 0 && (
+            <Card>
+              <Text style={styles.muted}>
+                {withoutVideo > 0
+                  ? lstrings.player_videos_none_recorded
+                  : lstrings.player_videos_empty}
+              </Text>
+            </Card>
+          )}
+          {highlights.map(highlight => (
+            <Card key={`${highlight.eventId} ${highlight.videoId}`}>
+              <GameRow
+                first={highlight.teamName ?? ''}
+                second={highlight.outcome}
+                detail={exactDateTime(highlight.playAt)}
+                posterUrl={highlight.stillUrl}
+                onPress={() => {
+                  onOpenMoment?.(
+                    highlight.gameId,
+                    highlight.videoId,
+                    highlight.startOffsetSec,
+                    highlight.outcome
+                  )
+                }}
+              />
+            </Card>
+          ))}
+          {nextBefore != null && (
+            <Button
+              label={lstrings.player_show_more}
+              kind="secondary"
+              onPress={() => {
+                setBefore(nextBefore)
+              }}
+            />
+          )}
+        </View>
       )}
 
       {tab === 'stats' && (
@@ -167,6 +256,9 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontWeight: '700',
     color: theme.headerTextColor,
     textAlign: 'center'
+  },
+  section: {
+    gap: theme.rem(theme.spaceMdRem)
   },
   identity: {
     gap: theme.rem(theme.spaceMdRem)

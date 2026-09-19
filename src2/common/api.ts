@@ -320,6 +320,38 @@ export const asPlayerDetail = asObject({
 })
 export type PlayerDetail = ReturnType<typeof asPlayerDetail>
 
+/**
+ * One highlight of one player, for their own page.
+ *
+ * The team is the one they were on **at that moment**, which is the credit's
+ * own team rather than wherever they play now: a child who moved clubs sees
+ * both down one list, each play against the shirt they were wearing.
+ */
+export const asPlayerHighlight = asObject({
+  eventId: asString,
+  gameId: asString,
+  videoId: asString,
+  teamId: asNullable(asString),
+  teamName: asNullable(asString),
+  /** `Run scored`, `Strikeout pitching`, `Single`. Never their own name. */
+  outcome: asString,
+  /** When the play happened, corrected — not when the scorekeeper tapped. */
+  playAt: asString,
+  startOffsetSec: asNumber,
+  playOffsetSec: asNumber,
+  stillUrl: asString
+})
+export type PlayerHighlight = ReturnType<typeof asPlayerHighlight>
+
+export const asPlayerHighlights = asObject({
+  highlights: asArray(asPlayerHighlight),
+  /** Ask for the next page from here. Null when this is the last one. */
+  nextBefore: asNullable(asString),
+  /** Plays of theirs on this page that no recording covers. */
+  withoutVideo: asOptional(asNumber, 0)
+})
+export type PlayerHighlights = ReturnType<typeof asPlayerHighlights>
+
 export const asStandingsRow = asObject({
   teamId: asString,
   teamName: asString,
@@ -1004,6 +1036,24 @@ export class GameStationClient {
       'GET',
       `/players/${encodeURIComponent(userId)}/name`,
       asPlayerName
+    )
+  }
+
+  /** Every highlight one player is credited on, newest first, a page at a time. */
+  async playerHighlights(
+    userId: string,
+    options: { before?: string; limit?: number } = {}
+  ): Promise<PlayerHighlights> {
+    const query = new URLSearchParams()
+    if (options.before != null) query.set('before', options.before)
+    if (options.limit != null) query.set('limit', String(options.limit))
+    const text = query.toString()
+    return await this.request(
+      'GET',
+      `/players/${encodeURIComponent(userId)}/highlights${
+        text === '' ? '' : `?${text}`
+      }`,
+      asPlayerHighlights
     )
   }
 
