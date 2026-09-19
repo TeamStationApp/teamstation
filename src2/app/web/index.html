@@ -2,10 +2,17 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta
-      name="viewport"
-      content="width=device-width, initial-scale=1, viewport-fit=cover"
-    />
+    <!--
+      No `viewport-fit=cover`. With it the page runs under the rounded corners
+      and the camera housing, and on a phone held sideways the island lands on
+      the left-hand edge of the picture. Nothing here reads `env(safe-area-
+      inset-*)` to get out of the way, and adding padding would not be enough
+      either: the layout sizes itself from `window.innerWidth`, which under
+      `cover` is the whole screen and not the part of it that can be seen. The
+      default insets the page to the safe area and reports that width, so the
+      two agree.
+    -->
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light" />
     <meta name="theme-color" content="#2B4221" />
     <title>GameStation</title>
