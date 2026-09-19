@@ -80,6 +80,8 @@ export interface PitcherEarnedRuns {
   er: number
 }
 
+export type { Runner as EarnedRunRunner }
+
 export interface EarnedRunTrace {
   index: number
   code: string
@@ -96,7 +98,9 @@ export interface EarnedRunTrace {
  * The replay's own state: who is on, how far their earned progress has got, and
  * the few facts about the current play that the next event needs to know.
  */
-class Replay {
+export class EarnedRunReplay {
+  /** Earned runs so far, per pitcher. */
+  readonly er = new Map<string, number>()
   runners: Runner[] = []
   lastBallInPlay: {
     batterId?: string
@@ -110,6 +114,36 @@ class Replay {
   walkOwner: { set: boolean; value: string | undefined } = {
     set: false,
     value: undefined
+  }
+
+  /**
+   * One event: the replay's whole turn at it.
+   *
+   * Kept on the class because the rest of the game's figures are counted from
+   * the same walk and need to read the runner list as it stands — who put the
+   * man who just scored on base, and who wore the walk.
+   */
+  apply(context: EventContext, trace?: EarnedRunTrace[]): void {
+    // The inning is cleared at the top of the event *after* the one that ended
+    // it, so a run scored on the third out is still charged first.
+    if (context.before.lastEvent.endedInning) this.clear()
+    updateWalkOwner(this, context)
+    process(this, context)
+    settle(this, context, trace)
+  }
+
+  charge(pitcherId: string | undefined, by: number): void {
+    if (pitcherId == null || pitcherId === '') return
+    this.er.set(pitcherId, (this.er.get(pitcherId) ?? 0) + by)
+  }
+
+  /** The runner added most recently, which is the one this event put on. */
+  get newestRunner(): Runner | undefined {
+    return this.runners[0]
+  }
+
+  mostRecentRunner(runnerId: string): Runner | undefined {
+    return this.runners.find(runner => runner.runnerId === runnerId)
   }
 
   clear(): void {
@@ -309,35 +343,16 @@ export function earnedRunsByPitcher(
   streamEvents: unknown,
   trace?: EarnedRunTrace[]
 ): Map<string, PitcherEarnedRuns> {
-  const charged = new Map<string, PitcherEarnedRuns>()
-  const replay = new Replay()
-
-  const add = (pitcherId: string | undefined, by: number): void => {
-    if (pitcherId == null || pitcherId === '') return
-    const held = charged.get(pitcherId) ?? { er: 0 }
-    held.er += by
-    charged.set(pitcherId, held)
-  }
-
-  walkGame(streamEvents, {
-    onEvent: context => {
-      // The inning is cleared at the top of the event *after* the one that
-      // ended it, so a run scored on the third out is still charged first.
-      if (context.before.lastEvent.endedInning) replay.clear()
-      updateWalkOwner(replay, context)
-      process(replay, context)
-      settle(replay, context, add, trace)
-    }
-  })
-
-  return charged
+  const replay = new EarnedRunReplay()
+  walkGame(streamEvents, { onEvent: context => replay.apply(context, trace) })
+  return new Map([...replay.er].map(([pitcherId, er]) => [pitcherId, { er }]))
 }
 
 /**
  * Who wears a walk: the pitcher who threw its second ball, not whoever happened
  * to finish it.
  */
-function updateWalkOwner(replay: Replay, context: EventContext): void {
+function updateWalkOwner(replay: EarnedRunReplay, context: EventContext): void {
   if (context.before.pitchesThisAtBat === 0) {
     replay.walkOwner = { set: false, value: undefined }
   } else if (
@@ -350,13 +365,13 @@ function updateWalkOwner(replay: Replay, context: EventContext): void {
 }
 
 function pitcherIdForWalk(
-  replay: Replay,
+  replay: EarnedRunReplay,
   context: EventContext
 ): string | undefined {
   return replay.walkOwner.set ? replay.walkOwner.value : context.pitcher
 }
 
-function process(replay: Replay, context: EventContext): void {
+function process(replay: EarnedRunReplay, context: EventContext): void {
   const { event, index } = context
   const a = event.attributes ?? {}
 
@@ -446,7 +461,10 @@ function process(replay: Replay, context: EventContext): void {
 }
 
 /** A walk or a strikeout that the count itself decided, rather than the scorer. */
-function addBatterFromCount(replay: Replay, context: EventContext): void {
+function addBatterFromCount(
+  replay: EarnedRunReplay,
+  context: EventContext
+): void {
   const { index } = context
   if (context.after.lastEvent.walk) {
     replay.addRunnerFromBatting(
@@ -473,7 +491,7 @@ function addBatterFromCount(replay: Replay, context: EventContext): void {
   }
 }
 
-function endAtBat(replay: Replay, context: EventContext): void {
+function endAtBat(replay: EarnedRunReplay, context: EventContext): void {
   const a = context.event.attributes ?? {}
   const reason = text(a.reason)
   const batterOut = reason === 'strikeout'
@@ -495,7 +513,7 @@ function endAtBat(replay: Replay, context: EventContext): void {
   )
 }
 
-function noteBallInPlay(replay: Replay, context: EventContext): void {
+function noteBallInPlay(replay: EarnedRunReplay, context: EventContext): void {
   const a = context.event.attributes ?? {}
   replay.lastBallInPlay = {
     batterId: context.batter,
@@ -506,7 +524,7 @@ function noteBallInPlay(replay: Replay, context: EventContext): void {
 }
 
 function advanceForBallInPlay(
-  replay: Replay,
+  replay: EarnedRunReplay,
   context: EventContext,
   qualified: boolean
 ): void {
@@ -515,7 +533,7 @@ function advanceForBallInPlay(
   replay.advanceAllRunners(config.bases, context.index)
 }
 
-function ballInPlay(replay: Replay, context: EventContext): void {
+function ballInPlay(replay: EarnedRunReplay, context: EventContext): void {
   const a = context.event.attributes ?? {}
   const config = ballInPlayConfig(a.playResult)
   const qualified = !config.error
@@ -542,7 +560,10 @@ function ballInPlay(replay: Replay, context: EventContext): void {
  * if the runner in front of them was not going to be driven along anyway — which
  * is the one place the replay looks at who is actually standing where.
  */
-function droppedThirdStrike(replay: Replay, context: EventContext): void {
+function droppedThirdStrike(
+  replay: EarnedRunReplay,
+  context: EventContext
+): void {
   const a = context.event.attributes ?? {}
   let qualified = false
   if (a.cause === 'wild_pitch') {
@@ -575,7 +596,7 @@ function droppedThirdStrike(replay: Replay, context: EventContext): void {
   noteBallInPlay(replay, context)
 }
 
-function baseRunning(replay: Replay, context: EventContext): void {
+function baseRunning(replay: EarnedRunReplay, context: EventContext): void {
   const a = context.event.attributes ?? {}
   const playType = text(a.playType)
   const runnerId = text(a.runnerId)
@@ -654,9 +675,8 @@ function baseRunning(replay: Replay, context: EventContext): void {
  * `chargedAtIndex` remembers.
  */
 function settle(
-  replay: Replay,
+  replay: EarnedRunReplay,
   context: EventContext,
-  add: (pitcherId: string | undefined, by: number) => void,
   trace?: EarnedRunTrace[]
 ): void {
   const index = context.index
@@ -683,7 +703,7 @@ function settle(
         .join(' ')
     })
     if (!ok) continue
-    add(runner.pitcherId, 1)
+    replay.charge(runner.pitcherId, 1)
     runner.chargedAtIndex = index
   }
 
@@ -692,7 +712,7 @@ function settle(
     if (runner.placed || runner.pitcherId === undefined) continue
     if (runner.scoredOnEventIndex === undefined) continue
     if (runner.chargedAtIndex !== runner.scoredOnEventIndex) continue
-    add(runner.pitcherId, -1)
+    replay.charge(runner.pitcherId, -1)
     runner.chargedAtIndex = undefined
   }
 }
