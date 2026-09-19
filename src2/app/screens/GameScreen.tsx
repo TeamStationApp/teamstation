@@ -314,17 +314,28 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    * spare for a number that is wrong.
    */
   const [pickerHeight, setPickerHeight] = useState(0)
+  /**
+   * Whether the window is short, readable from a callback.
+   *
+   * The layout is worked out further down, after the video's shape is known,
+   * so the scroll handler cannot close over it. A ref rather than state: it is
+   * read on scroll and never rendered from.
+   */
+  const shortWindow = useRef(false)
   const fitList = useCallback(() => {
     const node = listRef.current
     if (node == null || typeof node.getBoundingClientRect !== 'function') return
     const room = window.innerHeight - node.getBoundingClientRect().top
     node.style.maxHeight = `${Math.max(120, Math.round(room))}px`
   }, [])
-  const handleWatchScroll = useCallback(() => {
-    handoff.handleScroll()
-    fitList()
-  }, [fitList, handoff])
   const progress = handoff.progress
+  const handleWatchScroll = useCallback(() => {
+    // Short, the card is never drawn, so there is nothing to hand over and
+    // nothing to measure: the header simply holds the score.
+    if (shortWindow.current) progress.value = 1
+    else handoff.handleScroll()
+    fitList()
+  }, [fitList, handoff, progress])
   const headerScore = useMemo(
     () =>
       game == null ? null : (
@@ -373,6 +384,23 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   // A phone held sideways. The picture is as tall as the window allows and no
   // taller, so there is nothing under it to peg a description to.
   const short = layout.short
+  shortWindow.current = short
+  useEffect(() => {
+    // A short window may never scroll at all — everything that moves is
+    // inside the column — so the header is told once rather than waiting for
+    // a hand-over that will not come. Turned upright again, the card is back
+    // and the measurement decides, from where the page actually is.
+    if (short) {
+      progress.value = 1
+      return
+    }
+    const frame = requestAnimationFrame(() => {
+      handoff.handleScroll()
+    })
+    return () => {
+      cancelAnimationFrame(frame)
+    }
+  }, [handoff, progress, short])
   // From the list's own width, not the window's: beside the video the list is
   // 402px wide and takes one column, and asking the window would have given it
   // two squeezed into that.
@@ -859,6 +887,15 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     </View>
   )
 
+  const sections = (
+    <View
+      onLayout={event => {
+        setTabsHeight(event.nativeEvent.layout.height)
+      }}
+    >
+      {tabs}
+    </View>
+  )
   const head = (
     <>
       {/*
@@ -868,13 +905,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         of has left the screen.
       */}
       <View ref={handoff.ref}>{scoreboard}</View>
-      <View
-        onLayout={event => {
-          setTabsHeight(event.nativeEvent.layout.height)
-        }}
-      >
-        {tabs}
-      </View>
+      {sections}
     </>
   )
 
@@ -987,7 +1018,13 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
             overflowY: sideBySide ? 'auto' : 'visible'
           }}
         >
-          {short ? <View style={styles.columnHead}>{head}</View> : null}
+          {/*
+            The sections only. The card itself is not drawn on a short window
+            — a column narrow enough to sit beside the picture is narrower
+            than two team names laid out either side of a score, and the
+            header is already holding that score in full.
+          */}
+          {short ? <View style={styles.columnHead}>{sections}</View> : null}
           {short ? description : null}
           {highlightList}
           {/*
