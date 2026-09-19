@@ -36,6 +36,7 @@ import { seasonRoutes } from './routes/seasons'
 import { statsRoutes } from './routes/stats'
 import { teamRoutes } from './routes/teams'
 import { serverConfig } from './serverConfig'
+import { stopWorker } from './stopWorker'
 
 /**
  * What is actually running, not just what the package says.
@@ -80,6 +81,17 @@ const VERSION = versionOf()
  * and a half.
  */
 const FORCE_STOP_MS = 10_000
+
+/**
+ * A worker's own budget, which has to finish inside `FORCE_STOP_MS`.
+ *
+ * The primary's force is for a worker that cannot answer at all — a stopped
+ * process, a wedged event loop. Anything a worker can decide for itself it
+ * decides before then, so the ordinary path is a worker that left cleanly and
+ * a primary that never had to take anything.
+ */
+const WORKER_STOP_MS = 6_000
+const WORKER_CUT_CONNECTIONS_MS = 3_000
 const MEDIA_SECRET_ENV = 'GS_MEDIA_SECRET'
 
 /**
@@ -380,24 +392,15 @@ function runWorker(): void {
     if (closing) return
     closing = true
     stopLiveController()
-
-    // `server.close` waits for every open connection to end, and a browser's
-    // keep-alive connection sits open and idle for minutes after the page has
-    // finished loading. Closing the idle ones is what lets a worker that is
-    // doing nothing actually stop; without it the wait is not for work, it is
-    // for a socket nobody is using.
-    server.closeIdleConnections()
-    const forced = setTimeout(() => {
-      server.closeAllConnections()
-    }, FORCE_STOP_MS / 2)
-    forced.unref()
-
-    server.close(() => {
-      clearTimeout(forced)
-      db.destroy().then(
-        () => process.exit(0),
-        () => process.exit(1)
-      )
+    stopWorker({
+      server,
+      destroyDatabase: async () => await db.destroy(),
+      cutConnectionsMs: WORKER_CUT_CONNECTIONS_MS,
+      deadlineMs: WORKER_STOP_MS,
+      exit: code => process.exit(code),
+      log: message => {
+        console.error(`worker ${process.pid}: ${message}`)
+      }
     })
   }
   process.on('SIGTERM', shutdown)
