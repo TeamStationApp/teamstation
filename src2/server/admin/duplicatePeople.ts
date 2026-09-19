@@ -1,6 +1,7 @@
 import type { Kysely } from 'kysely'
 
 import type { Database } from '../db/database'
+import { bothPlayedTogether } from './people'
 
 /**
  * Two rows for one child.
@@ -133,6 +134,13 @@ export async function findDuplicatePeople(
     else held.push(row)
   }
 
+  // Who has ever taken a turn beside whom. Two rows that both batted in one
+  // game are two children, whatever their names look like.
+  const together = await bothPlayedTogether(
+    db,
+    rows.map(row => row.userId)
+  )
+
   const pairs: DuplicatePair[] = []
   const ambiguous: string[] = []
 
@@ -150,6 +158,14 @@ export async function findDuplicatePeople(
       }
       const match = matches[0]
       if (match == null) continue
+      if (together.has(`${one.userId}|${match.userId}`)) {
+        // Both of them batted in one game, so they are two children who share
+        // a first name — not one child written down twice.
+        ambiguous.push(
+          `${one.displayName} and ${match.displayName} on ${teamId}: both played in one game`
+        )
+        continue
+      }
       const onePlays = Number(one.plays)
       const matchPlays = Number(match.plays)
       pairs.push({
@@ -240,9 +256,19 @@ export async function findSamePersonAcrossTeams(
     else held.push(row)
   }
 
+  const together = await bothPlayedTogether(
+    db,
+    rows.map(row => row.userId)
+  )
+
   const groups: SamePersonGroup[] = []
   for (const people of byName.values()) {
     if (people.length < 2) continue
+    // One child cannot play for both sides of a game.
+    const split = people.some(one =>
+      people.some(other => together.has(`${one.userId}|${other.userId}`))
+    )
+    if (split) continue
     const sorted = [...people].sort((a, b) => Number(b.plays) - Number(a.plays))
     groups.push({
       keepUserId: sorted[0].userId,
