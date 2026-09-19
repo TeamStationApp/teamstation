@@ -95,7 +95,7 @@ that fails quietly rather than loudly.
    later makes every key unreadable, so they would have to be issued again
    rather than recovered.
 5. **A DNS record for the ingest name**, if it is to be its own name rather than
-   `tube.gamestation.co`. Nothing in the code cares which; the URL is built from
+   `gamestation.co`. Nothing in the code cares which; the URL is built from
    the setting.
 6. **Disk.** A three-hour game at 3 Mbit is about **4 GB** — measured: 25 min 39 s
    at 1.5 Mbit came to 565 MiB. The segments and the finished recording sit side
