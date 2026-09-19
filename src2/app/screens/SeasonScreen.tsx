@@ -11,6 +11,7 @@ import type {
 import {
   Badge,
   Card,
+  Emblem,
   GameRow,
   initialsOf,
   ListRow,
@@ -158,6 +159,12 @@ export function SeasonScreen(props: SeasonScreenProps): React.ReactElement {
           single glyph.
         */}
         <View style={styles.identityTop}>
+          {/*
+            The season's own mark, from the organisation it was imported
+            from. Seasons made by hand have none, and the glyph
+            stands in exactly as it does on the home list.
+          */}
+          <Emblem uri={season.logoUrl} fallback="▦" size={2.25} />
           <Text style={styles.seasonName}>{season.name}</Text>
           {onManage != null && (
             <ManageGear
