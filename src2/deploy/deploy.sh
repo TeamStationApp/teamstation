@@ -3,7 +3,7 @@ set -euo pipefail
 
 # GameStation 2.0: sync the deploy branch and rebuild.
 #
-#   ssh root@tube.gamestation.co /srv/gamestation/repo/src2/deploy/deploy.sh
+#   ssh root@gamestation.co /srv/gamestation/repo/src2/deploy/deploy.sh
 #
 # Nothing is copied from a laptop. The previous way was an rsync of a built
 # tree, which went wrong twice in the same way: `--delete` is needed so a
