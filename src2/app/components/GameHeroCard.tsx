@@ -1,5 +1,5 @@
 import React from 'react'
-import { Text, View } from 'react-native'
+import { Pressable, Text, View } from 'react-native'
 
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Emblem } from './Emblem'
@@ -59,6 +59,17 @@ export interface GameHeroCardProps {
   /** Each side's mark, beside its name. */
   awayLogoUrl?: string | null
   homeLogoUrl?: string | null
+  /**
+   * Opens a side's team, from its name and its mark.
+   *
+   * Nothing is drawn to say so — no colour, no chevron, no underline. Paul
+   * asked for it to be there without announcing itself, so the card reads
+   * exactly as it did and the two names happen to answer a tap. Left out for
+   * a side that has no page to open, an opponent from outside the season
+   * being the usual one, and then its name is simply a name.
+   */
+  onOpenAwayTeam?: () => void
+  onOpenHomeTeam?: () => void
 }
 
 /**
@@ -102,7 +113,9 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
     awayRecord,
     homeRecord,
     awayLogoUrl,
-    homeLogoUrl
+    homeLogoUrl,
+    onOpenAwayTeam,
+    onOpenHomeTeam
   } = props
   const styles = getStyles(useTheme())
   const narrow = useBreakpoint() === 'phone'
@@ -157,6 +170,7 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
             note="Away"
             won={winner === 'away'}
             stacked={narrow}
+            onPress={onOpenAwayTeam}
           />
           {!hasMeta && <Text style={styles.plainStatus}>{status}</Text>}
           <ScoreLine
@@ -168,6 +182,7 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
             won={winner === 'home'}
             alignEnd={!narrow}
             stacked={narrow}
+            onPress={onOpenHomeTeam}
           />
         </View>
         {line}
@@ -248,6 +263,8 @@ function ScoreLine(props: {
   alignEnd?: boolean
   /** One side per line rather than two across, on a phone. */
   stacked?: boolean
+  /** Opens this side's team. Absent where there is no page to open. */
+  onPress?: () => void
 }): React.ReactElement {
   const {
     name,
@@ -257,16 +274,56 @@ function ScoreLine(props: {
     note,
     won,
     alignEnd = false,
-    stacked = false
+    stacked = false,
+    onPress
   } = props
   const styles = getStyles(useTheme())
   // Only where there is a picture. A circle of initials beside a name that is
   // written out in full next to it says the same thing twice, in the place a
   // photograph would have gone.
-  const mark =
+  //
+  // Wrapped rather than the whole row made pressable: the row is laid out two
+  // ways — the mark beside the name across the card, and the mark beside a
+  // *column* holding the name and the record on a phone — so a press put
+  // around the row would take in the record on one of them and not the other.
+  // The mark and the name are the two things Paul named, and they are the two
+  // things wrapped, in both.
+  const emblem =
     logoUrl == null || logoUrl === '' ? null : (
       <Emblem uri={logoUrl} fallback={initialsOf(name)} size={2} />
     )
+  const mark =
+    emblem == null || onPress == null ? (
+      emblem
+    ) : (
+      <Pressable
+        accessibilityRole="link"
+        accessibilityLabel={name}
+        onPress={onPress}
+        style={styles.markPress}
+      >
+        {emblem}
+      </Pressable>
+    )
+  /**
+   * `Text`'s own `onPress`, not a `Pressable` around it.
+   *
+   * The name shrinks and truncates to one line inside a row that is measured
+   * to the pixel; a wrapper is another box for the browser to size and the
+   * ellipsis moved with it. `onPress` on the text itself changes no layout at
+   * all, which on a card this tight is the whole point.
+   */
+  const nameText = (
+    <Text
+      style={styles.sideName}
+      numberOfLines={1}
+      onPress={onPress}
+      accessibilityRole={onPress == null ? undefined : 'link'}
+    >
+      {name}
+      {won ? ' ★' : ''}
+    </Text>
+  )
 
   // Stacked — a phone — each side is one line: the name at the left margin and
   // the score hard against the right, which is how a score is read.
@@ -275,10 +332,7 @@ function ScoreLine(props: {
       <View style={[styles.side, styles.sideStacked, styles.sideRow]}>
         {mark}
         <View style={styles.sideRowText}>
-          <Text style={styles.sideName} numberOfLines={1}>
-            {name}
-            {won ? ' ★' : ''}
-          </Text>
+          {nameText}
           <Text style={styles.sideNote} numberOfLines={1}>
             {record == null || record === '' ? note : `${note} · ${record}`}
           </Text>
@@ -296,10 +350,7 @@ function ScoreLine(props: {
     <View style={[styles.side, alignEnd && styles.sideEnd]}>
       <View style={[styles.sideNameRow, alignEnd && styles.sideNameRowEnd]}>
         {mark}
-        <Text style={styles.sideName} numberOfLines={1}>
-          {name}
-          {won ? ' ★' : ''}
-        </Text>
+        {nameText}
       </View>
       <Text style={[styles.sideScore, won && styles.sideScoreWon]}>
         {score ?? '–'}
@@ -417,6 +468,11 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   sideEnd: {
     alignItems: 'flex-end'
+  },
+  // The mark is a fixed square and must stay one: a press around it inherits
+  // the row's shrinking otherwise and the circle goes oval on a long name.
+  markPress: {
+    flexShrink: 0
   },
   sideNameRow: {
     flexDirection: 'row',
