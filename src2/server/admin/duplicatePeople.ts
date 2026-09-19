@@ -32,6 +32,18 @@ import { bothPlayedTogether, onePerson } from './people'
  * have plays the history of both belongs to one child, so neither can be
  * thrown away and they are merged.
  */
+/** Every row of every person these rows belong to, closed ones included. */
+async function everyRowOf(
+  db: Kysely<Database>,
+  rows: Array<{ userId: string }>
+): Promise<string[]> {
+  const ids = new Set<string>()
+  for (const row of rows) {
+    for (const id of (await onePerson(db, row.userId)).userIds) ids.add(id)
+  }
+  return [...ids]
+}
+
 export function actionFor(
   onePlays: number,
   otherPlays: number
@@ -134,12 +146,12 @@ export async function findDuplicatePeople(
     else held.push(row)
   }
 
-  // Who has ever taken a turn beside whom. Two rows that both batted in one
-  // game are two children, whatever their names look like.
-  const together = await bothPlayedTogether(
-    db,
-    rows.map(row => row.userId)
-  )
+  // Who has ever been in a game beside whom — asked of **every** row each of
+  // these people holds, not just the open ones. The row that played beside
+  // `Casey` on 11 April had since been closed into `Casey Mize`, so a set
+  // built from open rows alone knew nothing about it and offered the merge
+  // straight back.
+  const together = await bothPlayedTogether(db, await everyRowOf(db, rows))
 
   const pairs: DuplicatePair[] = []
   const ambiguous: string[] = []
@@ -266,10 +278,7 @@ export async function findSamePersonAcrossTeams(
     else held.push(row)
   }
 
-  const together = await bothPlayedTogether(
-    db,
-    rows.map(row => row.userId)
-  )
+  const together = await bothPlayedTogether(db, await everyRowOf(db, rows))
 
   const groups: SamePersonGroup[] = []
   for (const people of byName.values()) {
