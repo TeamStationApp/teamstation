@@ -478,6 +478,9 @@ function Shell(props: AppProps): React.ReactElement {
       <GameScreen
         client={client}
         gameId={top.gameId}
+        onOpenTeam={team => {
+          push({ name: 'team', team })
+        }}
         initialTab={top.tab}
         autoPlay={top.autoPlay}
         initialVideoId={top.videoId}

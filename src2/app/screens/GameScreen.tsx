@@ -19,6 +19,7 @@ import type {
   LineScoreSide,
   PitchingRow,
   Playback,
+  TeamSummary,
   VideoSummary
 } from '../../common/api'
 import {
@@ -47,6 +48,7 @@ import { useVideoAspect } from '../player/useVideoAspect'
 import { cacheStyles, useTheme } from '../theme/ThemeContext'
 import type { Theme } from '../theme/types'
 import { gameStatusLine, shortDate, winnerOf } from './format'
+import { openableTeams as teamsWithAPage } from './openableTeams'
 
 export interface GameScreenProps {
   client: GameStationClient
@@ -79,6 +81,8 @@ export interface GameScreenProps {
    * destination, two different addresses.
    */
   onTab?: (tab: Tab) => void
+  /** Opens one of the two teams, from its name or its mark on the card. */
+  onOpenTeam?: (team: TeamSummary) => void
 }
 
 type Tab = 'watch' | 'boxScore'
@@ -229,7 +233,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     initialVideoId,
     startAtSec,
     onMoment,
-    onTab
+    onTab,
+    onOpenTeam
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -245,6 +250,18 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   const [withheld, setWithheld] = useState<string | null>(null)
   const [dropped, setDropped] = useState(0)
   const [box, setBox] = useState<BoxScoreData | undefined>(undefined)
+  /**
+   * The two sides' teams, where they are ones that can actually be opened.
+   *
+   * Looked up ahead of the tap rather than on it: a name that answers a press
+   * by doing nothing, a beat later, is worse than one that never answered. A
+   * side missing from here is left un-pressable — an opponent from outside the
+   * season has no page, and neither has a team in a season this person is not
+   * in.
+   */
+  const [openableTeams, setOpenableTeams] = useState<Map<string, TeamSummary>>(
+    () => new Map()
+  )
   const [playback, setPlayback] = useState<Playback | undefined>(undefined)
   /**
    * Which video the current playback URL belongs to.
@@ -462,6 +479,32 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     // it here would refetch the game in a loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, gameId])
+
+  const seasonId = game?.seasonId
+  const awayTeamId = game?.awayTeamId
+  const homeTeamId = game?.homeTeamId
+  useEffect(() => {
+    if (awayTeamId == null || homeTeamId == null) return
+    let live = true
+    const load = async (): Promise<void> => {
+      // Both lists: your own teams, which you can always open, and the rest of
+      // the season, which a season you are allowed to watch lets you open too.
+      // An opponent from outside the season is in neither, which is the whole
+      // point — it has no page.
+      const lists = await Promise.all([
+        client.teams().catch(() => []),
+        seasonId == null
+          ? Promise.resolve([])
+          : client.seasonTeams(seasonId).catch(() => [])
+      ])
+      if (!live) return
+      setOpenableTeams(teamsWithAPage(lists, [awayTeamId, homeTeamId]))
+    }
+    load().catch(() => undefined)
+    return () => {
+      live = false
+    }
+  }, [awayTeamId, client, homeTeamId, seasonId])
 
   useEffect(() => {
     if (video == null) return
@@ -690,6 +733,20 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   }
 
   const pickerNames = angleNames(game.videos)
+  /**
+   * A side's name and mark answer a press, where there is a page behind them.
+   *
+   * `undefined` rather than a handler that does nothing, so the card can tell
+   * a name that opens something from one that is only a name.
+   */
+  const openSide = (teamId: string): (() => void) | undefined => {
+    const team = openableTeams.get(teamId)
+    if (team == null || onOpenTeam == null) return undefined
+    return () => {
+      onOpenTeam(team)
+    }
+  }
+
   const scoreboard = (
     <GameHeroCard
       awayName={game.awayTeamName}
@@ -706,6 +763,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       date={shortDate(game.startAt)}
       venue={game.venue ?? undefined}
       teamStats={teamStatsOf(game.linescore)}
+      onOpenAwayTeam={openSide(game.awayTeamId)}
+      onOpenHomeTeam={openSide(game.homeTeamId)}
     />
   )
 
