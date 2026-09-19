@@ -126,6 +126,50 @@ describe('one person, however many rows', function () {
     )
   })
 
+  it('keeps the jersey the other row had', async function () {
+    if (db == null) this.skip()
+    const team = makeId('team')
+    const keeper = makeId('user')
+    const other = makeId('user')
+    await db
+      .insertInto('teams')
+      .values({ id: team, name: 'Hawks II' })
+      .execute()
+    await db
+      .insertInto('users')
+      .values([
+        { id: keeper, display_name: 'Casey Mize' },
+        { id: other, display_name: 'Casey Mize' }
+      ])
+      .execute()
+    await db
+      .insertInto('memberships')
+      .values([
+        // The row somebody imported without a number, and the one with it.
+        { id: makeId('membership'), team_id: team, user_id: keeper },
+        {
+          id: makeId('membership'),
+          team_id: team,
+          user_id: other,
+          jersey: '12',
+          is_player: true
+        }
+      ])
+      .execute()
+
+    await closeInto(db, other, keeper)
+
+    const rows = await db
+      .selectFrom('memberships')
+      .select(['user_id', 'jersey', 'is_player'])
+      .where('team_id', '=', team)
+      .execute()
+    expect(rows.length).equals(1)
+    expect(rows[0].user_id).equals(keeper)
+    expect(rows[0].jersey).equals('12')
+    expect(rows[0].is_player).equals(true)
+  })
+
   it('drops a second row on a team the survivor is already on', async function () {
     if (db == null) this.skip()
     const team = await db

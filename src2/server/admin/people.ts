@@ -74,10 +74,11 @@ export async function onePerson(
  * for people who are still open, so a child whose surviving row belonged to
  * another team simply vanished from the team they actually play for.
  *
- * Where the survivor is already on that team, the closing row's membership is
- * dropped rather than moved: two rows for one child on one team is the thing
- * being undone, and the survivor's own row is the one with the jersey somebody
- * checked.
+ * Where the survivor is already on that team, the two rows are one row: the
+ * survivor's is kept, and anything only the closing row had — a jersey, the
+ * positions, being a player at all — is copied onto it first. Two rows for one
+ * child on one team is the thing being undone, and a number nobody typed twice
+ * should not be what it costs.
  */
 export async function closeInto(
   db: Kysely<Database>,
@@ -88,21 +89,42 @@ export async function closeInto(
 
   const theirs = await db
     .selectFrom('memberships')
-    .select(['id', 'team_id'])
+    .select(['id', 'team_id', 'jersey', 'positions', 'is_player'])
     .where('user_id', '=', closing)
     .execute()
-  const already = new Set(
+  const already = new Map(
     (
       await db
         .selectFrom('memberships')
-        .select(['team_id'])
+        .select(['id', 'team_id', 'jersey', 'positions', 'is_player'])
         .where('user_id', '=', keeping)
         .execute()
-    ).map(row => row.team_id)
+    ).map(row => [row.team_id, row])
   )
 
   for (const membership of theirs) {
-    if (already.has(membership.team_id)) {
+    const kept = already.get(membership.team_id)
+    if (kept != null) {
+      // One row out of two, and nothing only one of them knew is thrown away.
+      const filled: {
+        jersey?: string | null
+        positions?: string[]
+        is_player?: boolean
+      } = {}
+      if (kept.jersey == null && membership.jersey != null) {
+        filled.jersey = membership.jersey
+      }
+      if (kept.positions.length === 0 && membership.positions.length > 0) {
+        filled.positions = membership.positions
+      }
+      if (!kept.is_player && membership.is_player) filled.is_player = true
+      if (Object.keys(filled).length > 0) {
+        await db
+          .updateTable('memberships')
+          .set(filled)
+          .where('id', '=', kept.id)
+          .execute()
+      }
       await db
         .deleteFrom('memberships')
         .where('id', '=', membership.id)
@@ -114,7 +136,13 @@ export async function closeInto(
       .set({ user_id: keeping })
       .where('id', '=', membership.id)
       .execute()
-    already.add(membership.team_id)
+    already.set(membership.team_id, {
+      id: membership.id,
+      team_id: membership.team_id,
+      jersey: membership.jersey,
+      positions: membership.positions,
+      is_player: membership.is_player
+    })
   }
 
   await db
