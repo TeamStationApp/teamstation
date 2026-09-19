@@ -147,6 +147,109 @@ public struct SettingsView: View {
   private var settingsForm: some View {
     NavigationStack {
       Form {
+        // The account, first and alone, because it is not a streaming
+        // setting. Somebody signs in once; where the Stream button publishes
+        // is a separate decision, made in the section below, and a Director
+        // that is signed in may still be streaming to a typed URL. Buried in
+        // the stream section, signing in looked like part of choosing a
+        // destination, and an operator who wanted neither had nowhere obvious
+        // to go.
+        Section {
+          Button {
+            cover = .gameStationSignIn
+          } label: {
+            HStack(spacing: 12) {
+              Image(systemName: environment.gameStation.isSignedIn
+                ? "person.crop.circle.fill.badge.checkmark"
+                : "person.crop.circle.badge.plus")
+                .font(.title2)
+                .foregroundStyle(
+                  environment.gameStation.isSignedIn ? Color.accentColor : .secondary
+                )
+              VStack(alignment: .leading, spacing: 2) {
+                Text(environment.gameStation.isSignedIn
+                  ? "GameStation account"
+                  : "Sign in to GameStation")
+                  .font(.headline)
+                  .foregroundStyle(.primary)
+                Text(gameStationAccountSummary)
+                  .font(.subheadline)
+                  .foregroundStyle(.secondary)
+              }
+              Spacer()
+              Image(systemName: "chevron.right")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.tertiary)
+            }
+            .contentShape(Rectangle())
+          }
+          .buttonStyle(.plain)
+          .accessibilityIdentifier("settings-gamestation-account")
+        } header: {
+          Text("GameStation")
+        } footer: {
+          Text("""
+          Signed in, this Director can list the games your teams are playing and stream to one \
+          without a URL being typed. Signing in changes nothing about where the Stream button \
+          publishes today — that is the section below.
+          """)
+        }
+
+        Section {
+          // Two destinations, one chosen. The event row is first because it is
+          // the one somebody uses every week; the typed URL is what a one-off
+          // to somebody else's service needs, and it keeps working exactly as
+          // it did for every Director that already has one.
+          streamEventRow
+
+          HStack(spacing: 12) {
+            destinationButton(.url, label: "Use a stream URL")
+            ClearableTextField(
+              text: $draft.streamURL,
+              clearIdentifier: "settings-stream-url-clear",
+              clearLabel: "Clear stream URL"
+            ) {
+              TextField("rtmp://host:1935/live/key", text: $draft.streamURL)
+                .keyboardType(.URL)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .accessibilityIdentifier("settings-stream-url")
+            }
+          }
+
+          Picker("Codec", selection: $draft.streamCodec) {
+            ForEach(ProgramCodec.allCases, id: \.self) { codec in
+              Text(codec.displayName).tag(codec)
+            }
+          }
+          .accessibilityIdentifier("settings-stream-codec")
+
+          Picker("Resolution", selection: $draft.streamResolution) {
+            Text("1080p").tag(ProgramResolution.hd1080)
+            Text("720p").tag(ProgramResolution.hd720)
+          }
+          .accessibilityIdentifier("settings-stream-resolution")
+
+          Picker("Frame rate", selection: $draft.streamFrameRate) {
+            ForEach(AppConfig.frameRateChoices, id: \.self) { rate in
+              Text("\(rate) fps").tag(rate)
+            }
+          }
+          .accessibilityIdentifier("settings-stream-framerate")
+
+          StreamBitrateRange(low: $draft.streamBitrateLow, high: $draft.streamBitrateHigh)
+        } header: {
+          Text("Programme master stream")
+        } footer: {
+          Text("""
+          Where the Stream button publishes the programme, and how that stream is encoded. Choose \
+          a GameStation event and the app holds its address for you. The stream URL is for publishing \
+          somewhere else, and is typed in full. The bitrate starts at the high point and comes \
+          down towards the low one while the network cannot keep up, rather than drop frames. \
+          HEVC needs a service that takes Enhanced RTMP; choose H.264 for one that does not.
+          """)
+        }
+
         Section {
           ReplaySlowMotionSlider(percent: $draft.replaySlowMotionRate)
         } header: {
@@ -296,61 +399,6 @@ public struct SettingsView: View {
           The programme master is a composite — cut, overlays and mixed audio — so it is always \
           encoded. These settings apply to the recorded master, and to a programme export that has \
           to be encoded again.
-          """)
-        }
-
-        Section {
-          // Two destinations, one chosen. The event row is first because it is
-          // the one somebody uses every week; the typed URL is what a one-off
-          // to somebody else's service needs, and it keeps working exactly as
-          // it did for every Director that already has one.
-          streamEventRow
-
-          HStack(spacing: 12) {
-            destinationButton(.url, label: "Use a stream URL")
-            ClearableTextField(
-              text: $draft.streamURL,
-              clearIdentifier: "settings-stream-url-clear",
-              clearLabel: "Clear stream URL"
-            ) {
-              TextField("rtmp://host:1935/live/key", text: $draft.streamURL)
-                .keyboardType(.URL)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .accessibilityIdentifier("settings-stream-url")
-            }
-          }
-
-          Picker("Codec", selection: $draft.streamCodec) {
-            ForEach(ProgramCodec.allCases, id: \.self) { codec in
-              Text(codec.displayName).tag(codec)
-            }
-          }
-          .accessibilityIdentifier("settings-stream-codec")
-
-          Picker("Resolution", selection: $draft.streamResolution) {
-            Text("1080p").tag(ProgramResolution.hd1080)
-            Text("720p").tag(ProgramResolution.hd720)
-          }
-          .accessibilityIdentifier("settings-stream-resolution")
-
-          Picker("Frame rate", selection: $draft.streamFrameRate) {
-            ForEach(AppConfig.frameRateChoices, id: \.self) { rate in
-              Text("\(rate) fps").tag(rate)
-            }
-          }
-          .accessibilityIdentifier("settings-stream-framerate")
-
-          StreamBitrateRange(low: $draft.streamBitrateLow, high: $draft.streamBitrateHigh)
-        } header: {
-          Text("Programme master stream")
-        } footer: {
-          Text("""
-          Where the Stream button publishes the programme, and how that stream is encoded. Pick a \
-          GameStation event and the app holds its address for you; the URL below is for streaming \
-          somewhere else. The bitrate starts at the high point and comes down towards the low one \
-          while the network cannot keep up, rather than drop frames. HEVC needs a service that \
-          takes Enhanced RTMP; choose H.264 for one that does not.
           """)
         }
 
@@ -530,6 +578,17 @@ public struct SettingsView: View {
     environment.endEditingRemoteTemplate()
   }
 
+  // MARK: - The account
+
+  /// The line under the account heading: who this Director is, or that it is
+  /// nobody yet.
+  private var gameStationAccountSummary: String {
+    guard environment.gameStation.isSignedIn else { return "Not signed in" }
+    return environment.gameStation.user?.email
+      ?? environment.gameStation.user?.displayName
+      ?? "Signed in"
+  }
+
   // MARK: - Where the stream goes
 
   /// The row that stands for "a game on GameStation".
@@ -552,17 +611,19 @@ public struct SettingsView: View {
         } label: {
           HStack {
             VStack(alignment: .leading, spacing: 2) {
+              Text("Stream to a GameStation event")
+                .foregroundStyle(.primary)
+              // What is chosen, or why nothing can be: the picker needs an
+              // account, and saying so here is kinder than opening a sign-in
+              // screen somebody did not ask for and leaving them to work out
+              // why.
               Text(
                 environment.gameStation.isSignedIn
-                  ? "Select GameStation event"
-                  : "Sign in to GameStation"
+                  ? (chosen?.title ?? "Tap to choose a game")
+                  : "Sign in above to choose a game"
               )
-              .foregroundStyle(.primary)
-              if let chosen {
-                Text(chosen.title)
-                  .font(.caption)
-                  .foregroundStyle(.secondary)
-              }
+              .font(.caption)
+              .foregroundStyle(.secondary)
             }
             Spacer()
             Image(systemName: "chevron.right")
@@ -573,32 +634,6 @@ public struct SettingsView: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("settings-stream-event-row")
-      }
-
-      // Signing in was reachable only while signed *out*: the row above turned
-      // into the event picker the moment it succeeded, and the screen holding
-      // Sign out had no other door. So whoever signed in on this iPad was the
-      // account it streamed as until somebody deleted the app.
-      if environment.gameStation.isSignedIn {
-        Button {
-          cover = .gameStationSignIn
-        } label: {
-          HStack {
-            Text(
-              environment.gameStation.user?.email
-                ?? environment.gameStation.user?.displayName
-                ?? "GameStation account"
-            )
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            Spacer()
-            Image(systemName: "chevron.right")
-              .font(.caption2.weight(.semibold))
-              .foregroundStyle(.tertiary)
-          }
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("settings-gamestation-account")
       }
 
       if let message = environment.gameStation.lastError {
