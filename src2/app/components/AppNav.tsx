@@ -37,6 +37,37 @@ export const NAV_TABS: NavTab[] = [
 
 export type NavMode = 'floating' | 'header'
 
+/**
+ * How much bigger the capsule is than the row in the header.
+ *
+ * The header's three sit on a 3rem bar beside a face and cannot grow without
+ * moving it; the capsule floats over the content with nothing to answer to,
+ * and it is the one a thumb actually uses — at a ball field, often
+ * one-handed, in the sun. Paul asked for a fifth again, glyphs and gap alike,
+ * so it is one number and everything the capsule draws is measured from it.
+ */
+const FLOATING_SCALE = 1.2
+/** The inline size everything else uses, grown by the same fifth. */
+const FLOATING_ICON_REM = 1.25 * FLOATING_SCALE
+/** The disc behind a glyph, which is also the whole of the touch target. */
+const FLOATING_DISC_REM = 2.75 * FLOATING_SCALE
+/** The capsule's own breathing room, around the discs. */
+const FLOATING_PAD_REM = 0.1875 * FLOATING_SCALE
+/** How far the capsule floats off the bottom of the window. */
+const FLOATING_BOTTOM_REM = 1
+
+/**
+ * How much room a screen has to leave under its last row.
+ *
+ * The capsule floats over the content rather than sitting in a bar beneath
+ * it, so nothing reserves this space on a screen's behalf — without it the
+ * bottom team on the home screen reads through frosted glass. Exported so the
+ * screens ask rather than repeat a number that would then have to be kept in
+ * step with the capsule's size.
+ */
+export const NAV_CLEARANCE_REM =
+  FLOATING_BOTTOM_REM + FLOATING_DISC_REM + FLOATING_PAD_REM * 2 + 0.5
+
 export interface AppNavProps {
   selected: NavTabId
   onSelect: (id: NavTabId) => void
@@ -81,7 +112,11 @@ export function AppNav(props: AppNavProps): React.ReactElement {
             onPress={() => {
               onSelect(tab.id)
             }}
-            style={({ pressed }) => [styles.item, pressed && styles.pressed]}
+            style={({ pressed }) => [
+              styles.item,
+              floating && styles.itemFloating,
+              pressed && styles.pressed
+            ]}
           >
             {/*
               The target and the paint are different boxes. The target is 44pt
@@ -97,6 +132,7 @@ export function AppNav(props: AppNavProps): React.ReactElement {
             >
               <Icon
                 name={tab.icon}
+                size={floating ? FLOATING_ICON_REM : undefined}
                 color={
                   isSelected ? theme.navActiveColor : theme.navInactiveColor
                 }
@@ -118,14 +154,15 @@ const getStyles = cacheStyles((theme: Theme) => ({
     // Over the content, not beside it: a bar across the bottom of a phone is a
     // strip of chrome under the thing somebody came to look at.
     position: 'absolute',
-    bottom: theme.rem(1),
+    bottom: theme.rem(FLOATING_BOTTOM_REM),
     alignSelf: 'center',
     // Half again on the gap: with no labels between them the three glyphs read
-    // as one shape at the spacing the rest of the app uses.
-    gap: theme.rem(theme.spaceXsRem * 1.5),
-    paddingHorizontal: theme.rem(theme.spaceSmRem),
-    paddingVertical: theme.rem(0.1875),
-    borderRadius: theme.rem(2),
+    // as one shape at the spacing the rest of the app uses. And then the
+    // capsule's own fifth on top of that.
+    gap: theme.rem(theme.spaceXsRem * 1.5 * FLOATING_SCALE),
+    paddingHorizontal: theme.rem(theme.spaceSmRem * FLOATING_SCALE),
+    paddingVertical: theme.rem(FLOATING_PAD_REM),
+    borderRadius: theme.rem(2.5),
     borderWidth: 1,
     borderColor: theme.glassBorderColor,
     shadowColor: '#000000',
@@ -145,10 +182,14 @@ const getStyles = cacheStyles((theme: Theme) => ({
     alignItems: 'center',
     justifyContent: 'center'
   },
+  itemFloating: {
+    minWidth: theme.rem(FLOATING_DISC_REM),
+    minHeight: theme.rem(FLOATING_DISC_REM)
+  },
   discFloating: {
-    width: theme.rem(2.75),
-    height: theme.rem(2.75),
-    borderRadius: theme.rem(1.375),
+    width: theme.rem(FLOATING_DISC_REM),
+    height: theme.rem(FLOATING_DISC_REM),
+    borderRadius: theme.rem(FLOATING_DISC_REM / 2),
     alignItems: 'center',
     justifyContent: 'center'
   },

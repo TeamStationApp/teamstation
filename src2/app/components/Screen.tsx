@@ -4,6 +4,7 @@ import Animated from 'react-native-reanimated'
 
 import { edgeMarginRem } from '../layout/margins'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { NAV_CLEARANCE_REM } from './AppNav'
 import { useHeaderSlot } from './headerSlot'
 import { useBreakpoint } from './useBreakpoint'
 
@@ -106,7 +107,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
   // bar beneath it, so the last row of a list has to clear the capsule. Without
   // this the bottom team on the home screen reads through frosted glass.
   clearOfNav: {
-    paddingBottom: theme.rem(4.5)
+    paddingBottom: theme.rem(NAV_CLEARANCE_REM)
   },
   column: {
     width: '100%',
