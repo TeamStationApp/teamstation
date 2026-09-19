@@ -53,14 +53,38 @@ export interface DuplicatePair {
 }
 
 /**
- * Pairs where one person's whole name is the *first word* of another's, on the
- * same team.
+ * Pairs on one team whose first names match and whose surnames are the same
+ * name written to different lengths: `Adrian` and `Adrian Houser`, `Anthony R`
+ * and `Anthony Rizzo`, `aaron` and `aaron sanchez`.
  *
- * Deliberately narrow. Two real children can share a first name, and one of
- * them may simply not have batted yet, so a name that is a prefix of **more
- * than one** full name on the team is not a duplicate of either — it is
- * ambiguous, and it is listed rather than guessed at.
+ * The short one came from a video title or a schedule, where somebody typed a
+ * name by hand and stopped; the long one came from an imported roster, with
+ * a jersey, a person id and a face. One rule covers both shapes, because a
+ * missing surname and a surname cut to its initial are the same thing
+ * happening.
+ *
+ * Deliberately narrow all the same. Two real children can share a first name —
+ * the Bay Stars have two boys called Ben, in shirts 2 and 5 — so surnames of
+ * **equal** length never pair, and a short name that fits **more than one**
+ * longer one is ambiguous and is listed rather than guessed at.
  */
+export function isShortFormOf(
+  short: { firstName: string; lastName: string },
+  long: { firstName: string; lastName: string }
+): boolean {
+  const first = (a: string): string => a.trim().toLowerCase()
+  if (
+    first(short.firstName) === '' ||
+    first(short.firstName) !== first(long.firstName)
+  ) {
+    return false
+  }
+  const a = first(short.lastName)
+  const b = first(long.lastName)
+  // Strictly shorter, or two rows of the same name would each be the other's
+  // short form and both would be closed into nothing.
+  return a.length < b.length && b.startsWith(a)
+}
 export async function findDuplicatePeople(
   db: Kysely<Database>
 ): Promise<{ pairs: DuplicatePair[]; ambiguous: string[] }> {
@@ -71,12 +95,36 @@ export async function findDuplicatePeople(
     .select([
       'memberships.team_id as teamId',
       'users.id as userId',
-      'users.display_name as displayName'
+      'users.display_name as displayName',
+      'users.first_name as firstName',
+      'users.last_name as lastName'
     ])
     .select(eb => eb.fn.count<number>('event_players.id').as('plays'))
     .where('users.merged_into', 'is', null)
-    .groupBy(['memberships.team_id', 'users.id', 'users.display_name'])
+    .groupBy([
+      'memberships.team_id',
+      'users.id',
+      'users.display_name',
+      'users.first_name',
+      'users.last_name'
+    ])
     .execute()
+
+  /**
+   * The two halves of a name, whichever way the row was made. A row invented
+   * from a video title has the whole thing in `display_name` and nothing else.
+   */
+  const named = (row: {
+    displayName: string
+    firstName: string | null
+    lastName: string | null
+  }): { firstName: string; lastName: string } => {
+    if (row.firstName != null && row.firstName.trim() !== '') {
+      return { firstName: row.firstName, lastName: row.lastName ?? '' }
+    }
+    const words = row.displayName.trim().split(/\s+/)
+    return { firstName: words[0] ?? '', lastName: words.slice(1).join(' ') }
+  }
 
   const byTeam = new Map<string, typeof rows>()
   for (const row of rows) {
@@ -89,14 +137,9 @@ export async function findDuplicatePeople(
   const ambiguous: string[] = []
 
   for (const [teamId, people] of byTeam) {
-    const single = people.filter(p => !p.displayName.trim().includes(' '))
-    const full = people.filter(p => p.displayName.trim().includes(' '))
-
-    for (const one of single) {
-      const name = one.displayName.trim().toLowerCase()
-      if (name === '') continue
-      const matches = full.filter(
-        other => other.displayName.trim().toLowerCase().split(/\s+/)[0] === name
+    for (const one of people) {
+      const matches = people.filter(other =>
+        isShortFormOf(named(one), named(other))
       )
       if (matches.length === 0) continue
       if (matches.length > 1) {
