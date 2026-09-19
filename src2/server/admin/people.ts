@@ -84,8 +84,8 @@ export async function closeInto(
   db: Kysely<Database>,
   closing: string,
   keeping: string
-): Promise<void> {
-  if (closing === keeping) return
+): Promise<number> {
+  if (closing === keeping) return 0
 
   const theirs = await db
     .selectFrom('memberships')
@@ -102,7 +102,9 @@ export async function closeInto(
     ).map(row => [row.team_id, row])
   )
 
+  let moved = 0
   for (const membership of theirs) {
+    moved += 1
     const kept = already.get(membership.team_id)
     if (kept != null) {
       // One row out of two, and nothing only one of them knew is thrown away.
@@ -150,6 +152,7 @@ export async function closeInto(
     .set({ merged_into: keeping })
     .where('id', '=', closing)
     .execute()
+  return moved
 }
 
 /**
@@ -174,8 +177,7 @@ export async function tidyClosedRows(db: Kysely<Database>): Promise<number> {
     // Through the chain, not one step: a row can be closed into a row that was
     // itself closed later.
     const person = await onePerson(db, row.userId)
-    await closeInto(db, row.userId, person.userId)
-    moved += 1
+    moved += await closeInto(db, row.userId, person.userId)
   }
   return moved
 }
