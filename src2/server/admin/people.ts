@@ -113,7 +113,12 @@ export async function closeInto(
         positions?: string[]
         is_player?: boolean
       } = {}
-      if (kept.jersey == null && membership.jersey != null) {
+      // An empty string is a number nobody typed, the same as null: testing
+      // only for null left `Dominic Smith` with `''` and threw away the #12
+      // on the row that closed.
+      const blank = (jersey: string | null): boolean =>
+        jersey == null || jersey.trim() === ''
+      if (blank(kept.jersey) && !blank(membership.jersey)) {
         filled.jersey = membership.jersey
       }
       if (kept.positions.length === 0 && membership.positions.length > 0) {
@@ -147,12 +152,69 @@ export async function closeInto(
     })
   }
 
+  await keepTheFullerName(db, closing, keeping)
+
   await db
     .updateTable('users')
     .set({ merged_into: keeping })
     .where('id', '=', closing)
     .execute()
   return moved
+}
+
+/**
+ * The surviving row takes the better of the two names.
+ *
+ * Which row survives is decided by how much history is on it, and the row a
+ * scorer used all season is usually the one somebody typed as a bare first
+ * name. So the fuller history and the fuller name are often on different rows,
+ * and closing one into the other turned `Carson Kelly` into `Carson` on eight
+ * children at once.
+ *
+ * Fuller means a longer surname that actually reads as one. `Lance (pool
+ * Player)` is longer than `Lance` and is not a better name for a child.
+ */
+/** Whether one row's name is the better of the two to keep. */
+export function isFullerName(
+  from: { last_name: string | null },
+  to: { last_name: string | null }
+): boolean {
+  const surname = (row: { last_name: string | null }): string => {
+    const name = (row.last_name ?? '').trim()
+    // Letters, and what a name is allowed to have in it. A bracket or a digit
+    // means somebody left a note in the field rather than a surname.
+    return /^\p{L}[\p{L}\s'’-]*$/u.test(name) ? name : ''
+  }
+  return surname(from).length > surname(to).length
+}
+
+export async function keepTheFullerName(
+  db: Kysely<Database>,
+  closing: string,
+  keeping: string
+): Promise<boolean> {
+  const rows = await db
+    .selectFrom('users')
+    .select(['id', 'display_name', 'first_name', 'last_name'])
+    .where('id', 'in', [closing, keeping])
+    .execute()
+  const from = rows.find(row => row.id === closing)
+  const to = rows.find(row => row.id === keeping)
+  if (from == null || to == null) return false
+
+  if (!isFullerName(from, to)) return false
+
+  await db
+    .updateTable('users')
+    .set({
+      display_name: from.display_name,
+      first_name: from.first_name,
+      last_name: from.last_name,
+      updated_at: new Date()
+    })
+    .where('id', '=', keeping)
+    .execute()
+  return true
 }
 
 /**
@@ -224,16 +286,24 @@ export async function survivorsOf(
 }
 
 /**
- * Pairs who both took their turn in the same game, which is two children.
+ * Pairs who were both in the same game, which is two children.
  *
- * The strongest evidence there is against a merge, and it comes from the
- * figures rather than from a name. One child cannot bat twice in one lineup —
- * and where they *were* entered twice, one of the two entries has nothing
- * beside it, which is why this asks for a plate appearance or an out on both
- * sides rather than merely a row.
+ * The strongest evidence there is against a merge, and it comes from the play
+ * itself rather than from a name. One child is one person on a field: two rows
+ * that were both named on a play in one game are two boys.
+ *
+ * Every part counts, not just batting. `Lincoln` batted four times while
+ * `Lincoln Williams` fielded in the same game with no stat line at all, and a
+ * test that only read plate appearances made them one child. The one shape
+ * this still allows is a scorer re-adding somebody mid-season — `Adrian Houser`
+ * has a new row that bats and an old one with an empty line, and the two are
+ * never named on a play together.
  *
  * Returned as a set of `a|b` pairs, both ways round, so a caller can ask about
- * a candidate without another query.
+ * a candidate without another query. Ask about **every** pair in a group and
+ * not just the two rows in front of you: `Casey Mize` was closed into
+ * another `Casey Mize` and that one into `Casey`, and the two ends of the
+ * chain both batted on 11 April — a pairwise test at each step saw nothing.
  */
 export async function bothPlayedTogether(
   db: Kysely<Database>,
@@ -242,18 +312,34 @@ export async function bothPlayedTogether(
   const together = new Set<string>()
   if (userIds.length < 2) return together
 
-  const rows = await db
+  const wanted = [...new Set(userIds)]
+  const byGame = new Map<string, string[]>()
+  const note = (gameId: string, userId: string): void => {
+    const held = byGame.get(gameId) ?? []
+    if (!held.includes(userId)) held.push(userId)
+    byGame.set(gameId, held)
+  }
+
+  // Everybody named on a play, in any part: batting, pitching, fielding, on
+  // base. This is the one that catches a boy who only took the field.
+  for (const row of await db
+    .selectFrom('event_players')
+    .innerJoin('events', 'events.id', 'event_players.event_id')
+    .select(['events.game_id as gameId', 'event_players.user_id as userId'])
+    .where('event_players.user_id', 'in', wanted)
+    .execute()) {
+    note(row.gameId, row.userId)
+  }
+
+  // And anybody with a figure in a game, for a game whose plays we never
+  // tagged. An empty line is a lineup slot rather than an appearance.
+  for (const row of await db
     .selectFrom('game_player_stats')
     .select(['game_id', 'user_id', 'pa', 'pitch_outs'])
-    .where('user_id', 'in', [...new Set(userIds)])
-    .execute()
-
-  const byGame = new Map<string, string[]>()
-  for (const row of rows) {
+    .where('user_id', 'in', wanted)
+    .execute()) {
     if (row.pa === 0 && row.pitch_outs === 0) continue
-    const held = byGame.get(row.game_id) ?? []
-    held.push(row.user_id)
-    byGame.set(row.game_id, held)
+    note(row.game_id, row.user_id)
   }
   for (const players of byGame.values()) {
     for (const one of players) {
