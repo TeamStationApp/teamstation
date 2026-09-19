@@ -12,6 +12,7 @@ import {
   closeInto,
   isFullerName,
   onePerson,
+  splitByClash,
   tidyClosedRows
 } from './people'
 
@@ -266,6 +267,35 @@ describe('one person, however many rows', function () {
     expect(
       isFullerName({ last_name: 'José Reyes' }, { last_name: 'J' })
     ).equals(true)
+  })
+
+  it('splits a group at the pair that clashes, and no further', function () {
+    // `Casey`, and three rows of `Casey Mize`. Only one of the Mizes ever
+    // played a game beside Casey; taking the whole group apart made one boy
+    // into three.
+    const people = splitByClash(
+      [
+        { userId: 'casey', weight: 219 },
+        { userId: 'mizeAllStars', weight: 84 },
+        { userId: 'mizeTitan', weight: 24 },
+        { userId: 'mizeStars', weight: 4 }
+      ],
+      new Set(['casey|mizeStars', 'mizeStars|casey'])
+    )
+    expect(people.length).equals(2)
+    expect(people[0]).deep.equals(['casey', 'mizeAllStars', 'mizeTitan'])
+    expect(people[1]).deep.equals(['mizeStars'])
+  })
+
+  it('leaves a group that clashes nowhere as one person', function () {
+    const people = splitByClash(
+      [
+        { userId: 'a', weight: 5 },
+        { userId: 'b', weight: 1 }
+      ],
+      new Set()
+    )
+    expect(people).deep.equals([['a', 'b']])
   })
 
   it('moves what an earlier merge left behind', async function () {
