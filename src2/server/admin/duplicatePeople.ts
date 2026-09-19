@@ -1,7 +1,7 @@
 import type { Kysely } from 'kysely'
 
 import type { Database } from '../db/database'
-import { bothPlayedTogether } from './people'
+import { bothPlayedTogether, onePerson } from './people'
 
 /**
  * Two rows for one child.
@@ -160,7 +160,15 @@ export async function findDuplicatePeople(
       }
       const match = matches[0]
       if (match == null) continue
-      if (together.has(`${one.userId}|${match.userId}`)) {
+      // Everybody either of them has already been merged with, because the
+      // question is whether the *people* ever batted in one game and a row is
+      // only the part of a person that was open at the time.
+      const ours = [
+        ...(await onePerson(db, one.userId)).userIds,
+        ...(await onePerson(db, match.userId)).userIds
+      ]
+      const clash = ours.some(a => ours.some(b => together.has(`${a}|${b}`)))
+      if (clash) {
         // Both of them batted in one game, so they are two children who share
         // a first name — not one child written down twice.
         ambiguous.push(
@@ -266,9 +274,14 @@ export async function findSamePersonAcrossTeams(
   const groups: SamePersonGroup[] = []
   for (const people of byName.values()) {
     if (people.length < 2) continue
-    // One child cannot play for both sides of a game.
-    const split = people.some(one =>
-      people.some(other => together.has(`${one.userId}|${other.userId}`))
+    // One child cannot play for both sides of a game — asked of every row the
+    // group already holds, not just the two in front of us.
+    const everyRow: string[] = []
+    for (const one of people) {
+      everyRow.push(...(await onePerson(db, one.userId)).userIds)
+    }
+    const split = everyRow.some(a =>
+      everyRow.some(b => together.has(`${a}|${b}`))
     )
     if (split) continue
     const sorted = [...people].sort((a, b) => Number(b.plays) - Number(a.plays))

@@ -10,6 +10,7 @@ import type { Database } from '../db/database'
 import {
   bothPlayedTogether,
   closeInto,
+  isFullerName,
   onePerson,
   tidyClosedRows
 } from './people'
@@ -251,6 +252,20 @@ describe('one person, however many rows', function () {
     expect(together.has(`${one}|${other}`)).equals(true)
     expect(together.has(`${other}|${one}`)).equals(true)
     expect(together.has(`${one}|${benched}`)).equals(false)
+  })
+
+  it('keeps the name with a surname on it', function () {
+    const bare = { last_name: null }
+    // The row a scorer used all season is usually the bare one, and it is
+    // usually the one with the history, so the survivor has to take the name
+    // rather than the other way round.
+    expect(isFullerName({ last_name: 'Roper' }, bare)).equals(true)
+    expect(isFullerName(bare, { last_name: 'Roper' })).equals(false)
+    // And a note somebody left in the field is not a surname.
+    expect(isFullerName({ last_name: '(pool Player)' }, bare)).equals(false)
+    expect(
+      isFullerName({ last_name: 'Jimenez Mares' }, { last_name: 'J' })
+    ).equals(true)
   })
 
   it('moves what an earlier merge left behind', async function () {
