@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Text, View } from 'react-native'
 
 import type {
@@ -131,11 +131,19 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
     )
   )
 
-  // A screen re-used for a second player must not keep the first one's pages.
-  // The stack unmounts between two players today, so this has nothing to undo
-  // — and a list that silently appended somebody else's highlights would be
-  // very hard to see and impossible to explain.
+  // A screen re-used for a second player must not keep the first one's pages,
+  // or the first one's filter: a season the new player never played in is not
+  // a narrowing anybody asked for. The stack unmounts between two players
+  // today, so this has nothing to undo — and a list that silently appended
+  // somebody else's highlights would be very hard to see and impossible to
+  // explain.
+  //
+  // On the first render there is nothing to forget, and clearing then would
+  // throw away the filter the address arrived with.
+  const showing = useRef(userId)
   useEffect(() => {
+    if (showing.current === userId) return
+    showing.current = userId
     setPlayer(undefined)
     setHighlights([])
     setNextBefore(undefined)
@@ -143,6 +151,7 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
     setBefore(undefined)
     setStats(undefined)
     setError(undefined)
+    setFilter({})
   }, [userId])
 
   useEffect(() => {
