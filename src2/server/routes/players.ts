@@ -74,7 +74,8 @@ export function playerRoutes(
         return
       }
 
-      const teams = await teamsOf(db, userId)
+      const person = await onePerson(db, userId)
+      const teams = await teamsOf(db, person.userIds)
 
       // The same rule as every other read: you may see somebody if you can
       // already see a team they are on, or a season opened up to you. Their
@@ -438,8 +439,11 @@ export interface PlayerTeam {
  */
 export async function teamsOf(
   db: Kysely<Database>,
-  userId: string
+  userIds: string[]
 ): Promise<PlayerTeam[]> {
+  // Every row that is this person: a child on five teams was five imports,
+  // and the teams of the four that were closed are still theirs.
+  if (userIds.length === 0) return []
   const fromMemberships = await db
     .selectFrom('memberships')
     .innerJoin('teams', 'teams.id', 'memberships.team_id')
@@ -452,7 +456,7 @@ export async function teamsOf(
       'seasons.name as seasonName',
       'seasons.year as seasonYear'
     ])
-    .where('memberships.user_id', '=', userId)
+    .where('memberships.user_id', 'in', userIds)
     .where('memberships.is_player', '=', true)
     .where('teams.merged_into', 'is', null)
     .execute()
@@ -468,7 +472,7 @@ export async function teamsOf(
       'seasons.name as seasonName',
       'seasons.year as seasonYear'
     ])
-    .where('player_season_stats.user_id', '=', userId)
+    .where('player_season_stats.user_id', 'in', userIds)
     .where('teams.merged_into', 'is', null)
     .execute()
 

@@ -162,7 +162,7 @@ describe('a player, and who may change their name', function () {
   })
 
   it('lists the teams a player has been on, with the season', async function () {
-    const teams = await teamsOf(db, childId)
+    const teams = await teamsOf(db, [childId])
     expect(teams).deep.equals([
       {
         teamId,
@@ -178,6 +178,6 @@ describe('a player, and who may change their name', function () {
   // filter on their stats is built from this list, and a season nobody batted
   // in is an option that can only ever answer "nothing".
   it('leaves out a team they are only a spectator on', async function () {
-    expect(await teamsOf(db, strangerId)).deep.equals([])
+    expect(await teamsOf(db, [strangerId])).deep.equals([])
   })
 })
