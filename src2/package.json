@@ -19,6 +19,7 @@
     "lint": "eslint .",
     "merge-team": "node -r sucrase/register server/dev/mergeTeam.ts",
     "migrate": "node -r sucrase/register migrate/cli.ts",
+    "same-person": "node -r sucrase/register server/dev/samePerson.ts",
     "sample-video": "node -r sucrase/register server/dev/makeSampleVideo.ts",
     "seed": "node -r sucrase/register server/dev/seed.ts",
     "start": "node -r sucrase/register server/index.ts",

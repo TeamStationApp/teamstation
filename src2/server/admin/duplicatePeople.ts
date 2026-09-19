@@ -124,3 +124,80 @@ export async function findDuplicatePeople(
 
   return { pairs, ambiguous }
 }
+
+/**
+ * One child on five teams, which an import makes five people out of.
+ *
+ * A player id there names a roster spot, not a person: Jensen Puey on the
+ * Hawks and Jensen Puey on Trosky Force are two ids, two imports and two
+ * users, and each of his pages knew about a fifth of him.
+ *
+ * The evidence is the name and nothing else. The import sends a `person_id`
+ * beside each player and it is the player's own id every time — measured over
+ * every roster we hold — so it links nothing. Two children really can share a
+ * first and a last name, so **this never applies itself**: it lists what it
+ * found with the teams beside each row, and a person decides.
+ */
+export interface SamePersonGroup {
+  /** The row to keep: the one with the most plays behind it. */
+  keepUserId: string
+  name: string
+  members: Array<{
+    userId: string
+    plays: number
+    /** The teams this row appears on, which is what makes it recognisable. */
+    teams: string[]
+  }>
+}
+
+export async function findSamePersonAcrossTeams(
+  db: Kysely<Database>
+): Promise<SamePersonGroup[]> {
+  const rows = await db
+    .selectFrom('users')
+    .leftJoin('event_players', 'event_players.user_id', 'users.id')
+    .leftJoin('memberships', 'memberships.user_id', 'users.id')
+    .leftJoin('teams', 'teams.id', 'memberships.team_id')
+    .select([
+      'users.id as userId',
+      'users.first_name as firstName',
+      'users.last_name as lastName'
+    ])
+    .select(eb =>
+      eb.fn.count<number>('event_players.id').distinct().as('plays')
+    )
+    .select(eb => eb.fn.max('teams.name').as('teamName'))
+    .where('users.merged_into', 'is', null)
+    .where('users.first_name', 'is not', null)
+    .where('users.last_name', 'is not', null)
+    .groupBy(['users.id', 'users.first_name', 'users.last_name'])
+    .execute()
+
+  const byName = new Map<string, typeof rows>()
+  for (const row of rows) {
+    const first = (row.firstName ?? '').trim().toLowerCase()
+    const last = (row.lastName ?? '').trim().toLowerCase()
+    // Both halves, or it is not evidence: half the league is called Jensen.
+    if (first === '' || last === '') continue
+    const key = `${first} ${last}`
+    const held = byName.get(key)
+    if (held == null) byName.set(key, [row])
+    else held.push(row)
+  }
+
+  const groups: SamePersonGroup[] = []
+  for (const people of byName.values()) {
+    if (people.length < 2) continue
+    const sorted = [...people].sort((a, b) => Number(b.plays) - Number(a.plays))
+    groups.push({
+      keepUserId: sorted[0].userId,
+      name: `${sorted[0].firstName ?? ''} ${sorted[0].lastName ?? ''}`.trim(),
+      members: sorted.map(row => ({
+        userId: row.userId,
+        plays: Number(row.plays),
+        teams: row.teamName == null ? [] : [row.teamName]
+      }))
+    })
+  }
+  return groups.sort((a, b) => a.name.localeCompare(b.name))
+}

@@ -3,6 +3,7 @@ import type { Kysely } from 'kysely'
 
 import { notFound, unauthorized } from '../../common/errors'
 import { visibleScopes } from '../access'
+import { onePerson } from '../admin/people'
 import type { Database } from '../db/database'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
@@ -59,21 +60,38 @@ export function statsRoutes(db: Kysely<Database>): Router {
           ? Number(req.query.year)
           : undefined
 
-      // Everything this player has, so the filter can be offered; the figures
+      // Every row that is this person, not every row under this id: one child
+      // on five teams is five ids, and four of them are closed into the fifth.
+      const person = await onePerson(db, userId)
+
+      // Everything they have, so the filter can be offered; the figures
       // themselves are then taken from whichever of those rows were asked for.
-      const all = await statRows(db, { userId })
+      //
+      // The rows come back under whichever id was current when each game was
+      // written, and a total grouped by that id would be one line per team
+      // again. They are one person here, so they carry one id.
+      const all = (await statRows(db, { userIds: person.userIds })).map(
+        row => ({
+          ...row,
+          userId: person.userId
+        })
+      )
 
       // A player's own figures are always theirs to see; anyone else's are
       // visible only for the teams the reader can already see.
       const visible =
-        userId === actor.userId || scopes.isAdmin
+        person.userIds.includes(actor.userId) || scopes.isAdmin
           ? all
           : all.filter(
               row =>
                 (row.teamId != null && scopes.teamIds.has(row.teamId)) ||
                 (row.seasonId != null && scopes.seasonIds.has(row.seasonId))
             )
-      if (visible.length === 0 && all.length > 0 && userId !== actor.userId) {
+      if (
+        visible.length === 0 &&
+        all.length > 0 &&
+        !person.userIds.includes(actor.userId)
+      ) {
         throw notFound()
       }
 
@@ -103,7 +121,8 @@ export function statsRoutes(db: Kysely<Database>): Router {
       }
 
       res.json({
-        userId,
+        // The open row, so a page opened on a closed id says who it really is.
+        userId: person.userId,
         filter: {
           seasonId: seasonId ?? null,
           teamId: teamId ?? null,
@@ -120,13 +139,23 @@ export function statsRoutes(db: Kysely<Database>): Router {
                 ip: inningsPitched(pitching.outs),
                 rates: pitchingRates(pitching)
               },
+        // Newest season first, then teams by name: a list whose order is
+        // whatever Postgres returned reshuffles itself between two readings of
+        // the same page.
         options: {
-          seasons: [...seasons].map(([id, season]) => ({
-            seasonId: id,
-            name: season.name,
-            year: season.year
-          })),
-          teams: [...teams].map(([id, name]) => ({ teamId: id, name })),
+          seasons: [...seasons]
+            .map(([id, season]) => ({
+              seasonId: id,
+              name: season.name,
+              year: season.year
+            }))
+            .sort((a, b) => {
+              const byYear = (b.year ?? 0) - (a.year ?? 0)
+              return byYear === 0 ? a.name.localeCompare(b.name) : byYear
+            }),
+          teams: [...teams]
+            .map(([id, name]) => ({ teamId: id, name }))
+            .sort((a, b) => a.name.localeCompare(b.name)),
           years: [...years].sort((a, b) => b - a)
         }
       })
@@ -201,6 +230,10 @@ export function statsRoutes(db: Kysely<Database>): Router {
       const userId = pathParam(req.params.userId)
       const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
 
+      // Every row that is this person: a merge closes a row without moving
+      // the plays written under it.
+      const person = await onePerson(db, userId)
+
       let query = db
         .selectFrom('event_players')
         .innerJoin('events', 'events.id', 'event_players.event_id')
@@ -220,7 +253,7 @@ export function statsRoutes(db: Kysely<Database>): Router {
           'event_players.team_id as teamId',
           'event_players.role as role'
         ])
-        .where('event_players.user_id', '=', userId)
+        .where('event_players.user_id', 'in', person.userIds)
         .where('events.hidden', '=', false)
 
       const seasonId = req.query.seasonId
@@ -247,7 +280,7 @@ export function statsRoutes(db: Kysely<Database>): Router {
       const visible = rows.filter(
         row =>
           scopes.isAdmin ||
-          userId === actor.userId ||
+          person.userIds.includes(actor.userId) ||
           (row.teamId != null && scopes.teamIds.has(row.teamId)) ||
           (row.seasonId != null && scopes.seasonIds.has(row.seasonId))
       )
