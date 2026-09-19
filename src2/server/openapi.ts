@@ -533,8 +533,11 @@ export function openApiDocument(version: string): OpenApiDocument {
       },
       '/games/{gameId}/box-score': {
         get: {
-          summary: "A game's batting lines",
-          description: 'Worked out from the stored plays.',
+          summary: "A game's batting and pitching lines",
+          description:
+            'Added up from the stored stat lines, one row per player per ' +
+            'game, counted by walking the archived game stream. Earned runs ' +
+            'are included, which a play-by-play cannot produce.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam],
           responses: {
@@ -572,17 +575,41 @@ export function openApiDocument(version: string): OpenApiDocument {
       },
       '/players/{userId}/stats': {
         get: {
-          summary: "A player's batting by season, and their career",
+          summary: "A player's batting and pitching, narrowed as asked",
           description:
-            'A career is the sum of the season rows, so a player on two teams ' +
-            'in one season keeps them apart. Runs scored, stolen bases and ' +
-            'caught stealing are not reported: they need runner movement from ' +
-            'the game stream, and a figure that cannot be derived honestly is ' +
-            'left out rather than guessed.',
+            'Every figure is a sum of that player\u2019s per-game stat lines, ' +
+            'so a total here and a line in a box score are the same rows ' +
+            'added up differently. Unfiltered is a career. The answer carries ' +
+            'the seasons, teams and years there are to choose from, which is ' +
+            'what the filter on the page offers. `rates.era` is absent until ' +
+            "something has worked out the league's regulation length: an ERA " +
+            'is earned runs per game.',
           security: [{ bearer: [] }],
-          parameters: [userIdParam],
+          parameters: [
+            userIdParam,
+            {
+              name: 'seasonId',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'Only games in this season'
+            },
+            {
+              name: 'teamId',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'Only games played for this team'
+            },
+            {
+              name: 'year',
+              in: 'query',
+              schema: { type: 'integer' },
+              description: 'Only games played in this calendar year'
+            }
+          ],
           responses: {
-            200: { description: 'Season lines and the career total' },
+            200: {
+              description: 'The totals, and what they can be narrowed to'
+            },
             404: errorResponse
           }
         }

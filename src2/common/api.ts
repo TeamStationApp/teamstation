@@ -199,11 +199,19 @@ const asRates = asObject({
   ops: asOptional(asNumber)
 })
 
+const asPitchingRates = asObject({
+  /** Earned runs per game, where a game's length is known. */
+  era: asOptional(asNumber),
+  whip: asOptional(asNumber)
+})
+
 export const asBattingRow = asObject({
   userId: asString,
   /** First name, last initial. Never the whole name. */
   shortName: asOptional(asString),
   teamId: asNullable(asString),
+  /** Games this line is the sum of. */
+  g: asOptional(asNumber, 0),
   pa: asNumber,
   ab: asNumber,
   h: asNumber,
@@ -213,8 +221,13 @@ export const asBattingRow = asObject({
   hr: asNumber,
   bb: asNumber,
   k: asNumber,
+  /** Runs scored, which belongs to whoever crossed the plate. */
+  r: asOptional(asNumber, 0),
   hbp: asNumber,
   rbi: asNumber,
+  sb: asOptional(asNumber, 0),
+  cs: asOptional(asNumber, 0),
+  sf: asOptional(asNumber, 0),
   rates: asRates,
   /**
    * This player's average for the season so far, up to and including this
@@ -224,23 +237,67 @@ export const asBattingRow = asObject({
 })
 export type BattingRow = ReturnType<typeof asBattingRow>
 
-/** One pitcher's line. No earned runs: the plays cannot tell them apart. */
+/**
+ * One pitcher's line, earned runs and all.
+ *
+ * An earned run is not a figure a play-by-play can produce — telling one from
+ * an unearned one means replaying the inning without the mistakes — and these
+ * come from a rule that does exactly that, checked against every game we hold.
+ * `rates.era` is absent until something has worked out how long a game in that
+ * league runs, because an ERA is earned runs per game.
+ */
 export const asPitchingRow = asObject({
   userId: asString,
   shortName: asOptional(asString),
   teamId: asNullable(asString),
   /** `5.2`, the way it is always written. */
   ip: asString,
+  g: asOptional(asNumber, 0),
   outs: asNumber,
   bf: asNumber,
   h: asNumber,
+  hr: asNumber,
+  hbp: asNumber,
   r: asNumber,
+  er: asOptional(asNumber, 0),
   bb: asNumber,
   k: asNumber,
-  hr: asNumber,
-  hbp: asNumber
+  rates: asPitchingRates
 })
 export type PitchingRow = ReturnType<typeof asPitchingRow>
+
+/**
+ * One player's figures, and what there is to narrow them to.
+ *
+ * The filter comes back with the answer because the two are the same question:
+ * these are the seasons, teams and years this player has figures for, and the
+ * totals are whichever of those rows were asked for. A career is the unfiltered
+ * answer, which is what the page opens on unless the reader arrived from a game.
+ */
+export const asPlayerStats = asObject({
+  userId: asString,
+  filter: asObject({
+    seasonId: asNullable(asString),
+    teamId: asNullable(asString),
+    year: asNullable(asNumber)
+  }),
+  games: asNumber,
+  /** Null where this player has never batted under the chosen filter. */
+  batting: asNullable(asBattingRow),
+  pitching: asNullable(asPitchingRow),
+  options: asObject({
+    seasons: asArray(
+      asObject({
+        seasonId: asString,
+        name: asString,
+        year: asNullable(asNumber)
+      })
+    ),
+    teams: asArray(asObject({ teamId: asString, name: asString })),
+    years: asArray(asNumber)
+  })
+})
+export type PlayerStats = ReturnType<typeof asPlayerStats>
 
 export const asBoxScore = asObject({
   batting: asArray(asBattingRow),
@@ -1054,6 +1111,31 @@ export class GameStationClient {
         text === '' ? '' : `?${text}`
       }`,
       asPlayerHighlights
+    )
+  }
+
+  /**
+   * One player's figures, narrowed to a season, a team or a year.
+   *
+   * The narrowing is done by the server rather than here: the page would
+   * otherwise have to add rows up and work out rates a second time, and two
+   * pieces of arithmetic for one figure is one too many.
+   */
+  async playerStats(
+    userId: string,
+    filter: { seasonId?: string; teamId?: string; year?: number } = {}
+  ): Promise<PlayerStats> {
+    const query = new URLSearchParams()
+    if (filter.seasonId != null) query.set('seasonId', filter.seasonId)
+    if (filter.teamId != null) query.set('teamId', filter.teamId)
+    if (filter.year != null) query.set('year', String(filter.year))
+    const text = query.toString()
+    return await this.request(
+      'GET',
+      `/players/${encodeURIComponent(userId)}/stats${
+        text === '' ? '' : `?${text}`
+      }`,
+      asPlayerStats
     )
   }
 

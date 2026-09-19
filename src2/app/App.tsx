@@ -295,6 +295,39 @@ function Shell(props: AppProps): React.ReactElement {
   }
 
   /**
+   * The Stats filter, on the address.
+   *
+   * Put back in place rather than pushed: narrowing a total is not somewhere
+   * new to go back from, and a reader who taps Back expects the page they came
+   * from rather than the same page with a different filter.
+   */
+  const setPlayerFilter = (next: {
+    seasonId?: string
+    teamId?: string
+    year?: number
+  }): void => {
+    inPlace.current = true
+    setStacks(current => {
+      const held = current[tab]
+      const last = held[held.length - 1]
+      if (last?.name !== 'player') return current
+      return {
+        ...current,
+        [tab]: [
+          ...held.slice(0, -1),
+          {
+            ...last,
+            tab: 'stats' as const,
+            seasonId: next.seasonId,
+            teamId: next.teamId,
+            year: next.year
+          }
+        ]
+      }
+    })
+  }
+
+  /**
    * Leaving the invitation for the thing it was an invitation to.
    *
    * The lists are asked again rather than trusted from before: the team or
@@ -476,7 +509,13 @@ function Shell(props: AppProps): React.ReactElement {
         userId={top.userId}
         title={top.title}
         initialTab={top.tab}
+        initialFilter={{
+          seasonId: top.seasonId,
+          teamId: top.teamId,
+          year: top.year
+        }}
         onTab={setTopTab}
+        onFilter={setPlayerFilter}
         onOpenMoment={(gameId, videoId, atSec, title) => {
           push({
             name: 'game',

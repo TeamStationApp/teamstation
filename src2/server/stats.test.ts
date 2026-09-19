@@ -2,105 +2,94 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import {
-  addLines,
   battingLines,
   battingRates,
-  emptyLine,
-  type StatEvent
+  inningsPitched,
+  pitchingLines,
+  pitchingRates,
+  type StatRow
 } from './stats'
 
 const ROBIN = 'usr_robin'
 const SAM = 'usr_sam'
 const TEAM = 'tem_one'
 
-const at = (eventType: string, rbi = 0, userId = ROBIN): StatEvent => ({
-  batterUserId: userId,
-  teamId: TEAM,
-  eventType,
-  rbi
-})
+/** One game's stored line, with only the figures a test is about. */
+function game(over: Partial<StatRow> = {}): StatRow {
+  return {
+    userId: ROBIN,
+    teamId: TEAM,
+    pa: 0,
+    ab: 0,
+    h: 0,
+    singles: 0,
+    doubles: 0,
+    triples: 0,
+    hr: 0,
+    bb: 0,
+    k: 0,
+    r: 0,
+    rbi: 0,
+    hbp: 0,
+    ci: 0,
+    sf: 0,
+    sb: 0,
+    cs: 0,
+    pitchBf: 0,
+    pitchOuts: 0,
+    pitchH: 0,
+    pitchHr: 0,
+    pitchBb: 0,
+    pitchHbp: 0,
+    pitchK: 0,
+    pitchR: 0,
+    pitchEr: 0,
+    ...over
+  }
+}
 
 describe('stats', function () {
-  it('counts a plate appearance for every time up', function () {
-    const [line] = battingLines([at('single'), at('walk'), at('strikeout')])
-    expect(line.pa).equals(3)
-  })
-
-  it('leaves walks, hit-by-pitch and sacrifices out of at-bats', function () {
+  it('adds a player’s games together', function () {
     const [line] = battingLines([
-      at('single'),
-      at('walk'),
-      at('hit_by_pitch'),
-      at('sac_fly'),
-      at('strikeout')
+      game({ pa: 4, ab: 3, h: 2, bb: 1, rbi: 2 }),
+      game({ pa: 3, ab: 3, h: 1, k: 2 })
     ])
-    expect(line.pa).equals(5)
-    expect(line.ab).equals(2)
+    expect(line.g).equals(2)
+    expect(line.pa).equals(7)
+    expect(line.ab).equals(6)
+    expect(line.h).equals(3)
     expect(line.bb).equals(1)
-    expect(line.hbp).equals(1)
+    expect(line.k).equals(2)
+    expect(line.rbi).equals(2)
   })
 
-  it('counts hits by kind', function () {
-    const [line] = battingLines([
-      at('single'),
-      at('single'),
-      at('double'),
-      at('triple'),
-      at('home_run'),
-      at('field_out')
-    ])
-    expect(line.h).equals(5)
-    expect(line.singles).equals(2)
-    expect(line.doubles).equals(1)
-    expect(line.triples).equals(1)
-    expect(line.hr).equals(1)
+  it('leaves out somebody who never came to bat or ran', function () {
+    expect(battingLines([game({ pitchOuts: 9, pitchBf: 12 })])).deep.equals([])
   })
 
-  it('ignores things that are not a plate appearance', function () {
-    const lines = battingLines([at('stolen_base'), at('wild_pitch')])
-    expect(lines).deep.equals([])
-  })
-
-  it('ignores a play with nobody named', function () {
-    const lines = battingLines([
-      { batterUserId: null, teamId: TEAM, eventType: 'single', rbi: 0 }
-    ])
-    expect(lines).deep.equals([])
+  it('keeps a runner who scored but never batted', function () {
+    // A pinch runner has no plate appearance and a run all the same.
+    const [line] = battingLines([game({ r: 1 })])
+    expect(line.r).equals(1)
   })
 
   it('keeps players apart, and sorts by who batted most', function () {
-    const lines = battingLines([
-      at('single', 0, ROBIN),
-      at('single', 0, ROBIN),
-      at('walk', 0, SAM)
-    ])
+    const lines = battingLines([game({ pa: 2 }), game({ userId: SAM, pa: 1 })])
     expect(lines.map(line => line.userId)).deep.equals([ROBIN, SAM])
-    expect(lines[0].pa).equals(2)
-    expect(lines[1].pa).equals(1)
   })
 
-  it('keeps one player apart on two teams', function () {
-    const lines = battingLines([
-      at('single'),
-      { batterUserId: ROBIN, teamId: 'tem_two', eventType: 'double', rbi: 0 }
+  it('drops the team when a total spans two of them', function () {
+    const [line] = battingLines([
+      game({ pa: 1 }),
+      game({ teamId: 'tem_two', pa: 1 })
     ])
-    expect(lines.length).equals(2)
-    const teams = lines
-      .map(line => line.teamId ?? '')
-      .sort((a, b) => a.localeCompare(b))
-    expect(teams).deep.equals(['tem_one', 'tem_two'])
+    expect(line.teamId).equals(null)
   })
 
   it('works out the usual rates from the counts', function () {
-    const line = {
-      ...emptyLine(ROBIN, TEAM),
-      pa: 5,
-      ab: 4,
-      h: 2,
-      singles: 1,
-      doubles: 1,
-      bb: 1
-    }
+    const [line] = battingLines([
+      game({ pa: 5, ab: 4, h: 2, singles: 1, doubles: 1, bb: 1 })
+    ])
     const rates = battingRates(line)
     expect(rates.avg).equals(0.5)
     // Three total bases over four at-bats.
@@ -110,39 +99,66 @@ describe('stats', function () {
     expect(rates.ops).equals(1.35)
   })
 
-  it('has no average for a player who has never batted', function () {
-    const rates = battingRates(emptyLine(ROBIN, TEAM))
-    // Not zero: no at-bats is not the same as batting .000.
-    expect(rates.avg).equals(undefined)
-    expect(rates.obp).equals(undefined)
-    expect(rates.ops).equals(undefined)
+  it('counts a sacrifice against an on-base percentage', function () {
+    const [line] = battingLines([game({ pa: 2, ab: 1, h: 1, sf: 1 })])
+    expect(battingRates(line).obp).equals(0.5)
   })
 
   it('gives a walk an on-base percentage but still no average', function () {
-    const [line] = battingLines([at('walk')])
+    const [line] = battingLines([game({ pa: 1, bb: 1 })])
     const rates = battingRates(line)
+    // Not zero: no at-bats is not the same as batting .000.
     expect(rates.avg).equals(undefined)
     expect(rates.obp).equals(1)
   })
 
-  it('adds seasons together for a career', function () {
-    const spring = { ...emptyLine(ROBIN, TEAM), pa: 10, ab: 8, h: 3, hr: 1 }
-    const fall = { ...emptyLine(ROBIN, TEAM), pa: 12, ab: 10, h: 4, hr: 2 }
-    const career = addLines(spring, fall)
-    expect(career.pa).equals(22)
-    expect(career.ab).equals(18)
-    expect(career.h).equals(7)
-    expect(career.hr).equals(3)
+  it('adds a pitcher’s games together, most work first', function () {
+    const lines = pitchingLines([
+      game({ pitchBf: 10, pitchOuts: 6, pitchEr: 1, pitchR: 2, pitchH: 3 }),
+      game({ userId: SAM, pitchBf: 4, pitchOuts: 3 })
+    ])
+    expect(lines.map(line => line.userId)).deep.equals([ROBIN, SAM])
+    expect(lines[0].outs).equals(6)
+    expect(lines[0].er).equals(1)
+    expect(lines[0].r).equals(2)
   })
 
-  it('drops the team when a career spans two of them', function () {
-    const one = { ...emptyLine(ROBIN, 'tem_one'), pa: 1 }
-    const two = { ...emptyLine(ROBIN, 'tem_two'), pa: 1 }
-    expect(addLines(one, two).teamId).equals(null)
+  it('divides an ERA by the innings a game here runs', function () {
+    // Six innings, not nine: two earned runs in three innings is 4.00 in this
+    // league and 6.00 in the majors, and the published figures divide by six.
+    const [line] = pitchingLines([
+      game({
+        pitchOuts: 9,
+        pitchEr: 2,
+        pitchH: 4,
+        pitchBb: 2,
+        inningsPerGame: 6
+      })
+    ])
+    expect(pitchingRates(line).era).equals(4)
+    expect(pitchingRates(line).whip).equals(2)
   })
 
-  it('credits RBI as the plays gave them', function () {
-    const [line] = battingLines([at('single', 2), at('home_run', 1)])
-    expect(line.rbi).equals(3)
+  it('has no ERA at all where nobody knows how long a game is', function () {
+    const [line] = pitchingLines([game({ pitchOuts: 9, pitchEr: 2 })])
+    expect(pitchingRates(line).era).equals(undefined)
+    expect(pitchingRates(line).whip).equals(0)
+  })
+
+  it('weights the divisor by the innings thrown under it', function () {
+    // Three innings in a six-inning league and three in a nine-inning one: the
+    // divisor lands between them rather than on whichever came last.
+    const [line] = pitchingLines([
+      game({ pitchOuts: 9, pitchEr: 1, inningsPerGame: 6 }),
+      game({ pitchOuts: 9, pitchEr: 1, inningsPerGame: 9 })
+    ])
+    expect(line.inningsPerGame).equals(7.5)
+    expect(pitchingRates(line).era).equals(2.5)
+  })
+
+  it('writes innings the way a box score does', function () {
+    expect(inningsPitched(0)).equals('0.0')
+    expect(inningsPitched(5)).equals('1.2')
+    expect(inningsPitched(18)).equals('6.0')
   })
 })

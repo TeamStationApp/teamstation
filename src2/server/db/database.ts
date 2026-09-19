@@ -86,6 +86,12 @@ export interface SeasonsTable {
   term: string | null
   starts_on: string | null
   ends_on: string | null
+  /**
+   * The regulation length of a game here, which is what an ERA divides by.
+   * Null until it has been worked out from the games themselves — see
+   * `024seasonInnings`.
+   */
+  innings_per_game: number | null
   spectator_access: Generated<'team' | 'season'>
   created_at: Timestamp
   updated_at: Timestamp

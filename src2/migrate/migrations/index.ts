@@ -21,6 +21,7 @@ import { migration020InviteEmails } from './020inviteEmails'
 import { migration021BatsThrows } from './021batsThrows'
 import { migration022CreditIndex } from './022creditIndex'
 import { migration023GameStats } from './023gameStats'
+import { migration024SeasonInnings } from './024seasonInnings'
 
 /** Every migration, in the order they were written. */
 export const migrations: Migration[] = [
@@ -45,5 +46,6 @@ export const migrations: Migration[] = [
   migration020InviteEmails,
   migration021BatsThrows,
   migration022CreditIndex,
-  migration023GameStats
+  migration023GameStats,
+  migration024SeasonInnings
 ]

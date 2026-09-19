@@ -344,7 +344,11 @@ export function earnedRunsByPitcher(
   trace?: EarnedRunTrace[]
 ): Map<string, PitcherEarnedRuns> {
   const replay = new EarnedRunReplay()
-  walkGame(streamEvents, { onEvent: context => replay.apply(context, trace) })
+  walkGame(streamEvents, {
+    onEvent: context => {
+      replay.apply(context, trace)
+    }
+  })
   return new Map([...replay.er].map(([pitcherId, er]) => [pitcherId, { er }]))
 }
 
