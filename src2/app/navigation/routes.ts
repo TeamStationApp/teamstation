@@ -19,6 +19,22 @@ export type Route =
   | { name: 'schedule'; when: When }
   | { name: 'account' }
   | { name: 'team'; teamId: string; tab?: string }
+  /**
+   * One player, and what the Stats tab is narrowed to.
+   *
+   * The filter is on the address like everything else, so a parent can send
+   * somebody a link to one child's spring rather than to a career total. Only
+   * the Stats tab has a filter, so the three narrowing parameters are written
+   * only beside `tab=stats`.
+   */
+  | {
+      name: 'player'
+      userId: string
+      tab?: 'videos' | 'stats'
+      seasonId?: string
+      teamId?: string
+      year?: number
+    }
   | { name: 'season'; seasonId: string; tab?: string; when?: When }
   | { name: 'league'; leagueId: string }
   /**
@@ -98,6 +114,20 @@ export function parseRoute(path: string, search = ''): Route {
         token: id,
         requestId: query.get('r') ?? undefined
       }
+    case 'players': {
+      if (id == null) return { name: 'home' }
+      const tab = query.get('tab') === 'stats' ? 'stats' : 'videos'
+      if (tab !== 'stats') return { name: 'player', userId: id }
+      const year = Number(query.get('year'))
+      return {
+        name: 'player',
+        userId: id,
+        tab,
+        seasonId: query.get('season') ?? undefined,
+        teamId: query.get('team') ?? undefined,
+        year: Number.isInteger(year) && year > 1900 ? year : undefined
+      }
+    }
     case 'teams':
       if (id == null) return { name: 'home' }
       if (parts[2] === 'manage') {
@@ -173,6 +203,17 @@ export function routePath(route: Route): string {
       return bits.length === 0
         ? `/seasons/${route.seasonId}`
         : `/seasons/${route.seasonId}?${bits.join('&')}`
+    }
+    case 'player': {
+      // Videos is the tab a bare address opens on, and it has no filter: the
+      // narrowing belongs to Stats, so it is written only where it is read.
+      if (route.tab !== 'stats') return `/players/${route.userId}`
+      const query = new URLSearchParams()
+      query.set('tab', 'stats')
+      if (route.seasonId != null) query.set('season', route.seasonId)
+      if (route.teamId != null) query.set('team', route.teamId)
+      if (route.year != null) query.set('year', String(route.year))
+      return `/players/${route.userId}?${query.toString()}`
     }
     case 'league':
       return `/leagues/${route.leagueId}`
