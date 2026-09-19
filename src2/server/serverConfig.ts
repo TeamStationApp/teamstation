@@ -113,7 +113,7 @@ export const asServerConfig = asObject({
     'http://127.0.0.1:8080'
   ]),
 
-  /** Log every request. Noisy, but useful while tube2 is still new. */
+  /** Log every request. Noisy, but useful while the server is still new. */
   logRequests: asOptional(asBoolean, true),
 
   /**
