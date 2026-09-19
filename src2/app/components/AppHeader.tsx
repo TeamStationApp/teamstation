@@ -1,11 +1,13 @@
 import React from 'react'
 import { Pressable, Text, View } from 'react-native'
 
+import { edgeMarginRem } from '../layout/margins'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Emblem } from './Emblem'
 import { glassStyle } from './glass'
 import { GsMark } from './GsMark'
 import { Icon } from './Icon'
+import { useBreakpoint } from './useBreakpoint'
 
 export interface AppHeaderProps {
   /** The name of the screen, centred. Absent on screens that say it below. */
@@ -59,10 +61,12 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
+  const breakpoint = useBreakpoint()
+  const wide = breakpoint !== 'phone'
 
   return (
     <View
-      style={[styles.header, glassStyle(theme)]}
+      style={[styles.header, wide && styles.headerWide, glassStyle(theme)]}
       onLayout={event => {
         onHeight?.(event.nativeEvent.layout.height)
       }}
@@ -95,7 +99,11 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
             />
           </Pressable>
         )}
-        {showMark && <GsMark size={1.75} />}
+        {showMark && (
+          <View style={[styles.mark, wide && styles.markWide]}>
+            <GsMark size={1.75} />
+          </View>
+        )}
         {handoff != null ? (
           <View style={styles.handoffLeft}>{handoff}</View>
         ) : (
@@ -154,18 +162,37 @@ const getStyles = cacheStyles((theme: Theme) => ({
     // left again: a ghost of it sat here at ten per cent for ever.
     height: theme.rem(3),
     overflow: 'hidden',
-    paddingHorizontal: theme.rem(theme.spaceSmRem),
+    // The content column's own margin, from the one place that decides it, so
+    // the mark starts where the cards below it start rather than half as far
+    // in. It widens above a phone because the column does.
+    paddingHorizontal: theme.rem(edgeMarginRem(theme, 'phone')),
     borderBottomWidth: 1,
     borderBottomColor: theme.glassBorderColor
+  },
+  headerWide: {
+    paddingHorizontal: theme.rem(edgeMarginRem(theme, 'tablet'))
   },
   side: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: theme.rem(theme.spaceXsRem),
     minWidth: theme.rem(3)
   },
+  // The same margin again on the inside edge of the mark, so `Your Home`, a
+  // score, or a row of filter pills stands off it by as much as the mark
+  // stands off the window. Spacing that belongs to the mark and not to the row
+  // it is in: a back chevron is the alternative to the mark and wants its own,
+  // much smaller, because the glyph already sits in a target far wider than it
+  // is.
+  mark: {
+    flexShrink: 0,
+    marginRight: theme.rem(edgeMarginRem(theme, 'phone'))
+  },
+  markWide: {
+    marginRight: theme.rem(edgeMarginRem(theme, 'tablet'))
+  },
   sideEnd: {
+    gap: theme.rem(theme.spaceXsRem),
     // Only as wide as the face and the icons in it. Everything else in the
     // header belongs to whatever the screen has handed up — a game's two team
     // names need the room far more than the empty half of a row does.
@@ -187,7 +214,10 @@ const getStyles = cacheStyles((theme: Theme) => ({
     minHeight: theme.rem(3),
     alignItems: 'center',
     justifyContent: 'center',
-    marginLeft: theme.rem(-theme.spaceXsRem)
+    // Pulled left by exactly the slack the glyph leaves inside its target, so
+    // the chevron's own edge lands on the margin rather than the target's.
+    marginLeft: theme.rem(-theme.spaceXsRem),
+    marginRight: theme.rem(theme.spaceXsRem)
   },
   title: {
     flexShrink: 1,

@@ -97,16 +97,26 @@ export function GamesFeedScreen(
             // the list instead — the thing that scrolled out of view.
             <Text style={styles.headerTitle}>Game videos</Text>
           ) : (
-            <PillTabs
-              tabs={WHEN_TABS}
-              selected={when}
-              onSelect={choose}
-              size="compact"
-            />
+            <View style={styles.headerPillsRow}>
+              <PillTabs
+                tabs={WHEN_TABS}
+                selected={when}
+                onSelect={choose}
+                size="compact"
+              />
+            </View>
           )}
         </HandoffView>
       ),
-      [choose, mode, progress, styles.headerPills, styles.headerTitle, when]
+      [
+        choose,
+        mode,
+        progress,
+        styles.headerPills,
+        styles.headerPillsRow,
+        styles.headerTitle,
+        when
+      ]
     )
   )
   const [games, setGames] = useState<SeasonGame[]>([])
@@ -274,6 +284,14 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   headerPills: {
     alignItems: 'flex-start'
+  },
+  // `PillTabs` insets its row so a pressed pill has somewhere to grow, which
+  // here would leave `Past` standing off the mark by that much more than
+  // `Your Home` does on the home screen. Pulled back by the same amount, so
+  // what the eye sees — the edge of the pill, not the edge of its row — sits
+  // on the margin the mark sits on.
+  headerPillsRow: {
+    marginLeft: theme.rem(-theme.spaceXsRem)
   },
   muted: {
     fontFamily: theme.regularTextFont,
