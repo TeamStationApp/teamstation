@@ -26,6 +26,7 @@ import {
   glassStyle,
   HandoffView,
   LivePill,
+  NAV_CLEARANCE_REM,
   PillTabs,
   Screen,
   StreamPanel,
@@ -1496,7 +1497,7 @@ const getStyles = cacheStyles((theme: Theme) =>
       // No padding here: the picture is edge to edge on a phone, so the
       // margins belong to the pieces either side of it rather than to the
       // column they share.
-      paddingBottom: theme.rem(4.5),
+      paddingBottom: theme.rem(NAV_CLEARANCE_REM),
       gap: theme.rem(theme.spaceSmRem)
     },
     watchStacked: {

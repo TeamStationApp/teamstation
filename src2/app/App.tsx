@@ -20,6 +20,7 @@ import {
 } from './components'
 import { lstrings, sprintf } from './locales/strings'
 import type { Route, When } from './navigation/routes'
+import { stacksAfterTabPress } from './navigation/tabPress'
 import {
   currentRoute,
   showRoute,
@@ -30,8 +31,8 @@ import { GameScreen } from './screens/GameScreen'
 import { GamesFeedScreen } from './screens/GamesFeedScreen'
 import { HomeScreen } from './screens/HomeScreen'
 import { JoinScreen } from './screens/JoinScreen'
-import { ManageScreen } from './screens/ManageScreen'
 import { LoginScreen } from './screens/LoginScreen'
+import { ManageScreen } from './screens/ManageScreen'
 import { SeasonScreen } from './screens/SeasonScreen'
 import { SignInLinkScreen } from './screens/SignInLinkScreen'
 import { TeamScreen } from './screens/TeamScreen'
@@ -232,6 +233,12 @@ function Shell(props: AppProps): React.ReactElement {
     }))
   }, [])
   useBrowserBack(goToRoute)
+
+  /** The tab, or — pressed on the tab you are already on — a step out of it. */
+  const selectTab = (next: NavTabId): void => {
+    setTab(next)
+    setStacks(current => stacksAfterTabPress(current, tab, next))
+  }
 
   const push = (next: Pushed): void => {
     setStacks(current => ({ ...current, [tab]: [...current[tab], next] }))
@@ -526,7 +533,7 @@ function Shell(props: AppProps): React.ReactElement {
       onHeight={setHeaderHeight}
       nav={
         isWide ? (
-          <AppNav mode="header" selected={tab} onSelect={setTab} />
+          <AppNav mode="header" selected={tab} onSelect={selectTab} />
         ) : undefined
       }
       onBack={stack.length > 0 ? pop : undefined}
@@ -567,7 +574,12 @@ function Shell(props: AppProps): React.ReactElement {
           <View style={styles.headerLayer}>{header}</View>
         </View>
         {!isWide && (
-          <AppNav key="nav" mode="floating" selected={tab} onSelect={setTab} />
+          <AppNav
+            key="nav"
+            mode="floating"
+            selected={tab}
+            onSelect={selectTab}
+          />
         )}
       </View>
     </GestureHandlerRootView>
