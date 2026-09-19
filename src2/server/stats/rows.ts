@@ -14,6 +14,8 @@ import type { StatRow } from '../stats'
 export interface StatRowFilter {
   gameId?: string
   userId?: string
+  /** Every id one person has had — see `admin/people.ts`. */
+  userIds?: string[]
   teamId?: string
   seasonId?: string
   /** The calendar year the game was played in. */
@@ -92,6 +94,11 @@ export async function statRows(
   }
   if (filter.userId != null) {
     query = query.where('game_player_stats.user_id', '=', filter.userId)
+  }
+  if (filter.userIds != null) {
+    // An empty list is nobody, and `in ()` is not valid SQL.
+    if (filter.userIds.length === 0) return []
+    query = query.where('game_player_stats.user_id', 'in', filter.userIds)
   }
   if (filter.teamId != null) {
     query = query.where('game_player_stats.team_id', '=', filter.teamId)

@@ -5,6 +5,7 @@ import { notFound, unauthorized } from '../../common/errors'
 import { shortName } from '../../common/names'
 import { type CreditedOutcomeLike, outcomeName } from '../../common/outcomes'
 import { mayEditName, visibleScopes } from '../access'
+import { onePerson } from '../admin/people'
 import type { Database } from '../db/database'
 import { isRealVideo } from '../db/realVideos'
 import { teamNames, teamStandings } from '../db/teamLookups'
@@ -182,6 +183,10 @@ export function playerRoutes(
       const limit = limitOf(req.query.limit)
       const before = dateOf(req.query.before)
 
+      // Every row that is this person, because a merge closes a row without
+      // moving what was written under it.
+      const person = await onePerson(db, userId)
+
       // The plays this person is credited on. The credit is what the row is
       // drawn from, so the credit is what is searched: `event_players` says
       // somebody was named on a play, which is not the same as somebody having
@@ -212,10 +217,14 @@ export function playerRoutes(
         // index in `022creditIndex` answers. Kysely has no builder for `@>`,
         // and every id is bound rather than pasted into the string.
         .where(eb =>
-          eb(
-            sql<boolean>`events.credits @> jsonb_build_array(jsonb_build_object('creditUserId', ${userId}::text))`,
-            '=',
-            true
+          eb.or(
+            person.userIds.map((id: string) =>
+              eb(
+                sql<boolean>`events.credits @> jsonb_build_array(jsonb_build_object('creditUserId', ${id}::text))`,
+                '=',
+                true
+              )
+            )
           )
         )
       if (before != null) {
@@ -232,7 +241,7 @@ export function playerRoutes(
       const seen = rows.filter(
         row =>
           scopes.isAdmin ||
-          userId === actor.userId ||
+          person.userIds.includes(actor.userId) ||
           scopes.teamIds.has(row.homeTeamId) ||
           scopes.teamIds.has(row.awayTeamId) ||
           (row.seasonId != null && scopes.seasonIds.has(row.seasonId))
@@ -293,12 +302,14 @@ export function playerRoutes(
 
       for (const row of usable) {
         const credits = (row.credits ?? []) as CreditedOutcomeLike[]
-        // The play's credits for this person, as the query found them.
-        const mine = credits.filter(
-          outcome =>
-            (outcome as { creditUserId?: string | null }).creditUserId ===
-            userId
-        )
+        // The play's credits for this person, by any of their rows.
+        const mine = credits.filter(outcome => {
+          const held = outcome as { creditUserId?: string | null }
+          return (
+            held.creditUserId != null &&
+            person.userIds.includes(held.creditUserId)
+          )
+        })
         if (mine.length === 0) continue
 
         // The video that was running when the play happened. The programme
