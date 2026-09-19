@@ -1,7 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { actionFor, isShortFormOf } from './duplicatePeople'
+import { actionFor, isShortFormOf, shirtPairs } from './duplicatePeople'
 
 describe('two rows for one child', function () {
   it('does not keep a row with nothing on it', function () {
@@ -87,6 +87,37 @@ describe('two rows for one child', function () {
         { firstName: 'Anthony', lastName: 'Rizzo' }
       )
     ).equals(false)
+  })
+
+  it('joins an empty row to the shirt it shares', function () {
+    // `Ned` #7 has 72 plays and `Edward Olivares` #7 has none: one roster spot,
+    // and no rule can read a nickname.
+    const found = shirtPairs([
+      { userId: 'ned', displayName: 'Ned', jersey: '7', plays: 72 },
+      { userId: 'edward', displayName: 'Edward Olivares', jersey: '7', plays: 0 },
+      { userId: 'other', displayName: 'Somebody', jersey: '3', plays: 12 }
+    ])
+    expect(found.length).equals(1)
+    expect(found[0].keepUserId).equals('ned')
+    expect(found[0].emptyUserId).equals('edward')
+  })
+
+  it('leaves a shirt two children have both played in', function () {
+    // Eleven numbers on the server are worn by two children who both played.
+    expect(
+      shirtPairs([
+        { userId: 'a', displayName: 'Aaron A', jersey: '13', plays: 40 },
+        { userId: 'b', displayName: 'Jack A', jersey: '13', plays: 12 }
+      ])
+    ).deep.equals([])
+    // And a shirt three rows claim says nothing at all.
+    expect(
+      shirtPairs([
+        { userId: 'a', displayName: 'A', jersey: '5', plays: 10 },
+        { userId: 'b', displayName: 'B', jersey: '5', plays: 0 },
+        { userId: 'c', displayName: 'C', jersey: '5', plays: 0 }
+      ])
+    ).deep.equals([])
   })
 
   it('needs a first name to go on', function () {

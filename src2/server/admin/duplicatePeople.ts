@@ -63,6 +63,12 @@ export interface DuplicatePair {
   otherPlays: number
   /** `drop` when only one has plays, `merge` when both do. */
   action: 'drop' | 'merge'
+  /**
+   * What joined them. A name is the ordinary evidence; a shirt is for an empty
+   * row sharing a team and a number with an active one, and a person reading
+   * the list should be told which they are looking at.
+   */
+  why: 'name' | 'shirt'
 }
 
 /**
@@ -113,6 +119,61 @@ export function isShortFormOf(
   return sameFirst ? a.length < b.length : a === ''
 }
 
+/**
+ * An empty row wearing the same shirt as somebody who plays.
+ *
+ * `Ned` wears #7 on the Bay Stars and has 72 plays; `Edward Olivares` wears #7
+ * on the Bay Stars and has none. A nickname is not something a rule can read,
+ * but a roster spot is: one team, one number, and nothing at all on one of the
+ * two rows. It cannot join two careers, because the row it closes has none —
+ * the worst it can do is take away a name nobody played under.
+ *
+ * Only where exactly two rows wear that number and exactly one of them has
+ * ever played. Eleven numbers on the server are worn by two children who both
+ * played, and none of those is this.
+ */
+export interface ShirtPair {
+  keepUserId: string
+  keepName: string
+  keepPlays: number
+  emptyUserId: string
+  emptyName: string
+}
+
+export function shirtPairs(
+  people: Array<{
+    userId: string
+    displayName: string
+    jersey: string | null
+    plays: number
+  }>
+): ShirtPair[] {
+  const shirts = new Map<string, typeof people>()
+  for (const row of people) {
+    const jersey = (row.jersey ?? '').trim()
+    if (jersey === '') continue
+    const held = shirts.get(jersey) ?? []
+    held.push(row)
+    shirts.set(jersey, held)
+  }
+
+  const found: ShirtPair[] = []
+  for (const wearing of shirts.values()) {
+    if (wearing.length !== 2) continue
+    const empty = wearing.filter(row => row.plays === 0)
+    const played = wearing.filter(row => row.plays > 0)
+    if (empty.length !== 1 || played.length !== 1) continue
+    found.push({
+      keepUserId: played[0].userId,
+      keepName: played[0].displayName,
+      keepPlays: played[0].plays,
+      emptyUserId: empty[0].userId,
+      emptyName: empty[0].displayName
+    })
+  }
+  return found
+}
+
 export async function findDuplicatePeople(
   db: Kysely<Database>
 ): Promise<{ pairs: DuplicatePair[]; ambiguous: string[] }> {
@@ -125,7 +186,8 @@ export async function findDuplicatePeople(
       'users.id as userId',
       'users.display_name as displayName',
       'users.first_name as firstName',
-      'users.last_name as lastName'
+      'users.last_name as lastName',
+      'memberships.jersey as jersey'
     ])
     .select(eb => eb.fn.count<number>('event_players.id').as('plays'))
     .where('users.merged_into', 'is', null)
@@ -134,7 +196,8 @@ export async function findDuplicatePeople(
       'users.id',
       'users.display_name',
       'users.first_name',
-      'users.last_name'
+      'users.last_name',
+      'memberships.jersey'
     ])
     .execute()
 
@@ -230,7 +293,40 @@ export async function findDuplicatePeople(
         otherUserId: one.userId,
         otherName: one.displayName,
         otherPlays: onePlays,
-        action: actionFor(onePlays, matchPlays)
+        action: actionFor(onePlays, matchPlays),
+        why: 'name'
+      })
+    }
+  }
+
+  // And the rows that share a shirt with somebody and have never played.
+  for (const [teamId, people] of byTeam) {
+    for (const found of shirtPairs(
+      people.map(row => ({
+        userId: row.userId,
+        displayName: row.displayName,
+        jersey: row.jersey,
+        plays: Number(row.plays)
+      }))
+    )) {
+      // Already found by the name rule, and once is enough.
+      if (
+        pairs.some(pair =>
+          [pair.keepUserId, pair.otherUserId].includes(found.emptyUserId)
+        )
+      ) {
+        continue
+      }
+      pairs.push({
+        teamId,
+        keepUserId: found.keepUserId,
+        keepName: found.keepName,
+        keepPlays: found.keepPlays,
+        otherUserId: found.emptyUserId,
+        otherName: found.emptyName,
+        otherPlays: 0,
+        action: 'drop',
+        why: 'shirt'
       })
     }
   }
