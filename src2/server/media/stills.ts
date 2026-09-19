@@ -3,6 +3,9 @@ import { mkdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 
+import { fetchSpaceFrame } from './spaceFrames'
+import type { SpaceSettings } from './spacesHls'
+
 const run = promisify(execFile)
 
 /**
@@ -19,10 +22,23 @@ const run = promisify(execFile)
  * needs.
  */
 
+/**
+ * Where a video's frames are read from.
+ *
+ * A video on this host is a path. One that has gone to the Space is named
+ * rather than located, because reading a frame out of it means fetching the
+ * fragment that holds it first — see `spaceFrames.ts`. Which of the two it is
+ * only matters on a cache miss, so a still that has already been cut costs the
+ * same either way.
+ */
+export type FrameSource =
+  | { kind: 'file'; path: string }
+  | { kind: 'space'; space: SpaceSettings; videoId: string }
+
 export interface StillOptions {
   ffmpegPath: string
-  /** The file to read the frame out of. */
-  videoPath: string
+  /** Where the frame is read from. */
+  source: FrameSource
   /** Where `stills/<videoId>/` lives. */
   workDir: string
   videoId: string
@@ -70,9 +86,57 @@ export async function ensureStill(options: StillOptions): Promise<string> {
 }
 
 async function makeStill(options: StillOptions, path: string): Promise<string> {
-  const { ffmpegPath, videoPath, atSec, width = 480 } = options
+  const { ffmpegPath, source, atSec, width = 480 } = options
   await mkdir(join(path, '..'), { recursive: true })
 
+  const frame = await openFrame(source, stillSecond(atSec), options.workDir)
+  if (frame == null) {
+    throw new Error(`No frame at ${atSec}s of ${options.videoId}`)
+  }
+
+  try {
+    return await cutFrame(ffmpegPath, frame, path, width, atSec)
+  } finally {
+    await frame.release()
+  }
+}
+
+/**
+ * The file FFmpeg reads and where the moment sits inside it.
+ *
+ * A local video is read where it lies, and the seek is the moment itself. A
+ * fragment pulled out of the Space starts partway through the game, so the
+ * seek is measured from the fragment's own start instead.
+ */
+async function openFrame(
+  source: FrameSource,
+  atSec: number,
+  workDir: string
+): Promise<
+  { path: string; seekSec: number; release: () => Promise<void> } | undefined
+> {
+  if (source.kind === 'file') {
+    return {
+      path: source.path,
+      seekSec: atSec,
+      release: async () => undefined
+    }
+  }
+  return await fetchSpaceFrame({
+    space: source.space,
+    videoId: source.videoId,
+    atSec,
+    workDir
+  })
+}
+
+async function cutFrame(
+  ffmpegPath: string,
+  frame: { path: string; seekSec: number },
+  path: string,
+  width: number,
+  atSec: number
+): Promise<string> {
   await run(
     ffmpegPath,
     [
@@ -83,9 +147,9 @@ async function makeStill(options: StillOptions, path: string): Promise<string> {
       // Before `-i`, so FFmpeg seeks to the keyframe rather than decoding
       // everything up to this point.
       '-ss',
-      String(stillSecond(atSec)),
+      String(frame.seekSec),
       '-i',
-      videoPath,
+      frame.path,
       '-frames:v',
       '1',
       // `-2` keeps the aspect ratio and an even height, which JPEG wants.
@@ -102,14 +166,14 @@ async function makeStill(options: StillOptions, path: string): Promise<string> {
   if (size == null || size === 0) {
     // Past the end of the video, or a moment FFmpeg could not decode. Saying
     // so beats leaving a zero-byte file to be served as a picture.
-    throw new Error(`No frame at ${atSec}s of ${videoPath}`)
+    throw new Error(`No frame at ${atSec}s of ${frame.path}`)
   }
   return path
 }
 
 export interface WarmOptions {
   ffmpegPath: string
-  videoPath: string
+  source: FrameSource
   workDir: string
   videoId: string
   /** The seconds to have ready, usually one per highlight. */

@@ -2,7 +2,7 @@ import { writeFile } from 'node:fs/promises'
 
 import { makeDatabase } from '../db/database'
 import { camerasFromTiles } from '../media/cameras'
-import { locateVideoFile } from '../media/locations'
+import { videoFrameSource } from '../media/locations'
 import { ensureStill } from '../media/stills'
 import { serverConfig } from '../serverConfig'
 
@@ -48,15 +48,16 @@ async function main(): Promise<void> {
         const atSec = Math.min(120, (video.duration_sec ?? 600) / 4)
         let still = ''
         try {
-          const path = await locateVideoFile({
+          const source = await videoFrameSource({
             mediaRoot: serverConfig.mediaDir,
+            space: serverConfig.space,
             storage: video.storage,
             videoId: video.id
           })
-          if (path != null) {
+          if (source != null) {
             still = await ensureStill({
               ffmpegPath: serverConfig.ffmpegPath,
-              videoPath: path,
+              source,
               workDir: serverConfig.workDir,
               videoId: video.id,
               atSec,
