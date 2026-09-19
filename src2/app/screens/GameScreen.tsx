@@ -306,6 +306,14 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    * pulled up past them into the empty space beside them.
    */
   const [tabsHeight, setTabsHeight] = useState(0)
+  /**
+   * How tall the camera-angle buttons are, so the picture can leave room.
+   *
+   * Measured rather than guessed at, because it is nothing at all on the games
+   * with one camera and the picture on a phone held sideways has no height to
+   * spare for a number that is wrong.
+   */
+  const [pickerHeight, setPickerHeight] = useState(0)
   const fitList = useCallback(() => {
     const node = listRef.current
     if (node == null || typeof node.getBoundingClientRect !== 'function') return
@@ -346,13 +354,20 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   const layout = watchLayout({
     width,
     height,
-    // The header, the card and the pills all sit above the picture.
-    chromeHeight: headerHeight + 180,
+    // The header is what the picture pegs under; the card and the section
+    // pills scroll away above it.
+    chromeHeight: headerHeight,
+    // The camera-angle buttons are pegged with the picture and have to stay
+    // on the screen with it.
+    belowVideo: (game?.videos.length ?? 0) > 1 ? pickerHeight : 0,
     aspect,
     previous: mode.current
   })
   mode.current = layout.mode
   const sideBySide = layout.mode === 'sideBySide'
+  // A phone held sideways. The picture is as tall as the window allows and no
+  // taller, so there is nothing under it to peg a description to.
+  const short = layout.short
   // From the list's own width, not the window's: beside the video the list is
   // 402px wide and takes one column, and asking the window would have given it
   // two squeezed into that.
@@ -697,7 +712,9 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         style={[
           styles.description,
           glassStyle(theme),
-          { width: layout.videoWidth }
+          // Beside the picture on a short window it is in the list's column
+          // and takes its width; everywhere else it is the picture's own.
+          short ? styles.descriptionInList : { width: layout.videoWidth }
         ]}
       >
         <Text style={styles.descriptionText}>{chosen.description}</Text>
@@ -754,6 +771,9 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
             glassStyle(theme),
             { width: layout.videoWidth }
           ]}
+          onLayout={event => {
+            setPickerHeight(event.nativeEvent.layout.height)
+          }}
         >
           <PillTabs
             tabs={game.videos.map(item => {
@@ -902,7 +922,13 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           }}
         >
           {player}
-          {description}
+          {/*
+            Under the picture, unless there is no `under`: on a phone held
+            sideways the picture already reaches the bottom of the window, so
+            the description goes into the column that scrolls instead of off
+            the end of the one that does not.
+          */}
+          {short ? null : description}
         </div>
 
         {/*
@@ -935,6 +961,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
             overflowY: sideBySide ? 'auto' : 'visible'
           }}
         >
+          {short ? description : null}
           {highlightList}
           {/*
             Under the highlights, and only for the people who run the team:
@@ -1334,6 +1361,12 @@ const getStyles = cacheStyles((theme: Theme) =>
       borderColor: theme.glassBorderColor,
       paddingHorizontal: theme.rem(theme.spaceSmRem),
       paddingVertical: theme.rem(theme.spaceSmRem)
+    },
+    // In the highlights' column it takes the column, and stands off the
+    // picture beside it by the same gap the column's own rows do.
+    descriptionInList: {
+      width: '100%',
+      marginBottom: theme.rem(theme.spaceSmRem)
     },
     descriptionText: {
       color: theme.primaryTextColor,
