@@ -12,6 +12,11 @@ public struct SourceSelectionView: View {
   /// types is lost.
   @FocusState private var isNamingFocused: Bool
 
+  /// The address-and-identity caption. Dimmer than the name above it and the format below it,
+  /// because it is reference rather than status — but not so dim that reading an IP off the iPad
+  /// means leaning into the screen, which at 35 percent it did.
+  private static let captionOpacity: Double = 0.65
+
   public init() {}
 
   public var body: some View {
@@ -170,15 +175,15 @@ public struct SourceSelectionView: View {
         // name looks wrong, so it takes the caption slot on live rows. Everything else keeps
         // showing the identifier the archive is keyed by.
         if let endpoint = environment.endpoint(for: selection.id) {
-          Text("\(endpoint.host):\(endpoint.port)")
+          Text(identifierLine("\(endpoint.host):\(endpoint.port)", for: selection))
             .font(.system(size: 11, weight: .regular, design: .monospaced))
-            .foregroundStyle(.white.opacity(0.35))
+            .foregroundStyle(.white.opacity(Self.captionOpacity))
             .lineLimit(1)
             .accessibilityIdentifier("source-endpoint-\(index + 1)")
         } else {
-          Text(selection.id.rawValue)
+          Text(identifierLine(selection.id.rawValue, for: selection))
             .font(.system(size: 11, weight: .regular, design: .monospaced))
-            .foregroundStyle(.white.opacity(0.35))
+            .foregroundStyle(.white.opacity(Self.captionOpacity))
             .lineLimit(1)
         }
 
@@ -311,15 +316,15 @@ public struct SourceSelectionView: View {
           nameButton(index: index, selection: selection)
         }
         if let endpoint = environment.endpoint(for: selection.id) {
-          Text("\(endpoint.host):\(endpoint.port)")
+          Text(identifierLine("\(endpoint.host):\(endpoint.port)", for: selection))
             .font(.system(size: 11, weight: .regular, design: .monospaced))
-            .foregroundStyle(.white.opacity(0.35))
+            .foregroundStyle(.white.opacity(Self.captionOpacity))
             .lineLimit(1)
             .accessibilityIdentifier("source-endpoint-\(index + 1)")
         } else {
-          Text(selection.id.rawValue)
+          Text(identifierLine(selection.id.rawValue, for: selection))
             .font(.system(size: 11, weight: .regular, design: .monospaced))
-            .foregroundStyle(.white.opacity(0.35))
+            .foregroundStyle(.white.opacity(Self.captionOpacity))
             .lineLimit(1)
         }
       }
@@ -422,6 +427,28 @@ public struct SourceSelectionView: View {
   private func rowName(for selection: SourceSelection) -> String {
     guard environment.endpoint(for: selection.id) != nil else { return selection.displayName }
     return environment.boundCamera(for: selection.id)?.name ?? "Unnamed"
+  }
+
+  /// The caption under a row's name: where the camera is answering, and what it calls itself.
+  ///
+  /// A renamed row says "1st"; the phone clipped to that tripod says "Pixel10". Once the operator
+  /// has named every row for its position, the position is the only thing left on screen — and on a
+  /// bench of near-identical phones that is exactly when you need to know which handset a row is.
+  /// The camera's own announcement goes here rather than in the name, because the name is the
+  /// operator's and overwriting it is the whole point of renaming.
+  ///
+  /// Suppressed when it is what the row is already called, so an unrenamed camera does not say its
+  /// name twice. Only a bound camera has an announcement to make: an NDI source's identifier is
+  /// built from its own name already, so there is nothing to add to it.
+  private func identifierLine(_ identifier: String, for selection: SourceSelection) -> String {
+    guard let advertised = environment.boundCamera(for: selection.id)?.advertisedName else {
+      return identifier
+    }
+    let trimmed = advertised.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty,
+          trimmed.caseInsensitiveCompare(selection.displayName) != .orderedSame
+    else { return identifier }
+    return "\(identifier) · \(trimmed)"
   }
 
   private func renameField(index: Int, selection: SourceSelection) -> some View {
