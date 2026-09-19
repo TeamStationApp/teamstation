@@ -859,6 +859,25 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     </View>
   )
 
+  const head = (
+    <>
+      {/*
+        The card alone is what hands its score up, not the block it shares
+        with the pills: measured across both, the score only arrived once the
+        pills had gone under too, which is long after the thing it is a copy
+        of has left the screen.
+      */}
+      <View ref={handoff.ref}>{scoreboard}</View>
+      <View
+        onLayout={event => {
+          setTabsHeight(event.nativeEvent.layout.height)
+        }}
+      >
+        {tabs}
+      </View>
+    </>
+  )
+
   // Two regions, not one scroll view: the card, the pills and the player are
   // fixed, and the highlights scroll underneath them. Reading to the bottom of
   // a long game must not take the video off the screen.
@@ -879,25 +898,23 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         scrollEventThrottle={16}
         contentContainerStyle={[
           styles.watchContent,
-          sideBySide ? styles.watchSplit : styles.watchStacked
+          sideBySide ? styles.watchSplit : styles.watchStacked,
+          // The header is glass and overlays this, so everything starts below
+          // it. On the container rather than on the card, because on a short
+          // window the card is not the first thing here — the picture is.
+          { paddingTop: headerHeight }
         ]}
       >
-        <View style={[styles.head, { paddingTop: headerHeight }]}>
-          {/*
-            The card alone is what hands its score up, not the block it shares
-            with the pills: measured across both, the score only arrived once
-            the pills had gone under too, which is long after the thing it is a
-            copy of has left the screen.
-          */}
-          <View ref={handoff.ref}>{scoreboard}</View>
-          <View
-            onLayout={event => {
-              setTabsHeight(event.nativeEvent.layout.height)
-            }}
-          >
-            {tabs}
-          </View>
-        </View>
+        {/*
+          The card and the sections, above everything on a window with the
+          height for them.
+
+          Short, they are in the column on the right instead. A band across
+          the top costs a phone held sideways half of what it has, and the
+          picture — the thing the screen is for — would start below the fold
+          and need scrolling to before it could be seen at all.
+        */}
+        {short ? null : <View style={styles.head}>{head}</View>}
 
         {/*
           A plain div, not a `View`: `position: sticky` is a web value React
@@ -960,12 +977,17 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
               : PHONE_MARGIN,
             // A starting value only; `fitList` measures the real one.
             maxHeight: sideBySide ? height - headerHeight : undefined,
-            marginTop: sideBySide
-              ? -(tabsHeight + theme.rem(theme.spaceSmRem))
-              : 0,
+            // Pulled up past the section pills into the empty space beside
+            // them. Short, the pills are in this column rather than beside
+            // it, so there is nothing to pull past.
+            marginTop:
+              sideBySide && !short
+                ? -(tabsHeight + theme.rem(theme.spaceSmRem))
+                : 0,
             overflowY: sideBySide ? 'auto' : 'visible'
           }}
         >
+          {short ? <View style={styles.columnHead}>{head}</View> : null}
           {short ? description : null}
           {highlightList}
           {/*
@@ -1455,6 +1477,11 @@ const getStyles = cacheStyles((theme: Theme) =>
       width: '100%',
       paddingHorizontal: theme.rem(theme.spaceMdRem),
       gap: theme.rem(theme.spaceSmRem)
+    },
+    // The same pieces, stacked in the column on the right on a short window.
+    columnHead: {
+      gap: theme.rem(theme.spaceSmRem),
+      marginBottom: theme.rem(theme.spaceSmRem)
     },
     playerColumn: {
       gap: theme.rem(theme.spaceSmRem)
