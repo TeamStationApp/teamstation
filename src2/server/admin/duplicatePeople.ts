@@ -78,9 +78,13 @@ export interface DuplicatePair {
  *
  * Deliberately narrow all the same. Two real children can share a first name —
  * the Bay Stars have two boys called Ben, in shirts 2 and 5 — so a row that is
- * no shorter than the other never pairs with it, a short first name must have
- * no surname of its own to claim, and a name that fits **more than one** longer
- * one is ambiguous and is listed rather than guessed at.
+ * no shorter than the other never pairs with it, and a short first name must
+ * have no surname of its own to claim.
+ *
+ * Ambiguity is refused in **both** directions. A short name that fits more than
+ * one longer one cannot say which child it is; and a longer name that more than
+ * one short row fits is the same problem seen from the other end, which is how
+ * both boys called Ben came to be offered to `Benito Santiago` at once.
  *
  * A nickname is not a truncation, and this cannot see one: `Ned` is not the
  * start of `Edward`, and inventing a table of nicknames would be guessing at
@@ -168,6 +172,17 @@ export async function findDuplicatePeople(
   const ambiguous: string[] = []
 
   for (const [teamId, people] of byTeam) {
+    // How many short rows each longer name would take. Two boys called Ben and
+    // one `Benito Santiago` is not one child written twice, and neither of them
+    // can be told from the other.
+    const claimed = new Map<string, number>()
+    for (const one of people) {
+      for (const other of people) {
+        if (!isShortFormOf(named(one), named(other))) continue
+        claimed.set(other.userId, (claimed.get(other.userId) ?? 0) + 1)
+      }
+    }
+
     for (const one of people) {
       const matches = people.filter(other =>
         isShortFormOf(named(one), named(other))
@@ -183,6 +198,12 @@ export async function findDuplicatePeople(
       }
       const match = matches[0]
       if (match == null) continue
+      if ((claimed.get(match.userId) ?? 0) > 1) {
+        ambiguous.push(
+          `${match.displayName} on ${teamId}: more than one short name fits it`
+        )
+        continue
+      }
       // Everybody either of them has already been merged with, because the
       // question is whether the *people* ever batted in one game and a row is
       // only the part of a person that was open at the time.
