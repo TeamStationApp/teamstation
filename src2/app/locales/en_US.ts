@@ -103,6 +103,8 @@ export const enUs = {
   player_no_batting: 'This player has never batted in a game we hold.',
   player_no_pitching: 'This player has never pitched in a game we hold.',
   player_filter: 'Filter',
+  player_filter_empty: 'No games under this filter.',
+  player_filter_clear: 'Show every game',
   player_filter_title: 'Which games?',
   player_filter_career: 'Career',
   player_filter_career_detail: 'Every game, every team, every season.',
@@ -113,6 +115,8 @@ export const enUs = {
   player_filter_cancel: 'Cancel',
   /** `12 games · Spring 2026` under the heading. */
   player_stats_scope: '%s \u00b7 %s',
+  /** What a filter narrows to when the season or team is no longer known. */
+  player_filter_unknown: 'a filter that no longer exists',
   player_games: '%s games',
   player_one_game: '1 game',
 

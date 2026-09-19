@@ -36,7 +36,8 @@ import {
   useHeaderHandoff,
   useHeaderSlot,
   VideoPoster,
-  webStyle
+  webStyle,
+  WideTable
 } from '../components'
 import { highlightColumnsFor } from '../layout/grid'
 import { PHONE_MARGIN, watchLayout, type WatchMode } from '../layout/watch'
@@ -1363,7 +1364,7 @@ function BattingTable(props: {
       {lines.length === 0 ? (
         <Text style={styles.message}>{lstrings.box_no_roster}</Text>
       ) : (
-        <>
+        <WideTable>
           <View style={[styles.tableRow, styles.tableHead]}>
             <Text style={[styles.cellName, styles.cellHead]}>
               {lstrings.stats_player}
@@ -1389,7 +1390,7 @@ function BattingTable(props: {
               }
             />
           ))}
-        </>
+        </WideTable>
       )}
     </View>
   )
@@ -1411,7 +1412,7 @@ function PitchingTable(props: {
       {rows.length === 0 ? (
         <Text style={styles.message}>{lstrings.box_no_roster}</Text>
       ) : (
-        <>
+        <WideTable>
           <View style={[styles.tableRow, styles.tableHead]}>
             <Text style={[styles.cellName, styles.cellHead]}>
               {lstrings.stats_player}
@@ -1437,7 +1438,7 @@ function PitchingTable(props: {
               }
             />
           ))}
-        </>
+        </WideTable>
       )}
     </View>
   )
@@ -1813,12 +1814,19 @@ const getStyles = cacheStyles((theme: Theme) =>
     },
     cellName: {
       color: theme.primaryTextColor,
-      // Takes what is left and gives it up first: eight stat columns beside a
-      // long name is what ran one table over the top of the next.
+      // Wide enough for a name before anything else gets a say, and greedy
+      // for whatever a wide window has left over. It never gives any back:
+      // inside a horizontal scroll a shrinking name is a column of ellipses
+      // where there was room to scroll instead.
+      flexBasis: theme.rem(6.5),
       flexGrow: 1,
-      flexShrink: 1,
-      flexBasis: 0,
-      minWidth: theme.rem(3.5),
+      flexShrink: 0,
+      // And pinned, so a row scrolled to its last column is still somebody's.
+      // `sticky` is a position React Native has no name for; this app renders
+      // to the DOM, where it does. The background is what the numbers pass
+      // under rather than through.
+      ...webStyle({ position: 'sticky', left: 0, zIndex: 1 }),
+      backgroundColor: theme.backgroundColor,
       fontFamily: theme.regularTextFont,
       fontSize: theme.rem(0.9)
     },
