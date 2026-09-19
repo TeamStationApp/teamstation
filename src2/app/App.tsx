@@ -33,6 +33,7 @@ import { HomeScreen } from './screens/HomeScreen'
 import { JoinScreen } from './screens/JoinScreen'
 import { LoginScreen } from './screens/LoginScreen'
 import { ManageScreen } from './screens/ManageScreen'
+import { PlayerScreen } from './screens/PlayerScreen'
 import { SeasonScreen } from './screens/SeasonScreen'
 import { SignInLinkScreen } from './screens/SignInLinkScreen'
 import { TeamScreen } from './screens/TeamScreen'
@@ -64,6 +65,24 @@ type Pushed =
       at?: number
     }
   | { name: 'account' }
+  /**
+   * One player, and what their stats are narrowed to.
+   *
+   * The narrowing arrives with the tap — a box score knows the season and the
+   * side, a roster knows the team — and is written straight to the address, so
+   * a link reproduces what the reader was looking at. It is a default they can
+   * change, not a lock.
+   */
+  | {
+      name: 'player'
+      userId: string
+      /** The name the tapped row showed, so the header has one immediately. */
+      title: string
+      tab?: 'videos' | 'stats'
+      seasonId?: string
+      teamId?: string
+      year?: number
+    }
   /** The page behind the gear on a team, season or league card. */
   | {
       name: 'manage'
@@ -260,7 +279,13 @@ function Shell(props: AppProps): React.ReactElement {
     setStacks(current => {
       const held = current[tab]
       const last = held[held.length - 1]
-      if (last?.name !== 'team' && last?.name !== 'season') return current
+      if (
+        last?.name !== 'team' &&
+        last?.name !== 'season' &&
+        last?.name !== 'player'
+      ) {
+        return current
+      }
       if (last.tab === next) return current
       return {
         ...current,
@@ -298,6 +323,30 @@ function Shell(props: AppProps): React.ReactElement {
 
   const openTeam = (team: TeamSummary): void => {
     push({ name: 'team', team })
+  }
+  /**
+   * A name, from wherever it was tapped.
+   *
+   * `from` is why the Stats tab knows what to open on: a box score hands over
+   * the game's season and the side that row belongs to, a roster hands over
+   * the team. It becomes part of the address at the moment of the push rather
+   * than a default the screen applies later — a default applied on mount is
+   * what strips a filter somebody actually asked for.
+   */
+  const openPlayer = (
+    userId: string,
+    title: string,
+    from: { seasonId?: string; teamId?: string } = {}
+  ): void => {
+    const narrowed = from.seasonId != null || from.teamId != null
+    push({
+      name: 'player',
+      userId,
+      title,
+      tab: narrowed ? 'stats' : undefined,
+      seasonId: from.seasonId,
+      teamId: from.teamId
+    })
   }
   /** The gear on a team, season or league card. */
   const openManage = (
@@ -421,11 +470,20 @@ function Shell(props: AppProps): React.ReactElement {
           setTab('home')
         }}
       />
+    ) : top.name === 'player' ? (
+      <PlayerScreen
+        client={client}
+        userId={top.userId}
+        title={top.title}
+        initialTab={top.tab}
+        onTab={setTopTab}
+      />
     ) : top.name === 'team' ? (
       <TeamScreen
         client={client}
         team={top.team}
         onOpenGame={openGame}
+        onOpenPlayer={openPlayer}
         onManage={() => {
           openManage('team', top.team.id)
         }}
@@ -478,6 +536,7 @@ function Shell(props: AppProps): React.ReactElement {
       <GameScreen
         client={client}
         gameId={top.gameId}
+        onOpenPlayer={openPlayer}
         onOpenTeam={team => {
           push({ name: 'team', team })
         }}
@@ -620,6 +679,21 @@ function stackFor(route: Route): Partial<Record<NavTabId, Pushed[]>> {
     }
   }
   if (route.name === 'account') return { [tab]: [{ name: 'account' }] }
+  if (route.name === 'player') {
+    return {
+      [tab]: [
+        {
+          name: 'player',
+          userId: route.userId,
+          title: '',
+          tab: route.tab,
+          seasonId: route.seasonId,
+          teamId: route.teamId,
+          year: route.year
+        }
+      ]
+    }
+  }
   if (route.name === 'manage') {
     return {
       [tab]: [
@@ -663,6 +737,16 @@ function routeOf(tab: NavTabId, top: Pushed | undefined, when?: When): Route {
       }
     }
     if (top.name === 'account') return { name: 'account' }
+    if (top.name === 'player') {
+      return {
+        name: 'player',
+        userId: top.userId,
+        tab: top.tab,
+        seasonId: top.seasonId,
+        teamId: top.teamId,
+        year: top.year
+      }
+    }
     if (top.name === 'manage') {
       return {
         name: 'manage',
