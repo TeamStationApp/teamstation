@@ -55,6 +55,16 @@ const FLOATING_DISC_REM = 2.75 * FLOATING_SCALE
 const FLOATING_PAD_REM = 0.1875 * FLOATING_SCALE
 /** How far the capsule floats off the bottom of the window. */
 const FLOATING_BOTTOM_REM = 1
+/**
+ * The gap between the capsule and the last thing above it.
+ *
+ * Half a rem left the last button on a page touching the capsule at the
+ * bottom of a list, which reads as the two being one control. Twice the
+ * margin the content keeps at its left and right edges, which is the widest
+ * gap anything in the app leaves, because this is the one place where a stray
+ * thumb lands on the wrong thing.
+ */
+const FLOATING_GAP_REM = 2
 
 /**
  * How much room a screen has to leave under its last row.
@@ -66,7 +76,13 @@ const FLOATING_BOTTOM_REM = 1
  * step with the capsule's size.
  */
 export const NAV_CLEARANCE_REM =
-  FLOATING_BOTTOM_REM + FLOATING_DISC_REM + FLOATING_PAD_REM * 2 + 0.5
+  FLOATING_BOTTOM_REM +
+  FLOATING_DISC_REM +
+  FLOATING_PAD_REM * 2 +
+  // The capsule's hairline border, top and bottom. Two pixels, and left out
+  // the gap would be two pixels short of the one it says it is.
+  2 / 16 +
+  FLOATING_GAP_REM
 
 export interface AppNavProps {
   selected: NavTabId
