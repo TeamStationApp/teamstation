@@ -1,0 +1,121 @@
+import type { Kysely } from 'kysely'
+
+import type { Database } from '../db/database'
+import type { StatRow } from '../stats'
+
+/**
+ * The stored stat lines, for whatever a screen is asking about.
+ *
+ * Every figure the app shows is a sum of these rows, so this is the one place
+ * that fetches them and every screen asks the same question with a different
+ * filter: one game for a box score, a team and a season for a team's table, a
+ * player for their own page.
+ */
+export interface StatRowFilter {
+  gameId?: string
+  userId?: string
+  teamId?: string
+  seasonId?: string
+  /** The calendar year the game was played in. */
+  year?: number
+  /** Games played by this moment, for a season-to-date average. */
+  playedBy?: Date
+  /** Any game either of these teams played, for a one-off with no season. */
+  teamIds?: string[]
+}
+
+export interface StatRowWithGame extends StatRow {
+  gameId: string
+  seasonId: string | null
+  startAt: Date | string | null
+  seasonName: string | null
+  seasonYear: number | null
+  teamName: string | null
+  /** The caller shortens these; a whole name never leaves a route. */
+  firstName: string | null
+  lastName: string | null
+  displayName: string
+}
+
+export async function statRows(
+  db: Kysely<Database>,
+  filter: StatRowFilter
+): Promise<StatRowWithGame[]> {
+  let query = db
+    .selectFrom('game_player_stats')
+    .innerJoin('games', 'games.id', 'game_player_stats.game_id')
+    .innerJoin('users', 'users.id', 'game_player_stats.user_id')
+    .leftJoin('seasons', 'seasons.id', 'games.season_id')
+    .leftJoin('teams', 'teams.id', 'game_player_stats.team_id')
+    .select([
+      'game_player_stats.game_id as gameId',
+      'game_player_stats.user_id as userId',
+      'game_player_stats.team_id as teamId',
+      'game_player_stats.pa as pa',
+      'game_player_stats.ab as ab',
+      'game_player_stats.h as h',
+      'game_player_stats.singles as singles',
+      'game_player_stats.doubles as doubles',
+      'game_player_stats.triples as triples',
+      'game_player_stats.hr as hr',
+      'game_player_stats.bb as bb',
+      'game_player_stats.k as k',
+      'game_player_stats.r as r',
+      'game_player_stats.rbi as rbi',
+      'game_player_stats.hbp as hbp',
+      'game_player_stats.ci as ci',
+      'game_player_stats.sf as sf',
+      'game_player_stats.sb as sb',
+      'game_player_stats.cs as cs',
+      'game_player_stats.pitch_bf as pitchBf',
+      'game_player_stats.pitch_outs as pitchOuts',
+      'game_player_stats.pitch_h as pitchH',
+      'game_player_stats.pitch_hr as pitchHr',
+      'game_player_stats.pitch_bb as pitchBb',
+      'game_player_stats.pitch_hbp as pitchHbp',
+      'game_player_stats.pitch_k as pitchK',
+      'game_player_stats.pitch_r as pitchR',
+      'game_player_stats.pitch_er as pitchEr',
+      'games.season_id as seasonId',
+      'games.start_at as startAt',
+      'seasons.name as seasonName',
+      'seasons.year as seasonYear',
+      'seasons.innings_per_game as inningsPerGame',
+      'teams.name as teamName',
+      'users.first_name as firstName',
+      'users.last_name as lastName',
+      'users.display_name as displayName'
+    ])
+
+  if (filter.gameId != null) {
+    query = query.where('game_player_stats.game_id', '=', filter.gameId)
+  }
+  if (filter.userId != null) {
+    query = query.where('game_player_stats.user_id', '=', filter.userId)
+  }
+  if (filter.teamId != null) {
+    query = query.where('game_player_stats.team_id', '=', filter.teamId)
+  }
+  if (filter.seasonId != null) {
+    query = query.where('games.season_id', '=', filter.seasonId)
+  }
+  if (filter.year != null) {
+    query = query
+      .where('games.start_at', '>=', new Date(Date.UTC(filter.year, 0, 1)))
+      .where('games.start_at', '<', new Date(Date.UTC(filter.year + 1, 0, 1)))
+  }
+  if (filter.playedBy != null) {
+    query = query.where('games.start_at', '<=', filter.playedBy)
+  }
+  if (filter.teamIds != null) {
+    const teamIds = filter.teamIds
+    query = query.where(eb =>
+      eb.or([
+        eb('games.home_team_id', 'in', teamIds),
+        eb('games.away_team_id', 'in', teamIds)
+      ])
+    )
+  }
+
+  return await query.execute()
+}

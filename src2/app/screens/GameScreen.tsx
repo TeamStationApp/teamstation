@@ -1447,12 +1447,15 @@ const pitchingColumns: Array<{
   label: string
   value: (row: PitchingRow) => string
 }> = [
-  { label: 'IP', value: row => row.ip },
+  { label: lstrings.stats_innings, value: row => row.ip },
   { label: 'BF', value: row => String(row.bf) },
-  { label: 'H', value: row => String(row.h) },
-  { label: 'R', value: row => String(row.r) },
-  { label: 'BB', value: row => String(row.bb) },
-  { label: 'K', value: row => String(row.k) },
+  { label: lstrings.stats_hits, value: row => String(row.h) },
+  { label: lstrings.stats_runs, value: row => String(row.r) },
+  // Earned runs, worked out by replaying the inning the way a scorebook
+  // does — the one figure on this line that a play-by-play cannot produce.
+  { label: lstrings.stats_earned_runs, value: row => String(row.er) },
+  { label: lstrings.stats_walks, value: row => String(row.bb) },
+  { label: lstrings.stats_strikeouts, value: row => String(row.k) },
   { label: 'HR', value: row => String(row.hr) },
   { label: 'HBP', value: row => String(row.hbp) }
 ]
@@ -1463,6 +1466,7 @@ const battingColumns: Array<{
 }> = [
   { label: lstrings.stats_at_bats, value: row => String(row.ab) },
   { label: lstrings.stats_hits, value: row => String(row.h) },
+  { label: lstrings.stats_runs, value: row => String(row.r) },
   { label: lstrings.stats_runs_batted_in, value: row => String(row.rbi) },
   { label: lstrings.stats_walks, value: row => String(row.bb) },
   { label: lstrings.stats_strikeouts, value: row => String(row.k) },

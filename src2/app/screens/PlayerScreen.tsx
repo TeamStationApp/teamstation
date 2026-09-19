@@ -4,7 +4,8 @@ import { Text, View } from 'react-native'
 import type {
   GameStationClient,
   PlayerDetail,
-  PlayerHighlight
+  PlayerHighlight,
+  PlayerStats
 } from '../../common/api'
 import {
   Button,
@@ -15,13 +16,18 @@ import {
   initialsOf,
   PillTabs,
   Screen,
+  type Stat,
+  type StatFilter,
+  StatFilterModal,
+  StatGrid,
   useHandoff,
   useHeaderHandoff,
   useHeaderSlot
 } from '../components'
-import { lstrings } from '../locales/strings'
+import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { battingLine, exactDateTime } from './format'
+import { average } from './GameScreen'
 
 export interface PlayerScreenProps {
   client: GameStationClient
@@ -31,6 +37,16 @@ export interface PlayerScreenProps {
   /** Which tab to open on, from the address. */
   initialTab?: 'videos' | 'stats'
   onTab?: (tab: 'videos' | 'stats', correcting?: boolean) => void
+  /**
+   * What the Stats tab opens narrowed to, from the address.
+   *
+   * A reader who tapped a name in a box score is asking about that season, not
+   * about a career, so the game they came from sets this. From anywhere with no
+   * game behind it, nothing is set and the answer is a career.
+   */
+  initialFilter?: StatFilter
+  /** So the address follows the filter, and a link can be sent. */
+  onFilter?: (filter: StatFilter) => void
   /** Opens the game's video at the moment of one of their highlights. */
   onOpenMoment?: (
     gameId: string,
@@ -58,7 +74,16 @@ const TABS = [
  * sends one; this screen never has both to choose between.
  */
 export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
-  const { client, userId, title, initialTab, onTab, onOpenMoment } = props
+  const {
+    client,
+    userId,
+    title,
+    initialTab,
+    initialFilter,
+    onTab,
+    onFilter,
+    onOpenMoment
+  } = props
   const theme = useTheme()
   const styles = getStyles(theme)
 
@@ -71,6 +96,10 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
   const [loadingVideos, setLoadingVideos] = useState(true)
   /** The page being asked for. Undefined is the first one. */
   const [before, setBefore] = useState<string | undefined>(undefined)
+  const [stats, setStats] = useState<PlayerStats | undefined>(undefined)
+  const [filter, setFilter] = useState<StatFilter>(initialFilter ?? {})
+  const [filtering, setFiltering] = useState(false)
+  const [loadingStats, setLoadingStats] = useState(true)
 
   // The name slides up into the header as the card goes under it, the way a
   // team's does. Until the request lands, the name the tapped row showed is
@@ -149,6 +178,28 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
       cancelled = true
     }
   }, [client, userId, before])
+
+  // Their figures, for whichever games the filter is on. Asked for again when
+  // the filter changes rather than added up here: the arithmetic has one home,
+  // and it is the one that was measured against published box scores.
+  useEffect(() => {
+    let cancelled = false
+    setLoadingStats(true)
+    client
+      .playerStats(userId, filter)
+      .then(loaded => {
+        if (!cancelled) setStats(loaded)
+      })
+      .catch(() => {
+        if (!cancelled) setStats(undefined)
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingStats(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [client, userId, filter])
 
   const handedness = player == null ? undefined : battingLine(player)
 
@@ -236,15 +287,166 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
       )}
 
       {tab === 'stats' && (
-        <Card>
-          <Text style={styles.muted}>{lstrings.player_stats_empty}</Text>
-        </Card>
+        <View style={styles.section}>
+          <View style={styles.filterRow}>
+            <Text style={styles.scope}>{scopeOf(stats, filter)}</Text>
+            <Button
+              label={lstrings.player_filter}
+              kind="secondary"
+              onPress={() => {
+                setFiltering(true)
+              }}
+            />
+          </View>
+
+          {loadingStats && stats == null && (
+            <Card>
+              <Text style={styles.muted}>{lstrings.player_loading}</Text>
+            </Card>
+          )}
+
+          {stats != null && stats.batting == null && stats.pitching == null && (
+            <Card>
+              <Text style={styles.muted}>{lstrings.player_stats_empty}</Text>
+            </Card>
+          )}
+
+          {stats?.batting != null && (
+            <Card>
+              <Text style={styles.cardTitle}>{lstrings.player_batting}</Text>
+              <StatGrid stats={battingStats(stats.batting)} columns={4} />
+            </Card>
+          )}
+
+          {stats?.pitching != null && (
+            <Card>
+              <Text style={styles.cardTitle}>{lstrings.player_pitching}</Text>
+              <StatGrid stats={pitchingStats(stats.pitching)} columns={4} />
+            </Card>
+          )}
+        </View>
+      )}
+
+      {filtering && stats != null && (
+        <StatFilterModal
+          options={stats.options}
+          filter={filter}
+          onApply={next => {
+            setFiltering(false)
+            setFilter(next)
+            onFilter?.(next)
+          }}
+          onClose={() => {
+            setFiltering(false)
+          }}
+        />
       )}
     </Screen>
   )
 }
 
+/** `12 games · Spring 2026`, or just the games for a career. */
+function scopeOf(stats: PlayerStats | undefined, filter: StatFilter): string {
+  const games =
+    stats == null
+      ? ''
+      : stats.games === 1
+        ? lstrings.player_one_game
+        : sprintf(lstrings.player_games, String(stats.games))
+  const named =
+    filter.seasonId != null
+      ? (stats?.options.seasons.find(
+          season => season.seasonId === filter.seasonId
+        )?.name ?? '')
+      : filter.teamId != null
+        ? (stats?.options.teams.find(team => team.teamId === filter.teamId)
+            ?.name ?? '')
+        : filter.year != null
+          ? String(filter.year)
+          : lstrings.player_filter_career
+  if (games === '') return named
+  return sprintf(lstrings.player_stats_scope, games, named)
+}
+
+/**
+ * A batting line as a block of figures.
+ *
+ * The four that a reader looks for first — average, on-base, slugging, OPS —
+ * and then the counts they are made of, so the rate and its workings are on the
+ * same card.
+ */
+function battingStats(line: NonNullable<PlayerStats['batting']>): Stat[] {
+  return [
+    { label: lstrings.stats_average, value: average(line.rates.avg) },
+    { label: lstrings.stats_on_base, value: average(line.rates.obp) },
+    { label: lstrings.stats_slugging, value: average(line.rates.slg) },
+    { label: lstrings.stats_ops, value: average(line.rates.ops) },
+    { label: lstrings.stats_plate_appearances, value: String(line.pa) },
+    { label: lstrings.stats_at_bats, value: String(line.ab) },
+    { label: lstrings.stats_hits, value: String(line.h) },
+    { label: lstrings.stats_home_runs, value: String(line.hr) },
+    { label: lstrings.stats_runs, value: String(line.r) },
+    { label: lstrings.stats_runs_batted_in, value: String(line.rbi) },
+    { label: lstrings.stats_walks, value: String(line.bb) },
+    { label: lstrings.stats_strikeouts, value: String(line.k) },
+    { label: lstrings.stats_stolen_bases, value: String(line.sb) }
+  ]
+}
+
+/**
+ * And a pitching line.
+ *
+ * The ERA is missing rather than zero where nobody has worked out how long a
+ * game in that league runs — it is earned runs per game, and a figure divided by
+ * a guess is worse than no figure.
+ */
+function pitchingStats(line: NonNullable<PlayerStats['pitching']>): Stat[] {
+  return [
+    {
+      label: lstrings.stats_era,
+      value:
+        line.rates.era == null
+          ? lstrings.stats_no_average
+          : line.rates.era.toFixed(2)
+    },
+    { label: lstrings.stats_innings, value: line.ip },
+    { label: lstrings.stats_earned_runs, value: String(line.er) },
+    {
+      label: lstrings.stats_whip,
+      value:
+        line.rates.whip == null
+          ? lstrings.stats_no_average
+          : line.rates.whip.toFixed(2)
+    },
+    { label: lstrings.stats_games, value: String(line.g) },
+    { label: lstrings.stats_hits, value: String(line.h) },
+    { label: lstrings.stats_runs, value: String(line.r) },
+    { label: lstrings.stats_walks, value: String(line.bb) },
+    { label: lstrings.stats_strikeouts, value: String(line.k) },
+    { label: lstrings.stats_home_runs, value: String(line.hr) }
+  ]
+}
+
 const getStyles = cacheStyles((theme: Theme) => ({
+  filterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: theme.rem(theme.spaceSmRem)
+  },
+  scope: {
+    flex: 1,
+    fontFamily: theme.regularTextFont,
+    fontSize: theme.rem(0.875),
+    color: theme.secondaryTextColor
+  },
+  cardTitle: {
+    fontFamily: theme.semiBoldTextFont,
+    fontSize: theme.rem(1),
+    fontWeight: '600',
+    color: theme.primaryTextColor,
+    marginBottom: theme.rem(theme.spaceSmRem)
+  },
   headerHandoff: {
     flexDirection: 'row',
     alignItems: 'center',

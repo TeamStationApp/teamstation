@@ -475,6 +475,7 @@ function BattingTable(props: { rows: BattingRow[] }): React.ReactElement {
         <Text style={[styles.cell, styles.cellHead]}>PA</Text>
         <Text style={[styles.cell, styles.cellHead]}>AB</Text>
         <Text style={[styles.cell, styles.cellHead]}>H</Text>
+        <Text style={[styles.cell, styles.cellHead]}>R</Text>
         <Text style={[styles.cell, styles.cellHead]}>RBI</Text>
         <Text style={[styles.cell, styles.cellHead]}>AVG</Text>
       </View>
@@ -486,6 +487,7 @@ function BattingTable(props: { rows: BattingRow[] }): React.ReactElement {
           <Text style={styles.cell}>{row.pa}</Text>
           <Text style={styles.cell}>{row.ab}</Text>
           <Text style={styles.cell}>{row.h}</Text>
+          <Text style={styles.cell}>{row.r}</Text>
           <Text style={styles.cell}>{row.rbi}</Text>
           <Text style={styles.cell}>{rate(row.rates.avg)}</Text>
         </View>
