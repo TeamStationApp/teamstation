@@ -1,26 +1,21 @@
 /**
- * Batting lines worked out from the stored plays.
+ * The figures on a screen, added up out of the stored stat lines.
  *
- * Only what the plays plainly say is counted. The plays name the batter, the
- * outcome and the score, so plate appearances, at-bats, hits, walks,
- * strikeouts and RBI are all honest. Runs scored, stolen bases and caught
- * stealing are **not** counted here: working them out needs the runner
- * movement, which lives in the game stream rather than the plays, and a number
- * that cannot be derived honestly is better left out than guessed at.
+ * One row per player per game is written when the game's plays are taken in,
+ * by walking its game stream. Everything here is arithmetic on those rows: a
+ * box score is one game's, a season is a season's, a career is all of them.
+ * There is no second way of working a figure out, so a box score and a career
+ * total cannot disagree.
  */
-export interface StatEvent {
-  batterUserId: string | null
-  teamId: string | null
-  eventType: string
-  rbi: number
-}
-
-export interface BattingLine {
+export interface StatRow {
   userId: string
   teamId: string | null
-  /** Plate appearances: every time this player came to bat. */
+  /**
+   * The regulation length of the game's season, which is what an ERA divides
+   * by. Null where nobody has worked it out — see `stats/regulation.ts`.
+   */
+  inningsPerGame?: number | null
   pa: number
-  /** At-bats: plate appearances less walks, hit-by-pitch and sacrifices. */
   ab: number
   h: number
   singles: number
@@ -29,43 +24,80 @@ export interface BattingLine {
   hr: number
   bb: number
   k: number
-  hbp: number
+  r: number
   rbi: number
+  hbp: number
+  ci: number
+  sf: number
+  sb: number
+  cs: number
+  pitchBf: number
+  pitchOuts: number
+  pitchH: number
+  pitchHr: number
+  pitchBb: number
+  pitchHbp: number
+  pitchK: number
+  pitchR: number
+  pitchEr: number
 }
 
-/** Whether a play's outcome is a hit. */
-function isHit(eventType: string): boolean {
-  return (
-    eventType === 'single' ||
-    eventType === 'double' ||
-    eventType === 'triple' ||
-    eventType === 'home_run'
-  )
+export interface BattingLine {
+  userId: string
+  /** Null where the total spans more than one team, as a career does. */
+  teamId: string | null
+  /** Games this player has a line for. */
+  g: number
+  /** Plate appearances: every time this player came to bat. */
+  pa: number
+  /** At-bats: plate appearances less walks, hit batters and sacrifices. */
+  ab: number
+  h: number
+  singles: number
+  doubles: number
+  triples: number
+  hr: number
+  bb: number
+  k: number
+  /** Runs scored, which is the runner's own figure and not the batter's. */
+  r: number
+  rbi: number
+  hbp: number
+  sb: number
+  cs: number
+  /** Sacrifices, which an on-base percentage counts against. */
+  sf: number
 }
 
-const NOT_AT_BAT = new Set([
-  'walk',
-  'intent_walk',
-  'hit_by_pitch',
-  'sac_fly',
-  'sac_bunt'
-])
+export interface PitchingLine {
+  userId: string
+  teamId: string | null
+  g: number
+  /** Outs recorded, which is what innings pitched actually means. */
+  outs: number
+  /** Batters faced. */
+  bf: number
+  h: number
+  hr: number
+  hbp: number
+  /** Runs allowed, charged to whoever put the runner on. */
+  r: number
+  /** Of those, the ones that were earned. */
+  er: number
+  bb: number
+  k: number
+  /**
+   * The innings-weighted regulation length of the games in this line, which an
+   * ERA divides by. Null where none of them say.
+   */
+  inningsPerGame: number | null
+}
 
-/** Plays that are not a plate appearance at all. */
-const NOT_A_PLATE_APPEARANCE = new Set([
-  'stolen_base',
-  'caught_stealing',
-  'wild_pitch',
-  'passed_ball',
-  'balk',
-  'inning_ended',
-  'unknown'
-])
-
-export function emptyLine(userId: string, teamId: string | null): BattingLine {
+function emptyBatting(userId: string, teamId: string | null): BattingLine {
   return {
     userId,
     teamId,
+    g: 0,
     pa: 0,
     ab: 0,
     h: 0,
@@ -75,50 +107,102 @@ export function emptyLine(userId: string, teamId: string | null): BattingLine {
     hr: 0,
     bb: 0,
     k: 0,
+    r: 0,
+    rbi: 0,
     hbp: 0,
-    rbi: 0
+    sb: 0,
+    cs: 0,
+    sf: 0
   }
 }
 
-export function battingLines(events: StatEvent[]): BattingLine[] {
+function emptyPitching(userId: string, teamId: string | null): PitchingLine {
+  return {
+    userId,
+    teamId,
+    g: 0,
+    outs: 0,
+    bf: 0,
+    h: 0,
+    hr: 0,
+    hbp: 0,
+    r: 0,
+    er: 0,
+    bb: 0,
+    k: 0,
+    inningsPerGame: null
+  }
+}
+
+/** One line per player, most plate appearances first. */
+export function battingLines(rows: StatRow[]): BattingLine[] {
   const byPlayer = new Map<string, BattingLine>()
-
-  for (const event of events) {
-    if (event.batterUserId == null) continue
-    if (NOT_A_PLATE_APPEARANCE.has(event.eventType)) continue
-
-    const key = `${event.batterUserId} ${event.teamId ?? ''}`
-    let line = byPlayer.get(key)
-    if (line == null) {
-      line = emptyLine(event.batterUserId, event.teamId)
-      byPlayer.set(key, line)
-    }
-
-    line.pa += 1
-    if (!NOT_AT_BAT.has(event.eventType)) line.ab += 1
-    line.rbi += event.rbi
-
-    if (isHit(event.eventType)) line.h += 1
-    if (event.eventType === 'single') line.singles += 1
-    if (event.eventType === 'double') line.doubles += 1
-    if (event.eventType === 'triple') line.triples += 1
-    if (event.eventType === 'home_run') line.hr += 1
-    if (event.eventType === 'walk' || event.eventType === 'intent_walk') {
-      line.bb += 1
-    }
-    if (event.eventType === 'strikeout') line.k += 1
-    if (event.eventType === 'hit_by_pitch') line.hbp += 1
+  for (const row of rows) {
+    const held =
+      byPlayer.get(row.userId) ?? emptyBatting(row.userId, row.teamId)
+    // A career spans teams, and a total that claims one of them is wrong.
+    if (held.teamId !== row.teamId) held.teamId = null
+    held.g += 1
+    held.pa += row.pa
+    held.ab += row.ab
+    held.h += row.h
+    held.singles += row.singles
+    held.doubles += row.doubles
+    held.triples += row.triples
+    held.hr += row.hr
+    held.bb += row.bb
+    held.k += row.k
+    held.r += row.r
+    held.rbi += row.rbi
+    held.hbp += row.hbp
+    held.sb += row.sb
+    held.cs += row.cs
+    held.sf += row.sf
+    byPlayer.set(row.userId, held)
   }
-
-  return [...byPlayer.values()].sort((a, b) => b.pa - a.pa)
+  return [...byPlayer.values()]
+    .filter(line => line.pa > 0 || line.r > 0 || line.sb > 0 || line.cs > 0)
+    .sort((a, b) => b.pa - a.pa)
 }
 
-/**
- * The rates, worked out on read from the counts above and never stored, so a
- * corrected play fixes them everywhere at once. Each is undefined rather than
- * zero when its denominator is zero: a player with no at-bats has no average,
- * which is not the same as batting .000.
- */
+/** And one per pitcher, most work first, which is the starter. */
+export function pitchingLines(rows: StatRow[]): PitchingLine[] {
+  const byPlayer = new Map<string, PitchingLine>()
+  // The ERA divisor is weighted by the innings thrown under it, so a career
+  // across a six-inning league and a nine-inning one lands between the two
+  // rather than on whichever season came last.
+  const weighted = new Map<string, { outs: number; product: number }>()
+  for (const row of rows) {
+    if (row.pitchBf === 0 && row.pitchOuts === 0) continue
+    const held =
+      byPlayer.get(row.userId) ?? emptyPitching(row.userId, row.teamId)
+    if (held.teamId !== row.teamId) held.teamId = null
+    held.g += 1
+    held.outs += row.pitchOuts
+    held.bf += row.pitchBf
+    held.h += row.pitchH
+    held.hr += row.pitchHr
+    held.hbp += row.pitchHbp
+    held.r += row.pitchR
+    held.er += row.pitchEr
+    held.bb += row.pitchBb
+    held.k += row.pitchK
+    byPlayer.set(row.userId, held)
+
+    if (row.inningsPerGame == null) continue
+    const sum = weighted.get(row.userId) ?? { outs: 0, product: 0 }
+    sum.outs += row.pitchOuts
+    sum.product += row.pitchOuts * row.inningsPerGame
+    weighted.set(row.userId, sum)
+  }
+  for (const [userId, sum] of weighted) {
+    const line = byPlayer.get(userId)
+    if (line == null || sum.outs === 0) continue
+    line.inningsPerGame = sum.product / sum.outs
+  }
+  return [...byPlayer.values()].sort((a, b) => b.outs - a.outs)
+}
+
 export interface BattingRates {
   avg?: number
   obp?: number
@@ -134,7 +218,9 @@ export function battingRates(line: BattingLine): BattingRates {
       line.singles + line.doubles * 2 + line.triples * 3 + line.hr * 4
     rates.slg = round3(bases / line.ab)
   }
-  const onBaseChances = line.ab + line.bb + line.hbp
+  // Their denominator, which counts a sacrifice against a hitter and a walk
+  // for them.
+  const onBaseChances = line.ab + line.bb + line.hbp + line.sf
   if (onBaseChances > 0) {
     rates.obp = round3((line.h + line.bb + line.hbp) / onBaseChances)
   }
@@ -144,117 +230,34 @@ export function battingRates(line: BattingLine): BattingRates {
   return rates
 }
 
-/** Adds two lines together, for a career total across seasons and teams. */
-export function addLines(a: BattingLine, b: BattingLine): BattingLine {
-  return {
-    userId: a.userId,
-    teamId: a.teamId === b.teamId ? a.teamId : null,
-    pa: a.pa + b.pa,
-    ab: a.ab + b.ab,
-    h: a.h + b.h,
-    singles: a.singles + b.singles,
-    doubles: a.doubles + b.doubles,
-    triples: a.triples + b.triples,
-    hr: a.hr + b.hr,
-    bb: a.bb + b.bb,
-    k: a.k + b.k,
-    hbp: a.hbp + b.hbp,
-    rbi: a.rbi + b.rbi
+export interface PitchingRates {
+  /**
+   * Earned runs per game — and a game is six innings here, not nine. Undefined
+   * until something has worked out how long a game in this league is, because a
+   * divisor we guessed would be wrong by a third.
+   */
+  era?: number
+  /** Walks and hits per inning. */
+  whip?: number
+}
+
+export function pitchingRates(line: PitchingLine): PitchingRates {
+  const rates: PitchingRates = {}
+  if (line.outs === 0) return rates
+  const innings = line.outs / 3
+  if (line.inningsPerGame != null) {
+    rates.era = round2((line.inningsPerGame * line.er) / innings)
   }
+  rates.whip = round2((line.h + line.bb) / innings)
+  return rates
 }
 
 function round3(value: number): number {
   return Math.round(value * 1000) / 1000
 }
 
-/** What a pitcher was on the mound for, from the plays that name them. */
-export interface PitchEvent {
-  pitcherUserId: string | null
-  teamId: string | null
-  eventType: string
-  /** Runs that scored on the play, from the score either side of it. */
-  runsScored: number
-}
-
-export interface PitchingLine {
-  userId: string
-  teamId: string | null
-  /** Outs recorded on the plays this pitcher was named on. */
-  outs: number
-  /** Batters faced. */
-  bf: number
-  h: number
-  /** Runs allowed. Not earned runs — see below. */
-  r: number
-  bb: number
-  k: number
-  hr: number
-  hbp: number
-}
-
-/**
- * How many outs a play recorded, by what the play was.
- *
- * The stored `outs` is the state at the play rather than what it added, and a
- * half-inning can end without a third out being written down, so counting the
- * kinds of play is steadier than differencing the state.
- */
-function outsFor(eventType: string): number {
-  if (eventType === 'grounded_into_double_play') return 2
-  return [
-    'field_out',
-    'strikeout',
-    'sac_fly',
-    'sac_bunt',
-    'runner_out',
-    'fielders_choice'
-  ].includes(eventType)
-    ? 1
-    : 0
-}
-
-/**
- * Pitching lines, from the plays that name a pitcher.
- *
- * **There is no earned-run column, and there will not be one.** Telling an
- * earned run from an unearned one means replaying the inning as it would have
- * gone without the error, which the plays do not describe — so an ERA here
- * would be a number we made up. Runs allowed is what the plays support, and
- * that is what this shows.
- *
- * Innings pitched is outs over three, counted from what each play was rather
- * than from the stored out count: that is the state at the play, not what the
- * play added, and a half-inning can end without a third out ever being written
- * down.
- */
-export function pitchingLines(events: PitchEvent[]): PitchingLine[] {
-  const byPitcher = new Map<string, PitchingLine>()
-  for (const event of events) {
-    if (event.pitcherUserId == null) continue
-    const line = byPitcher.get(event.pitcherUserId) ?? {
-      userId: event.pitcherUserId,
-      teamId: event.teamId,
-      outs: 0,
-      bf: 0,
-      h: 0,
-      r: 0,
-      bb: 0,
-      k: 0,
-      hr: 0,
-      hbp: 0
-    }
-    line.bf += 1
-    line.outs += outsFor(event.eventType)
-    line.r += event.runsScored
-    if (isHit(event.eventType)) line.h += 1
-    if (event.eventType === 'home_run') line.hr += 1
-    if (event.eventType === 'walk') line.bb += 1
-    if (event.eventType === 'strikeout') line.k += 1
-    if (event.eventType === 'hit_by_pitch') line.hbp += 1
-    byPitcher.set(event.pitcherUserId, line)
-  }
-  // Most work first, which is the starter.
-  return [...byPitcher.values()].sort((a, b) => b.outs - a.outs)
+function round2(value: number): number {
+  return Math.round(value * 100) / 100
 }
 
 /** `5.2`, the way an innings-pitched column is always written. */

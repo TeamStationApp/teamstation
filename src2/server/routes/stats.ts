@@ -6,8 +6,14 @@ import { visibleScopes } from '../access'
 import type { Database } from '../db/database'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
-import { careerFromLines } from '../rollups'
-import { type BattingLine, battingRates } from '../stats'
+import {
+  battingLines,
+  battingRates,
+  inningsPitched,
+  pitchingLines,
+  pitchingRates
+} from '../stats'
+import { statRows } from '../stats/rows'
 
 /**
  * A player's stats by season and for their career, a season's standings, and
@@ -20,6 +26,17 @@ import { type BattingLine, battingRates } from '../stats'
 export function statsRoutes(db: Kysely<Database>): Router {
   const router = Router()
 
+  /**
+   * One player's figures, for whichever games the reader is asking about.
+   *
+   * Filtered on the way in rather than on the way out: a season, a team or a
+   * year narrows the rows this is a sum of, and the same request comes back with
+   * the seasons, teams and years there are to choose from — which is what the
+   * filter on the page offers. A career is the unfiltered answer.
+   *
+   * Every figure is a sum of `game_player_stats`, so a total here and a line in
+   * a box score are the same rows added up differently.
+   */
   router.get(
     '/players/:userId/stats',
     requireActor,
@@ -29,70 +46,89 @@ export function statsRoutes(db: Kysely<Database>): Router {
       const userId = pathParam(req.params.userId)
       const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
 
-      const rows = await db
-        .selectFrom('player_season_stats')
-        .leftJoin('seasons', 'seasons.id', 'player_season_stats.season_id')
-        .leftJoin('teams', 'teams.id', 'player_season_stats.team_id')
-        .select([
-          'player_season_stats.season_id as seasonId',
-          'player_season_stats.team_id as teamId',
-          'player_season_stats.g as g',
-          'player_season_stats.pa as pa',
-          'player_season_stats.ab as ab',
-          'player_season_stats.h as h',
-          'player_season_stats.singles as singles',
-          'player_season_stats.doubles as doubles',
-          'player_season_stats.triples as triples',
-          'player_season_stats.hr as hr',
-          'player_season_stats.rbi as rbi',
-          'player_season_stats.bb as bb',
-          'player_season_stats.k as k',
-          'seasons.name as seasonName',
-          'seasons.year as seasonYear',
-          'teams.name as teamName'
-        ])
-        .where('player_season_stats.user_id', '=', userId)
-        .execute()
+      const seasonId =
+        typeof req.query.seasonId === 'string' && req.query.seasonId !== ''
+          ? req.query.seasonId
+          : undefined
+      const teamId =
+        typeof req.query.teamId === 'string' && req.query.teamId !== ''
+          ? req.query.teamId
+          : undefined
+      const year =
+        typeof req.query.year === 'string' && /^\d{4}$/.test(req.query.year)
+          ? Number(req.query.year)
+          : undefined
 
-      // A player's own stats are always theirs to see; anyone else's are
-      // visible only for the teams the viewer can already see.
+      // Everything this player has, so the filter can be offered; the figures
+      // themselves are then taken from whichever of those rows were asked for.
+      const all = await statRows(db, { userId })
+
+      // A player's own figures are always theirs to see; anyone else's are
+      // visible only for the teams the reader can already see.
       const visible =
         userId === actor.userId || scopes.isAdmin
-          ? rows
-          : rows.filter(row => scopes.teamIds.has(row.teamId))
-      if (visible.length === 0 && rows.length > 0 && userId !== actor.userId) {
+          ? all
+          : all.filter(
+              row =>
+                (row.teamId != null && scopes.teamIds.has(row.teamId)) ||
+                (row.seasonId != null && scopes.seasonIds.has(row.seasonId))
+            )
+      if (visible.length === 0 && all.length > 0 && userId !== actor.userId) {
         throw notFound()
       }
 
-      const lines: BattingLine[] = visible.map(row => ({
-        userId,
-        teamId: row.teamId,
-        pa: row.pa,
-        ab: row.ab,
-        h: row.h,
-        singles: row.singles,
-        doubles: row.doubles,
-        triples: row.triples,
-        hr: row.hr,
-        bb: row.bb,
-        k: row.k,
-        hbp: 0,
-        rbi: row.rbi
-      }))
+      const chosen = visible.filter(
+        row =>
+          (seasonId == null || row.seasonId === seasonId) &&
+          (teamId == null || row.teamId === teamId) &&
+          (year == null || yearOf(row.startAt) === year)
+      )
 
-      const career = careerFromLines(lines)
+      const [batting] = battingLines(chosen)
+      const [pitching] = pitchingLines(chosen)
+
+      const seasons = new Map<string, { name: string; year: number | null }>()
+      const teams = new Map<string, string>()
+      const years = new Set<number>()
+      for (const row of visible) {
+        if (row.seasonId != null) {
+          seasons.set(row.seasonId, {
+            name: row.seasonName ?? 'Season',
+            year: row.seasonYear
+          })
+        }
+        if (row.teamId != null) teams.set(row.teamId, row.teamName ?? 'Team')
+        const played = yearOf(row.startAt)
+        if (played != null) years.add(played)
+      }
+
       res.json({
         userId,
-        seasons: visible.map((row, index) => ({
-          seasonId: row.seasonId,
-          seasonName: row.seasonName,
-          seasonYear: row.seasonYear,
-          teamName: row.teamName,
-          g: row.g,
-          ...lines[index],
-          rates: battingRates(lines[index])
-        })),
-        career: { ...career, rates: battingRates(career) }
+        filter: {
+          seasonId: seasonId ?? null,
+          teamId: teamId ?? null,
+          year: year ?? null
+        },
+        games: new Set(chosen.map(row => row.gameId)).size,
+        batting:
+          batting == null ? null : { ...batting, rates: battingRates(batting) },
+        pitching:
+          pitching == null
+            ? null
+            : {
+                ...pitching,
+                ip: inningsPitched(pitching.outs),
+                rates: pitchingRates(pitching)
+              },
+        options: {
+          seasons: [...seasons].map(([id, season]) => ({
+            seasonId: id,
+            name: season.name,
+            year: season.year
+          })),
+          teams: [...teams].map(([id, name]) => ({ teamId: id, name })),
+          years: [...years].sort((a, b) => b - a)
+        }
       })
     })
   )
@@ -236,6 +272,13 @@ export function statsRoutes(db: Kysely<Database>): Router {
   )
 
   return router
+}
+
+/** The calendar year a game was played in, for the year filter. */
+function yearOf(startAt: Date | string | null): number | null {
+  if (startAt == null) return null
+  const when = startAt instanceof Date ? startAt : new Date(startAt)
+  return Number.isNaN(when.getTime()) ? null : when.getUTCFullYear()
 }
 
 function pathParam(value: string | string[] | undefined): string {

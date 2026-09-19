@@ -86,6 +86,12 @@ export interface SeasonsTable {
   term: string | null
   starts_on: string | null
   ends_on: string | null
+  /**
+   * The regulation length of a game here, which is what an ERA divides by.
+   * Null until it has been worked out from the games themselves — see
+   * `024seasonInnings`.
+   */
+  innings_per_game: number | null
   spectator_access: Generated<'team' | 'season'>
   created_at: Timestamp
   updated_at: Timestamp
@@ -431,6 +437,45 @@ export interface LiveStreamsTable {
   updated_at: Timestamp
 }
 
+/**
+ * One player's figures for one game, counted from the game stream.
+ *
+ * A recount replaces the game's rows outright, so this is a derived table that
+ * can be dropped and rebuilt.
+ */
+export interface GamePlayerStatsTable {
+  id: string
+  game_id: string
+  user_id: string
+  team_id: string | null
+  pa: Generated<number>
+  ab: Generated<number>
+  h: Generated<number>
+  singles: Generated<number>
+  doubles: Generated<number>
+  triples: Generated<number>
+  hr: Generated<number>
+  bb: Generated<number>
+  k: Generated<number>
+  r: Generated<number>
+  rbi: Generated<number>
+  hbp: Generated<number>
+  ci: Generated<number>
+  sf: Generated<number>
+  sb: Generated<number>
+  cs: Generated<number>
+  pitch_bf: Generated<number>
+  pitch_outs: Generated<number>
+  pitch_h: Generated<number>
+  pitch_hr: Generated<number>
+  pitch_bb: Generated<number>
+  pitch_hbp: Generated<number>
+  pitch_k: Generated<number>
+  pitch_r: Generated<number>
+  pitch_er: Generated<number>
+  computed_at: Generated<Timestamp>
+}
+
 export interface PlayerSeasonStatsTable {
   id: string
   user_id: string
@@ -485,6 +530,7 @@ export interface Database {
   events: EventsTable
   external_ids: ExternalIdsTable
   games: GamesTable
+  game_player_stats: GamePlayerStatsTable
   invite_redemptions: InviteRedemptionsTable
   invites: InvitesTable
   league_members: LeagueMembersTable
