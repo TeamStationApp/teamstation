@@ -43,7 +43,7 @@ export function seasonRoutes(
       const seasons = scopes.isAdmin
         ? await db
             .selectFrom('seasons')
-            .select(['id', 'league_id', 'name', 'year', 'term', 'age_group'])
+            .select(['id', 'league_id', 'name', 'year', 'term', 'age_group', 'logo_path'])
             .orderBy('year', 'desc')
             .orderBy('name')
             .execute()
@@ -51,7 +51,7 @@ export function seasonRoutes(
           ? []
           : await db
               .selectFrom('seasons')
-              .select(['id', 'league_id', 'name', 'year', 'term', 'age_group'])
+              .select(['id', 'league_id', 'name', 'year', 'term', 'age_group', 'logo_path'])
               .where('id', 'in', [...scopes.seasonIds])
               .orderBy('year', 'desc')
               .orderBy('name')
@@ -107,6 +107,7 @@ export function seasonRoutes(
           year: season.year,
           term: season.term,
           ageGroup: season.age_group,
+          logoUrl: imageUrl(media.space, season.logo_path),
           ...(counts.get(season.id) ?? { teams: 0, games: 0, videos: 0 })
         }))
       )
