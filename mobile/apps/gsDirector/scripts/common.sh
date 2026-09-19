@@ -5,6 +5,17 @@ set -euo pipefail
 DIRECTOR_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export DIRECTOR_ROOT
 
+# The system directories, whatever the caller's PATH is. A login shell gets
+# these from /etc/paths, but an agent, a launchd job and a CI runner each
+# inherit whatever they were handed — and `bootstrapNdi.sh` calling `pkgutil`,
+# which lives in /usr/sbin, then fails with `command not found` in the middle
+# of expanding a 225 MB installer. Appended rather than prepended, so a tool
+# somebody has deliberately put earlier still wins.
+case ":$PATH:" in
+  *:/usr/sbin:*) ;;
+  *) export PATH="$PATH:/usr/sbin:/sbin" ;;
+esac
+
 export DIRECTOR_SCHEME="${DIRECTOR_SCHEME:-Director}"
 export DIRECTOR_PROJECT="$DIRECTOR_ROOT/Director.xcodeproj"
 export DIRECTOR_DERIVED_DATA="${DIRECTOR_DERIVED_DATA:-$DIRECTOR_ROOT/DerivedData}"
