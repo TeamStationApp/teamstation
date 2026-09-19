@@ -17,6 +17,16 @@ export interface ListRowProps {
   emblemShape?: 'rounded' | 'circle'
   badgeLabel?: string
   badgeTone?: BadgeTone
+  /**
+   * A short figure at the right, right-justified in a column of its own:
+   * a jersey number, `#12`.
+   *
+   * Not a `Badge`, and not for a status. The tinted pill means `2nd Place` or
+   * `W 4–0` elsewhere in the app, and a number is not one of those. The fixed
+   * width is what keeps `#7` and `#12` on the same right edge down a list, and
+   * what keeps them there when a chevron follows.
+   */
+  trailing?: string
   onPress?: () => void
 }
 
@@ -38,6 +48,7 @@ export function ListRow(props: ListRowProps): React.ReactElement {
     emblemShape,
     badgeLabel,
     badgeTone,
+    trailing,
     onPress
   } = props
   const theme = useTheme()
@@ -58,6 +69,11 @@ export function ListRow(props: ListRowProps): React.ReactElement {
           </Text>
         )}
       </View>
+      {trailing != null && (
+        <Text style={styles.trailing} numberOfLines={1}>
+          {trailing}
+        </Text>
+      )}
       {badgeLabel != null && <Badge label={badgeLabel} tone={badgeTone} />}
       {onPress != null && (
         <Icon name="chevron_right" color={theme.secondaryTextColor} />
@@ -117,6 +133,14 @@ const getStyles = cacheStyles((theme: Theme) => ({
   subtitle: {
     fontFamily: theme.regularTextFont,
     fontSize: theme.rem(0.875),
+    color: theme.secondaryTextColor
+  },
+  trailing: {
+    width: theme.rem(2.75),
+    textAlign: 'right',
+    fontFamily: theme.semiBoldTextFont,
+    fontSize: theme.rem(0.9375),
+    fontWeight: '600',
     color: theme.secondaryTextColor
   }
 }))

@@ -266,6 +266,60 @@ export const asRosterEntry = asObject({
 })
 export type RosterEntry = ReturnType<typeof asRosterEntry>
 
+/** How a player bats and throws. Null is `nobody has said`, not `neither`. */
+export const asBats = asEither(
+  asValue(null),
+  asValue('left' as const),
+  asValue('right' as const),
+  asValue('switch' as const)
+)
+export const asThrows = asEither(
+  asValue(null),
+  asValue('left' as const),
+  asValue('right' as const)
+)
+
+/** A team this player has played for, and in which season. */
+export const asPlayerTeam = asObject({
+  teamId: asString,
+  teamName: asString,
+  seasonId: asNullable(asString),
+  seasonName: asNullable(asString),
+  seasonYear: asNullable(asNumber)
+})
+export type PlayerTeam = ReturnType<typeof asPlayerTeam>
+
+/**
+ * One person, for their own page.
+ *
+ * `name` is **always** the short form — `Jensen P` — for everybody, on every
+ * screen. There is no viewer who gets the whole name here, and no second field
+ * holding one: a field that exists is a field that eventually gets drawn. The
+ * surname is fetched separately, by somebody who is about to type in it.
+ *
+ * No jersey number: a number belongs to a player *on a team*, and is drawn on
+ * the team's roster and in the box score, where that context exists.
+ */
+export const asPlayerName = asObject({
+  userId: asString,
+  displayName: asString,
+  firstName: asNullable(asString),
+  lastName: asNullable(asString)
+})
+export type PlayerName = ReturnType<typeof asPlayerName>
+
+export const asPlayerDetail = asObject({
+  userId: asString,
+  name: asString,
+  /** Whether to offer this person the name field. A parent or an admin. */
+  canEditName: asOptional(asBoolean, false),
+  avatarUrl: asOptional(asNullable(asString), null),
+  bats: asOptional(asBats, null),
+  throws: asOptional(asThrows, null),
+  teams: asArray(asPlayerTeam)
+})
+export type PlayerDetail = ReturnType<typeof asPlayerDetail>
+
 export const asStandingsRow = asObject({
   teamId: asString,
   teamName: asString,
@@ -927,6 +981,29 @@ export class GameStationClient {
       'GET',
       `/teams/${encodeURIComponent(teamId)}/roster`,
       asArray(asRosterEntry)
+    )
+  }
+
+  /** One person: their picture, their name, their handedness, their teams. */
+  async player(userId: string): Promise<PlayerDetail> {
+    return await this.request(
+      'GET',
+      `/players/${encodeURIComponent(userId)}`,
+      asPlayerDetail
+    )
+  }
+
+  /**
+   * A player's name in full, for the field it is typed into.
+   *
+   * Answered only for a parent or an administrator, and asked for only when
+   * that field is opened — never to draw a page.
+   */
+  async playerName(userId: string): Promise<PlayerName> {
+    return await this.request(
+      'GET',
+      `/players/${encodeURIComponent(userId)}/name`,
+      asPlayerName
     )
   }
 

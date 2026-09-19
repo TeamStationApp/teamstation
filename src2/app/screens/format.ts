@@ -167,3 +167,26 @@ export function matchupLines(
   }
   return { first: game.awayTeamName, second: `@ ${game.homeTeamName}` }
 }
+
+/**
+ * How a player bats and throws, the way a scorecard writes it: `B: R · T: L`.
+ *
+ * A switch hitter is `B: L/R`. Half-known is half-shown — `B: L` on its own is
+ * true, and padding it out with `T: —` is not. Nothing known at all returns
+ * undefined, and the line is not drawn: a dash says somebody looked and found
+ * nothing, which is not what an empty column means.
+ */
+export function battingLine(person: {
+  bats?: 'left' | 'right' | 'switch' | null
+  throws?: 'left' | 'right' | null
+}): string | undefined {
+  const parts: string[] = []
+  if (person.bats != null) parts.push(`B: ${handLabel(person.bats)}`)
+  if (person.throws != null) parts.push(`T: ${handLabel(person.throws)}`)
+  return parts.length === 0 ? undefined : parts.join(' · ')
+}
+
+function handLabel(hand: 'left' | 'right' | 'switch'): string {
+  if (hand === 'switch') return 'L/R'
+  return hand === 'left' ? 'L' : 'R'
+}
