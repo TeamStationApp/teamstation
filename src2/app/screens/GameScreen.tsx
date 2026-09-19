@@ -358,8 +358,13 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     // pills scroll away above it.
     chromeHeight: headerHeight,
     // The camera-angle buttons are pegged with the picture and have to stay
-    // on the screen with it.
-    belowVideo: (game?.videos.length ?? 0) > 1 ? pickerHeight : 0,
+    // on the screen with it. Twice the small space as well: `onLayout`
+    // measures the card and not the margin above it, and the second keeps the
+    // card's lower edge off the bottom of the window rather than on it.
+    belowVideo:
+      (game?.videos.length ?? 0) > 1
+        ? pickerHeight + 2 * theme.rem(theme.spaceXsRem)
+        : 0,
     aspect,
     previous: mode.current
   })
