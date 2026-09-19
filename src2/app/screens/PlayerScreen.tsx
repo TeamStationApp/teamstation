@@ -98,6 +98,8 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
   const [before, setBefore] = useState<string | undefined>(undefined)
   const [stats, setStats] = useState<PlayerStats | undefined>(undefined)
   const [filter, setFilter] = useState<StatFilter>(initialFilter ?? {})
+  const narrowed =
+    filter.seasonId != null || filter.teamId != null || filter.year != null
   const [filtering, setFiltering] = useState(false)
   const [loadingStats, setLoadingStats] = useState(true)
 
@@ -128,6 +130,20 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
       [progress, styles.headerHandoff, styles.headerName, avatarUrl, shown]
     )
   )
+
+  // A screen re-used for a second player must not keep the first one's pages.
+  // The stack unmounts between two players today, so this has nothing to undo
+  // — and a list that silently appended somebody else's highlights would be
+  // very hard to see and impossible to explain.
+  useEffect(() => {
+    setPlayer(undefined)
+    setHighlights([])
+    setNextBefore(undefined)
+    setWithoutVideo(0)
+    setBefore(undefined)
+    setStats(undefined)
+    setError(undefined)
+  }, [userId])
 
   useEffect(() => {
     let cancelled = false
@@ -307,7 +323,27 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
 
           {stats != null && stats.batting == null && stats.pitching == null && (
             <Card>
-              <Text style={styles.muted}>{lstrings.player_stats_empty}</Text>
+              {/*
+                Two different silences. "Nothing under this filter" is a
+                narrowing the reader chose and can undo; "no stats yet" is
+                about the player. Saying the second when the first is true
+                reads as a boy with twelve games having none.
+              */}
+              <Text style={styles.muted}>
+                {narrowed
+                  ? lstrings.player_filter_empty
+                  : lstrings.player_stats_empty}
+              </Text>
+              {narrowed && (
+                <Button
+                  label={lstrings.player_filter_clear}
+                  kind="secondary"
+                  onPress={() => {
+                    setFilter({})
+                    onFilter?.({})
+                  }}
+                />
+              )}
             </Card>
           )}
 
@@ -318,10 +354,29 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
             </Card>
           )}
 
+          {/*
+            A card that says why it is empty, rather than one that is not
+            there: a pitcher with no plate appearances and a pitcher we have
+            no figures for look identical when the card is simply dropped.
+          */}
+          {stats?.batting == null && stats?.pitching != null && (
+            <Card>
+              <Text style={styles.cardTitle}>{lstrings.player_batting}</Text>
+              <Text style={styles.muted}>{lstrings.player_no_batting}</Text>
+            </Card>
+          )}
+
           {stats?.pitching != null && (
             <Card>
               <Text style={styles.cardTitle}>{lstrings.player_pitching}</Text>
               <StatGrid stats={pitchingStats(stats.pitching)} columns={4} />
+            </Card>
+          )}
+
+          {stats?.pitching == null && stats?.batting != null && (
+            <Card>
+              <Text style={styles.cardTitle}>{lstrings.player_pitching}</Text>
+              <Text style={styles.muted}>{lstrings.player_no_pitching}</Text>
             </Card>
           )}
         </View>
@@ -353,14 +408,16 @@ function scopeOf(stats: PlayerStats | undefined, filter: StatFilter): string {
       : stats.games === 1
         ? lstrings.player_one_game
         : sprintf(lstrings.player_games, String(stats.games))
+  // A season renamed or re-imported since the link was sent is a filter with
+  // no name left. Saying so beats `12 games · ` with nothing after it.
   const named =
     filter.seasonId != null
       ? (stats?.options.seasons.find(
           season => season.seasonId === filter.seasonId
-        )?.name ?? '')
+        )?.name ?? lstrings.player_filter_unknown)
       : filter.teamId != null
         ? (stats?.options.teams.find(team => team.teamId === filter.teamId)
-            ?.name ?? '')
+            ?.name ?? lstrings.player_filter_unknown)
         : filter.year != null
           ? String(filter.year)
           : lstrings.player_filter_career
