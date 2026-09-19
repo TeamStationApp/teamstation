@@ -350,3 +350,33 @@ export async function bothPlayedTogether(
   }
   return together
 }
+
+/**
+ * Splits a group of rows into the fewest people who were never in a game
+ * together.
+ *
+ * One pair sharing a game does not make every row in the group a stranger.
+ * `Wesley` and one `Wesley Boren` both played on 11 April, which makes two
+ * boys — but the other two `Wesley Boren` rows share a game with nobody and
+ * wear #10 and #4 on the same two teams as each other, and taking the whole
+ * group apart turned one boy into three.
+ *
+ * Greedy and ordered by how much history each row carries, so the fullest row
+ * anchors the first person and the rest join whoever they can. A row that
+ * clashes with everybody ends up alone, which is what it should be.
+ */
+export function splitByClash(
+  rows: Array<{ userId: string; weight: number }>,
+  clashes: Set<string>
+): string[][] {
+  const order = [...rows].sort((a, b) => b.weight - a.weight)
+  const people: string[][] = []
+  for (const row of order) {
+    const home = people.find(
+      person => !person.some(held => clashes.has(`${held}|${row.userId}`))
+    )
+    if (home == null) people.push([row.userId])
+    else home.push(row.userId)
+  }
+  return people
+}
