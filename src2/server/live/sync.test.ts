@@ -77,7 +77,6 @@ describe('what the ingest is told', function () {
         enabled: true,
         bindHost: '127.0.0.1',
         port: 19_362,
-        publicUrl: '',
         app: 'live',
         segmentSeconds: 4,
         closeAfterHours: 6,

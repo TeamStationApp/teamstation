@@ -110,7 +110,6 @@ describe('the end of a live stream', function () {
         enabled: true,
         bindHost: '127.0.0.1',
         port: 1936,
-        publicUrl: '',
         app: 'live',
         segmentSeconds: 2,
         closeAfterHours: 6,

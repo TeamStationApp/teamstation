@@ -2,6 +2,18 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+  <!--
+    Where this build talks to, for a build that is not pointed at the address
+    in the source. A host with no scheme; empty — which is every build that
+    does not say otherwise — means `AppServer.defaultHost`.
+
+        GS_PRIMARY_HOST=devhost2.examplegs.test xcodebuild …
+
+    From the environment rather than from a tracked file, so a development
+    build is not one stray commit away from shipping its address to everybody.
+  -->
+  <key>GSPrimaryHost</key>
+  <string>$(GS_PRIMARY_HOST)</string>
   <key>CFBundleDevelopmentRegion</key>
   <string>en</string>
   <key>CFBundleDisplayName</key>

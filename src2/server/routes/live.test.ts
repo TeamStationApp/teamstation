@@ -72,14 +72,13 @@ describe('a game’s stream key over the API', function () {
           enabled: true,
           bindHost: '0.0.0.0',
           port: 1936,
-          publicUrl: 'rtmp://live.example:1936',
           app: 'live',
           segmentSeconds: 4,
           closeAfterHours: 6,
           freeDiskFloorGb: 10
         },
         sessionSecret: 'k'.repeat(32),
-        fallbackHost: 'live.example'
+        host: 'live.example'
       })
     )
     // Mounted alongside, because deleting a recording is the other half of
@@ -644,14 +643,13 @@ describe('a game’s stream key over the API', function () {
           enabled: false,
           bindHost: '0.0.0.0',
           port: 1936,
-          publicUrl: '',
           app: 'live',
           segmentSeconds: 4,
           closeAfterHours: 6,
           freeDiskFloorGb: 10
         },
         sessionSecret: 'k'.repeat(32),
-        fallbackHost: 'live.example'
+        host: 'live.example'
       })
     )
     off.use(errorHandler)

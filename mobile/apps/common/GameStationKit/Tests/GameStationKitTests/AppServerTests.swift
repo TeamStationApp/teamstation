@@ -5,47 +5,73 @@ import Testing
 
 @Suite("Where the app server is")
 struct AppServerTests {
-  /// The committed file itself. This is the copy the server and the tools
-  /// read, and the one the app bundles, so it is the one worth asserting on.
-  private static var committedConfig: Data {
-    get throws {
-      let here = URL(filePath: #filePath)
-      let root = here
-        .deletingLastPathComponent()  // GameStationKitTests
-        .deletingLastPathComponent()  // Tests
-        .deletingLastPathComponent()  // GameStationKit
-        .deletingLastPathComponent()  // common
-        .deletingLastPathComponent()  // apps
-        .deletingLastPathComponent()  // mobile
-        .deletingLastPathComponent()  // repository root
-      return try Data(contentsOf: root.appending(path: "config.json"))
-    }
+  /// The repository root, walked up from this file.
+  private static var repositoryRoot: URL {
+    URL(filePath: #filePath)
+      .deletingLastPathComponent()  // GameStationKitTests
+      .deletingLastPathComponent()  // Tests
+      .deletingLastPathComponent()  // GameStationKit
+      .deletingLastPathComponent()  // common
+      .deletingLastPathComponent()  // apps
+      .deletingLastPathComponent()  // mobile
+      .deletingLastPathComponent()  // repository root
   }
 
-  @Test("The repository's config.json names an app server")
-  func theCommittedFileIsUsable() throws {
-    let url = try #require(AppServer.url(fromConfig: Self.committedConfig))
-    #expect(url.scheme == "https")
-    #expect(url.host() == "gamestation.co")
+  /// The name is written down twice — once for TypeScript, once for Swift —
+  /// because the two cannot import from each other. This is what stops the
+  /// two copies drifting, which is the failure the single `config.json` was
+  /// introduced to fix and this replaces it with: not one file read by both,
+  /// but one fact asserted across both.
+  @Test("Swift and TypeScript name the same host")
+  func theTwoCopiesAgree() throws {
+    let source = try String(
+      contentsOf: Self.repositoryRoot.appending(path: "src2/common/primaryUrl.ts"),
+      encoding: .utf8
+    )
+    let pattern = #"PRIMARY_HOST = '([^']+)'"#
+    let range = try #require(source.range(of: pattern, options: .regularExpression))
+    let written = String(source[range]).replacingOccurrences(of: "PRIMARY_HOST = ", with: "")
+      .trimmingCharacters(in: CharacterSet(charactersIn: "'"))
+    #expect(written == AppServer.defaultHost)
   }
 
-  @Test("A config without the key is not an address")
-  func aFileWithoutTheKeyIsRefused() {
-    #expect(AppServer.url(fromConfig: Data(#"{}"#.utf8)) == nil)
-    #expect(AppServer.url(fromConfig: Data(#"not json"#.utf8)) == nil)
+  @Test("The name in the source is a host and nothing else")
+  func theDefaultIsBare() {
+    #expect(!AppServer.defaultHost.contains("://"))
+    #expect(!AppServer.defaultHost.contains("/"))
+    #expect(AppServer.url(forHost: AppServer.defaultHost)?.host() == "gamestation.co")
   }
 
-  /// A bare word parses as a URL with no scheme and no host, and would then
-  /// be asked for `/api/v1` and fail somewhere far from here.
-  @Test("A config with something that is not an address is refused")
-  func aFileWithRubbishIsRefused() {
-    #expect(AppServer.url(fromConfig: Data(#"{"appServerUrl":"nonsense"}"#.utf8)) == nil)
-    #expect(AppServer.url(fromConfig: Data(#"{"appServerUrl":""}"#.utf8)) == nil)
+  /// A DNS name is behind TLS; the things nobody holds a certificate for are
+  /// the things somebody testing locally is actually reaching.
+  @Test("https is implied, except for an address")
+  func theSchemeFollowsTheHost() {
+    #expect(AppServer.url(forHost: "gamestation.co")?.absoluteString == "https://gamestation.co")
+    #expect(
+      AppServer.url(forHost: "devhost2.examplegs.test")?.absoluteString
+        == "https://devhost2.examplegs.test")
+    #expect(AppServer.url(forHost: "127.0.0.1:9100")?.absoluteString == "http://127.0.0.1:9100")
+    #expect(AppServer.url(forHost: "localhost:8080")?.absoluteString == "http://localhost:8080")
   }
 
-  @Test("A bundle without the file is not an address")
-  func aBundleWithoutTheFile() {
-    #expect(AppServer.url(in: Bundle(for: MarkerClass.self)) == nil)
+  @Test("An override is taken however somebody wrote it")
+  func anOverrideIsTidiedUp() {
+    #expect(AppServer.asHost("devhost2.examplegs.test") == "devhost2.examplegs.test")
+    #expect(AppServer.asHost("https://devhost2.examplegs.test/") == "devhost2.examplegs.test")
+    #expect(AppServer.asHost("  http://127.0.0.1:9100/api/v1  ") == "127.0.0.1:9100")
+    #expect(AppServer.asHost("") == "")
+  }
+
+  @Test("Nothing usable is not an address")
+  func rubbishIsRefused() {
+    #expect(AppServer.url(forHost: "") == nil)
+  }
+
+  /// A bundle with no override — which is every release build — talks to the
+  /// name in the source rather than to nothing.
+  @Test("A bundle without an override uses the name in the source")
+  func aBundleWithoutTheKey() {
+    #expect(AppServer.host(in: Bundle(for: MarkerClass.self)) == AppServer.defaultHost)
   }
 }
 
