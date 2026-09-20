@@ -46,13 +46,12 @@ const live = {
     enabled: true,
     bindHost: '127.0.0.1',
     port: 1936,
-    publicUrl: '',
     app: 'live',
     segmentSeconds: 4,
     closeAfterHours: 6
   },
   sessionSecret: 'secret',
-  fallbackHost: '127.0.0.1'
+  host: '127.0.0.1'
 }
 
 interface RouteLayer {

@@ -2,6 +2,7 @@ import { randomBytes } from 'crypto'
 import type { Kysely } from 'kysely'
 
 import { makeId } from '../../common/ids'
+import { rtmpOrigin } from '../../common/primaryUrl'
 import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import type { LiveSettings } from '../serverConfig'
@@ -19,20 +20,26 @@ export function makeStreamKey(): string {
   return `gs_${randomBytes(16).toString('base64url')}`
 }
 
-/** `rtmp://host:port` with no trailing slash and no path. */
-export function liveBaseUrl(live: LiveSettings, fallbackHost: string): string {
-  if (live.publicUrl !== '') return live.publicUrl.replace(/\/+$/, '')
-  const host = live.bindHost === '0.0.0.0' ? fallbackHost : live.bindHost
-  return `rtmp://${host}:${live.port}`
+/**
+ * `rtmp://host:port` with no trailing slash and no path.
+ *
+ * `host` is what the deployment calls itself, never `bindHost`: the ingest
+ * binds `0.0.0.0`, which is not an address anybody can publish to, and the
+ * name an encoder reaches this machine by is the same name a browser reaches
+ * it by. `rtmp` and not `rtmps` wherever it points — there is no encrypted
+ * RTMP here to choose between.
+ */
+export function liveBaseUrl(live: LiveSettings, host: string): string {
+  return rtmpOrigin(host, live.port)
 }
 
 /** The whole thing, key and all — what gets pasted into streaming software. */
 export function streamUrlFor(
   live: LiveSettings,
-  fallbackHost: string,
+  host: string,
   key: string
 ): string {
-  return `${liveBaseUrl(live, fallbackHost)}/${live.app}/${key}`
+  return `${liveBaseUrl(live, host)}/${live.app}/${key}`
 }
 
 export interface NewStreamKey {
