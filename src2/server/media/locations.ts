@@ -2,6 +2,10 @@ import type { Stats } from 'node:fs'
 import { readdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 
+import type { SpaceSettings } from './spacesHls'
+import { spaceConfigured } from './spacesHls'
+import type { FrameSource } from './stills'
+
 /**
  * Where a video's HLS actually sits, under the media root.
  *
@@ -19,17 +23,36 @@ export interface VideoLocation {
   master: string
 }
 
-/** The single fragmented MP4 a still is taken from, absolute on disk. */
+/**
+ * Where a video's frames are read from, wherever its bytes ended up.
+ *
+ * The one thing a caller wanting a still should ask. A video on this host is a
+ * path; one in the Space is named, and the fragment holding the moment is
+ * fetched when a still is actually cut.
+ */
+export async function videoFrameSource(
+  options: LocateOptions & { space: SpaceSettings }
+): Promise<FrameSource | undefined> {
+  const { space, storage, videoId } = options
+  if (storage === 'spaces') {
+    if (!spaceConfigured(space)) return undefined
+    return { kind: 'space', space, videoId }
+  }
+  const path = await locateVideoFile(options)
+  return path == null ? undefined : { kind: 'file', path }
+}
+
+/**
+ * The single fragmented MP4 a video is, absolute on disk.
+ *
+ * Only ever what is on this host: a video in the Space has no path, and a
+ * caller that wants its pictures asks `videoFrameSource` instead.
+ */
 export async function locateVideoFile(
   options: LocateOptions
 ): Promise<string | undefined> {
   const { mediaRoot, storage } = options
-  if (storage === 'spaces') {
-    // The bytes are in the bucket. A still from there means reading byte
-    // ranges through a presigned URL, which is not built yet, so this says
-    // plainly that it cannot rather than pointing at a file that is not here.
-    return undefined
-  }
+  if (storage === 'spaces') return undefined
 
   const location = await locateVideo(options)
   if (location == null) return undefined

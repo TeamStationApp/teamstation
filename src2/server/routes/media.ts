@@ -8,7 +8,7 @@ import { badRequest, notFound, unauthorized } from '../../common/errors'
 import { adminScopes, canSeeGame, visibleScopes } from '../access'
 import type { Database } from '../db/database'
 import { VIDEO_FILE } from '../media/ffmpeg'
-import { locateVideo, locateVideoFile } from '../media/locations'
+import { locateVideo, videoFrameSource } from '../media/locations'
 import type { MediaContext } from '../media/mediaContext'
 import {
   MEDIA_TOKEN_TTL_SEC,
@@ -149,16 +149,17 @@ export function mediaRoutes(
       if (video == null || video.hidden) throw notFound()
       if (!canSeeGame(scopes, video)) throw notFound()
 
-      const videoPath = await locateVideoFile({
+      const source = await videoFrameSource({
         mediaRoot,
+        space,
         storage: video.storage,
         videoId
       })
-      if (videoPath == null) throw notFound()
+      if (source == null) throw notFound()
 
       const still = await ensureStill({
         ffmpegPath,
-        videoPath,
+        source,
         workDir,
         videoId,
         atSec
