@@ -70,6 +70,12 @@ targets:
     platform: iOS
     sources:
       - path: App
+      # The repository's one config.json, carried into the app bundle so
+      # `AppServer` can read the same address the server and the tools read.
+      # Referenced where it lives rather than copied: a second copy is how the
+      # address went stale on a Director in the first place.
+      - path: ../../../config.json
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: co.gamestation.director
