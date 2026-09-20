@@ -76,7 +76,6 @@ struct StreamDestinationTests {
     // what a GameStation event is. Anything but `.url` here would move where
     // their Stream button publishes the next time they open the app.
     #expect(AppConfig().streamDestination == .url)
-    #expect(AppConfig().gameStationURL == "https://gamestation.co")
   }
 
   @Test("A settings file written before events existed reads as the typed URL")
@@ -87,32 +86,23 @@ struct StreamDestinationTests {
     )
     #expect(old.streamDestination == .url)
     #expect(old.streamURL == "rtmp://host:1935/live/key")
-    #expect(old.gameStationURL == "https://gamestation.co")
   }
 
-  @Test("A Director still pointed at the old site is moved to the new one")
-  func theMovedSiteIsFollowed() throws {
-    // PeerTube answers `/api/v1` on the old address, with a 400 and an empty
-    // body, so a Director left on it fails in a way nobody can read.
-    let moved = try JSONDecoder().decode(
+  @Test("A saved address left over from when it was a setting is ignored")
+  func theOldSavedAddressIsNotRead() throws {
+    // Every Director in the field has one of these on disk. The address comes
+    // from the build now, so the key is simply not a key any more.
+    let stale = try JSONDecoder().decode(
       AppConfig.self,
       from: Data(#"{"gameStationURL":"https://tube2.gamestation.co"}"#.utf8)
     )
-    #expect(moved.gameStationURL == "https://gamestation.co")
-
-    // An address somebody typed is theirs, and is left alone.
-    let typed = try JSONDecoder().decode(
-      AppConfig.self,
-      from: Data(#"{"gameStationURL":"http://127.0.0.1:9111"}"#.utf8)
-    )
-    #expect(typed.gameStationURL == "http://127.0.0.1:9111")
+    #expect(stale.streamDestination == .url)
   }
 
-  @Test("The choice and the address both survive a save")
+  @Test("The choice and the URL both survive a save")
   func destinationPersists() throws {
     var config = AppConfig()
     config.streamDestination = .event
-    config.gameStationURL = "http://127.0.0.1:9111"
     config.streamURL = "rtmp://host:1935/live/key"
 
     let saved = try JSONDecoder().decode(
@@ -120,7 +110,6 @@ struct StreamDestinationTests {
       from: JSONEncoder().encode(config)
     )
     #expect(saved.streamDestination == .event)
-    #expect(saved.gameStationURL == "http://127.0.0.1:9111")
     // The typed URL is kept while the event is chosen: switching back should
     // not mean typing it again.
     #expect(saved.streamURL == "rtmp://host:1935/live/key")
