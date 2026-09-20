@@ -126,6 +126,12 @@ trap 'rm -rf "${TARGET:?}"' ERR
 # because the directory is new every time — which is the point.
 git -C "$REPO" archive HEAD src2 | tar -x -C "$TARGET" --strip-components=1
 
+# The repository's one config.json, which is how this server knows its own
+# name. It lands at the top of the version directory, which is the same place
+# relative to the code as the repository root is in a checkout, so
+# `server/appConfig.ts` finds it either way.
+git -C "$REPO" archive HEAD config.json | tar -x -C "$TARGET"
+
 cd "$TARGET"
 npm ci --no-audit --fund=false
 npm run build        # tsc  → lib/

@@ -37,7 +37,7 @@ import { seasonRoutes } from './routes/seasons'
 import { statsRoutes } from './routes/stats'
 import { teamRoutes } from './routes/teams'
 import { livingWorkers } from './livingWorkers'
-import { serverConfig } from './serverConfig'
+import { publicUrl, serverConfig } from './serverConfig'
 import { stopWorker } from './stopWorker'
 
 /**
@@ -204,7 +204,7 @@ function liveControllerOptions(
 function liveRouteOptions(): LiveRouteOptions {
   let fallbackHost = serverConfig.listenHost
   try {
-    fallbackHost = new URL(serverConfig.publicUrl).hostname
+    fallbackHost = new URL(publicUrl).hostname
   } catch {
     // A publicUrl that is not a URL is a configuration mistake worth surviving:
     // the stream URL then names the bind address, which is wrong but visible.
@@ -345,7 +345,7 @@ function runWorker(): void {
     ffmpegPath: serverConfig.ffmpegPath,
     mediaRoot: serverConfig.mediaDir,
     mediaSecret,
-    publicUrl: serverConfig.publicUrl,
+    publicUrl: publicUrl,
     space: serverConfig.space,
     workDir: serverConfig.workDir
   }
@@ -369,16 +369,16 @@ function runWorker(): void {
     authRoutes(db, {
       sendCode,
       space: serverConfig.space,
-      publicUrl: serverConfig.publicUrl
+      publicUrl: publicUrl
     })
   )
   app.use(
     '/api/v1',
-    inviteRoutes(db, { sendCode, publicUrl: serverConfig.publicUrl })
+    inviteRoutes(db, { sendCode, publicUrl: publicUrl })
   )
   app.use(
     '/api/v1',
-    manageRoutes(db, { sendInvite, publicUrl: serverConfig.publicUrl })
+    manageRoutes(db, { sendInvite, publicUrl: publicUrl })
   )
   app.use('/api/v1', seasonRoutes(db, mediaContext))
   app.use('/api/v1', teamRoutes(db, mediaContext))

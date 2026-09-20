@@ -1783,8 +1783,7 @@ public final class AppEnvironment {
 
   private func makeAccount() -> GameStationAccount {
     GameStationAccount(
-      serverURL: URL(string: config.gameStationURL)
-        ?? URL(string: AppConfig.gameStationURLDefault)!,
+      serverURL: AppServer.url,
       deviceName: UIDevice.current.name
     )
   }

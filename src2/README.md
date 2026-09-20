@@ -20,6 +20,28 @@ cutover.
 | `migrate/` | The PeerTube importer, and the database migrations. |
 | `app/` | Expo + React Native Web client. Web only for now. |
 
+## Where the site's address lives
+
+`config.json`, at the top of the repository, and nowhere else:
+
+```json
+{ "appServerUrl": "https://gamestation.co" }
+```
+
+Everything that needs the address reads that file — this server, through
+`server/appConfig.ts`, to know its own name; the tools; and GS Director, which
+carries the same file in its app bundle and reads it through
+`GameStationKit.AppServer`. Moving the site is one line here and a release.
+
+It was three places before: a literal in the iOS app, a copy saved into every
+iPad's settings, and a line in each deployment's `serverConfig.json`. When the
+site moved from `tube2.gamestation.co` to `gamestation.co`, the saved copies
+did not, and a Director went on asking PeerTube for its games — getting a 400
+with an empty body, which reads as nothing being wrong at all.
+
+`serverConfig.publicUrl` still exists and still wins when it is set, for a
+development server that has to point at itself. Production leaves it empty.
+
 ## Conventions
 
 These follow the repository, not a new taste:

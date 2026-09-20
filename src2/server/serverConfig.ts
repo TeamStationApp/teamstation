@@ -8,6 +8,8 @@ import {
   asString
 } from 'cleaners'
 
+import { appServerUrl } from './appConfig'
+
 export const asServerConfig = asObject({
   /** Where the API listens. Caddy proxies gamestation.co to this. */
   listenHost: asOptional(asString, '127.0.0.1'),
@@ -97,8 +99,15 @@ export const asServerConfig = asObject({
   /** Signs `/media` playback tokens. Caddy checks them through forward_auth. */
   mediaSecret: asOptional(asString, ''),
 
-  /** The origin playback URLs are built against. */
-  publicUrl: asOptional(asString, 'http://127.0.0.1:9100'),
+  /**
+   * The origin playback URLs are built against.
+   *
+   * Empty means the address in the repository's `config.json`, which is what
+   * production wants: one place names the site, and the server reads it like
+   * everything else does. Set this only to point a development server at
+   * itself, e.g. `http://127.0.0.1:9100`.
+   */
+  publicUrl: asOptional(asString, ''),
 
   /**
    * Serve `/media` from Node. **Development only**: in production Caddy serves
@@ -167,3 +176,14 @@ export const serverConfig: ServerConfig = makeConfig(
   asServerConfig,
   './serverConfig.json'
 )
+
+/**
+ * The address this server answers on.
+ *
+ * Its own `publicUrl` when a deployment sets one — a development server
+ * pointing at itself — and otherwise the shared address in `config.json`,
+ * which is what production runs on. Resolved once, here, so no caller has to
+ * remember which of the two it is.
+ */
+export const publicUrl: string =
+  serverConfig.publicUrl === '' ? appServerUrl() : serverConfig.publicUrl
