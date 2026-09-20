@@ -74,6 +74,37 @@ enforces this. `server/routes/devMedia.ts` does the same thing for development
 and does have a comment; if the two ever disagree, this is the one that decides
 what a viewer sees.
 
+## The Space must allow the site to read it
+
+A video that has gone to the Space is played straight out of the bucket: the
+API serves the two playlists and rewrites the media entry to a presigned URL,
+so the bytes never pass through the droplet. That is the whole point of it —
+and it means the browser, not the server, is what fetches them.
+
+**hls.js fetches with XHR**, so those reads are cross-origin and the bucket has
+to say they are allowed. Without a CORS rule on it, every request for a segment
+is blocked by the browser and the player sits on a spinner for ever. It is a
+particularly quiet failure: the playlists come from the API on the site's own
+origin and load fine, so the duration and the scrubber are right and only the
+picture never arrives.
+
+The rule the bucket wants, against the names the app is served on:
+
+| | |
+| --- | --- |
+| Origins | `https://gamestation.co`, `https://www.gamestation.co`, `https://tube.gamestation.co` |
+| Methods | `GET`, `HEAD` |
+| Allowed headers | `*` — `Range` is the one that matters, and a preflight asks for it by name |
+| Max age | 3600 |
+
+**The app's own Spaces key cannot set this.** It is scoped to reading and
+writing objects, which is right, so `put_bucket_cors` comes back `AccessDenied`
+with it. Setting the rule needs a full-access key or the DigitalOcean control
+panel (Spaces → the bucket → Settings → CORS Configurations), and like the
+Caddyfile it lives outside this repository, so nothing here enforces it. Check
+it before the first live stream on a new bucket or a new hostname: a name the
+app answers on that is not in the list plays nothing.
+
 ## What live streaming needs on the box
 
 **None of this has been done on the server yet** — it is written here because
