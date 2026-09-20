@@ -54,7 +54,8 @@ export interface LiveRouteOptions {
   live: LiveSettings
   sessionSecret: string
   /** The host to print in a stream URL when none is configured. */
-  fallbackHost: string
+  /** What this deployment is called: the host a stream URL names. */
+  host: string
 }
 
 const asStreamChange = asObject({ label: asOptional(asString) })
@@ -75,7 +76,7 @@ export function liveRoutes(
   options: LiveRouteOptions
 ): Router {
   const router = Router()
-  const { live, sessionSecret, fallbackHost } = options
+  const { live, sessionSecret, host } = options
 
   /** The game, and the team of it this person runs — or nothing at all. */
   const gameToManage = async (
@@ -198,7 +199,7 @@ export function liveRoutes(
         setAudit(res.locals, { entityType: 'liveStream', entityId: raced.id })
         res.json({
           ...(await summaryOf(db, raced, actor.userId)),
-          url: streamUrlFor(live, fallbackHost, revealKey(sessionSecret, raced))
+          url: streamUrlFor(live, host, revealKey(sessionSecret, raced))
         })
         return
       }
@@ -206,7 +207,7 @@ export function liveRoutes(
       setAudit(res.locals, { entityType: 'liveStream', entityId: created.id })
       res.status(201).json({
         ...(await summaryOf(db, created, actor.userId)),
-        url: streamUrlFor(live, fallbackHost, created.key)
+        url: streamUrlFor(live, host, created.key)
       })
     })
   )
@@ -242,7 +243,7 @@ export function liveRoutes(
       }
       res.json({
         ...(await summaryOf(db, row, actor.userId)),
-        url: streamUrlFor(live, fallbackHost, key)
+        url: streamUrlFor(live, host, key)
       })
     })
   )
@@ -269,7 +270,7 @@ export function liveRoutes(
       const fresh = (await liveStreamById(db, row.id)) ?? row
       res.json({
         ...(await summaryOf(db, fresh, actor.userId)),
-        url: streamUrlFor(live, fallbackHost, key)
+        url: streamUrlFor(live, host, key)
       })
     })
   )

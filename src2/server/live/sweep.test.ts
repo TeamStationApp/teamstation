@@ -108,7 +108,6 @@ describe('the live sweep', function () {
         enabled: true,
         bindHost: '127.0.0.1',
         port: 1936,
-        publicUrl: '',
         app: 'live',
         segmentSeconds: 4,
         closeAfterHours: 6,

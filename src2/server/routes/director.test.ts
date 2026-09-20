@@ -71,14 +71,13 @@ describe('what GS Director is offered', function () {
           enabled: true,
           bindHost: '0.0.0.0',
           port: 1936,
-          publicUrl: 'rtmp://live.example:1936',
           app: 'live',
           segmentSeconds: 4,
           closeAfterHours: 6,
           freeDiskFloorGb: 10
         },
         sessionSecret: 'k'.repeat(32),
-        fallbackHost: 'live.example'
+        host: 'live.example'
       })
     )
     app.use(errorHandler)

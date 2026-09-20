@@ -114,9 +114,10 @@ that fails quietly rather than loudly.
 1. **A port open for the ingest.** The RTMP listener binds `live.port` (1936
    while PeerTube still holds 1935). Both the droplet firewall and `ufw` have to
    allow it inbound; nothing else on the box listens there.
-2. **`live.publicUrl` in `serverConfig.json`** — `rtmp://live.gamestation.co:1936`
-   or whichever name the DNS gets. Without it a stream URL names the bind
-   address, which is right on a laptop and useless to somebody with an encoder.
+2. **Nothing to configure for the stream URL.** It is built from the same name
+   everything else is — `PRIMARY_HOST`, or this deployment's
+   `primaryUrlOverride` — on `live.port`. There is no separate ingest setting
+   to forget, which is what the old `live.publicUrl` was for.
 3. **`mediaSecret` set.** Without it the server generates one at boot, and every playback URL
    already in somebody's player dies the moment the server restarts — which during a game means
    every viewer's picture stops at once, a few minutes into a deploy nobody thought was risky. It
@@ -125,9 +126,10 @@ that fails quietly rather than loudly.
    key can be issued, which the API now says in a sentence — and changing it
    later makes every key unreadable, so they would have to be issued again
    rather than recovered.
-5. **A DNS record for the ingest name**, if it is to be its own name rather than
-   `gamestation.co`. Nothing in the code cares which; the URL is built from
-   the setting.
+5. **The ingest answers on the site's own name.** It no longer *can* be its
+   own hostname: one name is written down, and the stream URL is built from
+   it like every other link. Splitting the ingest off onto `live.` again would
+   mean a second setting, which is the thing that went stale before.
 6. **Disk.** A three-hour game at 3 Mbit is about **4 GB** — measured: 25 min 39 s
    at 1.5 Mbit came to 565 MiB. The segments and the finished recording sit side
    by side from the moment the remux starts until the local copy is swept six
@@ -138,6 +140,38 @@ that fails quietly rather than loudly.
 
 The ingest runs in **one** process — the cluster primary — so nothing changes
 about the systemd unit. It is off entirely when `live.enabled` is false.
+
+## What this deployment is called
+
+One name is written down, in `src2/common/primaryUrl.ts`:
+
+```ts
+export const PRIMARY_HOST = 'gamestation.co'
+```
+
+Every URL this server hands out is built from it — playback, invites, sign-in
+links, the RTMP address an operator pastes into a camera — and so is the
+address the Director app talks to. No scheme is written anywhere: `https` is
+implied, except for an IP address or `localhost`, which imply `http`; RTMP is
+always `rtmp://`, there being no encrypted RTMP here to choose between.
+
+A deployment that is **not** production says its own name once, in its own
+`serverConfig.json`:
+
+```json
+{ "primaryUrlOverride": "develop2.gamestation.co" }
+```
+
+Production leaves it empty, because production is the address in the source.
+A host, optionally with a port — `127.0.0.1:9100` for a server you are running
+yourself — and a scheme or a trailing slash typed in by habit is dropped
+rather than refused.
+
+This replaces the committed `config.json` the server and the apps both read.
+The file was one copy rather than five, which was the point, but a branch that
+wanted a development server had to edit a tracked file and then remember not
+to land it — and forgetting to land the *other* direction is exactly how a
+Director spent a day asking PeerTube for its games.
 
 ## Going back
 
