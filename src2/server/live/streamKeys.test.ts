@@ -15,7 +15,6 @@ const LIVE = {
   enabled: true,
   bindHost: '0.0.0.0',
   port: 1936,
-  publicUrl: '',
   app: 'live',
   segmentSeconds: 4,
   closeAfterHours: 6
@@ -56,20 +55,18 @@ describe('stream keys', function () {
   })
 
   it('prints the URL people paste, key and all', function () {
-    expect(
-      streamUrlFor(
-        { ...LIVE, publicUrl: 'rtmp://live.example.com:1936/' },
-        '127.0.0.1',
-        'gs_abc'
-      )
-    ).equals('rtmp://live.example.com:1936/live/gs_abc')
+    expect(streamUrlFor(LIVE, 'live.example.com', 'gs_abc')).equals(
+      'rtmp://live.example.com:1936/live/gs_abc'
+    )
   })
 
-  it('falls back to a host somebody can actually reach', function () {
-    // A bind of 0.0.0.0 is not an address to hand out, so the public host the
-    // API is reached by stands in until `publicUrl` is configured.
-    expect(liveBaseUrl(LIVE, 'tube2.example.com')).equals(
-      'rtmp://tube2.example.com:1936'
+  it('names the deployment, never the bind address', function () {
+    // A bind of 0.0.0.0 is not an address anybody can publish to, so the URL
+    // is built from the name this deployment goes by — the same name the
+    // playback links are built from.
+    expect(LIVE.bindHost).equals('0.0.0.0')
+    expect(liveBaseUrl(LIVE, 'develop2.gamestation.co')).equals(
+      'rtmp://develop2.gamestation.co:1936'
     )
   })
 

@@ -8,7 +8,13 @@ import {
   asString
 } from 'cleaners'
 
-import { appServerUrl } from './appConfig'
+import {
+  asAuthority,
+  type Authority,
+  hostOf,
+  httpOrigin,
+  PRIMARY_HOST
+} from '../common/primaryUrl'
 
 export const asServerConfig = asObject({
   /** Where the API listens. Caddy proxies gamestation.co to this. */
@@ -100,14 +106,19 @@ export const asServerConfig = asObject({
   mediaSecret: asOptional(asString, ''),
 
   /**
-   * The origin playback URLs are built against.
+   * What this deployment is called, where that is not `PRIMARY_HOST`.
    *
-   * Empty means the address in the repository's `config.json`, which is what
-   * production wants: one place names the site, and the server reads it like
-   * everything else does. Set this only to point a development server at
-   * itself, e.g. `http://127.0.0.1:9100`.
+   * A **host**, with no scheme: `develop2.gamestation.co`, `127.0.0.1:9100`.
+   * `https` is implied, except for an IP address or `localhost`, which imply
+   * `http`; the stream URL is built from the same name. Every link this
+   * server hands out — playback, invites, sign-in, RTMP — is built from it.
+   *
+   * Empty is production, which is the whole point of it being empty: the one
+   * deployment that runs at the address in the source says nothing, and the
+   * development clones each say their own name once, here, instead of a
+   * branch editing a tracked file it must then remember not to land.
    */
-  publicUrl: asOptional(asString, ''),
+  primaryUrlOverride: asOptional(asString, ''),
 
   /**
    * Serve `/media` from Node. **Development only**: in production Caddy serves
@@ -128,10 +139,10 @@ export const asServerConfig = asObject({
   /**
    * Live streaming in: the RTMP ingest, and the URL people are given for it.
    *
-   * `publicUrl` is what a stream URL is printed as — scheme, host and port,
-   * no path — because the server cannot work out what name an encoder on
-   * somebody's laptop reaches it by. Empty falls back to the bind address,
-   * which is only ever right in development.
+   * `bindHost` is what the ingest listens on; what a stream URL is *printed*
+   * as comes from `primaryUrlOverride` above, because the name an encoder on
+   * somebody's laptop reaches this machine by is the same name a browser
+   * reaches it by, and there is no reason for a deployment to say it twice.
    *
    * The port is 1936 while PeerTube still holds 1935. Moving it changes every
    * URL shown from then on; keys already issued keep working, since the key is
@@ -142,7 +153,6 @@ export const asServerConfig = asObject({
       enabled: asOptional(asBoolean, true),
       bindHost: asOptional(asString, '0.0.0.0'),
       port: asOptional(asNumber, 1936),
-      publicUrl: asOptional(asString, ''),
       /** The RTMP application name: `rtmp://host:port/<app>/<key>`. */
       app: asOptional(asString, 'live'),
       /** Segment length. A multiple of the encoder's keyframe interval. */
@@ -161,7 +171,6 @@ export const asServerConfig = asObject({
       enabled: true,
       bindHost: '0.0.0.0',
       port: 1936,
-      publicUrl: '',
       app: 'live',
       segmentSeconds: 4,
       freeDiskFloorGb: 10
@@ -178,12 +187,19 @@ export const serverConfig: ServerConfig = makeConfig(
 )
 
 /**
- * The address this server answers on.
+ * What this server is called: a host, with a port only where it has one.
  *
- * Its own `publicUrl` when a deployment sets one — a development server
- * pointing at itself — and otherwise the shared address in `config.json`,
- * which is what production runs on. Resolved once, here, so no caller has to
- * remember which of the two it is.
+ * The override when a deployment sets one, and otherwise the name in the
+ * source, which is what production runs on. Resolved once, here, so no caller
+ * has to remember which of the two it is.
  */
-export const publicUrl: string =
-  serverConfig.publicUrl === '' ? appServerUrl() : serverConfig.publicUrl
+export const primaryAuthority: Authority =
+  serverConfig.primaryUrlOverride === ''
+    ? PRIMARY_HOST
+    : asAuthority(serverConfig.primaryUrlOverride)
+
+/** The same name with the scheme it implies: the origin links are built on. */
+export const publicUrl: string = httpOrigin(primaryAuthority)
+
+/** The same name again with no port, which is what a stream URL names. */
+export const primaryHost: string = hostOf(primaryAuthority)

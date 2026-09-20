@@ -37,7 +37,7 @@ import { seasonRoutes } from './routes/seasons'
 import { statsRoutes } from './routes/stats'
 import { teamRoutes } from './routes/teams'
 import { livingWorkers } from './livingWorkers'
-import { publicUrl, serverConfig } from './serverConfig'
+import { primaryHost, publicUrl, serverConfig } from './serverConfig'
 import { stopWorker } from './stopWorker'
 
 /**
@@ -202,17 +202,13 @@ function liveControllerOptions(
 }
 
 function liveRouteOptions(): LiveRouteOptions {
-  let fallbackHost = serverConfig.listenHost
-  try {
-    fallbackHost = new URL(publicUrl).hostname
-  } catch {
-    // A publicUrl that is not a URL is a configuration mistake worth surviving:
-    // the stream URL then names the bind address, which is wrong but visible.
-  }
   return {
     live: serverConfig.live,
     sessionSecret: serverConfig.sessionSecret,
-    fallbackHost
+    // The name this deployment goes by, which is the name an encoder has to
+    // publish to. There is nothing to fall back to and nothing to get wrong:
+    // it is the same fact the playback URLs are built from.
+    host: primaryHost
   }
 }
 
@@ -241,16 +237,6 @@ function startLive(db: ReturnType<typeof makeDatabase>): void {
   if (serverConfig.sessionSecret === '') {
     console.error('live ingest disabled: sessionSecret is not set')
     return
-  }
-  if (serverConfig.live.publicUrl === '') {
-    // Said at the top of the log rather than discovered by an operator whose
-    // stream URL names 0.0.0.0. It is the one live setting with no sensible
-    // default: only the deployment knows what the ingest is called from
-    // outside.
-    console.error(
-      'live.publicUrl is not set: stream URLs will name the bind address, ' +
-        'which nobody outside this machine can publish to'
-    )
   }
   const started = startLiveController(liveControllerOptions(db))
   if (!started) console.error('live ingest did not start')

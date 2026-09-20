@@ -35,7 +35,8 @@ import type { LiveSettings } from '../serverConfig'
 export interface DirectorRouteOptions {
   live: LiveSettings
   sessionSecret: string
-  fallbackHost: string
+  /** What this deployment is called: the host a stream URL names. */
+  host: string
   space?: SpaceSettings
   /** What a camera claimed by a Director is called in the list. */
   deviceLabel?: string
@@ -264,7 +265,7 @@ export function directorRoutes(
       setAudit(res.locals, { entityType: 'liveStream', entityId: row?.id })
       res.json({
         gameId: game.id,
-        url: streamUrlFor(options.live, options.fallbackHost, key),
+        url: streamUrlFor(options.live, options.host, key),
         opensAt: row?.opensAt.toISOString() ?? null,
         closesAt: row?.closesAt?.toISOString() ?? null
       })
