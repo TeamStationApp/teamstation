@@ -5,6 +5,7 @@ import type { PlayerStats } from '../../common/api'
 import { lstrings } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Button } from './Button'
+import { RadioMark } from './RadioMark'
 
 /** What a player's figures are narrowed to. Everything unset is a career. */
 export interface StatFilter {
@@ -151,7 +152,7 @@ function Choice(props: {
       style={[styles.choice, on && styles.choiceOn]}
       onPress={onPress}
     >
-      <Text style={styles.mark}>{on ? '●' : '○'}</Text>
+      <RadioMark on={on} />
       <View style={styles.choiceText}>
         <Text style={styles.choiceLabel}>{label}</Text>
         {detail != null && <Text style={styles.detail}>{detail}</Text>}
@@ -234,10 +235,5 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontSize: theme.rem(1),
     fontWeight: '600',
     color: theme.primaryTextColor
-  },
-  mark: {
-    fontFamily: theme.regularTextFont,
-    fontSize: theme.rem(1),
-    color: theme.activeColor
   }
 }))

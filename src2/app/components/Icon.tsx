@@ -1,6 +1,7 @@
 import React from 'react'
 import { Text } from 'react-native'
 
+import { fonts } from '../theme/fonts'
 import { useTheme } from '../theme/ThemeContext'
 
 /**
@@ -57,9 +58,16 @@ export function Icon(props: IconProps): React.ReactElement {
       importantForAccessibility="no"
       selectable={false}
       style={{
-        fontFamily: 'Material Symbols Outlined',
+        fontFamily: fonts.materialSymbols,
         fontSize: theme.rem(size),
         lineHeight: theme.rem(size),
+        // The line box is exactly the glyph, which is what keeps an icon
+        // centred in a row rather than sitting on a line of invisible
+        // descender space. Android adds that space back by default and then
+        // clips the glyph to the line height, so the top and bottom of every
+        // icon are shaved off; this is the switch that turns it off. It does
+        // nothing on the web, where there is no such padding to begin with.
+        includeFontPadding: false,
         color
       }}
     >

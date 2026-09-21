@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { AccessibilityInfo, Animated, Easing, Text } from 'react-native'
 
+import { USE_NATIVE_DRIVER } from '../platform/nativeDriver'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
 export interface LivePillProps {
@@ -55,22 +56,23 @@ export function LivePill(props: LivePillProps): React.ReactElement {
     // a red pill faded much further than that over a bright one stops reading
     // as red at all — which is the whole of what the pill is for.
     //
-    // Not the native driver: this app is the web build, where there is no
-    // native driver to hand the animation to — asking for one reaches into
-    // React Native's bridge helper and brings the screen down with it.
+    // The driver is the platform's where there is one. A browser has none —
+    // asking react-native-web for it reaches into a bridge helper it does not
+    // have and brings the screen down — and a phone does, which matters here
+    // because this pill sits over a video that is decoding.
     const pulse = Animated.loop(
       Animated.sequence([
         Animated.timing(opacity, {
           toValue: 0.72,
           duration: 800,
           easing: Easing.inOut(Easing.quad),
-          useNativeDriver: false
+          useNativeDriver: USE_NATIVE_DRIVER
         }),
         Animated.timing(opacity, {
           toValue: 1,
           duration: 800,
           easing: Easing.inOut(Easing.quad),
-          useNativeDriver: false
+          useNativeDriver: USE_NATIVE_DRIVER
         })
       ])
     )

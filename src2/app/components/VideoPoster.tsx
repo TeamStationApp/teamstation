@@ -2,7 +2,10 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Image, Pressable, Text, View } from 'react-native'
 
 import { attachHls } from '../player/attachHls'
+import type { VideoHandle } from '../player/videoHandle'
+import { VideoView } from '../player/VideoView'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { Gradient } from './Gradient'
 import { Icon } from './Icon'
 
 export interface VideoPosterProps {
@@ -56,9 +59,9 @@ export interface VideoPosterProps {
  * **left**. Top left keeps it off the duration at the bottom right and off the
  * middle of the frame, which is where the play usually is.
  *
- * The gradient is the one piece of this that is not React Native: there is no
- * gradient primitive, so on the web it is a `View` with a `backgroundImage`.
- * Confining it here means the native port replaces one file.
+ * The two pieces that are not plain React Native — the picture itself and the
+ * gradient over it — are each behind a component with a platform sibling, so
+ * this file says the same thing on a page and on a handset.
  */
 export function VideoPoster(props: VideoPosterProps): React.ReactElement {
   const {
@@ -82,14 +85,19 @@ export function VideoPoster(props: VideoPosterProps): React.ReactElement {
 
   // The poster stays underneath until there are frames to cover it, so the
   // card never flashes empty while the first segment loads.
-  const playInFrame = useCallback(
-    (element: HTMLVideoElement | null): void => {
-      if (element == null || videoUrl == null || videoUrl === '') return
-      const detach = attachHls(element, videoUrl, onVideoGone)
+  const takeVideo = useCallback(
+    (video: VideoHandle | null): void => {
+      // Whatever the last one left behind goes first, whether this is a new
+      // player or none at all.
+      teardown.current?.()
+      teardown.current = undefined
+      if (video == null || videoUrl == null || videoUrl === '') return
+
+      const detach = attachHls(video, videoUrl, onVideoGone)
       const start = (): void => {
-        if (element.paused !== true) return
+        if (!video.paused) return
         setMoving(true)
-        element.play().catch(() => {
+        video.play().catch(() => {
           // Refused even muted. The poster is already there, so there is
           // nothing to say and nothing to put right.
           setMoving(false)
@@ -97,13 +105,13 @@ export function VideoPoster(props: VideoPosterProps): React.ReactElement {
       }
       // `canplay` rather than `loadeddata` once, because a live game watched
       // from a card is watched through whatever the network does to it: a
-      // stall pauses the element, and nothing here would ever start it again.
+      // stall pauses the player, and nothing here would ever start it again.
       // There are no controls on this one, so there is no one to overrule.
-      element.addEventListener('canplay', start)
-      element.addEventListener('loadeddata', start)
+      video.addEventListener('canplay', start)
+      video.addEventListener('loadeddata', start)
       teardown.current = () => {
-        element.removeEventListener('canplay', start)
-        element.removeEventListener('loadeddata', start)
+        video.removeEventListener('canplay', start)
+        video.removeEventListener('loadeddata', start)
         detach()
       }
     },
@@ -144,35 +152,23 @@ export function VideoPoster(props: VideoPosterProps): React.ReactElement {
         // score so those stay on top of both. Clipped to the card's rounded
         // corners by the frame's `overflow: hidden`, exactly like the picture
         // it replaces.
-        //
-        // Web only, like the gradient below and for the same reason: there is
-        // no React Native video primitive here, and the browser's own player
-        // is what decodes HEVC.
-        <video
-          ref={playInFrame}
+        <VideoView
+          source={videoUrl}
+          onHandle={takeVideo}
           muted
-          playsInline
-          style={{
-            position: 'absolute',
-            left: 0,
-            top: 0,
-            width: '100%',
-            height: '100%',
-            objectFit: 'cover',
-            // Faded in only once there are frames, so the card never flashes
-            // empty over the poster while the first segment loads.
-            opacity: moving ? 1 : 0
-          }}
+          resizeMode="cover"
+          // Faded in only once there are frames, so the card never flashes
+          // empty over the poster while the first segment loads.
+          opacity={moving ? 1 : 0}
         />
       )}
 
       {(hasPicture || moving) && (
-        <View
+        <Gradient
           // The bottom fifth for a thumbnail, which carries four characters;
           // the bottom third for a hero, which carries two teams and two
           // scores.
           style={[styles.gradient, hero ? styles.gradientHero : undefined]}
-          pointerEvents="none"
         />
       )}
 
@@ -248,10 +244,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
     left: 0,
     right: 0,
     bottom: 0,
-    height: '20%',
-    // Web only, and deliberately the only place in the app that says so.
-    backgroundImage:
-      'linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0.7) 100%)'
+    height: '20%'
   },
   gradientHero: {
     height: '34%'
