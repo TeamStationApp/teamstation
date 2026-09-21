@@ -9,7 +9,7 @@ import {
   type Session,
   type TeamSummary
 } from '../common/api'
-import gsLogo from './assets/gsLogo.png'
+import { gsLogoSource } from './assets'
 import {
   AppHeader,
   AppNav,
@@ -23,6 +23,7 @@ import type { Route, When } from './navigation/routes'
 import { stacksAfterTabPress } from './navigation/tabPress'
 import {
   currentRoute,
+  popRoute,
   showRoute,
   useBrowserBack
 } from './navigation/useAddressBar'
@@ -46,6 +47,26 @@ import {
 
 export interface AppProps {
   apiBaseUrl?: string
+  /**
+   * A session token kept from the last launch, where the platform can keep
+   * one.
+   *
+   * The web keeps its session in an `HttpOnly` cookie that this code cannot
+   * read and the browser sends by itself, which is the stronger arrangement
+   * and why both are supported. A phone has no cookie jar — `server/auth/
+   * tokens.ts` reads the `Authorization` header first and says as much — so on
+   * a phone the token is carried here.
+   */
+  initialToken?: string
+  /**
+   * Called when the token changes, so a platform that can keep one does.
+   *
+   * Deliberately **not** called with `session.token`: `whoAmI` answers with a
+   * user and no token at all, so writing that through would replace a good
+   * stored token with an empty string on the second launch and sign the person
+   * out with nothing anywhere to say why.
+   */
+  onToken?: (token: string | undefined) => void
 }
 
 /** A screen pushed on top of a tab, rather than one of the tabs itself. */
@@ -109,7 +130,7 @@ type Pushed =
 export function App(props: AppProps): React.ReactElement {
   return (
     <ThemeProvider>
-      <Shell apiBaseUrl={props.apiBaseUrl} />
+      <Shell {...props} />
     </ThemeProvider>
   )
 }
@@ -130,9 +151,27 @@ function Shell(props: AppProps): React.ReactElement {
   // pills, a game's score. The header draws it and never anything else.
   const { handoff, setHandoff } = useHandoffSlot()
 
+  const { initialToken, onToken } = props
   const client = useMemo(
-    () => new GameStationClient({ baseUrl: apiBaseUrl }),
-    [apiBaseUrl]
+    () => new GameStationClient({ baseUrl: apiBaseUrl, token: initialToken }),
+    [apiBaseUrl, initialToken]
+  )
+  /**
+   * A sign-in, or a sign-out, and what the platform should remember of it.
+   *
+   * `client.token` rather than `session.token`, because the two are not the
+   * same thing: the client's is set by the four calls that actually sign
+   * somebody in, while `whoAmI` returns a user and no token, and the session
+   * built from it carries an empty string. Writing *that* through is how a
+   * working session becomes a sign-in screen on the launch after next.
+   */
+  const rememberSession = useCallback(
+    (next: Session | undefined): void => {
+      setSession(next)
+      const token = next == null ? undefined : client.token
+      onToken?.(token == null || token === '' ? undefined : token)
+    },
+    [client, onToken]
   )
   const [session, setSession] = useState<Session | undefined>(undefined)
   // Until we have asked, we do not know whether anybody is signed in. Showing
@@ -161,6 +200,19 @@ function Shell(props: AppProps): React.ReactElement {
   // The address bar is the state, not a copy of it: the app starts on
   // whatever was linked to, and every move writes the new address.
   const [tab, setTab] = useState<NavTabId>(() => tabOf(currentRoute()))
+  /**
+   * The address the app is on, as state rather than as a reading.
+   *
+   * The signed-out half of this shell draws from the address directly — a
+   * sign-in link, an invitation, or the form — and that is right, because none
+   * of those is a place inside the app. But a reading taken during render only
+   * changes what is drawn if something else re-renders, and following a link
+   * into a signed-out app changes nothing else: the tab is already home and
+   * the stack is already empty, so every setter below is a no-op and the
+   * screen stays where it was. A browser never had the problem, because
+   * following a link there is a navigation.
+   */
+  const [route, setRoute] = useState<Route>(() => currentRoute())
   // The address the app was opened on decides what is on the stack, so a link
   // to a game opens that game rather than the screen behind it.
   const [stacks, setStacks] = useState<Record<NavTabId, Pushed[]>>(() => {
@@ -176,7 +228,18 @@ function Shell(props: AppProps): React.ReactElement {
       .whoAmI()
       .then(user => {
         if (!live) return
-        if (user != null) setSession({ token: '', expiresAt: '', user })
+        if (user != null) {
+          setSession({ token: '', expiresAt: '', user })
+          return
+        }
+        // A token that was kept and is no longer good. Sessions last thirty
+        // days and nothing refreshes them, so this is the ordinary end of one
+        // rather than a fault: throw it away, or every launch from here on
+        // sends a dead token and is answered 401 by every screen.
+        if (client.token != null) {
+          client.token = undefined
+          onToken?.(undefined)
+        }
       })
       .catch(() => undefined)
       .finally(() => {
@@ -185,15 +248,33 @@ function Shell(props: AppProps): React.ReactElement {
     return () => {
       live = false
     }
-  }, [client])
+  }, [client, onToken])
+
+  /**
+   * A link to a team or a season is still being turned into a screen.
+   *
+   * Until it is, this app is sitting on an empty home stack, and the effect
+   * below would helpfully write `/` over the very address being resolved.
+   */
+  const resolvingLink = useRef(false)
 
   // A team or a season link carries only an id, and the screens want the whole
-  // summary to draw a header. Resolve it once, on arrival, rather than landing
-  // on the home screen and rewriting the address — which threw the link away.
+  // summary to draw a header. Resolve it on arrival, rather than landing on the
+  // home screen and rewriting the address — which threw the link away.
+  //
+  // This keys off `route`, which changes only when an *address* is handed to
+  // the app — opening cold, a universal link, Android's Back. It deliberately
+  // does not fire on ordinary navigation, or tapping a team on the home screen
+  // would fetch the whole team list again to push a screen already pushed.
+  //
+  // It has to be every address and not just the first, because `stackFor` has
+  // no answer for a team or a season: it returns an empty stack for them, so a
+  // link that arrives while the app is *running* would empty the tab and stop
+  // there, on Home. Cold start only worked because this ran on mount.
   useEffect(() => {
-    const route = currentRoute()
     if (route.name !== 'team' && route.name !== 'season') return
     let live = true
+    resolvingLink.current = true
     const find = async (): Promise<void> => {
       if (route.name === 'team') {
         const teams = await client.teams()
@@ -207,13 +288,20 @@ function Shell(props: AppProps): React.ReactElement {
         push({ name: 'season', season, tab: route.tab, when: route.when })
       }
     }
-    find().catch(() => undefined)
+    find()
+      .catch(() => undefined)
+      .finally(() => {
+        // Whether or not it resolved. A team that has since been deleted must
+        // not leave the address frozen for the rest of the launch.
+        if (live) resolvingLink.current = false
+      })
     return () => {
       live = false
+      resolvingLink.current = false
     }
-    // Once, on the address the app opened on.
+    // `push` is recreated every render and would restart the fetch each time.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [client])
+  }, [client, route])
 
   const stack = stacks[tab]
   const top = stack[stack.length - 1]
@@ -237,12 +325,15 @@ function Shell(props: AppProps): React.ReactElement {
     if (session == null) return
     // Nor while an invitation is open, for the same reason.
     if (joining != null) return
+    // Nor between a team or season link arriving and its screen being pushed.
+    if (resolvingLink.current) return
     showRoute(routeOf(tab, top, when), firstRender.current || inPlace.current)
     firstRender.current = false
     inPlace.current = false
   }, [joining, session, tab, top, when])
 
   const goToRoute = useCallback((route: Route): void => {
+    setRoute(route)
     setJoining(route.name === 'join' ? route.code : undefined)
     const next = tabOf(route)
     setTab(next)
@@ -263,6 +354,11 @@ function Shell(props: AppProps): React.ReactElement {
     setStacks(current => ({ ...current, [tab]: [...current[tab], next] }))
   }
   const pop = (): void => {
+    // The address goes back with the screen. On the web the browser owns the
+    // history and this does nothing; on a phone the two are kept by hand, and
+    // a chevron that left a step behind would make the next press of the
+    // system Back button appear to do nothing.
+    popRoute()
     setStacks(current => ({ ...current, [tab]: current[tab].slice(0, -1) }))
   }
 
@@ -404,7 +500,7 @@ function Shell(props: AppProps): React.ReactElement {
           <Image
             accessibilityIgnoresInvertColors
             accessibilityLabel="GameStation"
-            source={{ uri: gsLogo }}
+            source={gsLogoSource}
             style={styles.bootMark}
           />
           <ActivityIndicator color={theme.secondaryTextColor} />
@@ -423,7 +519,6 @@ function Shell(props: AppProps): React.ReactElement {
     // A link from the sign-in e-mail lands here, signed out, which is the
     // whole point of it. It spends the token only when it can tell a person is
     // behind the request.
-    const route = currentRoute()
     return (
       <View style={styles.app}>
         <AppHeader
@@ -435,7 +530,7 @@ function Shell(props: AppProps): React.ReactElement {
             client={client}
             code={route.code}
             signedIn={false}
-            onSignedIn={setSession}
+            onSignedIn={rememberSession}
             onOpen={openFromInvite}
           />
         ) : route.name === 'signInLink' ? (
@@ -443,10 +538,10 @@ function Shell(props: AppProps): React.ReactElement {
             client={client}
             token={route.token}
             requestId={route.requestId}
-            onSignedIn={setSession}
+            onSignedIn={rememberSession}
           />
         ) : (
-          <LoginScreen client={client} onSignedIn={setSession} />
+          <LoginScreen client={client} onSignedIn={rememberSession} />
         )}
       </View>
     )
@@ -460,7 +555,7 @@ function Shell(props: AppProps): React.ReactElement {
           client={client}
           code={joining}
           signedIn
-          onSignedIn={setSession}
+          onSignedIn={rememberSession}
           onOpen={openFromInvite}
         />
       </View>
@@ -498,7 +593,7 @@ function Shell(props: AppProps): React.ReactElement {
         session={session}
         onSignOut={() => {
           client.signOut().catch(() => undefined)
-          setSession(undefined)
+          rememberSession(undefined)
           setStacks({ home: [], videos: [], schedule: [] })
           setTab('home')
         }}

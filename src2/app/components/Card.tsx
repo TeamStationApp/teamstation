@@ -1,6 +1,7 @@
 import React from 'react'
 import { type StyleProp, View, type ViewStyle } from 'react-native'
 
+import { elevationFor } from '../theme/elevation'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
 export interface CardProps {
@@ -10,8 +11,14 @@ export interface CardProps {
   /** A left edge in the accent colour, marking a row worth noticing. */
   accent?: boolean
   style?: StyleProp<ViewStyle>
-  /** So a screen can watch where this card is as the page scrolls. */
-  ref?: (node: unknown) => void
+  /**
+   * So a screen can watch where this card is as the page scrolls.
+   *
+   * A `React.Ref` rather than a callback, because `useHandoff` hands back an
+   * animated ref on a phone — it measures the same rectangle on the animation
+   * thread, where a browser can simply be asked for it.
+   */
+  ref?: React.Ref<React.ComponentRef<typeof View>>
 }
 
 /**
@@ -26,6 +33,10 @@ export function Card(props: CardProps): React.ReactElement {
   return (
     <View
       ref={ref}
+      // A card somebody is watching the position of must survive Android's
+      // view flattening, which folds away any view that only groups its
+      // children — and a folded view has no position to measure.
+      collapsable={ref == null ? undefined : false}
       style={[
         styles.card,
         !flush && styles.padded,
@@ -48,7 +59,8 @@ const getStyles = cacheStyles((theme: Theme) => ({
     shadowColor: theme.shadowColor,
     shadowOpacity: 1,
     shadowRadius: theme.rem(0.375),
-    shadowOffset: { width: 0, height: theme.rem(0.125) }
+    shadowOffset: { width: 0, height: theme.rem(0.125) },
+    elevation: elevationFor(theme.rem(0.375))
   },
   padded: {
     padding: theme.rem(theme.spaceMdRem)
