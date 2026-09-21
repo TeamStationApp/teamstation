@@ -1,20 +1,45 @@
 {
+  // The 2.0 tree is `src2/`; this file, the package and the lockfile sit at
+  // the repository root, which is also exactly how a deploy lays a version
+  // out. That matters more than it looks: this config used to live *inside*
+  // `src2` and inherit from a tsconfig one directory above the package, and
+  // the server deployed that directory alone — so the parent was absent and
+  // TypeScript silently fell back to its defaults. `strict` went off with it,
+  // and Kysely decides which columns may be omitted from an insert by asking
+  // whether `undefined` is assignable, which without `strictNullChecks` is
+  // always true, so every column with a default became required and the build
+  // failed on eighteen files at once, none of which were the problem.
+  //
+  // The rule that prevents a repeat is now the deploy's, not this file's:
+  // `deploy/deploy.sh` ships the root configuration *with* `src2`, so what is
+  // built on the server is the same tree as here. Nothing in `src2` may reach
+  // above the root, and `src/` — frozen 1.0, kept for reference — is not part
+  // of this project.
+
   "compilerOptions": {
-    "target": "es5",
-    "lib": ["dom", "dom.iterable", "esnext"],
+    "target": "es2022",
+    "lib": ["es2023"],
+    "types": ["node"],
+    "module": "esnext",
+    "moduleResolution": "node",
+    "outDir": "lib",
+    "rootDir": "src2",
+
+    // Kysely's optional-column inference rests on this one. Turning it off does
+    // not loosen a check here, it breaks a type.
+    "strict": true,
+
     "allowJs": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
-    "strict": true,
     "forceConsistentCasingInFileNames": true,
     "noFallthroughCasesInSwitch": true,
-    "module": "esnext",
-    "moduleResolution": "node",
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": false,
     "jsx": "react-jsx"
   },
-  "include": ["src/**/*", "tools/**/*.ts"]
+  "include": ["src2/**/*.ts", "src2/**/*.tsx"],
+  "exclude": ["lib", "node_modules"]
 }

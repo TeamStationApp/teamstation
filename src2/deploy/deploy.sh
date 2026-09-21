@@ -112,7 +112,7 @@ say "At $SHA — $SUBJECT"
 
 # ---- 2. Build into a new directory -------------------------------------------
 
-VERSION="$(node -p "require('$REPO/src2/package.json').version")-$(date +%Y%m%d-%H%M%S)-$SHA"
+VERSION="$(node -p "require('$REPO/package.json').version")-$(date +%Y%m%d-%H%M%S)-$SHA"
 TARGET="$VERSIONS/$VERSION"
 [ -e "$TARGET" ] && die "$TARGET already exists"
 
@@ -124,12 +124,27 @@ mkdir -p "$TARGET"
 trap 'rm -rf "${TARGET:?}"' ERR
 # The source, without the git metadata or anything gitignored. No --delete,
 # because the directory is new every time — which is the point.
-git -C "$REPO" archive HEAD src2 | tar -x -C "$TARGET" --strip-components=1
+#
+# **The version directory is a copy of the repository, laid out the same way.**
+# It used to be `src2`'s contents flattened to the top, which meant the package
+# was built here against a tree that did not exist anywhere else, and the
+# tsconfig one directory above the package — present in a checkout, absent
+# here — silently stopped applying. Shipping the root configuration *with*
+# `src2` is what stops that being possible again.
+#
+# `src/` is GameStation 1.0, frozen at `v1.0.0` and not part of this: naming
+# what ships rather than excluding what does not means a new directory has to
+# be asked for before it can reach the server.
+git -C "$REPO" archive HEAD \
+  package.json package-lock.json .npmrc \
+  tsconfig.json tsconfig.app.json tsconfig.server.json \
+  src2 |
+  tar -x -C "$TARGET"
 
 cd "$TARGET"
 npm ci --no-audit --fund=false
-npm run build        # tsc  → lib/
-npm run build.web    # esbuild → dist/
+npm run build        # tsc     src2/ → lib/
+npm run build.web    # esbuild src2/ → dist/
 
 # What is running, written where the server can read it. Without this the
 # health endpoint reported a bare `0.1.0` and the only way to tell one deploy
