@@ -5,17 +5,12 @@ import {
   useSharedValue
 } from 'react-native-reanimated'
 
+import type { Handoff } from './handoff'
+
+export type { Handoff }
+
 /** How far the source travels past the header before the copy is fully in. */
 const RAMP = 48
-
-export interface Handoff {
-  /** 0 while the source is in view, 1 once it has passed under the header. */
-  progress: SharedValue<number>
-  /** Put on the thing that scrolls away — a card, a row of pills. */
-  ref: (node: unknown) => void
-  /** Put on the screen's scroll view. */
-  handleScroll: () => void
-}
 
 /**
  * The thing you were looking at, handed up to the header as it leaves.

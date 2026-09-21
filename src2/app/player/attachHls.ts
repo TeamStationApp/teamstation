@@ -1,23 +1,7 @@
 import Hls from 'hls.js'
 
-/**
- * Whether a stumble in the stream should be followed by playing again.
- *
- * Three things have to be true at once, and the third is the one that keeps
- * this honest: **a pause the viewer asked for is left alone.** Only a pause
- * that arrived while a recovery was in flight is the recovery's doing, and only
- * that one is undone.
- */
-export function shouldResumeAfterRecovery(state: {
-  /** A recovery is in flight, so a pause now was not the viewer's. */
-  recovering: boolean
-  /** What the viewer last asked for. */
-  wantsToPlay: boolean
-  /** What the element is actually doing. */
-  paused: boolean
-}): boolean {
-  return state.recovering && state.wantsToPlay && state.paused
-}
+import { shouldResumeAfterRecovery } from './resumeAfterRecovery'
+import type { VideoHandle } from './videoHandle'
 
 /**
  * Points a `<video>` at an HLS playlist, whichever way this browser needs.
@@ -32,7 +16,7 @@ export function shouldResumeAfterRecovery(state: {
  * buffers ahead, and leaking one per visited game would eat the tab.
  */
 export function attachHls(
-  video: HTMLVideoElement,
+  handle: VideoHandle,
   url: string,
   /**
    * Called once when the player has stopped trying. The address itself is the
@@ -42,6 +26,15 @@ export function attachHls(
    */
   onGiveUp?: () => void
 ): () => void {
+  // The one place the seam is crossed. `VideoHandle` is what the six modules
+  // that drive the picture agree on; the three lines below — `src`, `load`,
+  // `canPlayType` — and the element hls.js is handed are the browser's own,
+  // and they have no equivalent on a phone, which is why the whole of this
+  // file has a native sibling rather than a branch inside it. The cast is
+  // sound here and nowhere else: this file is only ever reached from the web
+  // build, where the handle *is* the element.
+  const video = handle as unknown as HTMLVideoElement
+
   // Media Source first, which is the order hls.js itself recommends, and not
   // `canPlayType`: Chrome answers `maybe` for HLS whether or not it can
   // actually play it, so that answer decides nothing. Anything without Media
@@ -100,7 +93,7 @@ export function attachHls(
    * apart: a pause that arrives while a recovery is in flight is the recovery's
    * doing, and any other is theirs.
    */
-  let wantsToPlay = video.paused !== true
+  let wantsToPlay = handle.paused !== true
   let recovering = false
   const onPlay = (): void => {
     wantsToPlay = true
@@ -108,8 +101,8 @@ export function attachHls(
   const onPause = (): void => {
     if (!recovering) wantsToPlay = false
   }
-  video.addEventListener('play', onPlay)
-  video.addEventListener('pause', onPause)
+  handle.addEventListener('play', onPlay)
+  handle.addEventListener('pause', onPause)
 
   /** Puts it back to playing, if that is what it was doing. */
   const resume = (): void => {
@@ -117,13 +110,13 @@ export function attachHls(
     const wanted = shouldResumeAfterRecovery({
       recovering,
       wantsToPlay,
-      paused: video.paused
+      paused: handle.paused
     })
     recovering = false
     if (!wanted) return
     // A promise, and a rejected one is not an error worth showing: an autoplay
     // policy that refuses here would have refused the first play too.
-    video.play().catch(() => undefined)
+    handle.play().catch(() => undefined)
   }
 
   hls.on(Hls.Events.ERROR, (event, data) => {
@@ -170,8 +163,8 @@ export function attachHls(
   hls.attachMedia(video)
   return () => {
     if (timer != null) clearTimeout(timer)
-    video.removeEventListener('play', onPlay)
-    video.removeEventListener('pause', onPause)
+    handle.removeEventListener('play', onPlay)
+    handle.removeEventListener('pause', onPause)
     hls.destroy()
   }
 }
