@@ -1,0 +1,13 @@
+# What a server build does not need.
+#
+# A server build is the package, the lockfile, the tsconfigs and `src2`, so
+# `ios/` and `android/` are left out by not being named at all. `src2` travels
+# whole, though, and `export-ignore` is what keeps the parts of it only a Mac
+# has any use for out of the archive.
+#
+# The **packages** they need are a different question and cannot be solved
+# here: the server install is a plain `npm ci`, and it has to be, because the
+# server starts through `sucrase` from `devDependencies`. So the native
+# packages do install on the server. See `src2/MOBILE.md` for what that costs.
+src2/maestro   export-ignore
+src2/tools     export-ignore
