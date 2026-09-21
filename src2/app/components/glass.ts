@@ -47,5 +47,5 @@ export function glassStyle(theme: Theme, opaque: boolean = false): ViewStyle {
 
 /** A web style React Native has no name for. One cast, kept in one place. */
 export function webStyle(style: Record<string, unknown>): ViewStyle {
-  return style as unknown as ViewStyle
+  return style
 }

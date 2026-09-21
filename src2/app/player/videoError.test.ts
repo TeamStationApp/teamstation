@@ -14,8 +14,7 @@ describe('addressIsWrong', function () {
       addressIsWrong(
         failure({
           error: {
-            errorString:
-              'InvalidResponseCodeException: Response code: 403',
+            errorString: 'InvalidResponseCodeException: Response code: 403',
             errorCode: '23001'
           }
         })

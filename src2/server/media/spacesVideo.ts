@@ -72,8 +72,7 @@ export async function uploadVideoDirectory(options: {
 }
 
 export type VerifyResult =
-  | { ok: true; checked: number }
-  | { ok: false; reason: string }
+  { ok: true; checked: number } | { ok: false; reason: string }
 
 /**
  * Asks the Space what it has, and compares.

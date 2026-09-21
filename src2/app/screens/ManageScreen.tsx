@@ -24,8 +24,6 @@ export interface ManageScreenProps {
   client: GameStationClient
   scopeKind: 'league' | 'season' | 'team'
   scopeId: string
-  /** Who is looking, so the page does not offer to lock them out. */
-  meUserId?: string
   /** Tells the shell what this page is called, once it knows. */
   onTitle?: (title: string) => void
 }
@@ -62,7 +60,7 @@ export interface ManageScreenProps {
 const TABLE_MIN_REM = 58
 
 export function ManageScreen(props: ManageScreenProps): React.ReactElement {
-  const { client, scopeKind, scopeId, meUserId, onTitle } = props
+  const { client, scopeKind, scopeId, onTitle } = props
   const theme = useTheme()
   const styles = getStyles(theme)
 
@@ -134,7 +132,7 @@ export function ManageScreen(props: ManageScreenProps): React.ReactElement {
     })
   }
 
-  const people = page?.people ?? []
+  const people = useMemo(() => page?.people ?? [], [page])
   const shown = useMemo(() => {
     const wanted = filter.trim().toLowerCase()
     if (wanted === '') return people

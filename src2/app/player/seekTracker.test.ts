@@ -40,8 +40,9 @@ describe('believing the player about the playhead', function () {
     let target: number | null = null
     for (let frame = 0; frame < 10; frame += 1) {
       target = 600 - frame * 0.04
-      expect(shouldAdoptProgress({ target, reported: 600, sentAt: 0, now: 16 }))
-        .equals(frame < 3)
+      expect(
+        shouldAdoptProgress({ target, reported: 600, sentAt: 0, now: 16 })
+      ).equals(frame < 3)
     }
     // And the one acknowledgement that does arrive names the last of them.
     expect(answersSeek(target, 599.64)).equals(true)

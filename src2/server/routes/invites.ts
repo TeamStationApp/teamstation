@@ -18,10 +18,9 @@ import {
   findInviteByCode,
   findInviteById,
   type Invite,
-  type InviteScopeType,
   inviteProblem,
+  type InviteScopeType,
   listInvites,
-  mayInvite,
   mayInviteTo,
   redeemInvite,
   revokeInvite,
@@ -121,7 +120,8 @@ export function inviteRoutes(
       const actor = req.actor
       if (actor == null) throw unauthorized()
       const scopeType = asScopeType(req.query.scopeType)
-      const scopeId = String(req.query.scopeId ?? '')
+      const scopeId =
+        typeof req.query.scopeId === 'string' ? req.query.scopeId : ''
       if (scopeId === '') throw badRequest('scopeId is required')
 
       const scopes = await adminScopes(db, actor.userId, actor.isAdmin)

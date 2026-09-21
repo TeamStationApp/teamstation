@@ -23,21 +23,22 @@ describe('routeOfUrl', function () {
   })
 
   it('keeps the query on a scheme link', function () {
-    expect(routeOfUrl('gamestation://players/u1?tab=stats&season=s1')).deep
-      .equals({
-        name: 'player',
-        userId: 'u1',
-        tab: 'stats',
-        seasonId: 's1',
-        teamId: undefined,
-        year: undefined
-      })
+    expect(
+      routeOfUrl('gamestation://players/u1?tab=stats&season=s1')
+    ).deep.equals({
+      name: 'player',
+      userId: 'u1',
+      tab: 'stats',
+      seasonId: 's1',
+      teamId: undefined,
+      year: undefined
+    })
   })
 
   it('takes a sign-in link out of the mail', function () {
-    expect(routeOfUrl('https://gamestation.co/signin/tok123?r=req9')).deep.equals(
-      { name: 'signInLink', token: 'tok123', requestId: 'req9' }
-    )
+    expect(
+      routeOfUrl('https://gamestation.co/signin/tok123?r=req9')
+    ).deep.equals({ name: 'signInLink', token: 'tok123', requestId: 'req9' })
   })
 
   it('takes an invite link in either form', function () {
@@ -57,9 +58,9 @@ describe('routeOfUrl', function () {
   })
 
   it('drops a fragment, which addresses nothing here', function () {
-    expect(routeOfUrl('https://gamestation.co/videos?when=all#top')).deep.equals(
-      { name: 'videos', when: 'all' }
-    )
+    expect(
+      routeOfUrl('https://gamestation.co/videos?when=all#top')
+    ).deep.equals({ name: 'videos', when: 'all' })
   })
 
   it('takes a bare path', function () {
