@@ -3,6 +3,7 @@ import { Pressable, Text, View } from 'react-native'
 
 import type { GameStationClient, Invite } from '../../common/api'
 import { lstrings, sprintf } from '../locales/strings'
+import { copyToClipboard } from '../platform/clipboard'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Button } from './Button'
 import { Card } from './Card'
@@ -232,12 +233,6 @@ function problemLabel(problem: Invite['problem']): string | undefined {
 }
 
 /** The clipboard, where this app runs: a browser, for now. */
-function copyToClipboard(text: string): void {
-  const clipboard = (globalThis as { navigator?: Navigator }).navigator
-    ?.clipboard
-  if (clipboard == null) return
-  clipboard.writeText(text).catch(() => undefined)
-}
 
 const getStyles = cacheStyles((theme: Theme) => ({
   section: {

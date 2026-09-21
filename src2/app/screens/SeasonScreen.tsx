@@ -164,7 +164,7 @@ export function SeasonScreen(props: SeasonScreenProps): React.ReactElement {
             from. Seasons made by hand have none, and the glyph
             stands in exactly as it does on the home list.
           */}
-          <Emblem uri={season.logoUrl} fallback="▦" size={2.25} />
+          <Emblem uri={season.logoUrl} fallback="" icon="event" size={2.25} />
           <Text style={styles.seasonName}>{season.name}</Text>
           {onManage != null && (
             <ManageGear
@@ -420,7 +420,12 @@ const getStyles = cacheStyles((theme: Theme) => ({
     color: theme.primaryTextColor
   },
   cell: {
-    width: theme.rem(2.5),
+    // 2.25 rather than 2.5: five figure columns at a quarter-rem each hand a
+    // whole rem back to the name beside them, which is what stops a team
+    // called `SS2 Strawberry` ending in an ellipsis on Android. Every figure
+    // here is at most three characters and `DIFF` is the widest heading, so
+    // none of them is any tighter for it.
+    width: theme.rem(2.25),
     textAlign: 'right',
     fontFamily: theme.semiBoldTextFont,
     fontSize: theme.rem(0.875),

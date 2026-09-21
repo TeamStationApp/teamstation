@@ -23,6 +23,44 @@ export const SIDE_MIN = 300
  * list takes what is left — and on a 667pt phone that is less than 300.
  */
 export const SIDE_MIN_SHORT = 260
+/**
+ * The narrowest picture worth giving two columns to.
+ *
+ * Below this the side-by-side arrangement is costing the picture more than
+ * the list is gaining, and the window is better off stacked.
+ */
+export const MIN_SHORT_VIDEO = 320
+/**
+ * The least room worth drawing the score card in.
+ *
+ * Below this the card would be squeezed to nothing, so its contents go into
+ * the column beside the picture instead. It is what separates a phone on its
+ * side from a laptop, which a comparison of widths cannot do.
+ */
+export const CARD_MIN_HEIGHT = 120
+/**
+ * The tallest window that can be "short" at all.
+ *
+ * Measured under the chrome. A phone on its side has about 340 points there;
+ * a laptop at 1366x768 has 696. Without this the card-room test alone hid the
+ * score card on two of the commonest laptop resolutions, because at that size
+ * a full-width picture really does leave little room above it — the window is
+ * not short, the *picture* is greedy, and the answer is to shrink the picture
+ * rather than to drop the card.
+ *
+ * It also stops a header of an unexpected height deciding the layout, which
+ * the card-room test alone did not: that turned on 14 points, and a header
+ * measuring 72 rather than the 48 a test assumed was enough to hide the card
+ * on two of the commonest laptop resolutions.
+ *
+ * **Do not read 500 as headroom.** Against a *phone* it is enormous — 340
+ * against 500 — but the gate turns between a 540-tall window and a 560-tall
+ * one, and half of a 1080 monitor is 540. So against something somebody
+ * actually does the margin is ten or twenty points. Both sides of that
+ * boundary are sensible, which is why it is left alone; it is not slack to
+ * spend.
+ */
+export const SHORT_WINDOW_MAX = 500
 export const GUTTER = 24
 export const PAGE_MARGIN = 24
 /**
@@ -108,7 +146,47 @@ export function watchLayout(input: WatchLayoutInput): WatchLayout {
    * in it instead and the picture moves to the left, which is the same two
    * columns a desktop gets and for the same reason.
    */
-  const short = heightBound + GUTTER + SIDE_MIN_SHORT <= stackedWidth
+  //
+  // **`short` means there is no room for a card above the picture.** Say that,
+  // rather than comparing widths and hoping it follows.
+  //
+  // Two earlier versions compared widths. The first asked whether the picture
+  // at its full height-bound width would fit beside a column, which said no
+  // on a phone that had room to spare once the picture was allowed to shrink.
+  // The second asked whether `heightBound < stackedWidth` — but that is true
+  // of *every* 16:9 and 16:10 window, because it is the definition of one. It
+  // is not "a phone on its side", and it took the score card off every common
+  // laptop: gone at 1366x768 and 1920x1080, drawn at 1920x1200, with the
+  // two-column arrangement otherwise byte-identical either side of the flip.
+  // The slack in the first version had been doing that work by accident.
+  //
+  // So: work out the picture this window would actually get side by side,
+  // and ask what is left above it.
+  //
+  // The column's floor keys off the **width**, not off `short`. A list has to
+  // be 300 wide to be worth reading on a desktop and may go to 260 on a phone
+  // that has not got 300 to give; tying that to `short` handed the phone's
+  // floor to any desktop window that happened to be short, and a 1366-wide
+  // laptop was showing a 260-point list.
+  const sideFloor = width >= TWO_COLUMN_MIN ? SIDE_MIN : SIDE_MIN_SHORT
+
+  const splitVideoWidth = Math.min(
+    row - sideFloor,
+    heightBound,
+    MAX_VIDEO_WIDTH
+  )
+  const roomForCard =
+    height - chromeHeight - belowVideo - splitVideoWidth / aspect
+
+  const short =
+    // A window that is actually short. Without this the test below fires on a
+    // laptop, where a full-width picture genuinely does crowd the card — but
+    // there the right answer is to shrink the picture, not drop the card.
+    height - chromeHeight <= SHORT_WINDOW_MAX &&
+    // Nowhere to put the card, so the card's contents move into the column.
+    roomForCard < CARD_MIN_HEIGHT &&
+    // And what is left is still a picture worth giving two columns to.
+    splitVideoWidth >= MIN_SHORT_VIDEO
 
   const mode: WatchMode = short
     ? 'sideBySide'
@@ -130,13 +208,13 @@ export function watchLayout(input: WatchLayoutInput): WatchLayout {
       ? 0
       : short
         ? Math.max(
-            SIDE_MIN_SHORT,
+            sideFloor,
             Math.min(
               SIDE_WIDTH,
-              row - Math.min(heightBound, MAX_VIDEO_WIDTH, row - SIDE_MIN_SHORT)
+              row - Math.min(heightBound, MAX_VIDEO_WIDTH, row - sideFloor)
             )
           )
-        : Math.max(SIDE_MIN, Math.min(SIDE_WIDTH, row - MIN_VIDEO_WIDTH))
+        : Math.max(sideFloor, Math.min(SIDE_WIDTH, row - MIN_VIDEO_WIDTH))
 
   // Stacked, the picture is edge to edge, the way a phone shows one
   // everywhere else: a margin either side leaves a sliver of the highlight

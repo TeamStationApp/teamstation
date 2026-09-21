@@ -2,9 +2,10 @@ import React from 'react'
 import { Pressable, Text, View } from 'react-native'
 
 import { edgeMarginRem } from '../layout/margins'
+import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Emblem } from './Emblem'
-import { glassStyle } from './glass'
+import { GlassView } from './GlassView'
 import { GsMark } from './GsMark'
 import { Icon } from './Icon'
 import { useBreakpoint } from './useBreakpoint'
@@ -63,10 +64,29 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
   const styles = getStyles(theme)
   const breakpoint = useBreakpoint()
   const wide = breakpoint !== 'phone'
+  // The glass runs under the status bar and the island, which is what makes it
+  // glass; the row inside it starts below them. The height reported through
+  // `onHeight` is the whole thing, so the content's top padding and the pegged
+  // picture clear the bar and the inset together without either of them
+  // knowing an inset exists.
+  //
+  // Held sideways the insets are at the sides instead, and the margin takes
+  // whichever is wider — the design's, or the corner's.
+  const insets = useInsets()
+  const margin = theme.rem(edgeMarginRem(theme, wide ? 'tablet' : 'phone'))
 
   return (
-    <View
-      style={[styles.header, wide && styles.headerWide, glassStyle(theme)]}
+    <GlassView
+      style={[
+        styles.header,
+        wide && styles.headerWide,
+        {
+          height: theme.rem(3) + insets.top,
+          paddingTop: insets.top,
+          paddingLeft: Math.max(margin, insets.left),
+          paddingRight: Math.max(margin, insets.right)
+        }
+      ]}
       onLayout={event => {
         onHeight?.(event.nativeEvent.layout.height)
       }}
@@ -135,7 +155,7 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
           </Pressable>
         )}
       </View>
-    </View>
+    </GlassView>
   )
 }
 

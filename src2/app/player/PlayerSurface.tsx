@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef } from 'react'
+import React, { useMemo, useRef } from 'react'
 import { Text, View } from 'react-native'
 import {
   GestureDetector,
@@ -7,15 +7,27 @@ import {
   useTapGesture
 } from 'react-native-gesture-handler'
 
+import { Icon } from '../components/Icon'
+import { elevationFor } from '../theme/elevation'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { engineOf, liveRects, type Rect } from './controlGeometry'
+import { liveRects, type Rect } from './controlGeometry'
+import { playerEngine } from './engine'
 import { slowMotion } from './slowMotion'
+import { useKeyboardShortcuts } from './useKeyboardShortcuts'
+import type { VideoHandle } from './videoHandle'
 import { seekBy, STEP_SECONDS, type Zone, zoneFor } from './zones'
 
 export interface PlayerSurfaceProps {
-  videoRef: React.RefObject<HTMLVideoElement | null>
+  videoRef: React.RefObject<VideoHandle | null>
   width: number
   height: number
+  /**
+   * Whether the player's own control bar is on screen right now.
+   *
+   * `true` unless something says otherwise, which keeps a browser exactly as
+   * it was: it cannot tell us, and its rectangles are the measured ones.
+   */
+  controlsVisible?: boolean
   children: React.ReactNode
 }
 
@@ -23,38 +35,44 @@ export interface PlayerSurfaceProps {
 const HOLD_MS = 250
 
 /**
- * The nine squares, and the keyboard.
+ * The nine squares, and the keyboard where there is one.
  *
  * The middle sides move ten seconds a tap; the top and bottom middles run at a
- * quarter speed for as long as they are held; every other square pauses. The
- * arrow keys do the same thing, and are taken in the capture phase because the
- * browser's own control bar takes them for itself once the scrubber has focus.
+ * quarter speed for as long as they are held; every other square pauses. On a
+ * laptop the arrow keys do the same thing, taken in the capture phase because
+ * the control bar takes them for itself once the scrubber has focus.
  *
- * The browser's controls stay, and they win where they are: this layer is the
- * picture minus the rectangles they occupy, in pieces, so a press on the
- * scrubber or the fullscreen button reaches them untouched. Which piece catches
- * a press makes no difference — the zone is worked out against the whole
- * picture, so the grid is even thirds however it has been cut up.
+ * **The player's own controls stay, and they win where they are.** Whose they
+ * are depends on where this is running — the browser's, AVPlayer's or
+ * ExoPlayer's — and `controlGeometry.ts` knows where each of them puts things.
+ * This layer is the picture minus the rectangles they occupy, in pieces, so a
+ * press on the scrubber or the fullscreen button reaches them untouched. Which
+ * piece catches a press makes no difference: the zone is worked out against
+ * the whole picture, so the grid is even thirds however it has been cut up.
  */
 export function PlayerSurface(props: PlayerSurfaceProps): React.ReactElement {
-  const { videoRef, width, height, children } = props
+  const { videoRef, width, height, controlsVisible = true, children } = props
   const theme = useTheme()
   const styles = getStyles(theme)
   const slow = useMemo(() => slowMotion(() => videoRef.current), [videoRef])
   const [speed, setSpeed] = React.useState(0)
   const holding = useRef(false)
 
-  const engine = useMemo(
-    () => engineOf(typeof navigator === 'undefined' ? '' : navigator.userAgent),
-    []
-  )
+  const engine = useMemo(() => playerEngine(), [])
   const pieces = useMemo(
-    () => liveRects(width, height, engine),
-    [engine, height, width]
+    // A hole is cut for a control, not for where a control sometimes is. The
+    // bar fades after a few seconds; while it is gone the whole picture is
+    // ours, and on Android that is the difference between the square that
+    // runs the film backwards being reachable and being covered up.
+    () =>
+      controlsVisible
+        ? liveRects(width, height, engine)
+        : [{ x: 0, y: 0, w: width, h: height }],
+    [controlsVisible, engine, height, width]
   )
 
   /** `play()` returns a promise the caller has no use for, and may reject. */
-  const play = (video: HTMLVideoElement): void => {
+  const play = (video: VideoHandle): void => {
     video.play().catch(() => undefined)
   }
 
@@ -69,9 +87,7 @@ export function PlayerSurface(props: PlayerSurfaceProps): React.ReactElement {
       seekBy(video, STEP_SECONDS)
       return
     }
-    // Explicit comparisons: the DOM types are not in this project's lib, so
-    // `paused` arrives as `any` and the linter rightly refuses to guess.
-    if (video.paused === true) play(video)
+    if (video.paused) play(video)
     else video.pause()
   }
 
@@ -89,63 +105,16 @@ export function PlayerSurface(props: PlayerSurfaceProps): React.ReactElement {
     setSpeed(0)
   }
 
-  // The keyboard, while this screen is on top. Capture, because the native
-  // control bar seeks on arrow keys the moment its scrubber has focus, and a
-  // bubble-phase listener arrives after it has already moved.
-  useEffect(() => {
-    const isTyping = (target: EventTarget | null): boolean => {
-      const node = target as HTMLElement | null
-      const tag = node?.tagName.toLowerCase()
-      return (
-        tag === 'input' ||
-        tag === 'textarea' ||
-        node?.isContentEditable === true
-      )
-    }
-    const down = (event: KeyboardEvent): void => {
-      const video = videoRef.current
-      if (video == null) return
-      if (
-        event.ctrlKey === true ||
-        event.metaKey === true ||
-        event.altKey === true
-      ) {
-        return
-      }
-      if (isTyping(event.target)) return
-      if (event.key === 'ArrowLeft') {
-        event.preventDefault()
-        seekBy(video, -STEP_SECONDS)
-      } else if (event.key === 'ArrowRight') {
-        event.preventDefault()
-        seekBy(video, STEP_SECONDS)
-      } else if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
-        event.preventDefault()
-        if (event.repeat === true || holding.current) return
-        beginSlow(event.key === 'ArrowUp' ? 'slowForward' : 'slowBack')
-      } else if (event.key === ' ' || event.key === 'k') {
-        event.preventDefault()
-        act('toggle')
-      }
-    }
-    const up = (event: KeyboardEvent): void => {
-      if (event.key === 'ArrowUp' || event.key === 'ArrowDown') endSlow()
-    }
-    // A key held while the tab changes never delivers its `keyup`.
-    const blur = (): void => {
-      endSlow()
-    }
-    window.addEventListener('keydown', down, true)
-    window.addEventListener('keyup', up, true)
-    window.addEventListener('blur', blur)
-    return () => {
-      window.removeEventListener('keydown', down, true)
-      window.removeEventListener('keyup', up, true)
-      window.removeEventListener('blur', blur)
-      endSlow()
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [videoRef])
+  // The keyboard, on a platform that has one. Lifted out because React Native
+  // defines `global.window` and gives it no `addEventListener`, so binding to
+  // it here brought down the one screen the app is for.
+  useKeyboardShortcuts({
+    video: () => videoRef.current,
+    act,
+    beginSlow,
+    endSlow,
+    holding: () => holding.current
+  })
 
   return (
     <View style={[styles.surface, { width, height }]}>
@@ -163,9 +132,20 @@ export function PlayerSurface(props: PlayerSurfaceProps): React.ReactElement {
       ))}
       {speed !== 0 && (
         <View style={styles.speed} pointerEvents="none">
-          <Text style={styles.speedText}>
-            {speed < 0 ? '◀ 0.25×' : '0.25×'}
-          </Text>
+          {/*
+            A Material Symbol turned round, not a `◀`. The triangle was a
+            literal U+25C0 drawn in the app's own font, which has no such
+            glyph — a browser borrows one and iOS draws the missing-glyph
+            box, so the backwards pill read `? 0.25×` on a phone. The arrow
+            that ships with the app, pointed the other way, is the same
+            picture everywhere.
+          */}
+          {speed < 0 && (
+            <View style={styles.speedArrow}>
+              <Icon name="play_arrow" size={0.875} color="#ffffff" />
+            </View>
+          )}
+          <Text style={styles.speedText}>0.25×</Text>
         </View>
       )}
     </View>
@@ -234,16 +214,23 @@ const getStyles = cacheStyles((theme: Theme) => ({
     shadowColor: theme.shadowColor,
     shadowOpacity: 1,
     shadowRadius: theme.rem(0.75),
-    shadowOffset: { width: 0, height: theme.rem(0.25) }
+    shadowOffset: { width: 0, height: theme.rem(0.25) },
+    elevation: elevationFor(theme.rem(0.75))
   },
   speed: {
     position: 'absolute',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.rem(0.125),
     top: theme.rem(theme.spaceSmRem),
     left: theme.rem(theme.spaceSmRem),
     paddingHorizontal: theme.rem(theme.spaceSmRem),
     paddingVertical: theme.rem(0.125),
     borderRadius: theme.rem(1),
     backgroundColor: 'rgba(0, 0, 0, 0.55)'
+  },
+  speedArrow: {
+    transform: [{ rotate: '180deg' }]
   },
   speedText: {
     color: '#ffffff',

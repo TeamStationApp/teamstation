@@ -16,6 +16,18 @@ import { parseRoute, type Route, routePath } from './routes'
  * has to be unpicked when that happens.
  */
 
+/**
+ * The address the app was opened on.
+ *
+ * Nothing, here. A browser's address bar is readable the moment the page
+ * exists, so there is nothing to settle first; the native sibling has to ask
+ * the operating system and cannot do it synchronously, and this is the
+ * declaration that keeps the two modules exporting the same names.
+ */
+export function seedRoute(_url: string | null | undefined): void {
+  // The address bar is the state.
+}
+
 /** Where the address bar currently points. */
 export function currentRoute(): Route {
   if (typeof window === 'undefined') return { name: 'home' }
@@ -35,6 +47,17 @@ export function showRoute(route: Route, replace = false): void {
   if (path === window.location.pathname + window.location.search) return
   if (replace) window.history.replaceState(null, '', path)
   else window.history.pushState(null, '', path)
+}
+
+/**
+ * A step back, taken by something other than the Back button.
+ *
+ * Nothing, here. The browser keeps the history and the effect that follows a
+ * pop writes the address it arrives at; the native sibling has to keep its own
+ * and this is where it does so.
+ */
+export function popRoute(): void {
+  // The browser is the history.
 }
 
 /** Calls back when the reader presses Back or Forward. */

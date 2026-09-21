@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { Text, View } from 'react-native'
+import { Platform, Text, View } from 'react-native'
 
 import type { GameStationClient, Session, SignInWait } from '../../common/api'
 import { Button, Card, Screen, TextField } from '../components'
@@ -117,7 +117,7 @@ export function LoginScreen(props: LoginScreenProps): React.ReactElement {
   const canSend = email.trim().length > 3
 
   return (
-    <Screen contentStyle={styles.centre}>
+    <Screen centreContent contentStyle={styles.centre}>
       <Card style={styles.card}>
         <View style={styles.heading}>
           <Text style={styles.title}>Sign in to GameStation</Text>
@@ -133,7 +133,16 @@ export function LoginScreen(props: LoginScreenProps): React.ReactElement {
           placeholder="parent@example.com"
           keyboardType="email-address"
           autoComplete="email"
-          autoFocus
+          // Only where focus is free. In a browser it puts the caret in the
+          // field and costs nothing; on a phone it throws up a keyboard that
+          // covers the lower half of the card — including `Use a password
+          // instead`, which is the one control somebody signing in with a
+          // password has to reach before they can type anything at all.
+          //
+          // The sign-in code field below keeps its `autoFocus` on every
+          // platform: by then the keyboard is what you want, because asking
+          // for the code is saying you are about to type it.
+          autoFocus={Platform.OS === 'web'}
           // Enter submits, which is what a keyboard's "go" key is for and what
           // anybody who has typed an address into a form expects. Noticed
           // because a browser test pressed it and nothing happened.
@@ -224,8 +233,9 @@ export function LoginScreen(props: LoginScreenProps): React.ReactElement {
 
 const getStyles = cacheStyles((theme: Theme) => ({
   centre: {
-    flex: 1,
-    justifyContent: 'center',
+    // No `flex: 1`: that made the column exactly as tall as the scroll view,
+    // so there was never anything to scroll and the keyboard could cover the
+    // card with no way back. `Screen`'s `centreContent` does the centring.
     maxWidth: theme.rem(28)
   },
   card: {

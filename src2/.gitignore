@@ -11,3 +11,32 @@ node_modules/
 .expo/
 web-build/
 .metro-health-check*
+
+# React Native, iOS
+ios/Pods/
+ios/build/
+# Xcode's output for a device build, which is a second derived-data tree
+# beside the simulator's and just as large.
+ios/build-device/
+# And the build that points at a local dev server, for QA comparisons.
+ios/build-local/
+ios/.xcode.env.local
+ios/*.xcworkspace
+ios/Podfile.lock.bak
+*.xcuserdatad/
+DerivedData/
+
+# React Native, Android
+android/.gradle/
+android/.kotlin/
+android/app/build/
+android/build/
+android/local.properties
+*.keystore
+!android/app/debug.keystore
+
+# Metro
+.metro-cache/
+
+# The font and icon tools' Python environment
+tools/.venv/

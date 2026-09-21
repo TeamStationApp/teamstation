@@ -1,5 +1,7 @@
 import { type RefObject, useEffect, useState } from 'react'
 
+import type { VideoHandle } from './videoHandle'
+
 /**
  * The shape of the file, rather than the shape we assumed.
  *
@@ -9,7 +11,7 @@ import { type RefObject, useEffect, useState } from 'react'
  * it has, and give it a box that fits.
  */
 export function useVideoAspect(
-  ref: RefObject<HTMLVideoElement | null>,
+  ref: RefObject<VideoHandle | null>,
   videoId: string | undefined
 ): number {
   const [aspect, setAspect] = useState(16 / 9)

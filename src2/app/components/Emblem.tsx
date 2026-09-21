@@ -2,12 +2,24 @@ import React, { useState } from 'react'
 import { Image, Text, View } from 'react-native'
 
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { Icon, type IconName } from './Icon'
 
 export interface EmblemProps {
   /** Signed, short-lived, and often absent. */
   uri?: string | null
   /** Drawn when there is no picture, or when the picture will not load. */
   fallback: string
+  /**
+   * A Material Symbol instead of the letters, for a row that stands for a
+   * thing rather than a person — an address, a role.
+   *
+   * It exists because the alternative was a literal pictograph in the source
+   * (`✉`, `☺`), and those are not in Space Grotesk. A browser quietly borrows
+   * one from Noto and draws an envelope; iOS has nothing to borrow and draws
+   * the missing-glyph box. Material Symbols ships with the app, so this is the
+   * same picture everywhere, which the pictograph never was.
+   */
+  icon?: IconName
   /** A badge is square with soft corners; a face is a circle. */
   shape?: 'rounded' | 'circle'
   /** In rem, like every other size. */
@@ -24,7 +36,7 @@ export interface EmblemProps {
  * shape either way.
  */
 export function Emblem(props: EmblemProps): React.ReactElement {
-  const { uri, fallback, shape = 'rounded', size = 2.5 } = props
+  const { uri, fallback, icon, shape = 'rounded', size = 2.5 } = props
   const theme = useTheme()
   const styles = getStyles(theme)
   const [failed, setFailed] = useState(false)
@@ -39,9 +51,13 @@ export function Emblem(props: EmblemProps): React.ReactElement {
   if (uri == null || uri === '' || failed) {
     return (
       <View style={[styles.tile, box]}>
-        <Text style={styles.letters} numberOfLines={1}>
-          {fallback}
-        </Text>
+        {icon != null ? (
+          <Icon name={icon} size={size / 2} color={theme.activeColor} />
+        ) : (
+          <Text style={styles.letters} numberOfLines={1}>
+            {fallback}
+          </Text>
+        )}
       </View>
     )
   }
