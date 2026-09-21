@@ -9,11 +9,7 @@ import type {
   VideoRef
 } from 'react-native-video'
 
-import {
-  answersSeek,
-  SEEK_TOLERANCE,
-  shouldAdoptProgress
-} from './seekTracker'
+import { answersSeek, SEEK_TOLERANCE, shouldAdoptProgress } from './seekTracker'
 import type {
   VideoEventName,
   VideoHandle,

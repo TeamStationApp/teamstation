@@ -34,11 +34,7 @@ export function useKeyboardShortcuts(shortcuts: KeyboardShortcuts): void {
     const down = (event: KeyboardEvent): void => {
       const player = video()
       if (player == null) return
-      if (
-        event.ctrlKey === true ||
-        event.metaKey === true ||
-        event.altKey === true
-      ) {
+      if (event.ctrlKey || event.metaKey || event.altKey) {
         return
       }
       if (isTyping(event.target)) return
@@ -50,7 +46,7 @@ export function useKeyboardShortcuts(shortcuts: KeyboardShortcuts): void {
         seekBy(player, STEP_SECONDS)
       } else if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
         event.preventDefault()
-        if (event.repeat === true || holding()) return
+        if (event.repeat || holding()) return
         beginSlow(event.key === 'ArrowUp' ? 'slowForward' : 'slowBack')
       } else if (event.key === ' ' || event.key === 'k') {
         event.preventDefault()

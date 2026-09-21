@@ -16,8 +16,13 @@ export type { GlassViewProps }
  * was, so the DOM this renders is unchanged.
  */
 export function GlassView(props: GlassViewProps): React.ReactElement {
-  const { children, style, opaque = false, fallbackFill = true, ...rest } =
-    props
+  const {
+    children,
+    style,
+    opaque = false,
+    fallbackFill = true,
+    ...rest
+  } = props
   const theme = useTheme()
   // A surface that is already on glass and cannot have real glass draws
   // nothing, rather than a flat tint over the blur beneath it. Where this

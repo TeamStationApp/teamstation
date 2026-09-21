@@ -1,6 +1,4 @@
-import type React from 'react'
 import { useCallback } from 'react'
-import type { View } from 'react-native'
 import {
   measure,
   runOnUI,
@@ -35,9 +33,10 @@ const RAMP = 48
  */
 export function useHandoff(headerHeight: number, anchor: number = 1): Handoff {
   const progress = useSharedValue(0)
-  const source = useAnimatedRef<React.ComponentRef<typeof View>>()
+  const source = useAnimatedRef()
 
   const handleScroll = useCallback(() => {
+    // eslint-disable-next-line @typescript-eslint/no-deprecated -- scheduleOnUI lives in react-native-worklets, which reanimated does not re-export; swapping the import is a change to make against a device
     runOnUI(() => {
       'worklet'
       // The source may not exist yet. A screen asks once on its first frame —

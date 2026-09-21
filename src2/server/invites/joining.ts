@@ -74,7 +74,7 @@ export async function settleInviteSignIn(
       await trx
         .insertInto('users')
         .values({
-          id: userId as string,
+          id: userId!,
           display_name: displayName,
           // By e-mail code, like everybody who arrived from PeerTube without
           // a password. A password can be set later; nothing here needs one.
@@ -82,7 +82,7 @@ export async function settleInviteSignIn(
           is_admin: false
         })
         .execute()
-      await addEmail(trx, userId as string, email, {
+      await addEmail(trx, userId!, email, {
         isPrimary: true,
         source: 'manual',
         // Verified by the very code or link that got us here.

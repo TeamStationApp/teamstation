@@ -14,10 +14,13 @@ import { Platform } from 'react-native'
  */
 export const fonts = {
   spaceGrotesk: 'Space Grotesk',
-  quicksand: Platform.select({ ios: 'System', default: 'sans-serif' }) as string,
+  quicksand: Platform.select({
+    ios: 'System',
+    default: 'sans-serif'
+  }),
   helveticaNeue: Platform.select({
     ios: 'Helvetica Neue',
     default: 'sans-serif'
-  }) as string,
+  }),
   materialSymbols: 'Material Symbols Outlined'
 }

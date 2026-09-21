@@ -67,11 +67,7 @@ interface NmsInstance {
 type NmsCtor = new (config: Record<string, unknown>) => NmsInstance
 
 export type OutputState =
-  | 'idle'
-  | 'connecting'
-  | 'connected'
-  | 'error'
-  | 'stopped'
+  'idle' | 'connecting' | 'connected' | 'error' | 'stopped'
 
 export interface OutputStatus {
   /** `hls` writes this machine's own copy; `rtmp` pushes somebody else's. */
@@ -1423,7 +1419,7 @@ export function attachSessionForTest(
 ): void {
   const entry = entries.get(key)
   if (entry == null) return
-  entry.ingress.session = session as NmsSession
+  entry.ingress.session = session
 }
 
 export function forcePublishForTest(key: string, publishing: boolean): void {

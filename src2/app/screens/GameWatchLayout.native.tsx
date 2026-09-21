@@ -81,6 +81,7 @@ export function GameWatchLayout(
     scrollY.value = event.contentOffset.y
     // The header hand-off measures the card itself, on this same thread, but
     // it has to be told when. This is the only hop to JavaScript per frame.
+    // eslint-disable-next-line @typescript-eslint/no-deprecated -- scheduleOnRN takes its arguments directly rather than returning a function, so this is a rewrite inside a worklet and wants a device
     runOnJS(onScroll)()
   })
 
