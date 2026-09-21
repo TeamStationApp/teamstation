@@ -86,7 +86,13 @@ describe('what the ingest is told', function () {
       mediaRoot,
       workDir: join(mediaRoot, 'work'),
       sessionSecret: SECRET,
-      log: () => undefined
+      log: () => undefined,
+      // A terabyte, said rather than measured. Read from the real disk, this
+      // suite takes the developer's free space as an input: a machine that
+      // filled up while an unrelated build was running failed four assertions
+      // here, and the message named nothing that was actually wrong. The one
+      // test that wants the refusal says so by raising the floor instead.
+      freeBytes: async () => 1_000_000_000_000
     }
 
     const now = new Date()
