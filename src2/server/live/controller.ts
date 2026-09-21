@@ -82,6 +82,17 @@ export interface LiveControllerOptions {
   /** Where a finished recording goes. Absent in development, and then it stays. */
   space?: SpaceSettings
   log?: (message: string) => void
+  /**
+   * How much room is left where recordings are written.
+   *
+   * Swapped out in tests, like `doFetch` on the API client. It was read
+   * straight from the disk with no seam, so `sync` asked the **host** how full
+   * it was — and a machine that filled up while an unrelated build was running
+   * made four assertions here fail with nothing in the message to say the code
+   * was fine. A test that takes the developer's free space as an input will do
+   * that again.
+   */
+  freeBytes?: (path: string) => Promise<number>
 }
 
 interface Tracked {
@@ -505,7 +516,7 @@ export async function resolveKey(
   // why this was refused and not the generic `unknown key` that would land on
   // top of it a moment later.
   const room = roomToRecord(
-    await freeBytes(mediaRoot),
+    await (current.freeBytes ?? freeBytes)(mediaRoot),
     current.live.freeDiskFloorGb * 1_000_000_000
   )
   if (!room.ok) return room.reason ?? 'there is no room to record'
@@ -548,11 +559,12 @@ export async function sync(
 
   // One syscall a second, and only asked at all when there is something that
   // might want to start.
+  const measure = current.freeBytes ?? freeBytes
   const room =
     rows.length === 0
       ? { ok: true }
       : roomToRecord(
-          await freeBytes(mediaRoot),
+          await measure(mediaRoot),
           current.live.freeDiskFloorGb * 1_000_000_000
         )
 
