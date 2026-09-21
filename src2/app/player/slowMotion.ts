@@ -1,3 +1,5 @@
+import type { VideoHandle } from './videoHandle'
+
 /** A quarter of normal, which is slow enough to see a swing and still follow it. */
 export const SLOW_RATE = 0.25
 
@@ -19,18 +21,20 @@ interface Held {
 /**
  * Quarter speed, in both directions.
  *
- * Forwards is the easy half: the browser has a playback rate and keeps the
- * pitch. Backwards has no browser support anywhere — no engine takes a negative
- * rate — so it is stepped by hand, frame by frame, with the element paused and
- * muted. Sound played backwards helps nobody.
+ * Forwards is the easy half: every player has a playback rate and keeps the
+ * pitch at it. Backwards has no support anywhere — no browser engine takes a
+ * negative rate, and neither does ExoPlayer — so it is stepped by hand, frame
+ * by frame, with the player paused and muted. Sound played backwards helps
+ * nobody.
+ *
+ * On a phone each of those frames is a `seek`, which is the one thing here
+ * that has not been judged on a device. See `MOBILE.md`.
  *
  * It is only smooth inside what the streaming library has kept behind the
  * playhead; past that it re-buffers and stutters, which is the reason
  * `attachHls` asks for a generous back buffer.
  */
-export function slowMotion(
-  getVideo: () => HTMLVideoElement | null
-): SlowMotion {
+export function slowMotion(getVideo: () => VideoHandle | null): SlowMotion {
   let held: Held | null = null
   let frame = 0
   let last = 0
@@ -67,12 +71,8 @@ export function slowMotion(
       current = SLOW_RATE
       video.playbackRate = SLOW_RATE
       // Keeps speech intelligible at a quarter speed rather than an octave down.
-      const withPitch = video as HTMLVideoElement & {
-        preservesPitch?: boolean
-        webkitPreservesPitch?: boolean
-      }
-      withPitch.preservesPitch = true
-      withPitch.webkitPreservesPitch = true
+      video.preservesPitch = true
+      video.webkitPreservesPitch = true
       video.play().catch(() => undefined)
       return
     }
@@ -80,9 +80,13 @@ export function slowMotion(
     current = -SLOW_RATE
     video.pause()
     video.muted = true
-    last = performance.now()
+    // The baseline comes from the first frame rather than from a clock read
+    // here: `requestAnimationFrame` hands its callback a timestamp on every
+    // platform, and taking it from there means this file needs no clock of its
+    // own — `performance` is a browser global that a phone does not type.
+    last = 0
     const step = (now: number): void => {
-      const seconds = (now - last) / 1000
+      const seconds = last === 0 ? 0 : (now - last) / 1000
       last = now
       const next = video.currentTime - seconds * SLOW_RATE
       video.currentTime = next < 0 ? 0 : next
