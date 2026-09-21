@@ -1,6 +1,7 @@
 import React from 'react'
 import { Pressable, Text, View } from 'react-native'
 
+import { elevationFor } from '../theme/elevation'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Emblem } from './Emblem'
 import { initialsOf } from './initials'
@@ -375,7 +376,8 @@ const getStyles = cacheStyles((theme: Theme) => ({
     shadowColor: theme.shadowColor,
     shadowOpacity: 1,
     shadowRadius: theme.rem(0.75),
-    shadowOffset: { width: 0, height: theme.rem(0.25) }
+    shadowOffset: { width: 0, height: theme.rem(0.25) },
+    elevation: elevationFor(theme.rem(0.75))
   },
   over: {
     gap: theme.rem(0.0625)

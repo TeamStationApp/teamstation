@@ -20,6 +20,17 @@ describe('sign-in link', function () {
     join(__dirname, '../../app/screens/SignInLinkScreen.tsx'),
     'utf8'
   )
+  // Where the "did this visitor ask for it" flag is kept. Two files, because
+  // a browser and an app remember for different lengths of time and each has
+  // to be the right length.
+  const onceWeb = readFileSync(
+    join(__dirname, '../../app/platform/onceStore.ts'),
+    'utf8'
+  )
+  const onceNative = readFileSync(
+    join(__dirname, '../../app/platform/onceStore.native.ts'),
+    'utf8'
+  )
 
   it('never spends the link on a GET', function () {
     // Mail scanners follow links before anybody reads them. A `GET` that
@@ -70,7 +81,12 @@ describe('sign-in link', function () {
 
   it('spends the token without a second tap only where a person asked', function () {
     expect(screen).contains('askedHere(requestId)')
-    expect(screen).contains('sessionStorage')
+    // For this visit and no longer, on either platform. A browser's session
+    // storage lasts as long as the tab; an app's memory lasts as long as the
+    // process. Anything more durable would spend a link somebody was sent
+    // weeks ago the moment they opened it.
+    expect(onceWeb).contains('sessionStorage')
+    expect(onceNative).not.contains('AsyncStorage')
   })
 
   it('lets the machine that asked finish a sign-in done elsewhere', function () {

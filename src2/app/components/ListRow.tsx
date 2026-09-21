@@ -4,13 +4,15 @@ import { Pressable, Text, View } from 'react-native'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Badge, type BadgeTone } from './Badge'
 import { Emblem } from './Emblem'
-import { Icon } from './Icon'
+import { Icon, type IconName } from './Icon'
 
 export interface ListRowProps {
   title: string
   subtitle?: string
   /** A short glyph or initials in the leading tile. */
   emblem?: string
+  /** A Material Symbol in the leading tile, in place of the initials. */
+  emblemIcon?: IconName
   /** A picture for the leading tile. The glyph is what shows without one. */
   emblemUri?: string | null
   /** A face is a circle; everything else is a soft square. */
@@ -44,6 +46,7 @@ export function ListRow(props: ListRowProps): React.ReactElement {
     title,
     subtitle,
     emblem,
+    emblemIcon,
     emblemUri,
     emblemShape,
     badgeLabel,
@@ -56,8 +59,13 @@ export function ListRow(props: ListRowProps): React.ReactElement {
 
   const content = (
     <>
-      {emblem != null && (
-        <Emblem uri={emblemUri} fallback={emblem} shape={emblemShape} />
+      {(emblem != null || emblemIcon != null) && (
+        <Emblem
+          uri={emblemUri}
+          fallback={emblem ?? ''}
+          icon={emblemIcon}
+          shape={emblemShape}
+        />
       )}
       <View style={styles.text}>
         <Text style={styles.title} numberOfLines={1}>

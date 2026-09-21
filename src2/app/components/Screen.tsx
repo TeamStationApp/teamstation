@@ -3,6 +3,7 @@ import { type StyleProp, View, type ViewStyle } from 'react-native'
 import Animated from 'react-native-reanimated'
 
 import { edgeMarginRem } from '../layout/margins'
+import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { NAV_CLEARANCE_REM } from './AppNav'
 import { useHeaderSlot } from './headerSlot'
@@ -20,6 +21,27 @@ export interface ScreenProps {
    * for, with grey either side.
    */
   wide?: boolean
+  /**
+   * Centre a short screen's content in the window rather than starting it at
+   * the top: a sign-in card, an invitation.
+   *
+   * On the container rather than as `flex: 1` on the column. A column with
+   * `flex: 1` is exactly the height of the scroll view, so its content size
+   * can never exceed its frame and the screen can never scroll — which is a
+   * problem the moment a keyboard covers the lower half of the card, because
+   * what is behind it is then unreachable. Centred from here the column keeps
+   * its natural height and the screen scrolls as soon as there is more content
+   * than room.
+   *
+   * Verified on Android, where the window is resized under the keyboard.
+   * **Unverified on iOS, and the earlier note here claiming it did not work
+   * there should not have been written.** Every iOS run behind that claim was
+   * driven through Maestro on the iPhone 17 Pro simulator, whose driver
+   * delivers drags as taps (see `MOBILE.md`) — an instrument that cannot drag
+   * cannot test dragging. Retry on the iPad simulator, where drags work, or
+   * with a finger.
+   */
+  centreContent?: boolean
   contentStyle?: StyleProp<ViewStyle>
   /**
    * From `useHandoff`, when this screen hands something up to the header.
@@ -48,6 +70,7 @@ export function Screen(props: ScreenProps): React.ReactElement {
     children,
     scroll = true,
     wide = false,
+    centreContent = false,
     contentStyle,
     onScroll
   } = props
@@ -58,6 +81,15 @@ export function Screen(props: ScreenProps): React.ReactElement {
   // top of the window and is pushed down by the height the header measured.
   // Anything else and there would be nothing behind the glass to blur.
   const { headerHeight } = useHeaderSlot()
+  // The capsule floats above the home indicator, so the clearance under the
+  // last row has to cover both.
+  const insets = useInsets()
+
+  // Held sideways, a phone's insets are at the sides: the camera housing on
+  // one edge and a rounded corner on the other. The margin takes whichever is
+  // wider — the design's, or the hardware's — so a line of text never starts
+  // underneath the island.
+  const margin = theme.rem(edgeMarginRem(theme, breakpoint))
 
   const inner = (
     <View
@@ -65,6 +97,13 @@ export function Screen(props: ScreenProps): React.ReactElement {
         styles.column,
         breakpoint !== 'phone' && styles.columnWide,
         breakpoint === 'phone' && styles.clearOfNav,
+        {
+          paddingLeft: Math.max(margin, insets.left),
+          paddingRight: Math.max(margin, insets.right)
+        },
+        breakpoint === 'phone' && {
+          paddingBottom: theme.rem(NAV_CLEARANCE_REM) + insets.bottom
+        },
         wide && styles.columnFull,
         contentStyle
       ]}
@@ -84,8 +123,28 @@ export function Screen(props: ScreenProps): React.ReactElement {
       style={styles.fill}
       onScroll={onScroll}
       scrollEventThrottle={16}
+      // Without this the first tap on a button while a field has focus only
+      // dismisses the keyboard and the button is never pressed — so `Sign in`,
+      // `Join` and every `Save` on the manage page take two taps on a phone
+      // and one in a browser.
+      keyboardShouldPersistTaps="handled"
+      // Dragging the page puts the keyboard away. Android has a Back key that
+      // does this and iOS has nothing at all, so without it a screen whose
+      // content is shorter than the window — the sign-in card is the one that
+      // matters — can raise a keyboard that there is then no way to lower:
+      // there is nothing to scroll and no blank area to tap, and the control
+      // you need is behind it. `handled` above is deliberately kept, so a tap
+      // still reaches a button first time; this covers everything else.
+      keyboardDismissMode="on-drag"
+      // And the keyboard insets the content rather than covering it. iOS does
+      // that for a scroll view when asked and not otherwise; Android resizes
+      // the window instead, which `adjustResize` in the manifest already asks
+      // for; and a browser has no keyboard of its own to make room for. One
+      // property, three answers, and only one of them needs saying here.
+      automaticallyAdjustKeyboardInsets
       contentContainerStyle={[
         styles.scrollContent,
+        centreContent && styles.centreContent,
         { paddingTop: headerHeight }
       ]}
     >
@@ -102,6 +161,9 @@ const getStyles = cacheStyles((theme: Theme) => ({
   scrollContent: {
     flexGrow: 1,
     alignItems: 'center'
+  },
+  centreContent: {
+    justifyContent: 'center'
   },
   // The three destinations float over the content now rather than sitting in a
   // bar beneath it, so the last row of a list has to clear the capsule. Without

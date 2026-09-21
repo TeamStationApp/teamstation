@@ -53,13 +53,13 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
           <ListRow
             title="Signed in as"
             subtitle={user.email ?? user.displayName}
-            emblem="✉"
+            emblemIcon="mail"
           />
           <View style={styles.divider} />
           <ListRow
             title="Role"
             subtitle={user.isAdmin ? 'Administrator' : 'Member'}
-            emblem={user.isAdmin ? '★' : '☺'}
+            emblemIcon={user.isAdmin ? 'star' : 'account_circle'}
           />
         </Card>
       </View>

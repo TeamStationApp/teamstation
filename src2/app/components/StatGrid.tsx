@@ -26,12 +26,23 @@ export interface StatGridProps {
 export function StatGrid(props: StatGridProps): React.ReactElement {
   const { stats, columns = 2 } = props
   const styles = getStyles(useTheme())
-  const basis: DimensionValue = `${100 / columns}%`
+  /**
+   * A whole percent, rounded down, and never the exact fraction.
+   *
+   * Three columns is `33.333333333333336%`, and on a device that lays out on
+   * whole pixels three of those can round to more than the row has — one cell
+   * wraps and a tidy grid becomes two above and one below. A percent short is
+   * invisible; the cells grow into the slack.
+   */
+  const basis: DimensionValue = `${Math.floor(100 / columns)}%`
 
   return (
     <View style={styles.grid}>
       {stats.map(stat => (
-        <View key={stat.label} style={[styles.cell, { flexBasis: basis }]}>
+        <View
+          key={stat.label}
+          style={[styles.cell, { flexBasis: basis, flexGrow: 1 }]}
+        >
           <Text style={styles.label} numberOfLines={1}>
             {stat.label.toUpperCase()}
           </Text>
