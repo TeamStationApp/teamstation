@@ -663,7 +663,6 @@ function Shell(props: AppProps): React.ReactElement {
         client={client}
         scopeKind={top.scopeKind}
         scopeId={top.scopeId}
-        meUserId={session.user.id}
         onTitle={title => {
           setStacks(current => {
             const held = current[tab]

@@ -337,7 +337,7 @@ export function liveRoutes(
         pathParam(req.params.gameId)
       )
       const row = await liveStreamById(db, pathParam(req.params.streamId))
-      if (row == null || row.gameId !== game.id) throw notFound()
+      if (row?.gameId !== game.id) throw notFound()
 
       // Closing the window rather than ending the stream from here. The
       // ingest holds the ffmpeg writing the playlist, and it is the only

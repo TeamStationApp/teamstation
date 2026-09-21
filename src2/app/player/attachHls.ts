@@ -93,7 +93,7 @@ export function attachHls(
    * apart: a pause that arrives while a recovery is in flight is the recovery's
    * doing, and any other is theirs.
    */
-  let wantsToPlay = handle.paused !== true
+  let wantsToPlay = !handle.paused
   let recovering = false
   const onPlay = (): void => {
     wantsToPlay = true

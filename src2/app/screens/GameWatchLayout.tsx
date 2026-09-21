@@ -1,5 +1,5 @@
 import React, { useCallback, useRef } from 'react'
-import { type StyleProp, View, type ViewStyle } from 'react-native'
+import { View } from 'react-native'
 import Animated from 'react-native-reanimated'
 
 import { PHONE_MARGIN } from '../layout/watch'

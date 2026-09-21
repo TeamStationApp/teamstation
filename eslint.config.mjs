@@ -9,6 +9,25 @@ export default [
     typescript: true
   }),
 
+  // **Type-aware rules must see the same types `npm run typecheck` does.**
+  //
+  // `standard-kit` turns on the project service, which picks the *nearest*
+  // tsconfig — the one at the root, whose `moduleResolution` is `node`.
+  // `tsconfig.app.json` deliberately resolves the way a bundler does, because
+  // react-native 0.87 declares its types only inside its `exports` map and
+  // Node10 resolution ignores them. Under the wrong one every
+  // `from 'react-native'` is an implicit `any`, and the rules that read types
+  // then draw exactly the wrong conclusions: fourteen `strict-boolean-expressions`
+  // on values that are not `any` at all, and `no-unnecessary-type-assertion`
+  // on three casts that are load-bearing — `--fix` removed them and broke the
+  // build.
+  {
+    files: ['src2/app/**/*.ts', 'src2/app/**/*.tsx', 'src2/common/**/*.ts'],
+    languageOptions: {
+      parserOptions: { projectService: false, project: './tsconfig.app.json' }
+    }
+  },
+
   // Global ignores need to be in their own block:
   {
     ignores: [

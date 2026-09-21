@@ -466,7 +466,6 @@ function rate(bytesPerSecond: number): string {
     : `${Math.round(mbit * 1000)} kbit/s`
 }
 
-
 const getStyles = cacheStyles((theme: Theme) => ({
   section: {
     gap: theme.rem(theme.spaceMdRem)

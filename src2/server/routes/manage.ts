@@ -9,8 +9,8 @@ import type { Database } from '../db/database'
 import {
   createInvite,
   type Invite,
-  type InviteScopeType,
   inviteProblem,
+  type InviteScopeType,
   listInvites,
   mayInviteTo,
   scopeName
@@ -18,8 +18,8 @@ import {
 import {
   addAdmin,
   addToScope,
-  peopleInScope,
   pendingInvitations,
+  peopleInScope,
   removeAdmin,
   removeFromScope,
   scopeTree

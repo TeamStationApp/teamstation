@@ -1,0 +1,9 @@
+# Lint before every commit.
+#
+# This is here because it was not: the 1.0 package owned the hook, and when
+# that package went the hook went with it. Nothing else runs eslint — there is
+# no CI — so the count drifted to 98 problems before anybody counted.
+#
+# Lint only. A typecheck and the test suite are another twenty-five seconds,
+# which is the kind of wait people learn to pass with --no-verify.
+npm run precommit

@@ -10,8 +10,9 @@ import { type StoppableServer, stopWorker } from './stopWorker'
 const CUT_MS = 20
 const DEADLINE_MS = 60
 
-const wait = async (ms: number): Promise<void> =>
+const wait = async (ms: number): Promise<void> => {
   await new Promise(resolve => setTimeout(resolve, ms))
+}
 
 interface Harness {
   server: StoppableServer

@@ -23,7 +23,24 @@ import { type Route, routePath } from './routes'
  *   whether it moved, and the caller decides what that means — on Android,
  *   that the app should close rather than sit there ignoring the button.
  */
-export function makeHistory(start: Route = { name: 'home' }) {
+export interface History {
+  /** The address the app was opened on, before anything renders. */
+  seed: (route: Route) => void
+  current: () => Route
+  /** How many steps there are, which is only ever interesting in a test. */
+  depth: () => number
+  /** Records a move, or corrects the step already there. */
+  show: (route: Route, replace?: boolean) => void
+  /**
+   * A step back. `false` means there was nowhere to go.
+   *
+   * Used by two callers that must agree: Android's system Back, and the
+   * chevron in the header.
+   */
+  back: () => boolean
+}
+
+export function makeHistory(start: Route = { name: 'home' }): History {
   let entries: Route[] = [start]
 
   return {
@@ -63,5 +80,3 @@ export function makeHistory(start: Route = { name: 'home' }) {
     }
   }
 }
-
-export type History = ReturnType<typeof makeHistory>

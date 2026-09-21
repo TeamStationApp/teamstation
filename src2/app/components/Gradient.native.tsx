@@ -27,7 +27,7 @@ export function Gradient(props: GradientProps): React.ReactElement {
             <Stop offset="1" stopColor="#000000" stopOpacity={0.7} />
           </LinearGradient>
         </Defs>
-        <Rect x="0" y="0" width="100%" height="100%" fill="url(#scrim)" />
+        <Rect width="100%" height="100%" fill="url(#scrim)" />
       </Svg>
     </View>
   )

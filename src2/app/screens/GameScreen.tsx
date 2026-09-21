@@ -8,7 +8,6 @@ import {
   useWindowDimensions,
   View
 } from 'react-native'
-import Animated from 'react-native-reanimated'
 
 import type {
   BattingRow,
@@ -40,9 +39,9 @@ import {
   WideTable
 } from '../components'
 import { highlightColumnsFor } from '../layout/grid'
-import { PHONE_MARGIN, watchLayout, type WatchMode } from '../layout/watch'
-import { useInsets } from '../platform/safeArea'
+import { watchLayout, type WatchMode } from '../layout/watch'
 import { lstrings } from '../locales/strings'
+import { useInsets } from '../platform/safeArea'
 import { sameMoment } from '../player/angleSwitch'
 import { attachHls } from '../player/attachHls'
 import { PlayerSurface } from '../player/PlayerSurface'
@@ -707,7 +706,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     setResumeAt({
       videoId: next.id,
       sec,
-      playing: player.paused === false
+      playing: !player.paused
     })
     setVideo(next)
     // The address names the angle, so it has to follow the angle. Without
@@ -824,7 +823,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           setResumeAt({
             videoId: video.id,
             sec: player.currentTime,
-            playing: player.paused === false
+            playing: !player.paused
           })
         }
         setTab(next)
@@ -1666,11 +1665,6 @@ const getStyles = cacheStyles((theme: Theme) =>
     // have gone by. `sticky` is a web position React Native has no name for;
     // this app renders to the DOM, and `webStyle` is the one place that cast
     // lives.
-
-
-
-
-
 
     player: {
       alignSelf: 'center',
