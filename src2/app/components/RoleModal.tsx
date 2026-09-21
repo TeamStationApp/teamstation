@@ -4,6 +4,7 @@ import { Modal, Pressable, Text, View } from 'react-native'
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Button } from './Button'
+import { RadioMark } from './RadioMark'
 
 export interface RoleModalProps {
   /** Whose role is being changed. */
@@ -81,9 +82,7 @@ export function RoleModal(props: RoleModalProps): React.ReactElement {
                 setChosen(choice.value)
               }}
             >
-              <Text style={styles.mark}>
-                {chosen === choice.value ? '●' : '○'}
-              </Text>
+              <RadioMark on={chosen === choice.value} />
               <View style={styles.choiceText}>
                 <Text style={styles.choiceLabel}>{choice.label}</Text>
                 <Text style={styles.detail}>{choice.detail}</Text>
@@ -177,10 +176,5 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontSize: theme.rem(1),
     fontWeight: '600',
     color: theme.primaryTextColor
-  },
-  mark: {
-    fontFamily: theme.regularTextFont,
-    fontSize: theme.rem(1),
-    color: theme.activeColor
   }
 }))
