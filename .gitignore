@@ -22,3 +22,25 @@ chromeData/
 
 # Visual regression artifacts:
 /screenshots/
+
+# React Native, iOS
+ios/Pods/
+ios/build/
+ios/.xcode.env.local
+ios/*.xcworkspace
+ios/Podfile.lock.bak
+*.xcuserdatad/
+DerivedData/
+
+# React Native, Android
+android/.gradle/
+android/.kotlin/
+android/app/build/
+android/build/
+android/local.properties
+*.keystore
+!android/app/debug.keystore
+
+# Metro
+.metro-cache/
+android/app/.cxx/
