@@ -1,0 +1,14 @@
+# Back to Home, deterministically.
+#
+# A relaunch rather than a walk back up the stack. Navigating out of a screen
+# and straight into the next thing races the unmount: for a frame after the
+# game screen goes, its own `Videos` pill is still in the tree, and a tap meant
+# for the bar lands on a control that no longer exists. The session survives a
+# relaunch — it is in storage, not in memory — so this costs a second and buys
+# a flow whose failures are the app's rather than the harness's.
+appId: co.gamestation.app
+---
+- launchApp
+- extendedWaitUntil:
+    visible: 'Your Home'
+    timeout: 30000
