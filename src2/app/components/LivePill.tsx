@@ -65,12 +65,16 @@ export function LivePill(props: LivePillProps): React.ReactElement {
         Animated.timing(opacity, {
           toValue: 0.72,
           duration: 800,
+
+          // eslint-disable-next-line @typescript-eslint/unbound-method -- Easing.quad is a plain function, not a method with a `this`
           easing: Easing.inOut(Easing.quad),
           useNativeDriver: USE_NATIVE_DRIVER
         }),
         Animated.timing(opacity, {
           toValue: 1,
           duration: 800,
+
+          // eslint-disable-next-line @typescript-eslint/unbound-method -- Easing.quad is a plain function, not a method with a `this`
           easing: Easing.inOut(Easing.quad),
           useNativeDriver: USE_NATIVE_DRIVER
         })

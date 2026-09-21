@@ -30,6 +30,7 @@ export function useBreakpoint(): Breakpoint {
   useEffect(() => {
     const subscription = Dimensions.addEventListener(
       'change',
+      // eslint-disable-next-line @typescript-eslint/no-deprecated -- DisplayMetrics, which it suggests, is not in react-native's public types
       ({ window }: { window: ScaledSize }) => {
         setBreakpoint(breakpointFor(window.width))
       }

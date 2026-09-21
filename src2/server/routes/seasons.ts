@@ -43,7 +43,15 @@ export function seasonRoutes(
       const seasons = scopes.isAdmin
         ? await db
             .selectFrom('seasons')
-            .select(['id', 'league_id', 'name', 'year', 'term', 'age_group', 'logo_path'])
+            .select([
+              'id',
+              'league_id',
+              'name',
+              'year',
+              'term',
+              'age_group',
+              'logo_path'
+            ])
             .orderBy('year', 'desc')
             .orderBy('name')
             .execute()
@@ -51,7 +59,15 @@ export function seasonRoutes(
           ? []
           : await db
               .selectFrom('seasons')
-              .select(['id', 'league_id', 'name', 'year', 'term', 'age_group', 'logo_path'])
+              .select([
+                'id',
+                'league_id',
+                'name',
+                'year',
+                'term',
+                'age_group',
+                'logo_path'
+              ])
               .where('id', 'in', [...scopes.seasonIds])
               .orderBy('year', 'desc')
               .orderBy('name')

@@ -2,11 +2,7 @@
 import type { VideoHandle } from './videoHandle'
 
 export type Zone =
-  | 'seekBack'
-  | 'seekForward'
-  | 'slowForward'
-  | 'slowBack'
-  | 'toggle'
+  'seekBack' | 'seekForward' | 'slowForward' | 'slowBack' | 'toggle'
 
 /**
  * Nine squares, tic-tac-toe, over the whole picture.

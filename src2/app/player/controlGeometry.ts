@@ -147,7 +147,12 @@ function exoPlayerRects(w: number, h: number): Rect[] {
   const cx = w / 2
   const cy = h / 2
   return [
-    { x: Math.max(0, cx - SPAN), y: cy - T / 2, w: Math.min(2 * SPAN, w), h: T },
+    {
+      x: Math.max(0, cx - SPAN),
+      y: cy - T / 2,
+      w: Math.min(2 * SPAN, w),
+      h: T
+    },
     { x: 0, y: h - 56, w, h: 56 } // the clocks, the scrubber, fullscreen
   ]
 }

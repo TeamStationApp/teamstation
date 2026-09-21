@@ -77,10 +77,7 @@ export function parseMediaPath(path: string): MediaPath | undefined {
 }
 
 export type MediaRefusal =
-  | 'malformed'
-  | 'expired'
-  | 'badSignature'
-  | 'escapesDirectory'
+  'malformed' | 'expired' | 'badSignature' | 'escapesDirectory'
 
 /**
  * Whether to serve this path, and if not, why. In memory: no database, no file

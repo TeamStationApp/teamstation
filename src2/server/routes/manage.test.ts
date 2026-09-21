@@ -251,7 +251,7 @@ describe('the manage page', function () {
   }
 
   const peopleOf = (body: Record<string, unknown>): Person[] =>
-    body.people as unknown as Person[]
+    body.people as Person[]
 
   it('shows every level a person\u2019s access comes through', async function () {
     if (db == null) this.skip()

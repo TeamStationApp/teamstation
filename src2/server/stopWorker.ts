@@ -49,7 +49,12 @@ export function stopWorker(options: StopWorkerOptions): () => StopStage {
     options
 
   let stage: StopStage = 'closing idle connections'
+  // `let`, and not `const`, because `leave` below closes over both and the
+  // timers cannot be made until after it exists — the deadline's callback
+  // calls it.
+  // eslint-disable-next-line prefer-const
   let cut: ReturnType<typeof setTimeout> | undefined
+  // eslint-disable-next-line prefer-const
   let deadline: ReturnType<typeof setTimeout> | undefined
   let left = false
 
@@ -93,7 +98,7 @@ export function stopWorker(options: StopWorkerOptions): () => StopStage {
   server.close(() => {
     clearTimeout(cut)
     stage = 'closing the database'
-    destroyDatabase().then(leave, error => {
+    destroyDatabase().then(leave, (error: unknown) => {
       log(`the database pool did not close: ${String(error)}`)
       leave()
     })

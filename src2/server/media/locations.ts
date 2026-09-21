@@ -130,7 +130,7 @@ async function locatePeertube(
     if (!info.isDirectory()) continue
 
     const cached = peertubeCache.get(dir)
-    if (cached != null && cached.mtimeMs === info.mtimeMs) {
+    if (cached?.mtimeMs === info.mtimeMs) {
       return cached.location
     }
 

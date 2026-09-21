@@ -180,7 +180,7 @@ export async function findInviteByCode(
     .select(FIELDS)
     .where(eb => eb.fn('lower', ['code']), '=', wanted)
     .executeTakeFirst()
-  return row == null ? undefined : shape(row as InviteFields)
+  return row == null ? undefined : shape(row)
 }
 
 export async function findInviteById(
@@ -192,7 +192,7 @@ export async function findInviteById(
     .select(FIELDS)
     .where('id', '=', id)
     .executeTakeFirst()
-  return row == null ? undefined : shape(row as InviteFields)
+  return row == null ? undefined : shape(row)
 }
 
 /** Why this invite is no good, or null when it is. */

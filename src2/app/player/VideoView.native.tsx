@@ -3,7 +3,6 @@ import { Platform, StyleSheet } from 'react-native'
 import Video, { type VideoRef, ViewType } from 'react-native-video'
 
 import { NativeVideoHandle } from './nativeVideoHandle'
-import type { VideoHandle } from './videoHandle'
 import type { VideoViewProps } from './videoViewProps'
 
 export type { VideoViewProps }
@@ -55,11 +54,9 @@ export function VideoViewNative(props: VideoViewProps): React.ReactElement {
   // so the only thing to tell React is *that* they changed.
   const [, bump] = useState(0)
   const handleRef = useRef<NativeVideoHandle | null>(null)
-  if (handleRef.current == null) {
-    handleRef.current = new NativeVideoHandle(() => {
-      bump(count => count + 1)
-    })
-  }
+  handleRef.current ??= new NativeVideoHandle(() => {
+    bump(count => count + 1)
+  })
   const handle = handleRef.current
   const playerRef = useRef<VideoRef | null>(null)
 
@@ -75,7 +72,7 @@ export function VideoViewNative(props: VideoViewProps): React.ReactElement {
   // callback the web file calls with the `<video>` element, so the screens
   // above cannot tell which platform they are on.
   useEffect(() => {
-    onHandle(handle as VideoHandle)
+    onHandle(handle)
     return () => {
       onHandle(null)
     }

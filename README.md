@@ -93,6 +93,14 @@ npm run lint
 `npm run build` compiles `src2/` to `lib/` and `npm run build.web` bundles the
 app to `dist/`, both at the root.
 
+**Run `npm run prepare` once**, per clone rather than per worktree. It installs
+the husky hook that lints before every commit. `npm install` will not do it for
+you: `.npmrc` sets `ignore-scripts`, which is what makes a fresh install safe
+and also what stops `prepare` running. Without it there is no gate, and the
+lint count drifts — it reached 98 the last time nobody was counting. The hook
+sets `core.hooksPath`, which lives in `.git/config` and so is shared by every
+worktree of this repository.
+
 Configuration is written by `cleaner-config` to `serverConfig.json` **at the
 root** on first run; it is gitignored, and every field has a default.
 
