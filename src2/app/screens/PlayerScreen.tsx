@@ -89,6 +89,22 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
 
   const [player, setPlayer] = useState<PlayerDetail | undefined>(undefined)
   const [tab, setTab] = useState<'videos' | 'stats'>(initialTab ?? 'videos')
+  /**
+   * The address is allowed to change this, not only to start it.
+   *
+   * Seeded once, the two disagreed the moment anything but a tap moved the
+   * address: Back from the box score wrote `/games/g1` and left the box score
+   * on the screen — on a phone, where Back is how people leave things, a
+   * button that does nothing reads as a hang. Both ends of the app gain the
+   * same thing, because it is the same code.
+   *
+   * The default is repeated rather than guarded against: an address that names
+   * no half means the first one.
+   */
+  useEffect(() => {
+    setTab(initialTab ?? 'videos')
+  }, [initialTab])
+
   const [error, setError] = useState<string | undefined>(undefined)
   const [highlights, setHighlights] = useState<PlayerHighlight[]>([])
   const [nextBefore, setNextBefore] = useState<string | undefined>(undefined)
