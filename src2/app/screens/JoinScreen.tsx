@@ -141,7 +141,7 @@ export function JoinScreen(props: JoinScreenProps): React.ReactElement {
 
   if (missing) {
     return (
-      <Screen contentStyle={styles.centre}>
+      <Screen centreContent contentStyle={styles.centre}>
         <Card style={styles.card}>
           <Text style={styles.title}>{lstrings.join_unknown}</Text>
           <Text style={styles.subtitle}>{lstrings.join_unknown_detail}</Text>
@@ -152,7 +152,7 @@ export function JoinScreen(props: JoinScreenProps): React.ReactElement {
 
   if (info == null) {
     return (
-      <Screen contentStyle={styles.centre}>
+      <Screen centreContent contentStyle={styles.centre}>
         <Card style={styles.card}>
           <ActivityIndicator />
           <Text style={styles.subtitle}>{lstrings.join_loading}</Text>
@@ -171,7 +171,7 @@ export function JoinScreen(props: JoinScreenProps): React.ReactElement {
   )
 
   return (
-    <Screen contentStyle={styles.centre}>
+    <Screen centreContent contentStyle={styles.centre}>
       <Card style={styles.card}>
         <View style={styles.heading}>
           <Text style={styles.title}>{lstrings.join_title}</Text>
@@ -270,8 +270,9 @@ export function JoinScreen(props: JoinScreenProps): React.ReactElement {
 
 const getStyles = cacheStyles((theme: Theme) => ({
   centre: {
-    flex: 1,
-    justifyContent: 'center',
+    // No `flex: 1`: that made the column exactly as tall as the scroll view,
+    // so there was never anything to scroll and the keyboard could cover the
+    // card with no way back. `Screen`'s `centreContent` does the centring.
     maxWidth: theme.rem(28)
   },
   card: {

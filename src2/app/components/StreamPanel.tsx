@@ -6,6 +6,7 @@ import type {
   GameStationClient,
   LiveStream
 } from '../../common/api'
+import { copyToClipboard } from '../platform/clipboard'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Button } from './Button'
 import { Card } from './Card'
@@ -465,19 +466,6 @@ function rate(bytesPerSecond: number): string {
     : `${Math.round(mbit * 1000)} kbit/s`
 }
 
-/**
- * The clipboard, where this app runs.
- *
- * Web only for now, like the rest of the app: `navigator.clipboard` is what a
- * browser has, and a native build would put `Clipboard` from React Native
- * behind this same call.
- */
-function copyToClipboard(text: string): void {
-  const clipboard = (globalThis as { navigator?: Navigator }).navigator
-    ?.clipboard
-  if (clipboard == null) return
-  clipboard.writeText(text).catch(() => undefined)
-}
 
 const getStyles = cacheStyles((theme: Theme) => ({
   section: {

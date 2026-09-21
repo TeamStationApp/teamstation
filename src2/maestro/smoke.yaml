@@ -1,0 +1,159 @@
+# Every screen the app has, in one pass, asserting that each one drew.
+#
+# The point is not to test what the screens say — that is what a pass against
+# the production web app is for — but to catch the failure this port is most
+# exposed to: a screen that renders nothing at all because something in it
+# reached for the DOM. That failure is invisible to a typecheck and obvious
+# here, which is why this runs at every phase gate rather than at the end.
+#
+#     maestro --device <udid> test maestro/smoke.yaml
+#
+# Each section starts from Home by relaunching, for the reason `home.yaml`
+# gives. Two of the eleven screens are reachable only by address — an
+# invitation and the link from the sign-in mail — so they are opened with
+# `openLink`; without that step this flow silently covers nine.
+appId: co.gamestation.app
+# `TEAM_ID` names the team whose invite link the clipboard check copies, and
+# it differs between the production database and a local dev one:
+#
+#     maestro test -e TEAM_ID=tem_xxx maestro/smoke.yaml
+#
+# Deliberately **no `env:` default here**. A flow's own `env` block wins over
+# `-e` on the command line — the opposite of what you would expect — so a
+# default would make the override silently do nothing, and the sweep would
+# look for a team that is not in the database it is pointed at.
+---
+# ---- The link from the sign-in mail ----------------------------------------
+#
+# First, and signed out, because that is the only state it exists in: a link
+# followed by somebody who is already signed in lands them on Home, here and
+# on the web alike.
+#
+# The token is deliberately not a real one. What this asserts is that opening
+# the link **spends nothing** — the screen comes up and waits for a person,
+# which is what stops a mail scanner burning a sign-in before it is read.
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible: 'Sign in to GameStation'
+    timeout: 30000
+- openLink: gamestation://signin/notarealtoken?r=notarealrequest
+- runFlow: openConfirm.yaml
+- extendedWaitUntil:
+    visible: 'This link can be used once.*'
+    timeout: 30000
+
+- runFlow: signIn.yaml
+
+# ---- Home ------------------------------------------------------------------
+- assertVisible: 'Your Home'
+# Waited for rather than asserted: the teams arrive from the network, and on a
+# cold start behind an emulator that can take a moment.
+- extendedWaitUntil:
+    visible: 'YOUR TEAMS'
+    timeout: 30000
+
+# ---- A season --------------------------------------------------------------
+#
+# Reached by the shape of the line rather than by the heading above it: a
+# season row always reads `N teams · N games · N videos` whatever the data
+# happens to be that day, and stopping at the heading leaves the row itself
+# below the fold. A partial view is enough, because the glass header and the
+# floating capsule both overlay the content, so nothing scrolled to an edge is
+# ever wholly visible.
+- scrollUntilVisible:
+    element: '.*teams · .*games · .*videos.*'
+    direction: DOWN
+    visibilityPercentage: 60
+- tapOn: '.*teams · .*games · .*videos.*'
+- extendedWaitUntil:
+    visible: 'Schedule'
+    timeout: 20000
+
+# ---- A team, and its four sections -----------------------------------------
+- runFlow: home.yaml
+# A team row always carries a season and a record: `NPLL Spring 2026 · 18–3`.
+- scrollUntilVisible:
+    element: '.*·.*[0-9]+–[0-9]+.*'
+    direction: DOWN
+    visibilityPercentage: 60
+- tapOn: '.*·.*[0-9]+–[0-9]+.*'
+- extendedWaitUntil:
+    visible: 'GAME VIDEO LIBRARY'
+    timeout: 20000
+- tapOn: 'Team'
+- tapOn: 'Stats'
+- tapOn: 'Schedule'
+
+# ---- The game: both halves, and the way back between them ------------------
+- runFlow: home.yaml
+- tapOn: 'Watch'
+- extendedWaitUntil:
+    visible: 'Highlights'
+    timeout: 30000
+- tapOn: 'Box score'
+# The heading names the side too — `Batting — Bandits (Ruden)` — and Maestro
+# matches the whole string.
+- extendedWaitUntil:
+    visible: 'Batting.*'
+    timeout: 20000
+# The chevron leaves the screen, which is what it means and what it does on
+# the web. Walking back through the halves of a screen is the *address*
+# moving, and only Android has a button for that — so that is asserted where
+# it exists, in `androidBack.yaml`.
+- tapOn: 'Back'
+- extendedWaitUntil:
+    visible: 'Your Home'
+    timeout: 20000
+
+# ---- The two lists ---------------------------------------------------------
+- runFlow: home.yaml
+- tapOn: 'Videos'
+- extendedWaitUntil:
+    visible: 'GAME VIDEOS'
+    timeout: 30000
+- tapOn: 'Schedule'
+- extendedWaitUntil:
+    visible: 'SCHEDULE'
+    timeout: 30000
+# The filter the address carries, which is `past` on both lists.
+- assertVisible: 'Past'
+
+# ---- The account -----------------------------------------------------------
+#
+# Reached by tapping your own picture at the top right, which is where every
+# application with a signed-in person puts it, and which is why there is no
+# fourth destination in the bar.
+- runFlow: home.yaml
+- tapOn: 'Account,.*'
+- extendedWaitUntil:
+    visible: 'Sign out'
+    timeout: 20000
+
+# ---- An invitation, which is also only reachable by address ---------------
+#
+# A code that exists, so the screen has something to say about it.
+- openLink: gamestation://i/tforce26
+- runFlow: openConfirm.yaml
+- extendedWaitUntil:
+    visible: 'You have been invited'
+    timeout: 30000
+# The code resolved against the server, not merely parsed: this names the team
+# it lets you into.
+- assertVisible: 'You are invited to watch.*'
+
+
+# And the one native binding nothing else here touches.
+#
+# `clipboard.native.ts` is the only sibling in the app that imports a native
+# module rather than wrapping something React Native already has, which makes
+# it the only one that can fail by not being linked. It went through the whole
+# build and four QA passes without being run once, because Copy lives on a
+# panel no flow opened. It does now.
+# Passed down explicitly: a subflow's own `env` block is a default and
+# shadows the value given on the command line, so without this the override
+# silently does nothing.
+- runFlow:
+    file: copyInvite.yaml
+    env:
+      TEAM_ID: ${TEAM_ID}

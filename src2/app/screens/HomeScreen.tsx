@@ -322,7 +322,7 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
                 <ListRow
                   title={season.name}
                   subtitle={`${season.teams} teams · ${season.games} games · ${season.videos} videos`}
-                  emblem="▦"
+                  emblemIcon="event"
                   emblemUri={season.logoUrl}
                   badgeLabel={season.term ?? undefined}
                   badgeTone="neutral"

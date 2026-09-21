@@ -1,3 +1,4 @@
+import { fonts } from './fonts'
 import type { Theme } from './types'
 
 /**
@@ -31,10 +32,10 @@ const palette = {
   blackOp35: 'rgba(0, 0, 0, .35)',
   blackOp70: 'rgba(0, 0, 0, .7)',
 
-  helveticaNeue: 'Helvetica Neue, Arial, sans-serif',
-  quicksandRegular: 'Quicksand, -apple-system, BlinkMacSystemFont, sans-serif',
-  quicksandSemiBold: 'Quicksand, -apple-system, BlinkMacSystemFont, sans-serif',
-  quicksandBold: 'Quicksand, -apple-system, BlinkMacSystemFont, sans-serif'
+  helveticaNeue: fonts.helveticaNeue,
+  quicksandRegular: fonts.quicksand,
+  quicksandSemiBold: fonts.quicksand,
+  quicksandBold: fonts.quicksand
 }
 
 /**

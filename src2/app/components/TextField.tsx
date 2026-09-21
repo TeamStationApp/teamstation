@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Pressable, Text, TextInput, View } from 'react-native'
+import { Platform, Pressable, Text, TextInput, View } from 'react-native'
 
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Icon } from './Icon'
@@ -76,7 +76,22 @@ export function TextField(props: TextFieldProps): React.ReactElement {
           autoCapitalize="none"
           autoCorrect={false}
           keyboardType={keyboardType}
-          autoComplete={autoComplete}
+          // `one-time-code` is iOS's name for it and Android's is `sms-otp`;
+          // give Android the wrong one and the code it has just received is
+          // not offered above the keyboard, which is the whole point of
+          // saying what the field is for.
+          autoComplete={
+            autoComplete === 'one-time-code'
+              ? Platform.select({
+                  ios: 'one-time-code',
+                  default: 'sms-otp' as const
+                })
+              : autoComplete
+          }
+          // A field with somewhere to submit to says so on the key. The
+          // default is a return arrow, which on a sign-in form looks like it
+          // will add a line to a single-line field.
+          returnKeyType={onSubmitEditing == null ? 'done' : 'go'}
           onSubmitEditing={onSubmitEditing}
           onFocus={() => {
             setFocused(true)

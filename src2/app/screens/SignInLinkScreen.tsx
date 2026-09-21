@@ -3,6 +3,7 @@ import { ActivityIndicator, Text, View } from 'react-native'
 
 import type { GameStationClient, Session } from '../../common/api'
 import { Button, Card, Screen } from '../components'
+import { alreadyAsked, markAsked } from '../platform/onceStore'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
 export interface SignInLinkScreenProps {
@@ -13,25 +14,19 @@ export interface SignInLinkScreenProps {
   onSignedIn: (session: Session) => void
 }
 
-/** Where this browser remembers the sign-in it asked for. */
-const ASKED_KEY = 'gsSignInRequest'
-
-/** Written when a sign-in is asked for here, so its own link is one tap. */
+/**
+ * Written when a sign-in is asked for here, so its own link is one tap.
+ *
+ * `onceStore` is the seam: a browser remembers this for as long as the tab is
+ * open and an app for as long as it is running, which are the same rule said
+ * in two vocabularies.
+ */
 export function rememberRequest(requestId: string): void {
-  try {
-    window.sessionStorage.setItem(ASKED_KEY, requestId)
-  } catch {
-    // A browser with storage turned off simply gets the button.
-  }
+  markAsked(requestId)
 }
 
 function askedHere(requestId: string | undefined): boolean {
-  if (requestId == null) return false
-  try {
-    return window.sessionStorage.getItem(ASKED_KEY) === requestId
-  } catch {
-    return false
-  }
+  return requestId != null && alreadyAsked(requestId)
 }
 
 /**

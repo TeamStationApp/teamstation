@@ -18,7 +18,9 @@ further to do with it belongs on `paul/gameStation1`.
 | `src2/common/` | Types and cleaners shared by server and app. No I/O, no Node-only imports. |
 | `src2/server/` | Express 5 API, clustered across every CPU. Postgres through Kysely. |
 | `src2/migrate/` | The PeerTube importer, and the database migrations. |
-| `src2/app/` | The client: React Native components rendered in a browser by `react-native-web`. |
+| `src2/app/` | The client. `react-native-web` renders it in a browser; `ios/` and `android/` render the same files on a phone — see `src2/MOBILE.md`. |
+| `ios/`, `android/` | The native projects, beside the package because that is where React Native takes its project root from. A deploy does not archive them. |
+| `src2/maestro/` | Flows that walk every screen on a phone, run at every gate. |
 | `src/` | GameStation 1.0, frozen. Not built. |
 
 ## Where the site's address lives

@@ -24,7 +24,7 @@ import type {
 } from '../../common/api'
 import {
   GameHeroCard,
-  glassStyle,
+  GlassView,
   HandoffView,
   LivePill,
   NAV_CLEARANCE_REM,
@@ -41,14 +41,18 @@ import {
 } from '../components'
 import { highlightColumnsFor } from '../layout/grid'
 import { PHONE_MARGIN, watchLayout, type WatchMode } from '../layout/watch'
+import { useInsets } from '../platform/safeArea'
 import { lstrings } from '../locales/strings'
 import { sameMoment } from '../player/angleSwitch'
 import { attachHls } from '../player/attachHls'
 import { PlayerSurface } from '../player/PlayerSurface'
 import { useVideoAspect } from '../player/useVideoAspect'
+import { HAVE_METADATA, type VideoHandle } from '../player/videoHandle'
+import { VideoView } from '../player/VideoView'
 import { cacheStyles, useTheme } from '../theme/ThemeContext'
 import type { Theme } from '../theme/types'
 import { gameStatusLine, shortDate, winnerOf } from './format'
+import { GameWatchLayout } from './GameWatchLayout'
 import { openableTeams as teamsWithAPage } from './openableTeams'
 
 export interface GameScreenProps {
@@ -247,11 +251,45 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   const theme = useTheme()
   const styles = getStyles(theme)
   const { height, width } = useWindowDimensions()
+  /**
+   * Nothing in a browser, and the reason a phone on its side used to break.
+   *
+   * `useWindowDimensions` reports the whole screen. On a phone held sideways
+   * the camera housing takes about sixty points off one edge and the rounded
+   * corner takes a little off the other, and the layout below is inset by
+   * exactly that much — so the arrangement was being worked out for a width
+   * the content never had. Two columns that fitted on paper did not fit on the
+   * glass, the row wrapped, and the highlights ended up *underneath* the
+   * pegged picture, showing as slivers past its left edge.
+   *
+   * On the web these are all zero (`app/web/index.html` deliberately does not
+   * ask for `viewport-fit=cover`), so this line changes nothing there.
+   */
+  const insets = useInsets()
   // One measured number: the header overlays the content, so the card clears
   // it with padding and the pegged player sticks below it.
   const { headerHeight } = useHeaderSlot()
 
   const [tab, setTab] = useState<Tab>(initialTab ?? 'watch')
+  /**
+   * The address is allowed to change this, not only to start it.
+   *
+   * Seeded once, the two disagreed the moment anything but a tap moved the
+   * address: Back from the box score wrote `/games/g1` and left the box score
+   * on the screen — on a phone, where Back is how people leave things, a
+   * button that does nothing reads as a hang. Both ends of the app gain the
+   * same thing, because it is the same code.
+   *
+   * The default is repeated rather than guarded against. An address that names
+   * no half means **the first one**, which is what `parseRoute` says and what
+   * the initialiser above says; treating it as "leave things alone" is how
+   * Back from the box score went on showing the box score even once the
+   * address had been put right.
+   */
+  useEffect(() => {
+    setTab(initialTab ?? 'watch')
+  }, [initialTab])
+
   const [game, setGame] = useState<GameDetail | undefined>(undefined)
   const [video, setVideo] = useState<VideoSummary | undefined>(undefined)
   const [highlights, setHighlights] = useState<Highlight[]>([])
@@ -313,16 +351,6 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   // words it copies had gone under it.
   const handoff = useHandoff(headerHeight, 0.5)
   /**
-   * The highlights column runs to the bottom of the window, wherever it starts.
-   *
-   * A fixed height cut it off at the picture's lower edge while the card was
-   * still on screen, so the rows ended in mid-air and the last of them could
-   * not be reached until the card had gone. Its height is set from where it
-   * actually is, on every scroll, which is cheap next to what the browser is
-   * already doing to scroll.
-   */
-  const listRef = useRef<HTMLElement | null>(null)
-  /**
    * How far the section pills push the highlights down.
    *
    * Beside the video the list should be clipped by the bottom of the card, not
@@ -348,20 +376,13 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    * read on scroll and never rendered from.
    */
   const shortWindow = useRef(false)
-  const fitList = useCallback(() => {
-    const node = listRef.current
-    if (node == null || typeof node.getBoundingClientRect !== 'function') return
-    const room = window.innerHeight - node.getBoundingClientRect().top
-    node.style.maxHeight = `${Math.max(120, Math.round(room))}px`
-  }, [])
   const progress = handoff.progress
   const handleWatchScroll = useCallback(() => {
     // Short, the card is never drawn, so there is nothing to hand over and
     // nothing to measure: the header simply holds the score.
     if (shortWindow.current) progress.value = 1
     else handoff.handleScroll()
-    fitList()
-  }, [fitList, handoff, progress])
+  }, [handoff, progress])
   const headerScore = useMemo(
     () =>
       game == null ? null : (
@@ -382,14 +403,24 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   )
   useHeaderHandoff(headerScore)
 
-  const playerRef = useRef<HTMLVideoElement | null>(null)
+  const playerRef = useRef<VideoHandle | null>(null)
+  /**
+   * Whether the player is currently drawing its own controls over the picture.
+   *
+   * `true` to begin with, and a browser never changes it: it has no way to
+   * say, and its control rectangles were measured rather than guessed at. A
+   * phone tells us, and while the bar is faded away the gesture squares get
+   * the whole picture back.
+   */
+  const [controlsVisible, setControlsVisible] = useState(true)
 
   // The box takes the video's own shape, read from the file, so there is
   // nothing left over for a black bar to fill. Until the browser knows, 16:9.
   const aspect = useVideoAspect(playerRef, video?.id)
   const mode = useRef<WatchMode>('stacked')
   const layout = watchLayout({
-    width,
+    // The width the content actually gets, not the width of the screen.
+    width: width - insets.left - insets.right,
     height,
     // The header is what the picture pegs under; the card and the section
     // pills scroll away above it.
@@ -438,7 +469,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    * The same element, as state, so that a **new** one is an event.
    *
    * A ref changing is invisible to React, and the box score unmounts the
-   * player: coming back mounted a fresh `<video>` with the same chosen video,
+   * player: coming back mounted a fresh one with the same chosen video,
    * so the attach effect — which fires only when the source changes — never
    * ran and the new element was never handed a manifest. It sat at
    * `readyState 0` with no source, and a highlight tap moved its timecode and
@@ -448,8 +479,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    * both halves: the narrow rule that stopped the restarts, and a player that
    * works after every mount.
    */
-  const [playerNode, setPlayerNode] = useState<HTMLVideoElement | null>(null)
-  const takePlayer = useCallback((node: HTMLVideoElement | null): void => {
+  const [playerNode, setPlayerNode] = useState<VideoHandle | null>(null)
+  const takePlayer = useCallback((node: VideoHandle | null): void => {
     playerRef.current = node
     setPlayerNode(node)
   }, [])
@@ -621,7 +652,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         if (resume.playing) element.play().catch(() => undefined)
         setResumeAt(undefined)
       }
-      if (element.readyState >= 1) apply()
+      if (element.readyState >= HAVE_METADATA) apply()
       else element.addEventListener('loadedmetadata', apply, { once: true })
       return detach
     }
@@ -635,7 +666,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         element.currentTime = linkAt
         element.play().catch(() => undefined)
       }
-      if (element.readyState >= 1) jump()
+      if (element.readyState >= HAVE_METADATA) jump()
       else element.addEventListener('loadedmetadata', jump, { once: true })
       return detach
     }
@@ -809,17 +840,17 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       // The same card as the angle names above it, and the same glass: the
       // two belong to the picture and sit under it, and a solid white panel
       // the width of the column read as a different kind of thing entirely.
-      <View
+      <GlassView
+        radius={theme.rem(theme.radiusRem)}
         style={[
           styles.description,
-          glassStyle(theme),
           // Beside the picture on a short window it is in the list's column
           // and takes its width; everywhere else it is the picture's own.
           short ? styles.descriptionInList : { width: layout.videoWidth }
         ]}
       >
         <Text style={styles.descriptionText}>{chosen.description}</Text>
-      </View>
+      </GlassView>
     )
 
   const isLive = video?.status === 'live'
@@ -829,6 +860,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         videoRef={playerRef}
         width={layout.videoWidth}
         height={layout.videoHeight}
+        controlsVisible={controlsVisible}
       >
         {isLive && <LivePill />}
         {video == null ? (
@@ -840,17 +872,15 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           // so beats a player that shows black and never explains itself.
           <Text style={styles.message}>{lstrings.game_video_unavailable}</Text>
         ) : (
-          // Web only for now. A raw video element is right here: react-native-web
-          // renders to the DOM, and the browser's own player is what gives us
-          // hardware decoding for HEVC and H.264 alike.
-          // The browser's own controls stay: they scrub, mute and go
+          // The platform's own controls stay: they scrub, mute and go
           // fullscreen well, and the gesture layer is cut around them rather
-          // than replacing them.
-          <video
-            ref={takePlayer}
-            style={{ width: '100%', height: '100%', backgroundColor: '#000' }}
+          // than replacing them — `controlGeometry.ts` knows where each
+          // platform puts them.
+          <VideoView
+            source={playback.url}
+            onHandle={takePlayer}
             controls
-            playsInline
+            onControlsVisible={setControlsVisible}
           />
         )}
       </PlayerSurface>
@@ -866,12 +896,9 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         // Its own card, the width of the picture, sitting just under it: glass,
         // so the highlights passing beneath the pegged block are blurred rather
         // than hidden or sharp.
-        <View
-          style={[
-            styles.videoPicker,
-            glassStyle(theme),
-            { width: layout.videoWidth }
-          ]}
+        <GlassView
+          radius={theme.rem(theme.radiusRem)}
+          style={[styles.videoPicker, { width: layout.videoWidth }]}
           onLayout={event => {
             setPickerHeight(event.nativeEvent.layout.height)
           }}
@@ -894,7 +921,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
             }}
             accessibilityLabel="Camera angles"
           />
-        </View>
+        </GlassView>
       ) : null}
     </View>
   )
@@ -972,7 +999,9 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         pills had gone under too, which is long after the thing it is a copy
         of has left the screen.
       */}
-      <View ref={handoff.ref}>{scoreboard}</View>
+      <View collapsable={false} ref={handoff.ref}>
+        {scoreboard}
+      </View>
       {sections}
     </>
   )
@@ -980,128 +1009,44 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   // Two regions, not one scroll view: the card, the pills and the player are
   // fixed, and the highlights scroll underneath them. Reading to the bottom of
   // a long game must not take the video off the screen.
+  //
+  // How those three are arranged is the one piece of this app that exists
+  // twice — `position: sticky` and a nested scroller have no React Native
+  // equivalent that is a style — so it lives in `GameWatchLayout`, which takes
+  // what to draw and knows nothing about a game.
   if (tab === 'watch') {
-    // One container, three children, always in this order. Stacked it is a
-    // column that scrolls, with the player pegged under the header once the
-    // card has gone by; side by side it is a wrapping row, where the card
-    // takes the full width and the player and the list share the line below.
-    //
-    // The same parent and the same children in both, because the `<video>`
-    // must not move in the tree: a layout that swapped one structure for
-    // another would remount it and stop playback dead the moment a window
-    // crossed the boundary.
     return (
-      <Animated.ScrollView
-        style={styles.watch}
+      <GameWatchLayout
+        head={head}
+        player={player}
+        description={description}
+        sections={sections}
+        highlightList={highlightList}
+        footer={
+          <>
+            {/*
+              Under the highlights, and only for the people who run the team:
+              everybody else is answered `404` and sees nothing here at all.
+            */}
+            <StreamPanel client={client} gameId={gameId} />
+          </>
+        }
+        layout={layout}
+        short={short}
+        sideBySide={sideBySide}
+        headerHeight={headerHeight}
+        tabsHeight={tabsHeight}
+        height={height}
         onScroll={handleWatchScroll}
-        scrollEventThrottle={16}
-        contentContainerStyle={[
+        style={styles.watch}
+        contentStyle={[
           styles.watchContent,
           sideBySide ? styles.watchSplit : styles.watchStacked,
-          // The header is glass and overlays this, so everything starts below
-          // it. On the container rather than on the card, because on a short
-          // window the card is not the first thing here — the picture is.
-          { paddingTop: headerHeight }
+          short && styles.watchSplitShort
         ]}
-      >
-        {/*
-          The card and the sections, above everything on a window with the
-          height for them.
-
-          Short, they are in the column on the right instead. A band across
-          the top costs a phone held sideways half of what it has, and the
-          picture — the thing the screen is for — would start below the fold
-          and need scrolling to before it could be seen at all.
-        */}
-        {short ? null : <View style={styles.head}>{head}</View>}
-
-        {/*
-          A plain div, not a `View`: `position: sticky` is a web value React
-          Native has no name for, and react-native-web drops it on the way
-          through style validation — the block simply scrolled away, which
-          looks like a working peg right up until the card has gone. The app
-          already renders DOM where it must, and this is the same seam.
-        */}
-        <div
-          style={{
-            // A raw div is content-box by default, unlike everything React
-            // Native renders: without this the padding is added to the width
-            // and the block runs past the edge of the screen.
-            boxSizing: 'border-box',
-            position: 'sticky',
-            top: headerHeight,
-            zIndex: 2,
-            alignSelf: 'flex-start',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: sideBySide ? 'flex-start' : 'center',
-            paddingLeft: sideBySide ? theme.rem(theme.spaceMdRem) : 0,
-            width: sideBySide ? undefined : '100%'
-            // Nothing painted here. The picture is opaque on its own and the
-            // card below it is the glass; a tint on this block as well stacked
-            // with the card's and turned it solid.
-          }}
-        >
-          {player}
-          {/*
-            Under the picture, unless there is no `under`: on a phone held
-            sideways the picture already reaches the bottom of the window, so
-            the description goes into the column that scrolls instead of off
-            the end of the one that does not.
-          */}
-          {short ? null : description}
-        </div>
-
-        {/*
-          Its own scroller beside the video, bounded by the window: the page
-          stops scrolling once the card has gone, and the list carries on
-          against a video that has stopped moving.
-        */}
-        <div
-          ref={node => {
-            listRef.current = node
-            // Once it exists, and again whenever the layout changes under it.
-            if (node != null) requestAnimationFrame(fitList)
-          }}
-          style={{
-            boxSizing: 'border-box',
-            flexGrow: sideBySide ? 0 : 1,
-            width: sideBySide ? layout.sideWidth : '100%',
-            // The same inset as the picture, so a row and the picture share
-            // their left and right edges and nothing appears beside the card
-            // that is pegged over them.
-            paddingLeft: sideBySide ? 0 : PHONE_MARGIN,
-            paddingRight: sideBySide
-              ? theme.rem(theme.spaceMdRem)
-              : PHONE_MARGIN,
-            // A starting value only; `fitList` measures the real one.
-            maxHeight: sideBySide ? height - headerHeight : undefined,
-            // Pulled up past the section pills into the empty space beside
-            // them. Short, the pills are in this column rather than beside
-            // it, so there is nothing to pull past.
-            marginTop:
-              sideBySide && !short
-                ? -(tabsHeight + theme.rem(theme.spaceSmRem))
-                : 0,
-            overflowY: sideBySide ? 'auto' : 'visible'
-          }}
-        >
-          {/*
-            The sections only. The card itself is not drawn on a short window
-            — a column narrow enough to sit beside the picture is narrower
-            than two team names laid out either side of a score, and the
-            header is already holding that score in full.
-          */}
-          {short ? <View style={styles.columnHead}>{sections}</View> : null}
-          {short ? description : null}
-          {highlightList}
-          {/*
-            Under the highlights, and only for the people who run the team:
-            everybody else is answered `404` and sees nothing here at all.
-          */}
-          <StreamPanel client={client} gameId={gameId} />
-        </div>
-      </Animated.ScrollView>
+        headStyle={styles.head}
+        columnHeadStyle={styles.columnHead}
+      />
     )
   }
 
@@ -1308,10 +1253,12 @@ function LineScore(props: {
 function StatRow(props: {
   name: string
   cells: string[]
+  /** Which of those cells take the wider column, by position. */
+  wide?: boolean[]
   theme: Theme
   onPress?: () => void
 }): React.ReactElement {
-  const { name, cells, theme, onPress } = props
+  const { name, cells, wide, theme, onPress } = props
   const styles = getStyles(theme)
   const content = (
     <>
@@ -1319,7 +1266,13 @@ function StatRow(props: {
         {name}
       </Text>
       {cells.map((value, index) => (
-        <Text key={index} style={styles.cell}>
+        <Text
+          key={index}
+          style={[styles.cell, wide?.[index] === true && styles.cellWide]}
+          // A figure is one line. Whatever it measures, it must not be
+          // allowed to make its row taller than the row above.
+          numberOfLines={1}
+        >
           {value}
         </Text>
       ))}
@@ -1370,7 +1323,15 @@ function BattingTable(props: {
               {lstrings.stats_player}
             </Text>
             {battingColumns.map(column => (
-              <Text key={column.label} style={[styles.cell, styles.cellHead]}>
+              <Text
+                key={column.label}
+                style={[
+                  styles.cell,
+                  styles.cellHead,
+                  column.wide === true && styles.cellWide
+                ]}
+                numberOfLines={1}
+              >
                 {column.label}
               </Text>
             ))}
@@ -1380,6 +1341,7 @@ function BattingTable(props: {
               key={line.userId}
               name={line.shortName ?? ''}
               cells={battingColumns.map(column => column.value(line))}
+              wide={battingColumns.map(column => column.wide === true)}
               theme={theme}
               onPress={
                 onOpenPlayer == null
@@ -1464,6 +1426,8 @@ const pitchingColumns: Array<{
 const battingColumns: Array<{
   label: string
   value: (row: BattingRow) => string
+  /** Holds five characters rather than three, so it gets its own width. */
+  wide?: boolean
 }> = [
   { label: lstrings.stats_at_bats, value: row => String(row.ab) },
   { label: lstrings.stats_hits, value: row => String(row.h) },
@@ -1478,7 +1442,13 @@ const battingColumns: Array<{
     // hitter, and the number beside a name is read as what kind of hitter
     // they are.
     label: lstrings.stats_average,
-    value: row => (row.seasonAvg == null ? '–' : average(row.seasonAvg))
+    value: row => (row.seasonAvg == null ? '–' : average(row.seasonAvg)),
+    // `1.000` is five characters where every other column holds at most
+    // three. At the shared width Android's shaping made it a hair too wide
+    // and broke it across two lines — `1.00` over `0` — which made that one
+    // row taller than the rest and put a step in the table. iOS and the
+    // browser measured the same string a hair narrower and got away with it.
+    wide: true
   }
 ]
 
@@ -1671,6 +1641,16 @@ const getStyles = cacheStyles((theme: Theme) =>
       alignItems: 'flex-start',
       columnGap: theme.rem(1.5)
     },
+    // A phone on its side never wraps. The card that forces the wrap above is
+    // not drawn on a short window at all, so there is nothing legitimate for a
+    // second line to hold — and if the two columns are ever a few points too
+    // wide for the glass, wrapping is the worst of the available answers: the
+    // list goes *under* the pegged picture, where it reads as an empty column
+    // beside the video rather than as a layout that did not fit. Refusing to
+    // wrap keeps the mistake visible instead of hiding it.
+    watchSplitShort: {
+      flexWrap: 'nowrap'
+    },
     head: {
       width: '100%',
       paddingHorizontal: theme.rem(theme.spaceMdRem),
@@ -1681,40 +1661,17 @@ const getStyles = cacheStyles((theme: Theme) =>
       gap: theme.rem(theme.spaceSmRem),
       marginBottom: theme.rem(theme.spaceSmRem)
     },
-    playerColumn: {
-      gap: theme.rem(theme.spaceSmRem)
-    },
+
     // Pegged under the header in both layouts, once the card and the pills
     // have gone by. `sticky` is a web position React Native has no name for;
     // this app renders to the DOM, and `webStyle` is the one place that cast
     // lives.
-    pegged: {
-      ...webStyle({ position: 'sticky' }),
-      zIndex: 2,
-      // Opaque, or the highlights show through as they pass underneath.
-      backgroundColor: theme.backgroundColor
-    },
-    playerColumnStacked: {
-      width: '100%',
-      alignItems: 'center'
-    },
-    playerColumnSplit: {
-      flexShrink: 1,
-      paddingLeft: theme.rem(theme.spaceMdRem)
-    },
-    listColumn: {
-      flexGrow: 1
-    },
-    listColumnStacked: {
-      width: '100%',
-      paddingHorizontal: theme.rem(theme.spaceMdRem)
-    },
-    listColumnSplit: {
-      flexGrow: 0,
-      paddingRight: theme.rem(theme.spaceMdRem),
-      // Its own scroller: the highlights move beside a video that does not.
-      ...webStyle({ overflowY: 'auto' })
-    },
+
+
+
+
+
+
     player: {
       alignSelf: 'center',
       backgroundColor: theme.videoBackgroundColor,
@@ -1836,10 +1793,16 @@ const getStyles = cacheStyles((theme: Theme) =>
       fontSize: theme.rem(0.8125),
       // Fixed, so the columns of two tables beside each other line up and
       // neither can push the other out of its half.
-      width: theme.rem(2.1),
+      width: theme.rem(2),
       flexGrow: 0,
       flexShrink: 0,
       textAlign: 'right'
+    },
+    cellWide: {
+      // For a batting average. The eight columns beside it each gave up
+      // 0.1rem to pay for this, so the table is the width it always was and
+      // the name column is not squeezed any further.
+      width: theme.rem(2.8)
     },
     cellHead: {
       color: theme.secondaryTextColor,

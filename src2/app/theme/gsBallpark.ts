@@ -1,3 +1,4 @@
+import { fonts } from './fonts'
 import type { Theme } from './types'
 
 /**
@@ -61,9 +62,11 @@ const palette = {
    * and Space Grotesk — and Paul chose the one on the sign-in screen. Its
    * numerals are near-monospaced, which is what makes a column of innings line
    * up without setting a second font for scores.
+   *
+   * Named by `fonts`, not spelled out here: a browser wants a stack and a
+   * phone wants one family, and only one of the two can be a literal.
    */
-  spaceGrotesk:
-    '"Space Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+  spaceGrotesk: fonts.spaceGrotesk
 }
 
 /** 16 logical pixels is one comfortable line, as on the web generally. */

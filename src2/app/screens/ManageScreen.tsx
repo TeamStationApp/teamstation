@@ -53,9 +53,18 @@ export interface ManageScreenProps {
  * header says what they are and stops there: where a row came from is this
  * system's business and not something to explain on every screen.
  */
+/**
+ * How wide the table wants to be before it would rather scroll than squeeze.
+ *
+ * Shared by the measured width above and the `minWidth` below so the two
+ * cannot drift apart — they are the same number and mean the same thing.
+ */
+const TABLE_MIN_REM = 58
+
 export function ManageScreen(props: ManageScreenProps): React.ReactElement {
   const { client, scopeKind, scopeId, meUserId, onTitle } = props
-  const styles = getStyles(useTheme())
+  const theme = useTheme()
+  const styles = getStyles(theme)
 
   const [page, setPage] = useState<ManagePage | undefined>(undefined)
   const [refused, setRefused] = useState(false)
@@ -65,6 +74,21 @@ export function ManageScreen(props: ManageScreenProps): React.ReactElement {
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<string | undefined>(undefined)
   const [error, setError] = useState<string | undefined>(undefined)
+  /**
+   * How wide the table is allowed to be, measured rather than declared.
+   *
+   * Inside a horizontal `ScrollView` the content's width is *indefinite*: the
+   * scroller's whole job is to let the content be as wide as it likes, so
+   * there is no free space for `flex` to divide and every row ends up as wide
+   * as its own longest word. The columns then line up with nothing — not with
+   * the header, not with each other — and the TEAM and SEASON ticks, which
+   * are the point of the table, are pushed off the right edge of a phone.
+   *
+   * A browser does not have this problem because the table's block container
+   * gives it a width to start from. Measuring the scroller and handing the
+   * table a real number is how you give Yoga the same thing.
+   */
+  const [scrollWidth, setScrollWidth] = useState(0)
 
   const load = useCallback(async () => {
     const answer = await client.managePage(scopeKind, scopeId)
@@ -204,8 +228,28 @@ export function ManageScreen(props: ManageScreenProps): React.ReactElement {
             // does not, rather than sitting at its minimum width and leaving
             // the last column half off the edge of a desktop.
             contentContainerStyle={styles.tableScroll}
+            onLayout={event => {
+              setScrollWidth(event.nativeEvent.layout.width)
+            }}
           >
-            <View style={styles.table}>
+            <View
+              style={[
+                styles.table,
+                // A declared width, and no `flexGrow` beside it — that
+                // pairing is the whole of this. With `flexGrow: 1` on the
+                // table the row container sized it to the scroller's own
+                // width instead: it asked for 864 and rendered at 377, every
+                // row sized to its own longest word, and the role column
+                // started at a different x on all six of them. Declared
+                // width alone and the columns line up, the role wraps to two
+                // lines, and the ticks are where the header says they are.
+                //
+                // Never narrower than the columns need, never narrower than
+                // the card — the second half is what stops a desktop showing
+                // an 864-wide table in a 1280-wide space.
+                { width: Math.max(theme.rem(TABLE_MIN_REM), scrollWidth) }
+              ]}
+            >
               <View style={[styles.row, styles.head]}>
                 <Text style={[styles.who, styles.headText]}>
                   {lstrings.manage_person}
@@ -428,6 +472,7 @@ function PersonRow(props: {
           <Button
             label={lstrings.role_change}
             kind="text"
+            style={styles.actionButton}
             disabled={busy}
             onPress={() => {
               onChangeRole(person)
@@ -440,6 +485,7 @@ function PersonRow(props: {
           <Button
             label={lstrings.manage_remove}
             kind="text"
+            style={styles.actionButton}
             disabled={busy}
             onPress={() => {
               onRemove(person)
@@ -527,16 +573,17 @@ const getStyles = cacheStyles((theme: Theme) => ({
     color: theme.secondaryTextColor
   },
   tableScroll: {
-    minWidth: '100%'
+    // `flexGrow`, not `minWidth: '100%'`. A percentage along a horizontal
+    // scroller's own axis has nothing to be a percentage *of* on a phone —
+    // the content is as wide as it likes — so it resolved to nothing and the
+    // table sat at its intrinsic width with the last column half off the
+    // edge, which is the very thing the comment above says it prevents.
+    flexGrow: 1
   },
   table: {
-    // Wide enough that every column keeps its own width; narrower screens
-    // scroll rather than squeeze, and wider ones let it grow.
-    // The padding sits outside this width, so leave room for it: a table
-    // that overflows its own card by exactly its padding is the kind of
-    // detail that reads as a bug.
-    minWidth: theme.rem(54),
-    flexGrow: 1,
+    // The width is set inline from the measured scroller, because it has to
+    // be a number rather than a rule. The padding sits inside it, so the
+    // table does not overflow its own card by exactly its padding.
     paddingHorizontal: theme.rem(theme.spaceMdRem),
     paddingBottom: theme.rem(theme.spaceSmRem)
   },
@@ -611,8 +658,38 @@ const getStyles = cacheStyles((theme: Theme) => ({
     textAlign: 'center'
   },
   actions: {
-    flex: 1.3,
+    // A fixed width, not `flex` with a floor under it — and the difference
+    // between those two is a whole platform bug.
+    //
+    // `minWidth` on a flex item is **clamping** in CSS and **additive** in
+    // Yoga. The browser grew this column to 76, saw that was under the 88
+    // floor, froze it there and shared the rest over the other columns. iOS
+    // reserved the 88 first and *then* gave it a grow share on top, landing
+    // at 147. Two of these columns, so 118 points came out of the other six:
+    // `TEAM` and `SEASON` fell from 56 to 45, `SEASON` needs about 52, and it
+    // broke mid-word as `SEASO` / `N`.
+    //
+    // Fixed, both platforms reserve the same 176 and divide what is left over
+    // the same 10.8 units. `Change role` is still never cut, which is what
+    // the floor was for — guaranteed now rather than left to whichever way
+    // the clamp went. It is what the box score's `cell` does, and the reason
+    // that table has never had this problem: it never divides free space.
+    // 7.5 rem, not 5.5: 5.5 was measured against the *label* and the button
+    // adds its own padding, so at 88 the label came out `Chan…` on a phone.
+    // `TABLE_MIN_REM` grows by the same 4 rem so the other columns keep every
+    // point they had — this column is fixed, so it comes out of the table's
+    // total rather than out of `TEAM` and `SEASON`.
+    width: theme.rem(7.5),
+    flexGrow: 0,
+    flexShrink: 0,
     alignItems: 'flex-end'
+  },
+  actionButton: {
+    // The browser lets this overflow its column leftwards into the
+    // whitespace and draws it whole; Yoga clamps it to the column instead —
+    // it is a cross-axis clamp, so `flexShrink: 0` does not stop it, which
+    // was worth finding out. The column is wide enough for the button now.
+    flexShrink: 0
   },
   name: {
     fontFamily: theme.semiBoldTextFont,

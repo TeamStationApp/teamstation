@@ -1,7 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { shouldResumeAfterRecovery } from './attachHls'
+import { shouldResumeAfterRecovery } from './resumeAfterRecovery'
 
 /**
  * What happens to a live game when the stream stumbles.

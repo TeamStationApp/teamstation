@@ -1,4 +1,6 @@
 /** What a press does, by where it lands in the picture. */
+import type { VideoHandle } from './videoHandle'
+
 export type Zone =
   | 'seekBack'
   | 'seekForward'
@@ -37,7 +39,7 @@ export function zoneFor(
 export const STEP_SECONDS = 10
 
 /** Seek, clamped, without changing whether it is playing. */
-export function seekBy(video: HTMLVideoElement, delta: number): void {
+export function seekBy(video: VideoHandle, delta: number): void {
   const duration = Number.isFinite(video.duration)
     ? video.duration
     : video.currentTime + Math.max(0, delta)

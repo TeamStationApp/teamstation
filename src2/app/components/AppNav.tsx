@@ -1,8 +1,10 @@
 import React from 'react'
-import { Pressable, View } from 'react-native'
+import { Platform, Pressable, View } from 'react-native'
 
+import { useInsets } from '../platform/safeArea'
+import { elevationFor } from '../theme/elevation'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { glassStyle } from './glass'
+import { GlassView } from './GlassView'
 import { Icon, type IconName } from './Icon'
 
 export type NavTabId = 'home' | 'videos' | 'schedule'
@@ -51,8 +53,22 @@ const FLOATING_SCALE = 1.2
 const FLOATING_ICON_REM = 1.25 * FLOATING_SCALE
 /** The disc behind a glyph, which is also the whole of the touch target. */
 const FLOATING_DISC_REM = 2.75 * FLOATING_SCALE
-/** The capsule's own breathing room, around the discs. */
-const FLOATING_PAD_REM = 0.1875 * FLOATING_SCALE
+/**
+ * The capsule's own breathing room, around the discs — **the same on every
+ * side**, and that is the whole of it rather than a detail.
+ *
+ * The end of a capsule is a semicircle whose radius is half the capsule's
+ * height, so it is centred half a height in from the end. The selected disc
+ * is centred one horizontal padding plus its own radius in from the same end.
+ * Those two only coincide when the horizontal padding equals the vertical
+ * one — and when they coincide, the disc and the end arc are concentric and
+ * the gap between them is the same all the way round.
+ *
+ * They did not. Vertically the disc had 3.6 points and at the ends it had
+ * 9.6, which put its centre six points inboard of the arc's, and it read as
+ * cramped above and below and adrift from the end it sits in.
+ */
+const FLOATING_PAD_REM = 0.375 * FLOATING_SCALE
 /** How far the capsule floats off the bottom of the window. */
 const FLOATING_BOTTOM_REM = 1
 /**
@@ -108,13 +124,40 @@ export function AppNav(props: AppNavProps): React.ReactElement {
   const theme = useTheme()
   const styles = getStyles(theme)
   const floating = mode === 'floating'
+  // Off the bottom of the *window* on a page, and off the home indicator on a
+  // phone — the same rem either way, measured from wherever the window really
+  // ends rather than from where the pixels do.
+  const insets = useInsets()
+
+  const capsule = theme.rem(2.5)
 
   return (
-    <View
+    <GlassView
       accessibilityRole="tablist"
+      // Interactive, unlike the header: this is the one surface a thumb
+      // presses, and on iOS 26 that is what makes the glass deform under it
+      // the way the system's own bars do.
+      interactive={floating}
+      // A pill in both places. In the header this used to ask for a radius of
+      // zero, and iOS duly drew a square-cornered pane of glass *on* the
+      // glass header — which reads as a rendering fault rather than as a
+      // surface. The floating capsule's own language, at the smaller size.
+      radius={floating ? capsule : theme.rem(1.25)}
+      // The capsule asks for the clear style: it is a row of glyphs with
+      // nothing written on the material, so it can afford the transparency,
+      // and the refraction is the whole point of it. The header keeps
+      // `regular`, because a title does sit on that one and has to stay
+      // readable over whatever scrolls under it.
+      clear={floating}
+      // In the header this row is already sitting on glass. On iOS that is
+      // the effect that was asked for and it stays; anything that has to fall
+      // back draws nothing, because a flat tint over the header reads as a
+      // square-cornered box around the three icons rather than as a surface.
+      fallbackFill={floating}
       style={[
         styles.container,
-        floating ? [styles.floating, glassStyle(theme)] : styles.inHeader
+        floating ? styles.floating : styles.inHeader,
+        floating && { bottom: theme.rem(FLOATING_BOTTOM_REM) + insets.bottom }
       ]}
     >
       {NAV_TABS.map(tab => {
@@ -157,7 +200,7 @@ export function AppNav(props: AppNavProps): React.ReactElement {
           </Pressable>
         )
       })}
-    </View>
+    </GlassView>
   )
 }
 
@@ -176,19 +219,53 @@ const getStyles = cacheStyles((theme: Theme) => ({
     // as one shape at the spacing the rest of the app uses. And then the
     // capsule's own fifth on top of that.
     gap: theme.rem(theme.spaceXsRem * 1.5 * FLOATING_SCALE),
-    paddingHorizontal: theme.rem(theme.spaceSmRem * FLOATING_SCALE),
-    paddingVertical: theme.rem(FLOATING_PAD_REM),
+    // One number, four sides. See `FLOATING_PAD_REM`.
+    padding: theme.rem(FLOATING_PAD_REM),
     borderRadius: theme.rem(2.5),
-    borderWidth: 1,
-    borderColor: theme.glassBorderColor,
-    shadowColor: '#000000',
-    shadowOpacity: 0.18,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
+    // A hairline gives the capsule an edge to read against scrolling content.
+    // The **shadow** does not come with it on iOS: the system material draws
+    // its own, and a second one spread a soft shape past the first.
+    //
+    // The hairline itself was not the fault it looked like. What made the
+    // capsule appear to have a second, slightly larger pill behind it was the
+    // glass being a *different shape* from this border — the material clipped
+    // itself with a squircle at a radius larger than half its height, which
+    // pulls the ends in and points them, while this border drew a true
+    // capsule. Two shapes, nearly aligned, reading as two pills. With the
+    // material clamped to a real capsule (`GSGlassView.mm`) the two coincide
+    // and the hairline does what it was always for.
+    ...Platform.select({
+      ios: { borderWidth: 1, borderColor: theme.glassBorderColor },
+      default: {
+        borderWidth: 1,
+        borderColor: theme.glassBorderColor,
+        shadowColor: '#000000',
+        shadowOpacity: 0.18,
+        shadowRadius: 12,
+        shadowOffset: { width: 0, height: 4 }
+      }
+    }),
+    // Android resolves `zIndex` against elevation, so the capsule needs a
+    // number higher than anything that scrolls beneath it or an elevated
+    // button passing under is painted on top of it.
+    elevation: elevationFor(12),
     zIndex: 5
   },
   inHeader: {
-    gap: theme.rem(theme.spaceXsRem)
+    gap: theme.rem(theme.spaceXsRem),
+    // The shape the glass above is cut to, so the two agree.
+    borderRadius: theme.rem(1.25),
+    overflow: 'hidden',
+    // The breathing room belongs to the pill, and the pill only exists where
+    // there is real glass to draw it — `fallbackFill` sees to that. Padding
+    // is layout rather than paint, though, so left unguarded it moved the
+    // three destinations four points left *in the browser*, where nothing is
+    // drawn around them at all. Measured against production at 1032: same
+    // icon pitch, same avatar, and this was the only difference.
+    ...Platform.select({
+      ios: { paddingHorizontal: theme.rem(theme.spaceXsRem) },
+      default: {}
+    })
   },
   item: {
     // The paint shrank when the labels went; the target did not. A thumb at a
@@ -206,6 +283,10 @@ const getStyles = cacheStyles((theme: Theme) => ({
     width: theme.rem(FLOATING_DISC_REM),
     height: theme.rem(FLOATING_DISC_REM),
     borderRadius: theme.rem(FLOATING_DISC_REM / 2),
+    // Android draws a background right to the edges of the view unless it is
+    // told to clip to the corner radius as well, so the disc behind the
+    // selected glyph came out a square.
+    overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center'
   },
@@ -215,6 +296,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
     width: theme.rem(2),
     height: theme.rem(2),
     borderRadius: theme.rem(1),
+    overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center'
   },

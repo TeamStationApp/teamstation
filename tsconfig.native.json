@@ -1,0 +1,46 @@
+{
+  // The app as a phone builds it, which is a different program from the one
+  // the browser builds even though almost every file is the same.
+  //
+  // Two settings carry this whole file, and without them the platform-sibling
+  // architecture is asserted rather than checked:
+  //
+  // `moduleSuffixes` makes `import './foo'` resolve to `foo.native.tsx` before
+  // `foo.tsx`, exactly as Metro does. TypeScript has no notion of a platform
+  // otherwise, so every native sibling's exports would be checked against no
+  // consumer at all — rename one, change a signature, drop a prop, and it
+  // compiles clean and red-boxes on the device.
+  //
+  // `lib` has no `dom`. That is the point: `document`, `window.addEventListener`,
+  // `HTMLVideoElement` and `getBoundingClientRect` are the entire subject of
+  // this port, and with the DOM in the library every one of them type-checks
+  // and fails at runtime instead.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "moduleResolution": "bundler",
+    "moduleSuffixes": [".native", ""],
+    "lib": ["es2023"],
+    "types": ["react-native"]
+  },
+  // Seeded from the entry point rather than by a glob, and that is the whole
+  // trick: TypeScript follows the imports, `moduleSuffixes` resolves each one
+  // the way Metro will, and what gets checked is exactly the graph the phone
+  // loads. A glob would also drag in every web file that has a native sibling
+  // — `useAddressBar.ts`, `attachHls.ts` — and report the DOM they are
+  // entitled to use. Those are `tsconfig.app.json`'s business.
+  "include": ["src2/app/native/index.tsx", "src2/app/native.d.ts"],
+  // The tests run under mocha in Node, not on a phone: they read fixtures off
+  // the disk and are type-checked by `tsconfig.app.json`, which has the Node
+  // types they need.
+  "exclude": [
+    "src2/app/web",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "node_modules",
+    "lib",
+    "dist",
+    "ios",
+    "android"
+  ]
+}
