@@ -62,16 +62,28 @@ These follow the repository, not a new taste:
 
 ## Running it
 
+Everything is driven from the **repository root** — the package, the lockfile
+and the tsconfigs live there, and `src2/` is the source this one package
+builds. That is also exactly how a deploy lays a version out, so what runs on
+the server is the tree you have here.
+
 ```sh
-cd src2
 npm install
 npm run migrate      # create or update the schema
 npm start            # API on 127.0.0.1:9100
 npm test
+npm run lint
 ```
 
-Configuration is written by `cleaner-config` to `src2/serverConfig.json` on
-first run; it is gitignored, and every field has a default.
+`npm run build` compiles `src2/` to `lib/` and `npm run build.web` bundles the
+app to `dist/`, both at the root, which is where the service and Caddy look.
+
+Configuration is written by `cleaner-config` to `serverConfig.json` **at the
+root** on first run; it is gitignored, and every field has a default.
+
+`src/` beside it is GameStation 1.0, frozen. It has no build configuration on
+this branch: it is tagged `v1.0.0`, and anything further to do with it belongs
+on `paul/gameStation1`.
 
 ## Live streaming
 

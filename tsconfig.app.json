@@ -13,5 +13,9 @@
     // library. The server config deliberately does not.
     "lib": ["es2023", "dom", "dom.iterable"]
   },
-  "include": ["app/**/*.ts", "app/**/*.tsx", "common/**/*.ts"]
+  "include": [
+    "src2/app/**/*.ts",
+    "src2/app/**/*.tsx",
+    "src2/common/**/*.ts"
+  ]
 }

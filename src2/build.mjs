@@ -1,6 +1,21 @@
 import babel from '@babel/core'
 import { build, context } from 'esbuild'
 import { copyFile, mkdir, readFile, rm, writeFile } from 'fs/promises'
+import path from 'path'
+import { fileURLToPath } from 'url'
+
+/**
+ * Everything below is written relative to the repository root, and this is
+ * what makes that true wherever the command is run from.
+ *
+ * `dist/` has to land beside `lib/` at the top of the tree, because that is
+ * where Caddy is pointed and where the service's working directory is. Anchor
+ * it to this file rather than to the shell's idea of where it is: `npm run
+ * build.web` runs from the root, but a person debugging runs it from wherever
+ * they happen to be standing, and a bundle built into the wrong directory is
+ * a deploy that serves the previous one with no error anywhere.
+ */
+process.chdir(path.join(path.dirname(fileURLToPath(import.meta.url)), '..'))
 
 /**
  * Bundles the web app.
@@ -87,7 +102,7 @@ const worklets = {
 
 const options = {
   plugins: [worklets],
-  entryPoints: ['app/web/index.tsx'],
+  entryPoints: ['src2/app/web/index.tsx'],
   // A content hash in the name, for production only. Without it the bundle is
   // always `/app.js`, and a browser that has cached one has no way to learn
   // there is a newer one — Paul's phone loaded the page twice after a fix was
@@ -138,7 +153,7 @@ const options = {
 }
 
 await mkdir('dist', { recursive: true })
-const template = await readFile('app/web/index.html', 'utf8')
+const template = await readFile('src2/app/web/index.html', 'utf8')
 
 /**
  * The two files Apple and Google fetch to decide whether a link may open the
@@ -148,7 +163,10 @@ const template = await readFile('app/web/index.html', 'utf8')
 async function copyWellKnown() {
   await mkdir('dist/.well-known', { recursive: true })
   for (const name of ['apple-app-site-association', 'assetlinks.json']) {
-    await copyFile(`app/web/.well-known/${name}`, `dist/.well-known/${name}`)
+    await copyFile(
+      `src2/app/web/.well-known/${name}`,
+      `dist/.well-known/${name}`
+    )
   }
 }
 await copyWellKnown()
