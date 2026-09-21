@@ -1,12 +1,14 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "outDir": "lib",
-    "rootDir": "src",
     "module": "commonjs",
-    "target": "es2020",
-    "sourceMap": true
+    "outDir": "lib",
+    "noEmit": false
   },
-  "include": ["src/server/**/*", "src/common/**/*", "src/config.ts"],
-  "exclude": ["src/client"]
+  "include": [
+    "src2/common/**/*.ts",
+    "src2/migrate/**/*.ts",
+    "src2/server/**/*.ts"
+  ],
+  "exclude": ["**/*.test.ts", "lib", "node_modules"]
 }
