@@ -314,6 +314,18 @@ public enum SourceSelectionRules {
     return .applied(reassign: nil)
   }
 
+  /// Turns one camera's audio on, and every other camera's off.
+  ///
+  /// A take has one source for sound. The programme master places its sound by one offset settled
+  /// at the part's start, which is only correct while the sound comes from one place: summing
+  /// several meant the mix could not emit a moment until the *last* contributor's audio for it had
+  /// landed, and the writer was left reconciling two independently-timed streams after the fact.
+  /// That reconciliation is what cost takes 413 and 414 forty-four and forty-seven seconds of
+  /// sound. See `ProgramSoundCheck` and the `programmeSoundLock` plan.
+  ///
+  /// The control stays a toggle, because that is what the operator already reaches for; turning one
+  /// on is what turns the others off. Turning the only one *off* leaves the take with no sound,
+  /// which is a thing an operator may legitimately want, so it is allowed.
   public static func setUsesAudio(
     _ usesAudio: Bool,
     for id: SourceID,
@@ -322,6 +334,45 @@ public enum SourceSelectionRules {
     guard let position = selections.firstIndex(where: { $0.id == id }) else { return }
     guard !isLinkedControl(id, in: selections) else { return }
     selections[position].usesAudio = usesAudio
+    guard usesAudio else { return }
+    for other in selections.indices where other != position {
+      selections[other].usesAudio = false
+    }
+  }
+
+  /// The one source carrying this take's sound, if any.
+  public static func audioSource(in selections: [SourceSelection]) -> SourceSelection? {
+    audioContributors(in: selections).first
+  }
+
+  /// Leaves at most one row's audio on: the one the operator most recently chose.
+  ///
+  /// Needed because remembered audio settings are filed per camera, and every take up to 409
+  /// remembered three cameras with audio on. Restoring those verbatim would put a sum back on a
+  /// build whose programme master is only correct with one source.
+  ///
+  /// `chosenAt` breaks the tie, and it has to. An earlier cut of this kept the first row instead,
+  /// on the grounds that row order is stable — and on the bench rig that quietly took the audio
+  /// from `1st`, which hears the clapperboard, and gave it to `3rd`, which barely does, so a
+  /// thirty-minute soak measured the wrong microphone. Stability is worth nothing if the stable
+  /// answer is not the operator's. Rows with no stamp are older than the stamp and lose to any
+  /// row that has one; with no stamps anywhere, row order still decides.
+  public static func normalisingAudioToOne(
+    _ selections: [SourceSelection],
+    chosenAt: [SourceID: Double] = [:]
+  ) -> [SourceSelection] {
+    let candidates = selections.filter(\.usesAudio)
+    guard candidates.count > 1 else { return selections }
+    let keep = candidates.enumerated().max {
+      (chosenAt[$0.element.id] ?? -.infinity, -Double($0.offset))
+        < (chosenAt[$1.element.id] ?? -.infinity, -Double($1.offset))
+    }?.element.id
+    return selections.map { selection in
+      guard selection.usesAudio, selection.id != keep else { return selection }
+      var off = selection
+      off.usesAudio = false
+      return off
+    }
   }
 
   public static let defaultInputGain: Double = 0.5

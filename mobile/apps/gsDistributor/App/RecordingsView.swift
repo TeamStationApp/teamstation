@@ -101,6 +101,18 @@ struct RecordingsView: View {
             }
           }
           Spacer()
+          // A master whose sound falls short of its picture is the one fault nothing downstream can
+          // repair, so it is said here, before anybody chooses to export or upload the take. Takes
+          // 413 and 414 were 43.9 s and 46.8 s short and went out anyway.
+          if let short = recording.soundShortfall, short > 0.25 {
+            Label(Self.describeShortfall(short), systemImage: "speaker.slash.fill")
+              .font(.caption.bold())
+              .foregroundStyle(.orange)
+              .help("The programme master's sound is \(Self.describeShortfall(short)) shorter than "
+                + "its picture, so it drifts further ahead as the take goes on. The camera "
+                + "archives are unaffected.")
+              .accessibilityIdentifier("recording-sound-short-\(recording.id)")
+          }
           if recording.isLive {
             Text("REC")
               .font(.caption.bold())
@@ -111,6 +123,12 @@ struct RecordingsView: View {
         .accessibilityIdentifier("recording-row-\(recording.id)")
       }
     }
+  }
+
+  /// Seconds, or minutes and seconds once it is long enough that seconds alone read as small.
+  static func describeShortfall(_ seconds: Double) -> String {
+    guard seconds >= 60 else { return String(format: "%.1f s", seconds) }
+    return String(format: "%d:%02d", Int(seconds) / 60, Int(seconds) % 60)
   }
 
   // MARK: - Files
