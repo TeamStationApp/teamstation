@@ -21,7 +21,7 @@ export function CameraDragControl({
   onChange,
   onActive
 }: {
-  kind: 'tilt' | 'height'
+  kind: 'tilt' | 'height' | 'zoom'
   value: number
   onChange: (value: number) => void
   onActive: (active: boolean) => void
@@ -56,12 +56,15 @@ export function CameraDragControl({
       onShouldBlockNativeResponder: () => true
     })
   }, [kind])
-  const limit = kind === 'tilt' ? TILT_LIMIT : HEIGHT_LIMIT
-  const label = kind === 'tilt' ? 'Tilt' : 'Height'
+  const limit =
+    kind === 'tilt' ? TILT_LIMIT : kind === 'zoom' ? 1.8 : HEIGHT_LIMIT
+  const label = kind === 'tilt' ? 'Tilt' : kind === 'zoom' ? 'Zoom' : 'Height'
   const hint =
     kind === 'tilt'
       ? 'Drag down to look up; drag up to look down.'
-      : 'Drag up to raise the camera; drag down to lower it.'
+      : kind === 'zoom'
+        ? 'Drag up to zoom in; drag down to zoom out.'
+        : 'Drag up to raise the camera; drag down to lower it.'
   return (
     <View
       {...responder.panHandlers}
@@ -70,13 +73,15 @@ export function CameraDragControl({
       accessibilityLabel={`Camera ${label.toLowerCase()}`}
       accessibilityHint={hint}
       accessibilityValue={{
-        min: -limit,
+        min: kind === 'zoom' ? 0.7 : -limit,
         max: limit,
         now: value,
         text:
           kind === 'tilt'
             ? `${Math.round((value * 180) / Math.PI)} degrees`
-            : `${Math.round(value)} metres`
+            : kind === 'zoom'
+              ? `${value.toFixed(2)} times`
+              : `${Math.round(value)} metres`
       }}
       accessibilityActions={[{ name: 'increment' }, { name: 'decrement' }]}
       onAccessibilityAction={event => {
@@ -126,7 +131,9 @@ export function CameraDragControl({
       >
         {kind === 'tilt'
           ? `${Math.round((value * 180) / Math.PI)}° · drag`
-          : `${Math.round(value)}m · drag`}
+          : kind === 'zoom'
+            ? `${value.toFixed(2)}× · drag`
+            : `${Math.round(value)}m · drag`}
       </Text>
     </View>
   )

@@ -24,37 +24,37 @@ export function Scoreboard({
       scale={SCOREBOARD_SCALE}
     >
       <mesh castShadow>
-        <boxGeometry args={[66, 34, 2]} />
+        <boxGeometry args={[66, 18, 2]} />
         <meshStandardMaterial color="#17372f" roughness={0.85} />
       </mesh>
       <mesh position={[0, 0, 1.02]} name="scoreboard-bulbs">
-        <planeGeometry args={[64, 32]} />
+        <planeGeometry args={[64, 16]} />
         <meshBasicMaterial map={texture} toneMapped={false} />
       </mesh>
       {[-1, 1].map(side => (
         <group key={side}>
           <mesh position={[side * 33, 0, 1]}>
-            <boxGeometry args={[0.8, 35, 1]} />
+            <boxGeometry args={[0.8, 18.4, 1]} />
             <meshStandardMaterial color="#63735b" roughness={0.75} />
           </mesh>
-          <mesh position={[0, side * 17, 1]}>
+          <mesh position={[0, side * 9, 1]}>
             <boxGeometry args={[67, 0.8, 1]} />
             <meshStandardMaterial color="#63735b" roughness={0.75} />
           </mesh>
-          <mesh position={[side * 23, -20, -0.4]} castShadow>
-            <boxGeometry args={[1.4, 16, 1.5]} />
+          <mesh position={[side * 23, -12.3, -0.4]} castShadow>
+            <boxGeometry args={[1.4, 6.7, 1.5]} />
             <meshStandardMaterial color="#33483d" />
           </mesh>
           <mesh
-            position={[side * 23, -19, -0.6]}
+            position={[side * 23, -12, -0.6]}
             rotation={[0, 0, side * 0.55]}
           >
-            <boxGeometry args={[0.6, 17, 0.6]} />
+            <boxGeometry args={[0.6, 7, 0.6]} />
             <meshStandardMaterial color="#33483d" />
           </mesh>
         </group>
       ))}
-      <mesh position={[0, 17.7, 0.4]} castShadow>
+      <mesh position={[0, 9.7, 0.4]} castShadow>
         <boxGeometry args={[69, 0.5, 5]} />
         <meshStandardMaterial color="#283b32" roughness={0.8} />
       </mesh>

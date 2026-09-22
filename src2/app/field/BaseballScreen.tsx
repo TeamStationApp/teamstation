@@ -38,9 +38,8 @@ export function BaseballScreen(): React.ReactElement {
   const [cameraTilt, setCameraTilt] = useState(0)
   const [cameraHeight, setCameraHeight] = useState(0)
   const [cameraDragging, setCameraDragging] = useState(false)
-  const { height: windowHeight } = useWindowDimensions()
-  const bottom = phone ? theme.rem(NAV_CLEARANCE_REM) + insets.bottom : 16
-  const viewportHeight = fieldViewportHeight(windowHeight, headerHeight, bottom)
+  const { width: windowWidth } = useWindowDimensions()
+  const viewportHeight = fieldViewportHeight(windowWidth - 24)
   const selectView = (next: CameraView): void => {
     setView(next)
     setCameraTilt(0)
@@ -91,7 +90,7 @@ export function BaseballScreen(): React.ReactElement {
           <Text style={[styles.title, phone && { fontSize: 24 }]}>
             Your field. Your play.
           </Text>
-          <Text style={styles.subtitle}>Drag a player. Watch them run.</Text>
+          <Text style={styles.subtitle}>Plan a move. Release to run.</Text>
         </View>
         {button('Reset', () => {
           setPlayers(createPlayers())
@@ -134,7 +133,13 @@ export function BaseballScreen(): React.ReactElement {
             'Scoreboard camera'
           )}
         </View>
-        <View style={{ position: 'absolute', right: 12, bottom: 74, gap: 8 }}>
+        <View style={{ position: 'absolute', right: 12, bottom: 12, gap: 8 }}>
+          <CameraDragControl
+            kind="zoom"
+            value={zoom}
+            onChange={setZoom}
+            onActive={setCameraDragging}
+          />
           <CameraDragControl
             kind="tilt"
             value={cameraTilt}
@@ -176,7 +181,7 @@ export function BaseballScreen(): React.ReactElement {
             <Text style={styles.buttonText}>
               {arcMode === 'aim'
                 ? 'Tap or drag a landing point'
-                : `Drag arrows up / down · ${arc != null && arc.angle < 5 ? 'Chopper' : `${Math.round(arc?.angle ?? 30)}°`}`}
+                : `Drag arrows up / down · ${arc != null && arc.angle < 0 ? 'Chopper' : `${Math.round(arc?.angle ?? 30)}°`}`}
             </Text>
           </View>
         )}
@@ -204,22 +209,6 @@ export function BaseballScreen(): React.ReactElement {
             },
             view === 'infield',
             'Infield camera'
-          )}
-          {button(
-            '−',
-            () => {
-              setZoom(value => Math.max(0.7, value - 0.15))
-            },
-            false,
-            'Zoom out'
-          )}
-          {button(
-            '+',
-            () => {
-              setZoom(value => Math.min(1.8, value + 0.15))
-            },
-            false,
-            'Zoom in'
           )}
         </View>
       </View>
@@ -260,7 +249,7 @@ export function BaseballScreen(): React.ReactElement {
                 ? 'Drag near the yellow arrows: up for a fly ball, down for a chopper.'
                 : 'Draw a hit from home plate with Ball arc.'}
             {arc != null
-              ? `  ${arc.angle < 5 ? 'Chopper' : `${Math.round(arc.angle)}° launch`} · ${Math.round(Math.hypot(arc.target.x, arc.target.z))}m`
+              ? `  ${arc.angle < 0 ? 'Chopper' : `${Math.round(arc.angle)}° launch`} · ${Math.round(Math.hypot(arc.target.x, arc.target.z))}m`
               : ''}
           </Text>
         </View>
@@ -305,8 +294,8 @@ export function BaseballScreen(): React.ReactElement {
         <View style={styles.actionRow}>
           <Text style={[styles.hint, { flex: 1 }]}>
             {phone
-              ? 'Select, then tap the turf to move.'
-              : 'Drag on the field, or select a player and click a destination.'}
+              ? 'Drag a player or name; release to move.'
+              : 'Drag a player or name to preview a move; release to run.'}
           </Text>
           {player.team === 'runner'
             ? button('Next base →', () => {
@@ -350,7 +339,6 @@ const getStyles = cacheStyles((theme: Theme) => ({
   subtitle: { color: theme.secondaryTextColor, fontSize: 13, marginTop: 5 },
   viewport: {
     flexShrink: 0,
-    minHeight: 240,
     overflow: 'hidden',
     borderRadius: 18,
     marginHorizontal: 12,
@@ -374,8 +362,8 @@ const getStyles = cacheStyles((theme: Theme) => ({
   cameraBar: {
     position: 'absolute',
     bottom: 12,
-    alignSelf: 'center',
-    flexDirection: 'row',
+    left: 12,
+    flexDirection: 'column',
     gap: 4,
     padding: 4,
     borderRadius: 12,

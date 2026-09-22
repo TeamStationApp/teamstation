@@ -57,6 +57,7 @@ describe('field locomotion', function () {
     for (const index of [2, 3, 0, 1]) {
       setDestination(runner, nextBase(runner))
       expect(runner.target).deep.equals(BASES[index])
+      for (let frame = 0; frame < 1200; frame++) advancePlayer(runner, 1 / 60)
     }
   })
 })

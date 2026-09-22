@@ -7,7 +7,6 @@ export interface ScoreboardState {
   pitcher: { firstName: string; lastName: string }
   batterHits?: number
   batterAtBats?: number
-  showPlayerNames?: boolean
   pitchCount: number
   balls: number
   strikes: number
@@ -23,7 +22,6 @@ export const DEMO_SCOREBOARD: ScoreboardState = {
   pitcher: { firstName: 'James', lastName: 'Wilson' },
   batterHits: 1,
   batterAtBats: 3,
-  showPlayerNames: false,
   pitchCount: 64,
   balls: 2,
   strikes: 1,

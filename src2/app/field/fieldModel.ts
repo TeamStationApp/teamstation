@@ -15,6 +15,8 @@ export interface FieldPlayer {
   heading: number
   speed: number
   stride: number
+  dragging?: boolean
+  runnerBase?: number
 }
 export type CameraView = 'home' | 'overhead' | 'infield' | 'scoreboard'
 export const BASE = 27.432 / Math.sqrt(2)
@@ -63,6 +65,7 @@ export function createPlayers(): FieldPlayer[] {
     target: { x, z },
     heading: index === 1 ? Math.PI : 0,
     speed: 0,
+    runnerBase: index >= 9 ? index - 8 : undefined,
     stride: 0
   }))
 }
@@ -83,6 +86,10 @@ export function setDestination(player: FieldPlayer, point: GroundPoint): void {
 }
 /** Frame-rate independent locomotion; cap elapsed time after a backgrounded tab. */
 export function advancePlayer(player: FieldPlayer, elapsed: number): void {
+  if (player.dragging === true) {
+    player.speed = 0
+    return
+  }
   const dt = Math.max(0, Math.min(elapsed, 0.05))
   const dx = player.target.x - player.position.x
   const dz = player.target.z - player.position.z
@@ -90,6 +97,12 @@ export function advancePlayer(player: FieldPlayer, elapsed: number): void {
   if (distance < 0.035) {
     player.position = { ...player.target }
     player.speed = 0
+    if (player.team === 'runner') {
+      const base = BASES.findIndex(
+        b => Math.hypot(b.x - player.position.x, b.z - player.position.z) < 0.1
+      )
+      if (base >= 0) player.runnerBase = base
+    }
     return
   }
   const desired = Math.atan2(dx, dz)
@@ -106,6 +119,8 @@ export function advancePlayer(player: FieldPlayer, elapsed: number): void {
   player.stride += step * 1.85
 }
 export function nextBase(player: FieldPlayer): GroundPoint {
+  if (player.runnerBase != null)
+    return { ...BASES[(player.runnerBase + 1) % BASES.length] }
   let nearest = 0
   let distance = Infinity
   BASES.forEach((base, index) => {

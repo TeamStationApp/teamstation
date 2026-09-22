@@ -17,8 +17,10 @@ interface Block {
 /** Hundreds of repeated stadium details share one geometry and one draw call. */
 function Blocks({
   blocks,
-  texture
+  texture,
+  name
 }: {
+  name?: string
   blocks: Block[]
   texture?: Texture
 }): React.ReactElement {
@@ -42,6 +44,7 @@ function Blocks({
   return (
     <instancedMesh
       ref={ref}
+      name={name}
       args={[undefined, undefined, blocks.length]}
       receiveShadow
     >
@@ -114,8 +117,8 @@ export function StadiumDetails({
   }, [])
   return (
     <group name="stadium-details">
-      <Blocks blocks={structure} texture={texture} />
-      <Blocks blocks={seats} />
+      <Blocks name="stadium-structure" blocks={structure} texture={texture} />
+      <Blocks name="stadium-seats" blocks={seats} />
       <LightBanks />
     </group>
   )
@@ -130,8 +133,8 @@ export function LightBanks(): React.ReactElement {
         <group
           key={side}
           name={`light-bank-${side}`}
-          position={[side * 77.5, 0, -131]}
-          rotation={[0, side * -0.2, 0]}
+          position={[side * 68, 0, -Math.sqrt(136 * 136 - 68 * 68)]}
+          rotation={[0, side * -Math.asin(68 / 136), 0]}
         >
           <mesh position={[0, 19, 0]}>
             <cylinderGeometry args={[0.45, 0.65, 38, 8]} />

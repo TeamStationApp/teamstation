@@ -1,7 +1,15 @@
 /* eslint-disable react/no-unknown-property -- React Three Fiber elements describe Three.js objects, not HTML. */
 import { type ThreeEvent, useFrame, useThree } from '@react-three/fiber'
-import React, { useEffect, useMemo, useRef } from 'react'
-import { type Mesh, PerspectiveCamera, Plane, Vector3 } from 'three'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  type Mesh,
+  type Object3D,
+  PerspectiveCamera,
+  Plane,
+  Raycaster,
+  Sprite,
+  Vector3
+} from 'three'
 
 import { BallArc } from './BallArc'
 import {
@@ -12,9 +20,16 @@ import {
 } from './ballArcModel'
 import { Ballpark } from './Ballpark'
 import { applyFieldCamera } from './cameraModel'
-import { type FieldPlayer, setDestination } from './fieldModel'
+import type { FieldPlayer } from './fieldModel'
 import { fieldPalette as p } from './fieldPalette'
 import type { FieldCanvasProps } from './fieldTypes'
+import { MoveGuide } from './MoveGuide'
+import {
+  beginMove,
+  finishMove,
+  type MoveDraft,
+  previewMove
+} from './movePreview'
 import { Player } from './Player'
 import { PlayerShadows } from './PlayerShadows'
 import { useSurfaceTextures } from './surfaceTextures'
@@ -35,7 +50,7 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     onArcChange,
     onArcFinish
   } = props
-  const { camera, size, gl, invalidate } = useThree()
+  const { camera, size, gl, invalidate, scene } = useThree()
   const textures = useSurfaceTextures()
   useEffect(() => {
     invalidate()
@@ -44,7 +59,9 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     gl.shadowMap.autoUpdate = false
     gl.shadowMap.needsUpdate = true
   }, [gl])
-  const drag = useRef<{ id: string; pointer: number } | null>(null)
+  const drag = useRef<MoveDraft | null>(null)
+  const [preview, setPreview] = useState<MoveDraft | null>(null)
+  const picker = useMemo(() => new Raycaster(), [])
   const ground = useMemo(
     () => new Plane(new Vector3(0, 1, 0), -TERRAIN.players),
     []
@@ -72,11 +89,25 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     invalidate
   ])
 
-  const move = (event: ThreeEvent<PointerEvent>, id: string): void => {
-    const player = players.find(item => item.id === id)
-    if (player == null || event.ray.intersectPlane(ground, point) == null)
+  useEffect(() => {
+    setPreview(null)
+    return () => {
+      if (drag.current != null) {
+        const player = players.find(item => item.id === drag.current?.id)
+        if (player != null) finishMove(player, drag.current, true)
+        drag.current = null
+      }
+    }
+  }, [arcMode, view, players])
+  const move = (event: ThreeEvent<PointerEvent>): void => {
+    if (
+      drag.current?.pointer !== event.pointerId ||
+      event.ray.intersectPlane(ground, point) == null
+    )
       return
-    setDestination(player, point)
+    event.stopPropagation()
+    previewMove(drag.current, point)
+    setPreview({ ...drag.current })
     invalidate()
   }
   const down = (event: ThreeEvent<PointerEvent>): void => {
@@ -88,32 +119,71 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     )
       return
     event.stopPropagation()
-    // Screen-space targets stay finger-sized even for distant outfielders.
-    let nearest: FieldPlayer | undefined
-    let best = 34
-    for (const player of players) {
-      point.set(player.position.x, 5, player.position.z).project(camera)
-      const dx = ((point.x - event.pointer.x) * size.width) / 2
-      const dy = ((point.y - event.pointer.y) * size.height) / 2
-      const distance = Math.hypot(dx, dy)
-      if (distance < best) {
-        nearest = player
-        best = distance
+    picker.ray.copy(event.ray)
+    picker.camera = camera
+    const roots = players
+      .map(player => scene.getObjectByName(`player-${player.id}`))
+      .filter((object): object is Object3D => object != null)
+    scene.updateMatrixWorld(true)
+    const hits = picker.intersectObjects(roots, true)
+    const hit = hits.find(item => item.object instanceof Sprite) ?? hits[0]
+    let object: Object3D | undefined = hit?.object
+    while (
+      object != null &&
+      !players.some(player => object?.name === `player-${player.id}`)
+    )
+      object = object.parent ?? undefined
+    let nearest: FieldPlayer | undefined = players.find(
+      player => object?.name === `player-${player.id}`
+    )
+    // Also retain a small touch allowance when tapping beside a narrow limb.
+    if (nearest == null) {
+      let best = 20
+      for (const player of players) {
+        point.set(player.position.x, 5, player.position.z).project(camera)
+        const distance = Math.hypot(
+          ((point.x - event.pointer.x) * size.width) / 2,
+          ((point.y - event.pointer.y) * size.height) / 2
+        )
+        if (distance < best) {
+          nearest = player
+          best = distance
+        }
       }
     }
-    const id = nearest?.id ?? selected
-    onSelect(id)
-    drag.current = { id, pointer: event.pointerId }
+    const player = nearest ?? players.find(item => item.id === selected)
+    if (player == null) return
+    if (event.ray.intersectPlane(ground, point) == null) {
+      if (nearest == null) return
+      point.set(player.position.x, TERRAIN.players, player.position.z)
+    }
+    onSelect(player.id)
+    drag.current = beginMove(player, event.pointerId, point, nearest != null)
+    if (nearest == null) previewMove(drag.current, point)
+    setPreview({ ...drag.current })
     const capture = event.target as Element
     capture.setPointerCapture(event.pointerId)
-    if (nearest == null) move(event, id)
+    invalidate()
   }
-  const up = (event: ThreeEvent<PointerEvent>): void => {
+  const up = (event: ThreeEvent<PointerEvent>, cancel = false): void => {
     if (drag.current?.pointer !== event.pointerId) return
     event.stopPropagation()
+    const player = players.find(item => item.id === drag.current?.id)
+    if (player != null) finishMove(player, drag.current, cancel)
     drag.current = null
+    setPreview(null)
     const capture = event.target as Element
     capture.releasePointerCapture(event.pointerId)
+    invalidate()
+  }
+  const lostMove = (): void => {
+    if (drag.current != null) {
+      const player = players.find(item => item.id === drag.current?.id)
+      if (player != null) finishMove(player, drag.current, true)
+      drag.current = null
+      setPreview(null)
+      invalidate()
+    }
   }
   const arcSurface = useRef<Mesh>(null)
   const arcDrag = useRef<{
@@ -140,19 +210,34 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
   useEffect(() => {
     arcDrag.current = null
   }, [arcMode, view])
+  const landingAt = (
+    event: ThreeEvent<PointerEvent>
+  ): Pick<BallArcState, 'target' | 'landingHeight'> | null => {
+    const onGround = event.ray.intersectPlane(ground, point)
+    const groundDistance =
+      onGround == null ? Infinity : event.ray.origin.distanceTo(point)
+    picker.ray.copy(event.ray)
+    const stands = ['stadium-structure', 'stadium-seats']
+      .map(name => scene.getObjectByName(name))
+      .filter((object): object is Object3D => object != null)
+    const hit = picker.intersectObjects(stands, false)[0]
+    if (hit != null && hit.distance < groundDistance)
+      return { target: arcTarget(hit.point), landingHeight: hit.point.y + 0.25 }
+    return onGround == null ? null : { target: arcTarget(point) }
+  }
   const aim = (
     event: ThreeEvent<PointerEvent>,
     initial: BallArcState
   ): void => {
-    if (event.ray.intersectPlane(ground, point) == null) return
-    onArcChange?.({ target: arcTarget(point), angle: initial.angle })
+    const landing = landingAt(event)
+    if (landing == null) return
+    onArcChange?.({ ...landing, angle: initial.angle })
     invalidate()
   }
   const arcDown = (event: ThreeEvent<PointerEvent>): void => {
     event.stopPropagation()
     if (event.button !== 0 || arcDrag.current != null) return
-    if (arcMode === 'aim' && event.ray.intersectPlane(ground, point) == null)
-      return
+    if (arcMode === 'aim' && landingAt(event) == null) return
     const initial = arc ?? { target: { x: 0, z: -60 }, angle: 30 }
     if (arcMode === 'edit') {
       const tip = arcHandle(initial)
@@ -214,22 +299,36 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
       <Ballpark textures={textures} />
       <PlayerShadows players={players} />
       {arc != null && <BallArc arc={arc} editing={arcMode === 'edit'} />}
-      {arcMode !== 'off' && (
-        <mesh
-          ref={arcSurface}
-          name="arc-interaction-surface"
-          onPointerDown={arcDown}
-          onPointerMove={arcMove}
-          onPointerUp={arcUp}
-          onPointerCancel={arcUp}
-          onLostPointerCapture={() => {
-            arcDrag.current = null
-          }}
-        >
-          <planeGeometry />
-          <meshBasicMaterial visible={false} />
-        </mesh>
-      )}
+      {preview != null && <MoveGuide draft={preview} />}
+      <mesh
+        ref={arcSurface}
+        name={
+          arcMode === 'off' ? 'interaction-surface' : 'arc-interaction-surface'
+        }
+        onPointerDown={arcMode === 'off' ? down : arcDown}
+        onPointerMove={arcMode === 'off' ? move : arcMove}
+        onPointerUp={
+          arcMode === 'off'
+            ? event => {
+                up(event)
+              }
+            : arcUp
+        }
+        onPointerCancel={
+          arcMode === 'off'
+            ? event => {
+                up(event, true)
+              }
+            : arcUp
+        }
+        onLostPointerCapture={() => {
+          arcDrag.current = null
+          lostMove()
+        }}
+      >
+        <planeGeometry />
+        <meshBasicMaterial visible={false} />
+      </mesh>
       {players.map(player => (
         <Player
           key={player.id}
@@ -238,26 +337,6 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
           selected={selected === player.id}
         />
       ))}
-      <mesh
-        name="interaction-surface"
-        rotation={[-Math.PI / 2, 0, 0]}
-        position={[0, TERRAIN.players, -40]}
-        onPointerDown={down}
-        onPointerMove={event => {
-          if (drag.current?.pointer === event.pointerId) {
-            event.stopPropagation()
-            move(event, drag.current.id)
-          }
-        }}
-        onPointerUp={up}
-        onPointerCancel={up}
-        onLostPointerCapture={() => {
-          drag.current = null
-        }}
-      >
-        <planeGeometry args={[1500, 1500]} />
-        <meshBasicMaterial visible={false} />
-      </mesh>
     </>
   )
 }

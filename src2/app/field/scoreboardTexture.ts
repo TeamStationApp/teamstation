@@ -14,7 +14,7 @@ import {
 } from './scoreboardModel'
 
 export const BOARD_WIDTH = 1024
-export const BOARD_HEIGHT = 512
+export const BOARD_HEIGHT = 256
 /** Individual bulbs and their halos baked into one 2 MiB map, not point lights or bloom passes. */
 export function makeScoreboardPixels(state: ScoreboardState): Uint8Array {
   const pixels = new Uint8Array(BOARD_WIDTH * BOARD_HEIGHT * 4)
@@ -104,52 +104,33 @@ export function makeScoreboardPixels(state: ScoreboardState): Uint8Array {
     })
   }
   const brass = [86, 92, 65]
-  rect(14, 14, 996, 2, brass)
-  rect(14, 496, 996, 2, brass)
-  rect(14, 14, 2, 484, brass)
-  rect(1008, 14, 2, 484, brass)
-  for (const y of [76, 214, 366]) rect(30, y, 964, 2, brass)
-  rect(810, 88, 2, 114, brass)
-  for (let x = 26; x < 1000; x += 48) {
-    lamp(x, 24, 2, [130, 122, 94], false)
-    lamp(x, 487, 2, [130, 122, 94], false)
-  }
-  text('GAMESTATION BALLPARK', 290, 32, 4)
-  text('AWAY', 55, 103, 4.5)
-  text(state.awayTeam, 220, 101, 6, 16)
-  text(
-    String(Math.max(0, Math.min(99, state.awayScore))).padStart(2, '0'),
-    860,
-    96,
-    6
-  )
-  text('HOME', 55, 163, 4.5)
-  text(state.homeTeam, 220, 161, 6, 16)
-  text(
-    String(Math.max(0, Math.min(99, state.homeScore))).padStart(2, '0'),
-    860,
-    156,
-    6
-  )
-  if (state.showPlayerNames === true) {
-    text(shortName(state.batter), 55, 243, 5.5, 14)
-    text(shortName(state.pitcher), 540, 243, 5.5, 14)
-  }
-  const statsY = state.showPlayerNames === true ? 310 : 268
-  text(battingLine(state), 55, statsY, 6)
-  text('PITCHES', 540, statsY + 2, 3.5)
-  text(String(Math.max(0, Math.min(999, state.pitchCount))), 725, statsY - 4, 6)
-  text('BALLS', 108, 386, 4)
-  text('STRIKES', 409, 386, 4)
-  text('OUTS', 787, 386, 4)
+  rect(14, 10, 996, 2, brass)
+  rect(14, 244, 996, 2, brass)
+  rect(14, 10, 2, 236, brass)
+  rect(1008, 10, 2, 236, brass)
+  for (const y of [118, 182]) rect(30, y, 964, 2, brass)
+  text('AWAY', 40, 23, 4)
+  text(state.awayTeam, 200, 20, 5.5, 16)
+  text(String(state.awayScore).padStart(2, '0'), 860, 20, 5.5)
+  text('HOME', 40, 76, 4)
+  text(state.homeTeam, 200, 73, 5.5, 16)
+  text(String(state.homeScore).padStart(2, '0'), 860, 73, 5.5)
+  // One compact line: batter, hits-at-bats, pitcher, pitch count.
+  text(shortName(state.batter), 40, 140, 3.5, 12)
+  text(battingLine(state), 315, 140, 3.5, 7)
+  text(shortName(state.pitcher), 485, 140, 3.5, 12)
+  text(`P:${Math.max(0, Math.min(999, state.pitchCount))}`, 790, 140, 3.5, 6)
+  text('BALLS', 40, 204, 3.5)
+  text('STRIKES', 355, 204, 3.5)
+  text('OUTS', 745, 204, 3.5)
   countLights(state.balls, 3).forEach((lit, i) => {
-    lamp(118 + i * 42, 449, 11, [70, 244, 105], lit)
+    lamp(178 + i * 35, 216, 9, [70, 244, 105], lit)
   })
   countLights(state.strikes, 2).forEach((lit, i) => {
-    lamp(459 + i * 42, 449, 11, [255, 211, 55], lit)
+    lamp(540 + i * 35, 216, 9, [255, 211, 55], lit)
   })
   countLights(state.outs, 2).forEach((lit, i) => {
-    lamp(809 + i * 42, 449, 11, [255, 73, 54], lit)
+    lamp(860 + i * 35, 216, 9, [255, 73, 54], lit)
   })
   return pixels
 }
