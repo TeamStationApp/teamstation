@@ -53,7 +53,7 @@ when updating. Native GPU/device testing is a separate integration gate.
 ```sh
 npx tsc -p tsconfig.app.json
 npm run typecheck.native
-npx mocha -r sucrase/register src2/app/field/fieldModel.test.ts src2/app/field/fieldScene.test.ts src2/app/navigation/routes.test.ts src2/app/navigation/tabPress.test.ts
+npx mocha -r sucrase/register 'src2/app/field/*.test.ts' src2/app/navigation/routes.test.ts src2/app/navigation/tabPress.test.ts
 npm run build.web
 npm run build.field
 ```
@@ -89,7 +89,7 @@ still need physical-device frame-time and thermal checks.
 - Moving player contact shadows share one instanced draw; the stadium shadow map
   renders once. No ongoing shadow pass for animated players.
 
-Scene-graph budget measured during development: 255 mesh draws before frustum
+Previous detail-pass scene-graph budget: 255 mesh draws before frustum
 culling, about 43k triangles including instanced seats, 24 static shadow casters,
 and about 4 MiB of texture data including mipmaps. These are structural counts,
 not an on-device GPU benchmark. The cloud browser has no WebGL context; bitmap
@@ -103,3 +103,31 @@ Hold **Tilt ↕** and drag down to look upward, or up to look downward.
 Hold **Height ↕** and drag up to translate upward on world Y, or down to lower
 the camera. Height preserves the viewing angle. Presets and Reset clear both
 adjustments. Dragging either control temporarily disables page scrolling.
+
+
+## Geometry, players and hit drawing
+
+Terrain layers now have 8cm vertical steps and ordered polygon offsets. The camera
+near plane is 2m rather than 0.1m, improving far-field depth precision by 20x;
+height controls stop above the ground. Geometry regression tests raycast the actual
+field across 81 orientation/tilt/height/zoom combinations and check at least four
+24-bit depth steps between covered surfaces before polygon offset. These checks
+cannot replace a visual GPU sweep on Safari/Chrome.
+
+Light banks are halfway toward the scoreboard's nearest outer edge from their
+original position. Housings and lamp faces share one local rotation, with a gap
+between faces and housing. Lamp faces use unlit cream materials, without bloom.
+
+Player body scale is doubled (1.6 to 3.2), with larger rings and contact shadows.
+Fictional `displayName` and `number` fields are separate from position/role names.
+Front/back jersey numbers and rounded, camera-facing nameplates use portable
+DataTextures; nameplate size stays approximately constant on screen.
+
+Press **Ball arc** below the viewport. Tap to place a 30-degree yellow flight path,
+or hold and drag its landing point; release enters angle adjustment. Drag within
+48px horizontally / 58px vertically of the yellow apex arrows. Up raises the
+launch angle; below 5 degrees the trajectory becomes a chopper. Lowering further
+moves the first ground contact toward home, with two diminishing bounces.
+**Move landing**, **Done**, **Adjust arc**, and **Clear arc** support subsequent edits.
+Player movement is disabled while drawing; Done restores it and keeps the arc.
+The path is a coaching diagram, not a physics prediction. No data is persisted.

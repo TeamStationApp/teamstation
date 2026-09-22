@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useRef } from 'react'
 import { DataTexture, type InstancedMesh, LinearFilter, Object3D } from 'three'
 
 import type { FieldPlayer } from './fieldModel'
+import { TERRAIN } from './terrain'
 
 /** Moving contact shadows in one draw call; the stadium shadow map stays static. */
 export function PlayerShadows({
@@ -36,11 +37,11 @@ export function PlayerShadows({
     players.forEach((player, i) => {
       transform.position.set(
         player.position.x + 0.5,
-        0.28,
+        TERRAIN.players - 0.01,
         player.position.z + 0.4
       )
       transform.rotation.set(-Math.PI / 2, 0, -0.35)
-      transform.scale.set(5, 3.3, 1)
+      transform.scale.set(9, 6, 1)
       transform.updateMatrix()
       mesh.current?.setMatrixAt(i, transform.matrix)
     })

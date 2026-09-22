@@ -43,7 +43,7 @@ export function applyFieldCamera(
   const aspect = Math.max(0.2, width / Math.max(1, height))
   camera.aspect = aspect
   camera.fov = 43
-  camera.near = 0.1
+  camera.near = 2
   camera.far = 1100
   const tangent = Math.tan((camera.fov * Math.PI) / 360)
   if (view === 'home') {
@@ -89,7 +89,7 @@ export function applyFieldCamera(
   // Rotate around the camera's own X axis. Positive pitch looks upward.
   camera.rotateX(tilt)
   // World-space translation, deliberately preserving the viewing angle.
-  camera.position.y += heightOffset
+  camera.position.y = Math.max(3, camera.position.y + heightOffset)
   camera.updateProjectionMatrix()
   camera.updateMatrixWorld()
 }

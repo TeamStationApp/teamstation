@@ -1,6 +1,11 @@
+import type { ArcMode, BallArcState } from './ballArcModel'
 import type { CameraView, FieldPlayer } from './fieldModel'
 
 export interface FieldCanvasProps {
+  arc?: BallArcState | null
+  arcMode?: ArcMode
+  onArcChange?: (arc: BallArcState) => void
+  onArcFinish?: () => void
   players: FieldPlayer[]
   selected: string
   onSelect: (id: string) => void

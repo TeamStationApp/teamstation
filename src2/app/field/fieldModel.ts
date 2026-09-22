@@ -7,6 +7,8 @@ export interface FieldPlayer {
   id: string
   label: string
   name: string
+  displayName: string
+  number: number
   team: 'defense' | 'runner'
   position: GroundPoint
   target: GroundPoint
@@ -41,6 +43,21 @@ export function createPlayers(): FieldPlayer[] {
     id,
     label: id,
     name,
+    displayName: [
+      'James W.',
+      'Noah C.',
+      'Liam B.',
+      'Ethan K.',
+      'Mason L.',
+      'Lucas M.',
+      'Owen R.',
+      'Logan D.',
+      'Jack S.',
+      'Alex R.',
+      'Leo T.',
+      'Max P.'
+    ][index],
+    number: [18, 2, 24, 7, 12, 5, 21, 9, 33, 14, 6, 27][index],
     team: index < 9 ? 'defense' : 'runner',
     position: { x, z },
     target: { x, z },

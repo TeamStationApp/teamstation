@@ -7,6 +7,7 @@ import { fieldPalette as p } from './fieldPalette'
 import { Scoreboard } from './Scoreboard'
 import { StadiumDetails } from './StadiumDetails'
 import type { useSurfaceTextures } from './surfaceTextures'
+import { groundDepth, TERRAIN } from './terrain'
 
 function sector(radius: number, inner = 0, angle = Math.PI / 4): Shape {
   const shape = new Shape()
@@ -28,7 +29,7 @@ function Polygon({
   points,
   color,
   map,
-  height = 0.04
+  height = TERRAIN.dirt
 }: {
   points: Array<[number, number]>
   color: string
@@ -50,7 +51,12 @@ function Polygon({
       receiveShadow
     >
       <shapeGeometry args={[shape]} />
-      <meshStandardMaterial color={color} map={map} roughness={1} />
+      <meshStandardMaterial
+        color={color}
+        map={map}
+        roughness={1}
+        {...groundDepth(height)}
+      />
     </mesh>
   )
 }
@@ -60,7 +66,7 @@ function Disc({
   radius,
   color,
   map,
-  height = 0.07
+  height = TERRAIN.plateDirt
 }: {
   x?: number
   z?: number
@@ -85,7 +91,12 @@ function Disc({
           uv.needsUpdate = true
         }}
       />
-      <meshStandardMaterial color={color} map={map} roughness={1} />
+      <meshStandardMaterial
+        color={color}
+        map={map}
+        roughness={1}
+        {...groundDepth(height)}
+      />
     </mesh>
   )
 }
@@ -100,11 +111,16 @@ function Stripe({
   return (
     <mesh
       rotation={[-Math.PI / 2, 0, 0]}
-      position={[0, 0.015, 0]}
+      position={[0, TERRAIN.stripe, 0]}
       receiveShadow
     >
       <shapeGeometry args={[shape]} />
-      <meshStandardMaterial color={p.stripe} map={map} roughness={1} />
+      <meshStandardMaterial
+        color={p.stripe}
+        map={map}
+        roughness={1}
+        {...groundDepth(TERRAIN.stripe)}
+      />
     </mesh>
   )
 }
@@ -162,7 +178,7 @@ export function Ballpark({
       ))}
       <mesh
         rotation={[-Math.PI / 2, 0, 0]}
-        position={[0, 0.03, 0]}
+        position={[0, TERRAIN.track, 0]}
         receiveShadow
       >
         <shapeGeometry args={[track]} />
@@ -170,11 +186,12 @@ export function Ballpark({
           color={p.dirt}
           map={textures.dirt}
           roughness={1}
+          {...groundDepth(TERRAIN.dirt)}
         />
       </mesh>
       <mesh
         rotation={[-Math.PI / 2, 0, 0]}
-        position={[0, 0.04, 0]}
+        position={[0, TERRAIN.dirt, 0]}
         receiveShadow
       >
         <shapeGeometry args={[infield]} />
@@ -182,6 +199,7 @@ export function Ballpark({
           color={p.dirt}
           map={textures.dirt}
           roughness={1}
+          {...groundDepth(TERRAIN.dirt)}
         />
       </mesh>
       <Polygon
@@ -193,7 +211,7 @@ export function Ballpark({
         ]}
         color={p.grass}
         map={textures.grass}
-        height={0.06}
+        height={TERRAIN.diamond}
       />
       <Disc radius={10} color={p.dirt} map={textures.dirt} />
       <Disc
@@ -201,10 +219,10 @@ export function Ballpark({
         z={-18.44}
         color={p.clay}
         map={textures.dirt}
-        height={0.18}
+        height={TERRAIN.mound}
       />
       <Box
-        position={[0, 0.23, -18.44]}
+        position={[0, TERRAIN.chalk, -18.44]}
         size={[0.61, 0.1, 0.15]}
         color={p.chalk}
       />
@@ -216,13 +234,13 @@ export function Ballpark({
           radius={1.8}
           color={p.clay}
           map={textures.dirt}
-          height={0.08}
+          height={TERRAIN.wear}
         />
       ))}
       {BASES.slice(1).map((b, i) => (
         <Box
           key={i}
-          position={[b.x, 0.16, b.z]}
+          position={[b.x, TERRAIN.chalk, b.z]}
           size={[0.7, 0.22, 0.7]}
           rotation={Math.PI / 4}
           color={p.chalk}
@@ -237,12 +255,12 @@ export function Ballpark({
           [-0.4, 0]
         ]}
         color={p.chalk}
-        height={0.1}
+        height={TERRAIN.chalk}
       />
       {[-1, 1].map(side => (
         <group key={side}>
           <Box
-            position={[side * 40, 0.09, -40]}
+            position={[side * 40, TERRAIN.chalk, -40]}
             size={[0.16, 0.05, 113]}
             rotation={(side * -Math.PI) / 4}
             color={p.chalk}
@@ -250,7 +268,7 @@ export function Ballpark({
           {[-1, 1].map(edge => (
             <Box
               key={edge}
-              position={[side * 1.6 + edge * 0.65, 0.1, -0.4]}
+              position={[side * 1.6 + edge * 0.65, TERRAIN.chalk, -0.4]}
               size={[0.08, 0.03, 2.5]}
               color={p.chalk}
             />
@@ -258,7 +276,7 @@ export function Ballpark({
           {[-1.65, 0.85].map(z => (
             <Box
               key={z}
-              position={[side * 1.6, 0.1, z]}
+              position={[side * 1.6, TERRAIN.chalk, z]}
               size={[1.38, 0.03, 0.08]}
               color={p.chalk}
             />

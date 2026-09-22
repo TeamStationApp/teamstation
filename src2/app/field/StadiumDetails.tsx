@@ -90,23 +90,6 @@ export function StadiumDetails({
       add(a, 135, 11, 8, 0.2, 0.2, p.wall)
       add(a, 135, 10.2, 0.15, 1.8, 0.15, p.wall)
     }
-    // Outfield light standards and lamp banks: emissive-looking paint, no extra shadow lights.
-    for (const a of [-0.74, 0.74]) {
-      add(a, 141, 17, 0.7, 34, 0.7, '#788780')
-      add(a, 141, 34, 16, 4.5, 1.4, '#344b44')
-      for (let i = -3; i <= 3; i++) {
-        blocks.push({
-          x: Math.sin(a) * 141 + i * 1.7,
-          y: 34,
-          z: -Math.cos(a) * 141 + 1.1,
-          width: 1,
-          height: 2.4,
-          depth: 0.3,
-          angle: 0,
-          color: '#fff0c3'
-        })
-      }
-    }
     return blocks
   }, [])
   const seats = useMemo(() => {
@@ -133,6 +116,45 @@ export function StadiumDetails({
     <group name="stadium-details">
       <Blocks blocks={structure} texture={texture} />
       <Blocks blocks={seats} />
+      <LightBanks />
+    </group>
+  )
+}
+
+/** The bank and every lamp share one local coordinate system. Move halfway from
+ * the old tower position toward the corresponding outer edge of the scoreboard. */
+export function LightBanks(): React.ReactElement {
+  return (
+    <group name="light-banks">
+      {[-1, 1].map(side => (
+        <group
+          key={side}
+          name={`light-bank-${side}`}
+          position={[side * 77.5, 0, -131]}
+          rotation={[0, side * -0.2, 0]}
+        >
+          <mesh position={[0, 19, 0]}>
+            <cylinderGeometry args={[0.45, 0.65, 38, 8]} />
+            <meshStandardMaterial color="#788780" roughness={0.8} />
+          </mesh>
+          <mesh position={[0, 38, 0]}>
+            <boxGeometry args={[15, 5.2, 1.6]} />
+            <meshStandardMaterial color="#344b44" roughness={0.8} />
+          </mesh>
+          {[-1, 1].map(row =>
+            [-3, -2, -1, 0, 1, 2, 3].map(column => (
+              <mesh
+                key={`${row}-${column}`}
+                name="lamp-face"
+                position={[column * 1.9, 38 + row * 1.2, 0.94]}
+              >
+                <boxGeometry args={[1.35, 1.6, 0.16]} />
+                <meshBasicMaterial color="#fff0c3" toneMapped={false} />
+              </mesh>
+            ))
+          )}
+        </group>
+      ))}
     </group>
   )
 }
