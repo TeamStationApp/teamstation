@@ -19,6 +19,7 @@ import {
   type BallArcState,
   firstBounceFraction
 } from './ballArcModel'
+import { DestinationMarker } from './DestinationMarker'
 import { ARROW_OVERLAY_ORDER, arrowPulse } from './interactionAffordances'
 import { TERRAIN } from './terrain'
 
@@ -134,17 +135,14 @@ export function BallArc({
       <mesh geometry={geometry} name="ball-trajectory">
         <meshBasicMaterial color="#ffe044" toneMapped={false} />
       </mesh>
-      <mesh
+      <DestinationMarker
         position={[
           arc.target.x,
           (arc.landingHeight ?? TERRAIN.players) + 0.1,
           arc.target.z
         ]}
-        rotation={[-Math.PI / 2, 0, 0]}
-      >
-        <ringGeometry args={[1.7, 2.2, 32]} />
-        <meshBasicMaterial color="#ffe044" toneMapped={false} />
-      </mesh>
+        radius={11}
+      />
       {editing && (
         <group
           ref={handle}

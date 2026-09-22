@@ -198,3 +198,15 @@ uses the actual finger position, and runner basepath constraints still apply.
 Mouse and pen placement remain exact. Native hosts pass `touchPlacement`; web
 also recognizes touch pointer events and coarse-pointer touch devices. The native
 3D adapter remains a separate integration step described above.
+
+## Destination visibility and scoreboard columns
+
+Both player and ball landing markers now have five concentric rings, with outer
+radii five times their previous size (4.75m and 11m). The outer rim is bright
+yellow; successive inner rings fade toward the center. They render above scene
+geometry and nameplates, below the angle arrows. Arrow brightness follows distance
+from the traveling crest, so the oldest inner trail becomes darkest.
+
+Team names are flush left without HOME/AWAY prefixes, scores occupy the middle,
+and smaller BALLS/STRIKES/OUTS labels and lamps stack vertically on the right.
+The batter, hits–at-bats, pitcher and pitch count remain on one bottom line.

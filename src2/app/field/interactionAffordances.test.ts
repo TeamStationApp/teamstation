@@ -29,6 +29,8 @@ describe('touch placement and animated arc affordances', function () {
       }
     }
     expect(arrowPulse(1, 0)).greaterThan(arrowPulse(2, 0))
+    expect(arrowPulse(0, 1.2)).lessThan(arrowPulse(1, 1.2))
+    expect(arrowPulse(1, 1.2)).lessThan(arrowPulse(2, 1.2))
     expect(inArcGrabArea(96, 80)).equals(true)
     expect(inArcGrabArea(-96, -80)).equals(true)
     expect(inArcGrabArea(97, 0)).equals(false)
