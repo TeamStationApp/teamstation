@@ -314,3 +314,115 @@ struct SourceSelectionTests {
     #expect(store.load() == nil)
   }
 }
+
+/// One source carries a take's sound. See `SourceSelectionRules.setUsesAudio` and the
+/// `programmeSoundLock` plan: the programme master places its sound by one offset settled at the
+/// part's start, which is only correct while the sound comes from one place.
+@Suite("One audio source")
+struct SingleAudioSourceTests {
+  /// `sourceIndex` matters: `audioContributors` counts only sources that are on a tile, since a
+  /// source with no tile is not being received at all and contributes nothing.
+  private func rows(_ audio: [Bool]) -> [SourceSelection] {
+    audio.enumerated().map { index, usesAudio in
+      SourceSelection(
+        id: .init("CAM\(index + 1)"),
+        kind: .synthetic,
+        advertisedName: "CAM\(index + 1)",
+        isEnabled: true,
+        usesAudio: usesAudio,
+        sourceIndex: index
+      )
+    }
+  }
+
+  @Test("Turning one camera's audio on turns every other camera's off")
+  func turningOneOnTurnsTheRestOff() {
+    var selections = rows([true, true, true])
+    SourceSelectionRules.setUsesAudio(true, for: .init("CAM2"), in: &selections)
+    #expect(selections.map(\.usesAudio) == [false, true, false])
+    #expect(SourceSelectionRules.audioSource(in: selections)?.id == .init("CAM2"))
+  }
+
+  @Test("Turning the only source off leaves the take with no sound rather than picking another")
+  func turningTheOnlyOneOffLeavesSilence() {
+    var selections = rows([false, true, false])
+    SourceSelectionRules.setUsesAudio(false, for: .init("CAM2"), in: &selections)
+    #expect(selections.allSatisfy { !$0.usesAudio })
+    #expect(SourceSelectionRules.audioSource(in: selections) == nil)
+  }
+
+  @Test("Turning one on twice is not a way to end up with two")
+  func repeatedOnIsIdempotent() {
+    var selections = rows([false, false, false])
+    SourceSelectionRules.setUsesAudio(true, for: .init("CAM1"), in: &selections)
+    SourceSelectionRules.setUsesAudio(true, for: .init("CAM1"), in: &selections)
+    #expect(SourceSelectionRules.audioContributors(in: selections).count == 1)
+  }
+
+  /// Every take up to 409 remembered three cameras with audio on, and those settings are filed per
+  /// camera with no ordering. Restoring them verbatim would put a sum back on a build whose master
+  /// is only correct with one source.
+  @Test("Restoring remembered settings that name three sources keeps the first and drops the rest")
+  func normalisingKeepsTheFirstRow() {
+    let normalised = SourceSelectionRules.normalisingAudioToOne(rows([true, true, true]))
+    #expect(normalised.map(\.usesAudio) == [true, false, false])
+  }
+
+  @Test("Normalising leaves a list that already names one source alone")
+  func normalisingIsAnIdentityOnOneSource() {
+    let already = rows([false, true, false])
+    #expect(SourceSelectionRules.normalisingAudioToOne(already).map(\.usesAudio) == [false, true, false])
+  }
+
+  @Test("Normalising a list with no audio source does not invent one")
+  func normalisingDoesNotInventASource() {
+    #expect(SourceSelectionRules.normalisingAudioToOne(rows([false, false])).allSatisfy { !$0.usesAudio })
+  }
+
+  /// The tie-break that matters. Keeping the first row instead took the bench rig's audio from
+  /// `1st`, which hears the clapperboard, and gave it to `3rd`, which barely does — so a
+  /// thirty-minute soak measured the wrong microphone and reported no claps.
+  @Test("The most recently chosen camera keeps the audio, not the first row")
+  func recencyBeatsRowOrder() {
+    let three = rows([true, true, true])
+    let chosen: [SourceID: Double] = [ .init("CAM3"): 200, .init("CAM1"): 100 ]
+    let kept = SourceSelectionRules.normalisingAudioToOne(three, chosenAt: chosen)
+    #expect(kept.map(\.usesAudio) == [false, false, true])
+  }
+
+  @Test("A stamped choice beats an unstamped one, however early its row")
+  func stampedBeatsUnstamped() {
+    let kept = SourceSelectionRules.normalisingAudioToOne(
+      rows([true, true]),
+      chosenAt: [ .init("CAM2"): 1 ]
+    )
+    #expect(kept.map(\.usesAudio) == [false, true])
+  }
+
+  @Test("With no stamps anywhere, row order still decides")
+  func rowOrderIsTheLastResort() {
+    #expect(SourceSelectionRules.normalisingAudioToOne(rows([true, true])).map(\.usesAudio) == [true, false])
+  }
+
+  @Test("Turning one on stamps it, and a gain change afterwards does not move the stamp")
+  func gainDoesNotRestampTheChoice() {
+    var settings: [String: SourceAudioSetting] = [:]
+    var one = rows([true])[0]
+    SourceAudioRules.remembering(one, in: &settings, key: { "k:\($0.id.rawValue)" }, now: 100)
+    #expect(settings["k:CAM1"]?.chosenAt == 100)
+    one.inputGain = 0.9
+    SourceAudioRules.remembering(one, in: &settings, key: { "k:\($0.id.rawValue)" }, now: 500)
+    #expect(settings["k:CAM1"]?.chosenAt == 100)
+    #expect(settings["k:CAM1"]?.inputGain == 0.9)
+  }
+
+  @Test("Turning a camera's audio off clears its stamp so it stops competing")
+  func turningOffClearsTheStamp() {
+    var settings: [String: SourceAudioSetting] = [:]
+    var one = rows([true])[0]
+    SourceAudioRules.remembering(one, in: &settings, key: { "k:\($0.id.rawValue)" }, now: 100)
+    one.usesAudio = false
+    SourceAudioRules.remembering(one, in: &settings, key: { "k:\($0.id.rawValue)" }, now: 200)
+    #expect(settings["k:CAM1"]?.chosenAt == nil)
+  }
+}

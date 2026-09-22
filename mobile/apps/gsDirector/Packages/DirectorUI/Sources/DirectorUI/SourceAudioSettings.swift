@@ -13,14 +13,24 @@ import DirectorSources
 public struct SourceAudioSetting: Hashable, Sendable, Codable {
   public var usesAudio: Bool
   public var inputGain: Double
+  /// When this camera was last made the audio source, as seconds since 1970. Nil on a setting
+  /// filed before this was kept, and on a camera whose audio is off.
+  ///
+  /// A take has one audio source, so restoring a stored set that names several has to pick one.
+  /// Row order is the wrong tie-break: it is arbitrary from the operator's seat, and on the bench
+  /// rig it silently took the audio from `1st`, which hears the clapperboard, and gave it to
+  /// `3rd`, which barely does — so a soak measured the wrong microphone. The most recent choice is
+  /// what the operator actually meant.
+  public var chosenAt: Double?
 
-  public init(usesAudio: Bool, inputGain: Double) {
+  public init(usesAudio: Bool, inputGain: Double, chosenAt: Double? = nil) {
     self.usesAudio = usesAudio
     self.inputGain = SourceSelectionRules.clampedInputGain(inputGain)
+    self.chosenAt = chosenAt
   }
 
-  public init(_ selection: SourceSelection) {
-    self.init(usesAudio: selection.usesAudio, inputGain: selection.inputGain)
+  public init(_ selection: SourceSelection, chosenAt: Double? = nil) {
+    self.init(usesAudio: selection.usesAudio, inputGain: selection.inputGain, chosenAt: chosenAt)
   }
 }
 
@@ -57,7 +67,7 @@ public enum SourceAudioRules {
   ) -> [SourceSelection] {
     guard !settings.isEmpty else { return selections }
     let controls = SourceSelectionRules.linkedControlIDs(in: selections)
-    return selections.map { selection in
+    let restored = selections.map { selection in
       guard !controls.contains(selection.id),
             let key = key(selection),
             let setting = settings[key]
@@ -67,16 +77,34 @@ public enum SourceAudioRules {
       updated.inputGain = SourceSelectionRules.clampedInputGain(setting.inputGain)
       return updated
     }
+    // Remembered settings are filed per camera, and takes up to 409 remembered three cameras with
+    // audio on. Restoring those verbatim would put a sum back on a build whose programme master is
+    // only correct with one source. The most recently chosen wins; see `normalisingAudioToOne`.
+    var chosen: [SourceID: Double] = [:]
+    for selection in restored {
+      if let key = key(selection), let at = settings[key]?.chosenAt { chosen[selection.id] = at }
+    }
+    return SourceSelectionRules.normalisingAudioToOne(restored, chosenAt: chosen)
   }
 
   /// Files what one row currently says, under that row's camera. What the operator just changed.
   public static func remembering(
     _ selection: SourceSelection,
     in settings: inout [String: SourceAudioSetting],
-    key: (SourceSelection) -> String?
+    key: (SourceSelection) -> String?,
+    now: Double = Date().timeIntervalSince1970
   ) {
     guard let key = key(selection) else { return }
-    settings[key] = SourceAudioSetting(selection)
+    // Stamped only while it is the audio source, and only when that is news: a gain change must
+    // not make this camera look like the operator's latest choice, and re-filing an unchanged
+    // row must not move the stamp either.
+    var chosen = settings[key]?.chosenAt
+    if !selection.usesAudio {
+      chosen = nil
+    } else if settings[key]?.usesAudio != true {
+      chosen = now
+    }
+    settings[key] = SourceAudioSetting(selection, chosenAt: chosen)
   }
 
   /// Takes the rows as the truth for any camera not yet on file.
