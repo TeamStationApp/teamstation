@@ -142,6 +142,7 @@ const options = {
     ),
     __DEV__: serve ? 'true' : 'false',
     GS_API_BASE_URL: JSON.stringify(apiBaseUrl),
+    GS_FIELD_PREVIEW: process.env.GS_FIELD_PREVIEW === '1' ? 'true' : 'false',
     // `global` is what a React Native runtime calls it and no browser does.
     // Worklets are compiled to code that reaches for it, and React Native Web
     // reaches for it too — stopping an `Animated` timing calls

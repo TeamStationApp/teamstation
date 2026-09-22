@@ -15,6 +15,7 @@ export type When = 'upcoming' | 'past' | 'all'
 
 export type Route =
   | { name: 'home' }
+  | { name: 'field' }
   | { name: 'videos'; when: When }
   | { name: 'schedule'; when: When }
   | { name: 'account' }
@@ -100,6 +101,8 @@ export function parseRoute(path: string, search = ''): Route {
   const head = parts[0]
   const id = parts[1]
   switch (head) {
+    case 'field':
+      return { name: 'field' }
     case 'videos':
       return { name: 'videos', when: whenOf(query.get('when'), 'past') }
     case 'schedule':
@@ -203,6 +206,8 @@ export function routePath(route: Route): string {
   switch (route.name) {
     case 'home':
       return '/'
+    case 'field':
+      return '/field'
     case 'videos':
       return route.when === 'past' ? '/videos' : `/videos?when=${route.when}`
     case 'schedule':
