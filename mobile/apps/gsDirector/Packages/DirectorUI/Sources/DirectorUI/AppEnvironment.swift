@@ -460,6 +460,11 @@ public final class AppEnvironment {
         wall: wall
       )
     }
+    // The part's sound verdict, onto the take's own row. Telemetry already carries it for the
+    // status line, but that is memory; this is what an export or an upload can still read.
+    programEncoder.setSoundCheckSink { recording, check in
+      try? anchorIndex.recordSoundCheck(check, for: recording)
+    }
   }
 
   /// Called once from the app's `task` modifier.
