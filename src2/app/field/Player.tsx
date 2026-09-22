@@ -1,10 +1,12 @@
 /* eslint-disable react/no-unknown-property -- React Three Fiber elements describe Three.js objects, not HTML. */
 import { useFrame, useThree } from '@react-three/fiber'
-import React, { useRef } from 'react'
-import type { Group, Mesh, Texture } from 'three'
+import React, { useEffect, useMemo, useRef } from 'react'
+import type { Group, Mesh, Sprite, Texture } from 'three'
 
 import { advancePlayer, type FieldPlayer } from './fieldModel'
 import { fieldPalette as p } from './fieldPalette'
+import { makePlayerLabel } from './playerLabels'
+import { TERRAIN } from './terrain'
 
 function Part({
   position,
@@ -42,6 +44,21 @@ export function Player({
   fabric?: Texture
 }): React.ReactElement {
   const invalidate = useThree(state => state.invalidate)
+  const label = useRef<Sprite>(null)
+  const labels = useMemo(
+    () => ({
+      badge: makePlayerLabel(`${player.number} ${player.displayName}`, true),
+      jersey: makePlayerLabel(String(player.number), false)
+    }),
+    [player.number, player.displayName]
+  )
+  useEffect(
+    () => () => {
+      labels.badge.dispose()
+      labels.jersey.dispose()
+    },
+    [labels]
+  )
   const root = useRef<Group>(null)
   const body = useRef<Group>(null)
   const leftArm = useRef<Group>(null)
@@ -50,11 +67,20 @@ export function Player({
   const rightLeg = useRef<Group>(null)
   const target = useRef<Mesh>(null)
   const shirt = player.team === 'runner' ? p.runner : p.defense
-  useFrame((_, dt) => {
+  useFrame(({ camera, size }, dt) => {
     advancePlayer(player, dt)
     if (player.speed > 0) invalidate()
     if (root.current == null || body.current == null) return
-    root.current.position.set(player.position.x, 0.2, player.position.z)
+    root.current.position.set(
+      player.position.x,
+      TERRAIN.players,
+      player.position.z
+    )
+    if (label.current != null) {
+      const distance = camera.position.distanceTo(root.current.position)
+      const pixel = (distance * 0.79) / Math.max(1, size.height)
+      label.current.scale.set(pixel * 112, pixel * 28, 1)
+    }
     body.current.rotation.y = player.heading
     const running = Math.min(1, player.speed / 5)
     const swing = Math.sin(player.stride) * 0.8 * running
@@ -65,7 +91,11 @@ export function Player({
     body.current.position.y = Math.abs(Math.cos(player.stride)) * 0.13 * running
     body.current.rotation.x = running * 0.12
     if (target.current != null) {
-      target.current.position.set(player.target.x, 0.3, player.target.z)
+      target.current.position.set(
+        player.target.x,
+        TERRAIN.players + 0.03,
+        player.target.z
+      )
       target.current.visible = selected && player.speed > 0.1
     }
   })
@@ -74,17 +104,48 @@ export function Player({
       <group
         name={`player-${player.id}`}
         ref={root}
-        position={[player.position.x, 0.2, player.position.z]}
+        position={[player.position.x, TERRAIN.players, player.position.z]}
       >
         <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]}>
-          <ringGeometry args={selected ? [1.8, 2.15, 32] : [1.1, 1.4, 24]} />
+          <ringGeometry args={selected ? [3.3, 3.65, 32] : [2.2, 2.5, 24]} />
           <meshBasicMaterial color={selected ? p.selection : shirt} />
         </mesh>
-        <group ref={body} scale={1.6}>
+        <sprite
+          ref={label}
+          position={[0, player.team === 'runner' ? 17 : 10.3, 0]}
+          scale={[14, 3.5, 1]}
+          renderOrder={5}
+          name={`player-label-${player.id}`}
+        >
+          <spriteMaterial
+            map={labels.badge}
+            transparent
+            depthWrite={false}
+            toneMapped={false}
+          />
+        </sprite>
+        <group ref={body} scale={3.2}>
           <mesh position={[0, 1.57, 0]} scale={[1, 1, 0.62]}>
             <cylinderGeometry args={[0.43, 0.33, 0.97, 10]} />
             <meshStandardMaterial color={shirt} map={fabric} roughness={0.85} />
           </mesh>
+          {[-1, 1].map(side => (
+            <mesh
+              key={side}
+              name="jersey-number"
+              position={[0, 1.63, side * 0.275]}
+              rotation={[0, side === -1 ? Math.PI : 0, 0]}
+            >
+              <planeGeometry args={[0.6, 0.65]} />
+              <meshBasicMaterial
+                map={labels.jersey}
+                transparent
+                alphaTest={0.1}
+                depthWrite={false}
+                toneMapped={false}
+              />
+            </mesh>
+          ))}
           <Part
             position={[0, 1.08, 0]}
             size={[0.82, 0.16, 0.5]}
@@ -104,11 +165,6 @@ export function Player({
             position={[0, 2.51, 0.27]}
             size={[0.65, 0.09, 0.45]}
             color={shirt}
-          />
-          <Part
-            position={[0, 1.75, 0.26]}
-            size={[0.11, 0.54, 0.025]}
-            color={p.chalk}
           />
           <group ref={leftArm} position={[-0.56, 1.93, 0]}>
             <Part

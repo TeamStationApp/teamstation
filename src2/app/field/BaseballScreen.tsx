@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useRef, useState } from 'react'
 import {
   Pressable,
   ScrollView,
@@ -10,6 +10,7 @@ import {
 import { NAV_CLEARANCE_REM, useBreakpoint, useHeaderSlot } from '../components'
 import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import type { ArcMode, BallArcState } from './ballArcModel'
 import { CameraDragControl } from './CameraDragControl'
 import { fieldViewportHeight } from './cameraModel'
 import { FieldCanvas } from './FieldCanvas'
@@ -22,6 +23,7 @@ import {
 import { fieldPalette as p } from './fieldPalette'
 
 export function BaseballScreen(): React.ReactElement {
+  const screen = useRef<React.ComponentRef<typeof ScrollView>>(null)
   const theme = useTheme()
   const styles = getStyles(theme)
   const phone = useBreakpoint() === 'phone'
@@ -30,6 +32,8 @@ export function BaseballScreen(): React.ReactElement {
   const [players, setPlayers] = useState(createPlayers)
   const [selected, setSelected] = useState('SS')
   const [view, setView] = useState<CameraView>('home')
+  const [arc, setArc] = useState<BallArcState | null>(null)
+  const [arcMode, setArcMode] = useState<ArcMode>('off')
   const [zoom, setZoom] = useState(1)
   const [cameraTilt, setCameraTilt] = useState(0)
   const [cameraHeight, setCameraHeight] = useState(0)
@@ -68,6 +72,7 @@ export function BaseballScreen(): React.ReactElement {
   )
   return (
     <ScrollView
+      ref={screen}
       scrollEnabled={!cameraDragging}
       style={{ flex: 1, backgroundColor: theme.backgroundColor }}
       contentContainerStyle={[
@@ -93,10 +98,18 @@ export function BaseballScreen(): React.ReactElement {
           setSelected('SS')
           selectView('home')
           setZoom(1)
+          setArc(null)
+          setArcMode('off')
         })}
       </View>
       <View style={[styles.viewport, { height: viewportHeight }]}>
         <FieldCanvas
+          arc={arc}
+          arcMode={arcMode}
+          onArcChange={setArc}
+          onArcFinish={() => {
+            setArcMode('edit')
+          }}
           players={players}
           selected={selected}
           onSelect={setSelected}
@@ -113,6 +126,7 @@ export function BaseballScreen(): React.ReactElement {
           {button(
             'Board',
             () => {
+              setArcMode('off')
               selectView(view === 'scoreboard' ? 'home' : 'scoreboard')
               setZoom(1)
             },
@@ -134,6 +148,38 @@ export function BaseballScreen(): React.ReactElement {
             onActive={setCameraDragging}
           />
         </View>
+        {arcMode !== 'off' && (
+          <View style={{ position: 'absolute', top: 52, right: 12 }}>
+            {button(
+              'Done',
+              () => {
+                setArcMode('off')
+              },
+              false,
+              'Finish ball arc'
+            )}
+          </View>
+        )}
+        {arcMode !== 'off' && (
+          <View
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              top: 52,
+              left: 12,
+              right: 90,
+              backgroundColor: theme.cardBackgroundColor,
+              borderRadius: 8,
+              padding: 8
+            }}
+          >
+            <Text style={styles.buttonText}>
+              {arcMode === 'aim'
+                ? 'Tap or drag a landing point'
+                : `Drag arrows up / down · ${arc != null && arc.angle < 5 ? 'Chopper' : `${Math.round(arc?.angle ?? 30)}°`}`}
+            </Text>
+          </View>
+        )}
         <View style={styles.cameraBar}>
           {button(
             'Home',
@@ -178,6 +224,46 @@ export function BaseballScreen(): React.ReactElement {
         </View>
       </View>
       <View style={styles.controls}>
+        <View style={{ gap: 8, marginBottom: 12 }}>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+            {button(
+              arcMode === 'off' ? 'Ball arc ↗' : 'Move landing',
+              () => {
+                if (view === 'scoreboard') {
+                  selectView('home')
+                  setZoom(1)
+                }
+                setArcMode('aim')
+                screen.current?.scrollTo({ y: 0, animated: true })
+              },
+              arcMode === 'aim'
+            )}
+            {arc != null &&
+              arcMode === 'off' &&
+              button('Adjust arc', () => {
+                setArcMode('edit')
+              })}
+            {arcMode !== 'off' &&
+              button('Done', () => {
+                setArcMode('off')
+              })}
+            {arc != null &&
+              button('Clear arc', () => {
+                setArc(null)
+                setArcMode('off')
+              })}
+          </View>
+          <Text style={styles.hint} accessibilityLiveRegion="polite">
+            {arcMode === 'aim'
+              ? 'Tap or drag the field to set the landing point.'
+              : arcMode === 'edit'
+                ? 'Drag near the yellow arrows: up for a fly ball, down for a chopper.'
+                : 'Draw a hit from home plate with Ball arc.'}
+            {arc != null
+              ? `  ${arc.angle < 5 ? 'Chopper' : `${Math.round(arc.angle)}° launch`} · ${Math.round(Math.hypot(arc.target.x, arc.target.z))}m`
+              : ''}
+          </Text>
+        </View>
         <View style={styles.controlHeading}>
           <Text style={styles.playerName} accessibilityLiveRegion="polite">
             {player.name}
