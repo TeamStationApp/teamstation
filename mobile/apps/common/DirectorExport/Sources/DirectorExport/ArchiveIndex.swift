@@ -44,6 +44,26 @@ public struct RecordingSummary: Sendable, Equatable, Identifiable {
   /// The raw camera and programme encoding the take was recorded with, which its exports use. Nil
   /// for a take recorded before encodings were kept with their takes.
   public var encoding: TakeEncoding?
+  /// What each programme part's sound track turned out to hold, read back from the file at Stop.
+  /// Empty for a take recorded before this was kept, which means *unknown* and not *fine*.
+  public var soundChecks: [ProgramSoundCheck]
+
+  /// Whether this take's programme sound is known good, known short, or was never checked.
+  ///
+  /// Three states on purpose. Collapsing "not checked" into "fine" is what let two games be
+  /// exported and uploaded before anyone noticed, so a take with no verdict has to say so.
+  public enum SoundVerdict: Sendable, Equatable {
+    case unchecked
+    case complete
+    /// Sound falls short of picture by this many seconds, in the worst part.
+    case short(seconds: Double)
+  }
+
+  public var soundVerdict: SoundVerdict {
+    guard !soundChecks.isEmpty else { return .unchecked }
+    let worst = soundChecks.filter(\.isShort).map(\.shortfall).max()
+    return worst.map { .short(seconds: $0) } ?? .complete
+  }
 
   /// How long the take is, from what was actually written.
   ///
@@ -66,7 +86,8 @@ public struct RecordingSummary: Sendable, Equatable, Identifiable {
     sourceIDs: [SourceID],
     lastSegmentEnd: WallClock? = nil,
     resumeCount: Int = 0,
-    encoding: TakeEncoding? = nil
+    encoding: TakeEncoding? = nil,
+    soundChecks: [ProgramSoundCheck] = []
   ) {
     self.id = id
     self.startedAt = startedAt
@@ -76,6 +97,7 @@ public struct RecordingSummary: Sendable, Equatable, Identifiable {
     self.lastSegmentEnd = lastSegmentEnd
     self.resumeCount = resumeCount
     self.encoding = encoding
+    self.soundChecks = soundChecks
   }
 }
 
@@ -163,6 +185,10 @@ public final class ArchiveIndex: @unchecked Sendable {
     // The encoding the take was recorded with, so its exports come out as it was set up rather than
     // as Settings say on the day of the export.
     try? store.execute("ALTER TABLE recordings ADD COLUMN encoding_json TEXT;")
+    // What each programme part's sound track turned out to hold, one `ProgramSoundCheck` per part.
+    // See `ProgramSoundCheck`: the Director noticed a 46.8 s shortfall at Stop on two consecutive
+    // weekends and reported it only to memory, so nobody read it until the games had been uploaded.
+    try? store.execute("ALTER TABLE recordings ADD COLUMN sound_checks_json TEXT;")
     try store.execute("""
       CREATE TABLE IF NOT EXISTS segments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -455,6 +481,40 @@ public final class ArchiveIndex: @unchecked Sendable {
     return try? JSONDecoder().decode(TakeEncoding.self, from: Data(text.utf8))
   }
 
+  // MARK: - What each programme part's sound turned out to hold
+
+  /// Records one part's verdict, replacing any earlier verdict for the same part.
+  ///
+  /// Read-modify-write rather than a row per part: a take has one part unless a writer died, so the
+  /// list is almost always a single element, and keeping it on the take's own row means every
+  /// reader that already loads a `RecordingSummary` gets it for nothing.
+  public func recordSoundCheck(_ check: ProgramSoundCheck, for id: Int64) throws {
+    var checks = try soundChecks(for: id).filter { $0.part != check.part }
+    checks.append(check)
+    checks.sort { $0.part < $1.part }
+    let json = try JSONEncoder().encode(checks)
+    try store.execute(
+      "UPDATE recordings SET sound_checks_json = ? WHERE id = ?;",
+      [ .text(String(decoding: json, as: UTF8.self)), .integer(id) ]
+    )
+  }
+
+  public func soundChecks(for id: Int64) throws -> [ProgramSoundCheck] {
+    guard let row = try store.query(
+      "SELECT sound_checks_json FROM recordings WHERE id = ?;",
+      [ .integer(id) ]
+    ).first else { return [] }
+    return Self.soundChecks(row.values[0] == .null ? nil : row.string(0))
+  }
+
+  /// Empty for a missing or unreadable value: a take recorded before this existed has no verdict,
+  /// which is not the same as a verdict of "fine" and must not read as one. See
+  /// `RecordingSummary.soundVerdict`.
+  static func soundChecks(_ text: String?) -> [ProgramSoundCheck] {
+    guard let text, !text.isEmpty else { return [] }
+    return (try? JSONDecoder().decode([ProgramSoundCheck].self, from: Data(text.utf8))) ?? []
+  }
+
   // MARK: - Programme cuts
 
   public struct ProgramCut: Sendable, Equatable {
@@ -539,7 +599,7 @@ public final class ArchiveIndex: @unchecked Sendable {
       SELECT r.id, r.started_at, r.ended_at, r.program_filename,
         (SELECT MAX(s.start_wall + s.duration) FROM segments s
           WHERE s.recording_id = r.id AND s.is_initialization = 0),
-        r.resume_count, r.encoding_json
+        r.resume_count, r.encoding_json, r.sound_checks_json
       FROM recordings r
       ORDER BY r.started_at DESC;
       """
@@ -558,7 +618,8 @@ public final class ArchiveIndex: @unchecked Sendable {
         sourceIDs: try sourceIDs(in: id),
         lastSegmentEnd: lastSegment,
         resumeCount: Int(row.int(5)),
-        encoding: Self.takeEncoding(row.values[6] == .null ? nil : row.string(6))
+        encoding: Self.takeEncoding(row.values[6] == .null ? nil : row.string(6)),
+        soundChecks: Self.soundChecks(row.values[7] == .null ? nil : row.string(7))
       )
     }
   }
