@@ -90,8 +90,18 @@ final class DistributorLinkBackend: DistributorBackend, @unchecked Sendable {
         isLive: recording.id == liveID,
         hasPrimary: recording.programFilename != nil,
         cameras: cameras,
-        preparedTracks: preparedTracks(of: recording, cameras: cameras)
+        preparedTracks: preparedTracks(of: recording, cameras: cameras),
+        soundShortfall: Self.soundShortfall(of: recording)
       )
+    }
+  }
+
+  /// Nil for a take with no verdict — never checked is not the same as whole.
+  private static func soundShortfall(of recording: RecordingSummary) -> Double? {
+    switch recording.soundVerdict {
+    case .unchecked: nil
+    case .complete: 0
+    case let .short(seconds): seconds
     }
   }
 
