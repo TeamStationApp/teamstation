@@ -9,6 +9,7 @@ import {
   type Texture
 } from 'three'
 
+import { BattingPose, DroppedBat } from './BattingPose'
 import { advancePlayer, type FieldPlayer } from './fieldModel'
 import { fieldPalette as p } from './fieldPalette'
 import { makePlayerLabel } from './playerLabels'
@@ -54,6 +55,7 @@ export function Player({
   selected: boolean
   fabric?: Texture
 }): React.ReactElement {
+  const batting = player.batting === true
   const invalidate = useThree(state => state.invalidate)
   const label = useRef<Sprite>(null)
   const showLabel = hasPlayerLabel(player)
@@ -98,7 +100,9 @@ export function Player({
     if (rightArm.current != null) rightArm.current.rotation.x = -swing
     if (leftLeg.current != null) leftLeg.current.rotation.x = -swing
     if (rightLeg.current != null) rightLeg.current.rotation.x = swing
-    body.current.position.y = Math.abs(Math.cos(player.stride)) * 0.13 * running
+    body.current.position.y = batting
+      ? -0.09
+      : Math.abs(Math.cos(player.stride)) * 0.13 * running
     body.current.rotation.x = running * 0.12
     if (target.current != null) {
       target.current.position.set(
@@ -138,7 +142,11 @@ export function Player({
           </sprite>
         )}
         <group ref={body} scale={PLAYER_SCALE}>
-          <mesh position={[0, 1.57, 0]} scale={[1, 1, 0.62]}>
+          <mesh
+            name="jersey-torso"
+            position={[0, 1.57, 0]}
+            scale={[1, 1, 0.62]}
+          >
             <cylinderGeometry args={[0.43, 0.33, 0.97, 10]} />
             <meshStandardMaterial color={shirt} map={fabric} roughness={0.85} />
           </mesh>
@@ -146,7 +154,7 @@ export function Player({
             <mesh
               key={side}
               name="jersey-number"
-              position={[0, 1.63, side * 0.275]}
+              position={[0, 1.63, side * 0.32]}
               rotation={[0, side === -1 ? Math.PI : 0, 0]}
             >
               <planeGeometry args={[0.6, 0.65]} />
@@ -154,6 +162,9 @@ export function Player({
                 map={labels.jersey}
                 transparent
                 alphaTest={0.1}
+                polygonOffset
+                polygonOffsetFactor={-2}
+                polygonOffsetUnits={-2}
                 depthWrite={false}
                 toneMapped={false}
               />
@@ -164,60 +175,69 @@ export function Player({
             size={[0.82, 0.16, 0.5]}
             color={p.shoes}
           />
-          <mesh position={[0, 2.34, 0]}>
-            <sphereGeometry args={[0.35, 12, 10]} />
-            <meshStandardMaterial color={p.skin} />
-          </mesh>
-          <mesh position={[0, 2.52, 0]}>
-            <sphereGeometry
-              args={[0.37, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2]}
-            />
-            <meshStandardMaterial color={shirt} />
-          </mesh>
-          <Part
-            position={[0, 2.51, 0.27]}
-            size={[0.65, 0.09, 0.45]}
-            color={shirt}
-          />
-          <group ref={leftArm} position={[-0.56, 1.93, 0]}>
-            <Part
-              position={[0, -0.22, 0]}
-              size={[0.36, 0.6, 0.4]}
-              rounded
-              map={fabric}
-              color={shirt}
-            />
-            <Part
-              position={[0, -0.6, 0.13]}
-              size={[0.29, 0.5, 0.29]}
-              rounded
-              color={p.skin}
-            />
-            {player.team === 'defense' && (
-              <Part
-                position={[0, -0.84, 0.17]}
-                size={[0.5, 0.4, 0.45]}
-                rounded
-                color={p.dirt}
+          <group rotation={[0, batting ? Math.PI / 2 : 0, 0]}>
+            <mesh position={[0, 2.34, 0]}>
+              <sphereGeometry args={[0.35, 12, 10]} />
+              <meshStandardMaterial color={p.skin} />
+            </mesh>
+            <mesh position={[0, 2.52, 0]}>
+              <sphereGeometry
+                args={[0.37, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2]}
               />
-            )}
-          </group>
-          <group ref={rightArm} position={[0.56, 1.93, 0]}>
+              <meshStandardMaterial color={shirt} />
+            </mesh>
             <Part
-              position={[0, -0.22, 0]}
-              size={[0.36, 0.6, 0.4]}
-              rounded
-              map={fabric}
+              position={[0, 2.51, 0.27]}
+              size={[0.65, 0.09, 0.45]}
               color={shirt}
             />
-            <Part
-              position={[0, -0.6, 0.13]}
-              size={[0.29, 0.5, 0.29]}
-              rounded
-              color={p.skin}
-            />
           </group>
-          <group ref={leftLeg} position={[-0.23, 1.02, 0]}>
+          {batting && <BattingPose />}
+          <group visible={!batting}>
+            <group ref={leftArm} position={[-0.56, 1.93, 0]}>
+              <Part
+                position={[0, -0.22, 0]}
+                size={[0.36, 0.6, 0.4]}
+                rounded
+                map={fabric}
+                color={shirt}
+              />
+              <Part
+                position={[0, -0.6, 0.13]}
+                size={[0.29, 0.5, 0.29]}
+                rounded
+                color={p.skin}
+              />
+              {player.team === 'defense' && (
+                <Part
+                  position={[0, -0.84, 0.17]}
+                  size={[0.5, 0.4, 0.45]}
+                  rounded
+                  color={p.dirt}
+                />
+              )}
+            </group>
+            <group ref={rightArm} position={[0.56, 1.93, 0]}>
+              <Part
+                position={[0, -0.22, 0]}
+                size={[0.36, 0.6, 0.4]}
+                rounded
+                map={fabric}
+                color={shirt}
+              />
+              <Part
+                position={[0, -0.6, 0.13]}
+                size={[0.29, 0.5, 0.29]}
+                rounded
+                color={p.skin}
+              />
+            </group>
+          </group>
+          <group
+            ref={leftLeg}
+            position={[batting ? -0.38 : -0.23, 1.02, 0]}
+            rotation={[0, 0, batting ? -0.1 : 0]}
+          >
             <Part
               position={[0, -0.42, 0]}
               size={[0.4, 1.02, 0.43]}
@@ -232,7 +252,11 @@ export function Player({
               color={p.shoes}
             />
           </group>
-          <group ref={rightLeg} position={[0.23, 1.02, 0]}>
+          <group
+            ref={rightLeg}
+            position={[batting ? 0.38 : 0.23, 1.02, 0]}
+            rotation={[0, 0, batting ? 0.1 : 0]}
+          >
             <Part
               position={[0, -0.42, 0]}
               size={[0.4, 1.02, 0.43]}
@@ -249,6 +273,7 @@ export function Player({
           </group>
         </group>
       </group>
+      {player.droppedBat != null && <DroppedBat {...player.droppedBat} />}
       <mesh ref={target} visible={false} rotation={[-Math.PI / 2, 0, 0]}>
         <ringGeometry args={[0.8, 1.1, 24]} />
         <meshBasicMaterial color={p.selection} />

@@ -16,6 +16,8 @@ export interface FieldPlayer {
   speed: number
   stride: number
   dragging?: boolean
+  batting?: boolean
+  droppedBat?: { x: number; z: number; heading: number }
   runnerBase?: number
 }
 export type CameraView = 'home' | 'overhead' | 'infield' | 'scoreboard'
