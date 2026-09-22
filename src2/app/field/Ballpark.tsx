@@ -5,6 +5,7 @@ import { Shape, type Texture } from 'three'
 import { BASE, BASES } from './fieldModel'
 import { fieldPalette as p } from './fieldPalette'
 import { Scoreboard } from './Scoreboard'
+import type { ScoreboardState } from './scoreboardModel'
 import { StadiumDetails } from './StadiumDetails'
 import type { useSurfaceTextures } from './surfaceTextures'
 import { groundDepth, TERRAIN } from './terrain'
@@ -148,8 +149,10 @@ function Box({
   )
 }
 export function Ballpark({
-  textures
+  textures,
+  scoreboard
 }: {
+  scoreboard?: ScoreboardState
   textures: ReturnType<typeof useSurfaceTextures>
 }): React.ReactElement {
   const grass = useMemo(() => sector(114, 0, Math.PI / 3.5), [])
@@ -301,7 +304,7 @@ export function Ballpark({
         </group>
       ))}
       <StadiumDetails texture={textures.wall} />
-      <Scoreboard />
+      <Scoreboard state={scoreboard} />
     </group>
   )
 }

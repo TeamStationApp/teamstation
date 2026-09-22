@@ -326,7 +326,7 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
         shadow-camera-far={350}
         shadow-bias={-0.001}
       />
-      <Ballpark textures={textures} />
+      <Ballpark textures={textures} scoreboard={props.scoreboard} />
       <PlayerShadows players={players} />
       {arc != null && <BallArc arc={arc} editing={arcMode === 'edit'} />}
       {preview != null && <MoveGuide draft={preview} />}
