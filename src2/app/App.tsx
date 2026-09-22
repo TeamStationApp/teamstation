@@ -607,7 +607,11 @@ function Shell(props: AppProps): React.ReactElement {
 
   const body =
     tab === 'field' && top == null ? (
-      <BaseballScreen />
+      <BaseballScreen
+        onExit={() => {
+          selectTab('home')
+        }}
+      />
     ) : top == null ? (
       tab === 'home' ? (
         <HomeScreen
@@ -844,19 +848,21 @@ function Shell(props: AppProps): React.ReactElement {
   // crossed the boundary and unmount everything below it — the `<video>`
   // element with it, which is what used to stop playback dead mid-drag. Keyed,
   // the pane is matched to the pane and nothing below it notices.
+  const immersiveField = tab === 'field' && top == null
+
   return (
     <GestureHandlerRootView style={styles.root}>
       <View style={styles.app}>
         <View key="pane" style={styles.pane}>
           <HeaderSlotProvider
-            headerHeight={headerHeight}
+            headerHeight={immersiveField ? 0 : headerHeight}
             onHandoff={setHandoff}
           >
             <View style={styles.body}>{body}</View>
           </HeaderSlotProvider>
-          <View style={styles.headerLayer}>{header}</View>
+          {!immersiveField && <View style={styles.headerLayer}>{header}</View>}
         </View>
-        {!isWide && (
+        {!isWide && !immersiveField && (
           <AppNav
             key="nav"
             mode="floating"

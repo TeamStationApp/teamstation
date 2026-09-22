@@ -210,3 +210,24 @@ from the traveling crest, so the oldest inner trail becomes darkest.
 Team names are flush left without HOME/AWAY prefixes, scores occupy the middle,
 and smaller BALLS/STRIKES/OUTS labels and lamps stack vertically on the right.
 The batter, hits–at-bats, pitcher and pitch count remain on one bottom line.
+
+
+## Immersive field controls
+
+The field route fills the available viewport without scrolling, with no app header
+or navigation. Its hamburger menu offers Resume and Exit; camera drag controls are
+centered in the header. The web route temporarily opts into viewport-fit=cover and
+100dvh, restores the previous viewport/scroll policy on exit, and places all controls
+inside CSS safe-area insets. Native uses the existing safe-area provider and its
+edge-to-edge host. Browser chrome remains controlled by the browser. Web hamburger
+uses backdrop blur; native has a translucent fallback until a native blur host is
+chosen alongside the native 3D integration.
+
+The bottom row records Ball, Called Strike, Swing and Miss, Foul Ball, and Ball in
+Play. More is above Ball; Undo is above Ball in Play. Ball in Play starts arc aiming.
+Counts and pitch totals update locally, with foul balls capped at two strikes.
+Walks/strikeouts reset the count; this is not a full scoring engine and does not
+automatically move runners or infer hits from a drawn trajectory. Undo restores the
+previous pitch/arc snapshot. More offers arc adjustment, clearing, and camera/player
+resets. The old fixed-ratio viewport, roster, presets and instructional panels are
+superseded by this full-screen layout.

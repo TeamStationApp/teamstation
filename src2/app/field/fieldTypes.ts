@@ -1,7 +1,9 @@
 import type { ArcMode, BallArcState } from './ballArcModel'
 import type { CameraView, FieldPlayer } from './fieldModel'
+import type { ScoreboardState } from './scoreboardModel'
 
 export interface FieldCanvasProps {
+  scoreboard?: ScoreboardState
   /** Native touch host or coarse-pointer web device; explicit mouse/pen events override. */
   touchPlacement?: boolean
   arc?: BallArcState | null

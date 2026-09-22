@@ -1,110 +1,83 @@
-import React, { useRef, useState } from 'react'
+import React, { useState } from 'react'
 import {
   Platform,
   Pressable,
-  ScrollView,
+  StatusBar,
+  StyleSheet,
   Text,
-  useWindowDimensions,
   View
 } from 'react-native'
 
-import { NAV_CLEARANCE_REM, useBreakpoint, useHeaderSlot } from '../components'
-import { useInsets } from '../platform/safeArea'
-import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import type { ArcMode, BallArcState } from './ballArcModel'
 import { CameraDragControl } from './CameraDragControl'
-import { fieldViewportHeight } from './cameraModel'
 import { FieldCanvas } from './FieldCanvas'
-import {
-  type CameraView,
-  createPlayers,
-  nextBase,
-  setDestination
-} from './fieldModel'
-import { fieldPalette as p } from './fieldPalette'
+import { createPlayers } from './fieldModel'
+import { type PitchKind, recordPitch } from './pitchControls'
+import { PitchIcon } from './PitchIcon'
+import { DEMO_SCOREBOARD, type ScoreboardState } from './scoreboardModel'
+import { glassStyle, useFieldSurface } from './useFieldSurface'
 
-export function BaseballScreen(): React.ReactElement {
-  const screen = useRef<React.ComponentRef<typeof ScrollView>>(null)
-  const theme = useTheme()
-  const styles = getStyles(theme)
-  const phone = useBreakpoint() === 'phone'
-  const { headerHeight } = useHeaderSlot()
-  const insets = useInsets()
+interface Snapshot {
+  scoreboard: ScoreboardState
+  arc: BallArcState | null
+}
+const pitches: Array<{ kind: PitchKind; label: string }> = [
+  { kind: 'ball', label: 'Ball' },
+  { kind: 'called', label: 'Called Strike' },
+  { kind: 'swing', label: 'Swing and Miss' },
+  { kind: 'foul', label: 'Foul Ball' },
+  { kind: 'play', label: 'Ball in Play' }
+]
+export function BaseballScreen({
+  onExit
+}: {
+  onExit: () => void
+}): React.ReactElement {
+  const surface = useFieldSurface()
   const [players, setPlayers] = useState(createPlayers)
   const [selected, setSelected] = useState('SS')
-  const [view, setView] = useState<CameraView>('home')
   const [arc, setArc] = useState<BallArcState | null>(null)
   const [arcMode, setArcMode] = useState<ArcMode>('off')
   const [zoom, setZoom] = useState(1)
   const [cameraTilt, setCameraTilt] = useState(0)
   const [cameraHeight, setCameraHeight] = useState(0)
-  const [cameraDragging, setCameraDragging] = useState(false)
-  const { width: windowWidth } = useWindowDimensions()
-  const viewportHeight = fieldViewportHeight(windowWidth - 24)
-  const selectView = (next: CameraView): void => {
-    setView(next)
-    setCameraTilt(0)
-    setCameraHeight(0)
+  const [menu, setMenu] = useState<'main' | 'more' | null>(null)
+  const [scoreboard, setScoreboard] = useState(DEMO_SCOREBOARD)
+  const [history, setHistory] = useState<Snapshot[]>([])
+  const save = (): void => {
+    setHistory(items => [...items, { scoreboard, arc }])
   }
-  const [movementRevision, setMovementRevision] = useState(0)
-  const player = players.find(item => item.id === selected) ?? players[0]
-  const button = (
-    label: string,
-    action: () => void,
-    active = false,
-    accessibilityLabel = label
-  ): React.ReactElement => (
+  const pitch = (kind: PitchKind): void => {
+    save()
+    setScoreboard(recordPitch(scoreboard, kind))
+    setMenu(null)
+    setArcMode(kind === 'play' ? 'aim' : 'off')
+  }
+  const undo = (): void => {
+    const previous = history[history.length - 1]
+    if (previous == null) return
+    setScoreboard(previous.scoreboard)
+    setArc(previous.arc)
+    setArcMode('off')
+    setHistory(items => items.slice(0, -1))
+  }
+  const action = (label: string, onPress: () => void): React.ReactElement => (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel}
-      accessibilityState={{ selected: active }}
-      onPress={action}
-      style={({ pressed }) => [
-        styles.button,
-        active && styles.activeButton,
-        pressed && { opacity: 0.65 }
-      ]}
+      accessibilityLabel={label}
+      onPress={onPress}
+      style={styles.menuItem}
     >
-      <Text style={[styles.buttonText, active && styles.activeText]}>
-        {label}
-      </Text>
+      <Text style={styles.text}>{label}</Text>
     </Pressable>
   )
   return (
-    <ScrollView
-      ref={screen}
-      scrollEnabled={!cameraDragging}
-      style={{ flex: 1, backgroundColor: theme.backgroundColor }}
-      contentContainerStyle={[
-        styles.root,
-        {
-          paddingTop: headerHeight,
-          paddingBottom: phone
-            ? theme.rem(NAV_CLEARANCE_REM) + insets.bottom
-            : 16
-        }
-      ]}
-    >
-      <View style={styles.intro}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.eyebrow}>THE SANDBOX / 01</Text>
-          <Text style={[styles.title, phone && { fontSize: 24 }]}>
-            Your field. Your play.
-          </Text>
-          <Text style={styles.subtitle}>Plan a move. Release to run.</Text>
-        </View>
-        {button('Reset', () => {
-          setPlayers(createPlayers())
-          setSelected('SS')
-          selectView('home')
-          setZoom(1)
-          setArc(null)
-          setArcMode('off')
-        })}
-      </View>
-      <View style={[styles.viewport, { height: viewportHeight }]}>
+    <View style={[styles.root, surface.root]}>
+      {Platform.OS !== 'web' && <StatusBar barStyle="light-content" />}
+      <View style={StyleSheet.absoluteFill}>
         <FieldCanvas
-          touchPlacement={Platform.OS === 'ios' || Platform.OS === 'android'}
+          touchPlacement={Platform.OS !== 'web'}
+          scoreboard={scoreboard}
           arc={arc}
           arcMode={arcMode}
           onArcChange={setArc}
@@ -114,309 +87,240 @@ export function BaseballScreen(): React.ReactElement {
           players={players}
           selected={selected}
           onSelect={setSelected}
-          view={view}
+          view="home"
           zoom={zoom}
           cameraTilt={cameraTilt}
           cameraHeight={cameraHeight}
-          movementRevision={movementRevision}
         />
-        <View pointerEvents="none" style={styles.sceneBadge}>
-          <Text style={styles.sceneBadgeText}>FIELD LAB · EXHIBITION</Text>
-        </View>
-        <View style={{ position: 'absolute', top: 12, right: 12 }}>
-          {button(
-            'Board',
-            () => {
-              setArcMode('off')
-              selectView(view === 'scoreboard' ? 'home' : 'scoreboard')
-              setZoom(1)
-            },
-            view === 'scoreboard',
-            'Scoreboard camera'
-          )}
-        </View>
-        <View style={{ position: 'absolute', right: 12, bottom: 12, gap: 8 }}>
-          <CameraDragControl
-            kind="zoom"
-            value={zoom}
-            onChange={setZoom}
-            onActive={setCameraDragging}
-          />
-          <CameraDragControl
-            kind="tilt"
-            value={cameraTilt}
-            onChange={setCameraTilt}
-            onActive={setCameraDragging}
-          />
-          <CameraDragControl
-            kind="height"
-            value={cameraHeight}
-            onChange={setCameraHeight}
-            onActive={setCameraDragging}
-          />
-        </View>
-        {arcMode !== 'off' && (
-          <View style={{ position: 'absolute', top: 52, right: 12 }}>
-            {button(
-              'Done',
-              () => {
-                setArcMode('off')
-              },
-              false,
-              'Finish ball arc'
-            )}
-          </View>
-        )}
-        {arcMode !== 'off' && (
-          <View
-            pointerEvents="none"
-            style={{
-              position: 'absolute',
-              top: 52,
-              left: 12,
-              right: 90,
-              backgroundColor: theme.cardBackgroundColor,
-              borderRadius: 8,
-              padding: 8
-            }}
-          >
-            <Text style={styles.buttonText}>
-              {arcMode === 'aim'
-                ? 'Tap or drag a landing point'
-                : `Drag arrows up / down · ${arc != null && arc.angle < 0 ? 'Chopper' : `${Math.round(arc?.angle ?? 30)}°`}`}
-            </Text>
-          </View>
-        )}
-        <View style={styles.cameraBar}>
-          {button(
-            'Home',
-            () => {
-              selectView('home')
-            },
-            view === 'home',
-            'Home plate camera'
-          )}
-          {button(
-            'Above',
-            () => {
-              selectView('overhead')
-            },
-            view === 'overhead',
-            'Overhead camera'
-          )}
-          {button(
-            'Infield',
-            () => {
-              selectView('infield')
-            },
-            view === 'infield',
-            'Infield camera'
-          )}
-        </View>
       </View>
-      <View style={styles.controls}>
-        <View style={{ gap: 8, marginBottom: 12 }}>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-            {button(
-              arcMode === 'off' ? 'Ball arc ↗' : 'Move landing',
-              () => {
-                if (view === 'scoreboard') {
-                  selectView('home')
-                  setZoom(1)
-                }
-                setArcMode('aim')
-                screen.current?.scrollTo({ y: 0, animated: true })
-              },
-              arcMode === 'aim'
-            )}
+      <View
+        pointerEvents="box-none"
+        style={[StyleSheet.absoluteFill, surface.safe]}
+      >
+        <View pointerEvents="box-none" style={styles.header}>
+          <View style={{ width: 44 }} pointerEvents="none" />
+          <View style={styles.camera}>
+            <CameraDragControl
+              kind="zoom"
+              value={zoom}
+              onChange={setZoom}
+              onActive={() => undefined}
+            />
+            <CameraDragControl
+              kind="tilt"
+              value={cameraTilt}
+              onChange={setCameraTilt}
+              onActive={() => undefined}
+            />
+            <CameraDragControl
+              kind="height"
+              value={cameraHeight}
+              onChange={setCameraHeight}
+              onActive={() => undefined}
+            />
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Open field menu"
+            accessibilityState={{ expanded: menu === 'main' }}
+            onPress={() => {
+              setMenu(menu === 'main' ? null : 'main')
+            }}
+            style={[styles.circle, glassStyle]}
+          >
+            <View style={{ gap: 4 }}>
+              {[0, 1, 2].map(i => (
+                <View
+                  key={i}
+                  style={{
+                    width: 18,
+                    height: 2,
+                    borderRadius: 1,
+                    backgroundColor: '#fff'
+                  }}
+                />
+              ))}
+            </View>
+          </Pressable>
+        </View>
+        {menu === 'main' && (
+          <View style={[styles.mainMenu, glassStyle]}>
+            {action('Resume field', () => {
+              setMenu(null)
+            })}
+            {action('Exit field', onExit)}
+          </View>
+        )}
+        <View pointerEvents="box-none" style={{ flex: 1 }} />
+        {arcMode !== 'off' && (
+          <View style={styles.arcRow}>
+            <Text style={[styles.text, { flex: 1 }]}>
+              {arcMode === 'aim'
+                ? 'Choose landing'
+                : arc != null && arc.angle < 0
+                  ? 'Chopper'
+                  : `${Math.round(arc?.angle ?? 30)}° launch`}
+            </Text>
+            {action(arcMode === 'aim' ? 'Cancel' : 'Done', () => {
+              if (arcMode === 'aim') undo()
+              else setArcMode('off')
+            })}
+          </View>
+        )}
+        {menu === 'more' && (
+          <View style={[styles.moreMenu, glassStyle]}>
             {arc != null &&
-              arcMode === 'off' &&
-              button('Adjust arc', () => {
+              action('Adjust arc', () => {
+                save()
                 setArcMode('edit')
-              })}
-            {arcMode !== 'off' &&
-              button('Done', () => {
-                setArcMode('off')
+                setMenu(null)
               })}
             {arc != null &&
-              button('Clear arc', () => {
+              action('Clear arc', () => {
+                save()
                 setArc(null)
                 setArcMode('off')
+                setMenu(null)
               })}
+            {action('Reset camera', () => {
+              setZoom(1)
+              setCameraTilt(0)
+              setCameraHeight(0)
+              setMenu(null)
+            })}
+            {action('Reset players', () => {
+              setPlayers(createPlayers())
+              setMenu(null)
+            })}
           </View>
-          <Text style={styles.hint} accessibilityLiveRegion="polite">
-            {arcMode === 'aim'
-              ? 'Tap or drag the field to set the landing point.'
-              : arcMode === 'edit'
-                ? 'Drag near the yellow arrows: up for a fly ball, down for a chopper.'
-                : 'Draw a hit from home plate with Ball arc.'}
-            {arc != null
-              ? `  ${arc.angle < 0 ? 'Chopper' : `${Math.round(arc.angle)}° launch`} · ${Math.round(Math.hypot(arc.target.x, arc.target.z))}m`
-              : ''}
-          </Text>
+        )}
+        <View pointerEvents="box-none" style={styles.utilityRow}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="More"
+            accessibilityState={{ expanded: menu === 'more' }}
+            onPress={() => {
+              setMenu(menu === 'more' ? null : 'more')
+            }}
+            style={[styles.utility, glassStyle]}
+          >
+            <Text style={styles.text}>⋮ More</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Undo last pitch or arc change"
+            disabled={history.length === 0}
+            accessibilityState={{ disabled: history.length === 0 }}
+            onPress={undo}
+            style={[
+              styles.utility,
+              glassStyle,
+              history.length === 0 && { opacity: 0.45 }
+            ]}
+          >
+            <Text style={styles.text}>↶ Undo</Text>
+          </Pressable>
         </View>
-        <View style={styles.controlHeading}>
-          <Text style={styles.playerName} accessibilityLiveRegion="polite">
-            {player.name}
-          </Text>
-          <Text style={styles.legend}>9 fielders · 3 runners</Text>
-        </View>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.roster}
-        >
-          {players.map(item => (
+        <View style={styles.pitchRow}>
+          {pitches.map(item => (
             <Pressable
-              key={item.id}
+              key={item.kind}
               accessibilityRole="button"
-              accessibilityLabel={`Select ${item.name.toLowerCase()}`}
-              accessibilityState={{ selected: selected === item.id }}
+              accessibilityLabel={item.label}
               onPress={() => {
-                setSelected(item.id)
+                pitch(item.kind)
               }}
-              style={[
-                styles.playerButton,
-                selected === item.id && styles.selectedPlayer
+              style={({ pressed }) => [
+                styles.pitch,
+                glassStyle,
+                pressed && { backgroundColor: '#59694c' }
               ]}
             >
-              <View
-                style={[
-                  styles.teamDot,
-                  {
-                    backgroundColor:
-                      item.team === 'runner' ? p.runner : p.defense
-                  }
-                ]}
-              />
-              <Text style={styles.buttonText}>{item.label}</Text>
+              <PitchIcon kind={item.kind} />
+              <Text style={styles.pitchText}>{item.label}</Text>
             </Pressable>
           ))}
-        </ScrollView>
-        <View style={styles.actionRow}>
-          <Text style={[styles.hint, { flex: 1 }]}>
-            {phone
-              ? 'Drag a player or name; release to move.'
-              : 'Drag a player or name to preview a move; release to run.'}
-          </Text>
-          {player.team === 'runner'
-            ? button('Next base →', () => {
-                setDestination(player, nextBase(player))
-                setMovementRevision(value => value + 1)
-              })
-            : button('Run a play →', () => {
-                setMovementRevision(value => value + 1)
-                players.forEach(item => {
-                  if (item.team === 'runner')
-                    setDestination(item, nextBase(item))
-                })
-              })}
         </View>
       </View>
-    </ScrollView>
+    </View>
   )
 }
-const getStyles = cacheStyles((theme: Theme) => ({
-  root: { flexGrow: 1, backgroundColor: theme.backgroundColor },
-  intro: {
+const styles = StyleSheet.create({
+  root: { flex: 1, backgroundColor: '#142c24', overflow: 'hidden' },
+  header: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    paddingHorizontal: 20,
-    paddingVertical: 16
+    justifyContent: 'space-between',
+    gap: 4
   },
-  eyebrow: {
-    color: theme.secondaryTextColor,
-    fontSize: 10,
-    fontWeight: '700',
-    letterSpacing: 2,
-    marginBottom: 5
-  },
-  title: {
-    color: theme.primaryTextColor,
-    fontSize: 30,
-    fontWeight: '700',
-    letterSpacing: -1
-  },
-  subtitle: { color: theme.secondaryTextColor, fontSize: 13, marginTop: 5 },
-  viewport: {
-    flexShrink: 0,
-    overflow: 'hidden',
-    borderRadius: 18,
-    marginHorizontal: 12,
-    backgroundColor: p.sky
-  },
-  sceneBadge: {
-    position: 'absolute',
-    top: 14,
-    left: 14,
-    borderRadius: 6,
-    backgroundColor: theme.scoreboardBackground,
-    paddingHorizontal: 10,
-    paddingVertical: 7
-  },
-  sceneBadgeText: {
-    color: theme.scoreboardTextColor,
-    fontSize: 9,
-    fontWeight: '700',
-    letterSpacing: 1.2
-  },
-  cameraBar: {
-    position: 'absolute',
-    bottom: 12,
-    left: 12,
-    flexDirection: 'column',
-    gap: 4,
-    padding: 4,
-    borderRadius: 12,
-    backgroundColor: theme.cardBackgroundColor
-  },
-  button: {
-    minHeight: 40,
-    minWidth: 36,
-    paddingHorizontal: 11,
+  camera: { flexDirection: 'row', gap: 4 },
+  circle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
     justifyContent: 'center',
-    alignItems: 'center',
-    borderRadius: 8,
-    backgroundColor: theme.containerBackgroundColor
-  },
-  buttonText: {
-    color: theme.primaryTextColor,
-    fontSize: 12,
-    fontWeight: '600'
-  },
-  activeButton: { backgroundColor: theme.primaryButtonColor },
-  activeText: { color: theme.buttonTextColor },
-  controls: { paddingHorizontal: 20, paddingTop: 12, gap: 10 },
-  controlHeading: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between'
-  },
-  playerName: {
-    color: theme.primaryTextColor,
-    fontSize: 15,
-    fontWeight: '700'
-  },
-  legend: { color: theme.secondaryTextColor, fontSize: 11 },
-  roster: { gap: 6, paddingVertical: 2 },
-  playerButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 7,
-    minWidth: 48,
-    minHeight: 40,
-    justifyContent: 'center',
-    paddingHorizontal: 10,
+    backgroundColor: '#243b32a8',
     borderWidth: 1,
-    borderColor: theme.defaultBorderColor,
-    borderRadius: 8
+    borderColor: '#ffffff55'
   },
-  selectedPlayer: {
-    borderColor: theme.primaryTextColor,
-    backgroundColor: theme.containerBackgroundColor
+  text: { color: '#fffaf0', fontSize: 12, fontWeight: '600' },
+  utilityRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 6
   },
-  teamDot: { width: 7, height: 7, borderRadius: 4 },
-  actionRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  hint: { color: theme.secondaryTextColor, fontSize: 11, lineHeight: 16 }
-}))
+  utility: {
+    minHeight: 44,
+    paddingHorizontal: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#243b32c9',
+    borderRadius: 14
+  },
+  pitchRow: { flexDirection: 'row', gap: 4 },
+  pitch: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 62,
+    paddingHorizontal: 3,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 2,
+    backgroundColor: '#243b32db',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#ffffff38'
+  },
+  pitchText: {
+    flexShrink: 1,
+    color: '#fffaf0',
+    fontWeight: '700',
+    fontSize: 11,
+    lineHeight: 14
+  },
+  menuItem: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 14 },
+  mainMenu: {
+    alignSelf: 'flex-end',
+    marginTop: 8,
+    borderRadius: 16,
+    backgroundColor: '#182e26ef',
+    padding: 4
+  },
+  moreMenu: {
+    alignSelf: 'flex-start',
+    marginBottom: 8,
+    borderRadius: 16,
+    backgroundColor: '#182e26ef',
+    padding: 4
+  },
+  arcRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 12,
+    backgroundColor: '#182e26db',
+    paddingLeft: 12,
+    marginBottom: 8
+  }
+})

@@ -96,12 +96,12 @@ export function CameraDragControl({
       }}
       style={[
         {
-          minHeight: 48,
-          minWidth: 60,
+          minHeight: 44,
+          minWidth: 54,
           borderRadius: 10,
           justifyContent: 'center',
           alignItems: 'center',
-          paddingHorizontal: 9,
+          paddingHorizontal: 6,
           borderWidth: 1,
           borderColor: theme.defaultBorderColor,
           backgroundColor: active
@@ -119,7 +119,7 @@ export function CameraDragControl({
           color: active ? theme.buttonTextColor : theme.primaryTextColor
         }}
       >
-        {label} ↕
+        {label}
       </Text>
       <Text
         selectable={false}
@@ -130,10 +130,10 @@ export function CameraDragControl({
         }}
       >
         {kind === 'tilt'
-          ? `${Math.round((value * 180) / Math.PI)}° · drag`
+          ? `${Math.round((value * 180) / Math.PI)}°`
           : kind === 'zoom'
-            ? `${value.toFixed(2)}× · drag`
-            : `${Math.round(value)}m · drag`}
+            ? `${value.toFixed(2)}×`
+            : `${Math.round(value)}m`}
       </Text>
     </View>
   )
