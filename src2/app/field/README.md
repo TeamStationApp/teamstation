@@ -231,3 +231,8 @@ automatically move runners or infer hits from a drawn trajectory. Undo restores 
 previous pitch/arc snapshot. More offers arc adjustment, clearing, and camera/player
 resets. The old fixed-ratio viewport, roster, presets and instructional panels are
 superseded by this full-screen layout.
+
+
+The initial and Reset camera pose is zoom 1.25×, tilt −11°, height offset 33m.
+Undo fills the utility row beside More and describes the newest history event
+(e.g. Called Strike, Ball in Play, Adjust ball arc, Clear ball arc).
