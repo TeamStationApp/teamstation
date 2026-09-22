@@ -28,14 +28,14 @@ describe('vintage scoreboard', function () {
       const index = ((BOARD_HEIGHT - 1 - y) * BOARD_WIDTH + x) * 4
       return Array.from(pixels.slice(index, index + 3))
     }
-    const green = rgb(178, 216)
-    const yellow = rgb(540, 216)
-    const red = rgb(860, 216)
+    const green = rgb(866, 37)
+    const yellow = rgb(866, 81)
+    const red = rgb(866, 125)
     expect(green[1]).greaterThan(green[0])
     expect(yellow[0]).greaterThan(yellow[2])
     expect(yellow[1]).greaterThan(yellow[2])
     expect(red[0]).greaterThan(red[1])
-    expect(rgb(248, 216)[1]).lessThan(60) // Unlit third ball.
+    expect(rgb(936, 37)[1]).lessThan(60) // Unlit third ball.
     const updated = makeScoreboardPixels({
       ...DEMO_SCOREBOARD,
       balls: 3,

@@ -37,10 +37,9 @@ export function inArcGrabArea(dx: number, dy: number): boolean {
     Math.abs(dx) <= ARC_GRAB_HALF_WIDTH && Math.abs(dy) <= ARC_GRAB_HALF_HEIGHT
   )
 }
-/** A bright crest travels outward through three fixed stops; the resting trail
- * is progressively darker farther from the center. Six solid meshes, no bloom. */
+/** A crest travels outward; brightness depends on distance from that crest,
+ * so the oldest (innermost) trail is darkest when the outer arrow lights up. */
 export function arrowPulse(stop: number, seconds: number): number {
   const phase = ((seconds % 1.8) / 1.8) * 3
-  const base = [0.45, 0.24, 0.1][stop] ?? 0.1
-  return base + (1 - base) * Math.exp(-(((phase - stop) / 0.5) ** 2))
+  return 0.04 + 0.96 * Math.exp(-Math.abs(phase - stop) * 1.65)
 }

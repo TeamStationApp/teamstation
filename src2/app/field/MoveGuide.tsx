@@ -2,6 +2,7 @@
 import React from 'react'
 import { Quaternion, Vector3 } from 'three'
 
+import { DestinationMarker } from './DestinationMarker'
 import type { MoveDraft } from './movePreview'
 import { TERRAIN } from './terrain'
 
@@ -27,10 +28,7 @@ export function MoveGuide({ draft }: { draft: MoveDraft }): React.ReactElement {
         <cylinderGeometry args={[0.15, 0.15, Math.max(0.001, length), 6]} />
         <meshBasicMaterial color="#ffe044" toneMapped={false} />
       </mesh>
-      <mesh position={to} rotation={[-Math.PI / 2, 0, 0]}>
-        <ringGeometry args={[0.65, 0.95, 24]} />
-        <meshBasicMaterial color="#ffe044" toneMapped={false} />
-      </mesh>
+      <DestinationMarker position={[to.x, to.y, to.z]} radius={4.75} />
     </group>
   )
 }

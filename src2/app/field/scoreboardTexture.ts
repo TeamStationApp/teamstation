@@ -108,30 +108,30 @@ export function makeScoreboardPixels(state: ScoreboardState): Uint8Array {
   rect(14, 244, 996, 2, brass)
   rect(14, 10, 2, 236, brass)
   rect(1008, 10, 2, 236, brass)
-  for (const y of [118, 182]) rect(30, y, 964, 2, brass)
-  text('AWAY', 40, 23, 4)
-  text(state.awayTeam, 200, 20, 5.5, 16)
-  text(String(state.awayScore).padStart(2, '0'), 860, 20, 5.5)
-  text('HOME', 40, 76, 4)
-  text(state.homeTeam, 200, 73, 5.5, 16)
-  text(String(state.homeScore).padStart(2, '0'), 860, 73, 5.5)
-  // One compact line: batter, hits-at-bats, pitcher, pitch count.
-  text(shortName(state.batter), 40, 140, 3.5, 12)
-  text(battingLine(state), 315, 140, 3.5, 7)
-  text(shortName(state.pitcher), 485, 140, 3.5, 12)
-  text(`P:${Math.max(0, Math.min(999, state.pitchCount))}`, 790, 140, 3.5, 6)
-  text('BALLS', 40, 204, 3.5)
-  text('STRIKES', 355, 204, 3.5)
-  text('OUTS', 745, 204, 3.5)
+  rect(30, 174, 964, 2, brass)
+  rect(650, 22, 2, 138, brass)
+  text(state.awayTeam, 40, 30, 5.5, 14)
+  text(String(state.awayScore).padStart(2, '0'), 550, 30, 5.5)
+  text(state.homeTeam, 40, 106, 5.5, 14)
+  text(String(state.homeScore).padStart(2, '0'), 550, 106, 5.5)
+  // Smaller count labels share the vertical space of the two team rows.
+  text('BALLS', 680, 28, 3)
+  text('STRIKES', 680, 72, 3)
+  text('OUTS', 680, 116, 3)
   countLights(state.balls, 3).forEach((lit, i) => {
-    lamp(178 + i * 35, 216, 9, [70, 244, 105], lit)
+    lamp(866 + i * 35, 37, 9, [70, 244, 105], lit)
   })
   countLights(state.strikes, 2).forEach((lit, i) => {
-    lamp(540 + i * 35, 216, 9, [255, 211, 55], lit)
+    lamp(866 + i * 35, 81, 9, [255, 211, 55], lit)
   })
   countLights(state.outs, 2).forEach((lit, i) => {
-    lamp(860 + i * 35, 216, 9, [255, 73, 54], lit)
+    lamp(866 + i * 35, 125, 9, [255, 73, 54], lit)
   })
+  // One compact line: batter, hits-at-bats, pitcher, pitch count.
+  text(shortName(state.batter), 40, 204, 3.5, 12)
+  text(battingLine(state), 315, 204, 3.5, 7)
+  text(shortName(state.pitcher), 485, 204, 3.5, 12)
+  text(`P:${Math.max(0, Math.min(999, state.pitchCount))}`, 790, 204, 3.5, 6)
   return pixels
 }
 export function makeScoreboardTexture(state: ScoreboardState): DataTexture {
