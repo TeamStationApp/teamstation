@@ -4,8 +4,10 @@ import { describe, it } from 'mocha'
 import React from 'react'
 import { type Camera, Ray, Sprite, Vector2, Vector3 } from 'three'
 
+import type { BallArcState } from './ballArcModel'
 import { createPlayers } from './fieldModel'
 import { FieldScene } from './FieldScene'
+import { TERRAIN } from './terrain'
 
 describe('rendered field interaction', function () {
   it('previews movement without running, commits on release, and cancels cleanly', async function () {
@@ -144,6 +146,96 @@ describe('rendered field interaction', function () {
       await renderer.fireEvent(surface, 'pointerDown', event)
       expect(selection).equals('LF')
       await renderer.fireEvent(surface, 'pointerCancel', event)
+    } finally {
+      await renderer.unmount()
+    }
+  })
+})
+
+describe('mobile finger clearance', function () {
+  it('picks the body under the finger but previews and commits player and arc destinations above it', async function () {
+    const players = createPlayers()
+    let selection = ''
+    let camera: Camera | undefined
+    let arc: BallArcState = { target: { x: 0, z: 0 }, angle: 30 }
+    const props = {
+      players,
+      selected: 'P',
+      view: 'home' as const,
+      zoom: 1,
+      onSelect: (id: string) => {
+        selection = id
+      },
+      onArcChange: (value: BallArcState) => {
+        arc = value
+      }
+    }
+    const renderer = await create(React.createElement(FieldScene, props), {
+      width: 390,
+      height: 488,
+      onCreated: state => {
+        camera = state.camera
+      }
+    })
+    try {
+      await renderer.advanceFrames(1, 1 / 60)
+      renderer.scene.instance.updateMatrixWorld(true)
+      if (camera == null) throw new Error('Missing camera')
+      const player = players[6]
+      const start = { ...player.position }
+      const body = new Vector3(start.x, 6, start.z)
+      const screen = body.clone().project(camera)
+      const event = {
+        button: 0,
+        pointerId: 19,
+        pointerType: 'touch',
+        pointer: new Vector2(screen.x, screen.y),
+        ray: new Ray(
+          camera.position.clone(),
+          body.sub(camera.position).normalize()
+        ),
+        target: {
+          setPointerCapture: () => undefined,
+          releasePointerCapture: () => undefined
+        }
+      }
+      const surface = renderer.scene.findByProps({
+        name: 'interaction-surface'
+      })
+      await renderer.fireEvent(surface, 'pointerDown', event)
+      expect(selection).equals('LF')
+      const landing = new Vector3(0, TERRAIN.players, -50)
+      const finger = landing.clone().project(camera)
+      event.pointer.set(finger.x, finger.y)
+      event.ray.direction.copy(landing).sub(camera.position).normalize()
+      await renderer.fireEvent(surface, 'pointerMove', event)
+      expect(player.position).deep.equals(start)
+      await renderer.fireEvent(surface, 'pointerUp', event)
+      const projected = new Vector3(
+        player.target.x,
+        TERRAIN.players,
+        player.target.z
+      ).project(camera)
+      expect(((projected.y - finger.y) * 488) / 2).closeTo(32, 0.001)
+      expect(projected.x).closeTo(finger.x, 0.001)
+      await renderer.update(
+        React.createElement(FieldScene, { ...props, arcMode: 'aim' })
+      )
+      const arcSurface = renderer.scene.findByProps({
+        name: 'arc-interaction-surface'
+      })
+      for (const pointerType of ['touch', 'mouse']) {
+        event.pointerType = pointerType
+        await renderer.fireEvent(arcSurface, 'pointerDown', event)
+        await renderer.fireEvent(arcSurface, 'pointerUp', event)
+        projected
+          .set(arc.target.x, TERRAIN.players, arc.target.z)
+          .project(camera)
+        expect(((projected.y - finger.y) * 488) / 2).closeTo(
+          pointerType === 'touch' ? 32 : 0,
+          0.001
+        )
+      }
     } finally {
       await renderer.unmount()
     }

@@ -6,6 +6,7 @@ import {
   type Object3D,
   PerspectiveCamera,
   Plane,
+  type Ray,
   Raycaster,
   Sprite,
   Vector3
@@ -23,6 +24,11 @@ import { applyFieldCamera } from './cameraModel'
 import type { FieldPlayer } from './fieldModel'
 import { fieldPalette as p } from './fieldPalette'
 import type { FieldCanvasProps } from './fieldTypes'
+import {
+  inArcGrabArea,
+  placementRay,
+  usesTouchPlacement
+} from './interactionAffordances'
 import { MoveGuide } from './MoveGuide'
 import {
   beginMove,
@@ -62,6 +68,21 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
   const drag = useRef<MoveDraft | null>(null)
   const [preview, setPreview] = useState<MoveDraft | null>(null)
   const picker = useMemo(() => new Raycaster(), [])
+  const placementPicker = useMemo(() => new Raycaster(), [])
+  const isTouch = (event: ThreeEvent<PointerEvent>): boolean =>
+    usesTouchPlacement(
+      event.pointerType ?? event.nativeEvent?.pointerType,
+      props.touchPlacement === true
+    )
+  const destinationRay = (event: ThreeEvent<PointerEvent>): Ray =>
+    placementRay(
+      event.ray,
+      event.pointer,
+      camera,
+      size.height,
+      isTouch(event),
+      placementPicker
+    )
   const ground = useMemo(
     () => new Plane(new Vector3(0, 1, 0), -TERRAIN.players),
     []
@@ -102,7 +123,7 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
   const move = (event: ThreeEvent<PointerEvent>): void => {
     if (
       drag.current?.pointer !== event.pointerId ||
-      event.ray.intersectPlane(ground, point) == null
+      destinationRay(event).intersectPlane(ground, point) == null
     )
       return
     event.stopPropagation()
@@ -159,7 +180,15 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     }
     onSelect(player.id)
     drag.current = beginMove(player, event.pointerId, point, nearest != null)
-    if (nearest == null) previewMove(drag.current, point)
+    if (isTouch(event)) {
+      // Body/name picking uses the original ray. Only the destination is lifted.
+      drag.current.offset = { x: 0, z: 0 }
+      if (
+        nearest == null &&
+        destinationRay(event).intersectPlane(ground, point) != null
+      )
+        previewMove(drag.current, point)
+    } else if (nearest == null) previewMove(drag.current, point)
     setPreview({ ...drag.current })
     const capture = event.target as Element
     capture.setPointerCapture(event.pointerId)
@@ -213,10 +242,11 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
   const landingAt = (
     event: ThreeEvent<PointerEvent>
   ): Pick<BallArcState, 'target' | 'landingHeight'> | null => {
-    const onGround = event.ray.intersectPlane(ground, point)
+    const ray = destinationRay(event)
+    const onGround = ray.intersectPlane(ground, point)
     const groundDistance =
-      onGround == null ? Infinity : event.ray.origin.distanceTo(point)
-    picker.ray.copy(event.ray)
+      onGround == null ? Infinity : ray.origin.distanceTo(point)
+    picker.ray.copy(ray)
     const stands = ['stadium-structure', 'stadium-seats']
       .map(name => scene.getObjectByName(name))
       .filter((object): object is Object3D => object != null)
@@ -244,7 +274,7 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
       point.set(tip.x, tip.y, tip.z).project(camera)
       const dx = ((point.x - event.pointer.x) * size.width) / 2
       const dy = ((point.y - event.pointer.y) * size.height) / 2
-      if (Math.abs(dx) > 48 || Math.abs(dy) > 58) return
+      if (!inArcGrabArea(dx, dy)) return
     }
     arcDrag.current = {
       pointer: event.pointerId,
