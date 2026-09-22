@@ -126,9 +126,9 @@ describe('scoreboard camera', function () {
     try {
       if (camera == null) throw new Error('Camera was not created')
       camera.updateMatrixWorld()
-      for (const x of [-34, 34])
-        for (const y of [8, 43]) {
-          const corner = new Vector3(x, y, -124).project(camera)
+      for (const x of [-63, 63])
+        for (const y of [18, 83]) {
+          const corner = new Vector3(x, y, -158).project(camera)
           expect(Math.abs(corner.x)).lessThan(1)
           expect(Math.abs(corner.y)).lessThan(1)
         }

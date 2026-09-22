@@ -77,7 +77,8 @@ still need physical-device frame-time and thermal checks.
   and approximately 1,200 seats use two instanced draws.
 - The enlarged scoreboard uses one 1024×512 texture with a hand-drawn 5×7 bulb
   font. Warm halos are baked into that texture: no bloom pass, per-bulb geometry,
-  point lights, external fonts or image requests. Press **Board** to read it.
+  point lights, external fonts or image requests. The oversized board sits behind the back row of stands; **Home** frames it
+  together with home plate. **Board** provides an optional close-up.
 - `scoreboardModel.ts` holds fictional exhibition data. “Number of pitchers” is
   interpreted as **pitch count** and labeled PITCHES. Name formatting is first
   name + last initial. The board has exactly 3 ball sockets, 2 strike sockets and
@@ -94,3 +95,11 @@ and about 4 MiB of texture data including mipmaps. These are structural counts,
 not an on-device GPU benchmark. The cloud browser has no WebGL context; bitmap
 scoreboard appearance, scene interaction, camera framing and builds are checked
 locally, with final visual/performance QA left to an actual phone.
+
+## Camera controls
+
+The scene is approximately 25% taller; scroll the page to reach the roster.
+Hold **Tilt ↕** and drag down to look upward, or up to look downward.
+Hold **Height ↕** and drag up to translate upward on world Y, or down to lower
+the camera. Height preserves the viewing angle. Presets and Reset clear both
+adjustments. Dragging either control temporarily disables page scrolling.

@@ -105,32 +105,32 @@ export function makeScoreboardPixels(state: ScoreboardState): Uint8Array {
     lamp(x, 487, 2, [130, 122, 94], false)
   }
   text('GAMESTATION BALLPARK', 290, 32, 4)
-  text('AWAY', 55, 103, 4)
-  text(state.awayTeam, 220, 101, 5, 17)
+  text('AWAY', 55, 103, 4.5)
+  text(state.awayTeam, 220, 101, 6, 16)
   text(
     String(Math.max(0, Math.min(99, state.awayScore))).padStart(2, '0'),
     860,
     96,
     6
   )
-  text('HOME', 55, 163, 4)
-  text(state.homeTeam, 220, 161, 5, 17)
+  text('HOME', 55, 163, 4.5)
+  text(state.homeTeam, 220, 161, 6, 16)
   text(
     String(Math.max(0, Math.min(99, state.homeScore))).padStart(2, '0'),
     860,
     156,
     6
   )
-  text('BATTER', 55, 239, 2.5)
-  text(shortName(state.batter), 55, 270, 4, 18)
-  text('PITCHER', 540, 239, 2.5)
-  text(shortName(state.pitcher), 540, 270, 4, 18)
-  text('PITCHES', 540, 324, 2.5)
-  text(String(Math.max(0, Math.min(999, state.pitchCount))), 710, 320, 4)
+  text('BATTER', 55, 239, 3.5)
+  text(shortName(state.batter), 55, 273, 5.5, 14)
+  text('PITCHER', 540, 239, 3.5)
+  text(shortName(state.pitcher), 540, 273, 5.5, 14)
+  text('PITCHES', 540, 330, 3)
+  text(String(Math.max(0, Math.min(999, state.pitchCount))), 725, 326, 5)
   text('EXHIBITION', 55, 328, 2)
-  text('BALLS', 114, 390, 3)
-  text('STRIKES', 424, 390, 3)
-  text('OUTS', 793, 390, 3)
+  text('BALLS', 108, 386, 4)
+  text('STRIKES', 409, 386, 4)
+  text('OUTS', 787, 386, 4)
   countLights(state.balls, 3).forEach((lit, i) => {
     lamp(118 + i * 42, 449, 11, [70, 244, 105], lit)
   })
