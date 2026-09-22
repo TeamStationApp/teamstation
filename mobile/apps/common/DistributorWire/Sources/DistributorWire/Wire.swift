@@ -98,6 +98,14 @@ public struct RecordingListing: Codable, Equatable, Sendable {
   public var cameras: [CameraListing]
   /// Files already stitched on the iPad, which need only downloading.
   public var preparedTracks: [Track]
+  /// Seconds by which the programme master's sound falls short of its picture, read back from the
+  /// file at Stop. Zero when the master is whole; nil when this take was never checked — which is
+  /// every take recorded before the check was kept, and is not the same as whole.
+  ///
+  /// Here so a damaged master is visible before anybody exports or uploads it. Takes 413 and 414
+  /// were 43.9 s and 46.8 s short, the Director said so at Stop, and it said so only to memory.
+  /// See `ProgramSoundCheck`.
+  public var soundShortfall: Double?
 
   public init(
     id: Int64,
@@ -106,7 +114,8 @@ public struct RecordingListing: Codable, Equatable, Sendable {
     isLive: Bool,
     hasPrimary: Bool,
     cameras: [CameraListing],
-    preparedTracks: [Track]
+    preparedTracks: [Track],
+    soundShortfall: Double? = nil
   ) {
     self.id = id
     self.startedAt = startedAt
@@ -115,6 +124,7 @@ public struct RecordingListing: Codable, Equatable, Sendable {
     self.hasPrimary = hasPrimary
     self.cameras = cameras
     self.preparedTracks = preparedTracks
+    self.soundShortfall = soundShortfall
   }
 }
 

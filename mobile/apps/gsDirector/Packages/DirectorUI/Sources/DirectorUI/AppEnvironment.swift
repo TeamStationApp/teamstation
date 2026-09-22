@@ -460,6 +460,11 @@ public final class AppEnvironment {
         wall: wall
       )
     }
+    // The part's sound verdict, onto the take's own row. Telemetry already carries it for the
+    // status line, but that is memory; this is what an export or an upload can still read.
+    programEncoder.setSoundCheckSink { recording, check in
+      try? anchorIndex.recordSoundCheck(check, for: recording)
+    }
   }
 
   /// Called once from the app's `task` modifier.
@@ -1578,9 +1583,27 @@ public final class AppEnvironment {
     applyInputGains()
   }
 
+  /// Whether the take's sound source may be changed right now.
+  ///
+  /// It may not, while recording. The programme master places its sound by one offset settled at
+  /// the part's start, and that is only correct while the sound keeps coming from the same place;
+  /// swapping source mid-take would put the writer back to reconciling a moving target, which is
+  /// the fault this whole change removes. Enforced here as well as disabled in the view, because
+  /// the control channel and the REST harness reach this directly.
+  ///
+  /// Input gain is deliberately *not* locked: it is applied in `AudioMixer.append` and never
+  /// touches the timeline, and an operator who hears the sound is too quiet twenty minutes into a
+  /// game should not be stuck with it for the rest of the game.
+  public var canChangeAudioSource: Bool { !isRecording }
+
   public func setUsesAudio(_ usesAudio: Bool, for id: SourceID) {
+    guard canChangeAudioSource else {
+      telemetry.recordError("audio source is locked while recording")
+      return
+    }
     SourceSelectionRules.setUsesAudio(usesAudio, for: id, in: &selections)
-    rememberAudio(for: id)
+    // Every row's audio may have moved, not just this one: turning one on turns the others off.
+    for selection in selections { rememberAudio(for: selection.id) }
     selectionStore.save(selections)
     refreshGridSnapshot()
     applyAudioContributors()
@@ -4409,6 +4432,11 @@ public final class AppEnvironment {
       Task { await enterDirecting() }
     case let .selectProgram(source):
       selectProgram(sourceIndex: source)
+    case let .selectAudioSource(source):
+      // By grid slot, like `.selectProgram`, so a flow names a camera the same way for both.
+      guard let pipeline = router.pipeline(at: source) else { return false }
+      guard canChangeAudioSource else { return false }
+      setUsesAudio(true, for: pipeline.sourceID)
     case let .replay(source, seconds, speed):
       let rate: Float = speed == "slow" ? Float(config.replaySlowMotionRate) : 1
       startInstantReplay(sourceIndex: source, seconds: seconds, rate: rate)
