@@ -6,4 +6,6 @@ export interface FieldCanvasProps {
   onSelect: (id: string) => void
   view: CameraView
   zoom: number
+  /** Wake an on-demand renderer after commands issued from the RN controls. */
+  movementRevision?: number
 }

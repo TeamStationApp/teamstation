@@ -23,6 +23,7 @@ export function BaseballScreen(): React.ReactElement {
   const [selected, setSelected] = useState('SS')
   const [view, setView] = useState<CameraView>('home')
   const [zoom, setZoom] = useState(1)
+  const [movementRevision, setMovementRevision] = useState(0)
   const player = players.find(item => item.id === selected) ?? players[0]
   const button = (
     label: string,
@@ -80,9 +81,21 @@ export function BaseballScreen(): React.ReactElement {
           onSelect={setSelected}
           view={view}
           zoom={zoom}
+          movementRevision={movementRevision}
         />
         <View pointerEvents="none" style={styles.sceneBadge}>
-          <Text style={styles.sceneBadgeText}>FIELD LAB · FREE PLAY</Text>
+          <Text style={styles.sceneBadgeText}>FIELD LAB · EXHIBITION</Text>
+        </View>
+        <View style={{ position: 'absolute', top: 12, right: 12 }}>
+          {button(
+            'Board',
+            () => {
+              setView(view === 'scoreboard' ? 'home' : 'scoreboard')
+              setZoom(1)
+            },
+            view === 'scoreboard',
+            'Scoreboard camera'
+          )}
         </View>
         <View style={styles.cameraBar}>
           {button(
@@ -175,8 +188,10 @@ export function BaseballScreen(): React.ReactElement {
           {player.team === 'runner'
             ? button('Next base →', () => {
                 setDestination(player, nextBase(player))
+                setMovementRevision(value => value + 1)
               })
             : button('Run a play →', () => {
+                setMovementRevision(value => value + 1)
                 players.forEach(item => {
                   if (item.team === 'runner')
                     setDestination(item, nextBase(item))

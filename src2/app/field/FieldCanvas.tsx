@@ -2,6 +2,7 @@ import { Canvas } from '@react-three/fiber'
 import React, { useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
 
+import { useBreakpoint } from '../components'
 import { useTheme } from '../theme/ThemeContext'
 import { FieldScene } from './FieldScene'
 import type { FieldCanvasProps } from './fieldTypes'
@@ -85,6 +86,7 @@ class RenderBoundary extends React.Component<
   }
 }
 export function FieldCanvas(props: FieldCanvasProps): React.ReactElement {
+  const phone = useBreakpoint() === 'phone'
   const [available, setAvailable] = useState(supportsWebGL)
   const [generation, setGeneration] = useState(0)
   const retry = (): void => {
@@ -95,8 +97,9 @@ export function FieldCanvas(props: FieldCanvasProps): React.ReactElement {
   return (
     <RenderBoundary key={generation}>
       <Canvas
+        frameloop="demand"
         shadows
-        dpr={[1, 1.5]}
+        dpr={[1, phone ? 1.25 : 1.5]}
         camera={{ position: [0, 100, 114], fov: 43 }}
         gl={{
           antialias: true,

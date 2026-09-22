@@ -48,7 +48,7 @@ describe('field locomotion', function () {
     expect(Math.hypot(player.target.x, player.target.z)).at.most(110.00001)
     advancePlayer(player, 30)
     expect(Math.hypot(player.position.x, player.position.z + 18.44)).at.most(
-      0.86
+      1.2
     )
     expect(clampToField({ x: NaN, z: Infinity })).deep.equals({ x: 0, z: 0 })
   })

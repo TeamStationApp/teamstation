@@ -61,3 +61,36 @@ npm run build.field
 The cloud browser used during development disables WebGL, so browser checks
 cover the public route, navigation and GPU-unavailable recovery. Check rendering,
 touch drag/cancel and frame rate in Safari/Chrome on real phones before merging.
+
+## Detail pass / older-phone budget
+
+The rendering target is 2021-era iOS and Android phones, including midrange
+Android hardware. Aim for 30 fps while moving; this is a design target, not a
+measured device guarantee. iPhone 13 (2021, A15) is an iOS reference:
+https://support.apple.com/en-us/111872. Android Chrome/WebGL2 and iOS Safari/WebGL2
+still need physical-device frame-time and thermal checks.
+
+- Players move 40% faster; stride length increases to keep the run cycle natural.
+- Grass, dirt, cloth and weathered wall maps are deterministic 256px DataTextures.
+  UVs use field coordinates; the infield has a rounded dirt arc and base wear.
+- Rounded limbs and tapered jerseys replace the block bodies. Repeated stands
+  and approximately 1,200 seats use two instanced draws.
+- The enlarged scoreboard uses one 1024×512 texture with a hand-drawn 5×7 bulb
+  font. Warm halos are baked into that texture: no bloom pass, per-bulb geometry,
+  point lights, external fonts or image requests. Press **Board** to read it.
+- `scoreboardModel.ts` holds fictional exhibition data. “Number of pitchers” is
+  interpreted as **pitch count** and labeled PITCHES. Name formatting is first
+  name + last initial. The board has exactly 3 ball sockets, 2 strike sockets and
+  2 out sockets; unused sockets are dim. `Scoreboard` accepts a typed state prop
+  for the integrating agent. Display values are not tied to the free-play moves.
+- At rest the canvas stops drawing. Movement, camera changes and RN commands
+  explicitly wake it. Pixel ratio is capped at 1.25 on narrow phones (1.5 desktop).
+- Moving player contact shadows share one instanced draw; the stadium shadow map
+  renders once. No ongoing shadow pass for animated players.
+
+Scene-graph budget measured during development: 255 mesh draws before frustum
+culling, about 43k triangles including instanced seats, 24 static shadow casters,
+and about 4 MiB of texture data including mipmaps. These are structural counts,
+not an on-device GPU benchmark. The cloud browser has no WebGL context; bitmap
+scoreboard appearance, scene interaction, camera framing and builds are checked
+locally, with final visual/performance QA left to an actual phone.
