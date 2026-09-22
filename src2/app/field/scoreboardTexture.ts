@@ -62,7 +62,9 @@ export function makeScoreboardPixels(state: ScoreboardState): Uint8Array {
             xx,
             yy,
             color,
-            Math.exp((-distance * distance) / (radius * radius * 2)) * 0.3
+            Math.exp((-distance * distance) / (radius * radius * 2)) *
+              0.3 *
+              (brightness > 1 ? brightness / 1.25 : 1)
           )
         if (distance < radius)
           put(
@@ -97,7 +99,7 @@ export function makeScoreboardPixels(state: ScoreboardState): Uint8Array {
               pitch * 0.3,
               [255, 190, 91],
               true,
-              1.25
+              1.875
             )
         })
       })

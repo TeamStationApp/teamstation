@@ -9,9 +9,14 @@ import {
 } from 'react-native'
 
 import type { ArcMode, BallArcState } from './ballArcModel'
+import {
+  clonePlayers,
+  createStartingPlayers,
+  startBatterRun
+} from './batterModel'
 import { CameraDragControl } from './CameraDragControl'
 import { FieldCanvas } from './FieldCanvas'
-import { createPlayers } from './fieldModel'
+import type { FieldPlayer } from './fieldModel'
 import { type PitchKind, recordPitch } from './pitchControls'
 import { PitchIcon } from './PitchIcon'
 import { DEMO_SCOREBOARD, type ScoreboardState } from './scoreboardModel'
@@ -21,6 +26,7 @@ const DEFAULT_CAMERA = { zoom: 1.25, tilt: (-11 * Math.PI) / 180, height: 33 }
 
 interface Snapshot {
   event: string
+  players: FieldPlayer[]
   scoreboard: ScoreboardState
   arc: BallArcState | null
 }
@@ -37,7 +43,7 @@ export function BaseballScreen({
   onExit: () => void
 }): React.ReactElement {
   const surface = useFieldSurface()
-  const [players, setPlayers] = useState(createPlayers)
+  const [players, setPlayers] = useState(createStartingPlayers)
   const [selected, setSelected] = useState('SS')
   const [arc, setArc] = useState<BallArcState | null>(null)
   const [arcMode, setArcMode] = useState<ArcMode>('off')
@@ -49,17 +55,22 @@ export function BaseballScreen({
   const [history, setHistory] = useState<Snapshot[]>([])
   const undoEvent = history[history.length - 1]?.event
   const save = (event: string): void => {
-    setHistory(items => [...items, { scoreboard, arc, event }])
+    setHistory(items => [
+      ...items,
+      { scoreboard, arc, event, players: clonePlayers(players) }
+    ])
   }
   const pitch = (kind: PitchKind): void => {
     save(pitches.find(item => item.kind === kind)?.label ?? 'Pitch')
     setScoreboard(recordPitch(scoreboard, kind))
+    if (kind === 'play') setPlayers(startBatterRun(players))
     setMenu(null)
     setArcMode(kind === 'play' ? 'aim' : 'off')
   }
   const undo = (): void => {
     const previous = history[history.length - 1]
     if (previous == null) return
+    setPlayers(clonePlayers(previous.players))
     setScoreboard(previous.scoreboard)
     setArc(previous.arc)
     setArcMode('off')
@@ -193,7 +204,7 @@ export function BaseballScreen({
               setMenu(null)
             })}
             {action('Reset players', () => {
-              setPlayers(createPlayers())
+              setPlayers(createStartingPlayers())
               setMenu(null)
             })}
           </View>

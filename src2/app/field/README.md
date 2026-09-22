@@ -236,3 +236,20 @@ superseded by this full-screen layout.
 The initial and Reset camera pose is zoom 1.25×, tilt −11°, height offset 33m.
 Undo fills the utility row beside More and describes the newest history event
 (e.g. Called Strike, Ball in Play, Adjust ball arc, Clear ball arc).
+
+## Batter opening state and jersey clearance
+
+The screen now starts with nine defenders, empty bases, and Alex R. (#14) in the
+right-handed batter's box. A widened stance, bent arms, two-handed grip, head turn,
+and wooden bat form the batting pose. Ball in Play releases the bat through a
+0.65-second drop and sends the batter to first using the existing run cycle.
+Undo/Cancel restores the independent player snapshot, including pose and bat.
+Reset players restores this opening arrangement; the older three-runner fixture
+remains available to exercise basepath logic in tests.
+
+Scoreboard text brightness is multiplied by another 1.5 (1.875 total), with
+stronger text halos so already-saturated bulbs remain visibly brighter; count
+lamps keep their existing colors. Jersey number planes sit outside the torso's
+maximum depth, with negative polygon offset and normal depth testing retained.
+Renderer tests cover bat release, arrival at first, undo restoration and number
+clearance. Physical-device rendering still requires visual verification.
