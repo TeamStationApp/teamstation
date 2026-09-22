@@ -8,6 +8,7 @@ import {
   arcHandle,
   arcPoint,
   arcTarget,
+  BALL_CONTACT,
   type BallArcState,
   dragLaunchAngle,
   firstBounceFraction
@@ -21,7 +22,7 @@ describe('ball flight authoring', function () {
     const arc = { target: { x: 30, z: -60 }, angle: 30 }
     expect(arcPoint(arc, 0)).deep.equals({
       x: 0,
-      y: TERRAIN.players + 0.16,
+      y: BALL_CONTACT,
       z: 0
     })
     const end = arcPoint(arc, 1)
@@ -29,19 +30,19 @@ describe('ball flight authoring', function () {
     expect(end.z).equals(-60)
     expect(end.y).closeTo(TERRAIN.players + 0.16, 0.000001)
     const first = arcPoint(arc, 0.0001)
-    expect((first.y - end.y) / Math.hypot(first.x, first.z)).closeTo(
+    expect((first.y - BALL_CONTACT) / Math.hypot(first.x, first.z)).closeTo(
       Math.tan(Math.PI / 6),
       0.001
     )
-    expect(dragLaunchAngle(30, 100)).equals(65)
+    expect(dragLaunchAngle(30, 100)).equals(70)
     expect(dragLaunchAngle(30, -300)).equals(-45)
     expect(
       Math.hypot(...Object.values(arcTarget({ x: 200, z: -200 })))
-    ).at.most(110)
+    ).at.most(160.00001)
   })
-  it('moves the first chop toward home and retains nonnegative diminishing bounces', function () {
+  it('moves ground contact toward home with a direct hit and a rising chopping arc', function () {
     let previous = 1
-    for (const angle of [4, -10, -25, -45]) {
+    for (const angle of [-1, -10, -25, -45]) {
       const arc = { target: { x: 0, z: -90 }, angle }
       const first = firstBounceFraction(angle)
       expect(first).lessThan(previous)
@@ -50,7 +51,12 @@ describe('ball flight authoring', function () {
       for (let i = 0; i <= 100; i++)
         expect(arcPoint(arc, i / 100).y).at.least(TERRAIN.players + 0.15999)
       const nextPeak = arcPoint(arc, first + (1 - first) * 0.3).y
-      expect(nextPeak).lessThan(arcPoint(arc, first / 2).y)
+      expect(nextPeak).greaterThan(arcPoint(arc, first).y)
+      expect(arcPoint(arc, first / 2).y).closeTo(
+        (BALL_CONTACT + TERRAIN.players + 0.16) / 2,
+        0.00001
+      )
+      expect(arcHandle(arc)).deep.equals(arcPoint(arc, first))
     }
   })
   it('supports tap, live drag, release, arrow adjustment and pointer cancellation without moving players', async function () {
@@ -138,6 +144,67 @@ describe('ball flight authoring', function () {
       expect(players.map(player => player.target)).deep.equals(
         createPlayers().map(player => player.target)
       )
+    } finally {
+      await renderer.unmount()
+    }
+  })
+})
+
+describe('home runs and pop-ups', function () {
+  it('reaches 70 degrees even when the landing point is close to home', function () {
+    const angle = dragLaunchAngle(30, 80)
+    expect(angle).equals(70)
+    for (const distance of [3, 8, 15, 140]) {
+      const arc = { target: { x: 0, z: -distance }, angle }
+      const start = arcPoint(arc, 0)
+      const tiny = arcPoint(arc, 0.00001)
+      expect((tiny.y - start.y) / Math.hypot(tiny.x, tiny.z)).closeTo(
+        Math.tan((70 * Math.PI) / 180),
+        0.001
+      )
+      expect(arcHandle(arc).y).greaterThan(start.y)
+    }
+  })
+  it('places a home-run landing on the spectator tiers instead of clamping to the outfield', async function () {
+    let current: BallArcState | null = null
+    const renderer = await create(
+      React.createElement(FieldScene, {
+        players: createPlayers(),
+        selected: 'SS',
+        onSelect: () => undefined,
+        view: 'home',
+        zoom: 1,
+        arcMode: 'aim',
+        onArcChange: value => {
+          current = value
+        }
+      })
+    )
+    try {
+      await renderer.advanceFrames(1, 1 / 60)
+      renderer.scene.instance.updateMatrixWorld(true)
+      const surface = renderer.scene.findByProps({
+        name: 'arc-interaction-surface'
+      })
+      const event = {
+        button: 0,
+        pointerId: 12,
+        pointer: new Vector2(),
+        ray: new Ray(new Vector3(0, 100, -133), new Vector3(0, -1, 0)),
+        target: {
+          setPointerCapture: () => undefined,
+          releasePointerCapture: () => undefined
+        }
+      }
+      await renderer.fireEvent(surface, 'pointerDown', event)
+      await renderer.fireEvent(surface, 'pointerUp', event)
+      const result: BallArcState | null = current
+      expect(result).not.equals(null)
+      if (result == null) throw new Error('No landing')
+      // Callback mutates current during the renderer event.
+      expect((result as BallArcState).target.z).closeTo(-133, 0.01)
+      expect((result as BallArcState).landingHeight).greaterThan(8)
+      expect(arcPoint(result, 1).y).greaterThan(8)
     } finally {
       await renderer.unmount()
     }

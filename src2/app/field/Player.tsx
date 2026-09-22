@@ -117,7 +117,7 @@ export function Player({
         position={[player.position.x, TERRAIN.players, player.position.z]}
       >
         <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]}>
-          <ringGeometry args={selected ? [3.3, 3.65, 32] : [2.2, 2.5, 24]} />
+          <ringGeometry args={selected ? [2.3, 2.65, 32] : [2.2, 2.5, 24]} />
           <meshBasicMaterial color={selected ? p.selection : shirt} />
         </mesh>
         {labels.badge != null && (

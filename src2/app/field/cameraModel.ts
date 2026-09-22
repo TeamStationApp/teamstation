@@ -3,30 +3,23 @@ import { type PerspectiveCamera, Vector3 } from 'three'
 import type { CameraView } from './fieldModel'
 
 export const SCOREBOARD_SCALE = 1.8
-export const SCOREBOARD_Y = 50
-export const SCOREBOARD_Z = -158
+export const SCOREBOARD_Y = 28.2
+export const SCOREBOARD_Z = -135
 export const TILT_LIMIT = Math.PI / 3
 export const HEIGHT_LIMIT = 70
 export function cameraDragValue(
-  kind: 'tilt' | 'height',
+  kind: 'tilt' | 'height' | 'zoom',
   start: number,
   dy: number
 ): number {
+  if (kind === 'zoom') return Math.max(0.7, Math.min(1.8, start - dy * 0.006))
   const limit = kind === 'tilt' ? TILT_LIMIT : HEIGHT_LIMIT
   const change = kind === 'tilt' ? dy * 0.003 : -dy * 0.3
   return Math.max(-limit, Math.min(limit, start + change))
 }
-export function fieldViewportHeight(
-  windowHeight: number,
-  header: number,
-  bottom: number
-): number {
-  // Previous layout: 102px introduction and 132px roster/actions. Give the scene
-  // 25% more space; the outer screen scrolls to keep all controls reachable.
-  return Math.max(
-    300,
-    Math.round(Math.max(240, windowHeight - header - bottom - 234) * 1.25)
-  )
+export const MAX_VIEWPORT_HEIGHT = 682
+export function fieldViewportHeight(width: number): number {
+  return Math.min(MAX_VIEWPORT_HEIGHT, Math.round(Math.max(1, width) * 1.25))
 }
 export function applyFieldCamera(
   camera: PerspectiveCamera,
@@ -47,7 +40,7 @@ export function applyFieldCamera(
   camera.far = 1100
   const tangent = Math.tan((camera.fov * Math.PI) / 360)
   if (view === 'home') {
-    const target = new Vector3(0, 31, -57)
+    const target = new Vector3(0, 15, -55)
     const pitch = (24 * Math.PI) / 180
     const backward = new Vector3(0, Math.sin(pitch), Math.cos(pitch))
     const up = new Vector3(0, Math.cos(pitch), -Math.sin(pitch))
@@ -55,7 +48,7 @@ export function applyFieldCamera(
     // for the camera bar and top badges. Deliberately prioritize these on phones.
     const points = [new Vector3(-12, 0, 10), new Vector3(12, 0, 10)]
     for (const x of [-63, 63])
-      for (const y of [18, 83]) points.push(new Vector3(x, y, SCOREBOARD_Z))
+      for (const y of [11.5, 46.5]) points.push(new Vector3(x, y, SCOREBOARD_Z))
     let distance = 130
     for (const point of points) {
       const local = point.clone().sub(target)
@@ -71,7 +64,7 @@ export function applyFieldCamera(
     camera.position.copy(target).addScaledVector(backward, distance / zoom)
     camera.lookAt(target)
   } else if (view === 'scoreboard') {
-    const visibleHeight = Math.max(130 / aspect, 76)
+    const visibleHeight = Math.max(130 / aspect, 38)
     const distance = visibleHeight / (2 * tangent) / zoom
     camera.position.set(0, SCOREBOARD_Y, SCOREBOARD_Z + distance)
     camera.lookAt(0, SCOREBOARD_Y, SCOREBOARD_Z)

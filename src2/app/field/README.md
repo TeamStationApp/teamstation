@@ -19,8 +19,8 @@ starts the root URL on `/field` and prevents API/session requests across preview
 navigation, including deep links. Omit the flag (`npm run build.web`) for the
 normal app. No server or database configuration changes are needed.
 
-Drag any player with a mouse or touch. Players turn toward and run to the moving
-destination, finishing their run after release. Alternatively choose a roster
+Drag any player body or name with a mouse or touch to preview a yellow route.
+Players remain still until release, then run to the committed destination. Alternatively choose a roster
 button and tap the turf. Nine blue fielders and three orange runners move
 independently. Camera presets, zoom, next-base/run-a-play and reset are local.
 
@@ -98,7 +98,7 @@ locally, with final visual/performance QA left to an actual phone.
 
 ## Camera controls
 
-The scene is approximately 25% taller; scroll the page to reach the roster.
+The scene uses a 4:5 width-to-height ratio capped at 682 CSS pixels; scroll to reach the roster.
 Hold **Tilt ↕** and drag down to look upward, or up to look downward.
 Hold **Height ↕** and drag up to translate upward on world Y, or down to lower
 the camera. Height preserves the viewing angle. Presets and Reset clear both
@@ -152,3 +152,33 @@ scoreboard names default to hidden (`showPlayerNames: false`); an integrator can
 opt them in, with the hits–at-bats line beneath the batter. The default board shows
 `1-3` and `PITCHES 64`. `batterHits` and `batterAtBats` default to a `0-0` line when
 not provided. B/S/O lamp colors and jersey numbers are unchanged.
+
+
+## Compact scoreboard and release-to-run controls
+
+The scoreboard uses a 1024×256 bulb texture and an 18-unit-high housing (previously
+34), with no title. After the team scores, a single line shows the batter name,
+hits–at-bats, pitcher name and `P:64`. Balls/strikes/outs labels and lamps share the
+last row. Names are always present again. Its center is `(0, 28.2, -135)`; the bottom
+trim is about 0.5m above the rear railing, with the face overhanging the central back
+row slightly. The light banks sit at radius 136m, x ±68m, tangent to the stands.
+
+Home/Above/Infield presets are on the left. Zoom/Tilt/Height drag controls are
+on the right; up zooms in and down zooms out. Zoom plus/minus buttons are removed.
+Viewport height depends only on width (1.25×), capped at 682 CSS pixels. The cap
+uses a design reference of 80% of an 852-point phone height (iPhone 15-class,
+2556 physical pixels at 3×; [Apple display specifications](https://support.apple.com/en-us/111831)).
+
+Player selection raycasts the actual bodies and nameplates. Selected rings are
+shoulder-width. During a drag, a separate yellow route previews the destination,
+and the player is paused; release commits it, while cancel/lost capture discards
+the draft. Runners can only advance from their recorded base to the next base.
+Their preview is constrained to that basepath and snaps beyond 50%; releasing
+before that threshold leaves them in place. Base ownership updates on arrival.
+
+Arc targets may extend to 160m and raycast the actual spectator tiers for landing
+height. Launch adjustment reaches 70 degrees at every landing distance. Negative
+angles now switch to a straight descending segment from bat contact to the ground
+handle, followed by one separate chopping arc toward the destination. Further
+downward adjustment brings that ground handle closer to home. The renderer uses
+two curve segments so the first ground impact is a sharp join, not a smoothed bend.

@@ -3,16 +3,25 @@ import { useFrame } from '@react-three/fiber'
 import React, { useEffect, useMemo, useRef } from 'react'
 import { Curve, type Group, Shape, TubeGeometry, Vector3 } from 'three'
 
-import { arcHandle, arcPoint, type BallArcState } from './ballArcModel'
+import {
+  arcHandle,
+  arcPoint,
+  type BallArcState,
+  firstBounceFraction
+} from './ballArcModel'
 import { TERRAIN } from './terrain'
 
 class FlightCurve extends Curve<Vector3> {
-  constructor(private readonly arc: BallArcState) {
+  constructor(
+    private readonly arc: BallArcState,
+    private readonly from = 0,
+    private readonly to = 1
+  ) {
     super()
   }
 
   getPoint(t: number, target = new Vector3()): Vector3 {
-    const point = arcPoint(this.arc, t)
+    const point = arcPoint(this.arc, this.from + t * (this.to - this.from))
     return target.set(point.x, point.y, point.z)
   }
 }
@@ -25,7 +34,17 @@ export function BallArc({
 }): React.ReactElement {
   const handle = useRef<Group>(null)
   const geometry = useMemo(
-    () => new TubeGeometry(new FlightCurve(arc), 160, 0.23, 5, false),
+    () =>
+      new TubeGeometry(
+        new FlightCurve(
+          arc,
+          arc.angle < 0 ? firstBounceFraction(arc.angle) : 0
+        ),
+        160,
+        0.23,
+        5,
+        false
+      ),
     [arc]
   )
   useEffect(
@@ -33,6 +52,25 @@ export function BallArc({
       geometry.dispose()
     },
     [geometry]
+  )
+  const direct = useMemo(
+    () =>
+      arc.angle < 0
+        ? new TubeGeometry(
+            new FlightCurve(arc, 0, firstBounceFraction(arc.angle)),
+            1,
+            0.23,
+            5,
+            false
+          )
+        : null,
+    [arc]
+  )
+  useEffect(
+    () => () => {
+      direct?.dispose()
+    },
+    [direct]
   )
   const tip = arcHandle(arc)
   const arrow = useMemo(() => {
@@ -56,11 +94,20 @@ export function BallArc({
   })
   return (
     <group name="ball-arc">
+      {direct != null && (
+        <mesh geometry={direct} name="ball-direct-hit">
+          <meshBasicMaterial color="#ffe044" toneMapped={false} />
+        </mesh>
+      )}
       <mesh geometry={geometry} name="ball-trajectory">
         <meshBasicMaterial color="#ffe044" toneMapped={false} />
       </mesh>
       <mesh
-        position={[arc.target.x, TERRAIN.players + 0.1, arc.target.z]}
+        position={[
+          arc.target.x,
+          (arc.landingHeight ?? TERRAIN.players) + 0.1,
+          arc.target.z
+        ]}
         rotation={[-Math.PI / 2, 0, 0]}
       >
         <ringGeometry args={[1.7, 2.2, 32]} />

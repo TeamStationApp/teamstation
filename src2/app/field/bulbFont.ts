@@ -1,5 +1,6 @@
 /** Five-by-seven bulb masks, explicitly drawn so no system font is required. */
 const glyphs: Record<string, string> = {
+  ':': '00000/00100/00100/00000/00100/00100/00000',
   A: '01110/10001/10001/11111/10001/10001/10001',
   B: '11110/10001/10001/11110/10001/10001/11110',
   C: '01111/10000/10000/10000/10000/10000/01111',

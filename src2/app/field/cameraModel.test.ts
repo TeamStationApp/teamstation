@@ -19,7 +19,7 @@ describe('field camera controls', function () {
     expect(cameraDragValue('height', 0, 100)).lessThan(0)
     expect(cameraDragValue('tilt', 0, 10000)).equals(TILT_LIMIT)
     expect(cameraDragValue('height', 0, 10000)).equals(-HEIGHT_LIMIT)
-    expect(fieldViewportHeight(844, 48, 117)).equals(556)
+    expect(fieldViewportHeight(390)).equals(488)
   })
   it('tilts upward on downward drags and translates height without changing orientation', function () {
     const camera = new PerspectiveCamera()
@@ -49,7 +49,8 @@ describe('field camera controls', function () {
       applyFieldCamera(camera, { width, height, view: 'home', zoom: 1 })
       const points = [new Vector3(0, 0, 10)]
       for (const x of [-63, 63])
-        for (const y of [18, 83]) points.push(new Vector3(x, y, SCOREBOARD_Z))
+        for (const y of [11.5, 46.5])
+          points.push(new Vector3(x, y, SCOREBOARD_Z))
       for (const point of points) {
         point.project(camera)
         expect(Math.abs(point.x)).at.most(0.901)

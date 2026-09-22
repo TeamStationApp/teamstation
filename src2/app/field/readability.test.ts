@@ -90,12 +90,12 @@ describe('responsive field readability', function () {
       zoom: 0.7
     })
     for (const x of [-63, 63])
-      for (const y of [18, 83]) {
-        const point = new Vector3(x, y, -158).project(camera)
+      for (const y of [11.5, 46.5]) {
+        const point = new Vector3(x, y, -135).project(camera)
         expect(point.z).within(-1, 1)
       }
   })
-  it('shows hits-at-bats with names hidden by default, but retains opt-in names', function () {
+  it('shows hits-at-bats and both names on the compact board', function () {
     expect(battingLine(DEMO_SCOREBOARD)).equals('1-3')
     expect(
       battingLine({
@@ -110,13 +110,8 @@ describe('responsive field readability', function () {
       batter: { firstName: 'Other', lastName: 'Name' },
       pitcher: { firstName: 'Changed', lastName: 'Name' }
     })
-    expect(Buffer.compare(Buffer.from(pixels), Buffer.from(renamed))).equals(0)
-    const visibleNames = makeScoreboardPixels({
-      ...DEMO_SCOREBOARD,
-      showPlayerNames: true
-    })
     expect(
-      Buffer.compare(Buffer.from(pixels), Buffer.from(visibleNames))
+      Buffer.compare(Buffer.from(pixels), Buffer.from(renamed))
     ).not.equals(0)
     const changedStats = makeScoreboardPixels({
       ...DEMO_SCOREBOARD,
