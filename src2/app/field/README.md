@@ -182,3 +182,19 @@ angles now switch to a straight descending segment from bat contact to the groun
 handle, followed by one separate chopping arc toward the destination. Further
 downward adjustment brings that ground handle closer to home. The renderer uses
 two curve segments so the first ground impact is a sharp join, not a smoothed bend.
+
+
+## Touch placement and arc arrows
+
+Arc editing displays three fixed chevrons in each direction. A solid yellow
+crest travels outward every 1.8 seconds over progressively darker trailing
+chevrons. These render after transparent nameplates with depth testing disabled.
+Only the editing handle keeps the demand renderer animating; Done stops it.
+The handle accepts a grab within 96 CSS pixels left/right and 80 pixels up/down.
+
+Touch placement lifts player destinations and arc landing points 32 screen pixels
+above the finger before intersecting the ground or stands. Player selection still
+uses the actual finger position, and runner basepath constraints still apply.
+Mouse and pen placement remain exact. Native hosts pass `touchPlacement`; web
+also recognizes touch pointer events and coarse-pointer touch devices. The native
+3D adapter remains a separate integration step described above.

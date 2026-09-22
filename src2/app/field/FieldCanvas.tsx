@@ -87,6 +87,13 @@ class RenderBoundary extends React.Component<
 }
 export function FieldCanvas(props: FieldCanvasProps): React.ReactElement {
   const phone = useBreakpoint() === 'phone'
+  const [mobileInput] = useState(
+    () =>
+      typeof navigator !== 'undefined' &&
+      navigator.maxTouchPoints > 0 &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(pointer: coarse)').matches
+  )
   const [available, setAvailable] = useState(supportsWebGL)
   const [generation, setGeneration] = useState(0)
   const retry = (): void => {
@@ -123,7 +130,10 @@ export function FieldCanvas(props: FieldCanvasProps): React.ReactElement {
         }}
         fallback={<Unavailable retry={retry} />}
       >
-        <FieldScene {...props} />
+        <FieldScene
+          {...props}
+          touchPlacement={props.touchPlacement === true || mobileInput}
+        />
       </Canvas>
     </RenderBoundary>
   )

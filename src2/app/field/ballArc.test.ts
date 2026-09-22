@@ -130,7 +130,7 @@ describe('ball flight authoring', function () {
       if (camera == null) throw new Error('No camera')
       const tip = arcHandle(current)
       const screen = new Vector3(tip.x, tip.y, tip.z).project(camera)
-      event.pointer.set(screen.x + 0.05, screen.y)
+      event.pointer.set(screen.x + (90 * 2) / 390, screen.y)
       const edit = renderer.scene.findByProps({
         name: 'arc-interaction-surface'
       })

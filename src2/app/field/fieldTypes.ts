@@ -2,6 +2,8 @@ import type { ArcMode, BallArcState } from './ballArcModel'
 import type { CameraView, FieldPlayer } from './fieldModel'
 
 export interface FieldCanvasProps {
+  /** Native touch host or coarse-pointer web device; explicit mouse/pen events override. */
+  touchPlacement?: boolean
   arc?: BallArcState | null
   arcMode?: ArcMode
   onArcChange?: (arc: BallArcState) => void

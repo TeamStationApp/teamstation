@@ -1,7 +1,17 @@
 /* eslint-disable react/no-unknown-property -- Three.js scene elements. */
 import { useFrame } from '@react-three/fiber'
 import React, { useEffect, useMemo, useRef } from 'react'
-import { Curve, type Group, Shape, TubeGeometry, Vector3 } from 'three'
+import {
+  Color,
+  Curve,
+  type Group,
+  Mesh,
+  MeshBasicMaterial,
+  PerspectiveCamera,
+  Shape,
+  TubeGeometry,
+  Vector3
+} from 'three'
 
 import {
   arcHandle,
@@ -9,6 +19,7 @@ import {
   type BallArcState,
   firstBounceFraction
 } from './ballArcModel'
+import { ARROW_OVERLAY_ORDER, arrowPulse } from './interactionAffordances'
 import { TERRAIN } from './terrain'
 
 class FlightCurve extends Curve<Vector3> {
@@ -33,6 +44,10 @@ export function BallArc({
   editing: boolean
 }): React.ReactElement {
   const handle = useRef<Group>(null)
+  const elapsed = useRef(0)
+  const dark = useMemo(() => new Color('#4a3b00'), [])
+  const yellow = useMemo(() => new Color('#ffe000'), [])
+  const viewPoint = useMemo(() => new Vector3(), [])
   const geometry = useMemo(
     () =>
       new TubeGeometry(
@@ -84,13 +99,30 @@ export function BallArc({
     shape.closePath()
     return shape
   }, [])
-  useFrame(({ camera, size }) => {
+  useFrame(({ camera, size, invalidate }, dt) => {
     if (handle.current == null) return
+    elapsed.current += Math.min(dt, 0.05)
     handle.current.quaternion.copy(camera.quaternion)
+    viewPoint
+      .copy(handle.current.position)
+      .applyMatrix4(camera.matrixWorldInverse)
+    const fov = camera instanceof PerspectiveCamera ? camera.fov : 43
     const pixel =
-      (camera.position.distanceTo(handle.current.position) * 0.79) /
+      (2 * Math.max(1, -viewPoint.z) * Math.tan((fov * Math.PI) / 360)) /
       Math.max(1, size.height)
     handle.current.scale.setScalar(pixel)
+    handle.current.children.forEach((child, index) => {
+      if (
+        child instanceof Mesh &&
+        child.material instanceof MeshBasicMaterial
+      ) {
+        child.material.color
+          .copy(dark)
+          .lerp(yellow, arrowPulse(index % 3, elapsed.current))
+      }
+    })
+    // Only the editing arrows keep the demand renderer alive. Done stops it.
+    invalidate()
   })
   return (
     <group name="ball-arc">
@@ -117,24 +149,30 @@ export function BallArc({
         <group
           ref={handle}
           name="arc-angle-handle"
+          renderOrder={ARROW_OVERLAY_ORDER}
           position={[tip.x, tip.y, tip.z]}
         >
-          {[-1, 1].map(side => (
-            <mesh
-              key={side}
-              position={[0, side * 13, 0]}
-              rotation={[0, 0, side === -1 ? Math.PI : 0]}
-              renderOrder={10}
-            >
-              <shapeGeometry args={[arrow]} />
-              <meshBasicMaterial
-                color="#ffe044"
-                depthTest={false}
-                depthWrite={false}
-                toneMapped={false}
-              />
-            </mesh>
-          ))}
+          {[-1, 1].flatMap(side =>
+            [0, 1, 2].map(stop => (
+              <mesh
+                key={`${side}-${stop}`}
+                name="arc-pulse-arrow"
+                position={[0, side * (13 + stop * 9), 0]}
+                rotation={[0, 0, side === -1 ? Math.PI : 0]}
+                renderOrder={ARROW_OVERLAY_ORDER}
+              >
+                <shapeGeometry args={[arrow]} />
+                <meshBasicMaterial
+                  color="#ffe000"
+                  transparent
+                  opacity={1}
+                  depthTest={false}
+                  depthWrite={false}
+                  toneMapped={false}
+                />
+              </mesh>
+            ))
+          )}
         </group>
       )}
     </group>

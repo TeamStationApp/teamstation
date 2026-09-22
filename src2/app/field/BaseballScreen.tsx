@@ -1,5 +1,6 @@
 import React, { useRef, useState } from 'react'
 import {
+  Platform,
   Pressable,
   ScrollView,
   Text,
@@ -103,6 +104,7 @@ export function BaseballScreen(): React.ReactElement {
       </View>
       <View style={[styles.viewport, { height: viewportHeight }]}>
         <FieldCanvas
+          touchPlacement={Platform.OS === 'ios' || Platform.OS === 'android'}
           arc={arc}
           arcMode={arcMode}
           onArcChange={setArc}
