@@ -7,7 +7,7 @@ import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { GlassView } from './GlassView'
 import { Icon, type IconName } from './Icon'
 
-export type NavTabId = 'home' | 'videos' | 'schedule'
+export type NavTabId = 'home' | 'videos' | 'schedule' | 'field'
 
 export interface NavTab {
   id: NavTabId
@@ -34,7 +34,8 @@ export interface NavTab {
 export const NAV_TABS: NavTab[] = [
   { id: 'home', label: 'Home', icon: 'home' },
   { id: 'videos', label: 'Videos', icon: 'smart_display' },
-  { id: 'schedule', label: 'Schedule', icon: 'event' }
+  { id: 'schedule', label: 'Schedule', icon: 'event' },
+  { id: 'field', label: 'Baseball field', icon: 'sports_baseball' }
 ]
 
 export type NavMode = 'floating' | 'header'

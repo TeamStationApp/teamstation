@@ -18,6 +18,7 @@ import {
   useBreakpoint,
   useHandoffSlot
 } from './components'
+import { BaseballScreen } from './field/BaseballScreen'
 import { lstrings, sprintf } from './locales/strings'
 import type { Route, When } from './navigation/routes'
 import { stacksAfterTabPress } from './navigation/tabPress'
@@ -46,6 +47,8 @@ import {
 } from './theme/ThemeContext'
 
 export interface AppProps {
+  /** Standalone field preview: never contact the API or restore a session. */
+  fieldPreview?: boolean
   apiBaseUrl?: string
   /**
    * A session token kept from the last launch, where the platform can keep
@@ -222,12 +225,18 @@ function Shell(props: AppProps): React.ReactElement {
   // to a game opens that game rather than the screen behind it.
   const [stacks, setStacks] = useState<Record<NavTabId, Pushed[]>>(() => {
     const opened = stackFor(currentRoute())
-    return { home: [], videos: [], schedule: [], ...opened }
+    return { home: [], videos: [], schedule: [], field: [], ...opened }
   })
+
+  const needsSession = props.fieldPreview !== true && tab !== 'field'
 
   // The session lives in an `HttpOnly` cookie this code cannot read, so the
   // only way to know is to ask.
   useEffect(() => {
+    if (!needsSession) {
+      setAskedAboutSession(true)
+      return
+    }
     let live = true
     client
       .whoAmI()
@@ -253,7 +262,7 @@ function Shell(props: AppProps): React.ReactElement {
     return () => {
       live = false
     }
-  }, [client, onToken])
+  }, [client, needsSession, onToken])
 
   /**
    * A link to a team or a season is still being turned into a screen.
@@ -277,6 +286,7 @@ function Shell(props: AppProps): React.ReactElement {
   // link that arrives while the app is *running* would empty the tab and stop
   // there, on Home. Cold start only worked because this ran on mount.
   useEffect(() => {
+    if (props.fieldPreview === true) return
     if (route.name !== 'team' && route.name !== 'season') return
     let live = true
     resolvingLink.current = true
@@ -306,7 +316,7 @@ function Shell(props: AppProps): React.ReactElement {
     }
     // `push` is recreated every render and would restart the fetch each time.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [client, route])
+  }, [client, route, props.fieldPreview])
 
   const stack = stacks[tab]
   const top = stack[stack.length - 1]
@@ -353,6 +363,13 @@ function Shell(props: AppProps): React.ReactElement {
   const selectTab = (next: NavTabId): void => {
     setTab(next)
     setStacks(current => stacksAfterTabPress(current, tab, next))
+    if (session == null || props.fieldPreview === true) {
+      if (next === tab) return
+      const destination = routeOf(next, undefined)
+      setRoute(destination)
+      setJoining(undefined)
+      showRoute(destination)
+    }
   }
 
   const push = (next: Pushed): void => {
@@ -493,7 +510,7 @@ function Shell(props: AppProps): React.ReactElement {
     push({ name: 'season', season })
   }
 
-  if (session == null) {
+  if (session == null && tab !== 'field') {
     // The sign-in screen must not be drawn until the question is answered: a
     // flash of it is how a link to a game becomes a link to the sign-in
     // screen. The mark and a spinner rather than a blank page, because on a
@@ -527,10 +544,28 @@ function Shell(props: AppProps): React.ReactElement {
     return (
       <View style={styles.app}>
         <AppHeader
-          title={route.name === 'join' ? lstrings.join_header : 'Sign in'}
+          title={
+            props.fieldPreview === true
+              ? 'Preview'
+              : route.name === 'join'
+                ? lstrings.join_header
+                : 'Sign in'
+          }
           showMark
+          nav={
+            isWide ? (
+              <AppNav mode="header" selected={tab} onSelect={selectTab} />
+            ) : undefined
+          }
         />
-        {route.name === 'join' ? (
+        {props.fieldPreview === true ? (
+          <View style={styles.booting}>
+            <Text style={styles.bootMessage}>
+              This preview runs without a server. Open the baseball tab to
+              explore the field.
+            </Text>
+          </View>
+        ) : route.name === 'join' ? (
           <JoinScreen
             client={client}
             code={route.code}
@@ -547,6 +582,9 @@ function Shell(props: AppProps): React.ReactElement {
           />
         ) : (
           <LoginScreen client={client} onSignedIn={rememberSession} />
+        )}
+        {!isWide && (
+          <AppNav mode="floating" selected={tab} onSelect={selectTab} />
         )}
       </View>
     )
@@ -568,7 +606,9 @@ function Shell(props: AppProps): React.ReactElement {
   }
 
   const body =
-    top == null ? (
+    tab === 'field' && top == null ? (
+      <BaseballScreen />
+    ) : top == null ? (
       tab === 'home' ? (
         <HomeScreen
           client={client}
@@ -593,13 +633,13 @@ function Shell(props: AppProps): React.ReactElement {
           onOpenGame={openGame}
         />
       )
-    ) : top.name === 'account' ? (
+    ) : top.name === 'account' && session != null ? (
       <AccountScreen
         session={session}
         onSignOut={() => {
           client.signOut().catch(() => undefined)
           rememberSession(undefined)
-          setStacks({ home: [], videos: [], schedule: [] })
+          setStacks({ home: [], videos: [], schedule: [], field: [] })
           setTab('home')
         }}
       />
@@ -781,7 +821,7 @@ function Shell(props: AppProps): React.ReactElement {
       }
       onBack={stack.length > 0 ? pop : undefined}
       account={
-        top?.name === 'account'
+        session == null || top?.name === 'account'
           ? undefined
           : {
               name: session.user.displayName,
@@ -901,6 +941,7 @@ function whenOf(route: Route): 'upcoming' | 'past' | 'all' | undefined {
 
 /** Which tab an address belongs to. */
 function tabOf(route: Route): NavTabId {
+  if (route.name === 'field') return 'field'
   if (route.name === 'videos') return 'videos'
   if (route.name === 'schedule') return 'schedule'
   return 'home'
@@ -949,6 +990,7 @@ function routeOf(tab: NavTabId, top: Pushed | undefined, when?: When): Route {
       zoom: top.zoom
     }
   }
+  if (tab === 'field') return { name: 'field' }
   if (tab === 'videos') return { name: 'videos', when: when ?? 'past' }
   if (tab === 'schedule') return { name: 'schedule', when: when ?? 'past' }
   return { name: 'home' }
@@ -973,6 +1015,7 @@ function titleFor(tab: NavTabId, top: Pushed | undefined): string | undefined {
     }
     return undefined
   }
+  if (tab === 'field') return 'Field lab'
   if (tab === 'home') return 'Your Home'
   return undefined
 }
