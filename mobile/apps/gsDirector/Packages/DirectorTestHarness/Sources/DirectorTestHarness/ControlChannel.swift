@@ -13,6 +13,9 @@ public enum ControlCommand: Sendable, Equatable {
   case stream(on: Bool)
   case startDirecting
   case selectProgram(source: Int)
+  /// Which camera carries the take's sound, by grid slot. A take has one audio source and it is
+  /// locked while recording, so this is refused mid-take exactly as the toggle is.
+  case selectAudioSource(source: Int)
   /// Instant replay on a 0-based source. `speed` is `full` or `slow`.
   case replay(source: Int, seconds: Double, speed: String)
   /// Slow-motion playback rate as a percentage. Exists so a flow can exercise a rate that is not
@@ -99,6 +102,9 @@ public enum ControlChannel {
     case "program":
       guard let source = Self.slot(query) else { return nil }
       return .selectProgram(source: source - 1)
+    case "audio", "audio-source", "audiosource":
+      guard let source = Self.slot(query) else { return nil }
+      return .selectAudioSource(source: source - 1)
     case "replay":
       guard let source = Self.slot(query) else { return nil }
       guard let seconds = query["seconds"].flatMap({ Double($0) }), seconds > 0 else { return nil }
