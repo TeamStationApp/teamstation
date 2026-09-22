@@ -1,6 +1,7 @@
 /* eslint-disable react/no-unknown-property -- Three.js scene elements. */
 import React, { useEffect, useMemo } from 'react'
 
+import { SCOREBOARD_SCALE, SCOREBOARD_Y, SCOREBOARD_Z } from './cameraModel'
 import { DEMO_SCOREBOARD, type ScoreboardState } from './scoreboardModel'
 import { makeScoreboardTexture } from './scoreboardTexture'
 
@@ -17,7 +18,11 @@ export function Scoreboard({
     [texture]
   )
   return (
-    <group name="vintage-scoreboard" position={[0, 25, -126]}>
+    <group
+      name="vintage-scoreboard"
+      position={[0, SCOREBOARD_Y, SCOREBOARD_Z]}
+      scale={SCOREBOARD_SCALE}
+    >
       <mesh castShadow>
         <boxGeometry args={[66, 34, 2]} />
         <meshStandardMaterial color="#17372f" roughness={0.85} />

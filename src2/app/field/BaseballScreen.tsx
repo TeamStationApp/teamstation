@@ -1,9 +1,17 @@
 import React, { useState } from 'react'
-import { Pressable, ScrollView, Text, View } from 'react-native'
+import {
+  Pressable,
+  ScrollView,
+  Text,
+  useWindowDimensions,
+  View
+} from 'react-native'
 
 import { NAV_CLEARANCE_REM, useBreakpoint, useHeaderSlot } from '../components'
 import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { CameraDragControl } from './CameraDragControl'
+import { fieldViewportHeight } from './cameraModel'
 import { FieldCanvas } from './FieldCanvas'
 import {
   type CameraView,
@@ -23,6 +31,17 @@ export function BaseballScreen(): React.ReactElement {
   const [selected, setSelected] = useState('SS')
   const [view, setView] = useState<CameraView>('home')
   const [zoom, setZoom] = useState(1)
+  const [cameraTilt, setCameraTilt] = useState(0)
+  const [cameraHeight, setCameraHeight] = useState(0)
+  const [cameraDragging, setCameraDragging] = useState(false)
+  const { height: windowHeight } = useWindowDimensions()
+  const bottom = phone ? theme.rem(NAV_CLEARANCE_REM) + insets.bottom : 16
+  const viewportHeight = fieldViewportHeight(windowHeight, headerHeight, bottom)
+  const selectView = (next: CameraView): void => {
+    setView(next)
+    setCameraTilt(0)
+    setCameraHeight(0)
+  }
   const [movementRevision, setMovementRevision] = useState(0)
   const player = players.find(item => item.id === selected) ?? players[0]
   const button = (
@@ -48,8 +67,10 @@ export function BaseballScreen(): React.ReactElement {
     </Pressable>
   )
   return (
-    <View
-      style={[
+    <ScrollView
+      scrollEnabled={!cameraDragging}
+      style={{ flex: 1, backgroundColor: theme.backgroundColor }}
+      contentContainerStyle={[
         styles.root,
         {
           paddingTop: headerHeight,
@@ -70,17 +91,19 @@ export function BaseballScreen(): React.ReactElement {
         {button('Reset', () => {
           setPlayers(createPlayers())
           setSelected('SS')
-          setView('home')
+          selectView('home')
           setZoom(1)
         })}
       </View>
-      <View style={styles.viewport}>
+      <View style={[styles.viewport, { height: viewportHeight }]}>
         <FieldCanvas
           players={players}
           selected={selected}
           onSelect={setSelected}
           view={view}
           zoom={zoom}
+          cameraTilt={cameraTilt}
+          cameraHeight={cameraHeight}
           movementRevision={movementRevision}
         />
         <View pointerEvents="none" style={styles.sceneBadge}>
@@ -90,18 +113,32 @@ export function BaseballScreen(): React.ReactElement {
           {button(
             'Board',
             () => {
-              setView(view === 'scoreboard' ? 'home' : 'scoreboard')
+              selectView(view === 'scoreboard' ? 'home' : 'scoreboard')
               setZoom(1)
             },
             view === 'scoreboard',
             'Scoreboard camera'
           )}
         </View>
+        <View style={{ position: 'absolute', right: 12, bottom: 74, gap: 8 }}>
+          <CameraDragControl
+            kind="tilt"
+            value={cameraTilt}
+            onChange={setCameraTilt}
+            onActive={setCameraDragging}
+          />
+          <CameraDragControl
+            kind="height"
+            value={cameraHeight}
+            onChange={setCameraHeight}
+            onActive={setCameraDragging}
+          />
+        </View>
         <View style={styles.cameraBar}>
           {button(
             'Home',
             () => {
-              setView('home')
+              selectView('home')
             },
             view === 'home',
             'Home plate camera'
@@ -109,7 +146,7 @@ export function BaseballScreen(): React.ReactElement {
           {button(
             'Above',
             () => {
-              setView('overhead')
+              selectView('overhead')
             },
             view === 'overhead',
             'Overhead camera'
@@ -117,7 +154,7 @@ export function BaseballScreen(): React.ReactElement {
           {button(
             'Infield',
             () => {
-              setView('infield')
+              selectView('infield')
             },
             view === 'infield',
             'Infield camera'
@@ -199,11 +236,11 @@ export function BaseballScreen(): React.ReactElement {
               })}
         </View>
       </View>
-    </View>
+    </ScrollView>
   )
 }
 const getStyles = cacheStyles((theme: Theme) => ({
-  root: { flex: 1, backgroundColor: theme.backgroundColor },
+  root: { flexGrow: 1, backgroundColor: theme.backgroundColor },
   intro: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -226,7 +263,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   subtitle: { color: theme.secondaryTextColor, fontSize: 13, marginTop: 5 },
   viewport: {
-    flex: 1,
+    flexShrink: 0,
     minHeight: 240,
     overflow: 'hidden',
     borderRadius: 18,

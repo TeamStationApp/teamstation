@@ -4,7 +4,8 @@ import React, { useEffect, useMemo, useRef } from 'react'
 import { PerspectiveCamera, Plane, Vector3 } from 'three'
 
 import { Ballpark } from './Ballpark'
-import { type CameraView, type FieldPlayer, setDestination } from './fieldModel'
+import { applyFieldCamera } from './cameraModel'
+import { type FieldPlayer, setDestination } from './fieldModel'
 import { fieldPalette as p } from './fieldPalette'
 import type { FieldCanvasProps } from './fieldTypes'
 import { Player } from './Player'
@@ -13,7 +14,15 @@ import { useSurfaceTextures } from './surfaceTextures'
 
 /** Scene is renderer-independent. Only the canvas adapter owns browser APIs. */
 export function FieldScene(props: FieldCanvasProps): React.ReactElement {
-  const { players, selected, onSelect, view, zoom } = props
+  const {
+    players,
+    selected,
+    onSelect,
+    view,
+    zoom,
+    cameraTilt = 0,
+    cameraHeight = 0
+  } = props
   const { camera, size, gl, invalidate } = useThree()
   const textures = useSurfaceTextures()
   useEffect(() => {
@@ -28,34 +37,25 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
   const point = useMemo(() => new Vector3(), [])
   useEffect(() => {
     if (!(camera instanceof PerspectiveCamera)) return
-    const narrow = size.width < size.height
-    const distance = (narrow ? 1.4 : 1) / zoom
-    const poses: Record<CameraView, [number, number, number]> = {
-      home: [0, 100, 114],
-      overhead: [0, 185, -35],
-      infield: [37, 54, 55],
-      scoreboard: [0, 28, -45]
-    }
-    const [x, y, z] = poses[view]
-    const center = view === 'scoreboard' ? -126 : view === 'infield' ? -24 : -48
-    camera.position.set(
-      x * distance,
-      y * distance,
-      center + (z - center) * distance
-    )
-    camera.fov = 43
-    camera.near = 0.1
-    camera.far = 900
-    if (view === 'scoreboard') {
-      const visibleHeight = Math.max(72 / (size.width / size.height), 42)
-      const distance =
-        visibleHeight / (2 * Math.tan((43 * Math.PI) / 360)) / zoom
-      camera.position.set(0, 25, -126 + distance)
-    }
-    camera.lookAt(0, view === 'scoreboard' ? 25 : 0, center)
-    camera.updateProjectionMatrix()
+    applyFieldCamera(camera, {
+      width: size.width,
+      height: size.height,
+      view,
+      zoom,
+      tilt: cameraTilt,
+      heightOffset: cameraHeight
+    })
     invalidate()
-  }, [camera, size.width, size.height, view, zoom, invalidate])
+  }, [
+    camera,
+    size.width,
+    size.height,
+    view,
+    zoom,
+    cameraTilt,
+    cameraHeight,
+    invalidate
+  ])
 
   const move = (event: ThreeEvent<PointerEvent>, id: string): void => {
     const player = players.find(item => item.id === id)
