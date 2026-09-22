@@ -6,7 +6,12 @@ import {
 } from 'three'
 
 import { bulbGlyph } from './bulbFont'
-import { countLights, type ScoreboardState, shortName } from './scoreboardModel'
+import {
+  battingLine,
+  countLights,
+  type ScoreboardState,
+  shortName
+} from './scoreboardModel'
 
 export const BOARD_WIDTH = 1024
 export const BOARD_HEIGHT = 512
@@ -18,7 +23,8 @@ export function makeScoreboardPixels(state: ScoreboardState): Uint8Array {
     if (x < 0 || y < 0 || x >= BOARD_WIDTH || y >= BOARD_HEIGHT) return
     const i = ((BOARD_HEIGHT - 1 - y) * BOARD_WIDTH + x) * 4
     for (let c = 0; c < 3; c++)
-      pixels[i + c] = pixels[i + c] * (1 - alpha) + rgb[c] * alpha
+      pixels[i + c] =
+        pixels[i + c] * (1 - alpha) + Math.min(255, rgb[c]) * alpha
     pixels[i + 3] = 255
   }
   for (let y = 0; y < BOARD_HEIGHT; y++)
@@ -42,8 +48,10 @@ export function makeScoreboardPixels(state: ScoreboardState): Uint8Array {
     y: number,
     radius: number,
     color: number[],
-    lit = true
+    lit = true,
+    brightness = 1
   ): void => {
+    color = color.map(channel => Math.min(255, channel * brightness))
     const halo = radius * 2.8
     for (let yy = Math.floor(y - halo); yy <= y + halo; yy++)
       for (let xx = Math.floor(x - halo); xx <= x + halo; xx++) {
@@ -87,7 +95,9 @@ export function makeScoreboardPixels(state: ScoreboardState): Uint8Array {
               x + (i * 6 + c) * pitch,
               y + r * pitch,
               pitch * 0.3,
-              [255, 190, 91]
+              [255, 190, 91],
+              true,
+              1.25
             )
         })
       })
@@ -121,13 +131,14 @@ export function makeScoreboardPixels(state: ScoreboardState): Uint8Array {
     156,
     6
   )
-  text('BATTER', 55, 239, 3.5)
-  text(shortName(state.batter), 55, 273, 5.5, 14)
-  text('PITCHER', 540, 239, 3.5)
-  text(shortName(state.pitcher), 540, 273, 5.5, 14)
-  text('PITCHES', 540, 330, 3)
-  text(String(Math.max(0, Math.min(999, state.pitchCount))), 725, 326, 5)
-  text('EXHIBITION', 55, 328, 2)
+  if (state.showPlayerNames === true) {
+    text(shortName(state.batter), 55, 243, 5.5, 14)
+    text(shortName(state.pitcher), 540, 243, 5.5, 14)
+  }
+  const statsY = state.showPlayerNames === true ? 310 : 268
+  text(battingLine(state), 55, statsY, 6)
+  text('PITCHES', 540, statsY + 2, 3.5)
+  text(String(Math.max(0, Math.min(999, state.pitchCount))), 725, statsY - 4, 6)
   text('BALLS', 108, 386, 4)
   text('STRIKES', 409, 386, 4)
   text('OUTS', 787, 386, 4)

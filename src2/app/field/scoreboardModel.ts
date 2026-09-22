@@ -5,6 +5,9 @@ export interface ScoreboardState {
   awayScore: number
   batter: { firstName: string; lastName: string }
   pitcher: { firstName: string; lastName: string }
+  batterHits?: number
+  batterAtBats?: number
+  showPlayerNames?: boolean
   pitchCount: number
   balls: number
   strikes: number
@@ -18,6 +21,9 @@ export const DEMO_SCOREBOARD: ScoreboardState = {
   awayScore: 2,
   batter: { firstName: 'Alex', lastName: 'Rivera' },
   pitcher: { firstName: 'James', lastName: 'Wilson' },
+  batterHits: 1,
+  batterAtBats: 3,
+  showPlayerNames: false,
   pitchCount: 64,
   balls: 2,
   strikes: 1,
@@ -33,4 +39,11 @@ export function countLights(value: number, maximum: number): boolean[] {
     ? Math.max(0, Math.min(maximum, Math.floor(value)))
     : 0
   return Array.from({ length: maximum }, (_, index) => index < count)
+}
+
+export function battingLine(state: ScoreboardState): string {
+  const count = (value: number | undefined): number =>
+    value != null && Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0
+  const atBats = count(state.batterAtBats)
+  return `${Math.min(count(state.batterHits), atBats)}-${atBats}`
 }

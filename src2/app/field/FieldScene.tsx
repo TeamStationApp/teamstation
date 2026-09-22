@@ -198,7 +198,6 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
   return (
     <>
       <color attach="background" args={[p.sky]} />
-      <fog attach="fog" args={[p.sky, 260, 650]} />
       <hemisphereLight args={['#dce8ee', '#4c5140', 1.65]} />
       <directionalLight
         position={[-65, 95, 45]}

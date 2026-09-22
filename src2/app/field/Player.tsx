@@ -1,11 +1,22 @@
 /* eslint-disable react/no-unknown-property -- React Three Fiber elements describe Three.js objects, not HTML. */
 import { useFrame, useThree } from '@react-three/fiber'
 import React, { useEffect, useMemo, useRef } from 'react'
-import type { Group, Mesh, Sprite, Texture } from 'three'
+import {
+  type Group,
+  type Mesh,
+  PerspectiveCamera,
+  type Sprite,
+  type Texture
+} from 'three'
 
 import { advancePlayer, type FieldPlayer } from './fieldModel'
 import { fieldPalette as p } from './fieldPalette'
 import { makePlayerLabel } from './playerLabels'
+import {
+  hasPlayerLabel,
+  placePlayerLabel,
+  PLAYER_SCALE
+} from './playerPresentation'
 import { TERRAIN } from './terrain'
 
 function Part({
@@ -45,16 +56,17 @@ export function Player({
 }): React.ReactElement {
   const invalidate = useThree(state => state.invalidate)
   const label = useRef<Sprite>(null)
+  const showLabel = hasPlayerLabel(player)
   const labels = useMemo(
     () => ({
-      badge: makePlayerLabel(`${player.number} ${player.displayName}`, true),
+      badge: showLabel ? makePlayerLabel(player.displayName, true) : null,
       jersey: makePlayerLabel(String(player.number), false)
     }),
-    [player.number, player.displayName]
+    [player.number, player.displayName, showLabel]
   )
   useEffect(
     () => () => {
-      labels.badge.dispose()
+      labels.badge?.dispose()
       labels.jersey.dispose()
     },
     [labels]
@@ -76,10 +88,8 @@ export function Player({
       TERRAIN.players,
       player.position.z
     )
-    if (label.current != null) {
-      const distance = camera.position.distanceTo(root.current.position)
-      const pixel = (distance * 0.79) / Math.max(1, size.height)
-      label.current.scale.set(pixel * 112, pixel * 28, 1)
+    if (label.current != null && camera instanceof PerspectiveCamera) {
+      placePlayerLabel(label.current, player, camera, size.height)
     }
     body.current.rotation.y = player.heading
     const running = Math.min(1, player.speed / 5)
@@ -110,21 +120,24 @@ export function Player({
           <ringGeometry args={selected ? [3.3, 3.65, 32] : [2.2, 2.5, 24]} />
           <meshBasicMaterial color={selected ? p.selection : shirt} />
         </mesh>
-        <sprite
-          ref={label}
-          position={[0, player.team === 'runner' ? 17 : 10.3, 0]}
-          scale={[14, 3.5, 1]}
-          renderOrder={5}
-          name={`player-label-${player.id}`}
-        >
-          <spriteMaterial
-            map={labels.badge}
-            transparent
-            depthWrite={false}
-            toneMapped={false}
-          />
-        </sprite>
-        <group ref={body} scale={3.2}>
+        {labels.badge != null && (
+          <sprite
+            ref={label}
+            position={[0, 12, 0]}
+            scale={[0, 0, 1]}
+            renderOrder={5}
+            name={`player-label-${player.id}`}
+          >
+            <spriteMaterial
+              map={labels.badge}
+              depthTest={false}
+              transparent
+              depthWrite={false}
+              toneMapped={false}
+            />
+          </sprite>
+        )}
+        <group ref={body} scale={PLAYER_SCALE}>
           <mesh position={[0, 1.57, 0]} scale={[1, 1, 0.62]}>
             <cylinderGeometry args={[0.43, 0.33, 0.97, 10]} />
             <meshStandardMaterial color={shirt} map={fabric} roughness={0.85} />

@@ -131,3 +131,24 @@ moves the first ground contact toward home, with two diminishing bounces.
 **Move landing**, **Done**, **Adjust arc**, and **Clear arc** support subsequent edits.
 Player movement is disabled while drawing; Done restores it and keeps the arc.
 The path is a coaching diagram, not a physics prediction. No data is persisted.
+
+
+## Readability pass
+
+Scene fog is removed. Fitting the same board into a narrow but tall desktop
+viewport pulls the camera far back; the old fixed 260–650m fog range hid the
+stadium. The far clipping plane now follows that distance as well.
+
+Players are another 15% larger (body scale 3.68). Nameplates are 56×14 CSS pixels,
+half their previous dimensions, calculated from camera-space depth and FOV.
+They omit jersey numbers. Pitcher and runner nameplates are hidden by default.
+The catcher label sits below his feet; 3B is screen-left, 1B screen-right; SS, 2B
+and outfield labels sit above the enlarged head with a one-foot game-space gap.
+Sprite anchors keep the boxes away from heads even when the viewport resizes.
+
+Scoreboard text bulbs receive a 1.25 brightness multiplier, with color channels
+clamped to preserve the warm glow. BATTER/PITCHER headings are removed. Both
+scoreboard names default to hidden (`showPlayerNames: false`); an integrator can
+opt them in, with the hits–at-bats line beneath the batter. The default board shows
+`1-3` and `PITCHES 64`. `batterHits` and `batterAtBats` default to a `0-0` line when
+not provided. B/S/O lamp colors and jersey numbers are unchanged.

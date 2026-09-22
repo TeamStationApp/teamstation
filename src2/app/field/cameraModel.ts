@@ -90,6 +90,8 @@ export function applyFieldCamera(
   camera.rotateX(tilt)
   // World-space translation, deliberately preserving the viewing angle.
   camera.position.y = Math.max(3, camera.position.y + heightOffset)
+  // Extremely narrow, tall desktop windows can pull the fit camera past 1km.
+  camera.far = Math.max(1100, camera.position.length() + 400)
   camera.updateProjectionMatrix()
   camera.updateMatrixWorld()
 }
