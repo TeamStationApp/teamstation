@@ -8,11 +8,21 @@ import { type CameraView, type FieldPlayer, setDestination } from './fieldModel'
 import { fieldPalette as p } from './fieldPalette'
 import type { FieldCanvasProps } from './fieldTypes'
 import { Player } from './Player'
+import { PlayerShadows } from './PlayerShadows'
+import { useSurfaceTextures } from './surfaceTextures'
 
 /** Scene is renderer-independent. Only the canvas adapter owns browser APIs. */
 export function FieldScene(props: FieldCanvasProps): React.ReactElement {
   const { players, selected, onSelect, view, zoom } = props
-  const { camera, size } = useThree()
+  const { camera, size, gl, invalidate } = useThree()
+  const textures = useSurfaceTextures()
+  useEffect(() => {
+    invalidate()
+  }, [invalidate, props.movementRevision])
+  useEffect(() => {
+    gl.shadowMap.autoUpdate = false
+    gl.shadowMap.needsUpdate = true
+  }, [gl])
   const drag = useRef<{ id: string; pointer: number } | null>(null)
   const ground = useMemo(() => new Plane(new Vector3(0, 1, 0), -0.25), [])
   const point = useMemo(() => new Vector3(), [])
@@ -23,10 +33,11 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     const poses: Record<CameraView, [number, number, number]> = {
       home: [0, 100, 114],
       overhead: [0, 185, -35],
-      infield: [37, 54, 55]
+      infield: [37, 54, 55],
+      scoreboard: [0, 28, -45]
     }
     const [x, y, z] = poses[view]
-    const center = view === 'infield' ? -24 : -48
+    const center = view === 'scoreboard' ? -126 : view === 'infield' ? -24 : -48
     camera.position.set(
       x * distance,
       y * distance,
@@ -35,18 +46,27 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     camera.fov = 43
     camera.near = 0.1
     camera.far = 900
-    camera.lookAt(0, 0, center)
+    if (view === 'scoreboard') {
+      const visibleHeight = Math.max(72 / (size.width / size.height), 42)
+      const distance =
+        visibleHeight / (2 * Math.tan((43 * Math.PI) / 360)) / zoom
+      camera.position.set(0, 25, -126 + distance)
+    }
+    camera.lookAt(0, view === 'scoreboard' ? 25 : 0, center)
     camera.updateProjectionMatrix()
-  }, [camera, size.width, size.height, view, zoom])
+    invalidate()
+  }, [camera, size.width, size.height, view, zoom, invalidate])
 
   const move = (event: ThreeEvent<PointerEvent>, id: string): void => {
     const player = players.find(item => item.id === id)
     if (player == null || event.ray.intersectPlane(ground, point) == null)
       return
     setDestination(player, point)
+    invalidate()
   }
   const down = (event: ThreeEvent<PointerEvent>): void => {
-    if (drag.current != null || event.button !== 0) return
+    if (view === 'scoreboard' || drag.current != null || event.button !== 0)
+      return
     event.stopPropagation()
     // Screen-space targets stay finger-sized even for distant outfielders.
     let nearest: FieldPlayer | undefined
@@ -79,10 +99,10 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     <>
       <color attach="background" args={[p.sky]} />
       <fog attach="fog" args={[p.sky, 260, 650]} />
-      <hemisphereLight args={['#fff5de', '#64746b', 2.5]} />
+      <hemisphereLight args={['#dce8ee', '#4c5140', 1.65]} />
       <directionalLight
-        position={[-70, 130, 60]}
-        intensity={2.4}
+        position={[-65, 95, 45]}
+        intensity={2.7}
         castShadow
         shadow-mapSize={[1024, 1024]}
         shadow-camera-left={-125}
@@ -92,11 +112,13 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
         shadow-camera-far={350}
         shadow-bias={-0.001}
       />
-      <Ballpark />
+      <Ballpark textures={textures} />
+      <PlayerShadows players={players} />
       {players.map(player => (
         <Player
           key={player.id}
           player={player}
+          fabric={textures.cloth}
           selected={selected === player.id}
         />
       ))}

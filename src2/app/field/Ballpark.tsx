@@ -1,9 +1,12 @@
 /* eslint-disable react/no-unknown-property -- React Three Fiber elements describe Three.js objects, not HTML. */
 import React, { useMemo } from 'react'
-import { Shape } from 'three'
+import { Shape, type Texture } from 'three'
 
 import { BASE, BASES } from './fieldModel'
 import { fieldPalette as p } from './fieldPalette'
+import { Scoreboard } from './Scoreboard'
+import { StadiumDetails } from './StadiumDetails'
+import type { useSurfaceTextures } from './surfaceTextures'
 
 function sector(radius: number, inner = 0, angle = Math.PI / 4): Shape {
   const shape = new Shape()
@@ -24,11 +27,13 @@ function sector(radius: number, inner = 0, angle = Math.PI / 4): Shape {
 function Polygon({
   points,
   color,
+  map,
   height = 0.04
 }: {
   points: Array<[number, number]>
   color: string
   height?: number
+  map?: Texture
 }): React.ReactElement {
   const shape = useMemo(() => {
     const result = new Shape()
@@ -45,7 +50,7 @@ function Polygon({
       receiveShadow
     >
       <shapeGeometry args={[shape]} />
-      <meshStandardMaterial color={color} roughness={1} />
+      <meshStandardMaterial color={color} map={map} roughness={1} />
     </mesh>
   )
 }
@@ -54,6 +59,7 @@ function Disc({
   z = 0,
   radius,
   color,
+  map,
   height = 0.07
 }: {
   x?: number
@@ -61,6 +67,7 @@ function Disc({
   radius: number
   color: string
   height?: number
+  map?: Texture
 }): React.ReactElement {
   return (
     <mesh
@@ -68,12 +75,27 @@ function Disc({
       rotation={[-Math.PI / 2, 0, 0]}
       receiveShadow
     >
-      <circleGeometry args={[radius, 48]} />
-      <meshStandardMaterial color={color} roughness={1} />
+      <circleGeometry
+        args={[radius, 48]}
+        onUpdate={geometry => {
+          const positions = geometry.getAttribute('position')
+          const uv = geometry.getAttribute('uv')
+          for (let i = 0; i < uv.count; i++)
+            uv.setXY(i, positions.getX(i) + x, positions.getY(i) - z)
+          uv.needsUpdate = true
+        }}
+      />
+      <meshStandardMaterial color={color} map={map} roughness={1} />
     </mesh>
   )
 }
-function Stripe({ radius }: { radius: number }): React.ReactElement {
+function Stripe({
+  radius,
+  map
+}: {
+  radius: number
+  map: Texture
+}): React.ReactElement {
   const shape = useMemo(() => sector(radius, radius - 6), [radius])
   return (
     <mesh
@@ -82,7 +104,7 @@ function Stripe({ radius }: { radius: number }): React.ReactElement {
       receiveShadow
     >
       <shapeGeometry args={[shape]} />
-      <meshStandardMaterial color={p.stripe} roughness={1} />
+      <meshStandardMaterial color={p.stripe} map={map} roughness={1} />
     </mesh>
   )
 }
@@ -109,8 +131,13 @@ function Box({
     </mesh>
   )
 }
-export function Ballpark(): React.ReactElement {
+export function Ballpark({
+  textures
+}: {
+  textures: ReturnType<typeof useSurfaceTextures>
+}): React.ReactElement {
   const grass = useMemo(() => sector(114, 0, Math.PI / 3.5), [])
+  const infield = useMemo(() => sector(47.5), [])
   const track = useMemo(() => sector(118, 109, Math.PI / 3.5), [])
   return (
     <group>
@@ -120,14 +147,18 @@ export function Ballpark(): React.ReactElement {
         receiveShadow
       >
         <circleGeometry args={[180, 80]} />
-        <meshStandardMaterial color={p.ground} />
+        <meshStandardMaterial color={p.ground} map={textures.grass} />
       </mesh>
       <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
         <shapeGeometry args={[grass]} />
-        <meshStandardMaterial color={p.grass} roughness={1} />
+        <meshStandardMaterial
+          color={p.grass}
+          map={textures.grass}
+          roughness={1}
+        />
       </mesh>
       {[12, 24, 36, 48, 60, 72, 84, 96, 108].map(radius => (
-        <Stripe key={radius} radius={radius} />
+        <Stripe key={radius} radius={radius} map={textures.grass} />
       ))}
       <mesh
         rotation={[-Math.PI / 2, 0, 0]}
@@ -135,34 +166,59 @@ export function Ballpark(): React.ReactElement {
         receiveShadow
       >
         <shapeGeometry args={[track]} />
-        <meshStandardMaterial color={p.dirt} roughness={1} />
+        <meshStandardMaterial
+          color={p.dirt}
+          map={textures.dirt}
+          roughness={1}
+        />
+      </mesh>
+      <mesh
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[0, 0.04, 0]}
+        receiveShadow
+      >
+        <shapeGeometry args={[infield]} />
+        <meshStandardMaterial
+          color={p.dirt}
+          map={textures.dirt}
+          roughness={1}
+        />
       </mesh>
       <Polygon
         points={[
-          [0, 5],
-          [27, -BASE],
-          [0, -48],
-          [-27, -BASE]
-        ]}
-        color={p.dirt}
-      />
-      <Polygon
-        points={[
-          [0, -6],
-          [13.5, -BASE],
-          [0, -33],
-          [-13.5, -BASE]
+          [0, -4],
+          [16.7, -BASE],
+          [0, -35],
+          [-16.7, -BASE]
         ]}
         color={p.grass}
+        map={textures.grass}
         height={0.06}
       />
-      <Disc radius={10} color={p.dirt} />
-      <Disc radius={2.8} z={-18.44} color={p.clay} height={0.18} />
+      <Disc radius={10} color={p.dirt} map={textures.dirt} />
+      <Disc
+        radius={2.8}
+        z={-18.44}
+        color={p.clay}
+        map={textures.dirt}
+        height={0.18}
+      />
       <Box
         position={[0, 0.23, -18.44]}
         size={[0.61, 0.1, 0.15]}
         color={p.chalk}
       />
+      {BASES.slice(1).map((b, i) => (
+        <Disc
+          key={`wear-${i}`}
+          x={b.x}
+          z={b.z}
+          radius={1.8}
+          color={p.clay}
+          map={textures.dirt}
+          height={0.08}
+        />
+      ))}
       {BASES.slice(1).map((b, i) => (
         <Box
           key={i}
@@ -226,49 +282,8 @@ export function Ballpark(): React.ReactElement {
           />
         </group>
       ))}
-      {Array.from({ length: 32 }, (_, i) => {
-        const a = -Math.PI / 3.5 + ((i + 0.5) / 32) * ((2 * Math.PI) / 3.5)
-        return (
-          <group key={i} rotation={[0, -a, 0]}>
-            <Box
-              position={[0, 2, -118]}
-              size={[7.1, 4, 1.2]}
-              color={i % 4 === 0 ? p.board : p.wall}
-            />
-            <Box
-              position={[0, 4.15, -118]}
-              size={[7.1, 0.3, 1.5]}
-              color={p.selection}
-            />
-            {[0, 1, 2, 3].map(row => (
-              <Box
-                key={row}
-                position={[0, 1.5 + row * 2.2, -124 - row * 3.1]}
-                size={[7.8, 2, 3.2]}
-                color={row % 2 === 0 ? p.seats : p.seatsLight}
-              />
-            ))}
-          </group>
-        )
-      })}
-      <Box position={[0, 12, -126]} size={[30, 13, 2]} color={p.board} />
-      <Box position={[0, 19, -126]} size={[32, 1, 2.5]} color={p.selection} />
-      {[-8, 8].map(x => (
-        <Box key={x} position={[x, 4, -126]} size={[1, 8, 1]} color={p.wall} />
-      ))}
-      {Array.from({ length: 9 }, (_, i) => (
-        <Box
-          key={i}
-          position={[-12 + i * 3, 13, -124.9]}
-          size={[1.1, 2, 0.1]}
-          color={i === 0 ? p.runner : p.chalk}
-        />
-      ))}
-      <Box
-        position={[0, 9, -124.9]}
-        size={[25, 0.4, 0.1]}
-        color={p.seatsLight}
-      />
+      <StadiumDetails texture={textures.wall} />
+      <Scoreboard />
     </group>
   )
 }

@@ -14,7 +14,7 @@ export interface FieldPlayer {
   speed: number
   stride: number
 }
-export type CameraView = 'home' | 'overhead' | 'infield'
+export type CameraView = 'home' | 'overhead' | 'infield' | 'scoreboard'
 export const BASE = 27.432 / Math.sqrt(2)
 export const BASES: GroundPoint[] = [
   { x: 0, z: 0 },
@@ -81,12 +81,12 @@ export function advancePlayer(player: FieldPlayer, elapsed: number): void {
     Math.cos(desired - player.heading)
   )
   player.heading += turn * (1 - Math.exp(-16 * dt))
-  const speed = Math.min(17, 4 + distance * 1.1)
+  const speed = 1.4 * Math.min(17, 4 + distance * 1.1)
   const step = Math.min(distance, speed * dt)
   player.position.x += (dx / distance) * step
   player.position.z += (dz / distance) * step
   player.speed = dt > 0 ? step / dt : 0
-  player.stride += step * 2.5
+  player.stride += step * 1.85
 }
 export function nextBase(player: FieldPlayer): GroundPoint {
   let nearest = 0
