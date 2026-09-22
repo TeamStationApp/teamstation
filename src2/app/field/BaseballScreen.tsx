@@ -17,7 +17,10 @@ import { PitchIcon } from './PitchIcon'
 import { DEMO_SCOREBOARD, type ScoreboardState } from './scoreboardModel'
 import { glassStyle, useFieldSurface } from './useFieldSurface'
 
+const DEFAULT_CAMERA = { zoom: 1.25, tilt: (-11 * Math.PI) / 180, height: 33 }
+
 interface Snapshot {
+  event: string
   scoreboard: ScoreboardState
   arc: BallArcState | null
 }
@@ -38,17 +41,18 @@ export function BaseballScreen({
   const [selected, setSelected] = useState('SS')
   const [arc, setArc] = useState<BallArcState | null>(null)
   const [arcMode, setArcMode] = useState<ArcMode>('off')
-  const [zoom, setZoom] = useState(1)
-  const [cameraTilt, setCameraTilt] = useState(0)
-  const [cameraHeight, setCameraHeight] = useState(0)
+  const [zoom, setZoom] = useState(DEFAULT_CAMERA.zoom)
+  const [cameraTilt, setCameraTilt] = useState(DEFAULT_CAMERA.tilt)
+  const [cameraHeight, setCameraHeight] = useState(DEFAULT_CAMERA.height)
   const [menu, setMenu] = useState<'main' | 'more' | null>(null)
   const [scoreboard, setScoreboard] = useState(DEMO_SCOREBOARD)
   const [history, setHistory] = useState<Snapshot[]>([])
-  const save = (): void => {
-    setHistory(items => [...items, { scoreboard, arc }])
+  const undoEvent = history[history.length - 1]?.event
+  const save = (event: string): void => {
+    setHistory(items => [...items, { scoreboard, arc, event }])
   }
   const pitch = (kind: PitchKind): void => {
-    save()
+    save(pitches.find(item => item.kind === kind)?.label ?? 'Pitch')
     setScoreboard(recordPitch(scoreboard, kind))
     setMenu(null)
     setArcMode(kind === 'play' ? 'aim' : 'off')
@@ -171,21 +175,21 @@ export function BaseballScreen({
           <View style={[styles.moreMenu, glassStyle]}>
             {arc != null &&
               action('Adjust arc', () => {
-                save()
+                save('Adjust ball arc')
                 setArcMode('edit')
                 setMenu(null)
               })}
             {arc != null &&
               action('Clear arc', () => {
-                save()
+                save('Clear ball arc')
                 setArc(null)
                 setArcMode('off')
                 setMenu(null)
               })}
             {action('Reset camera', () => {
-              setZoom(1)
-              setCameraTilt(0)
-              setCameraHeight(0)
+              setZoom(DEFAULT_CAMERA.zoom)
+              setCameraTilt(DEFAULT_CAMERA.tilt)
+              setCameraHeight(DEFAULT_CAMERA.height)
               setMenu(null)
             })}
             {action('Reset players', () => {
@@ -208,17 +212,22 @@ export function BaseballScreen({
           </Pressable>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Undo last pitch or arc change"
+            accessibilityLabel={
+              undoEvent == null ? 'Nothing to undo' : `Undo ${undoEvent}`
+            }
             disabled={history.length === 0}
             accessibilityState={{ disabled: history.length === 0 }}
             onPress={undo}
             style={[
               styles.utility,
+              { flex: 1, minWidth: 0 },
               glassStyle,
               history.length === 0 && { opacity: 0.45 }
             ]}
           >
-            <Text style={styles.text}>↶ Undo</Text>
+            <Text style={styles.text}>
+              ↶ Undo{undoEvent == null ? '' : ` · ${undoEvent}`}
+            </Text>
           </Pressable>
         </View>
         <View style={styles.pitchRow}>
@@ -267,7 +276,7 @@ const styles = StyleSheet.create({
   text: { color: '#fffaf0', fontSize: 12, fontWeight: '600' },
   utilityRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    gap: 6,
     marginBottom: 6
   },
   utility: {
