@@ -1,3 +1,4 @@
+import { fork } from 'node:child_process'
 import cluster from 'node:cluster'
 import { randomBytes } from 'node:crypto'
 import { readFileSync } from 'node:fs'
@@ -46,6 +47,16 @@ import { statsRoutes } from './routes/stats'
 import { teamRoutes } from './routes/teams'
 import { userRoutes } from './routes/users'
 import { primaryHost, publicUrl, serverConfig } from './serverConfig'
+import {
+  exitAfterBuilder,
+  forceStop,
+  startStatsBuilder,
+  type StatsBuilderHandle
+} from './statsBuilder/serverHooks'
+import {
+  type SupervisedChild,
+  superviseStatsBuilder
+} from './statsBuilder/supervisor'
 import { stopWorker } from './stopWorker'
 
 /**
@@ -324,6 +335,27 @@ function runPrimary(workerCount: number): void {
   startLive(liveDb)
   reopenInterrupted(liveDb)
   startPurge(liveDb)
+  const builder = startStatsBuilder({
+    enabled: serverConfig.statsBuilder,
+    supervise: () =>
+      superviseStatsBuilder({
+        fork: (modulePath, args, options) =>
+          fork(modulePath, args, options) as SupervisedChild,
+        log: message => {
+          console.log(message)
+        },
+        clock: () => new Date()
+      }),
+    log: message => {
+      console.log(message)
+    }
+  })
+  const exitWithBuilder = exitAfterBuilder(builder, code => {
+    process.exit(code)
+  })
+  const forceExit = forceStop(builder, code => {
+    process.exit(code)
+  })
   console.log(`gamestation ${VERSION}: forking ${workerCount} workers`)
   for (let i = 0; i < workerCount; i++) cluster.fork()
 
@@ -344,7 +376,7 @@ function runPrimary(workerCount: number): void {
     if (noticedBy !== 'exit') {
       console.log(`every worker has gone, noticed by the ${noticedBy}`)
     }
-    process.exit(0)
+    exitWithBuilder(0)
   }
 
   cluster.on('exit', (worker, code, signal) => {
@@ -362,9 +394,15 @@ function runPrimary(workerCount: number): void {
     if (stopping) return
     stopping = true
     stopLiveController()
+    builder.stop(signal).catch((error: unknown) => {
+      console.error('stats builder: stop failed', error)
+    })
     const workers = livingWorkers(cluster.workers)
     console.log(`${signal}: stopping ${workers.length} workers`)
-    if (workers.length === 0) process.exit(0)
+    if (workers.length === 0) {
+      exitWithBuilder(0)
+      return
+    }
     for (const worker of workers) worker.kill(signal)
 
     // Looking again, because a worker that has already gone sends no further
@@ -382,7 +420,7 @@ function runPrimary(workerCount: number): void {
       for (const worker of livingWorkers(cluster.workers)) {
         worker.process.kill('SIGKILL')
       }
-      process.exit(1)
+      forceExit(1)
     }, FORCE_STOP_MS)
     forced.unref()
   }
@@ -486,10 +524,28 @@ function runWorker(): void {
   )
 
   // Unclustered — one process, which is both the API and the ingest.
+  let builder: StatsBuilderHandle = {
+    stop: async () => undefined
+  }
   if (cluster.isPrimary) {
     startLive(db)
     reopenInterrupted(db)
     startPurge(db)
+    builder = startStatsBuilder({
+      enabled: serverConfig.statsBuilder,
+      supervise: () =>
+        superviseStatsBuilder({
+          fork: (modulePath, args, options) =>
+            fork(modulePath, args, options) as SupervisedChild,
+          log: message => {
+            console.log(message)
+          },
+          clock: () => new Date()
+        }),
+      log: message => {
+        console.log(message)
+      }
+    })
   }
 
   let closing = false
@@ -504,7 +560,9 @@ function runWorker(): void {
       },
       cutConnectionsMs: WORKER_CUT_CONNECTIONS_MS,
       deadlineMs: WORKER_STOP_MS,
-      exit: code => process.exit(code),
+      exit: exitAfterBuilder(builder, code => {
+        process.exit(code)
+      }),
       log: message => {
         console.error(`worker ${process.pid}: ${message}`)
       }

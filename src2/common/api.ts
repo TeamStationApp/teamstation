@@ -301,9 +301,26 @@ export const asPlayerStats = asObject({
 })
 export type PlayerStats = ReturnType<typeof asPlayerStats>
 
+export const asGameStatsStatus = asEither(
+  asObject({ status: asValue('none' as const) }),
+  asObject({
+    status: asEither(
+      asValue('pending' as const),
+      asValue('built' as const),
+      asValue('incomplete' as const),
+      asValue('failed' as const)
+    ),
+    detail: asNullable(asString),
+    builtAt: asNullable(asString)
+  })
+)
+export type GameStatsStatusResponse = ReturnType<typeof asGameStatsStatus>
+
 export const asBoxScore = asObject({
   batting: asArray(asBattingRow),
-  pitching: asArray(asPitchingRow)
+  pitching: asArray(asPitchingRow),
+  // Optional so older servers without the stats builder still clean.
+  stats: asOptional(asGameStatsStatus)
 })
 export type BoxScore = ReturnType<typeof asBoxScore>
 

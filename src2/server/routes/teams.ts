@@ -36,6 +36,7 @@ import {
   pitchingRates
 } from '../stats'
 import { statRows } from '../stats/rows'
+import { gameStatsStatus } from '../statsBuilder/status'
 import { teamRoster } from '../teams/teamRoster'
 
 /**
@@ -611,7 +612,8 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
           rates: battingRates(line),
           seasonAvg: seasonAvg.get(line.userId) ?? null
         })),
-        pitching
+        pitching,
+        stats: await gameStatsStatus(db, gameId)
       })
     })
   )

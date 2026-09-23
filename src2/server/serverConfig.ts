@@ -27,6 +27,14 @@ export const asServerConfig = asObject({
    */
   clusterWorkers: asOptional(asNumber, 0),
 
+  /**
+   * Whether this process forks and supervises the stats builder.
+   *
+   * On by default. Only for debugging: switch it off to run `stats-builder`
+   * by hand beside the server.
+   */
+  statsBuilder: asOptional(asBoolean, true),
+
   /** Postgres for GameStation's own data. */
   databaseUrl: asOptional(
     asString,
