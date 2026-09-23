@@ -2,6 +2,7 @@ import { Router } from 'express'
 import type { Kysely } from 'kysely'
 
 import { notFound, unauthorized } from '../../common/errors'
+import { asUserId } from '../../common/userIdNumber'
 import { visibleScopes } from '../access'
 import { onePerson } from '../admin/people'
 import type { Database } from '../db/database'
@@ -44,7 +45,7 @@ export function statsRoutes(db: Kysely<Database>): Router {
     withAsync(async (req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
-      const userId = pathParam(req.params.userId)
+      const userId = userIdParam(req.params.userId)
       const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
 
       const seasonId =
@@ -227,7 +228,7 @@ export function statsRoutes(db: Kysely<Database>): Router {
     withAsync(async (req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
-      const userId = pathParam(req.params.userId)
+      const userId = userIdParam(req.params.userId)
       const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
 
       // Every row that is this person: a merge closes a row without moving
@@ -237,17 +238,17 @@ export function statsRoutes(db: Kysely<Database>): Router {
       let query = db
         .selectFrom('event_players')
         .innerJoin('events', 'events.id', 'event_players.event_id')
-        .innerJoin('games', 'games.id', 'events.game_id')
+        .innerJoin('games', 'games.id', 'events.gameId')
         .select([
           'events.id as eventId',
-          'events.game_id as gameId',
-          'events.at_bat_index as atBatIndex',
+          'events.gameId as gameId',
+          'events.atBatIndex as atBatIndex',
           'events.inning as inning',
-          'events.half_inning as halfInning',
-          'events.event_type as eventType',
+          'events.halfInning as halfInning',
+          'events.eventType as eventType',
           'events.description as description',
           'events.rbi as rbi',
-          'events.start_time as startTime',
+          'events.startTime as startTime',
           'games.season_id as seasonId',
           'games.start_at as gameStartAt',
           'event_players.team_id as teamId',
@@ -262,7 +263,7 @@ export function statsRoutes(db: Kysely<Database>): Router {
       }
       const eventType = req.query.eventType
       if (typeof eventType === 'string' && eventType !== '') {
-        query = query.where('events.event_type', '=', eventType)
+        query = query.where('events.eventType', '=', eventType)
       }
 
       // Opening a batting figure should show the plays that figure came from,
@@ -317,6 +318,14 @@ function yearOf(startAt: Date | string | null): number | null {
 function pathParam(value: string | string[] | undefined): string {
   if (typeof value !== 'string' || value === '') throw notFound()
   return value
+}
+
+function userIdParam(value: string | string[] | undefined): number {
+  try {
+    return asUserId(pathParam(value))
+  } catch {
+    throw notFound()
+  }
 }
 
 /** The roles a play can tag somebody in, as the schema's check constraint has them. */

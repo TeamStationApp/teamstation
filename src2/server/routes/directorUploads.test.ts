@@ -9,8 +9,10 @@ import type { Kysely } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
+import { mintUserId } from '../../common/mintUserId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
+import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
@@ -34,14 +36,16 @@ import { directorUploadRoutes, replaceLiveRecording } from './directorUploads'
  * the file into HLS needs ffmpeg and a Space, and is exercised against the
  * development clone rather than here.
  */
-const adminUrl =
-  process.env.GS_TEST_DATABASE_URL ?? 'postgres://localhost:5432/postgres'
+const adminUrl = testDatabaseUrl
 const scratchName = `gamestation_uploads_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
 const COACH = 'tok_coach_upload_000000000000000'
 const PARENT = 'tok_parent_upload_00000000000000'
 const HOUR = 3_600_000
+
+const coach = mintUserId(() => false)
+const parent = mintUserId(id => id === coach.userId)
 
 describe('a Director sending a recording in', function () {
   this.timeout(60000)
@@ -63,9 +67,14 @@ describe('a Director sending a recording in', function () {
       return
     }
     await admin.query(`create database ${scratchName}`)
+    // Ended even when a migration fails, or its connection keeps the scratch
+    // database open and `after` cannot drop it.
     const pool = new Pool({ connectionString: scratchUrl })
-    await migrateUp(pool, migrations)
-    await pool.end()
+    try {
+      await migrateUp(pool, migrations)
+    } finally {
+      await pool.end()
+    }
     db = makeDatabase(scratchUrl)
     await seed(db)
     mediaDir = await mkdtemp(join(tmpdir(), 'gsUploadRoutes-'))
@@ -96,7 +105,9 @@ describe('a Director sending a recording in', function () {
   })
 
   after(async function () {
-    server?.close()
+    const listening = server
+    if (listening != null)
+      await new Promise(resolve => listening.close(resolve))
     if (mediaDir !== '') await rm(mediaDir, { recursive: true, force: true })
     if (db != null) await db.destroy()
     if (admin != null) {
@@ -107,14 +118,15 @@ describe('a Director sending a recording in', function () {
 
   async function seed(db: Kysely<Database>): Promise<void> {
     const now = new Date()
-    for (const [id, name] of [
-      ['usr_coach', 'Coach'],
-      ['usr_parent', 'Parent']
-    ]) {
+    for (const [made, name] of [
+      [coach, 'Coach'],
+      [parent, 'Parent']
+    ] as const) {
       await db
         .insertInto('users')
         .values({
-          id,
+          id: made.userId,
+          legacyId: made.legacyId,
           display_name: name,
           first_name: null,
           last_name: null,
@@ -124,9 +136,9 @@ describe('a Director sending a recording in', function () {
         .execute()
     }
     for (const [id, user, token] of [
-      ['ses_coach', 'usr_coach', COACH],
-      ['ses_parent', 'usr_parent', PARENT]
-    ]) {
+      ['ses_coach', coach.userId, COACH],
+      ['ses_parent', parent.userId, PARENT]
+    ] as const) {
       await db
         .insertInto('auth_sessions')
         .values({
@@ -152,7 +164,7 @@ describe('a Director sending a recording in', function () {
       .insertInto('memberships')
       .values({
         id: 'mem_coach',
-        user_id: 'usr_coach',
+        user_id: coach.userId,
         team_id: 'tem_ours',
         role: 'manager'
       })
@@ -412,8 +424,11 @@ describe('the live stream stepping aside for a better copy', function () {
     }
     await admin.query(`create database ${name}`)
     const pool = new Pool({ connectionString: url })
-    await migrateUp(pool, migrations)
-    await pool.end()
+    try {
+      await migrateUp(pool, migrations)
+    } finally {
+      await pool.end()
+    }
     db = makeDatabase(url)
 
     const now = new Date()

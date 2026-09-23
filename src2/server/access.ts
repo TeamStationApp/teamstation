@@ -36,7 +36,7 @@ export interface AdminScopes {
 
 export async function visibleScopes(
   db: Kysely<Database>,
-  userId: string,
+  userId: number,
   isAdmin: boolean
 ): Promise<VisibleScopes> {
   const memberships = await db
@@ -136,7 +136,7 @@ export async function visibleScopes(
 /** Where this user may change things, including what they inherit downwards. */
 export async function adminScopes(
   db: Kysely<Database>,
-  userId: string,
+  userId: number,
   isAdmin: boolean
 ): Promise<AdminScopes> {
   const roles = await db
@@ -226,8 +226,8 @@ export function canManageTeam(scopes: AdminScopes, teamId: string): boolean {
  */
 export async function mayEditName(
   db: Kysely<Database>,
-  actorUserId: string,
-  playerUserId: string,
+  actorUserId: number,
+  playerUserId: number,
   about: { isAdmin: boolean }
 ): Promise<boolean> {
   if (about.isAdmin) return true

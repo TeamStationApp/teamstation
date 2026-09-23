@@ -2,7 +2,12 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { mintUserId } from './mintUserId'
-import { asUserId, asUserIdNumber, userIdNumber } from './userIdNumber'
+import {
+  asUserId,
+  asUserIdNumber,
+  heldUserId,
+  userIdNumber
+} from './userIdNumber'
 
 describe('userIdNumber', function () {
   it('keeps the leading 53 bits of a 16-character payload', function () {
@@ -51,5 +56,13 @@ describe('userIdNumber', function () {
     expect(() => asUserIdNumber('usr_k3Jf8sQ2nP0aL9xY')).throws(/user id/)
     expect(() => asUserIdNumber(-1)).throws(/user id/)
     expect(() => asUserIdNumber(2 ** 53)).throws(/user id/)
+  })
+
+  it('reads the user an external id points at, and names one it cannot', function () {
+    expect(heldUserId('5187822249608915')).equals(5187822249608915)
+    expect(heldUserId('usr_k3Jf8sQ2nP0aL9xY')).equals(5187822249608915)
+    expect(() => heldUserId('tem_notAUser')).throws(
+      'external id points at "tem_notAUser", which is not a user id'
+    )
   })
 })

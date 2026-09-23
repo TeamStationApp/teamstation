@@ -13,11 +13,15 @@ export interface CreditedOutcome {
   eventType: string
   /** `Single: Jensen P`. */
   label: string
-  credit: { name: string; role: string; position: string | null } | null
+  credit: {
+    name: string
+    role: string
+    position: string | null
+  } | null
   /** Which of our teams the credit belongs to, or null for an unknown one. */
   teamId: string | null
   /** Who did it, when the sender knew them as one of our users. */
-  creditUserId: string | null
+  creditUserId: number | null
 }
 
 export interface HighlightEvent {

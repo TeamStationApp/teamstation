@@ -9,6 +9,7 @@ import { Pool } from 'pg'
 
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
+import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
@@ -26,8 +27,7 @@ import { configureIngest, liveKeys, resetForTest } from './splitter'
  * has got out, and a rotation that left the old key working until the game
  * ended would be no rotation at all.
  */
-const adminUrl =
-  process.env.GS_TEST_DATABASE_URL ?? 'postgres://localhost:5432/postgres'
+const adminUrl = testDatabaseUrl
 const scratchName = `gamestation_sync_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 const SECRET = 's'.repeat(32)

@@ -57,7 +57,7 @@ export interface TeamScreenProps {
    * on this team rather than on a career total nobody asked for.
    */
   onOpenPlayer?: (
-    userId: string,
+    userId: number,
     name: string,
     from?: { seasonId?: string; teamId?: string }
   ) => void

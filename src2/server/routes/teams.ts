@@ -7,6 +7,8 @@ import { canSeeGame, canSeeTeam, visibleScopes } from '../access'
 import type { Database } from '../db/database'
 import { isRealVideo } from '../db/realVideos'
 import { teamNames, teamStandings } from '../db/teamLookups'
+import { creditsForHighlight } from '../events/credits'
+import { whyEmpty } from '../events/whyEmpty'
 import { withDropped } from '../highlights'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
@@ -427,38 +429,40 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
         .selectFrom('events')
         .select([
           'id',
-          'at_bat_index',
-          'start_time',
-          'event_type',
+          'atBatIndex',
+          'startTime',
+          'eventType',
           'description',
-          'title_override',
-          'time_nudge_sec',
+          'titleOverride',
+          'timeNudgeSec',
           'hidden',
-          'is_scoring_play',
-          'credits'
+          'isScoringPlay'
         ])
-        .where('game_id', '=', video.gameId)
-        .orderBy('at_bat_index')
+        .where('gameId', '=', video.gameId)
+        .orderBy('atBatIndex')
         .execute()
 
+      const credits = await creditsForHighlight(
+        db,
+        events.map(row => row.id)
+      )
       const teams = await teamStandings(db)
 
       const settings = await highlightSettings(db)
       const computed = withDropped(
         events.map(row => ({
           id: row.id,
-          atBatIndex: row.at_bat_index,
-          startTime: row.start_time == null ? null : new Date(row.start_time),
-          eventType: row.event_type,
+          atBatIndex: row.atBatIndex,
+          startTime: row.startTime == null ? null : new Date(row.startTime),
+          eventType: row.eventType,
           description: row.description,
-          titleOverride: row.title_override,
-          timeNudgeSec: row.time_nudge_sec,
+          titleOverride: row.titleOverride,
+          timeNudgeSec: row.timeNudgeSec,
           hidden: row.hidden,
-          isScoringPlay: row.is_scoring_play,
-          // `?? []` here would be a bug: it turns "nobody has looked at this
-          // play yet" into "nobody did anything worth watching", and every
-          // game ingested before credits existed would lose its highlights.
-          credits: (row.credits ?? undefined) as never
+          isScoringPlay: row.isScoringPlay === true,
+          // `undefined` keeps a play nobody has looked at; `[]` drops one
+          // that was looked at and credited to nobody.
+          credits: credits.get(row.id)
         })),
         {
           startAt: video.startAt == null ? null : new Date(video.startAt),
@@ -776,32 +780,6 @@ function toIso(value: Date | string | null): string | null {
 }
 
 /**
- * Why a game with plays produced no seek points.
- *
- * An empty list with no explanation reads as a broken feature. It usually is
- * not: a highlight is placed by subtracting the video's start from the moment
- * the scorekeeper tapped, and some games were scored **from the video
- * afterwards**, sometimes days later. Those taps are real and their plays,
- * box score and stats are all perfectly good — the taps simply say when
- * somebody sat down with the recording, not when the ball was hit. Nothing
- * can recover the original timing, so the screen should say so plainly rather
- * than imply the video is missing something.
- */
-function whyEmpty(
-  highlights: unknown[],
-  events: Array<{ start_time: unknown }>,
-  video: { startAt: unknown; durationSec: number | null }
-): string | null {
-  if (highlights.length > 0) return null
-  if (events.length === 0) return null
-
-  const timed = events.filter(event => event.start_time != null)
-  if (timed.length === 0) return 'noPlayTimes'
-  if (video.startAt == null) return 'noVideoStart'
-  return 'scoredAfterRecording'
-}
-
-/**
  * Each batter's average for the season, up to and including this game.
  *
  * The average printed beside a name in a box score is read as what kind of
@@ -814,7 +792,7 @@ async function averagesToDate(
   db: Kysely<Database>,
   gameId: string,
   seasonId: string | null
-): Promise<Map<string, number>> {
+): Promise<Map<number, number>> {
   const game = await db
     .selectFrom('games')
     .select(['start_at', 'home_team_id', 'away_team_id'])
@@ -833,7 +811,7 @@ async function averagesToDate(
     playedBy: game.start_at == null ? undefined : new Date(game.start_at)
   })
 
-  const out = new Map<string, number>()
+  const out = new Map<number, number>()
   for (const line of battingLines(rows)) {
     if (line.ab > 0) out.set(line.userId, line.h / line.ab)
   }

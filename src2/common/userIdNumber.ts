@@ -45,3 +45,19 @@ export const asUserId: Cleaner<number> = raw => {
   }
   return n
 }
+
+/**
+ * The user an `external_ids` row of entity type `user` points at. Its
+ * `entity_id` is text, and a row migration 031 could not convert keeps
+ * whatever it held, so it is read through the user id rule rather than
+ * `Number`, which would pass `NaN` on to a query.
+ */
+export function heldUserId(entityId: string): number {
+  try {
+    return asUserId(entityId)
+  } catch {
+    throw new Error(
+      `external id points at ${JSON.stringify(entityId)}, which is not a user id`
+    )
+  }
+}

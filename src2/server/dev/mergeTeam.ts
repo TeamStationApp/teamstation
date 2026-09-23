@@ -3,6 +3,7 @@ import { Pool } from 'pg'
 
 import { mergeTeams } from '../admin/mergeTeams'
 import type { Database } from '../db/database'
+import { attachInt8Parser } from '../db/int8'
 import { rebuildAll } from '../rollups'
 import { serverConfig } from '../serverConfig'
 
@@ -122,6 +123,9 @@ async function findCandidates(db: Kysely<Database>): Promise<Candidate[]> {
 async function main(): Promise<void> {
   const args = process.argv.slice(2).filter(arg => arg !== '--apply')
   const apply = process.argv.includes('--apply')
+  // Its own pool rather than `makeDatabase`, so it attaches the parser that
+  // reads user ids as numbers itself.
+  attachInt8Parser()
   const pool = new Pool({ connectionString: serverConfig.databaseUrl })
   const db = new Kysely<Database>({ dialect: new PostgresDialect({ pool }) })
 

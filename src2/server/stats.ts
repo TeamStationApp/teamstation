@@ -8,7 +8,7 @@
 // working a figure out, so a box score and a career total cannot disagree.
 
 export interface StatRow {
-  userId: string
+  userId: number
   teamId: string | null
   /**
    * The regulation length of the game's season, which is what an ERA divides
@@ -43,7 +43,7 @@ export interface StatRow {
 }
 
 export interface BattingLine {
-  userId: string
+  userId: number
   /** Null where the total spans more than one team, as a career does. */
   teamId: string | null
   /** Games this player has a line for. */
@@ -70,7 +70,7 @@ export interface BattingLine {
 }
 
 export interface PitchingLine {
-  userId: string
+  userId: number
   teamId: string | null
   g: number
   /** Outs recorded, which is what innings pitched actually means. */
@@ -93,7 +93,7 @@ export interface PitchingLine {
   inningsPerGame: number | null
 }
 
-function emptyBatting(userId: string, teamId: string | null): BattingLine {
+function emptyBatting(userId: number, teamId: string | null): BattingLine {
   return {
     userId,
     teamId,
@@ -116,7 +116,7 @@ function emptyBatting(userId: string, teamId: string | null): BattingLine {
   }
 }
 
-function emptyPitching(userId: string, teamId: string | null): PitchingLine {
+function emptyPitching(userId: number, teamId: string | null): PitchingLine {
   return {
     userId,
     teamId,
@@ -136,7 +136,7 @@ function emptyPitching(userId: string, teamId: string | null): PitchingLine {
 
 /** One line per player, most plate appearances first. */
 export function battingLines(rows: StatRow[]): BattingLine[] {
-  const byPlayer = new Map<string, BattingLine>()
+  const byPlayer = new Map<number, BattingLine>()
   for (const row of rows) {
     const held =
       byPlayer.get(row.userId) ?? emptyBatting(row.userId, row.teamId)
@@ -167,11 +167,11 @@ export function battingLines(rows: StatRow[]): BattingLine[] {
 
 /** And one per pitcher, most work first, which is the starter. */
 export function pitchingLines(rows: StatRow[]): PitchingLine[] {
-  const byPlayer = new Map<string, PitchingLine>()
+  const byPlayer = new Map<number, PitchingLine>()
   // The ERA divisor is weighted by the innings thrown under it, so a career
   // across a six-inning league and a nine-inning one lands between the two
   // rather than on whichever season came last.
-  const weighted = new Map<string, { outs: number; product: number }>()
+  const weighted = new Map<number, { outs: number; product: number }>()
   for (const row of rows) {
     if (row.pitchBf === 0 && row.pitchOuts === 0) continue
     const held =

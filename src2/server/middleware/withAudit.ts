@@ -10,7 +10,8 @@ import type { Database } from '../db/database'
  */
 export interface AuditSubject {
   entityType?: string
-  entityId?: string
+  /** User ids arrive as numbers. The `entity_id` column is text. */
+  entityId?: string | number
   before?: unknown
   after?: unknown
 }
@@ -51,7 +52,7 @@ export function withAudit(db: Kysely<Database>): RequestHandler {
           method: req.method,
           path: req.originalUrl.split('?')[0],
           entity_type: subject.entityType ?? null,
-          entity_id: subject.entityId ?? null,
+          entity_id: subject.entityId == null ? null : String(subject.entityId),
           before: subject.before ?? null,
           after: subject.after ?? null
         })
