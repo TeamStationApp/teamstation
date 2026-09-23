@@ -1,46 +1,36 @@
 import DistributorWire
 
-/// Who stitches which file of an export.
+/// The order an export's files are stitched in.
 ///
-/// Each track that still needs stitching is handed out in order: the first to the Mac, the second
-/// to the iPad, and each after that to whichever becomes free first. The iPad counts as free as
-/// soon as its stitch finishes; downloading what it made goes on alongside. A track a worker could
-/// not do goes back to the front of the queue for the other.
+/// One worker, so this is a queue: the Mac takes the next track when it is
+/// free. It used to hand every other track to the iPad, which sounded like
+/// twice the speed and was not — the Mac encodes far faster than the iPad,
+/// and a track sent to the iPad also had to be sent back over USB. A track
+/// that fails goes to the front, because a failure is usually about the
+/// track rather than about the machine.
 public struct DistributionPlan: Sendable {
-  public enum Worker: String, Sendable, CaseIterable {
-    case mac
-    case iPad
-  }
-
   public private(set) var pending: [Track]
-  public private(set) var assigned: [Track: Worker] = [:]
-  public private(set) var finished: [Track: Worker] = [:]
+  public private(set) var assigned: Set<Track> = []
+  public private(set) var finished: [Track] = []
 
   public init(tracks: [Track]) {
     pending = tracks
   }
 
-  public mutating func next(for worker: Worker) -> Track? {
+  public mutating func next() -> Track? {
     guard !pending.isEmpty else { return nil }
     let track = pending.removeFirst()
-    assigned[track] = worker
+    assigned.insert(track)
     return track
   }
 
   public mutating func finish(_ track: Track) {
-    if let worker = assigned.removeValue(forKey: track) {
-      finished[track] = worker
-    }
+    if assigned.remove(track) != nil { finished.append(track) }
   }
 
   public mutating func giveBack(_ track: Track) {
-    guard assigned.removeValue(forKey: track) != nil else { return }
+    guard assigned.remove(track) != nil else { return }
     pending.insert(track, at: 0)
-  }
-
-  /// Tracks the other worker still holds, which may yet come back.
-  public func held(by worker: Worker) -> [Track] {
-    assigned.filter { $0.value == worker }.map(\.key)
   }
 
   public var isComplete: Bool { pending.isEmpty && assigned.isEmpty }
