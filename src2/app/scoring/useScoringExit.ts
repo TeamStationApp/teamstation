@@ -5,18 +5,22 @@ import { setNavigationGuard } from '../navigation/useAddressBar'
 export function useScoringExit(
   gameId: string,
   dirty: boolean,
-  onExit: () => void
+  onExit: () => void,
+  requestConfirmation?: () => Promise<boolean>
 ): () => void {
   const confirm = useCallback(
-    () =>
+    async () =>
       !dirty ||
-      window.confirm(
-        'Exit Current Game? Your local development scoring will be discarded.'
-      ),
-    [dirty]
+      (requestConfirmation != null
+        ? await requestConfirmation()
+        : window.confirm(
+            'Exit Current Game? Your local development scoring will be discarded.'
+          )),
+    [dirty, requestConfirmation]
   )
   useLayoutEffect(
-    () => setNavigationGuard(async () => confirm(), { name: 'game', gameId }),
+    () =>
+      setNavigationGuard(async () => await confirm(), { name: 'game', gameId }),
     [confirm, gameId]
   )
   useEffect(() => {
@@ -33,6 +37,10 @@ export function useScoringExit(
     }
   }, [dirty])
   return useCallback(() => {
-    if (confirm()) onExit()
+    confirm()
+      .then(accepted => {
+        if (accepted) onExit()
+      })
+      .catch(() => undefined)
   }, [confirm, onExit])
 }

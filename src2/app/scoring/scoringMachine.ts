@@ -1,4 +1,5 @@
 import { asScoringPlay } from './scoringContract'
+import { applyOverrideDraft, applyRosterDraft } from './scoringEdits'
 import {
   baseIds,
   battingSide,
@@ -105,6 +106,25 @@ export function scoringReducer(
           generation: state.generation + 1,
           past: state.past.slice(0, -1)
         }
+  }
+  if (event.type === 'ROSTER' || event.type === 'OVERRIDE') {
+    if (state.phase !== 'ready' && state.phase !== 'awaitingBatter')
+      return state
+    const result =
+      event.type === 'ROSTER'
+        ? applyRosterDraft(state, event.draft, event.nextBatter)
+        : applyOverrideDraft(state, event.draft)
+    if (result.session == null) return state
+    return accepted(
+      state,
+      event.type === 'ROSTER' ? 'Set team roster' : 'Override game state',
+      next => {
+        next.session = result.session!
+        next.phase = 'ready'
+        next.awaitingBatter = null
+        next.generation++
+      }
+    )
   }
   if (event.type === 'CLOSE_PLAY') return closePlay(state)
   if (event.type === 'END_HALF')

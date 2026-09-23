@@ -1,6 +1,7 @@
 import type { GroundPoint } from '../field/fieldModel'
 import type { PlayerIdentityMap } from './playerIdentity'
 import type { Outcome, PlayerRef, ScoringPlay } from './scoringContract'
+import type { OverrideDraft } from './scoringEdits'
 
 export const POSITIONS = [
   'P',
@@ -122,6 +123,8 @@ export interface ScoringState extends ScoringSnapshot {
   past: HistoryEntry[]
 }
 export type ScoringEvent =
+  | { type: 'ROSTER'; draft: ScoringSessionState; nextBatter?: number }
+  | { type: 'OVERRIDE'; draft: OverrideDraft }
   | { type: 'PITCH'; kind: 'ball' | 'called' | 'swing' | 'foul' }
   | { type: 'UNDO' }
   | { type: 'CLOSE_PLAY' }

@@ -87,6 +87,8 @@ class RenderBoundary extends React.Component<
 }
 export function FieldCanvas(props: FieldCanvasProps): React.ReactElement {
   const phone = useBreakpoint() === 'phone'
+  // Retain the event host across asynchronous renderer startup and route exit.
+  const [eventHost, setEventHost] = useState<HTMLDivElement | null>(null)
   const [mobileInput] = useState(
     () =>
       typeof navigator !== 'undefined' &&
@@ -102,39 +104,49 @@ export function FieldCanvas(props: FieldCanvasProps): React.ReactElement {
   }
   if (!available) return <Unavailable retry={retry} />
   return (
-    <RenderBoundary key={generation}>
-      <Canvas
-        frameloop="demand"
-        shadows
-        dpr={[1, phone ? 1.25 : 1.5]}
-        camera={{ position: [0, 100, 114], fov: 43 }}
-        gl={{
-          antialias: true,
-          alpha: false,
-          powerPreference: 'high-performance'
-        }}
-        onCreated={({ gl }) => {
-          gl.domElement.addEventListener(
-            'webglcontextlost',
-            () => {
-              setAvailable(false)
-            },
-            { once: true }
-          )
-        }}
-        style={{
-          touchAction: 'none',
-          width: '100%',
-          height: '100%',
-          cursor: 'grab'
-        }}
-        fallback={<Unavailable retry={retry} />}
-      >
-        <FieldScene
-          {...props}
-          touchPlacement={props.touchPlacement === true || mobileInput}
-        />
-      </Canvas>
-    </RenderBoundary>
+    <div
+      ref={node => {
+        if (node != null) setEventHost(node)
+      }}
+      style={{ width: '100%', height: '100%' }}
+    >
+      <RenderBoundary key={generation}>
+        {eventHost != null && (
+          <Canvas
+            eventSource={eventHost}
+            frameloop="demand"
+            shadows
+            dpr={[1, phone ? 1.25 : 1.5]}
+            camera={{ position: [0, 100, 114], fov: 43 }}
+            gl={{
+              antialias: true,
+              alpha: false,
+              powerPreference: 'high-performance'
+            }}
+            onCreated={({ gl }) => {
+              gl.domElement.addEventListener(
+                'webglcontextlost',
+                () => {
+                  setAvailable(false)
+                },
+                { once: true }
+              )
+            }}
+            style={{
+              touchAction: 'none',
+              width: '100%',
+              height: '100%',
+              cursor: 'grab'
+            }}
+            fallback={<Unavailable retry={retry} />}
+          >
+            <FieldScene
+              {...props}
+              touchPlacement={props.touchPlacement === true || mobileInput}
+            />
+          </Canvas>
+        )}
+      </RenderBoundary>
+    </div>
   )
 }
