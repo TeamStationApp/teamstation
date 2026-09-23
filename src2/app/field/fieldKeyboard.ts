@@ -1,4 +1,5 @@
 import { type RunnerDragView, runnerDragView } from '../scoring/runnerDrag'
+import { MAX_LAUNCH_ANGLE } from './ballArcModel'
 import { BASES, type FieldPlayer, type GroundPoint } from './fieldModel'
 import type { FieldCanvasProps } from './fieldTypes'
 import { homeRunLanding } from './stadiumBoundary'
@@ -45,7 +46,10 @@ export function fieldKey(
         ...props.arc,
         angle: Math.max(
           -45,
-          Math.min(70, props.arc.angle + (key === 'ArrowUp' ? 1 : -1))
+          Math.min(
+            MAX_LAUNCH_ANGLE,
+            props.arc.angle + (key === 'ArrowUp' ? 1 : -1)
+          )
         )
       })
     else return false
@@ -99,12 +103,17 @@ export function fieldKey(
       props.onRunnerDrop?.(player.id, view.to, view.hovered, policy.generation)
       cancel()
     } else {
+      const destination = { ...player.target }
+      if (props.deferDefenderPlacement === true && player.team === 'defense') {
+        player.position = { ...player.keyboardOrigin }
+        player.target = { ...player.keyboardOrigin }
+      }
       delete player.keyboardOrigin
-      props.onPlayerPlacement?.(player.id, { ...player.target })
+      props.onPlayerPlacement?.(player.id, destination)
       props.onFieldPlacement?.({
         entityId: player.id,
-        point: props.constrainPlacement?.(player.target) ?? {
-          ...player.target
+        point: props.constrainPlacement?.(destination) ?? {
+          ...destination
         },
         generation: policy?.generation ?? 0,
         gestureId: 0

@@ -2,7 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { BASES } from '../field/fieldModel'
-import { foulPoint, samplePitch } from '../field/playAnimationModel'
+import { foulPoint, sampleHit, samplePitch } from '../field/playAnimationModel'
 import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { initialScoringState, scoringReducer } from './scoringMachine'
@@ -116,8 +116,9 @@ describe('hit presentation coordination', function () {
   for (const [outcome, angle] of [
     ['Single', -5],
     ['Double', 25],
-    ['Triple', 50],
-    ['Home Run', -45]
+    ['Triple', 85],
+    ['Home Run', -45],
+    ['Ball Caught', 85]
   ] as const)
     it(`holds ${outcome} through trajectory, then releases runners at contact`, function () {
       let state = scoringReducer(initial(), { type: 'OUTCOME', outcome })
@@ -131,6 +132,9 @@ describe('hit presentation coordination', function () {
         point: { x: 25, z: -75 },
         generation: 0
       })
+      expect(
+        scoringFieldPlayers(state).find(p => p.playerId === 10)!.position
+      ).deep.equals(origin)
       expect(state.motions).has.length(0)
       expect(state.session.pending).equals(null)
       state = scoringReducer(state, {
@@ -138,6 +142,9 @@ describe('hit presentation coordination', function () {
         angle,
         generation: 0
       })
+      expect(
+        state.session.liveData.plays.currentPlay!.hitData!.launchAngle
+      ).equals(angle)
       const seq = state.presentation!
       if (seq.kind !== 'hit') throw new Error('Expected hit')
       expect(seq.fielderStart).deep.equals(
@@ -147,6 +154,12 @@ describe('hit presentation coordination', function () {
       )
       expect(scoringFieldPlayers(state).every(p => p.motion == null)).equals(
         true
+      )
+      expect(sampleHit(seq, seq.contactMs).fielder).deep.equals(
+        seq.fielderStart
+      )
+      expect(sampleHit(seq, seq.fielderEndMs).fielder).deep.equals(
+        seq.fielderTarget
       )
       const clock = presentationRuntime()
       expect(stepPresentation(clock, seq, 449, false).contact).equals(false)
@@ -160,7 +173,7 @@ describe('hit presentation coordination', function () {
       state = scoringReducer(state, contact)
       expect(scoringReducer(state, contact)).equals(state)
       expect(scoringFieldPlayers(state).some(p => p.motion != null)).equals(
-        true
+        outcome !== 'Ball Caught'
       )
       const flight = state.presentation!
       const frame = stepPresentation(clock, flight, seq.durationMs, false)

@@ -37,7 +37,7 @@ describe('trajectory polish', () => {
       })
       const cameraBefore = camera.matrixWorld.clone()
       for (const x of [-50, 0, 50])
-        for (const angle of [-45, 0, 25, 70]) {
+        for (const angle of [-45, 0, 25, 70, 85]) {
           const arc = {
             target: { x, z: -85 },
             angle,

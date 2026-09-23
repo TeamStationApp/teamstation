@@ -1,5 +1,11 @@
-import React, { useContext, useState } from 'react'
-import { Pressable, Text, useWindowDimensions, View } from 'react-native'
+import React, { useEffect, useState } from 'react'
+import {
+  Pressable,
+  ScrollView,
+  Text,
+  useWindowDimensions,
+  View
+} from 'react-native'
 
 import { rosterError } from '../../common/scoring/rules'
 import { setupOf } from '../../common/scoring/state'
@@ -10,11 +16,12 @@ import { PlaceholderPlayersSheet } from './PlaceholderPlayersSheet'
 import { addPlayerDraft } from './playerDraft'
 import { PlayerEntrySheet } from './PlayerEntrySheet'
 import { RosterDrag, RosterDragGroup, RosterScrollArea } from './RosterDrag'
+import { byJersey } from './rosterOrder'
 import { RosterRemoveButton } from './RosterRemoveButton'
 import { RosterSelector } from './RosterSelector'
 import { copyState } from './scoringMachine'
 import { baseIds, battingSide } from './scoringSelectors'
-import { ScoringButton, ScoringError, ScoringSheetHeight } from './ScoringSheet'
+import { ScoringButton, ScoringError } from './ScoringSheet'
 import {
   POSITIONS,
   type ScoringSessionState,
@@ -22,22 +29,40 @@ import {
   type Side
 } from './scoringTypes'
 
+export interface RosterEditorDraft {
+  draft: ScoringSessionState
+  side: Side
+  defense: boolean
+  nextBatter?: number
+}
 export function RosterEditor({
   state,
+  initialDraft,
+  onDraftChange,
   onSave
 }: {
   state: ScoringState
+  initialDraft?: RosterEditorDraft
+  onDraftChange?: (draft: RosterEditorDraft) => void
   onSave: (draft: ScoringSessionState, nextBatter?: number) => void
 }): React.ReactElement {
   const theme = useTheme()
   const { height } = useWindowDimensions()
-  const contentHeight = useContext(ScoringSheetHeight)
-  const [draft, setDraft] = useState(() => copyState(state.session))
-  const [side, setSide] = useState<Side>(battingSide(state.session))
-  const [defense, setDefense] = useState(false)
+  const [draft, setDraft] = useState(() =>
+    copyState(initialDraft?.draft ?? state.session)
+  )
+  const [side, setSide] = useState<Side>(
+    initialDraft?.side ?? battingSide(state.session)
+  )
+  const [defense, setDefense] = useState(initialDraft?.defense ?? false)
   const [adding, setAdding] = useState(false)
   const [placeholders, setPlaceholders] = useState(false)
-  const [nextBatter, setNextBatter] = useState<number>()
+  const [nextBatter, setNextBatter] = useState<number | undefined>(
+    initialDraft?.nextBatter
+  )
+  useEffect(() => {
+    onDraftChange?.({ draft, side, defense, nextBatter })
+  }, [draft, side, defense, nextBatter, onDraftChange])
   const edit = (change: (next: ScoringSessionState) => void): void => {
     setDraft(previous => {
       const next = copyState(previous)
@@ -95,41 +120,76 @@ export function RosterEditor({
     borderRadius: 6,
     backgroundColor: theme.scoringSelectorIdle
   }
-  const listHeight = Math.max(120, (contentHeight ?? height - 80) - 356)
   return (
-    <View style={{ gap: 12 }}>
-      <RosterSelector
-        labels={['Away Team', 'Home Team']}
-        value={side === 'away' ? 0 : 1}
-        onChange={index => {
-          setSide(index === 0 ? 'away' : 'home')
-        }}
-      />
-      <Text style={{ ...text, textAlign: 'center', fontSize: 20 }}>
-        {draft.gameData.teams[side].name}
-      </Text>
-      <RosterSelector
-        labels={['Set Lineup', 'Set Defense']}
-        value={defense ? 1 : 0}
-        onChange={index => {
-          setDefense(index === 1)
-        }}
-      />
-      <Text style={text}>
-        {defense
-          ? 'Hold a player briefly, then drag into a defensive position.'
-          : 'Tap to add to lineup. Hold briefly, then drag to reorder.'}
-      </Text>
+    <View style={{ flex: 1, minHeight: 0, gap: 8 }}>
+      <ScrollView
+        testID="Roster editor top"
+        // Short landscape shows both pills whole and no more: captions 17,
+        // gap 4, compact team pill 40, gap 4, Set Lineup 36 with 6 above and
+        // below. The instructions scroll under them.
+        style={{ flexGrow: 0, maxHeight: height < 500 ? 113 : 230 }}
+        contentContainerStyle={{ gap: 4 }}
+        keyboardShouldPersistTaps="handled"
+      >
+        <RosterSelector
+          labels={[
+            draft.gameData.teams.away.name,
+            draft.gameData.teams.home.name
+          ]}
+          captions={['Away', 'Home']}
+          compact={height < 500}
+          accessibilityLabels={['Away Team', 'Home Team']}
+          value={side === 'away' ? 0 : 1}
+          onChange={index => {
+            setSide(index === 0 ? 'away' : 'home')
+          }}
+        />
+        <RosterSelector
+          fitContent
+          labels={['Set Lineup', 'Set Defense']}
+          value={defense ? 1 : 0}
+          onChange={index => {
+            setDefense(index === 1)
+          }}
+        />
+        <Text style={text}>
+          {defense
+            ? 'Hold a player briefly, then drag into a defensive position.'
+            : 'Tap to add to lineup. Hold briefly, then drag to reorder.'}
+        </Text>
+        {state.phase === 'awaitingBatter' && (
+          <View style={{ gap: 6 }}>
+            <Text style={text}>Choose Next Batter</Text>
+            {draft.liveData.boxscore.teams[battingSide(draft)].battingOrder.map(
+              id => (
+                <ScoringButton
+                  key={id}
+                  label={`Next batter ${names[id].fullName}`}
+                  disabled={baseIds(draft).includes(id)}
+                  color={
+                    nextBatter === id
+                      ? theme.scoringMenuActiveBackground
+                      : theme.scoringSelectorIdle
+                  }
+                  onPress={() => {
+                    setNextBatter(id)
+                  }}
+                />
+              )
+            )}
+          </View>
+        )}
+      </ScrollView>
       <RosterDragGroup key={`${side}:${defense}`}>
-        <View style={{ flexDirection: 'row', gap: 8 }}>
-          <View style={{ flex: 1, gap: 6 }}>
+        <View style={{ flex: 1, minHeight: 0, flexDirection: 'row', gap: 8 }}>
+          <View style={{ flex: 1, minHeight: 0, gap: 6 }}>
             <Text style={{ ...text, fontWeight: '700' }}>Roster</Text>
-            <RosterScrollArea name="Roster players" height={listHeight}>
+            <RosterScrollArea name="Roster players">
               <RosterDrag
                 targetId="roster"
                 onDropPlayer={defense ? undefined : remove}
               >
-                {team.players.map(id => (
+                {byJersey(team.players, names).map(id => (
                   <RosterDrag
                     key={id}
                     playerId={id}
@@ -169,13 +229,12 @@ export function RosterEditor({
               </RosterDrag>
             </RosterScrollArea>
           </View>
-          <View style={{ flex: 1, gap: 6 }}>
+          <View style={{ flex: 1, minHeight: 0, gap: 6 }}>
             <Text style={{ ...text, fontWeight: '700' }}>
               {defense ? 'Defense' : 'Lineup'}
             </Text>
             <RosterScrollArea
               name={defense ? 'Defensive positions' : 'Batting lineup'}
-              height={listHeight}
             >
               {defense ? (
                 POSITIONS.map(position => {
@@ -306,78 +365,58 @@ export function RosterEditor({
           }}
         />
       )}
-      <View style={{ flexDirection: 'row', gap: 12 }}>
-        <View style={{ flex: 1 }}>
-          <Button
-            color={theme.scoringMenuActiveBackground}
-            textColor={theme.scoringMenuActiveText}
-            compact
-            accessibilityLabel="Create Player"
-            label="Add Player"
-            onPress={() => {
-              setAdding(true)
-            }}
-          />
+      <View testID="Roster footer" style={{ gap: 6 }}>
+        <View style={{ flexDirection: 'row', gap: 12 }}>
+          <View style={{ flex: 1 }}>
+            <Button
+              color={theme.scoringMenuActiveBackground}
+              textColor={theme.scoringMenuActiveText}
+              compact
+              accessibilityLabel="Create Player"
+              label="Add Player"
+              onPress={() => {
+                setAdding(true)
+              }}
+            />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Button
+              color={theme.scoringMenuActiveBackground}
+              textColor={theme.scoringMenuActiveText}
+              compact
+              accessibilityLabel="Save Rosters"
+              label="Save Rosters"
+              disabled={validation != null}
+              onPress={() => {
+                onSave(draft, nextBatter)
+              }}
+            />
+          </View>
         </View>
-        <View style={{ flex: 1 }}>
-          <Button
-            color={theme.scoringMenuActiveBackground}
-            textColor={theme.scoringMenuActiveText}
-            compact
-            accessibilityLabel="Save Rosters"
-            label="Save Rosters"
-            disabled={validation != null}
-            onPress={() => {
-              onSave(draft, nextBatter)
-            }}
-          />
-        </View>
-      </View>
-      {state.phase === 'awaitingBatter' && (
-        <View style={{ gap: 6 }}>
-          <Text style={text}>Choose Next Batter</Text>
-          {draft.liveData.boxscore.teams[battingSide(draft)].battingOrder.map(
-            id => (
-              <ScoringButton
-                key={id}
-                label={`Next batter ${names[id].fullName}`}
-                disabled={baseIds(draft).includes(id)}
-                color={
-                  nextBatter === id
-                    ? theme.scoringMenuActiveBackground
-                    : theme.scoringSelectorIdle
-                }
-                onPress={() => {
-                  setNextBatter(id)
-                }}
-              />
-            )
-          )}
-        </View>
-      )}
-      <ScoringError message={validation} />
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Add Placeholder Players"
-        onPress={() => {
-          setPlaceholders(true)
-        }}
-        style={{
-          minHeight: 44,
-          alignItems: 'center',
-          justifyContent: 'center'
-        }}
-      >
-        <Text
+        <ScoringError message={validation} />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Add Placeholder Players"
+          onPress={() => {
+            setPlaceholders(true)
+          }}
           style={{
-            ...text,
-            color: theme.successColor,
-            fontFamily: theme.semiBoldTextFont
+            minHeight: 44,
+            alignItems: 'center',
+            justifyContent: 'center'
           }}
         >
-          Add Placeholder Players
-        </Text>
-      </Pressable>
+          <Text
+            style={{
+              ...text,
+              color: theme.successColor,
+              fontFamily: theme.semiBoldTextFont
+            }}
+          >
+            Add Placeholder Players
+          </Text>
+        </Pressable>
+      </View>
       {placeholders && (
         <PlaceholderPlayersSheet
           onClose={() => {

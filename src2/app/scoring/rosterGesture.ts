@@ -1,3 +1,5 @@
+import { ROSTER_CARD_GAP } from './rosterLayout'
+
 export interface RosterPoint {
   x: number
   y: number
@@ -15,9 +17,13 @@ export interface RosterTarget {
 export interface RosterScroll {
   measure: () => Promise<RosterRect>
   scroll: (delta: number) => void
+  offset?: () => number
 }
 export interface RosterPreview extends RosterPoint {
   label: string
+  source?: string
+  cardRect?: RosterRect
+  grab?: RosterPoint
   target?: string
   edge?: 'before' | 'after'
 }
@@ -26,6 +32,22 @@ export const containsRosterPoint = (r: RosterRect, p: RosterPoint): boolean =>
 
 /** Both platform adapters measure in window coordinates; tokens discard stale measures/releases. */
 export class RosterGesture {
+  readonly listeners = new Set<(preview: RosterPreview | null) => void>()
+  readonly sources = new Map<
+    string,
+    {
+      measure: () => Promise<RosterRect>
+      clip?: () => Promise<RosterRect>
+      content: unknown
+    }
+  >()
+
+  private geometry: Map<
+    string,
+    { rect: RosterRect; clip?: () => Promise<RosterRect>; offset: number }
+  > | null = null
+
+  private geometryReady: Promise<void> = Promise.resolve()
   readonly heldListeners = new Set<(held: boolean) => void>()
   targets = new Map<string, RosterTarget>()
   scrolls = new Map<string, RosterScroll>()
@@ -35,12 +57,16 @@ export class RosterGesture {
     start: RosterPoint
     point: RosterPoint
     moved: boolean
+    source?: string
+    rect?: RosterRect
+    grab?: RosterPoint
   } | null = null
 
   preview: RosterPreview | null = null
   private publish(value: RosterPreview | null): void {
     this.preview = value
     this.notify(value)
+    for (const listener of this.listeners) listener(value)
   }
 
   private revision = 0
@@ -57,18 +83,77 @@ export class RosterGesture {
     id: number,
     label: string,
     point: RosterPoint,
-    lockScroll = true
+    lockScroll = true,
+    source?: string
   ): void {
     this.cancel()
-    this.active = { id, label, start: point, point, moved: false }
+    const drag: NonNullable<RosterGesture['active']> = {
+      id,
+      label,
+      start: point,
+      point,
+      moved: false,
+      source
+    }
+    this.active = drag
+    this.geometry = null
+    const sourceCard = source == null ? undefined : this.sources.get(source)
+    this.geometryReady =
+      sourceCard == null
+        ? Promise.resolve()
+        : (async () => {
+            const [rect, targets] = await Promise.all([
+              sourceCard.measure(),
+              Promise.all(
+                [...this.targets].map(
+                  async ([key, target]) =>
+                    [
+                      key,
+                      {
+                        rect: await target.measure(),
+                        clip: target.clip,
+                        offset: this.scrollOffset(target.clip)
+                      }
+                    ] as const
+                )
+              )
+            ])
+            if (this.active !== drag) return
+            drag.rect = rect
+            drag.grab = { x: point.x - rect.x, y: point.y - rect.y }
+            this.geometry = new Map(targets)
+            this.publish(this.dragPreview(drag.point))
+          })().catch(() => {
+            if (this.active === drag) this.cancel()
+          })
     if (lockScroll) this.setHeld(true)
   }
 
   cancel(): void {
     this.revision++
     this.active = null
+    this.geometry = null
     this.setHeld(false)
     this.publish(null)
+  }
+
+  private scrollOffset(clip?: () => Promise<RosterRect>): number {
+    return (
+      [...this.scrolls.values()]
+        .find(scroll => scroll.measure === clip)
+        ?.offset?.() ?? 0
+    )
+  }
+
+  private dragPreview(point: RosterPoint): RosterPreview {
+    const drag = this.active!
+    return {
+      ...point,
+      label: drag.label,
+      source: drag.source,
+      cardRect: drag.rect,
+      grab: drag.grab
+    }
   }
 
   private async targetAt(
@@ -76,7 +161,35 @@ export class RosterGesture {
   ): Promise<{ key: string; edge?: 'before' | 'after' } | undefined> {
     const candidates = await Promise.all(
       [...this.targets].map(async ([key, target]) => {
-        const rect = await target.measure()
+        const frozen = this.geometry?.get(key)
+        const rect =
+          frozen == null
+            ? await target.measure()
+            : {
+                ...frozen.rect,
+                y:
+                  frozen.rect.y -
+                  (this.scrollOffset(frozen.clip) - frozen.offset)
+              }
+        const drag = this.active
+        const source =
+          drag?.source == null ? undefined : this.sources.get(drag.source)
+        if (
+          frozen != null &&
+          drag?.rect != null &&
+          source?.clip === target.clip &&
+          frozen.rect.y > drag.rect.y
+        )
+          rect.y -= drag.rect.height + ROSTER_CARD_GAP
+        if (
+          frozen != null &&
+          drag?.rect != null &&
+          source?.clip === target.clip &&
+          frozen.rect.y === drag.rect.y &&
+          frozen.rect.x === drag.rect.x &&
+          target.insertion === 'row'
+        )
+          return undefined
         const clip = target.clip == null ? rect : await target.clip()
         return containsRosterPoint(rect, point) &&
           containsRosterPoint(clip, point)
@@ -103,18 +216,23 @@ export class RosterGesture {
   async move(point: RosterPoint): Promise<void> {
     const drag = this.active
     if (drag == null) return
+    await this.geometryReady
+    if (this.active !== drag) return
     drag.point = point
     drag.moved ||=
       Math.hypot(point.x - drag.start.x, point.y - drag.start.y) > 6
     if (!drag.moved) return
     const revision = this.revision
     const move = ++this.moveRevision
-    this.publish({ ...point, label: drag.label })
+    this.publish({
+      ...this.dragPreview(point),
+      target: this.preview?.target,
+      edge: this.preview?.edge
+    })
     const target = await this.targetAt(point)
     if (revision === this.revision && move === this.moveRevision)
       this.publish({
-        ...point,
-        label: drag.label,
+        ...this.dragPreview(point),
         target: target?.key,
         edge: target?.edge
       })
@@ -124,6 +242,7 @@ export class RosterGesture {
     const drag = this.active
     if (drag == null) return false
     const revision = this.revision
+    await this.geometryReady
     const target = drag.moved ? await this.targetAt(point) : undefined
     if (revision !== this.revision) return true
     this.cancel()

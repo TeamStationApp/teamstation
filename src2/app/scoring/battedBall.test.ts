@@ -102,7 +102,7 @@ describe('batted-ball draft', function () {
       'Pop Fly',
       'Pop Fly'
     ])
-    expect(allowedAngle(100, 'Single')).equals(70)
+    expect(allowedAngle(100, 'Single')).equals(85)
     expect(trajectoryLabel(47.5)).equals('Pop Fly')
   })
 })
@@ -137,8 +137,8 @@ describe('contextual batted-ball choices', function () {
         generation: 0
       })
       const kind = state.pendingPlay!.homeRunKind
-      for (const requested of [-45, -5, 9, 10, 25, 70, 90]) {
-        const expected = Math.max(outside ? 10 : -45, Math.min(70, requested))
+      for (const requested of [-45, -5, 9, 10, 25, 70, 85, 90]) {
+        const expected = Math.max(outside ? 10 : -45, Math.min(85, requested))
         expect(allowedAngle(requested, 'Home Run', kind)).equals(expected)
         const result = scoringReducer(state, {
           type: 'TRAJECTORY',

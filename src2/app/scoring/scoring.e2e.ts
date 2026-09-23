@@ -17,6 +17,7 @@ import { asGameDetail } from '../../common/api'
 import { applyFieldCamera } from '../field/cameraModel'
 import { BASES } from '../field/fieldModel'
 import { initialHitTarget } from '../field/trajectoryGuide'
+import { ROSTER_CARD_GAP } from './rosterLayout'
 
 const game = asGameDetail({
   id: 'g1',
@@ -51,6 +52,8 @@ const base = process.env.GS_SCORING_TEST_URL ?? 'http://127.0.0.1:8080'
 let browser: Browser
 /** Leaves every save unanswered, as a server that never replies would. */
 let holdSaves = false
+/** The away team's name in the mocked game, when a test needs another. */
+let awayTeamName: string | undefined
 async function open(
   path: string,
   scored: boolean | number = false,
@@ -61,7 +64,11 @@ async function open(
   logos?: 'valid' | 'broken',
   uiAnimations = false
 ): Promise<{ page: Page; unexpected: string[] }> {
-  const page = await browser.newPage()
+  const context = await browser.createBrowserContext()
+  const page = await context.newPage()
+  page.once('close', () => {
+    context.close().catch(() => undefined)
+  })
   if (probe)
     await page.evaluateOnNewDocument(() => {
       const host = window as unknown as SceneProbeWindow
@@ -78,6 +85,36 @@ async function open(
         onCommitFiberUnmount(): void {}
       }
     })
+  // What this page's server holds for the game: a save is kept and read back,
+  // as the API does, so reading the game again returns what was scored.
+  const held: {
+    plays: Array<{
+      id: string
+      gameId: string
+      gumbo: { about: { atBatIndex: number } }
+    }>
+    currentPlay: unknown
+  } = { plays: [], currentPlay: null }
+  const keep = (change: {
+    plays?: Array<{ about: { atBatIndex: number } }>
+    remove?: number[]
+    currentPlay?: unknown
+  }): void => {
+    const kept = new Map(
+      held.plays.map(row => [row.gumbo.about.atBatIndex, row])
+    )
+    for (const index of change.remove ?? []) kept.delete(index)
+    for (const play of change.plays ?? [])
+      kept.set(play.about.atBatIndex, {
+        id: `evt_${play.about.atBatIndex}`,
+        gameId: 'g1',
+        gumbo: play
+      })
+    held.plays = [...kept.values()].sort(
+      (a, b) => a.gumbo.about.atBatIndex - b.gumbo.about.atBatIndex
+    )
+    if (change.currentPlay !== undefined) held.currentPlay = change.currentPlay
+  }
   const unexpected: string[] = []
   page.on('pageerror', error => {
     console.error('Browser error:', error)
@@ -125,13 +162,23 @@ async function open(
       body = { withheld: null, droppedCount: 0, highlights: [] }
     } else if (url.pathname === '/api/v1/auth/me')
       body = { id: 100, displayName: 'Scorer', isAdmin: false }
-    else if (url.pathname === '/api/v1/games/g1/events')
-      body = { plays: [], currentPlay: null }
-    else if (url.pathname === '/api/v1/games/g1') {
+    else if (url.pathname === '/api/v1/games/g1/events') {
+      const answer = async (): Promise<void> => {
+        if (saving) keep(JSON.parse((await request.fetchPostData()) ?? '{}'))
+        await request.respond({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(held)
+        })
+      }
+      answer().catch(() => undefined)
+      return
+    } else if (url.pathname === '/api/v1/games/g1') {
       body =
         scored === false
           ? {
               ...game,
+              ...(awayTeamName == null ? {} : { awayTeamName }),
               videos: uiAnimations
                 ? [
                     {
@@ -682,7 +729,7 @@ describe('scoring browser', function () {
       await click(page, 'Ball')
       await click(page, 'Open scoring menu')
       await new Promise(resolve => setTimeout(resolve, 1400))
-      await click(page, 'Resume Game')
+      await page.keyboard.press('Escape')
       expect(
         await page.$eval('[aria-label="Ball"]', node =>
           node.getAttribute('aria-disabled')
@@ -690,7 +737,7 @@ describe('scoring browser', function () {
       ).equals('true')
       await waitReady(page)
       await click(page, 'Foul Ball')
-      const background = await browser.newPage()
+      const background = await page.browserContext().newPage()
       await background.bringToFront()
       await new Promise(resolve => setTimeout(resolve, 1700))
       expect(await page.evaluate(() => document.hidden)).equals(true)
@@ -1427,8 +1474,14 @@ describe('scoring browser', function () {
       const a = await position('[aria-label="Reorder Jordan K."]')
       await page.mouse.move(a.x, a.y)
       await page.mouse.down()
-      await new Promise(resolve => setTimeout(resolve, 550))
-      // Measure the destination after the grab; focus and layout can settle independently.
+      await new Promise(resolve => setTimeout(resolve, 750))
+      await page.waitForFunction(
+        () =>
+          document
+            .querySelector('[data-roster-target="lineup-0"]')!
+            .getBoundingClientRect().height < 1
+      )
+      // Measure the destination only once source collapse completes.
       const b = await position('[data-roster-target="lineup-2"]', true)
       await page.mouse.move(b.x, b.y, { steps: 10 })
       await page.waitForFunction(
@@ -1595,11 +1648,17 @@ describe('scoring browser', function () {
       })
       await page.touchscreen.touchStart(from.x, from.y)
       await new Promise(resolve => setTimeout(resolve, 550))
+      await page.waitForFunction(
+        () =>
+          document
+            .querySelector('[data-roster-target="lineup-0"]')!
+            .getBoundingClientRect().height < 1
+      )
       await page.touchscreen.touchMove(edge.x, edge.y)
       await page.waitForFunction(
         () =>
           document.querySelector('[aria-label="Batting lineup"]')!.scrollTop >
-          80
+          40
       )
       await page.touchscreen.touchEnd()
       await page.waitForFunction(
@@ -1696,10 +1755,18 @@ describe('scoring browser', function () {
           const r = n.getBoundingClientRect()
           return { x: r.x + 20, y: r.y + r.height / 2 }
         })
-        await page.touchscreen.touchStart(from.x, from.y)
-        for (let step = 1; step <= 8; step++)
-          await page.touchscreen.touchMove(from.x, from.y - step * 10)
-        await page.touchscreen.touchEnd()
+        // Browser-timed touch input stays below the 500ms hold threshold even
+        // when Node/CDP round trips are slow during a complete test batch.
+        const input = await page.createCDPSession()
+        await input.send('Input.synthesizeScrollGesture', {
+          x: from.x,
+          y: from.y,
+          yDistance: -80,
+          speed: 800,
+          gestureSourceType: 'touch',
+          preventFling: true
+        })
+        await input.detach()
         await page.waitForFunction(
           label =>
             document.querySelector(`[aria-label="${label}"]`)!.scrollTop > 20,
@@ -1730,6 +1797,7 @@ describe('scoring browser', function () {
       })
       await page.touchscreen.touchStart(from.x, from.y)
       await new Promise(resolve => setTimeout(resolve, 550))
+      await page.waitForSelector('[data-testid="Roster dragged card"]')
       await page.touchscreen.touchMove(to.x, to.y)
       await page.touchscreen.touchEnd()
       await page.waitForFunction(
@@ -1928,7 +1996,7 @@ describe('scoring browser', function () {
         )
       ).equals(seconds)
       await click(page, 'Cancel')
-      const background = await browser.newPage()
+      const background = await page.browserContext().newPage()
       await background.bringToFront()
       expect(await page.evaluate(() => document.hidden)).equals(true)
       await new Promise(resolve => setTimeout(resolve, 10500))
@@ -3460,7 +3528,10 @@ describe('scoring browser', function () {
     const { page, unexpected } = await open('/games/g1/score', false, true)
     try {
       await page.waitForFunction(() =>
-        String(document.body.textContent).includes('Game not found.')
+        String(document.body.textContent).includes('Unable to load scoring.')
+      )
+      expect(await page.$('[aria-label="Retry loading scoring"]')).not.equals(
+        null
       )
       await click(page, 'Exit Current Game')
       await page.waitForFunction(() => location.pathname === '/games/g1')
@@ -3715,7 +3786,7 @@ describe('scoring browser', function () {
               weight: getComputedStyle(t).fontWeight
             }
           })
-        ).deep.equals({ font: '16.8px', weight: '700' })
+        ).deep.equals({ font: '13px', weight: '700' })
         await page.screenshot({
           path: join(
             process.env.GS_SCORING_ARTIFACT_DIR!,
@@ -4309,4 +4380,447 @@ describe('scoring browser', function () {
       }
     })
   }
+  for (const [width, height] of [
+    [390, 844],
+    [844, 390]
+  ])
+    it(`names the teams inside a full-width Away/Home pill at ${width}×${height}`, async function () {
+      const { page } = await open('/games/g1/score')
+      const box = async (
+        selector: string
+      ): Promise<{ x: number; y: number; width: number; height: number }> =>
+        await page.$eval(selector, n => {
+          const r = n.getBoundingClientRect()
+          return { x: r.x, y: r.y, width: r.width, height: r.height }
+        })
+      try {
+        await page.setViewport({ width, height })
+        await click(page, 'Open scoring menu')
+        await click(page, 'Set Team Rosters')
+        await page.waitForSelector('[data-testid="Roster selector captions"]')
+        await new Promise(resolve => setTimeout(resolve, 300))
+        const footer = await box('[data-testid="Roster footer"]')
+        const away = await box('[aria-label="Away Team"]')
+        const home = await box('[aria-label="Home Team"]')
+        expect(away.x).closeTo(footer.x, 1)
+        expect(home.x + home.width).closeTo(footer.x + footer.width, 1)
+        expect(
+          await page.$eval('[aria-label="Away Team"]', n => n.textContent)
+        ).equals('Owls')
+        expect(
+          await page.$eval('[aria-label="Home Team"]', n => n.textContent)
+        ).equals('Hawks')
+        // "Away" and "Home" sit above their halves, centred on them.
+        const captions = await page.$$eval(
+          '[data-testid="Roster selector captions"] > * > *',
+          nodes =>
+            nodes.map(n => {
+              const r = n.getBoundingClientRect()
+              return {
+                text: n.textContent,
+                centre: r.x + r.width / 2,
+                bottom: r.bottom
+              }
+            })
+        )
+        expect(captions.map(c => c.text)).deep.equals(['Away', 'Home'])
+        expect(captions[0].centre).closeTo(away.x + away.width / 2, 2)
+        expect(captions[1].centre).closeTo(home.x + home.width / 2, 2)
+        for (const caption of captions)
+          expect(caption.bottom).at.most(Math.min(away.y, home.y))
+        // No team name stands on its own outside the pill.
+        const loose = await page.$$eval(
+          'body *',
+          nodes =>
+            nodes.filter(
+              n =>
+                n.children.length === 0 &&
+                ['Owls', 'Hawks'].includes(String(n.textContent)) &&
+                n.closest('[role="tab"]') == null
+            ).length
+        )
+        expect(loose).equals(0)
+        // Both pills show whole inside the editor's top area.
+        const top = await box('[data-testid="Roster editor top"]')
+        for (const tab of ['Away Team', 'Set Lineup', 'Set Defense']) {
+          const r = await box(`[aria-label="${tab}"]`)
+          expect(r.y).at.least(top.y - 0.5)
+          expect(r.y + r.height).at.most(top.y + top.height + 0.5)
+        }
+        if (process.env.GS_SCORING_ARTIFACT_DIR != null)
+          await page.screenshot({
+            path: `${process.env.GS_SCORING_ARTIFACT_DIR}/roster-pill-${width}.png`
+          })
+        // Tapping the right half picks the home team; dragging back picks away.
+        const lineup = async (): Promise<string> =>
+          await page.$eval('[aria-label="Batting lineup"]', n =>
+            String(n.textContent)
+          )
+        const awayLineup = await lineup()
+        await click(page, 'Home Team')
+        await page.waitForSelector(
+          '[aria-label="Home Team"][aria-selected="true"]'
+        )
+        expect(await lineup()).not.equals(awayLineup)
+        // Measured again: choosing a side can scroll the top of the editor.
+        const from = await box('[aria-label="Home Team"]')
+        const to = await box('[aria-label="Away Team"]')
+        await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2)
+        await page.mouse.down()
+        await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, {
+          steps: 8
+        })
+        await page.mouse.up()
+        await page.waitForSelector(
+          '[aria-label="Away Team"][aria-selected="true"]'
+        )
+        expect(await lineup()).equals(awayLineup)
+        await click(page, 'Cancel')
+      } finally {
+        await page.close()
+      }
+    })
+  it('lists the roster by jersey number with players who have none last', async function () {
+    const { page } = await open('/games/g1/score')
+    try {
+      await page.setViewport({ width: 390, height: 844 })
+      await click(page, 'Open scoring menu')
+      await click(page, 'Set Team Rosters')
+      const create = async (
+        first: string,
+        last: string,
+        jersey: string
+      ): Promise<void> => {
+        await click(page, 'Create Player')
+        await page.waitForFunction(
+          () =>
+            document.activeElement!.getAttribute('aria-label') === 'First Name'
+        )
+        await page.locator('[aria-label="First Name"]').fill(first)
+        await page.locator('[aria-label="Last Name"]').fill(last)
+        if (jersey !== '')
+          await page.locator('[aria-label="Jersey Number"]').fill(jersey)
+        await click(page, 'Add Player')
+        await page.waitForSelector('[aria-label="First Name"]', {
+          hidden: true
+        })
+      }
+      // Added out of order, then five placeholders.
+      await create('Amy', 'Blank', '')
+      await create('Zed', 'Ten', '10')
+      await click(page, 'Add Placeholder Players')
+      await new Promise(resolve => setTimeout(resolve, 400))
+      await click(page, 'Player count 5')
+      await page.waitForSelector(
+        '[aria-label="Player count 5"][aria-selected="true"]'
+      )
+      // The list scrolls to the count it was given; let it settle there.
+      await new Promise(resolve => setTimeout(resolve, 600))
+      await page.waitForSelector(
+        '[aria-label="Player count 5"][aria-selected="true"]'
+      )
+      await click(page, 'Add')
+      await page.waitForSelector(
+        '[aria-label="Number of placeholder players"]',
+        { hidden: true }
+      )
+      await new Promise(resolve => setTimeout(resolve, 400))
+      const roster = async (): Promise<string[]> =>
+        await page.$$eval(
+          '[data-roster-target="roster"] [data-roster-player]',
+          nodes => nodes.map(n => String(n.textContent).trim())
+        )
+      const rows = await roster()
+      expect(rows).length(9 + 2 + 5)
+      const numbers = rows.map(row => /^#(\d+)/.exec(row)?.[1])
+      const numbered = numbers.filter(number => number != null)
+      // Numbers first, lowest first; then everyone without one, by name.
+      expect(numbers.slice(0, numbered.length)).deep.equals(numbered)
+      expect(numbered.map(Number)).deep.equals(
+        [...numbered].map(Number).sort((a, b) => a - b)
+      )
+      expect(numbered.at(-1)).equals('10')
+      const unnumbered = rows.slice(numbered.length)
+      expect(unnumbered).deep.equals(
+        [...unnumbered].sort((a, b) => a.localeCompare(b))
+      )
+      expect(unnumbered).includes('Amy Blank')
+      await click(page, 'Set Defense')
+      expect(await roster()).deep.equals(rows)
+      await click(page, 'Set Lineup')
+      // The lineup keeps the order it is built in.
+      await click(page, 'Add Zed Ten to Lineup')
+      const lineup = await page.$$eval(
+        '[data-roster-target^="lineup-"][data-roster-player]',
+        nodes => nodes.map(n => String(n.textContent))
+      )
+      expect(lineup.at(-1)).includes('Zed Ten')
+      await click(page, 'Cancel')
+    } finally {
+      await page.close()
+    }
+  })
+  it('keeps a long team name on one line inside its half of the pill', async function () {
+    awayTeamName = 'The Extremely Long Named Visiting Squadron'
+    const { page } = await open('/games/g1/score')
+    try {
+      await page.setViewport({ width: 390, height: 844 })
+      await click(page, 'Open scoring menu')
+      await click(page, 'Set Team Rosters')
+      await page.waitForSelector('[data-testid="Roster selector captions"]')
+      await new Promise(resolve => setTimeout(resolve, 300))
+      const sizes = await page.$$eval('[role="tab"]', nodes =>
+        nodes.slice(0, 2).map(n => {
+          const r = n.getBoundingClientRect()
+          const text = n.firstElementChild!.getBoundingClientRect()
+          return { width: r.width, height: r.height, textHeight: text.height }
+        })
+      )
+      expect(sizes[0].width).closeTo(sizes[1].width, 1)
+      expect(sizes[0].height).closeTo(sizes[1].height, 1)
+      expect(sizes[0].textHeight).closeTo(sizes[1].textHeight, 1)
+      expect(
+        await page.$eval('[aria-label="Away Team"]', n => n.textContent)
+      ).equals(awayTeamName)
+      await click(page, 'Cancel')
+    } finally {
+      awayTeamName = undefined
+      await page.close()
+    }
+  })
+  it('roster flow keeps compact selectors and footer visible while full cards animate between columns', async function () {
+    const { page } = await open(
+      '/games/g1/score',
+      false,
+      false,
+      false,
+      'switch',
+      false,
+      undefined,
+      true
+    )
+    const rect = async (
+      selector: string
+    ): Promise<{
+      x: number
+      y: number
+      width: number
+      height: number
+      bottom: number
+    }> =>
+      await page.$eval(selector, n => {
+        const r = n.getBoundingClientRect()
+        return {
+          x: r.x,
+          y: r.y,
+          width: r.width,
+          height: r.height,
+          bottom: r.bottom
+        }
+      })
+    try {
+      await page.setViewport({
+        width: 390,
+        height: 844,
+        isMobile: true,
+        hasTouch: true
+      })
+      await click(page, 'Open scoring menu')
+      await click(page, 'Set Team Rosters')
+      await click(page, 'Remove Player 2')
+      await new Promise(resolve => setTimeout(resolve, 350))
+      for (const [width, height] of [
+        [390, 844],
+        [844, 390]
+      ]) {
+        await page.setViewport({
+          width,
+          height,
+          isMobile: true,
+          hasTouch: true
+        })
+        await new Promise(resolve => setTimeout(resolve, 250))
+        const footer = await rect('[data-testid="Roster footer"]')
+        // The team pill spans the editor, one half per team.
+        const awayTab = await rect('[aria-label="Away Team"]')
+        const homeTab = await rect('[aria-label="Home Team"]')
+        expect(awayTab.x).closeTo(footer.x, 1)
+        expect(homeTab.x + homeTab.width).closeTo(footer.x + footer.width, 1)
+        expect(awayTab.width).closeTo(homeTab.width, 1)
+        expect((await rect('[aria-label="Set Lineup"]')).height).equals(36)
+        expect(footer.bottom).at.most(height)
+        expect(height - footer.bottom).lessThan(30)
+        for (const label of ['Roster players', 'Batting lineup']) {
+          const list = await rect(`[aria-label="${label}"]`)
+          expect(list.height).greaterThan(60)
+          expect(list.bottom).at.most(footer.y)
+        }
+        if (process.env.GS_SCORING_ARTIFACT_DIR != null)
+          await page.screenshot({
+            path: `${process.env.GS_SCORING_ARTIFACT_DIR}/roster-flow-${width}.png`
+          })
+      }
+      await page.setViewport({
+        width: 390,
+        height: 844,
+        isMobile: true,
+        hasTouch: true
+      })
+      await new Promise(resolve => setTimeout(resolve, 250))
+      const source = '[data-roster-target="roster"] [data-roster-player="2"]'
+      const third = '[data-roster-target="roster"] [data-roster-player="3"]'
+      const a = await rect(source)
+      const following = await rect(third)
+      expect(following.y - a.bottom).closeTo(ROSTER_CARD_GAP, 0.5)
+      const destination = await rect('[data-roster-target="lineup-1"]')
+      const next = await rect('[data-roster-target="lineup-2"]')
+      expect(next.y - destination.bottom).closeTo(ROSTER_CARD_GAP, 0.5)
+      await page.touchscreen.touchStart(a.x + 17, a.y + 13)
+      await new Promise(resolve => setTimeout(resolve, 750))
+      const ghost = '[data-testid="Roster dragged card"]'
+      await page.waitForFunction(
+        selector =>
+          document.querySelector(selector)!.getBoundingClientRect().height < 1,
+        {},
+        source
+      )
+      expect((await rect(source)).height).lessThan(1)
+      expect((await rect(third)).y).lessThan(following.y - 40)
+      // The lifted card's place closes to one gap between its neighbours.
+      await new Promise(resolve => setTimeout(resolve, 250))
+      const above = await rect(
+        '[data-roster-target="roster"] [data-roster-player="1"]'
+      )
+      expect((await rect(third)).y - above.bottom).closeTo(ROSTER_CARD_GAP, 0.5)
+      await page.touchscreen.touchMove(destination.x + 17, destination.y + 10)
+      await new Promise(resolve => setTimeout(resolve, 250))
+      const floating = await rect(ghost)
+      expect(floating.width).closeTo(a.width, 1)
+      expect(floating.height).closeTo(a.height, 1)
+      expect(floating.x).closeTo(destination.x, 1)
+      expect(floating.y).closeTo(destination.y - 3, 1)
+      expect(await page.$eval(ghost, n => n.textContent)).includes(
+        '#2 Player 2'
+      )
+      await page.waitForFunction(
+        y =>
+          document
+            .querySelector('[data-roster-target="lineup-2"]')!
+            .getBoundingClientRect().y >
+          y + 40,
+        {},
+        next.y
+      )
+      expect((await rect('[data-roster-target="lineup-2"]')).y).greaterThan(
+        next.y + 40
+      )
+      if (process.env.GS_SCORING_ARTIFACT_DIR != null)
+        await page.screenshot({
+          path: `${process.env.GS_SCORING_ARTIFACT_DIR}/roster-flow-drag.png`
+        })
+      await page.touchscreen.touchEnd()
+      await page.waitForFunction(
+        () =>
+          document
+            .querySelector('[data-roster-target="lineup-1"]')!
+            .getAttribute('data-roster-player') === '2'
+      )
+      expect(await page.$(ghost)).equals(null)
+      await page.waitForFunction(
+        selector =>
+          document.querySelector(selector)!.getBoundingClientRect().height > 40,
+        {},
+        source
+      )
+      await click(page, 'Save Rosters')
+      await page.waitForSelector('[aria-label="Undo Set team roster"]')
+    } finally {
+      await page.close()
+    }
+  })
+  for (const outcome of ['Single', 'Ball Caught'] as const)
+    it(`keeps the fielding position through an 85-degree high fly for ${outcome}`, async function () {
+      const { page } = await open(
+        '/games/g1/score',
+        false,
+        false,
+        false,
+        'right',
+        true
+      )
+      try {
+        await page.setViewport({ width: 390, height: 844 })
+        await click(page, 'Swing in Play')
+        if (outcome === 'Ball Caught') await click(page, 'Batter Out')
+        await click(page, outcome)
+        await page.waitForSelector('canvas[data-field-ready="true"]')
+        await captureScene(page)
+        const before = await page.evaluate(() => {
+          const host = window as unknown as SceneProbeWindow
+          return {
+            player: host
+              .qaScene!.getObjectByName('player-defense-10')!
+              .position.toArray(),
+            camera: host.qaCamera!.position.toArray()
+          }
+        })
+        await page.focus('[role="application"]')
+        await page.keyboard.press('Space')
+        // Pitcher starts 18.44m from home; five steps toward home leaves a short 3.44m landing.
+        for (let i = 0; i < 5; i++) await page.keyboard.press('ArrowDown')
+        await page.keyboard.press('Enter')
+        await page.waitForSelector(
+          '[aria-label^="Drag up and down for ball trajectory."]'
+        )
+        for (let i = 0; i < 50; i++) await page.keyboard.press('ArrowUp')
+        await page.waitForSelector(
+          '[aria-label="Ball trajectory: 85° Pop Fly"]'
+        )
+        await captureScene(page)
+        const selected = await page.evaluate(() => {
+          const host = window as unknown as SceneProbeWindow
+          const curve = host.qaScene!.getObjectByName('ball-trajectory') as Mesh
+          curve.geometry.computeBoundingBox()
+          return {
+            player: host
+              .qaScene!.getObjectByName('player-defense-10')!
+              .position.toArray(),
+            camera: host.qaCamera!.position.toArray(),
+            apex: curve.geometry.boundingBox!.max.y
+          }
+        })
+        expect(selected.player).deep.equals(before.player)
+        expect(selected.camera).deep.equals(before.camera)
+        expect(selected.apex).greaterThan(15)
+        if (process.env.GS_SCORING_ARTIFACT_DIR != null)
+          await page.screenshot({
+            path: join(
+              process.env.GS_SCORING_ARTIFACT_DIR,
+              `high-fly-${outcome.replaceAll(' ', '-')}.png`
+            )
+          })
+        const sample = page.evaluate(async () => {
+          const scene = (window as unknown as SceneProbeWindow).qaScene!
+          const samples: number[][] = []
+          const start = performance.now()
+          while (performance.now() - start < 2300) {
+            await new Promise(requestAnimationFrame)
+            samples.push(
+              scene.getObjectByName('player-defense-10')!.position.toArray()
+            )
+          }
+          return samples
+        })
+        await page.keyboard.press('Enter')
+        const positions = await sample
+        expect(
+          positions.some(p => Math.abs(p[2] - before.player[2]) > 1)
+        ).equals(true)
+        expect(
+          positions.some(p => p[2] > before.player[2] + 1 && p[2] < -4)
+        ).equals(true)
+      } finally {
+        await page.close()
+      }
+    })
 })

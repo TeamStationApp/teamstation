@@ -10,7 +10,11 @@ import {
   ScoringSession as GameSession
 } from '../../common/scoring/session'
 import { ThemeProvider } from '../theme/ThemeContext'
-import { createDevelopmentSession } from './developmentSession'
+import {
+  createDevelopmentSession,
+  startingSetup,
+  teamsOf
+} from './developmentSession'
 import { CORRECTION_INSTRUCTION } from './InstructionToast'
 import { gameFixture } from './isUnscoredGame.test'
 import { scoringPreferences } from './scoringPreferences'
@@ -178,7 +182,7 @@ describe('local scoring controls', function () {
         throw new Error('bad state')
       }
     })
-    expect(document.body.textContent).includes('Game not found.')
+    expect(document.body.textContent).includes('Unable to load scoring.')
   })
   it('runs the native preference adapter through its platform storage implementation', async function () {
     await nativePreferences.write('native-test', { help: false, shown: 2 })
@@ -295,6 +299,42 @@ describe('saving from the scoring screen', function () {
     ).not.equals(null)
     expect(document.querySelector('[aria-label="Finish at-bat"]')).equals(null)
     expect(document.body.textContent).not.includes(CORRECTION_INSTRUCTION)
+  })
+
+  it('reads the game from the server on the way into the rosters', async function () {
+    const store = memoryStore()
+    const client = clientForSwitchHitter('right')
+    const source: ScoringSource = {
+      persistent: true,
+      open: async (game, away, home) =>
+        await GameSession.open(store, game.id, {
+          gamePk: game.id,
+          teams: teamsOf(game),
+          setup: startingSetup(game, away, home)
+        })
+    }
+    await mount(client, source)
+    expect(document.body.textContent).includes('0 balls')
+    // Another scorer saves two balls while this screen is open.
+    const [away, home] = await Promise.all([
+      client.roster(gameFixture.awayTeamId),
+      client.roster(gameFixture.homeTeamId)
+    ])
+    const other = await source.open(gameFixture, away, home)
+    other.apply({ type: 'pitch', call: 'B' })
+    other.apply({ type: 'pitch', call: 'B' })
+    await other.flush()
+    expect(document.body.textContent).includes('0 balls')
+    await click('Open scoring menu')
+    await click('Set Team Rosters')
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 5))
+    })
+    expect(document.querySelector('[aria-label="Save Rosters"]')).not.equals(
+      null
+    )
+    await click('Cancel')
+    expect(document.body.textContent).includes('2 balls')
   })
 
   it('undoes a play scored before the screen opened', async function () {

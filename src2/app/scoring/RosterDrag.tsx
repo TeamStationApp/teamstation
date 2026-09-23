@@ -2,17 +2,22 @@ import React, {
   useCallback,
   useContext,
   useEffect,
+  useId,
   useRef,
   useState
 } from 'react'
 
 import { useTheme } from '../theme/ThemeContext'
+import { RosterCardSlot, useRosterLifted } from './RosterCardSlot'
 import { RosterClipContext, useRosterGesture } from './RosterDragContext'
 import type { RosterDragProps } from './rosterDragProps'
 import { RosterHold } from './rosterHold'
+import { ROSTER_CARD_GAP } from './rosterLayout'
 export { RosterDragGroup, RosterScrollArea } from './RosterDragContext'
 export function RosterDrag(props: RosterDragProps): React.ReactElement {
   const engine = useRosterGesture()
+  const source = useId()
+  const lifted = useRosterLifted(source)
   const clip = useContext(RosterClipContext)
   const theme = useTheme()
   const node = useRef<HTMLDivElement>(null)
@@ -30,7 +35,7 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
         const p = latest.current
         if (p.playerId == null || p.disabled === true) return
         moved.current = true
-        engine.begin(p.playerId, p.label ?? '', point)
+        engine.begin(p.playerId, p.label ?? '', point, true, source)
         if (contact.current?.kind !== 'touch' && contact.current != null)
           node.current?.setPointerCapture(contact.current.pointer)
       })
@@ -105,6 +110,20 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
       window.removeEventListener('keydown', escape)
     }
   }, [engine, hold, cancel, props.playerId, props.disabled])
+  useEffect(() => {
+    if (props.playerId == null) return
+    engine.sources.set(source, {
+      measure: async () => {
+        const rect = node.current!.getBoundingClientRect()
+        return { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+      },
+      clip,
+      content: props.children
+    })
+    return () => {
+      engine.sources.delete(source)
+    }
+  }, [engine, source, clip, props.playerId, props.children])
   const token = props.targetId
   useEffect(() => {
     if (token == null || props.onDropPlayer == null) return
@@ -174,6 +193,13 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
             : undefined
       }
       style={{
+        display:
+          props.playerId == null && props.targetId === 'roster'
+            ? 'flex'
+            : undefined,
+        flexDirection: 'column',
+        gap: ROSTER_CARD_GAP,
+        marginBottom: lifted ? -ROSTER_CARD_GAP : undefined,
         touchAction: 'auto',
         WebkitTouchCallout: 'none',
         userSelect: 'none',
@@ -283,7 +309,17 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
         }
       }}
     >
-      {props.children}
+      {props.targetId === 'roster' ? (
+        props.children
+      ) : (
+        <RosterCardSlot
+          source={source}
+          target={props.targetId}
+          player={props.playerId}
+        >
+          {props.children}
+        </RosterCardSlot>
+      )}
       {(hover === 'before' || hover === 'after') && (
         <div
           aria-label="Lineup insertion point"

@@ -408,7 +408,7 @@ describe('direct home-run landing authoring', function () {
 })
 
 describe('outcome-constrained defender gestures', function () {
-  it('accepts a direct defender tap and clamps the visible drag and released location to fair territory', async function () {
+  it('accepts a direct defender tap, restores its position and clamps the visible drag and released location to fair territory', async function () {
     const players = createPlayers()
     const placements: FieldPlacement[] = []
     const renderer = await create(
@@ -419,6 +419,7 @@ describe('outcome-constrained defender gestures', function () {
         view: 'home',
         zoom: 1,
         acceptDefenderTap: true,
+        deferDefenderPlacement: true,
         constrainPlacement: point => fieldingLocation('Single', point),
         interaction: {
           generation: 4,
@@ -459,6 +460,10 @@ describe('outcome-constrained defender gestures', function () {
       expect(placements).length(2)
       expect(placements[1].point).deep.equals({ x: 20, z: -20 })
       expect(placements[1].generation).equals(4)
+      expect(players[0].position).deep.equals({ x: 0, z: -18.44 })
+      expect(players[0].target).deep.equals(players[0].position)
+      await renderer.advanceFrames(20, 1 / 60)
+      expect(players[0].position).deep.equals({ x: 0, z: -18.44 })
     } finally {
       await renderer.unmount()
     }

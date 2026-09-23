@@ -52,7 +52,7 @@ describe('visible trajectory guide', function () {
     }
   })
   it('bows only the yellow guide while preserving contact, elevation, target and actual flight', () => {
-    for (const angle of [-45, -5, 10, 45, 70])
+    for (const angle of [-45, -5, 10, 45, 70, 85])
       for (const bearing of [-5, 5]) {
         const arc = { target: { x: 0, z: -90 }, angle, landingHeight: 8 }
         const guide = { ...arc, guideBearing: bearing }
