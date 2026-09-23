@@ -77,7 +77,13 @@ export function GameWatchLayout(
         fitList()
       }}
       scrollEventThrottle={16}
-      contentContainerStyle={contentStyle}
+      contentContainerStyle={[
+        contentStyle,
+        // The header is glass and overlays this, so everything starts below
+        // it. On the container rather than on the card, because on a short
+        // window the card is not the first thing here — the picture is.
+        { paddingTop: headerHeight }
+      ]}
     >
       {/*
         The card and the sections, above everything on a window with the
