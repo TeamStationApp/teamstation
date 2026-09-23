@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { FlatList, Text, View } from 'react-native'
+import { FlatList, Platform, Text, View } from 'react-native'
 
 import type {
   DjBatter,
@@ -9,7 +9,13 @@ import type {
 } from '../../common/api'
 import type { GameSocketEvent } from '../../common/gameSocket'
 import type { WalkUpSong } from '../../common/walkUpSong'
-import { Button, NAV_CLEARANCE_REM, Screen } from '../components'
+import {
+  Button,
+  FLOATING_BOTTOM_REM,
+  NAV_CLEARANCE_REM,
+  Screen
+} from '../components'
+import { navClearanceAboveInset } from '../components/navClearance'
 import { lstrings, sprintf } from '../locales/strings'
 import { useInsets } from '../platform/safeArea'
 import { RosterSelector } from '../scoring/RosterSelector'
@@ -101,7 +107,12 @@ export function DjGameScreen(props: DjGameScreenProps): React.ReactElement {
   const styles = getStyles(theme)
   const player = useSongPlayer(music, fadeAppleMusic)
   // The list runs under the floating tabs, and ends clear of them.
-  const clearance = theme.rem(NAV_CLEARANCE_REM) + useInsets().bottom
+  const clearance =
+    navClearanceAboveInset(
+      Platform.OS,
+      theme.rem(NAV_CLEARANCE_REM),
+      theme.rem(FLOATING_BOTTOM_REM)
+    ) + useInsets().bottom
 
   const [shown, setShown] = useState<DjGame | undefined>(undefined)
   const [error, setError] = useState(false)

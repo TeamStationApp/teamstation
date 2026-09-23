@@ -6,6 +6,7 @@ import { elevationFor } from '../theme/elevation'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { GlassView } from './GlassView'
 import { Icon, type IconName } from './Icon'
+import { floatingNavBottom } from './navClearance'
 
 export type NavTabId = 'home' | 'videos' | 'schedule'
 
@@ -69,8 +70,14 @@ const FLOATING_DISC_REM = 2.75 * FLOATING_SCALE
  * cramped above and below and adrift from the end it sits in.
  */
 const FLOATING_PAD_REM = 0.375 * FLOATING_SCALE
-/** How far the capsule floats off the bottom of the window. */
-const FLOATING_BOTTOM_REM = 1
+/**
+ * How far the capsule floats off the bottom of the window, on Android and
+ * on the web.
+ *
+ * On iOS this is not added. The home-indicator inset is already that gap,
+ * and a nav capsule can sit against it.
+ */
+export const FLOATING_BOTTOM_REM = 1
 /**
  * The gap between the capsule and the last thing above it.
  *
@@ -124,10 +131,15 @@ export function AppNav(props: AppNavProps): React.ReactElement {
   const theme = useTheme()
   const styles = getStyles(theme)
   const floating = mode === 'floating'
-  // Off the bottom of the *window* on a page, and off the home indicator on a
-  // phone — the same rem either way, measured from wherever the window really
-  // ends rather than from where the pixels do.
+  // Off the bottom of the window on a page. On iOS, against the home
+  // indicator: the inset is the gap, and the capsule adds nothing past it.
+  // Android keeps the margin above its own navigation inset.
   const insets = useInsets()
+  const floatingBottom = floatingNavBottom(
+    Platform.OS,
+    theme.rem(FLOATING_BOTTOM_REM),
+    insets.bottom
+  )
 
   const capsule = theme.rem(2.5)
 
@@ -157,7 +169,7 @@ export function AppNav(props: AppNavProps): React.ReactElement {
       style={[
         styles.container,
         floating ? styles.floating : styles.inHeader,
-        floating && { bottom: theme.rem(FLOATING_BOTTOM_REM) + insets.bottom }
+        floating && { bottom: floatingBottom }
       ]}
     >
       {NAV_TABS.map(tab => {
