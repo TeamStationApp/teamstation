@@ -140,6 +140,20 @@ export const asServerConfig = asObject({
    */
   serveMediaLocally: asOptional(asBoolean, false),
 
+  /**
+   * Whether this deployment deletes recordings an upload replaced, once their
+   * month is up.
+   *
+   * **Off by default, and it has to be, because the Space is shared.** Every
+   * development seat is seeded from a copy of production's database, so it
+   * holds production's rows under production's video ids, and the objects
+   * those ids name are the ones production is serving. A seat that swept
+   * would delete the bytes off the live site. The deletion is real and
+   * irreversible, so it is opt-in per deployment rather than something a
+   * branch can switch on by being deployed.
+   */
+  purgeReplacedRecordings: asOptional(asBoolean, false),
+
   /** Origins the app may call the API from. */
   corsOrigins: asOptional(asArray(asString), [
     'http://localhost:8080',
