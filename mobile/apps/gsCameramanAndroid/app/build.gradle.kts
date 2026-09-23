@@ -123,6 +123,7 @@ kover {
                     "co.gamestation.cameraman.ui.RadarSettingsCard",
                     "co.gamestation.cameraman.ui.RadarSettingsCardKt",
                     "co.gamestation.cameraman.ui.SpeedOverlay",
+                    "co.gamestation.cameraman.ui.LoginFlow",
                     "co.gamestation.cameraman.radar.*"
                 )
             }

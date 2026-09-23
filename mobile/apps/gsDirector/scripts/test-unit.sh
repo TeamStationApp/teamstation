@@ -91,6 +91,7 @@ if [ -n "$COVERAGE" ]; then
       --derived-data "$DIRECTOR_DERIVED_DATA" \
       --exclude mobile/apps/gsDirector/Packages/DirectorUI/Sources/DirectorUI/SettingsView.swift \
       --exclude mobile/apps/gsDirector/Packages/DirectorUI/Sources/DirectorUI/GameStationEventPicker.swift \
+      --exclude mobile/apps/gsDirector/Packages/DirectorUI/Sources/DirectorUI/GameStationSignIn.swift \
       --exclude mobile/apps/gsDirector/Packages/DirectorUI/Sources/DirectorUI/ContentEditorView.swift \
       --exclude mobile/apps/gsDirector/Packages/DirectorUI/Sources/DirectorUI/AppEnvironment.swift \
       mobile/apps/gsDirector mobile/apps/common/DirectorCore mobile/apps/common/DirectorExport

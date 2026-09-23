@@ -1,152 +1,139 @@
+import CameramanCore
 import GameStationKit
 import SwiftUI
 
-/// Signing this Director in to a GameStation account.
-///
-/// An address, and then whichever answer arrives first: the six-digit code
-/// typed here, or the button in the same e-mail tapped on **anything** — a
-/// phone, a laptop, the iPad itself. GameStation approves the request whichever
-/// door it comes through, and this screen, holding a secret nobody else has,
-/// asks every couple of seconds whether that has happened and signs itself in
-/// when it has.
-///
-/// That is why there is no browser sheet here and no link that has to open this
-/// app. A parent standing at a field with the iPad can be signed in by somebody
-/// at home tapping a button in their own mail.
+/// The centered sign-in modal. One field and one pill: the address, then the code.
 struct GameStationSignIn: View {
   @Environment(AppEnvironment.self) private var environment
-  /// The way out, for the same reason the event picker needs one.
   let onClose: () -> Void
-  @State private var email = ""
-  @State private var code = ""
+  @State private var login = LoginFlow()
   @State private var busy = false
-  @State private var message: String?
+  @FocusState private var focused: Bool
 
-  /// How often the iPad asks whether somebody has answered the e-mail.
   private let poll = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
+  private let pill = Color(red: 0.50, green: 0.85, blue: 0.61)
+  private let ink = Color(red: 0.07, green: 0.14, blue: 0.09)
 
   var body: some View {
-    let account = environment.gameStation
-    VStack(spacing: 0) {
-      HStack {
-        Text("GameStation account")
-          .font(.title3.weight(.semibold))
-        Spacer()
-        Button("Done") { onClose() }
-          .accessibilityIdentifier("gamestation-sign-in-done")
+    GeometryReader { geo in
+      ZStack {
+        Color.black.opacity(0.92).ignoresSafeArea()
+        VStack(spacing: 20) {
+          Text("GameStation")
+            .font(.largeTitle.weight(.bold))
+            .foregroundStyle(pill)
+            .accessibilityIdentifier("gamestation-logo")
+          if LoginFlow.showsDevelopmentHost(AppServer.url.absoluteString) {
+            Text(AppServer.url.absoluteString)
+              .font(.footnote)
+              .foregroundStyle(.secondary)
+              .accessibilityIdentifier("gamestation-account-host")
+          }
+          if let notice = login.notice {
+            Text(notice)
+              .font(.subheadline)
+              .foregroundStyle(.secondary)
+              .accessibilityIdentifier("gamestation-notice")
+          }
+          field
+            .frame(width: geo.size.width / 2)
+          Button(login.buttonLabel) {
+            if login.fieldIsCode {
+              submit()
+            } else {
+              start()
+            }
+          }
+          .buttonStyle(.plain)
+          .font(.body.weight(.semibold))
+          .foregroundStyle(ink)
+          .padding(.horizontal, 18)
+          .padding(.vertical, 10)
+          .background(pill, in: Capsule())
+          .disabled(busy || (login.fieldIsCode ? login.code.count < 6 : !login.email.contains("@")))
+          .accessibilityIdentifier(login.fieldIsCode ? "gamestation-submit-code" : "gamestation-send-code")
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
       }
-      .padding()
-      form(account)
+      .overlay(alignment: .topTrailing) {
+        Button("Cancel") {
+          login.cancel()
+          onClose()
+        }
+        .font(.body.weight(.semibold))
+        .foregroundStyle(.red)
+        .padding()
+        .accessibilityIdentifier("gamestation-sign-in-done")
+      }
+    }
+    .onAppear { focused = true }
+    .onChange(of: login.step) { _, _ in focused = true }
+    .onChange(of: environment.gameStation.isSignedIn) { _, signedIn in
+      if signedIn { onClose() }
+    }
+    .onReceive(poll) { _ in
+      guard environment.gameStation.user == nil, environment.gameStation.waiting != nil else { return }
+      Task { await environment.gameStation.pollSignIn() }
     }
   }
 
-  @ViewBuilder
-  private func form(_ account: GameStationAccount) -> some View {
-    Form {
-      if let user = account.user {
-        Section {
-          LabeledContent("Signed in as", value: user.displayName)
-          if let address = user.email {
-            LabeledContent("E-mail", value: address)
-          }
-          Button("Sign out", role: .destructive) {
-            account.signOut()
-          }
-          .accessibilityIdentifier("gamestation-sign-out")
-        } header: {
-          Text("GameStation")
-        } footer: {
-          Text(
-            "Signed in, this Director lists the games your teams are playing and streams to one without a URL being typed."
+  private var field: some View {
+    Group {
+      if login.fieldIsCode {
+        TextField(
+          "123456",
+          text: Binding(
+            get: { login.code },
+            set: { raw in
+              // The binding's set runs before `code` changes. `onChange`
+              // would see the digits already stored and never submit.
+              if login.replaceCode(raw) { submit() }
+            }
           )
-        }
-      } else if account.waiting != nil {
-        Section {
-          Text("Waiting for the e-mail sent to \(email)")
-            .foregroundStyle(.secondary)
-          TextField("123456", text: $code)
-            .keyboardType(.numberPad)
-            .accessibilityIdentifier("gamestation-code")
-          Button("Sign in with the code") {
-            signIn()
-          }
-          .disabled(busy || code.trimmingCharacters(in: .whitespaces).count < 4)
-          .accessibilityIdentifier("gamestation-submit-code")
-          Button("Use a different address") {
-            account.signOut()
-            code = ""
-            message = nil
-          }
-        } header: {
-          Text("Check your e-mail")
-        } footer: {
-          Text(
-            "Tap the button in the e-mail — on this iPad or any other device — and this screen will sign itself in. Or type the code."
-          )
-        }
+        )
+        .keyboardType(.numberPad)
+        .accessibilityIdentifier("gamestation-code")
       } else {
-        Section {
-          TextField("parent@example.com", text: $email)
-            .keyboardType(.emailAddress)
-            .textInputAutocapitalization(.never)
-            .autocorrectionDisabled()
-            .accessibilityIdentifier("gamestation-email")
-          Button("Send me a sign-in e-mail") {
-            start()
-          }
-          .disabled(busy || !email.contains("@"))
-          .accessibilityIdentifier("gamestation-send-code")
-        } header: {
-          Text("Sign in to GameStation")
-        } footer: {
-          Text(
-            "GameStation sends a button and a six-digit code. Either one signs this iPad in."
-          )
-        }
-      }
-
-      if let message {
-        Section {
-          Text(message).foregroundStyle(.secondary)
-        }
+        TextField("email", text: $login.email)
+          .keyboardType(.emailAddress)
+          .textInputAutocapitalization(.never)
+          .autocorrectionDisabled()
+          .accessibilityIdentifier("gamestation-email")
       }
     }
-    .scrollContentBackground(.hidden)
-    .background(Color.black)
-    .onReceive(poll) { _ in
-      guard account.user == nil, account.waiting != nil else { return }
-      Task { await account.pollSignIn() }
-    }
+    .multilineTextAlignment(.center)
+    .focused($focused)
+    .padding(.vertical, 12)
+    .padding(.horizontal, 8)
+    .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
   }
 
   private func start() {
     busy = true
-    message = nil
+    let address = login.email.trimmingCharacters(in: .whitespaces).lowercased()
+    login.email = address
     Task {
       do {
-        try await environment.gameStation.startSignIn(
-          email: email.trimmingCharacters(in: .whitespaces).lowercased()
-        )
-        message = "Sent. The button and the code both last ten minutes."
+        try await environment.gameStation.startSignIn(email: address)
+        login.codeSent()
       } catch {
-        message = error.localizedDescription
+        login.notice = error.localizedDescription
       }
       busy = false
     }
   }
 
-  private func signIn() {
+  private func submit() {
+    guard !busy else { return }
     busy = true
-    message = nil
+    let address = login.email
+    let code = login.code
     Task {
       do {
-        try await environment.gameStation.completeSignIn(
-          email: email.trimmingCharacters(in: .whitespaces).lowercased(),
-          code: code.trimmingCharacters(in: .whitespaces)
-        )
-        message = nil
+        try await environment.gameStation.completeSignIn(email: address, code: code)
       } catch {
-        message = error.localizedDescription
+        login.codeRejected()
+        login.notice = LoginFlow.badCode
       }
       busy = false
     }

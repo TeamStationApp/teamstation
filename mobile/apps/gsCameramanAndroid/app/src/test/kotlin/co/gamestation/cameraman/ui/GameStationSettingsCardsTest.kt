@@ -85,12 +85,13 @@ class GameStationSettingsCardsTest {
             }
         }
 
-        rule.onNodeWithTag("scoreboard-account-server").assertIsDisplayed()
-        rule.onNodeWithTag("scoreboard-account-server").assert(hasSetTextAction().not())
+        rule.onNodeWithTag("scoreboard-account-server", useUnmergedTree = true).assertIsDisplayed()
+        rule.onNodeWithTag("scoreboard-account-server", useUnmergedTree = true)
+            .assert(hasSetTextAction().not())
         rule.onNodeWithText("devhost3.examplegs.test").assertIsDisplayed()
         rule.onNodeWithText("Account server").assertDoesNotExist()
-        assertPill("scoreboard-send-code", "Send Code")
-        assertPill("scoreboard-sign-in", "Sign In")
+        rule.onNodeWithText("Tap to Login").assertIsDisplayed()
+        rule.onNodeWithText("Email sign-in code").assertDoesNotExist()
 
         val login = rule.onNodeWithTag("settings-gamestation").getUnclippedBoundsInRoot()
         val board = rule.onNodeWithTag("settings-scoreboard").getUnclippedBoundsInRoot()
@@ -121,10 +122,10 @@ class GameStationSettingsCardsTest {
                 }
             }
         }
-        rule.onNodeWithText("ada@example.com").assertIsDisplayed()
-        assertPill("scoreboard-sign-out", "Sign Out")
+        rule.onNodeWithText("ada@example.com currently logged in").assertIsDisplayed()
+        rule.onNodeWithText("Logout").assertIsDisplayed()
         rule.onNodeWithText("gamestation.co").assertDoesNotExist()
-        rule.onNodeWithTag("scoreboard-account-server").assertDoesNotExist()
+        rule.onNodeWithTag("scoreboard-account-server", useUnmergedTree = true).assertDoesNotExist()
     }
 
     private fun assertPill(tag: String, label: String) {

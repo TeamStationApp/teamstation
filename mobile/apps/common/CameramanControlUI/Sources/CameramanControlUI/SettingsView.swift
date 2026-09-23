@@ -19,9 +19,10 @@ struct SettingsView<Model: CameraControlling>: View {
   @State private var showingTestThermal = false
   @State private var v1Server = ""
   @State private var v1EventId = ""
-  @State private var scoreboardEmail = ""
-  @State private var scoreboardCode = ""
+  @State private var login = LoginFlow()
+  @State private var loginOpen = false
   @State private var didLoadScoreboard = false
+  @FocusState private var loginFocused: Bool
 
   var body: some View {
     NavigationStack {
@@ -67,6 +68,7 @@ struct SettingsView<Model: CameraControlling>: View {
           .padding(.horizontal, 12)
           .padding(.bottom, 80)
         }
+        .simultaneousGesture(TapGesture().onEnded { login.tapElsewhere() })
       }
       .background(Color(uiColor: .systemGroupedBackground))
       .navigationTitle("Camera")
@@ -112,6 +114,11 @@ struct SettingsView<Model: CameraControlling>: View {
         Button("Cancel", role: .cancel) {}
       }
     }
+    .overlay {
+      if loginOpen, let board = model as? any ScoreboardControlling, !board.scoreboard.signedIn {
+        cameramanLoginModal(board)
+      }
+    }
     .onAppear {
       draftName = model.name
       draftSettings = model.settings
@@ -123,58 +130,154 @@ struct SettingsView<Model: CameraControlling>: View {
   @ViewBuilder
   private var gameStationSection: some View {
     if let board = model as? any ScoreboardControlling {
-      settingsCard("GameStation") {
-        if board.scoreboard.accountHost != ScoreboardTarget.productionAccountHost {
-          Text(board.scoreboard.accountHost)
-            .font(.footnote)
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
-            .accessibilityIdentifier("scoreboard-account-server")
-        }
-        if board.scoreboard.signedIn {
-          Text(board.scoreboard.accountLabel)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 16)
-            .padding(.top, 10)
-            .accessibilityIdentifier("scoreboard-account")
-          pillButton("Sign Out", tag: "scoreboard-sign-out") {
-            board.signOutScoreboard()
+      VStack(alignment: .leading, spacing: 8) {
+        settingsCard(board.scoreboard.signedIn ? "Gamestation account" : "Log in to Gamestation") {
+          if LoginFlow.showsDevelopmentHost(board.scoreboard.accountHost) {
+            Text(board.scoreboard.accountHost)
+              .font(.footnote)
+              .foregroundStyle(.secondary)
+              .frame(maxWidth: .infinity, alignment: .leading)
+              .padding(.horizontal, 16)
+              .padding(.top, 8)
+              .accessibilityIdentifier("scoreboard-account-server")
           }
-        } else {
-          cardRow {
-            TextField("Email", text: $scoreboardEmail)
-              .textInputAutocapitalization(.never)
-              .keyboardType(.emailAddress)
-              .autocorrectionDisabled()
-              .accessibilityIdentifier("scoreboard-email")
-          }
-          pillButton("Send Code", tag: "scoreboard-send-code") {
-            board.sendScoreboardCode(email: scoreboardEmail)
-          }
-          if board.scoreboard.awaitingCode {
-            cardRow {
-              TextField("Code", text: $scoreboardCode)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .accessibilityIdentifier("scoreboard-code")
+          if board.scoreboard.signedIn {
+            HStack {
+              Text(LoginFlow.loggedInLine(board.scoreboard.accountLabel))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .onTapGesture { login.tapElsewhere() }
+                .accessibilityIdentifier("scoreboard-account")
+              if login.logoutArmed {
+                Text("Slide to log out")
+                  .font(.body.weight(.semibold))
+                  .foregroundStyle(.red)
+                  .gesture(
+                    DragGesture(minimumDistance: 8).onEnded { value in
+                      if login.slide(translation: value.translation.width) {
+                        board.signOutScoreboard()
+                      }
+                    }
+                  )
+                  .accessibilityIdentifier("gamestation-slide-logout")
+              } else {
+                Button("Logout") { login.armLogout() }
+                  .font(.body.weight(.semibold))
+                  .foregroundStyle(.red)
+                  .accessibilityIdentifier("scoreboard-sign-out")
+              }
             }
-            pillButton("Sign In", tag: "scoreboard-sign-in") {
-              board.verifyScoreboardCode(email: scoreboardEmail, code: scoreboardCode)
-            }
-          }
-        }
-        if !board.scoreboard.status.isEmpty && !Self.isRouteStatus(board.scoreboard.status) {
-          Text(board.scoreboard.status)
-            .font(.footnote)
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 16)
-            .padding(.bottom, 8)
-            .accessibilityIdentifier("scoreboard-account-status")
+            .padding(.vertical, 14)
+          } else {
+            Button {
+              login.cancel()
+              loginOpen = true
+            } label: {
+              Text("Tap to Login")
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("scoreboard-login-row")
+          }
         }
       }
+      .onChange(of: board.scoreboard.awaitingCode) { _, waiting in
+        if waiting { login.codeSent() }
+      }
+      .onChange(of: board.scoreboard.status) { _, status in
+        if login.step == .code && (status.contains("wrong") || status.contains("expired")) {
+          login.codeRejected()
+        }
+      }
+      .onChange(of: board.scoreboard.signedIn) { _, signedIn in
+        if signedIn { loginOpen = false }
+      }
+    }
+  }
+
+  private func cameramanLoginModal(_ board: any ScoreboardControlling) -> some View {
+    GeometryReader { geo in
+      ZStack {
+        Color.black.opacity(0.92).ignoresSafeArea()
+        VStack(spacing: 20) {
+          Text("GameStation")
+            .font(.largeTitle.weight(.bold))
+            .foregroundStyle(Color(red: 0.50, green: 0.85, blue: 0.61))
+            .accessibilityIdentifier("gamestation-logo")
+          if login.fieldIsCode {
+            Text(login.notice ?? LoginFlow.checkEmail)
+              .font(.subheadline)
+              .foregroundStyle(.secondary)
+          } else if !board.scoreboard.status.isEmpty && !Self.isRouteStatus(board.scoreboard.status) {
+            Text(board.scoreboard.status)
+              .font(.subheadline)
+              .foregroundStyle(.secondary)
+              .accessibilityIdentifier("scoreboard-account-status")
+          }
+          Group {
+            if login.fieldIsCode {
+              TextField(
+                "123456",
+                text: Binding(
+                  get: { login.code },
+                  set: { raw in
+                    // The binding's set runs before `code` changes. `onChange`
+                    // would see the digits already stored and never submit.
+                    if login.replaceCode(raw) {
+                      board.verifyScoreboardCode(email: login.email, code: login.code)
+                    }
+                  }
+                )
+              )
+              .keyboardType(.numberPad)
+              .accessibilityIdentifier("scoreboard-code")
+            } else {
+              TextField("email", text: $login.email)
+                .keyboardType(.emailAddress)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .accessibilityIdentifier("scoreboard-email")
+            }
+          }
+          .multilineTextAlignment(.center)
+          .focused($loginFocused)
+          .frame(width: geo.size.width / 2)
+          .padding(.vertical, 12)
+          .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+          Button(login.buttonLabel) {
+            if login.fieldIsCode {
+              guard login.code.count == LoginFlow.codeLength else { return }
+              board.verifyScoreboardCode(email: login.email, code: login.code)
+            } else {
+              board.sendScoreboardCode(email: login.email)
+            }
+          }
+          .disabled(login.fieldIsCode && login.code.count < LoginFlow.codeLength)
+          .buttonStyle(.plain)
+          .font(.body.weight(.semibold))
+          .foregroundStyle(Color(red: 0.07, green: 0.14, blue: 0.09))
+          .padding(.horizontal, 18)
+          .padding(.vertical, 10)
+          .background(Color(red: 0.50, green: 0.85, blue: 0.61), in: Capsule())
+          .accessibilityIdentifier(login.fieldIsCode ? "scoreboard-verify" : "scoreboard-send-code")
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+      }
+      .overlay(alignment: .topTrailing) {
+        Button("Cancel") {
+          login.cancel()
+          loginOpen = false
+        }
+        .font(.body.weight(.semibold))
+        .foregroundStyle(.red)
+        .padding()
+        .accessibilityIdentifier("gamestation-cancel")
+      }
+      .onAppear { loginFocused = true }
+      .onChange(of: login.step) { _, _ in loginFocused = true }
     }
   }
 
