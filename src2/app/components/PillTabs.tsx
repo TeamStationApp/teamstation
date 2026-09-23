@@ -6,6 +6,7 @@ import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 export interface PillTab<Id extends string = string> {
   id: Id
   label: string
+  role?: 'tab' | 'button'
   /** Shown after the label, e.g. a count of videos. */
   badge?: string
 }
@@ -61,8 +62,10 @@ export function PillTabs<Id extends string = string>(
         return (
           <Pressable
             key={tab.id}
-            accessibilityRole="tab"
-            accessibilityState={{ selected: isSelected }}
+            accessibilityRole={tab.role ?? 'tab'}
+            accessibilityState={
+              tab.role === 'button' ? undefined : { selected: isSelected }
+            }
             accessibilityLabel={tab.label}
             onPress={() => {
               onSelect(tab.id)

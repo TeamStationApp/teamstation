@@ -1,0 +1,12 @@
+[
+  "src2/app/scoring/**/*.ts",
+  "src2/app/scoring/**/*.tsx",
+  "src2/app/App.tsx",
+  "src2/app/screens/GameScreen.tsx",
+  "src2/app/navigation/routes.ts",
+  "src2/app/navigation/useAddressBar.ts",
+  "src2/app/components/AppNav.tsx",
+  "src2/app/components/PillTabs.tsx",
+  "src2/app/field/BaseballScreen.tsx",
+  "src2/app/web/index.tsx"
+]

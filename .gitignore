@@ -44,4 +44,6 @@ android/local.properties
 # Metro
 .metro-cache/
 android/app/.cxx/
+
+# Test coverage reports:
 coverage/

@@ -28,6 +28,7 @@ import {
   showRoute,
   useBrowserBack
 } from './navigation/useAddressBar'
+import { ScoringScreen } from './scoring/ScoringScreen'
 import { AccountScreen } from './screens/AccountScreen'
 import { GameScreen } from './screens/GameScreen'
 import { GamesFeedScreen } from './screens/GamesFeedScreen'
@@ -74,6 +75,7 @@ export interface AppProps {
 
 /** A screen pushed on top of a tab, rather than one of the tabs itself. */
 type Pushed =
+  | { name: 'scoreGame'; gameId: string }
   | { name: 'season'; season: SeasonSummary; tab?: string; when?: When }
   | { name: 'team'; team: TeamSummary; tab?: string }
   | {
@@ -225,10 +227,10 @@ function Shell(props: AppProps): React.ReactElement {
   // to a game opens that game rather than the screen behind it.
   const [stacks, setStacks] = useState<Record<NavTabId, Pushed[]>>(() => {
     const opened = stackFor(currentRoute())
-    return { home: [], videos: [], schedule: [], field: [], ...opened }
+    return { home: [], videos: [], schedule: [], ...opened }
   })
 
-  const needsSession = props.fieldPreview !== true && tab !== 'field'
+  const needsSession = props.fieldPreview !== true
 
   // The session lives in an `HttpOnly` cookie this code cannot read, so the
   // only way to know is to ask.
@@ -510,7 +512,7 @@ function Shell(props: AppProps): React.ReactElement {
     push({ name: 'season', season })
   }
 
-  if (session == null && tab !== 'field') {
+  if (session == null && props.fieldPreview !== true) {
     // The sign-in screen must not be drawn until the question is answered: a
     // flash of it is how a link to a game becomes a link to the sign-in
     // screen. The mark and a spinner rather than a blank page, because on a
@@ -544,13 +546,7 @@ function Shell(props: AppProps): React.ReactElement {
     return (
       <View style={styles.app}>
         <AppHeader
-          title={
-            props.fieldPreview === true
-              ? 'Preview'
-              : route.name === 'join'
-                ? lstrings.join_header
-                : 'Sign in'
-          }
+          title={route.name === 'join' ? lstrings.join_header : 'Sign in'}
           showMark
           nav={
             isWide ? (
@@ -558,14 +554,7 @@ function Shell(props: AppProps): React.ReactElement {
             ) : undefined
           }
         />
-        {props.fieldPreview === true ? (
-          <View style={styles.booting}>
-            <Text style={styles.bootMessage}>
-              This preview runs without a server. Open the baseball tab to
-              explore the field.
-            </Text>
-          </View>
-        ) : route.name === 'join' ? (
+        {route.name === 'join' ? (
           <JoinScreen
             client={client}
             code={route.code}
@@ -606,7 +595,7 @@ function Shell(props: AppProps): React.ReactElement {
   }
 
   const body =
-    tab === 'field' && top == null ? (
+    props.fieldPreview === true ? (
       <BaseballScreen
         onExit={() => {
           selectTab('home')
@@ -643,7 +632,7 @@ function Shell(props: AppProps): React.ReactElement {
         onSignOut={() => {
           client.signOut().catch(() => undefined)
           rememberSession(undefined)
-          setStacks({ home: [], videos: [], schedule: [], field: [] })
+          setStacks({ home: [], videos: [], schedule: [] })
           setTab('home')
         }}
       />
@@ -724,10 +713,22 @@ function Shell(props: AppProps): React.ReactElement {
           })
         }}
       />
+    ) : top.name === 'scoreGame' ? (
+      <ScoringScreen
+        client={client}
+        gameId={top.gameId}
+        onExit={() => {
+          inPlace.current = true
+          goToRoute({ name: 'game', gameId: top.gameId })
+        }}
+      />
     ) : top.name === 'game' ? (
       <GameScreen
         client={client}
         gameId={top.gameId}
+        onScoreGame={() => {
+          push({ name: 'scoreGame', gameId: top.gameId })
+        }}
         onOpenPlayer={openPlayer}
         onOpenTeam={team => {
           push({ name: 'team', team })
@@ -848,7 +849,8 @@ function Shell(props: AppProps): React.ReactElement {
   // crossed the boundary and unmount everything below it — the `<video>`
   // element with it, which is what used to stop playback dead mid-drag. Keyed,
   // the pane is matched to the pane and nothing below it notices.
-  const immersiveField = tab === 'field' && top == null
+  const immersiveField =
+    props.fieldPreview === true || top?.name === 'scoreGame'
 
   return (
     <GestureHandlerRootView style={styles.root}>
@@ -890,6 +892,7 @@ export /**
  */
 function stackFor(route: Route): Partial<Record<NavTabId, Pushed[]>> {
   const tab = tabOf(route)
+  if (route.name === 'scoreGame') return { [tab]: [route] }
   if (route.name === 'game') {
     return {
       [tab]: [
@@ -947,7 +950,6 @@ function whenOf(route: Route): 'upcoming' | 'past' | 'all' | undefined {
 
 /** Which tab an address belongs to. */
 function tabOf(route: Route): NavTabId {
-  if (route.name === 'field') return 'field'
   if (route.name === 'videos') return 'videos'
   if (route.name === 'schedule') return 'schedule'
   return 'home'
@@ -956,6 +958,7 @@ function tabOf(route: Route): NavTabId {
 /** The address of wherever the app currently is. */
 function routeOf(tab: NavTabId, top: Pushed | undefined, when?: When): Route {
   if (top != null) {
+    if (top.name === 'scoreGame') return top
     if (top.name === 'team') {
       return { name: 'team', teamId: top.team.id, tab: top.tab }
     }
@@ -996,7 +999,6 @@ function routeOf(tab: NavTabId, top: Pushed | undefined, when?: When): Route {
       zoom: top.zoom
     }
   }
-  if (tab === 'field') return { name: 'field' }
   if (tab === 'videos') return { name: 'videos', when: when ?? 'past' }
   if (tab === 'schedule') return { name: 'schedule', when: when ?? 'past' }
   return { name: 'home' }
@@ -1021,7 +1023,6 @@ function titleFor(tab: NavTabId, top: Pushed | undefined): string | undefined {
     }
     return undefined
   }
-  if (tab === 'field') return 'Field lab'
   if (tab === 'home') return 'Your Home'
   return undefined
 }
