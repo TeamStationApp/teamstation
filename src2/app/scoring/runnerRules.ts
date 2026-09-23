@@ -130,6 +130,8 @@ export function recordRunner(
     origin: movement.from,
     destination: movement.to,
     reason,
+    pitchReference:
+      state.moreDraft == null ? undefined : (state.recentPitch ?? undefined),
     isOut: out,
     forceOut: out && movement.force,
     runScored: !out && movement.to === 4,
@@ -196,6 +198,19 @@ export function prepareHit(state: ScoringState): void {
   }
   state.session.liveData.linescore.teams[battingSide(state.session)].hits++
 }
+export function applyAwardMovements(state: ScoringState, reason: string): void {
+  const pending = state.pendingPlay!
+  rebuildQueue(state)
+  for (const key of baseKeys)
+    state.session.liveData.linescore.offense[key] = null
+  for (const movement of pending.movements) {
+    if (movement.to < 4) {
+      setBase(state, movement.playerId, movement.to)
+      recordRunner(state, movement, reason)
+    }
+    runMotion(state, movement)
+  }
+}
 export function prepareTerminalPitch(state: ScoringState): void {
   const pending = state.pendingPlay!
   if (pending.outcome === 'Walk') {
@@ -240,7 +255,9 @@ function commitChoiceIfResolved(state: ScoringState): void {
   if (
     pending == null ||
     pending.choiceApplied === true ||
-    !["Fielder's Choice", 'Error'].includes(pending.outcome) ||
+    !["Fielder's Choice", 'Error', 'Dropped Third Strike'].includes(
+      pending.outcome
+    ) ||
     state.session.liveData.linescore.outs >= 3 ||
     pending.movements.some(move => move.to < 4 && move.decision === 'pending')
   )
@@ -298,6 +315,14 @@ export function settleRunners(state: ScoringState): void {
     state.phase = 'runnerMovement'
     return
   }
+  if (pending?.sameAppearance === true) {
+    state.pendingPlay = null
+    state.runnerAction = null
+    state.correctionWindow = null
+    if (state.session.liveData.linescore.outs >= 3) finishBetween(state)
+    else state.phase = 'ready'
+    return
+  }
   if (state.runnerAction?.origin === 'between') {
     finishBetween(state)
     return
@@ -316,7 +341,11 @@ export function settleRunners(state: ScoringState): void {
 export function prepareBatterResult(state: ScoringState): void {
   const pending = state.pendingPlay!
   const batter = state.session.liveData.plays.currentPlay!.matchup.batter.id
-  if (pending.outcome === "Fielder's Choice" || pending.outcome === 'Error') {
+  if (
+    pending.outcome === "Fielder's Choice" ||
+    pending.outcome === 'Error' ||
+    pending.outcome === 'Dropped Third Strike'
+  ) {
     pending.movements = pending.originalBases
       .map((id, index) => ({ id, from: index + 1 }))
       .filter((row): row is { id: number; from: number } => row.id != null)
@@ -477,6 +506,7 @@ function validDefender(
   )
 }
 export function runnerReasons(state: ScoringState): string[] {
+  if (state.moreDraft != null) return [state.moreDraft.action]
   const action = state.runnerAction
   if (action?.decision === 'safe') return ADVANCE_SAFE_REASONS
   return action?.from === action?.to
@@ -528,7 +558,9 @@ function commitSafe(state: ScoringState): void {
   }
   const choice =
     pending != null &&
-    (pending.outcome === "Fielder's Choice" || pending.outcome === 'Error') &&
+    (pending.outcome === "Fielder's Choice" ||
+      pending.outcome === 'Error' ||
+      pending.outcome === 'Dropped Third Strike') &&
     action.returnPhase === 'resolveBatter'
   if (choice) {
     const old = pending.movements.find(

@@ -1,4 +1,5 @@
 import type { GroundPoint } from '../field/fieldModel'
+import type { MoreAction, MoreInput } from './moreActions'
 import type { PlayerIdentityMap } from './playerIdentity'
 import type { Outcome, PlayerRef, ScoringPlay } from './scoringContract'
 import type { OverrideDraft } from './scoringEdits'
@@ -96,7 +97,15 @@ export interface Movement {
 export interface PendingPlay {
   choiceApplied?: boolean
   originalRunnerRecordCount?: number
-  outcome: Outcome | 'Walk' | 'Strikeout'
+  outcome:
+    | Outcome
+    | 'Walk'
+    | 'Strikeout'
+    | 'Balk'
+    | 'Batter Out — Other'
+    | 'Dropped Third Strike'
+    | 'Manual placement'
+  sameAppearance?: boolean
   originalBases: Array<number | null>
   originalRuns: number
   originalOuts: number
@@ -131,6 +140,13 @@ export interface CorrectionWindow {
   revision: number
 }
 export interface ScoringSnapshot {
+  recentPitch?: { atBatIndex: number; index: number } | null
+  moreDraft?: {
+    action: MoreAction
+    checkpoint: ScoringSnapshot
+    historyLength: number
+  }
+
   activeGesture?: boolean
   runnerDraft?: { checkpoint: ScoringSnapshot; historyLength: number }
 
@@ -156,6 +172,7 @@ export interface ScoringState extends ScoringSnapshot {
   past: HistoryEntry[]
 }
 export type ScoringEvent =
+  | { type: 'MORE'; input: MoreInput }
   | { type: 'GESTURE'; active: boolean }
   | { type: 'MOTION_DONE'; id: string; generation: number }
   | {

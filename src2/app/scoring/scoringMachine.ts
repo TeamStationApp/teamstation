@@ -1,4 +1,5 @@
 import { acceptTrajectory, chooseOutcome, placeFielder } from './battedBall'
+import { moreReducer } from './moreActions'
 import { prepareTerminalPitch, runnerReducer } from './runnerRules'
 import { asScoringPlay } from './scoringContract'
 import { applyOverrideDraft, applyRosterDraft } from './scoringEdits'
@@ -78,6 +79,7 @@ export function nextHalf(state: ScoringState): void {
   state.pendingPlay = null
   state.homeQueue = []
   state.generation++
+  state.recentPitch = null
   state.awaitingBatter = startAppearance(state.session)
   state.phase = state.awaitingBatter == null ? 'ready' : 'awaitingBatter'
 }
@@ -110,7 +112,7 @@ function closePlay(state: ScoringState): ScoringState {
   return next
 }
 function cancelRunnerDraft(state: ScoringState): ScoringState {
-  const draft = state.runnerDraft
+  const draft = state.runnerDraft ?? state.moreDraft
   if (draft == null) return state
   const restored: ScoringState = {
     ...copyState(draft.checkpoint),
@@ -130,10 +132,17 @@ function runnerTransition(
   if (event.type === 'RUNNER_PROPOSE')
     return {
       ...result,
-      runnerDraft: state.runnerDraft ?? {
-        checkpoint: { ...snapshotOf(state), activeGesture: false },
-        historyLength: state.past.length
-      }
+      runnerDraft:
+        state.runnerDraft ??
+        (state.moreDraft != null
+          ? {
+              checkpoint: state.moreDraft.checkpoint,
+              historyLength: state.moreDraft.historyLength
+            }
+          : {
+              checkpoint: { ...snapshotOf(state), activeGesture: false },
+              historyLength: state.past.length
+            })
     }
   const draft = state.runnerDraft
   if (draft == null) return result
@@ -155,6 +164,7 @@ function runnerTransition(
   const label =
     state.runnerAction?.reason ?? result.past.at(-1)?.label ?? 'Runner movement'
   delete result.runnerDraft
+  delete result.moreDraft
   result.past = [
     ...state.past.slice(0, draft.historyLength),
     { label, snapshot: copyState(draft.checkpoint) }
@@ -171,6 +181,7 @@ export function scoringReducer(
   state: ScoringState,
   event: ScoringEvent
 ): ScoringState {
+  if (event.type === 'MORE') return moreReducer(state, event)
   if (event.type === 'GESTURE')
     return state.activeGesture === event.active
       ? state
@@ -178,7 +189,8 @@ export function scoringReducer(
   if (
     event.type === 'RUNNER_CANCEL' ||
     event.type === 'CANCEL_RUNNER' ||
-    (event.type === 'UNDO' && state.runnerDraft != null)
+    (event.type === 'UNDO' &&
+      (state.runnerDraft != null || state.moreDraft != null))
   )
     return cancelRunnerDraft(state)
   if (
@@ -236,10 +248,15 @@ export function scoringReducer(
       to: event.to
     })
     if (proposed == null || proposed === state) return state
-    const decided = scoringReducer(proposed, {
+    let decided = scoringReducer(proposed, {
       type: 'RUNNER_DECIDE',
       decision: event.decision
     })
+    if (decided.phase === 'runnerReason' && decided.moreDraft != null)
+      decided = scoringReducer(decided, {
+        type: 'RUNNER_REASON',
+        reason: decided.moreDraft.action
+      })
     return decided.phase === 'runnerDecision'
       ? cancelRunnerDraft(decided)
       : decided
@@ -252,7 +269,10 @@ export function scoringReducer(
   if (event.type === 'TRAJECTORY')
     return acceptTrajectory(state, event.angle, event.generation)
   if (event.type === 'ROSTER' || event.type === 'OVERRIDE') {
-    if (state.phase !== 'ready' && state.phase !== 'awaitingBatter')
+    if (
+      state.moreDraft != null ||
+      (state.phase !== 'ready' && state.phase !== 'awaitingBatter')
+    )
       return state
     const result =
       event.type === 'ROSTER'
@@ -263,6 +283,7 @@ export function scoringReducer(
       state,
       event.type === 'ROSTER' ? 'Set team roster' : 'Override game state',
       next => {
+        next.recentPitch = null
         next.session = result.session!
         next.phase = 'ready'
         next.awaitingBatter = null
@@ -286,7 +307,7 @@ export function scoringReducer(
     return closePlay(state)
   }
   if (event.type === 'END_HALF')
-    return state.phase !== 'ready'
+    return state.phase !== 'ready' || state.moreDraft != null
       ? state
       : accepted(state, 'End half inning', nextHalf)
   if (state.phase !== 'ready') return state
@@ -306,7 +327,7 @@ export function scoringReducer(
       }
     )
   }
-  if (event.type !== 'PITCH') return state
+  if (event.type !== 'PITCH' || state.moreDraft != null) return state
   const labels = {
     ball: 'Ball',
     called: 'Called Strike',
@@ -334,6 +355,13 @@ export function scoringReducer(
       count: before,
       player: play.matchup.pitcher
     })
+    next.recentPitch =
+      event.kind === 'foul'
+        ? null
+        : {
+            atBatIndex: play.about.atBatIndex,
+            index: play.playEvents.length - 1
+          }
     if (event.kind === 'ball') line.balls++
     else if (event.kind !== 'foul' || line.strikes < 2) line.strikes++
     if (line.balls >= 4 || line.strikes >= 3) {

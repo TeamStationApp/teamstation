@@ -30,8 +30,14 @@ export function chooseOutcome(
   state: ScoringState,
   outcome: Outcome
 ): ScoringState {
-  if (state.phase !== 'ready' || !(outcome in outcomeEvents)) return state
+  if (
+    state.phase !== 'ready' ||
+    state.moreDraft != null ||
+    !(outcome in outcomeEvents)
+  )
+    return state
   return accepted(state, outcome, next => {
+    next.recentPitch = null
     const session = next.session
     const line = session.liveData.linescore
     const play = session.liveData.plays.currentPlay!

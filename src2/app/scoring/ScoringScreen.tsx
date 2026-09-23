@@ -14,6 +14,7 @@ import type { FieldPlayer } from '../field/fieldModel'
 import { useFieldSurface } from '../field/useFieldSurface'
 import { useTheme } from '../theme/ThemeContext'
 import { allowedAngle, trajectoryLabel } from './battedBall'
+import { MoreMenu } from './MoreMenu'
 import { OutcomePicker } from './OutcomePicker'
 import { OverridesEditor } from './OverridesEditor'
 import { RosterEditor } from './RosterEditor'
@@ -134,6 +135,7 @@ function ScoringSession(props: {
   )
   const [gestureActive, setGestureActive] = useState(false)
   const [outcomeMenu, setOutcomeMenu] = useState(false)
+  const [moreOpen, setMoreOpen] = useState(false)
   const [angle, setAngle] = useState(45)
   const [menu, setMenu] = useState(false)
   const [sheet, setSheet] = useState<
@@ -171,7 +173,7 @@ function ScoringSession(props: {
   const [saveFailed, setSaveFailed] = useState(false)
   const pauseClock = useScoringClock(
     state,
-    menu || sheet != null || outcomeMenu || gestureActive,
+    menu || sheet != null || outcomeMenu || moreOpen || gestureActive,
     dispatch
   )
   const setGesture = useCallback(
@@ -326,7 +328,7 @@ function ScoringSession(props: {
           generation: state.generation,
           runnerIds,
           selectableIds:
-            menu || sheet != null || outcomeMenu
+            menu || sheet != null || outcomeMenu || moreOpen
               ? []
               : ['locateFielder', 'chooseThrower', 'chooseDefender'].includes(
                     state.phase
@@ -341,7 +343,7 @@ function ScoringSession(props: {
                       : [])
                   ],
           gestures:
-            menu || sheet != null || outcomeMenu
+            menu || sheet != null || outcomeMenu || moreOpen
               ? []
               : state.phase === 'trajectory'
                 ? ['trajectory']
@@ -411,9 +413,35 @@ function ScoringSession(props: {
             }
           : undefined
       }
+      moreControl={
+        <MoreMenu
+          state={state}
+          disabled={
+            menu ||
+            sheet != null ||
+            outcomeMenu ||
+            state.phase !== 'ready' ||
+            state.moreDraft != null
+          }
+          onActive={active => {
+            if (active) pauseClock()
+            setMoreOpen(active)
+          }}
+          onChoose={input => {
+            setHint(false)
+            dispatch({ type: 'MORE', input })
+          }}
+        />
+      }
       ballInPlayControl={
         <OutcomePicker
-          disabled={state.phase !== 'ready' || menu || sheet != null}
+          disabled={
+            state.phase !== 'ready' ||
+            menu ||
+            sheet != null ||
+            moreOpen ||
+            state.moreDraft != null
+          }
           onActive={setOutcomeMenu}
           onChoose={outcome => {
             setHint(false)
@@ -435,11 +463,13 @@ function ScoringSession(props: {
       }}
       historyLabel={state.past.at(-1)?.label}
       instruction={
-        instruction == null
-          ? state.phase === 'awaitingBatter'
-            ? 'Next batter is on base. Update lineup to continue.'
-            : undefined
-          : `${instruction}${state.phase === 'trajectory' ? ` ${angle}° ${trajectoryLabel(angle)}` : ''}`
+        state.moreDraft != null
+          ? `Drag a runner for ${state.moreDraft.action}`
+          : instruction == null
+            ? state.phase === 'awaitingBatter'
+              ? 'Next batter is on base. Update lineup to continue.'
+              : undefined
+            : `${instruction}${state.phase === 'trajectory' ? ` ${angle}° ${trajectoryLabel(angle)}` : ''}`
       }
       remainingMs={
         state.phase === 'correctionWindow'
@@ -455,7 +485,8 @@ function ScoringSession(props: {
         !state.motions.some(motion => !motion.complete)
       }
       onFinish={() => {
-        if (gestureActive || menu || sheet != null || outcomeMenu) return
+        if (gestureActive || menu || sheet != null || outcomeMenu || moreOpen)
+          return
         dispatch({
           type: 'CLOSE_PLAY',
           generation: state.generation,
@@ -465,12 +496,29 @@ function ScoringSession(props: {
       }}
       onCameraGesture={setGesture}
       canPitch={
-        state.phase === 'ready' && !menu && sheet == null && !outcomeMenu
+        state.phase === 'ready' &&
+        !menu &&
+        sheet == null &&
+        !outcomeMenu &&
+        !moreOpen &&
+        state.moreDraft == null
       }
       summary={summary}
       accessibilitySummary={`${summary} · Batter ${line.offense.batter?.fullName ?? 'waiting'} ${session.liveData.plays.currentPlay?.matchup.batSide.code === 'L' ? 'left handed' : 'right handed'} · Pitcher ${line.defense.P?.fullName ?? 'unassigned'}`}
     >
       <RunnerDragTargets view={runnerDrag} />
+      {state.moreDraft != null && state.runnerDraft == null && (
+        <View
+          style={{ position: 'absolute', bottom: 130, alignSelf: 'center' }}
+        >
+          <ScoringButton
+            label="Cancel"
+            onPress={() => {
+              dispatch({ type: 'RUNNER_CANCEL' })
+            }}
+          />
+        </View>
+      )}
       {!menu && sheet == null && (
         <RunnerControls state={state} anchor={null} dispatch={dispatch} />
       )}

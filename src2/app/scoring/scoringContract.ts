@@ -18,3 +18,16 @@ export const outcomeEvents = {
   'Batter Interference': 'field_out'
 } as const
 export type Outcome = keyof typeof outcomeEvents
+
+export const moreEvents = {
+  'Wild Pitch': 'wild_pitch',
+  'Passed Ball': 'passed_ball',
+  Balk: 'balk',
+  'Put Batter on Base': 'manual_placement',
+  'Batter Out — Other': 'field_out',
+  'Place a Runner (Tiebreaker)': 'placed_runner',
+  'Hit by Pitch': 'hit_by_pitch',
+  'Intentional Walk': 'intent_walk',
+  "Catcher's Interference": 'catcher_interf',
+  'Strike Three, Not Caught': 'strikeout'
+} as const
