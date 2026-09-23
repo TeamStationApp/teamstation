@@ -1,3 +1,4 @@
+import { pitchingHand } from '../field/athletePose'
 import { BALL_CONTACT, type BallArcState } from '../field/ballArcModel'
 import { BASES, type FieldPlayer, type GroundPoint } from '../field/fieldModel'
 import { fieldPlayersFor } from './fieldAdapter'
@@ -25,11 +26,11 @@ export interface PitchSequence {
   glove: Point3
 }
 export const PITCH_TIMING = {
-  release: 300,
-  plate: 700,
-  catch: 860,
-  finish: 1000,
-  foulFinish: 1400
+  release: 650,
+  plate: 1050,
+  catch: 1220,
+  finish: 1500,
+  foulFinish: 1750
 } as const
 export function pitchPresentation(
   state: ScoringState,
@@ -57,11 +58,12 @@ export function pitchPresentation(
     batter: play.matchup.batter.id,
     batSide: play.matchup.batSide.code,
     throwSide,
-    from: {
-      ...location(pitcher),
-      x: location(pitcher).x + (throwSide === 'R' ? 1.7 : -1.7),
-      y: 7
-    },
+    from: pitchingHand(
+      location(pitcher),
+      PITCH_TIMING.release,
+      PITCH_TIMING.release,
+      throwSide
+    ),
     plate: { x: 0, y: BALL_CONTACT, z: 0 },
     glove: { ...location(catcher), y: 5.2 }
   }

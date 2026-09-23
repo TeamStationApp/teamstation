@@ -6,10 +6,13 @@ import type { Mesh, MeshBasicMaterial } from 'three'
 import { scoringAudio } from '../scoring/scoringAudio'
 import {
   outBatterPoint,
+  PITCH_TIMING,
   presentationRuntime,
   type PresentationSequence,
   stepPresentation
 } from '../scoring/scoringPresentation'
+import { battingPose, pitchingPose } from './athletePose'
+import { BALL_CONTACT } from './ballArcModel'
 import type { FieldPlayer } from './fieldModel'
 import { sampleHit, samplePitch, sampleThrow } from './playAnimationModel'
 export function PlayAnimation({
@@ -90,6 +93,31 @@ export function PlayAnimation({
             ? sample.catch
             : 0,
         throwSide: sequence.kind === 'pitch' ? sequence.throwSide : 'R'
+      }
+      if (sequence.kind === 'pitch' && player.playerId === sequence.pitcher)
+        player.pose.athlete = pitchingPose(
+          runtime.current.elapsedMs,
+          PITCH_TIMING.release,
+          sequence.throwSide
+        )
+      if (
+        sequence.kind !== 'throw' &&
+        player.playerId === sequence.batter &&
+        (sequence.kind === 'hit'
+          ? runtime.current.elapsedMs <= sequence.contactMs + 300
+          : sequence.pitch === 'swing' || sequence.pitch === 'foul')
+      ) {
+        const origin = sequence.players.find(
+          p => p.playerId === sequence.batter
+        )!.position
+        player.pose.athlete = battingPose(
+          runtime.current.elapsedMs,
+          sequence.kind === 'pitch' ? PITCH_TIMING.plate : sequence.contactMs,
+          sequence.batSide,
+          origin,
+          { x: 0, y: BALL_CONTACT, z: 0 },
+          sequence.kind === 'pitch' && sequence.pitch === 'swing'
+        )
       }
       if (
         sequence.kind === 'hit' &&
