@@ -35,7 +35,7 @@ describe('rendered field interaction', function () {
           captured = false
         }
       }
-      const ray = new Ray(new Vector3(-10, 100, -70), new Vector3(0, -1, 0))
+      const ray = new Ray(new Vector3(-15, 100, -41), new Vector3(0, -1, 0))
       const event = {
         button: 0,
         pointerId: 7,
@@ -60,7 +60,7 @@ describe('rendered field interaction', function () {
       expect(captured).equals(false)
       await renderer.advanceFrames(600, 1 / 60)
       expect(players[4].position).deep.equals(players[4].target)
-      ray.origin.set(-30, 100, -80)
+      ray.origin.set(players[4].position.x, 100, players[4].position.z)
       const before = { ...players[4].target }
       await renderer.fireEvent(surface, 'pointerDown', event)
       await renderer.fireEvent(surface, 'pointerCancel', event)

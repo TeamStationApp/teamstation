@@ -109,6 +109,8 @@ async function chooseHit(page: Page, outcome: string): Promise<void> {
   await page.waitForSelector('canvas[data-field-ready="true"]')
   await page.waitForSelector('[aria-label^="Drag fielder to location"]')
   await page.focus('[role="application"]')
+  await page.keyboard.press('Space')
+  await page.keyboard.press('ArrowUp')
   await page.keyboard.press('Enter')
   await page.waitForSelector(
     '[aria-label^="Drag up and down for ball trajectory."]'
@@ -646,6 +648,79 @@ describe('scoring browser', function () {
       await page.close()
     }
   })
+  it('requires a grab and cancels constrained drags at each base with only one target pair', async function () {
+    for (const base of [1, 2, 3]) {
+      const { page } = await open('/games/g1/score')
+      try {
+        await click(page, 'Open scoring menu')
+        await click(page, 'Overrides')
+        const name = ['', 'First base', 'Second base', 'Third base'][base]
+        await click(page, name)
+        await click(page, `Choose ${name} Player 6`)
+        await click(page, 'Apply Override')
+        await click(page, 'Ball')
+        const before = await page.$eval('[aria-label^="Undo "]', node =>
+          node.getAttribute('aria-label')
+        )
+        const rect = await page.$eval('canvas', node => {
+          const r = node.getBoundingClientRect()
+          return { x: r.x, y: r.y, width: r.width, height: r.height }
+        })
+        const camera = new PerspectiveCamera()
+        applyFieldCamera(camera, {
+          width: rect.width,
+          height: rect.height,
+          view: 'home',
+          zoom: 1.25,
+          tilt: (-11 * Math.PI) / 180,
+          heightOffset: 33
+        })
+        const project = (x: number, y: number, z: number): [number, number] => {
+          const p = new Vector3(x, y, z).project(camera)
+          return [
+            rect.x + ((p.x + 1) * rect.width) / 2,
+            rect.y + ((1 - p.y) * rect.height) / 2
+          ]
+        }
+        await page.mouse.click(...project(-60, 0.7, -60))
+        expect(await page.$('[aria-label="Safe drag target"]')).equals(null)
+        const from = BASES[base]
+        const to = BASES[(base + 1) % 4]
+        await page.mouse.move(...project(from.x, 6, from.z))
+        await page.mouse.down()
+        const locations: number[] = []
+        for (const progress of [0.49, 0.51, 0.49]) {
+          await page.mouse.move(
+            ...project(
+              from.x + (to.x - from.x) * progress + (to.z - from.z) * 2,
+              0.7,
+              from.z + (to.z - from.z) * progress - (to.x - from.x) * 2
+            )
+          )
+          await page.waitForSelector('[aria-label="Safe drag target"]')
+          expect(await page.$$('[aria-label="Safe drag target"]')).has.length(1)
+          locations.push(
+            await page.$eval(
+              '[aria-label="Safe drag target"]',
+              node => node.getBoundingClientRect().y
+            )
+          )
+        }
+        expect(locations[0]).equals(locations[2])
+        expect(locations[0]).not.equals(locations[1])
+        await page.keyboard.press('Escape')
+        await page.mouse.up()
+        expect(await page.$('[aria-label="Safe drag target"]')).equals(null)
+        expect(
+          await page.$eval('[aria-label^="Undo "]', node =>
+            node.getAttribute('aria-label')
+          )
+        ).equals(before)
+      } finally {
+        await page.close()
+      }
+    }
+  })
   it('holds and advances a runner by touch on a phone, resetting the correction window', async function () {
     this.timeout(90000)
     const { page, unexpected } = await open('/games/g1/score')
@@ -696,8 +771,14 @@ describe('scoring browser', function () {
       await page.touchscreen.touchStart(...from)
       await new Promise(resolve => setTimeout(resolve, 400))
       await page.touchscreen.touchMove(to[0], to[1] + TOUCH_TARGET_LIFT)
+      await page.waitForSelector('[aria-label="Safe drag target"]')
+      const safe = await page.$eval('[aria-label="Safe drag target"]', node => {
+        const r = node.getBoundingClientRect()
+        return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
+      })
+      await page.touchscreen.touchMove(safe.x, safe.y)
       await page.touchscreen.touchEnd()
-      await click(page, 'Safe')
+      expect(await page.$('[aria-label="Safe drag target"]')).equals(null)
       await page.waitForSelector(
         '[aria-label="Time to edit play"][aria-valuenow="10"]',
         { timeout: 30000 }

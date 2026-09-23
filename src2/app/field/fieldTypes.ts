@@ -1,3 +1,4 @@
+import type { RunnerDecision, RunnerDragView } from '../scoring/runnerDrag'
 import type { ArcMode, BallArcState } from './ballArcModel'
 import type { CameraView, FieldPlayer, GroundPoint } from './fieldModel'
 import type { ScoreboardState } from './scoreboardModel'
@@ -15,6 +16,15 @@ export interface FieldPlacement {
   gestureId: number
 }
 export interface FieldCanvasProps {
+  runnerSafeError?: (id: string, to: number) => string | undefined
+  onRunnerDrag?: (view: RunnerDragView | null) => void
+  onRunnerDrop?: (
+    id: string,
+    to: number,
+    decision: RunnerDecision,
+    generation: number
+  ) => void
+
   onScoreboardBounds?: (bounds: {
     x: number
     y: number

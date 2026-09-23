@@ -1,4 +1,7 @@
+import { type RunnerDragView, runnerDragView } from '../scoring/runnerDrag'
+import { BASES, type FieldPlayer } from './fieldModel'
 import type { FieldCanvasProps } from './fieldTypes'
+const keyboardDrags = new WeakMap<FieldPlayer, RunnerDragView>()
 /** Keyboard input uses the same eligibility and accepted-placement boundary as pointers. */
 export function fieldKey(props: FieldCanvasProps, key: string): boolean {
   const policy = props.interaction
@@ -25,51 +28,100 @@ export function fieldKey(props: FieldCanvasProps, key: string): boolean {
   if (eligible.length === 0) return false
   const index = eligible.findIndex(player => player.id === props.selected)
   const player = eligible[Math.max(0, index)]
-  if (key === '[' || key === ']') {
+  const cancel = (): void => {
     if (player.keyboardOrigin != null) {
+      player.position = { ...player.keyboardOrigin }
       player.target = { ...player.keyboardOrigin }
       delete player.keyboardOrigin
-      props.onGestureActive?.(false)
     }
+    keyboardDrags.delete(player)
+    props.onRunnerDrag?.(null)
+    props.onGestureActive?.(false)
+    props.onSelect('')
+  }
+  if (key === '[' || key === ']') {
+    cancel()
     props.onSelect(
       eligible[
-        (Math.max(0, index) + (key === ']' ? 1 : eligible.length - 1)) %
-          eligible.length
+        (index < 0
+          ? key === ']'
+            ? 0
+            : eligible.length - 1
+          : index + (key === ']' ? 1 : eligible.length - 1)) % eligible.length
       ].id
     )
-  } else if (key === 'Enter') {
-    delete player.keyboardOrigin
-    if (policy?.runnerIds?.includes(player.id) === true)
-      props.onRunnerPlacement?.(
-        player.id,
-        { ...player.target },
-        { x: 0, y: 0 },
-        policy.generation
-      )
-    else props.onPlayerPlacement?.(player.id, { ...player.target })
-    props.onFieldPlacement?.({
-      entityId: player.id,
-      point: { ...player.target },
-      generation: policy?.generation ?? 0,
-      gestureId: 0
-    })
-    props.onGestureActive?.(false)
-  } else if (key === 'Escape') {
-    player.target = { ...(player.keyboardOrigin ?? player.position) }
-    delete player.keyboardOrigin
-    props.onGestureActive?.(false)
-  } else if (
-    ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(key)
-  ) {
-    player.keyboardOrigin ??= { ...player.position }
-    props.onGestureActive?.(true)
+  } else if (key === ' ' && player.keyboardOrigin == null) {
+    player.keyboardOrigin = { ...player.position }
     props.onSelect(player.id)
-    player.target = {
-      x:
-        player.target.x +
-        (key === 'ArrowLeft' ? -3 : key === 'ArrowRight' ? 3 : 0),
-      z:
-        player.target.z + (key === 'ArrowUp' ? -3 : key === 'ArrowDown' ? 3 : 0)
+    props.onGestureActive?.(true)
+  } else if (key === 'Escape') cancel()
+  else if (player.keyboardOrigin == null) return false
+  else if (key === 'Enter') {
+    if (policy?.runnerIds?.includes(player.id) === true) {
+      const view = keyboardDrags.get(player)
+      if (view?.hovered == null) {
+        cancel()
+        return true
+      }
+      props.onRunnerDrop?.(player.id, view.to, view.hovered, policy.generation)
+      cancel()
+    } else {
+      delete player.keyboardOrigin
+      props.onPlayerPlacement?.(player.id, { ...player.target })
+      props.onFieldPlacement?.({
+        entityId: player.id,
+        point: { ...player.target },
+        generation: policy?.generation ?? 0,
+        gestureId: 0
+      })
+      props.onSelect('')
+      props.onGestureActive?.(false)
+    }
+  } else if (
+    ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 's', 'o'].includes(key)
+  ) {
+    if (policy?.runnerIds?.includes(player.id) === true) {
+      const from = player.runnerBase ?? 1
+      const start = BASES[from % 4]
+      const end = BASES[(from + 1) % 4]
+      const previous = keyboardDrags.get(player)
+      const progress = Math.max(
+        0,
+        Math.min(
+          1,
+          (previous?.progress ?? 0) +
+            (key === 'ArrowRight' || key === 'ArrowUp'
+              ? 0.1
+              : key === 'ArrowLeft' || key === 'ArrowDown'
+                ? -0.1
+                : 0)
+        )
+      )
+      const view = runnerDragView(
+        player.id,
+        from,
+        {
+          x: start.x + (end.x - start.x) * progress,
+          z: start.z + (end.z - start.z) * progress
+        },
+        () => ({ x: 100, y: 150 }),
+        300,
+        300
+      )
+      view.hovered = key === 's' ? 'safe' : key === 'o' ? 'out' : undefined
+      keyboardDrags.set(player, view)
+      player.target = { ...view.point }
+      props.onRunnerDrag?.(view)
+    } else {
+      if (key === 's' || key === 'o') return false
+      player.target = {
+        x:
+          player.target.x +
+          (key === 'ArrowLeft' ? -3 : key === 'ArrowRight' ? 3 : 0),
+        z:
+          player.target.z +
+          (key === 'ArrowUp' ? -3 : key === 'ArrowDown' ? 3 : 0)
+      }
     }
   } else return false
   return true

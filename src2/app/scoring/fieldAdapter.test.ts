@@ -90,13 +90,15 @@ describe('scoring renderer identities', function () {
         button: 0,
         pointerId: 1,
         pointer: new Vector2(2, 2),
-        ray: new Ray(new Vector3(-4, 100, 0), new Vector3(0, -1, 0)),
+        ray: new Ray(new Vector3(4, 100, 0), new Vector3(0, -1, 0)),
         target: { setPointerCapture() {}, releasePointerCapture() {} }
       }
       await renderer.fireEvent(surface, 'pointerDown', event)
       await renderer.fireEvent(surface, 'pointerCancel', event)
       expect(placements).has.length(0)
       await renderer.fireEvent(surface, 'pointerDown', event)
+      event.ray.origin.x = -4
+      await renderer.fireEvent(surface, 'pointerMove', event)
       await renderer.fireEvent(surface, 'pointerUp', event)
       expect(placements).deep.equals([batter.id])
       await renderer.update(

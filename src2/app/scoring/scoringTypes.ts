@@ -161,6 +161,13 @@ export type ScoringEvent =
       revision: number
     }
   | { type: 'HOME'; decision: 'safe' | 'out' | 'back' }
+  | {
+      type: 'RUNNER_DROP'
+      id: number
+      to: number
+      decision: 'safe' | 'out'
+      generation: number
+    }
   | { type: 'RUNNER_PROPOSE'; id: number; to: number }
   | { type: 'RUNNER_DECIDE'; decision: 'safe' | 'out' }
   | { type: 'RUNNER_REASON'; reason: string }

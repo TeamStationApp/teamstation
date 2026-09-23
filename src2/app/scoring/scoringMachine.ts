@@ -149,6 +149,23 @@ export function scoringReducer(
     }
     return next.correctionWindow.remainingMs === 0 ? closePlay(next) : next
   }
+  if (event.type === 'RUNNER_DROP') {
+    if (event.generation !== state.generation) return state
+    const from = baseIds(state.session).indexOf(event.id) + 1
+    if (event.to !== from && event.to !== from + 1) return state
+    const proposed = runnerReducer(state, {
+      type: 'RUNNER_PROPOSE',
+      id: event.id,
+      to: event.to
+    })
+    if (proposed == null || proposed === state) return state
+    return (
+      runnerReducer(proposed, {
+        type: 'RUNNER_DECIDE',
+        decision: event.decision
+      }) ?? state
+    )
+  }
   const runnerResult = runnerReducer(state, event)
   if (runnerResult != null) return runnerResult
   if (event.type === 'OUTCOME') return chooseOutcome(state, event.outcome)

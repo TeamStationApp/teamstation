@@ -185,10 +185,23 @@ export function Player({
         ref={root}
         position={[player.position.x, TERRAIN.players, player.position.z]}
       >
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]}>
-          <ringGeometry args={selected ? [2.3, 2.65, 32] : [2.2, 2.5, 24]} />
-          <meshBasicMaterial color={selected ? p.selection : shirt} />
-        </mesh>
+        {selected &&
+          [0, 1, 2, 3].map(index => (
+            <mesh
+              key={index}
+              name="active-grab-ring"
+              rotation={[-Math.PI / 2, 0, 0]}
+              position={[0, 0.02 + index * 0.002, 0]}
+            >
+              <ringGeometry args={[1.3 + index, 2.3 + index, 48]} />
+              <meshBasicMaterial
+                color={p.selection}
+                transparent
+                opacity={0.15 + index * 0.2}
+                depthWrite={false}
+              />
+            </mesh>
+          ))}
         {labels.badge != null && (
           <sprite
             ref={label}

@@ -200,6 +200,24 @@ describe('local scoring sessions', function () {
       ).has.length(1)
     }
   })
+  it('accepts runner release decisions only for this generation and the next base', function () {
+    const state = pitch(initial(), 'ball', 4)
+    const drop = {
+      type: 'RUNNER_DROP' as const,
+      id: 1,
+      to: 2,
+      decision: 'safe' as const,
+      generation: state.generation
+    }
+    expect(
+      scoringReducer(state, { ...drop, generation: state.generation + 1 })
+    ).equals(state)
+    expect(scoringReducer(state, { ...drop, to: 3 })).equals(state)
+    expect(scoringReducer(state, { ...drop, id: 9876 })).equals(state)
+    const moved = scoringReducer(state, drop)
+    expect(moved).not.equals(state)
+    expect(moved.session.liveData.linescore.offense.second?.id).equals(1)
+  })
   it('guards Done by play identity, generation and timer revision and races expiry once', function () {
     const state = pitch(initial(), 'ball', 4)
     const done = {
