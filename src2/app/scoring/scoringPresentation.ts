@@ -87,7 +87,7 @@ export interface ThrowSequence {
   id: string
   generation: number
   kind: 'throw'
-  stage: 'transfer'
+  stage: 'transfer' | 'tag'
   durationMs: number
   players: FieldPlayer[]
   thrower: number
@@ -96,6 +96,10 @@ export interface ThrowSequence {
   from: Point3
   to: Point3
   unassisted: boolean
+  holderOrigin: GroundPoint
+  runnerFrom: GroundPoint
+  throwSide: 'R' | 'L'
+  heading: number
 }
 export type PresentationSequence = PitchSequence | HitSequence | ThrowSequence
 export function outBatterPoint(
@@ -119,20 +123,26 @@ export function outBatterPoint(
 export function throwPresentation(
   state: ScoringState,
   receiver: number,
-  point?: GroundPoint
+  point?: GroundPoint,
+  final = false
 ): ThrowSequence {
   const action = state.runnerAction!
   const players = scoringFieldPlayers(state).map(player => ({
     ...player,
     motion: undefined,
-    suppressed: false
+    suppressed: false,
+    hasBall: false
   }))
-  const thrower = action.thrower!
+  const holder = action.defensiveRoute?.at(-1)
+  const thrower = holder?.id ?? action.thrower!
   const from =
+    holder?.point ??
     action.throwerPoint ??
     state.pendingPlay?.location ??
     players.find(p => p.playerId === thrower)!.position
-  const to = point ?? BASES[action.to % 4]
+  const to = final
+    ? BASES[action.to % 4]
+    : (point ?? players.find(p => p.playerId === receiver)!.position)
   const runner = players.find(p => p.playerId === action.playerId)!
   const runnerPoint =
     action.runnerPoint ??
@@ -152,21 +162,38 @@ export function throwPresentation(
       player.target = { ...to }
     }
   }
-  const unassisted = thrower === receiver
+  const unassisted = final
+  const throwSide =
+    state.session.gameData.players[thrower].throws === 'left' ? 'L' : 'R'
+  const heading = Math.atan2(to.x - from.x, to.z - from.z)
   return {
     id: `${state.generation}:${state.session.meta.sequence + 1}:throw`,
     generation: state.generation,
     kind: 'throw',
-    stage: 'transfer',
+    stage: final ? 'tag' : 'transfer',
     players,
     thrower,
     receiver,
     runner: action.playerId,
-    from: { ...from, y: 6 },
+    holderOrigin: { ...from },
+    runnerFrom: { ...runnerPoint },
+    throwSide,
+    heading,
+    from: final
+      ? { ...from, y: 6 }
+      : pitchingHand(from, 150, 150, throwSide, heading),
     to: { ...to, y: 5.2 },
     unassisted,
     durationMs: unassisted
-      ? Math.max(650, (Math.hypot(to.x - from.x, to.z - from.z) / 10) * 1000)
+      ? Math.max(
+          650,
+          (Math.max(
+            Math.hypot(to.x - from.x, to.z - from.z),
+            Math.hypot(to.x - runnerPoint.x, to.z - runnerPoint.z)
+          ) /
+            10) *
+            1000
+        )
       : 900
   }
 }

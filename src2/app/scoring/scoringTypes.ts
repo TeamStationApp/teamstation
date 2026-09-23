@@ -96,6 +96,8 @@ export interface Movement {
   resolved?: boolean
 }
 export interface PendingPlay {
+  ballHolder?: number
+  ballLocation?: GroundPoint
   batterPoint?: GroundPoint
   choiceApplied?: boolean
   originalRunnerRecordCount?: number
@@ -126,6 +128,7 @@ export interface MotionCommand {
   complete: boolean
 }
 export interface RunnerAction {
+  defensiveRoute?: Array<{ id: number; point: GroundPoint }>
   purpose?: 'batterRetirement'
   runnerPoint?: GroundPoint
   playerId: number

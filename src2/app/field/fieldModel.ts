@@ -6,7 +6,9 @@ export interface GroundPoint {
   z: number
 }
 export interface FieldPlayer {
+  hasBall?: boolean
   pose?: {
+    athleteHeading?: number
     athlete?: AthletePose
     windup: number
     swing: number

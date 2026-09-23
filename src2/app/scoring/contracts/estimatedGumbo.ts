@@ -98,6 +98,14 @@ export const asEstimatedGumboPlay = asObject({
             forceOut: asBoolean,
             runScored: asBoolean,
             credits: asArray(asCredit),
+            defensiveRoute: asOptional(
+              asArray(
+                asObject({
+                  player: asPlayerRef,
+                  location: asObject({ x: asNumber, z: asNumber })
+                })
+              )
+            ),
             throwerLocation: asOptional(asObject({ x: asNumber, z: asNumber })),
             defenderLocation: asOptional(asObject({ x: asNumber, z: asNumber }))
           })

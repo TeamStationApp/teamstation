@@ -23,6 +23,22 @@ export function makePlayerLabel(text: string, badge: boolean): DataTexture {
   const left = (width - (text.length * 6 - 1) * pitch) / 2
   const top = (height - 7 * pitch) / 2
   Array.from(text.toUpperCase()).forEach((letter, index) => {
+    if (letter === '⚾') {
+      const radius = 2.7 * pitch
+      const cx = left + (index * 6 + 2) * pitch
+      const cy = top + 3 * pitch
+      for (let y = Math.floor(cy - radius); y <= cy + radius; y++)
+        for (let x = Math.floor(cx - radius); x <= cx + radius; x++) {
+          const dx = x - cx
+          const dy = y - cy
+          if (dx * dx + dy * dy > radius * radius) continue
+          const seam =
+            Math.abs(Math.abs(dx) - (radius * 0.5 - Math.abs(dy) * 0.15)) <
+            pitch * 0.35
+          put(x, y, seam ? [196, 48, 42, 255] : [255, 246, 221, 255])
+        }
+      return
+    }
     bulbGlyph(letter).forEach((row, y) => {
       Array.from(row).forEach((bit, x) => {
         if (bit !== '1') return

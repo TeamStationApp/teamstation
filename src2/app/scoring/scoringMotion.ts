@@ -166,6 +166,27 @@ export function scoringFieldPlayers(
       player.position = { ...state.runnerAction.defenderPoint }
       player.target = { ...player.position }
     }
+    if (player.team === 'defense') {
+      for (const record of session.liveData.plays.currentPlay?.source
+        .gamestation.runnerActions ?? [])
+        for (const hop of record.defensiveRoute ?? [])
+          if (hop.player.id === player.playerId) {
+            player.position = { ...hop.location }
+            player.target = { ...hop.location }
+          }
+      for (const hop of state.runnerAction?.defensiveRoute ?? [])
+        if (hop.id === player.playerId) {
+          player.position = { ...hop.point }
+          player.target = { ...hop.point }
+        }
+      const holder =
+        state.runnerAction?.defensiveRoute?.at(-1)?.id ??
+        state.runnerAction?.thrower
+      player.hasBall =
+        state.phase === 'chooseDefender' &&
+        state.presentation == null &&
+        player.playerId === holder
+    }
     player.suppressed =
       state.presentation == null && suppressed && player.team === 'runner'
   }
