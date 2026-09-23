@@ -16,7 +16,7 @@ set -euo pipefail
 #
 #   branch     paul/<name>
 #   worktree   /srv/GameStation_<name>/repo
-#   database   GameStation_<name>      on the development cluster, 5433
+#   database   GameStation_<name>      on 5433, or on the scoring cluster, 5434
 #   service    gamestation-<name>
 #   port       whatever this seat's serverConfig.json says
 #
@@ -113,11 +113,11 @@ say "Seat $SEAT — branch $BRANCH, database $DB, service $SERVICE, port $PORT"
 # The port says "not production"; only the name says "mine".
 SEAT_DB="$(node -p "require('$ROOT/serverConfig.json').databaseUrl" 2>/dev/null || true)"
 case "$SEAT_DB" in
-  *:5433/"$DB") ;;
+  *:5433/"$DB"|*:5434/"$DB") ;;
   *) die "this seat's databaseUrl is not its own database:
 ${SEAT_DB:-<unset>}
-It should name \`$DB\` on 5433. Every seat shares that cluster, so this would
-migrate somebody else's schema. Fix the config; do not relax this check." ;;
+It should name \`$DB\` on 5433 or 5434. 5432 is production, and any other name
+is somebody else's schema. Fix the config; do not relax this check." ;;
 esac
 
 say "Fetching $BRANCH"

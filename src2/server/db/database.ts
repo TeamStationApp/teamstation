@@ -6,12 +6,16 @@ import {
 } from 'kysely'
 import { Pool } from 'pg'
 
+import { attachInt8Parser } from './int8'
+
 /** `timestamptz`: read as a Date, written as a Date or an ISO string. */
 type Timestamp = ColumnType<Date, Date | string | undefined, Date | string>
 type Json = ColumnType<unknown, unknown, unknown>
 
 export interface UsersTable {
-  id: string
+  id: number
+  /** The `usr_` string this id was taken from. The other 43 bits live only here. */
+  legacyId: string
   display_name: string
   first_name: string | null
   last_name: string | null
@@ -29,7 +33,7 @@ export interface UsersTable {
   /** Where the two above came from, so an import never overwrites a person. */
   bats_source: 'import' | 'manual' | null
   /** Set when this account was absorbed by another; it is closed, not deleted. */
-  merged_into: string | null
+  merged_into: number | null
   created_at: Timestamp
   updated_at: Timestamp
 }
@@ -40,7 +44,7 @@ export interface UsersTable {
  */
 export interface UserEmailsTable {
   id: string
-  user_id: string
+  user_id: number
   email: string
   is_primary: Generated<boolean>
   verified_at: Timestamp | null
@@ -50,8 +54,8 @@ export interface UserEmailsTable {
 
 export interface UserLinksTable {
   id: string
-  user_id: string
-  related_user_id: string
+  user_id: number
+  related_user_id: number
   kind: 'guardian' | 'family' | 'other'
   can_manage: Generated<boolean>
   created_at: Timestamp
@@ -67,6 +71,11 @@ export interface LeaguesTable {
   logo_source: string | null
   logo_updated_at: Timestamp | null
   notes: string | null
+  /**
+   * The innings an ERA divides by, for seasons that do not set their own. Set
+   * by hand in the database; nothing writes it.
+   */
+  era_innings: number | null
   spectator_access: Generated<'team' | 'league'>
   created_at: Timestamp
   updated_at: Timestamp
@@ -87,11 +96,11 @@ export interface SeasonsTable {
   starts_on: string | null
   ends_on: string | null
   /**
-   * The regulation length of a game here, which is what an ERA divides by.
-   * Null until it has been worked out from the games themselves — see
-   * `024seasonInnings`.
+   * The innings a game here runs, which is what an ERA divides by. Set by hand
+   * in the database; nothing writes it. Null takes the league's, and six where
+   * that is unset too.
    */
-  innings_per_game: number | null
+  era_innings: number | null
   spectator_access: Generated<'team' | 'season'>
   created_at: Timestamp
   updated_at: Timestamp
@@ -125,7 +134,7 @@ export interface TeamsTable {
  */
 export interface SeasonMembersTable {
   id: string
-  user_id: string
+  user_id: number
   season_id: string
   role: Generated<'spectator' | 'member'>
   source: Generated<'peertube' | 'import' | 'manual'>
@@ -139,7 +148,7 @@ export interface SeasonMembersTable {
  */
 export interface LeagueMembersTable {
   id: string
-  user_id: string
+  user_id: number
   league_id: string
   role: Generated<'spectator' | 'member'>
   source: Generated<'peertube' | 'import' | 'manual'>
@@ -154,7 +163,7 @@ export interface SeasonTeamsTable {
 
 export interface MembershipsTable {
   id: string
-  user_id: string
+  user_id: number
   team_id: string
   role: Generated<'owner' | 'manager' | 'member'>
   is_player: Generated<boolean>
@@ -167,11 +176,11 @@ export interface MembershipsTable {
 
 export interface AdminRolesTable {
   id: string
-  user_id: string
+  user_id: number
   scope_type: 'league' | 'season' | 'team'
   scope_id: string
   role: Generated<'admin'>
-  granted_by: string | null
+  granted_by: number | null
   granted_at: Timestamp
 }
 
@@ -198,6 +207,12 @@ export interface GamesTable {
   gumbo_game_data: Json | null
   linescore: Json | null
   boxscore: Json | null
+  /** `gamestation` when a post from that system owns the plays. */
+  scoringOwner: ColumnType<
+    string | null,
+    string | null | undefined,
+    string | null
+  >
   ingest_status: Generated<'none' | 'ok' | 'scoreMismatch' | 'error'>
   ingest_message: string | null
   created_at: Timestamp
@@ -212,7 +227,7 @@ export interface GamesTable {
  */
 export interface DirectorUploadsTable {
   id: string
-  user_id: string
+  user_id: number
   game_id: string | null
   title: string
   kind: Generated<string>
@@ -287,36 +302,56 @@ export interface VideosTable {
   updated_at: Timestamp
 }
 
+/** A column Postgres fills. Inserts and updates must not name it. */
+type Filled<T> = ColumnType<T, never, never>
+
 export interface EventsTable {
   id: string
-  game_id: string
-  at_bat_index: number
-  start_time: Timestamp | null
-  end_time: Timestamp | null
-  inning: number | null
-  half_inning: 'top' | 'bottom' | null
-  batting_team_id: string | null
-  event_type: string | null
-  description: string | null
-  is_scoring_play: Generated<boolean>
-  rbi: Generated<number>
-  away_score: number | null
-  home_score: number | null
+  gameId: string
+  startTime: Timestamp | null
+  endTime: Timestamp | null
+  battingTeamId: string | null
   gumbo: Json
-  /** Credited outcomes, one play yielding one or more. See `010credits`. */
-  credits: Json | null
-  source: Generated<'external' | 'manual'>
+  /**
+   * True when the stored document's `credits` is an array, including an empty
+   * one; the events trigger sets it. The two mean different things to
+   * highlights: no `credits` key is a play whose sender said nothing about
+   * credits, which is kept and shown by its type, and `[]` is a play found to
+   * hold nothing worth watching, which is dropped.
+   */
+  creditsLookedAt: Generated<boolean>
+  source: Generated<'external' | 'manual' | 'gamestation'>
   hidden: Generated<boolean>
-  title_override: string | null
-  time_nudge_sec: Generated<number>
-  created_at: Timestamp
-  updated_at: Timestamp
+  titleOverride: string | null
+  timeNudgeSec: Generated<number>
+  createdAt: Timestamp
+  updatedAt: Timestamp
+  atBatIndex: Filled<number>
+  eventType: Filled<string | null>
+  isScoringPlay: Filled<boolean | null>
+  inning: Filled<number | null>
+  halfInning: Filled<'top' | 'bottom' | string | null>
+  rbi: Filled<number | null>
+  awayScore: Filled<number | null>
+  homeScore: Filled<number | null>
+}
+
+export interface EventCreditsTable {
+  id: string
+  eventId: string
+  eventType: string
+  label: string
+  teamId: string | null
+  creditUserId: number | null
+  name: string
+  role: string | null
+  position: string | null
 }
 
 export interface EventPlayersTable {
   id: string
   event_id: string
-  user_id: string
+  user_id: number
   team_id: string | null
   role: 'batter' | 'pitcher' | 'runner' | 'scorer' | 'fielder' | 'catcher'
   position: string | null
@@ -324,7 +359,7 @@ export interface EventPlayersTable {
 
 export interface AuthSessionsTable {
   id: string
-  user_id: string
+  user_id: number
   token_hash: string
   user_agent: string | null
   /** What this session is, when it is a thing rather than a browser tab. */
@@ -337,7 +372,7 @@ export interface AuthSessionsTable {
 
 export interface ApiTokensTable {
   id: string
-  user_id: string
+  user_id: number
   label: string
   token_hash: string
   scopes: Generated<string[]>
@@ -374,7 +409,7 @@ export interface InvitesTable {
   code: string
   scope_type: 'league' | 'season' | 'team'
   scope_id: string
-  created_by: string | null
+  created_by: number | null
   label: string | null
   /** Null for an invite that never runs out of uses, which is the usual one. */
   max_uses: number | null
@@ -391,7 +426,7 @@ export interface InvitesTable {
 export interface InviteRedemptionsTable {
   id: string
   invite_id: string
-  user_id: string
+  user_id: number
   created_account: Generated<boolean>
   redeemed_at: Timestamp
 }
@@ -431,7 +466,7 @@ export interface RateEventsTable {
 export interface AuditLogTable {
   id: string
   at: Timestamp
-  actor_user_id: string | null
+  actor_user_id: number | null
   api_token_id: string | null
   method: string
   path: string
@@ -445,7 +480,7 @@ export interface SystemSettingsTable {
   key: string
   value: Json
   updated_at: Timestamp
-  updated_by: string | null
+  updated_by: number | null
 }
 
 /**
@@ -461,7 +496,7 @@ export interface LiveStreamsTable {
   game_id: string
   team_id: string
   /** Whose key this is. A key publishes video as somebody. */
-  user_id: string
+  user_id: number
   /** Which of that person's four cameras for this game. */
   slot: Generated<number>
   /** What the camera is called. `Camera <slot>` where nobody has said. */
@@ -480,21 +515,22 @@ export interface LiveStreamsTable {
   first_published_at: Timestamp | null
   last_published_at: Timestamp | null
   ended_at: Timestamp | null
-  created_by: string | null
+  created_by: number | null
   created_at: Timestamp
   updated_at: Timestamp
 }
 
 /**
- * One player's figures for one game, counted from the game stream.
+ * One player's figures for one game.
  *
- * A recount replaces the game's rows outright, so this is a derived table that
- * can be dropped and rebuilt.
+ * Written by a stats engine outside the routes, which recomputes a game's rows
+ * whenever its plays change, so this is a derived table that can be dropped
+ * and rebuilt. A game with no rows yet has no box score.
  */
 export interface GamePlayerStatsTable {
   id: string
   game_id: string
-  user_id: string
+  user_id: number
   team_id: string | null
   pa: Generated<number>
   ab: Generated<number>
@@ -526,7 +562,7 @@ export interface GamePlayerStatsTable {
 
 export interface PlayerSeasonStatsTable {
   id: string
-  user_id: string
+  user_id: number
   season_id: string | null
   team_id: string
   g: Generated<number>
@@ -574,6 +610,7 @@ export interface Database {
   auth_sessions: AuthSessionsTable
   email_codes: EmailCodesTable
   rate_events: RateEventsTable
+  eventCredits: EventCreditsTable
   event_players: EventPlayersTable
   events: EventsTable
   external_ids: ExternalIdsTable
@@ -601,6 +638,7 @@ export interface Database {
 }
 
 export function makeDatabase(connectionString: string): Kysely<Database> {
+  attachInt8Parser()
   return new Kysely<Database>({
     dialect: new PostgresDialect({
       pool: new Pool({ connectionString, max: 10 })

@@ -7,14 +7,17 @@ import type { MediaContext } from './media/mediaContext'
 import { openApiDocument } from './openapi'
 import { authRoutes } from './routes/auth'
 import { directorRoutes } from './routes/director'
+import { eventRoutes } from './routes/events'
 import { healthRoutes } from './routes/health'
 import { inviteRoutes } from './routes/invites'
 import { liveRoutes } from './routes/live'
+import { logRoutes } from './routes/logs'
 import { manageRoutes } from './routes/manage'
 import { mediaRoutes } from './routes/media'
 import { seasonRoutes } from './routes/seasons'
 import { statsRoutes } from './routes/stats'
 import { teamRoutes } from './routes/teams'
+import { userRoutes } from './routes/users'
 
 /**
  * The document says what the API promises; the routers are what it does. This
@@ -95,12 +98,15 @@ describe('the API document', function () {
       ...routesOf(authRoutes(db, { sendCode: async () => undefined })),
       ...routesOf(seasonRoutes(db, media)),
       ...routesOf(teamRoutes(db, media)),
+      ...routesOf(eventRoutes(db)),
+      ...routesOf(logRoutes()),
       ...routesOf(statsRoutes(db)),
       ...routesOf(mediaRoutes(db, media)),
       ...routesOf(liveRoutes(db, live)),
       ...routesOf(directorRoutes(db, live)),
       ...routesOf(inviteRoutes(db, { sendCode: async () => undefined })),
-      ...routesOf(manageRoutes(db, { sendInvite: async () => undefined }))
+      ...routesOf(manageRoutes(db, { sendInvite: async () => undefined })),
+      ...routesOf(userRoutes(db))
     ]
 
     const documented = new Set<string>()
@@ -123,12 +129,15 @@ describe('the API document', function () {
       ...routesOf(authRoutes(db, { sendCode: async () => undefined })),
       ...routesOf(seasonRoutes(db, media)),
       ...routesOf(teamRoutes(db, media)),
+      ...routesOf(eventRoutes(db)),
+      ...routesOf(logRoutes()),
       ...routesOf(statsRoutes(db)),
       ...routesOf(mediaRoutes(db, media)),
       ...routesOf(liveRoutes(db, live)),
       ...routesOf(directorRoutes(db, live)),
       ...routesOf(inviteRoutes(db, { sendCode: async () => undefined })),
-      ...routesOf(manageRoutes(db, { sendInvite: async () => undefined }))
+      ...routesOf(manageRoutes(db, { sendInvite: async () => undefined })),
+      ...routesOf(userRoutes(db))
     ])
 
     const paths = openApiDocument('0.0.0').paths

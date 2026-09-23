@@ -6,7 +6,7 @@ import { hashToken, makeToken } from './tokens'
 
 /** Who is making a request, once a token has been resolved. */
 export interface Actor {
-  userId: string
+  userId: number
   isAdmin: boolean
   /** Set when the caller used a machine token rather than signing in. */
   apiTokenId?: string
@@ -31,7 +31,7 @@ export interface SessionOptions {
 
 export async function createSession(
   db: Kysely<Database>,
-  userId: string,
+  userId: number,
   userAgent: string | undefined,
   options: SessionOptions = {}
 ): Promise<NewSession> {

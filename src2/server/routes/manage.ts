@@ -3,6 +3,7 @@ import { Router } from 'express'
 import type { Kysely } from 'kysely'
 
 import { badRequest, notFound, unauthorized } from '../../common/errors'
+import { asUserId } from '../../common/userIdNumber'
 import { adminScopes } from '../access'
 import { findUserByEmail } from '../auth/emails'
 import type { Database } from '../db/database'
@@ -73,7 +74,7 @@ export function manageRoutes(
 
   /** The scope, refused as 404 to anybody who does not administer it. */
   const mustAdminister = async (
-    userId: string,
+    userId: number,
     isAdmin: boolean,
     scopeType: InviteScopeType,
     scopeId: string
@@ -209,7 +210,7 @@ export function manageRoutes(
       if (actor == null) throw unauthorized()
       const scopeType = asScopeType(req.params.scopeType)
       const scopeId = pathParam(req.params.scopeId)
-      const userId = pathParam(req.params.userId)
+      const userId = userIdParam(req.params.userId)
       await mustAdminister(actor.userId, actor.isAdmin, scopeType, scopeId)
 
       const gone = await removeFromScope(db, scopeType, scopeId, userId)
@@ -244,7 +245,7 @@ export function manageRoutes(
       if (actor == null) throw unauthorized()
       const scopeType = asScopeType(req.params.scopeType)
       const scopeId = pathParam(req.params.scopeId)
-      const userId = pathParam(req.params.userId)
+      const userId = userIdParam(req.params.userId)
       await mustAdminister(actor.userId, actor.isAdmin, scopeType, scopeId)
       const body = cleanBody(asRoleChange, req.body)
 
@@ -305,6 +306,14 @@ function shown(
 function pathParam(value: string | string[] | undefined): string {
   if (typeof value !== 'string' || value === '') throw notFound()
   return value
+}
+
+function userIdParam(value: string | string[] | undefined): number {
+  try {
+    return asUserId(pathParam(value))
+  } catch {
+    throw notFound()
+  }
 }
 
 function cleanBody<T>(cleaner: (raw: unknown) => T, raw: unknown): T {

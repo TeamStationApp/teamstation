@@ -213,7 +213,7 @@ export interface NewInvite {
   scopeType: InviteScopeType
   scopeId: string
   /** Null for one that came across from PeerTube, where nobody is recorded. */
-  createdBy: string | null
+  createdBy: number | null
   code?: string
   label?: string
   maxUses?: number
@@ -292,7 +292,7 @@ export async function revokeInvite(
 export async function alreadyInScope(
   db: Kysely<Database>,
   invite: Invite,
-  userId: string
+  userId: number
 ): Promise<boolean> {
   if (invite.scopeType === 'team') {
     const row = await db
@@ -340,7 +340,7 @@ export interface Redemption {
 export async function redeemInvite(
   db: Kysely<Database>,
   invite: Invite,
-  userId: string,
+  userId: number,
   options: { createdAccount?: boolean } = {}
 ): Promise<Redemption> {
   const problem = inviteProblem(invite)
@@ -377,7 +377,7 @@ export async function redeemInvite(
 async function grant(
   trx: Kysely<Database>,
   invite: Invite,
-  userId: string
+  userId: number
 ): Promise<boolean> {
   if (invite.scopeType === 'team') {
     const added = await trx

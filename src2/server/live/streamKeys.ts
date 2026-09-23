@@ -88,7 +88,7 @@ export interface LiveStreamRow {
   gameId: string
   teamId: string
   /** Whose key it is. A key publishes video as somebody. */
-  userId: string
+  userId: number
   /** Which of that person's four cameras for this game. */
   slot: number
   /** What the camera is called. */
@@ -163,7 +163,7 @@ export async function liveStreamsFor(
 export async function myLiveStreams(
   db: Kysely<Database>,
   gameId: string,
-  userId: string
+  userId: number
 ): Promise<LiveStreamRow[]> {
   const all = await liveStreamsFor(db, gameId)
   return all.filter(row => row.userId === userId)
@@ -206,7 +206,7 @@ export interface CreateLiveStreamOptions {
   teamId: string
   startAt: Date
   /** Whose key this is, which is also who asked for it. */
-  userId: string
+  userId: number
   /** Which of their four cameras. */
   slot: number
   /** What to call it. `Camera <slot>` where nobody has said. */

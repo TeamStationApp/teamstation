@@ -4,10 +4,13 @@ import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
 import { makeId } from '../../common/ids'
+import { mintUserId } from '../../common/mintUserId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
+import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { mayEditName } from '../access'
 import type { Database } from '../db/database'
+import { attachInt8Parser } from '../db/int8'
 import { teamsOf } from './players'
 
 /**
@@ -18,10 +21,21 @@ import { teamsOf } from './players'
  * it fails silently in the wrong direction — nobody complains that a name was
  * shortened, so a gate that had quietly opened would stay open.
  */
-const adminUrl =
-  process.env.GS_TEST_DATABASE_URL ?? 'postgres://localhost:5432/postgres'
+const adminUrl = testDatabaseUrl
 const scratchName = `gamestation_players_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
+
+const legacyOf = new Map<number, string>()
+function mintUser(): number {
+  const made = mintUserId(id => legacyOf.has(id))
+  legacyOf.set(made.userId, made.legacyId)
+  return made.userId
+}
+function legacyId(userId: number): string {
+  const id = legacyOf.get(userId)
+  if (id == null) throw new Error(`no legacy id for ${userId}`)
+  return id
+}
 
 describe('a player, and who may change their name', function () {
   this.timeout(60000)
@@ -33,13 +47,14 @@ describe('a player, and who may change their name', function () {
   const teamId = makeId('team')
   const otherTeamId = makeId('team')
   const seasonId = makeId('season')
-  const childId = makeId('user')
-  const parentId = makeId('user')
-  const coachId = makeId('user')
-  const strangerId = makeId('user')
-  const seasonAdminId = makeId('user')
+  const childId = mintUser()
+  const parentId = mintUser()
+  const coachId = mintUser()
+  const strangerId = mintUser()
+  const seasonAdminId = mintUser()
 
   before(async function () {
+    attachInt8Parser()
     admin = new Pool({ connectionString: adminUrl })
     try {
       await admin.query('select 1')
@@ -73,11 +88,28 @@ describe('a player, and who may change their name', function () {
     await db
       .insertInto('users')
       .values([
-        { id: childId, display_name: 'Jensen Puey', bats: 'left' },
-        { id: parentId, display_name: 'A Parent' },
-        { id: coachId, display_name: 'A Coach' },
-        { id: strangerId, display_name: 'Somebody Else' },
-        { id: seasonAdminId, display_name: 'A Season Admin' }
+        {
+          id: childId,
+          legacyId: legacyId(childId),
+          display_name: 'Jensen Puey',
+          bats: 'left'
+        },
+        {
+          id: parentId,
+          legacyId: legacyId(parentId),
+          display_name: 'A Parent'
+        },
+        { id: coachId, legacyId: legacyId(coachId), display_name: 'A Coach' },
+        {
+          id: strangerId,
+          legacyId: legacyId(strangerId),
+          display_name: 'Somebody Else'
+        },
+        {
+          id: seasonAdminId,
+          legacyId: legacyId(seasonAdminId),
+          display_name: 'A Season Admin'
+        }
       ])
       .execute()
     await db

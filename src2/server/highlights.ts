@@ -1,3 +1,8 @@
+import type { Selectable } from 'kysely'
+
+import { describePlay } from '../common/describePlay'
+import { eventTypeName } from '../common/gumboEventTypes'
+import type { EventsTable } from './db/database'
 import type { HighlightSettings } from './settings'
 
 /**
@@ -13,11 +18,15 @@ export interface CreditedOutcome {
   eventType: string
   /** `Single: Jensen P`. */
   label: string
-  credit: { name: string; role: string; position: string | null } | null
+  credit: {
+    name: string
+    role: string
+    position: string | null
+  } | null
   /** Which of our teams the credit belongs to, or null for an unknown one. */
   teamId: string | null
   /** Who did it, when the sender knew them as one of our users. */
-  creditUserId: string | null
+  creditUserId: number | null
 }
 
 export interface HighlightEvent {
@@ -26,7 +35,11 @@ export interface HighlightEvent {
   /** The scorekeeper's tap time. The play itself happened before this. */
   startTime: Date | null
   eventType: string | null
-  description: string | null
+  /** For the sentence GameStation writes about the play. */
+  inning: number | null
+  halfInning: string | null
+  awayScore: number | null
+  homeScore: number | null
   titleOverride: string | null
   timeNudgeSec: number
   hidden: boolean
@@ -35,13 +48,68 @@ export interface HighlightEvent {
    * A play yields one or more.
    *
    * `undefined` and `[]` are **not** the same thing, and the difference
-   * decides whether a highlight is shown. `[]` means the engine looked and
-   * nobody did anything worth watching — an error, a wild pitch — so there is
-   * nothing to show. `undefined` means nobody has looked yet, which is every
-   * game ingested before credits existed: those keep their old wording rather
-   * than disappearing from the app until somebody re-runs an import.
+   * decides whether a highlight is shown. `[]` means the stored play carries
+   * an empty `credits` array: nobody did anything worth watching — an error,
+   * a wild pitch — so there is nothing to show. `undefined` means no post of
+   * the play at this index has carried a `credits` key, or the row predates
+   * migration 031: those plays are shown by their type. A re-post without the
+   * key keeps the list stored before it (`withKeptCredits`).
    */
   credits?: CreditedOutcome[]
+}
+
+/** The `events` columns a highlight is worked out from. */
+export const HIGHLIGHT_EVENT_COLUMNS = [
+  'events.id',
+  'events.atBatIndex',
+  'events.startTime',
+  'events.eventType',
+  'events.inning',
+  'events.halfInning',
+  'events.awayScore',
+  'events.homeScore',
+  'events.titleOverride',
+  'events.timeNudgeSec',
+  'events.hidden',
+  'events.isScoringPlay'
+] as const
+
+type HighlightEventRow = Pick<
+  Selectable<EventsTable>,
+  | 'id'
+  | 'atBatIndex'
+  | 'startTime'
+  | 'eventType'
+  | 'inning'
+  | 'halfInning'
+  | 'awayScore'
+  | 'homeScore'
+  | 'titleOverride'
+  | 'timeNudgeSec'
+  | 'hidden'
+  | 'isScoringPlay'
+>
+
+/** A row read with `HIGHLIGHT_EVENT_COLUMNS`, with its play's credits. */
+export function highlightEvent(
+  row: HighlightEventRow,
+  credits: CreditedOutcome[] | undefined
+): HighlightEvent {
+  return {
+    id: row.id,
+    atBatIndex: row.atBatIndex,
+    startTime: row.startTime == null ? null : new Date(row.startTime),
+    eventType: row.eventType,
+    inning: row.inning,
+    halfInning: row.halfInning,
+    awayScore: row.awayScore,
+    homeScore: row.homeScore,
+    titleOverride: row.titleOverride,
+    timeNudgeSec: row.timeNudgeSec,
+    hidden: row.hidden,
+    isScoringPlay: row.isScoringPlay === true,
+    credits
+  }
 }
 
 /** Teams we would not show a highlight for: an opponent nobody runs. */
@@ -62,8 +130,12 @@ export interface Highlight {
   eventId: string
   atBatIndex: number
   title: string
-  /** The whole sentence, for the panel under the video. */
-  description: string | null
+  /**
+   * The play in a sentence, for the panel under the video: GameStation's own
+   * reading of its type, credits, half-inning and score (`describePlay`),
+   * written now and never stored.
+   */
+  description: string
   /** Where the player should seek to, in seconds from the video's start. */
   startOffsetSec: number
   /** Where the play itself is, for a still or a marker. */
@@ -127,6 +199,12 @@ export function withDropped(
   for (const event of events) {
     if (event.hidden) continue
     if (event.startTime == null) continue
+    // A fielding error is nobody's highlight: not the fielder's, and not the
+    // batter's either, who reached on somebody else's mistake. A person who
+    // gave the play a title of their own has said otherwise, and that stands.
+    if (event.eventType === 'field_error' && event.titleOverride == null) {
+      continue
+    }
 
     const tapMs = event.startTime.getTime() + event.timeNudgeSec * 1000
     const playMs = tapMs - settings.lagSec * 1000
@@ -164,8 +242,15 @@ export function withDropped(
       eventId: event.id,
       atBatIndex: event.atBatIndex,
       title: label,
+      description: describePlay({
+        eventType: event.eventType,
+        inning: event.inning,
+        halfInning: event.halfInning,
+        awayScore: event.awayScore,
+        homeScore: event.homeScore,
+        credits: shown
+      }),
       playAt: new Date(playMs),
-      description: event.description,
       startOffsetSec: Math.max(0, startOffsetSec),
       playOffsetSec,
       eventType: event.eventType,
@@ -245,8 +330,5 @@ function titleFor(event: HighlightEvent): string {
   if (event.titleOverride != null && event.titleOverride !== '') {
     return event.titleOverride
   }
-  if (event.description != null && event.description !== '') {
-    return event.description
-  }
-  return event.eventType ?? 'Play'
+  return eventTypeName(event.eventType)
 }

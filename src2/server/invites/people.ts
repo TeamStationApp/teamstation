@@ -34,7 +34,7 @@ export interface Grant {
 }
 
 export interface ScopePerson {
-  userId: string
+  userId: number
   displayName: string
   /** Every address on the account, the primary one first. */
   emails: string[]
@@ -180,8 +180,8 @@ export async function peopleInScope(
     named.set(item.id, item.name)
   }
 
-  const people = new Map<string, ScopePerson>()
-  const person = (userId: string, displayName: string): ScopePerson => {
+  const people = new Map<number, ScopePerson>()
+  const person = (userId: number, displayName: string): ScopePerson => {
     const held = people.get(userId)
     if (held != null) return held
     const made: ScopePerson = {
@@ -379,7 +379,7 @@ export async function removeFromScope(
   db: Kysely<Database>,
   scopeType: InviteScopeType,
   scopeId: string,
-  userId: string
+  userId: number
 ): Promise<{ removed: boolean }> {
   if (scopeType === 'team') {
     const gone = await db
@@ -413,7 +413,7 @@ export async function addToScope(
   db: Kysely<Database>,
   scopeType: InviteScopeType,
   scopeId: string,
-  userId: string
+  userId: number
 ): Promise<{ added: boolean }> {
   if (scopeType === 'team') {
     const made = await db
@@ -465,8 +465,8 @@ export async function addAdmin(
   db: Kysely<Database>,
   scopeType: InviteScopeType,
   scopeId: string,
-  userId: string,
-  grantedBy: string
+  userId: number,
+  grantedBy: number
 ): Promise<void> {
   await db
     .insertInto('admin_roles')
@@ -488,7 +488,7 @@ export async function removeAdmin(
   db: Kysely<Database>,
   scopeType: InviteScopeType,
   scopeId: string,
-  userId: string
+  userId: number
 ): Promise<void> {
   await db
     .deleteFrom('admin_roles')

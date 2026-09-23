@@ -531,13 +531,168 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/games/{gameId}/events': {
+        post: {
+          summary: "Replace a game's plays",
+          description:
+            'One body is the whole set. A play is replaced when its ' +
+            '`about.atBatIndex` is already stored, and a stored index that is ' +
+            'not in the body is deleted, including a legacy line-score-only ' +
+            '`final_score` play, at index 9999 or, in a game with no other ' +
+            'plays, at index 0. `source.system` names the sender: ' +
+            '`gamestation`, `manual`, or an outside system spelled as an ' +
+            "external id's system is, and a post with no `source` or no " +
+            '`source.system` counts as an outside one. `gamestation` sets ' +
+            '`scoringOwner`. An outside post is stored as `external`, is ' +
+            'rejected once that owner is set, and its ' +
+            "plays' `result.description` and `playEvents[].description` are " +
+            "not stored. A post whose plays carry both teams' scores sets " +
+            'the game `final`, and a final game refuses every later post with ' +
+            '409, so a game is posted once it is over. Otherwise a ' +
+            '`scheduled` game with plays becomes `inProgress`, and any other ' +
+            'status, `cancelled` included, is kept.',
+          security: [{ bearer: [] }],
+          parameters: [gameIdParam],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['plays'],
+                  properties: {
+                    plays: { type: 'array', items: { type: 'object' } },
+                    source: {
+                      type: 'object',
+                      properties: {
+                        system: {
+                          type: 'string',
+                          pattern: '^[a-z][a-zA-Z0-9]{0,31}$'
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            200: {
+              description: 'The stored plays, in atBatIndex order',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['plays'],
+                    properties: {
+                      plays: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          required: ['id', 'gameId', 'gumbo'],
+                          properties: {
+                            id: { type: 'string' },
+                            gameId: { type: 'string' },
+                            gumbo: { type: 'object' }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse,
+            409: errorResponse
+          }
+        },
+        get: {
+          summary: "A game's plays",
+          description: 'The stored plays in `atBatIndex` order.',
+          security: [{ bearer: [] }],
+          parameters: [gameIdParam],
+          responses: {
+            200: { description: '{ plays: [{ id, gameId, gumbo }] }' },
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/games/{gameId}/halves': {
+        get: {
+          summary: 'One outcome per half inning',
+          description:
+            '`inning`, `half`, `awayScore`, `homeScore`, `outs`, and `runs`. ' +
+            'Read off the stored plays. A play with no half is omitted.',
+          security: [{ bearer: [] }],
+          parameters: [gameIdParam],
+          responses: {
+            200: { description: '{ halves: [ ... ] }' },
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/logs': {
+        post: {
+          summary: "A client's own log lines, written to the server's log",
+          description:
+            'For the GameStation app, or any client that runs ' +
+            "away from the server. Each line is written to the server's log " +
+            'tagged `[client <source>]` with `run`, `build` and the signed-in ' +
+            'user, if any. No session is needed. At most 200 lines per post; ' +
+            'each line is cut at 2000 characters. Nothing is stored.',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['source', 'lines'],
+                  properties: {
+                    source: { type: 'string' },
+                    run: { type: 'string' },
+                    build: { type: 'string' },
+                    lines: {
+                      type: 'array',
+                      maxItems: 200,
+                      items: {
+                        type: 'object',
+                        required: ['at', 'level', 'text'],
+                        properties: {
+                          at: { type: 'string' },
+                          level: {
+                            type: 'string',
+                            enum: ['debug', 'info', 'warn', 'error']
+                          },
+                          text: { type: 'string' },
+                          data: {}
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            204: { description: 'Written' },
+            400: { description: 'Malformed, or more than 200 lines' }
+          }
+        }
+      },
       '/games/{gameId}/box-score': {
         get: {
           summary: "A game's batting and pitching lines",
           description:
             'Added up from the stored stat lines, one row per player per ' +
-            'game, counted by walking the archived game stream. Earned runs ' +
-            'are included, which a play-by-play cannot produce.',
+            'game. A stats engine outside these routes writes them, and ' +
+            "recomputes a game's lines whenever its plays change. A game " +
+            'with no lines yet has no box score: `batting` and `pitching` are ' +
+            'empty.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam],
           responses: {
@@ -581,9 +736,9 @@ export function openApiDocument(version: string): OpenApiDocument {
             'so a total here and a line in a box score are the same rows ' +
             'added up differently. Unfiltered is a career. The answer carries ' +
             'the seasons, teams and years there are to choose from, which is ' +
-            'what the filter on the page offers. `rates.era` is absent until ' +
-            "something has worked out the league's regulation length: an ERA " +
-            'is earned runs per game.',
+            'what the filter on the page offers. `rates.era` is earned runs ' +
+            "per game, a game being the season's or league's ERA innings " +
+            '(six unless set), and is absent for a pitcher with no outs.',
           security: [{ bearer: [] }],
           parameters: [
             userIdParam,
@@ -711,14 +866,76 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/games': {
+        get: {
+          summary: 'Every game you can see',
+          description:
+            "Your teams' games, and every game of a season opened to you; a " +
+            'site administrator sees every game. ' +
+            "Each game as a season's schedule has it, newest first, in one " +
+            'answer, with `externalIds`: the ids other services know it by, ' +
+            'as its importers recorded them. `externalId` narrows it to the ' +
+            'games known by that id, and may be given more than once; an ' +
+            'empty one is refused.',
+          security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'externalId',
+              in: 'query',
+              schema: { type: 'array', items: { type: 'string' } },
+              style: 'form',
+              explode: true,
+              description: "Other services' ids for the games"
+            }
+          ],
+          responses: {
+            200: { description: 'Newest first; empty when there are none' },
+            400: errorResponse,
+            401: errorResponse
+          }
+        }
+      },
       '/games/recent': {
         get: {
           summary: 'The newest played game anywhere you can see',
           description:
-            'What the home screen leads with. Null when there is none.',
+            'What the home screen leads with: the newest game with a score ' +
+            'among those `GET /games` lists. Null when there is none.',
           security: [{ bearer: [] }],
           responses: {
             200: { description: 'One game, or null' },
+            401: errorResponse
+          }
+        }
+      },
+      '/users': {
+        get: {
+          summary: 'Who people are here, by the ids another service has',
+          description:
+            'A play names people by GameStation user id alone, so a sender ' +
+            'asks this with the ids it holds first. Each answer is ' +
+            '`{ userId, externalIds }`: a person, and which of the asked ids ' +
+            'are theirs. A merged row answers as the person it was merged ' +
+            'into. Only people you could see the page of are answered. ' +
+            '`externalId` is required and may be given more than once; an ' +
+            'empty one is refused.',
+          security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'externalId',
+              in: 'query',
+              required: true,
+              schema: { type: 'array', items: { type: 'string' } },
+              style: 'form',
+              explode: true,
+              description: "Another service's ids for the people"
+            }
+          ],
+          responses: {
+            200: {
+              description: 'In user id order; empty when nobody matches'
+            },
+            400: errorResponse,
             401: errorResponse
           }
         }

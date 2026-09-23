@@ -119,7 +119,7 @@ export interface GameScreenProps {
   onOpenTeam?: (team: TeamSummary) => void
   /** Opens one player, from their line in the box score. */
   onOpenPlayer?: (
-    userId: string,
+    userId: number,
     name: string,
     from?: { seasonId?: string; teamId?: string }
   ) => void
@@ -1261,7 +1261,7 @@ interface BoxScoreProps {
    * on a career total nobody asked for.
    */
   onOpenPlayer?: (
-    userId: string,
+    userId: number,
     name: string,
     from?: { seasonId?: string; teamId?: string }
   ) => void
@@ -1305,7 +1305,7 @@ function BoxScore(props: BoxScoreProps): React.ReactElement {
     const open =
       onOpenPlayer == null
         ? undefined
-        : (userId: string, name: string) => {
+        : (userId: number, name: string) => {
             onOpenPlayer(userId, name, {
               seasonId: game.seasonId ?? undefined,
               teamId: side.teamId
@@ -1482,7 +1482,7 @@ function BattingTable(props: {
   name: string
   rows: BattingRow[]
   theme: Theme
-  onOpenPlayer?: (userId: string, name: string) => void
+  onOpenPlayer?: (userId: number, name: string) => void
 }): React.ReactElement {
   const { name, rows, theme, onOpenPlayer } = props
   const styles = getStyles(theme)
@@ -1543,7 +1543,7 @@ function PitchingTable(props: {
   name: string
   rows: PitchingRow[]
   theme: Theme
-  onOpenPlayer?: (userId: string, name: string) => void
+  onOpenPlayer?: (userId: number, name: string) => void
 }): React.ReactElement {
   const { name, rows, theme, onOpenPlayer } = props
   const styles = getStyles(theme)

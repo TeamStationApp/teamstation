@@ -11,6 +11,7 @@ import {
 } from 'cleaners'
 
 import { type ApiError, asApiError, HttpError } from './errors'
+import { asUserId } from './userIdNumber'
 
 /**
  * The client the app talks to the server through.
@@ -177,8 +178,9 @@ export const asHighlight = asObject({
   /** One frame of the video at the moment of the play. */
   stillUrl: asString,
   /**
-   * The whole sentence, for the panel under the video. The list draws `title`;
-   * only that panel draws this.
+   * The play in a sentence, for the panel under the video: GameStation's own
+   * reading of it, written by the server when it answers. The list draws
+   * `title`; only that panel draws this.
    */
   description: asOptional(asNullable(asString), null)
 })
@@ -200,13 +202,13 @@ const asRates = asObject({
 })
 
 const asPitchingRates = asObject({
-  /** Earned runs per game, where a game's length is known. */
+  /** Earned runs per game; absent for a pitcher with no outs. */
   era: asOptional(asNumber),
   whip: asOptional(asNumber)
 })
 
 export const asBattingRow = asObject({
-  userId: asString,
+  userId: asUserId,
   /** First name, last initial. Never the whole name. */
   shortName: asOptional(asString),
   teamId: asNullable(asString),
@@ -241,13 +243,13 @@ export type BattingRow = ReturnType<typeof asBattingRow>
  * One pitcher's line, earned runs and all.
  *
  * An earned run is not a figure a play-by-play can produce — telling one from
- * an unearned one means replaying the inning without the mistakes — and these
- * come from a rule that does exactly that, checked against every game we hold.
- * `rates.era` is absent until something has worked out how long a game in that
- * league runs, because an ERA is earned runs per game.
+ * an unearned one means replaying the inning without the mistakes — so these
+ * come from the stat lines the stats engine writes. `rates.era` is earned runs
+ * per game, a game being the season's or its league's ERA innings, six where
+ * neither sets one.
  */
 export const asPitchingRow = asObject({
-  userId: asString,
+  userId: asUserId,
   shortName: asOptional(asString),
   teamId: asNullable(asString),
   /** `5.2`, the way it is always written. */
@@ -275,7 +277,7 @@ export type PitchingRow = ReturnType<typeof asPitchingRow>
  * answer, which is what the page opens on unless the reader arrived from a game.
  */
 export const asPlayerStats = asObject({
-  userId: asString,
+  userId: asUserId,
   filter: asObject({
     seasonId: asNullable(asString),
     teamId: asNullable(asString),
@@ -306,7 +308,7 @@ export const asBoxScore = asObject({
 export type BoxScore = ReturnType<typeof asBoxScore>
 
 export const asRosterEntry = asObject({
-  userId: asString,
+  userId: asUserId,
   /**
    * First name, last initial. The field is named for what it is so a full
    * name cannot be shipped here by accident — the compiler visits every call
@@ -358,7 +360,7 @@ export type PlayerTeam = ReturnType<typeof asPlayerTeam>
  * the team's roster and in the box score, where that context exists.
  */
 export const asPlayerName = asObject({
-  userId: asString,
+  userId: asUserId,
   displayName: asString,
   firstName: asNullable(asString),
   lastName: asNullable(asString)
@@ -366,7 +368,7 @@ export const asPlayerName = asObject({
 export type PlayerName = ReturnType<typeof asPlayerName>
 
 export const asPlayerDetail = asObject({
-  userId: asString,
+  userId: asUserId,
   name: asString,
   /** Whether to offer this person the name field. A parent or an admin. */
   canEditName: asOptional(asBoolean, false),
@@ -392,6 +394,8 @@ export const asPlayerHighlight = asObject({
   teamName: asNullable(asString),
   /** `Run scored`, `Strikeout pitching`, `Single`. Never their own name. */
   outcome: asString,
+  /** The line under the video, which names who did it. */
+  title: asString,
   /** When the play happened, corrected — not when the scorekeeper tapped. */
   playAt: asString,
   startOffsetSec: asNumber,
@@ -475,9 +479,18 @@ export const asSeasonGame = asObject({
   /** A frame of the game's video, signed and short-lived. */
   posterUrl: asOptional(asNullable(asString), null),
   /** Being played, and being streamed, right now. */
-  isLive: asOptional(asBoolean, false)
+  isLive: asOptional(asBoolean, false),
+  /** Other services' ids for the game, as its importers recorded them. */
+  externalIds: asOptional(asArray(asString), () => [])
 })
 export type SeasonGame = ReturnType<typeof asSeasonGame>
+
+/** A person another service knows, and which of the asked ids are theirs. */
+export const asUserMatch = asObject({
+  userId: asUserId,
+  externalIds: asArray(asString)
+})
+export type UserMatch = ReturnType<typeof asUserMatch>
 
 /**
  * A live stream's own state, as the ingest last reported it.
@@ -521,7 +534,7 @@ export const asLiveStream = asObject({
   id: asString,
   gameId: asString,
   /** Whose camera it is, and what they are called. */
-  userId: asString,
+  userId: asUserId,
   ownerName: asString,
   /** Which of that person's four, and what they call it. */
   slot: asNumber,
@@ -611,7 +624,7 @@ export const asLiveNow = asObject({
 export type LiveNow = ReturnType<typeof asLiveNow>
 
 export const asSessionUser = asObject({
-  id: asString,
+  id: asUserId,
   displayName: asString,
   email: asOptional(asString),
   isAdmin: asBoolean,
@@ -713,7 +726,7 @@ export const asNamed = asObject({ id: asString, name: asString })
  * one and sees nothing change has been told a half-truth.
  */
 export const asScopePerson = asObject({
-  userId: asString,
+  userId: asUserId,
   displayName: asString,
   emails: asArray(asString),
   teams: asArray(asScopeGrant),
@@ -771,7 +784,7 @@ export type ManagePage = ReturnType<typeof asManagePage>
 export const asAddedPerson = asObject({
   added: asBoolean,
   person: asOptional(
-    asObject({ userId: asString, displayName: asString, email: asString })
+    asObject({ userId: asUserId, displayName: asString, email: asString })
   ),
   invited: asOptional(asPendingPerson)
 })
@@ -872,6 +885,30 @@ export class GameStationClient {
   /** The seasons this person can see, which is what home leads with. */
   async seasons(): Promise<SeasonSummary[]> {
     return await this.request('GET', '/seasons', asArray(asSeasonSummary))
+  }
+
+  /**
+   * Every game this person can see, across all their seasons, in one request.
+   * `externalIds` narrows it to the games another service knows by those ids.
+   */
+  async games(options: { externalIds?: string[] } = {}): Promise<SeasonGame[]> {
+    const ids = options.externalIds ?? []
+    const query =
+      ids.length === 0
+        ? ''
+        : `?${ids.map(id => `externalId=${encodeURIComponent(id)}`).join('&')}`
+    return await this.request('GET', `/games${query}`, asArray(asSeasonGame))
+  }
+
+  /**
+   * The people another service knows by these ids, as far as this person may
+   * see them. A merged row answers as whoever it was merged into.
+   */
+  async users(options: { externalIds: string[] }): Promise<UserMatch[]> {
+    const query = options.externalIds
+      .map(id => `externalId=${encodeURIComponent(id)}`)
+      .join('&')
+    return await this.request('GET', `/users?${query}`, asArray(asUserMatch))
   }
 
   async seasonGames(seasonId: string): Promise<SeasonGame[]> {
@@ -1259,7 +1296,7 @@ export class GameStationClient {
   async removePerson(
     kind: 'league' | 'season' | 'team',
     id: string,
-    userId: string
+    userId: number
   ): Promise<{ removed: boolean }> {
     return await this.request(
       'DELETE',
@@ -1278,13 +1315,13 @@ export class GameStationClient {
   async setRole(
     kind: 'league' | 'season' | 'team',
     id: string,
-    userId: string,
+    userId: number,
     role: 'admin' | 'member'
   ): Promise<void> {
     await this.request(
       'PUT',
       `/manage/${kind}/${encodeURIComponent(id)}/people/${encodeURIComponent(userId)}/role`,
-      asObject({ userId: asString, role: asString }),
+      asObject({ userId: asUserId, role: asString }),
       { role }
     )
   }

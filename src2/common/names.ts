@@ -9,7 +9,7 @@
  */
 
 export interface NamedPerson {
-  id: string
+  id: string | number
   firstName?: string | null
   lastName?: string | null
   /** The whole name, for people imported before we had the two halves. */
@@ -34,11 +34,13 @@ export function shortName(person: NamedPerson): string {
  * one screen's worth — a game for a box score, a team for a roster — which
  * keeps an answer stable while somebody is looking at it.
  */
-export function shortNames(people: NamedPerson[]): Map<string, string> {
+export function shortNames(
+  people: NamedPerson[]
+): Map<string | number, string> {
   // One entry per person. A box score joins the same user through more than
   // one row, and counting those as two people called `Henry H` made every
   // name in the list grow a letter it did not need.
-  const unique = new Map<string, NamedPerson>()
+  const unique = new Map<string | number, NamedPerson>()
   for (const person of people) {
     if (!unique.has(person.id)) unique.set(person.id, person)
   }
@@ -51,7 +53,7 @@ export function shortNames(people: NamedPerson[]): Map<string, string> {
     else held.push(person)
   }
 
-  const result = new Map<string, string>()
+  const result = new Map<string | number, string>()
   for (const [name, group] of byName) {
     if (group.length === 1) {
       const only = group[0]

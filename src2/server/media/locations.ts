@@ -86,11 +86,6 @@ interface CacheEntry {
 
 const peertubeCache = new Map<string, CacheEntry>()
 
-/** Forgets every cached PeerTube lookup. For tests, and after an import. */
-export function clearLocationCache(): void {
-  peertubeCache.clear()
-}
-
 /**
  * The video's directory and master playlist, or `undefined` if its files are
  * not where they should be — which the caller reports as `unavailable` rather

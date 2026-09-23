@@ -10,6 +10,7 @@ import { Pool } from 'pg'
 
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
+import { testDatabaseUrl } from '../../migrate/testDatabase'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
 import type { SpaceSettings } from '../media/spacesHls'
@@ -25,8 +26,7 @@ import { liveVideoDir, sweepLocalCopies } from './controller'
  * them would be the thing under test. It skips where there is no Postgres, the
  * way the migration suite does.
  */
-const adminUrl =
-  process.env.GS_TEST_DATABASE_URL ?? 'postgres://localhost:5432/postgres'
+const adminUrl = testDatabaseUrl
 const scratchName = `gamestation_sweep_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 

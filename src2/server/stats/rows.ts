@@ -1,8 +1,8 @@
-import type { Kysely } from 'kysely'
+import { type Kysely, sql } from 'kysely'
 
 import { survivorsOf } from '../admin/people'
 import type { Database } from '../db/database'
-import type { StatRow } from '../stats'
+import { DEFAULT_ERA_INNINGS, type StatRow } from '../stats'
 
 /**
  * The stored stat lines, for whatever a screen is asking about.
@@ -14,9 +14,9 @@ import type { StatRow } from '../stats'
  */
 export interface StatRowFilter {
   gameId?: string
-  userId?: string
+  userId?: number
   /** Every id one person has had — see `admin/people.ts`. */
-  userIds?: string[]
+  userIds?: number[]
   teamId?: string
   seasonId?: string
   /** The calendar year the game was played in. */
@@ -49,6 +49,7 @@ export async function statRows(
     .innerJoin('games', 'games.id', 'game_player_stats.game_id')
     .innerJoin('users', 'users.id', 'game_player_stats.user_id')
     .leftJoin('seasons', 'seasons.id', 'games.season_id')
+    .leftJoin('leagues', 'leagues.id', 'seasons.league_id')
     .leftJoin('teams', 'teams.id', 'game_player_stats.team_id')
     .select([
       'game_player_stats.game_id as gameId',
@@ -83,11 +84,13 @@ export async function statRows(
       'games.start_at as startAt',
       'seasons.name as seasonName',
       'seasons.year as seasonYear',
-      'seasons.innings_per_game as inningsPerGame',
       'teams.name as teamName',
       'users.first_name as firstName',
       'users.last_name as lastName',
-      'users.display_name as displayName'
+      'users.display_name as displayName',
+      sql<number>`coalesce(seasons.era_innings, leagues.era_innings, ${DEFAULT_ERA_INNINGS})`.as(
+        'eraInnings'
+      )
     ])
 
   if (filter.gameId != null) {

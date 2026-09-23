@@ -12,6 +12,7 @@ import { Pool } from 'pg'
 
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
+import { testDatabaseUrl } from '../../migrate/testDatabase'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
 import type { SpaceSettings } from '../media/spacesHls'
@@ -31,8 +32,7 @@ import { LIVE_PLAYLIST_NAME } from './splitter'
  */
 const run = promisify(execFile)
 const FFMPEG = process.env.GS_FFMPEG ?? '/opt/homebrew/bin/ffmpeg'
-const adminUrl =
-  process.env.GS_TEST_DATABASE_URL ?? 'postgres://localhost:5432/postgres'
+const adminUrl = testDatabaseUrl
 const scratchName = `gamestation_finish_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 

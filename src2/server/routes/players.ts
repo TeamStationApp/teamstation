@@ -1,15 +1,26 @@
 import { Router } from 'express'
-import { type Kysely, sql } from 'kysely'
+import type { Kysely } from 'kysely'
 
 import { notFound, unauthorized } from '../../common/errors'
 import { shortName } from '../../common/names'
-import { type CreditedOutcomeLike, outcomeName } from '../../common/outcomes'
-import { mayEditName, visibleScopes } from '../access'
+import { outcomeName } from '../../common/outcomes'
+import { asUserId } from '../../common/userIdNumber'
+import {
+  canSeePerson,
+  canSeePlayedFor,
+  mayEditName,
+  visibleScopes
+} from '../access'
 import { onePerson } from '../admin/people'
 import type { Database } from '../db/database'
 import { isRealVideo } from '../db/realVideos'
 import { teamNames, teamStandings } from '../db/teamLookups'
-import { withDropped } from '../highlights'
+import { creditsForPlayer } from '../events/credits'
+import {
+  HIGHLIGHT_EVENT_COLUMNS,
+  highlightEvent,
+  withDropped
+} from '../highlights'
 import { imageUrl, PROFILE_SIZE } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
 import { mediaUrlPath } from '../media/mediaTokens'
@@ -44,7 +55,7 @@ export function playerRoutes(
     withAsync(async (req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
-      const userId = pathParam(req.params.userId)
+      const userId = userIdParam(req.params.userId)
       const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
 
       const user = await db
@@ -80,15 +91,9 @@ export function playerRoutes(
       // The same rule as every other read: you may see somebody if you can
       // already see a team they are on, or a season opened up to you. Their
       // own page is always theirs.
-      const visible =
-        scopes.isAdmin ||
-        userId === actor.userId ||
-        teams.some(
-          team =>
-            scopes.teamIds.has(team.teamId) ||
-            (team.seasonId != null && scopes.seasonIds.has(team.seasonId))
-        )
-      if (!visible) throw notFound()
+      if (!canSeePerson(scopes, userId === actor.userId, teams)) {
+        throw notFound()
+      }
 
       // `Jensen P`, for everybody, always. There is no viewer who gets the
       // whole name because of who they are: this endpoint does not know how to
@@ -107,11 +112,7 @@ export function playerRoutes(
         bats: user.bats,
         throws: user.throws,
         teams: teams.filter(
-          team =>
-            scopes.isAdmin ||
-            userId === actor.userId ||
-            scopes.teamIds.has(team.teamId) ||
-            (team.seasonId != null && scopes.seasonIds.has(team.seasonId))
+          team => userId === actor.userId || canSeePlayedFor(scopes, team)
         )
       })
     })
@@ -131,7 +132,7 @@ export function playerRoutes(
     withAsync(async (req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
-      const userId = pathParam(req.params.userId)
+      const userId = userIdParam(req.params.userId)
 
       const mayEdit = await mayEditName(db, actor.userId, userId, {
         isAdmin: actor.isAdmin
@@ -179,7 +180,7 @@ export function playerRoutes(
     withAsync(async (req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
-      const userId = pathParam(req.params.userId)
+      const userId = userIdParam(req.params.userId)
       const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
       const limit = limitOf(req.query.limit)
       const before = dateOf(req.query.before)
@@ -192,48 +193,33 @@ export function playerRoutes(
       // drawn from, so the credit is what is searched: `event_players` says
       // somebody was named on a play, which is not the same as somebody having
       // done something worth watching.
+      const creditsByEvent = await creditsForPlayer(db, person.userId)
+      const eventIds = [...creditsByEvent.keys()]
+      if (eventIds.length === 0) {
+        res.json({ highlights: [], nextBefore: null, withoutVideo: 0 })
+        return
+      }
+
       let query = db
         .selectFrom('events')
-        .innerJoin('games', 'games.id', 'events.game_id')
+        .innerJoin('games', 'games.id', 'events.gameId')
         .select([
-          'events.id as eventId',
-          'events.game_id as gameId',
-          'events.at_bat_index as atBatIndex',
-          'events.start_time as startTime',
-          'events.event_type as eventType',
-          'events.description as description',
-          'events.title_override as titleOverride',
-          'events.time_nudge_sec as timeNudgeSec',
-          'events.hidden as hidden',
-          'events.is_scoring_play as isScoringPlay',
-          'events.credits as credits',
+          ...HIGHLIGHT_EVENT_COLUMNS,
+          'events.gameId as gameId',
           'games.home_team_id as homeTeamId',
           'games.away_team_id as awayTeamId',
           'games.season_id as seasonId',
           'games.ingest_status as ingestStatus'
         ])
+        .where('events.id', 'in', eventIds)
         .where('events.hidden', '=', false)
-        .where('events.start_time', 'is not', null)
-        // Containment against the credits themselves, which is what the GIN
-        // index in `022creditIndex` answers. Kysely has no builder for `@>`,
-        // and every id is bound rather than pasted into the string.
-        .where(eb =>
-          eb.or(
-            person.userIds.map((id: string) =>
-              eb(
-                sql<boolean>`events.credits @> jsonb_build_array(jsonb_build_object('creditUserId', ${id}::text))`,
-                '=',
-                true
-              )
-            )
-          )
-        )
+        .where('events.startTime', 'is not', null)
       if (before != null) {
-        query = query.where('events.start_time', '<', before)
+        query = query.where('events.startTime', '<', before)
       }
 
       const rows = await query
-        .orderBy('events.start_time', 'desc')
+        .orderBy('events.startTime', 'desc')
         // One extra, so the page knows whether there is another without
         // counting every play this child has ever been part of.
         .limit(limit + 1)
@@ -292,6 +278,7 @@ export function playerRoutes(
         teamId: string | null
         teamName: string | null
         outcome: string
+        title: string
         playAt: string
         startOffsetSec: number
         playOffsetSec: number
@@ -302,36 +289,20 @@ export function playerRoutes(
       const out: Row[] = []
 
       for (const row of usable) {
-        const credits = (row.credits ?? []) as CreditedOutcomeLike[]
+        const credits = creditsByEvent.get(row.id) ?? []
         // The play's credits for this person, by any of their rows.
-        const mine = credits.filter(outcome => {
-          const held = outcome as { creditUserId?: string | null }
-          return (
-            held.creditUserId != null &&
-            person.userIds.includes(held.creditUserId)
-          )
-        })
+        const mine = credits.filter(
+          outcome =>
+            outcome.creditUserId != null &&
+            person.userIds.includes(outcome.creditUserId)
+        )
         if (mine.length === 0) continue
 
         // The video that was running when the play happened. The program
         // recording first, which is the one a game is normally watched on.
         for (const video of videos.filter(item => item.gameId === row.gameId)) {
           const computed = withDropped(
-            [
-              {
-                id: row.eventId,
-                atBatIndex: row.atBatIndex,
-                startTime:
-                  row.startTime == null ? null : new Date(row.startTime),
-                eventType: row.eventType,
-                description: row.description,
-                titleOverride: row.titleOverride,
-                timeNudgeSec: row.timeNudgeSec,
-                hidden: row.hidden,
-                isScoringPlay: row.isScoringPlay,
-                credits: credits as never
-              }
-            ],
+            [highlightEvent(row, credits)],
             {
               startAt: video.startAt == null ? null : new Date(video.startAt),
               syncOffsetSec: video.syncOffsetSec,
@@ -346,12 +317,13 @@ export function playerRoutes(
           const outcome = mine[0]
           const teamId = (outcome as { teamId?: string | null }).teamId ?? null
           out.push({
-            eventId: row.eventId,
+            eventId: row.id,
             gameId: row.gameId,
             videoId: video.id,
             teamId,
             teamName: teamId == null ? null : (names.get(teamId) ?? null),
             outcome: outcomeName(outcome),
+            title: highlight.title,
             playAt: highlight.playAt.toISOString(),
             startOffsetSec: highlight.startOffsetSec,
             playOffsetSec: highlight.playOffsetSec,
@@ -439,7 +411,7 @@ export interface PlayerTeam {
  */
 export async function teamsOf(
   db: Kysely<Database>,
-  userIds: string[]
+  userIds: number[]
 ): Promise<PlayerTeam[]> {
   // Every row that is this person: a child on five teams was five imports,
   // and the teams of the four that were closed are still theirs.
@@ -493,4 +465,12 @@ export async function teamsOf(
 function pathParam(value: string | string[] | undefined): string {
   if (typeof value !== 'string' || value === '') throw notFound()
   return value
+}
+
+function userIdParam(value: string | string[] | undefined): number {
+  try {
+    return asUserId(pathParam(value))
+  } catch {
+    throw notFound()
+  }
 }

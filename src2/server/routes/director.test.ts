@@ -6,8 +6,10 @@ import type { Kysely } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
+import { mintUserId } from '../../common/mintUserId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
+import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
@@ -25,8 +27,7 @@ import { directorRoutes } from './director'
  * the account **runs**, not the games it may watch: a parent's forty watchable
  * games would bury the one they are holding a camera for.
  */
-const adminUrl =
-  process.env.GS_TEST_DATABASE_URL ?? 'postgres://localhost:5432/postgres'
+const adminUrl = testDatabaseUrl
 const scratchName = `gamestation_director_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
@@ -34,6 +35,21 @@ const COACH = 'tok_coach_00000000000000000000000'
 const PARENT = 'tok_parent_0000000000000000000000'
 const SECOND = 'tok_second_0000000000000000000000'
 const HOUR = 3_600_000
+
+const legacyOf = new Map<number, string>()
+function mintUser(): number {
+  const made = mintUserId(id => legacyOf.has(id))
+  legacyOf.set(made.userId, made.legacyId)
+  return made.userId
+}
+function legacyId(userId: number): string {
+  const id = legacyOf.get(userId)
+  if (id == null) throw new Error(`no legacy id for ${userId}`)
+  return id
+}
+
+const coachId = mintUser()
+const parentId = mintUser()
 
 describe('what GS Director is offered', function () {
   this.timeout(60000)
@@ -104,13 +120,14 @@ describe('what GS Director is offered', function () {
   async function seed(db: Kysely<Database>): Promise<void> {
     const now = new Date()
     for (const [id, name] of [
-      ['usr_coach', 'Coach'],
-      ['usr_parent', 'Parent']
-    ]) {
+      [coachId, 'Coach'],
+      [parentId, 'Parent']
+    ] as Array<[number, string]>) {
       await db
         .insertInto('users')
         .values({
           id,
+          legacyId: legacyId(id),
           display_name: name,
           first_name: null,
           last_name: null,
@@ -120,9 +137,9 @@ describe('what GS Director is offered', function () {
         .execute()
     }
     for (const [id, user, token] of [
-      ['ses_coach', 'usr_coach', COACH],
-      ['ses_parent', 'usr_parent', PARENT]
-    ]) {
+      ['ses_coach', coachId, COACH],
+      ['ses_parent', parentId, PARENT]
+    ] as Array<[string, number, string]>) {
       await db
         .insertInto('auth_sessions')
         .values({
@@ -148,7 +165,7 @@ describe('what GS Director is offered', function () {
       .insertInto('memberships')
       .values({
         id: 'mem_coach',
-        user_id: 'usr_coach',
+        user_id: coachId,
         team_id: 'tem_ours',
         role: 'manager'
       })
@@ -157,7 +174,7 @@ describe('what GS Director is offered', function () {
       .insertInto('memberships')
       .values({
         id: 'mem_parent',
-        user_id: 'usr_parent',
+        user_id: parentId,
         team_id: 'tem_ours',
         role: 'member'
       })
@@ -283,7 +300,7 @@ describe('what GS Director is offered', function () {
           id: `liv_cam${slot}`,
           game_id: 'gam_third',
           team_id: 'tem_ours',
-          user_id: 'usr_coach',
+          user_id: coachId,
           slot,
           key_hash: `hash_cam${slot}`,
           key_prefix: 'gs_cam',
@@ -353,10 +370,12 @@ describe('what GS Director is offered', function () {
     // the field. They are two cameras on one game now, not one publisher and
     // one refusal.
     const now = new Date()
+    const secondId = mintUser()
     await db
       ?.insertInto('users')
       .values({
-        id: 'usr_second',
+        id: secondId,
+        legacyId: legacyId(secondId),
         display_name: 'Second Coach',
         first_name: null,
         last_name: null,
@@ -368,7 +387,7 @@ describe('what GS Director is offered', function () {
       ?.insertInto('auth_sessions')
       .values({
         id: 'ses_second',
-        user_id: 'usr_second',
+        user_id: secondId,
         token_hash: hashToken(SECOND),
         expires_at: new Date(now.getTime() + HOUR),
         created_at: now
@@ -378,7 +397,7 @@ describe('what GS Director is offered', function () {
       ?.insertInto('memberships')
       .values({
         id: 'mem_second',
-        user_id: 'usr_second',
+        user_id: secondId,
         team_id: 'tem_ours',
         role: 'manager'
       })

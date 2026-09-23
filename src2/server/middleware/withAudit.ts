@@ -10,7 +10,8 @@ import type { Database } from '../db/database'
  */
 export interface AuditSubject {
   entityType?: string
-  entityId?: string
+  /** User ids arrive as numbers. The `entity_id` column is text. */
+  entityId?: string | number
   before?: unknown
   after?: unknown
 }
@@ -20,6 +21,14 @@ export function setAudit(
   subject: AuditSubject
 ): void {
   locals.audit = subject
+}
+
+/**
+ * Marks a write that changes nothing anyone would audit, such as a client's
+ * log lines, so it does not add a row per post to the audit trail.
+ */
+export function skipAudit(locals: Record<string, unknown>): void {
+  locals.skipAudit = true
 }
 
 const READ_ONLY = new Set(['GET', 'HEAD', 'OPTIONS'])
@@ -41,7 +50,7 @@ export function withAudit(db: Kysely<Database>): RequestHandler {
     }
 
     res.on('finish', () => {
-      if (res.statusCode >= 400) return
+      if (res.statusCode >= 400 || res.locals.skipAudit === true) return
       const subject = (res.locals.audit ?? {}) as AuditSubject
       db.insertInto('audit_log')
         .values({
@@ -51,7 +60,7 @@ export function withAudit(db: Kysely<Database>): RequestHandler {
           method: req.method,
           path: req.originalUrl.split('?')[0],
           entity_type: subject.entityType ?? null,
-          entity_id: subject.entityId ?? null,
+          entity_id: subject.entityId == null ? null : String(subject.entityId),
           before: subject.before ?? null,
           after: subject.after ?? null
         })

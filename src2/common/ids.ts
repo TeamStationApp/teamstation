@@ -12,6 +12,7 @@ export const idPrefixes = {
   authSession: 'ses',
   emailCode: 'emc',
   event: 'evt',
+  eventCredit: 'evc',
   eventPlayer: 'evp',
   externalId: 'ext',
   game: 'gam',

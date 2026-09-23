@@ -6,8 +6,10 @@ import type { Kysely } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
+import { mintUserId } from '../../common/mintUserId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
+import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
@@ -27,14 +29,29 @@ import { mediaRoutes } from './media'
  * router, with the real sign-in middleware, against a real database, because
  * every one of those three is a place the rule could be lost.
  */
-const adminUrl =
-  process.env.GS_TEST_DATABASE_URL ?? 'postgres://localhost:5432/postgres'
+const adminUrl = testDatabaseUrl
 const scratchName = `gamestation_liveroutes_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
 const MANAGER = 'tok_manager_000000000000000000000'
 const COACH = 'tok_coach_00000000000000000000000'
 const PARENT = 'tok_parent_0000000000000000000000'
+
+const legacyOf = new Map<number, string>()
+function mintUser(): number {
+  const made = mintUserId(id => legacyOf.has(id))
+  legacyOf.set(made.userId, made.legacyId)
+  return made.userId
+}
+function legacyId(userId: number): string {
+  const id = legacyOf.get(userId)
+  if (id == null) throw new Error(`no legacy id for ${userId}`)
+  return id
+}
+
+const managerId = mintUser()
+const coachId = mintUser()
+const parentId = mintUser()
 
 describe('a game’s stream key over the API', function () {
   this.timeout(60000)
@@ -122,14 +139,15 @@ describe('a game’s stream key over the API', function () {
   async function seed(db: Kysely<Database>): Promise<void> {
     const now = new Date()
     for (const [id, name] of [
-      ['usr_manager', 'Casey Manager'],
-      ['usr_coach', 'Robin Coach'],
-      ['usr_parent', 'Parent']
-    ]) {
+      [managerId, 'Casey Manager'],
+      [coachId, 'Robin Coach'],
+      [parentId, 'Parent']
+    ] as Array<[number, string]>) {
       await db
         .insertInto('users')
         .values({
           id,
+          legacyId: legacyId(id),
           display_name: name,
           first_name: null,
           last_name: null,
@@ -139,10 +157,10 @@ describe('a game’s stream key over the API', function () {
         .execute()
     }
     for (const [id, user, token] of [
-      ['ses_manager', 'usr_manager', MANAGER],
-      ['ses_coach', 'usr_coach', COACH],
-      ['ses_parent', 'usr_parent', PARENT]
-    ]) {
+      ['ses_manager', managerId, MANAGER],
+      ['ses_coach', coachId, COACH],
+      ['ses_parent', parentId, PARENT]
+    ] as Array<[string, number, string]>) {
       await db
         .insertInto('auth_sessions')
         .values({
@@ -195,7 +213,7 @@ describe('a game’s stream key over the API', function () {
       .insertInto('memberships')
       .values({
         id: 'mem_manager',
-        user_id: 'usr_manager',
+        user_id: managerId,
         team_id: 'tem_home',
         role: 'manager'
       })
@@ -204,7 +222,7 @@ describe('a game’s stream key over the API', function () {
       .insertInto('memberships')
       .values({
         id: 'mem_coach',
-        user_id: 'usr_coach',
+        user_id: coachId,
         team_id: 'tem_home',
         role: 'manager'
       })
@@ -213,7 +231,7 @@ describe('a game’s stream key over the API', function () {
       .insertInto('memberships')
       .values({
         id: 'mem_parent',
-        user_id: 'usr_parent',
+        user_id: parentId,
         team_id: 'tem_home',
         role: 'member'
       })
