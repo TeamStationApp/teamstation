@@ -1,5 +1,5 @@
 import { Canvas } from '@react-three/fiber'
-import React, { useCallback, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
 
 import { useBreakpoint } from '../components'
@@ -66,10 +66,14 @@ function Unavailable({ retry }: { retry: () => void }): React.ReactElement {
   )
 }
 class RenderBoundary extends React.Component<
-  { children: React.ReactNode },
+  { children: React.ReactNode; onFailure?: () => void },
   { failed: boolean }
 > {
   state = { failed: false }
+  componentDidCatch(): void {
+    this.props.onFailure?.()
+  }
+
   static getDerivedStateFromError(): { failed: boolean } {
     return { failed: true }
   }
@@ -98,6 +102,26 @@ export function FieldCanvas(props: FieldCanvasProps): React.ReactElement {
       window.matchMedia('(pointer: coarse)').matches
   )
   const [available, setAvailable] = useState(supportsWebGL)
+  const [hidden, setHidden] = useState(() => document.hidden)
+  useEffect(() => {
+    const change = (): void => {
+      setHidden(document.hidden)
+    }
+    document.addEventListener('visibilitychange', change)
+    return () => {
+      document.removeEventListener('visibilitychange', change)
+    }
+  }, [])
+  const { presentation, onPresentationDone } = props
+  const recover = useCallback((): void => {
+    const sequence = presentation
+    if (sequence != null)
+      onPresentationDone?.(sequence.id, sequence.generation, sequence.stage)
+  }, [presentation, onPresentationDone])
+  useEffect(() => {
+    if (!available) recover()
+  }, [available, recover])
+
   const cancelGesture = useRef<(() => void) | null>(null)
   const registerInterruption = useCallback((cancel: (() => void) | null) => {
     cancelGesture.current = cancel
@@ -134,7 +158,7 @@ export function FieldCanvas(props: FieldCanvasProps): React.ReactElement {
         WebkitTouchCallout: 'none'
       }}
     >
-      <RenderBoundary key={generation}>
+      <RenderBoundary key={generation} onFailure={recover}>
         {eventHost != null && (
           <Canvas
             eventSource={eventHost}
@@ -167,6 +191,7 @@ export function FieldCanvas(props: FieldCanvasProps): React.ReactElement {
           >
             <FieldScene
               {...props}
+              presentationPaused={props.presentationPaused === true || hidden}
               registerInterruption={registerInterruption}
               touchPlacement={props.touchPlacement === true || mobileInput}
             />

@@ -14,7 +14,7 @@ function initial(mask = 0): ScoringState {
     createDevelopmentSession(gameFixture, [], [])
   )
   for (const [i, key] of (['first', 'second', 'third'] as const).entries())
-    if (mask & (1 << i))
+    if ((mask & (1 << i)) !== 0)
       state.session.liveData.linescore.offense[key] = playerRef(
         state.session,
         i + 2

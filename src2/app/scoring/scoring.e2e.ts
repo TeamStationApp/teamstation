@@ -101,6 +101,18 @@ async function open(
 }
 async function click(page: Page, label: string): Promise<void> {
   const selector = `[aria-label="${label}"]`
+  await page.waitForFunction(
+    selector => {
+      const node = document.querySelector(selector)
+      return (
+        node != null &&
+        node.getAttribute('aria-disabled') !== 'true' &&
+        !(node instanceof HTMLButtonElement && node.disabled)
+      )
+    },
+    {},
+    selector
+  )
   await page.locator(selector).click()
 }
 async function chooseHit(page: Page, outcome: string): Promise<void> {
@@ -146,6 +158,118 @@ describe('scoring browser', function () {
   })
   after(async function () {
     await browser?.close()
+  })
+  it('pauses a pitch while a menu or hidden document blocks the field', async function () {
+    const { page } = await open('/games/g1/score')
+    try {
+      await page.waitForSelector('canvas[data-field-ready="true"]')
+      await click(page, 'Ball')
+      await click(page, 'Open scoring menu')
+      await new Promise(resolve => setTimeout(resolve, 1400))
+      await click(page, 'Resume Game')
+      expect(
+        await page.$eval('[aria-label="Ball"]', node =>
+          node.getAttribute('aria-disabled')
+        )
+      ).equals('true')
+      await waitReady(page)
+      await click(page, 'Foul Ball')
+      const background = await browser.newPage()
+      await background.bringToFront()
+      await new Promise(resolve => setTimeout(resolve, 1700))
+      expect(await page.evaluate(() => document.hidden)).equals(true)
+      expect(
+        await page.$eval('[aria-label="Ball"]', node =>
+          node.getAttribute('aria-disabled')
+        )
+      ).equals('true')
+      await background.close()
+      await page.bringToFront()
+      await waitReady(page)
+      await page.waitForSelector('[aria-label*="Pitches 2"]')
+    } finally {
+      await page.close()
+    }
+  })
+  it('animates each pitch with real audio sources, gates rapid taps, mutes and cancels on Undo', async function () {
+    const { page } = await open('/games/g1/score')
+    try {
+      await page.waitForSelector('canvas[data-field-ready="true"]')
+      await page.evaluate(() => {
+        const target = window as unknown as {
+          pitchCues: Array<{ time: number; peak: number }>
+        }
+        target.pitchCues = []
+        // Keep the original receiver when wrapping the browser audio factory.
+        // eslint-disable-next-line @typescript-eslint/unbound-method
+        const original = AudioContext.prototype.createBufferSource
+        AudioContext.prototype.createBufferSource = function () {
+          const source = original.call(this)
+          const start = source.start.bind(source)
+          source.start = (...args) => {
+            const data =
+              source.buffer == null ? [] : source.buffer.getChannelData(0)
+            target.pitchCues.push({
+              time: performance.now(),
+              peak: Math.max(...Array.from(data).map(Math.abs))
+            })
+            start(...args)
+          }
+          return source
+        }
+      })
+      let pitch = 0
+      for (const label of [
+        'Ball',
+        'Called Strike',
+        'Swing and Miss',
+        'Foul Ball'
+      ]) {
+        await click(page, label)
+        await page.evaluate(label => {
+          const button = document.querySelector<HTMLElement>(
+            `[aria-label="${label}"]`
+          )!
+          button.click()
+          button.click()
+        }, label)
+        expect(
+          await page.$eval('[aria-label="Ball"]', node =>
+            node.getAttribute('aria-disabled')
+          )
+        ).equals('true')
+        await waitReady(page)
+        pitch++
+        await page.waitForSelector(`[aria-label*="Pitches ${pitch}"]`)
+      }
+      const cues = await page.evaluate(
+        () =>
+          (
+            window as unknown as {
+              pitchCues: Array<{ time: number; peak: number }>
+            }
+          ).pitchCues
+      )
+      expect(cues).has.length(9)
+      expect(cues.every(cue => cue.peak > 0.1)).equals(true)
+      await click(page, 'Open scoring menu')
+      await click(page, 'Settings')
+      await click(page, 'Toggle scoring sound')
+      await click(page, 'Cancel')
+      await click(page, 'Ball')
+      await waitReady(page)
+      expect(
+        await page.evaluate(
+          () => (window as unknown as { pitchCues: unknown[] }).pitchCues.length
+        )
+      ).equals(9)
+      await click(page, 'Foul Ball')
+      await click(page, 'Undo Foul Ball')
+      await waitReady(page)
+      await page.waitForSelector('[aria-label*="Pitches 5"]')
+    } finally {
+      await page.close()
+    }
   })
   it('uses themed chrome and completes the toast with Done', async function () {
     const { page, unexpected } = await open('/games/g1/score')

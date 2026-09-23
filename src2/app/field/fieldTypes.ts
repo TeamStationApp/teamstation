@@ -1,4 +1,5 @@
 import type { RunnerDecision, RunnerDragView } from '../scoring/runnerDrag'
+import type { PresentationSequence } from '../scoring/scoringPresentation'
 import type { ArcMode, BallArcState } from './ballArcModel'
 import type { CameraView, FieldPlayer, GroundPoint } from './fieldModel'
 import type { ScoreboardState } from './scoreboardModel'
@@ -16,6 +17,14 @@ export interface FieldPlacement {
   gestureId: number
 }
 export interface FieldCanvasProps {
+  presentation?: PresentationSequence | null
+  presentationPaused?: boolean
+  onPresentationDone?: (
+    id: string,
+    generation: number,
+    stage: PresentationSequence['stage']
+  ) => void
+
   runnerSafeError?: (id: string, to: number) => string | undefined
   onRunnerDrag?: (view: RunnerDragView | null) => void
   onRunnerDrop?: (

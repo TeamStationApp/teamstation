@@ -1,4 +1,5 @@
 export interface ScoringPreferences {
+  sound?: boolean
   help: boolean
   shown: number
 }
@@ -26,6 +27,7 @@ export function scoringPreferenceStore(storage: PreferenceStorage): {
         )
           return { help: true, shown: 0 }
         return {
+          ...('sound' in value ? { sound: value.sound !== false } : {}),
           help: value.help !== false,
           shown:
             typeof value.shown === 'number' && Number.isInteger(value.shown)

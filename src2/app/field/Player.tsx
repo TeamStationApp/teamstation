@@ -52,10 +52,12 @@ export function Player({
   player,
   selected,
   fabric,
-  onMovementComplete
+  onMovementComplete,
+  paused = false
 }: {
   player: FieldPlayer
   selected: boolean
+  paused?: boolean
   fabric?: Texture
   onMovementComplete?: (id: string, generation: number) => void
 }): React.ReactElement {
@@ -84,6 +86,7 @@ export function Player({
   const body = useRef<Group>(null)
   const leftArm = useRef<Group>(null)
   const rightArm = useRef<Group>(null)
+  const batPose = useRef<Group>(null)
   const leftLeg = useRef<Group>(null)
   const rightLeg = useRef<Group>(null)
   const target = useRef<Mesh>(null)
@@ -129,9 +132,10 @@ export function Player({
   }, [player.suppressed, invalidate])
   const shirt = player.team === 'runner' ? p.runner : p.defense
   useFrame(({ camera, size }, dt) => {
-    advancePlayer(player, dt)
+    if (!paused) advancePlayer(player, dt)
     const motion = player.motion
     if (
+      !paused &&
       motion != null &&
       !motion.reported &&
       Math.hypot(
@@ -148,7 +152,7 @@ export function Player({
         onMovementComplete?.(motion.id, motion.generation)
       }
     }
-    if (player.speed > 0) invalidate()
+    if (player.speed > 0 && !paused) invalidate()
     if (root.current == null || body.current == null) return
     root.current.position.set(
       player.position.x,
@@ -169,6 +173,19 @@ export function Player({
       ? -0.09
       : Math.abs(Math.cos(player.stride)) * 0.13 * running
     body.current.rotation.x = running * 0.12
+    if (player.pose != null) {
+      const {
+        windup,
+        catch: catching,
+        throwSide,
+        swing: batSwing
+      } = player.pose
+      const throwingArm = throwSide === 'R' ? rightArm.current : leftArm.current
+      if (throwingArm != null) throwingArm.rotation.x -= windup * 2.7
+      if (leftArm.current != null) leftArm.current.rotation.x -= catching * 0.8
+      body.current.rotation.x -= windup * 0.18
+      if (batPose.current != null) batPose.current.rotation.y = batSwing * 2.8
+    } else if (batPose.current != null) batPose.current.rotation.y = 0
     if (target.current != null) {
       target.current.position.set(
         player.target.x,
@@ -272,7 +289,10 @@ export function Player({
             />
           </group>
           {batting && (
-            <group scale={[player.batSide === 'L' ? -1 : 1, 1, 1]}>
+            <group
+              ref={batPose}
+              scale={[player.batSide === 'L' ? -1 : 1, 1, 1]}
+            >
               <BattingPose />
             </group>
           )}

@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect } from 'react'
 import { Text, View } from 'react-native'
 
 import { useTheme } from '../theme/ThemeContext'
@@ -12,6 +12,15 @@ import type { FieldCanvasProps } from './fieldTypes'
  */
 export function FieldCanvas(_props: FieldCanvasProps): React.ReactElement {
   const theme = useTheme()
+  useEffect(() => {
+    const sequence = _props.presentation
+    if (sequence != null)
+      _props.onPresentationDone?.(
+        sequence.id,
+        sequence.generation,
+        sequence.stage
+      )
+  }, [_props])
   return (
     <View style={{ flex: 1, justifyContent: 'center', padding: 32, gap: 12 }}>
       <Text style={{ color: theme.primaryTextColor, fontSize: 22 }}>

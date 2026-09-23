@@ -3,6 +3,7 @@ import type { MoreAction, MoreInput } from './moreActions'
 import type { PlayerIdentityMap } from './playerIdentity'
 import type { Outcome, PlayerRef, ScoringPlay } from './scoringContract'
 import type { OverrideDraft } from './scoringEdits'
+import type { PresentationSequence } from './scoringPresentation'
 
 export const POSITIONS = [
   'P',
@@ -140,6 +141,9 @@ export interface CorrectionWindow {
   revision: number
 }
 export interface ScoringSnapshot {
+  presentationEnabled?: boolean
+  presentation?: PresentationSequence | null
+
   recentPitch?: { atBatIndex: number; index: number } | null
   moreDraft?: {
     action: MoreAction
@@ -172,6 +176,12 @@ export interface ScoringState extends ScoringSnapshot {
   past: HistoryEntry[]
 }
 export type ScoringEvent =
+  | {
+      type: 'PRESENTATION_DONE'
+      id: string
+      generation: number
+      stage: PresentationSequence['stage']
+    }
   | { type: 'MORE'; input: MoreInput }
   | { type: 'GESTURE'; active: boolean }
   | { type: 'MOTION_DONE'; id: string; generation: number }

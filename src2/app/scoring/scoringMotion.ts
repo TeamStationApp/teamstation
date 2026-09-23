@@ -5,6 +5,7 @@ import type { ScoringState } from './scoringTypes'
 export function scoringFieldPlayers(
   state: Pick<
     ScoringState,
+    | 'presentation'
     | 'session'
     | 'phase'
     | 'pendingPlay'
@@ -14,6 +15,12 @@ export function scoringFieldPlayers(
   >,
   previous: FieldPlayer[] = []
 ): FieldPlayer[] {
+  if (state.presentation?.kind === 'pitch')
+    return state.presentation.players.map(player => ({
+      ...player,
+      position: { ...player.position },
+      target: { ...player.target }
+    }))
   const session = state.session
   const suppressed = [
     'locateFielder',
