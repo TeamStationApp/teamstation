@@ -15,6 +15,7 @@ import {
   normaliseImage,
   putObject,
   putObjectFile,
+  putObjectMultipart,
   sha256Of,
   storeImage
 } from './images'
@@ -162,15 +163,47 @@ describe('stored images', function () {
       string,
       { contentLength?: string; transferEncoding?: string }
     >()
+    const parts = new Map<string, Map<number, Buffer>>()
+    const aborted: string[] = []
+    let nextUploadId = 1
 
     before(async function () {
       server = createServer((req, res) => {
-        if (req.method !== 'PUT') {
+        const url = new URL(req.url ?? '/', 'http://space.test')
+        const path = url.pathname
+        const method = req.method ?? ''
+
+        if (method === 'POST' && url.searchParams.has('uploads')) {
+          const uploadId = `upload-${nextUploadId++}`
+          res.statusCode = 200
+          res.end(
+            `<InitiateMultipartUploadResult><UploadId>${uploadId}</UploadId></InitiateMultipartUploadResult>`
+          )
+          return
+        }
+        if (method === 'DELETE' && url.searchParams.has('uploadId')) {
+          aborted.push(path)
+          parts.delete(path)
+          res.statusCode = 204
+          res.end()
+          return
+        }
+        if (method === 'POST' && url.searchParams.has('uploadId')) {
+          const held = parts.get(path) ?? new Map()
+          const ordered = [...held.entries()]
+            .sort((a, b) => a[0] - b[0])
+            .map(entry => entry[1])
+          written.set(path, Buffer.concat(ordered))
+          parts.delete(path)
+          res.statusCode = 200
+          res.end('<CompleteMultipartUploadResult/>')
+          return
+        }
+        if (method !== 'PUT') {
           res.statusCode = 405
           res.end()
           return
         }
-        const path = (req.url ?? '').split('?')[0] ?? ''
         framing.set(path, {
           contentLength: req.headers['content-length'],
           transferEncoding: req.headers['transfer-encoding']
@@ -182,10 +215,26 @@ describe('stored images', function () {
           res.end('<Error><Code>AccessDenied</Code></Error>')
           return
         }
+        const partNumber = Number(url.searchParams.get('partNumber') ?? '0')
+        if (path.includes('fail-part') && partNumber === 2) {
+          res.statusCode = 400
+          res.end('<Error><Code>EntityTooLarge</Code></Error>')
+          return
+        }
         const chunks: Buffer[] = []
         req.on('data', chunk => chunks.push(chunk as Buffer))
         req.on('end', () => {
-          written.set(path, Buffer.concat(chunks))
+          const body = Buffer.concat(chunks)
+          if (partNumber > 0) {
+            const held = parts.get(path) ?? new Map()
+            held.set(partNumber, body)
+            parts.set(path, held)
+            res.setHeader('etag', `"${sha256Of(body).slice(0, 16)}"`)
+            res.statusCode = 200
+            res.end()
+            return
+          }
+          written.set(path, body)
           res.statusCode = 200
           res.end()
         })
@@ -265,6 +314,54 @@ describe('stored images', function () {
       // times out — which is five seconds later, and would be five seconds per
       // file of a game that is never going to upload.
       expect(Date.now() - started, 'reported at once').lessThan(2000)
+    })
+
+    it('reassembles a file from multipart parts', async function () {
+      // 12 MB in 5 MB parts: two full parts and a remainder, without writing
+      // a 5 GB file just to cross the production threshold.
+      const source = join(dir, 'multipart.mp4')
+      const bytes = Buffer.alloc(12 * 1024 * 1024)
+      for (let i = 0; i < bytes.length; i++) bytes[i] = i % 251
+      await writeFile(source, bytes)
+
+      await putObjectMultipart({
+        space,
+        key: 'videos/vid_big/video.mp4',
+        path: source,
+        contentType: 'video/mp4',
+        size: bytes.length,
+        partSize: 5 * 1024 * 1024
+      })
+
+      const path = '/example-media-bkt/videos/vid_big/video.mp4'
+      expect(written.get(path)?.length, 'every byte arrived').equals(
+        bytes.length
+      )
+      expect(sha256Of(written.get(path) ?? Buffer.alloc(0))).equals(
+        sha256Of(bytes)
+      )
+    })
+
+    it('aborts a multipart upload when a part is refused', async function () {
+      const source = join(dir, 'abort.mp4')
+      await writeFile(source, Buffer.alloc(12 * 1024 * 1024, 9))
+      let message = ''
+      try {
+        await putObjectMultipart({
+          space,
+          key: 'videos/vid_fail-part/video.mp4',
+          path: source,
+          contentType: 'video/mp4',
+          size: 12 * 1024 * 1024,
+          partSize: 5 * 1024 * 1024
+        })
+      } catch (error) {
+        message = error instanceof Error ? error.message : String(error)
+      }
+      expect(message).contains('400')
+      expect(aborted).includes(
+        '/example-media-bkt/videos/vid_fail-part/video.mp4'
+      )
     })
 
     it('uploads every size and reports where the row should point', async function () {
