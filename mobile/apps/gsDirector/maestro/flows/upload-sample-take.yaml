@@ -1,0 +1,51 @@
+# Uploads a short take from the Director to a finished game, as a sample.
+#
+# Take 901 is a short bench recording with two cameras and a programme
+# output, so it exercises four files, the grouping the multi-camera view does
+# on their titles, and — because the game it goes to still has its live
+# recording — the live recording stepping aside.
+#
+# Deletes nothing: no `clearState`, and nowhere near Select All, Delete, or
+# the per-row circles that mark a take for deletion.
+appId: co.gamestation.director
+---
+- launchApp:
+    appId: co.gamestation.director
+- extendedWaitUntil:
+    visible:
+      id: 'start-directing'
+    timeout: 30000
+- tapOn:
+    id: 'start-directing'
+- extendedWaitUntil:
+    visible:
+      id: 'recordings-button'
+    timeout: 30000
+- tapOn:
+    id: 'recordings-button'
+- extendedWaitUntil:
+    visible:
+      id: 'recordings-dates'
+    timeout: 25000
+# The list is long and the take is well down it.
+- scrollUntilVisible:
+    element:
+      id: 'recording-row-418'
+    direction: DOWN
+    timeout: 30000
+- tapOn:
+    id: 'recording-row-418'
+- waitForAnimationToEnd:
+    timeout: 2000
+- takeScreenshot: shot-sample-chosen
+- tapOn:
+    id: 'recordings-upload'
+- extendedWaitUntil:
+    visible:
+      id: 'upload-event-gam_demo000000000002'
+    timeout: 40000
+- tapOn:
+    id: 'upload-event-gam_demo000000000002'
+- waitForAnimationToEnd:
+    timeout: 10000
+- takeScreenshot: shot-sample-started
