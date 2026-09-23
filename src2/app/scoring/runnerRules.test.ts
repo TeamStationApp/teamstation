@@ -141,6 +141,29 @@ describe('runner progression and correction deadline', function () {
           undone.session.liveData.plays.currentPlay?.matchup.batter.id
         ).equals(1)
       })
+  it('keeps earlier runs when the batter is tagged out at home for the third out', function () {
+    const start = initial(4)
+    start.session.liveData.linescore.outs = 2
+    let state = completeMotions(hit(start, 'Home Run'))
+    state = completeMotions(
+      scoringReducer(state, { type: 'HOME', decision: 'safe' })
+    )
+    expect(state.session.liveData.linescore.teams.away.runs).equals(1)
+    state = scoringReducer(state, { type: 'HOME', decision: 'out' })
+    state = completeMotions(retire(state))
+    expect(state.session.liveData.linescore.outs).equals(3)
+    expect(state.session.liveData.linescore.teams.away.runs).equals(1)
+    const runners = state.session.liveData.plays.currentPlay!.runners
+    expect(
+      runners.find(move => move.details.runner.id === 4)!.movement.runScored
+    ).equals(true)
+    expect(
+      runners.find(move => move.details.runner.id === 1)!.movement.forceOut
+    ).equals(false)
+    state = expire(state)
+    expect(state.session.liveData.linescore.inningState).equals('Bottom')
+    expect(state.session.liveData.plays.allPlays[0].result.awayScore).equals(1)
+  })
   it('backs a legal single up atomically and hides Back for forced or fixed-batter collisions', function () {
     let state = completeMotions(hit(initial(6)))
     expect(
