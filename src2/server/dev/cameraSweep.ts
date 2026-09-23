@@ -21,7 +21,7 @@ import { serverConfig } from '../serverConfig'
  * fills in the tile count, and the second pass applies it — a wrong count
  * mislabels a recording permanently and there are not many to look at.
  *
- * Tiles are not cameras: one tile is always the programme output, so four
+ * Tiles are not cameras: one tile is always the program output, so four
  * tiles is three cameras and three tiles is two.
  */
 const CSV = '/tmp/gsCameraSweep.csv'
