@@ -7,6 +7,7 @@ import {
 } from '../../common/scoring/actions'
 import {
   closesAutomatically,
+  completesHitOffer,
   forcedFrom,
   homeBackProposal,
   nextDecision,
@@ -152,11 +153,10 @@ export function settleRunners(state: ScoringState): void {
     else beginDefense(state)
     return
   }
-  const lead = game.homeQueue[0]
   if (decision === 'homeDecision') {
-    if (
-      state.motions.some(motion => motion.playerId === lead && !motion.complete)
-    ) {
+    // Wait for every unfinished motion (lead to home and trailer retreat /
+    // re-advance), not only the lead — home Safe/Out must not fire mid-drag.
+    if (moving) {
       state.phase = 'runnerMovement'
       return
     }
@@ -474,12 +474,6 @@ export function runnerReducer(
   if (event.type === 'RUNNER_PROPOSE') {
     if (
       state.runnerAction?.purpose === 'droppedThirdStrike' ||
-      ![
-        'ready',
-        'correctionWindow',
-        'resolveBatter',
-        'runnerDecision'
-      ].includes(state.phase) ||
       state.motions.some(motion => !motion.complete) ||
       !Number.isInteger(event.to) ||
       event.to < 0 ||
@@ -493,6 +487,20 @@ export function runnerReducer(
     ]
     const from = bases.indexOf(event.id) + 1
     const batter = state.session.liveData.plays.currentPlay?.matchup.batter.id
+    // homeDecision may propose only a hit-offer re-take (Out after retreat).
+    const homeRetake =
+      state.phase === 'homeDecision' &&
+      completesHitOffer(state.session, event.id, from, event.to)
+    if (
+      ![
+        'ready',
+        'correctionWindow',
+        'resolveBatter',
+        'runnerDecision'
+      ].includes(state.phase) &&
+      !homeRetake
+    )
+      return state
     if (
       from === 0 &&
       !(

@@ -25,6 +25,45 @@ describe('constrained runner drag geometry', function () {
         expect(view.point.z).closeTo(start.z + dz * view.progress, 1e-10)
       }
     })
+  it('offers a one-base retreat when canRetreat is set', function () {
+    const from = 3
+    const start = BASES[from]
+    const back = BASES[from - 1]
+    const dx = back.x - start.x
+    const dz = back.z - start.z
+    const view = runnerDragView(
+      'runner',
+      from,
+      { x: start.x + dx * 0.75, z: start.z + dz * 0.75 },
+      () => ({ x: 200, y: 300 }),
+      390,
+      700,
+      true
+    )
+    expect(view.to).equals(2)
+    expect(view.hovered).equals('safe')
+  })
+
+  it('ignores forward drag when canAdvance is false', function () {
+    const from = 3
+    const start = BASES[from]
+    const forward = BASES[(from + 1) % 4]
+    const dx = forward.x - start.x
+    const dz = forward.z - start.z
+    const view = runnerDragView(
+      'runner',
+      from,
+      { x: start.x + dx * 0.9, z: start.z + dz * 0.9 },
+      () => ({ x: 200, y: 300 }),
+      390,
+      700,
+      true,
+      false
+    )
+    expect(view.to).equals(from)
+    expect(view.progress).equals(0)
+  })
+
   it('clamps both targets together and ignores empty space and disabled Safe', function () {
     for (const anchor of [
       { x: -100, y: -100 },

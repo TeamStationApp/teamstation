@@ -15,7 +15,13 @@ import {
 } from 'react-native'
 
 import type { GameStationClient } from '../../common/api'
-import { awaitingResult, forcedFrom } from '../../common/scoring/rules'
+import {
+  awaitingResult,
+  completesHitOffer,
+  forcedFrom,
+  runnerDecisionError as baseOccupiedError,
+  undoesHitOffer
+} from '../../common/scoring/rules'
 import type { ScoringSession as GameSession } from '../../common/scoring/session'
 import type { BallArcState } from '../field/ballArcModel'
 import { BaseballScreen } from '../field/BaseballScreen'
@@ -439,6 +445,37 @@ function ScoringPanel(props: {
     state.runnerAction?.purpose === 'batterRetirement' &&
     state.presentation == null &&
     !status.readOnly
+  const hitOfferRetreatIds = players
+    .filter(player => {
+      if (player.team !== 'runner' || player.playerId == null) return false
+      if (session.homeQueue.includes(player.playerId)) return false
+      const from = baseIds(session).indexOf(player.playerId) + 1
+      const to = from - 1
+      if (!undoesHitOffer(session, player.playerId, from, to)) return false
+      // Same occupancy gate as apply: do not offer retreat onto a taken base.
+      return (
+        baseOccupiedError(session, {
+          playerId: player.playerId,
+          from,
+          to
+        }) == null
+      )
+    })
+    .map(player => player.id)
+  // While home waits, the unforced trailer may retreat or re-take the offer —
+  // not drag past the offered base toward home (that would no-op).
+  const hitOfferAdvanceIds = players
+    .filter(player => {
+      if (player.team !== 'runner' || player.playerId == null) return false
+      if (session.homeQueue.includes(player.playerId)) return false
+      const from = baseIds(session).indexOf(player.playerId) + 1
+      return completesHitOffer(session, player.playerId, from, from + 1)
+    })
+    .map(player => player.id)
+  const hitOfferHomeIds = [...new Set([...hitOfferRetreatIds, ...hitOfferAdvanceIds])]
+  const homeWaiting =
+    state.phase === 'homeDecision' &&
+    !state.motions.some(motion => !motion.complete)
   const runnerIds = relayForce
     ? players
         .filter(
@@ -449,18 +486,25 @@ function ScoringPanel(props: {
             forcedFrom(session, baseIds(session).indexOf(player.playerId) + 1)
         )
         .map(player => player.id)
-    : runnerEnabled
-      ? players
-          .filter(
-            player =>
-              player.team === 'runner' &&
-              (state.phase === 'resolveBatter' ||
-              state.runnerAction?.returnPhase === 'resolveBatter'
-                ? player.playerId === unresolvedRunner?.playerId
-                : player.batting !== true)
-          )
-          .map(player => player.id)
+    : homeWaiting
+      ? hitOfferHomeIds
+      : runnerEnabled
+        ? players
+            .filter(
+              player =>
+                player.team === 'runner' &&
+                (state.phase === 'resolveBatter' ||
+                state.runnerAction?.returnPhase === 'resolveBatter'
+                  ? player.playerId === unresolvedRunner?.playerId
+                  : player.batting !== true)
+            )
+            .map(player => player.id)
+        : []
+  const retreatIds =
+    state.phase === 'correctionWindow' || state.phase === 'homeDecision'
+      ? hitOfferRetreatIds
       : []
+  const advanceIds = homeWaiting ? hitOfferAdvanceIds : undefined
   const instruction =
     state.presentation != null
       ? undefined
@@ -567,6 +611,8 @@ function ScoringPanel(props: {
         interaction: {
           generation: state.generation,
           runnerIds,
+          retreatIds,
+          advanceIds,
           selectableIds:
             status.readOnly ||
             menu ||
@@ -836,7 +882,16 @@ function ScoringPanel(props: {
     >
       <ErrorCreditSheet state={state} dispatch={dispatch} />
       <RunnerDragTargets
-        view={runnerDrag}
+        view={
+          runnerDrag != null &&
+          (runnerDrag.to < runnerDrag.from ||
+            // homeDecision retreat-only: no Safe/Out on a hold at the offered base
+            (homeWaiting &&
+              retreatIds.includes(runnerDrag.id) &&
+              advanceIds?.includes(runnerDrag.id) !== true))
+            ? null
+            : runnerDrag
+        }
         onChoose={decision => {
           keyboard.current?.(decision === 'safe' ? 's' : 'o')
           keyboard.current?.('Enter')
