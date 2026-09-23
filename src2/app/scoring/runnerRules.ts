@@ -445,7 +445,7 @@ function finishOut(state: ScoringState, defender: number): void {
       enqueue(state, id, [homeQueuePoint(index + 1), homeQueuePoint(index)])
     })
   if (line.outs >= 3) {
-    if (pending != null && (force || action.from === 0)) {
+    if (pending != null && force) {
       line.teams[battingSide(state.session)].runs = pending.originalRuns
       state.session.liveData.plays.currentPlay!.result.rbi = 0
       const play = state.session.liveData.plays.currentPlay!

@@ -947,6 +947,8 @@ describe('scoring browser', function () {
       await click(page, 'First base')
       await click(page, 'Choose First base Player 6')
       await click(page, 'Apply Override')
+      // A pitch locks the switch hitter, leaving the base runner selectable.
+      await click(page, 'Ball')
       await holdRunnerWithKeyboard(page)
       await click(page, 'Out')
       await click(page, 'Picked Off')
@@ -1107,6 +1109,106 @@ describe('scoring browser', function () {
       await click(page, 'Exit Current Game')
       await page.waitForFunction(() => location.pathname === '/games/g1')
       expect(unexpected).deep.equals([])
+    } finally {
+      await page.close()
+    }
+  })
+  it('stationary runner presents Safe above and Out below', async () => {
+    const { page, unexpected } = await open('/games/g1/score')
+    try {
+      await page.setViewport({
+        width: 390,
+        height: 844,
+        isMobile: true,
+        hasTouch: true
+      })
+      await click(page, 'Open scoring menu')
+      await click(page, 'Overrides')
+      await click(page, 'First base')
+      await click(page, 'Choose First base Player 6')
+      await click(page, 'Apply Override')
+      await page.waitForSelector('canvas[data-field-ready="true"]')
+      const rect = await page.$eval('canvas', n => {
+        const r = n.getBoundingClientRect()
+        return { x: r.x, y: r.y, width: r.width, height: r.height }
+      })
+      const camera = new PerspectiveCamera()
+      applyFieldCamera(camera, {
+        width: rect.width,
+        height: rect.height,
+        view: 'home',
+        zoom: 1.25,
+        tilt: (-11 * Math.PI) / 180,
+        heightOffset: 33
+      })
+      const pt = new Vector3(BASES[1].x, 6, BASES[1].z).project(camera)
+      await page.touchscreen.touchStart(
+        rect.x + ((pt.x + 1) * rect.width) / 2,
+        rect.y + ((1 - pt.y) * rect.height) / 2
+      )
+      await new Promise(resolve => setTimeout(resolve, 450))
+      await page.touchscreen.touchEnd()
+      await page.waitForSelector('[aria-label="Safe from Pickoff"]')
+      const positions = await page.evaluate(() =>
+        ['Safe from Pickoff', 'Out'].map(label => {
+          const e = document.querySelector(`[aria-label="${label}"]`)!
+          const r = e.getBoundingClientRect()
+          return { label, x: r.x, y: r.y, width: r.width, height: r.height }
+        })
+      )
+      expect(unexpected).deep.equals([])
+      expect(positions[0].y + positions[0].height).at.most(positions[1].y)
+    } finally {
+      await page.close()
+    }
+  })
+  it('keeps previous home runs when the batter is tagged out at home for third out', async () => {
+    const { page, unexpected } = await open('/games/g1/score')
+    try {
+      await page.setViewport({
+        width: 390,
+        height: 844,
+        isMobile: true,
+        hasTouch: true
+      })
+      await click(page, 'Open scoring menu')
+      await click(page, 'Overrides')
+      await page.locator('[aria-label="outs"]').fill('2')
+      for (const [base, player] of [['Third base', 'Player 8']]) {
+        await click(page, base)
+        await click(page, `Choose ${base} ${player}`)
+      }
+      await click(page, 'Apply Override')
+      await chooseHit(page, 'Home Run')
+      await page.waitForSelector(
+        '[aria-label="Home plate decision for Player 8"]',
+        { timeout: 30000 }
+      )
+      for (const name of ['Player 8']) {
+        await page.waitForSelector(
+          `[aria-label="Home plate decision for ${name}"]`,
+          { timeout: 30000 }
+        )
+        await click(page, 'Safe')
+      }
+      await page.waitForSelector(
+        '[aria-label="Home plate decision for Jordan K."]',
+        { timeout: 30000 }
+      )
+      await page.waitForSelector('[aria-label*="Owls 1 · Hawks 0"]')
+      await click(page, 'Out')
+      await page.waitForSelector('[aria-label^="Tap and Drag Thrower."]')
+      await page.focus('[role="application"]')
+      await page.keyboard.press('Enter')
+      await click(page, 'Done')
+      await page.waitForSelector('[aria-label="Time to edit play"]', {
+        timeout: 30000
+      })
+      const summary = await page.$eval('[aria-label*="Owls "]', n =>
+        n.getAttribute('aria-label')
+      )
+      expect(unexpected).deep.equals([])
+      expect(summary).includes('Owls 1 · Hawks 0')
     } finally {
       await page.close()
     }

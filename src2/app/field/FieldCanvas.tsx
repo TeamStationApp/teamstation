@@ -125,7 +125,13 @@ export function FieldCanvas(props: FieldCanvasProps): React.ReactElement {
       ref={node => {
         if (node != null) setEventHost(node)
       }}
-      style={{ width: '100%', height: '100%' }}
+      style={{
+        width: '100%',
+        height: '100%',
+        userSelect: 'none',
+        WebkitUserSelect: 'none',
+        WebkitTouchCallout: 'none'
+      }}
     >
       <RenderBoundary key={generation}>
         {eventHost != null && (

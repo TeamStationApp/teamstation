@@ -83,7 +83,13 @@ export function RunnerControls({
       <Text style={{ color: 'white', textAlign: 'center' }}>
         {state.session.gameData.players[id].fullName}
       </Text>
-      <View style={{ flexDirection: 'row', gap: 8, justifyContent: 'center' }}>
+      <View
+        style={{
+          flexDirection: !home && stationary ? 'column' : 'row',
+          gap: 8,
+          justifyContent: 'center'
+        }}
+      >
         {!currentHold && (home || action!.to > 0) && (
           <ScoringButton
             label={!home && stationary ? 'Safe from Pickoff' : 'Safe'}
