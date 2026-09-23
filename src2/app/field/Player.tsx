@@ -2,8 +2,10 @@
 import { useFrame, useThree } from '@react-three/fiber'
 import React, { useEffect, useMemo, useRef } from 'react'
 import {
+  Color,
   type Group,
-  type Mesh,
+  type Material,
+  Mesh,
   PerspectiveCamera,
   type Sprite,
   type Texture
@@ -58,14 +60,16 @@ export function Player({
   const batting = player.batting === true
   const invalidate = useThree(state => state.invalidate)
   const label = useRef<Sprite>(null)
-  const showLabel = hasPlayerLabel(player)
+  const showLabel = player.suppressed !== true && hasPlayerLabel(player)
   const labels = useMemo(
     () => ({
       badge: showLabel ? makePlayerLabel(player.displayName, true) : null,
       jersey:
-        player.jersey === '' ? null : makePlayerLabel(player.jersey, false)
+        player.jersey === '' || player.suppressed === true
+          ? null
+          : makePlayerLabel(player.jersey, false)
     }),
-    [player.jersey, player.displayName, showLabel]
+    [player.jersey, player.displayName, player.suppressed, showLabel]
   )
   useEffect(
     () => () => {
@@ -81,6 +85,47 @@ export function Player({
   const leftLeg = useRef<Group>(null)
   const rightLeg = useRef<Group>(null)
   const target = useRef<Mesh>(null)
+  useEffect(() => {
+    if (player.suppressed !== true) return
+    const originals = new Map<
+      Material,
+      { opacity: number; transparent: boolean; color?: Color }
+    >()
+    root.current?.traverse(object => {
+      if (!(object instanceof Mesh)) return
+      for (const material of Array.isArray(object.material)
+        ? object.material
+        : [object.material]) {
+        const color =
+          'color' in material && material.color instanceof Color
+            ? material.color
+            : undefined
+        originals.set(material, {
+          opacity: material.opacity,
+          transparent: material.transparent,
+          color: color?.clone()
+        })
+        if (color != null) color.lerp(new Color('#929b96'), 0.7)
+        material.opacity = 0.4
+        material.transparent = true
+        material.needsUpdate = true
+      }
+    })
+    invalidate()
+    return () => {
+      for (const [material, before] of originals) {
+        material.opacity = before.opacity
+        material.transparent = before.transparent
+        if (
+          before.color != null &&
+          'color' in material &&
+          material.color instanceof Color
+        )
+          material.color.copy(before.color)
+        material.needsUpdate = true
+      }
+    }
+  }, [player.suppressed, invalidate])
   const shirt = player.team === 'runner' ? p.runner : p.defense
   useFrame(({ camera, size }, dt) => {
     advancePlayer(player, dt)
@@ -142,7 +187,14 @@ export function Player({
             />
           </sprite>
         )}
-        <group ref={body} scale={PLAYER_SCALE}>
+        <group
+          ref={body}
+          scale={[
+            PLAYER_SCALE,
+            PLAYER_SCALE * (player.suppressed === true ? 0.5 : 1),
+            PLAYER_SCALE
+          ]}
+        >
           <mesh
             name="jersey-torso"
             position={[0, 1.57, 0]}

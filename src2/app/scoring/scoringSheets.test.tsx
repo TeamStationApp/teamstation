@@ -251,6 +251,18 @@ describe('scoring slide-up sheets', function () {
     }
     await click('Cancel')
   })
+  it('enters fielder selection from a tapped outcome and restores ready with Undo', async function () {
+    await mount()
+    await click('Ball in Play')
+    await click('Single')
+    expect(document.body.textContent).includes(
+      'Drag fielder to location of fielded ball.'
+    )
+    await click('Undo Single')
+    expect(document.body.textContent).includes(
+      '0 balls 0 strikes 0 outs · Pitches 0'
+    )
+  })
   it('renders the native fallback for the web-only gesture host', async function () {
     const host = document.createElement('div')
     document.body.appendChild(host)

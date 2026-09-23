@@ -4,6 +4,8 @@ export interface GroundPoint {
   z: number
 }
 export interface FieldPlayer {
+  suppressed?: boolean
+  keyboardOrigin?: GroundPoint
   id: string
   label: string
   name: string

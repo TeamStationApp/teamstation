@@ -20,5 +20,7 @@
   "src2/server/routes/teams.ts",
   "src2/server/teams/teamRoster.ts",
   "src2/app/field/movePreview.ts",
-  "src2/app/field/FieldCanvas.tsx"
+  "src2/app/field/FieldCanvas.tsx",
+  "src2/app/field/scoreboardTexture.ts",
+  "src2/app/field/fieldKeyboard.ts"
 ]

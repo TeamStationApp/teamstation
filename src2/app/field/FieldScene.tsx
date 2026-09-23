@@ -58,6 +58,9 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     onArcFinish
   } = props
   const { camera, size, gl, invalidate, scene } = useThree()
+  const { registerInterruption } = props
+  const callbacks = useRef(props)
+  callbacks.current = props
   const textures = useSurfaceTextures()
   const ready = useRef(false)
   useFrame(() => {
@@ -74,6 +77,9 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     gl.shadowMap.needsUpdate = true
   }, [gl])
   const drag = useRef<MoveDraft | null>(null)
+  const dragCapture = useRef<Element | null>(null)
+  const gestureId = useRef(0)
+  const dragGeneration = useRef(0)
   const [preview, setPreview] = useState<MoveDraft | null>(null)
   const picker = useMemo(() => new Raycaster(), [])
   const placementPicker = useMemo(() => new Raycaster(), [])
@@ -118,16 +124,32 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     invalidate
   ])
 
+  const gesturePolicyKey = props.interaction?.gestures.join()
+  const selectablePolicyKey = props.interaction?.selectableIds.join()
   useEffect(() => {
     setPreview(null)
     return () => {
+      for (const player of players)
+        if (player.keyboardOrigin != null) {
+          player.target = { ...player.keyboardOrigin }
+          delete player.keyboardOrigin
+          callbacks.current.onGestureActive?.(false)
+        }
       if (drag.current != null) {
         const player = players.find(item => item.id === drag.current?.id)
         if (player != null) finishMove(player, drag.current, true)
         drag.current = null
+        callbacks.current.onGestureActive?.(false)
       }
     }
-  }, [arcMode, view, players])
+  }, [
+    arcMode,
+    view,
+    players,
+    props.interaction?.generation,
+    gesturePolicyKey,
+    selectablePolicyKey
+  ])
   const move = (event: ThreeEvent<PointerEvent>): void => {
     if (
       drag.current?.pointer !== event.pointerId ||
@@ -139,9 +161,11 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     setPreview({ ...drag.current })
     invalidate()
   }
-  const eligible = players.filter(
-    player =>
-      props.selectableIds == null || props.selectableIds.includes(player.id)
+  const eligible = players.filter(player =>
+    props.interaction != null
+      ? props.interaction.gestures.includes('place') &&
+        props.interaction.selectableIds.includes(player.id)
+      : props.selectableIds == null || props.selectableIds.includes(player.id)
   )
   const down = (event: ThreeEvent<PointerEvent>): void => {
     if (
@@ -190,6 +214,10 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
       if (nearest == null) return
       point.set(player.position.x, TERRAIN.players, player.position.z)
     }
+    dragCapture.current = event.target as Element
+    dragGeneration.current = props.interaction?.generation ?? 0
+    gestureId.current++
+    props.onGestureActive?.(true)
     onSelect(player.id)
     drag.current = beginMove(player, event.pointerId, point, nearest != null)
     if (isTouch(event)) {
@@ -212,9 +240,21 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     const player = players.find(item => item.id === drag.current?.id)
     if (player != null) {
       finishMove(player, drag.current, cancel)
-      if (!cancel) props.onPlayerPlacement?.(player.id, { ...player.target })
+      if (
+        !cancel &&
+        dragGeneration.current === (props.interaction?.generation ?? 0)
+      ) {
+        props.onPlayerPlacement?.(player.id, { ...player.target })
+        props.onFieldPlacement?.({
+          entityId: player.id,
+          point: { ...player.target },
+          generation: dragGeneration.current,
+          gestureId: gestureId.current
+        })
+      }
     }
     drag.current = null
+    props.onGestureActive?.(false)
     setPreview(null)
     const capture = event.target as Element
     capture.releasePointerCapture(event.pointerId)
@@ -225,6 +265,7 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
       const player = players.find(item => item.id === drag.current?.id)
       if (player != null) finishMove(player, drag.current, true)
       drag.current = null
+      props.onGestureActive?.(false)
       setPreview(null)
       invalidate()
     }
@@ -235,7 +276,37 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     kind: 'target' | 'angle'
     startY: number
     initial: BallArcState
+    latest: BallArcState
+    generation: number
+    capture: Element
   } | null>(null)
+  useEffect(() => {
+    const cancel = (): void => {
+      const moving = drag.current
+      drag.current = null
+      if (moving != null) {
+        const player = callbacks.current.players.find(
+          item => item.id === moving.id
+        )
+        if (player != null) finishMove(player, moving, true)
+        dragCapture.current?.releasePointerCapture(moving.pointer)
+        setPreview(null)
+      }
+      const active = arcDrag.current
+      arcDrag.current = null
+      if (active != null) {
+        callbacks.current.onArcChange?.(active.initial)
+        active.capture.releasePointerCapture(active.pointer)
+      }
+      callbacks.current.onGestureActive?.(false)
+      invalidate()
+    }
+    registerInterruption?.(cancel)
+    return () => {
+      registerInterruption?.(null)
+      cancel()
+    }
+  }, [registerInterruption, invalidate])
   const forward = useMemo(() => new Vector3(), [])
   // A camera-facing picking plane covers the arrows even when they lie above
   // the horizon. Ray/ground intersection is used only for landing placement.
@@ -251,9 +322,16 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
       2 * Math.tan((camera.fov * Math.PI) / 360) * (camera.near + 1)
     surface.scale.set(height * camera.aspect, height, 1)
   })
-  useEffect(() => {
-    arcDrag.current = null
-  }, [arcMode, view])
+  useEffect(
+    () => () => {
+      if (arcDrag.current != null) {
+        callbacks.current.onArcChange?.(arcDrag.current.initial)
+        arcDrag.current = null
+        callbacks.current.onGestureActive?.(false)
+      }
+    },
+    [arcMode, view, props.interaction?.generation]
+  )
   const landingAt = (
     event: ThreeEvent<PointerEvent>
   ): Pick<BallArcState, 'target' | 'landingHeight'> | null => {
@@ -276,15 +354,23 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
   ): void => {
     const landing = landingAt(event)
     if (landing == null) return
-    onArcChange?.({ ...landing, angle: initial.angle })
+    const next = { ...landing, angle: initial.angle }
+    if (arcDrag.current != null) arcDrag.current.latest = next
+    onArcChange?.(next)
     invalidate()
   }
   const arcDown = (event: ThreeEvent<PointerEvent>): void => {
     event.stopPropagation()
-    if (event.button !== 0 || arcDrag.current != null) return
+    if (
+      event.button !== 0 ||
+      arcDrag.current != null ||
+      (props.interaction != null &&
+        !props.interaction.gestures.includes('trajectory'))
+    )
+      return
     if (arcMode === 'aim' && landingAt(event) == null) return
     const initial = arc ?? { target: { x: 0, z: -60 }, angle: 30 }
-    if (arcMode === 'edit') {
+    if (arcMode === 'edit' && props.interaction == null) {
       const tip = arcHandle(initial)
       point.set(tip.x, tip.y, tip.z).project(camera)
       const dx = ((point.x - event.pointer.x) * size.width) / 2
@@ -295,8 +381,12 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
       pointer: event.pointerId,
       kind: arcMode === 'aim' ? 'target' : 'angle',
       startY: (event.pointer.y * size.height) / 2,
-      initial
+      initial,
+      latest: initial,
+      generation: props.interaction?.generation ?? 0,
+      capture: event.target as Element
     }
+    props.onGestureActive?.(true)
     const capture = event.target as Element
     capture.setPointerCapture(event.pointerId)
     if (arcMode === 'aim') aim(event, initial)
@@ -307,23 +397,31 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     event.stopPropagation()
     if (active.kind === 'target') aim(event, active.initial)
     else {
-      onArcChange?.({
+      const next = {
         ...active.initial,
         angle: dragLaunchAngle(
           active.initial.angle,
           (event.pointer.y * size.height) / 2 - active.startY
         )
-      })
+      }
+      active.latest = next
+      onArcChange?.(next)
       invalidate()
     }
   }
-  const arcUp = (event: ThreeEvent<PointerEvent>): void => {
+  const arcUp = (event: ThreeEvent<PointerEvent>, cancel = false): void => {
     if (arcDrag.current?.pointer !== event.pointerId) return
     event.stopPropagation()
+    const active = arcDrag.current
     arcDrag.current = null
+    props.onGestureActive?.(false)
     const capture = event.target as Element
     capture.releasePointerCapture(event.pointerId)
-    onArcFinish?.()
+    if (cancel) onArcChange?.(active.initial)
+    else if (active.generation === (props.interaction?.generation ?? 0)) {
+      onArcFinish?.()
+      props.onTrajectoryAccepted?.(active.latest.angle, active.generation)
+    }
   }
   return (
     <>
@@ -365,10 +463,16 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
             ? event => {
                 up(event, true)
               }
-            : arcUp
+            : event => {
+                arcUp(event, true)
+              }
         }
         onLostPointerCapture={() => {
-          arcDrag.current = null
+          if (arcDrag.current != null) {
+            onArcChange?.(arcDrag.current.initial)
+            arcDrag.current = null
+            props.onGestureActive?.(false)
+          }
           lostMove()
         }}
       >
@@ -380,7 +484,10 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
           key={player.id}
           player={player}
           fabric={textures.cloth}
-          selected={selected === player.id}
+          selected={
+            selected === player.id &&
+            eligible.some(item => item.id === player.id)
+          }
         />
       ))}
     </>

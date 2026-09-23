@@ -24,6 +24,7 @@ export interface BaseballScreenProps {
   summary: string
   accessibilitySummary?: string
   children?: React.ReactNode
+  ballInPlayControl?: React.ReactNode
 }
 /** The game owns scoring and history; this surface owns only the camera. */
 export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
@@ -134,33 +135,43 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
             </Text>
           </Pressable>
           <View style={{ flexDirection: 'row', gap: 4 }}>
-            {PITCH_CONTROLS.map(control => (
-              <Pressable
-                key={control.kind}
-                accessibilityRole="button"
-                accessibilityLabel={control.label}
-                disabled={!props.canPitch}
-                onPress={() => {
-                  props.onPitch(control.kind)
-                }}
-                style={{
-                  minHeight: 52,
-                  flex: 1,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  borderRadius: 8,
-                  backgroundColor: '#14382ddd',
-                  opacity: props.canPitch ? 1 : 0.5
-                }}
-              >
-                <PitchIcon kind={control.kind} />
-                <Text
-                  style={{ color: 'white', fontSize: 11, textAlign: 'center' }}
+            {PITCH_CONTROLS.map(control =>
+              control.kind === 'play' && props.ballInPlayControl != null ? (
+                <React.Fragment key={control.kind}>
+                  {props.ballInPlayControl}
+                </React.Fragment>
+              ) : (
+                <Pressable
+                  key={control.kind}
+                  accessibilityRole="button"
+                  accessibilityLabel={control.label}
+                  disabled={!props.canPitch}
+                  onPress={() => {
+                    props.onPitch(control.kind)
+                  }}
+                  style={{
+                    minHeight: 52,
+                    flex: 1,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    borderRadius: 8,
+                    backgroundColor: '#14382ddd',
+                    opacity: props.canPitch ? 1 : 0.5
+                  }}
                 >
-                  {control.label}
-                </Text>
-              </Pressable>
-            ))}
+                  <PitchIcon kind={control.kind} />
+                  <Text
+                    style={{
+                      color: 'white',
+                      fontSize: 11,
+                      textAlign: 'center'
+                    }}
+                  >
+                    {control.label}
+                  </Text>
+                </Pressable>
+              )
+            )}
           </View>
         </View>
       </View>

@@ -1,3 +1,4 @@
+import { acceptTrajectory, chooseOutcome, placeFielder } from './battedBall'
 import { asScoringPlay } from './scoringContract'
 import { applyOverrideDraft, applyRosterDraft } from './scoringEdits'
 import {
@@ -107,6 +108,11 @@ export function scoringReducer(
           past: state.past.slice(0, -1)
         }
   }
+  if (event.type === 'OUTCOME') return chooseOutcome(state, event.outcome)
+  if (event.type === 'FIELDER')
+    return placeFielder(state, event.id, event.point, event.generation)
+  if (event.type === 'TRAJECTORY')
+    return acceptTrajectory(state, event.angle, event.generation)
   if (event.type === 'ROSTER' || event.type === 'OVERRIDE') {
     if (state.phase !== 'ready' && state.phase !== 'awaitingBatter')
       return state

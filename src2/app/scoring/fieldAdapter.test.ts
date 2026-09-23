@@ -2,12 +2,20 @@ import { create } from '@react-three/test-renderer'
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 import React from 'react'
-import { Ray, Vector2, Vector3 } from 'three'
+import {
+  type BufferGeometry,
+  type Mesh,
+  type MeshStandardMaterial,
+  Ray,
+  Vector2,
+  Vector3
+} from 'three'
 
 import { asRosterEntry } from '../../common/api'
 import { FieldScene } from '../field/FieldScene'
+import type { FieldCanvasProps } from '../field/fieldTypes'
 import { Player } from '../field/Player'
-import { hasPlayerLabel } from '../field/playerPresentation'
+import { hasPlayerLabel, PLAYER_SCALE } from '../field/playerPresentation'
 import { createDevelopmentSession } from './developmentSession'
 import { fieldPlayersFor } from './fieldAdapter'
 import { gameFixture } from './isUnscoredGame.test'
@@ -98,6 +106,129 @@ describe('scoring renderer identities', function () {
       await renderer.fireEvent(surface, 'pointerUp', event)
       expect(placements).has.length(1)
       expect(JSON.stringify(session)).equals(original)
+    } finally {
+      await renderer.unmount()
+    }
+  })
+})
+
+describe('scoring field policy', function () {
+  it('removes offensive name and number meshes and halves height during defensive selection', async function () {
+    const player = fieldPlayersFor(
+      createDevelopmentSession(gameFixture, roster, [])
+    ).find(item => item.batting === true)!
+    const renderer = await create(
+      React.createElement(Player, {
+        player: { ...player, suppressed: true },
+        selected: false
+      })
+    )
+    try {
+      expect(
+        renderer.scene.findAllByProps({ name: `player-label-${player.id}` })
+      ).has.length(0)
+      expect(
+        renderer.scene.findAllByProps({ name: 'jersey-number' })
+      ).has.length(0)
+      const torso = renderer.scene.findByProps({ name: 'jersey-torso' })
+      expect(torso.parent!.props.scale).deep.equals([
+        PLAYER_SCALE,
+        PLAYER_SCALE / 2,
+        PLAYER_SCALE
+      ])
+      expect(
+        (torso.instance as Mesh<BufferGeometry, MeshStandardMaterial>).material
+          .opacity
+      ).equals(0.4)
+      await renderer.update(
+        React.createElement(Player, { player, selected: false })
+      )
+      expect(
+        renderer.scene.findAllByProps({ name: `player-label-${player.id}` })
+      ).has.length(1)
+    } finally {
+      await renderer.unmount()
+    }
+  })
+  it('cancels an arc without acceptance and ignores a stale pointer after policy replacement', async function () {
+    const players = fieldPlayersFor(
+      createDevelopmentSession(gameFixture, roster, [])
+    )
+    let accepted = 0
+    let previews = 0
+    let lastPreview = 45
+    let lastAccepted = 45
+    const host = { cancel: null as (() => void) | null }
+    const props: FieldCanvasProps = {
+      players,
+      registerInterruption: cancel => {
+        host.cancel = cancel
+      },
+      selected: players[0].id,
+      onSelect: () => undefined,
+      view: 'home',
+      zoom: 1,
+      interaction: {
+        generation: 2,
+        selectableIds: [players[0].id],
+        gestures: ['trajectory']
+      },
+      arcMode: 'edit',
+      arc: { target: { x: 10, z: -30 }, angle: 45 },
+      onArcChange: arc => {
+        lastPreview = arc.angle
+        previews++
+      },
+      onTrajectoryAccepted: angle => {
+        lastAccepted = angle
+        accepted++
+      }
+    }
+    const renderer = await create(React.createElement(FieldScene, props))
+    try {
+      const surface = renderer.scene.findByProps({
+        name: 'arc-interaction-surface'
+      })
+      const event = {
+        button: 0,
+        pointerId: 1,
+        pointer: new Vector2(0, 0),
+        ray: new Ray(new Vector3(0, 100, 0), new Vector3(0, -1, 0)),
+        target: { setPointerCapture() {}, releasePointerCapture() {} }
+      }
+      await renderer.fireEvent(surface, 'pointerDown', event)
+      await renderer.fireEvent(surface, 'pointerMove', {
+        ...event,
+        pointer: new Vector2(0, 0.3)
+      })
+      await renderer.fireEvent(surface, 'pointerCancel', event)
+      expect(accepted).equals(0)
+      expect(previews).equals(2)
+      await renderer.fireEvent(surface, 'pointerDown', event)
+      await renderer.fireEvent(surface, 'lostPointerCapture', event)
+      expect(accepted).equals(0)
+      await renderer.fireEvent(surface, 'pointerDown', event)
+      await renderer.update(
+        React.createElement(FieldScene, {
+          ...props,
+          interaction: { ...props.interaction!, generation: 3 }
+        })
+      )
+      await renderer.fireEvent(surface, 'pointerUp', event)
+      expect(accepted).equals(0)
+      await renderer.fireEvent(surface, 'pointerDown', event)
+      await renderer.fireEvent(surface, 'pointerMove', {
+        ...event,
+        pointer: new Vector2(0, -0.3)
+      })
+      await renderer.fireEvent(surface, 'pointerUp', event)
+      expect(accepted).equals(1)
+      expect(lastAccepted).equals(lastPreview)
+      expect(lastAccepted).not.equals(45)
+      await renderer.fireEvent(surface, 'pointerDown', event)
+      host.cancel?.()
+      await renderer.fireEvent(surface, 'pointerUp', event)
+      expect(accepted).equals(1)
     } finally {
       await renderer.unmount()
     }
