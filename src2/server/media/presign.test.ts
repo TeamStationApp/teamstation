@@ -79,5 +79,8 @@ describe('presigned Spaces URLs', function () {
         presignGetUrl({ ...AWS_EXAMPLE, now: new Date('2013-05-25T00:00:00Z') })
       )
     ).does.not.equal(signatureOf(base))
+    expect(
+      signatureOf(presignGetUrl({ ...AWS_EXAMPLE, method: 'POST' }))
+    ).does.not.equal(signatureOf(base))
   })
 })
