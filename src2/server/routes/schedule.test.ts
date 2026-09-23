@@ -39,6 +39,7 @@ const PEOPLE = [
   'seasonAdmin',
   'otherSeasonAdmin',
   'leagueAdmin',
+  'flagged',
   'stranger'
 ] as const
 type Person = (typeof PEOPLE)[number]
@@ -169,6 +170,12 @@ describe('scheduling a team’s games over HTTP', function () {
         },
         {
           id: makeId('membership'),
+          user_id: user('flagged'),
+          team_id: hawks,
+          role: 'member'
+        },
+        {
+          id: makeId('membership'),
           user_id: user('parent'),
           team_id: hawks,
           role: 'member',
@@ -177,7 +184,7 @@ describe('scheduling a team’s games over HTTP', function () {
       ])
       .execute()
     await db
-      .insertInto('admin_roles')
+      .insertInto('scope_roles')
       .values(
         (
           [
@@ -187,11 +194,35 @@ describe('scheduling a team’s games over HTTP', function () {
             ['leagueAdmin', 'league', league]
           ] as const
         ).map(([person, scopeType, scopeId]) => ({
-          id: makeId('adminRole'),
+          id: makeId('scopeRole'),
           user_id: user(person),
           scope_type: scopeType,
           scope_id: scopeId
         }))
+      )
+      .execute()
+    // Every flag, on the team and everything above it: none of them is the
+    // right to schedule.
+    await db
+      .insertInto('scope_roles')
+      .values(
+        (
+          ['coach', 'scorekeeper', 'songkeeper', 'videographer'] as const
+        ).flatMap(role =>
+          (
+            [
+              ['team', hawks],
+              ['season', spring],
+              ['league', league]
+            ] as const
+          ).map(([scopeType, scopeId]) => ({
+            id: makeId('scopeRole'),
+            user_id: user('flagged'),
+            scope_type: scopeType,
+            scope_id: scopeId,
+            role
+          }))
+        )
       )
       .execute()
 
@@ -272,8 +303,8 @@ describe('scheduling a team’s games over HTTP', function () {
     ).equals(404)
   })
 
-  it('answers 403 to a member and a parent', async function () {
-    for (const person of ['member', 'parent'] as const) {
+  it('answers 403 to a member, a parent and somebody holding every flag', async function () {
+    for (const person of ['member', 'parent', 'flagged'] as const) {
       const answer = await schedule(person, { games: [springRow()] })
       expect(answer.status, person).equals(403)
       expect(answer.body.message).equals(MESSAGE)

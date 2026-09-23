@@ -62,3 +62,40 @@ describe('app layout', function () {
     expect(watch).contains('paddingTop: headerHeight')
   })
 })
+
+/**
+ * U28: DJ Game's address. It is wired like Score Game — a screen of its own
+ * on the tab's stack — but a browser has no music to play, so on the web
+ * the same address draws the game screen instead.
+ */
+describe('DJ Game in the shell', function () {
+  const source = readFileSync(join(__dirname, 'App.tsx'), 'utf8')
+
+  it('stacks the DJ Game route on its tab, and reads it back off the top', function () {
+    expect(source).contains(
+      "if (route.name === 'djGame') return { [tab]: [route] }"
+    )
+    expect(source).contains(
+      "if (top.name === 'djGame') return { name: 'djGame', gameId: top.gameId }"
+    )
+  })
+
+  it('draws DJ Game only where there is music, and the game screen otherwise', function () {
+    const phone = source.indexOf(
+      "top.name === 'djGame' && walkUpMusic.available ? ("
+    )
+    const web = source.indexOf("top.name === 'djGame' ? (")
+    expect(phone).greaterThan(0)
+    expect(web).greaterThan(phone)
+    expect(source.slice(phone, web)).contains('<DjGameScreen')
+    const next = source.indexOf(') : top.name', web)
+    expect(source.slice(web, next)).contains('<GameScreen')
+    expect(source.slice(web, next)).not.contains('<DjGameScreen')
+  })
+
+  it('is not immersive: the header and the tabs stay', function () {
+    expect(source).match(
+      /const immersiveField =\s*props\.fieldPreview === true \|\| top\?\.name === 'scoreGame'\n/
+    )
+  })
+})

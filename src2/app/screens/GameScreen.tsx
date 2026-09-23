@@ -24,13 +24,13 @@ import type {
 } from '../../common/api'
 import {
   AnglePickerModal,
+  FLOATING_BOTTOM_REM,
   GameHeroCard,
   GlassView,
   HandoffView,
   LivePill,
   NAV_CLEARANCE_REM,
   PillTabs,
-  Screen,
   StreamPanel,
   type TeamStatLine,
   useHandoff,
@@ -40,6 +40,7 @@ import {
   webStyle,
   WideTable
 } from '../components'
+import { navClearanceAboveInset } from '../components/navClearance'
 import { highlightColumnsFor } from '../layout/grid'
 import { watchLayout, type WatchMode } from '../layout/watch'
 import { lstrings } from '../locales/strings'
@@ -64,6 +65,13 @@ export interface GameScreenProps {
   client: GameStationClient
   gameId: string
   onScoreGame?: () => void
+  /** Opens DJ Game, for a songkeeper of either team. */
+  onDjGame?: () => void
+  /**
+   * The phone's music. DJ Game plays songs, so it is offered only where
+   * there is music to play them with: never on the web.
+   */
+  music?: { available: boolean }
   /** Which half to open on. A `Box Score` button means the box score. */
   initialTab?: Tab
   /** Start the video. Arriving here by pressing `Watch Replay` is a gesture a
@@ -123,7 +131,7 @@ export interface GameScreenProps {
   onOpenPlayer?: (
     userId: number,
     name: string,
-    from?: { seasonId?: string; teamId?: string }
+    from?: { seasonId?: string; teamId?: string; onTeam?: string }
   ) => void
 }
 
@@ -904,7 +912,10 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     <PillTabs
       tabs={[
         { id: 'watch', label: lstrings.game_videos },
-        ...(Platform.OS === 'web' &&
+        { id: 'boxScore', label: lstrings.game_box_score },
+        // Only for a scorekeeper of either team: the server refuses anybody
+        // else's plays, and a button that ends in a refusal is worse than none.
+        ...(game.canScore &&
         scoringEntry(game) != null &&
         props.onScoreGame != null
           ? [
@@ -918,12 +929,28 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
               }
             ]
           : []),
-        { id: 'boxScore', label: lstrings.game_box_score }
+        // For a songkeeper of either team, on a phone, whatever the game's
+        // status: songs are set and played before, during and after.
+        ...(game.canDj &&
+        props.music?.available === true &&
+        props.onDjGame != null
+          ? [
+              {
+                id: 'dj' as const,
+                label: lstrings.dj_game,
+                role: 'button' as const
+              }
+            ]
+          : [])
       ]}
       selected={tab}
       onSelect={next => {
         if (next === 'score') {
           props.onScoreGame?.()
+          return
+        }
+        if (next === 'dj') {
+          props.onDjGame?.()
           return
         }
         // Leaving the video unmounts it, so where it had got to is written
@@ -1249,10 +1276,28 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
 
   return (
     <>
-      <ScrollView style={styles.screen}>
-        <Screen wide scroll={false}>
-          {scoreboard}
-          {tabs}
+      {/*
+        The same frame the videos tab gives the card, so the card keeps its
+        width when the two tabs trade places.
+      */}
+      <ScrollView
+        style={styles.screen}
+        onScroll={handleWatchScroll}
+        scrollEventThrottle={16}
+        contentContainerStyle={{
+          paddingTop: headerHeight,
+          paddingBottom:
+            navClearanceAboveInset(
+              Platform.OS,
+              theme.rem(NAV_CLEARANCE_REM),
+              theme.rem(FLOATING_BOTTOM_REM)
+            ) + (Platform.OS === 'web' ? 0 : insets.bottom),
+          paddingLeft: Platform.OS === 'web' ? 0 : insets.left,
+          paddingRight: Platform.OS === 'web' ? 0 : insets.right
+        }}
+      >
+        <View style={styles.head}>{head}</View>
+        <View style={styles.boxSheet}>
           <BoxScore
             game={game}
             box={box}
@@ -1260,7 +1305,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
             sideBySide={sideBySide}
             onOpenPlayer={onOpenPlayer}
           />
-        </Screen>
+        </View>
       </ScrollView>
       {anglePicker}
       {multiCam}
@@ -1278,12 +1323,13 @@ interface BoxScoreProps {
   /**
    * Opening a line. The game's season and the side that line belongs to go
    * with it, so the player's stats open on the season being read rather than
-   * on a career total nobody asked for.
+   * on a career total nobody asked for. The side goes again as `onTeam`, the
+   * team a coach's Settings tab edits the player on.
    */
   onOpenPlayer?: (
     userId: number,
     name: string,
-    from?: { seasonId?: string; teamId?: string }
+    from?: { seasonId?: string; teamId?: string; onTeam?: string }
   ) => void
 }
 
@@ -1328,7 +1374,8 @@ function BoxScore(props: BoxScoreProps): React.ReactElement {
         : (userId: number, name: string) => {
             onOpenPlayer(userId, name, {
               seasonId: game.seasonId ?? undefined,
-              teamId: side.teamId
+              teamId: side.teamId,
+              onTeam: side.teamId
             })
           }
     return (
@@ -1828,7 +1875,11 @@ const getStyles = cacheStyles((theme: Theme) =>
       // No padding here: the picture is edge to edge on a phone, so the
       // margins belong to the pieces either side of it rather than to the
       // column they share.
-      paddingBottom: theme.rem(NAV_CLEARANCE_REM),
+      paddingBottom: navClearanceAboveInset(
+        Platform.OS,
+        theme.rem(NAV_CLEARANCE_REM),
+        theme.rem(FLOATING_BOTTOM_REM)
+      ),
       gap: theme.rem(theme.spaceSmRem)
     },
     watchStacked: {
@@ -1859,6 +1910,14 @@ const getStyles = cacheStyles((theme: Theme) =>
       paddingTop: theme.rem(theme.spaceMdRem),
       paddingHorizontal: theme.rem(theme.spaceMdRem),
       gap: theme.rem(theme.spaceSmRem)
+    },
+    // The tables under that card. The same side inset, so they share its
+    // edges rather than sitting in a wider column of their own.
+    boxSheet: {
+      width: '100%',
+      paddingHorizontal: theme.rem(theme.spaceMdRem),
+      paddingBottom: theme.rem(theme.spaceLgRem),
+      gap: theme.rem(theme.spaceLgRem)
     },
     // The same pieces, stacked in the column on the right on a short window.
     columnHead: {

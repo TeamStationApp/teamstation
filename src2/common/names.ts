@@ -4,8 +4,9 @@
  *
  * The full name is stored — it is what the import sent, what a parent would
  * search for, and what an admin needs to tell two children apart — but it is
- * not what gets drawn. The only screen that shows it is a player's own detail
- * screen, for the people allowed to edit it.
+ * not what gets drawn for everybody. It goes only to the people
+ * `maySeeFullName` names on the server: a coach or an administrator of the
+ * player's team, a parent, the player, and a site administrator.
  */
 
 export interface NamedPerson {
@@ -23,6 +24,17 @@ export function shortName(person: NamedPerson): string {
   if (first !== '' && last.length === 1) return `${first} ${last}`
   if (first !== '') return first
   return last
+}
+
+/**
+ * `Jensen`, `Puey` → `Jensen Puey`: both halves as stored, or the display name
+ * for somebody imported before there were halves.
+ */
+export function fullName(person: NamedPerson): string {
+  const first = (person.firstName ?? '').trim()
+  const last = (person.lastName ?? '').trim()
+  if (first === '' && last === '') return person.displayName.trim()
+  return [first, last].filter(half => half !== '').join(' ')
 }
 
 /**

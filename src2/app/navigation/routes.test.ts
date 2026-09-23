@@ -89,9 +89,18 @@ describe('addresses', function () {
     })
   })
 
+  it('reads and writes DJ Game at /games/<id>/dj (U28)', function () {
+    expect(parseRoute('/games/g1/dj')).deep.equals({
+      name: 'djGame',
+      gameId: 'g1'
+    })
+    expect(routePath({ name: 'djGame', gameId: 'g1' })).equals('/games/g1/dj')
+  })
+
   it('round-trips every kind of screen', function () {
     const routes: Route[] = [
       { name: 'scoreGame', gameId: 'g1' },
+      { name: 'djGame', gameId: 'g1' },
       { name: 'home' },
       { name: 'videos', when: 'past' },
       { name: 'videos', when: 'all' },
@@ -256,6 +265,77 @@ describe('a player', function () {
 
   it('falls back to home without an id', function () {
     expect(parseRoute('/players')).deep.equals({ name: 'home' })
+  })
+
+  it('carries the team it was opened for to Settings, and reads it back', function () {
+    expect(parseRoute('/players/u1', 'tab=settings&onTeam=t1')).deep.equals({
+      name: 'player',
+      userId: 'u1',
+      tab: 'settings',
+      onTeam: 't1'
+    })
+    expect(
+      routePath({ name: 'player', userId: 'u1', tab: 'settings', onTeam: 't1' })
+    ).equals('/players/u1?tab=settings&onTeam=t1')
+  })
+
+  // `onTeam` is the team the page was opened for; `team` is what the Stats
+  // filter narrows to. Two things, side by side, and neither moves the other.
+  it('keeps the team it was opened for beside the Stats filter', function () {
+    const route = {
+      name: 'player' as const,
+      userId: 'u1',
+      tab: 'stats' as const,
+      seasonId: undefined,
+      teamId: 'tem_3',
+      year: undefined,
+      onTeam: 't1'
+    }
+    const path = routePath(route)
+    expect(path).equals('/players/u1?tab=stats&team=tem_3&onTeam=t1')
+    const [head, search] = path.split('?')
+    expect(parseRoute(head, search)).deep.equals(route)
+    // And on Videos, which has no filter, it is still written.
+    expect(routePath({ name: 'player', userId: 'u1', onTeam: 't1' })).equals(
+      '/players/u1?onTeam=t1'
+    )
+    expect(parseRoute('/players/u1', 'onTeam=t1')).deep.equals({
+      name: 'player',
+      userId: 'u1',
+      onTeam: 't1'
+    })
+  })
+
+  it('carries the team it was opened for to Walk-up, and reads it back', function () {
+    expect(parseRoute('/players/u1', 'tab=walkup&onTeam=t1')).deep.equals({
+      name: 'player',
+      userId: 'u1',
+      tab: 'walkup',
+      onTeam: 't1'
+    })
+    expect(
+      routePath({ name: 'player', userId: 'u1', tab: 'walkup', onTeam: 't1' })
+    ).equals('/players/u1?tab=walkup&onTeam=t1')
+  })
+
+  it('opens Videos for Walk-up with no team whose song it would be', function () {
+    expect(parseRoute('/players/u1', 'tab=walkup')).deep.equals({
+      name: 'player',
+      userId: 'u1'
+    })
+    expect(routePath({ name: 'player', userId: 'u1', tab: 'walkup' })).equals(
+      '/players/u1'
+    )
+  })
+
+  it('opens Videos for Settings with no team to edit the player on', function () {
+    expect(parseRoute('/players/u1', 'tab=settings')).deep.equals({
+      name: 'player',
+      userId: 'u1'
+    })
+    expect(routePath({ name: 'player', userId: 'u1', tab: 'settings' })).equals(
+      '/players/u1'
+    )
   })
 })
 

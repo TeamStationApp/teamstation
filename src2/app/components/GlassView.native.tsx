@@ -1,12 +1,14 @@
 import React from 'react'
 import {
   Platform,
+  processColor,
   requireNativeComponent,
   StyleSheet,
   View
 } from 'react-native'
 
 import { useTheme } from '../theme/ThemeContext'
+import { backdropOf } from './glassBackdrop'
 import type { GlassViewProps } from './glassViewProps'
 
 export type { GlassViewProps }
@@ -19,12 +21,13 @@ export type { GlassViewProps }
  * and earlier versions draw `systemThinMaterial`, which is what the web app's
  * `backdrop-filter` was imitating. `GSGlassView.mm` decides between them.
  *
- * Android gets `theme.glassFallbackColor` and an elevation, and that is not a
- * shortfall: it is exactly the branch `glassStyle` already takes in a browser
- * without `backdrop-filter`, so it is a rendering the design already has.
- * Blurring a view's backdrop on Android means compositing that backdrop to a
- * bitmap every frame, under a scrolling list, for a tint that is already
- * legible without it.
+ * Android gets `theme.glassFallbackColor` and an elevation, which is exactly
+ * the branch `glassStyle` already takes in a browser without
+ * `backdrop-filter`. Blurring a view's backdrop on Android means recording
+ * that backdrop again every frame, under a scrolling list, for a tint that is
+ * already legible without it — so only a surface that asks (`androidBlur`)
+ * gets `GSBlurView`, the web's blur and tint drawn over a recording of what
+ * is behind it.
  *
  * The glass is drawn **behind** the children rather than around them, so it
  * never takes part in React's child ordering and nothing can end up beneath
@@ -37,7 +40,18 @@ const NativeGlass =
         glassInteractive?: boolean
         glassClear?: boolean
         glassRadius?: number
+        glassDark?: boolean
       }>('GSGlassView')
+    : null
+const NativeBlur =
+  Platform.OS === 'android'
+    ? requireNativeComponent<{
+        style?: unknown
+        blurRadius?: number
+        blurTint?: number
+        blurSaturation?: number
+        blurCornerRadius?: number
+      }>('GSBlurView')
     : null
 
 export function GlassView(props: GlassViewProps): React.ReactElement {
@@ -49,9 +63,28 @@ export function GlassView(props: GlassViewProps): React.ReactElement {
     radius = 0,
     clear = false,
     fallbackFill = true,
+    androidBlur = false,
     ...rest
   } = props
   const theme = useTheme()
+
+  // Android, asked to blur: the backdrop, blurred, under the web's tint.
+  if (NativeBlur != null && androidBlur && !opaque) {
+    const { radius: blur, saturation } = backdropOf(theme.glassBlur)
+    const tint = processColor(theme.glassBackgroundColor)
+    return (
+      <View {...rest} style={style}>
+        <NativeBlur
+          style={StyleSheet.absoluteFill}
+          blurRadius={blur}
+          blurTint={typeof tint === 'number' ? tint : 0}
+          blurSaturation={saturation}
+          blurCornerRadius={radius}
+        />
+        {children}
+      </View>
+    )
+  }
 
   // Android, or a reader who has asked for less transparency. Both want the
   // same thing — the filled surface `glassStyle` falls back to in a browser
@@ -84,6 +117,8 @@ export function GlassView(props: GlassViewProps): React.ReactElement {
         glassInteractive={interactive}
         glassClear={clear}
         glassRadius={radius}
+        // The app's theme, not the phone's Dark Mode: see `GSGlassView.mm`.
+        glassDark={theme.isDark}
       />
       {children}
     </View>

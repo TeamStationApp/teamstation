@@ -1,5 +1,5 @@
 /* eslint-disable react/no-unknown-property -- Three.js scene elements. */
-import React, { useEffect, useMemo } from 'react'
+import React, { useEffect, useState } from 'react'
 
 import { SCOREBOARD_SCALE, SCOREBOARD_Y, SCOREBOARD_Z } from './cameraModel'
 import { HomeRunLights } from './HomeRunLights'
@@ -11,7 +11,29 @@ export function Scoreboard({
 }: {
   state?: ScoreboardState
 }): React.ReactElement {
-  const texture = useMemo(() => makeScoreboardTexture(state), [state])
+  // Built from what the board says, not from the object that says it: the
+  // scoring screen hands over a new one on every render. Drawing the board
+  // takes a phone 15-30 ms, so a change is drawn in a task of its own after
+  // the render that brought it, rather than adding to the stall of a tap; the
+  // board shows what it said until then.
+  const content = JSON.stringify(state)
+  const [board, setBoard] = useState(() => ({
+    content,
+    texture: makeScoreboardTexture(state)
+  }))
+  useEffect(() => {
+    if (board.content === content) return
+    const timer = setTimeout(() => {
+      setBoard({
+        content,
+        texture: makeScoreboardTexture(JSON.parse(content) as ScoreboardState)
+      })
+    }, 0)
+    return () => {
+      clearTimeout(timer)
+    }
+  }, [board.content, content])
+  const { texture } = board
   useEffect(
     () => () => {
       texture.dispose()

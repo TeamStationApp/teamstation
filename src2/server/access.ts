@@ -1,5 +1,6 @@
 import type { Expression, ExpressionBuilder, Kysely, SqlBool } from 'kysely'
 
+import { type Role, ROLE_FLAGS, ROLES } from '../common/roles'
 import type { Database } from './db/database'
 
 /**
@@ -15,8 +16,8 @@ import type { Database } from './db/database'
  * 4. Nothing else is visible, and a read that is not allowed answers 404 so
  *    that existence does not leak.
  *
- * These settings only ever widen *viewing*. Editing, uploading and ingesting
- * stay with admins, which is `adminScopes` below.
+ * These settings only ever widen *viewing*. What somebody may change is
+ * `roleScopes` below: administrators, and the four role flags.
  */
 export interface VisibleScopes {
   /** Teams the user belongs to. */
@@ -133,57 +134,164 @@ export async function visibleScopes(
   return { teamIds, seasonIds, isAdmin }
 }
 
-/** Where this user may change things, including what they inherit downwards. */
-export async function adminScopes(
+/** The leagues, seasons and teams one role reaches, inherited downwards. */
+export interface ScopeSet {
+  leagueIds: Set<string>
+  seasonIds: Set<string>
+  teamIds: Set<string>
+}
+
+/**
+ * Where one person holds each role, worked out once per request.
+ *
+ * Every flag's sets already include the administrator's, because an admin
+ * holds every flag without having one set, so a check reads one set and
+ * never two. A site administrator holds every role everywhere, which the
+ * sets cannot list: `isAdmin` says so, and `hasRole` reads it first.
+ */
+export type RoleScopes = Record<Role, ScopeSet> & { isAdmin: boolean }
+
+function emptyScopes(): ScopeSet {
+  return { leagueIds: new Set(), seasonIds: new Set(), teamIds: new Set() }
+}
+
+/**
+ * Each role's rows, carried down: a league's to its seasons and their teams,
+ * a season's to its teams. Never upwards.
+ *
+ * One query per level for every role at once, whatever the number of roles:
+ * the seasons of every league anybody holds anything on, then the teams of
+ * every season. The sets are filled in place, and returned.
+ */
+export async function inheritScopes<K extends string>(
+  db: Kysely<Database>,
+  direct: Record<K, ScopeSet>
+): Promise<Record<K, ScopeSet>> {
+  const sets = Object.values<ScopeSet>(direct)
+  const leagueIds = new Set(sets.flatMap(set => [...set.leagueIds]))
+  if (leagueIds.size > 0) {
+    const seasons = await db
+      .selectFrom('seasons')
+      .select(['id', 'league_id'])
+      .where('league_id', 'in', [...leagueIds])
+      .execute()
+    for (const set of sets) {
+      for (const row of seasons) {
+        if (row.league_id != null && set.leagueIds.has(row.league_id)) {
+          set.seasonIds.add(row.id)
+        }
+      }
+    }
+  }
+  const seasonIds = new Set(sets.flatMap(set => [...set.seasonIds]))
+  if (seasonIds.size > 0) {
+    const teams = await db
+      .selectFrom('season_teams')
+      .select(['season_id', 'team_id'])
+      .where('season_id', 'in', [...seasonIds])
+      .execute()
+    for (const set of sets) {
+      for (const row of teams) {
+        if (set.seasonIds.has(row.season_id)) set.teamIds.add(row.team_id)
+      }
+    }
+  }
+  return direct
+}
+
+/**
+ * Every role this person holds, and where.
+ *
+ * The `scope_roles` rows, plus a team's owner or manager as that team's
+ * administrator, so there is one place to look rather than two. Then each
+ * role is carried downwards, and the administrator's sets are added to every
+ * flag's.
+ */
+export async function roleScopes(
   db: Kysely<Database>,
   userId: number,
   isAdmin: boolean
-): Promise<AdminScopes> {
-  const roles = await db
-    .selectFrom('admin_roles')
-    .select(['scope_type', 'scope_id'])
+): Promise<RoleScopes> {
+  const direct = Object.fromEntries(
+    ROLES.map(role => [role, emptyScopes()])
+  ) as Record<Role, ScopeSet>
+
+  const rows = await db
+    .selectFrom('scope_roles')
+    .select(['scope_type', 'scope_id', 'role'])
     .where('user_id', '=', userId)
     .execute()
-
-  const leagueIds = new Set<string>()
-  const seasonIds = new Set<string>()
-  const teamIds = new Set<string>()
-  for (const role of roles) {
-    if (role.scope_type === 'league') leagueIds.add(role.scope_id)
-    if (role.scope_type === 'season') seasonIds.add(role.scope_id)
-    if (role.scope_type === 'team') teamIds.add(role.scope_id)
+  for (const row of rows) {
+    const set = direct[row.role]
+    if (row.scope_type === 'league') set.leagueIds.add(row.scope_id)
+    if (row.scope_type === 'season') set.seasonIds.add(row.scope_id)
+    if (row.scope_type === 'team') set.teamIds.add(row.scope_id)
   }
 
-  // A team's owner or manager is an admin of that team, so there is one place
-  // to look rather than two.
   const owned = await db
     .selectFrom('memberships')
     .select(['team_id'])
     .where('user_id', '=', userId)
     .where('role', 'in', ['owner', 'manager'])
     .execute()
-  for (const row of owned) teamIds.add(row.team_id)
+  for (const row of owned) direct.admin.teamIds.add(row.team_id)
 
-  // Rights inherit downwards: a league admin administers its seasons and their
-  // teams; a season admin administers that season's teams. Never upwards.
-  if (leagueIds.size > 0) {
-    const seasons = await db
-      .selectFrom('seasons')
-      .select(['id'])
-      .where('league_id', 'in', [...leagueIds])
-      .execute()
-    for (const row of seasons) seasonIds.add(row.id)
+  const inherited = await inheritScopes(db, direct)
+  for (const flag of ROLE_FLAGS) {
+    for (const key of ['leagueIds', 'seasonIds', 'teamIds'] as const) {
+      for (const id of inherited.admin[key]) inherited[flag][key].add(id)
+    }
   }
-  if (seasonIds.size > 0) {
-    const teams = await db
-      .selectFrom('season_teams')
-      .select(['team_id'])
-      .where('season_id', 'in', [...seasonIds])
-      .execute()
-    for (const row of teams) teamIds.add(row.team_id)
-  }
+  return { ...inherited, isAdmin }
+}
 
-  return { leagueIds, seasonIds, teamIds, isAdmin }
+/**
+ * Where this user may change things, including what they inherit downwards.
+ *
+ * Administrator rows only: a flag grants what it names and never what an
+ * administrator may do, so no flag ever widens this.
+ */
+export async function adminScopes(
+  db: Kysely<Database>,
+  userId: number,
+  isAdmin: boolean
+): Promise<AdminScopes> {
+  const scopes = await roleScopes(db, userId, isAdmin)
+  return { ...scopes.admin, isAdmin }
+}
+
+/** Whether these scopes hold `role` on `teamId`. A site admin holds all. */
+export function hasRole(
+  scopes: RoleScopes,
+  role: Role,
+  teamId: string
+): boolean {
+  return scopes.isAdmin || scopes[role].teamIds.has(teamId)
+}
+
+/** Scores the team's games: Score Game, and posting plays and lineups. */
+export function canScore(scopes: RoleScopes, teamId: string): boolean {
+  return hasRole(scopes, 'scorekeeper', teamId)
+}
+
+/** Sets the team's walk-up songs and DJs its games. */
+export function canKeepSongs(scopes: RoleScopes, teamId: string): boolean {
+  return hasRole(scopes, 'songkeeper', teamId)
+}
+
+/** Edits the team's players' settings, and sees their whole names. */
+export function canCoach(scopes: RoleScopes, teamId: string): boolean {
+  return hasRole(scopes, 'coach', teamId)
+}
+
+/** Films and streams the team's games, live or uploaded afterwards. */
+export function canFilm(scopes: RoleScopes, teamId: string): boolean {
+  return hasRole(scopes, 'videographer', teamId)
+}
+
+/** The roles these scopes hold on one team, administrator first. */
+export function rolesOnTeam(scopes: RoleScopes, teamId: string): Role[] {
+  return ROLES.filter(role => hasRole(scopes, role, teamId))
 }
 
 export interface GameScope {
@@ -269,19 +377,13 @@ export function canManageTeam(scopes: AdminScopes, teamId: string): boolean {
 }
 
 /**
- * Whether somebody may **change** a player's name — and so be shown it in full.
+ * Whether somebody may **change** a player's name.
  *
- * The app draws `Jensen P` and nothing else, on every screen, for everybody.
- * There is no viewer who gets the whole name because of who they are: these
- * are children, and a full name on a page a hundred parents can open is a
- * decision nobody made. The one place the surname appears is the field you
- * type it into, which is a different thing from a page you read.
- *
- * So this is an *editing* right, not a viewing one, and it is narrow by
- * Paul's instruction of 2026-09-19: a site administrator, a parent — a
- * `user_links` row of kind `guardian` or `family` — or the player themselves,
- * whose own name is their own business. A coach is deliberately not on this
- * list, and neither is a season or league administrator.
+ * Narrow by Paul's instruction of 2026-09-19: a site administrator, a parent
+ * — a `user_links` row of kind `guardian` or `family` — or the player
+ * themselves, whose own name is their own business. A coach may read the
+ * whole name (`maySeeFullName`) but not change it, and neither may a season
+ * or league administrator.
  */
 export async function mayEditName(
   db: Kysely<Database>,
@@ -300,4 +402,30 @@ export async function mayEditName(
     .where('kind', 'in', ['guardian', 'family'])
     .executeTakeFirst()
   return parent != null
+}
+
+/**
+ * Whether somebody may **read** a player's whole name.
+ *
+ * Everybody else reads `Jensen P`. The whole name goes to whoever may change
+ * it, and to a coach or an administrator of a team the player plays on —
+ * directly, or through its season or league — because telling two children
+ * apart is part of running the team. Keeping score, keeping songs and
+ * filming do not need it, and neither does watching.
+ */
+export async function maySeeFullName(
+  db: Kysely<Database>,
+  actorUserId: number,
+  playerUserId: number,
+  about: { isAdmin: boolean }
+): Promise<boolean> {
+  if (await mayEditName(db, actorUserId, playerUserId, about)) return true
+  const scopes = await roleScopes(db, actorUserId, about.isAdmin)
+  const teams = await db
+    .selectFrom('memberships')
+    .select(['team_id'])
+    .where('user_id', '=', playerUserId)
+    .where('is_player', '=', true)
+    .execute()
+  return teams.some(row => canCoach(scopes, row.team_id))
 }

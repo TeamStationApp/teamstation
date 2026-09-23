@@ -416,6 +416,15 @@ describe('reading a game back', function () {
     ])
   })
 
+  it('reads each stored record once, and no record from one that is not an object', function () {
+    const scored = score(game(), inning)
+    const play = scored.plays[0]
+    expect(recordOf(play)).not.equals(null)
+    expect(recordOf(play)).equals(recordOf(play))
+    expect(recordOf({ ...play, gameStation: 'version 1' })).equals(null)
+    expect(recordOf({ ...play, gameStation: { version: 2 } })).equals(null)
+  })
+
   it('takes what the server writes on a play in its stride', function () {
     const scored = score(game(), inning)
     const stored = withHalfOuts(scored.plays).map(play => {

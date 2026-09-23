@@ -51,6 +51,11 @@ export interface FieldCanvasProps {
   ) => void
 
   runnerSafeError?: (id: string, to: number) => string | undefined
+  /**
+   * The runner drag's Safe/Out view, sent when what it offers changes — the
+   * base, the target under the finger, whether Safe is allowed — and not for
+   * every move of the finger, which the scene follows by itself. Null ends it.
+   */
   onRunnerDrag?: (view: RunnerDragView | null) => void
   onRunnerDrop?: (
     id: string,

@@ -186,7 +186,7 @@ describe('invite codes', function () {
         .execute()
     }
     await db
-      .insertInto('admin_roles')
+      .insertInto('scope_roles')
       .values({
         id: 'adm_boss',
         user_id: bossId,
@@ -450,7 +450,7 @@ describe('invite codes', function () {
       })
       .execute()
     await db
-      .insertInto('admin_roles')
+      .insertInto('scope_roles')
       .values({
         id: 'adm_boss_league',
         user_id: bossId,

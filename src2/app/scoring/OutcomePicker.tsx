@@ -2,6 +2,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import { useTheme } from '../theme/ThemeContext'
 import { outcomeAvailable } from './battedBall'
+import { OUT_TYPES, PRIMARY_OUTCOMES } from './outcomeChoices'
 import type { OutcomePickerProps } from './outcomePickerProps'
 import type { Outcome } from './scoringContract'
 import {
@@ -16,15 +17,8 @@ import {
   ScoringMenuLabel
 } from './ScoringMenuAppearance'
 import { scoringMenuPanel, scoringMenuRow } from './scoringMenuWebStyle'
-export const PRIMARY_OUTCOMES = [
-  'Batter Out',
-  'Single',
-  'Double',
-  'Triple',
-  'Home Run',
-  "Fielder's Choice",
-  'Error'
-] as const
+
+export { PRIMARY_OUTCOMES }
 export function OutcomePicker({
   disabled,
   contactKind = 'swing',
@@ -346,9 +340,7 @@ export function OutcomePicker({
               }}
             >
               <OutTypeHeader />
-              {(
-                ['Throw Out', 'Ball Caught', 'Batter Interference'] as const
-              ).map(value => (
+              {OUT_TYPES.map(value => (
                 <button
                   role="menuitem"
                   key={value}

@@ -1,5 +1,5 @@
 import { fonts } from '../theme/fonts'
-import type { FieldPlayer } from './fieldModel'
+import { nameplateColor } from './nameplateOverlay'
 import {
   NAMEPLATE_FONT,
   NAMEPLATE_LINE_GAP,
@@ -7,6 +7,7 @@ import {
   NAMEPLATE_PAD,
   type NameplatePlacement
 } from './playerPresentation'
+export { nameplateColor } from './nameplateOverlay'
 
 function plateLine(
   node: HTMLElement,
@@ -26,16 +27,6 @@ function plateLine(
   line.style.lineHeight = `${fontPx}px`
   line.style.fontWeight = '400'
   return line
-}
-const BLUE_CARD = 'rgba(16, 40, 72, 0.94)'
-const RED_CARD = 'rgba(122, 48, 16, 0.94)'
-/** Away wears blue and home wears red, on the shirt and on the card. */
-export function nameplateColor(plate: {
-  team: FieldPlayer['team']
-  uniformSide?: FieldPlayer['uniformSide']
-}): string {
-  const side = plate.uniformSide ?? (plate.team === 'runner' ? 'home' : 'away')
-  return side === 'away' ? BLUE_CARD : RED_CARD
 }
 /** DOM nameplates sit over the canvas in CSS pixels, so the type is the display's own. */
 export function syncFieldNameplates(

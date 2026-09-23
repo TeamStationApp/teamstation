@@ -5,6 +5,7 @@ import { Pressable, Text, View } from 'react-native'
 import { useBreakpoint } from '../components'
 import { useTheme } from '../theme/ThemeContext'
 import { syncFieldNameplates } from './fieldNameplates'
+import { fieldPixelRatioRange } from './fieldResolution'
 import { FieldScene } from './FieldScene'
 import type { FieldCanvasProps } from './fieldTypes'
 import type { NameplatePlacement } from './playerPresentation'
@@ -188,7 +189,7 @@ export function FieldCanvas(props: FieldCanvasProps): React.ReactElement {
             eventSource={eventHost}
             frameloop="demand"
             shadows
-            dpr={[1, phone ? 1.25 : 1.5]}
+            dpr={fieldPixelRatioRange(phone)}
             camera={{ position: [0, 100, 114], fov: 43 }}
             gl={{
               antialias: true,

@@ -12,7 +12,13 @@ export {
   type AnglePickerModalProps
 } from './AnglePickerModal'
 export { AppHeader, type AppHeaderProps } from './AppHeader'
-export { AppNav, NAV_CLEARANCE_REM, NAV_TABS, type NavTabId } from './AppNav'
+export {
+  AppNav,
+  FLOATING_BOTTOM_REM,
+  NAV_CLEARANCE_REM,
+  NAV_TABS,
+  type NavTabId
+} from './AppNav'
 export { Badge, type BadgeTone } from './Badge'
 export { Button, type ButtonKind } from './Button'
 export { Card } from './Card'
@@ -31,10 +37,10 @@ export { ManageGear, type ManageGearProps } from './ManageGear'
 export { LivePill, type LivePillProps } from './LivePill'
 export {
   adminLabel,
-  memberLabel,
-  RoleModal,
-  type RoleModalProps
-} from './RoleModal'
+  flagLabel,
+  RolesModal,
+  type RolesModalProps
+} from './RolesModal'
 export { PillTabs, type PillTab } from './PillTabs'
 export { Scoreboard } from './Scoreboard'
 export { Screen } from './Screen'

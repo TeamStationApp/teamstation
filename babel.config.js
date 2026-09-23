@@ -22,6 +22,10 @@ module.exports = {
       'transform-inline-environment-variables',
       { include: ['GS_API_BASE_URL'] }
     ],
+    // three.js, which the scoring field draws with, declares static blocks
+    // inside its classes, and neither React Native's preset nor Hermes
+    // understands them.
+    '@babel/plugin-transform-class-static-block',
     // Last, always: it rewrites the functions Reanimated runs on the UI
     // thread, and it has to see them after every other transform has had its
     // turn.

@@ -18,6 +18,8 @@ export const gameFixture = asGameDetail({
   awayScore: null,
   ingestStatus: 'pending',
   ingestMessage: null,
+  // Seen by a scorekeeper, so the Score Game tab is on offer.
+  canScore: true,
   videos: []
 })
 describe('unscored entry', function () {

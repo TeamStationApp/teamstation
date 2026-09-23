@@ -15,6 +15,7 @@ import {
 } from 'react-native'
 
 import type { GameStationClient } from '../../common/api'
+import type { ScoringAction } from '../../common/scoring/actions'
 import {
   awaitingResult,
   completesHitOffer,
@@ -23,14 +24,24 @@ import {
   undoesHitOffer
 } from '../../common/scoring/rules'
 import type { ScoringSession as GameSession } from '../../common/scoring/session'
+import type { WalkUpSong } from '../../common/walkUpSong'
 import type { BallArcState } from '../field/ballArcModel'
 import { BaseballScreen } from '../field/BaseballScreen'
 import type { FieldPlayer } from '../field/fieldModel'
+import { createRelay, type Relay, useRelay } from '../field/fieldPropsRelay'
+import { scoringMenuFrame, WEB_MENU_BUTTON } from '../field/fieldSafeArea'
 import type { BaseProjection } from '../field/fieldTypes'
 import { homeRunKind, homeRunLabel } from '../field/stadiumBoundary'
 import { useFieldSurface } from '../field/useFieldSurface'
 import { lstrings } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
+import {
+  NO_WALK_UP_MUSIC,
+  useWalkUpNote,
+  type WalkUpRosters
+} from '../walkup/useWalkUpNote'
+import { WalkUpControl } from '../walkup/WalkUpControl'
+import type { WalkUpMusic } from '../walkup/walkUpMusicTypes'
 import { startingAngle, trajectoryLabel } from './battedBall'
 import { battedBallField, fieldStageInstruction } from './battedBallField'
 import { ErrorCreditSheet } from './ErrorCreditSheet'
@@ -43,7 +54,12 @@ import type { RunnerDragView } from './runnerDrag'
 import { RunnerDragTargets } from './RunnerDragTargets'
 import { scoringAudio } from './scoringAudio'
 import { runnerDecisionError } from './scoringFlow'
-import { initialScoringState, scoringReducer } from './scoringMachine'
+import {
+  actsOnOpening,
+  resumedScoringState,
+  scoringScreenModel,
+  scoringScreenReducer
+} from './scoringMachine'
 import { SCORING_MENU, ScoringMenuButton } from './ScoringMenuAppearance'
 import { scoringFieldPlayers } from './scoringMotion'
 import { scoringPreferences } from './scoringPreferences'
@@ -68,10 +84,23 @@ export interface ScoringScreenProps {
   userId?: string | number
   onExit: () => void
   source?: ScoringSource
+  /**
+   * The phone's music, for the batter's walk-up note. The web's has nothing
+   * to play, and then the note never shows.
+   */
+  music?: WalkUpMusic
+  /** Finds a walk-up song on this phone, as a handle `music` plays. */
+  resolveSong?: (
+    song: WalkUpSong,
+    owner: { teamId: string; userId: string }
+  ) => Promise<string | null>
+  /** Whether an Apple Music clip fades on the phone's volume. */
+  fadeAppleMusic?: boolean
 }
 export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
   const theme = useTheme()
   const [opened, setOpened] = useState<GameSession>()
+  const [rosters, setRosters] = useState<WalkUpRosters>({})
   const [failed, setFailed] = useState(false)
   const [retry, setRetry] = useState(0)
   const surface = useFieldSurface()
@@ -88,7 +117,9 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
         props.client.roster(game.homeTeamId).catch(() => [])
       ])
       const value = await source.open(game, away, home)
-      if (live) setOpened(value)
+      if (!live) return
+      setRosters({ [game.awayTeamId]: away, [game.homeTeamId]: home })
+      setOpened(value)
     }
     load().catch(() => {
       if (live) setFailed(true)
@@ -153,6 +184,10 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
       persistent={source.persistent === true}
       onExit={props.onExit}
       userId={String(props.userId ?? 'local-scorer')}
+      rosters={rosters}
+      music={props.music ?? NO_WALK_UP_MUSIC}
+      resolveSong={props.resolveSong}
+      fadeAppleMusic={props.fadeAppleMusic}
     />
   )
 }
@@ -170,6 +205,27 @@ function statusOf(game: GameSession): SaveStatus {
     problem: game.problem
   }
 }
+function sameActions(
+  a: readonly ScoringAction[],
+  b: readonly ScoringAction[]
+): boolean {
+  return (
+    a.length === b.length &&
+    a.every(
+      (action, index) =>
+        action === b[index] ||
+        JSON.stringify(action) === JSON.stringify(b[index])
+    )
+  )
+}
+export function sameStatus(a: SaveStatus, b: SaveStatus): boolean {
+  return (
+    a.pending === b.pending &&
+    a.offline === b.offline &&
+    a.readOnly === b.readOnly &&
+    a.problem === b.problem
+  )
+}
 /** What the save is doing, in a line, or nothing when everything is saved. */
 export function saveStatusText(status: SaveStatus): string | null {
   if (status.readOnly) return null
@@ -184,41 +240,88 @@ function ScoringPanel(props: {
   persistent: boolean
   onExit: () => void
   userId: string
+  rosters: WalkUpRosters
+  music: WalkUpMusic
+  resolveSong?: ScoringScreenProps['resolveSong']
+  fadeAppleMusic?: boolean
 }): React.ReactElement {
   const theme = useTheme()
   // A ball in play saved without its result cannot be shown, because the
   // outcome chosen for it is logged only with the result: the screen picks
   // the game up at the pitch before it, and saves that only once the scorer
   // does something from there.
-  const [state, dispatch] = useReducer(scoringReducer, props.game, game => {
-    const resumed = game.resumable()
-    return {
-      ...initialScoringState(resumed.state, true),
-      log: resumed.actions
+  const [model, dispatch] = useReducer(
+    scoringScreenReducer,
+    props.game,
+    game => {
+      const resumed = game.resumable()
+      return scoringScreenModel(
+        resumedScoringState(resumed.state, resumed.actions, true)
+      )
     }
-  })
+  )
+  const state = model.scoring
   const openedLog = useRef(state.log)
   const [status, setStatus] = useState(() => statusOf(props.game))
-  useEffect(
-    () =>
-      props.game.subscribe(() => {
-        setStatus(statusOf(props.game))
-        // Refused, the session went back to what the server holds, and so
-        // does the screen.
-        if (props.game.readOnly)
-          dispatch({
-            type: 'RESET',
-            session: props.game.state,
-            log: [...props.game.actions],
-            readOnly: true
-          })
-      }),
-    [props.game]
-  )
+  useEffect(() => {
+    // What the screen shows of the save is read in a task of its own: the
+    // count folds the whole game (`ScoringSession.picture`), which would add
+    // to the stall of the tap that changed it, and the save reads the same
+    // fold straight after.
+    let reading: ReturnType<typeof setTimeout> | null = null
+    const unsubscribe = props.game.subscribe(() => {
+      reading ??= setTimeout(() => {
+        reading = null
+        // The session tells of every change; the screen draws again only
+        // when what it shows of the save changed.
+        const next = statusOf(props.game)
+        setStatus(shown => (sameStatus(shown, next) ? shown : next))
+      }, 0)
+      // Refused, the session went back to what the server holds, and so
+      // does the screen.
+      if (props.game.readOnly)
+        dispatch({
+          type: 'RESET',
+          session: props.game.state,
+          log: [...props.game.actions],
+          readOnly: true
+        })
+    })
+    return () => {
+      unsubscribe()
+      if (reading != null) clearTimeout(reading)
+    }
+  }, [props.game])
   // The screen's log is the game: the session saves whatever it says.
   useEffect(() => {
     if (state.log !== openedLog.current) props.game.sync(state.log)
   }, [props.game, state.log])
+  // Undo taps into play scored before this screen opened, one at a time,
+  // each from the game the one before it left: the game steps back one
+  // action, and on past any step the screen cannot rest on — a ball in play
+  // still waiting for its result, or a play that closes by itself, such as
+  // a hit by pitch before its close — so each tap shows one step back.
+  const takingBack = useRef(-1)
+  useEffect(() => {
+    if (model.savedUndos === 0 || takingBack.current === model.savedUndone)
+      return
+    takingBack.current = model.savedUndone
+    props.game.sync(state.log)
+    let undone = props.game.undo()
+    while (
+      undone.problems.length === 0 &&
+      (awaitingResult(props.game.state) || actsOnOpening(props.game.state))
+    )
+      undone = props.game.undo()
+    dispatch({
+      type: 'SAVED_UNDONE',
+      ...(undone.problems.length === 0
+        ? {
+            undone: { session: props.game.state, log: [...props.game.actions] }
+          }
+        : {})
+    })
+  }, [props.game, model.savedUndos, model.savedUndone, state.log])
   const [sound, setSound] = useState(true)
   useEffect(() => {
     let live = true
@@ -264,6 +367,7 @@ function ScoringPanel(props: {
     z: number
   } | null>(null)
   const [menu, setMenu] = useState(false)
+  const [menuButton, setMenuButton] = useState(WEB_MENU_BUTTON)
   const [sheet, setSheet] = useState<
     'exit' | 'settings' | 'overrides' | 'half' | 'rosters' | 'game'
   >()
@@ -321,10 +425,14 @@ function ScoringPanel(props: {
   const line = session.liveData.linescore
   const scoredHere = useRef(state.past.length)
   scoredHere.current = state.past.length
+  // The walk-up song stops the moment the scorer leaves, not once the save
+  // the exit waits on has finished.
+  const stopWalkUp = useRef<() => void>(() => undefined)
   // Leaving first saves what the server has not acknowledged, and asks only
   // about changes that still did not reach it. A server that does not answer
   // holds the scorer back three seconds at most.
   const leave = useCallback(async (): Promise<boolean> => {
+    stopWalkUp.current()
     if (props.persistent) {
       await Promise.race([
         props.game.flush().catch(() => undefined),
@@ -348,13 +456,20 @@ function ScoringPanel(props: {
   // saved change is what the scorer edits; saving them posts at once. The
   // last one saved wins.
   const [rosterRead, setRosterRead] = useState(0)
+  const shownLog = useRef(state.log)
+  shownLog.current = state.log
   const openRosters = (): void => {
     setSheet('rosters')
     if (!props.persistent) return
     props.game
       .reload()
       .then(changed => {
-        if (!changed) return
+        // The server's copy can read back differently with the same plays
+        // (its players in another order). Then the screen is the game
+        // already, and keeps its Undo history; only another scorer's plays
+        // start it again from the server's.
+        if (!changed || sameActions(shownLog.current, props.game.actions))
+          return
         dispatch({
           type: 'RESET',
           session: props.game.state,
@@ -392,9 +507,16 @@ function ScoringPanel(props: {
     state.pendingPlay?.homeRunKind,
     state.generation
   ])
-  const [runnerDrag, setRunnerDrag] = useState<RunnerDragView | null>(null)
+  // A runner drag's Safe/Out view changes every frame the finger moves. It
+  // goes to the drop targets alone, not through this whole screen.
+  const [runnerDrag] = useState(() => createRelay<RunnerDragView | null>(null))
   const [selected, setSelected] = useState('')
   const switchable = state.phase === 'ready' && canSwitchBatter(session)
+  const note = useWalkUpNote(state, props.rosters, props.music, {
+    resolve: props.resolveSong,
+    fadeAppleMusic: props.fadeAppleMusic
+  })
+  stopWalkUp.current = note.stop
   const batterId = line.offense.batter?.id
   const shownAppearances = useRef(new Set<string>())
   const appearance = session.liveData.plays.currentPlay?.about.atBatIndex
@@ -570,7 +692,7 @@ function ScoringPanel(props: {
           dispatch({ type: 'PRESENTATION_DONE', id, generation, stage })
         },
         onGestureActive: setGesture,
-        onRunnerDrag: setRunnerDrag,
+        onRunnerDrag: runnerDrag.set,
         runnerSafeError: (id, to) => {
           const player = players.find(item => item.id === id)
           if (player?.playerId == null) return 'Runner unavailable'
@@ -717,6 +839,17 @@ function ScoringPanel(props: {
             }
           : undefined
       }
+      walkUpControl={
+        note.shown ? (
+          <WalkUpControl
+            batterName={note.batterName}
+            playing={note.playing}
+            dimmed={note.dimmed}
+            toast={note.toast}
+            onPress={note.handlePress}
+          />
+        ) : undefined
+      }
       moreControl={
         <MoreMenu
           state={state}
@@ -754,6 +887,7 @@ function ScoringPanel(props: {
           }}
         />
       }
+      onMenuButton={setMenuButton}
       onMenu={() => {
         pauseClock()
         setOutcomeMenu(false)
@@ -762,23 +896,9 @@ function ScoringPanel(props: {
       onUndo={() => {
         scoringAudio.stop()
         if (status.readOnly) return
-        if (state.past.length > 0 || state.log.length === 0) {
-          dispatch({ type: 'UNDO' })
-          return
-        }
-        // Scored before this screen opened: the game steps back one action,
-        // or, from a ball in play still waiting for its result, back to the
-        // pitch before it, where the screen can pick the play up again.
-        props.game.sync(state.log)
-        let undone = props.game.undo()
-        while (undone.problems.length === 0 && awaitingResult(props.game.state))
-          undone = props.game.undo()
-        if (undone.problems.length === 0)
-          dispatch({
-            type: 'RESET',
-            session: props.game.state,
-            log: [...props.game.actions]
-          })
+        // The reducer decides, from the state every earlier tap left, whether
+        // this one is the screen's to take back or the saved game's.
+        dispatch({ type: 'UNDO' })
       }}
       onPitch={kind => {
         if (!actionsAllowed || menu || sheet != null || outcomeMenu || moreOpen)
@@ -887,16 +1007,14 @@ function ScoringPanel(props: {
       accessibilitySummary={`${state.celebration == null ? '' : state.celebration.kind === 'in-park' ? 'IN THE PARK HOME RUN · ' : 'HOME RUN · '}${summary} · Batter ${line.offense.batter?.fullName ?? 'waiting'} ${session.liveData.plays.currentPlay?.matchup.batSide.code === 'L' ? 'left handed' : 'right handed'} · Pitcher ${line.defense.P?.fullName ?? 'unassigned'}`}
     >
       <ErrorCreditSheet state={state} dispatch={dispatch} />
-      <RunnerDragTargets
-        view={
-          runnerDrag != null &&
-          (runnerDrag.to < runnerDrag.from ||
-            // homeDecision retreat-only: no Safe/Out on a hold at the offered base
-            (homeWaiting &&
-              retreatIds.includes(runnerDrag.id) &&
-              advanceIds?.includes(runnerDrag.id) !== true))
-            ? null
-            : runnerDrag
+      <RelayedRunnerDragTargets
+        relay={runnerDrag}
+        hides={view =>
+          view.to < view.from ||
+          // homeDecision retreat-only: no Safe/Out on a hold at the offered base
+          (homeWaiting &&
+            retreatIds.includes(view.id) &&
+            advanceIds?.includes(view.id) !== true)
         }
         onChoose={decision => {
           keyboard.current?.(decision === 'safe' ? 's' : 'o')
@@ -938,8 +1056,7 @@ function ScoringPanel(props: {
           <ScrollView
             style={{
               position: 'absolute',
-              right: 12,
-              top: 64,
+              ...scoringMenuFrame(menuButton),
               maxHeight: '75%',
               zIndex: 100,
               overflow: 'hidden',
@@ -1180,5 +1297,27 @@ function ScoringPanel(props: {
         </View>
       )}
     </BaseballScreen>
+  )
+}
+
+/** The drop targets, redrawn from the drag's relay on their own. */
+function RelayedRunnerDragTargets({
+  relay,
+  hides,
+  onChoose,
+  onCancel
+}: {
+  relay: Relay<RunnerDragView | null>
+  hides: (view: RunnerDragView) => boolean
+  onChoose: (decision: 'safe' | 'out') => void
+  onCancel: () => void
+}): React.ReactElement {
+  const view = useRelay(relay)
+  return (
+    <RunnerDragTargets
+      view={view == null || hides(view) ? null : view}
+      onChoose={onChoose}
+      onCancel={onCancel}
+    />
   )
 }

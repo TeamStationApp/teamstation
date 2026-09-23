@@ -72,7 +72,16 @@ export function ScoringMenuLabel({
   return (
     <View
       pointerEvents="none"
-      style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 }}
+      style={{
+        // Grow and shrink from the text's own width, never from zero: the
+        // scoring menu takes its width from its rows, and a phone's Yoga
+        // would otherwise lay every row, and the menu, out 26 points wide.
+        flexGrow: 1,
+        flexShrink: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6
+      }}
     >
       {chevron === 'left' && (
         <Text
@@ -90,7 +99,8 @@ export function ScoringMenuLabel({
         testID="scoring-menu-label"
         selectable={false}
         style={{
-          flex: 1,
+          flexGrow: 1,
+          flexShrink: 1,
           minWidth: 0,
           textAlign: 'left',
           fontFamily: theme.regularTextFont,
@@ -231,16 +241,23 @@ export function ScoringMenuButton({
   label,
   disabled = false,
   submenuRight = false,
+  submenuLeft = false,
   danger = false,
+  highlighted = false,
   onPress
 }: {
   label: string
   disabled?: boolean
   submenuRight?: boolean
+  /** The submenu opens to the left, as Batter Out's does. */
+  submenuLeft?: boolean
   danger?: boolean
+  /** Lit by a drag passing over it, which the row cannot see for itself. */
+  highlighted?: boolean
   onPress: () => void
 }): React.ReactElement {
-  const [active, setActive] = useState(false)
+  const [pressed, setActive] = useState(false)
+  const active = pressed || highlighted
   return (
     <Pressable
       accessibilityRole="button"
@@ -280,7 +297,7 @@ export function ScoringMenuButton({
         label={label}
         danger={danger}
         active={active && !disabled}
-        chevron={submenuRight ? 'right' : undefined}
+        chevron={submenuRight ? 'right' : submenuLeft ? 'left' : undefined}
       />
     </Pressable>
   )

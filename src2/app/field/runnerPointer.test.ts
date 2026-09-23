@@ -316,4 +316,89 @@ describe('runner captured pointer decisions', function () {
       await renderer.unmount()
     }
   })
+
+  it('tells the screen when the offer changes, not on every move', async function () {
+    const runner = createPlayers()[9]
+    runner.position = { ...BASES[1] }
+    runner.target = { ...runner.position }
+    runner.runnerBase = 1
+    let camera: Camera | undefined
+    const views: Array<RunnerDragView | null> = []
+    const renderer = await create(
+      React.createElement(FieldScene, {
+        players: [runner],
+        selected: runner.id,
+        onSelect: () => {},
+        view: 'home',
+        zoom: 1,
+        interaction: {
+          generation: 1,
+          selectableIds: [runner.id],
+          runnerIds: [runner.id],
+          gestures: ['place']
+        },
+        onRunnerDrag: value => {
+          views.push(value)
+        }
+      }),
+      {
+        width: 900,
+        height: 650,
+        onCreated: state => {
+          camera = state.camera
+        }
+      }
+    )
+    const target = { setPointerCapture() {}, releasePointerCapture() {} }
+    const between = (t: number): object => {
+      const ground = new Vector3(
+        BASES[1].x + (BASES[2].x - BASES[1].x) * t,
+        0.7,
+        BASES[1].z + (BASES[2].z - BASES[1].z) * t
+      )
+      const projected = ground.project(camera!)
+      const pointer = new Vector2(projected.x, projected.y)
+      const point = new Vector3(pointer.x, pointer.y, 0.5).unproject(camera!)
+      return {
+        pointerId: 1,
+        button: 0,
+        pointer,
+        target,
+        ray: new Ray(
+          camera!.position.clone(),
+          point.sub(camera!.position).normalize()
+        )
+      }
+    }
+    try {
+      await renderer.advanceFrames(1, 1 / 60)
+      const surface = renderer.scene.findByProps({
+        name: 'interaction-surface'
+      })
+      await renderer.fireEvent(surface, 'pointerDown', between(0))
+      const guide = renderer.scene.findByProps({ name: 'move-preview' })
+      const marker = (): { x: number; z: number } =>
+        guide.instance.getObjectByName('destination-marker')!.position
+      for (const t of [0.1, 0.2, 0.3, 0.4]) {
+        await renderer.fireEvent(surface, 'pointerMove', between(t))
+        await renderer.advanceFrames(1, 1 / 60)
+        // The runner and the guide follow the finger in the scene…
+        expect(runner.position.x).closeTo(
+          BASES[1].x + (BASES[2].x - BASES[1].x) * t,
+          0.5
+        )
+        expect(marker().x).closeTo(runner.position.x, 1e-6)
+      }
+      // …and the screen heard once: still bound for first.
+      expect(views.map(view => view?.to)).deep.equals([1])
+      for (const t of [0.7, 0.8, 0.9])
+        await renderer.fireEvent(surface, 'pointerMove', between(t))
+      // Past halfway, second is the offer.
+      expect(views.map(view => view?.to)).deep.equals([1, 2])
+      await renderer.fireEvent(surface, 'pointerUp', between(0.9))
+      expect(views.at(-1)).equals(null)
+    } finally {
+      await renderer.unmount()
+    }
+  })
 })

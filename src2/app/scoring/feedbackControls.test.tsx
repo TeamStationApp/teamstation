@@ -124,6 +124,50 @@ describe('feedback control locking and reversible guides', () => {
         host.remove()
       }
     })
+  it('follows a live drag each frame without a re-render', async () => {
+    const origin = BASES[1]
+    const next = BASES[2]
+    const draft = {
+      id: 'runner',
+      pointer: 1,
+      origin,
+      goal: origin,
+      offset: { x: 0, z: 0 },
+      next,
+      commit: false,
+      touch: true
+    }
+    const live = { current: { ...draft } }
+    const renderer = await create(<MoveGuide draft={draft} live={live} />)
+    try {
+      const line = renderer.scene.findByProps({
+        name: 'runner-transition-line'
+      }).instance as Mesh
+      const marker = renderer.scene.findByProps({
+        name: 'destination-marker'
+      }).instance
+      expect(line.visible).equals(false)
+      live.current.goal = {
+        x: (origin.x + next.x) / 2,
+        z: (origin.z + next.z) / 2
+      }
+      await renderer.advanceFrames(1, 1 / 60)
+      expect(marker.position.x).equals(live.current.goal.x)
+      expect(marker.position.z).equals(live.current.goal.z)
+      expect(line.visible).equals(true)
+      expect(line.position.x).closeTo(
+        (origin.x + live.current.goal.x) / 2,
+        1e-8
+      )
+      expect(line.scale.y).closeTo(
+        Math.hypot(next.x - origin.x, next.z - origin.z) / 2,
+        1e-6
+      )
+    } finally {
+      await renderer.unmount()
+    }
+  })
+
   for (const base of [0, 1, 2, 3])
     it(`keeps base ${base} line and rings at the same reversible endpoint`, async () => {
       const origin = BASES[base]

@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 
 import { GameStationClient } from '../../common/api'
 import { App, stackFor } from '../App'
+import { BaseballScreen } from '../field/BaseballScreen'
 import { StandaloneField } from '../field/StandaloneField'
 import { parseRoute } from '../navigation/routes'
 import {
@@ -14,6 +15,8 @@ import {
   useBrowserBack
 } from '../navigation/useAddressBar'
 import { ThemeProvider } from '../theme/ThemeContext'
+import webMusic from '../walkup/walkUpMusic'
+import type { PlaybackState, WalkUpMusic } from '../walkup/walkUpMusicTypes'
 import { gameFixture } from './isUnscoredGame.test'
 import { ScoringScreen } from './ScoringScreen'
 import { useScoringExit as nativeExit } from './useScoringExit.native'
@@ -117,6 +120,13 @@ describe('scoring shell and exit', function () {
     expect(document.querySelector('[aria-label="Undo Ball"]')).not.equals(null)
     await click('Undo Ball')
     await click('Open scoring menu')
+    // Below ☰, as the web draws it, so ☰ is never under the menu.
+    let menuBox = document.querySelector<HTMLElement>(
+      '[aria-label="Exit Current Game"]'
+    )
+    while (menuBox?.style.top === '') menuBox = menuBox.parentElement
+    expect(menuBox?.style.top).equals('64px')
+    expect(menuBox?.style.right).equals('12px')
     await click('Exit Current Game')
     expect(currentRoute().name).equals('game')
   })
@@ -274,5 +284,173 @@ describe('scoring shell and exit', function () {
     expect(routes).deep.equals(['game'])
     expect(currentRoute().name).equals('game')
     remove()
+  })
+  it('puts the walk-up note in its own row directly above the row More starts', async function () {
+    const screen = (walkUp?: React.ReactElement): React.ReactElement => (
+      <BaseballScreen
+        field={{
+          players: [],
+          selected: '',
+          onSelect: () => undefined,
+          view: 'home',
+          zoom: 1
+        }}
+        onMenu={() => undefined}
+        onUndo={() => undefined}
+        onPitch={() => undefined}
+        canPitch
+        summary="Game"
+        moreControl={<button aria-label="More" />}
+        walkUpControl={walkUp}
+      />
+    )
+    await render(screen())
+    expect(document.querySelector('[data-testid="walk-up-row"]')).equals(null)
+    await act(async () => {
+      root?.render(
+        <ThemeProvider>{screen(<button aria-label="Note" />)}</ThemeProvider>
+      )
+    })
+    const row = document.querySelector('[data-testid="walk-up-row"]')!
+    const note = document.querySelector('[aria-label="Note"]')!
+    const more = document.querySelector('[aria-label="More"]')!
+    expect(row.contains(note)).equals(true)
+    expect(row.contains(more)).equals(false)
+    // The next thing down is the deck, whose first row starts with More.
+    const deck = row.nextElementSibling!
+    expect(deck.contains(more)).equals(true)
+    const moreRow = more.parentElement!
+    expect(moreRow.firstElementChild).equals(more)
+    expect(deck.firstElementChild?.firstElementChild).equals(moreRow)
+  })
+  it('shows the batter’s note on a phone, and never on the web', async function () {
+    const song = {
+      provider: 'localFile',
+      providerId: 'lf:000000000000000b',
+      isrc: null,
+      title: 'Walk This Way',
+      artist: 'Band',
+      album: null,
+      artworkUrl: null,
+      durationMs: 90000,
+      startMs: 10000,
+      endMs: 25000
+    }
+    const roster = (base: number): unknown[] =>
+      Array.from({ length: 9 }, (_, index) => ({
+        userId: base + index,
+        shortName: `P${base + index}`,
+        fullName: null,
+        avatarUrl: null,
+        jersey: String(index + 1),
+        positions: [],
+        isPlayer: true,
+        role: 'member',
+        walkUpSong: song
+      }))
+    globalThis.fetch = async input => {
+      const path = (
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url
+      ).split('?')[0]
+      const data = path.endsWith('/games/g1')
+        ? gameFixture
+        : path.endsWith('/teams/away/roster')
+          ? roster(100)
+          : path.endsWith('/teams/home/roster')
+            ? roster(200)
+            : []
+      return new Response(JSON.stringify(data), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      })
+    }
+    const client = new GameStationClient({ baseUrl: 'http://api.test' })
+    const listeners = new Set<(state: PlaybackState) => void>()
+    const played: string[] = []
+    const stops: number[] = []
+    const phone: WalkUpMusic = {
+      ...webMusic,
+      available: true,
+      play: async handle => {
+        played.push(handle)
+      },
+      stop: async fadeMs => {
+        stops.push(fadeMs)
+      },
+      onState: listener => {
+        listeners.add(listener)
+        return () => {
+          listeners.delete(listener)
+        }
+      }
+    }
+    const owners: string[] = []
+    await render(
+      <ScoringScreen
+        client={client}
+        gameId="g1"
+        onExit={() => undefined}
+        music={phone}
+        resolveSong={async (_song, owner) => {
+          owners.push(`${owner.teamId}:${owner.userId}`)
+          return 'content://walk'
+        }}
+      />
+    )
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 50))
+    })
+    const note = document.querySelector<HTMLElement>(
+      '[data-testid="walk-up-note"]'
+    )
+    expect(note, 'note').not.equals(null)
+    expect(owners[0]).matches(/^away:10\d$/)
+    await act(async () => {
+      note?.click()
+    })
+    expect(played).deep.equals(['content://walk'])
+    // A pitch ends the walk-up: the note goes.
+    await click('Ball')
+    expect(document.querySelector('[data-testid="walk-up-note"]')).equals(null)
+    expect(stops).deep.equals([1500])
+    // Undo brings it back idle; leaving stops the song at once.
+    await click('Undo Ball')
+    await act(async () => {
+      document
+        .querySelector<HTMLElement>('[data-testid="walk-up-note"]')
+        ?.click()
+    })
+    expect(played).deep.equals(['content://walk', 'content://walk'])
+    await click('Open scoring menu')
+    await click('Exit Current Game')
+    expect(stops).deep.equals([1500, 0])
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+
+    // The web's music has nothing to play: no note, and nothing looked for.
+    owners.length = 0
+    await render(
+      <ScoringScreen
+        client={client}
+        gameId="g1"
+        onExit={() => undefined}
+        music={webMusic}
+        resolveSong={async (_song, owner) => {
+          owners.push(owner.userId)
+          return 'content://walk'
+        }}
+      />
+    )
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 50))
+    })
+    expect(document.querySelector('[data-testid="walk-up-note"]')).equals(null)
+    expect(owners).deep.equals([])
   })
 })

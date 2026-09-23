@@ -54,12 +54,14 @@ export interface TeamScreenProps {
   ) => void
   /**
    * A name on the roster. The team travels with it, so the player's stats open
-   * on this team rather than on a career total nobody asked for.
+   * on this team rather than on a career total nobody asked for, and again as
+   * `onTeam`, the team the page was opened for, which a coach's Settings tab
+   * edits the player on.
    */
   onOpenPlayer?: (
     userId: number,
     name: string,
-    from?: { seasonId?: string; teamId?: string }
+    from?: { seasonId?: string; teamId?: string; onTeam?: string }
   ) => void
   /** Which section to open on, from the address. */
   initialTab?: string
@@ -344,11 +346,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                       {index > 0 && <View style={styles.divider} />}
                       <ListRow
                         title={person.shortName}
-                        subtitle={
-                          person.positions.length > 0
-                            ? person.positions.join(' · ')
-                            : undefined
-                        }
+                        subtitle={rosterSubtitle(person)}
                         emblem={initialsOf(person.shortName)}
                         emblemUri={person.avatarUrl}
                         emblemShape="circle"
@@ -364,7 +362,8 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                             ? undefined
                             : () => {
                                 onOpenPlayer(person.userId, person.shortName, {
-                                  teamId: team.id
+                                  teamId: team.id,
+                                  onTeam: team.id
                                 })
                               }
                         }
@@ -400,6 +399,18 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
 }
 
 /** `1st Place`, `2nd Place`, `11th Place`. */
+/**
+ * The line under a roster name: the whole name, when this viewer coaches or
+ * runs the team and the server sent it, then the positions.
+ */
+export function rosterSubtitle(person: RosterEntry): string | undefined {
+  const parts = [
+    ...(person.fullName == null ? [] : [person.fullName]),
+    ...person.positions
+  ]
+  return parts.length > 0 ? parts.join(' · ') : undefined
+}
+
 function placeLabel(place: number): string {
   const rest = place % 100
   const suffix =

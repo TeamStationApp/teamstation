@@ -216,4 +216,22 @@ describe('scoring instruction and completion toast', function () {
       expect(panel.style.backgroundColor).equals('rgb(102, 80, 22)')
     }
   })
+  it('starts no higher than it is told, to stay clear of the menu button', async function () {
+    await render(
+      <InstructionToast
+        instruction="Tap or drag a player"
+        bounds={{ x: 20, y: 70, width: 340, height: 90 }}
+      />
+    )
+    // The web's ☰ ends at 56, so 62 there.
+    expect((host.firstChild as HTMLElement).style.top).equals('70px')
+    await render(
+      <InstructionToast
+        instruction="Tap or drag a player"
+        bounds={{ x: 20, y: 70, width: 340, height: 90 }}
+        minTop={101}
+      />
+    )
+    expect((host.firstChild as HTMLElement).style.top).equals('101px')
+  })
 })

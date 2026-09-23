@@ -145,11 +145,17 @@ describe('ball flight authoring', function () {
       })
       await renderer.fireEvent(edit, 'pointerDown', event)
       expect(captured).equals(true)
+      // The angle reaches the screen once a frame, the latest of the moves.
+      const nextFrame = async (): Promise<void> => {
+        await new Promise(resolve => setTimeout(resolve, 40))
+      }
       event.pointer.y -= 0.8
       await renderer.fireEvent(edit, 'pointerMove', event)
+      await nextFrame()
       expect(current.angle).lessThan(5)
       event.pointer.y += 2
       await renderer.fireEvent(edit, 'pointerMove', event)
+      await nextFrame()
       expect(current.angle).equals(85)
       await renderer.fireEvent(edit, 'pointerCancel', event)
       expect(captured).equals(false)

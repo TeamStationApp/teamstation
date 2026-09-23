@@ -496,3 +496,18 @@ describe('applying lineup changes', function () {
     expect(state.liveData.linescore.offense.batter!.id).equals(5)
   })
 })
+
+describe('applying in place', function () {
+  it('changes the given game rather than a copy, to the same result', function () {
+    const kept = after(game(), ball)
+    const before = JSON.stringify(kept)
+    const copied = applyAction(kept, pitch('C'))
+    expect(JSON.stringify(kept)).equals(before)
+    const own = JSON.parse(before) as typeof kept
+    const inPlace = applyAction(own, pitch('C'), { inPlace: true })
+    expect(inPlace.state).equals(own)
+    expect(count(own)).equals('1-1')
+    expect(JSON.stringify(inPlace.state)).equals(JSON.stringify(copied.state))
+    expect(inPlace.transitions).deep.equals(copied.transitions)
+  })
+})

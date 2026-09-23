@@ -2,6 +2,8 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { Platform } from 'react-native'
+import { GestureHandlerRootView } from 'react-native-gesture-handler'
 
 import {
   asBattingRow,
@@ -32,7 +34,7 @@ afterEach(async function () {
   root = undefined
 })
 describe('actual game scoring entry', function () {
-  it('renders Score Game between Videos and Box score and launches only on press', async function () {
+  it('renders Score Game after Box score and launches only on press', async function () {
     const client = new GameStationClient({ baseUrl: '/api/v1' })
     client.game = async () => gameFixture
     client.teams = async () => []
@@ -49,8 +51,8 @@ describe('actual game scoring entry', function () {
     expect(opened).equals(0)
     expect(button('Score Game')?.getAttribute('role')).equals('button')
     const text = document.body.textContent ?? ''
-    expect(text.indexOf('Videos')).lessThan(text.indexOf('Score Game'))
-    expect(text.indexOf('Score Game')).lessThan(text.indexOf('Box score'))
+    expect(text.indexOf('Videos')).lessThan(text.indexOf('Box score'))
+    expect(text.indexOf('Box score')).lessThan(text.indexOf('Score Game'))
     await act(async () => {
       button('Score Game')?.click()
     })
@@ -67,6 +69,136 @@ describe('actual game scoring entry', function () {
     expect(button('Videos')).not.equals(null)
     expect(button('Box score')).not.equals(null)
   })
+  it('offers scoring only to a scorekeeper, never to a member, coach or songkeeper', async function () {
+    // The server says `canScore: false` to everybody who is not a
+    // scorekeeper or an administrator of either team; a coach and a
+    // songkeeper are two of them, and read exactly as a member does.
+    for (const game of [
+      { ...gameFixture, canScore: false },
+      {
+        ...gameFixture,
+        canScore: false,
+        scoringOwner: 'gamestation' as const,
+        status: 'inProgress',
+        awayScore: 1
+      }
+    ]) {
+      const client = new GameStationClient({ baseUrl: '/api/v1' })
+      client.game = async () => game
+      client.teams = async () => []
+      await render(
+        <GameScreen client={client} gameId="g1" onScoreGame={() => undefined} />
+      )
+      expect(button('Score Game')).equals(null)
+      expect(button('Continue Scoring')).equals(null)
+      expect(button('Box score')).not.equals(null)
+      await act(async () => {
+        root?.unmount()
+      })
+    }
+    // The same game, seen by its scorekeeper, is scored.
+    const client = new GameStationClient({ baseUrl: '/api/v1' })
+    client.game = async () => ({
+      ...gameFixture,
+      scoringOwner: 'gamestation' as const,
+      status: 'inProgress',
+      awayScore: 1
+    })
+    client.teams = async () => []
+    await render(
+      <GameScreen client={client} gameId="g1" onScoreGame={() => undefined} />
+    )
+    expect(button('Continue Scoring')).not.equals(null)
+  })
+})
+
+describe('scoring entry on the phones', function () {
+  // The phone app draws the field through expo-gl, so the tab follows the
+  // same rules there as in a browser: a scorekeeper, a game that can still be
+  // scored, and somewhere to go.
+  const web = Platform.OS
+  afterEach(function () {
+    Platform.OS = web
+  })
+  // Gesture Handler insists on its root view off the web, as `App.tsx` gives it.
+  async function renderOn(
+    os: 'ios' | 'android',
+    element: React.ReactElement
+  ): Promise<void> {
+    Platform.OS = os
+    await render(<GestureHandlerRootView>{element}</GestureHandlerRootView>)
+  }
+  async function tabs(
+    os: 'ios' | 'android',
+    game: typeof gameFixture
+  ): Promise<{ score: boolean; resume: boolean }> {
+    const client = new GameStationClient({ baseUrl: '/api/v1' })
+    client.game = async () => game
+    client.teams = async () => []
+    await renderOn(
+      os,
+      <GameScreen client={client} gameId="g1" onScoreGame={() => undefined} />
+    )
+    const shown = {
+      score: button('Score Game') != null,
+      resume: button('Continue Scoring') != null
+    }
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+    return shown
+  }
+  for (const os of ['ios', 'android'] as const) {
+    it(`shows Score Game on ${os} under the same rules as the web`, async function () {
+      const inProgress = {
+        ...gameFixture,
+        scoringOwner: 'gamestation' as const,
+        status: 'inProgress',
+        awayScore: 1
+      }
+      expect(await tabs(os, gameFixture)).deep.equals({
+        score: true,
+        resume: false
+      })
+      expect(await tabs(os, inProgress)).deep.equals({
+        score: false,
+        resume: true
+      })
+      expect(
+        await tabs(os, { ...gameFixture, awayScore: 0, homeScore: 0 })
+      ).deep.equals({ score: false, resume: false })
+      expect(await tabs(os, { ...gameFixture, canScore: false })).deep.equals({
+        score: false,
+        resume: false
+      })
+      expect(await tabs(os, { ...inProgress, canScore: false })).deep.equals({
+        score: false,
+        resume: false
+      })
+    })
+    it(`opens the scorer on ${os} only on press`, async function () {
+      const client = new GameStationClient({ baseUrl: '/api/v1' })
+      client.game = async () => gameFixture
+      client.teams = async () => []
+      let opened = 0
+      await renderOn(
+        os,
+        <GameScreen
+          client={client}
+          gameId="g1"
+          onScoreGame={() => {
+            opened++
+          }}
+        />
+      )
+      expect(opened).equals(0)
+      await act(async () => {
+        button('Score Game')?.click()
+      })
+      expect(opened).equals(1)
+    })
+  }
 })
 
 describe('game actions preserve box score and videos', function () {
@@ -129,12 +261,14 @@ describe('game actions preserve box score and videos', function () {
       ]
     })
     const opened: number[] = []
+    const from: unknown[] = []
     await render(
       <GameScreen
         client={client}
         gameId="g1"
-        onOpenPlayer={id => {
+        onOpenPlayer={(id, _name, side) => {
           opened.push(id)
+          from.push(side)
         }}
       />
     )
@@ -148,6 +282,12 @@ describe('game actions preserve box score and videos', function () {
       button('Blake')?.click()
     })
     expect(opened).deep.equals([1, 2])
+    // Each line opens the player on its own side: the Stats filter, and the
+    // team a coach's Settings tab edits them on.
+    expect(from).deep.equals([
+      { seasonId: undefined, teamId: 'away', onTeam: 'away' },
+      { seasonId: undefined, teamId: 'home', onTeam: 'home' }
+    ])
     await act(async () => {
       button('Videos')?.click()
     })

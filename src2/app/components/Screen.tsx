@@ -1,12 +1,13 @@
 import React from 'react'
-import { type StyleProp, View, type ViewStyle } from 'react-native'
+import { Platform, type StyleProp, View, type ViewStyle } from 'react-native'
 import Animated from 'react-native-reanimated'
 
 import { edgeMarginRem } from '../layout/margins'
 import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { NAV_CLEARANCE_REM } from './AppNav'
+import { FLOATING_BOTTOM_REM, NAV_CLEARANCE_REM } from './AppNav'
 import { useHeaderSlot } from './headerSlot'
+import { navClearanceAboveInset } from './navClearance'
 import { useBreakpoint } from './useBreakpoint'
 
 export interface ScreenProps {
@@ -81,9 +82,16 @@ export function Screen(props: ScreenProps): React.ReactElement {
   // top of the window and is pushed down by the height the header measured.
   // Anything else and there would be nothing behind the glass to blur.
   const { headerHeight } = useHeaderSlot()
-  // The capsule floats above the home indicator, so the clearance under the
-  // last row has to cover both.
+  // The capsule floats above the home indicator. On iOS it sits against that
+  // inset, so the clearance drops the extra margin; Android and the web keep
+  // both.
   const insets = useInsets()
+  const navClearance =
+    navClearanceAboveInset(
+      Platform.OS,
+      theme.rem(NAV_CLEARANCE_REM),
+      theme.rem(FLOATING_BOTTOM_REM)
+    ) + insets.bottom
 
   // Held sideways, a phone's insets are at the sides: the camera housing on
   // one edge and a rounded corner on the other. The margin takes whichever is
@@ -102,7 +110,7 @@ export function Screen(props: ScreenProps): React.ReactElement {
           paddingRight: Math.max(margin, insets.right)
         },
         breakpoint === 'phone' && {
-          paddingBottom: theme.rem(NAV_CLEARANCE_REM) + insets.bottom
+          paddingBottom: navClearance
         },
         wide && styles.columnFull,
         contentStyle

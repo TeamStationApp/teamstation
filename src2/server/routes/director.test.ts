@@ -24,8 +24,9 @@ import { directorRoutes } from './director'
  * Soonest first, reaching two hours backwards — a game called for one o'clock
  * that somebody starts filming at ten past three is still the game they mean —
  * and never more than ten, because a longer list is a worse one. Of the games
- * the account **runs**, not the games it may watch: a parent's forty watchable
- * games would bury the one they are holding a camera for.
+ * the account **films** — a videographer of the team, which its administrators
+ * are — not the games it may watch: a parent's forty watchable games would
+ * bury the one they are holding a camera for.
  */
 const adminUrl = testDatabaseUrl
 const scratchName = `gamestation_director_${Date.now()}`
@@ -34,6 +35,8 @@ const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 const COACH = 'tok_coach_00000000000000000000000'
 const PARENT = 'tok_parent_0000000000000000000000'
 const SECOND = 'tok_second_0000000000000000000000'
+const FILMER = 'tok_filmer_0000000000000000000000'
+const SCORER = 'tok_scorer_0000000000000000000000'
 const HOUR = 3_600_000
 
 const legacyOf = new Map<number, string>()
@@ -50,6 +53,8 @@ function legacyId(userId: number): string {
 
 const coachId = mintUser()
 const parentId = mintUser()
+const filmerId = mintUser()
+const scorerId = mintUser()
 
 describe('what GS Director is offered', function () {
   this.timeout(60000)
@@ -121,7 +126,9 @@ describe('what GS Director is offered', function () {
     const now = new Date()
     for (const [id, name] of [
       [coachId, 'Coach'],
-      [parentId, 'Parent']
+      [parentId, 'Parent'],
+      [filmerId, 'Filmer'],
+      [scorerId, 'Scorer']
     ] as Array<[number, string]>) {
       await db
         .insertInto('users')
@@ -138,7 +145,9 @@ describe('what GS Director is offered', function () {
     }
     for (const [id, user, token] of [
       ['ses_coach', coachId, COACH],
-      ['ses_parent', parentId, PARENT]
+      ['ses_parent', parentId, PARENT],
+      ['ses_filmer', filmerId, FILMER],
+      ['ses_scorer', scorerId, SCORER]
     ] as Array<[string, number, string]>) {
       await db
         .insertInto('auth_sessions')
@@ -179,6 +188,33 @@ describe('what GS Director is offered', function () {
         role: 'member'
       })
       .execute()
+
+    // A videographer of the team and a scorekeeper of it, neither of them
+    // running anything.
+    for (const [userId, role] of [
+      [filmerId, 'videographer'],
+      [scorerId, 'scorekeeper']
+    ] as const) {
+      await db
+        .insertInto('memberships')
+        .values({
+          id: `mem_${role}`,
+          user_id: userId,
+          team_id: 'tem_ours',
+          role: 'member'
+        })
+        .execute()
+      await db
+        .insertInto('scope_roles')
+        .values({
+          id: `rol_${role}`,
+          user_id: userId,
+          scope_type: 'team',
+          scope_id: 'tem_ours',
+          role
+        })
+        .execute()
+    }
 
     /** Our team's games, at hours either side of now. */
     const ours: Array<[string, number]> = [
@@ -427,5 +463,32 @@ describe('what GS Director is offered', function () {
     if (db == null) this.skip()
     const answer = await ask('/director/events/gam_later/claim', PARENT, 'POST')
     expect(answer.status).equals(404)
+  })
+
+  it('offers a videographer the team\u2019s games, and lets them claim one', async function () {
+    if (db == null) this.skip()
+    const listed = await ask('/director/events', FILMER)
+    const events = listed.body as Array<{ gameId: string }>
+    expect(events.length).equals(10)
+    expect(events.map(event => event.gameId)).includes('gam_fourth')
+    expect(events.map(event => event.gameId)).not.includes('gam_notOurs')
+    const claimed = await ask(
+      '/director/events/gam_fourth/claim',
+      FILMER,
+      'POST'
+    )
+    expect(claimed.status).equals(200)
+  })
+
+  it('offers a scorekeeper nothing to film, and refuses their claim', async function () {
+    if (db == null) this.skip()
+    const listed = await ask('/director/events', SCORER)
+    expect(listed.body).deep.equals([])
+    const claimed = await ask(
+      '/director/events/gam_fifth/claim',
+      SCORER,
+      'POST'
+    )
+    expect(claimed.status).equals(404)
   })
 })

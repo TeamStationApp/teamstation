@@ -6,6 +6,7 @@ import {
 } from 'kysely'
 import { Pool } from 'pg'
 
+import type { Role } from '../../common/roles'
 import { attachInt8Parser } from './int8'
 
 /** `timestamptz`: read as a Date, written as a Date or an ISO string. */
@@ -132,6 +133,11 @@ export interface TeamsTable {
   logo_updated_at: Timestamp | null
   primary_color: string | null
   secondary_color: string | null
+  /**
+   * `{ lineup, fromGameId, setAt }`: the starting lineup of the last game
+   * that began with a different one, or null (044teamDefaultLineup).
+   */
+  default_lineup: Json | null
   created_at: Timestamp
   updated_at: Timestamp
 }
@@ -182,14 +188,33 @@ export interface MembershipsTable {
   granted_by_link_id: string | null
 }
 
-export interface AdminRolesTable {
+/** One role for one person on one league, season or team (043roleFlags). */
+export interface ScopeRolesTable {
   id: string
   user_id: number
   scope_type: 'league' | 'season' | 'team'
   scope_id: string
-  role: Generated<'admin'>
+  role: Generated<Role>
   granted_by: number | null
   granted_at: Timestamp
+}
+
+/** One player's walk-up song on one team (045walkUpSongs). */
+export interface WalkUpSongsTable {
+  team_id: string
+  user_id: number
+  provider: 'appleMusic' | 'localFile'
+  provider_id: string
+  isrc: string | null
+  title: string
+  artist: string
+  album: string | null
+  artwork_url: string | null
+  duration_ms: number
+  start_ms: number
+  end_ms: number
+  set_by: number
+  set_at: Timestamp
 }
 
 export interface ExternalIdsTable {
@@ -228,6 +253,10 @@ export interface GamesTable {
   currentPlay: Json | null
   /** Feet from home plate to the fence. Null takes the season's. */
   fence_distance_ft: number | null
+  /** When the starting lineup was taken as the teams' defaults. */
+  lineup_started_at: Timestamp | null
+  /** A sha256 of both sides' lineups after the last live post. */
+  lineups_digest: string | null
   created_at: Timestamp
   updated_at: Timestamp
 }
@@ -635,7 +664,6 @@ export interface TeamSeasonRecordsTable {
 }
 
 export interface Database {
-  admin_roles: AdminRolesTable
   api_tokens: ApiTokensTable
   audit_log: AuditLogTable
   auth_sessions: AuthSessionsTable
@@ -657,6 +685,7 @@ export interface Database {
   memberships: MembershipsTable
   player_season_stats: PlayerSeasonStatsTable
   season_members: SeasonMembersTable
+  scope_roles: ScopeRolesTable
   season_teams: SeasonTeamsTable
   seasons: SeasonsTable
   system_settings: SystemSettingsTable
@@ -666,6 +695,7 @@ export interface Database {
   user_emails: UserEmailsTable
   users: UsersTable
   videos: VideosTable
+  walk_up_songs: WalkUpSongsTable
   director_uploads: DirectorUploadsTable
 }
 

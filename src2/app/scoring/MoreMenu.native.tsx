@@ -1,8 +1,14 @@
-import React, { useEffect, useState } from 'react'
-import { Pressable, View } from 'react-native'
+import React, { useState } from 'react'
 
+import { useDropMenu } from './dropMenu'
+import { DropMenuView } from './DropMenuView'
 import { MoreActionEditor } from './MoreActionEditor'
-import { MORE_GROUPS, moreEligibility, type MoreInput } from './moreActions'
+import {
+  MORE_GROUPS,
+  type MoreAction,
+  moreEligibility,
+  type MoreInput
+} from './moreActions'
 import type { MoreMenuProps } from './moreMenuProps'
 import {
   CONTROL_COLORS,
@@ -10,148 +16,92 @@ import {
   ControlFace,
   controlFrame
 } from './ScoringControlAppearance'
-import { SCORING_MENU, ScoringMenuButton } from './ScoringMenuAppearance'
-import { ScoringSheet } from './ScoringSheet'
+
+const BASE = 'Put Batter on Base'
+const BASES = ['First', 'Second', 'Third'] as const
+
+/** What a More row's key asks for: an action, or a base for Put Batter on Base. */
+function inputOf(key: string): MoreInput {
+  const base = Number(key)
+  return [1, 2, 3].includes(base)
+    ? { action: BASE, base }
+    : { action: key as MoreAction }
+}
+
+/** The phone's More: the web's menu, opened above the button (`DropMenuView`). */
 export function MoreMenu({
   state,
   disabled,
   onActive,
   onChoose
 }: MoreMenuProps): React.ReactElement {
-  const [open, setOpen] = useState(false)
-  const [base, setBase] = useState(false)
-  const [baseY, setBaseY] = useState(0)
   const [form, setForm] = useState<MoreInput>()
-  const close = (): void => {
-    setOpen(false)
-    setBase(false)
-    setForm(undefined)
-    onActive(false)
-  }
-  useEffect(() => {
-    if (disabled) {
-      setOpen(false)
-      setBase(false)
-      setForm(undefined)
-      onActive(false)
+  const menu = useDropMenu({
+    disabled,
+    childKey: BASE,
+    escape: true,
+    onActive,
+    canChoose: key => moreEligibility(state, inputOf(key).action) == null,
+    onChoose: key => {
+      const input = inputOf(key)
+      if (input.action === 'Place a Runner (Tiebreaker)') {
+        setForm(input)
+        onActive(true)
+      } else onChoose(input)
     }
-  }, [disabled, onActive])
-  const choose = (input: MoreInput): void => {
-    if (disabled || moreEligibility(state, input.action) != null) return
-    if (input.action === 'Place a Runner (Tiebreaker)') {
-      setOpen(false)
-      setForm(input)
-    } else {
-      close()
-      onChoose(input)
-    }
-  }
+  })
+  const rows = MORE_GROUPS.flatMap(group => group.actions)
+    .filter(
+      action =>
+        !['Dropped Third Strike', BASE, 'Balk'].includes(action) ||
+        moreEligibility(state, action) == null
+    )
+    .map(action => ({
+      key: action,
+      label: action,
+      disabled: moreEligibility(state, action) != null,
+      submenu: action === BASE
+    }))
   return (
     <>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="More"
+      <DropMenuView
+        menu={menu}
+        label="More"
         disabled={disabled}
-        style={{
+        side="left"
+        width={{ share: 0.5, less: 16, most: 300 }}
+        rows={rows}
+        childKey={BASE}
+        childRows={BASES.map((label, index) => ({
+          key: String(index + 1),
+          label
+        }))}
+        panelLabel="More scoring actions"
+        childLabel="Batter base"
+        dismissLabel="Dismiss More"
+        triggerStyle={{
           ...controlFrame,
           flex: 1,
           borderColor: CONTROL_COLORS.more.border,
           backgroundColor: CONTROL_COLORS.more.bottom,
           opacity: disabled ? 0.5 : 1
         }}
-        onPress={() => {
-          if (disabled) return
-          setOpen(true)
-          onActive(true)
-        }}
       >
         <ControlBackdrop kind="more" />
         <ControlFace kind="more" />
-      </Pressable>
-      {open && (
-        <ScoringSheet title="More" onClose={close}>
-          <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
-            <View
-              style={{
-                width: '50%',
-                backgroundColor: SCORING_MENU.background,
-                borderColor: SCORING_MENU.border,
-                borderWidth: 1,
-                borderRadius: 12,
-                overflow: 'hidden'
-              }}
-            >
-              {MORE_GROUPS.map(group => (
-                <React.Fragment key={group.label}>
-                  {group.actions
-                    .filter(
-                      action =>
-                        ![
-                          'Dropped Third Strike',
-                          'Put Batter on Base',
-                          'Balk'
-                        ].includes(action) ||
-                        moreEligibility(state, action) == null
-                    )
-                    .map(action => (
-                      <View
-                        key={action}
-                        onLayout={event => {
-                          if (action === 'Put Batter on Base')
-                            setBaseY(event.nativeEvent.layout.y)
-                        }}
-                      >
-                        <ScoringMenuButton
-                          label={action}
-                          submenuRight={action === 'Put Batter on Base'}
-                          disabled={moreEligibility(state, action) != null}
-                          onPress={() => {
-                            if (action === 'Put Batter on Base') setBase(!base)
-                            else choose({ action })
-                          }}
-                        />
-                      </View>
-                    ))}
-                </React.Fragment>
-              ))}
-            </View>
-            {base && (
-              <View
-                accessibilityLabel="Batter base"
-                style={{
-                  position: 'absolute',
-                  right: 0,
-                  top: baseY,
-                  width: '50%',
-                  backgroundColor: SCORING_MENU.background,
-                  borderColor: SCORING_MENU.border,
-                  borderWidth: 1,
-                  borderRadius: 12,
-                  overflow: 'hidden'
-                }}
-              >
-                {['First', 'Second', 'Third'].map((label, index) => (
-                  <ScoringMenuButton
-                    key={label}
-                    label={label}
-                    onPress={() => {
-                      choose({ action: 'Put Batter on Base', base: index + 1 })
-                    }}
-                  />
-                ))}
-              </View>
-            )}
-          </View>
-        </ScoringSheet>
-      )}
+      </DropMenuView>
       {form != null && (
         <MoreActionEditor
           state={state}
           input={form}
-          onCancel={close}
+          onCancel={() => {
+            setForm(undefined)
+            onActive(false)
+          }}
           onSave={input => {
             if (disabled) return
-            close()
+            setForm(undefined)
+            onActive(false)
             onChoose(input)
           }}
         />

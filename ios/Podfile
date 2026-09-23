@@ -5,7 +5,25 @@ require Pod::Executable.execute_command('node', ['-p',
     {paths: [process.argv[1]]},
   )', __dir__]).strip
 
-platform :ios, min_ios_version_supported
+# Expo modules without the `expo` package: `expo/scripts/autolinking.rb` is
+# these two requires and the `use_expo_modules!` below, and the rest of that
+# package is a runtime this app does not use. See src2/MOBILE.md.
+expo_autolinking = File.dirname(Pod::Executable.execute_command('node', ['-p',
+  'require.resolve("expo-modules-autolinking/package.json", {paths: [process.argv[1]]})',
+  __dir__]).strip)
+require File.join(expo_autolinking, 'scripts/ios/autolinking_manager')
+require File.join(expo_autolinking, 'scripts/ios/xcode_env_generator')
+
+def use_expo_modules!(options = {})
+  return if @current_target_definition.autolinking_manager.present?
+  @current_target_definition.autolinking_manager =
+    Expo::AutolinkingManager.new(self, @current_target_definition, options).use_expo_modules!
+  maybe_generate_xcode_env_file!()
+  generate_or_remove_xcode_env_updates_file!()
+end
+
+# ExpoModulesCore and expo-gl need iOS 16.4; React Native's own floor is 15.1.
+platform :ios, '16.4'
 prepare_react_native_project!
 
 linkage = ENV['USE_FRAMEWORKS']
@@ -15,6 +33,7 @@ if linkage != nil
 end
 
 target 'GameStation' do
+  use_expo_modules!
   config = use_native_modules!
 
   use_react_native!(
