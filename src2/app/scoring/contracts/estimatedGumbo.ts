@@ -53,7 +53,8 @@ export const asEstimatedGumboPlay = asObject({
         end: asNumber,
         isOut: asBoolean,
         outNumber: asOptional(asNumber),
-        forceOut: asBoolean
+        forceOut: asBoolean,
+        runScored: asOptional(asBoolean)
       }),
       details: asObject({ runner: asPlayerRef, movementReason: asString }),
       credits: asArray(asCredit)
@@ -82,7 +83,23 @@ export const asEstimatedGumboPlay = asObject({
     gamestation: asObject({
       version: asValue('estimated-v1' as const),
       outcome: asString,
-      outSubtype: asOptional(asString)
+      outSubtype: asOptional(asString),
+      runnerActions: asOptional(
+        asArray(
+          asObject({
+            runner: asPlayerRef,
+            origin: asNumber,
+            destination: asNumber,
+            reason: asString,
+            isOut: asBoolean,
+            forceOut: asBoolean,
+            runScored: asBoolean,
+            credits: asArray(asCredit),
+            throwerLocation: asOptional(asObject({ x: asNumber, z: asNumber })),
+            defenderLocation: asOptional(asObject({ x: asNumber, z: asNumber }))
+          })
+        )
+      )
     })
   })
 })

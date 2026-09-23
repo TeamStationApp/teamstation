@@ -6,6 +6,14 @@ export interface GroundPoint {
 export interface FieldPlayer {
   suppressed?: boolean
   keyboardOrigin?: GroundPoint
+  labelOrder?: number
+  motion?: {
+    id: string
+    generation: number
+    waypoints: GroundPoint[]
+    index: number
+    reported: boolean
+  }
   id: string
   label: string
   name: string

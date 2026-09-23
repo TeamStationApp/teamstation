@@ -21,6 +21,8 @@ export interface BaseballScreenProps {
   onPitch: (kind: (typeof PITCH_CONTROLS)[number]['kind']) => void
   historyLabel?: string
   canPitch: boolean
+  remainingMs?: number
+  onCameraGesture?: (active: boolean) => void
   summary: string
   accessibilitySummary?: string
   children?: React.ReactNode
@@ -76,19 +78,19 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
               kind="zoom"
               value={zoom}
               onChange={setZoom}
-              onActive={() => undefined}
+              onActive={props.onCameraGesture ?? (() => undefined)}
             />
             <CameraDragControl
               kind="tilt"
               value={tilt}
               onChange={setTilt}
-              onActive={() => undefined}
+              onActive={props.onCameraGesture ?? (() => undefined)}
             />
             <CameraDragControl
               kind="height"
               value={height}
               onChange={setHeight}
-              onActive={() => undefined}
+              onActive={props.onCameraGesture ?? (() => undefined)}
             />
             <Pressable
               accessibilityRole="button"
@@ -116,6 +118,11 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
                 ? 'Nothing to undo'
                 : `Undo ${props.historyLabel}`
             }
+            accessibilityHint={
+              props.remainingMs == null
+                ? undefined
+                : `${Math.ceil(props.remainingMs / 1000)} seconds to edit this play`
+            }
             disabled={props.historyLabel == null}
             onPress={props.onUndo}
             style={[
@@ -129,9 +136,31 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
               }
             ]}
           >
+            {props.remainingMs != null && (
+              <View
+                accessibilityRole="progressbar"
+                accessibilityLabel="Time to edit play"
+                aria-valuemin={0}
+                aria-valuemax={10}
+                aria-valuenow={Math.ceil(props.remainingMs / 1000)}
+                pointerEvents="none"
+                style={{
+                  position: 'absolute',
+                  left: 0,
+                  top: 0,
+                  bottom: 0,
+                  width: `${Math.max(0, props.remainingMs / 100)}%`,
+                  backgroundColor: '#b69a3b66',
+                  borderRadius: 8
+                }}
+              />
+            )}
             <Text style={{ color: 'white' }}>
               ↶ Undo
               {props.historyLabel == null ? '' : ` · ${props.historyLabel}`}
+              {props.remainingMs == null
+                ? ''
+                : ` · ${Math.ceil(props.remainingMs / 1000)}s`}
             </Text>
           </Pressable>
           <View style={{ flexDirection: 'row', gap: 4 }}>

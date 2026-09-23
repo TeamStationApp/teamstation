@@ -1,4 +1,5 @@
 import type { GroundPoint } from '../field/fieldModel'
+import { prepareBatterResult, prepareHit } from './runnerRules'
 import { type Outcome, outcomeEvents } from './scoringContract'
 import { accepted } from './scoringMachine'
 import {
@@ -36,6 +37,7 @@ export function chooseOutcome(
     const play = session.liveData.plays.currentPlay!
     next.pendingPlay = {
       outcome,
+      originalRunnerRecordCount: play.runners.length,
       originalBases: baseIds(session),
       originalRuns: line.teams[battingSide(session)].runs,
       originalOuts: line.outs,
@@ -86,6 +88,7 @@ export function placeFielder(
       pending.fielder = id
       pending.location = { ...point }
       pending.angle = 45
+      prepareHit(next)
       next.phase = 'trajectory'
     }
   )
@@ -112,9 +115,6 @@ export function acceptTrajectory(
       coordinates: { ...pending.location! },
       fielder: playerRef(next.session, pending.fielder!)!
     }
-    next.phase =
-      pending.outcome === "Fielder's Choice" || pending.outcome === 'Error'
-        ? 'resolveBatter'
-        : 'correctionWindow'
+    prepareBatterResult(next)
   })
 }

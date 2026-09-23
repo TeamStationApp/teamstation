@@ -44,7 +44,9 @@ describe('batted-ball draft', function () {
       ).deep.equals({ x: 22, z: -30 })
       expect(accepted.past.length).equals(3)
       expect(
-        accepted.session.liveData.plays.currentPlay!.playEvents.length
+        accepted.session.liveData.plays.currentPlay!.playEvents.filter(
+          event => event.isPitch
+        ).length
       ).equals(1)
       const undone = scoringReducer(accepted, { type: 'UNDO' })
       expect(undone.phase).equals('trajectory')

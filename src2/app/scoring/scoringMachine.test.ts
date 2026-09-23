@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { asRosterEntry } from '../../common/api'
+import { completeMotions } from '../../test/scoringHelpers'
 import { advancePlayer } from '../field/fieldModel'
 import { asSessionId } from './contracts/estimatedGumbo'
 import {
@@ -47,7 +48,7 @@ function pitch(
   let next = state
   for (let i = 0; i < times; i++)
     next = scoringReducer(next, { type: 'PITCH', kind })
-  return next
+  return completeMotions(next)
 }
 function frozen<T>(value: T): T {
   if (value != null && typeof value === 'object') {

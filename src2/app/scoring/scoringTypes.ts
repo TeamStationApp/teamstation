@@ -91,8 +91,11 @@ export interface Movement {
   to: number
   force: boolean
   decision: 'pending' | 'safe' | 'out'
+  resolved?: boolean
 }
 export interface PendingPlay {
+  choiceApplied?: boolean
+  originalRunnerRecordCount?: number
   outcome: Outcome | 'Walk' | 'Strikeout'
   originalBases: Array<number | null>
   originalRuns: number
@@ -103,7 +106,34 @@ export interface PendingPlay {
   angle?: number
   trajectoryAccepted: boolean
 }
+export interface MotionCommand {
+  id: string
+  generation: number
+  playerId: number
+  waypoints: GroundPoint[]
+  complete: boolean
+}
+export interface RunnerAction {
+  playerId: number
+  from: number
+  to: number
+  origin: 'current' | 'between'
+  returnPhase: ScoringPhase
+  decision?: 'safe' | 'out'
+  reason?: string
+  thrower?: number
+  throwerPoint?: GroundPoint
+  defender?: number
+  defenderPoint?: GroundPoint
+}
+export interface CorrectionWindow {
+  remainingMs: number
+  revision: number
+}
 export interface ScoringSnapshot {
+  motions: MotionCommand[]
+  runnerAction: RunnerAction | null
+  correctionWindow: CorrectionWindow | null
   session: ScoringSessionState
   phase: ScoringPhase
   pendingPlay: PendingPlay | null
@@ -123,6 +153,20 @@ export interface ScoringState extends ScoringSnapshot {
   past: HistoryEntry[]
 }
 export type ScoringEvent =
+  | { type: 'MOTION_DONE'; id: string; generation: number }
+  | {
+      type: 'TIMER_TICK'
+      elapsedMs: number
+      generation: number
+      revision: number
+    }
+  | { type: 'HOME'; decision: 'safe' | 'out' | 'back' }
+  | { type: 'RUNNER_PROPOSE'; id: number; to: number }
+  | { type: 'RUNNER_DECIDE'; decision: 'safe' | 'out' }
+  | { type: 'RUNNER_REASON'; reason: string }
+  | { type: 'CANCEL_RUNNER' }
+  | { type: 'THROWER'; id: number; point: GroundPoint; generation: number }
+  | { type: 'DEFENDER'; id?: number; point?: GroundPoint; generation: number }
   | { type: 'OUTCOME'; outcome: Outcome }
   | { type: 'FIELDER'; id: number; point: GroundPoint; generation: number }
   | { type: 'TRAJECTORY'; angle: number; generation: number }
