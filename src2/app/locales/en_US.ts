@@ -222,6 +222,7 @@ export const enUs = {
   dj_matchup: '%s @ %s',
   dj_note_default: 'Lineup not set for this game — showing the team’s default',
   dj_note_roster: 'No lineup yet — showing the roster',
+  dj_at_bat: 'at bat',
   dj_no_song: 'No walk-up song',
   dj_song: '%s · %s',
   dj_not_here: '%s isn’t on this phone',

@@ -94,7 +94,9 @@ describe('a DJ Game row (U30)', function () {
     )
     const line = document.querySelector('[data-testid="DJ song line"]')!
     const name = Array.from(box.querySelectorAll('div')).find(
-      node => node.textContent === 'Tom A'
+      node =>
+        node.textContent === 'Tom A' &&
+        getComputedStyle(node).fontWeight === '600'
     ) as HTMLElement
     const small = Number.parseFloat(getComputedStyle(line).fontSize)
     const big = Number.parseFloat(getComputedStyle(name).fontSize)
@@ -146,8 +148,32 @@ describe('a DJ Game row (U30)', function () {
       root?.unmount()
     })
     await row({ playing: true })
-    const stop = labelled('Stop Tom A’s walk-up song')
-    expect(stop?.textContent).equals('stop')
+    expect(labelled('Stop Tom A’s walk-up song')).not.equals(null)
+    expect(document.querySelector('[data-testid="DJ stop glyph"]')).not.equals(
+      null
+    )
+    expect(document.querySelector('[data-testid="DJ play glyph"]')).equals(null)
+  })
+
+  it('names the batter at the plate, and draws a solid play mark', async function () {
+    await row({ outline: 'steady' })
+    expect(text()).includes('at bat')
+    const mark = document.querySelector('[data-testid="DJ at bat"]')
+    const name = document.querySelector('[data-testid="DJ row"]')!
+    expect(mark?.parentElement?.textContent).includes('Tom A')
+    const small = Number.parseFloat(
+      getComputedStyle(mark as HTMLElement).fontSize
+    )
+    const big = Number.parseFloat(
+      getComputedStyle(
+        Array.from(name.querySelectorAll('div')).find(
+          node => node.textContent === 'Tom A'
+        ) as HTMLElement
+      ).fontSize
+    )
+    expect(small).lessThan(big)
+    const play = document.querySelector('[data-testid="DJ play glyph"]')!
+    expect(getComputedStyle(play).borderLeftWidth).not.equals('0px')
   })
 
   it('dims a song not on this phone, and a tap asks for the toast', async function () {

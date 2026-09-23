@@ -477,6 +477,7 @@ describe('the lineup routes (U11)', function () {
         dj.home.batters.map(batter => batter.walkUpSong?.title ?? null)
       ).deep.equals(Array(9).fill(null))
       expect(dj.home).deep.include({ source: 'lineup', canEditWalkUp: false })
+      expect(dj.atBat?.side).equals('away')
     })
 
     it("lists each team's default before the game has a record", async function () {
@@ -494,6 +495,7 @@ describe('the lineup routes (U11)', function () {
         'H9'
       ])
       expect(dj.away.source).equals('default')
+      expect(dj.atBat).equals(null)
       // The default is the lineup the visitors began with, before the Guest.
       expect(dj.away.batters[1].name).equals('A2')
       expect(dj.away.batters[0].walkUpSong?.title).equals('Away Song')
