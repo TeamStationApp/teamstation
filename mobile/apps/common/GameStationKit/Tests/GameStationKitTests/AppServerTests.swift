@@ -76,3 +76,28 @@ struct AppServerTests {
 }
 
 private final class MarkerClass {}
+
+/// The URL a request is actually sent to.
+///
+/// `appending(path:)` escapes what it is handed, so a query written into the
+/// path becomes `%3F…` and the server answers 404 — which reads as "no such
+/// game" rather than "this app built the URL wrongly".
+struct GameStationClientURLTests {
+  @Test func queryIsAQueryAndNotPartOfThePath() {
+    let url = GameStationClient.url(
+      URL(string: "https://develop.gamestation.co")!,
+      "director/events",
+      [URLQueryItem(name: "when", value: "finished")]
+    )
+    #expect(url.absoluteString == "https://develop.gamestation.co/api/v1/director/events?when=finished")
+  }
+
+  @Test func noQueryLeavesTheAddressAlone() {
+    let url = GameStationClient.url(
+      URL(string: "https://gamestation.co")!,
+      "director/events",
+      []
+    )
+    #expect(url.absoluteString == "https://gamestation.co/api/v1/director/events")
+  }
+}

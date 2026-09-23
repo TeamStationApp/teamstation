@@ -15,6 +15,39 @@ import type { VideoHandle } from './videoHandle'
  * Returns the teardown, which the caller must run: hls.js holds a worker and
  * buffers ahead, and leaking one per visited game would eat the tab.
  */
+export interface PlayIntent {
+  /**
+   * Whether the **viewer** wants this playing, as the caller understands it.
+   *
+   * Supplied only by a caller that pauses this element itself. The multi-camera
+   * view does: it holds three tiles while a fourth stalls, and it pauses them
+   * all while a tile that was not recording yet is parked. Without this the
+   * pause below reads every one of those as the viewer pressing pause, and the
+   * recovery this file exists to guarantee never fires again for that tile —
+   * silently, and only on the stream that has already gone wrong once.
+   *
+   * A caller that never pauses the element from outside leaves this out, and
+   * the element's own pause events remain the whole story, exactly as before.
+   */
+  wantsToPlay: () => boolean
+  /**
+   * How much this player may run ahead, for a caller driving several at once.
+   *
+   * Left out, hls.js is allowed what it likes, which is the right answer for
+   * one player: it asks for 30 seconds, then grows the target as the line
+   * allows until it is holding 60 MB. Four players doing that at once is
+   * **240 MB, asked for at the same moment** — measured on a real take, the
+   * grid pulled 178 MB in its first ten seconds for a game whose four streams
+   * carry 11 Mbit/s between them. On a line that cannot serve that in ten
+   * seconds the four spend the opening minutes starving each other, which is
+   * how a camera stops drawing and takes the sound down with it.
+   *
+   * So a grid says what it may have, and the four together ask for less than
+   * the single player does on its own.
+   */
+  buffer?: { seconds: number; megabytes: number }
+}
+
 export function attachHls(
   handle: VideoHandle,
   url: string,
@@ -24,7 +57,8 @@ export function attachHls(
    * minted by a server that has since restarted — and only the caller can ask
    * for a new one.
    */
-  onGiveUp?: () => void
+  onGiveUp?: () => void,
+  intent?: PlayIntent
 ): () => void {
   // The one place the seam is crossed. `VideoHandle` is what the six modules
   // that drive the picture agree on; the three lines below — `src`, `load`,
@@ -53,10 +87,20 @@ export function attachHls(
     }
   }
 
+  // `maxBufferLength` is where hls.js starts, not where it stops: it loads
+  // whenever the buffer is shorter than this and grows the target from there
+  // as bandwidth allows. A ceiling needs the other two as well.
+  const limit = intent?.buffer
   const hls = new Hls({
     // A game is watched by seeking around it, not straight through, so there
     // is no point buffering minutes ahead of a position about to change.
-    maxBufferLength: 30
+    maxBufferLength: limit?.seconds ?? 30,
+    ...(limit == null
+      ? {}
+      : {
+          maxMaxBufferLength: limit.seconds,
+          maxBufferSize: limit.megabytes * 1024 * 1024
+        })
   })
 
   /**
@@ -93,13 +137,16 @@ export function attachHls(
    * apart: a pause that arrives while a recovery is in flight is the recovery's
    * doing, and any other is theirs.
    */
-  let wantsToPlay = !handle.paused
+  let ownWantsToPlay = !handle.paused
   let recovering = false
+  /** The caller's answer where there is one, and ours where there is not. */
+  const wantsToPlay = (): boolean =>
+    intent == null ? ownWantsToPlay : intent.wantsToPlay()
   const onPlay = (): void => {
-    wantsToPlay = true
+    ownWantsToPlay = true
   }
   const onPause = (): void => {
-    if (!recovering) wantsToPlay = false
+    if (!recovering) ownWantsToPlay = false
   }
   handle.addEventListener('play', onPlay)
   handle.addEventListener('pause', onPause)
@@ -109,7 +156,7 @@ export function attachHls(
     if (!recovering) return
     const wanted = shouldResumeAfterRecovery({
       recovering,
-      wantsToPlay,
+      wantsToPlay: wantsToPlay(),
       paused: handle.paused
     })
     recovering = false

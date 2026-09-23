@@ -44,6 +44,19 @@ export const asServerConfig = asObject({
 
   /** Finished HLS, served from here until it is verified in the Space. */
   mediaDir: asOptional(asString, '/mnt/gamestation/media'),
+  /**
+   * Where a Director's upload waits while its parts arrive.
+   *
+   * Its own setting rather than a corner of `mediaDir`, because the two are
+   * different kinds of thing: media is what the site serves and may be shared
+   * with another deployment read-only, while this is scratch — gigabytes of
+   * parts that exist for an hour and are deleted. A development clone that
+   * reads production's media cannot write beside it, which is exactly what
+   * `ProtectSystem=strict` says.
+   *
+   * Empty means `<mediaDir>/uploads`, which is right for production.
+   */
+  uploadsDir: asOptional(asString, ''),
 
   /** PeerTube's HLS, mounted read-only and served in place until cutover. */
   peertubeMediaDir: asOptional(asString, ''),
@@ -126,6 +139,20 @@ export const asServerConfig = asObject({
    * through the API.
    */
   serveMediaLocally: asOptional(asBoolean, false),
+
+  /**
+   * Whether this deployment deletes recordings an upload replaced, once their
+   * month is up.
+   *
+   * **Off by default, and it has to be, because the Space is shared.** Every
+   * development seat is seeded from a copy of production's database, so it
+   * holds production's rows under production's video ids, and the objects
+   * those ids name are the ones production is serving. A seat that swept
+   * would delete the bytes off the live site. The deletion is real and
+   * irreversible, so it is opt-in per deployment rather than something a
+   * branch can switch on by being deployed.
+   */
+  purgeReplacedRecordings: asOptional(asBoolean, false),
 
   /** Origins the app may call the API from. */
   corsOrigins: asOptional(asArray(asString), [

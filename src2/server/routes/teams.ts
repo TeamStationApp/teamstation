@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import type { Kysely } from 'kysely'
+import { type Kysely, sql } from 'kysely'
 
 import { notFound, unauthorized } from '../../common/errors'
 import { shortNames } from '../../common/names'
@@ -292,7 +292,15 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
         .where('game_id', '=', gameId)
         .where('hidden', '=', false)
         .where(isRealVideo)
-        .orderBy('kind')
+        // As they arrived. `kind` sorted them alphabetically, which put
+        // `combined` first — so the mosaic led the picker, and "the first
+        // four" would tick the very thing the multi-camera view replaces into
+        // the top-left quadrant. `created_at` on its own is import time rather
+        // than upload order, and a camera backfilled a week late would sort a
+        // week after its siblings, so the recording's own start wins where it
+        // has one.
+        .orderBy(sql`coalesce(start_at, created_at)`)
+        .orderBy('id')
         .execute()
 
       const names = await teamNames(db, [game.home_team_id, game.away_team_id])

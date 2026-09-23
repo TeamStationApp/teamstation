@@ -32,13 +32,13 @@ public struct APIStatus: Codable, Equatable, Sendable {
   public var destination: String?
   /// The export under way, or the last one, until it is put away.
   public var run: APIRun?
-  public var peerTube: APIPeerTube
+  public var gameStation: APIGameStation
 
-  public init(iPad: APIIPad, destination: String?, run: APIRun?, peerTube: APIPeerTube) {
+  public init(iPad: APIIPad, destination: String?, run: APIRun?, gameStation: APIGameStation) {
     self.iPad = iPad
     self.destination = destination
     self.run = run
-    self.peerTube = peerTube
+    self.gameStation = gameStation
   }
 }
 
@@ -133,18 +133,19 @@ public struct APIUploadRequest: Codable, Equatable, Sendable {
   /// "primary", "combined", "camera:<name>" or a camera's name; nil for the files the settings
   /// upload.
   public var tracks: [String]?
-  /// The title field: the recording's date and a space, then what describes it. Each file adds its
-  /// camera's name, or "combined". Nil for the date alone.
+  /// The GameStation game every file of this upload belongs to, as
+  /// `/api/v1/gamestation` lists them. Required: a recording with no game
+  /// named has nowhere to go.
+  public var game: String?
+  /// What the videos are called; each file adds its camera's name, or
+  /// "combined". Nil for the game's own dated title, which is what the app
+  /// uses and what the library reads.
   public var title: String?
-  /// A channel's id, name or display name; nil for the one last uploaded to.
-  public var channel: String?
-  public var privacy: Int?
 
-  public init(tracks: [String]? = nil, title: String? = nil, channel: String? = nil, privacy: Int? = nil) {
+  public init(tracks: [String]? = nil, game: String? = nil, title: String? = nil) {
     self.tracks = tracks
+    self.game = game
     self.title = title
-    self.channel = channel
-    self.privacy = privacy
   }
 }
 
@@ -173,7 +174,9 @@ public struct APIRunStep: Codable, Equatable, Sendable {
   /// A file's track, "combined", or an upload's track.
   public var track: String
   public var name: String
-  /// "queued", "fetching", "stitching", "downloading", "uploading", "done" or "failed".
+  /// "queued", "fetching", "stitching", "downloading", "uploading",
+  /// "finishing" (every byte is up and the server is making a video of it),
+  /// "done" or "failed".
   public var state: String
   /// How far along, 0 to 1, when that is known.
   public var fraction: Double?
@@ -214,77 +217,38 @@ public struct APIRun: Codable, Equatable, Sendable {
   }
 }
 
-public struct APIPeerTube: Codable, Equatable, Sendable {
-  public struct Channel: Codable, Equatable, Sendable {
-    public var id: Int
-    public var name: String
-    public var displayName: String
-
-    public init(id: Int, name: String, displayName: String) {
-      self.id = id
-      self.name = name
-      self.displayName = displayName
-    }
-  }
-
-  /// "off" (uploads are off in the settings), "signedIn", "signedOut", "unreachable" or "unknown".
+/// The GameStation account this Mac uploads with, and the games it may
+/// upload to.
+public struct APIGameStation: Codable, Equatable, Sendable {
+  /// "signedIn" or "signedOut". Signing in is done in the app: it takes a code
+  /// from an e-mail, which no API call can read.
   public var state: String
-  public var host: String?
-  public var username: String?
-  public var channels: [Channel]
-  /// Privacy settings by id.
-  public var privacies: [String: String]
-  /// What an upload starts on.
-  public var uploadChannel: Int?
-  public var uploadPrivacy: Int?
+  public var email: String?
+  /// The games already played that this account runs, latest first — the ones
+  /// an upload can name.
+  public var games: [APIGame]
   public var detail: String?
 
-  public init(state: String, host: String? = nil, username: String? = nil, channels: [Channel] = [], privacies: [String: String] = [:], uploadChannel: Int? = nil, uploadPrivacy: Int? = nil, detail: String? = nil) {
+  public init(state: String, email: String? = nil, games: [APIGame] = [], detail: String? = nil) {
     self.state = state
-    self.host = host
-    self.username = username
-    self.channels = channels
-    self.privacies = privacies
-    self.uploadChannel = uploadChannel
-    self.uploadPrivacy = uploadPrivacy
+    self.email = email
+    self.games = games
     self.detail = detail
   }
 }
 
-public struct APISignIn: Codable, Equatable, Sendable {
-  public var host: String
-  public var username: String
-  public var password: String
-  /// The two-factor code, when the account has one.
-  public var code: String?
+/// One game an upload can be sent to.
+public struct APIGame: Codable, Equatable, Sendable {
+  public var id: String
+  public var title: String
+  public var startAt: Date
+  public var venue: String?
 
-  public init(host: String, username: String, password: String, code: String? = nil) {
-    self.host = host
-    self.username = username
-    self.password = password
-    self.code = code
-  }
-}
-
-/// One video of the signed-in PeerTube account.
-public struct APIVideo: Codable, Equatable, Sendable {
-  public var uuid: String
-  public var shortUUID: String?
-  public var name: String
-  public var channel: String
-  /// When its recording started, as PeerTube's original publication date holds it.
-  public var originallyPublishedAt: Date?
-  public var publishedAt: Date?
-  public var watchURL: String?
-
-  public init(uuid: String, shortUUID: String?, name: String, channel: String, originallyPublishedAt: Date?, publishedAt: Date?, watchURL: String?) {
-    self.uuid = uuid
-    self.shortUUID = shortUUID
-    self.name = name
-    self.channel = channel
-    self.originallyPublishedAt = originallyPublishedAt
-    self.publishedAt = publishedAt
-    self.watchURL = watchURL
+  public init(id: String, title: String, startAt: Date, venue: String?) {
+    self.id = id
+    self.title = title
+    self.startAt = startAt
+    self.venue = venue
   }
 }
 
@@ -292,25 +256,10 @@ public struct APIVideo: Codable, Equatable, Sendable {
 public struct APISettingsPatch: Codable, Equatable, Sendable {
   public var destination: String?
   public var createCombined: Bool?
-  public var iPadStitching: Bool?
-  public var uploadToPeerTube: Bool?
-  public var peerTubeChannel: Int?
-  public var peerTubePrivacy: Int?
 
-  public init(
-    destination: String? = nil,
-    createCombined: Bool? = nil,
-    iPadStitching: Bool? = nil,
-    uploadToPeerTube: Bool? = nil,
-    peerTubeChannel: Int? = nil,
-    peerTubePrivacy: Int? = nil
-  ) {
+  public init(destination: String? = nil, createCombined: Bool? = nil) {
     self.destination = destination
     self.createCombined = createCombined
-    self.iPadStitching = iPadStitching
-    self.uploadToPeerTube = uploadToPeerTube
-    self.peerTubeChannel = peerTubeChannel
-    self.peerTubePrivacy = peerTubePrivacy
   }
 }
 

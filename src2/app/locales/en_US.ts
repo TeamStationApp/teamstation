@@ -63,6 +63,31 @@ export const enUs = {
   game_video_unavailable: 'This video is not available right now.',
   /** Marks a video in the picker whose file is no longer on the server. */
   game_video_gone_suffix: '(unavailable)',
+
+  // Four angles at once
+  angles_open: 'All angles',
+  angles_title: 'Choose up to four angles',
+  angles_detail:
+    'They play together, on one clock. Drag a picture to move it; double-tap to make it big.',
+  angles_cap: 'Four at a time is the most the picture holds.',
+  angles_watch: 'Watch',
+  angles_cancel: 'Cancel',
+  angles_rotate: 'Turn your phone sideways to watch all the angles.',
+  angles_not_recording_yet: 'Not recording yet',
+  angles_stopped: 'Stopped recording',
+  angles_all_ended: 'Every angle has ended.',
+  angles_unplaceable:
+    'This recording has no start time, so it cannot be held in step with the others.',
+  angles_demoted: 'Two angles, while a camera catches up.',
+  angles_demoted_stuck: 'Two angles. A camera kept dropping out.',
+  angles_waiting: 'Waiting for the pictures to catch up…',
+  angles_restore: 'Show all four',
+  angles_sound_from: 'Sound: %s',
+  angles_close: 'Close',
+  angles_play: 'Play',
+  angles_pause: 'Pause',
+  angles_back_ten: 'Back ten seconds',
+  angles_forward_ten: 'Forward ten seconds',
   game_batting: 'Batting',
   game_box_score_empty: 'No batting to show for this game yet.',
   game_at: 'at',

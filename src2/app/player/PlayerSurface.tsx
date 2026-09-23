@@ -28,6 +28,15 @@ export interface PlayerSurfaceProps {
    * it was: it cannot tell us, and its rectangles are the measured ones.
    */
   controlsVisible?: boolean
+  /**
+   * False while something else owns the picture and the keyboard.
+   *
+   * The multi-camera view is a state of the game screen, not a route, so this
+   * player is still mounted behind it — and two capture-phase key listeners
+   * would both answer an arrow key, seeking a hidden video as well as the one
+   * on screen.
+   */
+  active?: boolean
   children: React.ReactNode
 }
 
@@ -51,7 +60,14 @@ const HOLD_MS = 250
  * the whole picture, so the grid is even thirds however it has been cut up.
  */
 export function PlayerSurface(props: PlayerSurfaceProps): React.ReactElement {
-  const { videoRef, width, height, controlsVisible = true, children } = props
+  const {
+    videoRef,
+    width,
+    height,
+    controlsVisible = true,
+    active = true,
+    children
+  } = props
   const theme = useTheme()
   const styles = getStyles(theme)
   const slow = useMemo(() => slowMotion(() => videoRef.current), [videoRef])
@@ -107,8 +123,11 @@ export function PlayerSurface(props: PlayerSurfaceProps): React.ReactElement {
 
   // The keyboard, on a platform that has one. Lifted out because React Native
   // defines `global.window` and gives it no `addEventListener`, so binding to
-  // it here brought down the one screen the app is for.
+  // it here brought down the one screen the app is for. Silent while the
+  // multi-camera view is up: it uses this same hook, and two capture-phase
+  // listeners would both answer one arrow key.
   useKeyboardShortcuts({
+    enabled: active,
     video: () => videoRef.current,
     act,
     beginSlow,

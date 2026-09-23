@@ -2,7 +2,6 @@ import DirectorCore
 import DirectorExport
 import DistributorWire
 import Foundation
-import PeerTubeKit
 
 /// What the Director is, for `/v1/hello`.
 public struct DirectorIdentity: Sendable {
@@ -65,21 +64,16 @@ public final class DistributorService: Sendable {
   private let backend: any DistributorBackend
   private let roots: FileRoots
   private let settings: DistributorSettingsStore
-  /// The PeerTube account GS Director signs in to for GS Distributor, with its own tokens; the Mac
-  /// signs in with its own too.
-  private let peerTube: PeerTubeAccount
 
   public init(
     backend: any DistributorBackend,
     roots: FileRoots,
     settings: DistributorSettingsStore,
-    peerTube: PeerTubeAccount,
     events: EventHub = EventHub()
   ) {
     self.backend = backend
     self.roots = roots
     self.settings = settings
-    self.peerTube = peerTube
     self.events = events
   }
 
@@ -179,44 +173,9 @@ public final class DistributorService: Sendable {
         try settings.save(merged)
         return .json(merged)
 
-      case ("POST", "peertube") where route.count == 2 && route[1] == "signin":
-        guard let signIn = try? JSONDecoder().decode(PeerTubeSignIn.self, from: request.body),
-              let host = try? PeerTubeHost.normalize(signIn.host),
-              !signIn.username.isEmpty
-        else { return .error(400, "instance, username and password required") }
-        do {
-          try await peerTube.signIn(host: host, username: signIn.username, password: signIn.password, otp: signIn.otp)
-        } catch PeerTubeError.otpRequired {
-          return .json(PeerTubeSignInResult.otpRequired)
-        }
-        try rememberPeerTubeAccount(host: host, username: signIn.username)
-        return .json(PeerTubeSignInResult.signedIn(account: signIn.username))
-
-      case ("GET", "peertube") where route.count == 2 && route[1] == "token":
-        let token = try await peerTube.accessToken()
-        return .json(PeerTubeToken(
-          host: token.host,
-          username: token.username,
-          accessToken: token.token,
-          expiresAt: token.expiresAt
-        ))
-
-      case ("POST", "peertube") where route.count == 2 && route[1] == "signout":
-        await peerTube.signOut()
-        return .ok
-
       default:
         return .error(404, "unknown route")
       }
-    } catch PeerTubeError.signInAgain {
-      return .error(401, "GS Director is not signed in to PeerTube")
-    } catch let error as PeerTubeError {
-      switch error {
-      case .invalidCredentials, .notPeerTube: return .error(401, error.description)
-      default: return .error(502, error.description)
-      }
-    } catch let error as URLError {
-      return .error(502, "the iPad could not reach PeerTube: \(error.localizedDescription)")
     } catch DistributorRefusal.recording {
       return .error(409, "GS Director is recording; export once the take has stopped")
     } catch DistributorRefusal.streaming {
@@ -226,15 +185,6 @@ public final class DistributorService: Sendable {
     } catch {
       return .error(500, "\(error)")
     }
-  }
-
-  /// Notes the account in the settings, stamped as changed on the iPad.
-  private func rememberPeerTubeAccount(host: String, username: String) throws {
-    let before = settings.load()
-    var saved = before
-    saved.peerTube.host = host
-    saved.peerTube.username = username
-    try settings.save(saved.stampingChanges(from: before, by: SettingsStamp.iPad))
   }
 
   /// `primary,camera:<source id>,…`

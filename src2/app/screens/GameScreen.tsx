@@ -22,6 +22,7 @@ import type {
   VideoSummary
 } from '../../common/api'
 import {
+  AnglePickerModal,
   GameHeroCard,
   GlassView,
   HandoffView,
@@ -44,10 +45,13 @@ import { lstrings } from '../locales/strings'
 import { useInsets } from '../platform/safeArea'
 import { sameMoment } from '../player/angleSwitch'
 import { attachHls } from '../player/attachHls'
+import { angleLabels, defaultAngles } from '../player/multiCam/takes'
+import { MultiCamView } from '../player/MultiCamView'
 import { PlayerSurface } from '../player/PlayerSurface'
 import { useVideoAspect } from '../player/useVideoAspect'
 import { HAVE_METADATA, type VideoHandle } from '../player/videoHandle'
 import { VideoView } from '../player/VideoView'
+import { windowOf } from '../player/wallClock'
 import { cacheStyles, useTheme } from '../theme/ThemeContext'
 import type { Theme } from '../theme/types'
 import { gameStatusLine, shortDate, winnerOf } from './format'
@@ -85,6 +89,32 @@ export interface GameScreenProps {
    * destination, two different addresses.
    */
   onTab?: (tab: Tab) => void
+  /**
+   * The angles showing at once, in the order they are laid out, from the
+   * address. Empty or absent is the ordinary single player.
+   */
+  angles?: string[]
+  /** Which angle is heard, and which one fills the picture. */
+  audioId?: string
+  zoomedId?: string
+  /** Tells the shell what the viewer has arranged, so the address can say so. */
+  onAngles?: (next: {
+    angles?: string[]
+    /**
+     * `null` clears it, `undefined` leaves it alone. Without the difference
+     * there is no way to say "nothing is zoomed any more" — which made the
+     * zoom a one-way door on a phone, where there is no address bar to edit.
+     */
+    audio?: string | null
+    zoom?: string | null
+    /**
+     * Seconds into the take, for a link to a moment of the grid. `null`
+     * clears it: beside `video=` the same parameter means seconds into one
+     * file, so a take's moment left behind on a closed grid would seek the
+     * single player to a number that means nothing in it.
+     */
+    at?: number | null
+  }) => void
   /** Opens one of the two teams, from its name or its mark on the card. */
   onOpenTeam?: (team: TeamSummary) => void
   /** Opens one player, from their line in the box score. */
@@ -98,65 +128,32 @@ export interface GameScreenProps {
 type Tab = 'watch' | 'boxScore'
 
 /**
- * What a video is called on the picker.
+ * What each of a game's videos is called on the strip under the picture.
  *
  * Never its file name. `2026-05-16 Hawks vs Black Sox raw` is a file on a
- * disk, not a thing a parent would say. What matters to somebody choosing is
- * whether they are about to see one view or several.
- */
-function angleName(video: VideoSummary): string {
-  // A live stream's camera has a name its owner gave it — `Behind the plate` —
-  // and the video carries it after the em dash. That beats `Primary 2` by a
-  // mile for choosing between four angles of one game.
-  const named = video.title.split(' — ')
-  if (named.length > 1) {
-    const last = named[named.length - 1].trim()
-    if (last !== '') return last
-  }
-  return video.numCameras > 1
-    ? lstrings.video_multi_angle
-    : lstrings.video_primary
-}
-
-/**
- * Names for the picker, numbered only where they would otherwise repeat.
- *
- * Until a recording has been looked at it counts as one camera, so a game with
- * three of them offered `Video`, `Video` and `Video` — three buttons
- * that all claim to be the same thing. Numbering them says what is true: we
- * have three and do not yet know what they are.
+ * disk, not a thing a parent would say. The names come from what a take's
+ * videos share: strip the words they all begin with and what is left is the
+ * camera — `3rd`, `home`, `Behind the plate` — and the one with nothing left
+ * is the program output. A mosaic is named for what it is.
  */
 function angleNames(videos: VideoSummary[]): Map<string, string> {
-  const counts = new Map<string, number>()
-  for (const video of videos) {
-    const name = angleName(video)
-    counts.set(name, (counts.get(name) ?? 0) + 1)
-  }
-  const seen = new Map<string, number>()
-  const out = new Map<string, string>()
-  for (const video of videos) {
-    const name = angleName(video)
-    if ((counts.get(name) ?? 0) < 2) {
-      out.set(video.id, name)
-      continue
-    }
-    const nth = (seen.get(name) ?? 0) + 1
-    seen.set(name, nth)
-    out.set(video.id, `${name} ${nth}`)
-  }
-  return out
+  const labels = angleLabels(
+    videos.map(video => ({
+      id: video.id,
+      title: video.title,
+      status: video.status,
+      numCameras: video.numCameras,
+      durationSec: video.durationSec
+    }))
+  )
+  return new Map(
+    labels.map(label => [
+      label.id,
+      label.mosaic ? lstrings.video_multi_angle : label.name
+    ])
+  )
 }
 
-/**
- * The card's two stat lines, from the line score the plays produced.
- *
- * A side's defensive strikeouts are the other side's batters struck out, so
- * they are read across rather than counted again — the two lines of the card
- * check each other, and there is nothing new to store.
- *
- * `null` on a side means the plays were never counted. That is not none, and
- * the card draws nothing for it rather than a row of zeroes.
- */
 function teamStatsOf(
   linescore: GameDetail['linescore']
 ): { away: TeamStatLine | null; home: TeamStatLine | null } | null {
@@ -215,6 +212,14 @@ function ScoreRow(props: {
  * a desktop, a foot from the names it belongs to. Fixed, the two stay together
  * and the names still have room for most of what a team is called.
  */
+/**
+ * The pill that is not a camera.
+ *
+ * A value no video id can collide with, because the strip's ids are video ids
+ * and one of its entries is not a video at all.
+ */
+const ALL_ANGLES = '\u0000allAngles'
+
 const HEADER_SCORE_WIDTH = 201
 
 /** How long a chosen highlight's full account stays under the video. */
@@ -244,6 +249,10 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     startAtSec,
     onMoment,
     onTab,
+    angles,
+    audioId,
+    zoomedId,
+    onAngles,
     onOpenTeam,
     onOpenPlayer
   } = props
@@ -340,6 +349,17 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     { videoId: string; sec: number; playing: boolean } | undefined
   >(undefined)
   const [error, setError] = useState<string | undefined>(undefined)
+  /** Open while somebody is choosing which angles to watch together. */
+  const [picking, setPicking] = useState(false)
+
+  /**
+   * Whether the multi-camera view is up, and the single player is not.
+   *
+   * It is a state of this screen rather than a route of its own, because the
+   * shell renders only the top of its stack: a pushed screen would unmount
+   * this one, taking the `<video>` with it and stopping playback dead.
+   */
+  const showAngles = angles != null && angles.length > 0
 
   // The card's own content goes up into the header as the card scrolls away:
   // the away team over the home team, small, with their scores beside them.
@@ -634,12 +654,85 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   const placeFor = useRef<{ videoId?: string; playbackFor?: string }>({})
   placeFor.current = { videoId: video?.id, playbackFor }
 
+  /**
+   * What the viewer wants the single player to be doing, and who paused it.
+   *
+   * The multi-camera view leaves this screen mounted, so the player behind it
+   * has to be stood down — a fifth decoder and a fifth buffer on a phone is
+   * the difference between four tiles playing and four tiles stuttering. It is
+   * **not** done with a bare `pause()`: `attachHls` reads any pause it did not
+   * cause as the viewer's, and would then refuse to resume this player after a
+   * media error for the rest of the game. So the intent is injected and this
+   * screen owns it.
+   */
+  const viewerWants = useRef(false)
+  const suspended = useRef(false)
+  suspended.current = showAngles
+  /**
+   * Where the single player had got to, sampled as it plays.
+   *
+   * Read from the element when the angles open, it was always zero: React runs
+   * an effect's cleanup before the next effect's body, so the detach — which
+   * resets the element — had already happened by the time anything asked. So
+   * the position is kept as it goes, and the last one before the grid opened
+   * is the one that comes back.
+   */
+  const lastTime = useRef(0)
+
   useEffect(() => {
     const element = playerNode
-    if (element == null || playbackUrl == null) return
-    const detach = attachHls(element, playbackUrl, () => {
-      setAddressAttempt(attempt => attempt + 1)
+    if (element == null) return
+    const onTime = (): void => {
+      if (!suspended.current && element.currentTime > 0) {
+        lastTime.current = element.currentTime
+      }
+    }
+    const onPlay = (): void => {
+      viewerWants.current = true
+    }
+    const onPause = (): void => {
+      if (!suspended.current) viewerWants.current = false
+    }
+    element.addEventListener('timeupdate', onTime)
+    element.addEventListener('play', onPlay)
+    element.addEventListener('pause', onPause)
+    return () => {
+      element.removeEventListener('timeupdate', onTime)
+      element.removeEventListener('play', onPlay)
+      element.removeEventListener('pause', onPause)
+    }
+  }, [playerNode])
+
+  useEffect(() => {
+    const element = playerNode
+    if (element == null || !showAngles || video == null) return
+    // Where it had got to, so the re-attach on the way back picks it up. The
+    // source itself is detached below — four tiles on a phone should not be
+    // sharing the decoder with a fifth player nobody is looking at.
+    setResumeAt({
+      videoId: video.id,
+      sec: lastTime.current,
+      playing: viewerWants.current
     })
+    element.pause()
+    // Only as the overlay opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playerNode, showAngles])
+
+  useEffect(() => {
+    const element = playerNode
+    // Nothing attached while the angles are up: the source, its worker and its
+    // buffers go with it, and the resume written above brings the position
+    // back when it returns.
+    if (element == null || playbackUrl == null || showAngles) return
+    const detach = attachHls(
+      element,
+      playbackUrl,
+      () => {
+        setAddressAttempt(attempt => attempt + 1)
+      },
+      { wantsToPlay: () => !suspended.current && viewerWants.current }
+    )
 
     const resume = resumeAtRef.current
     const { videoId, playbackFor: forId } = placeFor.current
@@ -681,7 +774,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       start()
     }
     return detach
-  }, [playbackUrl, playerNode])
+  }, [playbackUrl, playerNode, showAngles])
 
   /**
    * The other recording, from the same moment, still playing.
@@ -860,6 +953,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         width={layout.videoWidth}
         height={layout.videoHeight}
         controlsVisible={controlsVisible}
+        active={!showAngles}
       >
         {isLive && <LivePill />}
         {video == null ? (
@@ -903,18 +997,27 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           }}
         >
           <PillTabs
-            tabs={game.videos.map(item => {
-              const name = pickerNames.get(item.id) ?? angleName(item)
-              return {
-                id: item.id,
-                label:
-                  item.status === 'ready' || item.status === 'live'
-                    ? name
-                    : `${name} ${lstrings.game_video_gone_suffix}`
-              }
-            })}
+            tabs={[
+              ...game.videos.map(item => {
+                const name = pickerNames.get(item.id) ?? item.title
+                return {
+                  id: item.id,
+                  label:
+                    item.status === 'ready' || item.status === 'live'
+                      ? name
+                      : `${name} ${lstrings.game_video_gone_suffix}`
+                }
+              }),
+              // Last, after the angles themselves: it is not another camera,
+              // it is all of them at once.
+              { id: ALL_ANGLES, label: lstrings.angles_open }
+            ]}
             selected={video?.id ?? ''}
             onSelect={id => {
+              if (id === ALL_ANGLES) {
+                setPicking(true)
+                return
+              }
               const item = game.videos.find(one => one.id === id)
               if (item != null) switchAngle(item)
             }}
@@ -1013,56 +1116,135 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   // twice — `position: sticky` and a nested scroller have no React Native
   // equivalent that is a style — so it lives in `GameWatchLayout`, which takes
   // what to draw and knows nothing about a game.
+  const anglePicker = picking ? (
+    <AnglePickerModal
+      videos={game.videos}
+      chosen={angles}
+      onClose={() => {
+        setPicking(false)
+      }}
+      onWatch={ids => {
+        setPicking(false)
+        onAngles?.({
+          angles: ids,
+          // Nothing, on purpose: which tile is heard is worked out by the
+          // grid from where the viewer is, and freezing an answer into the
+          // address here is how it stopped being able to change. A tile the
+          // viewer picks from the bar is written down; a tile the app chose
+          // for them is not.
+          audio: null,
+          zoom: null
+        })
+      }}
+    />
+  ) : null
+
+  /**
+   * The take the chosen angles cover, so a moment can be written down.
+   *
+   * `t` means seconds into the game the angles are of — the same axis the
+   * grid's own scrubber is drawn on — rather than seconds into any one file,
+   * which is what it means beside `video=`. Only one of the two is ever on an
+   * address.
+   */
+  const takeWindow = showAngles
+    ? windowOf(
+        (angles ?? [])
+          .map(id => game.videos.find(one => one.id === id))
+          .filter((one): one is VideoSummary => one != null)
+      )
+    : null
+
+  const multiCam = showAngles ? (
+    <MultiCamView
+      client={client}
+      videos={game.videos}
+      order={angles ?? defaultAngles(game.videos)}
+      audioId={audioId ?? null}
+      zoomedId={zoomedId ?? null}
+      title={`${game.awayTeamName} @ ${game.homeTeamName}`}
+      atMs={
+        takeWindow != null && startAtSec != null && startAtSec > 0
+          ? takeWindow.fromMs + startAtSec * 1000
+          : undefined
+      }
+      onMoment={wallMs => {
+        if (takeWindow == null) return
+        onAngles?.({
+          at: Math.max(0, Math.round((wallMs - takeWindow.fromMs) / 1000))
+        })
+      }}
+      onChange={next => {
+        onAngles?.({
+          angles: next.order,
+          audio: next.audioId,
+          zoom: next.zoomedId
+        })
+      }}
+      onClose={() => {
+        onAngles?.({ angles: [], audio: null, zoom: null, at: null })
+      }}
+    />
+  ) : null
+
   if (tab === 'watch') {
     return (
-      <GameWatchLayout
-        head={head}
-        player={player}
-        description={description}
-        sections={sections}
-        highlightList={highlightList}
-        footer={
-          <>
-            {/*
-              Under the highlights, and only for the people who run the team:
-              everybody else is answered `404` and sees nothing here at all.
-            */}
-            <StreamPanel client={client} gameId={gameId} />
-          </>
-        }
-        layout={layout}
-        short={short}
-        sideBySide={sideBySide}
-        headerHeight={headerHeight}
-        tabsHeight={tabsHeight}
-        height={height}
-        onScroll={handleWatchScroll}
-        style={styles.watch}
-        contentStyle={[
-          styles.watchContent,
-          sideBySide ? styles.watchSplit : styles.watchStacked,
-          short && styles.watchSplitShort
-        ]}
-        headStyle={styles.head}
-        columnHeadStyle={styles.columnHead}
-      />
+      <>
+        <GameWatchLayout
+          head={head}
+          player={player}
+          description={description}
+          sections={sections}
+          highlightList={highlightList}
+          footer={
+            <>
+              {/*
+                Under the highlights, and only for the people who run the team:
+                everybody else is answered `404` and sees nothing here at all.
+              */}
+              <StreamPanel client={client} gameId={gameId} />
+            </>
+          }
+          layout={layout}
+          short={short}
+          sideBySide={sideBySide}
+          headerHeight={headerHeight}
+          tabsHeight={tabsHeight}
+          height={height}
+          onScroll={handleWatchScroll}
+          style={styles.watch}
+          contentStyle={[
+            styles.watchContent,
+            sideBySide ? styles.watchSplit : styles.watchStacked,
+            short && styles.watchSplitShort
+          ]}
+          headStyle={styles.head}
+          columnHeadStyle={styles.columnHead}
+        />
+        {anglePicker}
+        {multiCam}
+      </>
     )
   }
 
   return (
-    <ScrollView style={styles.screen}>
-      <Screen wide scroll={false}>
-        {scoreboard}
-        {tabs}
-        <BoxScore
-          game={game}
-          box={box}
-          theme={theme}
-          sideBySide={sideBySide}
-          onOpenPlayer={onOpenPlayer}
-        />
-      </Screen>
-    </ScrollView>
+    <>
+      <ScrollView style={styles.screen}>
+        <Screen wide scroll={false}>
+          {scoreboard}
+          {tabs}
+          <BoxScore
+            game={game}
+            box={box}
+            theme={theme}
+            sideBySide={sideBySide}
+            onOpenPlayer={onOpenPlayer}
+          />
+        </Screen>
+      </ScrollView>
+      {anglePicker}
+      {multiCam}
+    </>
   )
 }
 

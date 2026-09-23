@@ -15,8 +15,9 @@ stitching between the Mac and the iPad, and stitching with the Director's own co
   takes the first file, the iPad the second, then whichever is free.
 - **Combined video.** `Packages/CombinedVideo` puts up to four cameras on a 4K canvas as HEVC at
   4 Mb/s per camera, with one camera's sound.
-- **PeerTube.** `../common/PeerTubeKit` signs in and uploads (from the Mac, resumably, in 8 MiB
-  chunks), each video carrying its recording's start as its original publication date.
+- **GameStation.** `../common/GameStationKit` signs this Mac in and sends each file to one game,
+  in parts, asking first what already landed so a cut-off upload carries on where it stopped. The
+  same code GS Director uploads with, so both resume the same way.
 - **Settings and logins on both devices.** The Mac keeps its copy in
   `~/Library/Application Support/GS Distributor` (`Packages/MacState`) and the logins in its
   Keychain; GS Director keeps the same on the iPad. They are brought together whenever the iPad is
@@ -32,10 +33,12 @@ stitching between the Mac and the iPad, and stitching with the Director's own co
    shows a MAC pill.
 2. The gear at the top right opens Settings: the folder to save into (this Mac's own), whether the
    iPad shares the stitching ("Enable iPad Stitching", off by default, so the Mac stitches every
-   file), whether to make a combined video, and PeerTube (instance host, then sign in).
+   file), whether to make a combined video, and GameStation (an e-mail address, then the code it
+   sends).
 3. Pick a recording, tick its files, Export. With the combined video on, lay the cameras out first;
-   with PeerTube on, the title comes next (it starts with the date, which can be changed), with the
-   channel and privacy, which start on the last ones used (privacy 6 where the instance has it).
+   then the game it belongs to and which of its files go up — or Export Without Uploading, which
+   saves them and stops there. Each video is titled from the game, with the camera's name after it,
+   because that is how the library tells one angle of a take from another.
 4. Each file shows whether it is already on this Mac. Files already here need nothing from the iPad,
    so a cut-off export (an upload that failed, a combined video never made) can be picked up with
    Export even while GS Director records or streams; only fetching and stitching wait for the iPad.
@@ -58,4 +61,5 @@ A debug build launched with `-harness -noIPad` never touches the cable: the way 
 the no-iPad window, and the API, while an iPad is plugged in.
 
 The plans are `~/.cursor/plans/202609131549-gsDistributor.md` and, for the API, the Mac's own
-state and highlights, `~/.cursor/plans/202609142144-gsDistributorApiHighlights.md`.
+state, `~/.cursor/plans/202609142144-gsDistributorApiHighlights.md`. Highlights are no longer
+part of this app; they went with PeerTube, which was the only place they could be written.

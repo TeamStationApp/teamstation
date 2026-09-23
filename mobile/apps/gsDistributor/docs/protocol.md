@@ -31,21 +31,19 @@ foreground, which does not.
 | `GET /v1/events` | Newline-delimited `DistributorEvent`s until the connection drops: job progress, finished (with the `RemoteFile`), failed; recordings changed; recording started or stopped; Director backgrounded |
 | `GET /v1/settings` | `DistributorSettings` |
 | `PUT /v1/settings` `DistributorSettings` + `X-Distributor-Mac: <IOPlatformUUID>` | The merged settings: each group from whichever copy changed it last (`SettingsStamp`); a body with no stamps is taken whole. Only the sending Mac's download folder is taken from the body |
-| `POST /v1/peertube/signin` `PeerTubeSignIn` | `PeerTubeSignInResult`: `signedIn(account)` or `otpRequired`. 400 for a missing host or user name, 401 for a refused sign-in or a host that is not PeerTube, 502 when PeerTube cannot be reached |
-| `GET /v1/peertube/token` | `PeerTubeToken`: host, user name, an access token with five minutes or more left, and when it expires. 401 when not signed in |
-| `POST /v1/peertube/signout` | 200. The token is revoked (best effort) and the account forgotten |
 
 ## Who keeps what
 
 - **The iPad** keeps GS Distributor's settings (`DistributorSettingsStore`, JSON beside the index):
-  a download folder per Mac, whether the iPad stitches, the combined-video toggle, layout and sound
-  camera by camera name, PeerTube's host, user name, the channel and privacy last uploaded with,
-  and which files to upload. Every group is stamped with when and where it last changed.
-- **The iPad's Keychain** keeps its own PeerTube account (the instance's OAuth client and the
-  tokens), on this device only, after first unlock.
+  a download folder per Mac, the combined-video toggle, layout and sound camera by camera name,
+  and which files to upload. Every group is stamped with when and where it last changed; a group
+  an older build kept and this one does not have is left unread, stamp and all.
+- **The iPad's Keychain** keeps its own GameStation session, on this device only, after first
+  unlock.
 - **The Mac** keeps its own copy of the settings in `~/Library/Application Support/GS Distributor`,
-  with the last recording list seen from each iPad; its own PeerTube account is in its Keychain. On
-  attaching it brings the settings together (`GET`, then `PUT` when its copy has anything newer).
+  with the last recording list seen from each iPad and when it last met each one; its own
+  GameStation session is in its Keychain. On attaching it brings the settings together (`GET`,
+  then `PUT` when its copy has anything newer).
 
 ## An export
 
@@ -54,11 +52,12 @@ foreground, which does not.
    Director records or streams. Otherwise the Mac takes the export lock and asks for the take's
    manifest with no tracks, for the shared window.
 2. Tracks already stitched on the iPad are downloaded as they are.
-3. The rest are split: the first to the Mac, which fetches the segments and stitches with the same
-   `ExportService`; the second to the iPad as a job; then whichever is free takes the next. The iPad
-   takes nothing new while it records, and a job it refuses with 409 goes back to the Mac.
+3. The rest are stitched on the Mac, which fetches the segments and uses the same `ExportService`.
+   The iPad no longer takes a share: it is several times slower at stitching and it is the thing
+   everybody is waiting for, so sharing cost more than it saved.
 4. With a combined video, the Mac renders it from the saved camera files.
-5. With uploads, the Mac uploads each chosen file to PeerTube with its own account's token, or,
-   while it has never signed in itself, one from `/v1/peertube/token`, fetched again whenever the
-   one it holds has under five minutes left. Each upload's original publication date is the
-   recording's start.
+5. With uploads, the Mac sends each chosen file to one game on GameStation with its own account's
+   session, in parts, asking first what already landed so a cut-off upload carries on where it
+   stopped. Every file of a take is placed at the recording's own start, so a take's angles line up
+   however far apart they were sent. The server acknowledges the finish and converts behind it; the
+   Mac watches and says which part of that work is under way.

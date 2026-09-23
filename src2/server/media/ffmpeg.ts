@@ -80,6 +80,15 @@ export interface RemuxOptions {
   outDir: string
   /** Seconds per segment. Shorter seeks faster and costs more requests. */
   segmentSeconds?: number
+  /**
+   * What to tag the video track as, or null to leave it alone.
+   *
+   * `hvc1` by default, because everything this server records is HEVC and
+   * Safari refuses an HEVC track tagged `hev1`. It is **wrong for anything
+   * else**: a recording from a camera that shoots H.264 must keep `avc1`, and
+   * a stream tagged as a codec it is not plays nowhere at all.
+   */
+  videoTag?: string | null
 }
 
 /** What the remux writes, and what everything downstream expects to find. */
@@ -105,7 +114,7 @@ export const VIDEO_FILE = 'video.mp4'
  * `video.mp4.tmp` that is renamed away the moment the remux finishes.
  */
 export function remuxToHlsArgs(options: RemuxOptions): string[] {
-  const { input, outDir, segmentSeconds = 6 } = options
+  const { input, outDir, segmentSeconds = 6, videoTag = 'hvc1' } = options
   return [
     '-hide_banner',
     '-loglevel',
@@ -114,8 +123,7 @@ export function remuxToHlsArgs(options: RemuxOptions): string[] {
     input,
     '-c',
     'copy',
-    '-tag:v',
-    'hvc1',
+    ...(videoTag == null ? [] : ['-tag:v', videoTag]),
     '-f',
     'hls',
     '-hls_time',

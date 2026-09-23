@@ -18,6 +18,10 @@ import Observation
 public final class GameStationAccount {
   public private(set) var user: GameStationUser?
   public private(set) var events: [GameStationEvent] = []
+  /// The games already played, latest first — the list an upload picks from.
+  public private(set) var finishedEvents: [GameStationEvent] = []
+  /// One recording on its way up, by the take it came from.
+  public private(set) var uploads: [Int64: UploadProgress] = [:]
   public private(set) var isLoading = false
   public private(set) var lastError: String?
 
@@ -66,6 +70,127 @@ public final class GameStationAccount {
 
   private var client: GameStationClient {
     GameStationClient(baseURL: serverURL, token: keychain.token())
+  }
+
+  /// What one recording's upload is doing, for the row it came from.
+  public struct UploadProgress: Sendable, Equatable {
+    public var name: String
+    public var fraction: Double
+    public var done: Bool
+    public var failed: String?
+    /// What the server is doing once the bytes are up: nil while they are
+    /// going, then a word for the phase. Without it a two-hour take shows a
+    /// full bar for four minutes and looks wedged.
+    public var step: String?
+
+    /// What to show for this upload, in words.
+    public var saying: String {
+      if let failed { return failed }
+      if done { return "Uploaded" }
+      guard let step else { return "Uploading \(Int(fraction * 100))%" }
+      switch step {
+      case "assembling": return "Putting the parts together…"
+      case "probing": return "Reading the recording…"
+      case "remuxing": return "Converting…"
+      case "uploading": return "Copying to the library…"
+      case "writing": return "Nearly there…"
+      default: return "Working…"
+      }
+    }
+  }
+
+  /// The games already played, for a take that was never claimed to one.
+  public func refreshFinishedEvents() async {
+    guard keychain.token() != nil else { return }
+    do {
+      finishedEvents = try await client.finishedEvents()
+      lastError = nil
+    } catch {
+      lastError = error.localizedDescription
+    }
+  }
+
+  /// Sends one file to a game and answers with the video it became.
+  ///
+  /// The plain form, for a caller that reports progress its own way — GS
+  /// Distributor tracks it per export rather than per take. `upload` below is
+  /// the same thing with the Director's bookkeeping around it.
+  public func send(
+    file: URL,
+    gameId: String,
+    title: String,
+    kind: String,
+    startedAt: Date,
+    onProgress: @escaping @Sendable (Int64, Int64, String?) -> Void = { _, _, _ in }
+  ) async throws -> String {
+    let service = UploadService(client: client)
+    return try await service.send(
+      file: file,
+      gameId: gameId,
+      title: title,
+      kind: kind,
+      startedAt: startedAt,
+      onProgress: { progress in
+        onProgress(
+          Int64(progress.bytesSent),
+          Int64(progress.bytesTotal),
+          progress.step
+        )
+      }
+    )
+  }
+
+  /// Sends one exported file to a game, and reports its progress by take.
+  ///
+  /// The upload is the export's own files — whatever the operator ticked —
+  /// sent somewhere else, so nothing is exported twice and nothing is chosen
+  /// twice. What comes back is the video it became, which by then has already
+  /// taken the live stream's place on that game.
+  public func upload(
+    file: URL,
+    recordingID: Int64,
+    gameId: String,
+    title: String,
+    kind: String,
+    startedAt: Date
+  ) async -> String? {
+    guard keychain.token() != nil else {
+      lastError = "Sign in to GameStation first."
+      return nil
+    }
+    uploads[recordingID] = UploadProgress(
+      name: file.lastPathComponent,
+      fraction: 0,
+      done: false,
+      failed: nil
+    )
+    do {
+      let videoId = try await send(
+        file: file,
+        gameId: gameId,
+        title: title,
+        kind: kind,
+        startedAt: startedAt,
+        onProgress: { [weak self] sent, total, step in
+          Task { @MainActor in
+            guard let self, total > 0 else { return }
+            var held = self.uploads[recordingID]
+            held?.fraction = Double(sent) / Double(total)
+            held?.step = step
+            self.uploads[recordingID] = held
+          }
+        }
+      )
+      uploads[recordingID]?.fraction = 1
+      uploads[recordingID]?.step = nil
+      uploads[recordingID]?.done = true
+      return videoId
+    } catch {
+      let said = error.localizedDescription
+      uploads[recordingID]?.failed = said
+      lastError = said
+      return nil
+    }
   }
 
   // MARK: - Signing in

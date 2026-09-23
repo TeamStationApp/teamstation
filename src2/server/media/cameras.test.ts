@@ -5,7 +5,7 @@ import { camerasFromTiles } from '../media/cameras'
 
 /**
  * Tiles are not cameras. One tile of a multi-angle mosaic is always the
- * programme output, which is not a camera, so the count is one less than what
+ * program output, which is not a camera, so the count is one less than what
  * you see.
  */
 describe('reading a mosaic', function () {

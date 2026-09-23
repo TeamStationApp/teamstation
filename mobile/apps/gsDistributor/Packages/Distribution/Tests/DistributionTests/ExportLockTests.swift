@@ -5,7 +5,6 @@ import DirectorLink
 import Distribution
 import DistributorWire
 import Foundation
-import PeerTubeKit
 import Testing
 
 /// A GS Director that grants the export lock, remembers what it granted and what came back, and
@@ -68,8 +67,7 @@ struct ExportLockTests {
         program: base.appendingPathComponent("Program", isDirectory: true),
         prepared: base.appendingPathComponent("Prepared", isDirectory: true)
       ),
-      settings: DistributorSettingsStore(url: base.appendingPathComponent("settings.json")),
-      peerTube: PeerTubeAccount(storage: MemoryAccountStorage())
+      settings: DistributorSettingsStore(url: base.appendingPathComponent("settings.json"))
     )
     let server = LinkServer(port: 0) { await service.handle($0) }
     let port = try await server.start()
@@ -86,7 +84,7 @@ struct ExportLockTests {
       connection: connection,
       jobs: JobWatcher(),
       destination: base.appendingPathComponent("Mac", isDirectory: true)
-    ) { true }
+    )
     let exporting = Task { await run.run() }
 
     // Cancelled while GS Director is still working out the manifest, with the lock taken.
@@ -119,8 +117,7 @@ struct ExportLockTests {
         program: base.appendingPathComponent("Program", isDirectory: true),
         prepared: base.appendingPathComponent("Prepared", isDirectory: true)
       ),
-      settings: DistributorSettingsStore(url: base.appendingPathComponent("settings.json")),
-      peerTube: PeerTubeAccount(storage: MemoryAccountStorage())
+      settings: DistributorSettingsStore(url: base.appendingPathComponent("settings.json"))
     )
     let server = LinkServer(port: 0) { await service.handle($0) }
     let port = try await server.start()
@@ -139,7 +136,7 @@ struct ExportLockTests {
       jobs: JobWatcher(),
       destination: base.appendingPathComponent("Mac", isDirectory: true),
       lockRenewal: .milliseconds(100)
-    ) { true }
+    )
     await run.run()
 
     #expect(run.wasCancelled)

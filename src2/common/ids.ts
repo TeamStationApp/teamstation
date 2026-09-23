@@ -16,6 +16,7 @@ export const idPrefixes = {
   externalId: 'ext',
   game: 'gam',
   gamePlayerStats: 'gps',
+  directorUpload: 'dup',
   invite: 'inv',
   inviteRedemption: 'ivr',
   league: 'lea',

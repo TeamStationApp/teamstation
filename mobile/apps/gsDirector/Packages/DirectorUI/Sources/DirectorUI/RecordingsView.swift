@@ -1,5 +1,6 @@
 import DirectorCore
 import DirectorDVR
+import GameStationKit
 import SwiftUI
 
 /// Browse past recordings and AirDrop the chosen cameras plus the programme master.
@@ -14,6 +15,7 @@ public struct RecordingsView: View {
   @State private var selectedCameras: Set<String> = []
   @State private var showDeleteConfirm = false
   @State private var showReuseConfirm = false
+  @State private var showEventPicker = false
   @State private var pendingReuse: (recording: RecordingSummary, cameras: [(SourceID, String)], includeProgram: Bool)?
 
   public init() {}
@@ -80,6 +82,18 @@ public struct RecordingsView: View {
     }
     // AirDrop has to be presented from inside this full-screen cover. A share sheet asked for
     // on the root view queues behind the cover and only appears once DONE dismisses it.
+    .sheet(isPresented: $showEventPicker) {
+      if let recording = selectedRecording {
+        EventPickerSheet(
+          title: "Upload to which game?",
+          onChoose: { event in
+            showEventPicker = false
+            upload(recording, to: event)
+          },
+          onCancel: { showEventPicker = false }
+        )
+      }
+    }
     .sheet(isPresented: $environment.isSharingRecordings) {
       ShareSheet(urls: environment.lastRecordingShare)
     }
@@ -160,6 +174,34 @@ public struct RecordingsView: View {
         .buttonStyle(.plain)
         .disabled(!canExport(recording) || environment.isExporting)
         .accessibilityIdentifier("recordings-export")
+        .padding(.horizontal, 16)
+        .padding(.top, 16)
+
+        Button {
+          // A take that was streamed to a game goes straight there. The list
+          // exists for the take that was not — a bare RTSP publish, or a
+          // recording made with no stream at all.
+          if let game = recording.gameId {
+            upload(
+              recording,
+              gameId: game,
+              title: recording.gameTitle ?? dateLabel(recording.startedAt)
+            )
+          } else {
+            showEventPicker = true
+          }
+        } label: {
+          Text(uploadLabel(recording))
+            .font(.system(size: 13, weight: .heavy, design: .rounded))
+            .tracking(1)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 14)
+            .background(canExport(recording) ? Color.white.opacity(0.14) : Color.white.opacity(0.06))
+            .foregroundStyle(canExport(recording) ? .white : .white.opacity(0.35))
+        }
+        .buttonStyle(.plain)
+        .disabled(!canExport(recording) || environment.isExporting)
+        .accessibilityIdentifier("recordings-upload")
         .padding(16)
       } else {
         Text(recordings.isEmpty ? "No recordings yet" : "Choose a recording")
@@ -378,6 +420,66 @@ public struct RecordingsView: View {
       recording,
       cameras: cameras,
       includeProgram: includeProgram
+    )
+  }
+
+  /// What the button says: the upload's own progress once one is running.
+  ///
+  /// A take that knows its game says so. There is no picker to confirm
+  /// against on that path, so the name of the game has to be on the button
+  /// somebody is about to press.
+  private func uploadLabel(_ recording: RecordingSummary) -> String {
+    guard let upload = environment.gameStation.uploads[recording.id] else {
+      guard recording.gameId != nil, let game = recording.gameTitle else {
+        return "UPLOAD TO GAMESTATION"
+      }
+      return "UPLOAD TO \(withoutDate(game).uppercased())"
+    }
+    if upload.failed != nil { return "UPLOAD FAILED — TRY AGAIN" }
+    if upload.done { return "UPLOADED" }
+    // Once the bytes are up the server has minutes of work left, and a
+    // percentage that sits at 100 for four of them reads as a hang. The
+    // account turns the server's own word for what it is doing into a
+    // sentence; this only has to shout it.
+    return upload.saying.uppercased()
+  }
+
+  private func upload(_ recording: RecordingSummary, to event: GameStationEvent) {
+    let day = ISO8601DateFormatter()
+    day.formatOptions = [.withFullDate]
+    upload(
+      recording,
+      gameId: event.gameId,
+      title: "\(day.string(from: event.startAt)) \(event.title)"
+    )
+  }
+
+  /// Sends whatever is ticked, to the game named.
+  ///
+  /// The tracks come from the tick boxes rather than from what is on disk,
+  /// which is the same rule the export button follows: the operator chose
+  /// these, and an upload that quietly sends a camera nobody ticked is a
+  /// surprise on a connection that cannot afford one.
+  private func upload(_ recording: RecordingSummary, gameId: String, title: String) {
+    let cameras = recording.sourceIDs
+      .filter { selectedCameras.contains($0.rawValue) }
+      .map { ($0, environment.recordingCameraName(for: $0, in: recording.id)) }
+    let includeProgram = selectedProgram && recording.programFilename != nil
+    environment.uploadRecording(
+      recording,
+      cameras: cameras,
+      includeProgram: includeProgram,
+      gameId: gameId,
+      title: title
+    )
+  }
+
+  /// A title with its `YYYY-MM-DD ` prefix taken off. The date is already in
+  /// the row above the button; repeating it on the button costs the room the
+  /// game's name needs.
+  private func withoutDate(_ title: String) -> String {
+    title.replacingOccurrences(
+      of: "^\\d{4}-\\d{2}-\\d{2}\\s*", with: "", options: .regularExpression
     )
   }
 

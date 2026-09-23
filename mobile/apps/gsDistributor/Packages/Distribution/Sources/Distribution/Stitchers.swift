@@ -138,41 +138,6 @@ public struct MacStitcher: Sendable {
   }
 }
 
-/// Stitches one track on the iPad and says where the result is.
-public struct IPadStitcher: Sendable {
-  public let connection: DirectorConnection
-  public let jobs: JobWatcher
-
-  public init(connection: DirectorConnection, jobs: JobWatcher) {
-    self.connection = connection
-    self.jobs = jobs
-  }
-
-  public func stitch(
-    recording: RecordingListing,
-    track: Track,
-    window: ExportWindow,
-    reprocess: Bool,
-    progress: @escaping @Sendable (Double) -> Void
-  ) async throws -> RemoteFile {
-    try Task.checkCancellation()
-    let id = try await connection.startJob(
-      JobRequest(recordingID: recording.id, track: track, window: window, reprocess: reprocess)
-    )
-    let connection = self.connection
-    let jobs = self.jobs
-    // Cancelling stops the wait here and tells the iPad, which then reports nothing for the job.
-    return try await withTaskCancellationHandler {
-      try await jobs.wait(for: id, progress: progress)
-    } onCancel: {
-      Task {
-        await jobs.cancel(id)
-        try? await connection.cancelJob(id)
-      }
-    }
-  }
-}
-
 /// Sums what several downloads have received, for one progress figure.
 final class FetchTally: @unchecked Sendable {
   private let lock = NSLock()
