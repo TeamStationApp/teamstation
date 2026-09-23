@@ -1,3 +1,7 @@
+import {
+  completesHitOffer,
+  undoesHitOffer
+} from '../../common/scoring/rules'
 import { setupOf } from '../../common/scoring/state'
 import {
   acceptTrajectory,
@@ -10,6 +14,7 @@ import {
   accepted,
   act,
   completeDefense,
+  destination,
   forceOutInRelay,
   Refused,
   runnerReducer,
@@ -334,6 +339,31 @@ export function scoringReducer(
       [offense.first?.id, offense.second?.id, offense.third?.id].indexOf(
         event.id
       ) + 1
+    // Unforced hit-offer undo / safe re-take: commit in one step, no Safe/Out.
+    // Out on a re-take falls through so the Safe/Out strip can put him out.
+    // settleRunners so homeDecision waits out the return / re-advance motion.
+    if (
+      (event.to === from - 1 &&
+        undoesHitOffer(state.session, event.id, from, event.to)) ||
+      (event.to === from + 1 &&
+        event.decision === 'safe' &&
+        completesHitOffer(state.session, event.id, from, event.to))
+    ) {
+      const back = event.to === from - 1
+      return accepted(
+        state,
+        `${back ? 'Back' : 'Advance'} ${state.session.gameData.players[event.id].fullName}`,
+        next => {
+          act(next, {
+            type: 'runnerMovement',
+            runner: event.id,
+            to: destination(event.to)
+          })
+          next.phase = 'runnerMovement'
+          settleRunners(next)
+        }
+      )
+    }
     if (event.to !== from && event.to !== from + 1) return state
     const proposed = scoringReducer(state, {
       type: 'RUNNER_PROPOSE',

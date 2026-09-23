@@ -84,11 +84,48 @@ export function runnerDragView(
   point: GroundPoint,
   project: (point: GroundPoint) => { x: number; y: number },
   width: number,
-  height: number
+  height: number,
+  canRetreat = false,
+  /** When false, forward drag past the start base is ignored (homeDecision retreat). */
+  canAdvance = true
 ): RunnerDragView {
   const start = BASES[from % 4]
-  const end = BASES[(from + 1) % 4]
-  const progress = runnerProgress(start, end, point)
+  const forward = BASES[(from + 1) % 4]
+  const forwardProgress = canAdvance
+    ? runnerProgress(start, forward, point)
+    : 0
+  if (canRetreat && from > 1) {
+    const back = BASES[(from - 1) % 4]
+    const backProgress = runnerProgress(start, back, point)
+    if (
+      (!canAdvance && backProgress > 0.5 + 1e-12) ||
+      (backProgress > forwardProgress && backProgress > 0.5 + 1e-12)
+    ) {
+      return {
+        id,
+        from,
+        to: from - 1,
+        progress: backProgress,
+        point: {
+          x: start.x + (back.x - start.x) * backProgress,
+          z: start.z + (back.z - start.z) * backProgress
+        },
+        hovered: 'safe',
+        ...runnerTargets(project(BASES[(from - 1) % 4]), width, height, from - 1)
+      }
+    }
+  }
+  if (!canAdvance) {
+    return {
+      id,
+      from,
+      to: from,
+      progress: 0,
+      point: { ...start },
+      ...runnerTargets(project(start), width, height, from)
+    }
+  }
+  const progress = forwardProgress
   const to = progress > 0.5 + 1e-12 ? from + 1 : from
   return {
     id,
@@ -96,8 +133,8 @@ export function runnerDragView(
     to,
     progress,
     point: {
-      x: start.x + (end.x - start.x) * progress,
-      z: start.z + (end.z - start.z) * progress
+      x: start.x + (forward.x - start.x) * progress,
+      z: start.z + (forward.z - start.z) * progress
     },
     ...runnerTargets(project(BASES[to % 4]), width, height, to)
   }

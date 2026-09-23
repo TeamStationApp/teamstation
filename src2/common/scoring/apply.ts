@@ -47,6 +47,7 @@ import {
 import { homeRunKind, isFair } from './park'
 import {
   choiceOpen,
+  completesHitOffer,
   forcedFrom,
   hasEligiblePitch,
   HIT_BASES,
@@ -56,7 +57,8 @@ import {
   nextDecision,
   runnerDecisionError,
   trajectoryLabel,
-  trajectoryOf
+  trajectoryOf,
+  undoesHitOffer
 } from './rules'
 import {
   BASE_KEYS,
@@ -593,18 +595,26 @@ function prepareHit(ctx: Ctx): void {
     .filter((row): row is { id: number; from: number } => row.id != null)
     .reverse()
   pending.movements = [...runners, { id: batter, from: 0 }].map(row => {
-    const to = Math.min(4, row.from + bases)
+    const offeredTo = Math.min(4, row.from + bases)
     const forced =
       row.from === 0 ||
       pending.originalBases.slice(0, row.from).every(id => id != null)
+    const force = forced && offeredTo === row.from + 1
     const automaticHome = pending.outcome === 'Home Run'
+    // Unforced one-base advances short of home still place the runner
+    // (2→3 on a single with first open), but keep offeredTo so correction
+    // can drag him back to the start base with no Safe/Out strip.
+    const hitOffer =
+      row.from > 0 && !force && offeredTo < 4 && offeredTo === row.from + 1
     return {
       playerId: row.id,
+      start: row.from,
       from: row.from,
-      to,
+      to: offeredTo,
+      offeredTo: hitOffer ? offeredTo : undefined,
       automaticHome,
-      force: forced && to === row.from + 1,
-      decision: to === 4 && !automaticHome ? 'pending' : 'safe',
+      force,
+      decision: offeredTo === 4 && !automaticHome ? 'pending' : 'safe',
       resolved: false
     }
   })
@@ -1223,7 +1233,24 @@ function runnerMovement(
     homeMovement(ctx, action, to)
     return
   }
-  if (decision === 'homeDecision')
+  // Hit-offer retreat / re-take is allowed even while a lead runner waits on
+  // home — the trailer on third can still be sent back to second (and forward
+  // again). Occupancy still applies on retreat: the start base must be free.
+  if (
+    to < where &&
+    undoesHitOffer(state, action.runner, where, to)
+  ) {
+    const occupied = runnerDecisionError(state, {
+      playerId: action.runner,
+      from: where,
+      to
+    })
+    if (occupied != null) refuse('illegal', occupied)
+    undoHitOffer(ctx, action.runner, where, to)
+    return
+  }
+  const retakingOffer = completesHitOffer(state, action.runner, where, to)
+  if (decision === 'homeDecision' && !retakingOffer)
     refuse('notNow', 'Decide the runner headed home first')
   if (where === 0) {
     const batterTurn =
@@ -1232,7 +1259,9 @@ function runnerMovement(
         pending?.movements.some(move => move.playerId === action.runner) ===
           true)
     if (!batterTurn) refuse('notNow', 'The batter is not running')
-  } else if (to < where) refuse('illegal', 'A runner cannot go back')
+  } else if (to < where) {
+    refuse('illegal', 'A runner cannot go back')
+  }
   if (decision === 'batterOut' && action.out !== true)
     refuse('notNow', 'Say who put the batter out')
   if (action.out === true) {
@@ -1315,18 +1344,87 @@ function commitSafe(
     (action.reason ?? 'Safe from Pickoff') !== 'Safe from Pickoff'
   )
     refuse('illegal', `That runner is already on ${DESTINATIONS[to]}`)
+  const hitOffer = completesHitOffer(ctx.state, action.runner, from, to)
   const reason =
     action.reason ??
-    (pending == null && from === to ? 'Safe from Pickoff' : 'Advance')
+    (hitOffer && pending?.outcome != null
+      ? pending.outcome
+      : pending == null && from === to
+        ? 'Safe from Pickoff'
+        : 'Advance')
   setBase(ctx, action.runner, to)
   const rbi = to === 4 && earnsRbi(pending?.outcome, reason)
   if (to === 4 && from !== 4) scoreRun(ctx, action.runner, rbi)
   const old = pending?.movements.find(move => move.playerId === action.runner)
-  if (old != null) Object.assign(old, movement)
-  else pending?.movements.push(movement)
+  if (old != null) {
+    const start = old.start ?? old.from
+    const offeredTo = old.offeredTo
+    Object.assign(old, movement)
+    old.start = start
+    if (offeredTo != null) old.offeredTo = offeredTo
+    // Re-taking the auto-advance must stay unresolved so homeBackProposal can
+    // still send the trailer back when the lead is waved home → third.
+    if (hitOffer) old.resolved = false
+  } else pending?.movements.push(movement)
   recordRunner(ctx, movement, { reason, rbi, playIndex: joining })
-  if (joining == null) actionEvent(ctx, action.runner, reason)
+  // A hit-offer advance belongs on the in-play pitch, not a new action event.
+  if (joining == null && !hitOffer) actionEvent(ctx, action.runner, reason)
   moved(ctx, movement)
+  settle(ctx)
+}
+
+/**
+ * Returns an unforced runner who took his hit offer back to the start base and
+ * drops the advance row so the stored play matches "never advanced".
+ */
+function undoHitOffer(ctx: Ctx, runnerId: number, from: number, to: number): void {
+  const pending = ctx.state.pending
+  if (pending == null) refuse('notNow', 'Finish the current play first')
+  const move = pending.movements.find(m => m.playerId === runnerId)
+  if (move?.offeredTo == null) refuse('illegal', 'A runner cannot go back')
+  const start = move.start ?? to
+  const play = current(ctx)
+  for (let i = play.runners.length - 1; i >= 0; i--) {
+    const row = play.runners[i]
+    if (
+      row.details.runner.id === runnerId &&
+      row.movement.isOut !== true &&
+      row.movement.end === from &&
+      row.movement.start === start
+    ) {
+      play.runners.splice(i, 1)
+      const actions = play.source.gamestation.runnerActions
+      if (actions != null) {
+        for (let j = actions.length - 1; j >= 0; j--) {
+          if (
+            actions[j].runner.id === runnerId &&
+            actions[j].destination === from &&
+            actions[j].origin === start
+          ) {
+            actions.splice(j, 1)
+            break
+          }
+        }
+      }
+      break
+    }
+  }
+  countRbi(play)
+  for (const key of BASE_KEYS) line(ctx).offense[key] = null
+  move.to = to
+  move.from = start
+  move.decision = 'safe'
+  move.resolved = true
+  for (const other of pending.movements) {
+    if (other.decision === 'out') continue
+    if (other.to > 0 && other.to < 4) setBase(ctx, other.playerId, other.to)
+  }
+  ctx.out.push({
+    type: 'runnerReturned',
+    runner: runnerId,
+    from,
+    to
+  })
   settle(ctx)
 }
 

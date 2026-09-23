@@ -4824,3 +4824,239 @@ describe('scoring browser', function () {
       }
     })
 })
+
+describe('unforced hit-offer on a single (E1–E4)', function () {
+  this.timeout(120000)
+  // Own browser lifecycle so `--grep unforced` still launches Puppeteer
+  // (sibling of `scoring browser`, whose before/after would otherwise be skipped).
+  before(async function () {
+    browser = await puppeteer.launch({
+      headless: true,
+      executablePath: process.env.GS_CHROME_PATH,
+      args: [
+        '--use-gl=angle',
+        '--use-angle=swiftshader',
+        '--enable-unsafe-swiftshader'
+      ]
+    })
+  })
+  after(async function () {
+    await browser?.close()
+  })
+
+  async function projectBase(
+    page: Page,
+    base: number,
+    y = 0
+  ): Promise<[number, number]> {
+    const rect = await page.$eval('canvas', canvas => {
+      const r = canvas.getBoundingClientRect()
+      return { x: r.x, y: r.y, width: r.width, height: r.height }
+    })
+    const camera = new PerspectiveCamera()
+    applyFieldCamera(camera, {
+      width: rect.width,
+      height: rect.height,
+      view: 'home',
+      zoom: 1.25,
+      tilt: (-11 * Math.PI) / 180,
+      heightOffset: 33,
+      bottomExtension: 112
+    })
+    const point = new Vector3(BASES[base].x, y, BASES[base].z).project(camera)
+    return [
+      rect.x + ((point.x + 1) * rect.width) / 2,
+      rect.y + ((1 - point.y) * rect.height) / 2
+    ]
+  }
+
+  async function overrideBases(
+    page: Page,
+    bases: Array<['First base' | 'Second base' | 'Third base', string]>
+  ): Promise<void> {
+    await click(page, 'Open scoring menu')
+    await click(page, 'Overrides')
+    for (const [base, player] of bases) {
+      await click(page, base)
+      await click(page, `Choose ${base} ${player}`)
+    }
+    await click(page, 'Apply Override')
+  }
+
+  async function dragRunner(
+    page: Page,
+    fromBase: number,
+    toBase: number
+  ): Promise<void> {
+    const from = await projectBase(page, fromBase, 6)
+    const to = await projectBase(page, toBase, 0)
+    await page.touchscreen.touchStart(...from)
+    await new Promise(resolve => setTimeout(resolve, 400))
+    await page.touchscreen.touchMove(to[0], to[1])
+  }
+
+  async function runnerNearBase(page: Page, base: number): Promise<boolean> {
+    await captureScene(page)
+    const { x, z } = BASES[base]
+    return await page.evaluate(
+      (tx, tz) => {
+        const scene = (window as unknown as SceneProbeWindow).qaScene
+        if (scene == null) return false
+        let best = Infinity
+        scene.traverse(obj => {
+          if (!obj.name.startsWith('player-offense-')) return
+          const dx = obj.position.x - tx
+          const dz = obj.position.z - tz
+          best = Math.min(best, dx * dx + dz * dz)
+        })
+        return best < 36
+      },
+      x,
+      z
+    )
+  }
+
+  async function waitRunnerNearBase(page: Page, base: number): Promise<void> {
+    for (let i = 0; i < 60; i++) {
+      if (await runnerNearBase(page, base)) return
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+    expect(await runnerNearBase(page, base)).equals(true)
+  }
+
+  it('E1 auto-advances an unforced runner second to third on a single', async function () {
+    const { page } = await open(
+      '/games/g1/score',
+      false,
+      false,
+      false,
+      'switch',
+      true
+    )
+    try {
+      await page.setViewport({
+        width: 390,
+        height: 844,
+        isMobile: true,
+        hasTouch: true
+      })
+      await overrideBases(page, [['Second base', 'Player 7']])
+      await chooseHit(page, 'Single')
+      await page.waitForSelector('[aria-label="Time to edit play"]', {
+        timeout: 30000
+      })
+      // Auto-advanced: no forced Safe/Out; retreat from third is available.
+      expect(await page.$('[aria-label="Safe"]')).equals(null)
+      expect(await page.$('[aria-label="Out"]')).equals(null)
+      expect(await runnerNearBase(page, 3)).equals(true)
+      await dragRunner(page, 3, 2)
+      // Hit-offer retreat commits without mounting Safe/Out.
+      expect(await page.$('[aria-label="Safe drag target"]')).equals(null)
+      expect(await page.$('[aria-label="Out drag target"]')).equals(null)
+      await page.touchscreen.touchEnd()
+      await waitRunnerNearBase(page, 2)
+      await click(page, 'Finish at-bat')
+      await page.waitForSelector('[aria-label*="Batter Player 2"]', {
+        timeout: 30000
+      })
+      expect(await runnerNearBase(page, 2)).equals(true)
+    } finally {
+      await page.close()
+    }
+  })
+
+  it('E2 leaves the auto-advanced runner on third when the scorer does not drag', async function () {
+    const { page } = await open(
+      '/games/g1/score',
+      false,
+      false,
+      false,
+      'switch',
+      true
+    )
+    try {
+      await overrideBases(page, [['Second base', 'Player 7']])
+      await chooseHit(page, 'Single')
+      await page.waitForSelector('[aria-label="Time to edit play"]', {
+        timeout: 30000
+      })
+      expect(await page.$('[aria-label="Safe"]')).equals(null)
+      expect(await runnerNearBase(page, 3)).equals(true)
+      await click(page, 'Finish at-bat')
+      await page.waitForSelector('[aria-label*="Batter Player 2"]', {
+        timeout: 30000
+      })
+      expect(await runnerNearBase(page, 3)).equals(true)
+    } finally {
+      await page.close()
+    }
+  })
+
+  it('E3 retreats third back to second without a Safe/Out strip', async function () {
+    const { page } = await open(
+      '/games/g1/score',
+      false,
+      false,
+      false,
+      'switch',
+      true
+    )
+    try {
+      await page.setViewport({
+        width: 390,
+        height: 844,
+        isMobile: true,
+        hasTouch: true
+      })
+      await overrideBases(page, [['Second base', 'Player 7']])
+      await chooseHit(page, 'Single')
+      await page.waitForSelector('[aria-label="Time to edit play"]', {
+        timeout: 30000
+      })
+      expect(await runnerNearBase(page, 3)).equals(true)
+      await dragRunner(page, 3, 2)
+      // Retreat must not mount Safe/Out.
+      expect(await page.$('[aria-label="Safe drag target"]')).equals(null)
+      expect(await page.$('[aria-label="Out drag target"]')).equals(null)
+      await page.touchscreen.touchEnd()
+      await waitRunnerNearBase(page, 2)
+      await click(page, 'Finish at-bat')
+      await page.waitForSelector('[aria-label*="Batter Player 2"]', {
+        timeout: 30000
+      })
+      expect(await runnerNearBase(page, 2)).equals(true)
+    } finally {
+      await page.close()
+    }
+  })
+
+  it('E4 still forces the runner on first on a bases-loaded single', async function () {
+    const { page } = await open('/games/g1/score')
+    try {
+      await overrideBases(page, [
+        ['First base', 'Player 6'],
+        ['Second base', 'Player 7'],
+        ['Third base', 'Player 8']
+      ])
+      await chooseHit(page, 'Single')
+      await page.waitForSelector(
+        '[aria-label="Home plate decision for Player 8"]',
+        { timeout: 30000 }
+      )
+      // Forced advances leave no Back for the runner scoring from third.
+      expect(await page.$('[aria-label="Back"]')).equals(null)
+      await click(page, 'Safe')
+      await page.waitForSelector('[aria-label="Time to edit play"]', {
+        timeout: 30000
+      })
+      await click(page, 'Finish at-bat')
+      await page.waitForSelector('[aria-label*="Batter Player 2"]', {
+        timeout: 30000
+      })
+      await page.waitForSelector('[aria-label*="Owls 1 · Hawks 0"]')
+    } finally {
+      await page.close()
+    }
+  })
+})
+
