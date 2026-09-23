@@ -6,6 +6,7 @@ import {
 } from './fieldModel'
 
 export interface MoveDraft {
+  touch?: boolean
   id: string
   pointer: number
   origin: GroundPoint

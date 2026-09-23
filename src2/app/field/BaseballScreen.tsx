@@ -29,6 +29,8 @@ export interface BaseballScreenProps {
   canPitch: boolean
   remainingMs?: number
   instruction?: string
+  instructionDetail?: string
+  finishLabel?: string
   canFinish?: boolean
   onFinish?: () => void
   onCameraGesture?: (active: boolean) => void
@@ -44,6 +46,12 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
   const surface = useFieldSurface()
   const theme = useTheme()
   const [bounds, setBounds] = useState<ScoreboardBounds>()
+  const [viewportHeight, setViewportHeight] = useState(0)
+  const [header, setHeader] = useState<ScoreboardBounds>()
+  const compact = viewportHeight > 0 && viewportHeight < 480 && header != null
+  const toastBounds = compact
+    ? { ...header, width: Math.max(100, header.width - 56) }
+    : bounds
   const button = {
     minHeight: 52,
     flex: 1,
@@ -60,11 +68,17 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
     textAlign: 'center'
   } as const
   return (
-    <View style={[surface.root, { backgroundColor: theme.backgroundColor }]}>
-      <View style={{ flex: 1, marginBottom: 112 }}>
+    <View
+      style={[surface.root, { backgroundColor: theme.backgroundColor }]}
+      onLayout={event => {
+        setViewportHeight(event.nativeEvent.layout.height)
+      }}
+    >
+      <View style={{ flex: 1 }}>
         <FieldCanvas
           {...props.field}
           zoom={1.25}
+          bottomExtension={112}
           cameraTilt={(-11 * Math.PI) / 180}
           cameraHeight={33}
           onScoreboardBounds={setBounds}
@@ -80,6 +94,9 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
         <View
           pointerEvents="box-none"
           style={{ flexDirection: 'row', justifyContent: 'flex-end' }}
+          onLayout={event => {
+            setHeader(event.nativeEvent.layout)
+          }}
         >
           <Text
             accessibilityLiveRegion="polite"
@@ -126,10 +143,13 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
         </View>
         <InstructionToast
           instruction={props.instruction}
+          detail={props.instructionDetail}
+          finishLabel={props.finishLabel}
           remainingMs={props.remainingMs}
           canFinish={props.canFinish}
           onFinish={props.onFinish}
-          bounds={bounds}
+          bounds={toastBounds}
+          compact={compact}
         />
         {props.onDismissHint != null && (
           <SwitchHitterHint bounds={bounds} onDismiss={props.onDismissHint} />

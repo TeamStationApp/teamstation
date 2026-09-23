@@ -73,6 +73,7 @@ export interface FieldCanvasProps {
   zoom: number
   cameraTilt?: number
   cameraHeight?: number
+  bottomExtension?: number
   /** Wake an on-demand renderer after commands issued from the RN controls. */
   movementRevision?: number
 }

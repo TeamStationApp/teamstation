@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { Modal, Pressable, ScrollView, Text, View } from 'react-native'
 
 import { useTheme } from '../theme/ThemeContext'
@@ -22,11 +22,30 @@ export function ScoringButton({
   submenu?: boolean
 }): React.ReactElement {
   const theme = useTheme()
+  const [active, setActive] = useState(false)
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={label}
       disabled={disabled}
+      onHoverIn={() => {
+        setActive(true)
+      }}
+      onHoverOut={() => {
+        setActive(false)
+      }}
+      onFocus={() => {
+        setActive(true)
+      }}
+      onBlur={() => {
+        setActive(false)
+      }}
+      onPressIn={() => {
+        setActive(true)
+      }}
+      onPressOut={() => {
+        setActive(false)
+      }}
       style={({ pressed }) => ({
         minHeight: 44,
         padding: 10,
@@ -37,8 +56,8 @@ export function ScoringButton({
         backgroundColor:
           color ??
           (row
-            ? pressed
-              ? theme.inactiveBackgroundColor
+            ? (pressed || active) && !disabled
+              ? theme.scoringMenuActiveBackground
               : theme.backgroundColor
             : theme.primaryButtonColor),
         opacity: disabled ? 0.4 : 1
@@ -53,7 +72,9 @@ export function ScoringButton({
             color != null
               ? theme.scoringDecisionText
               : row
-                ? theme.primaryTextColor
+                ? active && !disabled
+                  ? theme.scoringMenuActiveText
+                  : theme.primaryTextColor
                 : theme.buttonTextColor,
           textAlign: row ? 'left' : 'center'
         }}

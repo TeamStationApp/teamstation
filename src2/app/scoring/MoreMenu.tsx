@@ -29,6 +29,8 @@ export function MoreMenu({
     escaped: boolean
   } | null>(null)
   const skipClick = useRef(false)
+  const primaryPanel = useRef<HTMLDivElement>(null)
+  const childPanel = useRef<HTMLDivElement>(null)
   const close = (): void => {
     setOpen(false)
     setChild(false)
@@ -92,6 +94,18 @@ export function MoreMenu({
         role="menuitem"
         aria-label={label}
         title={reason}
+        onPointerEnter={() => {
+          if (reason == null) setHover(key)
+        }}
+        onPointerLeave={() => {
+          setHover(undefined)
+        }}
+        onFocus={() => {
+          if (reason == null) setHover(key)
+        }}
+        onBlur={() => {
+          setHover(undefined)
+        }}
         disabled={reason != null}
         onClick={() => {
           choose(key)
@@ -105,16 +119,19 @@ export function MoreMenu({
           borderBottom: `1px solid ${theme.defaultBorderColor}`,
           padding: '9px 12px',
           background:
-            hover === key
-              ? theme.inactiveBackgroundColor
+            hover === key && reason == null
+              ? theme.scoringMenuActiveBackground
               : theme.backgroundColor,
-          color: theme.primaryTextColor,
+          color:
+            hover === key && reason == null
+              ? theme.scoringMenuActiveText
+              : theme.primaryTextColor,
           fontFamily: theme.semiBoldTextFont,
           fontSize: 14,
           opacity: reason == null ? 1 : 0.4
         }}
       >
-        {submenu ? '‹  ' : ''}
+        {submenu ? '›  ' : ''}
         {label}
       </button>
     )
@@ -153,6 +170,9 @@ export function MoreMenu({
         }}
         onPointerDown={event => {
           if (disabled || event.button !== 0) return
+          // Safari may omit the compatibility click after a captured drag.
+          // A fresh pointer press must not inherit that drag's click guard.
+          skipClick.current = false
           gesture.current = {
             x: event.clientX,
             y: event.clientY,
@@ -170,8 +190,15 @@ export function MoreMenu({
             show()
           }
           if (!active.dragged) return
+          const parentBounds = primaryPanel.current?.getBoundingClientRect()
+          const childBounds = childPanel.current?.getBoundingClientRect()
+          const right = Math.max(
+            parentBounds?.right ?? 0,
+            childBounds?.right ?? 0
+          )
           if (
-            event.clientX > (child ? 380 : 308) &&
+            right > 0 &&
+            event.clientX > right &&
             hit(event.clientX, event.clientY) == null
           ) {
             active.escaped = true
@@ -182,7 +209,7 @@ export function MoreMenu({
           const key = hit(event.clientX, event.clientY)
           setHover(key)
           if (key === 'Put Batter on Base') setChild(true)
-          else if (key != null && ![1, 2, 3].includes(Number(key)))
+          else if (parentBounds != null && event.clientX <= parentBounds.right)
             setChild(false)
         }}
         onPointerUp={event => {
@@ -239,12 +266,13 @@ export function MoreMenu({
           <div
             role="menu"
             aria-label="More scoring actions"
+            ref={primaryPanel}
             style={{
               position: 'fixed',
-              left: child ? 190 : 8,
+              left: 'max(8px, env(safe-area-inset-left))',
               bottom: 128,
-              width: child ? 190 : 300,
-              maxWidth: 'calc(100vw - 16px)',
+              width: 'calc(50vw - 16px)',
+              maxWidth: 300,
               zIndex: 20,
               background: theme.backgroundColor,
               borderRadius: theme.rem(theme.radiusRem),
@@ -281,11 +309,13 @@ export function MoreMenu({
               <div
                 role="menu"
                 aria-label="Batter base"
+                ref={childPanel}
                 style={{
-                  position: 'absolute',
-                  right: 'calc(100% + 8px)',
-                  bottom: 0,
-                  width: 174,
+                  position: 'fixed',
+                  left: 'calc(50vw + 8px)',
+                  maxWidth: 300,
+                  bottom: 128,
+                  width: 'calc(50vw - 16px)',
                   borderRadius: theme.rem(theme.radiusRem),
                   overflow: 'hidden',
                   background: theme.backgroundColor

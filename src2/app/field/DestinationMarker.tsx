@@ -1,6 +1,8 @@
 /* eslint-disable react/no-unknown-property -- Three.js scene elements. */
 import React from 'react'
 
+export const DESTINATION_RADIUS = 11
+
 /** Broad target with a bright outer rim and progressively dimmer inner rings. */
 export function DestinationMarker({
   position,

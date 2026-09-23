@@ -6,7 +6,6 @@ import { PerspectiveCamera, Vector3 } from 'three'
 import { asGameDetail } from '../../common/api'
 import { applyFieldCamera } from '../field/cameraModel'
 import { BASES } from '../field/fieldModel'
-import { TOUCH_TARGET_LIFT } from '../field/interactionAffordances'
 
 const game = asGameDetail({
   id: 'g1',
@@ -179,6 +178,68 @@ describe('scoring browser', function () {
   after(async function () {
     await browser?.close()
   })
+  for (const defensive of [false, true])
+    it(`keeps ${defensive ? 'defensive' : 'correction'} toast Done above controls in short landscape`, async function () {
+      const { page } = await open('/games/g1/score')
+      try {
+        if (defensive) {
+          await click(page, 'Ball in Play')
+          await click(page, 'Batter Out')
+          await click(page, 'Throw Out')
+          await page.waitForSelector('canvas[data-field-ready="true"]')
+          await placeDefenderWithKeyboard(page)
+          await page.keyboard.press('Enter')
+          await page.waitForSelector(
+            '[aria-label^="Tap and drag the next defender"]'
+          )
+        } else {
+          await chooseHit(page, 'Single')
+          await page.waitForSelector('[aria-label="Time to edit play"]', {
+            timeout: 30000
+          })
+        }
+        await page.setViewport({ width: 874, height: 292 })
+        const label = defensive ? 'Finish defensive play' : 'Finish at-bat'
+        await page.waitForFunction(
+          label => {
+            const done = document.querySelector(`[aria-label="${label}"]`)
+            const row = done == null ? null : done.parentElement
+            const toast = row == null ? null : row.parentElement
+            return toast != null && toast.getBoundingClientRect().width > 400
+          },
+          {},
+          label
+        )
+        const measured = await page.evaluate(label => {
+          const done = document
+            .querySelector(`[aria-label="${label}"]`)!
+            .getBoundingClientRect()
+          const undo = document
+            .querySelector('[aria-label^="Undo "]')!
+            .getBoundingClientRect()
+          const hit = document
+            .elementFromPoint(
+              done.x + done.width / 2,
+              done.y + done.height / 2
+            )!
+            .closest('[aria-label]')!
+          return {
+            bottom: done.bottom,
+            footerTop: undo.top,
+            hit: hit.getAttribute('aria-label')
+          }
+        }, label)
+        expect(measured.bottom).lessThan(measured.footerTop)
+        expect(measured.hit).equals(label)
+        await click(page, label)
+        await page.waitForSelector('[aria-label*="Batter Player 2"]', {
+          timeout: 30000
+        })
+        await page.waitForSelector(`[aria-label*="${defensive ? 1 : 0} outs"]`)
+      } finally {
+        await page.close()
+      }
+    })
   it('finishes coordinated hit flight before exposing correction or home decisions', async function () {
     for (const outcome of ['Single', 'Double', 'Triple', 'Home Run']) {
       const { page, unexpected } = await open('/games/g1/score')
@@ -219,7 +280,7 @@ describe('scoring browser', function () {
         await page.waitForSelector('[aria-label^="Tap and Drag Defender"]')
         expect(await page.$('[aria-label="Time to edit play"]')).equals(null)
         if (assisted) await placeDefenderWithKeyboard(page, true)
-        else await click(page, 'Done')
+        else await click(page, 'Finish defensive play')
         expect(await page.$('[aria-label="Time to edit play"]')).equals(null)
         await page.waitForSelector('[aria-label="Time to edit play"]', {
           timeout: 30000
@@ -481,7 +542,8 @@ describe('scoring browser', function () {
         view: 'home',
         zoom: 1.25,
         tilt: (-11 * Math.PI) / 180,
-        heightOffset: 33
+        heightOffset: 33,
+        bottomExtension: 112
       })
       camera.updateMatrixWorld()
       const project = (x: number, y: number, z: number): [number, number] => {
@@ -693,7 +755,8 @@ describe('scoring browser', function () {
         view: 'home',
         zoom: 1.25,
         tilt: (-11 * Math.PI) / 180,
-        heightOffset: 33
+        heightOffset: 33,
+        bottomExtension: 112
       })
       const point = (x: number, z: number): [number, number] => {
         const p = new Vector3(x, 6, z).project(camera)
@@ -827,7 +890,7 @@ describe('scoring browser', function () {
       await click(page, 'Out')
       await page.waitForSelector('[aria-label^="Tap and Drag Thrower."]')
       await placeDefenderWithKeyboard(page)
-      await click(page, 'Done')
+      await click(page, 'Finish defensive play')
       await page.waitForSelector(
         '[aria-label="Home plate decision for Player 6"]',
         { timeout: 30000 }
@@ -873,6 +936,55 @@ describe('scoring browser', function () {
       await page.close()
     }
   })
+  for (const width of [320, 390, 874]) {
+    it(`keeps More halves fixed and extends the field at ${width}px`, async function () {
+      const { page } = await open('/games/g1/score')
+      try {
+        await page.setViewport({ width, height: width === 874 ? 402 : 844 })
+        await click(page, 'More')
+        const bounds = async (
+          label: string
+        ): Promise<{
+          x: number
+          y: number
+          right: number
+          bottom: number
+          width: number
+        }> =>
+          await page.$eval(`[aria-label="${label}"]`, node => {
+            const r = node.getBoundingClientRect()
+            return {
+              x: r.x,
+              y: r.y,
+              right: r.right,
+              bottom: r.bottom,
+              width: r.width
+            }
+          })
+        const parent = await bounds('More scoring actions')
+        expect(parent.right).at.most(width / 2)
+        await click(page, 'Put Batter on Base')
+        expect(await bounds('More scoring actions')).deep.equals(parent)
+        expect((await bounds('Batter base')).x).at.least(width / 2)
+        await page.focus('[aria-label="First"]')
+        expect(
+          await page.$eval('[aria-label="First"]', node => ({
+            bg: getComputedStyle(node).backgroundColor,
+            text: getComputedStyle(node).color
+          }))
+        ).deep.equals({ bg: 'rgb(36, 113, 61)', text: 'rgb(255, 255, 255)' })
+        await page.keyboard.press('Escape')
+        expect(await page.$('[aria-label="More scoring actions"]')).equals(null)
+        const geometry = await page.$eval('canvas', node => ({
+          bottom: node.getBoundingClientRect().bottom,
+          height: window.innerHeight
+        }))
+        expect(geometry.bottom).closeTo(geometry.height, 1)
+      } finally {
+        await page.close()
+      }
+    })
+  }
   it('opens More on upward drag and releases an action or escapes right', async function () {
     const { page } = await open('/games/g1/score')
     try {
@@ -963,7 +1075,7 @@ describe('scoring browser', function () {
           await page.keyboard.press('Space')
           await page.keyboard.press('ArrowUp')
           await page.keyboard.press('Enter')
-          await click(page, 'Done')
+          await click(page, 'Finish defensive play')
         }
         const windowExpected = ![
           'Place a Runner (Tiebreaker)',
@@ -1025,7 +1137,8 @@ describe('scoring browser', function () {
           view: 'home',
           zoom: 1.25,
           tilt: (-11 * Math.PI) / 180,
-          heightOffset: 33
+          heightOffset: 33,
+          bottomExtension: 112
         })
         const projected = new Vector3(BASES[2].x, 9, BASES[2].z).project(camera)
         const expectedX = Math.max(
@@ -1154,7 +1267,8 @@ describe('scoring browser', function () {
           view: 'home',
           zoom: 1.25,
           tilt: (-11 * Math.PI) / 180,
-          heightOffset: 33
+          heightOffset: 33,
+          bottomExtension: 112
         })
         const project = (x: number, y: number, z: number): [number, number] => {
           const p = new Vector3(x, y, z).project(camera)
@@ -1236,7 +1350,8 @@ describe('scoring browser', function () {
         view: 'home',
         zoom: 1.25,
         tilt: (-11 * Math.PI) / 180,
-        heightOffset: 33
+        heightOffset: 33,
+        bottomExtension: 112
       })
       const project = (base: number, y: number): [number, number] => {
         const point = new Vector3(BASES[base].x, y, BASES[base].z).project(
@@ -1251,7 +1366,7 @@ describe('scoring browser', function () {
       const to = project(2, 0)
       await page.touchscreen.touchStart(...from)
       await new Promise(resolve => setTimeout(resolve, 400))
-      await page.touchscreen.touchMove(to[0], to[1] + TOUCH_TARGET_LIFT)
+      await page.touchscreen.touchMove(to[0], to[1])
       await page.waitForSelector('[aria-label="Safe drag target"]')
       const safe = await page.$eval('[aria-label="Safe drag target"]', node => {
         const r = node.getBoundingClientRect()
@@ -1365,7 +1480,7 @@ describe('scoring browser', function () {
           await page.waitForSelector('[aria-label^="Resolve Player 6"]')
           await dropRunnerWithKeyboard(page, 'Out')
           await placeDefenderWithKeyboard(page)
-          await click(page, 'Done')
+          await click(page, 'Finish defensive play')
         }
         await page.waitForSelector('[aria-label="Time to edit play"]', {
           timeout: 30000
@@ -1449,7 +1564,7 @@ describe('scoring browser', function () {
         await new Promise(resolve => setTimeout(resolve, 10500))
         await page.waitForSelector('[aria-label^="Tap and Drag Thrower."]')
         await placeDefenderWithKeyboard(page)
-        if (sameDefender) await click(page, 'Done')
+        if (sameDefender) await click(page, 'Finish defensive play')
         else {
           await placeDefenderWithKeyboard(page, true)
         }
@@ -1513,7 +1628,7 @@ describe('scoring browser', function () {
       await dropRunnerWithKeyboard(page, 'Out')
       await click(page, 'Picked Off')
       await placeDefenderWithKeyboard(page)
-      await click(page, 'Done')
+      await click(page, 'Finish defensive play')
       await page.waitForSelector('[aria-label*="Bottom 1st"]', {
         timeout: 30000
       })
@@ -1698,7 +1813,8 @@ describe('scoring browser', function () {
         view: 'home',
         zoom: 1.25,
         tilt: (-11 * Math.PI) / 180,
-        heightOffset: 33
+        heightOffset: 33,
+        bottomExtension: 112
       })
       const pt = new Vector3(BASES[1].x, 6, BASES[1].z).project(camera)
       await page.touchscreen.touchStart(
@@ -1759,7 +1875,7 @@ describe('scoring browser', function () {
       await click(page, 'Out')
       await page.waitForSelector('[aria-label^="Tap and Drag Thrower."]')
       await placeDefenderWithKeyboard(page)
-      await click(page, 'Done')
+      await click(page, 'Finish defensive play')
       await page.waitForSelector('[aria-label="Time to edit play"]', {
         timeout: 30000
       })

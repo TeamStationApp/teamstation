@@ -239,14 +239,30 @@ export function OutcomePicker({
                 data-outcome={value}
                 key={value}
                 aria-label={value}
+                onPointerEnter={() => {
+                  setHover(value)
+                }}
+                onPointerLeave={() => {
+                  setHover('')
+                }}
+                onFocus={() => {
+                  setHover(value)
+                }}
+                onBlur={() => {
+                  setHover('')
+                }}
                 style={{
                   ...buttonStyle,
+                  color:
+                    hover === value
+                      ? theme.scoringMenuActiveText
+                      : theme.primaryTextColor,
                   borderRadius: 0,
                   textAlign: 'left',
                   borderBottom: `1px solid ${theme.defaultBorderColor}`,
                   background:
                     hover === value
-                      ? theme.inactiveBackgroundColor
+                      ? theme.scoringMenuActiveBackground
                       : theme.backgroundColor
                 }}
                 onClick={event => {
@@ -289,14 +305,30 @@ export function OutcomePicker({
                   key={value}
                   data-outcome={value}
                   aria-label={value}
+                  onPointerEnter={() => {
+                    setHover(value)
+                  }}
+                  onPointerLeave={() => {
+                    setHover('')
+                  }}
+                  onFocus={() => {
+                    setHover(value)
+                  }}
+                  onBlur={() => {
+                    setHover('')
+                  }}
                   style={{
                     ...buttonStyle,
+                    color:
+                      hover === value
+                        ? theme.scoringMenuActiveText
+                        : theme.primaryTextColor,
                     borderRadius: 0,
                     textAlign: 'left',
                     borderBottom: `1px solid ${theme.defaultBorderColor}`,
                     background:
                       hover === value
-                        ? theme.inactiveBackgroundColor
+                        ? theme.scoringMenuActiveBackground
                         : theme.backgroundColor
                   }}
                   onClick={() => {

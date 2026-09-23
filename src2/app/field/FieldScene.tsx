@@ -7,7 +7,6 @@ import {
   type Object3D,
   PerspectiveCamera,
   Plane,
-  type Ray,
   Raycaster,
   Sprite,
   Vector3
@@ -34,7 +33,7 @@ import { fieldPalette as p } from './fieldPalette'
 import type { FieldCanvasProps } from './fieldTypes'
 import {
   inArcGrabArea,
-  placementRay,
+  offsetTouchTarget,
   usesTouchPlacement
 } from './interactionAffordances'
 import { MoveGuide } from './MoveGuide'
@@ -121,20 +120,10 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
   const dragGeneration = useRef(0)
   const [preview, setPreview] = useState<MoveDraft | null>(null)
   const picker = useMemo(() => new Raycaster(), [])
-  const placementPicker = useMemo(() => new Raycaster(), [])
   const isTouch = (event: ThreeEvent<PointerEvent>): boolean =>
     usesTouchPlacement(
       event.pointerType ?? event.nativeEvent?.pointerType,
       props.touchPlacement === true
-    )
-  const destinationRay = (event: ThreeEvent<PointerEvent>): Ray =>
-    placementRay(
-      event.ray,
-      event.pointer,
-      camera,
-      size.height,
-      isTouch(event),
-      placementPicker
     )
   const ground = useMemo(
     () => new Plane(new Vector3(0, 1, 0), -TERRAIN.players),
@@ -149,7 +138,8 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
       view,
       zoom,
       tilt: cameraTilt,
-      heightOffset: cameraHeight
+      heightOffset: cameraHeight,
+      bottomExtension: props.bottomExtension
     })
     invalidate()
   }, [
@@ -160,6 +150,7 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     zoom,
     cameraTilt,
     cameraHeight,
+    props.bottomExtension,
     invalidate
   ])
 
@@ -240,7 +231,7 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     if (runner != null) {
       const hit = runnerTargetAt(runner.view, pointer)
       if (hit == null) {
-        if (destinationRay(event).intersectPlane(ground, point) == null) return
+        if (event.ray.intersectPlane(ground, point) == null) return
         runner.view = runnerDragView(
           runner.id,
           runner.view.from,
@@ -264,8 +255,8 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
       }
       callbacks.current.onRunnerDrag?.({ ...runner.view })
     } else {
-      if (destinationRay(event).intersectPlane(ground, point) == null) return
-      previewMove(drag.current, point)
+      if (event.ray.intersectPlane(ground, point) == null) return
+      previewMove(drag.current, offsetTouchTarget(point, isTouch(event)))
     }
     if (runnerDrag.current != null) {
       if (
@@ -340,6 +331,7 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     props.onGestureActive?.(true)
     onSelect(player.id)
     drag.current = beginMove(player, event.pointerId, point, nearest != null)
+    drag.current.touch = isTouch(event)
     if (props.interaction?.runnerIds?.includes(player.id) === true) {
       const from = player.runnerBase ?? (player.batting === true ? 0 : 1)
       drag.current.origin = { ...BASES[from % 4] }
@@ -363,12 +355,10 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     if (isTouch(event)) {
       // Body/name picking uses the original ray. Only the destination is lifted.
       drag.current.offset = { x: 0, z: 0 }
-      if (
-        nearest == null &&
-        destinationRay(event).intersectPlane(ground, point) != null
-      )
-        previewMove(drag.current, point)
-    } else if (nearest == null) previewMove(drag.current, point)
+      if (nearest == null && event.ray.intersectPlane(ground, point) != null)
+        previewMove(drag.current, offsetTouchTarget(point, isTouch(event)))
+    } else if (nearest == null)
+      previewMove(drag.current, offsetTouchTarget(point, isTouch(event)))
     setPreview({ ...drag.current })
     const capture = event.target as Element
     capture.setPointerCapture(event.pointerId)
@@ -494,9 +484,23 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
       .copy(camera.position)
       .addScaledVector(forward, camera.near + 1)
     surface.quaternion.copy(camera.quaternion)
-    const height =
-      2 * Math.tan((camera.fov * Math.PI) / 360) * (camera.near + 1)
-    surface.scale.set(height * camera.aspect, height, 1)
+    const topLeft = new Vector3(-1, 1, -1).unproject(camera)
+    const bottomRight = new Vector3(1, -1, -1).unproject(camera)
+    const factor = (camera.near + 1) / camera.near
+    surface.position
+      .copy(topLeft)
+      .add(bottomRight)
+      .multiplyScalar(0.5)
+      .sub(camera.position)
+      .multiplyScalar(factor)
+      .add(camera.position)
+    const localTop = camera.worldToLocal(topLeft.clone())
+    const localBottom = camera.worldToLocal(bottomRight.clone())
+    surface.scale.set(
+      (localBottom.x - localTop.x) * factor,
+      (localTop.y - localBottom.y) * factor,
+      1
+    )
   })
   useEffect(
     () => () => {
@@ -511,7 +515,7 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
   const landingAt = (
     event: ThreeEvent<PointerEvent>
   ): Pick<BallArcState, 'target' | 'landingHeight'> | null => {
-    const ray = destinationRay(event)
+    const ray = event.ray
     const onGround = ray.intersectPlane(ground, point)
     const groundDistance =
       onGround == null ? Infinity : ray.origin.distanceTo(point)
@@ -521,8 +525,13 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
       .filter((object): object is Object3D => object != null)
     const hit = picker.intersectObjects(stands, false)[0]
     if (hit != null && hit.distance < groundDistance)
-      return { target: arcTarget(hit.point), landingHeight: hit.point.y + 0.25 }
-    return onGround == null ? null : { target: arcTarget(point) }
+      return {
+        target: arcTarget(offsetTouchTarget(hit.point, isTouch(event))),
+        landingHeight: hit.point.y + 0.25
+      }
+    return onGround == null
+      ? null
+      : { target: arcTarget(offsetTouchTarget(point, isTouch(event))) }
   }
   const aim = (
     event: ThreeEvent<PointerEvent>,

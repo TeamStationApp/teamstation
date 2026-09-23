@@ -555,11 +555,20 @@ function ScoringSession(props: {
       instruction={
         state.moreDraft != null
           ? `Drag a runner for ${state.moreDraft.action}`
-          : instruction == null
-            ? state.phase === 'awaitingBatter'
+          : (instruction ??
+            (state.phase === 'awaitingBatter'
               ? 'Next batter is on base. Update lineup to continue.'
-              : undefined
-            : `${instruction}${state.phase === 'trajectory' ? ` ${angle}° ${trajectoryLabel(angle)}` : ''}`
+              : undefined))
+      }
+      instructionDetail={
+        state.phase === 'trajectory'
+          ? `${angle}° ${trajectoryLabel(angle)}`
+          : undefined
+      }
+      finishLabel={
+        state.phase === 'chooseDefender'
+          ? 'Finish defensive play'
+          : 'Finish at-bat'
       }
       remainingMs={
         state.phase === 'correctionWindow' && state.presentation == null
@@ -567,7 +576,8 @@ function ScoringSession(props: {
           : undefined
       }
       canFinish={
-        state.phase === 'correctionWindow' &&
+        (state.phase === 'correctionWindow' ||
+          state.phase === 'chooseDefender') &&
         !menu &&
         sheet == null &&
         !outcomeMenu &&
@@ -575,16 +585,33 @@ function ScoringSession(props: {
         state.presentation == null &&
         !state.motions.some(motion => !motion.complete)
       }
-      onFinish={() => {
-        if (gestureActive || menu || sheet != null || outcomeMenu || moreOpen)
-          return
-        dispatch({
-          type: 'CLOSE_PLAY',
-          generation: state.generation,
-          revision: state.correctionWindow?.revision,
-          sequence: session.meta.sequence
-        })
-      }}
+      onFinish={
+        state.phase !== 'chooseDefender' && state.phase !== 'correctionWindow'
+          ? undefined
+          : () => {
+              if (
+                gestureActive ||
+                menu ||
+                sheet != null ||
+                outcomeMenu ||
+                moreOpen
+              )
+                return
+              if (state.phase === 'chooseDefender') {
+                dispatchRunner({
+                  type: 'DEFENDER',
+                  generation: state.generation
+                })
+                return
+              }
+              dispatch({
+                type: 'CLOSE_PLAY',
+                generation: state.generation,
+                revision: state.correctionWindow?.revision,
+                sequence: session.meta.sequence
+              })
+            }
+      }
       onCameraGesture={setGesture}
       canPitch={
         state.phase === 'ready' &&
