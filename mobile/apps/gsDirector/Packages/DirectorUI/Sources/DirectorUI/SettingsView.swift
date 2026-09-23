@@ -1,5 +1,7 @@
 import CameramanControlUI
+import CameramanCore
 import DirectorCore
+import GameStationKit
 import SwiftUI
 
 private enum SettingsCover: String, Identifiable {
@@ -21,6 +23,7 @@ public struct SettingsView: View {
 
   @State private var draft = AppConfig.default
   @State private var cover: SettingsCover?
+  @State private var logout = LoginFlow()
   @State private var showingClearCameraMemory = false
   @State private var showingTestThermal = false
   @State private var deleting: OverlayTemplate?
@@ -40,6 +43,10 @@ public struct SettingsView: View {
         .stackedBehind(depth: cover == nil ? 0 : 1)
         .accessibilityHidden(cover != nil)
         .allowsHitTesting(cover == nil)
+        // A tap off the slide disarms an armed logout. A Form row button with
+        // the default style never runs under this gesture, so those rows set
+        // an explicit button style.
+        .simultaneousGesture(TapGesture().onEnded { logout.tapElsewhere() })
 
       if let cover {
         StackedSceneLayer(onDismiss: dismissCover) {
@@ -155,44 +162,17 @@ public struct SettingsView: View {
         // destination, and an operator who wanted neither had nowhere obvious
         // to go.
         Section {
-          Button {
-            cover = .gameStationSignIn
-          } label: {
-            HStack(spacing: 12) {
-              Image(systemName: environment.gameStation.isSignedIn
-                ? "person.crop.circle.fill.badge.checkmark"
-                : "person.crop.circle.badge.plus")
-                .font(.title2)
-                .foregroundStyle(
-                  environment.gameStation.isSignedIn ? Color.accentColor : .secondary
-                )
-              VStack(alignment: .leading, spacing: 2) {
-                Text(environment.gameStation.isSignedIn
-                  ? "GameStation account"
-                  : "Sign in to GameStation")
-                  .font(.headline)
-                  .foregroundStyle(.primary)
-                Text(gameStationAccountSummary)
-                  .font(.subheadline)
-                  .foregroundStyle(.secondary)
-              }
-              Spacer()
-              Image(systemName: "chevron.right")
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(.tertiary)
-            }
-            .contentShape(Rectangle())
+          if LoginFlow.showsDevelopmentHost(AppServer.url.absoluteString) {
+            Text(AppServer.url.absoluteString)
+              .font(.footnote)
+              .foregroundStyle(.secondary)
+              .accessibilityIdentifier("settings-gamestation-host")
           }
-          .buttonStyle(.plain)
-          .accessibilityIdentifier("settings-gamestation-account")
+          accountRow
         } header: {
-          Text("GameStation")
-        } footer: {
-          Text("""
-          The event is the game this Director is covering. Every recording made while it is \
-          chosen is filed under it, its scoreboard can be shown on the programme, and the Stream \
-          button can publish to it — that is chosen in the section below.
-          """)
+          Text(environment.gameStation.isSignedIn
+            ? "Gamestation account"
+            : "Log in to Gamestation")
         }
 
         Section {
@@ -283,11 +263,15 @@ public struct SettingsView: View {
             )
           }
 
-          Button("Add New Template") {
+          Button {
             copyFromID = environment.activeTemplateID
             newTemplateName = ""
             cover = .newTemplate
+          } label: {
+            Text("Add New Template")
+              .frame(maxWidth: .infinity, alignment: .leading)
           }
+          .buttonStyle(.borderless)
           .accessibilityIdentifier("settings-add-content-template")
         } header: {
           Text("Content Templates")
@@ -312,11 +296,15 @@ public struct SettingsView: View {
             )
           }
 
-          Button("Add New Template") {
+          Button {
             copyRemoteFromID = environment.activeRemoteTemplateID
             newRemoteName = ""
             cover = .newRemote
+          } label: {
+            Text("Add New Template")
+              .frame(maxWidth: .infinity, alignment: .leading)
           }
+          .buttonStyle(.borderless)
           .accessibilityIdentifier("settings-add-remote-template")
         } header: {
           Text("Remote Control")
@@ -528,6 +516,7 @@ public struct SettingsView: View {
           Button("Clear camera memory", role: .destructive) {
             showingClearCameraMemory = true
           }
+          .buttonStyle(.borderless)
           .accessibilityIdentifier("settings-clear-camera-memory")
         } header: {
           Text("Sources")
@@ -547,6 +536,7 @@ public struct SettingsView: View {
           Button("Test Thermal Visuals") {
             showingTestThermal = true
           }
+          .buttonStyle(.borderless)
           .accessibilityIdentifier("settings-test-thermal")
         } header: {
           Text("Diagnostics")
@@ -588,13 +578,57 @@ public struct SettingsView: View {
 
   // MARK: - The account
 
-  /// The line under the account heading: who this Director is, or that it is
-  /// nobody yet.
-  private var gameStationAccountSummary: String {
-    guard environment.gameStation.isSignedIn else { return "Not signed in" }
-    return environment.gameStation.user?.email
+  private var accountEmail: String {
+    environment.gameStation.user?.email
       ?? environment.gameStation.user?.displayName
-      ?? "Signed in"
+      ?? ""
+  }
+
+  @ViewBuilder
+  private var accountRow: some View {
+    if environment.gameStation.isSignedIn {
+      VStack(alignment: .leading, spacing: 8) {
+        HStack {
+          Text(LoginFlow.loggedInLine(accountEmail))
+            .font(.body)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .onTapGesture { logout.tapElsewhere() }
+            .accessibilityIdentifier("settings-gamestation-account")
+          if !logout.logoutArmed {
+            Button("Logout") { logout.armLogout() }
+            // Nested in the account row, and under the form's tap-elsewhere
+            // gesture. Without its own style the tap never arms the slide.
+            .buttonStyle(.borderless)
+            .font(.body.weight(.semibold))
+            .foregroundStyle(.red)
+            .accessibilityIdentifier("gamestation-sign-out")
+          }
+        }
+        if logout.logoutArmed {
+          SlideToStopOverlay(
+            phrase: "Slide to log out",
+            trackIdentifier: "gamestation-slide-logout",
+            onStop: {
+              if logout.slide(progress: 1) {
+                environment.gameStation.signOut()
+              }
+            }
+          )
+          .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+      }
+    } else {
+      Button {
+        cover = .gameStationSignIn
+      } label: {
+        Text("Tap to Login")
+          .font(.body)
+          .frame(maxWidth: .infinity, alignment: .leading)
+      }
+      .buttonStyle(.plain)
+      .accessibilityIdentifier("settings-gamestation-account")
+    }
   }
 
   // MARK: - The event

@@ -460,9 +460,20 @@ async function signIn(m: Device): Promise<void> {
     .assertVisible({ id: 'gamestation-sign-out', timeout: 3_000 })
     .then(() => true)
     .catch(() => false)
-  // Signed in as somebody else, the iPad would list that account's games.
   if (signedIn && !JSON.stringify(await m.hierarchy()).includes(RUNNER_EMAIL)) {
     await m.tapOn({ id: 'gamestation-sign-out' })
+    await m.extendedWaitUntil({ visible: { id: 'gamestation-slide-logout' }, timeout: 5_000 })
+    const track = await boundsOf(m, 'gamestation-slide-logout')
+    if (track != null) {
+      const y = track.y + track.height / 2
+      await m.swipe({
+        startX: track.x + 4,
+        startY: y,
+        endX: track.x + track.width - 4,
+        endY: y,
+        duration: 400
+      })
+    }
     await m.extendedWaitUntil({ visible: { id: 'gamestation-email' }, timeout: 10_000 })
     signedIn = false
   }
@@ -475,11 +486,19 @@ async function signIn(m: Device): Promise<void> {
     await sleep(3_000)
     await m.tapOn({ id: 'gamestation-code' })
     await m.inputText({ text: seat('SEAT_SIGN_IN_CODE', RUNNER_EMAIL) })
-    await m.hideKeyboard()
-    await m.tapOn({ id: 'gamestation-submit-code' })
-    await m.extendedWaitUntil({ visible: { id: 'gamestation-sign-out' }, timeout: 30_000 })
+    const stillThere = await m
+      .assertVisible({ id: 'gamestation-submit-code', timeout: 2_000 })
+      .then(() => true)
+      .catch(() => false)
+    if (stillThere) {
+      await m.hideKeyboard()
+      await m.tapOn({ id: 'gamestation-submit-code' })
+    }
+    await m.extendedWaitUntil({
+      visible: { id: 'settings-gamestation-account' },
+      timeout: 30_000
+    })
   }
-  await m.tapOn({ id: 'gamestation-sign-in-done' })
 }
 
 // MARK: - Moving about Settings
