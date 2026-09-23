@@ -940,7 +940,25 @@ export const asDjSide = asObject({
   batters: asArray(asDjBatter)
 })
 export type DjSide = ReturnType<typeof asDjSide>
-export const asDjGame = asObject({ away: asDjSide, home: asDjSide })
+
+/** The plate appearance in progress: which side, and who is batting. */
+export const asDjAtBat = asObject({
+  side: asValue('away', 'home'),
+  userId: asNullable(asUserId)
+})
+export type DjAtBat = ReturnType<typeof asDjAtBat>
+
+/** Missing, on an older server, reads the same as no plate appearance. */
+function asDjAtBatField(raw: unknown): DjAtBat | null {
+  return raw == null ? null : asDjAtBat(raw)
+}
+
+export const asDjGame = asObject({
+  away: asDjSide,
+  home: asDjSide,
+  /** Who is at the plate, or null when no plate appearance is in progress. */
+  atBat: asDjAtBatField
+})
 export type DjGame = ReturnType<typeof asDjGame>
 
 export class GameStationClient {

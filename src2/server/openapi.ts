@@ -1834,8 +1834,11 @@ export function openApiDocument(version: string): OpenApiDocument {
             'own current lineup once GameStation has a record of it, the ' +
             "team's default before that, and otherwise the team's players " +
             'by jersey number, then name. `canEditWalkUp` is whether the ' +
-            "caller keeps that team's songs. Needs somebody who can see the " +
-            'game; 404 for anybody else.',
+            "caller keeps that team's songs. `atBat` is the plate appearance " +
+            'in progress: `side` is `away` in the top of an inning and `home` ' +
+            'in the bottom, and `userId` is the batter, or null for a guest. ' +
+            '`atBat` is null when no plate appearance is in progress. Needs ' +
+            'somebody who can see the game; 404 for anybody else.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam],
           responses: {
@@ -1845,10 +1848,27 @@ export function openApiDocument(version: string): OpenApiDocument {
                 'application/json': {
                   schema: {
                     type: 'object',
-                    required: ['away', 'home'],
+                    required: ['away', 'home', 'atBat'],
                     properties: {
                       away: { $ref: '#/components/schemas/DjSide' },
-                      home: { $ref: '#/components/schemas/DjSide' }
+                      home: { $ref: '#/components/schemas/DjSide' },
+                      atBat: {
+                        description:
+                          'The plate appearance in progress, or null.',
+                        oneOf: [
+                          {
+                            type: 'object',
+                            required: ['side', 'userId'],
+                            properties: {
+                              side: { enum: ['away', 'home'] },
+                              userId: {
+                                oneOf: [{ type: 'integer' }, { type: 'null' }]
+                              }
+                            }
+                          },
+                          { type: 'null' }
+                        ]
+                      }
                     }
                   }
                 }

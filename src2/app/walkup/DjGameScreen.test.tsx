@@ -12,6 +12,7 @@ import {
 import type { GameSocketEvent } from '../../common/gameSocket'
 import type { WalkUpSong } from '../../common/walkUpSong'
 import { ThemeProvider } from '../theme/ThemeContext'
+import { AT_BAT_FADE_MS } from './atBatColors'
 import {
   DjGameScreen,
   type DjGameScreenProps,
@@ -306,6 +307,62 @@ describe('DJ Game’s team pill (U29)', function () {
   it('comes back on the side it was left on', async function () {
     await render({ client: djClient([game()]), side: 'away' })
     expect(labelled('Away Team')?.getAttribute('aria-selected')).equals('true')
+  })
+
+  it('opens on the team at bat, with that batter outlined', async function () {
+    await render({
+      client: djClient([{ ...game(), atBat: { side: 'away', userId: 1 } }])
+    })
+    expect(labelled('Away Team')?.getAttribute('aria-selected')).equals('true')
+    const marks = document.querySelectorAll('[data-testid="DJ at bat"]')
+    expect(marks.length).equals(1)
+    expect(marks[0].parentElement?.textContent).includes('Otto')
+  })
+
+  it('fades to the next batter, and moves the pill when the half changes', async function () {
+    const socket = new FakeSocket()
+    const sides: string[] = []
+    const client = djClient([
+      { ...game(), atBat: { side: 'away', userId: 1 } },
+      { ...game(), atBat: { side: 'away', userId: 2 } },
+      { ...game(), atBat: { side: 'home', userId: 2 } }
+    ])
+    await render({
+      client,
+      socket,
+      onSide: next => sides.push(next)
+    })
+    expect(
+      document.querySelector('[data-testid="DJ at bat"]')?.parentElement
+        ?.textContent
+    ).includes('Otto')
+    const change = {
+      type: 'change',
+      gameId: 'g1',
+      kind: 'plays',
+      at: '',
+      data: {}
+    } as unknown as GameSocketEvent
+    await socket.emit('g1', change)
+    await act(async () => {
+      await delay(AT_BAT_FADE_MS * 2 + 40)
+    })
+    expect(labelled('Away Team')?.getAttribute('aria-selected')).equals('true')
+    expect(sides).deep.equals([])
+    expect(
+      document.querySelector('[data-testid="DJ at bat"]')?.parentElement
+        ?.textContent
+    ).includes('Olga')
+    await socket.emit('g1', change)
+    await act(async () => {
+      await delay(AT_BAT_FADE_MS * 2 + 40)
+    })
+    expect(labelled('Home Team')?.getAttribute('aria-selected')).equals('true')
+    expect(sides).deep.equals(['home'])
+    expect(
+      document.querySelector('[data-testid="DJ at bat"]')?.parentElement
+        ?.textContent
+    ).includes('Bea B')
   })
 })
 

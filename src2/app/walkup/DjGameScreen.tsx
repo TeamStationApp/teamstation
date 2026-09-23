@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { FlatList, Platform, Text, View } from 'react-native'
 
 import type {
+  DjAtBat,
   DjBatter,
   DjGame,
   DjSide,
@@ -21,6 +22,7 @@ import { useInsets } from '../platform/safeArea'
 import { RosterSelector } from '../scoring/RosterSelector'
 import { shortDate } from '../screens/format'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { AT_BAT_FADE_MS } from './atBatColors'
 import { DjLineupRow, type RowSong } from './DjLineupRow'
 import { useSongPlayer } from './useSongPlayer'
 import type { WalkUpMusic } from './walkUpMusicTypes'
@@ -74,8 +76,9 @@ const POLL_MS = 10_000
  * away, on a phone.
  *
  * The roster editor's team pill picks the side — the away team's name on the
- * left, the home team's on the right, "Away" and "Home" above them — and the
- * list below is that side's batting order: the game's own lineup as it stands
+ * left, the home team's on the right, "Away" and "Home" above them. The screen
+ * opens on the side at bat. The list below is that side's batting order: the
+ * game's own lineup as it stands
  * (a pinch hitter the moment the scorer sends him in), the team's default
  * before the game has one, or its players by jersey, each of the last two
  * with a line saying so.
@@ -87,6 +90,11 @@ const POLL_MS = 10_000
  * asking again, it reads every ten seconds instead. An update that arrives while a
  * finger is on the list waits until it lifts, so a row never moves under a
  * tap.
+ *
+ * The batter at the plate has a blue ring. A new batter fades that ring out
+ * and the next one in. A new half moves the pill onto that side and fades
+ * the ring in on the new batter. While the batter's own song plays, the ring
+ * travels around the card.
  *
  * One clip plays at a time. Switching sides leaves it playing — the next
  * batter may be on the other team's list — and leaving the screen stops it.
@@ -126,6 +134,15 @@ export function DjGameScreen(props: DjGameScreenProps): React.ReactElement {
    */
   const [refused, setRefused] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
+  /** Which batter's ring is up, and whether it is fading. */
+  const [highlight, setHighlight] = useState<AtBatHighlight>({
+    key: null,
+    phase: 'steady'
+  })
+  const trackedAtBat = useRef<string | null | undefined>(undefined)
+  const highlightTimers = useRef<Array<ReturnType<typeof setTimeout>>>([])
+  const onSideRef = useRef(onSide)
+  onSideRef.current = onSide
 
   /** The newest answer, shown at once unless a finger is down. */
   const latest = useRef<DjGame | undefined>(undefined)
@@ -217,6 +234,51 @@ export function DjGameScreen(props: DjGameScreenProps): React.ReactElement {
     }
   }, [connected, refused, load, pollMs])
 
+  // The ring follows the plate appearance: fade out, and on a new half move
+  // the pill before fading the next ring in.
+  useEffect(() => {
+    if (shown == null) return
+    const nextKey = atBatKey(shown.atBat)
+    const nextSide = shown.atBat?.side ?? null
+    if (trackedAtBat.current === undefined) {
+      trackedAtBat.current = nextKey
+      setHighlight({ key: nextKey, phase: 'steady' })
+      return
+    }
+    if (trackedAtBat.current === nextKey) return
+    const leaving = trackedAtBat.current
+    const fromSide = sideOf(leaving)
+    trackedAtBat.current = nextKey
+    clearHighlightTimers(highlightTimers.current)
+    highlightTimers.current = []
+    const later = (wait: number, step: () => void): void => {
+      highlightTimers.current.push(setTimeout(step, wait))
+    }
+    const arrive = (): void => {
+      if (nextSide != null && nextSide !== fromSide) {
+        setSide(nextSide)
+        onSideRef.current?.(nextSide)
+      }
+      setHighlight({ key: nextKey, phase: 'in' })
+      later(AT_BAT_FADE_MS, () => {
+        setHighlight({ key: nextKey, phase: 'steady' })
+      })
+    }
+    if (leaving == null) {
+      arrive()
+      return
+    }
+    setHighlight({ key: leaving, phase: 'out' })
+    later(AT_BAT_FADE_MS, arrive)
+  }, [shown])
+
+  useEffect(() => {
+    const timers = highlightTimers
+    return () => {
+      clearHighlightTimers(timers.current)
+    }
+  }, [])
+
   // The toast goes by itself.
   useEffect(() => {
     if (toast == null) return
@@ -289,7 +351,7 @@ export function DjGameScreen(props: DjGameScreenProps): React.ReactElement {
     )
   }
 
-  const showing: DjTeamSide = side ?? startingSide(shown)
+  const showing: DjTeamSide = side ?? shown.atBat?.side ?? startingSide(shown)
   const team: DjSide = shown[showing]
   const note =
     team.source === 'default'
@@ -353,11 +415,17 @@ export function DjGameScreen(props: DjGameScreenProps): React.ReactElement {
                 : songKey(team.teamId, batter.userId, tune)
             const rowKey = `${team.teamId}:${batter.userId ?? batter.name}`
             const userId = batter.userId
+            const outlineKey = batterOutlineKey(showing, batter, team.batters)
             return (
               <DjLineupRow
                 batter={batter}
                 song={found[key] ?? (resolve == null ? 'missing' : 'resolving')}
                 playing={player.playing === rowKey}
+                outline={
+                  outlineKey != null && outlineKey === highlight.key
+                    ? highlight.phase
+                    : null
+                }
                 onEdit={
                   team.canEditWalkUp && userId != null && onEditSong != null
                     ? () => {
@@ -409,6 +477,38 @@ export function DjGameScreen(props: DjGameScreenProps): React.ReactElement {
 
 function Gap(): React.ReactElement {
   return <View style={{ height: 8 }} />
+}
+
+interface AtBatHighlight {
+  key: string | null
+  phase: 'steady' | 'in' | 'out'
+}
+
+function atBatKey(atBat: DjAtBat | null | undefined): string | null {
+  if (atBat == null) return null
+  return `${atBat.side}:${atBat.userId ?? 'guest'}`
+}
+
+function sideOf(key: string | null): DjTeamSide | null {
+  if (key == null) return null
+  return key.startsWith('home:') ? 'home' : 'away'
+}
+
+/** The row the ring belongs on, or null when this batter is not the one. */
+function batterOutlineKey(
+  side: DjTeamSide,
+  batter: DjBatter,
+  batters: readonly DjBatter[]
+): string | null {
+  if (batter.userId != null) return `${side}:${batter.userId}`
+  const guests = batters.filter(row => row.userId == null)
+  return guests.length === 1 ? `${side}:guest` : null
+}
+
+function clearHighlightTimers(
+  timers: Array<ReturnType<typeof setTimeout>>
+): void {
+  for (const timer of timers) clearTimeout(timer)
 }
 
 /** The side the viewer keeps songs for, and Home for both or neither. */

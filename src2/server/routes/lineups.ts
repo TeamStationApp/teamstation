@@ -2,6 +2,7 @@ import { Router } from 'express'
 import type { Kysely } from 'kysely'
 
 import type { DjBatter, DjGame, DjSide } from '../../common/api'
+import { atBatFromCurrentPlay } from '../../common/djAtBat'
 import { notFound, unauthorized } from '../../common/errors'
 import { shortNames } from '../../common/names'
 import {
@@ -143,7 +144,8 @@ export function lineupRoutes(db: Kysely<Database>): Router {
       }
       const answer: DjGame = {
         away: await side('away'),
-        home: await side('home')
+        home: await side('home'),
+        atBat: atBatFromCurrentPlay(game.currentPlay)
       }
       res.json(answer)
     })
