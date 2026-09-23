@@ -3,6 +3,7 @@ import type { Kysely } from 'kysely'
 import type { GumboPlay } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
 import type { Database } from '../db/database'
+import { requestGameStats } from '../statsBuilder/request'
 
 export interface GameTeams {
   homeTeamId: string | null
@@ -207,4 +208,6 @@ export async function replaceGameEvents(
         .execute()
     }
   }
+
+  await requestGameStats(db, input.gameId)
 }

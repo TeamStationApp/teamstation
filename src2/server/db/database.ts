@@ -521,6 +521,23 @@ export interface LiveStreamsTable {
 }
 
 /**
+ * One row per game that has had plays written: the generation asked for, the
+ * one built, the status and its reason, and the retry clock. The events write
+ * path asks; the stats builder records the result.
+ */
+export interface GameStatsStateTable {
+  game_id: string
+  requested_generation: number
+  built_generation: Generated<number>
+  status: 'pending' | 'built' | 'incomplete' | 'failed'
+  detail: string | null
+  attempts: Generated<number>
+  retry_at: Timestamp | null
+  requested_at: Generated<Timestamp>
+  built_at: Timestamp | null
+}
+
+/**
  * One player's figures for one game.
  *
  * Written by a stats engine outside the routes, which recomputes a game's rows
@@ -557,7 +574,7 @@ export interface GamePlayerStatsTable {
   pitch_k: Generated<number>
   pitch_r: Generated<number>
   pitch_er: Generated<number>
-  computed_at: Generated<Timestamp>
+  computed_at: Timestamp
 }
 
 export interface PlayerSeasonStatsTable {
@@ -616,6 +633,7 @@ export interface Database {
   external_ids: ExternalIdsTable
   games: GamesTable
   game_player_stats: GamePlayerStatsTable
+  game_stats_state: GameStatsStateTable
   invite_redemptions: InviteRedemptionsTable
   invites: InvitesTable
   league_members: LeagueMembersTable
