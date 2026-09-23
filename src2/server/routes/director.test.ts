@@ -33,6 +33,7 @@ import { eventListRoutes } from './eventList'
  */
 
 const NEXT_TEN = '/events?scope=film&lookbackHours=2&limit=10'
+const NEXT_TWENTY = '/events?scope=film&lookbackHours=2&limit=20'
 
 const media: MediaContext = {
   ffmpegPath: 'ffmpeg',
@@ -380,6 +381,40 @@ describe('what GS Director is offered', function () {
     // One camera publishing makes the game on, whatever the others are doing.
     expect(appearances[0].liveState).equals('publishing')
     expect(events.length, 'and the ten are still ten games').equals(10)
+  })
+
+  it('lists the next twenty and leaves out a twenty-first', async function () {
+    if (db == null) this.skip()
+    const now = new Date()
+    for (let index = 0; index < 20; index += 1) {
+      await db
+        .insertInto('games')
+        .values({
+          id: `gam_extra_${index}`,
+          home_team_id: 'tem_ours',
+          away_team_id: 'tem_theirs',
+          start_at: new Date(now.getTime() + (12 + index) * HOUR),
+          created_at: now,
+          updated_at: now
+        })
+        .execute()
+    }
+    const answer = await ask(NEXT_TWENTY, COACH)
+    expect(answer.status).equals(200)
+    const events = answer.body as Array<{ gameId: string; startAt: string }>
+    const ids = events.map(event => event.gameId)
+    expect(ids.length).equals(20)
+    expect(ids[0]).equals('gam_thisAfternoon')
+    expect(ids).does.not.contain('gam_longGone')
+    expect(ids).does.not.contain('gam_cancelled')
+    expect(ids).does.not.contain('gam_notOurs')
+    expect(ids).does.not.contain('gam_extra_8')
+    expect(ids).contains('gam_extra_7')
+    const times = events.map(event => Date.parse(event.startAt))
+    expect([...times].sort((a, b) => a - b)).deep.equals(times)
+    const parent = await ask(NEXT_TWENTY, PARENT)
+    expect(parent.status).equals(200)
+    expect(parent.body).deep.equals([])
   })
 
   it('offers a parent nothing, however many games they can watch', async function () {

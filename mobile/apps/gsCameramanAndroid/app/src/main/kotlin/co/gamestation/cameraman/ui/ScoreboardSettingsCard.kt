@@ -2,7 +2,6 @@ package co.gamestation.cameraman.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -31,7 +30,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -40,7 +38,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
@@ -70,7 +67,6 @@ internal fun GameStationLoginCard(
 ) {
     var flow by remember { mutableStateOf(LoginFlow()) }
     var open by remember { mutableStateOf(false) }
-    var traveled by remember { mutableFloatStateOf(0f) }
     val focus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
     LaunchedEffect(state.awaitingCode) {
@@ -117,44 +113,46 @@ internal fun GameStationLoginCard(
                 )
             }
             if (state.signedIn) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 20.dp, vertical = 8.dp)
                 ) {
-                    Text(
-                        text = LoginFlow.loggedInLine(state.accountLabel),
-                        style = MaterialTheme.typography.bodyLarge,
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("scoreboard-account")
-                    )
-                    if (flow.logoutArmed) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            text = "Slide to log out",
-                            color = MaterialTheme.colorScheme.error,
-                            fontWeight = FontWeight.SemiBold,
+                            text = LoginFlow.loggedInLine(state.accountLabel),
+                            style = MaterialTheme.typography.bodyLarge,
                             modifier = Modifier
-                                .testTag("gamestation-slide-logout")
-                                .pointerInput(Unit) {
-                                    detectHorizontalDragGestures(
-                                        onDragStart = { traveled = 0f },
-                                        onHorizontalDrag = { _, dragAmount ->
-                                            traveled += dragAmount
-                                            val (next, confirm) = flow.slide(traveled.toDouble())
-                                            flow = next
-                                            if (confirm) onSignOut()
-                                        }
-                                    )
-                                }
+                                .weight(1f)
+                                .clickable { flow = flow.tapElsewhere() }
+                                .testTag("scoreboard-account")
                         )
-                    } else {
-                        TextButton(
-                            onClick = { flow = flow.armLogout().tapElsewhere() },
-                            modifier = Modifier.testTag("scoreboard-sign-out")
+                        if (!flow.logoutArmed) {
+                            TextButton(
+                                onClick = { flow = flow.armLogout().tapElsewhere() },
+                                modifier = Modifier.testTag("scoreboard-sign-out")
+                            ) {
+                                Text("Logout", color = MaterialTheme.colorScheme.error)
+                            }
+                        }
+                    }
+                    if (flow.logoutArmed) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 8.dp),
+                            contentAlignment = Alignment.CenterEnd
                         ) {
-                            Text("Logout", color = MaterialTheme.colorScheme.error)
+                            SlideToStop(
+                                animate = true,
+                                onStop = {
+                                    val (next, confirm) = flow.slide(1.0)
+                                    flow = next
+                                    if (confirm) onSignOut()
+                                },
+                                label = "Slide to log out",
+                                trackTag = "gamestation-slide-logout"
+                            )
                         }
                     }
                 }
@@ -506,8 +504,7 @@ private fun EventPicker(
                             .testTag("scoreboard-events-status")
                     )
                 }
-                EventSection("Last 3 hours", "scoreboard-events-recent", state.recent, onChoose)
-                EventSection("Next 5", "scoreboard-events-upcoming", state.upcoming, onChoose)
+                EventSection("Events", "scoreboard-events-upcoming", state.upcoming, onChoose)
                 TextButton(onClick = onDismiss, modifier = Modifier.testTag("scoreboard-events-close")) {
                     Text("Close")
                 }

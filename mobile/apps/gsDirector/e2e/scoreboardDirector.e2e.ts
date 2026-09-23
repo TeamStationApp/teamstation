@@ -1368,12 +1368,15 @@ async function tapInRow(m: Device, n: number, label: string): Promise<void> {
   await m.tapOn({ point: `${x.toFixed(1)}%, ${y.toFixed(1)}%` })
 }
 
-/** The game's `liveState` in `GET /director/events`, as the runner sees it. */
+/** The game's `liveState` in `GET /events`, as the runner sees it. */
 async function directorLiveState(e: Env, gameId: string): Promise<string | undefined> {
-  const response = await fetch(`https://${e.host}/api/v1/director/events`, {
-    headers: { Authorization: `Bearer ${e.token}` }
-  })
-  assert.equal(response.status, 200, 'GET /director/events answered 200')
+  const response = await fetch(
+    `https://${e.host}/api/v1/events?scope=run&lookbackHours=2&limit=10`,
+    {
+      headers: { Authorization: `Bearer ${e.token}` }
+    }
+  )
+  assert.equal(response.status, 200, 'GET /events answered 200')
   const events = (await response.json()) as Array<{ gameId: string; liveState: string }>
   return events.find(one => one.gameId === gameId)?.liveState
 }
@@ -1805,7 +1808,7 @@ async function eventStream(m: Device, e: Env): Promise<void> {
   assert.equal(
     await directorLiveState(e, id),
     'publishing',
-    'GET /director/events shows liveState publishing'
+    'GET /events shows liveState publishing'
   )
   await m.shot('d2-streaming')
   await toggleCapture(m, 'stream-button')

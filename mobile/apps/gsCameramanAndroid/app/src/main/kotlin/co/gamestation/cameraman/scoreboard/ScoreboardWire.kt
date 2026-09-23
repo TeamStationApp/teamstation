@@ -94,11 +94,26 @@ internal class OkHttpScoreboardAccount(
     }
 
     override fun events(server: String, token: String, zone: ZoneId): ScoreboardEventLists {
-        val body = get(server, "scoreboard/events", token)
-        return ScoreboardEventLists(
-            recent = rows(body.optJSONArray("recent"), zone),
-            upcoming = rows(body.optJSONArray("upcoming"), zone)
-        )
+        val text = getText(server, "events?scope=run&lookbackHours=2&limit=20", token)
+        val rows = rows(JSONArray(text), zone)
+        return ScoreboardEventLists(recent = emptyList(), upcoming = rows)
+    }
+
+    private fun getText(server: String, path: String, token: String): String {
+        val url = ScoreboardTarget.httpOrigin(server).trimEnd('/') + "/api/v1/" + path
+        val builder = Request.Builder().url(url).header("Accept", "application/json")
+        if (token.isNotEmpty()) builder.header("Authorization", "Bearer $token")
+        builder.method("GET", null)
+        val response = try {
+            client.newCall(builder.build()).execute()
+        } catch (error: Exception) {
+            throw ScoreboardWireException("Cannot reach ${ScoreboardTarget.httpOrigin(server)}")
+        }
+        val text = response.body?.string().orEmpty()
+        if (response.code !in 200..299) {
+            throw ScoreboardWireException(messageOf(text) ?: "The server answered ${response.code}")
+        }
+        return text
     }
 
     private fun post(
