@@ -2,7 +2,8 @@
 export function useScoringExit(
   _gameId: string,
   _dirty: boolean,
-  onExit: () => void
+  onExit: () => void,
+  _requestConfirmation?: () => Promise<boolean>
 ): () => void {
   return onExit
 }

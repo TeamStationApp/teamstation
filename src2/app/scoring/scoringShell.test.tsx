@@ -144,8 +144,6 @@ describe('scoring shell and exit', function () {
     // Save the host method solely for restoration.
     // eslint-disable-next-line @typescript-eslint/unbound-method
     const confirm = window.confirm
-    let accepts = false
-    window.confirm = () => accepts
     try {
       await render(
         <ScoringScreen
@@ -163,8 +161,10 @@ describe('scoring shell and exit', function () {
       await click('Open scoring menu')
       await click('Exit Current Game')
       expect(exits).equals(0)
-      accepts = true
+      await click('Cancel')
+      await click('Open scoring menu')
       await click('Exit Current Game')
+      await click('Discard and Exit')
       expect(exits).equals(1)
       await click('Undo Ball')
       const cleanUnload = new window.Event('beforeunload', { cancelable: true })

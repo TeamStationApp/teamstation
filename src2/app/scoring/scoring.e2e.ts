@@ -90,8 +90,7 @@ async function open(
 }
 async function click(page: Page, label: string): Promise<void> {
   const selector = `[aria-label="${label}"]`
-  await page.waitForSelector(selector)
-  await page.click(selector)
+  await page.locator(selector).click()
 }
 describe('scoring browser', function () {
   this.timeout(60000)
@@ -119,28 +118,16 @@ describe('scoring browser', function () {
       await click(page, 'Ball')
       await page.waitForSelector('[aria-label="Undo Ball"]')
       const length = await page.evaluate(() => history.length)
-      const dismissed = new Promise<void>(resolve => {
-        page.once('dialog', dialog => {
-          dialog
-            .dismiss()
-            .then(() => {
-              resolve()
-            })
-            .catch(() => undefined)
-        })
-      })
       await page.evaluate(() => {
         history.back()
       })
-      await dismissed
+      await click(page, 'Cancel')
       await page.waitForFunction(() => location.pathname === '/games/g1/score')
       expect(await page.evaluate(() => history.length)).equals(length)
-      page.once('dialog', dialog => {
-        dialog.accept().catch(() => undefined)
-      })
       await page.evaluate(() => {
         history.back()
       })
+      await click(page, 'Discard and Exit')
       await page.waitForSelector('[aria-label="Score Game"]')
       expect(new URL(page.url()).pathname).equals('/games/g1')
       expect(unexpected).deep.equals([])
@@ -233,6 +220,101 @@ describe('scoring browser', function () {
       await page.waitForSelector(
         '[aria-label*="0 balls 0 strikes 0 outs · Pitches 0"]'
       )
+      expect(unexpected).deep.equals([])
+    } finally {
+      await page.close()
+    }
+  })
+  it('edits rosters with a captured drag, validates overrides, and uses slide-up settings', async function () {
+    const { page, unexpected } = await open('/games/g1/score')
+    try {
+      await click(page, 'Open scoring menu')
+      await click(page, 'Set Team Rosters')
+      await click(page, 'Remove Player 2')
+      const source = '[data-roster-target="roster"] [data-roster-player="2"]'
+      const target = '[data-roster-target="lineup-0"]'
+      await page.$eval(source, node => {
+        node.scrollIntoView({ block: 'center' })
+      })
+      const from = await page.$eval(source, node => {
+        const rect = node.getBoundingClientRect()
+        return { x: rect.x + 20, y: rect.y + 15 }
+      })
+      const to = await page.$eval(target, node => {
+        const rect = node.getBoundingClientRect()
+        return { x: rect.x + 20, y: rect.y + 15 }
+      })
+      await page.mouse.move(from.x, from.y)
+      await page.mouse.down()
+      await page.mouse.move(to.x, to.y, { steps: 12 })
+      await page.mouse.up()
+      await page.waitForFunction(() =>
+        document
+          .querySelector('[data-roster-target="lineup-0"]')!
+          .textContent!.includes('Player 2')
+      )
+      await click(page, 'Save Rosters')
+      await page.waitForSelector('[aria-label="Undo Set team roster"]')
+      await click(page, 'Open scoring menu')
+      await click(page, 'Overrides')
+      await page.locator('[aria-label="balls"]').fill('4')
+      expect(
+        await page.$eval('[aria-label="Apply Override"]', node =>
+          node.getAttribute('aria-disabled')
+        )
+      ).equals('true')
+      await page.locator('[aria-label="balls"]').fill('2')
+      await click(page, 'Apply Override')
+      await page.waitForSelector('[aria-label*="2 balls 0 strikes"]')
+      await click(page, 'Open scoring menu')
+      await click(page, 'Settings')
+      await click(page, 'Toggle switch-hitter help')
+      await click(page, 'Reset shown count')
+      await click(page, 'Cancel')
+      await click(page, 'Undo Override game state')
+      await click(page, 'Undo Set team roster')
+      expect(unexpected).deep.equals([])
+    } finally {
+      await page.close()
+    }
+  })
+  it('assigns a defender with a touch drag on a phone-sized sheet', async function () {
+    const { page, unexpected } = await open('/games/g1/score')
+    try {
+      await page.setViewport({
+        width: 390,
+        height: 844,
+        isMobile: true,
+        hasTouch: true
+      })
+      await click(page, 'Open scoring menu')
+      await click(page, 'Set Team Rosters')
+      await click(page, 'Set Defense')
+      await click(page, 'Clear P')
+      const source = '[data-roster-target="roster"] [data-roster-player="1"]'
+      const target = '[data-roster-target="defense-P"]'
+      const from = await page.$eval(source, node => {
+        const rect = node.getBoundingClientRect()
+        return { x: rect.x + 20, y: rect.y + 15 }
+      })
+      const to = await page.$eval(target, node => {
+        const rect = node.getBoundingClientRect()
+        return { x: rect.x + 20, y: rect.y + 15 }
+      })
+      await page.touchscreen.touchStart(from.x, from.y)
+      await page.touchscreen.touchMove(to.x, to.y)
+      await page.touchscreen.touchEnd()
+      await page.waitForFunction(() =>
+        document
+          .querySelector('[data-roster-target="defense-P"]')!
+          .textContent!.includes('Jordan K.')
+      )
+      if (process.env.GS_SCORING_ARTIFACT_DIR != null)
+        await page.screenshot({
+          path: `${process.env.GS_SCORING_ARTIFACT_DIR}/rosters-phone.png`
+        })
+      await click(page, 'Save Rosters')
+      await page.waitForSelector('[aria-label="Undo Set team roster"]')
       expect(unexpected).deep.equals([])
     } finally {
       await page.close()

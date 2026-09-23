@@ -19,5 +19,6 @@
   "src2/common/api.ts",
   "src2/server/routes/teams.ts",
   "src2/server/teams/teamRoster.ts",
-  "src2/app/field/movePreview.ts"
+  "src2/app/field/movePreview.ts",
+  "src2/app/field/FieldCanvas.tsx"
 ]

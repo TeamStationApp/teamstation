@@ -1,13 +1,24 @@
-import React, { useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState
+} from 'react'
 import { ActivityIndicator, Pressable, Text, View } from 'react-native'
 
 import type { GameStationClient } from '../../common/api'
 import { BaseballScreen } from '../field/BaseballScreen'
 import { useFieldSurface } from '../field/useFieldSurface'
 import { fieldPlayersFor } from './fieldAdapter'
+import { OverridesEditor } from './OverridesEditor'
+import { RosterEditor } from './RosterEditor'
 import { initialScoringState, scoringReducer } from './scoringMachine'
 import { scoringPreferences } from './scoringPreferences'
 import { canSwitchBatter, scoreboardFor } from './scoringSelectors'
+import { ScoringSettings } from './ScoringSettings'
+import { ScoringButton, ScoringSheet } from './ScoringSheet'
 import {
   DevelopmentScoringStateSource,
   type ScoringStateSource
@@ -98,6 +109,30 @@ function ScoringSession(props: {
     initialScoringState
   )
   const [menu, setMenu] = useState(false)
+  const [sheet, setSheet] = useState<
+    'exit' | 'settings' | 'overrides' | 'half' | 'rosters'
+  >()
+  const confirmation = useRef<((value: boolean) => void) | null>(null)
+  const requestConfirmation = useCallback(
+    async () =>
+      await new Promise<boolean>(resolve => {
+        confirmation.current = resolve
+        setMenu(false)
+        setSheet('exit')
+      }),
+    []
+  )
+  const closeSheet = (): void => {
+    confirmation.current?.(false)
+    confirmation.current = null
+    setSheet(undefined)
+  }
+  useEffect(
+    () => () => {
+      confirmation.current?.(false)
+    },
+    []
+  )
   const [hint, setHint] = useState(false)
   const [saveFailed, setSaveFailed] = useState(false)
   const stateRef = useRef(state)
@@ -107,7 +142,8 @@ function ScoringSession(props: {
   const exit = useScoringExit(
     session.gamePk,
     state.past.length > 0,
-    props.onExit
+    props.onExit,
+    requestConfirmation
   )
   const players = useMemo(() => fieldPlayersFor(session), [session])
   const [selected, setSelected] = useState('')
@@ -172,7 +208,9 @@ function ScoringSession(props: {
         zoom: 1.25,
         movementRevision: state.generation + session.meta.sequence,
         selectableIds:
-          switchable && batterId != null ? [`offense-${batterId}`] : [],
+          switchable && !menu && sheet == null && batterId != null
+            ? [`offense-${batterId}`]
+            : [],
         onPlayerPlacement: (id, point) => {
           if (id === `offense-${batterId}`) {
             const rendered = players.find(player => player.id === id)
@@ -195,11 +233,11 @@ function ScoringSession(props: {
         setHint(false)
       }}
       historyLabel={state.past.at(-1)?.label}
-      canPitch={state.phase === 'ready' && !menu}
+      canPitch={state.phase === 'ready' && !menu && sheet == null}
       summary={summary}
       accessibilitySummary={`${summary} · Batter ${line.offense.batter?.fullName ?? 'waiting'} ${session.liveData.plays.currentPlay?.matchup.batSide.code === 'L' ? 'left handed' : 'right handed'} · Pitcher ${line.defense.P?.fullName ?? 'unassigned'}`}
     >
-      {hint && (
+      {hint && !menu && sheet == null && (
         <SwitchHitterHint
           onDismiss={() => {
             setHint(false)
@@ -213,29 +251,115 @@ function ScoringSession(props: {
             right: 12,
             top: 64,
             padding: 12,
+            gap: 6,
             backgroundColor: '#14382df2',
             borderRadius: 8
           }}
         >
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Exit Current Game"
-            onPress={exit}
-            style={{ padding: 16 }}
-          >
-            <Text style={{ color: 'white' }}>Exit Current Game</Text>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Resume Game"
-            onPress={() => {
-              setMenu(false)
-            }}
-            style={{ padding: 16 }}
-          >
-            <Text style={{ color: 'white' }}>Resume Game</Text>
-          </Pressable>
+          {(
+            [
+              'Exit Current Game',
+              'Settings',
+              'Overrides',
+              'End Half Inning',
+              'Set Team Rosters',
+              'Resume Game'
+            ] as const
+          ).map((label, index) => (
+            <ScoringButton
+              key={label}
+              label={label}
+              disabled={
+                index === 3
+                  ? state.phase !== 'ready'
+                  : (index === 2 || index === 4) &&
+                    state.phase !== 'ready' &&
+                    state.phase !== 'awaitingBatter'
+              }
+              onPress={() => {
+                setMenu(false)
+                if (index === 0) exit()
+                else if (index !== 5)
+                  setSheet(
+                    (
+                      [
+                        'exit',
+                        'settings',
+                        'overrides',
+                        'half',
+                        'rosters'
+                      ] as const
+                    )[index]
+                  )
+              }}
+            />
+          ))}
         </View>
+      )}
+      {sheet != null && (
+        <ScoringSheet
+          title={
+            {
+              exit: 'Exit Current Game',
+              settings: 'Settings',
+              overrides: 'Overrides',
+              half: 'End Half Inning',
+              rosters: 'Set Team Rosters'
+            }[sheet]
+          }
+          onClose={closeSheet}
+        >
+          {sheet === 'exit' && (
+            <>
+              <Text style={{ color: 'white' }}>
+                Your local development scoring will be discarded.
+              </Text>
+              <ScoringButton
+                label="Discard and Exit"
+                color="#963f3f"
+                onPress={() => {
+                  confirmation.current?.(true)
+                  confirmation.current = null
+                  setSheet(undefined)
+                }}
+              />
+            </>
+          )}
+          {sheet === 'settings' && <ScoringSettings userId={props.userId} />}
+          {sheet === 'rosters' && (
+            <RosterEditor
+              state={state}
+              onSave={(draft, nextBatter) => {
+                dispatch({ type: 'ROSTER', draft, nextBatter })
+                closeSheet()
+              }}
+            />
+          )}
+          {sheet === 'overrides' && (
+            <OverridesEditor
+              state={state}
+              onApply={draft => {
+                dispatch({ type: 'OVERRIDE', draft })
+                closeSheet()
+              }}
+            />
+          )}
+          {sheet === 'half' && (
+            <>
+              <Text style={{ color: 'white' }}>
+                End {line.inningState} of the {line.currentInningOrdinal}{' '}
+                inning?
+              </Text>
+              <ScoringButton
+                label="Confirm End Half Inning"
+                onPress={() => {
+                  dispatch({ type: 'END_HALF' })
+                  closeSheet()
+                }}
+              />
+            </>
+          )}
+        </ScoringSheet>
       )}
       {saveFailed && (
         <Pressable
