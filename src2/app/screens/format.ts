@@ -75,9 +75,12 @@ export function shortTime(iso: string | null): string {
  * What to write across the middle of a scoreboard.
  *
  * A game with no score is not 0–0, it is a game that has not happened, so it
- * says when it is instead.
+ * says when it is instead. A game under way already has a score, and that
+ * score is not a final one: the numbers sit on either side, and the middle
+ * says the game is still live.
  */
 export function gameStatusLine(game: ScoredGame): string {
+  if (game.status === 'inProgress') return 'LIVE'
   if (game.awayScore == null || game.homeScore == null) {
     const time = shortTime(game.startAt)
     return time === '' ? game.status.toUpperCase() : time.toUpperCase()
@@ -85,8 +88,12 @@ export function gameStatusLine(game: ScoredGame): string {
   return 'FINAL'
 }
 
-/** Which side won, or undefined for a tie or a game not yet played. */
+/**
+ * Which side won, or undefined for a tie, a game still being played, or one
+ * not yet played.
+ */
 export function winnerOf(game: ScoredGame): 'away' | 'home' | undefined {
+  if (game.status !== 'final') return undefined
   const { awayScore, homeScore } = game
   if (awayScore == null || homeScore == null) return undefined
   if (awayScore > homeScore) return 'away'
@@ -95,15 +102,18 @@ export function winnerOf(game: ScoredGame): 'away' | 'home' | undefined {
 }
 
 /**
- * `W 4–0` from the point of view of one team, or nothing when unplayed.
+ * `W 4–0` from the point of view of one team, or nothing when the game is
+ * not final.
  *
  * An en dash, not a hyphen: it is a score, not a range of numbers, and the
- * hyphen is visibly too short beside the numerals at this weight.
+ * hyphen is visibly too short beside the numerals at this weight. A game
+ * still being played has a score and no winner yet, so it gets no result.
  */
 export function resultFor(
   game: ScoredGame & { homeTeamId: string; awayTeamId: string },
   teamId: string
 ): { label: string; tone: 'win' | 'loss' | 'neutral' } | undefined {
+  if (game.status !== 'final') return undefined
   const { awayScore, homeScore } = game
   if (awayScore == null || homeScore == null) return undefined
   const isHome = game.homeTeamId === teamId

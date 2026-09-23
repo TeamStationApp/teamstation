@@ -1,7 +1,13 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { calendarDate, matchupLines } from './format'
+import {
+  calendarDate,
+  gameStatusLine,
+  matchupLines,
+  resultFor,
+  winnerOf
+} from './format'
 
 const game = {
   homeTeamId: 'tem_home',
@@ -34,6 +40,53 @@ describe('how a fixture is written', function () {
 
   it('falls back to the fixture for a team that is not playing', function () {
     expect(matchupLines(game, 'tem_someone_else').second).equals('@ Bay Stars')
+  })
+})
+
+describe('the word between the two scores', function () {
+  const played = {
+    startAt: '2026-09-06T19:00:00Z',
+    awayScore: 2,
+    homeScore: 1
+  }
+
+  it('says when an unscored game is, rather than calling it 0–0', function () {
+    const line = gameStatusLine({
+      ...played,
+      status: 'scheduled',
+      awayScore: null,
+      homeScore: null
+    })
+    expect(line).does.not.equal('FINAL')
+    expect(line.length).is.greaterThan(0)
+  })
+
+  it('calls a finished game final', function () {
+    expect(gameStatusLine({ ...played, status: 'final' })).equals('FINAL')
+    expect(winnerOf({ ...played, status: 'final' })).equals('away')
+    expect(
+      resultFor(
+        {
+          ...played,
+          status: 'final',
+          homeTeamId: 'tem_home',
+          awayTeamId: 'tem_away'
+        },
+        'tem_home'
+      )
+    ).deep.equals({ label: 'L 1–2', tone: 'loss' })
+  })
+
+  it('does not call a game final while it is still being played', function () {
+    const live = { ...played, status: 'inProgress' as const }
+    expect(gameStatusLine(live)).equals('LIVE')
+    expect(winnerOf(live)).equals(undefined)
+    expect(
+      resultFor(
+        { ...live, homeTeamId: 'tem_home', awayTeamId: 'tem_away' },
+        'tem_home'
+      )
+    ).equals(undefined)
   })
 })
 
