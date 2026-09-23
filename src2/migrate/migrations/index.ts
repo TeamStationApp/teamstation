@@ -23,6 +23,11 @@ import { migration022CreditIndex } from './022creditIndex'
 import { migration023GameStats } from './023gameStats'
 import { migration024SeasonInnings } from './024seasonInnings'
 import { migration025ShortNamesInDescriptions } from './025shortNamesInDescriptions'
+import { migration026DirectorUploads } from './026directorUploads'
+import { migration027UploadStartedAt } from './027uploadStartedAt'
+import { migration028UploadKeepsItsHistory } from './028uploadKeepsItsHistory'
+import { migration029UploadStep } from './029uploadStep'
+import { migration030ReplacementCanBeDeleted } from './030replacementCanBeDeleted'
 
 /** Every migration, in the order they were written. */
 export const migrations: Migration[] = [
@@ -49,5 +54,10 @@ export const migrations: Migration[] = [
   migration022CreditIndex,
   migration023GameStats,
   migration024SeasonInnings,
-  migration025ShortNamesInDescriptions
+  migration025ShortNamesInDescriptions,
+  migration026DirectorUploads,
+  migration027UploadStartedAt,
+  migration028UploadKeepsItsHistory,
+  migration029UploadStep,
+  migration030ReplacementCanBeDeleted
 ]

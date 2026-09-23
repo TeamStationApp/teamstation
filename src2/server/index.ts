@@ -7,6 +7,7 @@ import path from 'node:path'
 import express from 'express'
 
 import { makeDatabase } from './db/database'
+import { reopenInterruptedUploads } from './director/uploads'
 import {
   mailConfigured,
   sendInvitation,
@@ -27,6 +28,7 @@ import { openApiDocument } from './openapi'
 import { authRoutes } from './routes/auth'
 import { devMediaRoutes } from './routes/devMedia'
 import { directorRoutes } from './routes/director'
+import { directorUploadRoutes } from './routes/directorUploads'
 import { healthRoutes } from './routes/health'
 import { inviteRoutes } from './routes/invites'
 import type { LiveRouteOptions } from './routes/live'
@@ -248,12 +250,31 @@ function startLive(db: ReturnType<typeof makeDatabase>): void {
  * Set `clusterWorkers` to 1 when debugging, so breakpoints land in the only
  * process there is.
  */
+/**
+ * Uploads a stopped process left half-taken-in.
+ *
+ * Called from **both** ways this server starts. It was attached to the
+ * forking path alone, which meant a server configured with one worker — the
+ * way anything being debugged runs — never swept at all,
+ * and an upload interrupted there stayed `assembling` for ever.
+ */
+function reopenInterrupted(db: ReturnType<typeof makeDatabase>): void {
+  reopenInterruptedUploads(db)
+    .then((count: number) => {
+      if (count > 0) console.log(`reopened ${count} interrupted upload(s)`)
+    })
+    .catch((error: unknown) => {
+      console.error(`reopening interrupted uploads: ${String(error)}`)
+    })
+}
+
 function runPrimary(workerCount: number): void {
   // Before forking, so every worker inherits the same one.
   resolveMediaSecret()
   checkStillsAreReachable()
   const liveDb = makeDatabase(serverConfig.databaseUrl)
   startLive(liveDb)
+  reopenInterrupted(liveDb)
   console.log(`gamestation ${VERSION}: forking ${workerCount} workers`)
   for (let i = 0; i < workerCount; i++) cluster.fork()
 
@@ -376,6 +397,19 @@ function runWorker(): void {
       deviceLabel: 'GS Director'
     })
   )
+  // Its own router because its bodies are not JSON: a part is megabytes of
+  // recording, and `express.json` on the way in would try to parse it.
+  app.use(
+    '/api/v1',
+    directorUploadRoutes(db, {
+      uploadsDir:
+        serverConfig.uploadsDir === ''
+          ? path.join(serverConfig.mediaDir, 'uploads')
+          : serverConfig.uploadsDir,
+      ffmpegPath: serverConfig.ffmpegPath,
+      space: serverConfig.space
+    })
+  )
 
   // What the reverse proxy's auth check calls. Not under /api/v1: it is not a
   // public endpoint, and the proxy is the only thing that should ever reach it.
@@ -400,7 +434,10 @@ function runWorker(): void {
   )
 
   // Unclustered — one process, which is both the API and the ingest.
-  if (cluster.isPrimary) startLive(db)
+  if (cluster.isPrimary) {
+    startLive(db)
+    reopenInterrupted(db)
+  }
 
   let closing = false
   const shutdown = (): void => {
