@@ -1,6 +1,7 @@
 import { type Kysely, sql } from 'kysely'
 
 import type { Database } from '../db/database'
+import { requestGameStats } from '../statsBuilder/request'
 
 /**
  * Joining two rows that are one real team.
@@ -141,6 +142,17 @@ export async function mergeTeams(
   if (!apply) return report
 
   await db.transaction().execute(async trx => {
+    const movedGames = await trx
+      .selectFrom('games')
+      .select('id')
+      .where(expression =>
+        expression.or([
+          expression('home_team_id', '=', fromTeamId),
+          expression('away_team_id', '=', fromTeamId)
+        ])
+      )
+      .execute()
+
     for (const [table, column] of references) {
       await trx
         .updateTable(table as 'games')
@@ -200,6 +212,20 @@ export async function mergeTeams(
       .set({ merged_into: intoTeamId })
       .where('id', '=', fromTeamId)
       .execute()
+
+    // A merge changes a game's teams, so the team_id on its stat rows must be
+    // rebuilt. Retired fixture games are gone; poke every survivor we moved.
+    const retired = new Set(fixtures.map(fixture => fixture.retiredGameId))
+    for (const game of movedGames) {
+      if (retired.has(game.id)) continue
+      const still = await trx
+        .selectFrom('games')
+        .select('id')
+        .where('id', '=', game.id)
+        .executeTakeFirst()
+      if (still == null) continue
+      await requestGameStats(trx, game.id)
+    }
   })
 
   return report

@@ -4,11 +4,13 @@ import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
 import { makeId } from '../../common/ids'
+import { mintUserId } from '../../common/mintUserId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
 import type { Database } from '../db/database'
 import { attachInt8Parser } from '../db/int8'
+import { replaceGameEvents } from '../events/eventWrite'
 import { mergeTeams } from './mergeTeams'
 
 const adminUrl = testDatabaseUrl
@@ -190,6 +192,16 @@ describe('merging two rows that are one team', function () {
       .where('id', '=', hardy)
       .executeTakeFirstOrThrow()
     expect(team.merged_into).equals(hawks)
+
+    const owed = await db
+      .selectFrom('game_stats_state')
+      .selectAll()
+      .where('game_id', '=', scoredGame)
+      .executeTakeFirstOrThrow()
+    expect(Number(owed.requested_generation)).greaterThan(
+      Number(owed.built_generation)
+    )
+    expect(owed.status).equals('pending')
   })
 
   it('refuses to merge a team into itself', async function () {
@@ -201,5 +213,91 @@ describe('merging two rows that are one team', function () {
       refused = true
     }
     expect(refused).equals(true)
+  })
+
+  it('a drain after merge writes rows with the surviving team id', async function () {
+    if (db == null) this.skip()
+    // Fresh pair: fromTeam is home, intoTeam is the survivor name for team_id.
+    const from = makeId('team')
+    const into = makeId('team')
+    const opponent = makeId('team')
+    const game = makeId('game')
+    const held = new Set<number>()
+    const mint = (): { userId: number; legacyId: string } => {
+      const made = mintUserId(id => held.has(id))
+      held.add(made.userId)
+      return made
+    }
+    const batter = mint()
+    const pitcher = mint()
+    const now = new Date()
+    await db
+      .insertInto('teams')
+      .values([
+        { id: from, name: 'From', kind: 'external' },
+        { id: into, name: 'Into', kind: 'full' },
+        { id: opponent, name: 'Opp', kind: 'full' }
+      ])
+      .execute()
+    for (const user of [batter, pitcher]) {
+      await db
+        .insertInto('users')
+        .values({
+          id: user.userId,
+          legacyId: user.legacyId,
+          display_name: 'P',
+          created_at: now,
+          updated_at: now
+        })
+        .execute()
+    }
+    await db
+      .insertInto('games')
+      .values({
+        id: game,
+        home_team_id: from,
+        away_team_id: opponent,
+        start_at: now
+      })
+      .execute()
+    await replaceGameEvents(db, {
+      gameId: game,
+      homeTeamId: from,
+      awayTeamId: opponent,
+      plays: [
+        {
+          gumbo: {
+            about: { atBatIndex: 0, inning: 1, halfInning: 'bottom' },
+            result: { eventType: 'single', awayScore: 0, homeScore: 0 },
+            count: { outs: 0 },
+            matchup: {
+              batter: { id: batter.userId },
+              pitcher: { id: pitcher.userId }
+            },
+            runners: [
+              {
+                movement: { start: null, end: '1B', isOut: false },
+                details: {
+                  eventType: 'single',
+                  runner: { id: batter.userId }
+                }
+              }
+            ]
+          },
+          source: 'manual'
+        }
+      ]
+    })
+    await mergeTeams(db, { fromTeamId: from, intoTeamId: into, apply: true })
+    const { drain } = await import('../statsBuilder/builder')
+    await drain(db, () => new Date('2026-09-25T12:00:00.000Z'))
+    const rows = await db
+      .selectFrom('game_player_stats')
+      .select(['user_id', 'team_id'])
+      .where('game_id', '=', game)
+      .execute()
+    expect(rows.length).greaterThan(0)
+    const bat = rows.find(row => Number(row.user_id) === batter.userId)!
+    expect(bat.team_id).equals(into)
   })
 })
