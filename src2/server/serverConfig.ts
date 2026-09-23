@@ -44,6 +44,19 @@ export const asServerConfig = asObject({
 
   /** Finished HLS, served from here until it is verified in the Space. */
   mediaDir: asOptional(asString, '/mnt/gamestation/media'),
+  /**
+   * Where a Director's upload waits while its parts arrive.
+   *
+   * Its own setting rather than a corner of `mediaDir`, because the two are
+   * different kinds of thing: media is what the site serves and may be shared
+   * with another deployment read-only, while this is scratch — gigabytes of
+   * parts that exist for an hour and are deleted. A development clone that
+   * reads production's media cannot write beside it, which is exactly what
+   * `ProtectSystem=strict` says.
+   *
+   * Empty means `<mediaDir>/uploads`, which is right for production.
+   */
+  uploadsDir: asOptional(asString, ''),
 
   /** PeerTube's HLS, mounted read-only and served in place until cutover. */
   peertubeMediaDir: asOptional(asString, ''),

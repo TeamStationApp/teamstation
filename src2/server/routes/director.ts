@@ -87,11 +87,17 @@ export function directorRoutes(
   const router = Router()
 
   /**
-   * The next ten games, most recent first.
+   * The next ten games, most recent first — or the last ten finished ones.
    *
    * "Most recent" reaches two hours backwards: a game called for one o'clock
    * that somebody starts filming at ten past three is still the game they mean,
    * and having to scroll past it to find it would be absurd.
+   *
+   * `?when=finished` turns the list round: the games that have already been
+   * played, latest first. That is the list an **upload** needs, and it is the
+   * opposite of the one claiming needs — claiming is about the game starting
+   * now, uploading is about the game that has just finished. Same rule about
+   * whose games they are, same shape of answer, one query parameter.
    */
   router.get(
     '/director/events',
@@ -100,7 +106,8 @@ export function directorRoutes(
       const actor = req.actor
       if (actor == null) throw unauthorized()
       const scopes = await adminScopes(db, actor.userId, actor.isAdmin)
-      const from = new Date(Date.now() - LOOK_BACK_HOURS * 3_600_000)
+      const finished = req.query.when === 'finished'
+      const edge = new Date(Date.now() - LOOK_BACK_HOURS * 3_600_000)
 
       let query = db
         .selectFrom('games')
@@ -117,9 +124,9 @@ export function directorRoutes(
           'home.logo_path as homeLogoPath',
           'away.logo_path as awayLogoPath'
         ])
-        .where('games.start_at', '>=', from)
+        .where('games.start_at', finished ? '<' : '>=', edge)
         .where('games.status', '<>', 'cancelled')
-        .orderBy('games.start_at', 'asc')
+        .orderBy('games.start_at', finished ? 'desc' : 'asc')
         .limit(LIMIT)
 
       // An administrator of the site sees every game; everybody else sees the

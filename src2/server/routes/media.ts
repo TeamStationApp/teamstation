@@ -313,6 +313,20 @@ export function mediaRoutes(
           .where('video_id', '=', videoId)
           .execute()
       }
+      // Anything this video displaced comes back. A recording is hidden and
+      // dated for deletion only because something better took its place, so
+      // deleting that something takes the reason away with it — and without
+      // this, undoing a bad upload quietly destroys the recording the upload
+      // pushed aside, which is the opposite of what deleting it was for.
+      // The foreign key clears the pointer; the hiding and the purge date are
+      // ours to undo.
+      const restored = await db
+        .updateTable('videos')
+        .set({ hidden: false, purge_after: null, updated_at: new Date() })
+        .where('replaced_by', '=', videoId)
+        .returning('id')
+        .execute()
+
       await db.deleteFrom('videos').where('id', '=', videoId).execute()
 
       setAudit(res.locals, {
@@ -324,9 +338,14 @@ export function mediaRoutes(
           storage: video.storage,
           gameId: video.gameId
         },
-        after: { removedFromSpace }
+        after: { removedFromSpace, restored: restored.map(one => one.id) }
       })
-      res.json({ id: videoId, removedFromSpace })
+      res.json({
+        id: videoId,
+        removedFromSpace,
+        // What came back out of hiding because this went.
+        restored: restored.map(one => one.id)
+      })
     })
   )
 
