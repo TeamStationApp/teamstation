@@ -98,6 +98,23 @@ describe('ffmpeg contract', function () {
     expect(args[args.indexOf('-tag:v') + 1]).equals('hvc1')
   })
 
+  it('keeps an H.264 camera as avc1, and can tag nothing at all', function () {
+    // The default is right for everything this server records and wrong for
+    // everything else: a track tagged as a codec it is not plays nowhere.
+    const avc = remuxToHlsArgs({
+      input: 'in.mov',
+      outDir: '/tmp/out',
+      videoTag: 'avc1'
+    })
+    expect(avc[avc.indexOf('-tag:v') + 1]).equals('avc1')
+    const untagged = remuxToHlsArgs({
+      input: 'in.mov',
+      outDir: '/tmp/out',
+      videoTag: null
+    })
+    expect(untagged).does.not.contain('-tag:v')
+  })
+
   it('remuxes real HEVC to fMP4 HLS without re-encoding it', async function () {
     if (!hasHevc) this.skip()
     const source = join(workDir, 'source.mp4')
