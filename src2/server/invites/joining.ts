@@ -1,6 +1,6 @@
 import type { Kysely } from 'kysely'
 
-import { makeId } from '../../common/ids'
+import { mintUserId } from '../../common/mintUserId'
 import { addEmail, findUserByEmail } from '../auth/emails'
 import type { Database } from '../db/database'
 import { findInviteById, redeemInvite } from './invites'
@@ -22,7 +22,7 @@ import { findInviteById, redeemInvite } from './invites'
  */
 
 export interface SettledJoin {
-  userId: string
+  userId: number
   displayName: string
   /** True when this sign-in is where the account came from. */
   createdAccount: boolean
@@ -68,13 +68,18 @@ export async function settleInviteSignIn(
   if (userId == null) {
     const wanted = (options.displayName ?? '').trim()
     displayName = wanted === '' ? nameFromEmail(email) : wanted
-    userId = makeId('user')
+    const held = new Set(
+      (await db.selectFrom('users').select('id').execute()).map(row => row.id)
+    )
+    const minted = mintUserId(id => held.has(id))
+    userId = minted.userId
     createdAccount = true
     await db.transaction().execute(async trx => {
       await trx
         .insertInto('users')
         .values({
-          id: userId!,
+          id: minted.userId,
+          legacyId: minted.legacyId,
           display_name: displayName,
           // By e-mail code, like everybody who arrived from PeerTube without
           // a password. A password can be set later; nothing here needs one.
@@ -82,7 +87,7 @@ export async function settleInviteSignIn(
           is_admin: false
         })
         .execute()
-      await addEmail(trx, userId!, email, {
+      await addEmail(trx, minted.userId, email, {
         isPrimary: true,
         source: 'manual',
         // Verified by the very code or link that got us here.

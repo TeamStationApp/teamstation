@@ -1,4 +1,4 @@
-import { makeId } from '../../common/ids'
+import { mintUserId } from '../../common/mintUserId'
 import { addEmail, findUserByEmail } from '../auth/emails'
 import { hashPassword } from '../auth/passwords'
 import { makeDatabase } from '../db/database'
@@ -42,25 +42,35 @@ async function main(): Promise<void> {
       return
     }
 
-    const id = makeId('user')
+    const held = new Set(
+      (await db.selectFrom('users').select('id').execute()).map(row => row.id)
+    )
+    const minted = mintUserId(id => held.has(id))
     await db
       .insertInto('users')
       .values({
-        id,
+        id: minted.userId,
+        legacyId: minted.legacyId,
         display_name: normalised.split('@')[0],
         password_hash: passwordHash,
         login_enabled: true,
         is_admin: true
       })
       .execute()
-    await addEmail(db, id, normalised, { isPrimary: true, source: 'manual' })
-    console.log(`created ${normalised} (${id})`)
+    await addEmail(db, minted.userId, normalised, {
+      isPrimary: true,
+      source: 'manual'
+    })
+    console.log(`created ${normalised} (${minted.userId})`)
   } finally {
     await db.destroy()
   }
 }
 
-main().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.message : error)
-  process.exit(1)
-})
+const entry = process.argv[1] ?? ''
+if (entry.endsWith('/seed.ts') || entry.endsWith('/seed.js')) {
+  main().catch((error: unknown) => {
+    console.error(error instanceof Error ? error.message : error)
+    process.exit(1)
+  })
+}

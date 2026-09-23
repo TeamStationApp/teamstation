@@ -6,11 +6,12 @@ import { Pool } from 'pg'
 import { makeId } from '../../common/ids'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
+import { testDatabaseUrl } from '../../migrate/testDatabase'
 import type { Database } from '../db/database'
+import { attachInt8Parser } from '../db/int8'
 import { mergeTeams } from './mergeTeams'
 
-const adminUrl =
-  process.env.GS_TEST_DATABASE_URL ?? 'postgres://localhost:5432/postgres'
+const adminUrl = testDatabaseUrl
 const scratchName = `gamestation_mergeteams_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
@@ -39,6 +40,7 @@ describe('merging two rows that are one team', function () {
   const startAt = new Date('2026-05-20T23:45:00.000Z')
 
   before(async function () {
+    attachInt8Parser()
     admin = new Pool({ connectionString: adminUrl })
     try {
       await admin.query('select 1')
@@ -81,14 +83,13 @@ describe('merging two rows that are one team', function () {
       .values(
         [0, 1, 2].map(index => ({
           id: makeId('event'),
-          game_id: scoredGame,
-          at_bat_index: index,
-          event_type: 'single',
-          batting_team_id: widows,
-          away_score: 14,
-          home_score: 4,
-          gumbo: JSON.stringify({ source: 'test' }),
-          source: 'external' as const
+          gameId: scoredGame,
+          battingTeamId: widows,
+          source: 'external' as const,
+          gumbo: {
+            about: { atBatIndex: index },
+            result: { eventType: 'single', awayScore: 14, homeScore: 4 }
+          }
         }))
       )
       .execute()

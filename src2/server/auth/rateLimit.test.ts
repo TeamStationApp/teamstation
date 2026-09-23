@@ -8,11 +8,12 @@ import { HttpError } from '../../common/errors'
 import { makeId } from '../../common/ids'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
+import { testDatabaseUrl } from '../../migrate/testDatabase'
 import type { Database } from '../db/database'
+import { attachInt8Parser } from '../db/int8'
 import { checkLimits, clientIp, recordAttempts } from './rateLimit'
 
-const adminUrl =
-  process.env.GS_TEST_DATABASE_URL ?? 'postgres://localhost:5432/postgres'
+const adminUrl = testDatabaseUrl
 const scratchName = `gamestation_ratelimit_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
@@ -61,6 +62,7 @@ describe('rate limits', function () {
   ]
 
   before(async function () {
+    attachInt8Parser()
     admin = new Pool({ connectionString: adminUrl })
     try {
       await admin.query('select 1')

@@ -44,3 +44,4 @@ android/local.properties
 # Metro
 .metro-cache/
 android/app/.cxx/
+coverage/

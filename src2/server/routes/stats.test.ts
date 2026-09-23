@@ -5,22 +5,25 @@ import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
 import { makeId } from '../../common/ids'
+import { mintUserId } from '../../common/mintUserId'
+import { asUserId } from '../../common/userIdNumber'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
+import { testDatabaseUrl } from '../../migrate/testDatabase'
 import type { Database } from '../db/database'
+import { attachInt8Parser } from '../db/int8'
+import { statRows } from '../stats/rows'
 import { statsRoutes } from './stats'
 
-/**
- * One player's figures, asked for the way the page asks for them.
- *
- * The filter is the thing a reader touches, so it is the thing under test: a
- * season, a team, a year, a career, and the answer a filter that matches
- * nothing gives. The rows are written straight into `game_player_stats`
- * because what is being tested is the reading of them: the counting belongs
- * to the stats engine that writes them.
- */
-const adminUrl =
-  process.env.GS_TEST_DATABASE_URL ?? 'postgres://localhost:5432/postgres'
+// One player's figures, asked for the way the page asks for them.
+//
+// The filter is the thing a reader touches, so it is the thing under test: a
+// season, a team, a year, a career, and the answer a filter that matches
+// nothing gives. The rows are written straight into `game_player_stats`
+// because what is being tested is the reading of them: the counting belongs
+// to the stats engine that writes them.
+
+const adminUrl = testDatabaseUrl
 const scratchName = `gamestation_statsroute_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
@@ -28,9 +31,23 @@ const spring = makeId('season')
 const fall = makeId('season')
 const hawks = makeId('team')
 const ravens = makeId('team')
-const jordan = makeId('user')
-const jordanClosed = makeId('user')
-const stranger = makeId('user')
+const legacyOf = new Map<number, string>()
+function mintUser(): number {
+  const made = mintUserId(id => legacyOf.has(id))
+  legacyOf.set(made.userId, made.legacyId)
+  return made.userId
+}
+function legacyId(userId: number): string {
+  const id = legacyOf.get(userId)
+  if (id == null) throw new Error(`no legacy id for ${userId}`)
+  return id
+}
+
+const jordan = mintUser()
+const jordanClosed = mintUser()
+const stranger = mintUser()
+const teammate = mintUser()
+const seasonFan = mintUser()
 
 describe('one player’s figures', function () {
   this.timeout(60000)
@@ -46,7 +63,7 @@ describe('one player’s figures', function () {
     actor = jordan
   ): Promise<{ status: number; body: any }> => {
     const res = await fetch(`${base}${path}`, {
-      headers: { 'x-test-actor': actor }
+      headers: { 'x-test-actor': String(actor) }
     })
     // A refusal from the bare router is Express's own page rather than our
     // error body: this mounts the routes and not the whole server.
@@ -59,6 +76,7 @@ describe('one player’s figures', function () {
   }
 
   before(async function () {
+    attachInt8Parser()
     admin = new Pool({ connectionString: adminUrl })
     try {
       await admin.query('select 1')
@@ -76,8 +94,8 @@ describe('one player’s figures', function () {
     await db
       .insertInto('seasons')
       .values([
-        { id: spring, name: 'Spring 2026', year: 2026, innings_per_game: 6 },
-        { id: fall, name: 'Fall 2025', year: 2025, innings_per_game: 6 }
+        { id: spring, name: 'Spring 2026', year: 2026, era_innings: 6 },
+        { id: fall, name: 'Fall 2025', year: 2025, era_innings: 6 }
       ])
       .execute()
     await db
@@ -90,14 +108,23 @@ describe('one player’s figures', function () {
     await db
       .insertInto('users')
       .values([
-        { id: jordan, display_name: 'Jordan Pujols' },
+        {
+          id: jordan,
+          legacyId: legacyId(jordan),
+          display_name: 'Jordan Pujols'
+        },
         // The same child, on another team, closed into the row above.
         {
           id: jordanClosed,
+          legacyId: legacyId(jordanClosed),
           display_name: 'Jordan Pujols',
           merged_into: jordan
         },
-        { id: stranger, display_name: 'Somebody Else' }
+        {
+          id: stranger,
+          legacyId: legacyId(stranger),
+          display_name: 'Somebody Else'
+        }
       ])
       .execute()
 
@@ -148,7 +175,9 @@ describe('one player’s figures', function () {
     // reading itself is what is under test.
     app.use((req, _res, next) => {
       const id = req.header('x-test-actor')
-      if (id != null) req.actor = { userId: id, isAdmin: false, tokenId: null }
+      if (id != null) {
+        req.actor = { userId: asUserId(id), isAdmin: false, tokenId: null }
+      }
       next()
     })
     app.use('/api/v1', statsRoutes(db))
@@ -241,5 +270,203 @@ describe('one player’s figures', function () {
     if (db == null) this.skip()
     const { status } = await ask(`/players/${jordan}/stats`, stranger)
     expect(status).equals(404)
+  })
+
+  it('divides an ERA by the season’s innings, else its league’s, else six', async function () {
+    if (db == null) return this.skip()
+    const divisor = async (): Promise<number[]> =>
+      (await statRows(db!, { seasonId: spring })).map(row => row.eraInnings)
+    const league = makeId('league')
+    await db
+      .insertInto('leagues')
+      .values({ id: league, name: 'QPLL' })
+      .execute()
+    try {
+      await db
+        .updateTable('seasons')
+        .set({ era_innings: null, league_id: league })
+        .where('id', '=', spring)
+        .execute()
+      expect(await divisor()).deep.equals([6])
+
+      await db
+        .updateTable('leagues')
+        .set({ era_innings: 7 })
+        .where('id', '=', league)
+        .execute()
+      expect(await divisor()).deep.equals([7])
+
+      await db
+        .updateTable('seasons')
+        .set({ era_innings: 5 })
+        .where('id', '=', spring)
+        .execute()
+      expect(await divisor()).deep.equals([5])
+    } finally {
+      await db
+        .updateTable('seasons')
+        .set({ era_innings: 6, league_id: null })
+        .where('id', '=', spring)
+        .execute()
+      await db.deleteFrom('leagues').where('id', '=', league).execute()
+    }
+  })
+
+  describe('the plays behind them', function () {
+    const springGame = makeId('game')
+    const fallGame = makeId('game')
+    const single = makeId('event')
+    const hiddenOut = makeId('event')
+    const double = makeId('event')
+
+    before(async function () {
+      if (db == null) return this.skip()
+      const now = new Date()
+      await db
+        .insertInto('users')
+        .values([
+          {
+            id: teammate,
+            legacyId: legacyId(teammate),
+            display_name: 'Hawks Parent'
+          },
+          {
+            id: seasonFan,
+            legacyId: legacyId(seasonFan),
+            display_name: 'Fall Watcher'
+          }
+        ])
+        .execute()
+      await db
+        .insertInto('memberships')
+        .values({
+          id: makeId('membership'),
+          user_id: teammate,
+          team_id: hawks,
+          role: 'member'
+        })
+        .execute()
+      await db
+        .insertInto('season_members')
+        .values({
+          id: makeId('seasonMember'),
+          user_id: seasonFan,
+          season_id: fall,
+          joined_at: now
+        })
+        .execute()
+      await db
+        .insertInto('games')
+        .values([
+          {
+            id: springGame,
+            home_team_id: hawks,
+            away_team_id: ravens,
+            season_id: spring,
+            start_at: new Date('2026-05-20T18:00:00Z'),
+            status: 'final'
+          },
+          {
+            id: fallGame,
+            home_team_id: ravens,
+            away_team_id: hawks,
+            season_id: fall,
+            start_at: new Date('2025-10-10T18:00:00Z'),
+            status: 'final'
+          }
+        ])
+        .execute()
+      // Each play names its batter, so the events trigger writes the
+      // event_players row the route reads.
+      const play = (
+        id: string,
+        gameId: string,
+        battingTeamId: string,
+        atBatIndex: number,
+        eventType: string,
+        batter: number,
+        hidden = false
+      ): Record<string, unknown> => ({
+        id,
+        gameId,
+        battingTeamId,
+        hidden,
+        startTime: new Date('2026-05-20T18:30:00Z'),
+        createdAt: now,
+        updatedAt: now,
+        gumbo: JSON.stringify({
+          about: { atBatIndex, inning: 1, halfInning: 'bottom' },
+          result: { eventType, rbi: 1 },
+          matchup: { batter: { id: batter } }
+        })
+      })
+      await db
+        .insertInto('events')
+        .values([
+          play(single, springGame, hawks, 0, 'single', jordan),
+          play(hiddenOut, springGame, hawks, 1, 'strikeout', jordan, true),
+          // Written under the row that was later closed into Jordan's.
+          play(double, fallGame, ravens, 0, 'double', jordanClosed)
+        ] as never)
+        .execute()
+    })
+
+    const plays = async (
+      query = '',
+      actor = jordan
+    ): Promise<{ status: number; ids: string[]; body: any }> => {
+      const answer = await ask(`/players/${jordan}/plays${query}`, actor)
+      return {
+        status: answer.status,
+        ids: Array.isArray(answer.body)
+          ? answer.body.map((row: { eventId: string }) => row.eventId)
+          : [],
+        body: answer.body
+      }
+    }
+
+    it('lists a person’s plays across a closed row, newest game first', async function () {
+      const answer = await plays()
+      expect(answer.status).equals(200)
+      expect(answer.ids).deep.equals([single, double])
+      expect(answer.body[0]).deep.equals({
+        eventId: single,
+        gameId: springGame,
+        atBatIndex: 0,
+        inning: 1,
+        halfInning: 'bottom',
+        eventType: 'single',
+        rbi: 1,
+        role: 'batter',
+        seasonId: spring,
+        startTime: '2026-05-20T18:30:00.000Z'
+      })
+      for (const row of answer.body) {
+        expect(row).not.have.property('description')
+      }
+    })
+
+    it('leaves a hidden play out', async function () {
+      expect((await plays()).ids).not.include(hiddenOut)
+    })
+
+    it('narrows to a season and to an event type', async function () {
+      expect((await plays(`?seasonId=${fall}`)).ids).deep.equals([double])
+      expect((await plays('?eventType=single')).ids).deep.equals([single])
+      expect((await plays('?role=pitcher')).ids).deep.equals([])
+    })
+
+    it('shows another reader only the plays of teams and seasons they see', async function () {
+      expect((await plays('', teammate)).ids).deep.equals([single])
+      expect((await plays('', seasonFan)).ids).deep.equals([double])
+      const hidden = await plays('', stranger)
+      expect(hidden.status).equals(200)
+      expect(hidden.ids).deep.equals([])
+    })
+
+    it('answers 404 for a user id that is not a number', async function () {
+      if (db == null) return this.skip()
+      expect((await ask('/players/usr_notanumber/plays')).status).equals(404)
+    })
   })
 })

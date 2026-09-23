@@ -14,6 +14,7 @@ import {
   sendInvitation,
   sendSignInCode
 } from './email/sendMail'
+import { jsonBody } from './jsonBody'
 import {
   type LiveControllerOptions,
   startLiveController,
@@ -31,16 +32,19 @@ import { authRoutes } from './routes/auth'
 import { devMediaRoutes } from './routes/devMedia'
 import { directorRoutes } from './routes/director'
 import { directorUploadRoutes } from './routes/directorUploads'
+import { eventRoutes } from './routes/events'
 import { healthRoutes } from './routes/health'
 import { inviteRoutes } from './routes/invites'
 import type { LiveRouteOptions } from './routes/live'
 import { liveRoutes } from './routes/live'
+import { logRoutes } from './routes/logs'
 import { manageRoutes } from './routes/manage'
 import { mediaAuthRoute, mediaRoutes } from './routes/media'
 import { playerRoutes } from './routes/players'
 import { seasonRoutes } from './routes/seasons'
 import { statsRoutes } from './routes/stats'
 import { teamRoutes } from './routes/teams'
+import { userRoutes } from './routes/users'
 import { primaryHost, publicUrl, serverConfig } from './serverConfig'
 import { stopWorker } from './stopWorker'
 
@@ -405,7 +409,7 @@ function runWorker(): void {
 
   app.set('trust proxy', 'loopback')
   app.disable('x-powered-by')
-  app.use(express.json({ limit: '1mb' }))
+  app.use(jsonBody)
   app.use(withCors(serverConfig.corsOrigins))
 
   // Who is calling, then what they changed, then the routes themselves.
@@ -428,8 +432,11 @@ function runWorker(): void {
   app.use('/api/v1', manageRoutes(db, { sendInvite, publicUrl }))
   app.use('/api/v1', seasonRoutes(db, mediaContext))
   app.use('/api/v1', teamRoutes(db, mediaContext))
+  app.use('/api/v1', eventRoutes(db))
+  app.use('/api/v1', logRoutes())
   app.use('/api/v1', statsRoutes(db))
   app.use('/api/v1', playerRoutes(db, mediaContext))
+  app.use('/api/v1', userRoutes(db))
   app.use('/api/v1', mediaRoutes(db, mediaContext))
   app.use('/api/v1', liveRoutes(db, liveRouteOptions()))
   app.use(

@@ -126,13 +126,8 @@ export function GamesFeedScreen(
   useEffect(() => {
     let cancelled = false
     const load = async (): Promise<void> => {
-      const seasons = await client.seasons()
-      if (cancelled) return
-      const perSeason = await Promise.all(
-        seasons.map(async season => await client.seasonGames(season.id))
-      )
-      if (cancelled) return
-      setGames(perSeason.flat())
+      const all = await client.games()
+      if (!cancelled) setGames(all)
     }
     load()
       .catch((caught: unknown) => {

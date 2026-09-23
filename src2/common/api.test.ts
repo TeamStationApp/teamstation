@@ -87,7 +87,7 @@ describe('api client', function () {
     const session = {
       token: 'tok_abc',
       expiresAt: '2026-10-01T00:00:00.000Z',
-      user: { id: 'usr_1', displayName: 'Robin', isAdmin: false }
+      user: { id: 1, displayName: 'Robin', isAdmin: false }
     }
     const { fetch, calls } = stubFetch(200, session)
     const client = new GameStationClient({ baseUrl: 'http://x/api/v1', fetch })
@@ -112,6 +112,18 @@ describe('api client', function () {
     const client = new GameStationClient({ baseUrl: 'http://x/api/v1', fetch })
     await client.teamGames('a/b?c')
     expect(calls[0].url).equals('http://x/api/v1/teams/a%2Fb%3Fc/games')
+  })
+
+  it('asks for people by each external id, escaped', async function () {
+    const { fetch, calls } = stubFetch(200, [
+      { userId: 7, externalIds: ['a&b', 'c'] }
+    ])
+    const client = new GameStationClient({ baseUrl: 'http://x/api/v1', fetch })
+    const users = await client.users({ externalIds: ['a&b', 'c'] })
+    expect(calls[0].url).equals(
+      'http://x/api/v1/users?externalId=a%26b&externalId=c'
+    )
+    expect(users).deep.equals([{ userId: 7, externalIds: ['a&b', 'c'] }])
   })
 
   it('trims a trailing slash off the base so paths do not double up', async function () {

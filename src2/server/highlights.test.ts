@@ -5,7 +5,8 @@ import {
   computeHighlights,
   type HighlightEvent,
   type HighlightVideo,
-  leadFor
+  leadFor,
+  withDropped
 } from './highlights'
 import type { HighlightSettings } from './settings'
 
@@ -29,7 +30,10 @@ const event = (over: Partial<HighlightEvent> = {}): HighlightEvent => ({
   atBatIndex: 1,
   startTime: new Date(videoStart.getTime() + 600_000),
   eventType: 'single',
-  description: 'Jordan singles to left',
+  inning: null,
+  halfInning: null,
+  awayScore: null,
+  homeScore: null,
   titleOverride: null,
   timeNudgeSec: 0,
   hidden: false,
@@ -110,6 +114,27 @@ describe('highlights', function () {
     )
   })
 
+  it('leaves out a fielding error, for either team, unless somebody titled it', function () {
+    const error = event({
+      id: 'evt_err',
+      atBatIndex: 2,
+      eventType: 'field_error'
+    })
+    const { highlights, dropped } = withDropped(
+      [event(), error],
+      video,
+      settings
+    )
+    expect(highlights.map(h => h.eventId)).deep.equals(['evt_1'])
+    expect(dropped).equals(0)
+    const titled = computeHighlights(
+      [{ ...error, titleOverride: 'The one that got away' }],
+      video,
+      settings
+    )
+    expect(titled.map(h => h.title)).deep.equals(['The one that got away'])
+  })
+
   it('returns them in game order, oldest first', function () {
     const third = event({ id: 'c', atBatIndex: 3 })
     const first = event({ id: 'a', atBatIndex: 1 })
@@ -118,7 +143,7 @@ describe('highlights', function () {
     expect(order.map(item => item.eventId)).deep.equals(['a', 'b', 'c'])
   })
 
-  it('prefers a manual title, then the description', function () {
+  it('prefers a manual title, then names the play by its type', function () {
     const overridden = computeHighlights(
       [event({ titleOverride: 'The catch' })],
       video,
@@ -126,15 +151,23 @@ describe('highlights', function () {
     )
     expect(overridden[0].title).equals('The catch')
 
-    const described = computeHighlights([event()], video, settings)
-    expect(described[0].title).equals('Jordan singles to left')
-
-    const bare = computeHighlights(
-      [event({ description: null, titleOverride: null })],
+    const named = computeHighlights([event()], video, settings)
+    expect(named[0].title).equals('Single')
+    // The sentence under the video is GameStation's own, from the play.
+    expect(named[0].description).equals('Single.')
+    const placed = computeHighlights(
+      [event({ inning: 3, halfInning: 'bottom', awayScore: 1, homeScore: 2 })],
       video,
       settings
     )
-    expect(bare[0].title).equals('single')
+    expect(placed[0].description).equals('Bottom 3rd: Single. 1–2')
+
+    const unknown = computeHighlights(
+      [event({ eventType: 'something_new' })],
+      video,
+      settings
+    )
+    expect(unknown[0].title).equals('Play')
   })
 
   it('has nothing to offer for a video with no start time', function () {
@@ -155,7 +188,10 @@ describe('what a highlight is called, and whether it is shown at all', function 
   const base = {
     atBatIndex: 1,
     eventType: 'single',
-    description: 'Jordan Pujols singles on a ground ball.',
+    inning: null,
+    halfInning: null,
+    awayScore: null,
+    homeScore: null,
     titleOverride: null,
     timeNudgeSec: 0,
     hidden: false,
@@ -343,15 +379,16 @@ describe('what a highlight is called, and whether it is shown at all', function 
     expect(found).to.have.length(1)
   })
 
-  it('leaves a game ingested before credits existed alone', function () {
-    // `undefined` is not `[]`: nobody has looked at this play yet, so it keeps
-    // its old wording rather than vanishing until an import is re-run.
+  it('shows a game ingested before credits existed by its plays’ types', function () {
+    // `undefined` is not `[]`: nobody has looked at this play yet, so it is
+    // shown by what kind of play it was rather than vanishing until an import
+    // is re-run.
     const found = computeHighlights(
       [{ ...base, id: 'e1', startTime: at(600) }],
       video,
       settings
     )
     expect(found).to.have.length(1)
-    expect(found[0]?.title).equals('Jordan Pujols singles on a ground ball.')
+    expect(found[0]?.title).equals('Single')
   })
 })

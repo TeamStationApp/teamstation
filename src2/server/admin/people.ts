@@ -21,9 +21,9 @@ import type { Database } from '../db/database'
  */
 export interface OnePerson {
   /** The row still open, which is the one to answer as. */
-  userId: string
+  userId: number
   /** That row and every one closed into it, for a query to sum over. */
-  userIds: string[]
+  userIds: number[]
 }
 
 /** However deep a chain of merges can sensibly go before it is a mistake. */
@@ -31,12 +31,12 @@ const MAX_DEPTH = 16
 
 export async function onePerson(
   db: Kysely<Database>,
-  userId: string
+  userId: number
 ): Promise<OnePerson> {
   // Up the chain to whoever is still open. A cycle would be a bug in whatever
   // wrote it; the guard means it cannot become a hung request.
   let survivor = userId
-  const walked = new Set<string>([userId])
+  const walked = new Set<number>([userId])
   for (let step = 0; step < MAX_DEPTH; step += 1) {
     const row = await db
       .selectFrom('users')
@@ -50,7 +50,7 @@ export async function onePerson(
   }
 
   // And back down it, gathering everybody who became them.
-  const userIds = new Set<string>([survivor])
+  const userIds = new Set<number>([survivor])
   let frontier = [survivor]
   for (let step = 0; step < MAX_DEPTH && frontier.length > 0; step += 1) {
     const rows = await db
@@ -82,8 +82,8 @@ export async function onePerson(
  */
 export async function closeInto(
   db: Kysely<Database>,
-  closing: string,
-  keeping: string
+  closing: number,
+  keeping: number
 ): Promise<number> {
   if (closing === keeping) return 0
 
@@ -190,8 +190,8 @@ export function isFullerName(
 
 export async function keepTheFullerName(
   db: Kysely<Database>,
-  closing: string,
-  keeping: string
+  closing: number,
+  keeping: number
 ): Promise<boolean> {
   const rows = await db
     .selectFrom('users')
@@ -247,9 +247,9 @@ export async function tidyClosedRows(db: Kysely<Database>): Promise<number> {
 /** Who each of these ids is now, for a read that has rows rather than a name. */
 export async function survivorsOf(
   db: Kysely<Database>,
-  userIds: string[]
-): Promise<Map<string, string>> {
-  const survivors = new Map<string, string>()
+  userIds: number[]
+): Promise<Map<number, number>> {
+  const survivors = new Map<number, number>()
   if (userIds.length === 0) return survivors
   const rows = await db
     .selectFrom('users')
@@ -257,13 +257,13 @@ export async function survivorsOf(
     .where('id', 'in', [...new Set(userIds)])
     .execute()
 
-  const closedInto = new Map<string, string>()
+  const closedInto = new Map<number, number>()
   for (const row of rows) {
     if (row.merged_into != null) closedInto.set(row.id, row.merged_into)
   }
   for (const row of rows) {
     let id = row.id
-    const walked = new Set<string>([id])
+    const walked = new Set<number>([id])
     while (true) {
       const next = closedInto.get(id)
       if (next == null || walked.has(next)) break
@@ -286,86 +286,6 @@ export async function survivorsOf(
 }
 
 /**
- * Pairs who were on the field at the same time, which is two children.
- *
- * The strongest evidence there is against a merge, and it comes from the play
- * itself rather than from a name. One child is one person: two rows named on
- * plays in **the same half-inning** were both out there at once.
- *
- * The half-inning is what makes this sharp rather than merely broad. A scorer
- * re-adding somebody mid-season leaves two rows in one game — the old one
- * fields early, the new one bats later — and they are never in the same half.
- * `Jameson Taillon` was *pitching* in the top of the second while `Jameson`
- * fielded behind him, which no child can do; `Lucas` and `Lucas Giolito` never
- * share a half, and a game where one holds an empty line beside the other is
- * the re-added shape rather than two boys.
- *
- * A number settles nothing here, whatever it looks like: eleven numbers on the
- * server are worn by two different children on one team.
- *
- * The figures are asked as well, because a game whose plays we never tagged
- * has no half-innings to compare — two rows that both batted in one game are
- * two boys however little else we hold.
- *
- * Returned as a set of `a|b` pairs, both ways round, so a caller can ask about
- * a candidate without another query. Ask about **every** pair in a group and
- * not just the two rows in front of you: `Casey Mize` was closed into
- * another `Casey Mize` and that one into `Casey`, and the two ends of the
- * chain both batted on 11 April — a pairwise test at each step saw nothing.
- */
-export async function bothPlayedTogether(
-  db: Kysely<Database>,
-  userIds: string[]
-): Promise<Set<string>> {
-  const together = new Set<string>()
-  if (userIds.length < 2) return together
-
-  const wanted = [...new Set(userIds)]
-  const byGame = new Map<string, string[]>()
-  const note = (gameId: string, userId: string): void => {
-    const held = byGame.get(gameId) ?? []
-    if (!held.includes(userId)) held.push(userId)
-    byGame.set(gameId, held)
-  }
-
-  // Everybody named on a play, in any part: batting, pitching, fielding, on
-  // base — gathered per half-inning, which is the window a child can only be
-  // in one place in.
-  for (const row of await db
-    .selectFrom('event_players')
-    .innerJoin('events', 'events.id', 'event_players.event_id')
-    .select([
-      'events.game_id as gameId',
-      'events.inning as inning',
-      'events.half_inning as half',
-      'event_players.user_id as userId'
-    ])
-    .where('event_players.user_id', 'in', wanted)
-    .execute()) {
-    note(`${row.gameId} ${row.inning ?? ''} ${row.half ?? ''}`, row.userId)
-  }
-
-  // And anybody with a figure in a game, for a game whose plays we never
-  // tagged. An empty line is a lineup slot rather than an appearance.
-  for (const row of await db
-    .selectFrom('game_player_stats')
-    .select(['game_id', 'user_id', 'pa', 'pitch_outs'])
-    .where('user_id', 'in', wanted)
-    .execute()) {
-    if (row.pa === 0 && row.pitch_outs === 0) continue
-    note(row.game_id, row.user_id)
-  }
-  for (const players of byGame.values()) {
-    for (const one of players) {
-      for (const other of players) {
-        if (one !== other) together.add(`${one}|${other}`)
-      }
-    }
-  }
-  return together
-}
-
-/**
  * Splits a group of rows into the fewest people who were never in a game
  * together.
  *
@@ -380,11 +300,11 @@ export async function bothPlayedTogether(
  * clashes with everybody ends up alone, which is what it should be.
  */
 export function splitByClash(
-  rows: Array<{ userId: string; weight: number }>,
+  rows: Array<{ userId: number; weight: number }>,
   clashes: Set<string>
-): string[][] {
+): number[][] {
   const order = [...rows].sort((a, b) => b.weight - a.weight)
-  const people: string[][] = []
+  const people: number[][] = []
   for (const row of order) {
     const home = people.find(
       person => !person.some(held => clashes.has(`${held}|${row.userId}`))
