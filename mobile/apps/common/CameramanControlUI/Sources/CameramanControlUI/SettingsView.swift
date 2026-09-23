@@ -142,29 +142,31 @@ struct SettingsView<Model: CameraControlling>: View {
               .accessibilityIdentifier("scoreboard-account-server")
           }
           if board.scoreboard.signedIn {
-            HStack {
-              Text(LoginFlow.loggedInLine(board.scoreboard.accountLabel))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-                .onTapGesture { login.tapElsewhere() }
-                .accessibilityIdentifier("scoreboard-account")
+            VStack(alignment: .leading, spacing: 8) {
+              HStack {
+                Text(LoginFlow.loggedInLine(board.scoreboard.accountLabel))
+                  .frame(maxWidth: .infinity, alignment: .leading)
+                  .contentShape(Rectangle())
+                  .onTapGesture { login.tapElsewhere() }
+                  .accessibilityIdentifier("scoreboard-account")
+                if !login.logoutArmed {
+                  Button("Logout") { login.armLogout() }
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.red)
+                    .accessibilityIdentifier("scoreboard-sign-out")
+                }
+              }
               if login.logoutArmed {
-                Text("Slide to log out")
-                  .font(.body.weight(.semibold))
-                  .foregroundStyle(.red)
-                  .gesture(
-                    DragGesture(minimumDistance: 8).onEnded { value in
-                      if login.slide(translation: value.translation.width) {
-                        board.signOutScoreboard()
-                      }
-                    }
-                  )
-                  .accessibilityIdentifier("gamestation-slide-logout")
-              } else {
-                Button("Logout") { login.armLogout() }
-                  .font(.body.weight(.semibold))
-                  .foregroundStyle(.red)
-                  .accessibilityIdentifier("scoreboard-sign-out")
+                SlideToStop(
+                  label: "Slide to log out",
+                  trackIdentifier: "gamestation-slide-logout",
+                  animate: model.animatesChrome
+                ) {
+                  if login.slide(progress: 1) {
+                    board.signOutScoreboard()
+                  }
+                }
+                .frame(maxWidth: .infinity, alignment: .trailing)
               }
             }
             .padding(.horizontal, 16)
@@ -466,23 +468,7 @@ struct SettingsView<Model: CameraControlling>: View {
       )) {
         NavigationStack {
           List {
-            Section("Last 3 hours") {
-              if board.scoreboard.recent.isEmpty {
-                Text("None")
-              }
-              ForEach(board.scoreboard.recent) { event in
-                Button {
-                  board.chooseScoreboardEvent(event.gameId)
-                } label: {
-                  VStack(alignment: .leading) {
-                    Text(event.title)
-                    Text(event.whenLabel).font(.footnote).foregroundStyle(.secondary)
-                  }
-                }
-                .accessibilityIdentifier("scoreboard-event-\(event.gameId)")
-              }
-            }
-            Section("Next 5") {
+            Section("Events") {
               if board.scoreboard.upcoming.isEmpty {
                 Text("None")
               }
@@ -491,8 +477,8 @@ struct SettingsView<Model: CameraControlling>: View {
                   board.chooseScoreboardEvent(event.gameId)
                 } label: {
                   VStack(alignment: .leading) {
-                    Text(event.title)
                     Text(event.whenLabel).font(.footnote).foregroundStyle(.secondary)
+                    Text(event.title)
                   }
                 }
                 .accessibilityIdentifier("scoreboard-event-\(event.gameId)")

@@ -177,13 +177,12 @@ public final class ScoreboardDesk {
       do {
         let json = try await call(
           method: "GET",
-          path: "scoreboard/events",
+          path: "events?scope=run&lookbackHours=2&limit=20",
           body: nil,
           token: saved.token
         )
-        let object = json as? [String: Any] ?? [:]
-        recent = rows(object["recent"])
-        upcoming = rows(object["upcoming"])
+        recent = []
+        upcoming = rows(json)
         pickerStatus = ""
       } catch {
         pickerStatus = error.localizedDescription
@@ -339,7 +338,14 @@ public final class ScoreboardDesk {
   }
 
   private func rows(_ value: Any?) -> [ScoreboardEventChoice] {
-    guard let list = value as? [[String: Any]] else { return [] }
+    let list: [[String: Any]]
+    if let objects = value as? [[String: Any]] {
+      list = objects
+    } else if let any = value as? [Any] {
+      list = any.compactMap { $0 as? [String: Any] }
+    } else {
+      return []
+    }
     return list.compactMap { item in
       guard let gameId = item["gameId"] as? String, !gameId.isEmpty else { return nil }
       let away = item["awayTeamName"] as? String ?? ""

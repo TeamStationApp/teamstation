@@ -652,27 +652,22 @@ async function e4(): Promise<void> {
 
 async function e5(): Promise<void> {
   const { games, runner } = readState()
-  const answer = await getJson('/scoreboard/events', runner)
-  const recent = (answer.body.recent as Array<{ gameId: string }>).map(
-    e => e.gameId
+  const answer = await getJson(
+    '/events?scope=run&lookbackHours=2&limit=20',
+    runner
   )
-  const upcoming = (
-    answer.body.upcoming as Array<{ gameId: string; startAt: string }>
-  ).map(e => e.gameId)
-  observe(
-    'recent holds only the -10m game',
-    JSON.stringify(recent) === JSON.stringify([games['-10m']]),
-    recent
-  )
-  const wanted = ['+1h', '+2h', '+3h', '+4h', '+5h'].map(name => games[name])
-  observe(
-    'upcoming is exactly +1h … +5h, soonest first',
-    JSON.stringify(upcoming) === JSON.stringify(wanted),
-    upcoming
+  const ids = (answer.body as Array<{ gameId: string }>).map(e => e.gameId)
+  const wanted = ['-10m', '+1h', '+2h', '+3h', '+4h', '+5h', '+6h'].map(
+    name => games[name]
   )
   observe(
-    'the cancelled game is in neither',
-    !recent.includes(games.cancelled) && !upcoming.includes(games.cancelled)
+    'GET /events is the -10m game through +6h, soonest first',
+    JSON.stringify(ids) === JSON.stringify(wanted),
+    ids
+  )
+  observe(
+    'the -4h game and the cancelled game are absent',
+    !ids.includes(games['-4h']) && !ids.includes(games.cancelled)
   )
 }
 

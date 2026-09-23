@@ -97,9 +97,17 @@ public struct GameStationClient: Sendable {
 
   // MARK: - Events
 
-  /// The next ten games of the teams this account runs, soonest first.
+  /// The next twenty games of the teams this account runs, soonest first.
   public func events() async throws -> [GameStationEvent] {
-    try await send("director/events", method: "GET")
+    try await send(
+      "events",
+      method: "GET",
+      query: [
+        URLQueryItem(name: "scope", value: "run"),
+        URLQueryItem(name: "lookbackHours", value: "2"),
+        URLQueryItem(name: "limit", value: "20")
+      ]
+    )
   }
 
   /// The last ten games already played, latest first.
@@ -109,9 +117,14 @@ public struct GameStationClient: Sendable {
   /// game that has just finished.
   public func finishedEvents() async throws -> [GameStationEvent] {
     try await send(
-      "director/events",
+      "events",
       method: "GET",
-      query: [URLQueryItem(name: "when", value: "finished")]
+      query: [
+        URLQueryItem(name: "scope", value: "run"),
+        URLQueryItem(name: "when", value: "finished"),
+        URLQueryItem(name: "lookbackHours", value: "2"),
+        URLQueryItem(name: "limit", value: "10")
+      ]
     )
   }
 
