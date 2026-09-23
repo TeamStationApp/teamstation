@@ -23,11 +23,21 @@ const { getDefaultConfig, mergeConfig } = require('@react-native/metro-config')
  * `three` resolves to its ES module. Babel turns every `import` into a
  * `require`, so Metro asks for the `require` export, and three's CommonJS
  * entry calls Node's `process.emitWarning` and throws on a phone.
+ *
+ * A `node_modules` directory next to the app sources is closer to those
+ * files than the repository install, so hierarchical lookup would load a
+ * second React for `src2/app` while React Native's renderer keeps the
+ * repository copy. The renderer installs the hook dispatcher on its own
+ * copy, and the app's first `useState` then reads null and the phone
+ * quits on launch. A resolution that lands in that nearer directory is
+ * tried again from the repository root, where the renderer looks.
  */
 const expoStandIn = path.resolve(
   __dirname,
   'src2/app/native/expoStandIn/assets.js'
 )
+const strayModules = path.resolve(__dirname, 'src2', 'node_modules') + path.sep
+const repositoryOrigin = path.join(__dirname, 'package.json')
 const config = {
   resolver: {
     resolveRequest: (context, moduleName, platform) => {
@@ -39,9 +49,17 @@ const config = {
           moduleName,
           platform
         )
-      return context.resolveRequest(context, moduleName, platform)
+      const resolved = context.resolveRequest(context, moduleName, platform)
+      if (resolved?.filePath?.startsWith(strayModules))
+        return context.resolveRequest(
+          { ...context, originModulePath: repositoryOrigin },
+          moduleName,
+          platform
+        )
+      return resolved
     },
     blockList: [
+      new RegExp(`^${escape(strayModules)}.*$`),
       new RegExp(`^${escape(path.resolve(__dirname, 'src'))}/.*$`),
       new RegExp(`^${escape(path.resolve(__dirname, 'mobile'))}/.*$`),
       new RegExp(`^${escape(path.resolve(__dirname, 'lib'))}/.*$`),
