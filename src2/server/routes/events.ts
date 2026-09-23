@@ -9,12 +9,7 @@ import {
 } from '../../common/errors'
 import { asPostEventsBody } from '../../common/gumboPlay'
 import { halfOutcomes } from '../../common/scoring/linescore'
-import {
-  adminScopes,
-  canManageTeam,
-  canSeeGame,
-  visibleScopes
-} from '../access'
+import { canScore, canSeeGame, roleScopes, visibleScopes } from '../access'
 import type { Database } from '../db/database'
 import {
   documentOf,
@@ -80,10 +75,11 @@ export function eventRoutes(db: Kysely<Database>): Router {
         gameId,
         body,
         async (trx, game) => {
-          const editors = await adminScopes(trx, actor.userId, actor.isAdmin)
+          // A scorekeeper of either team, which an administrator of it is.
+          const scorers = await roleScopes(trx, actor.userId, actor.isAdmin)
           if (
-            !canManageTeam(editors, game.home_team_id) &&
-            !canManageTeam(editors, game.away_team_id)
+            !canScore(scorers, game.home_team_id) &&
+            !canScore(scorers, game.away_team_id)
           ) {
             throw forbidden(
               'Only someone who can score this game may change its plays'

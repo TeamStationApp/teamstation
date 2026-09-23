@@ -8,6 +8,7 @@ import { BallArc } from './BallArc'
 import {
   arrowPulse,
   inArcGrabArea,
+  isPrimaryPress,
   offsetTouchTarget,
   usesTouchPlacement
 } from './interactionAffordances'
@@ -45,6 +46,14 @@ describe('touch placement and animated arc affordances', function () {
     expect(usesTouchPlacement(undefined, true)).equals(true)
     expect(usesTouchPlacement('mouse', true)).equals(false)
     expect(usesTouchPlacement('pen', true)).equals(false)
+  })
+  it('reads a phone touch, which has no button, as a primary press', function () {
+    expect(isPrimaryPress({ pointerType: 'touch' })).equals(true)
+    expect(isPrimaryPress({})).equals(false)
+    expect(isPrimaryPress({ button: 0, pointerType: 'mouse' })).equals(true)
+    expect(isPrimaryPress({ button: 0, pointerType: 'touch' })).equals(true)
+    expect(isPrimaryPress({ button: 1, pointerType: 'mouse' })).equals(false)
+    expect(isPrimaryPress({ button: 2, pointerType: 'mouse' })).equals(false)
   })
   it('renders six animated arrows in the overlay pass above transparent nameplates', async function () {
     const arc = { target: { x: 0, z: -60 }, angle: 30 }

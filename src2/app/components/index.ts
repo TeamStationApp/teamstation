@@ -31,10 +31,10 @@ export { ManageGear, type ManageGearProps } from './ManageGear'
 export { LivePill, type LivePillProps } from './LivePill'
 export {
   adminLabel,
-  memberLabel,
-  RoleModal,
-  type RoleModalProps
-} from './RoleModal'
+  flagLabel,
+  RolesModal,
+  type RolesModalProps
+} from './RolesModal'
 export { PillTabs, type PillTab } from './PillTabs'
 export { Scoreboard } from './Scoreboard'
 export { Screen } from './Screen'

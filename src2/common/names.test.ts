@@ -1,7 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { shortName, shortNames } from './names'
+import { fullName, shortName, shortNames } from './names'
 
 const person = (
   id: string,
@@ -41,6 +41,20 @@ describe('how a name is written', function () {
 
   it('leaves an empty name empty rather than inventing one', function () {
     expect(shortName({ id: '1', displayName: '' })).equals('')
+  })
+})
+
+describe('a whole name', function () {
+  it('is both halves, or whichever one there is', function () {
+    expect(fullName(person('1', 'Jordan', 'Pujols'))).equals('Jordan Pujols')
+    expect(fullName(person('1', 'Casey', ''))).equals('Casey')
+    expect(fullName(person('1', '', 'Mize'))).equals('Mize')
+  })
+
+  it('is the display name for somebody with no halves', function () {
+    expect(
+      fullName({ id: '1', displayName: ' Childe Harold Janvrin ' })
+    ).equals('Childe Harold Janvrin')
   })
 })
 

@@ -38,6 +38,278 @@ function stubFetch(
 }
 
 describe('api client', function () {
+  it('sets somebody\u2019s roles on one level, and reads the caller\u2019s own', async function () {
+    const set = stubFetch(200, { userId: 42, roles: ['admin', 'coach'] })
+    const client = new GameStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: set.fetch
+    })
+    const roles = await client.setRoles('season', 'sea 1', 42, {
+      admin: true,
+      flags: ['coach']
+    })
+    expect(roles).deep.equals(['admin', 'coach'])
+    expect(set.calls[0].method).equals('PUT')
+    expect(set.calls[0].url).equals(
+      'http://x/api/v1/manage/season/sea%201/people/42/roles'
+    )
+    expect(JSON.parse(set.calls[0].body ?? '')).deep.equals({
+      admin: true,
+      flags: ['coach']
+    })
+
+    const mine = stubFetch(200, {
+      teams: { tem_1: ['scorekeeper'], tem_2: ['admin', 'coach'] }
+    })
+    const reader = new GameStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: mine.fetch
+    })
+    expect((await reader.myRoles()).teams.tem_1).deep.equals(['scorekeeper'])
+    expect(mine.calls[0].url).equals('http://x/api/v1/me/roles')
+    // A role this app does not know is refused rather than drawn.
+    const odd = stubFetch(200, { teams: { tem_1: ['umpire'] } })
+    let refused = false
+    try {
+      await new GameStationClient({
+        baseUrl: 'http://x/api/v1',
+        fetch: odd.fetch
+      }).myRoles()
+    } catch {
+      refused = true
+    }
+    expect(refused).equals(true)
+  })
+
+  it('sets a player\u2019s settings on a team, and reads back the roster entry', async function () {
+    const set = stubFetch(200, {
+      userId: 7,
+      shortName: 'Jordan P',
+      jersey: '12',
+      positions: ['SS', '2B'],
+      bats: 'left',
+      throws: 'right',
+      isPlayer: true,
+      role: 'member'
+    })
+    const client = new GameStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: set.fetch
+    })
+    const entry = await client.setPlayerSettings('tem 1', 7, {
+      jersey: '12',
+      bats: 'left'
+    })
+    expect(entry.jersey).equals('12')
+    expect(entry.positions).deep.equals(['SS', '2B'])
+    expect(set.calls[0].method).equals('PUT')
+    expect(set.calls[0].url).equals(
+      'http://x/api/v1/teams/tem%201/players/7/settings'
+    )
+    expect(JSON.parse(set.calls[0].body ?? '')).deep.equals({
+      jersey: '12',
+      bats: 'left'
+    })
+  })
+
+  it('sets and clears a walk-up song, and reads it on the roster', async function () {
+    const song = {
+      provider: 'appleMusic',
+      providerId: '1440857781',
+      isrc: 'USFI86900049',
+      title: 'Centerfield',
+      artist: 'John Fogerty',
+      album: null,
+      artworkUrl: null,
+      durationMs: 230000,
+      startMs: 10000,
+      endMs: 25000
+    } as const
+    const set = stubFetch(200, song)
+    const client = new GameStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: set.fetch
+    })
+    expect(await client.setWalkUpSong('tem 1', 7, song)).deep.equals(song)
+    expect(set.calls[0].method).equals('PUT')
+    expect(set.calls[0].url).equals(
+      'http://x/api/v1/teams/tem%201/players/7/walk-up-song'
+    )
+    expect(JSON.parse(set.calls[0].body ?? '')).deep.equals(song)
+
+    // 204 carries no body, which a stubbed Response may not be given.
+    const cleared: Array<{ url: string; method?: string; body?: unknown }> = []
+    await new GameStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: async (url: unknown, init?: RequestInit) => {
+        cleared.push({
+          url: String(url),
+          method: init?.method,
+          body: init?.body
+        })
+        return new Response(null, { status: 204 })
+      }
+    }).clearWalkUpSong('tem 1', '7')
+    expect(cleared).deep.equals([
+      {
+        url: 'http://x/api/v1/teams/tem%201/players/7/walk-up-song',
+        method: 'DELETE',
+        body: undefined
+      }
+    ])
+
+    // A song the app would not store is refused rather than drawn.
+    let refused = false
+    try {
+      await new GameStationClient({
+        baseUrl: 'http://x/api/v1',
+        fetch: stubFetch(200, { ...song, endMs: 5000 }).fetch
+      }).setWalkUpSong('tem_1', 7, song)
+    } catch {
+      refused = true
+    }
+    expect(refused).equals(true)
+
+    const entry = {
+      userId: 7,
+      shortName: 'Jordan P',
+      jersey: '12',
+      positions: [],
+      isPlayer: true,
+      role: 'member'
+    }
+    const roster = stubFetch(200, [
+      { ...entry, walkUpSong: song },
+      { ...entry, userId: 8, walkUpSong: null },
+      // An older server sends no song at all.
+      { ...entry, userId: 9 }
+    ])
+    const read = await new GameStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: roster.fetch
+    }).roster('tem_1')
+    expect(read.map(row => row.walkUpSong)).deep.equals([song, null, null])
+  })
+
+  it("reads a team's default lineup and a game's lineups", async function () {
+    const person = { userId: 7, name: 'Jordan P', jersey: '12' }
+    const defense = {
+      P: person,
+      C: null,
+      '1B': null,
+      '2B': null,
+      SS: null,
+      '3B': null,
+      LF: null,
+      CF: null,
+      RF: null
+    }
+    const kept = stubFetch(200, {
+      lineup: { batters: [person], defense },
+      fromGameId: 'gam 1',
+      setAt: '2026-09-28T12:00:00.000Z'
+    })
+    const client = new GameStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: kept.fetch
+    })
+    const found = await client.defaultLineup('tem 1')
+    expect(found.lineup?.defense.P).deep.equals(person)
+    expect(found.fromGameId).equals('gam 1')
+    expect(kept.calls[0].url).equals(
+      'http://x/api/v1/teams/tem%201/default-lineup'
+    )
+
+    const side = (teamId: string): Record<string, unknown> => ({
+      teamId,
+      teamName: teamId.toUpperCase(),
+      start: null,
+      changes: [
+        {
+          atBatIndex: 3,
+          inning: 1,
+          half: 'bottom',
+          side: 'home',
+          eventType: 'pitching_substitution',
+          player: person,
+          position: 'P',
+          battingOrder: null,
+          replaced: null,
+          description: 'Pitching Change: Jordan P replaces Ott O.'
+        }
+      ],
+      current: { batters: [person], defense }
+    })
+    const read = stubFetch(200, { away: side('a'), home: side('h') })
+    const lineups = await new GameStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: read.fetch
+    }).gameLineups('gam 1')
+    expect(read.calls[0].url).equals('http://x/api/v1/games/gam%201/lineups')
+    expect(lineups.away.teamName).equals('A')
+    expect(lineups.home.changes[0].eventType).equals('pitching_substitution')
+    expect(lineups.home.current?.batters).deep.equals([person])
+
+    const bad = stubFetch(200, { away: side('a'), home: { teamId: 'h' } })
+    let refused = false
+    try {
+      await new GameStationClient({
+        baseUrl: 'http://x/api/v1',
+        fetch: bad.fetch
+      }).gameLineups('g')
+    } catch {
+      refused = true
+    }
+    expect(refused).equals(true)
+  })
+
+  it("reads DJ Game's batters and songs, and refuses a bad source (U27)", async function () {
+    const song = {
+      provider: 'localFile',
+      providerId: 'lf:0123456789abcdef',
+      isrc: null,
+      title: 'Walk',
+      artist: 'Band',
+      album: null,
+      artworkUrl: null,
+      durationMs: 180000,
+      startMs: 10000,
+      endMs: 25000
+    }
+    const side = (source: string): Record<string, unknown> => ({
+      teamId: 'tem_1',
+      teamName: 'Titan',
+      source,
+      canEditWalkUp: true,
+      batters: [
+        { userId: 7, name: 'Tom A', walkUpSong: song },
+        { userId: null, name: 'Guest', walkUpSong: null }
+      ]
+    })
+    const read = stubFetch(200, { away: side('lineup'), home: side('roster') })
+    const dj = await new GameStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: read.fetch
+    }).djGame('gam 1')
+    expect(read.calls[0].url).equals('http://x/api/v1/games/gam%201/dj')
+    expect(dj.away.source).equals('lineup')
+    expect(dj.home.source).equals('roster')
+    expect(dj.away.batters[0].walkUpSong?.title).equals('Walk')
+    expect(dj.away.batters[1].userId).equals(null)
+
+    const bad = stubFetch(200, { away: side('lineup'), home: side('guess') })
+    let refused = false
+    try {
+      await new GameStationClient({
+        baseUrl: 'http://x/api/v1',
+        fetch: bad.fetch
+      }).djGame('g')
+    } catch {
+      refused = true
+    }
+    expect(refused).equals(true)
+  })
+
   it('cleans a team list', async function () {
     const { fetch } = stubFetch(200, [
       { id: 'tem_1', name: 'Badgers', shortName: null, logoPath: null }

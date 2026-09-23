@@ -7,6 +7,7 @@ import type {
   PlayerHighlight,
   PlayerStats
 } from '../../common/api'
+import type { WalkUpSong } from '../../common/walkUpSong'
 import {
   Button,
   Card,
@@ -26,8 +27,11 @@ import {
 } from '../components'
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import webMusic, { type WalkUpMusic } from '../walkup/walkUpMusic'
+import { WalkUpTab } from '../walkup/WalkUpTab'
 import { battingLine, exactDateTime } from './format'
 import { average } from './GameScreen'
+import { PlayerSettingsTab } from './PlayerSettingsTab'
 
 export interface PlayerScreenProps {
   client: GameStationClient
@@ -35,8 +39,41 @@ export interface PlayerScreenProps {
   /** The name the row that was tapped showed, so the header has one at once. */
   title?: string
   /** Which tab to open on, from the address. */
-  initialTab?: 'videos' | 'stats'
-  onTab?: (tab: 'videos' | 'stats', correcting?: boolean) => void
+  initialTab?: PlayerTab
+  onTab?: (tab: PlayerTab, correcting?: boolean) => void
+  /**
+   * The team the page was opened for, the address's `onTeam`: the roster
+   * row or the box-score side that was tapped. The Settings tab edits the
+   * player on it. The Stats filter is a different thing and never changes
+   * it.
+   */
+  forTeam?: string
+  /**
+   * Whether the viewer coaches `forTeam`, from `GET /me/roles`. Undefined
+   * while that is still being asked, so an address that opens on Settings is
+   * not sent back to Videos before the answer is in.
+   */
+  canCoach?: boolean
+  /**
+   * The Walk-up tab. `canEdit` is whether the viewer keeps `forTeam`'s
+   * walk-up songs — a songkeeper of it or its admin — from `GET /me/roles`,
+   * and undefined while that is still being asked, as `canCoach` is. The song
+   * itself is read from `forTeam`'s roster by the tab.
+   */
+  walkUp?: {
+    canEdit?: boolean
+    /** Finds the song on this phone, for Preview. */
+    resolve?: (song: WalkUpSong) => Promise<string | null>
+    /**
+     * Opens the song picker, titled with the player's name: the loaded
+     * player's, which an address opened from a link has no other way to know.
+     */
+    onPick?: (song: WalkUpSong | null, playerName: string) => void
+    /** Whether Preview fades Apple Music on the phone's volume. */
+    fadeAppleMusic?: boolean
+  }
+  /** The phone's music; the web's adapter, which has none, by default. */
+  music?: WalkUpMusic
   /**
    * What the Stats tab opens narrowed to, from the address.
    *
@@ -56,10 +93,20 @@ export interface PlayerScreenProps {
   ) => void
 }
 
-const TABS = [
-  { id: 'videos' as const, label: lstrings.player_videos },
-  { id: 'stats' as const, label: lstrings.player_stats }
+export type PlayerTab = 'videos' | 'stats' | 'settings' | 'walkup'
+
+const TABS: Array<{ id: PlayerTab; label: string }> = [
+  { id: 'videos', label: lstrings.player_videos },
+  { id: 'stats', label: lstrings.player_stats }
 ]
+const WALKUP_TAB = {
+  id: 'walkup' as const,
+  label: lstrings.player_walkup
+}
+const SETTINGS_TAB = {
+  id: 'settings' as const,
+  label: lstrings.player_settings
+}
 
 /**
  * One player: their face, their name, how they bat and throw, and then what
@@ -70,8 +117,10 @@ const TABS = [
  * one has learned the other. The photograph is a circle rather than the team's
  * rounded badge: a face is a circle everywhere else in this app already.
  *
- * The name is whichever one the viewer is entitled to. The server decides and
- * sends one; this screen never has both to choose between.
+ * The title is the short name, for everybody. The whole name sits under it
+ * only when the server sent one, which it does for a coach or an
+ * administrator of the player's team, a parent, the player and a site
+ * administrator; this screen never decides that for itself.
  */
 export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
   const {
@@ -82,13 +131,17 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
     initialFilter,
     onTab,
     onFilter,
-    onOpenMoment
+    onOpenMoment,
+    forTeam,
+    canCoach,
+    walkUp,
+    music = webMusic
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
 
   const [player, setPlayer] = useState<PlayerDetail | undefined>(undefined)
-  const [tab, setTab] = useState<'videos' | 'stats'>(initialTab ?? 'videos')
+  const [tab, setTab] = useState<PlayerTab>(initialTab ?? 'videos')
   /**
    * The address is allowed to change this, not only to start it.
    *
@@ -104,6 +157,32 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
   useEffect(() => {
     setTab(initialTab ?? 'videos')
   }, [initialTab])
+
+  // Settings is offered to a coach of the team the page was opened for, and
+  // Walk-up to a keeper of its songs, on the web and on a phone alike, and
+  // to nobody else. An address that asks for either without that right opens
+  // on Videos, and says so, once the answer to "do they hold it?" is in.
+  const canKeepSongs = walkUp?.canEdit
+  const settingsShown = forTeam != null && canCoach === true
+  const walkUpShown = forTeam != null && canKeepSongs === true
+  const tabs = [
+    ...TABS,
+    ...(walkUpShown ? [WALKUP_TAB] : []),
+    ...(settingsShown ? [SETTINGS_TAB] : [])
+  ]
+  const refused =
+    forTeam != null &&
+    ((tab === 'settings' && canCoach === false) ||
+      (tab === 'walkup' && canKeepSongs === false))
+  useEffect(() => {
+    if (!refused) return
+    setTab('videos')
+    onTab?.('videos', true)
+  }, [refused, onTab])
+  const shownTab =
+    (tab === 'settings' && !settingsShown) || (tab === 'walkup' && !walkUpShown)
+      ? 'videos'
+      : tab
 
   const [error, setError] = useState<string | undefined>(undefined)
   const [highlights, setHighlights] = useState<PlayerHighlight[]>([])
@@ -256,6 +335,9 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
           />
           <View style={styles.identityText}>
             <Text style={styles.playerName}>{shown}</Text>
+            {player?.fullName != null && (
+              <Text style={styles.playerMeta}>{player.fullName}</Text>
+            )}
             {/*
               Only when there is something to say. `B: —` claims we looked and
               found nothing; a missing line claims nothing at all, which is
@@ -269,8 +351,8 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
       </Card>
 
       <PillTabs
-        tabs={TABS}
-        selected={tab}
+        tabs={tabs}
+        selected={shownTab}
         onSelect={next => {
           setTab(next)
           onTab?.(next)
@@ -281,7 +363,7 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
 
       {error != null && <Text style={styles.error}>{error}</Text>}
 
-      {tab === 'videos' && (
+      {shownTab === 'videos' && (
         <View style={styles.section}>
           {loadingVideos && highlights.length === 0 && (
             <Card>
@@ -327,7 +409,45 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
         </View>
       )}
 
-      {tab === 'stats' && (
+      {shownTab === 'walkup' && forTeam != null && (
+        <View style={styles.section}>
+          <WalkUpTab
+            client={client}
+            teamId={forTeam}
+            userId={userId}
+            music={music}
+            resolve={walkUp?.resolve}
+            onPick={
+              walkUp?.onPick == null
+                ? undefined
+                : song => {
+                    walkUp.onPick?.(song, shown)
+                  }
+            }
+            fadeAppleMusic={walkUp?.fadeAppleMusic}
+          />
+        </View>
+      )}
+
+      {shownTab === 'settings' && forTeam != null && (
+        <View style={styles.section}>
+          <PlayerSettingsTab
+            client={client}
+            teamId={forTeam}
+            userId={userId}
+            onSaved={entry => {
+              // How they bat and throw is on the card above; keep it true.
+              setPlayer(held =>
+                held == null
+                  ? held
+                  : { ...held, bats: entry.bats, throws: entry.throws }
+              )
+            }}
+          />
+        </View>
+      )}
+
+      {shownTab === 'stats' && (
         <View style={styles.section}>
           <View style={styles.filterRow}>
             <Text style={styles.scope}>{scopeOf(stats, filter)}</Text>

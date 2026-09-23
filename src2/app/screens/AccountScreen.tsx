@@ -1,5 +1,5 @@
 import React from 'react'
-import { Text, View } from 'react-native'
+import { Platform, Switch, Text, View } from 'react-native'
 
 import type { Session } from '../../common/api'
 import {
@@ -10,7 +10,9 @@ import {
   Screen,
   SectionHeader
 } from '../components'
+import { lstrings } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { useWalkUpPreferences } from '../walkup/walkUpPreferences'
 
 export interface AccountScreenProps {
   session: Session
@@ -34,6 +36,7 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
   const { session, onSignOut } = props
   const styles = getStyles(useTheme())
   const { user } = session
+  const [walkUp, setWalkUp] = useWalkUpPreferences()
 
   return (
     <Screen>
@@ -63,6 +66,35 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
           />
         </Card>
       </View>
+
+      {/*
+        An iPhone fades Apple Music by moving the phone's own volume, which
+        some Bluetooth speakers answer with a beep at every step. An Android
+        phone fades a file on its player's volume, and has nothing to turn
+        off, so the section is the iPhone's alone.
+      */}
+      {Platform.OS === 'ios' && (
+        <View style={styles.section}>
+          <SectionHeader title={lstrings.account_walkup} />
+          <Card style={styles.setting}>
+            <View style={styles.settingRow}>
+              <Text style={styles.settingLabel}>
+                {lstrings.account_walkup_fade}
+              </Text>
+              <Switch
+                accessibilityLabel={lstrings.account_walkup_fade}
+                value={walkUp.fadeAppleMusic}
+                onValueChange={fadeAppleMusic => {
+                  setWalkUp({ ...walkUp, fadeAppleMusic })
+                }}
+              />
+            </View>
+            <Text style={styles.email}>
+              {lstrings.account_walkup_fade_detail}
+            </Text>
+          </Card>
+        </View>
+      )}
 
       <Button label="Sign out" kind="secondary" block onPress={onSignOut} />
 
@@ -111,6 +143,21 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   section: {
     gap: theme.rem(theme.spaceMdRem)
+  },
+  setting: {
+    gap: theme.rem(theme.spaceSmRem)
+  },
+  settingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.rem(theme.spaceMdRem)
+  },
+  settingLabel: {
+    flex: 1,
+    fontFamily: theme.semiBoldTextFont,
+    fontSize: theme.rem(1),
+    fontWeight: '600',
+    color: theme.primaryTextColor
   },
   divider: {
     height: 1,

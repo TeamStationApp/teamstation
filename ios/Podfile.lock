@@ -25,6 +25,45 @@ PODS:
     - ReactNativeDependencies
   - DoubleConversion (1.1.6):
     - ReactNativeDependencies
+  - ExpoGL (58.0.1):
+    - ExpoModulesCore
+    - ExpoModulesJSI
+    - ReactCommon/turbomodule/core
+  - ExpoModulesCore (58.0.4):
+    - ExpoModulesJSI
+    - hermes-engine
+    - RCTRequired
+    - RCTTypeSafety
+    - React-bridging
+    - React-Core
+    - React-Core-prebuilt
+    - React-debug
+    - React-Fabric
+    - React-featureflags
+    - React-graphics
+    - React-ImageManager
+    - React-jsi
+    - React-jsinspector
+    - React-NativeModulesApple
+    - React-RCTFabric
+    - React-renderercss
+    - React-rendererdebug
+    - React-utils
+    - ReactCodegen
+    - ReactCommon/turbomodule/core
+    - ReactNativeDependencies
+    - Yoga
+  - ExpoModulesJSI (58.0.3):
+    - React-Core
+    - ReactCommon
+  - ExpoModulesWorklets (58.0.4):
+    - ExpoModulesCore
+    - ExpoModulesJSI
+  - ExpoModulesWorkletsAdapter (58.0.4):
+    - ExpoModulesCore
+    - ExpoModulesJSI
+    - ExpoModulesWorklets
+    - RNWorklets
   - fast_float (8.0.0):
     - ReactNativeDependencies
   - FBLazyVector (0.87.1):
@@ -2054,6 +2093,11 @@ DEPENDENCIES:
   - "AsyncStorage (from `../node_modules/@react-native-async-storage/async-storage`)"
   - boost (from `build/rndeps-facades/boost`)
   - DoubleConversion (from `build/rndeps-facades/DoubleConversion`)
+  - ExpoGL (from `../node_modules/expo-gl`)
+  - ExpoModulesCore (from `../node_modules/expo-modules-core`)
+  - ExpoModulesJSI (from `../node_modules/expo-modules-jsi/apple`)
+  - ExpoModulesWorklets (from `../node_modules/expo-modules-core`)
+  - ExpoModulesWorkletsAdapter (from `../node_modules/expo-modules-core`)
   - fast_float (from `build/rndeps-facades/fast_float`)
   - FBLazyVector (from `build/rncore-facades/FBLazyVector`)
   - fmt (from `build/rndeps-facades/fmt`)
@@ -2154,6 +2198,16 @@ EXTERNAL SOURCES:
     :path: build/rndeps-facades/boost
   DoubleConversion:
     :path: build/rndeps-facades/DoubleConversion
+  ExpoGL:
+    :path: "../node_modules/expo-gl"
+  ExpoModulesCore:
+    :path: "../node_modules/expo-modules-core"
+  ExpoModulesJSI:
+    :path: "../node_modules/expo-modules-jsi/apple"
+  ExpoModulesWorklets:
+    :path: "../node_modules/expo-modules-core"
+  ExpoModulesWorkletsAdapter:
+    :path: "../node_modules/expo-modules-core"
   fast_float:
     :path: build/rndeps-facades/fast_float
   FBLazyVector:
@@ -2342,6 +2396,11 @@ SPEC CHECKSUMS:
   AsyncStorage: f0453c14a52d22d3f6184284c55f2117fbfd9954
   boost: 8502bfdc46e2804408af2e163049ece181009af4
   DoubleConversion: 501a575c40c0b50c89685762dd3e415e6bb26fb0
+  ExpoGL: 401c221e6dcf6d223ce12043420b80d970064344
+  ExpoModulesCore: c61acb1444b9d4f79ebbf350c7ee946a65fe7fed
+  ExpoModulesJSI: dde0e7a9a01d2456c3a61b503d4bea5769d97895
+  ExpoModulesWorklets: 02178d61511df4fc21565ab88707509c114fc1e5
+  ExpoModulesWorkletsAdapter: 26954991570240e7401274f9c74deaf48d2b8084
   fast_float: 7c925d1cebf8328d4018d061f49377e9f887e3b4
   FBLazyVector: e08a27053b503eeb756ea4bd75d570d2f2522a1b
   fmt: ba0886e864ebb21d14c98b2e12e164b8002f5b93
@@ -2422,18 +2481,18 @@ SPEC CHECKSUMS:
   React-viewtransitionnativemodule: 1bc6bb59029e578e62cb1a818ff4a4d548071a66
   React-webperformancenativemodule: 10cf05e9bcf2f28a4b1c498d580e21ba3cc114f1
   ReactAppDependencyProvider: 3949ea6b2df0d96295128aae79f068cb6c5f81dc
-  ReactCodegen: 13d2ebfe2d8f1200052509b4fc4abf7a6825a7fc
+  ReactCodegen: ddf279b3b317b3f1d651789bdd85e7cc6a698f26
   ReactCommon: 749169e12aa3461a3df3656a00e48dbe0456b2d6
   ReactNativeDependencies: 94c922c39e0e6150ee9ad05e2ca1946e0ef55783
   RNCClipboard: a4d3243922d75b241b7ab9c0f8b62995a601ff2b
   RNCPicker: ec68d66db9b3dae7563bdd5f13bdadee1ac90eba
   RNGestureHandler: eb4c031b22e791851742d29384ddcad30f3ee49d
-  RNReanimated: a40a23cfa56063c9b0c7af8794c847c0ddf8a99c
+  RNReanimated: 9ae98436a430fb660cf67746b918f998a3afb22f
   RNSVG: 6c9bcbf53822153be6f6c1484f6b0b57c0040d21
   RNWorklets: e00d9fe0f91ef81e6056248566c84501506ad539
   SocketRocket: 37aec555668fb852ec12e3c0de59a86ca58f0871
   Yoga: d1c536142c5ff8ec8cd856ab2a7c227a1d875c8e
 
-PODFILE CHECKSUM: 292fd37ac1a693faa2b477307a4187e5b802db5a
+PODFILE CHECKSUM: 8a198491d6c64546f295075ae1cb750e274c8560
 
 COCOAPODS: 1.16.2

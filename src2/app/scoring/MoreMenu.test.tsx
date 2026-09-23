@@ -167,7 +167,7 @@ describe('More scoring menu', function () {
       })
       expect(inputs).has.length(0)
       await click('More')
-      await click(native ? 'Cancel' : 'Dismiss More')
+      await click('Dismiss More')
     })
   for (const native of [false, true])
     it(`hides placement on occupied bases on ${native ? 'native' : 'web'}`, async () => {
@@ -177,7 +177,7 @@ describe('More scoring menu', function () {
       expect(
         document.querySelector('[aria-label="Put Batter on Base"]')
       ).equals(null)
-      await click(native ? 'Cancel' : 'Dismiss More')
+      await click('Dismiss More')
     })
   it('supports captured release and rightward escape without scoring an opened menu', async function () {
     await mount()

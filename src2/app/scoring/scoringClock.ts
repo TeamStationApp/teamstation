@@ -3,8 +3,11 @@ export interface ScoringClock {
   schedule: (callback: () => void, delay: number) => unknown
   cancel: (id: unknown) => void
 }
+// React Native has `performance.now()` too, but its types leave it out.
+const monotonic = (globalThis as { performance?: { now: () => number } })
+  .performance
 export const scoringClock: ScoringClock = {
-  now: () => performance.now(),
+  now: () => monotonic?.now() ?? Date.now(),
   schedule: (callback, delay) => setTimeout(callback, delay),
   cancel: id => {
     clearTimeout(id as ReturnType<typeof setTimeout>)

@@ -42,10 +42,16 @@ const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
 const COACH = 'tok_coach_upload_000000000000000'
 const PARENT = 'tok_parent_upload_00000000000000'
+const FILMER = 'tok_filmer_upload_00000000000000'
+const SCORER = 'tok_scorer_upload_00000000000000'
 const HOUR = 3_600_000
 
 const coach = mintUserId(() => false)
 const parent = mintUserId(id => id === coach.userId)
+const filmer = mintUserId(id => id === coach.userId || id === parent.userId)
+const scorer = mintUserId(
+  id => id === coach.userId || id === parent.userId || id === filmer.userId
+)
 
 describe('a Director sending a recording in', function () {
   this.timeout(60000)
@@ -120,7 +126,9 @@ describe('a Director sending a recording in', function () {
     const now = new Date()
     for (const [made, name] of [
       [coach, 'Coach'],
-      [parent, 'Parent']
+      [parent, 'Parent'],
+      [filmer, 'Filmer'],
+      [scorer, 'Scorer']
     ] as const) {
       await db
         .insertInto('users')
@@ -137,7 +145,9 @@ describe('a Director sending a recording in', function () {
     }
     for (const [id, user, token] of [
       ['ses_coach', coach.userId, COACH],
-      ['ses_parent', parent.userId, PARENT]
+      ['ses_parent', parent.userId, PARENT],
+      ['ses_filmer', filmer.userId, FILMER],
+      ['ses_scorer', scorer.userId, SCORER]
     ] as const) {
       await db
         .insertInto('auth_sessions')
@@ -169,6 +179,22 @@ describe('a Director sending a recording in', function () {
         role: 'manager'
       })
       .execute()
+    // A videographer of the team, and a scorekeeper of it.
+    for (const [made, role] of [
+      [filmer, 'videographer'],
+      [scorer, 'scorekeeper']
+    ] as const) {
+      await db
+        .insertInto('scope_roles')
+        .values({
+          id: `rol_${role}`,
+          user_id: made.userId,
+          scope_type: 'team',
+          scope_id: 'tem_ours',
+          role
+        })
+        .execute()
+    }
     for (const [id, home] of [
       ['gam_ours', 'tem_ours'],
       ['gam_notOurs', 'tem_strangers']
@@ -238,6 +264,12 @@ describe('a Director sending a recording in', function () {
     // Not found rather than forbidden: an id is not a thing to confirm.
     expect((await open(COACH, 'gam_notOurs')).status).equals(404)
     expect((await open(PARENT, 'gam_ours')).status).equals(404)
+  })
+
+  it('takes a recording from a videographer of the team, and not from its scorekeeper', async function () {
+    expect((await open(FILMER, 'gam_ours')).status).equals(201)
+    expect((await open(FILMER, 'gam_notOurs')).status).equals(404)
+    expect((await open(SCORER, 'gam_ours')).status).equals(404)
   })
 
   it('refuses an empty recording', async function () {

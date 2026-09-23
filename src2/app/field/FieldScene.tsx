@@ -31,8 +31,10 @@ import type { FieldPlayer } from './fieldModel'
 import { BASES, clampToField } from './fieldModel'
 import { fieldPalette as p } from './fieldPalette'
 import type { FieldCanvasProps } from './fieldTypes'
+import { frameThrottle } from './frameThrottle'
 import {
   inArcGrabArea,
+  isPrimaryPress,
   offsetTouchTarget,
   usesTouchPlacement
 } from './interactionAffordances'
@@ -77,6 +79,12 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
   const { registerInterruption } = props
   const callbacks = useRef(props)
   callbacks.current = props
+  // The angle the finger sets, once a frame at most (see frameThrottle).
+  const [arcFrames] = useState(() =>
+    frameThrottle<BallArcState>(next => {
+      callbacks.current.onArcChange?.(next)
+    })
+  )
   const textures = useSurfaceTextures()
   const ready = useRef(false)
   const boundsKey = useRef('')
@@ -139,7 +147,30 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     held: boolean
     moved: boolean
     view: RunnerDragView
+    /** What the screen was last told of `view` (see `offered`). */
+    shown?: string
   } | null>(null)
+  /**
+   * Tells the screen the runner's Safe/Out view when what it offers changed.
+   * A finger reports faster than the screen draws, and each report re-renders
+   * the drop targets; the runner and the guide follow it in the scene alone.
+   */
+  const offered = (runner: { view: RunnerDragView; shown?: string }): void => {
+    const { view } = runner
+    const shown = JSON.stringify([
+      view.id,
+      view.from,
+      view.to,
+      view.hovered,
+      view.safeDisabled,
+      view.keyboard,
+      view.safe,
+      view.out
+    ])
+    if (shown === runner.shown) return
+    runner.shown = shown
+    callbacks.current.onRunnerDrag?.({ ...view })
+  }
   const clearHold = (): void => {
     if (holdTimer.current != null) clearTimeout(holdTimer.current)
     holdTimer.current = null
@@ -311,7 +342,7 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
         player.position = { ...runner.view.point }
         player.target = { ...runner.view.point }
       }
-      callbacks.current.onRunnerDrag?.({ ...runner.view })
+      offered(runner)
     } else if (props.homeRunPlacement === true) {
       const landing = landingAt(event.ray, isTouch(event))
       if (landing == null) return
@@ -336,9 +367,17 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
         clearHold()
       }
     }
-    setPreview({ ...drag.current })
-    invalidate()
+    // The guide reads the drag each frame it draws (MoveGuide's `live`), so
+    // a move re-renders nothing. The frames themselves come from the loop
+    // below, not from here.
   }
+  // While a player is held the scene draws every frame, as it does while an
+  // animation runs. On the Pixel 10 a frame asked for from each touch took
+  // 17 ms to draw and the drag ran at 30 frames a second; from the loop it
+  // takes 11 ms, and runs at 60.
+  useFrame(() => {
+    if (drag.current != null) invalidate()
+  })
   const eligible = players.filter(player =>
     props.interaction != null
       ? props.interaction.gestures.includes('place') &&
@@ -350,7 +389,7 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
       arcMode !== 'off' ||
       view === 'scoreboard' ||
       drag.current != null ||
-      event.button !== 0
+      !isPrimaryPress(event)
     )
       return
     event.stopPropagation()
@@ -432,7 +471,7 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
       holdTimer.current = setTimeout(() => {
         if (runnerDrag.current?.id !== player.id) return
         runnerDrag.current.held = true
-        callbacks.current.onRunnerDrag?.({ ...runnerDrag.current.view })
+        offered(runnerDrag.current)
       }, 350)
     }
     if (isTouch(event)) {
@@ -559,6 +598,7 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
       const active = arcDrag.current
       arcDrag.current = null
       if (active != null) {
+        arcFrames.cancel()
         callbacks.current.onArcChange?.(active.initial)
         active.capture.releasePointerCapture(active.pointer)
       }
@@ -573,7 +613,7 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
       registerInterruption?.(null)
       cancel()
     }
-  }, [registerInterruption, invalidate])
+  }, [registerInterruption, invalidate, arcFrames])
   const forward = useMemo(() => new Vector3(), [])
   // A camera-facing picking plane covers the arrows even when they lie above
   // the horizon. Ray/ground intersection is used only for landing placement.
@@ -606,12 +646,13 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
   useEffect(
     () => () => {
       if (arcDrag.current != null) {
+        arcFrames.cancel()
         callbacks.current.onArcChange?.(arcDrag.current.initial)
         arcDrag.current = null
         callbacks.current.onGestureActive?.(false)
       }
     },
-    [arcMode, view, props.interaction?.generation]
+    [arcMode, view, props.interaction?.generation, arcFrames]
   )
   const landingAt = (
     ray: Ray,
@@ -672,7 +713,7 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
   const arcDown = (event: ThreeEvent<PointerEvent>): void => {
     event.stopPropagation()
     if (
-      event.button !== 0 ||
+      !isPrimaryPress(event) ||
       arcDrag.current != null ||
       (props.interaction != null &&
         !props.interaction.gestures.includes('trajectory'))
@@ -732,13 +773,14 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
         angle: dragLaunchAngle(active.initial.angle, pixelsUp)
       }
       active.latest = next
-      onArcChange?.(next)
+      arcFrames(next)
       invalidate()
     }
   }
   const arcUp = (event: ThreeEvent<PointerEvent>, cancel = false): void => {
     if (arcDrag.current?.pointer !== event.pointerId) return
     event.stopPropagation()
+    arcFrames.flush()
     const active = arcDrag.current
     arcDrag.current = null
     props.onGestureActive?.(false)
@@ -808,7 +850,7 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
           editing={arcMode === 'edit'}
         />
       )}
-      {preview != null && <MoveGuide draft={preview} />}
+      {preview != null && <MoveGuide draft={preview} live={drag} />}
       <mesh
         ref={arcSurface}
         name={
@@ -834,6 +876,7 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
         }
         onLostPointerCapture={() => {
           if (arcDrag.current != null) {
+            arcFrames.cancel()
             onArcChange?.(arcDrag.current.initial)
             arcDrag.current = null
             props.onGestureActive?.(false)

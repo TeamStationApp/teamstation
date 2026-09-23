@@ -142,6 +142,10 @@ describe('home-run scoreboard celebration', () => {
       await renderer.advanceFrames(3, 1)
       expect(Array.from(fireworks.instanceMatrix.array)).deep.equals(paused)
       await renderer.update(<Scoreboard state={DEMO_SCOREBOARD} />)
+      // The board is drawn again in a task of its own (`Scoreboard`).
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 5))
+      })
       expect(disposed).equals(true)
       expect(
         (

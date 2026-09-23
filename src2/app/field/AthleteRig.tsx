@@ -8,19 +8,25 @@ import { Bat } from './BattingPose'
 import type { FieldPlayer } from './fieldModel'
 import { fieldPalette as p } from './fieldPalette'
 import { PLAYER_SCALE } from './playerPresentation'
-import { uniformColor } from './teamUniform'
 
-/** Joint endpoints and the displayed bat use exactly the same sampled pose. */
+/**
+ * Joint endpoints and the displayed bat use exactly the same sampled pose.
+ * The pose is read each frame from the player `source` holds now, so the rig
+ * is not drawn again when only the player moves.
+ */
 export function AthleteRig({
-  player,
+  source,
+  shirt,
   jersey
 }: {
-  player: FieldPlayer
+  source: { current: FieldPlayer }
+  shirt: string
   jersey?: Texture | null
 }): React.ReactElement {
   const root = useRef<Group>(null)
   const unitY = new Vector3(0, 1, 0)
   useFrame(() => {
+    const player = source.current
     const pose: AthletePose | undefined = player.pose?.athlete
     if (root.current == null) return
     root.current.visible = pose != null
@@ -60,7 +66,6 @@ export function AthleteRig({
       )
     }
   })
-  const shirt = uniformColor(player)
   return (
     <group name="athlete-rig" ref={root} scale={PLAYER_SCALE} visible={false}>
       <group name="animated-torso" position={[0, 1.57, 0]}>

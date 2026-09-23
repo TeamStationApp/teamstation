@@ -25,6 +25,8 @@ chromeData/
 
 # React Native, iOS
 ios/Pods/
+# Derived data from the device build in src2/MOBILE.md.
+ios/build-device/
 ios/build/
 ios/.xcode.env.local
 ios/*.xcworkspace

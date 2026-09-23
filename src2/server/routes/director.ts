@@ -3,7 +3,7 @@ import type { Kysely } from 'kysely'
 
 import { asDirectorEvent, type DirectorEvent } from '../../common/api'
 import { badRequest, notFound, unauthorized } from '../../common/errors'
-import { adminScopes } from '../access'
+import { canFilm, roleScopes } from '../access'
 import type { Database } from '../db/database'
 import {
   createLiveStream,
@@ -26,10 +26,10 @@ import type { LiveSettings } from '../serverConfig'
  * claims it, which is the whole of choosing a destination: no URL is typed and
  * none is shown. The key comes back to the app and goes in its keychain.
  *
- * The list is of games this account **runs** — owner, manager, or an admin of
- * the team, its season or its league — not of games it may watch. The person
- * holding the camera is the person who runs the team, and a parent's list of
- * forty watchable games would bury the one they want.
+ * The list is of games this account **films**: a videographer of the team, its
+ * season or its league, which every administrator of them is — not of games
+ * it may watch. A parent's list of forty watchable games would bury the one
+ * they want.
  */
 
 export interface DirectorRouteOptions {
@@ -105,7 +105,7 @@ export function directorRoutes(
     withAsync(async (req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
-      const scopes = await adminScopes(db, actor.userId, actor.isAdmin)
+      const scopes = await roleScopes(db, actor.userId, actor.isAdmin)
       const finished = req.query.when === 'finished'
       const edge = new Date(Date.now() - LOOK_BACK_HOURS * 3_600_000)
 
@@ -130,9 +130,9 @@ export function directorRoutes(
         .limit(LIMIT)
 
       // An administrator of the site sees every game; everybody else sees the
-      // games of the teams they run, and somebody who runs nothing sees none.
+      // games of the teams they film, and somebody who films none sees none.
       if (!scopes.isAdmin) {
-        const teamIds = [...scopes.teamIds]
+        const teamIds = [...scopes.videographer.teamIds]
         if (teamIds.length === 0) {
           res.json([])
           return
@@ -217,9 +217,9 @@ export function directorRoutes(
         .executeTakeFirst()
       if (game == null) throw notFound()
 
-      const scopes = await adminScopes(db, actor.userId, actor.isAdmin)
-      const teamId = [game.homeTeamId, game.awayTeamId].find(
-        id => scopes.isAdmin || scopes.teamIds.has(id)
+      const scopes = await roleScopes(db, actor.userId, actor.isAdmin)
+      const teamId = [game.homeTeamId, game.awayTeamId].find(id =>
+        canFilm(scopes, id)
       )
       if (teamId == null) throw notFound()
       if (!options.live.enabled) {

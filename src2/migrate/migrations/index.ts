@@ -38,6 +38,9 @@ import { migration039GumboEventTypes } from './039gumboEventTypes'
 import { migration040LegacyEventTypes } from './040legacyEventTypes'
 import { migration041ScheduleApi } from './041scheduleApi'
 import { migration042FenceDistance } from './042fenceDistance'
+import { migration043RoleFlags } from './043roleFlags'
+import { migration044TeamDefaultLineup } from './044teamDefaultLineup'
+import { migration045WalkUpSongs } from './045walkUpSongs'
 
 /** Every migration, in the order they were written. */
 export const migrations: Migration[] = [
@@ -79,5 +82,8 @@ export const migrations: Migration[] = [
   migration039GumboEventTypes,
   migration040LegacyEventTypes,
   migration041ScheduleApi,
-  migration042FenceDistance
+  migration042FenceDistance,
+  migration043RoleFlags,
+  migration044TeamDefaultLineup,
+  migration045WalkUpSongs
 ]
