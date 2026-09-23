@@ -80,7 +80,6 @@ public struct SourceSelectionView: View {
         .allowsHitTesting(false)
       }
     }
-    .onDisappear { environment.endPeek() }
   }
 
   private var header: some View {
@@ -312,12 +311,14 @@ public struct SourceSelectionView: View {
     Button {
       environment.beginPeek(id: selection.id)
     } label: {
-      // The live thumbnail is a UIKit layer and would otherwise take the tap itself.
-      previewImage(selection)
-        .allowsHitTesting(false)
+      // A clear hit target in front of the thumbnail. The live picture is a UIKit layer, and a
+      // layer that participates in hit testing keeps the tap for itself.
+      Color.clear
+        .frame(width: 128, height: 72)
+        .contentShape(RoundedRectangle(cornerRadius: 8))
     }
     .buttonStyle(.plain)
-    .contentShape(RoundedRectangle(cornerRadius: 8))
+    .background { previewImage(selection) }
     .accessibilityIdentifier("source-preview-\(index + 1)")
     .accessibilityLabel("Preview \(rowName(for: selection))")
   }
