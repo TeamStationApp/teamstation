@@ -581,6 +581,30 @@ public enum SourceSelectionRules {
   }
 }
 
+/// Where a camera-row preview gets its picture.
+///
+/// Opening the preview does not enable the camera, so it takes no grid slot. When a tile already
+/// holds the session the modal watches that picture; a second connection would be refused by most
+/// cameras. Otherwise a pixel-only session runs for the modal and stops when it closes.
+public enum SourcePeekTarget: Equatable, Sendable {
+  /// The tile's pipeline already owns the session.
+  case livePipeline
+  /// Nothing is connected. Discovery can build a source for the modal alone.
+  case temporary
+  /// Discovery cannot build this camera.
+  case unavailable
+}
+
+public enum SourcePeekRules {
+  /// Same answer for every kind. Whether the VIDEO toggle is on is not an input: a discovered
+  /// camera with no pipeline is previewed on its own, which is what keeps the row off the grid.
+  public static func target(hasLivePipeline: Bool, isDiscovered: Bool) -> SourcePeekTarget {
+    if hasLivePipeline { return .livePipeline }
+    if isDiscovered { return .temporary }
+    return .unavailable
+  }
+}
+
 /// Operator-facing camera failures. A camera that is not on the network at launch is not an
 /// error — it simply is not shown. The same failure during a recording is: that take is lost.
 public enum OperatorAlert {
