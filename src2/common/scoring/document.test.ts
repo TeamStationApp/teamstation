@@ -180,6 +180,7 @@ describe('the stored runner document (U8)', function () {
       close,
       running('steal'),
       ...hit('single'),
+      // Unforced 2→3 is automatic on the single; the scorer then sends him home.
       move(1, 'home')
     )
     const all = runnersOf(stored(state))
@@ -1310,6 +1311,7 @@ describe('action events (U12)', function () {
       running('steal'),
       strike,
       ...hit('single'),
+      // Steal, auto-advanced runner on the single, and the batter.
       close,
       { type: 'gameFlow', kind: 'endGame' }
     )

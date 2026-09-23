@@ -347,8 +347,16 @@ export interface Movement {
   automaticHome?: boolean
   homeReleased?: boolean
   playerId: number
+  /** Original base when the play began; kept across correction steps. */
+  start?: number
   from: number
   to: number
+  /**
+   * HIT_BASES destination when this was an unforced one-base advance short of
+   * home. The runner is placed there, and correction may drag him back to
+   * `start` with no Safe/Out strip.
+   */
+  offeredTo?: number
   force: boolean
   decision: 'pending' | 'safe' | 'out'
   resolved?: boolean
@@ -549,8 +557,10 @@ const asMovement = asObject({
   automaticHome: asOptional(asBoolean),
   homeReleased: asOptional(asBoolean),
   playerId: asSessionId,
+  start: asOptional(asNumber),
   from: asNumber,
   to: asNumber,
+  offeredTo: asOptional(asNumber),
   force: asBoolean,
   decision: asValue('pending' as const, 'safe' as const, 'out' as const),
   resolved: asOptional(asBoolean)

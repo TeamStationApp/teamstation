@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
+import { gumboViolations } from '../gumbo/validate'
 import {
   after,
   ball,
@@ -18,7 +19,10 @@ import {
 } from '../../test/scoringGames'
 import type { ScoringAction } from './actions'
 import { applyAction } from './apply'
+import { documentOf } from './document'
+import { homeBackProposal } from './rules'
 import type { GameState } from './state'
+import { setupOf } from './state'
 
 const move = (
   runner: number,
@@ -58,6 +62,199 @@ describe('runners on a hit', function () {
         [2, 1]
       ]
     )
+  })
+
+  it('auto-advances an unforced runner second to third on a single (first open)', function () {
+    // Batter on first steals second; next single — he is not forced.
+    let state = after(single(game()), close, {
+      type: 'baseRunning',
+      kind: 'steal',
+      runner: 1
+    })
+    expect(bases(state)).deep.equals([null, 1, null])
+    state = single(state)
+    expect(bases(state)).deep.equals([2, null, 1])
+    const pending = state.pending!.movements.find(m => m.playerId === 1)!
+    expect(pending).includes({
+      start: 2,
+      from: 2,
+      to: 3,
+      offeredTo: 3,
+      force: false
+    })
+    const onHit = state.liveData.plays.currentPlay!.runners.filter(
+      r => r.details.movementReason === 'Single'
+    )
+    expect(onHit.map(r => [r.details.runner.id, r.movement.end])).deep.equals([
+      [1, 3],
+      [2, 1]
+    ])
+  })
+
+  it('auto-advances the trailer to third when the lead scores on a single', function () {
+    // Two walks, both steal up: R1 on third, R2 on second.
+    let state = walk(walk(game()))
+    state = after(
+      state,
+      { type: 'baseRunning', kind: 'steal', runner: 1 },
+      { type: 'baseRunning', kind: 'steal', runner: 2 }
+    )
+    expect(bases(state)).deep.equals([null, 2, 1])
+    state = single(state)
+    expect(state.homeQueue).deep.equals([1])
+    expect(bases(state)).deep.equals([3, null, 2])
+    const trailer = state.pending!.movements.find(m => m.playerId === 2)!
+    expect(trailer).includes({
+      start: 2,
+      from: 2,
+      to: 3,
+      offeredTo: 3,
+      force: false
+    })
+    state = after(state, move(1, 'home'))
+    expect(bases(state)).deep.equals([3, null, 2])
+    expect(runs(state)).equals(1)
+  })
+
+  it('still auto-advances an unforced multi-base runner on a double', function () {
+    const state = after(single(game()), close, {
+      type: 'ballInPlay',
+      contact: 'swing',
+      fielder: F.CF
+    }, result('double'))
+    expect(bases(state)).deep.equals([null, 2, 1])
+  })
+
+  it('undoes an auto-advanced unforced runner with no advance row', function () {
+    let state = after(single(game()), close, {
+      type: 'baseRunning',
+      kind: 'steal',
+      runner: 1
+    })
+    state = single(state)
+    expect(bases(state)).deep.equals([2, null, 1])
+    const advanced = state.liveData.plays.currentPlay!.runners.filter(
+      r => r.details.runner.id === 1 && r.details.movementReason === 'Single'
+    )
+    expect(advanced.map(r => r.movement.end)).deep.equals([3])
+    state = after(state, move(1, '2B'))
+    expect(bases(state)).deep.equals([2, 1, null])
+    const onHit = state.liveData.plays.currentPlay!.runners.filter(
+      r => r.details.movementReason === 'Single'
+    )
+    expect(onHit.map(r => [r.details.runner.id, r.movement.end])).deep.equals([
+      [2, 1]
+    ])
+  })
+
+  it('refuses to send a forced runner back after a single', function () {
+    const state = single(walk(game()))
+    expect(bases(state)).deep.equals([2, 1, null])
+    expect(applyAction(state, move(1, '1B')).problems[0].message).equals(
+      'A runner cannot go back'
+    )
+  })
+
+  it('retreats the trailer to second while the lead waits at home', function () {
+    // R1 on third, R2 on second; single sends R1 home and R2 to third.
+    let state = walk(walk(game()))
+    state = after(
+      state,
+      { type: 'baseRunning', kind: 'steal', runner: 1 },
+      { type: 'baseRunning', kind: 'steal', runner: 2 }
+    )
+    state = single(state)
+    expect(state.homeQueue).deep.equals([1])
+    expect(bases(state)).deep.equals([3, null, 2])
+    state = after(state, move(2, '2B'))
+    expect(bases(state)).deep.equals([3, 2, null])
+    expect(state.homeQueue).deep.equals([1])
+    const onHit = state.liveData.plays.currentPlay!.runners.filter(
+      r => r.details.movementReason === 'Single'
+    )
+    expect(onHit.map(r => [r.details.runner.id, r.movement.end])).deep.equals([
+      [3, 1]
+    ])
+  })
+
+  it('refuses hit-offer retreat when the batter has taken the start base', function () {
+    // Steal → single auto-advances R1 to third; batter then takes second.
+    let state = after(single(game()), close, {
+      type: 'baseRunning',
+      kind: 'steal',
+      runner: 1
+    })
+    state = single(state)
+    expect(bases(state)).deep.equals([2, null, 1])
+    state = after(state, move(2, '2B'))
+    expect(bases(state)).deep.equals([null, 2, 1])
+    expect(applyAction(state, move(1, '2B')).problems[0].message).equals(
+      'That base is occupied. Move the lead runner first.'
+    )
+    expect(bases(state)).deep.equals([null, 2, 1])
+  })
+
+  it('re-takes a hit offer while the lead waits at home', function () {
+    let state = walk(walk(game()))
+    state = after(
+      state,
+      { type: 'baseRunning', kind: 'steal', runner: 1 },
+      { type: 'baseRunning', kind: 'steal', runner: 2 }
+    )
+    state = single(state)
+    expect(state.homeQueue).deep.equals([1])
+    state = after(state, move(2, '2B'))
+    expect(bases(state)).deep.equals([3, 2, null])
+    state = after(state, move(2, '3B'))
+    expect(bases(state)).deep.equals([3, null, 2])
+    expect(state.homeQueue).deep.equals([1])
+    // Re-take must leave the trailer unresolved so Home Back still works.
+    expect(homeBackProposal(state)).not.equals(null)
+    const trailer = state.pending!.movements.find(m => m.playerId === 2)!
+    expect(trailer.resolved).equals(false)
+  })
+
+  it('stores auto-advance and undo plays without Gumbo violations', function () {
+    const stamp = { setupBefore: setupOf(game()), actions: [] as ScoringAction[] }
+    let advanced = after(single(game()), close, {
+      type: 'baseRunning',
+      kind: 'steal',
+      runner: 1
+    })
+    advanced = after(single(advanced), close)
+    const advancedPlay = documentOf(
+      advanced,
+      advanced.liveData.plays.allPlays.at(-1)!,
+      { ...stamp, setupBefore: setupOf(advanced) }
+    )
+    expect(gumboViolations(advancedPlay)).deep.equals([])
+    expect(
+      advancedPlay.runners.some(
+        r =>
+          r.details.runner.fullName === 'Player 1' &&
+          r.movement.end === '3B' &&
+          r.details.movementReason === 'r_adv_play'
+      )
+    ).equals(true)
+
+    let undone = after(single(game()), close, {
+      type: 'baseRunning',
+      kind: 'steal',
+      runner: 1
+    })
+    undone = after(single(undone), move(1, '2B'), close)
+    const undonePlay = documentOf(
+      undone,
+      undone.liveData.plays.allPlays.at(-1)!,
+      { ...stamp, setupBefore: setupOf(undone) }
+    )
+    expect(gumboViolations(undonePlay)).deep.equals([])
+    expect(
+      undonePlay.runners.some(
+        r =>
+          r.details.runner.fullName === 'Player 1' && r.movement.end === '3B'
+      )
+    ).equals(false)
   })
 
   it('sends a runner home on a double and waits to hear whether he was safe', function () {
