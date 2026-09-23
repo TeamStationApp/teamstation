@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    Where this build talks to, for a build that is not pointed at the address in
+    the source. A host with no scheme; empty — which is every build that does
+    not say otherwise — means `AppServer.defaultHost`.
+
+        GS_PRIMARY_HOST=devhost.examplegs.test scripts/build.sh
+
+    From the environment rather than from a tracked file, so a development build
+    is not one stray commit away from shipping its address to everybody. The
+    same key, read by the same code, as GS Director's own Info.plist: the Mac
+    and the iPad have to be able to point at the same server to test an upload
+    against it.
+
+    Everything else in this app's Info.plist is still generated from the build
+    settings; this file only adds what they cannot express.
+  -->
+  <key>GSPrimaryHost</key>
+  <string>$(GS_PRIMARY_HOST)</string>
+</dict>
+</plist>

@@ -12,7 +12,6 @@ final class FakeActions: DistributorActions {
   var runs: [UUID: APIRun] = [:]
   var startFailure: HTTPError?
   var patches: [APISettingsPatch] = []
-  var searched: [String?] = []
 
   static let recording = APIRecording(
     id: 361,
@@ -25,7 +24,7 @@ final class FakeActions: DistributorActions {
   )
 
   func status() -> APIStatus {
-    APIStatus(iPad: APIIPad(state: "none", message: "Connect iPad"), destination: "/Movies", run: nil, peerTube: APIPeerTube(state: "signedOut"))
+    APIStatus(iPad: APIIPad(state: "none", message: "Connect iPad"), destination: "/Movies", run: nil, gameStation: APIGameStation(state: "signedOut"))
   }
 
   func recordings() -> APIRecordingList {
@@ -70,14 +69,19 @@ final class FakeActions: DistributorActions {
     return DistributorSettings(createCombined: patch.createCombined ?? true)
   }
 
-  func peerTube() -> APIPeerTube { APIPeerTube(state: "signedOut") }
-  func peerTubeSignIn(_ request: APISignIn) async throws(HTTPError) -> APIPeerTube {
-    APIPeerTube(state: "signedIn", host: request.host, username: request.username)
-  }
-  func peerTubeSignOut() async -> APIPeerTube { APIPeerTube(state: "signedOut") }
-  func peerTubeVideos(search: String?) async throws(HTTPError) -> [APIVideo] {
-    searched.append(search)
-    return []
+  func gameStation() async -> APIGameStation {
+    APIGameStation(
+      state: "signedIn",
+      email: "coach@example.org",
+      games: [
+        APIGame(
+          id: "gam_1",
+          title: "Titan at Ravens",
+          startAt: Date(timeIntervalSince1970: 1_789_683_300),
+          venue: "Vale Field"
+        )
+      ]
+    )
   }
 }
 
@@ -100,20 +104,37 @@ struct DistributorAPITests {
     try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
   }
 
-  @Test("The index lists every route with what it does")
+  @Test("The index lists every route with what it does, and nothing else")
   func index() async throws {
     let router = DistributorAPI.router(actions: FakeActions(), events: JSONEventHub())
     let answer = try await Self.call(router, "GET", "/api/v1")
     let index = try JSONDecoder().decode(APIIndex.self, from: answer.data)
     let routes = Set(index.routes.map { "\($0.method) \($0.path)" })
-    for route in [
-      "GET /api/v1", "GET /api/v1/status", "GET /api/v1/recordings", "POST /api/v1/recordings/{id}/download",
-      "POST /api/v1/recordings/{id}/export", "POST /api/v1/recordings/{id}/combined", "POST /api/v1/recordings/{id}/upload",
-      "GET /api/v1/runs/{id}", "DELETE /api/v1/runs/{id}", "PATCH /api/v1/settings", "GET /api/v1/peertube/videos"
-    ] {
-      #expect(routes.contains(route), "missing \(route)")
-    }
+    #expect(routes == [
+      "GET /api/v1", "GET /api/v1/status", "GET /api/v1/events",
+      "GET /api/v1/recordings", "DELETE /api/v1/recordings", "GET /api/v1/recordings/{id}", "GET /api/v1/recordings/{id}/still",
+      "POST /api/v1/recordings/{id}/download", "POST /api/v1/recordings/{id}/export",
+      "POST /api/v1/recordings/{id}/combined", "POST /api/v1/recordings/{id}/upload",
+      "POST /api/v1/runs", "GET /api/v1/runs/current", "GET /api/v1/runs/{id}", "DELETE /api/v1/runs/{id}",
+      "GET /api/v1/settings", "PATCH /api/v1/settings", "GET /api/v1/gamestation"
+    ])
     #expect(index.routes.allSatisfy { !$0.summary.isEmpty })
+  }
+
+  @Test("A path no route serves is 404")
+  func unknownPath() async throws {
+    let router = DistributorAPI.router(actions: FakeActions(), events: JSONEventHub())
+    for (method, path) in [ ("GET", "/api/v1/teams"), ("POST", "/api/v1/signin"), ("GET", "/api/v1/nothing/here") ] {
+      #expect(try await Self.call(router, method, path).status == 404, "\(method) \(path)")
+    }
+  }
+
+  @Test("The settings answer carries only the Distributor's own settings")
+  func settingsKeys() async throws {
+    let router = DistributorAPI.router(actions: FakeActions(), events: JSONEventHub())
+    let answer = try await Self.call(router, "GET", "/api/v1/settings")
+    #expect(answer.status == 200)
+    #expect(Set(try Self.json(answer.data).keys) == [ "version", "destinations", "createCombined", "combinedLayout", "upload", "stamps" ])
   }
 
   @Test("Each verb starts a run of its kind for the recording in the path, and answers 202")
@@ -122,12 +143,12 @@ struct DistributorAPITests {
     let router = DistributorAPI.router(actions: actions, events: JSONEventHub())
     let combined = try await Self.call(router, "POST", "/api/v1/recordings/411/combined", body: #"{"combined":{"include":["Home","Away"],"audioCamera":"Home"}}"#)
     #expect(combined.status == 202)
-    _ = try await Self.call(router, "POST", "/api/v1/recordings/411/upload", body: #"{"upload":{"title":"2026-08-23 Titan vs Taipans","channel":"Titan"}}"#)
+    _ = try await Self.call(router, "POST", "/api/v1/recordings/411/upload", body: #"{"upload":{"game":"gam_1"}}"#)
     _ = try await Self.call(router, "POST", "/api/v1/recordings/362/download")
     #expect(actions.started.map(\.kind) == [ .combined, .upload, .download ])
     #expect(actions.started.map(\.recording) == [ 411, 411, 362 ])
     #expect(actions.started[0].combined == APICombinedRequest(include: [ "Home", "Away" ], audioCamera: "Home"))
-    #expect(actions.started[1].upload?.channel == "Titan")
+    #expect(actions.started[1].upload?.game == "gam_1")
 
     let run = try JSONDecoder.api.decode(APIRun.self, from: combined.data)
     let followed = try await Self.call(router, "GET", "/api/v1/runs/\(run.id.uuidString)")
@@ -163,7 +184,7 @@ struct DistributorAPITests {
     #expect(body["refused"] as? [Int] == [ 1 ])
   }
 
-  @Test("Recordings, stills, settings and PeerTube answer as the app says")
+  @Test("Recordings, stills, settings and GameStation answer as the app says")
   func answers() async throws {
     let actions = FakeActions()
     let router = DistributorAPI.router(actions: actions, events: JSONEventHub())
@@ -176,10 +197,11 @@ struct DistributorAPITests {
     let patched = try await Self.call(router, "PATCH", "/api/v1/settings", body: #"{"createCombined":false}"#)
     #expect(patched.status == 200)
     #expect(actions.patches == [ APISettingsPatch(createCombined: false) ])
-    let signedIn = try await Self.call(router, "POST", "/api/v1/peertube/signin", body: #"{"host":"videos.example.org","username":"spjr","password":"x"}"#)
-    #expect(try Self.json(signedIn.data)["state"] as? String == "signedIn")
-    _ = try await Self.call(router, "GET", "/api/v1/peertube/videos", query: [ "search": "Taipans" ])
-    #expect(actions.searched == [ "Taipans" ])
+    let account = try await Self.call(router, "GET", "/api/v1/gamestation")
+    let gameStation = try JSONDecoder.api.decode(APIGameStation.self, from: account.data)
+    #expect(gameStation.state == "signedIn")
+    // The games an upload may name, which is what this call is for.
+    #expect(gameStation.games.map(\.id) == [ "gam_1" ])
   }
 
   @Test("Served on loopback, the API answers a real request, and streams the status")

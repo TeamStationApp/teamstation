@@ -17,7 +17,7 @@ struct SettingsSyncTests {
     let stamped = edited.stampingChanges(from: old, by: Self.mac, at: Self.at(10))
     #expect(stamped.stamp(.createCombined) == SettingsStamp(modifiedAt: Self.at(10), by: Self.mac))
     #expect(stamped.stamp(.destination(mac: Self.mac))?.by == Self.mac)
-    #expect(stamped.stamp(.peerTube) == nil)
+    #expect(stamped.stamp(.upload) == nil)
     #expect(stamped.stamps.count == 2)
   }
 
@@ -26,20 +26,20 @@ struct SettingsSyncTests {
     var ipad = DistributorSettings()
     ipad.createCombined = true
     ipad.stamps[SettingsGroup.createCombined.key] = SettingsStamp(modifiedAt: Self.at(20), by: SettingsStamp.iPad)
-    ipad.iPadStitching = true
-    ipad.stamps[SettingsGroup.iPadStitching.key] = SettingsStamp(modifiedAt: Self.at(5), by: SettingsStamp.iPad)
+    ipad.upload.choice.combined = true
+    ipad.stamps[SettingsGroup.upload.key] = SettingsStamp(modifiedAt: Self.at(5), by: SettingsStamp.iPad)
 
     var mac = DistributorSettings()
     mac.createCombined = false
     mac.stamps[SettingsGroup.createCombined.key] = SettingsStamp(modifiedAt: Self.at(10), by: Self.mac)
-    mac.iPadStitching = false
-    mac.stamps[SettingsGroup.iPadStitching.key] = SettingsStamp(modifiedAt: Self.at(30), by: Self.mac)
+    mac.upload.choice.combined = false
+    mac.stamps[SettingsGroup.upload.key] = SettingsStamp(modifiedAt: Self.at(30), by: Self.mac)
 
     let merged = mac.reconciled(with: ipad)
     #expect(merged.createCombined)
-    #expect(merged.iPadStitching == false)
+    #expect(merged.upload.choice.combined == false)
     #expect(merged.stamp(.createCombined)?.by == SettingsStamp.iPad)
-    #expect(merged.stamp(.iPadStitching)?.by == Self.mac)
+    #expect(merged.stamp(.upload)?.by == Self.mac)
     // The same answer whichever side brings them together.
     #expect(ipad.reconciled(with: mac) == merged)
   }
@@ -51,7 +51,6 @@ struct SettingsSyncTests {
     let merged = DistributorSettings().reconciled(with: ipad)
     #expect(merged.createCombined)
     #expect(merged.destinations == [ Self.mac: "/Movies/GS" ])
-    #expect(merged.peerTube.host == "videos.example.org")
     #expect(merged.version == DistributorSettings.currentVersion)
   }
 
@@ -76,6 +75,37 @@ struct SettingsSyncTests {
     #expect(mac.reconciled(with: answered).combinedLayout == mac.combinedLayout)
   }
 
+  @Test("Settings saved with a group this build no longer has still load, and are written without it")
+  func retiredGroup() throws {
+    // The shape a retired group was saved in: its block, and its stamp beside the others'.
+    let saved = #"""
+      {"version":2,"destinations":{"MAC-1":"/Movies/GS"},"createCombined":true,
+       "upload":{"choice":{"primary":false,"cameras":["Home"],"combined":true}},
+       "retiredGroup":{"teams":[{"id":"t1","publicID":"P1","name":"Titan"}]},
+       "stamps":{"retiredGroup":{"modifiedAt":800000000,"by":"MAC-1"},
+                 "createCombined":{"modifiedAt":800000000,"by":"ipad"},
+                 "destination:MAC-1":{"modifiedAt":800000000,"by":"MAC-1"}}}
+      """#
+    let decoded = try JSONDecoder().decode(DistributorSettings.self, from: Data(saved.utf8))
+    #expect(decoded.destinations == [ Self.mac: "/Movies/GS" ])
+    #expect(decoded.createCombined)
+    #expect(decoded.upload.choice == UploadChoice(primary: false, cameras: [ "Home" ], combined: true))
+    #expect(Set(decoded.stamps.keys) == [ "createCombined", "destination:MAC-1" ])
+    #expect(decoded.stamp(.createCombined)?.by == SettingsStamp.iPad)
+
+    let written = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(decoded)) as? [String: Any])
+    #expect(Set(written.keys) == [ "version", "destinations", "createCombined", "combinedLayout", "upload", "stamps" ])
+    #expect(try JSONDecoder().decode(DistributorSettings.self, from: JSONEncoder().encode(decoded)) == decoded)
+  }
+
+  @Test("A stamp's key names its group, and a key no group has names none")
+  func groupKeys() {
+    for group in SettingsGroup.shared + [ .destination(mac: Self.mac) ] {
+      #expect(SettingsGroup(key: group.key) == group)
+    }
+    #expect(SettingsGroup(key: "retiredGroup") == nil)
+  }
+
   @Test("A folder cleared on the Mac stays cleared once brought together")
   func clearedFolder() {
     let ipad = DistributorSettings(destinations: [ Self.mac: "/Old" ])
@@ -89,6 +119,7 @@ struct SettingsSyncTests {
   @Test("New settings load with their defaults from a file written before them")
   func newGroupsDefault() throws {
     let decoded = try JSONDecoder().decode(DistributorSettings.self, from: Data(#"{"createCombined":true}"#.utf8))
+    #expect(decoded.upload == UploadSettings())
     #expect(decoded.stamps.isEmpty)
   }
 }

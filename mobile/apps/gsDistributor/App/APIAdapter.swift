@@ -4,7 +4,7 @@ import DistributorAPI
 import DistributorWire
 import Foundation
 import LoopbackHTTP
-import PeerTubeKit
+import GameStationKit
 
 /// Answers GS Distributor's REST API with the model the window uses, so what the API starts is what
 /// the window would start, and the window shows it.
@@ -50,7 +50,7 @@ final class APIAdapter: DistributorActions {
       iPad: iPad(),
       destination: model.destination?.path,
       run: model.run.map(snapshot),
-      peerTube: peerTube()
+      gameStation: account()
     )
   }
 
@@ -177,7 +177,7 @@ final class APIAdapter: DistributorActions {
     let reprocess = request.reprocess ?? false
 
     var combined: CombinedPlan?
-    var upload: UploadPlan?
+    var upload: GameStationPlan?
     switch kind {
     case .download:
       break
@@ -190,8 +190,8 @@ final class APIAdapter: DistributorActions {
       if request.combined != nil || model.settings.createCombined {
         combined = try automaticCombined(recording, tracks: tracks, request: request.combined ?? APICombinedRequest(), required: request.combined != nil)
       }
-      if request.upload != nil || model.settings.peerTube.enabled {
-        upload = try uploadPlan(recording, request: request.upload ?? APIUploadRequest(), makesCombined: combined != nil)
+      if let asked = request.upload {
+        upload = try uploadPlan(recording, request: asked, makesCombined: combined != nil)
       }
     case .upload:
       // Only what is already on this Mac goes up; nothing is stitched or made for it.
@@ -226,7 +226,7 @@ final class APIAdapter: DistributorActions {
     }
 
     do {
-      let run = try model.startExport(recording, tracks: tracks, reprocess: reprocess, combined: combined, upload: upload)
+      let run = try model.startExport(recording, tracks: tracks, reprocess: reprocess, combined: combined, gameStation: upload)
       return snapshot(run)
     } catch {
       throw httpError(for: error)
@@ -287,17 +287,16 @@ final class APIAdapter: DistributorActions {
         Self.step(
           track: Self.name(track),
           name: Self.displayName(track, in: run.recording),
-          state: run.states[track] ?? .queued,
-          by: run.stitchedBy[track]
+          state: run.states[track] ?? .queued
         )
       },
       combined: run.combinedState.map { state in
-        var step = Self.step(track: "combined", name: "Combined video", state: state, by: nil)
+        var step = Self.step(track: "combined", name: "Combined video", state: state)
         if let sound = run.combinedSound, step.detail == nil { step.detail = "sound from \(sound)" }
         return step
       },
-      uploads: (run.upload?.tracks ?? []).map { track in
-        Self.step(track: Self.name(track), name: run.upload?.title(for: track) ?? "", upload: run.uploadStates[track] ?? .queued)
+      uploads: (run.gameStation?.tracks ?? []).map { track in
+        Self.step(track: Self.name(track), name: run.gameStation?.title(for: track) ?? "", upload: run.uploadStates[track] ?? .queued)
       }
     )
   }
@@ -327,32 +326,48 @@ final class APIAdapter: DistributorActions {
     return plan
   }
 
-  private func uploadPlan(_ recording: RecordingListing, request: APIUploadRequest, makesCombined: Bool) throws(HTTPError) -> UploadPlan {
-    guard case .signedIn(let account) = model.peerTube else {
-      throw HTTPError(412, "peerTubeSignedOut", "this Mac is not signed in to PeerTube: POST /api/v1/peertube/signin, and turn uploads on with PATCH /api/v1/settings {\"uploadToPeerTube\": true}")
+  /// The upload an API request asks for: which files, to which game.
+  ///
+  /// The game is required and named by id, because this is the one thing the
+  /// caller knows that the Mac cannot work out. The title is the game's own,
+  /// dated, unless the request says otherwise — the library reads these titles
+  /// to tell a take's primary output from its cameras.
+  private func uploadPlan(
+    _ recording: RecordingListing,
+    request: APIUploadRequest,
+    makesCombined: Bool
+  ) throws(HTTPError) -> GameStationPlan {
+    guard model.gameStation.isSignedIn else {
+      throw HTTPError(412, "gameStationSignedOut", "this Mac is not signed in to GameStation: sign in from Settings in the app, which takes a code from an e-mail")
     }
+    guard let gameId = request.game else {
+      throw HTTPError.badRequest("upload.game is required: a game id from GET /api/v1/gamestation")
+    }
+    guard let game = model.gameStation.finishedEvents.first(where: { $0.gameId == gameId }) else {
+      throw HTTPError.badRequest("no game \(gameId) among the games this account runs that have been played: GET /api/v1/gamestation")
+    }
+
     let tracks: [UploadTrack]
     if let names = request.tracks {
       tracks = try names.map { name throws(HTTPError) in try Self.uploadTrack(name, in: recording) }
     } else {
-      let choice = model.settings.peerTube.uploadChoice.applied(
+      let choice = model.settings.upload.choice.applied(
         hasPrimary: recording.hasPrimary,
         cameras: recording.cameras.map(\.name),
         makesCombined: makesCombined
       )
       tracks = (choice.primary ? [ UploadTrack.primary ] : []) + choice.cameras.map { .camera($0) } + (choice.combined ? [ .combined ] : [])
     }
-    guard !tracks.isEmpty else { throw HTTPError.badRequest("nothing to upload: list upload.tracks, or tick files to upload in Settings") }
-    let channelID = try request.channel.map { text throws(HTTPError) in try Self.channel(text, in: account) } ?? model.uploadChannelID
-    guard let channelID else { throw HTTPError(412, "noChannel", "the PeerTube account has no channel") }
-    let title = request.title ?? PeerTubeTitle.initialTitle(for: recording.startedAt.date)
-    guard PeerTubeTitle.isValid(title: title, tracks: tracks) else {
-      throw HTTPError.badRequest("every video's title must be \(PeerTubeTitle.minimumLength) to \(PeerTubeTitle.maximumLength) characters, camera names included")
-    }
-    guard let plan = model.uploadPlan(for: recording, title: title, channelID: channelID, privacy: request.privacy ?? model.uploadPrivacy, tracks: tracks) else {
-      throw HTTPError(412, "peerTubeSignedOut", "this Mac is not signed in to PeerTube")
-    }
-    return plan
+    guard !tracks.isEmpty else { throw HTTPError.badRequest("nothing to upload: list upload.tracks, or tick files to upload in the app") }
+
+    let day = DateFormatter()
+    day.dateFormat = "yyyy-MM-dd"
+    return model.gameStationPlan(
+      gameId: gameId,
+      title: request.title ?? "\(day.string(from: game.startAt)) \(game.title)",
+      tracks: tracks,
+      startedAt: recording.startedAt.date
+    )
   }
 
   // MARK: - Settings
@@ -370,82 +385,27 @@ final class APIAdapter: DistributorActions {
     await model.updateSettings { settings in
       if let path = patch.destination { settings.destinations[macID] = path }
       if let on = patch.createCombined { settings.createCombined = on }
-      if let on = patch.iPadStitching { settings.iPadStitching = on }
-      if let on = patch.uploadToPeerTube { settings.peerTube.enabled = on }
-      if let channel = patch.peerTubeChannel { settings.peerTube.channelID = channel }
-      if let privacy = patch.peerTubePrivacy { settings.peerTube.privacy = privacy }
     }
-    if patch.uploadToPeerTube != nil { await model.loadPeerTube() }
     return model.settings
   }
 
-  // MARK: - PeerTube
+  // MARK: - GameStation
 
-  func peerTube() -> APIPeerTube {
-    switch model.peerTube {
-    case .signedIn(let account):
-      return APIPeerTube(
-        state: "signedIn",
-        host: account.host,
-        username: account.username,
-        channels: account.channels.map { APIPeerTube.Channel(id: $0.id, name: $0.name, displayName: $0.displayName) },
-        privacies: Dictionary(uniqueKeysWithValues: account.privacies.map { (String($0.key), $0.value) }),
-        uploadChannel: model.uploadChannelID,
-        uploadPrivacy: model.uploadPrivacy
-      )
-    case .signedOut:
-      return APIPeerTube(state: "signedOut")
-    case .unknown:
-      return APIPeerTube(state: model.settings.peerTube.enabled ? "unknown" : "off")
-    case .unreachable(let reason):
-      return APIPeerTube(state: "unreachable", detail: reason)
+  /// The account alone, for the status, which is asked for constantly and must
+  /// not put a request on the network each time. The games come from
+  /// `GET /gamestation`, which is allowed to ask the server.
+  private func account(games: [APIGame] = []) -> APIGameStation {
+    guard let user = model.gameStation.user else {
+      return APIGameStation(state: "signedOut", detail: model.gameStation.lastError)
     }
+    return APIGameStation(state: "signedIn", email: user.email, games: games, detail: model.gameStation.lastError)
   }
 
-  func peerTubeSignIn(_ request: APISignIn) async throws(HTTPError) -> APIPeerTube {
-    let host: String
-    do {
-      host = try PeerTubeHost.normalize(request.host)
-    } catch {
-      throw HTTPError.badRequest("host must be a PeerTube instance's host name, like videos.example.org, reached over HTTPS")
-    }
-    // Signing in says uploads are wanted.
-    await model.updateSettings { $0.peerTube.enabled = true }
-    switch await model.signInToPeerTube(host: host, username: request.username, password: request.password, code: request.code) {
-    case .signedIn:
-      return peerTube()
-    case .needsCode:
-      throw HTTPError(401, "codeRequired", "the account has two-factor sign-in: send the same again with its code")
-    case .failed(let reason):
-      throw HTTPError(401, "signInFailed", reason)
-    }
-  }
-
-  func peerTubeSignOut() async -> APIPeerTube {
-    await model.signOutOfPeerTube()
-    return peerTube()
-  }
-
-  func peerTubeVideos(search: String?) async throws(HTTPError) -> [APIVideo] {
-    guard case .signedIn(let account) = model.peerTube else {
-      throw HTTPError(412, "peerTubeSignedOut", "this Mac is not signed in to PeerTube")
-    }
-    do {
-      let token = try await model.peerTubeAccessToken()
-      return try await PeerTubeAPI(host: account.host).myVideos(accessToken: token.accessToken, search: search).map { video in
-        APIVideo(
-          uuid: video.uuid,
-          shortUUID: video.shortUUID,
-          name: video.name,
-          channel: video.channel.displayName,
-          originallyPublishedAt: video.originallyPublishedAt,
-          publishedAt: video.publishedAt,
-          watchURL: video.watchURL(host: account.host)?.absoluteString
-        )
-      }
-    } catch {
-      throw HTTPError(502, "peerTubeFailed", "PeerTube did not list the videos: \(error)")
-    }
+  func gameStation() async -> APIGameStation {
+    await model.gameStation.refreshFinishedEvents()
+    return account(games: model.gameStation.finishedEvents.map {
+      APIGame(id: $0.gameId, title: $0.title, startAt: $0.startAt, venue: $0.venue)
+    })
   }
 
   // MARK: - Names
@@ -502,18 +462,6 @@ final class APIAdapter: DistributorActions {
     }
   }
 
-  /// A channel by id, name or display name.
-  static func channel(_ text: String, in account: DistributorModel.PeerTubeAccountView) throws(HTTPError) -> Int {
-    let wanted = text.trimmingCharacters(in: .whitespaces).lowercased()
-    guard let channel = account.channels.first(where: {
-      String($0.id) == wanted || $0.name.lowercased() == wanted || $0.displayName.lowercased() == wanted
-    }) else {
-      let names = account.channels.map { "\($0.displayName) (\($0.id))" }.joined(separator: ", ")
-      throw HTTPError.badRequest("no channel \(text); the account has \(names)")
-    }
-    return channel.id
-  }
-
   static func word(_ state: ExportInventory.FileState) -> String {
     switch state {
     case .saved: "saved"
@@ -529,18 +477,24 @@ final class APIAdapter: DistributorActions {
     }
   }
 
-  static func step(track: String, name: String, state: TrackState, by worker: DistributionPlan.Worker?) -> APIRunStep {
+  /// One line of a run, as the API reports it.
+  ///
+  /// Nothing says which machine did the work any more: this Mac stitches
+  /// every file. A file the iPad had already prepared is still fetched rather
+  /// than made again, and that one says so, because it is the only case where
+  /// where it came from changes what the operator should expect.
+  static func step(track: String, name: String, state: TrackState) -> APIRunStep {
     switch state {
     case .queued:
       return APIRunStep(track: track, name: name, state: "queued")
-    case let .fetching(worker, received, total):
-      return APIRunStep(track: track, name: name, state: "fetching", fraction: fraction(received, total), detail: "for the \(worker.rawValue)")
-    case let .stitching(worker, fraction):
-      return APIRunStep(track: track, name: name, state: "stitching", fraction: fraction, detail: "on the \(worker.rawValue)")
+    case let .fetching(received, total):
+      return APIRunStep(track: track, name: name, state: "fetching", fraction: fraction(received, total))
+    case let .stitching(fraction):
+      return APIRunStep(track: track, name: name, state: "stitching", fraction: fraction)
     case let .downloading(received, total):
-      return APIRunStep(track: track, name: name, state: "downloading", fraction: fraction(received, total), detail: "stitched on the iPad")
+      return APIRunStep(track: track, name: name, state: "downloading", fraction: fraction(received, total), detail: "already stitched on the iPad")
     case .done(let url):
-      return APIRunStep(track: track, name: name, state: "done", detail: worker.map { "stitched on the \($0.rawValue)" }, result: url.path)
+      return APIRunStep(track: track, name: name, state: "done", result: url.path)
     case .failed(let reason):
       return APIRunStep(track: track, name: name, state: "failed", detail: reason)
     }
@@ -552,8 +506,12 @@ final class APIAdapter: DistributorActions {
       return APIRunStep(track: track, name: name, state: "queued")
     case let .uploading(sent, total):
       return APIRunStep(track: track, name: name, state: "uploading", fraction: fraction(sent, total))
-    case .done(let page):
-      return APIRunStep(track: track, name: name, state: "done", result: page?.absoluteString)
+    case .finishing(let step):
+      // Every byte is up and the server is making a video of it. No fraction
+      // to give: the caller is told which part of that work is under way.
+      return APIRunStep(track: track, name: name, state: "finishing", detail: step)
+    case .done:
+      return APIRunStep(track: track, name: name, state: "done")
     case .failed(let reason):
       return APIRunStep(track: track, name: name, state: "failed", detail: reason)
     }

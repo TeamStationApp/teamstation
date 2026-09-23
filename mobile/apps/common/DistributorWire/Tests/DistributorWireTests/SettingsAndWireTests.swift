@@ -11,25 +11,18 @@ struct SettingsAndWireTests {
     let settings = DistributorSettings(
       destinations: [ "8A1F-MAC": "/Users/someone/Movies/GameStation" ],
       createCombined: true,
-      iPadStitching: true,
       combinedLayout: CombinedLayoutSettings(
         included: [ "Home", "Away", "Wide" ],
         placements: [ QuadrantPlacement(camera: "Home", quadrant: .topLeading) ],
         solo: SoloPlacement(camera: "Wide", axis: .vertical, position: 0.5),
         audioCamera: "Home"
       ),
-      peerTube: PeerTubeSettings(
-        enabled: true,
-        host: "videos.example.org",
-        username: "spjr",
-        channelID: 3,
-        privacy: 6,
-        uploadChoice: UploadChoice(primary: true, cameras: [ "Home" ], combined: true)
+      upload: UploadSettings(
+        choice: UploadChoice(primary: true, cameras: [ "Home" ], combined: true)
       )
     )
     let decoded = try JSONDecoder().decode(DistributorSettings.self, from: JSONEncoder().encode(settings))
     #expect(decoded == settings)
-    #expect(decoded.iPadStitching)
   }
 
   @Test("Settings written before a field existed still load, with that field's default")
@@ -38,11 +31,17 @@ struct SettingsAndWireTests {
     let decoded = try JSONDecoder().decode(DistributorSettings.self, from: Data(old.utf8))
     #expect(decoded.createCombined)
     // iPad stitching starts off: the Mac stitches everything until it is turned on.
-    #expect(!decoded.iPadStitching)
     #expect(decoded.destinations.isEmpty)
-    #expect(decoded.peerTube.host == "videos.example.org")
-    #expect(decoded.peerTube.uploadChoice == UploadChoice())
     #expect(decoded.combinedLayout == CombinedLayoutSettings())
+  }
+
+  @Test("The files ticked for the last upload survive PeerTube going away")
+  func ticksCarryOverFromTheOldBlock() throws {
+    // Written by a build whose uploads went to PeerTube: the account is of no
+    // use now, the ticks are the same ticks.
+    let old = #"{"peerTube":{"enabled":true,"host":"videos.example.org","uploadChoice":{"primary":false,"cameras":["Home","Third"],"combined":true}}}"#
+    let decoded = try JSONDecoder().decode(DistributorSettings.self, from: Data(old.utf8))
+    #expect(decoded.upload.choice == UploadChoice(primary: false, cameras: [ "Home", "Third" ], combined: true))
   }
 
   @Test("The upload choice shows only what this export makes, and remembers the rest")
