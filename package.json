@@ -23,6 +23,7 @@
     "import-video": "node -r sucrase/register src2/server/dev/importVideoFile.ts",
     "ios": "react-native run-ios",
     "lint": "eslint .",
+    "make-season": "node -r sucrase/register src2/server/dev/makeSeasonFromVideos.ts",
     "merge-team": "node -r sucrase/register src2/server/dev/mergeTeam.ts",
     "metro": "react-native start",
     "migrate": "node -r sucrase/register src2/migrate/cli.ts",
