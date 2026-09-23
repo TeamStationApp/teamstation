@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -23,6 +24,7 @@ import type {
 } from '../../common/api'
 import {
   AnglePickerModal,
+  FLOATING_BOTTOM_REM,
   GameHeroCard,
   GlassView,
   HandoffView,
@@ -39,6 +41,7 @@ import {
   webStyle,
   WideTable
 } from '../components'
+import { navClearanceAboveInset } from '../components/navClearance'
 import { highlightColumnsFor } from '../layout/grid'
 import { watchLayout, type WatchMode } from '../layout/watch'
 import { lstrings } from '../locales/strings'
@@ -1855,7 +1858,11 @@ const getStyles = cacheStyles((theme: Theme) =>
       // No padding here: the picture is edge to edge on a phone, so the
       // margins belong to the pieces either side of it rather than to the
       // column they share.
-      paddingBottom: theme.rem(NAV_CLEARANCE_REM),
+      paddingBottom: navClearanceAboveInset(
+        Platform.OS,
+        theme.rem(NAV_CLEARANCE_REM),
+        theme.rem(FLOATING_BOTTOM_REM)
+      ),
       gap: theme.rem(theme.spaceSmRem)
     },
     watchStacked: {
