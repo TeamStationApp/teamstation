@@ -3,6 +3,7 @@ import React, { useLayoutEffect, useMemo, useRef } from 'react'
 import { Color, type InstancedMesh, Object3D, type Texture } from 'three'
 
 import { fieldPalette as p } from './fieldPalette'
+import { OUTFIELD_HALF_ANGLE, OUTFIELD_RADIUS } from './stadiumBoundary'
 
 interface Block {
   x: number
@@ -81,9 +82,10 @@ export function StadiumDetails({
       })
     }
     for (let i = 0; i < 32; i++) {
-      const a = -Math.PI / 3.5 + (((i + 0.5) / 32) * 2 * Math.PI) / 3.5
-      add(a, 118, 2, 7.1, 4, 1.2, i % 4 === 0 ? p.board : p.wall)
-      add(a, 118, 4.15, 7.1, 0.3, 1.5, '#b8a269')
+      const a =
+        -OUTFIELD_HALF_ANGLE + ((i + 0.5) / 32) * 2 * OUTFIELD_HALF_ANGLE
+      add(a, OUTFIELD_RADIUS, 2, 7.1, 4, 1.2, i % 4 === 0 ? p.board : p.wall)
+      add(a, OUTFIELD_RADIUS, 4.15, 7.1, 0.3, 1.5, '#b8a269')
       for (let row = 0; row < 4; row++) {
         add(a, 124 + row * 3.1, 1.5 + row * 2.2, 7.8, 2, 3.2, p.concrete)
         add(a, 123 + row * 3.1, 3 + row * 2.2, 7.8, 0.15, 0.15, p.wall)
@@ -100,7 +102,8 @@ export function StadiumDetails({
     for (let row = 0; row < 4; row++)
       for (let i = 0; i < 320; i++) {
         if (i % 40 < 3) continue
-        const a = -Math.PI / 3.5 + (((i + 0.5) / 320) * 2 * Math.PI) / 3.5
+        const a =
+          -OUTFIELD_HALF_ANGLE + ((i + 0.5) / 320) * 2 * OUTFIELD_HALF_ANGLE
         const radius = 124 + row * 3.1
         blocks.push({
           x: Math.sin(a) * radius,

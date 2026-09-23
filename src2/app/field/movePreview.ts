@@ -6,6 +6,7 @@ import {
 } from './fieldModel'
 
 export interface MoveDraft {
+  landingHeight?: number
   touch?: boolean
   id: string
   pointer: number

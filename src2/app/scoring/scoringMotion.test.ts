@@ -51,16 +51,17 @@ describe('owned runner animations', function () {
       expect(rebuilt.motion).equals(batter.motion)
       await renderer.advanceFrames(2400, 1 / 60)
       expect(completions).equals(1)
-      expect(batter.motion!.index).equals(4)
+      expect(batter.motion!.index).equals(5)
       await renderer.advanceFrames(120, 1 / 60)
       expect(completions).equals(1)
       expect(JSON.stringify(state)).equals(original)
       state = completeMotions(state)
-      const queued = scoringFieldPlayers(state).find(
-        player => player.playerId === 1
-      )!
-      expect(queued.labelOrder).equals(100)
-      expect(queued.motion).equals(undefined)
+      expect(
+        scoringFieldPlayers(state).find(player => player.playerId === 1)
+      ).equals(undefined)
+      expect(
+        state.session.liveData.plays.currentPlay!.matchup.batter.id
+      ).equals(2)
     } finally {
       await renderer.unmount()
     }

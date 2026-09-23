@@ -6,6 +6,11 @@ import { BASE, BASES } from './fieldModel'
 import { fieldPalette as p } from './fieldPalette'
 import { Scoreboard } from './Scoreboard'
 import type { ScoreboardState } from './scoreboardModel'
+import {
+  OUTFIELD_HALF_ANGLE,
+  OUTFIELD_RADIUS,
+  WARNING_TRACK_INNER
+} from './stadiumBoundary'
 import { StadiumDetails } from './StadiumDetails'
 import type { useSurfaceTextures } from './surfaceTextures'
 import { groundDepth, TERRAIN } from './terrain'
@@ -155,9 +160,12 @@ export function Ballpark({
   scoreboard?: ScoreboardState
   textures: ReturnType<typeof useSurfaceTextures>
 }): React.ReactElement {
-  const grass = useMemo(() => sector(114, 0, Math.PI / 3.5), [])
+  const grass = useMemo(() => sector(114, 0, OUTFIELD_HALF_ANGLE), [])
   const infield = useMemo(() => sector(47.5), [])
-  const track = useMemo(() => sector(118, 109, Math.PI / 3.5), [])
+  const track = useMemo(
+    () => sector(OUTFIELD_RADIUS, WARNING_TRACK_INNER, OUTFIELD_HALF_ANGLE),
+    []
+  )
   return (
     <group>
       <mesh

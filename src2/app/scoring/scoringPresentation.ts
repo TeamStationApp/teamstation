@@ -1,6 +1,11 @@
 import { pitchingHand } from '../field/athletePose'
 import { BALL_CONTACT, type BallArcState } from '../field/ballArcModel'
-import { BASES, type FieldPlayer, type GroundPoint } from '../field/fieldModel'
+import {
+  BASES,
+  clampToField,
+  type FieldPlayer,
+  type GroundPoint
+} from '../field/fieldModel'
 import { fieldPlayersFor } from './fieldAdapter'
 import { scoringFieldPlayers } from './scoringMotion'
 import type { ScoringState } from './scoringTypes'
@@ -69,6 +74,8 @@ export function pitchPresentation(
   }
 }
 export interface HitSequence {
+  outOfPark?: boolean
+  fielderTarget?: GroundPoint
   id: string
   generation: number
   stage: 'swing' | 'flight'
@@ -216,6 +223,11 @@ export function hitPresentation(
     generation: state.generation,
     stage: 'swing',
     kind: 'hit',
+    outOfPark: pending.homeRunKind === 'out-of-park',
+    fielderTarget:
+      pending.homeRunKind === 'out-of-park'
+        ? clampToField(target)
+        : { ...target },
     durationMs: 450 + flight,
     contactMs: 450,
     players,
@@ -225,7 +237,9 @@ export function hitPresentation(
     arc: {
       target: { ...target },
       angle,
-      landingHeight: pending.outcome === 'Ball Caught' ? 5.2 : undefined
+      landingHeight:
+        pending.landingHeight ??
+        (pending.outcome === 'Ball Caught' ? 5.2 : undefined)
     },
     batSide: state.session.liveData.plays.currentPlay!.matchup.batSide.code,
     out: ['Ball Caught', 'Throw Out', 'Batter Interference'].includes(
@@ -277,7 +291,11 @@ export function stepPresentation(
         : [
             ['swing', sequence.contactMs - 120, 'swish'],
             ['contact', sequence.contactMs, 'bat'],
-            ['fielded', sequence.durationMs, 'pop']
+            [
+              'fielded',
+              sequence.outOfPark === true ? Infinity : sequence.durationMs,
+              'pop'
+            ]
           ]
   for (const [id, at, cue] of schedule) {
     if (runtime.elapsedMs >= at && !runtime.fired.has(id)) {

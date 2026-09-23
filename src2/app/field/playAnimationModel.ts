@@ -111,10 +111,14 @@ export function sampleHit(
     fielder: {
       x:
         sequence.fielderStart.x +
-        (sequence.arc.target.x - sequence.fielderStart.x) * flight,
+        ((sequence.fielderTarget ?? sequence.arc.target).x -
+          sequence.fielderStart.x) *
+          flight,
       z:
         sequence.fielderStart.z +
-        (sequence.arc.target.z - sequence.fielderStart.z) * flight
+        ((sequence.fielderTarget ?? sequence.arc.target).z -
+          sequence.fielderStart.z) *
+          flight
     },
     running: flight > 0 && flight < 1
   }

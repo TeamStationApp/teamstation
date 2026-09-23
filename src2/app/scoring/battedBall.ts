@@ -1,4 +1,5 @@
 import type { GroundPoint } from '../field/fieldModel'
+import { homeRunKind } from '../field/stadiumBoundary'
 import { prepareBatterResult, prepareHit } from './runnerRules'
 import { type Outcome, outcomeEvents } from './scoringContract'
 import { accepted } from './scoringMachine'
@@ -75,13 +76,15 @@ export function placeFielder(
   state: ScoringState,
   id: number,
   point: GroundPoint,
-  generation: number
+  generation: number,
+  landingHeight?: number
 ): ScoringState {
   if (
     state.phase !== 'locateFielder' ||
     state.generation !== generation ||
     !Number.isFinite(point.x) ||
     !Number.isFinite(point.z) ||
+    (landingHeight != null && !Number.isFinite(landingHeight)) ||
     !Object.values(state.session.liveData.linescore.defense).some(
       player => player?.id === id
     )
@@ -94,6 +97,9 @@ export function placeFielder(
       const pending = next.pendingPlay!
       pending.fielder = id
       pending.location = { ...point }
+      pending.landingHeight = landingHeight
+      if (pending.outcome === 'Home Run')
+        pending.homeRunKind = homeRunKind(point)
       pending.angle = 45
       next.phase = 'trajectory'
     }
@@ -122,6 +128,12 @@ export function acceptTrajectory(
       trajectory: trajectoryLabel(value),
       coordinates: { ...pending.location! },
       fielder: playerRef(next.session, pending.fielder!)!
+    }
+    if (pending.outcome === 'Home Run') {
+      next.session.liveData.plays.currentPlay!.source.gamestation.homeRunKind =
+        pending.homeRunKind
+      next.session.liveData.plays.currentPlay!.source.gamestation.landingHeight =
+        pending.landingHeight
     }
     prepareHit(next)
     prepareBatterResult(next)

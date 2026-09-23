@@ -84,6 +84,10 @@ export const asEstimatedGumboPlay = asObject({
       version: asValue('estimated-v1' as const),
       outcome: asString,
       outSubtype: asOptional(asString),
+      homeRunKind: asOptional(
+        asValue('out-of-park' as const, 'in-park' as const)
+      ),
+      landingHeight: asOptional(asNumber),
       runnerActions: asOptional(
         asArray(
           asObject({

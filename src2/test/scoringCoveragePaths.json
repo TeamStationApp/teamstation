@@ -38,5 +38,8 @@
   "src2/app/field/BallArc.tsx",
   "src2/app/field/athletePose.ts",
   "src2/app/field/AthleteRig.tsx",
-  "src2/app/field/playerLabels.ts"
+  "src2/app/field/playerLabels.ts",
+  "src2/app/field/stadiumBoundary.ts",
+  "src2/app/field/StadiumDetails.tsx",
+  "src2/app/field/Ballpark.tsx"
 ]

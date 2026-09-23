@@ -4,7 +4,8 @@ import {
   approachFirst,
   completeDefense,
   prepareTerminalPitch,
-  runnerReducer
+  runnerReducer,
+  settleRunners
 } from './runnerRules'
 import { asScoringPlay } from './scoringContract'
 import { applyOverrideDraft, applyRosterDraft } from './scoringEdits'
@@ -92,7 +93,7 @@ export function nextHalf(state: ScoringState): void {
   state.awaitingBatter = startAppearance(state.session)
   state.phase = state.awaitingBatter == null ? 'ready' : 'awaitingBatter'
 }
-function closePlay(state: ScoringState): ScoringState {
+export function closePlay(state: ScoringState): ScoringState {
   if (state.phase !== 'correctionWindow' || state.pendingPlay == null)
     return state
   const next = { ...snapshotOf(state), past: state.past }
@@ -246,6 +247,7 @@ export function scoringReducer(
           outBatterPoint(sequence, Infinity)
         )
     }
+    settleRunners(next)
     return next
   }
   if (
@@ -350,7 +352,13 @@ export function scoringReducer(
   if (runnerResult != null) return runnerResult
   if (event.type === 'OUTCOME') return chooseOutcome(state, event.outcome)
   if (event.type === 'FIELDER')
-    return placeFielder(state, event.id, event.point, event.generation)
+    return placeFielder(
+      state,
+      event.id,
+      event.point,
+      event.generation,
+      event.landingHeight
+    )
   if (event.type === 'TRAJECTORY')
     return acceptTrajectory(state, event.angle, event.generation)
   if (event.type === 'ROSTER' || event.type === 'OVERRIDE') {
