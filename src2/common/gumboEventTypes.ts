@@ -25,6 +25,8 @@ const GUMBO_EVENT_TYPES = [
   'wild_pitch',
   'passed_ball',
   'balk',
+  'other_out',
+  'game_advisory',
   'score_correction',
   'final_score'
 ] as const
@@ -64,6 +66,8 @@ const EVENT_TYPE_NAMES: Record<GumboEventType, string> = {
   wild_pitch: 'Wild pitch',
   passed_ball: 'Passed ball',
   balk: 'Balk',
+  other_out: 'Out',
+  game_advisory: 'Scorekeeper note',
   score_correction: 'Score correction',
   final_score: 'Final score'
 }

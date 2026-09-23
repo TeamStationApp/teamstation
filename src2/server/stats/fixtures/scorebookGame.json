@@ -1,0 +1,3247 @@
+{
+  "finalScore": {
+    "away": 5,
+    "home": 4
+  },
+  "plays": [
+    {
+      "about": {
+        "atBatIndex": 0,
+        "inning": 1,
+        "halfInning": "top"
+      },
+      "result": {
+        "eventType": "single",
+        "awayScore": 0,
+        "homeScore": 0
+      },
+      "count": {
+        "outs": 0
+      },
+      "matchup": {
+        "batter": {
+          "id": 1
+        },
+        "pitcher": {
+          "id": 11
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": null,
+            "end": "1B",
+            "isOut": false
+          },
+          "details": {
+            "eventType": "single",
+            "runner": {
+              "id": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 1,
+        "inning": 1,
+        "halfInning": "top"
+      },
+      "result": {
+        "eventType": "single",
+        "awayScore": 1,
+        "homeScore": 0
+      },
+      "count": {
+        "outs": 0
+      },
+      "matchup": {
+        "batter": {
+          "id": 2
+        },
+        "pitcher": {
+          "id": 11
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": "1B",
+            "end": "2B",
+            "isOut": false
+          },
+          "details": {
+            "eventType": "stolen_base_2b",
+            "runner": {
+              "id": 1
+            }
+          }
+        },
+        {
+          "movement": {
+            "start": "2B",
+            "end": "score",
+            "isOut": false
+          },
+          "details": {
+            "eventType": "single",
+            "runner": {
+              "id": 1
+            },
+            "responsiblePitcher": {
+              "id": 11
+            },
+            "earned": true,
+            "rbi": true
+          }
+        },
+        {
+          "movement": {
+            "start": null,
+            "end": "1B",
+            "isOut": false
+          },
+          "details": {
+            "eventType": "single",
+            "runner": {
+              "id": 2
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 2,
+        "inning": 1,
+        "halfInning": "top"
+      },
+      "result": {
+        "eventType": "double",
+        "awayScore": 1,
+        "homeScore": 0
+      },
+      "count": {
+        "outs": 0
+      },
+      "matchup": {
+        "batter": {
+          "id": 3
+        },
+        "pitcher": {
+          "id": 11
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": "1B",
+            "end": "3B",
+            "isOut": false
+          },
+          "details": {
+            "eventType": "double",
+            "runner": {
+              "id": 2
+            }
+          }
+        },
+        {
+          "movement": {
+            "start": null,
+            "end": "2B",
+            "isOut": false
+          },
+          "details": {
+            "eventType": "double",
+            "runner": {
+              "id": 3
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 3,
+        "inning": 1,
+        "halfInning": "top"
+      },
+      "result": {
+        "eventType": "sac_fly",
+        "awayScore": 2,
+        "homeScore": 0
+      },
+      "count": {
+        "outs": 1
+      },
+      "matchup": {
+        "batter": {
+          "id": 4
+        },
+        "pitcher": {
+          "id": 11
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": "3B",
+            "end": "score",
+            "isOut": false
+          },
+          "details": {
+            "eventType": "sac_fly",
+            "runner": {
+              "id": 2
+            },
+            "responsiblePitcher": {
+              "id": 11
+            },
+            "earned": true,
+            "rbi": true
+          }
+        },
+        {
+          "movement": {
+            "start": "2B",
+            "end": "3B",
+            "isOut": false
+          },
+          "details": {
+            "eventType": "sac_fly",
+            "runner": {
+              "id": 3
+            }
+          }
+        },
+        {
+          "movement": {
+            "start": null,
+            "end": null,
+            "isOut": true
+          },
+          "details": {
+            "eventType": "sac_fly",
+            "runner": {
+              "id": 4
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 4,
+        "inning": 1,
+        "halfInning": "top"
+      },
+      "result": {
+        "eventType": "field_out",
+        "awayScore": 2,
+        "homeScore": 0
+      },
+      "count": {
+        "outs": 2
+      },
+      "matchup": {
+        "batter": {
+          "id": 5
+        },
+        "pitcher": {
+          "id": 11
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": null,
+            "end": null,
+            "isOut": true
+          },
+          "details": {
+            "eventType": "field_out",
+            "runner": {
+              "id": 5
+            }
+          }
+        },
+        {
+          "credits": [
+            {
+              "player": {
+                "id": 15
+              },
+              "credit": "f_putout"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 5,
+        "inning": 1,
+        "halfInning": "top"
+      },
+      "result": {
+        "eventType": "strikeout",
+        "awayScore": 2,
+        "homeScore": 0
+      },
+      "count": {
+        "outs": 3
+      },
+      "matchup": {
+        "batter": {
+          "id": 6
+        },
+        "pitcher": {
+          "id": 11
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": null,
+            "end": null,
+            "isOut": true
+          },
+          "details": {
+            "eventType": "strikeout",
+            "runner": {
+              "id": 6
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 6,
+        "inning": 1,
+        "halfInning": "top"
+      },
+      "result": {
+        "eventType": "game_advisory",
+        "awayScore": 2,
+        "homeScore": 0
+      },
+      "count": {
+        "outs": 3
+      },
+      "matchup": {
+        "pitcher": {
+          "id": 11
+        }
+      },
+      "runners": []
+    },
+    {
+      "about": {
+        "atBatIndex": 7,
+        "inning": 1,
+        "halfInning": "bottom"
+      },
+      "result": {
+        "eventType": "walk",
+        "awayScore": 2,
+        "homeScore": 0
+      },
+      "count": {
+        "outs": 0
+      },
+      "matchup": {
+        "batter": {
+          "id": 12
+        },
+        "pitcher": {
+          "id": 10
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": null,
+            "end": "1B",
+            "isOut": false
+          },
+          "details": {
+            "eventType": "walk",
+            "runner": {
+              "id": 12
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 8,
+        "inning": 1,
+        "halfInning": "bottom"
+      },
+      "result": {
+        "eventType": "other_out",
+        "awayScore": 2,
+        "homeScore": 0
+      },
+      "count": {
+        "outs": 1
+      },
+      "matchup": {
+        "pitcher": {
+          "id": 10
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": "1B",
+            "end": null,
+            "isOut": true
+          },
+          "details": {
+            "eventType": "other_out",
+            "runner": {
+              "id": 12
+            },
+            "pitcher": {
+              "id": 10
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 9,
+        "inning": 1,
+        "halfInning": "bottom"
+      },
+      "result": {
+        "eventType": "triple",
+        "awayScore": 2,
+        "homeScore": 0
+      },
+      "count": {
+        "outs": 1
+      },
+      "matchup": {
+        "batter": {
+          "id": 13
+        },
+        "pitcher": {
+          "id": 10
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": null,
+            "end": "3B",
+            "isOut": false
+          },
+          "details": {
+            "eventType": "triple",
+            "runner": {
+              "id": 13
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 10,
+        "inning": 1,
+        "halfInning": "bottom"
+      },
+      "result": {
+        "eventType": "intent_walk",
+        "awayScore": 2,
+        "homeScore": 0
+      },
+      "count": {
+        "outs": 1
+      },
+      "matchup": {
+        "batter": {
+          "id": 14
+        },
+        "pitcher": {
+          "id": 10
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": null,
+            "end": "1B",
+            "isOut": false
+          },
+          "details": {
+            "eventType": "intent_walk",
+            "runner": {
+              "id": 14
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 11,
+        "inning": 1,
+        "halfInning": "bottom"
+      },
+      "result": {
+        "eventType": "grounded_into_double_play",
+        "awayScore": 2,
+        "homeScore": 0
+      },
+      "count": {
+        "outs": 3
+      },
+      "matchup": {
+        "batter": {
+          "id": 15
+        },
+        "pitcher": {
+          "id": 10
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": "1B",
+            "end": null,
+            "isOut": true
+          },
+          "details": {
+            "eventType": "grounded_into_double_play",
+            "runner": {
+              "id": 14
+            }
+          }
+        },
+        {
+          "movement": {
+            "start": null,
+            "end": null,
+            "isOut": true
+          },
+          "details": {
+            "eventType": "grounded_into_double_play",
+            "runner": {
+              "id": 15
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 12,
+        "inning": 2,
+        "halfInning": "top"
+      },
+      "result": {
+        "eventType": "hit_by_pitch",
+        "awayScore": 2,
+        "homeScore": 0
+      },
+      "count": {
+        "outs": 0
+      },
+      "matchup": {
+        "batter": {
+          "id": 7
+        },
+        "pitcher": {
+          "id": 11
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": null,
+            "end": "1B",
+            "isOut": false
+          },
+          "details": {
+            "eventType": "hit_by_pitch",
+            "runner": {
+              "id": 7
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 13,
+        "inning": 2,
+        "halfInning": "top"
+      },
+      "result": {
+        "eventType": "balk",
+        "awayScore": 2,
+        "homeScore": 0
+      },
+      "count": {
+        "outs": 0
+      },
+      "matchup": {
+        "pitcher": {
+          "id": 11
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": "1B",
+            "end": "2B",
+            "isOut": false
+          },
+          "details": {
+            "eventType": "balk",
+            "runner": {
+              "id": 7
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 14,
+        "inning": 2,
+        "halfInning": "top"
+      },
+      "result": {
+        "eventType": "wild_pitch",
+        "awayScore": 2,
+        "homeScore": 0
+      },
+      "count": {
+        "outs": 0
+      },
+      "matchup": {
+        "pitcher": {
+          "id": 11
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": "2B",
+            "end": "3B",
+            "isOut": false
+          },
+          "details": {
+            "eventType": "wild_pitch",
+            "runner": {
+              "id": 7
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 15,
+        "inning": 2,
+        "halfInning": "top"
+      },
+      "result": {
+        "eventType": "passed_ball",
+        "awayScore": 2,
+        "homeScore": 0
+      },
+      "count": {
+        "outs": 0
+      },
+      "matchup": {
+        "pitcher": {
+          "id": 11
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": "3B",
+            "end": "3B",
+            "isOut": false
+          },
+          "details": {
+            "eventType": "passed_ball",
+            "runner": {
+              "id": 7
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 16,
+        "inning": 2,
+        "halfInning": "top"
+      },
+      "result": {
+        "eventType": "field_error",
+        "awayScore": 3,
+        "homeScore": 0
+      },
+      "count": {
+        "outs": 0
+      },
+      "matchup": {
+        "batter": {
+          "id": 8
+        },
+        "pitcher": {
+          "id": 11
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": "3B",
+            "end": "score",
+            "isOut": false
+          },
+          "details": {
+            "eventType": "field_error",
+            "runner": {
+              "id": 7
+            },
+            "responsiblePitcher": {
+              "id": 11
+            },
+            "earned": false,
+            "rbi": false
+          }
+        },
+        {
+          "movement": {
+            "start": null,
+            "end": "1B",
+            "isOut": false
+          },
+          "details": {
+            "eventType": "field_error",
+            "runner": {
+              "id": 8
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 17,
+        "inning": 2,
+        "halfInning": "top"
+      },
+      "result": {
+        "eventType": "caught_stealing",
+        "awayScore": 3,
+        "homeScore": 0
+      },
+      "count": {
+        "outs": 1
+      },
+      "matchup": {
+        "pitcher": {
+          "id": 11
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": "1B",
+            "end": null,
+            "isOut": true
+          },
+          "details": {
+            "eventType": "caught_stealing_2b",
+            "runner": {
+              "id": 8
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 18,
+        "inning": 2,
+        "halfInning": "top"
+      },
+      "result": {
+        "eventType": "catcher_interference",
+        "awayScore": 3,
+        "homeScore": 0
+      },
+      "count": {
+        "outs": 1
+      },
+      "matchup": {
+        "batter": {
+          "id": 9
+        },
+        "pitcher": {
+          "id": 11
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": null,
+            "end": "1B",
+            "isOut": false
+          },
+          "details": {
+            "eventType": "catcher_interference",
+            "runner": {
+              "id": 9
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 19,
+        "inning": 2,
+        "halfInning": "top"
+      },
+      "result": {
+        "eventType": "fielders_choice",
+        "awayScore": 3,
+        "homeScore": 0
+      },
+      "count": {
+        "outs": 2
+      },
+      "matchup": {
+        "batter": {
+          "id": 1
+        },
+        "pitcher": {
+          "id": 11
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": "1B",
+            "end": null,
+            "isOut": true
+          },
+          "details": {
+            "eventType": "fielders_choice",
+            "runner": {
+              "id": 9
+            }
+          }
+        },
+        {
+          "movement": {
+            "start": null,
+            "end": "1B",
+            "isOut": false
+          },
+          "details": {
+            "eventType": "fielders_choice",
+            "runner": {
+              "id": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 20,
+        "inning": 2,
+        "halfInning": "top"
+      },
+      "result": {
+        "eventType": "field_out",
+        "awayScore": 3,
+        "homeScore": 0
+      },
+      "count": {
+        "outs": 3
+      },
+      "matchup": {
+        "batter": {
+          "id": 2
+        },
+        "pitcher": {
+          "id": 11
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": null,
+            "end": null,
+            "isOut": true
+          },
+          "details": {
+            "eventType": "field_out",
+            "runner": {
+              "id": 2
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 21,
+        "inning": 2,
+        "halfInning": "bottom"
+      },
+      "result": {
+        "eventType": "home_run",
+        "awayScore": 3,
+        "homeScore": 1
+      },
+      "count": {
+        "outs": 0
+      },
+      "matchup": {
+        "batter": {
+          "id": 16
+        },
+        "pitcher": {
+          "id": 10
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": null,
+            "end": "score",
+            "isOut": false
+          },
+          "details": {
+            "eventType": "home_run",
+            "runner": {
+              "id": 16
+            },
+            "responsiblePitcher": {
+              "id": 10
+            },
+            "earned": true,
+            "rbi": true
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 22,
+        "inning": 2,
+        "halfInning": "bottom"
+      },
+      "result": {
+        "eventType": "single",
+        "awayScore": 3,
+        "homeScore": 1
+      },
+      "count": {
+        "outs": 0
+      },
+      "matchup": {
+        "batter": {
+          "id": 17
+        },
+        "pitcher": {
+          "id": 10
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": null,
+            "end": "1B",
+            "isOut": false
+          },
+          "details": {
+            "eventType": "single",
+            "runner": {
+              "id": 17
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 23,
+        "inning": 2,
+        "halfInning": "bottom"
+      },
+      "result": {
+        "eventType": "stolen_base",
+        "awayScore": 3,
+        "homeScore": 1
+      },
+      "count": {
+        "outs": 0
+      },
+      "matchup": {
+        "pitcher": {
+          "id": 10
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": "1B",
+            "end": "2B",
+            "isOut": false
+          },
+          "details": {
+            "eventType": "stolen_base_2b",
+            "runner": {
+              "id": 17
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 24,
+        "inning": 2,
+        "halfInning": "bottom"
+      },
+      "result": {
+        "eventType": "sac_bunt",
+        "awayScore": 3,
+        "homeScore": 1
+      },
+      "count": {
+        "outs": 1
+      },
+      "matchup": {
+        "batter": {
+          "id": 18
+        },
+        "pitcher": {
+          "id": 10
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": "2B",
+            "end": "3B",
+            "isOut": false
+          },
+          "details": {
+            "eventType": "sac_bunt",
+            "runner": {
+              "id": 17
+            }
+          }
+        },
+        {
+          "movement": {
+            "start": null,
+            "end": null,
+            "isOut": true
+          },
+          "details": {
+            "eventType": "sac_bunt",
+            "runner": {
+              "id": 18
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 25,
+        "inning": 2,
+        "halfInning": "bottom"
+      },
+      "result": {
+        "eventType": "field_out",
+        "awayScore": 3,
+        "homeScore": 1
+      },
+      "count": {
+        "outs": 2
+      },
+      "matchup": {
+        "batter": {
+          "id": 19
+        },
+        "pitcher": {
+          "id": 10
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": null,
+            "end": null,
+            "isOut": true
+          },
+          "details": {
+            "eventType": "field_out",
+            "runner": {
+              "id": 19
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 26,
+        "inning": 2,
+        "halfInning": "bottom"
+      },
+      "result": {
+        "eventType": "field_out",
+        "awayScore": 3,
+        "homeScore": 1
+      },
+      "count": {
+        "outs": 3
+      },
+      "matchup": {
+        "batter": {
+          "id": 12
+        },
+        "pitcher": {
+          "id": 10
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": null,
+            "end": null,
+            "isOut": true
+          },
+          "details": {
+            "eventType": "field_out",
+            "runner": {
+              "id": 12
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 27,
+        "inning": 3,
+        "halfInning": "top"
+      },
+      "result": {
+        "eventType": "walk",
+        "awayScore": 3,
+        "homeScore": 1
+      },
+      "count": {
+        "outs": 0
+      },
+      "matchup": {
+        "batter": {
+          "id": 3
+        },
+        "pitcher": {
+          "id": 11
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": null,
+            "end": "1B",
+            "isOut": false
+          },
+          "details": {
+            "eventType": "walk",
+            "runner": {
+              "id": 3
+            },
+            "responsiblePitcher": {
+              "id": 11
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 28,
+        "inning": 3,
+        "halfInning": "top"
+      },
+      "result": {
+        "eventType": "other_out",
+        "awayScore": 3,
+        "homeScore": 1
+      },
+      "count": {
+        "outs": 1
+      },
+      "matchup": {
+        "pitcher": {
+          "id": 16
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": "1B",
+            "end": null,
+            "isOut": true
+          },
+          "details": {
+            "eventType": "other_out",
+            "runner": {
+              "id": 3
+            },
+            "pitcher": {
+              "id": 11
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 29,
+        "inning": 3,
+        "halfInning": "top"
+      },
+      "result": {
+        "eventType": "walk",
+        "awayScore": 3,
+        "homeScore": 1
+      },
+      "count": {
+        "outs": 1
+      },
+      "matchup": {
+        "batter": {
+          "id": 4
+        },
+        "pitcher": {
+          "id": 16
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": null,
+            "end": "1B",
+            "isOut": false
+          },
+          "details": {
+            "eventType": "walk",
+            "runner": {
+              "id": 4
+            },
+            "responsiblePitcher": {
+              "id": 11
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 30,
+        "inning": 3,
+        "halfInning": "top"
+      },
+      "result": {
+        "eventType": "single",
+        "awayScore": 3,
+        "homeScore": 1
+      },
+      "count": {
+        "outs": 1
+      },
+      "matchup": {
+        "batter": {
+          "id": 5
+        },
+        "pitcher": {
+          "id": 16
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": "1B",
+            "end": "3B",
+            "isOut": false
+          },
+          "details": {
+            "eventType": "single",
+            "runner": {
+              "id": 4
+            }
+          }
+        },
+        {
+          "movement": {
+            "start": null,
+            "end": "1B",
+            "isOut": false
+          },
+          "details": {
+            "eventType": "single",
+            "runner": {
+              "id": 5
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 31,
+        "inning": 3,
+        "halfInning": "top"
+      },
+      "result": {
+        "eventType": "single",
+        "awayScore": 4,
+        "homeScore": 1
+      },
+      "count": {
+        "outs": 1
+      },
+      "matchup": {
+        "batter": {
+          "id": 6
+        },
+        "pitcher": {
+          "id": 16
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": "3B",
+            "end": "score",
+            "isOut": false
+          },
+          "details": {
+            "eventType": "single",
+            "runner": {
+              "id": 4
+            },
+            "responsiblePitcher": {
+              "id": 11
+            },
+            "earned": true,
+            "rbi": true
+          }
+        },
+        {
+          "movement": {
+            "start": "1B",
+            "end": "2B",
+            "isOut": false
+          },
+          "details": {
+            "eventType": "single",
+            "runner": {
+              "id": 5
+            }
+          }
+        },
+        {
+          "movement": {
+            "start": null,
+            "end": "1B",
+            "isOut": false
+          },
+          "details": {
+            "eventType": "single",
+            "runner": {
+              "id": 6
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 32,
+        "inning": 3,
+        "halfInning": "top"
+      },
+      "result": {
+        "eventType": "triple_play",
+        "awayScore": 4,
+        "homeScore": 1
+      },
+      "count": {
+        "outs": 3
+      },
+      "matchup": {
+        "batter": {
+          "id": 7
+        },
+        "pitcher": {
+          "id": 16
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": "2B",
+            "end": null,
+            "isOut": true
+          },
+          "details": {
+            "eventType": "triple_play",
+            "runner": {
+              "id": 5
+            }
+          }
+        },
+        {
+          "movement": {
+            "start": "1B",
+            "end": null,
+            "isOut": true
+          },
+          "details": {
+            "eventType": "triple_play",
+            "runner": {
+              "id": 6
+            }
+          }
+        },
+        {
+          "movement": {
+            "start": null,
+            "end": null,
+            "isOut": true
+          },
+          "details": {
+            "eventType": "triple_play",
+            "runner": {
+              "id": 7
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 33,
+        "inning": 3,
+        "halfInning": "bottom"
+      },
+      "result": {
+        "eventType": "single",
+        "awayScore": 4,
+        "homeScore": 1
+      },
+      "count": {
+        "outs": 0
+      },
+      "matchup": {
+        "batter": {
+          "id": 13
+        },
+        "pitcher": {
+          "id": 10
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": null,
+            "end": "1B",
+            "isOut": false
+          },
+          "details": {
+            "eventType": "single",
+            "runner": {
+              "id": 13
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 34,
+        "inning": 3,
+        "halfInning": "bottom"
+      },
+      "result": {
+        "eventType": "single",
+        "awayScore": 4,
+        "homeScore": 2
+      },
+      "count": {
+        "outs": 0
+      },
+      "matchup": {
+        "batter": {
+          "id": 14
+        },
+        "pitcher": {
+          "id": 9
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": "1B",
+            "end": "score",
+            "isOut": false
+          },
+          "details": {
+            "eventType": "single",
+            "runner": {
+              "id": 13
+            },
+            "responsiblePitcher": {
+              "id": 10
+            },
+            "earned": true,
+            "rbi": true
+          }
+        },
+        {
+          "movement": {
+            "start": null,
+            "end": "1B",
+            "isOut": false
+          },
+          "details": {
+            "eventType": "single",
+            "runner": {
+              "id": 14
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 35,
+        "inning": 3,
+        "halfInning": "bottom"
+      },
+      "result": {
+        "eventType": "field_out",
+        "awayScore": 4,
+        "homeScore": 2
+      },
+      "count": {
+        "outs": 1
+      },
+      "matchup": {
+        "batter": {
+          "id": 15
+        },
+        "pitcher": {
+          "id": 9
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": null,
+            "end": null,
+            "isOut": true
+          },
+          "details": {
+            "eventType": "field_out",
+            "runner": {
+              "id": 15
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 36,
+        "inning": 3,
+        "halfInning": "bottom"
+      },
+      "result": {
+        "eventType": "field_out",
+        "awayScore": 4,
+        "homeScore": 2
+      },
+      "count": {
+        "outs": 2
+      },
+      "matchup": {
+        "batter": {
+          "id": 16
+        },
+        "pitcher": {
+          "id": 9
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": null,
+            "end": null,
+            "isOut": true
+          },
+          "details": {
+            "eventType": "field_out",
+            "runner": {
+              "id": 16
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 37,
+        "inning": 3,
+        "halfInning": "bottom"
+      },
+      "result": {
+        "eventType": "field_out",
+        "awayScore": 4,
+        "homeScore": 2
+      },
+      "count": {
+        "outs": 3
+      },
+      "matchup": {
+        "batter": {
+          "id": 17
+        },
+        "pitcher": {
+          "id": 9
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": null,
+            "end": null,
+            "isOut": true
+          },
+          "details": {
+            "eventType": "field_out",
+            "runner": {
+              "id": 17
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 38,
+        "inning": 4,
+        "halfInning": "top"
+      },
+      "result": {
+        "eventType": "single",
+        "awayScore": 4,
+        "homeScore": 2
+      },
+      "count": {
+        "outs": 0
+      },
+      "matchup": {
+        "batter": {
+          "id": 8
+        },
+        "pitcher": {
+          "id": 16
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": null,
+            "end": "1B",
+            "isOut": false
+          },
+          "details": {
+            "eventType": "single",
+            "runner": {
+              "id": 8
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 39,
+        "inning": 4,
+        "halfInning": "top"
+      },
+      "result": {
+        "eventType": "field_out",
+        "awayScore": 4,
+        "homeScore": 2
+      },
+      "count": {
+        "outs": 1
+      },
+      "matchup": {
+        "batter": {
+          "id": 9
+        },
+        "pitcher": {
+          "id": 16
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": null,
+            "end": null,
+            "isOut": true
+          },
+          "details": {
+            "eventType": "field_out",
+            "runner": {
+              "id": 9
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 40,
+        "inning": 4,
+        "halfInning": "top"
+      },
+      "result": {
+        "eventType": "field_out",
+        "awayScore": 4,
+        "homeScore": 2
+      },
+      "count": {
+        "outs": 2
+      },
+      "matchup": {
+        "batter": {
+          "id": 1
+        },
+        "pitcher": {
+          "id": 16
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": null,
+            "end": null,
+            "isOut": true
+          },
+          "details": {
+            "eventType": "field_out",
+            "runner": {
+              "id": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 41,
+        "inning": 4,
+        "halfInning": "top"
+      },
+      "result": {
+        "eventType": "field_out",
+        "awayScore": 4,
+        "homeScore": 2
+      },
+      "count": {
+        "outs": 3
+      },
+      "matchup": {
+        "batter": {
+          "id": 2
+        },
+        "pitcher": {
+          "id": 16
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": null,
+            "end": null,
+            "isOut": true
+          },
+          "details": {
+            "eventType": "field_out",
+            "runner": {
+              "id": 2
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 42,
+        "inning": 4,
+        "halfInning": "bottom"
+      },
+      "result": {
+        "eventType": "single",
+        "awayScore": 4,
+        "homeScore": 2
+      },
+      "count": {
+        "outs": 0
+      },
+      "matchup": {
+        "batter": {
+          "fullName": "Opp"
+        },
+        "pitcher": {
+          "id": 9
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": null,
+            "end": "1B",
+            "isOut": false
+          },
+          "details": {
+            "eventType": "single",
+            "runner": {
+              "fullName": "Opp"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 43,
+        "inning": 4,
+        "halfInning": "bottom"
+      },
+      "result": {
+        "eventType": "single",
+        "awayScore": 4,
+        "homeScore": 3
+      },
+      "count": {
+        "outs": 0
+      },
+      "matchup": {
+        "batter": {
+          "id": 18
+        },
+        "pitcher": {
+          "id": 9
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": "1B",
+            "end": "score",
+            "isOut": false
+          },
+          "details": {
+            "eventType": "single",
+            "runner": {
+              "fullName": "Opp"
+            },
+            "responsiblePitcher": {
+              "id": 9
+            },
+            "earned": true,
+            "rbi": true
+          }
+        },
+        {
+          "movement": {
+            "start": null,
+            "end": "1B",
+            "isOut": false
+          },
+          "details": {
+            "eventType": "single",
+            "runner": {
+              "id": 18
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 44,
+        "inning": 4,
+        "halfInning": "bottom"
+      },
+      "result": {
+        "eventType": "field_out",
+        "awayScore": 4,
+        "homeScore": 3
+      },
+      "count": {
+        "outs": 1
+      },
+      "matchup": {
+        "batter": {
+          "id": 19
+        },
+        "pitcher": {
+          "id": 9
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": null,
+            "end": null,
+            "isOut": true
+          },
+          "details": {
+            "eventType": "field_out",
+            "runner": {
+              "id": 19
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 45,
+        "inning": 4,
+        "halfInning": "bottom"
+      },
+      "result": {
+        "eventType": "field_out",
+        "awayScore": 4,
+        "homeScore": 3
+      },
+      "count": {
+        "outs": 2
+      },
+      "matchup": {
+        "batter": {
+          "id": 12
+        },
+        "pitcher": {
+          "id": 9
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": null,
+            "end": null,
+            "isOut": true
+          },
+          "details": {
+            "eventType": "field_out",
+            "runner": {
+              "id": 12
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 46,
+        "inning": 4,
+        "halfInning": "bottom"
+      },
+      "result": {
+        "eventType": "field_out",
+        "awayScore": 4,
+        "homeScore": 3
+      },
+      "count": {
+        "outs": 3
+      },
+      "matchup": {
+        "batter": {
+          "id": 13
+        },
+        "pitcher": {
+          "id": 9
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": null,
+            "end": null,
+            "isOut": true
+          },
+          "details": {
+            "eventType": "field_out",
+            "runner": {
+              "id": 13
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 47,
+        "inning": 5,
+        "halfInning": "top"
+      },
+      "result": {
+        "eventType": "home_run",
+        "awayScore": 5,
+        "homeScore": 3
+      },
+      "count": {
+        "outs": 0
+      },
+      "matchup": {
+        "batter": {
+          "id": 3
+        },
+        "pitcher": {
+          "id": 16
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": null,
+            "end": "score",
+            "isOut": false
+          },
+          "details": {
+            "eventType": "home_run",
+            "runner": {
+              "id": 3
+            },
+            "responsiblePitcher": {
+              "id": 16
+            },
+            "earned": true,
+            "rbi": true
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 48,
+        "inning": 5,
+        "halfInning": "top"
+      },
+      "result": {
+        "eventType": "field_out",
+        "awayScore": 5,
+        "homeScore": 3
+      },
+      "count": {
+        "outs": 1
+      },
+      "matchup": {
+        "batter": {
+          "id": 4
+        },
+        "pitcher": {
+          "id": 16
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": null,
+            "end": null,
+            "isOut": true
+          },
+          "details": {
+            "eventType": "field_out",
+            "runner": {
+              "id": 4
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 49,
+        "inning": 5,
+        "halfInning": "top"
+      },
+      "result": {
+        "eventType": "field_out",
+        "awayScore": 5,
+        "homeScore": 3
+      },
+      "count": {
+        "outs": 2
+      },
+      "matchup": {
+        "batter": {
+          "id": 5
+        },
+        "pitcher": {
+          "id": 16
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": null,
+            "end": null,
+            "isOut": true
+          },
+          "details": {
+            "eventType": "field_out",
+            "runner": {
+              "id": 5
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 50,
+        "inning": 5,
+        "halfInning": "top"
+      },
+      "result": {
+        "eventType": "field_out",
+        "awayScore": 5,
+        "homeScore": 3
+      },
+      "count": {
+        "outs": 3
+      },
+      "matchup": {
+        "batter": {
+          "id": 6
+        },
+        "pitcher": {
+          "id": 16
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": null,
+            "end": null,
+            "isOut": true
+          },
+          "details": {
+            "eventType": "field_out",
+            "runner": {
+              "id": 6
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 51,
+        "inning": 5,
+        "halfInning": "bottom"
+      },
+      "result": {
+        "eventType": "double",
+        "awayScore": 5,
+        "homeScore": 3
+      },
+      "count": {
+        "outs": 0
+      },
+      "matchup": {
+        "batter": {
+          "id": 14
+        },
+        "pitcher": {
+          "id": 9
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": null,
+            "end": "2B",
+            "isOut": false
+          },
+          "details": {
+            "eventType": "double",
+            "runner": {
+              "id": 14
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 52,
+        "inning": 5,
+        "halfInning": "bottom"
+      },
+      "result": {
+        "eventType": "single",
+        "awayScore": 5,
+        "homeScore": 4
+      },
+      "count": {
+        "outs": 0
+      },
+      "matchup": {
+        "batter": {
+          "id": 15
+        },
+        "pitcher": {
+          "id": 9
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": "2B",
+            "end": "score",
+            "isOut": false
+          },
+          "details": {
+            "eventType": "single",
+            "runner": {
+              "id": 14
+            },
+            "responsiblePitcher": {
+              "id": 9
+            },
+            "earned": true,
+            "rbi": true
+          }
+        },
+        {
+          "movement": {
+            "start": null,
+            "end": "1B",
+            "isOut": false
+          },
+          "details": {
+            "eventType": "single",
+            "runner": {
+              "id": 15
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 53,
+        "inning": 5,
+        "halfInning": "bottom"
+      },
+      "result": {
+        "eventType": "field_out",
+        "awayScore": 5,
+        "homeScore": 4
+      },
+      "count": {
+        "outs": 1
+      },
+      "matchup": {
+        "batter": {
+          "id": 16
+        },
+        "pitcher": {
+          "id": 9
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": null,
+            "end": null,
+            "isOut": true
+          },
+          "details": {
+            "eventType": "field_out",
+            "runner": {
+              "id": 16
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 54,
+        "inning": 5,
+        "halfInning": "bottom"
+      },
+      "result": {
+        "eventType": "field_out",
+        "awayScore": 5,
+        "homeScore": 4
+      },
+      "count": {
+        "outs": 2
+      },
+      "matchup": {
+        "batter": {
+          "id": 17
+        },
+        "pitcher": {
+          "id": 9
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": null,
+            "end": null,
+            "isOut": true
+          },
+          "details": {
+            "eventType": "field_out",
+            "runner": {
+              "id": 17
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 55,
+        "inning": 5,
+        "halfInning": "bottom"
+      },
+      "result": {
+        "eventType": "field_out",
+        "awayScore": 5,
+        "homeScore": 4
+      },
+      "count": {
+        "outs": 3
+      },
+      "matchup": {
+        "batter": {
+          "id": 18
+        },
+        "pitcher": {
+          "id": 9
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": null,
+            "end": null,
+            "isOut": true
+          },
+          "details": {
+            "eventType": "field_out",
+            "runner": {
+              "id": 18
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 56,
+        "inning": 6,
+        "halfInning": "top"
+      },
+      "result": {
+        "eventType": "field_out",
+        "awayScore": 5,
+        "homeScore": 4
+      },
+      "count": {
+        "outs": 1
+      },
+      "matchup": {
+        "batter": {
+          "id": 7
+        },
+        "pitcher": {
+          "id": 16
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": null,
+            "end": null,
+            "isOut": true
+          },
+          "details": {
+            "eventType": "field_out",
+            "runner": {
+              "id": 7
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 57,
+        "inning": 6,
+        "halfInning": "top"
+      },
+      "result": {
+        "eventType": "field_out",
+        "awayScore": 5,
+        "homeScore": 4
+      },
+      "count": {
+        "outs": 2
+      },
+      "matchup": {
+        "batter": {
+          "id": 8
+        },
+        "pitcher": {
+          "id": 16
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": null,
+            "end": null,
+            "isOut": true
+          },
+          "details": {
+            "eventType": "field_out",
+            "runner": {
+              "id": 8
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 58,
+        "inning": 6,
+        "halfInning": "top"
+      },
+      "result": {
+        "eventType": "field_out",
+        "awayScore": 5,
+        "homeScore": 4
+      },
+      "count": {
+        "outs": 3
+      },
+      "matchup": {
+        "batter": {
+          "id": 9
+        },
+        "pitcher": {
+          "id": 16
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": null,
+            "end": null,
+            "isOut": true
+          },
+          "details": {
+            "eventType": "field_out",
+            "runner": {
+              "id": 9
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 59,
+        "inning": 6,
+        "halfInning": "bottom"
+      },
+      "result": {
+        "eventType": "field_out",
+        "awayScore": 5,
+        "homeScore": 4
+      },
+      "count": {
+        "outs": 1
+      },
+      "matchup": {
+        "batter": {
+          "id": 19
+        },
+        "pitcher": {
+          "id": 9
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": null,
+            "end": null,
+            "isOut": true
+          },
+          "details": {
+            "eventType": "field_out",
+            "runner": {
+              "id": 19
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 60,
+        "inning": 6,
+        "halfInning": "bottom"
+      },
+      "result": {
+        "eventType": "field_out",
+        "awayScore": 5,
+        "homeScore": 4
+      },
+      "count": {
+        "outs": 2
+      },
+      "matchup": {
+        "batter": {
+          "id": 12
+        },
+        "pitcher": {
+          "id": 9
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": null,
+            "end": null,
+            "isOut": true
+          },
+          "details": {
+            "eventType": "field_out",
+            "runner": {
+              "id": 12
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 61,
+        "inning": 6,
+        "halfInning": "bottom"
+      },
+      "result": {
+        "eventType": "single",
+        "awayScore": 5,
+        "homeScore": 4
+      },
+      "count": {
+        "outs": 2
+      },
+      "matchup": {
+        "batter": {
+          "id": 13
+        },
+        "pitcher": {
+          "id": 9
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": null,
+            "end": "1B",
+            "isOut": false
+          },
+          "details": {
+            "eventType": "single",
+            "runner": {
+              "id": 13
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 62,
+        "inning": 6,
+        "halfInning": "bottom"
+      },
+      "result": {
+        "eventType": "field_out",
+        "awayScore": 5,
+        "homeScore": 4
+      },
+      "count": {
+        "outs": 3
+      },
+      "matchup": {
+        "batter": {
+          "id": 14
+        },
+        "pitcher": {
+          "id": 9
+        }
+      },
+      "runners": [
+        {
+          "movement": {
+            "start": null,
+            "end": null,
+            "isOut": true
+          },
+          "details": {
+            "eventType": "field_out",
+            "runner": {
+              "id": 14
+            }
+          }
+        }
+      ]
+    },
+    {
+      "about": {
+        "atBatIndex": 63,
+        "inning": 6,
+        "halfInning": "bottom"
+      },
+      "result": {
+        "eventType": "score_correction",
+        "awayScore": 5,
+        "homeScore": 4
+      },
+      "count": {
+        "outs": 3
+      },
+      "matchup": {
+        "pitcher": {
+          "id": 9
+        }
+      },
+      "runners": []
+    },
+    {
+      "about": {
+        "atBatIndex": 64,
+        "inning": 6,
+        "halfInning": "bottom"
+      },
+      "result": {
+        "eventType": "final_score",
+        "awayScore": 5,
+        "homeScore": 4
+      },
+      "count": {
+        "outs": 3
+      },
+      "matchup": {
+        "pitcher": {
+          "id": 9
+        }
+      },
+      "runners": []
+    }
+  ],
+  "expected": [
+    {
+      "userId": 1,
+      "teamId": "away",
+      "pa": 3,
+      "ab": 3,
+      "h": 1,
+      "singles": 1,
+      "doubles": 0,
+      "triples": 0,
+      "hr": 0,
+      "bb": 0,
+      "k": 0,
+      "r": 1,
+      "rbi": 0,
+      "hbp": 0,
+      "ci": 0,
+      "sf": 0,
+      "sb": 1,
+      "cs": 0,
+      "pitch_bf": 0,
+      "pitch_outs": 0,
+      "pitch_h": 0,
+      "pitch_hr": 0,
+      "pitch_bb": 0,
+      "pitch_hbp": 0,
+      "pitch_k": 0,
+      "pitch_r": 0,
+      "pitch_er": 0
+    },
+    {
+      "userId": 2,
+      "teamId": "away",
+      "pa": 3,
+      "ab": 3,
+      "h": 1,
+      "singles": 1,
+      "doubles": 0,
+      "triples": 0,
+      "hr": 0,
+      "bb": 0,
+      "k": 0,
+      "r": 1,
+      "rbi": 1,
+      "hbp": 0,
+      "ci": 0,
+      "sf": 0,
+      "sb": 0,
+      "cs": 0,
+      "pitch_bf": 0,
+      "pitch_outs": 0,
+      "pitch_h": 0,
+      "pitch_hr": 0,
+      "pitch_bb": 0,
+      "pitch_hbp": 0,
+      "pitch_k": 0,
+      "pitch_r": 0,
+      "pitch_er": 0
+    },
+    {
+      "userId": 3,
+      "teamId": "away",
+      "pa": 3,
+      "ab": 2,
+      "h": 2,
+      "singles": 0,
+      "doubles": 1,
+      "triples": 0,
+      "hr": 1,
+      "bb": 1,
+      "k": 0,
+      "r": 1,
+      "rbi": 1,
+      "hbp": 0,
+      "ci": 0,
+      "sf": 0,
+      "sb": 0,
+      "cs": 0,
+      "pitch_bf": 0,
+      "pitch_outs": 0,
+      "pitch_h": 0,
+      "pitch_hr": 0,
+      "pitch_bb": 0,
+      "pitch_hbp": 0,
+      "pitch_k": 0,
+      "pitch_r": 0,
+      "pitch_er": 0
+    },
+    {
+      "userId": 4,
+      "teamId": "away",
+      "pa": 3,
+      "ab": 1,
+      "h": 0,
+      "singles": 0,
+      "doubles": 0,
+      "triples": 0,
+      "hr": 0,
+      "bb": 1,
+      "k": 0,
+      "r": 1,
+      "rbi": 1,
+      "hbp": 0,
+      "ci": 0,
+      "sf": 1,
+      "sb": 0,
+      "cs": 0,
+      "pitch_bf": 0,
+      "pitch_outs": 0,
+      "pitch_h": 0,
+      "pitch_hr": 0,
+      "pitch_bb": 0,
+      "pitch_hbp": 0,
+      "pitch_k": 0,
+      "pitch_r": 0,
+      "pitch_er": 0
+    },
+    {
+      "userId": 5,
+      "teamId": "away",
+      "pa": 3,
+      "ab": 3,
+      "h": 1,
+      "singles": 1,
+      "doubles": 0,
+      "triples": 0,
+      "hr": 0,
+      "bb": 0,
+      "k": 0,
+      "r": 0,
+      "rbi": 0,
+      "hbp": 0,
+      "ci": 0,
+      "sf": 0,
+      "sb": 0,
+      "cs": 0,
+      "pitch_bf": 0,
+      "pitch_outs": 0,
+      "pitch_h": 0,
+      "pitch_hr": 0,
+      "pitch_bb": 0,
+      "pitch_hbp": 0,
+      "pitch_k": 0,
+      "pitch_r": 0,
+      "pitch_er": 0
+    },
+    {
+      "userId": 6,
+      "teamId": "away",
+      "pa": 3,
+      "ab": 3,
+      "h": 1,
+      "singles": 1,
+      "doubles": 0,
+      "triples": 0,
+      "hr": 0,
+      "bb": 0,
+      "k": 1,
+      "r": 0,
+      "rbi": 1,
+      "hbp": 0,
+      "ci": 0,
+      "sf": 0,
+      "sb": 0,
+      "cs": 0,
+      "pitch_bf": 0,
+      "pitch_outs": 0,
+      "pitch_h": 0,
+      "pitch_hr": 0,
+      "pitch_bb": 0,
+      "pitch_hbp": 0,
+      "pitch_k": 0,
+      "pitch_r": 0,
+      "pitch_er": 0
+    },
+    {
+      "userId": 7,
+      "teamId": "away",
+      "pa": 3,
+      "ab": 2,
+      "h": 0,
+      "singles": 0,
+      "doubles": 0,
+      "triples": 0,
+      "hr": 0,
+      "bb": 0,
+      "k": 0,
+      "r": 1,
+      "rbi": 0,
+      "hbp": 1,
+      "ci": 0,
+      "sf": 0,
+      "sb": 0,
+      "cs": 0,
+      "pitch_bf": 0,
+      "pitch_outs": 0,
+      "pitch_h": 0,
+      "pitch_hr": 0,
+      "pitch_bb": 0,
+      "pitch_hbp": 0,
+      "pitch_k": 0,
+      "pitch_r": 0,
+      "pitch_er": 0
+    },
+    {
+      "userId": 8,
+      "teamId": "away",
+      "pa": 3,
+      "ab": 3,
+      "h": 1,
+      "singles": 1,
+      "doubles": 0,
+      "triples": 0,
+      "hr": 0,
+      "bb": 0,
+      "k": 0,
+      "r": 0,
+      "rbi": 0,
+      "hbp": 0,
+      "ci": 0,
+      "sf": 0,
+      "sb": 0,
+      "cs": 1,
+      "pitch_bf": 0,
+      "pitch_outs": 0,
+      "pitch_h": 0,
+      "pitch_hr": 0,
+      "pitch_bb": 0,
+      "pitch_hbp": 0,
+      "pitch_k": 0,
+      "pitch_r": 0,
+      "pitch_er": 0
+    },
+    {
+      "userId": 9,
+      "teamId": "away",
+      "pa": 3,
+      "ab": 2,
+      "h": 0,
+      "singles": 0,
+      "doubles": 0,
+      "triples": 0,
+      "hr": 0,
+      "bb": 0,
+      "k": 0,
+      "r": 0,
+      "rbi": 0,
+      "hbp": 0,
+      "ci": 1,
+      "sf": 0,
+      "sb": 0,
+      "cs": 0,
+      "pitch_bf": 18,
+      "pitch_outs": 12,
+      "pitch_h": 6,
+      "pitch_hr": 0,
+      "pitch_bb": 0,
+      "pitch_hbp": 0,
+      "pitch_k": 0,
+      "pitch_r": 2,
+      "pitch_er": 2
+    },
+    {
+      "userId": 10,
+      "teamId": "away",
+      "pa": 0,
+      "ab": 0,
+      "h": 0,
+      "singles": 0,
+      "doubles": 0,
+      "triples": 0,
+      "hr": 0,
+      "bb": 0,
+      "k": 0,
+      "r": 0,
+      "rbi": 0,
+      "hbp": 0,
+      "ci": 0,
+      "sf": 0,
+      "sb": 0,
+      "cs": 0,
+      "pitch_bf": 10,
+      "pitch_outs": 6,
+      "pitch_h": 4,
+      "pitch_hr": 1,
+      "pitch_bb": 2,
+      "pitch_hbp": 0,
+      "pitch_k": 0,
+      "pitch_r": 2,
+      "pitch_er": 2
+    },
+    {
+      "userId": 11,
+      "teamId": "home",
+      "pa": 0,
+      "ab": 0,
+      "h": 0,
+      "singles": 0,
+      "doubles": 0,
+      "triples": 0,
+      "hr": 0,
+      "bb": 0,
+      "k": 0,
+      "r": 0,
+      "rbi": 0,
+      "hbp": 0,
+      "ci": 0,
+      "sf": 0,
+      "sb": 0,
+      "cs": 0,
+      "pitch_bf": 13,
+      "pitch_outs": 7,
+      "pitch_h": 3,
+      "pitch_hr": 0,
+      "pitch_bb": 2,
+      "pitch_hbp": 1,
+      "pitch_k": 1,
+      "pitch_r": 4,
+      "pitch_er": 3
+    },
+    {
+      "userId": 12,
+      "teamId": "home",
+      "pa": 4,
+      "ab": 3,
+      "h": 0,
+      "singles": 0,
+      "doubles": 0,
+      "triples": 0,
+      "hr": 0,
+      "bb": 1,
+      "k": 0,
+      "r": 0,
+      "rbi": 0,
+      "hbp": 0,
+      "ci": 0,
+      "sf": 0,
+      "sb": 0,
+      "cs": 0,
+      "pitch_bf": 0,
+      "pitch_outs": 0,
+      "pitch_h": 0,
+      "pitch_hr": 0,
+      "pitch_bb": 0,
+      "pitch_hbp": 0,
+      "pitch_k": 0,
+      "pitch_r": 0,
+      "pitch_er": 0
+    },
+    {
+      "userId": 13,
+      "teamId": "home",
+      "pa": 4,
+      "ab": 4,
+      "h": 3,
+      "singles": 2,
+      "doubles": 0,
+      "triples": 1,
+      "hr": 0,
+      "bb": 0,
+      "k": 0,
+      "r": 1,
+      "rbi": 0,
+      "hbp": 0,
+      "ci": 0,
+      "sf": 0,
+      "sb": 0,
+      "cs": 0,
+      "pitch_bf": 0,
+      "pitch_outs": 0,
+      "pitch_h": 0,
+      "pitch_hr": 0,
+      "pitch_bb": 0,
+      "pitch_hbp": 0,
+      "pitch_k": 0,
+      "pitch_r": 0,
+      "pitch_er": 0
+    },
+    {
+      "userId": 14,
+      "teamId": "home",
+      "pa": 4,
+      "ab": 3,
+      "h": 2,
+      "singles": 1,
+      "doubles": 1,
+      "triples": 0,
+      "hr": 0,
+      "bb": 1,
+      "k": 0,
+      "r": 1,
+      "rbi": 1,
+      "hbp": 0,
+      "ci": 0,
+      "sf": 0,
+      "sb": 0,
+      "cs": 0,
+      "pitch_bf": 0,
+      "pitch_outs": 0,
+      "pitch_h": 0,
+      "pitch_hr": 0,
+      "pitch_bb": 0,
+      "pitch_hbp": 0,
+      "pitch_k": 0,
+      "pitch_r": 0,
+      "pitch_er": 0
+    },
+    {
+      "userId": 15,
+      "teamId": "home",
+      "pa": 3,
+      "ab": 3,
+      "h": 1,
+      "singles": 1,
+      "doubles": 0,
+      "triples": 0,
+      "hr": 0,
+      "bb": 0,
+      "k": 0,
+      "r": 0,
+      "rbi": 1,
+      "hbp": 0,
+      "ci": 0,
+      "sf": 0,
+      "sb": 0,
+      "cs": 0,
+      "pitch_bf": 0,
+      "pitch_outs": 0,
+      "pitch_h": 0,
+      "pitch_hr": 0,
+      "pitch_bb": 0,
+      "pitch_hbp": 0,
+      "pitch_k": 0,
+      "pitch_r": 0,
+      "pitch_er": 0
+    },
+    {
+      "userId": 16,
+      "teamId": "home",
+      "pa": 3,
+      "ab": 3,
+      "h": 1,
+      "singles": 0,
+      "doubles": 0,
+      "triples": 0,
+      "hr": 1,
+      "bb": 0,
+      "k": 0,
+      "r": 1,
+      "rbi": 1,
+      "hbp": 0,
+      "ci": 0,
+      "sf": 0,
+      "sb": 0,
+      "cs": 0,
+      "pitch_bf": 15,
+      "pitch_outs": 11,
+      "pitch_h": 4,
+      "pitch_hr": 1,
+      "pitch_bb": 0,
+      "pitch_hbp": 0,
+      "pitch_k": 0,
+      "pitch_r": 1,
+      "pitch_er": 1
+    },
+    {
+      "userId": 17,
+      "teamId": "home",
+      "pa": 3,
+      "ab": 3,
+      "h": 1,
+      "singles": 1,
+      "doubles": 0,
+      "triples": 0,
+      "hr": 0,
+      "bb": 0,
+      "k": 0,
+      "r": 0,
+      "rbi": 0,
+      "hbp": 0,
+      "ci": 0,
+      "sf": 0,
+      "sb": 1,
+      "cs": 0,
+      "pitch_bf": 0,
+      "pitch_outs": 0,
+      "pitch_h": 0,
+      "pitch_hr": 0,
+      "pitch_bb": 0,
+      "pitch_hbp": 0,
+      "pitch_k": 0,
+      "pitch_r": 0,
+      "pitch_er": 0
+    },
+    {
+      "userId": 18,
+      "teamId": "home",
+      "pa": 3,
+      "ab": 2,
+      "h": 1,
+      "singles": 1,
+      "doubles": 0,
+      "triples": 0,
+      "hr": 0,
+      "bb": 0,
+      "k": 0,
+      "r": 0,
+      "rbi": 1,
+      "hbp": 0,
+      "ci": 0,
+      "sf": 1,
+      "sb": 0,
+      "cs": 0,
+      "pitch_bf": 0,
+      "pitch_outs": 0,
+      "pitch_h": 0,
+      "pitch_hr": 0,
+      "pitch_bb": 0,
+      "pitch_hbp": 0,
+      "pitch_k": 0,
+      "pitch_r": 0,
+      "pitch_er": 0
+    },
+    {
+      "userId": 19,
+      "teamId": "home",
+      "pa": 3,
+      "ab": 3,
+      "h": 0,
+      "singles": 0,
+      "doubles": 0,
+      "triples": 0,
+      "hr": 0,
+      "bb": 0,
+      "k": 0,
+      "r": 0,
+      "rbi": 0,
+      "hbp": 0,
+      "ci": 0,
+      "sf": 0,
+      "sb": 0,
+      "cs": 0,
+      "pitch_bf": 0,
+      "pitch_outs": 0,
+      "pitch_h": 0,
+      "pitch_hr": 0,
+      "pitch_bb": 0,
+      "pitch_hbp": 0,
+      "pitch_k": 0,
+      "pitch_r": 0,
+      "pitch_er": 0
+    }
+  ]
+}

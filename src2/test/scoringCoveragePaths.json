@@ -18,6 +18,8 @@
   "src2/app/field/playerPresentation.ts",
   "src2/app/field/scoreboardModel.ts",
   "src2/common/api.ts",
+  "src2/common/gumboEventTypes.ts",
+  "src2/server/stats/gumboStats.ts",
   "src2/server/routes/teams.ts",
   "src2/server/teams/teamRoster.ts",
   "src2/app/field/movePreview.ts",
