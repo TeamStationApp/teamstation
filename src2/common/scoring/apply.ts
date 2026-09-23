@@ -1875,7 +1875,18 @@ const CLOSES_FIRST = new Set<ScoringAction['type']>([
   'lineup'
 ])
 
-export function applyAction(state: GameState, raw: ScoringAction): Applied {
+/**
+ * Applies one action to the game. `state` is copied first and left as it
+ * was, unless `inPlace` is set: then it is changed where it is, which saves
+ * the copy when the caller keeps only the result, as a replay does. A refused
+ * action may leave an `inPlace` state part changed, so it is not to be used
+ * after a refusal.
+ */
+export function applyAction(
+  state: GameState,
+  raw: ScoringAction,
+  { inPlace = false }: { inPlace?: boolean } = {}
+): Applied {
   const cleaned = cleanAction(raw)
   const unchanged = (problem: Problem): Applied => ({
     state,
@@ -1887,11 +1898,11 @@ export function applyAction(state: GameState, raw: ScoringAction): Applied {
   const action = cleaned.action
   if (state.final)
     return unchanged({ code: 'gameOver', message: 'The game is over' })
-  const copy = copyState(state)
+  const played = state.liveData.plays.allPlays.length
+  const copy = inPlace ? state : copyState(state)
   const ctx: Ctx = { state: copy, out: [], charges: chargeBook(copy) }
   const mound = copy.liveData.linescore.defense.P
   errorlessOuts(copy)
-  const played = state.liveData.plays.allPlays.length
   try {
     if (
       (CLOSES_FIRST.has(action.type) ||

@@ -1,16 +1,32 @@
 import type { Kysely } from 'kysely'
 
 import type { RosterEntry } from '../../common/api'
-import { shortNames } from '../../common/names'
+import { fullName, shortNames } from '../../common/names'
+import { canCoach, type RoleScopes } from '../access'
 import type { Database } from '../db/database'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
+import { teamWalkUpSongs } from '../routes/walkUpSongs'
 
+/**
+ * Who is on a team, for one viewer.
+ *
+ * Everybody reads short names. A coach or an administrator of this team —
+ * directly, or through its season or league — also reads each player's whole
+ * name, the same rule `maySeeFullName` holds the player page to; everybody
+ * else gets `null` there.
+ *
+ * Each entry carries the person's walk-up song on this team, or `null`: a
+ * song belongs to a player's place on a team, so the same child reads
+ * another team's song only on that team's roster.
+ */
 export async function teamRoster(
   db: Kysely<Database>,
   space: MediaContext['space'],
-  teamId: string
+  teamId: string,
+  viewer: RoleScopes
 ): Promise<RosterEntry[]> {
+  const coaches = canCoach(viewer, teamId)
   const rows = await db
     .selectFrom('memberships')
     .innerJoin('users', 'users.id', 'memberships.user_id')
@@ -69,6 +85,8 @@ export async function teamRoster(
     }))
   )
 
+  const songs = await teamWalkUpSongs(db, teamId)
+
   const onTheTeam = new Set(rows.map(row => row.userId))
   const followers = followerRows.filter(row => !onTheTeam.has(row.userId))
   const followerNames = shortNames(
@@ -98,12 +116,15 @@ export async function teamRoster(
         bats: row.bats,
         throws: row.throws,
         shortName: names.get(row.userId) ?? row.displayName,
+        fullName:
+          coaches && row.isPlayer ? fullName({ ...row, id: row.userId }) : null,
         avatarUrl: imageUrl(space, row.avatarPath),
         jersey: row.jersey,
         positions: row.positions,
         isPlayer: row.isPlayer,
         role: row.role,
-        group: group(row)
+        group: group(row),
+        walkUpSong: songs.get(row.userId) ?? null
       }))
       .sort((a, b) => {
         const byGroup =
@@ -118,12 +139,14 @@ export async function teamRoster(
         bats: row.bats,
         throws: row.throws,
         shortName: followerNames.get(row.userId) ?? row.displayName,
+        fullName: null,
         avatarUrl: imageUrl(space, row.avatarPath),
         jersey: null,
         positions: [] as string[],
         isPlayer: false,
         role: 'member',
-        group: 'follower'
+        group: 'follower',
+        walkUpSong: null
       }))
       .sort((a, b) => a.shortName.localeCompare(b.shortName))
   ]

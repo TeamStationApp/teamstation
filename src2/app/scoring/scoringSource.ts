@@ -1,6 +1,7 @@
 import type {
   GameDetail,
   GameStationClient,
+  Lineup,
   RosterEntry
 } from '../../common/api'
 import {
@@ -9,7 +10,11 @@ import {
   ScoringSession,
   type StoredGame
 } from '../../common/scoring/session'
-import { startingSetup, teamsOf } from './developmentSession'
+import {
+  type DefaultLineups,
+  startingSetup,
+  teamsOf
+} from './developmentSession'
 
 /** Where the scoring screen's game comes from and is kept. */
 export interface ScoringSource {
@@ -25,14 +30,35 @@ export interface ScoringSource {
 function context(
   game: GameDetail,
   away: RosterEntry[],
-  home: RosterEntry[]
+  home: RosterEntry[],
+  defaults: DefaultLineups = {}
 ): Parameters<typeof ScoringSession.open>[2] {
   return {
     gamePk: game.id,
     teams: teamsOf(game),
-    setup: startingSetup(game, away, home),
+    setup: startingSetup(game, away, home, defaults),
     fenceDistanceFt: game.fenceDistanceFt
   }
+}
+
+/**
+ * Both teams' default lineups. A default that fails to load is none, so the
+ * side starts from its roster.
+ */
+async function defaultsOf(
+  client: GameStationClient,
+  game: GameDetail
+): Promise<DefaultLineups> {
+  const load = async (teamId: string): Promise<Lineup | null> =>
+    await client
+      .defaultLineup(teamId)
+      .then(found => found.lineup)
+      .catch(() => null)
+  const [away, home] = await Promise.all([
+    load(game.awayTeamId),
+    load(game.homeTeamId)
+  ])
+  return { away, home }
 }
 
 /** Scores into the server's copy of the game as it is played. */
@@ -51,7 +77,14 @@ export class ServerScoringSource implements ScoringSource {
       save: async (gameId, change) =>
         await client.saveGameEvents(gameId, change)
     }
-    return await ScoringSession.open(store, game.id, context(game, away, home))
+    // The defaults shape only a new game: one with records is rebuilt from
+    // them, whatever the defaults say now.
+    const defaults = await defaultsOf(client, game)
+    return await ScoringSession.open(
+      store,
+      game.id,
+      context(game, away, home, defaults)
+    )
   }
 }
 

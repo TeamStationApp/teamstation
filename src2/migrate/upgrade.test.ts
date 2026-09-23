@@ -10,6 +10,9 @@ import { migration039GumboEventTypes } from './migrations/039gumboEventTypes'
 import { migration040LegacyEventTypes } from './migrations/040legacyEventTypes'
 import { migration041ScheduleApi } from './migrations/041scheduleApi'
 import { migration042FenceDistance } from './migrations/042fenceDistance'
+import { migration043RoleFlags } from './migrations/043roleFlags'
+import { migration044TeamDefaultLineup } from './migrations/044teamDefaultLineup'
+import { migration045WalkUpSongs } from './migrations/045walkUpSongs'
 import { migrateDown, migrateUp } from './runner'
 import { testDatabaseUrl } from './testDatabase'
 
@@ -1242,5 +1245,287 @@ describe('migration 042fenceDistance', function () {
         )
       ).rows
     ).deep.equals([{ id: 'gam_042p' }])
+  })
+})
+
+const through043 = migrations.filter(migration => migration.name < '044')
+
+/**
+ * Migration 043 renames `admin_roles` to `scope_roles` and lets a row hold a
+ * role flag as well as `admin`: one row per person, level and role. Down
+ * drops the flags and puts the table back exactly as 001 made it.
+ */
+describe('migration 043roleFlags', function () {
+  this.timeout(60000)
+
+  const scratchName = `gamestation_upgrade_043_${Date.now()}`
+  const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
+  const boss = mintUserId(() => false)
+
+  let admin: Pool
+  let pool: Pool
+
+  /** Every constraint and index on the table, by name and definition. */
+  const shape = async (table: string): Promise<string[]> => {
+    const constraints = await pool.query<{ line: string }>(
+      `select conname || ' ' || pg_get_constraintdef(oid) as line
+       from pg_constraint where conrelid = $1::regclass`,
+      [table]
+    )
+    const indexes = await pool.query<{ line: string }>(
+      `select indexname || ' ' || indexdef as line
+       from pg_indexes where tablename = $1`,
+      [table]
+    )
+    return [...constraints.rows, ...indexes.rows]
+      .map(row => row.line.replaceAll(table, '<table>'))
+      .sort()
+  }
+  const roles = async (): Promise<unknown[]> =>
+    (
+      await pool.query(
+        `select scope_type, scope_id, role from scope_roles order by scope_id, role`
+      )
+    ).rows
+  let before043: string[] = []
+
+  before(async function () {
+    admin = new Pool({ connectionString: adminUrl })
+    await admin.query(`create database ${scratchName}`)
+    pool = new Pool({ connectionString: scratchUrl })
+    await migrateUp(pool, through042)
+    await pool.query(
+      `insert into users (id, "legacyId", display_name) values ($1, $2, 'Boss')`,
+      [boss.userId, boss.legacyId]
+    )
+    await pool.query(
+      `insert into admin_roles (id, user_id, scope_type, scope_id)
+       values ('adm_league', $1, 'league', 'lea_043'),
+              ('adm_team', $1, 'team', 'tem_043')`,
+      [boss.userId]
+    )
+    before043 = await shape('admin_roles')
+  })
+
+  after(async function () {
+    if (pool != null) await pool.end()
+    if (admin != null) {
+      await admin.query(`drop database if exists ${scratchName}`)
+      await admin.end()
+    }
+  })
+
+  it('keeps every admin row and takes one row per role', async function () {
+    const applied = await migrateUp(pool, through043)
+    expect(applied.applied).deep.equals([migration043RoleFlags.name])
+    expect(await roles()).deep.equals([
+      { scope_type: 'league', scope_id: 'lea_043', role: 'admin' },
+      { scope_type: 'team', scope_id: 'tem_043', role: 'admin' }
+    ])
+    await pool.query(
+      `insert into scope_roles (id, user_id, scope_type, scope_id, role)
+       values ('rol_coach', $1, 'team', 'tem_043', 'coach'),
+              ('rol_film', $1, 'team', 'tem_043', 'videographer')`,
+      [boss.userId]
+    )
+    const shaped = await shape('scope_roles')
+    expect(
+      shaped.some(line => line.startsWith('<table>_one_role UNIQUE'))
+    ).equals(true)
+    expect(shaped.some(line => line.startsWith('<table>_scope CREATE'))).equals(
+      true
+    )
+  })
+
+  it('refuses an unknown role and a second row for the same role', async function () {
+    let refused = ''
+    try {
+      await pool.query(
+        `insert into scope_roles (id, user_id, scope_type, scope_id, role)
+         values ('rol_umpire', $1, 'team', 'tem_043', 'umpire')`,
+        [boss.userId]
+      )
+    } catch (error) {
+      refused = String(error)
+    }
+    expect(refused).includes('scope_roles_role_check')
+    refused = ''
+    try {
+      await pool.query(
+        `insert into scope_roles (id, user_id, scope_type, scope_id, role)
+         values ('rol_coach_again', $1, 'team', 'tem_043', 'coach')`,
+        [boss.userId]
+      )
+    } catch (error) {
+      refused = String(error)
+    }
+    expect(refused).includes('scope_roles_one_role')
+  })
+
+  it('drops the flags when rolled back, restoring admin_roles as it was', async function () {
+    const rolled = await migrateDown(pool, through043, 1)
+    expect(rolled).deep.equals([migration043RoleFlags.name])
+    expect(await shape('admin_roles')).deep.equals(before043)
+    expect(
+      (
+        await pool.query(
+          `select scope_id, role from admin_roles order by scope_id`
+        )
+      ).rows
+    ).deep.equals([
+      { scope_id: 'lea_043', role: 'admin' },
+      { scope_id: 'tem_043', role: 'admin' }
+    ])
+    const again = await migrateUp(pool, through043)
+    expect(again.applied).deep.equals([migration043RoleFlags.name])
+    expect((await roles()).length).equals(2)
+  })
+})
+
+const through044 = migrations.filter(migration => migration.name < '045')
+
+/**
+ * Migration 044 gives each team a default lineup and each game the marks
+ * of its lineups — when its starting lineup was taken, and the digest of
+ * them after its last live post — all empty, and takes them away again.
+ */
+describe('migration 044teamDefaultLineup', function () {
+  this.timeout(60000)
+
+  const scratchName = `gamestation_upgrade_044_${Date.now()}`
+  const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
+
+  let admin: Pool
+  let pool: Pool
+
+  const columns = async (): Promise<string[]> =>
+    (
+      await pool.query<{ line: string }>(
+        `select table_name || '.' || column_name || ' ' || data_type as line
+         from information_schema.columns
+         where column_name in ('default_lineup', 'lineup_started_at', 'lineups_digest')
+         order by table_name, column_name`
+      )
+    ).rows.map(row => row.line)
+
+  before(async function () {
+    admin = new Pool({ connectionString: adminUrl })
+    await admin.query(`create database ${scratchName}`)
+    pool = new Pool({ connectionString: scratchUrl })
+    await migrateUp(pool, through043)
+    await pool.query(
+      `insert into teams (id, name) values ('tem_044a', 'A'), ('tem_044b', 'B')`
+    )
+    await pool.query(
+      `insert into games (id, home_team_id, away_team_id, start_at)
+       values ('gam_044', 'tem_044a', 'tem_044b', $1)`,
+      [PLAYED]
+    )
+  })
+
+  after(async function () {
+    if (pool != null) await pool.end()
+    if (admin != null) {
+      await admin.query(`drop database if exists ${scratchName}`)
+      await admin.end()
+    }
+  })
+
+  it('adds an empty default lineup to every team and empty marks to every game', async function () {
+    const applied = await migrateUp(pool, through044)
+    expect(applied.applied).deep.equals([migration044TeamDefaultLineup.name])
+    expect(await columns()).deep.equals([
+      'games.lineup_started_at timestamp with time zone',
+      'games.lineups_digest text',
+      'teams.default_lineup jsonb'
+    ])
+    expect(
+      (await pool.query(`select default_lineup from teams order by id`)).rows
+    ).deep.equals([{ default_lineup: null }, { default_lineup: null }])
+    expect(
+      (await pool.query(`select lineup_started_at, lineups_digest from games`))
+        .rows
+    ).deep.equals([{ lineup_started_at: null, lineups_digest: null }])
+    await pool.query(
+      `update teams set default_lineup = '{"lineup": null}'::jsonb where id = 'tem_044a'`
+    )
+  })
+
+  it('drops all three when rolled back, and adds them again', async function () {
+    const rolled = await migrateDown(pool, through044, 1)
+    expect(rolled).deep.equals([migration044TeamDefaultLineup.name])
+    expect(await columns()).deep.equals([])
+    const again = await migrateUp(pool, through044)
+    expect(again.applied).deep.equals([migration044TeamDefaultLineup.name])
+    expect(await columns()).length(3)
+  })
+})
+
+const through045 = migrations.filter(migration => migration.name < '046')
+
+/**
+ * Migration 045 adds the walk-up songs table, empty, over a database that
+ * already has teams and players, and drops it again.
+ */
+describe('migration 045walkUpSongs', function () {
+  this.timeout(60000)
+
+  const scratchName = `gamestation_upgrade_045_${Date.now()}`
+  const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
+  const player = mintUserId(() => false)
+
+  let admin: Pool
+  let pool: Pool
+
+  const table = async (): Promise<string | null> =>
+    (
+      await pool.query<{ found: string | null }>(
+        `select to_regclass('walk_up_songs')::text as found`
+      )
+    ).rows[0].found
+
+  before(async function () {
+    admin = new Pool({ connectionString: adminUrl })
+    await admin.query(`create database ${scratchName}`)
+    pool = new Pool({ connectionString: scratchUrl })
+    await migrateUp(pool, through044)
+    await pool.query(`insert into teams (id, name) values ('tem_045', 'A')`)
+    await pool.query(
+      `insert into users (id, "legacyId", display_name) values ($1, $2, 'P')`,
+      [player.userId, player.legacyId]
+    )
+  })
+
+  after(async function () {
+    if (pool != null) await pool.end()
+    if (admin != null) {
+      await admin.query(`drop database if exists ${scratchName}`)
+      await admin.end()
+    }
+  })
+
+  it('adds an empty table that takes a song', async function () {
+    const applied = await migrateUp(pool, through045)
+    expect(applied.applied).deep.equals([migration045WalkUpSongs.name])
+    expect(await table()).equals('walk_up_songs')
+    expect(
+      (await pool.query('select count(*)::int as n from walk_up_songs')).rows
+    ).deep.equals([{ n: 0 }])
+    await pool.query(
+      `insert into walk_up_songs (team_id, user_id, provider, provider_id,
+         title, artist, duration_ms, start_ms, end_ms, set_by)
+       values ('tem_045', $1, 'localFile', 'lf:0123456789abcdef', 'T', 'A',
+         90000, 0, 60000, $1)`,
+      [player.userId]
+    )
+  })
+
+  it('drops it when rolled back, and adds it again', async function () {
+    const rolled = await migrateDown(pool, through045, 1)
+    expect(rolled).deep.equals([migration045WalkUpSongs.name])
+    expect(await table()).equals(null)
+    const again = await migrateUp(pool, through045)
+    expect(again.applied).deep.equals([migration045WalkUpSongs.name])
+    expect(await table()).equals('walk_up_songs')
   })
 })

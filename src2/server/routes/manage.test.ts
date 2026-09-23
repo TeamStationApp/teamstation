@@ -34,6 +34,8 @@ const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 const BOSS = 'tok_boss_00000000000000000000000000'
 const COACH = 'tok_coach_0000000000000000000000000'
 const PARENT = 'tok_parent_000000000000000000000000'
+const CHIEF = 'tok_chief_0000000000000000000000000'
+const GHOST = 'tok_ghost_0000000000000000000000000'
 
 const legacyOf = new Map<number, string>()
 function mintUser(): number {
@@ -54,6 +56,7 @@ const bossId = mintUser()
 const coachId = mintUser()
 const parentId = mintUser()
 const ghostId = mintUser()
+const chiefId = mintUser()
 const bossEmail = exampleEmail()
 const coachEmail = exampleEmail()
 const parentEmail = exampleEmail()
@@ -199,7 +202,7 @@ describe('the manage page', function () {
         .execute()
     }
     await db
-      .insertInto('admin_roles')
+      .insertInto('scope_roles')
       .values({
         id: 'adm_boss',
         user_id: bossId,
@@ -280,6 +283,7 @@ describe('the manage page', function () {
     seasons: Array<{ id: string; name: string }>
     leagues: Array<{ id: string; name: string }>
     adminOf: Array<{ kind: string; id: string }>
+    grants: Array<{ kind: string; id: string; name: string; roles: string[] }>
   }
 
   const peopleOf = (body: Record<string, unknown>): Person[] =>
@@ -445,7 +449,7 @@ describe('the manage page', function () {
     )
     expect(made.status).equals(200)
     const roles = await db
-      .selectFrom('admin_roles')
+      .selectFrom('scope_roles')
       .select(['scope_type', 'scope_id'])
       .where('user_id', '=', parentId)
       .execute()
@@ -503,7 +507,7 @@ describe('the manage page', function () {
       .values({ id: 'lea_field', name: 'Field League' })
       .execute()
     await db
-      .insertInto('admin_roles')
+      .insertInto('scope_roles')
       .values({
         id: 'adm_boss_field',
         user_id: bossId,
@@ -576,5 +580,314 @@ describe('the manage page', function () {
         await put('/manage/season/sea_spring/field', BOSS, body),
         JSON.stringify(body)
       ).equals(400)
+  })
+
+  /** The roles rows one person holds on one level, oldest first. */
+  const rowsOf = async (
+    userId: number,
+    scopeType: string,
+    scopeId: string
+  ): Promise<string[]> =>
+    (
+      await db!
+        .selectFrom('scope_roles')
+        .select(['role'])
+        .where('user_id', '=', userId)
+        .where('scope_type', '=', scopeType as 'team')
+        .where('scope_id', '=', scopeId)
+        .orderBy('role')
+        .execute()
+    ).map(row => row.role)
+
+  it('sets, replaces and clears roles on a league, a season and a team', async function () {
+    if (db == null) this.skip()
+    // A league's administrator, who runs everything on this page.
+    const now = new Date()
+    await db
+      .insertInto('users')
+      .values({
+        id: chiefId,
+        legacyId: legacyId(chiefId),
+        display_name: 'Lee Chief',
+        created_at: now,
+        updated_at: now
+      })
+      .execute()
+    await db
+      .insertInto('auth_sessions')
+      .values({
+        id: 'ses_chief',
+        user_id: chiefId,
+        token_hash: hashToken(CHIEF),
+        expires_at: new Date(now.getTime() + 3_600_000),
+        created_at: now
+      })
+      .execute()
+    await db
+      .insertInto('scope_roles')
+      .values({
+        id: 'rol_chief',
+        user_id: chiefId,
+        scope_type: 'league',
+        scope_id: 'lea_npll',
+        role: 'admin'
+      })
+      .execute()
+
+    const league = await ask(
+      `/manage/league/lea_npll/people/${ghostId}/roles`,
+      CHIEF,
+      'PUT',
+      { admin: false, flags: ['scorekeeper'] }
+    )
+    expect(league).deep.equals({
+      status: 200,
+      body: { userId: ghostId, roles: ['scorekeeper'] }
+    })
+    // And able to see what they keep score of.
+    const joined = await db
+      .selectFrom('league_members')
+      .select(['id'])
+      .where('user_id', '=', ghostId)
+      .where('league_id', '=', 'lea_npll')
+      .executeTakeFirst()
+    expect(joined == null).equals(false)
+
+    const season = await ask(
+      `/manage/season/sea_spring/people/${ghostId}/roles`,
+      BOSS,
+      'PUT',
+      { admin: true, flags: ['songkeeper', 'coach', 'coach'] }
+    )
+    expect(season.body.roles).deep.equals(['admin', 'coach', 'songkeeper'])
+    const team = await ask(
+      `/manage/team/tem_hawks/people/${ghostId}/roles`,
+      COACH,
+      'PUT',
+      { admin: false, flags: ['videographer'] }
+    )
+    expect(team.body.roles).deep.equals(['videographer'])
+    expect(await rowsOf(ghostId, 'league', 'lea_npll')).deep.equals([
+      'scorekeeper'
+    ])
+    expect(await rowsOf(ghostId, 'season', 'sea_spring')).deep.equals([
+      'admin',
+      'coach',
+      'songkeeper'
+    ])
+
+    // The body is the whole set: what it leaves out is taken away, and what
+    // it keeps keeps its row.
+    const kept = await db
+      .selectFrom('scope_roles')
+      .select(['id'])
+      .where('user_id', '=', ghostId)
+      .where('scope_id', '=', 'sea_spring')
+      .where('role', '=', 'songkeeper')
+      .executeTakeFirstOrThrow()
+    const replaced = await ask(
+      `/manage/season/sea_spring/people/${ghostId}/roles`,
+      BOSS,
+      'PUT',
+      { admin: false, flags: ['songkeeper'] }
+    )
+    expect(replaced.body.roles).deep.equals(['songkeeper'])
+    const still = await db
+      .selectFrom('scope_roles')
+      .select(['id'])
+      .where('user_id', '=', ghostId)
+      .where('scope_id', '=', 'sea_spring')
+      .executeTakeFirstOrThrow()
+    expect(still.id).equals(kept.id)
+
+    const cleared = await ask(
+      `/manage/team/tem_hawks/people/${ghostId}/roles`,
+      COACH,
+      'PUT',
+      { admin: false, flags: [] }
+    )
+    expect(cleared.body.roles).deep.equals([])
+    expect(await rowsOf(ghostId, 'team', 'tem_hawks')).deep.equals([])
+
+    let audited: unknown[] = []
+    for (let tries = 0; tries < 50 && audited.length < 5; tries++) {
+      await new Promise(resolve => setTimeout(resolve, 10))
+      audited = await db
+        .selectFrom('audit_log')
+        .select(['after'])
+        .where('entity_type', '=', 'scopeRoles')
+        .where('entity_id', '=', String(ghostId))
+        .execute()
+    }
+    expect(audited.length).equals(5)
+  })
+
+  it('lets only an administrator of the level or one above it set roles', async function () {
+    if (db == null) this.skip()
+    const put = async (
+      path: string,
+      token: string,
+      body: unknown
+    ): Promise<number> => (await ask(path, token, 'PUT', body)).status
+    const body = { admin: false, flags: ['coach'] }
+    // Holding flags is not administering: somebody who keeps score across the
+    // league still may not hand out roles on one of its teams.
+    const now = new Date()
+    await db
+      .insertInto('auth_sessions')
+      .values({
+        id: 'ses_ghost',
+        user_id: ghostId,
+        token_hash: hashToken(GHOST),
+        expires_at: new Date(now.getTime() + 3_600_000),
+        created_at: now
+      })
+      .execute()
+    expect(
+      await put(`/manage/team/tem_hawks/people/${parentId}/roles`, GHOST, body)
+    ).equals(404)
+    expect((await ask('/manage/team/tem_hawks', GHOST)).status).equals(404)
+    // A team's manager does not run its season.
+    expect(
+      await put(
+        `/manage/season/sea_spring/people/${ghostId}/roles`,
+        COACH,
+        body
+      )
+    ).equals(404)
+    // The season's and the league's administrators run the team below them.
+    expect(
+      await put(`/manage/team/tem_hawks/people/${ghostId}/roles`, BOSS, body)
+    ).equals(200)
+    expect(
+      await put(`/manage/team/tem_hawks/people/${ghostId}/roles`, CHIEF, {
+        admin: false,
+        flags: []
+      })
+    ).equals(200)
+    // `admin` is not a flag, and an unknown flag is not either.
+    for (const bad of [
+      { admin: false, flags: ['admin'] },
+      { admin: false, flags: ['umpire'] },
+      { flags: [] },
+      { admin: 'yes', flags: [] }
+    ]) {
+      expect(
+        await put(`/manage/team/tem_hawks/people/${ghostId}/roles`, COACH, bad),
+        JSON.stringify(bad)
+      ).equals(400)
+    }
+    expect(
+      await put(
+        `/manage/team/tem_hawks/people/${mintUser()}/roles`,
+        COACH,
+        body
+      )
+    ).equals(404)
+    expect(
+      await put('/manage/team/tem_hawks/people/nobody/roles', COACH, body)
+    ).equals(404)
+  })
+
+  it('will not let an administrator clear their own admin, and lets them add flags', async function () {
+    if (db == null) this.skip()
+    const refused = await ask(
+      `/manage/season/sea_spring/people/${bossId}/roles`,
+      BOSS,
+      'PUT',
+      { admin: false, flags: ['coach'] }
+    )
+    expect(refused.status).equals(400)
+    const kept = await ask(
+      `/manage/season/sea_spring/people/${bossId}/roles`,
+      BOSS,
+      'PUT',
+      { admin: true, flags: ['coach'] }
+    )
+    expect(kept.body.roles).deep.equals(['admin', 'coach'])
+    // A league administrator holds no row on the season, so has none here to
+    // clear, and may set their own flags on it.
+    const flags = await ask(
+      `/manage/season/sea_spring/people/${chiefId}/roles`,
+      CHIEF,
+      'PUT',
+      { admin: false, flags: ['scorekeeper'] }
+    )
+    expect(flags.body.roles).deep.equals(['scorekeeper'])
+  })
+
+  it('keeps the old role route, which leaves flags alone', async function () {
+    if (db == null) this.skip()
+    await ask(`/manage/team/tem_hawks/people/${ghostId}/roles`, COACH, 'PUT', {
+      admin: false,
+      flags: ['scorekeeper', 'songkeeper']
+    })
+    const made = await ask(
+      `/manage/team/tem_hawks/people/${ghostId}/role`,
+      COACH,
+      'PUT',
+      { role: 'admin' }
+    )
+    expect(made.body).deep.equals({ userId: ghostId, role: 'admin' })
+    expect(await rowsOf(ghostId, 'team', 'tem_hawks')).deep.equals([
+      'admin',
+      'scorekeeper',
+      'songkeeper'
+    ])
+    const back = await ask(
+      `/manage/team/tem_hawks/people/${ghostId}/role`,
+      COACH,
+      'PUT',
+      { role: 'member' }
+    )
+    expect(back.body.role).equals('member')
+    expect(await rowsOf(ghostId, 'team', 'tem_hawks')).deep.equals([
+      'scorekeeper',
+      'songkeeper'
+    ])
+  })
+
+  it('lists every role by the level it is set on, named', async function () {
+    if (db == null) this.skip()
+    const page = await ask('/manage/team/tem_hawks', COACH)
+    const ghost = peopleOf(page.body).find(person => person.userId === ghostId)
+    const height = { league: 0, season: 1, team: 2 }
+    const byHeight = (a: { kind: string }, b: { kind: string }): number =>
+      height[a.kind as keyof typeof height] -
+      height[b.kind as keyof typeof height]
+    expect([...(ghost?.grants ?? [])].sort(byHeight)).deep.equals([
+      {
+        kind: 'league',
+        id: 'lea_npll',
+        name: 'Demo League',
+        roles: ['scorekeeper']
+      },
+      {
+        kind: 'season',
+        id: 'sea_spring',
+        name: 'Demo Spring 2026',
+        roles: ['songkeeper']
+      },
+      {
+        kind: 'team',
+        id: 'tem_hawks',
+        name: 'Demo Hawks',
+        roles: ['scorekeeper', 'songkeeper']
+      }
+    ])
+    // An administrator's levels are still listed on their own, for the apps
+    // that read nothing else.
+    const boss = peopleOf(page.body).find(person => person.userId === bossId)
+    expect(boss?.adminOf).deep.equals([
+      { kind: 'season', id: 'sea_spring', name: 'Demo Spring 2026' }
+    ])
+    expect(boss?.grants).deep.equals([
+      {
+        kind: 'season',
+        id: 'sea_spring',
+        name: 'Demo Spring 2026',
+        roles: ['admin', 'coach']
+      }
+    ])
   })
 })

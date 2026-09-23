@@ -520,7 +520,7 @@ export interface LineupChange {
  * that is not a lineup change. Before that the lineups are still the ones
  * the game starts with, and MLB announces no substitution.
  */
-function begun(state: GameState): boolean {
+export function begun(state: GameState): boolean {
   return (
     state.liveData.plays.allPlays.length > 0 ||
     state.liveData.plays.currentPlay?.playEvents.some(

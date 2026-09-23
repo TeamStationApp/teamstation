@@ -13,8 +13,20 @@ import {
 import { type ApiError, asApiError, HttpError } from './errors'
 import { DEFAULT_FENCE_DISTANCE_FT } from './fenceDistance'
 import { asCurrentPlay, asGumboPlay } from './gumboPlay'
+import type { PlayerSettings } from './playerSettings'
+import { asRole, type Role, type RoleFlag } from './roles'
+import {
+  asDefaultLineup,
+  asSideLineups,
+  type DefaultLineup,
+  type Lineup,
+  type LineupChange,
+  type LineupPerson,
+  type SideLineups
+} from './scoring/lineupHistory'
 import type { SaveChange, StoredGame } from './scoring/session'
 import { asUserId } from './userIdNumber'
+import { asWalkUpSong, type WalkUpSong } from './walkUpSong'
 
 /**
  * The client the app talks to the server through.
@@ -178,6 +190,17 @@ export const asGameDetail = asObject({
    * the default.
    */
   fenceDistanceFt: asOptional(asNumber, DEFAULT_FENCE_DISTANCE_FT),
+  /**
+   * Whether this viewer may score the game: a scorekeeper of either team,
+   * which every administrator of it is. A server from before the role flags
+   * sends none, and the app offers no Score Game it would refuse.
+   */
+  canScore: asOptional(asBoolean, false),
+  /**
+   * Whether this viewer may DJ the game: a songkeeper of either team, which
+   * every administrator of it is. Absent from an older server, and false.
+   */
+  canDj: asOptional(asBoolean, false),
   videos: asArray(asVideoSummary)
 })
 export type GameDetail = ReturnType<typeof asGameDetail>
@@ -364,13 +387,20 @@ export const asRosterEntry = asObject({
    * site, where a reviewer might not.
    */
   shortName: asString,
+  /**
+   * First and last name, for a viewer who coaches or administers this team,
+   * and only for its players. `null` for everybody else.
+   */
+  fullName: asOptional(asNullable(asString), null),
   avatarUrl: asOptional(asNullable(asString), null),
   jersey: asNullable(asString),
   positions: asArray(asString),
   isPlayer: asBoolean,
   role: asString,
   /** `coach`, `player` or `follower` — the section they are listed under. */
-  group: asOptional(asString, 'player')
+  group: asOptional(asString, 'player'),
+  /** Their walk-up song on this team, or null for none. */
+  walkUpSong: asOptional(asNullable(asWalkUpSong), null)
 })
 export type RosterEntry = ReturnType<typeof asRosterEntry>
 
@@ -395,9 +425,10 @@ export type PlayerTeam = ReturnType<typeof asPlayerTeam>
  * One person, for their own page.
  *
  * `name` is **always** the short form — `Jordan P` — for everybody, on every
- * screen. There is no viewer who gets the whole name here, and no second field
- * holding one: a field that exists is a field that eventually gets drawn. The
- * surname is fetched separately, by somebody who is about to type in it.
+ * screen. `fullName` is the whole name, sent only to a coach or an
+ * administrator of a team the player is on, a parent, the player and a site
+ * administrator, and `null` for everybody else. The name field's own values
+ * are fetched separately, by somebody who may change them.
  *
  * No jersey number: a number belongs to a player *on a team*, and is drawn on
  * the team's roster and in the box score, where that context exists.
@@ -413,6 +444,8 @@ export type PlayerName = ReturnType<typeof asPlayerName>
 export const asPlayerDetail = asObject({
   userId: asUserId,
   name: asString,
+  /** First and last name, for the viewers above; `null` otherwise. */
+  fullName: asOptional(asNullable(asString), null),
   /** Whether to offer this person the name field. A parent or an admin. */
   canEditName: asOptional(asBoolean, false),
   avatarUrl: asOptional(asNullable(asString), null),
@@ -761,6 +794,15 @@ export type ScopeGrant = ReturnType<typeof asScopeGrant>
 
 export const asNamed = asObject({ id: asString, name: asString })
 
+/** The roles one person holds on one level of the tree being managed. */
+export const asRoleGrant = asObject({
+  kind: asValue('league' as const, 'season' as const, 'team' as const),
+  id: asString,
+  name: asString,
+  roles: asArray(asRole)
+})
+export type RoleGrant = ReturnType<typeof asRoleGrant>
+
 /**
  * One person with access, and every level it comes through.
  *
@@ -775,6 +817,11 @@ export const asScopePerson = asObject({
   teams: asArray(asScopeGrant),
   seasons: asArray(asScopeGrant),
   leagues: asArray(asScopeGrant),
+  /**
+   * Every role they hold in this tree, one entry per level. A server from
+   * before the role flags sends only `adminOf`, which reads as admin rows.
+   */
+  grants: asOptional(asArray(asRoleGrant)),
   adminOf: asArray(
     asObject({
       kind: asValue('league', 'season', 'team'),
@@ -795,6 +842,20 @@ export const asScopePerson = asObject({
   lastSeenAt: asNullable(asString)
 })
 export type ScopePerson = ReturnType<typeof asScopePerson>
+
+/** Every role one person holds on one level, from `ScopePerson.grants`. */
+export function grantsOf(person: ScopePerson): RoleGrant[] {
+  return (
+    person.grants ??
+    person.adminOf.map(level => ({ ...level, roles: ['admin' as const] }))
+  )
+}
+
+/** The roles the signed-in person holds on each team where they hold any. */
+export const asMyRoles = asObject({
+  teams: asObject(asArray(asRole))
+})
+export type MyRoles = ReturnType<typeof asMyRoles>
 
 /** Somebody invited by address who has not opened the link yet. */
 export const asPendingPerson = asObject({
@@ -839,6 +900,66 @@ export interface ClientOptions {
   /** Swapped out in tests. Defaults to the platform's own. */
   fetch?: typeof fetch
 }
+
+export type { DefaultLineup, Lineup, LineupChange, LineupPerson, SideLineups }
+
+/** One side of `GET /games/:gameId/lineups`: its team, and its lineups. */
+export type TeamLineups = SideLineups & { teamId: string; teamName: string }
+export interface GameLineupsResponse {
+  away: TeamLineups
+  home: TeamLineups
+}
+const asTeamLineups: Cleaner<TeamLineups> = raw => {
+  const team = asObject({ teamId: asString, teamName: asString })(raw)
+  return { ...asSideLineups(raw), ...team }
+}
+export const asGameLineupsResponse: Cleaner<GameLineupsResponse> = asObject({
+  away: asTeamLineups,
+  home: asTeamLineups
+})
+
+/** One batter in DJ Game's list: a placeholder has no user id and no song. */
+export const asDjBatter = asObject({
+  userId: asNullable(asUserId),
+  name: asString,
+  walkUpSong: asNullable(asWalkUpSong)
+})
+export type DjBatter = ReturnType<typeof asDjBatter>
+
+/**
+ * One side of `GET /games/:gameId/dj`: its batters in order, and where the
+ * order came from — the game's own lineup as it stands, the team's default
+ * before the game has one, or else its players by jersey.
+ */
+export const asDjSide = asObject({
+  teamId: asString,
+  teamName: asString,
+  source: asValue('lineup', 'default', 'roster'),
+  /** Whether this viewer may set this team's walk-up songs. */
+  canEditWalkUp: asBoolean,
+  batters: asArray(asDjBatter)
+})
+export type DjSide = ReturnType<typeof asDjSide>
+
+/** The plate appearance in progress: which side, and who is batting. */
+export const asDjAtBat = asObject({
+  side: asValue('away', 'home'),
+  userId: asNullable(asUserId)
+})
+export type DjAtBat = ReturnType<typeof asDjAtBat>
+
+/** Missing, on an older server, reads the same as no plate appearance. */
+function asDjAtBatField(raw: unknown): DjAtBat | null {
+  return raw == null ? null : asDjAtBat(raw)
+}
+
+export const asDjGame = asObject({
+  away: asDjSide,
+  home: asDjSide,
+  /** Who is at the plate, or null when no plate appearance is in progress. */
+  atBat: asDjAtBatField
+})
+export type DjGame = ReturnType<typeof asDjGame>
 
 export class GameStationClient {
   private readonly baseUrl: string
@@ -1145,6 +1266,37 @@ export class GameStationClient {
     )
   }
 
+  /**
+   * A team's default lineup: the starting lineup of the last game scored
+   * here that began with a different one. All three fields are null for a
+   * team with none.
+   */
+  async defaultLineup(teamId: string): Promise<DefaultLineup> {
+    return await this.request(
+      'GET',
+      `/teams/${encodeURIComponent(teamId)}/default-lineup`,
+      asDefaultLineup
+    )
+  }
+
+  /** Each side's lineups in a game: start, changes and current. */
+  async gameLineups(gameId: string): Promise<GameLineupsResponse> {
+    return await this.request(
+      'GET',
+      `/games/${encodeURIComponent(gameId)}/lineups`,
+      asGameLineupsResponse
+    )
+  }
+
+  /** Both sides' batters and their walk-up songs, for DJ Game. */
+  async djGame(gameId: string): Promise<DjGame> {
+    return await this.request(
+      'GET',
+      `/games/${encodeURIComponent(gameId)}/dj`,
+      asDjGame
+    )
+  }
+
   /** A game's stored plays and the at-bat in progress. */
   async gameEvents(gameId: string): Promise<StoredGame> {
     const stored = await this.request(
@@ -1195,6 +1347,48 @@ export class GameStationClient {
       `/teams/${encodeURIComponent(teamId)}/roster`,
       asArray(asRosterEntry)
     )
+  }
+
+  /**
+   * What a coach sets for one player on one team. Only the fields sent
+   * change; the answer is the player's roster entry as it now reads.
+   */
+  async setPlayerSettings(
+    teamId: string,
+    userId: number | string,
+    settings: PlayerSettings
+  ): Promise<RosterEntry> {
+    return await this.request(
+      'PUT',
+      `/teams/${encodeURIComponent(teamId)}/players/${encodeURIComponent(userId)}/settings`,
+      asRosterEntry,
+      settings
+    )
+  }
+
+  /**
+   * Sets a player's walk-up song on one team, for a songkeeper. The answer
+   * is the song as it was stored.
+   */
+  async setWalkUpSong(
+    teamId: string,
+    userId: number | string,
+    song: WalkUpSong
+  ): Promise<WalkUpSong> {
+    return await this.request(
+      'PUT',
+      walkUpSongPath(teamId, userId),
+      asWalkUpSong,
+      song
+    )
+  }
+
+  /** Removes a player's walk-up song on one team. Removing none is fine. */
+  async clearWalkUpSong(
+    teamId: string,
+    userId: number | string
+  ): Promise<void> {
+    await this.request('DELETE', walkUpSongPath(teamId, userId), asUnknownOk)
   }
 
   /** One person: their picture, their name, their handedness, their teams. */
@@ -1413,6 +1607,30 @@ export class GameStationClient {
     )
   }
 
+  /**
+   * Everything somebody holds at this level: administrator or not, and which
+   * of the four flags. The whole set, so a flag left out is taken away.
+   */
+  async setRoles(
+    kind: 'league' | 'season' | 'team',
+    id: string,
+    userId: number,
+    roles: { admin: boolean; flags: RoleFlag[] }
+  ): Promise<Role[]> {
+    const answer = await this.request(
+      'PUT',
+      `/manage/${kind}/${encodeURIComponent(id)}/people/${encodeURIComponent(userId)}/roles`,
+      asObject({ userId: asUserId, roles: asArray(asRole) }),
+      roles
+    )
+    return answer.roles
+  }
+
+  /** The roles the signed-in person holds, team by team. */
+  async myRoles(): Promise<MyRoles> {
+    return await this.request('GET', '/me/roles', asMyRoles)
+  }
+
   private async request<T>(
     method: string,
     path: string,
@@ -1460,6 +1678,10 @@ export class GameStationClient {
     }
     return cleaner(parsed)
   }
+}
+
+function walkUpSongPath(teamId: string, userId: number | string): string {
+  return `/teams/${encodeURIComponent(teamId)}/players/${encodeURIComponent(userId)}/walk-up-song`
 }
 
 /** For the endpoints whose body carries nothing a caller needs. */

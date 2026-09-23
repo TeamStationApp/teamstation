@@ -1,5 +1,6 @@
 import { completesHitOffer, undoesHitOffer } from '../../common/scoring/rules'
-import { setupOf } from '../../common/scoring/state'
+import { applyAction } from '../../common/scoring/session'
+import { copyGame, setupOf } from '../../common/scoring/state'
 import {
   acceptTrajectory,
   chooseOutcome,
@@ -22,7 +23,11 @@ import { outBatterPoint, pitchPresentation } from './scoringPresentation'
 import { bottomActionsAllowed, canSwitchBatter } from './scoringSelectors'
 import {
   CORRECTION_WINDOW_MS,
+  type GameCheckpoint,
+  type HistoryEntry,
+  type ScoringDraft,
   type ScoringEvent,
+  type ScoringScreenState,
   type ScoringSessionState,
   type ScoringSnapshot,
   type ScoringState
@@ -33,18 +38,28 @@ import {
  * a menu choice — into actions the scoring library applies, and keeps the
  * screen's own state: the step the scorer is on, what is being drawn, and the
  * history Undo walks back through.
+ *
+ * Undo keeps no copy of the game per step. Each step records the log's length
+ * and the screen, and the game is kept once per plate appearance, as it
+ * opened (`checkpoints`); the first, every tenth and the newest two hold a
+ * copy of the game. An Undo copies the newest of those at or before the
+ * step, applies the log from there to the step with the library's
+ * `applyAction`, in the order the screen applied it, truncates the log, and
+ * restores the screen. So the history grows with the log, not with the game
+ * times the number of taps.
  */
 
-export { accepted }
+export { accepted, copyGame }
 
 export function copyState<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
 }
+
 export function initialScoringState(
   session: ScoringSessionState,
   presentationEnabled = false
 ): ScoringState {
-  const owned = copyState(session)
+  const owned = copyGame(session)
   const state: ScoringState = {
     session: owned,
     presentationEnabled,
@@ -56,7 +71,8 @@ export function initialScoringState(
     pendingPlay: null,
     log: [],
     generation: 0,
-    past: []
+    past: [],
+    checkpoints: []
   }
   // A game picked up in the middle of a play resumes at that play's step.
   if (owned.pending != null) {
@@ -72,15 +88,218 @@ export function initialScoringState(
   }
   return state
 }
+/**
+ * The screen picking up a game whose log so far is `log`. A play the screen
+ * would close by itself — an award, say — closes as it opens, and that close
+ * joins the log, so the log always makes the game the screen shows.
+ */
+export function resumedScoringState(
+  session: ScoringSessionState,
+  log: ScoringState['log'],
+  presentationEnabled = false
+): ScoringState {
+  const state = initialScoringState(session, presentationEnabled)
+  return { ...state, log: [...log, ...state.log] }
+}
+
+/**
+ * Whether the screen, picking the game up here, would act on it by itself:
+ * the game is a step no Undo can come to rest on.
+ */
+export function actsOnOpening(session: ScoringSessionState): boolean {
+  return initialScoringState(session).log.length > 0
+}
+
 export function snapshotOf(state: ScoringState): ScoringSnapshot {
-  const { past: _past, ...snapshot } = state
-  return copyState(snapshot)
+  // The log is shared: nothing changes an action once it is logged, and a
+  // step that logs one makes a new log (`act`).
+  const {
+    past: _past,
+    checkpoints: _checkpoints,
+    session,
+    log,
+    ...rest
+  } = state
+  return { ...copyState(rest), log, session: copyGame(session) }
+}
+
+/** A copy of the screen without the game or its history. */
+export function screenOf(state: ScoringState): ScoringScreenState {
+  const {
+    past: _past,
+    checkpoints: _checkpoints,
+    session: _session,
+    log: _log,
+    ...screen
+  } = state
+  return copyState(screen)
+}
+
+/** The plate appearance a game is on: the plays it has finished. */
+function appearanceOf(session: ScoringSessionState): number {
+  return session.liveData.plays.allPlays.length
+}
+
+/** How many plate appearances apart the kept copies of the game are. */
+export const CHECKPOINT_SPACING = 10
+
+/**
+ * Whether the checkpoint at `index` of `count` keeps its copy of the game:
+ * the first, every tenth, and the newest two. Any other is rebuilt from the
+ * nearest earlier copy, so an Undo replays at most about ten appearances.
+ */
+export function keepsGame(index: number, count: number): boolean {
+  return index % CHECKPOINT_SPACING === 0 || index >= count - 2
+}
+
+/**
+ * The checkpoints once `state` is recorded as the start of a step or a
+ * draft: a new one when this is a plate appearance the newest does not
+ * cover. Only those `keepsGame` names keep a copy of the game.
+ */
+export function checkpointsFor(state: ScoringState): GameCheckpoint[] {
+  const newest = state.checkpoints.at(-1)
+  const appearance = appearanceOf(state.session)
+  if (newest?.appearance === appearance) return state.checkpoints
+  const checkpoints = [
+    ...state.checkpoints,
+    {
+      logLength: state.log.length,
+      appearance,
+      session: copyGame(state.session)
+    }
+  ]
+  const retired = checkpoints.length - 3
+  if (retired > 0 && !keepsGame(retired, checkpoints.length))
+    checkpoints[retired] = { ...checkpoints[retired], session: null }
+  return checkpoints
+}
+
+/** The history once `state` is recorded as the start of a step. */
+export function withStep(
+  state: ScoringState,
+  label: string
+): Pick<ScoringState, 'past' | 'checkpoints'> {
+  return {
+    past: [
+      ...state.past,
+      { label, logLength: state.log.length, screen: screenOf(state) }
+    ],
+    checkpoints: checkpointsFor(state)
+  }
+}
+
+/** Where a draft begins: here, recorded so cancelling can come back. */
+export function draftAt(
+  state: ScoringState,
+  screen: ScoringScreenState = screenOf(state)
+): ScoringDraft {
+  return {
+    historyLength: state.past.length,
+    logLength: state.log.length,
+    screen
+  }
+}
+
+/**
+ * Applies `log` from `start` up to `end` to `session`, in place: the caller
+ * owns `session`, and nothing else holds it.
+ */
+function replay(
+  session: ScoringSessionState,
+  log: ScoringState['log'],
+  start: number,
+  end: number
+): ScoringSessionState {
+  for (let index = start; index < end; index++) {
+    const applied = applyAction(session, log[index], { inPlace: true })
+    if (applied.problems.length > 0)
+      throw new Error(
+        `The log does not replay at ${index}: ${applied.problems[0].message}`
+      )
+    session = applied.state
+  }
+  return session
+}
+
+/**
+ * The game when the log was `logLength` long: the newest checkpoint at or
+ * before it that holds a game, with the log applied from there, copied. A
+ * checkpoint passed on the way that `keepsGame` names gets its copy of the
+ * game back, so the newest and the one before it always hold one.
+ */
+function gameAt(
+  state: ScoringState,
+  logLength: number
+): { session: ScoringSessionState; checkpoints: GameCheckpoint[] } {
+  const checkpoints = state.checkpoints.filter(
+    checkpoint => checkpoint.logLength <= logLength
+  )
+  let from = checkpoints.length - 1
+  // The one before the newest is rebuilt too, if it has lost its game.
+  if (from > 0 && checkpoints[from - 1].session == null) from--
+  while (from > 0 && checkpoints[from].session == null) from--
+  const first = checkpoints[from]?.session
+  if (first == null) throw new Error(`No checkpoint at log length ${logLength}`)
+  // A checkpoint's game is never changed: the replay works on a copy of it,
+  // taken only once there is something to apply.
+  let session = first
+  let owned = false
+  let applied = checkpoints[from].logLength
+  const replayTo = (end: number): void => {
+    if (end === applied) return
+    if (!owned) session = copyGame(session)
+    owned = true
+    session = replay(session, state.log, applied, end)
+    applied = end
+  }
+  for (let index = from + 1; index < checkpoints.length; index++) {
+    const held = checkpoints[index].session
+    if (held != null) {
+      session = held
+      owned = false
+      applied = checkpoints[index].logLength
+      continue
+    }
+    replayTo(checkpoints[index].logLength)
+    if (keepsGame(index, checkpoints.length))
+      checkpoints[index] = {
+        ...checkpoints[index],
+        session: copyGame(session)
+      }
+  }
+  replayTo(logLength)
+  // A copy, as the screen's own game always is (no undefined fields).
+  return { session: copyGame(session), checkpoints }
+}
+
+/**
+ * The state as it was when the log was `where.logLength` long and the screen
+ * was `where.screen`, with the history as far back as `historyLength`.
+ */
+function restoreTo(
+  state: ScoringState,
+  where: Pick<HistoryEntry, 'logLength' | 'screen'>,
+  historyLength: number
+): ScoringState {
+  const { session, checkpoints } = gameAt(state, where.logLength)
+  return {
+    ...copyState(where.screen),
+    session,
+    log: state.log.slice(0, where.logLength),
+    past: state.past.slice(0, historyLength),
+    checkpoints
+  }
 }
 
 /** Closes the decided play: the game moves on to the next batter. */
 export function closePlay(state: ScoringState): ScoringState {
   if (state.phase !== 'correctionWindow') return state
-  const next = { ...snapshotOf(state), past: state.past }
+  const next = {
+    ...snapshotOf(state),
+    past: state.past,
+    checkpoints: state.checkpoints
+  }
   try {
     act(next, { type: 'gameFlow', kind: 'closePlay' })
   } catch (error) {
@@ -98,9 +317,8 @@ function cancelRunnerDraft(state: ScoringState): ScoringState {
   const draft = state.runnerDraft ?? state.moreDraft
   if (draft == null) return state
   const restored: ScoringState = {
-    ...copyState(draft.checkpoint),
+    ...restoreTo(state, draft, draft.historyLength),
     celebration: null,
-    past: state.past.slice(0, draft.historyLength),
     generation: state.generation + 1
   }
   for (const motion of restored.motions) motion.generation = restored.generation
@@ -120,13 +338,12 @@ function runnerTransition(
         state.runnerDraft ??
         (state.moreDraft != null
           ? {
-              checkpoint: state.moreDraft.checkpoint,
-              historyLength: state.moreDraft.historyLength
+              historyLength: state.moreDraft.historyLength,
+              logLength: state.moreDraft.logLength,
+              screen: state.moreDraft.screen
             }
-          : {
-              checkpoint: { ...snapshotOf(state), activeGesture: false },
-              historyLength: state.past.length
-            })
+          : draftAt(state, { ...screenOf(state), activeGesture: false })),
+      checkpoints: checkpointsFor(state)
     }
   const draft = state.runnerDraft
   if (draft == null) return result
@@ -146,6 +363,7 @@ function runnerTransition(
       session: state.session,
       log: state.log,
       past: state.past,
+      checkpoints: state.checkpoints,
       correctionWindow: state.correctionWindow
     }
   const label =
@@ -154,7 +372,7 @@ function runnerTransition(
   delete result.moreDraft
   result.past = [
     ...state.past.slice(0, draft.historyLength),
-    { label, snapshot: copyState(draft.checkpoint) }
+    { label, logLength: draft.logLength, screen: copyState(draft.screen) }
   ]
   if (result.correctionWindow != null)
     result.correctionWindow = {
@@ -173,8 +391,11 @@ export function scoringReducer(
       : { ...state, presentationEnabled: event.enabled }
   if (event.type === 'RESET')
     return {
-      ...initialScoringState(event.session, state.presentationEnabled),
-      log: [...event.log],
+      ...resumedScoringState(
+        event.session,
+        event.log,
+        state.presentationEnabled
+      ),
       ...(event.readOnly === true ? { readOnly: true } : {})
     }
   if (event.type === 'CELEBRATION_DONE')
@@ -201,7 +422,12 @@ export function scoringReducer(
       sequence.stage !== event.stage
     )
       return state
-    const next = { ...snapshotOf(state), past: state.past, presentation: null }
+    const next = {
+      ...snapshotOf(state),
+      past: state.past,
+      checkpoints: state.checkpoints,
+      presentation: null
+    }
     if (sequence.kind === 'throw') {
       completeDefense(next, sequence)
       if (sequence.stage === 'tag' && next.runnerDraft != null) {
@@ -210,7 +436,8 @@ export function scoringReducer(
           ...next.past.slice(0, draft.historyLength),
           {
             label: `Out by ${next.session.gameData.players[sequence.receiver].fullName}`,
-            snapshot: copyState(draft.checkpoint)
+            logLength: draft.logLength,
+            screen: copyState(draft.screen)
           }
         ]
         delete next.runnerDraft
@@ -284,11 +511,10 @@ export function scoringReducer(
     const last = state.past.at(-1)
     if (last == null || state.readOnly === true) return state
     const next = {
-      ...copyState(last.snapshot),
+      ...restoreTo(state, last, state.past.length - 1),
       presentation: null,
       celebration: null,
-      generation: state.generation + 1,
-      past: state.past.slice(0, -1)
+      generation: state.generation + 1
     }
     for (const motion of next.motions) motion.generation = next.generation
     if (next.correctionWindow != null)
@@ -507,4 +733,56 @@ export function scoringReducer(
     })
     settleRunners(next)
   })
+}
+
+/**
+ * The scoring screen's state around `scoringReducer`. An Undo tap that
+ * reaches back past what was scored on this screen, into play saved before
+ * it opened, is taken back through the saved game rather than the reducer.
+ * Such taps wait here in order, and the screen takes each back one at a time
+ * from the game as the taps before it left it (`SAVED_UNDONE`). So a tap
+ * that comes before the screen has drawn the last one still takes exactly one
+ * step, even where the history runs out.
+ */
+export interface ScoringScreenModel {
+  scoring: ScoringState
+  /** Undo taps waiting to take back play saved before the screen opened. */
+  savedUndos: number
+  /** How many such taps have been taken back so far. */
+  savedUndone: number
+}
+
+/** One tap into the saved game taken back: the game it left, if it could. */
+export interface SavedUndone {
+  type: 'SAVED_UNDONE'
+  undone?: { session: ScoringSessionState; log: ScoringState['log'] }
+}
+
+export function scoringScreenModel(scoring: ScoringState): ScoringScreenModel {
+  return { scoring, savedUndos: 0, savedUndone: 0 }
+}
+
+export function scoringScreenReducer(
+  model: ScoringScreenModel,
+  event: ScoringEvent | SavedUndone
+): ScoringScreenModel {
+  const { scoring } = model
+  if (event.type === 'SAVED_UNDONE')
+    return {
+      scoring:
+        event.undone == null
+          ? scoring
+          : scoringReducer(scoring, { type: 'RESET', ...event.undone }),
+      savedUndos: Math.max(0, model.savedUndos - 1),
+      savedUndone: model.savedUndone + 1
+    }
+  if (
+    event.type === 'UNDO' &&
+    scoring.past.length === 0 &&
+    scoring.log.length > 0 &&
+    scoring.readOnly !== true
+  )
+    return { ...model, savedUndos: model.savedUndos + 1 }
+  const next = scoringReducer(scoring, event)
+  return next === scoring ? model : { ...model, scoring: next }
 }

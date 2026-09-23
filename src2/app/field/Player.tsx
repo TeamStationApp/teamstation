@@ -1,6 +1,12 @@
 /* eslint-disable react/no-unknown-property -- React Three Fiber elements describe Three.js objects, not HTML. */
 import { useFrame, useThree } from '@react-three/fiber'
-import React, { useEffect, useMemo, useRef } from 'react'
+import React, {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react'
 import { Color, type Group, type Material, Mesh, type Texture } from 'three'
 
 import { AthleteRig } from './AthleteRig'
@@ -53,14 +59,17 @@ export function Player({
 }): React.ReactElement {
   const batting = player.batting === true
   const invalidate = useThree(state => state.invalidate)
+  // Made again only when the number shown changes: the pitch presentation
+  // hands over players whose `suppressed` is unset rather than false, and
+  // keying on the flag itself made every player's number again, with its
+  // upload and its shader, on every pitch.
+  const shownJersey =
+    player.jersey === '' || player.suppressed === true ? null : player.jersey
   const labels = useMemo(
     () => ({
-      jersey:
-        player.jersey === '' || player.suppressed === true
-          ? null
-          : makePlayerLabel(player.jersey)
+      jersey: shownJersey == null ? null : makePlayerLabel(shownJersey)
     }),
-    [player.jersey, player.suppressed]
+    [shownJersey]
   )
   useEffect(
     () => () => {
@@ -76,6 +85,16 @@ export function Player({
   const leftLeg = useRef<Group>(null)
   const rightLeg = useRef<Group>(null)
   const target = useRef<Mesh>(null)
+  const [parts] = useState<PlayerParts>(() => ({
+    root,
+    body,
+    leftArm,
+    rightArm,
+    batPose,
+    leftLeg,
+    rightLeg,
+    target
+  }))
   useEffect(() => {
     if (player.suppressed !== true) return
     const originals = new Map<
@@ -193,22 +212,118 @@ export function Player({
       target.current.visible = selected && player.speed > 0.1
     }
   })
+  // The player's position, pose and motion move him from frame to frame
+  // (`useFrame` above, and the rig's); his body is drawn again only when
+  // what it is made of changes. Reconciling every player's forty-odd parts on
+  // each change of the field cost a phone about 15 ms of the frame a pitch
+  // starts on.
+  const latest = useRef(player)
+  latest.current = player
+  const x = player.position.x
+  const z = player.position.z
+  const placed = useRef({ x, z })
+  useLayoutEffect(() => {
+    if (placed.current.x === x && placed.current.z === z) return
+    placed.current = { x, z }
+    root.current?.position.set(x, TERRAIN.players, z)
+    invalidate()
+  }, [x, z, invalidate])
+  return (
+    <PlayerBody
+      id={player.id}
+      start={placed.current}
+      shirt={shirt}
+      fabric={fabric}
+      jersey={labels.jersey}
+      batting={batting}
+      batSide={player.batSide}
+      team={player.team}
+      hasBall={player.hasBall === true}
+      receivingBall={player.receivingBall === true}
+      selected={selected}
+      droppedX={player.droppedBat?.x}
+      droppedZ={player.droppedBat?.z}
+      droppedHeading={player.droppedBat?.heading}
+      source={latest}
+      parts={parts}
+    />
+  )
+}
+
+interface PlayerParts {
+  root: React.RefObject<Group | null>
+  body: React.RefObject<Group | null>
+  leftArm: React.RefObject<Group | null>
+  rightArm: React.RefObject<Group | null>
+  batPose: React.RefObject<Group | null>
+  leftLeg: React.RefObject<Group | null>
+  rightLeg: React.RefObject<Group | null>
+  target: React.RefObject<Mesh | null>
+}
+
+interface PlayerBodyProps {
+  id: string
+  /** Where he stood when first drawn; `Player` moves him from there. */
+  start: { x: number; z: number }
+  shirt: string
+  fabric?: Texture
+  jersey: Texture | null
+  batting: boolean
+  batSide?: FieldPlayer['batSide']
+  team: FieldPlayer['team']
+  hasBall: boolean
+  receivingBall: boolean
+  selected: boolean
+  droppedX?: number
+  droppedZ?: number
+  droppedHeading?: number
+  source: { current: FieldPlayer }
+  parts: PlayerParts
+}
+
+/** Everything but where he stands: `start` is read only when first drawn. */
+function samePlayerBody(a: PlayerBodyProps, b: PlayerBodyProps): boolean {
+  for (const key of Object.keys(a) as Array<keyof PlayerBodyProps>)
+    if (key !== 'start' && a[key] !== b[key]) return false
+  return true
+}
+
+const PlayerBody = React.memo(function PlayerBody({
+  id,
+  start,
+  shirt,
+  fabric,
+  jersey,
+  batting,
+  batSide,
+  team,
+  hasBall,
+  receivingBall,
+  selected,
+  droppedX,
+  droppedZ,
+  droppedHeading,
+  source,
+  parts
+}: PlayerBodyProps): React.ReactElement {
+  const { root, body, leftArm, rightArm, batPose, leftLeg, rightLeg, target } =
+    parts
+  const droppedBat =
+    droppedX == null || droppedZ == null || droppedHeading == null
+      ? null
+      : { x: droppedX, z: droppedZ, heading: droppedHeading }
   return (
     <>
       <group
-        name={`player-${player.id}`}
+        name={`player-${id}`}
         ref={root}
-        position={[player.position.x, TERRAIN.players, player.position.z]}
+        position={[start.x, TERRAIN.players, start.z]}
       >
-        {(player.hasBall === true || player.receivingBall === true) &&
+        {(hasBall || receivingBall) &&
           [0, 1, 2, 3].map(index => (
             <mesh
               key={`possession-${index}`}
-              name={
-                player.receivingBall === true
-                  ? 'receiving-ring'
-                  : 'possession-ring'
-              }
+              name={receivingBall ? 'receiving-ring' : 'possession-ring'}
               rotation={[-Math.PI / 2, 0, 0]}
               position={[0, 0.04 + index * 0.003, 0]}
             >
@@ -238,7 +353,7 @@ export function Player({
               />
             </mesh>
           ))}
-        <AthleteRig player={player} jersey={labels.jersey} />
+        <AthleteRig source={source} shirt={shirt} jersey={jersey} />
         <group ref={body} scale={[PLAYER_SCALE, PLAYER_SCALE, PLAYER_SCALE]}>
           <mesh
             name="jersey-torso"
@@ -248,7 +363,7 @@ export function Player({
             <cylinderGeometry args={[0.43, 0.33, 0.97, 10]} />
             <meshStandardMaterial color={shirt} map={fabric} roughness={0.85} />
           </mesh>
-          {labels.jersey != null &&
+          {jersey != null &&
             [-1, 1].map(side => (
               <mesh
                 key={side}
@@ -258,7 +373,7 @@ export function Player({
               >
                 <planeGeometry args={[0.6, 0.65]} />
                 <meshBasicMaterial
-                  map={labels.jersey}
+                  map={jersey}
                   transparent
                   alphaTest={0.1}
                   polygonOffset
@@ -292,10 +407,7 @@ export function Player({
             />
           </group>
           {batting && (
-            <group
-              ref={batPose}
-              scale={[player.batSide === 'L' ? -1 : 1, 1, 1]}
-            >
+            <group ref={batPose} scale={[batSide === 'L' ? -1 : 1, 1, 1]}>
               <BattingPose />
             </group>
           )}
@@ -314,7 +426,7 @@ export function Player({
                 rounded
                 color={p.skin}
               />
-              {player.team === 'defense' && (
+              {team === 'defense' && (
                 <Part
                   position={[0, -0.84, 0.17]}
                   size={[0.5, 0.4, 0.45]}
@@ -324,7 +436,7 @@ export function Player({
               )}
             </group>
             <group ref={rightArm} position={[0.56, 1.93, 0]}>
-              {player.hasBall === true && (
+              {hasBall && (
                 <mesh name="possession-ball" position={[0, -0.84, 0.17]}>
                   <sphereGeometry args={[0.25, 12, 8]} />
                   <meshStandardMaterial color="#fff7de" />
@@ -385,11 +497,11 @@ export function Player({
           </group>
         </group>
       </group>
-      {player.droppedBat != null && <DroppedBat {...player.droppedBat} />}
+      {droppedBat != null && <DroppedBat {...droppedBat} />}
       <mesh ref={target} visible={false} rotation={[-Math.PI / 2, 0, 0]}>
         <ringGeometry args={[0.8, 1.1, 24]} />
         <meshBasicMaterial color={p.selection} />
       </mesh>
     </>
   )
-}
+}, samePlayerBody)

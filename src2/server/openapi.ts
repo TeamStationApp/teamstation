@@ -5,6 +5,12 @@ import {
   POSITION_CODES,
   STORED_EVENT_TYPES
 } from '../common/gumbo/reference'
+import { JERSEY_MAX_LENGTH, PLAYER_POSITIONS } from '../common/playerSettings'
+import {
+  CLIP_MAX_MS,
+  CLIP_MIN_MS,
+  WALK_UP_PROVIDERS
+} from '../common/walkUpSong'
 
 /**
  * The API's own description, served at `/api/v1/openapi.json`.
@@ -750,8 +756,19 @@ export function openApiDocument(version: string): OpenApiDocument {
               type: 'array',
               items: { $ref: '#/components/schemas/ScopeGrant' }
             },
+            grants: {
+              type: 'array',
+              description:
+                'Every role they hold in this tree, one entry per level. A ' +
+                'role set above the level being managed appears under that ' +
+                'level, with its name.',
+              items: { $ref: '#/components/schemas/RoleGrant' }
+            },
             adminOf: {
               type: 'array',
+              description:
+                '`grants` narrowed to `admin`, for apps from before the ' +
+                'role flags.',
               items: {
                 type: 'object',
                 properties: {
@@ -776,6 +793,246 @@ export function openApiDocument(version: string): OpenApiDocument {
               description:
                 'The last request on any of their sessions, which is later ' +
                 'than the sign-in for anybody who stays signed in'
+            }
+          }
+        },
+        LineupPerson: {
+          type: 'object',
+          required: ['userId', 'name', 'jersey'],
+          description:
+            'A player in a lineup: his user id, or null for a placeholder ' +
+            'named at the field, the short name the scoring screen shows ' +
+            '(never a full name), and his jersey.',
+          properties: {
+            userId: { type: ['integer', 'null'] },
+            name: { type: 'string' },
+            jersey: { type: 'string' }
+          }
+        },
+        Lineup: {
+          type: 'object',
+          required: ['batters', 'defense'],
+          properties: {
+            batters: {
+              type: 'array',
+              description: 'The batting order; the first leads off.',
+              items: { $ref: '#/components/schemas/LineupPerson' }
+            },
+            defense: {
+              type: 'object',
+              description:
+                'Each position, P, C, 1B, 2B, SS, 3B, LF, CF and RF, and who ' +
+                'plays it, or null.',
+              additionalProperties: {
+                oneOf: [
+                  { $ref: '#/components/schemas/LineupPerson' },
+                  { type: 'null' }
+                ]
+              }
+            }
+          }
+        },
+        LineupChange: {
+          type: 'object',
+          required: [
+            'atBatIndex',
+            'inning',
+            'half',
+            'side',
+            'eventType',
+            'player',
+            'position',
+            'battingOrder',
+            'replaced',
+            'description'
+          ],
+          description:
+            'One stored Gumbo substitution event, announced in the play at ' +
+            '`atBatIndex` where MLB announces it: a pinch hitter in the play ' +
+            'he bats in, a pinch runner where he takes the base, and a ' +
+            "side's fielding changes at the start of the first play it fields.",
+          properties: {
+            atBatIndex: { type: 'integer' },
+            inning: { type: 'integer' },
+            half: { type: 'string', enum: ['top', 'bottom'] },
+            side: {
+              type: 'string',
+              enum: ['away', 'home'],
+              description: 'The side the player belongs to'
+            },
+            eventType: {
+              type: 'string',
+              enum: [
+                'offensive_substitution',
+                'defensive_substitution',
+                'defensive_switch',
+                'pitching_substitution',
+                'gs_batting_order'
+              ]
+            },
+            player: { $ref: '#/components/schemas/LineupPerson' },
+            position: {
+              type: ['string', 'null'],
+              description: 'The Gumbo abbreviation: PH, PR, SS, P, …'
+            },
+            battingOrder: {
+              type: ['string', 'null'],
+              description: 'The place in the order as MLB writes it, `601`'
+            },
+            replaced: {
+              oneOf: [
+                { $ref: '#/components/schemas/LineupPerson' },
+                { type: 'null' }
+              ]
+            },
+            description: { type: 'string' }
+          }
+        },
+        SideLineups: {
+          type: 'object',
+          required: ['teamId', 'teamName', 'start', 'changes', 'current'],
+          properties: {
+            teamId: { type: 'string' },
+            teamName: { type: 'string' },
+            start: {
+              description:
+                'The lineup the side began with; null until the game has ' +
+                'begun, and for a game GameStation did not score.',
+              oneOf: [{ $ref: '#/components/schemas/Lineup' }, { type: 'null' }]
+            },
+            changes: {
+              type: 'array',
+              items: { $ref: '#/components/schemas/LineupChange' }
+            },
+            current: {
+              description:
+                'The lineup as it stands, including a change not announced ' +
+                'yet, such as a pinch hitter waiting to bat. Null for a game ' +
+                'GameStation did not score, or whose record no longer replays.',
+              oneOf: [{ $ref: '#/components/schemas/Lineup' }, { type: 'null' }]
+            }
+          }
+        },
+        DjSide: {
+          type: 'object',
+          required: [
+            'teamId',
+            'teamName',
+            'source',
+            'canEditWalkUp',
+            'batters'
+          ],
+          properties: {
+            teamId: { type: 'string' },
+            teamName: { type: 'string' },
+            source: {
+              description:
+                "Where the order came from: the game's own lineup as it " +
+                "stands, the team's default before the game has one, or its " +
+                'players by jersey number when it has neither.',
+              enum: ['lineup', 'default', 'roster']
+            },
+            canEditWalkUp: {
+              type: 'boolean',
+              description: "Whether the caller keeps this team's walk-up songs."
+            },
+            batters: {
+              type: 'array',
+              items: {
+                type: 'object',
+                required: ['userId', 'name', 'walkUpSong'],
+                properties: {
+                  userId: {
+                    description: 'Null for a placeholder named at the field.',
+                    oneOf: [{ type: 'integer' }, { type: 'null' }]
+                  },
+                  name: { type: 'string' },
+                  walkUpSong: {
+                    oneOf: [
+                      { $ref: '#/components/schemas/WalkUpSong' },
+                      { type: 'null' }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        DefaultLineup: {
+          type: 'object',
+          required: ['lineup', 'fromGameId', 'setAt'],
+          description:
+            "A team's default lineup, or all three null for a team with none.",
+          properties: {
+            lineup: {
+              oneOf: [{ $ref: '#/components/schemas/Lineup' }, { type: 'null' }]
+            },
+            fromGameId: { type: ['string', 'null'] },
+            setAt: { type: ['string', 'null'], format: 'date-time' }
+          }
+        },
+        Role: {
+          type: 'string',
+          enum: ['admin', 'coach', 'scorekeeper', 'songkeeper', 'videographer'],
+          description:
+            'What somebody may do on a league, season or team and everything ' +
+            'inside it. `admin` holds every flag without having one set.'
+        },
+        WalkUpSong: {
+          type: 'object',
+          required: [
+            'provider',
+            'providerId',
+            'title',
+            'artist',
+            'durationMs',
+            'startMs',
+            'endMs'
+          ],
+          description:
+            "A player's walk-up song on one team, and the clip of it that " +
+            `plays: \`startMs\` to \`endMs\`, within \`durationMs\`, ` +
+            `${CLIP_MIN_MS / 1000} to ${CLIP_MAX_MS / 1000} seconds long. ` +
+            'Text is trimmed; an empty optional field is null.',
+          properties: {
+            provider: { type: 'string', enum: [...WALK_UP_PROVIDERS] },
+            providerId: {
+              type: 'string',
+              description:
+                'The Apple Music catalog id, or for a file on a phone `lf:` ' +
+                'and the first 16 hex characters of a sha256 of its ' +
+                'normalised title, artist and whole-second duration.'
+            },
+            isrc: {
+              type: ['string', 'null'],
+              description: 'Read without hyphens, in capitals.'
+            },
+            title: { type: 'string', maxLength: 300 },
+            artist: { type: 'string', maxLength: 300 },
+            album: { type: ['string', 'null'], maxLength: 300 },
+            artworkUrl: {
+              type: ['string', 'null'],
+              description: 'An http or https address.'
+            },
+            durationMs: { type: 'integer', minimum: 1 },
+            startMs: { type: 'integer', minimum: 0 },
+            endMs: { type: 'integer' }
+          }
+        },
+        RoleFlag: {
+          type: 'string',
+          enum: ['coach', 'scorekeeper', 'songkeeper', 'videographer']
+        },
+        RoleGrant: {
+          type: 'object',
+          required: ['kind', 'id', 'name', 'roles'],
+          properties: {
+            kind: { type: 'string', enum: ['league', 'season', 'team'] },
+            id: { type: 'string' },
+            name: { type: 'string' },
+            roles: {
+              type: 'array',
+              items: { $ref: '#/components/schemas/Role' }
             }
           }
         },
@@ -970,6 +1227,40 @@ export function openApiDocument(version: string): OpenApiDocument {
           responses: { 204: { description: 'Revoked' }, 401: errorResponse }
         }
       },
+      '/me/roles': {
+        get: {
+          summary: 'What the caller may do, team by team',
+          description:
+            'Every team on which the caller holds any role, with the roles ' +
+            'they hold there: set on the team, carried down from its season ' +
+            'or league, and every role on a team they administer. A site ' +
+            'admin holds every role on every team.',
+          security: [{ bearer: [] }],
+          responses: {
+            200: {
+              description: 'The roles on each team',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['teams'],
+                    properties: {
+                      teams: {
+                        type: 'object',
+                        additionalProperties: {
+                          type: 'array',
+                          items: { $ref: '#/components/schemas/Role' }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            401: errorResponse
+          }
+        }
+      },
       '/auth/me': {
         get: {
           summary: 'Who this token belongs to',
@@ -1016,8 +1307,8 @@ export function openApiDocument(version: string): OpenApiDocument {
             'Schedules up to 200 games for the team in one call, and answers ' +
             'each row on its own, in order. Rows are applied one at a time, ' +
             'each in its own transaction, so one refused row stops nothing.\n\n' +
-            '**Who may call:** a site admin, an admin of the team (an ' +
-            '`admin_roles` team row, or its owner or manager), or an admin of ' +
+            '**Who may call:** a site admin, an admin of the team (an admin ' +
+            '`scope_roles` team row, or its owner or manager), or an admin of ' +
             "a season the team plays in or of that season's league. A plain " +
             'member, parent or spectator gets 403; a team the caller can ' +
             'neither see nor administer gets 404. A season or league admin ' +
@@ -1216,7 +1507,10 @@ export function openApiDocument(version: string): OpenApiDocument {
             '`fenceDistanceFt` is the fence the game is played to, in feet: ' +
             "the game's own, else its season's, else that season's " +
             "league's, else 200. A game with plays keeps the fence it had " +
-            'when they began.',
+            'when they began. `canScore` is whether the caller may post its ' +
+            'plays: a scorekeeper of either team, which every admin of it ' +
+            'is. `canDj` is whether the caller may DJ it: a songkeeper of ' +
+            'either team, which every admin of it is.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam],
           responses: {
@@ -1238,8 +1532,8 @@ export function openApiDocument(version: string): OpenApiDocument {
             '`fenceDistanceFt`, else the one the game resolves to then), ' +
             'whatever its season or league later sets, and this answers 409 ' +
             'while the game has plays. **Who may call:** ' +
-            'a site admin, an admin of either team (an `admin_roles` team ' +
-            "row, or its owner or manager), or an admin of the game's season " +
+            'a site admin, an admin of either team (an admin `scope_roles` ' +
+            "team row, or its owner or manager), or an admin of the game's season " +
             'or its league. Anybody else who can see the game gets 403; a ' +
             'game the caller cannot see, or that does not exist, 404.',
           security: [{ bearer: [] }],
@@ -1326,7 +1620,10 @@ export function openApiDocument(version: string): OpenApiDocument {
             "the 'score' runner entries must equal that score. A play that " +
             'lacks a required field is still stored: the builder marks the ' +
             'game `incomplete` with the reason and leaves any earlier ' +
-            '`game_player_stats` rows untouched.',
+            '`game_player_stats` rows untouched. **Who may call:** a ' +
+            'scorekeeper of either team, set on the team, its season or its ' +
+            'league, which every admin of them is, and a site admin. Anybody ' +
+            'else who can see the game gets 403.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam],
           requestBody: {
@@ -1452,6 +1749,123 @@ export function openApiDocument(version: string): OpenApiDocument {
                       currentPlay: {
                         oneOf: [
                           { $ref: '#/components/schemas/GumboCurrentPlay' },
+                          { type: 'null' }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/teams/{teamId}/default-lineup': {
+        get: {
+          summary: "A team's default lineup",
+          description:
+            'The starting lineup of the last game scored in GameStation that ' +
+            'began with a different one, the game it came from and when it ' +
+            'was taken. The first live post after which a game has begun ' +
+            "takes each side's starting lineup as its team's default, unless " +
+            'the default already has the same order and fielders; undone ' +
+            'back to before its first pitch, the game takes the lineup it ' +
+            'begins with next. Substitutions, replace posts and outside ' +
+            'posts never change it. The scoring screen starts a new game ' +
+            'from it. Needs somebody who can see the team; 404 for anybody ' +
+            'else.',
+          security: [{ bearer: [] }],
+          parameters: [teamIdParam],
+          responses: {
+            200: {
+              description: 'The default, or all three null',
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/DefaultLineup' }
+                }
+              }
+            },
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/games/{gameId}/lineups': {
+        get: {
+          summary: "Both sides' lineups in a game",
+          description:
+            'Read from the stored plays and the at-bat in progress: the ' +
+            'lineup each side began with, every substitution the stored ' +
+            'Gumbo announces, in game order, and the lineup as it stands. A ' +
+            'game GameStation did not score has only the substitutions its ' +
+            'plays carry. Needs somebody who can see the game; 404 for ' +
+            'anybody else.',
+          security: [{ bearer: [] }],
+          parameters: [gameIdParam],
+          responses: {
+            200: {
+              description: '{ away, home }',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['away', 'home'],
+                    properties: {
+                      away: { $ref: '#/components/schemas/SideLineups' },
+                      home: { $ref: '#/components/schemas/SideLineups' }
+                    }
+                  }
+                }
+              }
+            },
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/games/{gameId}/dj': {
+        get: {
+          summary: "Both sides' batters and walk-up songs, for DJ Game",
+          description:
+            "Each side's batters in order, with each one's walk-up song on " +
+            "that team (a placeholder has none). The order is the game's " +
+            'own current lineup once GameStation has a record of it, the ' +
+            "team's default before that, and otherwise the team's players " +
+            'by jersey number, then name. `canEditWalkUp` is whether the ' +
+            "caller keeps that team's songs. `atBat` is the plate appearance " +
+            'in progress: `side` is `away` in the top of an inning and `home` ' +
+            'in the bottom, and `userId` is the batter, or null for a guest. ' +
+            '`atBat` is null when no plate appearance is in progress. Needs ' +
+            'somebody who can see the game; 404 for anybody else.',
+          security: [{ bearer: [] }],
+          parameters: [gameIdParam],
+          responses: {
+            200: {
+              description: '{ away, home }',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['away', 'home', 'atBat'],
+                    properties: {
+                      away: { $ref: '#/components/schemas/DjSide' },
+                      home: { $ref: '#/components/schemas/DjSide' },
+                      atBat: {
+                        description:
+                          'The plate appearance in progress, or null.',
+                        oneOf: [
+                          {
+                            type: 'object',
+                            required: ['side', 'userId'],
+                            properties: {
+                              side: { enum: ['away', 'home'] },
+                              userId: {
+                                oneOf: [{ type: 'integer' }, { type: 'null' }]
+                              }
+                            }
+                          },
                           { type: 'null' }
                         ]
                       }
@@ -1793,12 +2207,130 @@ export function openApiDocument(version: string): OpenApiDocument {
         get: {
           summary: "A team's players, coaches and followers",
           description:
-            'Names are a first name and a last initial: a full name is not ' +
-            'something this API hands out about a child.',
+            'Names are a first name and a last initial. `fullName`, first and ' +
+            'last, is set on each player for a caller who is a coach or an ' +
+            'admin of the team, its season or its league, and null for ' +
+            'everybody else. `walkUpSong` is the WalkUpSong the person has ' +
+            'on this team, or null. Whether the caller may change the songs ' +
+            'is `GET /me/roles`: `songkeeper` or `admin` on the team.',
           security: [{ bearer: [] }],
           parameters: [teamIdParam],
           responses: {
             200: { description: 'The roster, coaches first' },
+            404: errorResponse
+          }
+        }
+      },
+      '/teams/{teamId}/players/{userId}/settings': {
+        put: {
+          summary: "Set a player's jersey, positions, bats and throws",
+          description:
+            'For a coach of the team — the flag set on the team, its season ' +
+            'or its league — an admin of any of those, or a site admin. ' +
+            'Anybody else, and a user who is not a player on the team, gets ' +
+            '404. Send only the fields to change; a body with none is 400. ' +
+            "`jersey` and `positions` are the player's place on this team. " +
+            "`bats` and `throws` are the player's own and read the same on " +
+            'every team; setting either marks them set by hand, so a ' +
+            'roster import no longer overwrites them. Audited. ' +
+            "Answers with the player's roster entry as it now reads.",
+          security: [{ bearer: [] }],
+          parameters: [teamIdParam, userIdParam],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  minProperties: 1,
+                  properties: {
+                    jersey: {
+                      type: 'string',
+                      nullable: true,
+                      maxLength: JERSEY_MAX_LENGTH,
+                      description: 'Trimmed; empty or null is no number.'
+                    },
+                    positions: {
+                      type: 'array',
+                      items: {
+                        type: 'string',
+                        enum: [...PLAYER_POSITIONS]
+                      },
+                      description:
+                        'Replaces every position; stored once each, in this order.'
+                    },
+                    bats: {
+                      type: 'string',
+                      nullable: true,
+                      enum: ['left', 'right', 'switch']
+                    },
+                    throws: {
+                      type: 'string',
+                      nullable: true,
+                      enum: ['left', 'right']
+                    }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            200: {
+              description:
+                "The player's roster entry, as GET /teams/{teamId}/roster lists it"
+            },
+            400: errorResponse,
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/teams/{teamId}/players/{userId}/walk-up-song': {
+        put: {
+          summary: "Set a player's walk-up song on a team",
+          description:
+            'For a songkeeper of the team — the flag set on the team, its ' +
+            'season or its league — an admin of any of those, or a site ' +
+            'admin. Anybody else, and a user who is not a player on the ' +
+            'team, gets 404; a bad body is 400. Replaces any song the player ' +
+            'had on the team. Audited, and announced on the game socket as a ' +
+            '`walkUpSong` change to every subscribed game the team plays in. ' +
+            'Answers with the song as stored.',
+          security: [{ bearer: [] }],
+          parameters: [teamIdParam, userIdParam],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/WalkUpSong' }
+              }
+            }
+          },
+          responses: {
+            200: {
+              description: 'The song as stored',
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/WalkUpSong' }
+                }
+              }
+            },
+            400: errorResponse,
+            401: errorResponse,
+            404: errorResponse
+          }
+        },
+        delete: {
+          summary: "Remove a player's walk-up song on a team",
+          description:
+            'The same rights as setting one. Removing a song the player does ' +
+            'not have is also 204. Audited, and a removal is announced on the ' +
+            'game socket with `song: null`.',
+          security: [{ bearer: [] }],
+          parameters: [teamIdParam, userIdParam],
+          responses: {
+            204: { description: 'The player has no song on the team' },
+            401: errorResponse,
             404: errorResponse
           }
         }
@@ -2256,14 +2788,72 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/manage/{scopeType}/{scopeId}/people/{userId}/roles': {
+        put: {
+          summary: 'Set everything somebody may do at this level',
+          description:
+            'Replaces their roles on this one level: `admin`, and any of ' +
+            'the flags `coach`, `scorekeeper`, `songkeeper` and ' +
+            '`videographer`. A role set here reaches everything inside ' +
+            'this level. Only at the level named: a team page sets team ' +
+            'roles and nothing wider. It adds them to the level as well, so ' +
+            'they can see what they hold a role on. Only an admin of this ' +
+            'level or one above it may call; anybody else gets 404. Nobody ' +
+            'may clear their own `admin` here.',
+          security: [{ bearer: [] }],
+          parameters: [scopeTypeParam, scopeIdParam, userIdParam],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['admin', 'flags'],
+                  properties: {
+                    admin: { type: 'boolean' },
+                    flags: {
+                      type: 'array',
+                      items: { $ref: '#/components/schemas/RoleFlag' }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            200: {
+              description: 'The roles they hold on this level now',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['userId', 'roles'],
+                    properties: {
+                      userId: { type: 'integer' },
+                      roles: {
+                        type: 'array',
+                        items: { $ref: '#/components/schemas/Role' }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            400: errorResponse,
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
       '/manage/{scopeType}/{scopeId}/people/{userId}/role': {
         put: {
-          summary: 'Make somebody an administrator of this level, or a member',
+          summary: 'Make somebody an administrator of this level, or not',
           description:
-            'Only at the level named: a team page makes team administrators ' +
-            'and nothing wider. Either answer leaves them able to watch, ' +
-            'because an administrator of something they cannot see is a ' +
-            'state nobody asks for on purpose. Nobody may demote themselves.',
+            'The route from before the role flags, kept for older apps. ' +
+            '`admin` makes them this level\u2019s administrator and `member` ' +
+            'takes that away; either leaves their flags as they were, and ' +
+            'leaves them able to watch. Only at the level named. Nobody may ' +
+            'demote themselves.',
           security: [{ bearer: [] }],
           parameters: [scopeTypeParam, scopeIdParam, userIdParam],
           requestBody: {
@@ -2494,11 +3084,13 @@ export function openApiDocument(version: string): OpenApiDocument {
       },
       '/director/events': {
         get: {
-          summary: 'The next ten games of the teams you run',
+          summary: 'The next ten games of the teams you film',
           description:
             'Soonest first, reaching two hours backwards \u2014 a one o\u2019clock ' +
             'game somebody starts filming at ten past three is still the game ' +
-            'they mean.',
+            'they mean. The teams are those the caller is a videographer of, ' +
+            'set on the team, its season or its league, which every admin of ' +
+            'them is.',
           security: [{ bearer: [] }],
           responses: {
             200: {
@@ -2511,6 +3103,9 @@ export function openApiDocument(version: string): OpenApiDocument {
       '/director/events/{gameId}/claim': {
         post: {
           summary: 'Take a game, and get the URL to publish it to',
+          description:
+            'For a videographer of either team, which every admin of it ' +
+            'is. Anybody else gets 404.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam],
           responses: {

@@ -36,6 +36,8 @@ const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 const MANAGER = 'tok_manager_000000000000000000000'
 const COACH = 'tok_coach_00000000000000000000000'
 const PARENT = 'tok_parent_0000000000000000000000'
+const FILMER = 'tok_filmer_0000000000000000000000'
+const SCORER = 'tok_scorer_0000000000000000000000'
 
 const legacyOf = new Map<number, string>()
 function mintUser(): number {
@@ -52,6 +54,8 @@ function legacyId(userId: number): string {
 const managerId = mintUser()
 const coachId = mintUser()
 const parentId = mintUser()
+const filmerId = mintUser()
+const scorerId = mintUser()
 
 describe('a game’s stream key over the API', function () {
   this.timeout(60000)
@@ -141,7 +145,9 @@ describe('a game’s stream key over the API', function () {
     for (const [id, name] of [
       [managerId, 'Casey Manager'],
       [coachId, 'Robin Coach'],
-      [parentId, 'Parent']
+      [parentId, 'Parent'],
+      [filmerId, 'Vic Filmer'],
+      [scorerId, 'Kim Scorer']
     ] as Array<[number, string]>) {
       await db
         .insertInto('users')
@@ -159,7 +165,9 @@ describe('a game’s stream key over the API', function () {
     for (const [id, user, token] of [
       ['ses_manager', managerId, MANAGER],
       ['ses_coach', coachId, COACH],
-      ['ses_parent', parentId, PARENT]
+      ['ses_parent', parentId, PARENT],
+      ['ses_filmer', filmerId, FILMER],
+      ['ses_scorer', scorerId, SCORER]
     ] as Array<[string, number, string]>) {
       await db
         .insertInto('auth_sessions')
@@ -195,7 +203,8 @@ describe('a game’s stream key over the API', function () {
       'gam_10',
       'gam_11',
       'gam_12',
-      'gam_13'
+      'gam_13',
+      'gam_14'
     ]) {
       await db
         .insertInto('games')
@@ -236,6 +245,27 @@ describe('a game’s stream key over the API', function () {
         role: 'member'
       })
       .execute()
+    // A videographer of the away team and a scorekeeper of the home team,
+    // each a member of the team they hold it on.
+    for (const [userId, teamId, role] of [
+      [filmerId, 'tem_away', 'videographer'],
+      [scorerId, 'tem_home', 'scorekeeper']
+    ] as const) {
+      await db
+        .insertInto('memberships')
+        .values({ id: `mem_${role}`, user_id: userId, team_id: teamId })
+        .execute()
+      await db
+        .insertInto('scope_roles')
+        .values({
+          id: `rol_${role}`,
+          user_id: userId,
+          scope_type: 'team',
+          scope_id: teamId,
+          role
+        })
+        .execute()
+    }
   }
 
   async function ask(
@@ -621,6 +651,21 @@ describe('a game’s stream key over the API', function () {
       ['/games/gam_1/live-streams', 'POST']
     ]) {
       const answer = await ask(path, PARENT, method)
+      expect(answer.status, `${method} ${path}`).equals(404)
+    }
+  })
+
+  it('lets a videographer of either team stream, and not a scorekeeper', async function () {
+    if (db == null) this.skip()
+    const made = await ask('/games/gam_14/live-streams', FILMER, 'POST')
+    expect(made.status).equals(201)
+    const listed = await ask('/games/gam_14/live-streams', FILMER)
+    expect(listed.status).equals(200)
+    for (const [path, method] of [
+      ['/games/gam_14/live-streams', 'GET'],
+      ['/games/gam_14/live-streams', 'POST']
+    ]) {
+      const answer = await ask(path, SCORER, method)
       expect(answer.status, `${method} ${path}`).equals(404)
     }
   })

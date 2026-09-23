@@ -22,6 +22,7 @@ import {
 import {
   asGamePlay,
   asGameSetup,
+  copyGame,
   copyState,
   type GamePlay,
   type GameSetup,
@@ -55,11 +56,24 @@ const asRecord: Cleaner<GameStationRecord> = asObject({
   detail: asUnknown
 }) as Cleaner<GameStationRecord>
 
+/**
+ * Each stored record, as `recordOf` read it. A save reads the game's lineups,
+ * which reads every record and then replays them, reading each again;
+ * cleaning a record's setup was half of what that cost.
+ */
+const readRecords = new WeakMap<object, GameStationRecord | null>()
+
 /** The record on a stored play, or null for one GameStation did not score. */
 export function recordOf(play: unknown): GameStationRecord | null {
   if (play == null || typeof play !== 'object') return null
   const raw = (play as { gameStation?: unknown }).gameStation
   if (raw == null) return null
+  if (typeof raw !== 'object') return cleanRecord(raw)
+  if (!readRecords.has(raw)) readRecords.set(raw, cleanRecord(raw))
+  return readRecords.get(raw) ?? null
+}
+
+function cleanRecord(raw: unknown): GameStationRecord | null {
   try {
     const record = asRecord(raw)
     const actions: ScoringAction[] = []
@@ -141,7 +155,11 @@ export function segmentAfter(
   let rest = completed
   if (applied.transitions[0]?.type === 'playClosed') {
     finished.push({ play: completed[0], segment })
-    const closed = applyAction(before, { type: 'gameFlow', kind: 'closePlay' })
+    const closed = applyAction(
+      copyGame(before),
+      { type: 'gameFlow', kind: 'closePlay' },
+      { inPlace: true }
+    )
     segment = { setupBefore: setupOf(closed.state), actions: [action] }
     rest = completed.slice(1)
   } else segment = { ...segment, actions: [...segment.actions, action] }
@@ -219,7 +237,11 @@ export function replayPlays(
     const kept: ScoringAction[] = []
     for (const action of record.actions) {
       if (problems.length > 0) break
-      const applied = applyAction(state, action)
+      // `copyGame` shares the finished plays an earlier copy made, where
+      // `applyAction`'s own copy copies every one of them again: at 85 plate
+      // appearances that made a replay 330 ms, and every save replays the
+      // game to keep its lineups. A refused action leaves `state` whole.
+      const applied = applyAction(copyGame(state), action, { inPlace: true })
       if (applied.problems.length > 0) {
         problems.push(...applied.problems)
         break

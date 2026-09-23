@@ -31,12 +31,21 @@ export function ControlFace({
     contact:
       contact === 'bunt'
         ? lstrings.scoring_control_bunt
-        : lstrings.scoring_control_swing
+        : lstrings.scoring_control_swing,
+    music: lstrings.scoring_control_song
   }[kind]
+  // The face and its label span the button. A label that only hugs its
+  // widest line wraps again on Android, where that width is rounded down:
+  // "SWING\n& MISS" broke "& MISS" in two and lost MISS below the button.
   return (
     <View
       pointerEvents="none"
-      style={{ alignItems: 'center', justifyContent: 'center', gap: 1 }}
+      style={{
+        alignSelf: 'stretch',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 1
+      }}
     >
       {kind === 'contact' ? (
         <View
@@ -67,7 +76,9 @@ export function ControlFace({
       <Text
         testID="scoring-control-label"
         selectable={false}
+        numberOfLines={2}
         style={{
+          alignSelf: 'stretch',
           color: CONTROL_COLORS[kind].text,
           fontFamily: theme.regularTextFont,
           fontSize: kind === 'contact' || kind === 'ball' ? 12 : 11,

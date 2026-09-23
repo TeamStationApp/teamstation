@@ -1616,6 +1616,34 @@ function resultIsOut(play: GamePlay): boolean {
   )
 }
 
+/** Each segment's setup without its undefined keys, cleaned once per setup. */
+const cleanSetups = new WeakMap<GameSetup, GameSetup>()
+
+/**
+ * A play's document without its undefined keys, as `withoutUndefined` makes
+ * it, except that the setup it began from, half the document and the same
+ * for every play folded from its segment, is cleaned once and shared. Cleaning
+ * it for every play of the game on every save took a phone about 25 ms 70
+ * plate appearances in.
+ */
+function folded(document: Record<string, unknown>): Record<string, unknown> {
+  const stamp = document.gameStation as
+    { setupBefore?: GameSetup; [key: string]: unknown } | undefined
+  const setup = stamp?.setupBefore
+  if (stamp == null || setup == null) return withoutUndefined(document)
+  const out = withoutUndefined({
+    ...document,
+    gameStation: { ...stamp, setupBefore: null }
+  })
+  let clean = cleanSetups.get(setup)
+  if (clean == null) {
+    clean = withoutUndefined(setup)
+    cleanSetups.set(setup, clean)
+  }
+  ;(out.gameStation as Record<string, unknown>).setupBefore = clean
+  return out
+}
+
 /**
  * Folds a game's plays into stored plays, carrying the `Cast` from each play
  * to the next, so folding every play of a game is one pass over it rather
@@ -1632,10 +1660,34 @@ export class PlayFolder {
 
   constructor(private readonly state: GameState) {}
 
+  /**
+   * A folder over `state`, a later game with the same plays so far, that
+   * carries on from where this one has got to rather than walking those plays
+   * again. This one is left as it was, so it can be carried on from again.
+   * Its plays fold as a fresh folder's would only while `foldInputsOf` both
+   * games is the same.
+   */
+  continuing(state: GameState): PlayFolder {
+    const next = new PlayFolder(state)
+    const cast = this.cast
+    next.cast = {
+      appeared: new Map(cast.appeared),
+      waiting: new Map(cast.waiting),
+      left: new Map(cast.left),
+      pinch: new Map(cast.pinch),
+      place: new Map(cast.place),
+      lastIn: new Map(cast.lastIn),
+      codes: { away: new Map(cast.codes.away), home: new Map(cast.codes.home) },
+      seeded: cast.seeded
+    }
+    next.through = this.through
+    return next
+  }
+
   /** A completed play, ready to store. */
   play(play: GamePlay, stamp: PlayStamp): GumboPlay {
     return asGumboPlay(
-      withoutUndefined({
+      folded({
         ...this.body(play, stamp),
         result: {
           type: 'atBat',
@@ -1680,7 +1732,7 @@ export class PlayFolder {
     }
     const body = this.body(play, stamp)
     return asCurrentPlay(
-      withoutUndefined({
+      folded({
         ...body,
         about: { ...(body.about as object), isComplete: false }
       })
@@ -1728,6 +1780,26 @@ export class PlayFolder {
     this.through = at < all.length ? at + 1 : Number.POSITIVE_INFINITY
     return events
   }
+}
+
+/**
+ * Everything of a game, beyond its plays, that folding one of its completed
+ * plays reads: its players' names, user ids and teams, its teams and its
+ * fence. A play folded from a game folds the same from a later one with the
+ * same plays so far while this is the same.
+ */
+export function foldInputsOf(state: GameState): string {
+  const { gameData } = state
+  const parts = [
+    String(fenceOf(state)),
+    gameData.teams.away.id,
+    gameData.teams.home.id
+  ]
+  for (const id of Object.keys(gameData.players)) {
+    const player = gameData.players[Number(id)]
+    parts.push(`${id}:${player.userId}:${player.teamId}:${player.fullName}`)
+  }
+  return JSON.stringify(parts)
 }
 
 /**

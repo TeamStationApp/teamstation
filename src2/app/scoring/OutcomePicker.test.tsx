@@ -182,6 +182,86 @@ describe('ball-in-play outcome menu', function () {
   })
 })
 
+describe('the phone in-play control', () => {
+  async function mountNative(
+    props: Partial<React.ComponentProps<typeof NativePicker>>,
+    chosen: string[],
+    active: boolean[]
+  ): Promise<void> {
+    const node = document.createElement('div')
+    document.body.appendChild(node)
+    root = createRoot(node)
+    await act(async () => {
+      root!.render(
+        <NativePicker
+          disabled={false}
+          onChoose={value => chosen.push(value)}
+          onActive={value => active.push(value)}
+          {...props}
+        />
+      )
+    })
+  }
+  it('opens the outcomes on a tap and records the one chosen', async () => {
+    const chosen: string[] = []
+    const active: boolean[] = []
+    await mountNative({}, chosen, active)
+    expect(document.querySelector('[aria-label="Single"]')).equals(null)
+    await click('Swing in Play')
+    expect(active).deep.equals([true])
+    for (const value of PRIMARY_OUTCOMES) expect(button(value)).not.equals(null)
+    await click('Double')
+    expect(chosen).deep.equals(['Double'])
+    expect(active).deep.equals([true, false])
+    expect(document.querySelector('[aria-label="Single"]')).equals(null)
+  })
+  it('opens how the batter was put out beside Batter Out', async () => {
+    const chosen: string[] = []
+    await mountNative({}, chosen, [])
+    await click('Swing in Play')
+    expect(document.querySelector('[aria-label="Ball Caught"]')).equals(null)
+    await click('Batter Out')
+    await click('Batter Out')
+    expect(document.querySelector('[aria-label="Ball Caught"]')).equals(null)
+    await click('Batter Out')
+    await click('Ball Caught')
+    expect(chosen).deep.equals(['Ball Caught'])
+  })
+  it("offers a bunt no home run, and no fielder's choice with the bases empty", async () => {
+    await mountNative({ contactKind: 'bunt', hasRunners: false }, [], [])
+    await click('Bunt in Play')
+    expect(document.querySelector('[aria-label="Home Run"]')).equals(null)
+    expect(document.querySelector(`[aria-label="Fielder's Choice"]`)).equals(
+      null
+    )
+    expect(button('Single')).not.equals(null)
+    await click('Dismiss outcomes')
+  })
+  it('closes when it is disabled or cancelled', async () => {
+    const chosen: string[] = []
+    const active: boolean[] = []
+    await mountNative({}, chosen, active)
+    await click('Swing in Play')
+    await click('Dismiss outcomes')
+    expect(document.querySelector('[aria-label="Single"]')).equals(null)
+    await click('Swing in Play')
+    await act(async () => {
+      root!.render(
+        <NativePicker
+          disabled
+          onChoose={value => chosen.push(value)}
+          onActive={value => active.push(value)}
+        />
+      )
+    })
+    expect(document.querySelector('[aria-label="Single"]')).equals(null)
+    await click('Swing in Play')
+    expect(document.querySelector('[aria-label="Single"]')).equals(null)
+    expect(chosen).deep.equals([])
+    expect(active.at(-1)).equals(false)
+  })
+})
+
 describe('swing and bunt paired controls', () => {
   it('owns one menu at a time, filters bunt/FC, and delivers contact identity', async () => {
     const node = document.createElement('div')

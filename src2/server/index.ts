@@ -36,10 +36,12 @@ import { directorUploadRoutes } from './routes/directorUploads'
 import { eventRoutes } from './routes/events'
 import { healthRoutes } from './routes/health'
 import { inviteRoutes } from './routes/invites'
+import { lineupRoutes } from './routes/lineups'
 import type { LiveRouteOptions } from './routes/live'
 import { liveRoutes } from './routes/live'
 import { logRoutes } from './routes/logs'
 import { manageRoutes } from './routes/manage'
+import { meRoutes } from './routes/me'
 import { mediaAuthRoute, mediaRoutes } from './routes/media'
 import { playerRoutes } from './routes/players'
 import { scheduleRoutes } from './routes/schedule'
@@ -47,7 +49,9 @@ import { seasonRoutes } from './routes/seasons'
 import { statsRoutes } from './routes/stats'
 import { teamRoutes } from './routes/teams'
 import { userRoutes } from './routes/users'
+import { walkUpSongRoutes } from './routes/walkUpSongs'
 import { primaryHost, publicUrl, serverConfig } from './serverConfig'
+import { attachGameSocket } from './socket/gameSocket'
 import {
   exitAfterBuilder,
   forceStop,
@@ -473,10 +477,13 @@ function runWorker(): void {
   app.use('/api/v1', teamRoutes(db, mediaContext))
   app.use('/api/v1', scheduleRoutes(db))
   app.use('/api/v1', eventRoutes(db))
+  app.use('/api/v1', lineupRoutes(db))
   app.use('/api/v1', logRoutes())
   app.use('/api/v1', statsRoutes(db))
   app.use('/api/v1', playerRoutes(db, mediaContext))
+  app.use('/api/v1', walkUpSongRoutes(db))
   app.use('/api/v1', userRoutes(db))
+  app.use('/api/v1', meRoutes(db))
   app.use('/api/v1', mediaRoutes(db, mediaContext))
   app.use('/api/v1', liveRoutes(db, liveRouteOptions()))
   app.use(
@@ -524,6 +531,7 @@ function runWorker(): void {
       )
     }
   )
+  attachGameSocket(server, db, serverConfig.databaseUrl)
 
   // Unclustered — one process, which is both the API and the ingest.
   let builder: StatsBuilderHandle = {

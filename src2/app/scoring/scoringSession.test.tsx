@@ -342,6 +342,47 @@ describe('saving from the scoring screen', function () {
     expect(document.body.textContent).includes('2 balls')
   })
 
+  it('keeps the Undo history through opening and cancelling the rosters', async function () {
+    const store = memoryStore()
+    const source: ScoringSource = {
+      persistent: true,
+      open: async (game, away, home) => {
+        const session = await GameSession.open(store, game.id, {
+          gamePk: game.id,
+          teams: teamsOf(game),
+          setup: startingSetup(game, away, home)
+        })
+        // The server's copy of a new game reads back with its players in
+        // another order, so the first read after a save finds the game
+        // changed although its plays are the same.
+        const reload = session.reload.bind(session)
+        session.reload = async () => {
+          await reload()
+          return true
+        }
+        return session
+      }
+    }
+    await mount(clientForSwitchHitter('right'), source)
+    const settle = async (): Promise<void> => {
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 5))
+      })
+    }
+    await click('Ball')
+    await click('Called Strike')
+    await settle()
+    await click('Open scoring menu')
+    await click('Set Team Rosters')
+    await settle()
+    await click('Cancel')
+    await settle()
+    await click('Undo Called Strike')
+    expect(document.body.textContent).includes('1 balls 0 strikes')
+    await click('Undo Ball')
+    expect(document.body.textContent).includes('0 balls 0 strikes')
+  })
+
   it('undoes a play scored before the screen opened', async function () {
     const source = new DevelopmentScoringSource()
     const client = clientForSwitchHitter('right')
@@ -355,6 +396,38 @@ describe('saving from the scoring screen', function () {
     expect(document.body.textContent).includes('1 balls')
     await click('Undo Last play')
     expect(document.body.textContent).includes('0 balls')
+    expect(document.querySelector('[aria-label="Undo Last play"]')).equals(null)
+  })
+
+  it('takes every Undo tap one step back, in order, though the taps come before the screen redraws', async function () {
+    const source = new DevelopmentScoringSource()
+    const first = await source.open(gameFixture, [], [])
+    for (let i = 0; i < 3; i++) first.apply({ type: 'pitch', call: 'B' })
+    await first.flush()
+    await mount(clientForSwitchHitter('right'), source)
+    await click('Called Strike')
+    await click('Foul Ball')
+    await click('Foul Ball')
+    expect(document.body.textContent).includes('3 balls 2 strikes')
+    // Taps landing together, as they do while an Undo is still being
+    // rebuilt: nothing is drawn between them.
+    const taps = async (label: string, times: number): Promise<void> => {
+      const element = document.querySelector<HTMLElement>(
+        `[aria-label="${label}"]`
+      )
+      expect(element, label).not.equals(null)
+      await act(async () => {
+        for (let i = 0; i < times; i++) element?.click()
+      })
+    }
+    await taps('Undo Foul Ball', 2)
+    expect(document.body.textContent).includes('3 balls 1 strikes')
+    // One step left on this screen, then two into the saved game.
+    await taps('Undo Called Strike', 3)
+    expect(document.body.textContent).includes('1 balls 0 strikes')
+    // The last saved pitch, and a tap with nothing left, which does nothing.
+    await taps('Undo Last play', 2)
+    expect(document.body.textContent).includes('0 balls 0 strikes')
     expect(document.querySelector('[aria-label="Undo Last play"]')).equals(null)
   })
 
@@ -406,6 +479,51 @@ describe('saving from the scoring screen', function () {
     expect(document.body.textContent).includes('1 balls')
     await click('Ball')
     expect(document.body.textContent).includes('2 balls')
+  })
+
+  it('takes a saved hit by pitch back in one Undo tap', async function () {
+    const source = new DevelopmentScoringSource()
+    const client = clientForSwitchHitter('right')
+    const screenPitches = (): string =>
+      /Pitches \d+/.exec(document.body.textContent ?? '')?.[0] ?? ''
+    // The saved game ends with a hit by pitch and the next batter's empty
+    // appearance.
+    const first = await source.open(gameFixture, [], [])
+    first.apply({ type: 'pitch', call: 'B' })
+    expect(
+      first.apply({ type: 'result', eventType: 'hit_by_pitch' }).problems
+    ).deep.equals([])
+    expect(
+      first.apply({ type: 'gameFlow', kind: 'closePlay' }).problems
+    ).deep.equals([])
+    await first.flush()
+    await mount(client, source)
+    expect(screenPitches()).equals('Pitches 2')
+    const up = document.body.textContent
+    await click('Undo Last play')
+    // One tap: the hit by pitch is taken back, and its pitch with it.
+    expect(document.body.textContent).not.equals(up)
+    expect(screenPitches()).equals('Pitches 1')
+    expect(document.body.textContent).includes('1 balls')
+  })
+
+  it('logs the close of a saved hit by pitch the screen closes as it opens', async function () {
+    const source = new DevelopmentScoringSource()
+    const first = await source.open(gameFixture, [], [])
+    first.apply({ type: 'result', eventType: 'hit_by_pitch' })
+    await first.flush()
+    await mount(clientForSwitchHitter('right'), source)
+    await click('Ball')
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 5))
+    })
+    const saved = await source.open(gameFixture, [], [])
+    expect(saved.actions.map(action => action.type)).deep.equals([
+      'result',
+      'gameFlow',
+      'pitch'
+    ])
+    expect(saved.state.liveData.plays.allPlays.length).equals(1)
   })
 
   it('plays the game to the fence the server gives it, 200 feet when it gives none', async function () {

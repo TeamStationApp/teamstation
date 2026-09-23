@@ -9,6 +9,18 @@ export function usesTouchPlacement(
   if (pointerType === 'mouse' || pointerType === 'pen') return false
   return pointerType === 'touch' || mobileHint
 }
+/**
+ * Whether a press is the primary one: a mouse's main button, a pen tip or a
+ * finger. Fiber's native Canvas sends a phone's touch with no `button` at all.
+ */
+export function isPrimaryPress(event: {
+  button?: number
+  pointerType?: string
+}): boolean {
+  return event.button === undefined
+    ? event.pointerType === 'touch'
+    : event.button === 0
+}
 /** World-space finger clearance, measured in metres (10 feet). */
 export const TOUCH_TARGET_DISTANCE = 3.048
 export function offsetTouchTarget(

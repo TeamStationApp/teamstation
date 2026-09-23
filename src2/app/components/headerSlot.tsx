@@ -4,6 +4,7 @@ import React, {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState
 } from 'react'
 
@@ -23,11 +24,14 @@ import React, {
 export interface HeaderSlot {
   headerHeight: number
   setHandoff: (node: React.ReactNode) => void
+  /** A screen that wants the header's back, instead of leaving the screen. */
+  setBackOverride: (handler: (() => void) | null) => void
 }
 
 const HeaderSlotContext = createContext<HeaderSlot>({
   headerHeight: 48,
-  setHandoff: () => undefined
+  setHandoff: () => undefined,
+  setBackOverride: () => undefined
 })
 
 export function useHeaderSlot(): HeaderSlot {
@@ -37,16 +41,21 @@ export function useHeaderSlot(): HeaderSlot {
 export interface HeaderSlotProviderProps {
   headerHeight: number
   onHandoff: (node: React.ReactNode) => void
+  onBackOverride?: (handler: (() => void) | null) => void
   children: React.ReactNode
 }
 
 export function HeaderSlotProvider(
   props: HeaderSlotProviderProps
 ): React.ReactElement {
-  const { headerHeight, onHandoff, children } = props
+  const { headerHeight, onHandoff, onBackOverride, children } = props
   const value = useMemo(
-    () => ({ headerHeight, setHandoff: onHandoff }),
-    [headerHeight, onHandoff]
+    () => ({
+      headerHeight,
+      setHandoff: onHandoff,
+      setBackOverride: onBackOverride ?? (() => undefined)
+    }),
+    [headerHeight, onHandoff, onBackOverride]
   )
   return (
     <HeaderSlotContext.Provider value={value}>
@@ -61,6 +70,28 @@ export function HeaderSlotProvider(
  * Clearing it on the way out is the whole reason this is a hook: a screen that
  * left its score in the header would leave it there over the next screen.
  */
+/**
+ * Take the header's back while `active`. Letting go returns the chevron to
+ * leaving the screen.
+ *
+ * The handler is read through a ref, so a new function each render does not
+ * re-subscribe the header.
+ */
+export function useBackOverride(active: boolean, handler: () => void): void {
+  const { setBackOverride } = useHeaderSlot()
+  const handlerRef = useRef(handler)
+  handlerRef.current = handler
+  useEffect(() => {
+    if (!active) return
+    setBackOverride(() => {
+      handlerRef.current()
+    })
+    return () => {
+      setBackOverride(null)
+    }
+  }, [active, setBackOverride])
+}
+
 export function useHeaderHandoff(node: React.ReactNode): void {
   const { setHandoff } = useHeaderSlot()
   useEffect(() => {

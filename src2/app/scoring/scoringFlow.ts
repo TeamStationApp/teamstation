@@ -16,7 +16,13 @@ import {
 } from '../../common/scoring/rules'
 import { type Applied, applyAction } from '../../common/scoring/session'
 import { BASES } from '../field/fieldModel'
-import { closePlay, copyState, snapshotOf } from './scoringMachine'
+import {
+  closePlay,
+  copyGame,
+  copyState,
+  snapshotOf,
+  withStep
+} from './scoringMachine'
 import { approachFirst, sequencesFor } from './scoringMotion'
 import { throwPresentation, type ThrowSequence } from './scoringPresentation'
 import { battingSide } from './scoringSelectors'
@@ -50,7 +56,9 @@ export function act(next: ScoringSnapshot, action: ScoringAction): Applied {
   if (next.readOnly === true)
     throw new Refused([{ code: 'notNow', message: 'Scoring is read-only' }])
   const before = next.session
-  const applied = applyAction(before, action)
+  // On a copy that shares the finished plays (`copyGame`): `applyAction`'s
+  // own copy is of the whole game, a stall that grew with it.
+  const applied = applyAction(copyGame(before), action, { inPlace: true })
   if (applied.problems.length > 0) throw new Refused(applied.problems)
   next.session = applied.state
   next.log = [...next.log, action]
@@ -388,10 +396,7 @@ export function accepted(
   label: string,
   edit: (next: ScoringState) => void
 ): ScoringState {
-  const next: ScoringState = {
-    ...snapshotOf(state),
-    past: [...state.past, { label, snapshot: snapshotOf(state) }]
-  }
+  const next: ScoringState = { ...snapshotOf(state), ...withStep(state, label) }
   next.celebration = null
   try {
     edit(next)
@@ -450,7 +455,11 @@ export function runnerReducer(
       command.complete
     )
       return state
-    const next = { ...snapshotOf(state), past: state.past }
+    const next = {
+      ...snapshotOf(state),
+      past: state.past,
+      checkpoints: state.checkpoints
+    }
     next.motions.find(motion => motion.id === event.id)!.complete = true
     if (command.purpose === 'approachFirst' && next.pendingPlay != null)
       next.pendingPlay.batterPoint = {

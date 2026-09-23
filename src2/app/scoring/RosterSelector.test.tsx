@@ -6,7 +6,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import { gsBallpark } from '../theme/gsBallpark'
 import { gsDark } from '../theme/gsDark'
 import { changeTheme, ThemeProvider } from '../theme/ThemeContext'
-import { RosterSelector } from './RosterSelector'
+import { rosterNameProps } from './RosterEditor'
+import { RosterSelector, rosterThumbWidth } from './RosterSelector'
 let root: Root | undefined
 let host: HTMLDivElement
 const Harness = (): React.ReactElement => {
@@ -29,6 +30,52 @@ afterEach(async () => {
   root = undefined
 })
 describe('roster selector', function () {
+  it('keeps a phone roster name on one line, and leaves the web wrap alone', function () {
+    expect(rosterNameProps('web')).deep.equals({})
+    for (const os of ['ios', 'android'])
+      expect(rosterNameProps(os)).deep.equals({
+        numberOfLines: 1,
+        adjustsFontSizeToFit: true,
+        minimumFontScale: 0.75
+      })
+  })
+
+  it('sizes the thumb from the measured pill, not a percentage a phone misreads', function () {
+    // Set Lineup / Set Defense on a Pixel: the pill measures 214 dp while the
+    // row offered it 378 dp, and Yoga drew a `50%` thumb 189 dp wide.
+    expect(rosterThumbWidth(214, 2, false)).equals(107)
+    expect(rosterThumbWidth(214, 2, true)).equals(107)
+    expect(rosterThumbWidth(300, 3, false)).equals(100)
+    // Before the first layout a phone draws no thumb; the web's percentage
+    // is resolved against the pill itself and is right from the start.
+    expect(rosterThumbWidth(0, 2, false)).equals(0)
+    expect(rosterThumbWidth(0, 2, true)).equals('50%')
+    expect(rosterThumbWidth(0, 4, true)).equals('25%')
+  })
+
+  it('draws the web thumb over one segment before the pill is measured', async function () {
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <RosterSelector
+            fitContent
+            labels={['Set Lineup', 'Set Defense']}
+            value={0}
+            onChange={() => {}}
+          />
+        </ThemeProvider>
+      )
+    })
+    const thumb = host.querySelector<HTMLElement>(
+      '[data-testid="Roster selector thumb"]'
+    )!
+    expect(thumb.style.width).equals('50%')
+    expect(thumb.style.position).equals('absolute')
+  })
+
   it('uses themed halves and supports tap, immediate swipe, child capture loss and cancellation', async function () {
     host = document.createElement('div')
     document.body.appendChild(host)

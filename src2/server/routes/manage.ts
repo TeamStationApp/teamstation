@@ -1,9 +1,10 @@
-import { asObject, asOptional, asString, asValue } from 'cleaners'
+import { asBoolean, asObject, asOptional, asString, asValue } from 'cleaners'
 import { Router } from 'express'
 import type { Kysely } from 'kysely'
 
 import { badRequest, notFound, unauthorized } from '../../common/errors'
 import { asFenceDistanceBody } from '../../common/fenceDistance'
+import { asRoleFlags, type RoleFlag } from '../../common/roles'
 import { asUserId } from '../../common/userIdNumber'
 import { adminScopes } from '../access'
 import { findUserByEmail } from '../auth/emails'
@@ -18,13 +19,13 @@ import {
   scopeName
 } from '../invites/invites'
 import {
-  addAdmin,
   addToScope,
   pendingInvitations,
   peopleInScope,
-  removeAdmin,
   removeFromScope,
-  scopeTree
+  rolesAt,
+  scopeTree,
+  setScopeRoles
 } from '../invites/people'
 import { cleanBody } from '../jsonBody'
 import { setAudit } from '../middleware/withAudit'
@@ -57,6 +58,11 @@ const asPersonByEmail = asObject({
 
 const asRoleChange = asObject({
   role: asValue('admin', 'member')
+})
+
+const asRolesChange = asObject({
+  admin: asBoolean,
+  flags: asRoleFlags
 })
 
 export interface ManageRouteOptions {
@@ -227,17 +233,82 @@ export function manageRoutes(
   )
 
   /**
-   * What one person is at this level: its administrator, or one of its people.
+   * Somebody who may be given a role here: an account that has not been
+   * merged into another. They are added to the scope as well, so they can
+   * see it: an administrator or a scorekeeper with no membership holds a
+   * role on something they cannot open, which nobody asks for on purpose.
+   */
+  const mustBePerson = async (userId: number): Promise<void> => {
+    const person = await db
+      .selectFrom('users')
+      .select(['id'])
+      .where('id', '=', userId)
+      .where('merged_into', 'is', null)
+      .executeTakeFirst()
+    if (person == null) throw notFound()
+  }
+
+  /**
+   * What one person may do at this level: administer it, and any of the four
+   * role flags, set together.
    *
-   * Only ever at **this** level. A team's page can make somebody a team
-   * administrator and nothing else; the season's page is where a season
-   * administrator is made. That is the same rule the rest of this file
-   * follows, and it is what stops a team's manager quietly gaining the run of
-   * the league by promoting themselves somewhere the page never showed.
+   * Only ever at **this** level. A team's page sets team roles and nothing
+   * else; the season's page is where a season's are set, and they reach its
+   * teams from there. That is the same rule the rest of this file follows,
+   * and it is what stops a team's manager quietly gaining the run of the
+   * league by promoting themselves somewhere the page never showed.
    *
-   * Either answer leaves them able to watch: an administrator with no
-   * membership administers something they cannot see, which is a state nobody
-   * asks for on purpose.
+   * The body is the whole of what they hold here, so an empty list with
+   * `admin: false` takes every role on this level away and leaves them a
+   * member.
+   */
+  router.put(
+    '/manage/:scopeType/:scopeId/people/:userId/roles',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const scopeType = asScopeType(req.params.scopeType)
+      const scopeId = pathParam(req.params.scopeId)
+      const userId = userIdParam(req.params.userId)
+      await mustAdminister(actor.userId, actor.isAdmin, scopeType, scopeId)
+      const body = cleanBody(asRolesChange, req.body)
+
+      // Nobody demotes themselves: it is the one change that cannot be undone
+      // from the screen it was made on.
+      if (userId === actor.userId && !body.admin) {
+        const held = await rolesAt(db, scopeType, scopeId, userId)
+        if (held.includes('admin')) {
+          throw badRequest('You cannot remove yourself as an administrator')
+        }
+      }
+      await mustBePerson(userId)
+
+      const before = await rolesAt(db, scopeType, scopeId, userId)
+      await addToScope(db, scopeType, scopeId, userId)
+      const roles = await setScopeRoles(
+        db,
+        scopeType,
+        scopeId,
+        userId,
+        body,
+        actor.userId
+      )
+
+      setAudit(res.locals, {
+        entityType: 'scopeRoles',
+        entityId: userId,
+        before: { scopeType, scopeId, roles: before },
+        after: { scopeType, scopeId, roles }
+      })
+      res.json({ userId, roles })
+    })
+  )
+
+  /**
+   * The route from before the role flags: `admin` makes somebody this level's
+   * administrator and `member` takes that away, leaving any flags they hold
+   * as they were. Kept so a phone build from before the flags still works.
    */
   router.put(
     '/manage/:scopeType/:scopeId/people/:userId/role',
@@ -251,31 +322,30 @@ export function manageRoutes(
       await mustAdminister(actor.userId, actor.isAdmin, scopeType, scopeId)
       const body = cleanBody(asRoleChange, req.body)
 
-      // Nobody demotes themselves: it is the one change that cannot be undone
-      // from the screen it was made on.
       if (userId === actor.userId && body.role === 'member') {
         throw badRequest('You cannot remove yourself as an administrator')
       }
+      await mustBePerson(userId)
 
-      const person = await db
-        .selectFrom('users')
-        .select(['id'])
-        .where('id', '=', userId)
-        .where('merged_into', 'is', null)
-        .executeTakeFirst()
-      if (person == null) throw notFound()
-
+      const before = await rolesAt(db, scopeType, scopeId, userId)
       await addToScope(db, scopeType, scopeId, userId)
-      if (body.role === 'admin') {
-        await addAdmin(db, scopeType, scopeId, userId, actor.userId)
-      } else {
-        await removeAdmin(db, scopeType, scopeId, userId)
-      }
+      const roles = await setScopeRoles(
+        db,
+        scopeType,
+        scopeId,
+        userId,
+        {
+          admin: body.role === 'admin',
+          flags: before.filter((role): role is RoleFlag => role !== 'admin')
+        },
+        actor.userId
+      )
 
       setAudit(res.locals, {
-        entityType: 'adminRole',
+        entityType: 'scopeRoles',
         entityId: userId,
-        after: { scopeType, scopeId, role: body.role }
+        before: { scopeType, scopeId, roles: before },
+        after: { scopeType, scopeId, roles }
       })
       res.json({ userId, role: body.role })
     })

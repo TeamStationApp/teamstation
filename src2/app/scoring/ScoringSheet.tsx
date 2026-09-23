@@ -16,6 +16,7 @@ import {
 } from 'react-native-safe-area-context'
 
 import { useTheme } from '../theme/ThemeContext'
+import { MODAL_ORIENTATIONS } from './modalOrientations'
 
 export function ScoringButton({
   label,
@@ -161,6 +162,7 @@ export function ScoringSheet({
     <Modal
       transparent={!fullScreen}
       animationType="slide"
+      supportedOrientations={MODAL_ORIENTATIONS}
       onShow={onShow}
       onRequestClose={onClose}
     >

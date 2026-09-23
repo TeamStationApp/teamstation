@@ -19,9 +19,9 @@ import { resolveOpponent } from '../teams/resolveOpponent'
  * Who may write a team's schedule, and into which seasons.
  *
  * `teamAdminIds` are the teams this person administers in their own right —
- * an `admin_roles` team row, or owning or managing it — and not the ones a
- * season or league right carries down, because that right is judged season by
- * season. `seasonIds` are the seasons they administer, a league's included.
+ * an administrator's `scope_roles` team row, or owning or managing it — and
+ * not the ones a season or league right carries down, because that right is
+ * judged season by season. `seasonIds` are the seasons they administer, a league's included.
  */
 export interface ScheduleRights {
   siteAdmin: boolean
@@ -36,10 +36,12 @@ export async function scheduleRights(
 ): Promise<ScheduleRights> {
   const scopes = await adminScopes(db, userId, isAdmin)
   const teamRoles = await db
-    .selectFrom('admin_roles')
+    .selectFrom('scope_roles')
     .select(['scope_id'])
     .where('user_id', '=', userId)
     .where('scope_type', '=', 'team')
+    // A flag row is a coach or a scorekeeper, never the right to schedule.
+    .where('role', '=', 'admin')
     .execute()
   const owned = await db
     .selectFrom('memberships')

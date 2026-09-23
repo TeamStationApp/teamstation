@@ -29,6 +29,8 @@ export interface ListRowProps {
    * what keeps them there when a chevron follows.
    */
   trailing?: string
+  /** Sits where a badge would, ahead of the chevron. */
+  end?: React.ReactNode
   onPress?: () => void
 }
 
@@ -52,6 +54,7 @@ export function ListRow(props: ListRowProps): React.ReactElement {
     badgeLabel,
     badgeTone,
     trailing,
+    end,
     onPress
   } = props
   const theme = useTheme()
@@ -83,6 +86,7 @@ export function ListRow(props: ListRowProps): React.ReactElement {
         </Text>
       )}
       {badgeLabel != null && <Badge label={badgeLabel} tone={badgeTone} />}
+      {end}
       {onPress != null && (
         <Icon name="chevron_right" color={theme.secondaryTextColor} />
       )}

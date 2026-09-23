@@ -5,10 +5,14 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import {
   GameStationClient,
   type InviteInfo,
+  type MyRoles,
   type SeasonSummary,
   type Session,
   type TeamSummary
 } from '../common/api'
+import { GameSocket } from '../common/gameSocket'
+import { coachesTeam, keepsSongs } from '../common/roles'
+import type { WalkUpSong } from '../common/walkUpSong'
 import { gsLogoSource } from './assets'
 import {
   AppHeader,
@@ -47,6 +51,11 @@ import {
   ThemeProvider,
   useTheme
 } from './theme/ThemeContext'
+import { DjGameScreen } from './walkup/DjGameScreen'
+import { resolveSong } from './walkup/resolveSong'
+import walkUpMusic from './walkup/walkUpMusic'
+import { useWalkUpPreferences } from './walkup/walkUpPreferences'
+import { WalkUpSongScreen } from './walkup/WalkUpSongScreen'
 
 export interface AppProps {
   /** Standalone field preview: never contact the API or restore a session. */
@@ -77,6 +86,11 @@ export interface AppProps {
 /** A screen pushed on top of a tab, rather than one of the tabs itself. */
 type Pushed =
   | { name: 'scoreGame'; gameId: string }
+  /**
+   * DJ Game, on a phone. The side showing is kept here, so coming back from
+   * the song picker lands on the list the songkeeper left.
+   */
+  | { name: 'djGame'; gameId: string; side?: 'away' | 'home' }
   | { name: 'season'; season: SeasonSummary; tab?: string; when?: When }
   | { name: 'team'; team: TeamSummary; tab?: string }
   | {
@@ -110,10 +124,23 @@ type Pushed =
       userId: string
       /** The name the tapped row showed, so the header has one immediately. */
       title: string
-      tab?: 'videos' | 'stats'
+      tab?: 'videos' | 'stats' | 'settings' | 'walkup'
       seasonId?: string
       teamId?: string
       year?: number
+      /** The team the page was opened for, which Settings and Walk-up edit. */
+      onTeam?: string
+    }
+  /**
+   * The walk-up song picker, on a phone: a player's song on one team. The
+   * song there is now, if any, so Change opens on its clip.
+   */
+  | {
+      name: 'walkUpSong'
+      teamId: string
+      userId: string
+      playerName: string
+      song: WalkUpSong | null
     }
   /** The page behind the gear on a team, season or league card. */
   | {
@@ -161,6 +188,10 @@ function Shell(props: AppProps): React.ReactElement {
   // What the screen on top has handed up: a team's name, a row of filter
   // pills, a game's score. The header draws it and never anything else.
   const { handoff, setHandoff } = useHandoffSlot()
+  const [backOverride, setBackOverride] = useState<(() => void) | null>(null)
+  const setBack = useCallback((handler: (() => void) | null) => {
+    setBackOverride(() => handler)
+  }, [])
 
   const { initialToken, onToken } = props
   const client = useMemo(
@@ -233,6 +264,51 @@ function Shell(props: AppProps): React.ReactElement {
   })
 
   const needsSession = props.fieldPreview !== true
+
+  /**
+   * The roles the signed-in person holds, team by team, asked once a session.
+   *
+   * For the few things no other answer carries — whether to offer a player's
+   * Settings or Walk-up tab — and never trusted for more than drawing: every write is
+   * decided again on the server. A failure reads as no roles, so the worst it
+   * can do is hide a tab.
+   */
+  const [myRoles, setMyRoles] = useState<MyRoles | undefined>(undefined)
+  const signedInAs = session?.user.id
+
+  /**
+   * The one socket every screen hears a game's changes on, for as long as
+   * somebody is signed in. It connects only once a screen subscribes.
+   */
+  const gameSocket = useMemo(
+    () =>
+      signedInAs == null
+        ? undefined
+        : new GameSocket({ baseUrl: apiBaseUrl, token: client.token }),
+    [apiBaseUrl, client, signedInAs]
+  )
+  useEffect(
+    () => () => {
+      gameSocket?.close()
+    },
+    [gameSocket]
+  )
+  useEffect(() => {
+    setMyRoles(undefined)
+    if (signedInAs == null) return
+    let live = true
+    client
+      .myRoles()
+      .then(roles => {
+        if (live) setMyRoles(roles)
+      })
+      .catch(() => {
+        if (live) setMyRoles({ teams: {} })
+      })
+    return () => {
+      live = false
+    }
+  }, [client, signedInAs])
 
   // The session lives in an `HttpOnly` cookie this code cannot read, so the
   // only way to know is to ask.
@@ -324,6 +400,32 @@ function Shell(props: AppProps): React.ReactElement {
 
   const stack = stacks[tab]
   const top = stack[stack.length - 1]
+
+  // Where the open player page's walk-up song is on this phone. One function
+  // per page, not per render: the tab asks again whenever it changes.
+  const [walkUpSettings] = useWalkUpPreferences()
+  const walkUpTeam = top?.name === 'player' ? top.onTeam : undefined
+  const walkUpPlayer = top?.name === 'player' ? top.userId : undefined
+  // Where a DJ Game row's song is on this phone, for any team's player.
+  const resolveDjSong = useMemo(
+    () =>
+      walkUpMusic.available
+        ? async (song: WalkUpSong, owner: { teamId: string; userId: string }) =>
+            await resolveSong(walkUpMusic, song, owner)
+        : undefined,
+    []
+  )
+  const resolveWalkUp = useMemo(
+    () =>
+      walkUpTeam == null || walkUpPlayer == null || !walkUpMusic.available
+        ? undefined
+        : async (song: WalkUpSong) =>
+            await resolveSong(walkUpMusic, song, {
+              teamId: walkUpTeam,
+              userId: walkUpPlayer
+            }),
+    [walkUpTeam, walkUpPlayer]
+  )
 
   // Keep the address saying where we are. `replace` on the first render so
   // landing on `/` and resolving it does not leave a step for Back to find.
@@ -491,7 +593,7 @@ function Shell(props: AppProps): React.ReactElement {
   const openPlayer = (
     userId: number,
     title: string,
-    from: { seasonId?: string; teamId?: string } = {}
+    from: { seasonId?: string; teamId?: string; onTeam?: string } = {}
   ): void => {
     const narrowed = from.seasonId != null || from.teamId != null
     push({
@@ -500,7 +602,8 @@ function Shell(props: AppProps): React.ReactElement {
       title,
       tab: narrowed ? 'stats' : undefined,
       seasonId: from.seasonId,
-      teamId: from.teamId
+      teamId: from.teamId,
+      onTeam: from.onTeam
     })
   }
   /** The gear on a team, season or league card. */
@@ -650,6 +753,37 @@ function Shell(props: AppProps): React.ReactElement {
           year: top.year
         }}
         onTab={setTopTab}
+        forTeam={top.onTeam}
+        canCoach={
+          top.onTeam == null
+            ? false
+            : myRoles == null
+              ? undefined
+              : coachesTeam(myRoles, top.onTeam)
+        }
+        walkUp={{
+          canEdit:
+            top.onTeam == null
+              ? false
+              : myRoles == null
+                ? undefined
+                : keepsSongs(myRoles, top.onTeam),
+          resolve: resolveWalkUp,
+          onPick:
+            top.onTeam == null || !walkUpMusic.available
+              ? undefined
+              : (song, playerName) => {
+                  push({
+                    name: 'walkUpSong',
+                    teamId: top.onTeam ?? '',
+                    userId: top.userId,
+                    playerName,
+                    song
+                  })
+                },
+          fadeAppleMusic: walkUpSettings.fadeAppleMusic
+        }}
+        music={walkUpMusic}
         onFilter={setPlayerFilter}
         onOpenMoment={(gameId, videoId, atSec, title) => {
           push({
@@ -661,6 +795,22 @@ function Shell(props: AppProps): React.ReactElement {
             autoPlay: true
           })
         }}
+      />
+    ) : top.name === 'walkUpSong' ? (
+      <WalkUpSongScreen
+        client={client}
+        music={walkUpMusic}
+        teamId={top.teamId}
+        userId={top.userId}
+        song={top.song}
+        resolve={async song =>
+          await resolveSong(walkUpMusic, song, {
+            teamId: top.teamId,
+            userId: top.userId
+          })
+        }
+        fadeAppleMusic={walkUpSettings.fadeAppleMusic}
+        onSaved={pop}
       />
     ) : top.name === 'team' ? (
       <TeamScreen
@@ -715,12 +865,58 @@ function Shell(props: AppProps): React.ReactElement {
           })
         }}
       />
+    ) : top.name === 'djGame' && walkUpMusic.available ? (
+      <DjGameScreen
+        client={client}
+        gameId={top.gameId}
+        socket={gameSocket}
+        music={walkUpMusic}
+        fadeAppleMusic={walkUpSettings.fadeAppleMusic}
+        resolve={resolveDjSong}
+        side={top.side}
+        onSide={next => {
+          setStacks(current => {
+            const held = current[tab]
+            const last = held[held.length - 1]
+            if (last?.name !== 'djGame' || last.side === next) return current
+            return {
+              ...current,
+              [tab]: [...held.slice(0, -1), { ...last, side: next }]
+            }
+          })
+        }}
+        onEditSong={(teamId, batter, song) => {
+          push({
+            name: 'walkUpSong',
+            teamId,
+            userId: String(batter.userId),
+            playerName: batter.name,
+            song
+          })
+        }}
+      />
+    ) : top.name === 'djGame' ? (
+      // The web has no music to play, so its DJ Game address shows the game.
+      <GameScreen
+        client={client}
+        gameId={top.gameId}
+        onScoreGame={() => {
+          push({ name: 'scoreGame', gameId: top.gameId })
+        }}
+        onOpenPlayer={openPlayer}
+        onOpenTeam={team => {
+          push({ name: 'team', team })
+        }}
+      />
     ) : top.name === 'scoreGame' ? (
       <ScoringScreen
         userId={session?.user.id}
         client={client}
         source={scoringSource}
         gameId={top.gameId}
+        music={walkUpMusic}
+        resolveSong={resolveDjSong}
+        fadeAppleMusic={walkUpSettings.fadeAppleMusic}
         onExit={() => {
           inPlace.current = true
           goToRoute({ name: 'game', gameId: top.gameId })
@@ -733,6 +929,10 @@ function Shell(props: AppProps): React.ReactElement {
         onScoreGame={() => {
           push({ name: 'scoreGame', gameId: top.gameId })
         }}
+        onDjGame={() => {
+          push({ name: 'djGame', gameId: top.gameId })
+        }}
+        music={walkUpMusic}
         onOpenPlayer={openPlayer}
         onOpenTeam={team => {
           push({ name: 'team', team })
@@ -827,7 +1027,7 @@ function Shell(props: AppProps): React.ReactElement {
           <AppNav mode="header" selected={tab} onSelect={selectTab} />
         ) : undefined
       }
-      onBack={stack.length > 0 ? pop : undefined}
+      onBack={backOverride ?? (stack.length > 0 ? pop : undefined)}
       account={
         session == null || top?.name === 'account'
           ? undefined
@@ -862,6 +1062,7 @@ function Shell(props: AppProps): React.ReactElement {
           <HeaderSlotProvider
             headerHeight={immersiveField ? 0 : headerHeight}
             onHandoff={setHandoff}
+            onBackOverride={setBack}
           >
             <View style={styles.body}>{body}</View>
           </HeaderSlotProvider>
@@ -896,6 +1097,7 @@ export /**
 function stackFor(route: Route): Partial<Record<NavTabId, Pushed[]>> {
   const tab = tabOf(route)
   if (route.name === 'scoreGame') return { [tab]: [route] }
+  if (route.name === 'djGame') return { [tab]: [route] }
   if (route.name === 'game') {
     return {
       [tab]: [
@@ -925,7 +1127,8 @@ function stackFor(route: Route): Partial<Record<NavTabId, Pushed[]>> {
           tab: route.tab,
           seasonId: route.seasonId,
           teamId: route.teamId,
-          year: route.year
+          year: route.year,
+          onTeam: route.onTeam
         }
       ]
     }
@@ -962,6 +1165,7 @@ function tabOf(route: Route): NavTabId {
 function routeOf(tab: NavTabId, top: Pushed | undefined, when?: When): Route {
   if (top != null) {
     if (top.name === 'scoreGame') return top
+    if (top.name === 'djGame') return { name: 'djGame', gameId: top.gameId }
     if (top.name === 'team') {
       return { name: 'team', teamId: top.team.id, tab: top.tab }
     }
@@ -981,7 +1185,8 @@ function routeOf(tab: NavTabId, top: Pushed | undefined, when?: When): Route {
         tab: top.tab,
         seasonId: top.seasonId,
         teamId: top.teamId,
-        year: top.year
+        year: top.year,
+        onTeam: top.onTeam
       }
     }
     if (top.name === 'manage') {
@@ -989,6 +1194,16 @@ function routeOf(tab: NavTabId, top: Pushed | undefined, when?: When): Route {
         name: 'manage',
         scopeKind: top.scopeKind,
         scopeId: top.scopeId
+      }
+    }
+    // The picker has no address of its own: it is a step on the player's
+    // Walk-up tab, which a link opens instead.
+    if (top.name === 'walkUpSong') {
+      return {
+        name: 'player',
+        userId: top.userId,
+        tab: 'walkup',
+        onTeam: top.teamId
       }
     }
     return {
@@ -1019,6 +1234,10 @@ function titleFor(tab: NavTabId, top: Pushed | undefined): string | undefined {
   if (top != null) {
     if (top.name === 'season') return top.season.name
     if (top.name === 'account') return 'Account'
+    if (top.name === 'djGame') return lstrings.dj_game
+    if (top.name === 'walkUpSong') {
+      return sprintf(lstrings.walkup_title, top.playerName)
+    }
     if (top.name === 'manage') {
       return top.title == null
         ? lstrings.manage_open

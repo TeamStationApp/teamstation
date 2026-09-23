@@ -15,9 +15,32 @@ const { getDefaultConfig, mergeConfig } = require('@react-native/metro-config')
  * directories — thousands of files that change on every compile — and the two
  * trees that have nothing to do with this app, GameStation 1.0 in `src/` and
  * the separate native apps in `mobile/`.
+ *
+ * `expo-asset` and `expo-file-system` resolve to one stand-in: Fiber's native
+ * entry imports them, and the app installs no Expo package beyond
+ * `expo-modules-core` and `expo-gl` (see `src2/MOBILE.md`).
+ *
+ * `three` resolves to its ES module. Babel turns every `import` into a
+ * `require`, so Metro asks for the `require` export, and three's CommonJS
+ * entry calls Node's `process.emitWarning` and throws on a phone.
  */
+const expoStandIn = path.resolve(
+  __dirname,
+  'src2/app/native/expoStandIn/assets.js'
+)
 const config = {
   resolver: {
+    resolveRequest: (context, moduleName, platform) => {
+      if (/^expo-(asset|file-system)(\/legacy)?$/.test(moduleName))
+        return { type: 'sourceFile', filePath: expoStandIn }
+      if (moduleName === 'three')
+        return context.resolveRequest(
+          { ...context, unstable_conditionNames: ['import'] },
+          moduleName,
+          platform
+        )
+      return context.resolveRequest(context, moduleName, platform)
+    },
     blockList: [
       new RegExp(`^${escape(path.resolve(__dirname, 'src'))}/.*$`),
       new RegExp(`^${escape(path.resolve(__dirname, 'mobile'))}/.*$`),

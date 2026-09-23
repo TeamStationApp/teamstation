@@ -52,4 +52,13 @@ export interface GlassViewProps extends ViewProps {
    * nothing, which is what the browser effectively does.
    */
   fallbackFill?: boolean
+  /**
+   * Blur what is behind it on Android too, as the web's `backdrop-filter`
+   * does, rather than drawing the filled fallback.
+   *
+   * For a small control over a picture, such as the scoring menu button over
+   * the field. Not for a bar over a scrolling list: Android re-records the
+   * backdrop every frame something beneath it changes.
+   */
+  androidBlur?: boolean
 }

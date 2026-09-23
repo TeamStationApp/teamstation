@@ -6,7 +6,6 @@ import { randomBytes } from 'crypto'
  * shorter than a UUID and safe in a path segment.
  */
 export const idPrefixes = {
-  adminRole: 'adm',
   apiToken: 'atk',
   audit: 'aud',
   authSession: 'ses',
@@ -27,6 +26,7 @@ export const idPrefixes = {
   membership: 'mem',
   playerSeasonStats: 'pss',
   rateEvent: 'rte',
+  scopeRole: 'rol',
   season: 'sea',
   seasonMember: 'smb',
   team: 'tem',

@@ -1,6 +1,18 @@
-pluginManagement { includeBuild("../node_modules/@react-native/gradle-plugin") }
-plugins { id("com.facebook.react.settings") }
+pluginManagement {
+  includeBuild("../node_modules/@react-native/gradle-plugin")
+  // Expo's Gradle plugins, from expo-modules-autolinking; the `expo` package
+  // is not installed (src2/MOBILE.md says why).
+  includeBuild("../node_modules/expo-modules-autolinking/android/expo-gradle-plugin")
+}
+plugins {
+  id("com.facebook.react.settings")
+  id("expo-autolinking-settings")
+}
 extensions.configure(com.facebook.react.ReactSettingsExtension){ ex -> ex.autolinkLibrariesFromCommand() }
+// Adds expo-modules-core and expo-gl as projects; `app/build.gradle` applies
+// `expo-autolinking`, which depends on them and lists their modules.
+expoAutolinking.useExpoModules()
 rootProject.name = 'GameStation'
+expoAutolinking.useExpoVersionCatalog()
 include ':app'
 includeBuild('../node_modules/@react-native/gradle-plugin')

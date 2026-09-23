@@ -11,7 +11,7 @@ import {
   type LiveStream
 } from '../../common/api'
 import { badRequest, notFound, unauthorized } from '../../common/errors'
-import { adminScopes, canSeeGame, visibleScopes } from '../access'
+import { canFilm, canSeeGame, roleScopes, visibleScopes } from '../access'
 import type { Database } from '../db/database'
 import {
   createLiveStream,
@@ -78,7 +78,10 @@ export function liveRoutes(
   const router = Router()
   const { live, sessionSecret, host } = options
 
-  /** The game, and the team of it this person runs — or nothing at all. */
+  /**
+   * The game, and the team of it this person films — a videographer of it,
+   * which its administrators are — or nothing at all.
+   */
   const gameToManage = async (
     userId: number,
     isAdmin: boolean,
@@ -86,11 +89,11 @@ export function liveRoutes(
   ): Promise<{ game: GameRow; teamId: string }> => {
     const game = await loadGame(db, gameId)
     if (game == null) throw notFound()
-    const scopes = await adminScopes(db, userId, isAdmin)
-    // Home first: when somebody runs both teams of a friendly, the stream
+    const scopes = await roleScopes(db, userId, isAdmin)
+    // Home first: when somebody films both teams of a friendly, the stream
     // belongs to the side the game is listed under.
     for (const teamId of [game.homeTeamId, game.awayTeamId]) {
-      if (scopes.isAdmin || scopes.teamIds.has(teamId)) return { game, teamId }
+      if (canFilm(scopes, teamId)) return { game, teamId }
     }
     // 404, not 403: whether a game exists is not something to confirm to
     // somebody who cannot see it.

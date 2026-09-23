@@ -119,10 +119,14 @@ describe('scoring UI updates', () => {
       ]) {
         const button = node(label)!
         expect(style(button).backgroundColor).equals(color)
-        expect(
-          style(button.querySelector('[data-testid="scoring-control-label"]')!)
-            .color
-        ).equals(text)
+        const face = button.querySelector<HTMLElement>(
+          '[data-testid="scoring-control-label"]'
+        )!
+        expect(style(face).color).equals(text)
+        // The label spans the button rather than hugging its widest line,
+        // so Android's rounded-down width cannot wrap a line a third time.
+        expect(style(face).alignSelf, label).equals('stretch')
+        expect(style(face.parentElement!).alignSelf, label).equals('stretch')
       }
       expect(node('Foul Ball')!.textContent).equals('FOUL\nBALL')
       for (const label of ['Swing', 'Bunt']) {
