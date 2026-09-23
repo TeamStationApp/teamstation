@@ -30,10 +30,12 @@ export function applyFieldCamera(
     zoom: number
     tilt?: number
     heightOffset?: number
+    bottomExtension?: number
   }
 ): void {
   const { width, height, view, zoom, tilt = 0, heightOffset = 0 } = options
-  const aspect = Math.max(0.2, width / Math.max(1, height))
+  const referenceHeight = Math.max(1, height - (options.bottomExtension ?? 0))
+  const aspect = Math.max(0.2, width / referenceHeight)
   camera.aspect = aspect
   camera.fov = 43
   camera.near = 2
@@ -69,7 +71,7 @@ export function applyFieldCamera(
     camera.position.set(0, SCOREBOARD_Y, SCOREBOARD_Z + distance)
     camera.lookAt(0, SCOREBOARD_Y, SCOREBOARD_Z)
   } else {
-    const distance = (width < height ? 1.4 : 1) / zoom
+    const distance = (width < referenceHeight ? 1.4 : 1) / zoom
     const center = view === 'infield' ? -24 : -48
     const pose = view === 'infield' ? [37, 54, 55] : [0, 185, -35]
     camera.position.set(
@@ -85,6 +87,9 @@ export function applyFieldCamera(
   camera.position.y = Math.max(3, camera.position.y + heightOffset)
   // Extremely narrow, tall desktop windows can pull the fit camera past 1km.
   camera.far = Math.max(1100, camera.position.length() + 400)
+  camera.clearViewOffset()
+  if (height > referenceHeight)
+    camera.setViewOffset(width, referenceHeight, 0, 0, width, height)
   camera.updateProjectionMatrix()
   camera.updateMatrixWorld()
 }

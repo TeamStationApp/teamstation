@@ -31,5 +31,9 @@
   "src2/app/field/PlayAnimation.tsx",
   "src2/app/field/playAnimationModel.ts",
   "src2/app/field/ballArcModel.ts",
-  "src2/app/field/FieldCanvas.native.tsx"
+  "src2/app/field/FieldCanvas.native.tsx",
+  "src2/app/field/cameraModel.ts",
+  "src2/app/field/interactionAffordances.ts",
+  "src2/app/field/DestinationMarker.tsx",
+  "src2/app/field/BallArc.tsx"
 ]

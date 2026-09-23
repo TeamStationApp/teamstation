@@ -216,7 +216,7 @@ describe('mobile finger clearance', function () {
         TERRAIN.players,
         player.target.z
       ).project(camera)
-      expect(((projected.y - finger.y) * 488) / 2).closeTo(32, 0.001)
+      expect(player.target.z).closeTo(-53.048, 0.001)
       expect(projected.x).closeTo(finger.x, 0.001)
       await renderer.update(
         React.createElement(FieldScene, { ...props, arcMode: 'aim' })
@@ -231,8 +231,8 @@ describe('mobile finger clearance', function () {
         projected
           .set(arc.target.x, TERRAIN.players, arc.target.z)
           .project(camera)
-        expect(((projected.y - finger.y) * 488) / 2).closeTo(
-          pointerType === 'touch' ? 32 : 0,
+        expect(arc.target.z).closeTo(
+          pointerType === 'touch' ? -53.048 : -50,
           0.001
         )
       }

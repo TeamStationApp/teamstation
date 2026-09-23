@@ -52,6 +52,28 @@ afterEach(async () => {
   inputs.splice(0)
 })
 describe('More scoring menu', function () {
+  it('keeps the primary menu left and the child right with dark green focus', async function () {
+    await mount()
+    await click('More')
+    const parent = button('More scoring actions')
+    const width = parent.style.width
+    const left = parent.style.left
+    expect(width).includes('50vw')
+    await act(async () => {
+      button('Put Batter on Base').focus()
+    })
+    expect(button('Put Batter on Base').style.backgroundColor).equals(
+      'rgb(36, 113, 61)'
+    )
+    expect(button('Put Batter on Base').style.color).equals(
+      'rgb(255, 255, 255)'
+    )
+    await click('Put Batter on Base')
+    expect(parent.style.width).equals(width)
+    expect(parent.style.left).equals(left)
+    expect(button('Batter base').style.left).includes('50vw')
+    await click('Dismiss More')
+  })
   for (const native of [false, true])
     it(`groups real scoring actions and confirms placements on ${native ? 'native' : 'web'}`, async function () {
       await mount(native)
@@ -126,7 +148,13 @@ describe('More scoring menu', function () {
       await pointer('pointermove', 50, 680)
       await pointer('pointerup', 50, 680)
       expect(inputs.pop()?.action).equals('Wild Pitch')
+      // iOS Safari can omit the synthetic click after captured release.
+      // The next real tap must still open More on its first press.
+      await pointer('pointerdown', 50, 800)
+      await pointer('pointerup', 50, 800)
       await click('More')
+      expect(button('Wild Pitch')).not.equals(null)
+      await click('Dismiss More')
       hit = []
       await pointer('pointerdown', 50, 800)
       await pointer('pointermove', 50, 700)

@@ -125,7 +125,7 @@ describe('runner decisions', function () {
     })
     await render(initial())
   })
-  it('has only Out for a current-play hold and Done for an unassisted putout', async function () {
+  it('has only Out for a current-play hold and leaves defensive completion to the toast', async function () {
     let state = initial()
     state.session.liveData.linescore.offense.first = playerRef(state.session, 2)
     state = scoringReducer(state, { type: 'RUNNER_PROPOSE', id: 2, to: 1 })
@@ -143,8 +143,7 @@ describe('runner decisions', function () {
       generation: 0
     })
     await render(state)
-    await click('Done')
-    expect(received.at(-1)).deep.equals({ type: 'DEFENDER', generation: 0 })
+    expect(document.querySelector('[aria-label="Done"]')).equals(null)
     await render(initial())
     expect(document.querySelector('[aria-label="Done"]')).equals(null)
   })

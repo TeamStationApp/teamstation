@@ -123,6 +123,8 @@ export const gsBallpark: Theme = {
   scoringInstructionText: '#ffffff',
   scoringCountdownColor: '#f1cf55',
   scoringSafeColor: '#24713d',
+  scoringMenuActiveBackground: '#24713d',
+  scoringMenuActiveText: '#ffffff',
   scoringSafeIdleColor: '#a9d7b5',
   scoringOutColor: '#a83535',
   scoringOutIdleColor: '#e8aaa5',

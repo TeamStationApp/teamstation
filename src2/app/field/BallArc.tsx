@@ -19,7 +19,7 @@ import {
   type BallArcState,
   firstBounceFraction
 } from './ballArcModel'
-import { DestinationMarker } from './DestinationMarker'
+import { DESTINATION_RADIUS, DestinationMarker } from './DestinationMarker'
 import { ARROW_OVERLAY_ORDER, arrowPulse } from './interactionAffordances'
 import { TERRAIN } from './terrain'
 
@@ -141,7 +141,7 @@ export function BallArc({
           (arc.landingHeight ?? TERRAIN.players) + 0.1,
           arc.target.z
         ]}
-        radius={11}
+        radius={DESTINATION_RADIUS}
       />
       {editing && (
         <group

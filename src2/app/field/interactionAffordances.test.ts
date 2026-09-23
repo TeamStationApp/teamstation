@@ -2,21 +2,13 @@ import { create } from '@react-three/test-renderer'
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 import React from 'react'
-import {
-  Mesh,
-  MeshBasicMaterial,
-  PerspectiveCamera,
-  Plane,
-  Raycaster,
-  Vector2,
-  Vector3
-} from 'three'
+import { Mesh, MeshBasicMaterial } from 'three'
 
 import { BallArc } from './BallArc'
 import {
   arrowPulse,
   inArcGrabArea,
-  placementRay,
+  offsetTouchTarget,
   usesTouchPlacement
 } from './interactionAffordances'
 
@@ -35,49 +27,19 @@ describe('touch placement and animated arc affordances', function () {
     expect(inArcGrabArea(-96, -80)).equals(true)
     expect(inArcGrabArea(97, 0)).equals(false)
   })
-  it('lifts touch placement 32 screen pixels at different tilts, zooms, and landing heights', function () {
-    const pointer = new Vector2(0.1, -0.1)
-    for (const height of [488, 682]) {
-      for (const eye of [
-        [0, 100, 100],
-        [40, 180, 100],
-        [0, 80, 160]
-      ]) {
-        const camera = new PerspectiveCamera(43, 390 / height, 2, 1000)
-        camera.position.set(eye[0], eye[1], eye[2])
-        camera.lookAt(0, 0, -40)
-        camera.updateMatrixWorld(true)
-        const raw = new Raycaster()
-        raw.setFromCamera(pointer, camera)
-        for (const elevation of [0.7, 15]) {
-          const ray = placementRay(
-            raw.ray,
-            pointer,
-            camera,
-            height,
-            true,
-            new Raycaster()
-          )
-          const hit = ray.intersectPlane(
-            new Plane(new Vector3(0, 1, 0), -elevation),
-            new Vector3()
-          )
-          if (hit == null) throw new Error('Missed landing plane')
-          hit.project(camera)
-          expect(hit.x).closeTo(pointer.x, 0.000001)
-          expect(((hit.y - pointer.y) * height) / 2).closeTo(32, 0.000001)
-          expect(
-            placementRay(
-              raw.ray,
-              pointer,
-              camera,
-              height,
-              false,
-              new Raycaster()
-            )
-          ).equals(raw.ray)
-        }
-      }
+  it('offsets touch destinations ten feet radially without changing precise inputs', function () {
+    for (const point of [
+      { x: 0, z: 0 },
+      { x: 10, z: -30 },
+      { x: -80, z: -120 }
+    ]) {
+      const offset = offsetTouchTarget(point, true)
+      expect(Math.hypot(offset.x - point.x, offset.z - point.z)).closeTo(
+        3.048,
+        0.000001
+      )
+      expect(offsetTouchTarget(point, false)).deep.equals(point)
+      expect(offset.z).lessThan(point.z)
     }
     expect(usesTouchPlacement('touch', false)).equals(true)
     expect(usesTouchPlacement(undefined, true)).equals(true)

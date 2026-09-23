@@ -12,16 +12,22 @@ export interface ScoreboardBounds {
 }
 export function InstructionToast({
   instruction,
+  detail,
+  finishLabel = 'Finish at-bat',
   remainingMs,
   canFinish = false,
   onFinish,
-  bounds
+  bounds,
+  compact = false
 }: {
   instruction?: string
+  detail?: string
+  finishLabel?: string
   remainingMs?: number
   canFinish?: boolean
   onFinish?: () => void
   bounds?: ScoreboardBounds
+  compact?: boolean
 }): React.ReactElement | null {
   const theme = useTheme()
   if (instruction == null && remainingMs == null) return null
@@ -30,7 +36,7 @@ export function InstructionToast({
       pointerEvents="box-none"
       style={{
         position: 'absolute',
-        top: Math.max(62, bounds?.y ?? 75),
+        top: compact ? (bounds?.y ?? 8) : Math.max(62, bounds?.y ?? 75),
         left: bounds?.x ?? 12,
         right: bounds == null ? 12 : undefined,
         width: bounds?.width,
@@ -38,8 +44,8 @@ export function InstructionToast({
         borderWidth: 2,
         borderColor: theme.scoringInstructionBorder,
         backgroundColor: theme.scoringInstructionBackground,
-        padding: 12,
-        gap: 10
+        padding: compact ? 8 : 12,
+        gap: compact ? 6 : 10
       }}
     >
       <Text
@@ -53,43 +59,60 @@ export function InstructionToast({
       >
         {instruction ?? CORRECTION_INSTRUCTION}
       </Text>
-      {remainingMs != null && (
+      {detail != null && (
+        <Text
+          pointerEvents="none"
+          style={{
+            color: theme.scoringInstructionText,
+            fontFamily: theme.semiBoldTextFont,
+            fontSize: 16
+          }}
+        >
+          {detail}
+        </Text>
+      )}
+      {(remainingMs != null || onFinish != null) && (
         <View
           pointerEvents="box-none"
           style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}
         >
-          <Text
-            pointerEvents="none"
-            accessibilityLabel="Seconds to edit play"
-            style={{
-              color: theme.scoringInstructionText,
-              fontFamily: theme.boldTextFont,
-              fontSize: 18,
-              minWidth: 24
-            }}
-          >
-            {Math.ceil(remainingMs / 1000)}
-          </Text>
-          <View
-            pointerEvents="none"
-            accessibilityRole="progressbar"
-            accessibilityLabel="Time to edit play"
-            aria-valuemin={0}
-            aria-valuemax={10}
-            aria-valuenow={Math.ceil(remainingMs / 1000)}
-            style={{ flex: 1, height: 5 }}
-          >
-            <View
-              style={{
-                height: 5,
-                borderRadius: 3,
-                backgroundColor: theme.scoringCountdownColor,
-                width: `${Math.max(0, Math.min(100, remainingMs / 100))}%`
-              }}
-            />
-          </View>
+          {remainingMs != null && (
+            <>
+              <Text
+                pointerEvents="none"
+                accessibilityLabel="Seconds to edit play"
+                style={{
+                  color: theme.scoringInstructionText,
+                  fontFamily: theme.boldTextFont,
+                  fontSize: 18,
+                  minWidth: 24
+                }}
+              >
+                {Math.ceil(remainingMs / 1000)}
+              </Text>
+              <View
+                pointerEvents="none"
+                accessibilityRole="progressbar"
+                accessibilityLabel="Time to edit play"
+                aria-valuemin={0}
+                aria-valuemax={10}
+                aria-valuenow={Math.ceil(remainingMs / 1000)}
+                style={{ flex: 1, height: 5 }}
+              >
+                <View
+                  style={{
+                    height: 5,
+                    borderRadius: 3,
+                    backgroundColor: theme.scoringCountdownColor,
+                    width: `${Math.max(0, Math.min(100, remainingMs / 100))}%`
+                  }}
+                />
+              </View>
+            </>
+          )}
+          {remainingMs == null && <View style={{ flex: 1 }} />}
           <Pressable
-            accessibilityLabel="Finish at-bat"
+            accessibilityLabel={finishLabel}
             accessibilityRole="button"
             disabled={!canFinish}
             onPress={onFinish}

@@ -110,6 +110,36 @@ describe('runner drag targets', function () {
   })
 })
 describe('scoring instruction and completion toast', function () {
+  it('separates trajectory detail and defensive completion from the countdown', async function () {
+    let finished = 0
+    await render(
+      <InstructionToast
+        instruction="Drag up and down for ball trajectory."
+        detail="45° Fly Ball"
+      />
+    )
+    expect(host.textContent).includes('45° Fly Ball')
+    expect(host.querySelector('[role="progressbar"]')).equals(null)
+    await render(
+      <InstructionToast
+        instruction="Drag the next defender"
+        finishLabel="Finish defensive play"
+        canFinish
+        onFinish={() => {
+          finished++
+        }}
+      />
+    )
+    const done = host.querySelector<HTMLElement>(
+      '[aria-label="Finish defensive play"]'
+    )!
+    expect(done.style.backgroundColor).equals('rgb(36, 113, 61)')
+    expect(host.querySelector('[aria-label="Finish at-bat"]')).equals(null)
+    await act(async () => {
+      done.click()
+    })
+    expect(finished).equals(1)
+  })
   it('uses one clock for the numeric countdown and left-anchored shrinking line', async function () {
     let finished = 0
     const view = (ms: number, enabled = true): React.ReactElement => (

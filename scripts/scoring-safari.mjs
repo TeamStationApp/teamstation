@@ -137,7 +137,8 @@ async function geometry() {
     view: 'home',
     zoom: 1.25,
     tilt: (-11 * Math.PI) / 180,
-    heightOffset: 33
+    heightOffset: 33,
+    bottomExtension: 112
   })
   const project = (point, y = 6) => {
     const p = new Vector3(point.x, y, point.z).project(camera)
@@ -257,7 +258,7 @@ try {
       { x: a.x + (b.x - a.x) * fraction, z: a.z + (b.z - a.z) * fraction },
       TERRAIN.players
     )
-    return { ...p, y: p.y + 32, pause: 700 }
+    return { ...p, y: p.y, pause: 700 }
   }
   await gesture([
     g.project(BASES[1]),
@@ -298,7 +299,7 @@ try {
   const destination = g.project(BASES[1], TERRAIN.players)
   await gesture([
     g.project({ x: 24, z: -23 }),
-    { ...destination, y: destination.y + 32 }
+    { ...destination, y: destination.y }
   ])
   await visible('^Finish at-bat$')
   await shot('throw-out-correction')

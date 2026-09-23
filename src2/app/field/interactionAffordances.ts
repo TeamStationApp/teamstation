@@ -1,6 +1,3 @@
-import { type Camera, type Ray, type Raycaster, Vector2 } from 'three'
-
-export const TOUCH_TARGET_LIFT = 32
 export const ARC_GRAB_HALF_WIDTH = 96
 export const ARC_GRAB_HALF_HEIGHT = 80
 export const ARROW_OVERLAY_ORDER = 1000
@@ -12,25 +9,20 @@ export function usesTouchPlacement(
   if (pointerType === 'mouse' || pointerType === 'pen') return false
   return pointerType === 'touch' || mobileHint
 }
-/** Offset in screen pixels before intersecting the field or seats, so tilt,
- * zoom, and landing height do not change the amount of finger clearance. */
-export function placementRay(
-  raw: Ray,
-  pointer: { x: number; y: number },
-  camera: Camera,
-  height: number,
-  touch: boolean,
-  caster: Raycaster
-): Ray {
-  if (!touch) return raw
-  caster.setFromCamera(
-    new Vector2(
-      pointer.x,
-      pointer.y + (2 * TOUCH_TARGET_LIFT) / Math.max(1, height)
-    ),
-    camera
-  )
-  return caster.ray
+/** World-space finger clearance, measured in metres (10 feet). */
+export const TOUCH_TARGET_DISTANCE = 3.048
+export function offsetTouchTarget(
+  point: { x: number; z: number },
+  touch: boolean
+): { x: number; z: number } {
+  if (!touch) return { ...point }
+  const length = Math.hypot(point.x, point.z)
+  return length < 0.001
+    ? { x: point.x, z: point.z - TOUCH_TARGET_DISTANCE }
+    : {
+        x: point.x + (point.x / length) * TOUCH_TARGET_DISTANCE,
+        z: point.z + (point.z / length) * TOUCH_TARGET_DISTANCE
+      }
 }
 export function inArcGrabArea(dx: number, dy: number): boolean {
   return (

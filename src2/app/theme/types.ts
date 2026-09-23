@@ -63,6 +63,8 @@ export interface Theme {
   scoringInstructionBorder: string
   scoringInstructionText: string
   scoringCountdownColor: string
+  scoringMenuActiveBackground: string
+  scoringMenuActiveText: string
   scoringSafeColor: string
   scoringSafeIdleColor: string
   scoringOutColor: string

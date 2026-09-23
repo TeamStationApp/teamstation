@@ -12,6 +12,48 @@ import {
 } from './cameraModel'
 
 describe('field camera controls', function () {
+  it('extends only the bottom while retaining world scale and reference pixels', function () {
+    for (const [width, height] of [
+      [320, 520],
+      [390, 600],
+      [874, 180]
+    ]) {
+      const old = new PerspectiveCamera()
+      const extended = new PerspectiveCamera()
+      const options = {
+        width,
+        height,
+        view: 'home' as const,
+        zoom: 1.25,
+        tilt: (-11 * Math.PI) / 180,
+        heightOffset: 33
+      }
+      applyFieldCamera(old, options)
+      applyFieldCamera(extended, {
+        ...options,
+        height: height + 112,
+        bottomExtension: 112
+      })
+      expect(old.position.distanceTo(extended.position)).lessThan(0.000001)
+      expect(old.quaternion.angleTo(extended.quaternion)).lessThan(0.000001)
+      for (const point of [
+        new Vector3(0, 0, 0),
+        new Vector3(19, 9, -19),
+        new Vector3(0, 28, -135)
+      ]) {
+        const a = point.clone().project(old)
+        const b = point.clone().project(extended)
+        expect(((a.x + 1) * width) / 2).closeTo(((b.x + 1) * width) / 2, 0.001)
+        expect(((1 - a.y) * height) / 2).closeTo(
+          ((1 - b.y) * (height + 112)) / 2,
+          0.001
+        )
+        expect(b.clone().unproject(extended).distanceTo(point)).lessThan(
+          0.00001
+        )
+      }
+    }
+  })
   it('maps drag directions and bounds long gestures', function () {
     expect(cameraDragValue('tilt', 0, 100)).greaterThan(0)
     expect(cameraDragValue('tilt', 0, -100)).lessThan(0)

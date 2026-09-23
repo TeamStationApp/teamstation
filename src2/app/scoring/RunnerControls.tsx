@@ -40,17 +40,6 @@ export function RunnerControls({
         ))}
       </ScoringSheet>
     )
-  if (state.phase === 'chooseDefender')
-    return (
-      <View style={{ position: 'absolute', bottom: 130, alignSelf: 'center' }}>
-        <ScoringButton
-          label="Done"
-          onPress={() => {
-            dispatch({ type: 'DEFENDER', generation: state.generation })
-          }}
-        />
-      </View>
-    )
   const home = state.phase === 'homeDecision'
   if (!home && (state.phase !== 'runnerDecision' || action == null)) return null
   const id = home ? state.homeQueue[0] : action!.playerId
