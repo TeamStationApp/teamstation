@@ -7,6 +7,7 @@ import path from 'node:path'
 import express from 'express'
 
 import { makeDatabase } from './db/database'
+import { purgeReplacedRecordings } from './director/purge'
 import { reopenInterruptedUploads } from './director/uploads'
 import {
   mailConfigured,
@@ -20,6 +21,7 @@ import {
 } from './live/controller'
 import { livingWorkers } from './livingWorkers'
 import type { MediaContext } from './media/mediaContext'
+import { spaceConfigured } from './media/spacesHls'
 import { withAudit } from './middleware/withAudit'
 import { withActor } from './middleware/withAuth'
 import { withCors } from './middleware/withCors'
@@ -268,6 +270,48 @@ function reopenInterrupted(db: ReturnType<typeof makeDatabase>): void {
     })
 }
 
+/** How often replaced recordings whose month is up are looked for. */
+const PURGE_INTERVAL_MS = 6 * 60 * 60 * 1000
+
+/**
+ * Deletes recordings an upload replaced, once their month is up.
+ *
+ * On the way up as well as on the timer: a server that was off for a week comes
+ * back with a week of recordings owed a deletion, and waiting six hours to
+ * start is six hours of a Space being paid for copies on no page.
+ *
+ * Only where a Space is configured — with local storage there is nothing to
+ * be charged for and nothing to delete remotely.
+ */
+function startPurge(db: ReturnType<typeof makeDatabase>): void {
+  // Off unless this deployment says so: deleting from a bucket another
+  // deployment also serves would delete bytes it still needs. See
+  // `purgeReplacedRecordings` in serverConfig.
+  if (!serverConfig.purgeReplacedRecordings) return
+  if (!spaceConfigured(serverConfig.space)) return
+  const sweep = (): void => {
+    purgeReplacedRecordings({
+      db,
+      space: serverConfig.space,
+      mediaDir: serverConfig.mediaDir,
+      log: message => {
+        console.log(message)
+      }
+    })
+      .then(gone => {
+        if (gone.length > 0) {
+          console.log(`purged ${gone.length} replaced recording(s)`)
+        }
+      })
+      .catch((error: unknown) => {
+        console.error(`purging replaced recordings: ${String(error)}`)
+      })
+  }
+  sweep()
+  const timer = setInterval(sweep, PURGE_INTERVAL_MS)
+  timer.unref?.()
+}
+
 function runPrimary(workerCount: number): void {
   // Before forking, so every worker inherits the same one.
   resolveMediaSecret()
@@ -275,6 +319,7 @@ function runPrimary(workerCount: number): void {
   const liveDb = makeDatabase(serverConfig.databaseUrl)
   startLive(liveDb)
   reopenInterrupted(liveDb)
+  startPurge(liveDb)
   console.log(`gamestation ${VERSION}: forking ${workerCount} workers`)
   for (let i = 0; i < workerCount; i++) cluster.fork()
 
@@ -437,6 +482,7 @@ function runWorker(): void {
   if (cluster.isPrimary) {
     startLive(db)
     reopenInterrupted(db)
+    startPurge(db)
   }
 
   let closing = false

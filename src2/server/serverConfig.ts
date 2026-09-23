@@ -138,6 +138,18 @@ export const asServerConfig = asObject({
    */
   serveMediaLocally: asOptional(asBoolean, false),
 
+  /**
+   * Whether this deployment deletes recordings an upload replaced, once their
+   * month is up.
+   *
+   * **Off by default, and it has to be, because a bucket may be shared.**
+   * Another deployment may hold rows naming the same objects, and one that
+   * swept would delete bytes the other is serving. The deletion is real and
+   * irreversible, so it is opt-in per deployment rather than something a
+   * branch can switch on by being deployed.
+   */
+  purgeReplacedRecordings: asOptional(asBoolean, false),
+
   /** Origins the app may call the API from. */
   corsOrigins: asOptional(asArray(asString), [
     'http://localhost:8080',
