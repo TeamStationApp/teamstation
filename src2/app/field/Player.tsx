@@ -68,13 +68,24 @@ export function Player({
   const showLabel = player.suppressed !== true && hasPlayerLabel(player)
   const labels = useMemo(
     () => ({
-      badge: showLabel ? makePlayerLabel(player.displayName, true) : null,
+      badge: showLabel
+        ? makePlayerLabel(
+            `${player.hasBall === true ? '⚾ ' : ''}${player.displayName}`,
+            true
+          )
+        : null,
       jersey:
         player.jersey === '' || player.suppressed === true
           ? null
           : makePlayerLabel(player.jersey, false)
     }),
-    [player.jersey, player.displayName, player.suppressed, showLabel]
+    [
+      player.jersey,
+      player.displayName,
+      player.suppressed,
+      player.hasBall,
+      showLabel
+    ]
   )
   useEffect(
     () => () => {
@@ -218,6 +229,23 @@ export function Player({
         ref={root}
         position={[player.position.x, TERRAIN.players, player.position.z]}
       >
+        {player.hasBall === true &&
+          [0, 1, 2, 3].map(index => (
+            <mesh
+              key={`possession-${index}`}
+              name="possession-ring"
+              rotation={[-Math.PI / 2, 0, 0]}
+              position={[0, 0.04 + index * 0.003, 0]}
+            >
+              <ringGeometry args={[2 + index, 2.35 + index, 48]} />
+              <meshBasicMaterial
+                color="#ffffff"
+                transparent
+                opacity={1 - index * 0.17}
+                depthWrite={false}
+              />
+            </mesh>
+          ))}
         {selected &&
           [0, 1, 2, 3].map(index => (
             <mesh
@@ -338,6 +366,12 @@ export function Player({
               )}
             </group>
             <group ref={rightArm} position={[0.56, 1.93, 0]}>
+              {player.hasBall === true && (
+                <mesh name="possession-ball" position={[0, -0.84, 0.17]}>
+                  <sphereGeometry args={[0.25, 12, 8]} />
+                  <meshStandardMaterial color="#fff7de" />
+                </mesh>
+              )}
               <Part
                 position={[0, -0.22, 0]}
                 size={[0.36, 0.6, 0.4]}

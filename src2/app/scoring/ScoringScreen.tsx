@@ -324,7 +324,7 @@ function ScoringSession(props: {
           : state.phase === 'chooseThrower'
             ? 'Tap and Drag Thrower.'
             : state.phase === 'chooseDefender'
-              ? 'Tap and Drag Defender or Hit Done if the same defender created the out'
+              ? 'Tap and drag the next defender, or hit Done to finish the out.'
               : state.phase === 'resolveBatter'
                 ? unresolvedRunner?.from === 0
                   ? 'Drag batter to a base, or hold to mark Out'
@@ -413,7 +413,10 @@ function ScoringSession(props: {
                     state.phase
                   )
                 ? players
-                    .filter(player => player.team !== 'runner')
+                    .filter(
+                      player =>
+                        player.team !== 'runner' && player.hasBall !== true
+                    )
                     .map(player => player.id)
                 : [
                     ...runnerIds,
@@ -577,13 +580,16 @@ function ScoringSession(props: {
       }
       canFinish={
         (state.phase === 'correctionWindow' ||
-          state.phase === 'chooseDefender') &&
+          (state.phase === 'chooseDefender' &&
+            state.runnerAction?.thrower != null)) &&
         !menu &&
         sheet == null &&
         !outcomeMenu &&
         !gestureActive &&
         state.presentation == null &&
-        !state.motions.some(motion => !motion.complete)
+        !state.motions.some(
+          motion => !motion.complete && motion.purpose !== 'approachFirst'
+        )
       }
       onFinish={
         state.phase !== 'chooseDefender' && state.phase !== 'correctionWindow'

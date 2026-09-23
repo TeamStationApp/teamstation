@@ -1,7 +1,7 @@
 import { BASES, type GroundPoint } from '../field/fieldModel'
 import { asScoringPlay } from './scoringContract'
 import { accepted, copyState, nextHalf, snapshotOf } from './scoringMachine'
-import { throwPresentation } from './scoringPresentation'
+import { throwPresentation, type ThrowSequence } from './scoringPresentation'
 import { baseIds, battingSide, playerRef } from './scoringSelectors'
 import {
   type Movement,
@@ -147,7 +147,11 @@ export function recordRunner(
     runScored: !out && movement.to === 4,
     credits: record.credits,
     throwerLocation: state.runnerAction?.throwerPoint,
-    defenderLocation: state.runnerAction?.defenderPoint
+    defenderLocation: state.runnerAction?.defenderPoint,
+    defensiveRoute: state.runnerAction?.defensiveRoute?.map(hop => ({
+      player: playerRef(session, hop.id)!,
+      location: hop.point
+    }))
   })
   play.count = {
     balls: session.liveData.linescore.balls,
@@ -395,7 +399,7 @@ export function prepareBatterResult(state: ScoringState): void {
       reason: pending.outcome,
       thrower: pending.fielder
     }
-    if (pending.outcome === 'Throw Out') state.phase = 'chooseDefender'
+    if (pending.outcome === 'Throw Out') beginDefense(state)
     else finishOut(state, pending.fielder!)
   } else settleRunners(state)
 }
@@ -437,7 +441,7 @@ export function homeBackProposal(state: ScoringState): Movement[] | null {
     .map(move => move.to)
   return new Set(occupied).size === occupied.length ? moves : null
 }
-function finishOut(state: ScoringState, defender: number): void {
+export function finishOut(state: ScoringState, defender: number): void {
   const action = state.runnerAction!
   const pending = state.pendingPlay
   const line = state.session.liveData.linescore
@@ -467,9 +471,18 @@ function finishOut(state: ScoringState, defender: number): void {
   else pending?.movements.push(movement)
   setBase(state, action.playerId, 0)
   recordRunner(state, movement, action.reason ?? 'Out', [
-    ...(action.thrower != null && action.thrower !== defender
-      ? [{ id: action.thrower, credit: 'f_assist' as const }]
-      : []),
+    ...Array.from(
+      new Set(
+        (
+          action.defensiveRoute ??
+          (action.thrower == null ? [] : [{ id: action.thrower }])
+        )
+          .slice(0, action.defensiveRoute == null ? undefined : -1)
+          .map(hop => hop.id)
+      )
+    )
+      .filter(id => action.defensiveRoute != null || id !== defender)
+      .map(id => ({ id, credit: 'f_assist' as const })),
     { id: defender, credit: 'f_putout' }
   ])
   actionEvent(state, action.playerId, action.reason ?? 'Out')
@@ -520,6 +533,56 @@ function validDefender(
       player => player?.id === id
     )
   )
+}
+export function beginDefense(state: ScoringState): void {
+  const action = state.runnerAction!
+  const pending = state.pendingPlay
+  const holder = pending?.ballHolder ?? pending?.fielder
+  const point = pending?.ballLocation ?? pending?.location
+  if (action.origin === 'current' && holder != null && point != null) {
+    action.thrower = holder
+    action.throwerPoint = { ...point }
+    action.defensiveRoute = [{ id: holder, point: { ...point } }]
+    state.phase = 'chooseDefender'
+  } else state.phase = 'chooseThrower'
+}
+export function completeDefense(
+  state: ScoringState,
+  sequence: ThrowSequence
+): void {
+  const action = state.runnerAction!
+  const point = { x: sequence.to.x, z: sequence.to.z }
+  if (sequence.stage === 'transfer') {
+    action.defensiveRoute ??= [
+      { id: sequence.thrower, point: { ...sequence.holderOrigin } }
+    ]
+    action.defensiveRoute.push({ id: sequence.receiver, point })
+    if (state.pendingPlay != null) {
+      state.pendingPlay.ballHolder = sequence.receiver
+      state.pendingPlay.ballLocation = { ...point }
+      if (action.purpose === 'batterRetirement') {
+        state.pendingPlay.batterPoint = { ...sequence.runnerFrom }
+        approachFirst(state, action.playerId, sequence.runnerFrom, {
+          x: BASES[1].x * 0.96,
+          z: BASES[1].z * 0.96
+        })
+      }
+    }
+    state.phase = 'chooseDefender'
+    return
+  }
+  action.defender = sequence.receiver
+  action.defenderPoint = point
+  action.runnerPoint = point
+  const last = action.defensiveRoute?.at(-1)
+  if (last != null) last.point = { ...point }
+  if (state.pendingPlay != null) {
+    state.pendingPlay.ballHolder = sequence.receiver
+    state.pendingPlay.ballLocation = { ...point }
+    if (action.purpose === 'batterRetirement')
+      state.pendingPlay.batterPoint = { ...point }
+  }
+  finishOut(state, sequence.receiver)
 }
 export function runnerReasons(state: ScoringState): string[] {
   if (state.moreDraft != null) return [state.moreDraft.action]
@@ -710,7 +773,7 @@ export function runnerReducer(
           !(event.decision === 'safe' && action.from === action.to)
         )
           next.phase = 'runnerReason'
-        else if (event.decision === 'out') next.phase = 'chooseThrower'
+        else if (event.decision === 'out') beginDefense(next)
         else {
           next.runnerAction!.reason =
             action.from === action.to ? 'Safe from Pickoff' : 'Advance'
@@ -727,7 +790,7 @@ export function runnerReducer(
       return state
     return accepted(state, event.reason, next => {
       next.runnerAction!.reason = event.reason
-      if (next.runnerAction!.decision === 'out') next.phase = 'chooseThrower'
+      if (next.runnerAction!.decision === 'out') beginDefense(next)
       else commitSafe(next)
     })
   }
@@ -746,16 +809,24 @@ export function runnerReducer(
       next => {
         next.runnerAction!.thrower = event.id
         next.runnerAction!.throwerPoint = { ...event.point }
+        next.runnerAction!.defensiveRoute = [
+          { id: event.id, point: { ...event.point } }
+        ]
         next.phase = 'chooseDefender'
       }
     )
   }
   if (event.type === 'DEFENDER') {
-    const id = event.id ?? state.runnerAction?.thrower
+    const action = state.runnerAction
+    const holder = action?.defensiveRoute?.at(-1)?.id ?? action?.thrower
+    const id = event.id ?? holder
     if (
       state.phase !== 'chooseDefender' ||
+      state.presentation != null ||
       event.generation !== state.generation ||
       !validDefender(state, id) ||
+      !validDefender(state, holder) ||
+      (event.id != null && event.id === holder) ||
       (event.point != null &&
         (!Number.isFinite(event.point.x) || !Number.isFinite(event.point.z))) ||
       (event.runnerPoint != null &&
@@ -765,18 +836,20 @@ export function runnerReducer(
       return state
     return accepted(
       state,
-      `Out by ${state.session.gameData.players[id].fullName}`,
+      event.id == null
+        ? `Out by ${state.session.gameData.players[id].fullName}`
+        : `Throw to ${state.session.gameData.players[id].fullName}`,
       next => {
-        next.runnerAction!.runnerPoint = event.runnerPoint
-        if (state.presentationEnabled === true)
-          next.presentation = throwPresentation(next, id, event.point)
-        next.runnerAction!.defender = id
-        next.runnerAction!.defenderPoint =
-          event.point ??
-          (next.presentation?.kind === 'throw'
-            ? { x: next.presentation.to.x, z: next.presentation.to.z }
-            : undefined)
-        finishOut(next, id)
+        next.runnerAction!.runnerPoint =
+          event.runnerPoint ?? next.runnerAction!.runnerPoint
+        const sequence = throwPresentation(
+          next,
+          id,
+          event.point,
+          event.id == null
+        )
+        if (next.presentationEnabled === true) next.presentation = sequence
+        else completeDefense(next, sequence)
       }
     )
   }
@@ -836,7 +909,7 @@ export function runnerReducer(
             decision: 'out',
             reason: 'Out at home'
           }
-          next.phase = 'chooseThrower'
+          beginDefense(next)
           return
         }
         const move = next.pendingPlay!.movements.find(

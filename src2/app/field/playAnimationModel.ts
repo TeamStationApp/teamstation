@@ -128,11 +128,20 @@ export function sampleThrow(
     (time - (sequence.unassisted ? 0 : 150)) /
       (sequence.durationMs - (sequence.unassisted ? 0 : 150))
   )
-  const ball = lerp(sequence.from, sequence.to, t)
+  const ball =
+    !sequence.unassisted && time < 150
+      ? pitchingHand(
+          sequence.holderOrigin,
+          time,
+          150,
+          sequence.throwSide,
+          sequence.heading
+        )
+      : lerp(sequence.from, sequence.to, t)
   ball.y += Math.sin(t * Math.PI) * (sequence.unassisted ? 0 : 3)
   return {
     ball,
-    visible: !sequence.unassisted && time >= 150 && time < sequence.durationMs,
+    visible: !sequence.unassisted && time < sequence.durationMs,
     progress: t,
     swing: 0
   }

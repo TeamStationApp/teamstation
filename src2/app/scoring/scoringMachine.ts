@@ -2,6 +2,7 @@ import { acceptTrajectory, chooseOutcome, placeFielder } from './battedBall'
 import { moreReducer } from './moreActions'
 import {
   approachFirst,
+  completeDefense,
   prepareTerminalPitch,
   runnerReducer
 } from './runnerRules'
@@ -154,6 +155,8 @@ function runnerTransition(
     }
   const draft = state.runnerDraft
   if (draft == null) return result
+  if (event.type === 'DEFENDER' && result.phase === 'chooseDefender')
+    return result
   if (
     [
       'runnerDecision',
@@ -209,6 +212,22 @@ export function scoringReducer(
     )
       return state
     const next = { ...snapshotOf(state), past: state.past, presentation: null }
+    if (sequence.kind === 'throw') {
+      completeDefense(next, sequence)
+      if (sequence.stage === 'tag' && next.runnerDraft != null) {
+        const draft = next.runnerDraft
+        next.past = [
+          ...next.past.slice(0, draft.historyLength),
+          {
+            label: `Out by ${next.session.gameData.players[sequence.receiver].fullName}`,
+            snapshot: copyState(draft.checkpoint)
+          }
+        ]
+        next.session.meta.sequence = draft.checkpoint.session.meta.sequence + 1
+        delete next.runnerDraft
+        delete next.moreDraft
+      }
+    }
     if (sequence.kind === 'hit' && sequence.out) {
       const point = outBatterPoint(sequence)
       if (next.pendingPlay != null) next.pendingPlay.batterPoint = point
@@ -231,7 +250,9 @@ export function scoringReducer(
   }
   if (
     state.presentation != null &&
-    !['UNDO', 'GESTURE'].includes(event.type) &&
+    !['UNDO', 'GESTURE', 'RUNNER_CANCEL', 'CANCEL_RUNNER'].includes(
+      event.type
+    ) &&
     !(
       event.type === 'MOTION_DONE' &&
       state.presentation.kind === 'hit' &&
@@ -248,7 +269,12 @@ export function scoringReducer(
     event.type === 'RUNNER_CANCEL' ||
     event.type === 'CANCEL_RUNNER' ||
     (event.type === 'UNDO' &&
-      (state.runnerDraft != null || state.moreDraft != null))
+      (state.runnerDraft != null || state.moreDraft != null) &&
+      !(
+        state.phase === 'chooseDefender' &&
+        (state.runnerAction?.defensiveRoute?.length ?? 0) > 0 &&
+        state.past.length > (state.runnerDraft?.historyLength ?? 0)
+      ))
   )
     return cancelRunnerDraft(state)
   if (

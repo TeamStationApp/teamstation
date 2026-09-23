@@ -293,7 +293,7 @@ try {
   await tap('Batter Out')
   await tap('Throw Out')
   await fieldAndTrajectory()
-  await visible('Tap and Drag Defender or Hit Done')
+  await visible('Tap and drag the next defender')
   await shot('receiver-choice')
   g = await geometry()
   const destination = g.project(BASES[1], TERRAIN.players)
@@ -301,6 +301,8 @@ try {
     g.project({ x: 24, z: -23 }),
     { ...destination, y: destination.y }
   ])
+  await visible('Tap and drag the next defender')
+  await tap('Finish defensive play')
   await visible('^Finish at-bat$')
   await shot('throw-out-correction')
   await visible('Batter Player 3')

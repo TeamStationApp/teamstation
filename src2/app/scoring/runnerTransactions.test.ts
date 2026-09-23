@@ -61,6 +61,10 @@ describe('atomic runner drafts', function () {
           point: { x: 0, z: -38 },
           generation: draft.generation
         })
+        draft = scoringReducer(draft, {
+          type: 'DEFENDER',
+          generation: draft.generation
+        })
       }
       expect(draft.past).has.length(before.past.length + 1)
       draft = completeMotions(draft)

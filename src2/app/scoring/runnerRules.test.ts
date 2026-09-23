@@ -62,9 +62,13 @@ function retire(state: ScoringState, defender = 11): ScoringState {
     point: { x: 0, z: -20 },
     generation: state.generation
   })
-  return scoringReducer(state, {
+  state = scoringReducer(state, {
     type: 'DEFENDER',
     id: defender,
+    generation: state.generation
+  })
+  return scoringReducer(state, {
+    type: 'DEFENDER',
     generation: state.generation
   })
 }

@@ -194,10 +194,26 @@ describe('rendered defensive transfers', function () {
         const ball = renderer.scene.findByProps({ name: 'animated-baseball' })
           .instance as Mesh
         expect(ball.visible).equals(!unassisted)
-        if (unassisted)
+        if (unassisted) {
+          const runner = players.find(p => p.playerId === sequence.runner)!
+          const defender = players.find(p => p.playerId === sequence.thrower)!
+          const progress =
+            (defender.position.z - sequence.holderOrigin.z) /
+            (sequence.to.z - sequence.holderOrigin.z)
+          expect(runner.position.x).closeTo(
+            sequence.runnerFrom.x +
+              (sequence.to.x - sequence.runnerFrom.x) * progress,
+            0.00001
+          )
+          expect(runner.position.z).closeTo(
+            sequence.runnerFrom.z +
+              (sequence.to.z - sequence.runnerFrom.z) * progress,
+            0.00001
+          )
           expect(
             players.find(p => p.playerId === sequence.thrower)!.pose!.run
           ).equals(1)
+        }
         await renderer.advanceFrames(200, 0.05)
         expect(complete).equals(1)
         expect(ball.position.x).closeTo(sequence.to.x, 0.001)

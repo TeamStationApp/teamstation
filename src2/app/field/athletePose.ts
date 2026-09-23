@@ -105,9 +105,13 @@ export function pitchingHand(
   origin: GroundPoint,
   time: number,
   release: number,
-  side: 'R' | 'L'
+  side: 'R' | 'L',
+  heading = 0
 ): Point3 {
-  const hand = pitchingPose(time, release, side).hands[side === 'R' ? 1 : 0]
+  const hand = yaw(
+    pitchingPose(time, release, side).hands[side === 'R' ? 1 : 0],
+    heading
+  )
   return {
     x: origin.x + hand[0] * PLAYER_SCALE,
     y: TERRAIN.players + hand[1] * PLAYER_SCALE,

@@ -237,6 +237,15 @@ describe('defensive presentation barriers', function () {
             generation: 0,
             stage: 'transfer'
           })
+          expect(state.session.liveData.linescore.outs).equals(0)
+          state = scoringReducer(state, { type: 'DEFENDER', generation: 0 })
+          const tag = state.presentation!
+          state = scoringReducer(state, {
+            type: 'PRESENTATION_DONE',
+            id: tag.id,
+            generation: 0,
+            stage: tag.stage
+          })
         }
         const motion = state.motions.find(m => m.playerId === hit.batter)!
         expect(motion.waypoints[0]).deep.equals(state.pendingPlay!.batterPoint)
@@ -298,11 +307,9 @@ describe('defensive presentation barriers', function () {
           .position
       ).deep.equals(visible)
       expect(
-        state.motions.find(m => m.playerId === approach.playerId)!.waypoints[0]
+        state.presentation!.kind === 'throw' && state.presentation!.runnerFrom
       ).deep.equals(visible)
-      expect(state.motions.some(m => m.purpose === 'approachFirst')).equals(
-        false
-      )
+      expect(state.session.liveData.linescore.outs).equals(0)
     })
   it('uses an unassisted touch without a self-throw and invalidates it on undo', function () {
     let state = initial()
@@ -330,10 +337,8 @@ describe('defensive presentation barriers', function () {
     if (seq.kind !== 'throw') throw new Error('Expected throw')
     expect(seq.unassisted).equals(true)
     expect(
-      state.session.liveData.plays.currentPlay!.source.gamestation.runnerActions!.at(
-        -1
-      )!.defenderLocation
-    ).deep.equals({ x: seq.to.x, z: seq.to.z })
+      state.session.liveData.plays.currentPlay!.source.gamestation.runnerActions
+    ).equals(undefined)
     const clock = presentationRuntime()
     expect(
       stepPresentation(clock, seq, seq.durationMs, false).cues

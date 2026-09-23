@@ -24,6 +24,7 @@ export function AthleteRig({
     if (root.current == null) return
     root.current.visible = pose != null
     if (pose == null) return
+    root.current.rotation.y = player.pose?.athleteHeading ?? 0
     const set = (name: string, from: Joint, to: Joint): void => {
       const object = root.current!.getObjectByName(name)!
       const a = new Vector3(...from)

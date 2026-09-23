@@ -277,10 +277,12 @@ describe('scoring browser', function () {
             audio: true
           })
         await page.keyboard.press('Enter')
-        await page.waitForSelector('[aria-label^="Tap and Drag Defender"]')
+        await page.waitForSelector(
+          '[aria-label^="Tap and drag the next defender"]'
+        )
         expect(await page.$('[aria-label="Time to edit play"]')).equals(null)
         if (assisted) await placeDefenderWithKeyboard(page, true)
-        else await click(page, 'Finish defensive play')
+        await click(page, 'Finish defensive play')
         expect(await page.$('[aria-label="Time to edit play"]')).equals(null)
         await page.waitForSelector('[aria-label="Time to edit play"]', {
           timeout: 30000
@@ -294,6 +296,33 @@ describe('scoring browser', function () {
         await page.close()
       }
     })
+  it('chains three recipients with no intermediate out and finishes from the toast', async function () {
+    const { page } = await open('/games/g1/score')
+    try {
+      await chooseHit(page, 'Single')
+      await page.waitForSelector('[aria-label="Time to edit play"]', {
+        timeout: 30000
+      })
+      await dropRunnerWithKeyboard(page, 'Out', true)
+      await page.waitForSelector(
+        '[aria-label^="Tap and drag the next defender"]'
+      )
+      expect(await page.$('[aria-label^="Tap and Drag Thrower"]')).equals(null)
+      for (let n = 0; n < 3; n++) {
+        await placeDefenderWithKeyboard(page, n % 2 === 0)
+        await page.waitForSelector(
+          '[aria-label^="Tap and drag the next defender"]',
+          { timeout: 30000 }
+        )
+        expect(await page.$('[aria-label="Time to edit play"]')).equals(null)
+      }
+      await click(page, 'Finish defensive play')
+      await page.waitForSelector('[aria-label*="1 outs"]', { timeout: 30000 })
+      expect(await page.$('[aria-label="Done"]')).equals(null)
+    } finally {
+      await page.close()
+    }
+  })
   it('recovers a lost WebGL context during a pitch without replaying the scoring action', async function () {
     const { page, unexpected } = await open('/games/g1/score')
     try {
@@ -888,8 +917,9 @@ describe('scoring browser', function () {
         { timeout: 30000 }
       )
       await click(page, 'Out')
-      await page.waitForSelector('[aria-label^="Tap and Drag Thrower."]')
-      await placeDefenderWithKeyboard(page)
+      await page.waitForSelector(
+        '[aria-label^="Tap and drag the next defender"]'
+      )
       await click(page, 'Finish defensive play')
       await page.waitForSelector(
         '[aria-label="Home plate decision for Player 6"]',
@@ -1532,8 +1562,11 @@ describe('scoring browser', function () {
           if (decision === 'Out') {
             await page.waitForSelector('[aria-label^="Tap and Drag Thrower."]')
             await placeDefenderWithKeyboard(page)
-            await page.waitForSelector('[aria-label^="Tap and Drag Defender"]')
+            await page.waitForSelector(
+              '[aria-label^="Tap and drag the next defender"]'
+            )
             await placeDefenderWithKeyboard(page, true)
+            await click(page, 'Finish defensive play')
           }
           await waitReady(page)
           await page.waitForSelector(
@@ -1560,14 +1593,15 @@ describe('scoring browser', function () {
           timeout: 30000
         })
         await dropRunnerWithKeyboard(page, 'Out')
-        await page.waitForSelector('[aria-label^="Tap and Drag Thrower."]')
+        await page.waitForSelector(
+          '[aria-label^="Tap and drag the next defender"]'
+        )
         await new Promise(resolve => setTimeout(resolve, 10500))
-        await page.waitForSelector('[aria-label^="Tap and Drag Thrower."]')
-        await placeDefenderWithKeyboard(page)
-        if (sameDefender) await click(page, 'Finish defensive play')
-        else {
-          await placeDefenderWithKeyboard(page, true)
-        }
+        await page.waitForSelector(
+          '[aria-label^="Tap and drag the next defender"]'
+        )
+        if (!sameDefender) await placeDefenderWithKeyboard(page, true)
+        await click(page, 'Finish defensive play')
         await page.waitForSelector(
           '[aria-label="Time to edit play"][aria-valuenow="10"]',
           { timeout: 30000 }
@@ -1873,8 +1907,9 @@ describe('scoring browser', function () {
       )
       await page.waitForSelector('[aria-label*="Owls 1 · Hawks 0"]')
       await click(page, 'Out')
-      await page.waitForSelector('[aria-label^="Tap and Drag Thrower."]')
-      await placeDefenderWithKeyboard(page)
+      await page.waitForSelector(
+        '[aria-label^="Tap and drag the next defender"]'
+      )
       await click(page, 'Finish defensive play')
       await page.waitForSelector('[aria-label="Time to edit play"]', {
         timeout: 30000

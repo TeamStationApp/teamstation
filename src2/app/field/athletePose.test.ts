@@ -18,6 +18,7 @@ import { BALL_CONTACT } from './ballArcModel'
 import { createStartingPlayers } from './batterModel'
 import { samplePitch } from './playAnimationModel'
 import { Player } from './Player'
+import { makePlayerLabel } from './playerLabels'
 import { PLAYER_SCALE } from './playerPresentation'
 import { TERRAIN } from './terrain'
 
@@ -132,6 +133,40 @@ describe('articulated athlete motion', function () {
       })
     }
   }
+  it('renders a possession ball in the right hand and four white foot rings', async function () {
+    const player = createStartingPlayers()[0]
+    player.hasBall = true
+    const texture = makePlayerLabel('⚾ Pitcher', true)
+    const rgba = Array.from(texture.image.data as Uint8Array)
+    expect(
+      rgba.some((v, i) => i % 4 === 0 && v === 196 && rgba[i + 1] === 48)
+    ).equals(true)
+    texture.dispose()
+    const renderer = await create(
+      React.createElement(Player, { player, selected: false })
+    )
+    try {
+      expect(
+        renderer.scene.findAllByProps({ name: 'possession-ring' })
+      ).has.length(4)
+      const ball = renderer.scene.findByProps({
+        name: 'possession-ball'
+      }).instance
+      expect(ball.parent!.position.x).equals(0.56)
+      expect(
+        renderer.scene.findAllByProps({ name: 'active-grab-ring' })
+      ).has.length(0)
+      player.hasBall = false
+      await renderer.update(
+        React.createElement(Player, { player, selected: false })
+      )
+      expect(
+        renderer.scene.findAllByProps({ name: 'possession-ball' })
+      ).has.length(0)
+    } finally {
+      await renderer.unmount()
+    }
+  })
   it('mirrors pitching hand positions throughout all phases', function () {
     for (const time of [0, 200, 450, 650, 900, 1300, 1600]) {
       const right = pitchingHand({ x: 0, z: -18.44 }, time, 650, 'R')

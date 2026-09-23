@@ -103,12 +103,16 @@ describe('owned runner animations', function () {
       point: { x: 1, z: 0 },
       generation: 0
     })
+    state = scoringReducer(state, {
+      type: 'DEFENDER',
+      generation: state.generation
+    })
     expect(
       state.motions.find(motion => motion.playerId === 4)!.waypoints.at(-1)!.x
     ).lessThan(0)
     const moving = scoringFieldPlayers(state)
     expect(moving.find(player => player.playerId === 11)!.position).deep.equals(
-      { x: 1, z: 0 }
+      { x: 0, z: 0 }
     )
     state = completeMotions(state)
     expect(

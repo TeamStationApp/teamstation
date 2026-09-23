@@ -147,9 +147,31 @@ export function PlayAnimation({
             )
             player.stride = runtime.current.elapsedMs * 0.012
             player.pose.run = sample.progress < 1 ? 1 : 0
-          } else
-            player.pose.windup =
-              1 - Math.min(1, runtime.current.elapsedMs / 300)
+          } else {
+            player.pose.athlete = pitchingPose(
+              runtime.current.elapsedMs,
+              150,
+              sequence.throwSide
+            )
+            player.pose.athleteHeading = sequence.heading
+          }
+        }
+        if (sequence.stage === 'tag' && player.playerId === sequence.runner) {
+          player.position = {
+            x:
+              sequence.runnerFrom.x +
+              (sequence.to.x - sequence.runnerFrom.x) * sample.progress,
+            z:
+              sequence.runnerFrom.z +
+              (sequence.to.z - sequence.runnerFrom.z) * sample.progress
+          }
+          player.target = { ...player.position }
+          player.heading = Math.atan2(
+            sequence.to.x - sequence.runnerFrom.x,
+            sequence.to.z - sequence.runnerFrom.z
+          )
+          player.stride = runtime.current.elapsedMs * 0.012
+          player.pose.run = sample.progress < 1 ? 1 : 0
         }
         if (player.playerId === sequence.receiver)
           player.pose.catch = sample.progress > 0.8 ? 1 : 0
