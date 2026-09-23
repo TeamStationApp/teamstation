@@ -574,7 +574,7 @@ export interface GamePlayerStatsTable {
   pitch_k: Generated<number>
   pitch_r: Generated<number>
   pitch_er: Generated<number>
-  computed_at: Generated<Timestamp>
+  computed_at: Timestamp
 }
 
 export interface PlayerSeasonStatsTable {
