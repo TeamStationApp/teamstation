@@ -1,0 +1,71 @@
+{
+  "/repo/Tally/Sources/Tally/Tally.swift": [
+    {
+      "isExecutable": false,
+      "line": 1
+    },
+    {
+      "executionCount": 1,
+      "isExecutable": true,
+      "line": 2
+    },
+    {
+      "executionCount": 1,
+      "isExecutable": true,
+      "line": 3
+    },
+    {
+      "isExecutable": false,
+      "line": 4
+    },
+    {
+      "executionCount": 1,
+      "isExecutable": true,
+      "line": 5
+    },
+    {
+      "executionCount": 1,
+      "isExecutable": true,
+      "line": 6
+    },
+    {
+      "executionCount": 1,
+      "isExecutable": true,
+      "line": 7
+    },
+    {
+      "executionCount": 1,
+      "isExecutable": true,
+      "line": 8,
+      "subranges": [
+        {
+          "column": 12,
+          "executionCount": 0,
+          "length": 0
+        }
+      ]
+    },
+    {
+      "executionCount": 0,
+      "isExecutable": true,
+      "line": 9
+    },
+    {
+      "executionCount": 0,
+      "isExecutable": true,
+      "line": 10,
+      "subranges": [
+        {
+          "column": 6,
+          "executionCount": 1,
+          "length": 0
+        }
+      ]
+    },
+    {
+      "executionCount": 1,
+      "isExecutable": true,
+      "line": 11
+    }
+  ]
+}

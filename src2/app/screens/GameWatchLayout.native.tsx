@@ -144,7 +144,7 @@ export function GameWatchLayout(
         the thing the screen is for — would start below the fold and need
         scrolling to before it could be seen at all.
       */}
-      {short ? null : <View style={headStyle}>{head}</View>}
+      {short || head == null ? null : <View style={headStyle}>{head}</View>}
 
       <Animated.View
         onLayout={measurePeg}

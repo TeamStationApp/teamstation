@@ -24,7 +24,7 @@ import {
 } from './components'
 import { StandaloneField } from './field/StandaloneField'
 import { lstrings, sprintf } from './locales/strings'
-import type { Route, When } from './navigation/routes'
+import { parseRoute, type Route, type When } from './navigation/routes'
 import { stacksAfterTabPress } from './navigation/tabPress'
 import {
   currentRoute,
@@ -32,6 +32,7 @@ import {
   showRoute,
   useBrowserBack
 } from './navigation/useAddressBar'
+import { ScoreboardOverrideScreen } from './scoreboard/ScoreboardOverrideScreen'
 import { ScoringScreen } from './scoring/ScoringScreen'
 import { ServerScoringSource } from './scoring/scoringSource'
 import { AccountScreen } from './screens/AccountScreen'
@@ -91,6 +92,7 @@ type Pushed =
    * the song picker lands on the list the songkeeper left.
    */
   | { name: 'djGame'; gameId: string; side?: 'away' | 'home' }
+  | { name: 'scoreboardOverride'; gameId: string }
   | { name: 'season'; season: SeasonSummary; tab?: string; when?: When }
   | { name: 'team'; team: TeamSummary; tab?: string }
   | {
@@ -98,7 +100,7 @@ type Pushed =
       gameId: string
       title: string
       /** Which half of the game screen to open on. */
-      tab?: 'watch' | 'boxScore'
+      tab?: 'boxScore' | 'watch' | 'score'
       /** Start the video rather than waiting to be asked. */
       autoPlay?: boolean
       /** Which video, and where in it, from a link to a moment. */
@@ -616,6 +618,20 @@ function Shell(props: AppProps): React.ReactElement {
   const openSeason = (season: SeasonSummary): void => {
     push({ name: 'season', season })
   }
+  /**
+   * Somebody who has just signed in, back to where the sign-in was for.
+   *
+   * A sign-in reached with `?next=` — the override dashboard sends a
+   * visitor whose session has lapsed there — returns to that address rather
+   * than to the home screen.
+   */
+  const signedIn = (next: Session): void => {
+    rememberSession(next)
+    if (route.name === 'signIn' && route.next != null) {
+      const [path, search = ''] = route.next.split('?')
+      goToRoute(parseRoute(path, search))
+    }
+  }
 
   if (session == null && props.fieldPreview !== true) {
     // The sign-in screen must not be drawn until the question is answered: a
@@ -675,7 +691,7 @@ function Shell(props: AppProps): React.ReactElement {
             onSignedIn={rememberSession}
           />
         ) : (
-          <LoginScreen client={client} onSignedIn={rememberSession} />
+          <LoginScreen client={client} onSignedIn={signedIn} />
         )}
         {!isWide && (
           <AppNav mode="floating" selected={tab} onSelect={selectTab} />
@@ -900,12 +916,30 @@ function Shell(props: AppProps): React.ReactElement {
       <GameScreen
         client={client}
         gameId={top.gameId}
-        onScoreGame={() => {
+        onFullScoring={() => {
           push({ name: 'scoreGame', gameId: top.gameId })
         }}
+        onScoreboard={() => {
+          push({ name: 'scoreboardOverride', gameId: top.gameId })
+        }}
+        onDjGame={() => {
+          push({ name: 'djGame', gameId: top.gameId })
+        }}
+        music={walkUpMusic}
         onOpenPlayer={openPlayer}
         onOpenTeam={team => {
           push({ name: 'team', team })
+        }}
+      />
+    ) : top.name === 'scoreboardOverride' ? (
+      <ScoreboardOverrideScreen
+        apiBaseUrl={apiBaseUrl}
+        gameId={top.gameId}
+        onSignIn={next => {
+          rememberSession(undefined)
+          const signIn: Route = { name: 'signIn', next }
+          goToRoute(signIn)
+          showRoute(signIn)
         }}
       />
     ) : top.name === 'scoreGame' ? (
@@ -926,8 +960,11 @@ function Shell(props: AppProps): React.ReactElement {
       <GameScreen
         client={client}
         gameId={top.gameId}
-        onScoreGame={() => {
+        onFullScoring={() => {
           push({ name: 'scoreGame', gameId: top.gameId })
+        }}
+        onScoreboard={() => {
+          push({ name: 'scoreboardOverride', gameId: top.gameId })
         }}
         onDjGame={() => {
           push({ name: 'djGame', gameId: top.gameId })
@@ -1098,6 +1135,13 @@ function stackFor(route: Route): Partial<Record<NavTabId, Pushed[]>> {
   const tab = tabOf(route)
   if (route.name === 'scoreGame') return { [tab]: [route] }
   if (route.name === 'djGame') return { [tab]: [route] }
+  // The dashboard sits on the game's Score Game section, so Back returns to
+  // the hero and the three pills with Score Game still selected.
+  if (route.name === 'scoreboardOverride') {
+    return {
+      [tab]: [gameUnder(route.gameId, 'score'), route]
+    }
+  }
   if (route.name === 'game') {
     return {
       [tab]: [
@@ -1147,6 +1191,14 @@ function stackFor(route: Route): Partial<Record<NavTabId, Pushed[]>> {
   return {}
 }
 
+/** A game's page, beneath a screen opened from it. */
+function gameUnder(
+  gameId: string,
+  section?: 'boxScore' | 'watch' | 'score'
+): Pushed {
+  return { name: 'game', gameId, title: '', tab: section }
+}
+
 /** The filter an address asks for, if it asks for one. */
 function whenOf(route: Route): 'upcoming' | 'past' | 'all' | undefined {
   return route.name === 'videos' || route.name === 'schedule'
@@ -1164,8 +1216,10 @@ function tabOf(route: Route): NavTabId {
 /** The address of wherever the app currently is. */
 function routeOf(tab: NavTabId, top: Pushed | undefined, when?: When): Route {
   if (top != null) {
-    if (top.name === 'scoreGame') return top
     if (top.name === 'djGame') return { name: 'djGame', gameId: top.gameId }
+    if (top.name === 'scoreGame' || top.name === 'scoreboardOverride') {
+      return top
+    }
     if (top.name === 'team') {
       return { name: 'team', teamId: top.team.id, tab: top.tab }
     }
@@ -1237,6 +1291,9 @@ function titleFor(tab: NavTabId, top: Pushed | undefined): string | undefined {
     if (top.name === 'djGame') return lstrings.dj_game
     if (top.name === 'walkUpSong') {
       return sprintf(lstrings.walkup_title, top.playerName)
+    }
+    if (top.name === 'scoreboardOverride') {
+      return lstrings.game_override_scoreboard
     }
     if (top.name === 'manage') {
       return top.title == null

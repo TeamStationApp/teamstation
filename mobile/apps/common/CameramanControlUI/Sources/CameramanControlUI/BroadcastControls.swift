@@ -77,6 +77,8 @@ struct BroadcastingPill: View {
 
 /// Confirm a stop. Start stays one tap. The knob commits at `BroadcastPolicy.slideCommitFraction`.
 struct SlideToStop: View {
+  var label: String = "Slide to Stop"
+  var trackIdentifier: String = "slide-to-stop-track"
   let animate: Bool
   let onStop: () -> Void
 
@@ -90,7 +92,7 @@ struct SlideToStop: View {
       ZStack(alignment: .leading) {
         RoundedRectangle(cornerRadius: BroadcastChrome.trackCorner, style: .continuous)
           .fill(BroadcastChrome.recordRed.opacity(0.72))
-        Text("Slide to Stop")
+        Text(label)
           .font(.system(size: 17, weight: .semibold, design: .rounded))
           .foregroundStyle(.white)
           .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -107,7 +109,7 @@ struct SlideToStop: View {
         .frame(width: BroadcastChrome.knob, height: BroadcastChrome.knob)
         .offset(x: 3 + dragOffset)
         .accessibilityIdentifier("slide-to-stop-knob")
-        .accessibilityLabel("Slide to Stop")
+        .accessibilityLabel(label)
         Color.clear
           .frame(width: 1, height: 1)
           .accessibilityIdentifier("slide-to-stop-end")
@@ -116,7 +118,7 @@ struct SlideToStop: View {
       }
       .contentShape(RoundedRectangle(cornerRadius: BroadcastChrome.trackCorner, style: .continuous))
       .gesture(drag(travel: travel))
-      .accessibilityIdentifier("slide-to-stop-track")
+      .accessibilityIdentifier(trackIdentifier)
       .accessibilityValue(String(format: "%.0f percent", progress * 100))
       .onAppear {
         guard animate else { return }

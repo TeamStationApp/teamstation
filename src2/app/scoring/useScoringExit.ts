@@ -5,6 +5,9 @@ import { setNavigationGuard } from '../navigation/useAddressBar'
 /**
  * Leaving the game first saves it; only a save that could not finish holds the
  * scorer back, and the page warns before unloading while one is outstanding.
+ *
+ * The browser's Back returns to the game's Score Game section, which is
+ * where the scorer is opened from.
  */
 export function useScoringExit(
   gameId: string,
@@ -17,7 +20,7 @@ export function useScoringExit(
     [flush]
   )
   useLayoutEffect(
-    () => setNavigationGuard(save, { name: 'game', gameId }),
+    () => setNavigationGuard(save, { name: 'game', gameId, tab: 'score' }),
     [save, gameId]
   )
   useEffect(() => {

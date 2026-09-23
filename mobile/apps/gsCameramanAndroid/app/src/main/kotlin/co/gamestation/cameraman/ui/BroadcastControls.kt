@@ -149,7 +149,13 @@ fun BroadcastingPill(animate: Boolean, modifier: Modifier = Modifier) {
  * of the track; a shorter drag springs back.
  */
 @Composable
-fun SlideToStop(animate: Boolean, onStop: () -> Unit, modifier: Modifier = Modifier) {
+fun SlideToStop(
+    animate: Boolean,
+    onStop: () -> Unit,
+    modifier: Modifier = Modifier,
+    label: String = "Slide to Stop",
+    trackTag: String = "slide-to-stop-track"
+) {
     var offsetPx by remember { mutableFloatStateOf(0f) }
     val pulse = if (animate) {
         val transition = rememberInfiniteTransition(label = "slide-to-stop")
@@ -169,7 +175,7 @@ fun SlideToStop(animate: Boolean, onStop: () -> Unit, modifier: Modifier = Modif
             .height(58.dp)
             .clip(RoundedCornerShape(slideTrackCorner))
             .background(recordRed.copy(alpha = 0.72f))
-            .testTag("slide-to-stop-track")
+            .testTag(trackTag)
             .pointerInput(Unit) {
                 val travel = (size.width - 52.dp.toPx() - 6.dp.toPx()).coerceAtLeast(1f)
                 detectHorizontalDragGestures(
@@ -195,7 +201,7 @@ fun SlideToStop(animate: Boolean, onStop: () -> Unit, modifier: Modifier = Modif
                 .testTag("slide-to-stop-label")
         ) {
             Text(
-                text = "Slide to Stop",
+                text = label,
                 color = Color.White,
                 fontWeight = FontWeight.SemiBold,
                 fontSize = 17.sp,
@@ -211,7 +217,7 @@ fun SlideToStop(animate: Boolean, onStop: () -> Unit, modifier: Modifier = Modif
                 .clip(RoundedCornerShape(slideKnobCorner))
                 .background(androidx.compose.ui.graphics.lerp(darkerRed, brighterRed, pulse))
                 .testTag("slide-to-stop-knob")
-                .semantics { contentDescription = "Slide to Stop" }
+                .semantics { contentDescription = label }
         ) {
             Box(
                 modifier = Modifier

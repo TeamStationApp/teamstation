@@ -3,8 +3,11 @@ import { type Kysely, sql } from 'kysely'
 
 import { notFound, unauthorized } from '../../common/errors'
 import { shortNames } from '../../common/names'
+import { scoreboardOpen } from '../../common/scoreboard'
 import {
+  adminScopes,
   canKeepSongs,
+  canManageTeam,
   canScore,
   canSeeGame,
   canSeeTeam,
@@ -35,6 +38,10 @@ import { stillSecond } from '../media/stills'
 import { warmVideoStills } from '../media/videoStills'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
+import {
+  type ScoreboardStore,
+  ScoreboardUnavailable
+} from '../scoreboard/scoreboardStore'
 import { highlightSettings } from '../settings'
 import {
   battingLines,
@@ -53,8 +60,16 @@ import { teamRoster } from '../teams/teamRoster'
  *
  * Anything the caller may not see answers **404**, never 403, so that probing
  * cannot reveal that a team, game or video exists.
+ *
+ * `store` is the scoreboard's, which a game's answer asks whether its board
+ * is open. Without one, or with Redis away, the game says `scoreboard: null`
+ * and is otherwise the same.
  */
-export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
+export function teamRoutes(
+  db: Kysely<Database>,
+  media: MediaContext,
+  store?: ScoreboardStore
+): Router {
   const router = Router()
 
   router.get(
@@ -320,6 +335,13 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
         .orderBy('id')
         .execute()
 
+      // Whether this caller runs the game, and so may override its scoreboard:
+      // a manager of either side or anybody above one. It needs no Redis.
+      const editors = await adminScopes(db, actor.userId, actor.isAdmin)
+      const mayOverride =
+        canManageTeam(editors, game.home_team_id) ||
+        canManageTeam(editors, game.away_team_id)
+
       const names = await teamNames(db, [game.home_team_id, game.away_team_id])
       // Whether to offer Score Game: a scorekeeper of either team, which
       // every administrator of it is. The events route holds the same rule.
@@ -394,6 +416,11 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
         canDj:
           canKeepSongs(roles, game.home_team_id) ||
           canKeepSongs(roles, game.away_team_id),
+        scoreboard: await scoreboardOf(store, mayOverride, {
+          startAt: new Date(game.start_at).getTime(),
+          status: game.status,
+          gameId
+        }),
         videos: videos.map(video => ({
           id: video.id,
           numCameras: video.num_cameras,
@@ -661,6 +688,31 @@ async function countVideos(
     counts.set(row.game_id, (counts.get(row.game_id) ?? 0) + 1)
   }
   return counts
+}
+
+/**
+ * Whether a game's scoreboard is open, and whether this caller may override
+ * it: null when there is no store or Redis is away, which leaves the
+ * Scoreboard option on the Score Game screen unavailable. Whoever may score
+ * the game may override its board.
+ */
+async function scoreboardOf(
+  store: ScoreboardStore | undefined,
+  mayScore: boolean,
+  game: { gameId: string; startAt: number; status: string }
+): Promise<{ open: boolean; mayOverride: boolean } | null> {
+  if (store == null) return null
+  let keyExists: boolean
+  try {
+    keyExists = await store.exists(game.gameId)
+  } catch (error) {
+    if (error instanceof ScoreboardUnavailable) return null
+    throw error
+  }
+  return {
+    open: scoreboardOpen(game, keyExists, store.now()),
+    mayOverride: mayScore
+  }
 }
 
 /**

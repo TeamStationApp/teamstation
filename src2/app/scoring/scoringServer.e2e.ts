@@ -321,11 +321,14 @@ async function reachOnError(page: Page): Promise<void> {
   )
   await click(page, credits.at(-1)!)
 }
-async function openScoring(
-  page: Page,
-  entry: 'Score Game' | 'Continue Scoring'
-): Promise<void> {
-  await click(page, entry)
+/**
+ * The game page's one Score Game pill, whether the game is new or being
+ * continued, then the Score Game screen's Full game scoring.
+ */
+async function openScoring(page: Page): Promise<void> {
+  await click(page, 'Score Game')
+  await page.waitForFunction(() => location.pathname.endsWith('/score-game'))
+  await click(page, 'Full game scoring')
   await page.waitForFunction(() => location.pathname.endsWith('/score'))
   await page.waitForSelector('canvas[data-field-ready="true"]', {
     timeout: 30000
@@ -376,7 +379,7 @@ describe('scoring into the server', function () {
     const gameId = fixture.games[0]
     const page = await openAs(scorer, `/games/${gameId}`)
     try {
-      await openScoring(page, 'Score Game')
+      await openScoring(page)
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
       await click(page, 'Save Rosters')
@@ -475,7 +478,7 @@ describe('scoring into the server', function () {
       const context = await browser.createBrowserContext()
       const page = await openAs(scorer, `/games/${gameId}`, context)
       try {
-        await openScoring(page, 'Score Game')
+        await openScoring(page)
         if (index === 1) {
           await click(page, 'Open scoring menu')
           await click(page, 'Settings')
@@ -514,7 +517,7 @@ describe('scoring into the server', function () {
     for (const gameId of fixture.games) {
       const page = await openAs(scorer, `/games/${gameId}`)
       try {
-        await openScoring(page, 'Continue Scoring')
+        await openScoring(page)
         await waitReady(page)
         reopened.push(await summary(page))
       } finally {
@@ -530,7 +533,7 @@ describe('scoring into the server', function () {
     const gameId = fixture.games[0]
     const page = await openAs(scorer, `/games/${gameId}`)
     try {
-      await openScoring(page, 'Score Game')
+      await openScoring(page)
       // A single to centre.
       await pitch(page, 'Ball')
       await pitch(page, 'Called Strike')
@@ -689,7 +692,7 @@ describe('scoring into the server', function () {
     const gameId = fixture.games[0]
     let page = await openAs(scorer, `/games/${gameId}`)
     try {
-      await openScoring(page, 'Score Game')
+      await openScoring(page)
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
       await click(page, 'Save Rosters')
@@ -718,10 +721,10 @@ describe('scoring into the server', function () {
       const before = await summary(page)
       await page.close()
       page = await openAs(scorer, `/games/${gameId}`)
-      await page.waitForSelector('[aria-label="Continue Scoring"]')
-      expect(await page.$('[aria-label="Score Game"]')).equals(null)
+      await page.waitForSelector('[aria-label="Score Game"]')
+      expect(await page.$('[aria-label="Continue Scoring"]')).equals(null)
       await page.reload()
-      await openScoring(page, 'Continue Scoring')
+      await openScoring(page)
       await page.waitForFunction(
         text => document.querySelector(`[aria-label*="${text}"]`) != null,
         {},
@@ -754,7 +757,7 @@ describe('scoring into the server', function () {
     let page = await openAs(scorer, `/games/${gameId}`)
     const context = await browser.createBrowserContext()
     try {
-      await openScoring(page, 'Score Game')
+      await openScoring(page)
       await pitch(page, 'Ball')
       await waitReady(page)
       await waitSaved(page)
@@ -791,9 +794,20 @@ describe('scoring into the server', function () {
         sql(`select count(*) from events where "gameId"='${gameId}'`)
       ).equals('1')
 
-      // Somebody who can see the game and scores for neither team.
-      const refused = await openAs(viewer, `/games/${gameId}`, context)
-      await openScoring(refused, 'Continue Scoring')
+      // Somebody who can see the game and scores for neither team: the game
+      // page offers them no Score Game pill, and the scorer's own address
+      // opens read-only.
+      const viewing = await openAs(viewer, `/games/${gameId}`, context)
+      await viewing.waitForSelector('[aria-label="Box score"]')
+      expect(await viewing.$('[aria-label="Score Game"]')).equals(null)
+      await viewing.close()
+      const refused = await openAs(viewer, `/games/${gameId}/score`, context)
+      await refused.waitForSelector('canvas[data-field-ready="true"]', {
+        timeout: 30000
+      })
+      if ((await refused.$('[aria-label="OK"]')) != null) {
+        await click(refused, 'OK')
+      }
       await waitReady(refused)
       const unrefused = await summary(refused)
       await click(refused, 'Ball')
@@ -855,7 +869,7 @@ describe('scoring into the server', function () {
 
       // Taken up again: undo the end, open the single again, and correct it.
       page = await openAs(scorer, `/games/${gameId}`)
-      await openScoring(page, 'Continue Scoring')
+      await openScoring(page)
       await click(page, 'Undo Last play')
       await page.waitForSelector('[aria-label="Game over"]', { hidden: true })
       await waitSaved(page)
@@ -922,7 +936,7 @@ describe('scoring into the server', function () {
     const pitcher = fixture.home[0]
     const page = await openAs(scorer, `/games/${gameId}`)
     try {
-      await openScoring(page, 'Score Game')
+      await openScoring(page)
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
       await click(page, 'Save Rosters')
@@ -1038,7 +1052,7 @@ describe('scoring into the server', function () {
     let scored: Stored | null = null
     let undone: Stored | null = null
     try {
-      await openScoring(page, 'Score Game')
+      await openScoring(page)
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
       await click(page, 'Save Rosters')
@@ -1201,7 +1215,7 @@ describe('scoring into the server', function () {
     let starter = ''
     let dueBatter = ''
     try {
-      await openScoring(page, 'Score Game')
+      await openScoring(page)
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
       await click(page, 'Save Rosters')

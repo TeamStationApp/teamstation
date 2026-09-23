@@ -30,11 +30,14 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun SettingsBody(
     modifier: Modifier = Modifier,
+    columns: Int = 2,
     horizontalInsets: WindowInsets = WindowInsets.displayCutout
         .union(WindowInsets.safeDrawing)
         .only(androidx.compose.foundation.layout.WindowInsetsSides.Horizontal),
-    left: @Composable ColumnScope.() -> Unit,
-    right: @Composable ColumnScope.() -> Unit,
+    header: @Composable ColumnScope.() -> Unit = {},
+    left: @Composable ColumnScope.() -> Unit = {},
+    right: @Composable ColumnScope.() -> Unit = {},
+    stack: @Composable ColumnScope.() -> Unit = {},
     footer: @Composable ColumnScope.() -> Unit = {}
 ) {
     Column(
@@ -45,20 +48,30 @@ fun SettingsBody(
             .padding(horizontal = 14.dp, vertical = 4.dp)
             .testTag("settings-scroll")
     ) {
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-            verticalAlignment = Alignment.Top
-        ) {
+        header()
+        if (columns == 1) {
             Column(
-                modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
-                content = left
+                modifier = Modifier.testTag("settings-layout-portrait"),
+                content = stack
             )
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-                content = right
-            )
+        } else {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalAlignment = Alignment.Top,
+                modifier = Modifier.testTag("settings-layout-landscape")
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    content = left
+                )
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    content = right
+                )
+            }
         }
         footer()
     }

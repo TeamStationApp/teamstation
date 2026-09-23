@@ -518,9 +518,10 @@ class CaptureRotationTest {
 
     @Test
     fun `only the two landscape holds move the capture rotation`() {
-        // The app is landscape-only. A portrait reading — a phone tipped upright while it is being
-        // re-clamped — must be held rather than applied, or the stream sends a quarter-turned
-        // picture on the way past. Flat on a bench reports ORIENTATION_UNKNOWN and is held too.
+        // The picture stays landscape even while Settings is portrait. A portrait reading — a
+        // phone tipped upright while it is being re-clamped — must be held rather than applied,
+        // or the stream sends a quarter-turned picture on the way past. Flat on a bench reports
+        // ORIENTATION_UNKNOWN and is held too.
         assertNull(CameramanService.landscapeSurfaceRotation(0))
         assertNull(CameramanService.landscapeSurfaceRotation(180))
         assertNull(CameramanService.landscapeSurfaceRotation(359))

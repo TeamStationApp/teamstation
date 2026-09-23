@@ -201,6 +201,16 @@ export const asGameDetail = asObject({
    * every administrator of it is. Absent from an older server, and false.
    */
   canDj: asOptional(asBoolean, false),
+  /**
+   * The game's scoreboard: whether it is open, and whether this caller runs
+   * the game and so may override it. Null when the server cannot tell, which
+   * leaves the Score Game screen's Scoreboard option unavailable, and from a
+   * server from before scoreboards.
+   */
+  scoreboard: asOptional(
+    asNullable(asObject({ open: asBoolean, mayOverride: asBoolean })),
+    null
+  ),
   videos: asArray(asVideoSummary)
 })
 export type GameDetail = ReturnType<typeof asGameDetail>
@@ -1054,14 +1064,23 @@ export class GameStationClient {
   /**
    * Every game this person can see, across all their seasons, in one request.
    * `externalIds` narrows it to the games another service knows by those ids.
+   * `when` asks the server for past or upcoming rather than the whole list.
    */
-  async games(options: { externalIds?: string[] } = {}): Promise<SeasonGame[]> {
-    const ids = options.externalIds ?? []
-    const query =
-      ids.length === 0
-        ? ''
-        : `?${ids.map(id => `externalId=${encodeURIComponent(id)}`).join('&')}`
-    return await this.request('GET', `/games${query}`, asArray(asSeasonGame))
+  async games(
+    options: {
+      externalIds?: string[]
+      when?: 'past' | 'upcoming' | 'all'
+    } = {}
+  ): Promise<SeasonGame[]> {
+    const params: string[] = []
+    if (options.when != null && options.when !== 'all') {
+      params.push(`when=${options.when}`)
+    }
+    for (const id of options.externalIds ?? []) {
+      params.push(`externalId=${encodeURIComponent(id)}`)
+    }
+    const query = params.length === 0 ? '' : `?${params.join('&')}`
+    return await this.request('GET', `/events${query}`, asArray(asSeasonGame))
   }
 
   /**
@@ -1078,7 +1097,7 @@ export class GameStationClient {
   async seasonGames(seasonId: string): Promise<SeasonGame[]> {
     return await this.request(
       'GET',
-      `/seasons/${encodeURIComponent(seasonId)}/games`,
+      `/events?season=${encodeURIComponent(seasonId)}`,
       asArray(asSeasonGame)
     )
   }
@@ -1101,7 +1120,12 @@ export class GameStationClient {
 
   /** The newest played game anywhere this person can see, or null. */
   async recentGame(): Promise<SeasonGame | null> {
-    return await this.request('GET', '/games/recent', asNullable(asSeasonGame))
+    const games = await this.request(
+      'GET',
+      '/events?played=1&limit=1',
+      asArray(asSeasonGame)
+    )
+    return games[0] ?? null
   }
 
   async seasonTeams(seasonId: string): Promise<TeamSummary[]> {

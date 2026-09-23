@@ -607,7 +607,8 @@ export function openApiDocument(version: string): OpenApiDocument {
                 'tooLarge',
                 'unsupportedMedia',
                 'rateLimited',
-                'internal'
+                'internal',
+                'unavailable'
               ]
             },
             message: { type: 'string' },
@@ -1510,7 +1511,10 @@ export function openApiDocument(version: string): OpenApiDocument {
             'when they began. `canScore` is whether the caller may post its ' +
             'plays: a scorekeeper of either team, which every admin of it ' +
             'is. `canDj` is whether the caller may DJ it: a songkeeper of ' +
-            'either team, which every admin of it is.',
+            'either team, which every admin of it is. `scoreboard` is `{ open, mayOverride }`: ' +
+            "whether the game's scoreboard is open, and whether the caller " +
+            'runs the game and so may override it; null when the ' +
+            'scoreboard store cannot be asked.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam],
           responses: {
@@ -2102,72 +2106,6 @@ export function openApiDocument(version: string): OpenApiDocument {
           responses: {
             200: { description: 'Every team playing in it' },
             404: errorResponse
-          }
-        }
-      },
-      '/seasons/{seasonId}/games': {
-        get: {
-          summary: "A season's schedule",
-          security: [{ bearer: [] }],
-          parameters: [
-            {
-              name: 'seasonId',
-              in: 'path',
-              required: true,
-              schema: { type: 'string' }
-            },
-            {
-              name: 'when',
-              in: 'query',
-              schema: { type: 'string', enum: ['past', 'upcoming'] },
-              description: 'Which half of the schedule. Both, when unset'
-            }
-          ],
-          responses: {
-            200: { description: 'Newest first' },
-            404: errorResponse
-          }
-        }
-      },
-      '/games': {
-        get: {
-          summary: 'Every game you can see',
-          description:
-            "Your teams' games, and every game of a season opened to you; a " +
-            'site administrator sees every game. ' +
-            "Each game as a season's schedule has it, newest first, in one " +
-            'answer, with `externalIds`: the ids other services know it by, ' +
-            'as its importers recorded them. `externalId` narrows it to the ' +
-            'games known by that id, and may be given more than once; an ' +
-            'empty one is refused.',
-          security: [{ bearer: [] }],
-          parameters: [
-            {
-              name: 'externalId',
-              in: 'query',
-              schema: { type: 'array', items: { type: 'string' } },
-              style: 'form',
-              explode: true,
-              description: "Other services' ids for the games"
-            }
-          ],
-          responses: {
-            200: { description: 'Newest first; empty when there are none' },
-            400: errorResponse,
-            401: errorResponse
-          }
-        }
-      },
-      '/games/recent': {
-        get: {
-          summary: 'The newest played game anywhere you can see',
-          description:
-            'What the home screen leads with: the newest game with a score ' +
-            'among those `GET /games` lists. Null when there is none.',
-          security: [{ bearer: [] }],
-          responses: {
-            200: { description: 'One game, or null' },
-            401: errorResponse
           }
         }
       },
@@ -3082,22 +3020,193 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
-      '/director/events': {
+      '/events': {
         get: {
-          summary: 'The next ten games of the teams you film',
+          summary: 'Games, filtered by the query string',
           description:
-            'Soonest first, reaching two hours backwards \u2014 a one o\u2019clock ' +
-            'game somebody starts filming at ten past three is still the game ' +
-            'they mean. The teams are those the caller is a videographer of, ' +
-            'set on the team, its season or its league, which every admin of ' +
-            'them is.',
+            'The one list. `scope=visible` (the default) is every game you ' +
+            'may see: your teams, and every game of a season opened to you. ' +
+            'A site administrator sees every game. `scope=run` is every game ' +
+            'you may score — owner, manager, or an admin of the team, its ' +
+            'season or its league — and omits cancelled games. Somebody who ' +
+            'runs nothing gets an empty array. `scope=film` is every game ' +
+            'you may film — a videographer of the team, its season or its ' +
+            'league, which every admin of them is — and omits cancelled ' +
+            'games. Somebody who films nothing gets an empty array.\n\n' +
+            '`season` may be repeated. On `scope=visible`, a season you ' +
+            'cannot see is 404. `when` is `all` (newest first), `upcoming` ' +
+            '(no score and still ahead, soonest first), `past` (the rest), ' +
+            '`future` (still ahead, scored or not, soonest first), ' +
+            '`finished` (started before the look-back, latest first), or ' +
+            '`recent` (started inside the look-back, up to now, latest ' +
+            'first). `lookbackHours` is how far `finished` (default 2), ' +
+            '`recent` (default 3), and `when=all` reach; on `when=all` the ' +
+            'list runs forward from that instant. `since` and `until` are ' +
+            'instants, `until` exclusive. `order` is `asc` or `desc`. ' +
+            '`limit` is a whole number of at least 1; omit it for no cap. ' +
+            '`externalId` may be repeated. `played=1` keeps games that have ' +
+            'a score. `scoreboard=open` keeps games whose scoreboard is ' +
+            'still open, and answers 503 while that store is away.\n\n' +
+            'Each row is a schedule game plus `gameId`, both teams\u2019 logo ' +
+            'URLs, and `liveState`.',
           security: [{ bearer: [] }],
-          responses: {
-            200: {
-              description: 'At most ten, each with both teams\u2019 marks'
+          parameters: [
+            {
+              name: 'scope',
+              in: 'query',
+              schema: { type: 'string', enum: ['visible', 'run', 'film'] }
             },
-            401: errorResponse
+            {
+              name: 'season',
+              in: 'query',
+              schema: { type: 'array', items: { type: 'string' } },
+              style: 'form',
+              explode: true
+            },
+            {
+              name: 'when',
+              in: 'query',
+              schema: {
+                type: 'string',
+                enum: [
+                  'all',
+                  'upcoming',
+                  'past',
+                  'future',
+                  'finished',
+                  'recent'
+                ]
+              }
+            },
+            {
+              name: 'lookbackHours',
+              in: 'query',
+              schema: { type: 'number' }
+            },
+            {
+              name: 'since',
+              in: 'query',
+              schema: { type: 'string', format: 'date-time' }
+            },
+            {
+              name: 'until',
+              in: 'query',
+              schema: { type: 'string', format: 'date-time' }
+            },
+            {
+              name: 'order',
+              in: 'query',
+              schema: { type: 'string', enum: ['asc', 'desc'] }
+            },
+            {
+              name: 'limit',
+              in: 'query',
+              schema: { type: 'integer', minimum: 1 }
+            },
+            {
+              name: 'externalId',
+              in: 'query',
+              schema: { type: 'array', items: { type: 'string' } },
+              style: 'form',
+              explode: true
+            },
+            {
+              name: 'played',
+              in: 'query',
+              schema: { type: 'string', enum: ['1', 'true'] }
+            },
+            {
+              name: 'scoreboard',
+              in: 'query',
+              schema: { type: 'string', enum: ['open'] }
+            }
+          ],
+          responses: {
+            200: { description: 'The games that match' },
+            400: errorResponse,
+            401: errorResponse,
+            404: errorResponse,
+            503: errorResponse
           }
+        }
+      },
+      '/scoreboard/{gameId}': {
+        get: {
+          summary: "A game's scoreboard, as it is drawn",
+          description:
+            'No sign-in. `{ state }`, the board with every override applied, ' +
+            "while the scoreboard is open: from the game's creation until two " +
+            'hours after its start, and after that until two hours after the ' +
+            'last write, never later than three days after the start. 404 ' +
+            'for a cancelled or unknown game or a closed scoreboard, and 503 ' +
+            'while the scoreboard store is unreachable.',
+          parameters: [gameIdParam],
+          responses: {
+            200: { description: '`{ state }`' },
+            404: errorResponse,
+            503: errorResponse
+          }
+        }
+      },
+      '/scoreboard/{gameId}/dashboard': {
+        get: {
+          summary: "The override dashboard's state, or its socket",
+          description:
+            'As JSON: `{ automated, overrides, final, gameAt, watcherAt }`, ' +
+            'where `gameAt` and `watcherAt` are when (epoch ms) each ' +
+            'automated source last reported a contested field. ' +
+            'With `Upgrade: websocket` it is the dashboard socket: it sends ' +
+            "`{ type: 'state', automated, overrides, final, gameAt, " +
+            'watcherAt }` on open and after every change, and takes ' +
+            "`{ type: 'overrides', data }`, stored whole, or " +
+            "`{ type: 'reset' }`, which clears every override and GS " +
+            "Watcher's stored state, so the board shows the game's own " +
+            'scoring. An unreadable message is answered with ' +
+            '`{ error }` and the socket stays open. **Who may call:** a site ' +
+            'admin or an admin of either team; anybody else gets 404, or ' +
+            'close 4403 on the socket. Socket close codes: 4401 not signed ' +
+            'in, 4403 may not override this game, 4404 no such game or its ' +
+            'scoreboard is closed, 1011 the store is unreachable.',
+          security: [{ bearer: [] }],
+          parameters: [gameIdParam],
+          responses: {
+            101: { description: 'The dashboard socket' },
+            200: { description: 'The dashboard state' },
+            401: errorResponse,
+            404: errorResponse,
+            503: errorResponse
+          }
+        }
+      },
+      '/scoreboard/{gameId}/socket': {
+        get: {
+          summary: "A game's scoreboard as a WebSocket",
+          description:
+            'No sign-in. Sends the board as it is drawn, `ScoreState` JSON, ' +
+            'on open and after every change from any source. Inbound ' +
+            'messages are ignored. Closes with 4404 when there is no such ' +
+            'game or its scoreboard is closed, and 1011 while the store is ' +
+            'unreachable.',
+          parameters: [gameIdParam],
+          responses: { 101: { description: 'The viewer socket' } }
+        }
+      },
+      '/scoreboard/{gameId}/publish': {
+        get: {
+          summary: "Publish to a game's scoreboard over a WebSocket",
+          description:
+            "GS Watcher's socket. Each message is a bare partial " +
+            '`ScoreState` JSON object, merged into what Watcher has sent ' +
+            'before. Team names are ignored: they come from the game. An ' +
+            'unreadable message is answered with `{ error }` and the socket ' +
+            'stays open. **Who may call:** a site admin or an admin of ' +
+            'either team, by bearer token or session cookie. Close codes: ' +
+            '4401 not signed in, 4403 may not publish this game, 4404 no ' +
+            'such game or its scoreboard is closed, 1011 the store is ' +
+            'unreachable.',
+          security: [{ bearer: [] }],
+          parameters: [gameIdParam],
+          responses: { 101: { description: 'The publisher socket' } }
         }
       },
       '/director/events/{gameId}/claim': {

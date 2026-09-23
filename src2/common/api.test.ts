@@ -310,6 +310,36 @@ describe('api client', function () {
     expect(refused).equals(true)
   })
 
+  it('renames a camera with nothing but its label', async function () {
+    const renamed = stubFetch(200, {
+      id: 'liv_1',
+      gameId: 'gam 1',
+      userId: 42,
+      ownerName: 'Pat',
+      slot: 1,
+      label: 'Dugout',
+      keyPrefix: 'gs_abc',
+      state: 'idle',
+      opensAt: '2026-05-02T18:00:00.000Z',
+      closesAt: null
+    })
+    const client = new GameStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: renamed.fetch
+    })
+    const stream = await client.updateLiveStream('gam 1', 'liv_1', {
+      label: 'Dugout'
+    })
+    expect(stream.label).equals('Dugout')
+    expect(renamed.calls[0].method).equals('PATCH')
+    expect(renamed.calls[0].url).equals(
+      'http://x/api/v1/games/gam%201/live-streams/liv_1'
+    )
+    expect(JSON.parse(renamed.calls[0].body ?? '')).deep.equals({
+      label: 'Dugout'
+    })
+  })
+
   it('cleans a team list', async function () {
     const { fetch } = stubFetch(200, [
       { id: 'tem_1', name: 'Badgers', shortName: null, logoPath: null }
@@ -553,5 +583,138 @@ describe('api client', function () {
     const client = new GameStationClient({ baseUrl: 'http://x/api/v1', fetch })
     expect(await client.standings('sea 1')).deep.equals([row])
     expect(calls[0].url).equals('http://x/api/v1/seasons/sea%201/standings')
+  })
+
+  it('signs in by code, by link, and by a sign-in approved elsewhere, and signs out', async function () {
+    const session = {
+      token: 'tok_code',
+      expiresAt: '2026-10-01T00:00:00.000Z',
+      user: { id: 1, displayName: 'Robin', isAdmin: false }
+    }
+    const answers: Array<[number, unknown]> = [
+      [202, { sent: true, requestId: 'req_1', clientSecret: 'secret' }],
+      [202, { ready: false }],
+      [200, { ...session, token: 'tok_claim' }],
+      [200, { ...session, token: 'tok_link' }],
+      [200, session],
+      [200, { ok: true }]
+    ]
+    const calls: Call[] = []
+    const fetch = async (
+      url: unknown,
+      init?: { method?: string; headers?: unknown; body?: string }
+    ): Promise<Response> => {
+      calls.push({
+        url: String(url),
+        method: init?.method ?? 'GET',
+        headers: (init?.headers ?? {}) as Record<string, string>,
+        body: init?.body
+      })
+      const [status, body] = answers[calls.length - 1]
+      return new Response(JSON.stringify(body), { status })
+    }
+    const client = new GameStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: fetch as unknown as typeof globalThis.fetch
+    })
+    const wait = await client.requestEmailCode('a@b.c')
+    expect(wait).deep.equals({ requestId: 'req_1', clientSecret: 'secret' })
+    expect(JSON.parse(calls[0].body ?? '')).deep.equals({
+      email: 'a@b.c',
+      origin: 'web'
+    })
+    expect(await client.claimSignIn(wait)).equals(undefined)
+    expect(client.token).equals(undefined)
+    expect((await client.claimSignIn(wait))?.token).equals('tok_claim')
+    expect(JSON.parse(calls[2].body ?? '')).deep.equals({
+      requestId: 'req_1',
+      clientSecret: 'secret'
+    })
+    await client.signInWithLink('link_token')
+    expect(client.token).equals('tok_link')
+    await client.signInWithCode('a@b.c', '123456')
+    expect(client.token).equals('tok_code')
+    expect(calls[4].url).equals('http://x/api/v1/auth/email-code/verify')
+    await client.signOut()
+    expect(client.token).equals(undefined)
+    expect(
+      calls.map(call => call.url.slice('http://x/api/v1'.length))
+    ).deep.equals([
+      '/auth/email-code',
+      '/auth/request/claim',
+      '/auth/request/claim',
+      '/auth/link/verify',
+      '/auth/email-code/verify',
+      '/auth/logout'
+    ])
+  })
+
+  it("reads a game's scoring and scoreboard flags, and their defaults from a server from before them", async function () {
+    const game = {
+      id: 'g/1',
+      homeTeamId: 'h',
+      awayTeamId: 'a',
+      homeTeamName: 'Hawks',
+      awayTeamName: 'Gulls',
+      seasonId: null,
+      startAt: '2026-09-28T18:00:00.000Z',
+      venue: null,
+      status: 'scheduled',
+      homeScore: null,
+      awayScore: null,
+      ingestStatus: 'none',
+      ingestMessage: null,
+      videos: []
+    }
+    const flagged = stubFetch(200, {
+      ...game,
+      canScore: true,
+      canDj: true,
+      scoreboard: { open: true, mayOverride: false }
+    })
+    const detail = await new GameStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: flagged.fetch
+    }).game('g/1')
+    expect(flagged.calls[0].url).equals('http://x/api/v1/games/g%2F1')
+    expect(detail.canScore).equals(true)
+    expect(detail.canDj).equals(true)
+    expect(detail.scoreboard).deep.equals({ open: true, mayOverride: false })
+    const older = await new GameStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: stubFetch(200, game).fetch
+    }).game('g/1')
+    expect(older.canScore).equals(false)
+    expect(older.canDj).equals(false)
+    expect(older.scoreboard).equals(null)
+  })
+
+  it('asks for seasons, their games and teams, the newest game and who is signed in', async function () {
+    const { fetch, calls } = stubFetch(200, [])
+    const client = new GameStationClient({ baseUrl: 'http://x/api/v1', fetch })
+    expect(await client.seasons()).deep.equals([])
+    expect(await client.games()).deep.equals([])
+    expect(await client.games({ externalIds: ['ext 1'] })).deep.equals([])
+    expect(await client.seasonGames('s/1')).deep.equals([])
+    expect(await client.seasonTeams('s/1')).deep.equals([])
+    expect(await client.liveNow()).deep.equals([])
+    expect(await client.whoAmI()).equals(null)
+    expect(
+      await new GameStationClient({
+        baseUrl: 'http://x/api/v1',
+        fetch: stubFetch(200, []).fetch
+      }).recentGame()
+    ).equals(null)
+    expect(
+      calls.map(call => call.url.slice('http://x/api/v1'.length))
+    ).deep.equals([
+      '/seasons',
+      '/events',
+      '/events?externalId=ext%201',
+      '/events?season=s%2F1',
+      '/seasons/s%2F1/teams',
+      '/live',
+      '/auth/me'
+    ])
   })
 })

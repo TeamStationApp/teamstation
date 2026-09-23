@@ -64,7 +64,7 @@ function fixtureFetch(signedIn = true): void {
       : path.endsWith('/games/g1/events')
         ? { plays: [], currentPlay: null }
         : path.endsWith('/games/g1')
-          ? gameFixture
+          ? { ...gameFixture, canScore: true }
           : path.endsWith('/live-streams')
             ? { streams: [] }
             : []
@@ -114,6 +114,12 @@ describe('scoring shell and exit', function () {
     showRoute({ name: 'game', gameId: 'g1' }, true)
     await render(<App />)
     await click('Score Game')
+    expect(currentRoute()).deep.equals({
+      name: 'game',
+      gameId: 'g1',
+      tab: 'score'
+    })
+    await click('Full game scoring')
     expect(currentRoute()).deep.equals({ name: 'scoreGame', gameId: 'g1' })
     expect(document.querySelector('[aria-label="Schedule"]')).equals(null)
     await click('Ball')

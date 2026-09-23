@@ -164,6 +164,19 @@ export const asServerConfig = asObject({
     'http://127.0.0.1:8080'
   ]),
 
+  /**
+   * Redis, which holds every game's scoreboard and carries its changes from
+   * worker to worker. Empty `prefix` means `gs:<database name>`, so deployments
+   * that share one Redis, each with its own database, never meet.
+   */
+  redis: asOptional(
+    asObject({
+      url: asOptional(asString, 'redis://127.0.0.1:6379'),
+      prefix: asOptional(asString, '')
+    }),
+    { url: 'redis://127.0.0.1:6379', prefix: '' }
+  ),
+
   /** Log every request. Noisy, but useful while the server is still new. */
   logRequests: asOptional(asBoolean, true),
 

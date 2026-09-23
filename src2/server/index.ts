@@ -33,6 +33,7 @@ import { authRoutes } from './routes/auth'
 import { devMediaRoutes } from './routes/devMedia'
 import { directorRoutes } from './routes/director'
 import { directorUploadRoutes } from './routes/directorUploads'
+import { eventListRoutes } from './routes/eventList'
 import { eventRoutes } from './routes/events'
 import { healthRoutes } from './routes/health'
 import { inviteRoutes } from './routes/invites'
@@ -45,12 +46,16 @@ import { meRoutes } from './routes/me'
 import { mediaAuthRoute, mediaRoutes } from './routes/media'
 import { playerRoutes } from './routes/players'
 import { scheduleRoutes } from './routes/schedule'
+import { scoreboardRoutes } from './routes/scoreboard'
 import { seasonRoutes } from './routes/seasons'
 import { statsRoutes } from './routes/stats'
 import { teamRoutes } from './routes/teams'
 import { userRoutes } from './routes/users'
 import { walkUpSongRoutes } from './routes/walkUpSongs'
+import { attachScoreboard } from './scoreboard/attachScoreboard'
+import { startScoreboard } from './scoreboard/scoreboardService'
 import { primaryHost, publicUrl, serverConfig } from './serverConfig'
+import { bindUpgrades } from './socket/bindUpgrades'
 import { attachGameSocket } from './socket/gameSocket'
 import {
   exitAfterBuilder,
@@ -448,6 +453,16 @@ function runWorker(): void {
     space: serverConfig.space,
     workDir: serverConfig.workDir
   }
+  // Redis is connected to and not waited for: the API comes up without it,
+  // and only the scoreboard notices that it is away.
+  const scoreboard = startScoreboard({
+    db,
+    redis: serverConfig.redis,
+    databaseUrl: serverConfig.databaseUrl,
+    log: message => {
+      console.error(`worker ${process.pid}: ${message}`)
+    }
+  })
   const app = express()
 
   app.set('trust proxy', 'loopback')
@@ -474,10 +489,18 @@ function runWorker(): void {
   app.use('/api/v1', inviteRoutes(db, { sendCode, publicUrl }))
   app.use('/api/v1', manageRoutes(db, { sendInvite, publicUrl }))
   app.use('/api/v1', seasonRoutes(db, mediaContext))
-  app.use('/api/v1', teamRoutes(db, mediaContext))
+  app.use(
+    '/api/v1',
+    eventListRoutes(db, mediaContext, { store: scoreboard.store })
+  )
+  app.use('/api/v1', teamRoutes(db, mediaContext, scoreboard.store))
   app.use('/api/v1', scheduleRoutes(db))
-  app.use('/api/v1', eventRoutes(db))
+  app.use(
+    '/api/v1',
+    eventRoutes(db, { onGameWritten: scoreboard.onGameWritten })
+  )
   app.use('/api/v1', lineupRoutes(db))
+  app.use('/api/v1', scoreboardRoutes(db, scoreboard.store))
   app.use('/api/v1', logRoutes())
   app.use('/api/v1', statsRoutes(db))
   app.use('/api/v1', playerRoutes(db, mediaContext))
@@ -531,7 +554,21 @@ function runWorker(): void {
       )
     }
   )
-  attachGameSocket(server, db, serverConfig.databaseUrl)
+  // One upgrade listener. Node delivers an upgrade to every listener on the
+  // same socket, so each socket takes only the paths it owns.
+  const gameSocket = attachGameSocket(server, db, serverConfig.databaseUrl, {
+    listenForUpgrades: false
+  })
+  const closeScoreboard = attachScoreboard(server, scoreboard.hub, {
+    listen: false
+  })
+  const unbindUpgrades = bindUpgrades(server, [
+    (req, socket, head) => gameSocket.acceptUpgrade(req, socket, head),
+    (req, socket, head) => {
+      scoreboard.hub.handleUpgrade(req, socket, head)
+      return true
+    }
+  ])
 
   // Unclustered — one process, which is both the API and the ingest.
   let builder: StatsBuilderHandle = {
@@ -563,6 +600,12 @@ function runWorker(): void {
     if (closing) return
     closing = true
     stopLiveController()
+    unbindUpgrades()
+    // Before the server: an upgraded socket is not one of its connections,
+    // so closing the server would leave every scoreboard socket open.
+    closeScoreboard().catch((error: unknown) => {
+      console.error(`worker ${process.pid}: scoreboard close: ${String(error)}`)
+    })
     stopWorker({
       server,
       destroyDatabase: async () => {

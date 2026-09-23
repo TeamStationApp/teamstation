@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 # Runs the unit and integration test targets on an iPad simulator.
+#
+# COVERAGE=1 also gathers code coverage and holds the lines this branch changed in GS Director,
+# DirectorCore and DirectorExport to 90% with scripts/swift-changed-line-coverage.cjs. The four
+# files it excludes are SwiftUI layout and AppEnvironment's one-line wiring, which the maestro-d
+# device tests exercise instead.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
@@ -19,6 +24,10 @@ ONLY="${ONLY:-}"
 ARGS=()
 if [ -n "$ONLY" ]; then
   ARGS+=(-only-testing:"$ONLY")
+fi
+COVERAGE="${COVERAGE:-}"
+if [ -n "$COVERAGE" ]; then
+  ARGS+=(-enableCodeCoverage YES)
 fi
 
 LOG="$DIRECTOR_DERIVED_DATA/test-unit.log"
@@ -69,6 +78,27 @@ CASES="$(xcrun xcresulttool get test-results summary \
   ' || true)"
 log "Ran ${CASES:-0} test cases"
 
+# Measured whether or not a test failed, so a run with one failure still reports its coverage.
+COVERED=0
+if [ -n "$COVERAGE" ]; then
+  # From the top level, where the pathspecs below are written.
+  TOP="$(git -C "$DIRECTOR_ROOT" rev-parse --show-toplevel)"
+  log "Changed-line coverage"
+  (
+    cd "$TOP"
+    node "$TOP/scripts/swift-changed-line-coverage.cjs" \
+      --xcresult "$DIRECTOR_DERIVED_DATA/TestResults.xcresult" \
+      --derived-data "$DIRECTOR_DERIVED_DATA" \
+      --exclude mobile/apps/gsDirector/Packages/DirectorUI/Sources/DirectorUI/SettingsView.swift \
+      --exclude mobile/apps/gsDirector/Packages/DirectorUI/Sources/DirectorUI/GameStationEventPicker.swift \
+      --exclude mobile/apps/gsDirector/Packages/DirectorUI/Sources/DirectorUI/GameStationSignIn.swift \
+      --exclude mobile/apps/gsDirector/Packages/DirectorUI/Sources/DirectorUI/ContentEditorView.swift \
+      --exclude mobile/apps/gsDirector/Packages/DirectorUI/Sources/DirectorUI/AppEnvironment.swift \
+      mobile/apps/gsDirector mobile/apps/common/DirectorCore mobile/apps/common/DirectorExport
+  ) || COVERED=1
+fi
+
 [ $STATUS -eq 0 ] || fail "tests failed — full log at $LOG"
 [ "${CASES:-0}" -gt 0 ] || fail "no test cases ran — full log at $LOG"
+[ $COVERED -eq 0 ] || fail "changed lines are under 90% covered"
 log "Tests passed"

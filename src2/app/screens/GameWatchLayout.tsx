@@ -94,7 +94,7 @@ export function GameWatchLayout(
         picture — the thing the screen is for — would start below the fold
         and need scrolling to before it could be seen at all.
       */}
-      {short ? null : <View style={headStyle}>{head}</View>}
+      {short || head == null ? null : <View style={headStyle}>{head}</View>}
 
       {/*
         A plain div, not a `View`: `position: sticky` is a web value React

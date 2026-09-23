@@ -46,8 +46,6 @@ struct EventPickerSheet: View {
               onChoose(event)
             } label: {
               VStack(alignment: .leading, spacing: 3) {
-                Text(event.title)
-                  .font(.system(size: 16, weight: .semibold))
                 HStack(spacing: 6) {
                   Text(when(event.startAt))
                   if let venue = event.venue, !venue.isEmpty {
@@ -57,6 +55,8 @@ struct EventPickerSheet: View {
                 }
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(.secondary)
+                Text(event.title)
+                  .font(.system(size: 16, weight: .semibold))
               }
               .frame(maxWidth: .infinity, alignment: .leading)
               .contentShape(Rectangle())
@@ -91,11 +91,7 @@ struct EventPickerSheet: View {
     return "GameStation has no games this account runs that have already been played."
   }
 
-  /// `Sat 20 Sep, 12:15` — the day and the time, because two games of the same
-  /// teams on one weekend are told apart by the clock.
   private func when(_ date: Date) -> String {
-    let formatter = DateFormatter()
-    formatter.dateFormat = "EEE d MMM, HH:mm"
-    return formatter.string(from: date)
+    EventWhenLabel.format(date)
   }
 }

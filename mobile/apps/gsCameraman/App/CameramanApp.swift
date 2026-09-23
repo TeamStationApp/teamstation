@@ -3,16 +3,18 @@ import CameramanUI
 import SwiftUI
 import UIKit
 
-/// Landscape only. Declared here as well as in Info.plist because SwiftUI's window can otherwise
-/// come up in portrait on a phone that was launched from portrait lock, which then draws the whole
-/// UI on its side. The same mask covers the external-display window, so the clean feed is never
-/// rotated on its way out.
+/// The camera stays landscape, including when the phone was launched from portrait lock.
+/// Settings may be portrait or landscape. The clean-feed window stays landscape either way,
+/// so the picture on a USB-C display is never rotated on its way out.
 final class CameramanAppDelegate: NSObject, UIApplicationDelegate {
   func application(
     _ application: UIApplication,
     supportedInterfaceOrientationsFor window: UIWindow?
   ) -> UIInterfaceOrientationMask {
-    .landscape
+    if window?.windowScene?.session.role == .windowExternalDisplayNonInteractive {
+      return .landscape
+    }
+    return InterfaceOrientation.mask
   }
 
   /// A USB-C display gets the clean-feed scene; everything else is left to SwiftUI, which supplies
