@@ -30,12 +30,14 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun SettingsBody(
     modifier: Modifier = Modifier,
+    columns: Int = 2,
     horizontalInsets: WindowInsets = WindowInsets.displayCutout
         .union(WindowInsets.safeDrawing)
         .only(androidx.compose.foundation.layout.WindowInsetsSides.Horizontal),
     header: @Composable ColumnScope.() -> Unit = {},
-    left: @Composable ColumnScope.() -> Unit,
-    right: @Composable ColumnScope.() -> Unit,
+    left: @Composable ColumnScope.() -> Unit = {},
+    right: @Composable ColumnScope.() -> Unit = {},
+    stack: @Composable ColumnScope.() -> Unit = {},
     footer: @Composable ColumnScope.() -> Unit = {}
 ) {
     Column(
@@ -47,20 +49,29 @@ fun SettingsBody(
             .testTag("settings-scroll")
     ) {
         header()
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-            verticalAlignment = Alignment.Top
-        ) {
+        if (columns == 1) {
             Column(
-                modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
-                content = left
+                modifier = Modifier.testTag("settings-layout-portrait"),
+                content = stack
             )
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-                content = right
-            )
+        } else {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalAlignment = Alignment.Top,
+                modifier = Modifier.testTag("settings-layout-landscape")
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    content = left
+                )
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    content = right
+                )
+            }
         }
         footer()
     }
