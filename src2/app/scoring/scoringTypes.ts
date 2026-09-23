@@ -96,6 +96,7 @@ export interface Movement {
   resolved?: boolean
 }
 export interface PendingPlay {
+  batterPoint?: GroundPoint
   choiceApplied?: boolean
   originalRunnerRecordCount?: number
   outcome:
@@ -117,6 +118,7 @@ export interface PendingPlay {
   trajectoryAccepted: boolean
 }
 export interface MotionCommand {
+  purpose?: 'approachFirst'
   id: string
   generation: number
   playerId: number
@@ -124,6 +126,8 @@ export interface MotionCommand {
   complete: boolean
 }
 export interface RunnerAction {
+  purpose?: 'batterRetirement'
+  runnerPoint?: GroundPoint
   playerId: number
   from: number
   to: number
@@ -206,7 +210,13 @@ export type ScoringEvent =
   | { type: 'CANCEL_RUNNER' }
   | { type: 'RUNNER_CANCEL' }
   | { type: 'THROWER'; id: number; point: GroundPoint; generation: number }
-  | { type: 'DEFENDER'; id?: number; point?: GroundPoint; generation: number }
+  | {
+      type: 'DEFENDER'
+      id?: number
+      point?: GroundPoint
+      runnerPoint?: GroundPoint
+      generation: number
+    }
   | { type: 'OUTCOME'; outcome: Outcome }
   | { type: 'FIELDER'; id: number; point: GroundPoint; generation: number }
   | { type: 'TRAJECTORY'; angle: number; generation: number }

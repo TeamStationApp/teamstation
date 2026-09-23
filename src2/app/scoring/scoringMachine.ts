@@ -1,9 +1,13 @@
 import { acceptTrajectory, chooseOutcome, placeFielder } from './battedBall'
 import { moreReducer } from './moreActions'
-import { prepareTerminalPitch, runnerReducer } from './runnerRules'
+import {
+  approachFirst,
+  prepareTerminalPitch,
+  runnerReducer
+} from './runnerRules'
 import { asScoringPlay } from './scoringContract'
 import { applyOverrideDraft, applyRosterDraft } from './scoringEdits'
-import { pitchPresentation } from './scoringPresentation'
+import { outBatterPoint, pitchPresentation } from './scoringPresentation'
 import {
   baseIds,
   battingSide,
@@ -204,7 +208,26 @@ export function scoringReducer(
       sequence.stage !== event.stage
     )
       return state
-    return { ...state, presentation: null }
+    const next = { ...snapshotOf(state), past: state.past, presentation: null }
+    if (sequence.kind === 'hit' && sequence.out) {
+      const point = outBatterPoint(sequence)
+      if (next.pendingPlay != null) next.pendingPlay.batterPoint = point
+      const motion = next.motions.find(
+        m => m.playerId === sequence.batter && !m.complete
+      )
+      if (motion != null) motion.waypoints[0] = point
+      if (
+        next.runnerAction?.purpose === 'batterRetirement' &&
+        next.phase === 'chooseDefender'
+      )
+        approachFirst(
+          next,
+          sequence.batter,
+          point,
+          outBatterPoint(sequence, Infinity)
+        )
+    }
+    return next
   }
   if (
     state.presentation != null &&

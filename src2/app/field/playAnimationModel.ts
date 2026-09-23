@@ -2,7 +2,8 @@ import {
   type HitSequence,
   PITCH_TIMING,
   type PitchSequence,
-  type Point3
+  type Point3,
+  type ThrowSequence
 } from '../scoring/scoringPresentation'
 import { arcPoint } from './ballArcModel'
 import type { GroundPoint } from './fieldModel'
@@ -105,5 +106,23 @@ export function sampleHit(
         (sequence.arc.target.z - sequence.fielderStart.z) * flight
     },
     running: flight > 0 && flight < 1
+  }
+}
+
+export function sampleThrow(
+  sequence: ThrowSequence,
+  time: number
+): { ball: Point3; visible: boolean; progress: number; swing: number } {
+  const t = clamp(
+    (time - (sequence.unassisted ? 0 : 150)) /
+      (sequence.durationMs - (sequence.unassisted ? 0 : 150))
+  )
+  const ball = lerp(sequence.from, sequence.to, t)
+  ball.y += Math.sin(t * Math.PI) * (sequence.unassisted ? 0 : 3)
+  return {
+    ball,
+    visible: !sequence.unassisted && time >= 150 && time < sequence.durationMs,
+    progress: t,
+    swing: 0
   }
 }

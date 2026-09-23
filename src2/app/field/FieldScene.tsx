@@ -27,6 +27,7 @@ import {
 } from './ballArcModel'
 import { Ballpark } from './Ballpark'
 import { applyFieldCamera } from './cameraModel'
+import { fieldKey } from './fieldKeyboard'
 import type { FieldPlayer } from './fieldModel'
 import { BASES } from './fieldModel'
 import { fieldPalette as p } from './fieldPalette'
@@ -115,6 +116,7 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
       y: ((1 - projected.y) * size.height) / 2
     }
   }
+  const { registerKeyboard } = props
   const gestureId = useRef(0)
   const dragGeneration = useRef(0)
   const [preview, setPreview] = useState<MoveDraft | null>(null)
@@ -161,6 +163,36 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     invalidate
   ])
 
+  useEffect(() => {
+    const handle = (key: string): boolean =>
+      fieldKey(callbacks.current, key, {
+        project: position => {
+          const projected = new Vector3(position.x, 9, position.z).project(
+            camera
+          )
+          return {
+            x: ((projected.x + 1) * size.width) / 2,
+            y: ((1 - projected.y) * size.height) / 2
+          }
+        },
+        width: size.width,
+        height: size.height
+      })
+    registerKeyboard?.(handle)
+    return () => {
+      registerKeyboard?.(null)
+    }
+  }, [
+    registerKeyboard,
+    camera,
+    size.width,
+    size.height,
+    view,
+    zoom,
+    cameraTilt,
+    cameraHeight
+  ])
+
   const gesturePolicyKey = props.interaction?.gestures.join()
   const selectablePolicyKey = props.interaction?.selectableIds.join()
   useEffect(() => {
@@ -176,6 +208,8 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
         if (player.keyboardOrigin != null) {
           player.target = { ...player.keyboardOrigin }
           delete player.keyboardOrigin
+          callbacks.current.onRunnerDrag?.(null)
+          callbacks.current.onSelect('')
           callbacks.current.onGestureActive?.(false)
         }
       if (drag.current != null) {

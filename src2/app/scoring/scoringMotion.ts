@@ -17,6 +17,7 @@ export function scoringFieldPlayers(
 ): FieldPlayer[] {
   if (
     state.presentation?.kind === 'pitch' ||
+    state.presentation?.kind === 'throw' ||
     (state.presentation?.kind === 'hit' && state.presentation.stage === 'swing')
   )
     return state.presentation.players.map(player => ({
@@ -73,7 +74,13 @@ export function scoringFieldPlayers(
     player.runnerBase = 4
   })
   for (const command of state.motions) {
-    if (command.complete) continue
+    if (
+      command.complete ||
+      (state.presentation?.kind === 'hit' &&
+        state.presentation.out &&
+        command.playerId === state.presentation.batter)
+    )
+      continue
     const player = addRunner(command.playerId)
     player.batting = false
     const prior = previous.find(
@@ -100,6 +107,23 @@ export function scoringFieldPlayers(
         reported: false
       }
     }
+  }
+  if (state.presentation?.kind === 'hit' && state.presentation.out) {
+    const batter = addRunner(state.presentation.batter)
+    batter.batting = false
+  } else if (
+    pending?.batterPoint != null &&
+    state.phase === 'chooseDefender' &&
+    state.runnerAction?.purpose === 'batterRetirement'
+  ) {
+    const batter = addRunner(
+      session.liveData.plays.currentPlay!.matchup.batter.id
+    )
+    if (batter.motion == null) {
+      batter.position = { ...pending.batterPoint }
+      batter.target = { ...pending.batterPoint }
+    }
+    batter.batting = false
   }
   for (const player of players) {
     if (
@@ -142,7 +166,8 @@ export function scoringFieldPlayers(
       player.position = { ...state.runnerAction.defenderPoint }
       player.target = { ...player.position }
     }
-    player.suppressed = suppressed && player.team === 'runner'
+    player.suppressed =
+      state.presentation == null && suppressed && player.team === 'runner'
   }
   return players
 }

@@ -21,6 +21,7 @@ import { RosterEditor } from './RosterEditor'
 import { RunnerControls } from './RunnerControls'
 import type { RunnerDragView } from './runnerDrag'
 import { RunnerDragTargets } from './RunnerDragTargets'
+import { runnerDecisionError } from './runnerRules'
 import { scoringAudio } from './scoringAudio'
 import { initialScoringState, scoringReducer } from './scoringMachine'
 import { scoringFieldPlayers } from './scoringMotion'
@@ -32,7 +33,7 @@ import {
   DevelopmentScoringStateSource,
   type ScoringStateSource
 } from './scoringStateSource'
-import type { ScoringSessionState } from './scoringTypes'
+import type { ScoringEvent, ScoringSessionState } from './scoringTypes'
 import { useMenuEscape } from './useMenuEscape'
 import { useScoringClock } from './useScoringClock'
 import { useScoringExit } from './useScoringExit'
@@ -149,6 +150,13 @@ function ScoringSession(props: {
   useEffect(() => {
     scoringAudio.setEnabled(sound)
   }, [sound])
+  const keyboard = useRef<((key: string) => boolean) | null>(null)
+  const registerKeyboard = useCallback(
+    (handler: ((key: string) => boolean) | null) => {
+      keyboard.current = handler
+    },
+    []
+  )
   const [gestureActive, setGestureActive] = useState(false)
   const [outcomeMenu, setOutcomeMenu] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
@@ -329,6 +337,19 @@ function ScoringSession(props: {
         ? 'Next batter is on base. Update lineup to continue.'
         : `${session.gameData.teams.away.name} ${line.teams.away.runs} · ${session.gameData.teams.home.name} ${line.teams.home.runs} · ${line.inningState} ${line.currentInningOrdinal} · ${line.balls} balls ${line.strikes} strikes ${line.outs} outs · Pitches ${scoreboardFor(session).pitchCount}`
       : `${instruction}${state.phase === 'trajectory' ? ` ${angle}° ${trajectoryLabel(angle)}` : ''}`
+  const dispatchRunner = (event: ScoringEvent): void => {
+    if (event.type === 'DEFENDER') {
+      const runner = players.find(
+        player =>
+          player.playerId === state.runnerAction?.playerId &&
+          player.team === 'runner'
+      )
+      dispatch({
+        ...event,
+        runnerPoint: runner == null ? undefined : { ...runner.position }
+      })
+    } else dispatch(event)
+  }
   return (
     <BaseballScreen
       field={{
@@ -346,10 +367,16 @@ function ScoringSession(props: {
         runnerSafeError: (id, to) => {
           const player = players.find(item => item.id === id)
           if (player?.playerId == null) return 'Runner unavailable'
-          const occupant = to < 4 ? baseIds(session)[to - 1] : null
-          return occupant != null && occupant !== player.playerId
-            ? 'Destination base is occupied'
-            : undefined
+          return runnerDecisionError({
+            ...state,
+            runnerAction: {
+              playerId: player.playerId,
+              from: baseIds(session).indexOf(player.playerId) + 1,
+              to,
+              origin: state.pendingPlay == null ? 'between' : 'current',
+              returnPhase: state.phase
+            }
+          })
         },
         onRunnerDrop: (id, to, decision, generation) => {
           if (generation !== state.generation) return
@@ -420,6 +447,7 @@ function ScoringSession(props: {
           scoringAudio.unlock()
           dispatch({ type: 'TRAJECTORY', angle: value, generation })
         },
+        registerKeyboard,
         onFieldPlacement: event => {
           const id = players.find(
             player => player.id === event.entityId
@@ -429,7 +457,7 @@ function ScoringSession(props: {
             (state.phase === 'chooseThrower' ||
               state.phase === 'chooseDefender')
           )
-            dispatch({
+            dispatchRunner({
               type: state.phase === 'chooseThrower' ? 'THROWER' : 'DEFENDER',
               id,
               point: event.point,
@@ -570,7 +598,16 @@ function ScoringSession(props: {
       summary={summary}
       accessibilitySummary={`${summary} · Batter ${line.offense.batter?.fullName ?? 'waiting'} ${session.liveData.plays.currentPlay?.matchup.batSide.code === 'L' ? 'left handed' : 'right handed'} · Pitcher ${line.defense.P?.fullName ?? 'unassigned'}`}
     >
-      <RunnerDragTargets view={runnerDrag} />
+      <RunnerDragTargets
+        view={runnerDrag}
+        onChoose={decision => {
+          keyboard.current?.(decision === 'safe' ? 's' : 'o')
+          keyboard.current?.('Enter')
+        }}
+        onCancel={() => {
+          keyboard.current?.('Escape')
+        }}
+      />
       {state.moreDraft != null && state.runnerDraft == null && (
         <View
           style={{ position: 'absolute', bottom: 130, alignSelf: 'center' }}
@@ -584,7 +621,7 @@ function ScoringSession(props: {
         </View>
       )}
       {!menu && sheet == null && state.presentation == null && (
-        <RunnerControls state={state} anchor={null} dispatch={dispatch} />
+        <RunnerControls state={state} anchor={null} dispatch={dispatchRunner} />
       )}
       {menu && (
         <>

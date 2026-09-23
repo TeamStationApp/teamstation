@@ -4,7 +4,6 @@ import { Pressable, Text, View } from 'react-native'
 
 import { useBreakpoint } from '../components'
 import { useTheme } from '../theme/ThemeContext'
-import { fieldKey } from './fieldKeyboard'
 import { FieldScene } from './FieldScene'
 import type { FieldCanvasProps } from './fieldTypes'
 
@@ -122,6 +121,23 @@ export function FieldCanvas(props: FieldCanvasProps): React.ReactElement {
     if (!available) recover()
   }, [available, recover])
 
+  const keyboard = useRef<((key: string) => boolean) | null>(null)
+  const { registerKeyboard: registerParentKeyboard } = props
+  const registerKeyboard = useCallback(
+    (handler: ((key: string) => boolean) | null) => {
+      keyboard.current = handler
+      registerParentKeyboard?.(
+        handler == null
+          ? null
+          : key => {
+              const handled = handler(key)
+              if (key === 'Enter' || key === 'Escape') eventHost?.focus()
+              return handled
+            }
+      )
+    },
+    [registerParentKeyboard, eventHost]
+  )
   const cancelGesture = useRef<(() => void) | null>(null)
   const registerInterruption = useCallback((cancel: (() => void) | null) => {
     cancelGesture.current = cancel
@@ -145,7 +161,7 @@ export function FieldCanvas(props: FieldCanvasProps): React.ReactElement {
       aria-label="Baseball field. Brackets focus a player, Space grabs, arrows move, S or O chooses runner Safe or Out, Enter releases, Escape cancels."
       onKeyDown={event => {
         if (event.key === 'Escape') cancelGesture.current?.()
-        if (fieldKey(props, event.key)) event.preventDefault()
+        if (keyboard.current?.(event.key) === true) event.preventDefault()
       }}
       ref={node => {
         if (node != null) setEventHost(node)
@@ -193,6 +209,7 @@ export function FieldCanvas(props: FieldCanvasProps): React.ReactElement {
               {...props}
               presentationPaused={props.presentationPaused === true || hidden}
               registerInterruption={registerInterruption}
+              registerKeyboard={registerKeyboard}
               touchPlacement={props.touchPlacement === true || mobileInput}
             />
           </Canvas>

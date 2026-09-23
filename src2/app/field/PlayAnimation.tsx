@@ -5,12 +5,13 @@ import type { Mesh, MeshBasicMaterial } from 'three'
 
 import { scoringAudio } from '../scoring/scoringAudio'
 import {
+  outBatterPoint,
   presentationRuntime,
   type PresentationSequence,
   stepPresentation
 } from '../scoring/scoringPresentation'
 import type { FieldPlayer } from './fieldModel'
-import { sampleHit, samplePitch } from './playAnimationModel'
+import { sampleHit, samplePitch, sampleThrow } from './playAnimationModel'
 export function PlayAnimation({
   sequence,
   players,
@@ -61,7 +62,9 @@ export function PlayAnimation({
     const sample =
       sequence.kind === 'pitch'
         ? samplePitch(sequence, runtime.current.elapsedMs)
-        : sampleHit(sequence, runtime.current.elapsedMs)
+        : sequence.kind === 'hit'
+          ? sampleHit(sequence, runtime.current.elapsedMs)
+          : sampleThrow(sequence, runtime.current.elapsedMs)
     if (ball.current != null) {
       ball.current.position.set(sample.ball.x, sample.ball.y, sample.ball.z)
       ball.current.visible = sample.visible
@@ -76,7 +79,10 @@ export function PlayAnimation({
           'windup' in sample
             ? sample.windup
             : 0,
-        swing: player.playerId === sequence.batter ? sample.swing : 0,
+        swing:
+          sequence.kind !== 'throw' && player.playerId === sequence.batter
+            ? sample.swing
+            : 0,
         catch:
           sequence.kind === 'pitch' &&
           player.playerId === sequence.catcher &&
@@ -84,6 +90,41 @@ export function PlayAnimation({
             ? sample.catch
             : 0,
         throwSide: sequence.kind === 'pitch' ? sequence.throwSide : 'R'
+      }
+      if (
+        sequence.kind === 'hit' &&
+        sequence.out &&
+        sequence.stage === 'flight' &&
+        player.playerId === sequence.batter
+      ) {
+        const point = outBatterPoint(sequence, runtime.current.elapsedMs)
+        const start = sequence.players.find(
+          p => p.playerId === sequence.batter
+        )!.position
+        player.position = point
+        player.target = { ...point }
+        player.batting = false
+        player.heading = Math.atan2(point.x - start.x, point.z - start.z)
+        player.stride = runtime.current.elapsedMs * 0.012
+        player.pose.run = 1
+      }
+      if (sequence.kind === 'throw' && 'progress' in sample) {
+        if (player.playerId === sequence.thrower) {
+          if (sequence.unassisted) {
+            player.position = { x: sample.ball.x, z: sample.ball.z }
+            player.target = { ...player.position }
+            player.heading = Math.atan2(
+              sequence.to.x - sequence.from.x,
+              sequence.to.z - sequence.from.z
+            )
+            player.stride = runtime.current.elapsedMs * 0.012
+            player.pose.run = sample.progress < 1 ? 1 : 0
+          } else
+            player.pose.windup =
+              1 - Math.min(1, runtime.current.elapsedMs / 300)
+        }
+        if (player.playerId === sequence.receiver)
+          player.pose.catch = sample.progress > 0.8 ? 1 : 0
       }
       if (
         sequence.kind === 'hit' &&
@@ -98,6 +139,8 @@ export function PlayAnimation({
         )
         player.stride = runtime.current.elapsedMs * 0.012
         player.pose.run = sample.running ? 1 : 0
+        player.pose.catch =
+          runtime.current.elapsedMs > sequence.durationMs - 200 ? 1 : 0
       }
     }
     if (frame.contact === true) onContact?.(sequence.id, sequence.generation)
