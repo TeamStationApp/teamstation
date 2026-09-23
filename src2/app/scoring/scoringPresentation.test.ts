@@ -8,6 +8,7 @@ import { gameFixture } from './isUnscoredGame.test'
 import { initialScoringState, scoringReducer } from './scoringMachine'
 import { scoringFieldPlayers } from './scoringMotion'
 import {
+  PITCH_TIMING,
   pitchPresentation,
   presentationRuntime,
   stepPresentation
@@ -32,13 +33,13 @@ describe('pitch presentation coordination', function () {
       expect(stepPresentation(runtime, sequence, 300, true).cues).has.length(0)
       expect(runtime.elapsedMs).equals(0)
       expect(stepPresentation(runtime, sequence, 0, false).done).equals(false)
-      expect(stepPresentation(runtime, sequence, 300, false).cues).deep.equals([
-        'swish'
-      ])
-      const atRelease = samplePitch(sequence, 300)
+      expect(
+        stepPresentation(runtime, sequence, PITCH_TIMING.release, false).cues
+      ).deep.equals(['swish'])
+      const atRelease = samplePitch(sequence, PITCH_TIMING.release)
       expect(atRelease.visible).equals(true)
       expect(atRelease.ball).deep.equals(sequence.from)
-      const atPlate = samplePitch(sequence, 700)
+      const atPlate = samplePitch(sequence, PITCH_TIMING.plate)
       expect(atPlate.ball).deep.equals(sequence.plate)
       expect(atPlate.swing > 0).equals(kind === 'swing' || kind === 'foul')
       const rest = stepPresentation(runtime, sequence, 2000, false)
@@ -101,9 +102,12 @@ describe('pitch presentation coordination', function () {
         180) /
       Math.PI
     expect(angle).within(44, 46)
-    expect(samplePitch(sequence, 1300).opacity).equals(0.5)
-    expect(samplePitch(sequence, 0).visible).equals(false)
-    const caught = samplePitch(pitchPresentation(state, 'called'), 900)
+    expect(samplePitch(sequence, sequence.durationMs - 100).opacity).equals(0.5)
+    expect(samplePitch(sequence, 0).visible).equals(true)
+    const caught = samplePitch(
+      pitchPresentation(state, 'called'),
+      PITCH_TIMING.catch
+    )
     expect(caught.catch).greaterThan(0)
   })
 })

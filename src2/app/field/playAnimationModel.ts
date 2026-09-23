@@ -5,6 +5,7 @@ import {
   type Point3,
   type ThrowSequence
 } from '../scoring/scoringPresentation'
+import { pitchingHand } from './athletePose'
 import { arcPoint } from './ballArcModel'
 import type { GroundPoint } from './fieldModel'
 export interface PitchSample {
@@ -42,7 +43,13 @@ export function samplePitch(
 ): PitchSample {
   const foul = sequence.pitch === 'foul'
   let ball: Point3
-  if (time < PITCH_TIMING.release) ball = sequence.from
+  if (time < PITCH_TIMING.release)
+    ball = pitchingHand(
+      sequence.players.find(p => p.playerId === sequence.pitcher)!.position,
+      time,
+      PITCH_TIMING.release,
+      sequence.throwSide
+    )
   else if (time < PITCH_TIMING.plate)
     ball = lerp(
       sequence.from,
@@ -71,12 +78,16 @@ export function samplePitch(
   return {
     ball,
     visible:
-      time >= PITCH_TIMING.release &&
+      time >= 0 &&
       (foul ? time < sequence.durationMs : time < PITCH_TIMING.catch),
-    opacity: foul ? 1 - clamp((time - 1200) / 200) : 1,
-    windup: Math.sin(clamp(time / 600) * Math.PI),
-    swing: swinging ? Math.sin(clamp((time - 500) / 420) * Math.PI) : 0,
-    catch: !foul ? Math.sin(clamp((time - 800) / 200) * Math.PI) : 0
+    opacity: foul ? 1 - clamp((time - (sequence.durationMs - 200)) / 200) : 1,
+    windup: Math.sin(clamp(time / (PITCH_TIMING.release * 2)) * Math.PI),
+    swing: swinging
+      ? Math.sin(clamp((time - (PITCH_TIMING.plate - 200)) / 500) * Math.PI)
+      : 0,
+    catch: !foul
+      ? Math.sin(clamp((time - (PITCH_TIMING.catch - 60)) / 200) * Math.PI)
+      : 0
   }
 }
 

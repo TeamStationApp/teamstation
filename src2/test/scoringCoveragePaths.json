@@ -35,5 +35,7 @@
   "src2/app/field/cameraModel.ts",
   "src2/app/field/interactionAffordances.ts",
   "src2/app/field/DestinationMarker.tsx",
-  "src2/app/field/BallArc.tsx"
+  "src2/app/field/BallArc.tsx",
+  "src2/app/field/athletePose.ts",
+  "src2/app/field/AthleteRig.tsx"
 ]

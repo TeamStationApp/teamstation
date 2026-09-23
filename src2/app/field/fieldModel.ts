@@ -1,3 +1,5 @@
+import type { AthletePose } from './athletePose'
+
 /** Ground coordinates are metres: home is (0, 0), centre field is negative z. */
 export interface GroundPoint {
   x: number
@@ -5,6 +7,7 @@ export interface GroundPoint {
 }
 export interface FieldPlayer {
   pose?: {
+    athlete?: AthletePose
     windup: number
     swing: number
     catch: number

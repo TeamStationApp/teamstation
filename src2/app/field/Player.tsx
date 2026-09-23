@@ -11,6 +11,7 @@ import {
   type Texture
 } from 'three'
 
+import { AthleteRig } from './AthleteRig'
 import { BattingPose, DroppedBat } from './BattingPose'
 import { advancePlayer, type FieldPlayer } from './fieldModel'
 import { fieldPalette as p } from './fieldPalette'
@@ -162,6 +163,7 @@ export function Player({
     if (label.current != null && camera instanceof PerspectiveCamera) {
       placePlayerLabel(label.current, player, camera, size.height)
     }
+    body.current.visible = player.pose?.athlete == null
     body.current.rotation.y = player.heading
     const running = player.pose?.run ?? Math.min(1, player.speed / 5)
     const swing = Math.sin(player.stride) * 0.8 * running
@@ -250,6 +252,7 @@ export function Player({
             />
           </sprite>
         )}
+        <AthleteRig player={player} jersey={labels.jersey} />
         <group ref={body} scale={[PLAYER_SCALE, PLAYER_SCALE, PLAYER_SCALE]}>
           <mesh
             name="jersey-torso"

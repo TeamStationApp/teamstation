@@ -42,7 +42,7 @@ describe('rendered pitch timeline', function () {
     )
     const renderer = await create(view(false))
     try {
-      await renderer.advanceFrames(7, 0.05)
+      await renderer.advanceFrames(14, 0.05)
       const ball = renderer.scene.findByProps({ name: 'animated-baseball' })
         .instance as Mesh
       expect(ball.visible).equals(true)
