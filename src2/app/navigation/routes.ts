@@ -49,6 +49,20 @@ export type Route =
       videoId?: string
       /** Seconds into the video. The link somebody pastes into a group chat. */
       at?: number
+      /**
+       * The angles showing at once, in the order they are laid out.
+       *
+       * On the game's own address rather than a route of its own: the
+       * multi-camera view is a state of the game screen, because this app
+       * renders only the top of its stack and a separate route would unmount
+       * the screen — and its player — on the way in. The order is the layout,
+       * so a dragged arrangement is a link somebody can send.
+       */
+      angles?: string[]
+      /** Which angle is heard. */
+      audio?: string
+      /** Which angle fills the picture. */
+      zoom?: string
     }
   | { name: 'signIn'; next?: string }
   /**
@@ -157,12 +171,26 @@ export function parseRoute(path: string, search = ''): Route {
     case 'games': {
       if (id == null) return { name: 'home' }
       const at = Number(query.get('t'))
+      // Empty entries dropped, and capped at four: the address is somewhere
+      // anybody can type, and the view draws four tiles at most.
+      const angles = (query.get('angles') ?? '')
+        .split(',')
+        .map(one => one.trim())
+        .filter(one => one !== '')
+        .slice(0, 4)
+      const audio = query.get('audio')
+      const zoom = query.get('zoom')
+      // Spread rather than a key set to `undefined`: a game address with no
+      // angles on it parses to exactly what it always did, key for key.
       return {
         name: 'game',
         gameId: id,
         tab: query.get('tab') === 'boxScore' ? 'boxScore' : 'watch',
         videoId: query.get('video') ?? undefined,
-        at: Number.isFinite(at) && at > 0 ? at : undefined
+        at: Number.isFinite(at) && at > 0 ? at : undefined,
+        ...(angles.length > 0 ? { angles } : {}),
+        ...(angles.length > 0 && audio != null ? { audio } : {}),
+        ...(angles.length > 0 && zoom != null ? { zoom } : {})
       }
     }
     default:
@@ -224,6 +252,11 @@ export function routePath(route: Route): string {
       if (route.tab === 'boxScore') query.set('tab', 'boxScore')
       if (route.videoId != null) query.set('video', route.videoId)
       if (route.at != null) query.set('t', String(Math.round(route.at)))
+      if (route.angles != null && route.angles.length > 0) {
+        query.set('angles', route.angles.join(','))
+        if (route.audio != null) query.set('audio', route.audio)
+        if (route.zoom != null) query.set('zoom', route.zoom)
+      }
       const text = query.toString()
       return text === ''
         ? `/games/${route.gameId}`

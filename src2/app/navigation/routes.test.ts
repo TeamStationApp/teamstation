@@ -37,6 +37,58 @@ describe('addresses', function () {
     ).equals('/games/gam_1?video=vid_2&t=734')
   })
 
+  it('carries the angles showing at once, in the order they are laid out', function () {
+    expect(
+      parseRoute('/games/gam_1', 'angles=a,b,c,d&audio=b&zoom=c')
+    ).deep.equals({
+      name: 'game',
+      gameId: 'gam_1',
+      tab: 'watch',
+      videoId: undefined,
+      at: undefined,
+      angles: ['a', 'b', 'c', 'd'],
+      audio: 'b',
+      zoom: 'c'
+    })
+  })
+
+  it('writes an arrangement back as a link somebody can send', function () {
+    expect(
+      routePath({
+        name: 'game',
+        gameId: 'gam_1',
+        angles: ['a', 'b', 'c', 'd'],
+        audio: 'b',
+        zoom: 'c'
+      })
+    ).equals('/games/gam_1?angles=a%2Cb%2Cc%2Cd&audio=b&zoom=c')
+  })
+
+  it('never draws more than four, whatever the address asks for', function () {
+    const route = parseRoute('/games/gam_1', 'angles=a,b,c,d,e,f')
+    expect(route.name === 'game' ? route.angles : []).deep.equals([
+      'a',
+      'b',
+      'c',
+      'd'
+    ])
+  })
+
+  it('drops empty entries rather than opening a tile with no video', function () {
+    const route = parseRoute('/games/gam_1', 'angles=a,,b,')
+    expect(route.name === 'game' ? route.angles : []).deep.equals(['a', 'b'])
+  })
+
+  it('ignores a sound or a zoom with no angles to apply them to', function () {
+    expect(parseRoute('/games/gam_1', 'audio=b&zoom=c')).deep.equals({
+      name: 'game',
+      gameId: 'gam_1',
+      tab: 'watch',
+      videoId: undefined,
+      at: undefined
+    })
+  })
+
   it('round-trips every kind of screen', function () {
     const routes: Route[] = [
       { name: 'home' },
