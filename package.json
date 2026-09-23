@@ -2,7 +2,7 @@
   "name": "gamestation2",
   "version": "0.1.0",
   "private": true,
-  "description": "GameStation 2.0 — video server and app, serving gamestation.co",
+  "description": "GameStation 2.0 \u2014 video server and app, serving gamestation.co",
   "engines": {
     "node": ">=24.0.0"
   },
@@ -39,9 +39,11 @@
     "seed": "node -r sucrase/register src2/server/dev/seed.ts",
     "start": "node -r sucrase/register src2/server/index.ts",
     "start.web": "node src2/build.mjs --serve",
-    "test": "mocha -r sucrase/register --extension ts --spec 'src2/**/*.test.ts' --ignore '**/node_modules/**' --ignore 'lib/**'",
+    "test": "node scripts/build-scoring-tests.mjs && mocha -r sucrase/register -r ./src2/test/scoringDomSetup.cjs --extension ts --spec 'src2/**/*.test.ts' --spec lib/scoring-tests.cjs --ignore '**/node_modules/**'",
     "typecheck": "tsc -p tsconfig.app.json && tsc -p tsconfig.server.json --noEmit",
-    "typecheck.native": "tsc -p tsconfig.native.json"
+    "typecheck.native": "tsc -p tsconfig.native.json",
+    "coverage": "node scripts/build-scoring-tests.mjs && node scripts/scoring-coverage.mjs",
+    "coverage.scoring": "node scripts/build-scoring-tests.mjs && node scripts/scoring-coverage.mjs"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "^3.1.1",
@@ -85,6 +87,7 @@
     "@react-three/test-renderer": "9.1.0",
     "@types/chai": "^4.3.20",
     "@types/express": "^5.0.0",
+    "@types/jsdom": "^30.0.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "^24.3.1",
     "@types/nodemailer": "^8.0.2",
@@ -99,6 +102,7 @@
     "eslint": "^9.37.0",
     "eslint-config-standard-kit": "^1.0.0",
     "husky": "^9.1.7",
+    "jsdom": "^29.1.1",
     "mocha": "^12.0.1",
     "prettier": "^3.5.3",
     "puppeteer": "^25.11.0",

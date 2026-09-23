@@ -15,7 +15,7 @@ export type When = 'upcoming' | 'past' | 'all'
 
 export type Route =
   | { name: 'home' }
-  | { name: 'field' }
+  | { name: 'scoreGame'; gameId: string }
   | { name: 'videos'; when: When }
   | { name: 'schedule'; when: When }
   | { name: 'account' }
@@ -101,8 +101,6 @@ export function parseRoute(path: string, search = ''): Route {
   const head = parts[0]
   const id = parts[1]
   switch (head) {
-    case 'field':
-      return { name: 'field' }
     case 'videos':
       return { name: 'videos', when: whenOf(query.get('when'), 'past') }
     case 'schedule':
@@ -173,6 +171,7 @@ export function parseRoute(path: string, search = ''): Route {
       return { name: 'league', leagueId: id }
     case 'games': {
       if (id == null) return { name: 'home' }
+      if (parts[2] === 'score') return { name: 'scoreGame', gameId: id }
       const at = Number(query.get('t'))
       // Empty entries dropped, and capped at four: the address is somewhere
       // anybody can type, and the view draws four tiles at most.
@@ -206,8 +205,8 @@ export function routePath(route: Route): string {
   switch (route.name) {
     case 'home':
       return '/'
-    case 'field':
-      return '/field'
+    case 'scoreGame':
+      return `/games/${route.gameId}/score`
     case 'videos':
       return route.when === 'past' ? '/videos' : `/videos?when=${route.when}`
     case 'schedule':

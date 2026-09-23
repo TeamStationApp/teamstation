@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useLayoutEffect, useState } from 'react'
 import {
   Platform,
   Pressable,
@@ -38,9 +38,11 @@ const pitches: Array<{ kind: PitchKind; label: string }> = [
   { kind: 'play', label: 'Ball in Play' }
 ]
 export function BaseballScreen({
-  onExit
+  onExit,
+  onDirtyChange
 }: {
   onExit: () => void
+  onDirtyChange?: (dirty: boolean) => void
 }): React.ReactElement {
   const surface = useFieldSurface()
   const [players, setPlayers] = useState(createStartingPlayers)
@@ -53,6 +55,9 @@ export function BaseballScreen({
   const [menu, setMenu] = useState<'main' | 'more' | null>(null)
   const [scoreboard, setScoreboard] = useState(DEMO_SCOREBOARD)
   const [history, setHistory] = useState<Snapshot[]>([])
+  useLayoutEffect(() => {
+    onDirtyChange?.(history.length > 0)
+  }, [history.length, onDirtyChange])
   const undoEvent = history[history.length - 1]?.event
   const save = (event: string): void => {
     setHistory(items => [
