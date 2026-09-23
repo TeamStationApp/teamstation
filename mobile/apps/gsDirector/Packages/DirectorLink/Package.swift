@@ -14,17 +14,16 @@ let package = Package(
     .package(path: "../../../common/DirectorExport"),
     .package(path: "../../../common/DistributorWire"),
     .package(path: "../../../common/LoopbackHTTP"),
-    .package(path: "../../../common/PeerTubeKit")
   ],
   targets: [
     .target(
       name: "DirectorLink",
-      dependencies: [ "DirectorCore", "DirectorExport", "DistributorWire", "LoopbackHTTP", "PeerTubeKit" ],
+      dependencies: [ "DirectorCore", "DirectorExport", "DistributorWire", "LoopbackHTTP" ],
       swiftSettings: [ .swiftLanguageMode(.v6) ]
     ),
     .testTarget(
       name: "DirectorLinkTests",
-      dependencies: [ "DirectorLink", "DirectorCore", "DirectorExport", "DistributorWire", "PeerTubeKit" ],
+      dependencies: [ "DirectorLink", "DirectorCore", "DirectorExport", "DistributorWire" ],
       swiftSettings: [ .swiftLanguageMode(.v6) ]
     )
   ]

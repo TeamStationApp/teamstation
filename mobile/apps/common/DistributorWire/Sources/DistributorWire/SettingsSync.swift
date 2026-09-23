@@ -20,24 +20,34 @@ public enum SettingsGroup: Hashable, Sendable {
   /// One Mac's download folder. Each Mac's is its own group, so two Macs never clash.
   case destination(mac: String)
   case createCombined
-  case iPadStitching
   case combinedLayout
-  case peerTube
+  case upload
 
   /// Every group but the per-Mac folders.
   public static let shared: [SettingsGroup] = [
-    .createCombined, .iPadStitching, .combinedLayout, .peerTube
+    .createCombined, .combinedLayout, .upload
   ]
 
   public var key: String {
     switch self {
-    case .destination(let mac): "destination:\(mac)"
+    case .destination(let mac): "\(Self.destinationPrefix)\(mac)"
     case .createCombined: "createCombined"
-    case .iPadStitching: "iPadStitching"
     case .combinedLayout: "combinedLayout"
-    case .peerTube: "peerTube"
+    case .upload: "upload"
     }
   }
+
+  /// The group `key` names, or nil for one this build does not have.
+  public init?(key: String) {
+    if key.hasPrefix(Self.destinationPrefix) {
+      self = .destination(mac: String(key.dropFirst(Self.destinationPrefix.count)))
+      return
+    }
+    guard let group = Self.shared.first(where: { $0.key == key }) else { return nil }
+    self = group
+  }
+
+  static let destinationPrefix = "destination:"
 }
 
 public extension DistributorSettings {
@@ -69,22 +79,20 @@ public extension DistributorSettings {
   // MARK: - Groups
 
   private func groups(alongside other: DistributorSettings) -> [SettingsGroup] {
-    let stamped = (Array(stamps.keys) + Array(other.stamps.keys)).compactMap(Self.mac(fromKey:))
+    let stamped = (Array(stamps.keys) + Array(other.stamps.keys)).compactMap { key -> String? in
+      guard case .destination(let mac) = SettingsGroup(key: key) else { return nil }
+      return mac
+    }
     let macs = Set(destinations.keys).union(other.destinations.keys).union(stamped)
     return SettingsGroup.shared + macs.sorted().map { SettingsGroup.destination(mac: $0) }
-  }
-
-  private static func mac(fromKey key: String) -> String? {
-    key.hasPrefix("destination:") ? String(key.dropFirst("destination:".count)) : nil
   }
 
   private func sameValue(_ group: SettingsGroup, as other: DistributorSettings) -> Bool {
     switch group {
     case .destination(let mac): destinations[mac] == other.destinations[mac]
     case .createCombined: createCombined == other.createCombined
-    case .iPadStitching: iPadStitching == other.iPadStitching
     case .combinedLayout: combinedLayout == other.combinedLayout
-    case .peerTube: peerTube == other.peerTube
+    case .upload: upload == other.upload
     }
   }
 
@@ -92,9 +100,8 @@ public extension DistributorSettings {
     switch group {
     case .destination(let mac): destinations[mac] = other.destinations[mac]
     case .createCombined: createCombined = other.createCombined
-    case .iPadStitching: iPadStitching = other.iPadStitching
     case .combinedLayout: combinedLayout = other.combinedLayout
-    case .peerTube: peerTube = other.peerTube
+    case .upload: upload = other.upload
     }
     stamps[group.key] = other.stamps[group.key]
   }

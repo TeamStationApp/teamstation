@@ -17,7 +17,6 @@ PACKAGES=(
   "$DISTRIBUTOR_ROOT/Packages/DistributorAPI"
   "$APPS/common/DistributorWire"
   "$APPS/common/LoopbackHTTP"
-  "$APPS/common/PeerTubeKit"
   "$APPS/common/DirectorExport"
   "$APPS/gsDirector/Packages/DirectorLink"
 )

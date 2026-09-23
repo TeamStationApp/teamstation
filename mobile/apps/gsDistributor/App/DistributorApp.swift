@@ -30,10 +30,7 @@ struct DistributorApp: App {
         if DebugHarness.isRequested { harness.start() }
         // `-noIPad` leaves the cable alone, to see and drive the Distributor as it is with no
         // iPad even while one is attached.
-        if DebugHarness.ignoresCable {
-          await model.loadPeerTube()
-          return
-        }
+        if DebugHarness.ignoresCable { return }
         #endif
         await model.watch()
       }
@@ -48,7 +45,6 @@ struct DistributorApp: App {
     // Every launch opens the window on what the cable has now, whatever the last one left.
     .defaultLaunchBehavior(.presented)
     .restorationBehavior(.disabled)
-
     Settings {
       SettingsView(model: model)
     }

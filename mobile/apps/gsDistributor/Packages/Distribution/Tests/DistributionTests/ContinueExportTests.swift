@@ -5,7 +5,6 @@ import DirectorLink
 import Distribution
 import DistributorWire
 import Foundation
-import PeerTubeKit
 import Testing
 
 /// A GS Director in the middle of a take: it refuses the export lock and counts how often it was
@@ -67,8 +66,7 @@ struct ContinueExportTests {
         program: base.appendingPathComponent("Program", isDirectory: true),
         prepared: base.appendingPathComponent("Prepared", isDirectory: true)
       ),
-      settings: DistributorSettingsStore(url: base.appendingPathComponent("settings.json")),
-      peerTube: PeerTubeAccount(storage: MemoryAccountStorage())
+      settings: DistributorSettingsStore(url: base.appendingPathComponent("settings.json"))
     )
     let server = LinkServer(port: 0) { await service.handle($0) }
     let port = try await server.start()
@@ -110,7 +108,7 @@ struct ContinueExportTests {
       connection: connection,
       jobs: JobWatcher(),
       destination: destination
-    ) { false }
+    )
     await run.run()
 
     #expect(run.isFinished)
@@ -145,7 +143,7 @@ struct ContinueExportTests {
         frames: CombinedGeometry.frames(assignment: [ "Primary output": .topLeading, "home": .topTrailing ], solo: nil),
         audioCamera: nil
       )
-    ) { false }
+    )
     await run.run()
 
     let after = try FileManager.default.attributesOfItem(atPath: combined.path)
@@ -171,7 +169,7 @@ struct ContinueExportTests {
       jobs: JobWatcher(),
       destination: destination,
       combined: CombinedPlan.automatic(for: Self.recording, tracks: [ .primary, .camera(Self.camera) ], saved: CombinedLayoutSettings())
-    ) { false }
+    )
     await run.run()
 
     #expect(run.isFinished)
@@ -192,7 +190,7 @@ struct ContinueExportTests {
       connection: nil,
       jobs: JobWatcher(),
       destination: destination
-    ) { false }
+    )
     await run.run()
 
     #expect(run.isFinished)
@@ -228,7 +226,7 @@ struct ContinueExportTests {
       connection: connection,
       jobs: JobWatcher(),
       destination: destination
-    ) { false }
+    )
     await run.run()
 
     #expect(run.states[.primary] == .done(saved))
