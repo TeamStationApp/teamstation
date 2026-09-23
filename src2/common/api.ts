@@ -241,10 +241,10 @@ export type BattingRow = ReturnType<typeof asBattingRow>
  * One pitcher's line, earned runs and all.
  *
  * An earned run is not a figure a play-by-play can produce — telling one from
- * an unearned one means replaying the inning without the mistakes — and these
- * come from a rule that does exactly that, checked against every game we hold.
- * `rates.era` is absent until something has worked out how long a game in that
- * league runs, because an ERA is earned runs per game.
+ * an unearned one means replaying the inning without the mistakes — so these
+ * come from the stat lines the stats engine writes. `rates.era` is absent
+ * until something has worked out how long a game in that league runs, because
+ * an ERA is earned runs per game.
  */
 export const asPitchingRow = asObject({
   userId: asString,

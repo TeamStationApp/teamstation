@@ -486,10 +486,11 @@ export interface LiveStreamsTable {
 }
 
 /**
- * One player's figures for one game, counted from the game stream.
+ * One player's figures for one game.
  *
- * A recount replaces the game's rows outright, so this is a derived table that
- * can be dropped and rebuilt.
+ * Written by a stats engine outside the routes, which recomputes a game's rows
+ * whenever its plays change, so this is a derived table that can be dropped
+ * and rebuilt. A game with no rows yet has no box score.
  */
 export interface GamePlayerStatsTable {
   id: string
