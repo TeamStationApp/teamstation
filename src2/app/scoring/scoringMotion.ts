@@ -1,0 +1,137 @@
+import { BASES, type FieldPlayer } from '../field/fieldModel'
+import { fieldPlayersFor } from './fieldAdapter'
+import { homeQueuePoint } from './runnerRules'
+import type { ScoringState } from './scoringTypes'
+export function scoringFieldPlayers(
+  state: Pick<
+    ScoringState,
+    | 'session'
+    | 'phase'
+    | 'pendingPlay'
+    | 'motions'
+    | 'homeQueue'
+    | 'runnerAction'
+  >,
+  previous: FieldPlayer[] = []
+): FieldPlayer[] {
+  const session = state.session
+  const suppressed = [
+    'locateFielder',
+    'trajectory',
+    'chooseThrower',
+    'chooseDefender'
+  ].includes(state.phase)
+  const players = fieldPlayersFor(session)
+  const pending = state.pendingPlay
+  const absent = (pending?.movements ?? [])
+    .filter(move => move.decision === 'out' || move.to === 4)
+    .map(move => move.playerId)
+  for (let index = players.length - 1; index >= 0; index--)
+    if (
+      players[index].team === 'runner' &&
+      absent.includes(players[index].playerId!)
+    )
+      players.splice(index, 1)
+  const addRunner = (id: number): FieldPlayer => {
+    const existing = players.find(
+      player => player.playerId === id && player.team === 'runner'
+    )
+    if (existing != null) return existing
+    const person = session.gameData.players[id]
+    const player: FieldPlayer = {
+      id: `offense-${id}`,
+      playerId: id,
+      label: 'Runner',
+      name: person.fullName,
+      displayName: person.fullName,
+      jersey: person.jersey,
+      team: 'runner',
+      position: { ...BASES[0] },
+      target: { ...BASES[0] },
+      speed: 0,
+      heading: 0,
+      stride: 0
+    }
+    players.push(player)
+    return player
+  }
+  state.homeQueue.forEach((id, index) => {
+    const player = addRunner(id)
+    player.position = homeQueuePoint(index)
+    player.target = { ...player.position }
+    player.labelOrder = 100 - index
+    player.runnerBase = 4
+  })
+  for (const command of state.motions) {
+    if (command.complete) continue
+    const player = addRunner(command.playerId)
+    player.batting = false
+    const prior = previous.find(
+      old =>
+        old.id === player.id &&
+        old.motion?.id === command.id &&
+        old.motion.generation === command.generation
+    )
+    if (prior != null) {
+      player.position = { ...prior.position }
+      player.target = { ...prior.target }
+      player.speed = prior.speed
+      player.heading = prior.heading
+      player.stride = prior.stride
+      player.motion = prior.motion
+    } else {
+      player.position = { ...command.waypoints[0] }
+      player.target = { ...command.waypoints[1] }
+      player.motion = {
+        id: command.id,
+        generation: command.generation,
+        waypoints: command.waypoints.map(point => ({ ...point })),
+        index: 1,
+        reported: false
+      }
+    }
+  }
+  for (const player of players) {
+    if (
+      pending != null &&
+      player.playerId === pending.fielder &&
+      pending.location != null
+    ) {
+      player.position = { ...pending.location }
+      player.target = { ...pending.location }
+    }
+    if (pending != null && player.team === 'defense') {
+      for (const action of session.liveData.plays.currentPlay?.source
+        .gamestation.runnerActions ?? []) {
+        const credit = action.credits.find(
+          credit => credit.player.id === player.playerId
+        )
+        if (credit == null) continue
+        const location =
+          credit.credit === 'f_assist'
+            ? action.throwerLocation
+            : (action.defenderLocation ?? action.throwerLocation)
+        if (location != null) {
+          player.position = { ...location }
+          player.target = { ...location }
+        }
+      }
+    }
+    if (
+      player.playerId === state.runnerAction?.thrower &&
+      state.runnerAction?.throwerPoint != null
+    ) {
+      player.position = { ...state.runnerAction.throwerPoint }
+      player.target = { ...player.position }
+    }
+    if (
+      player.playerId === state.runnerAction?.defender &&
+      state.runnerAction?.defenderPoint != null
+    ) {
+      player.position = { ...state.runnerAction.defenderPoint }
+      player.target = { ...player.position }
+    }
+    player.suppressed = suppressed && player.team === 'runner'
+  }
+  return players
+}

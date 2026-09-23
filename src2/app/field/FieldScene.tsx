@@ -78,6 +78,26 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
   }, [gl])
   const drag = useRef<MoveDraft | null>(null)
   const dragCapture = useRef<Element | null>(null)
+  const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const runnerDrag = useRef<{
+    id: string
+    held: boolean
+    moved: boolean
+  } | null>(null)
+  const clearHold = (): void => {
+    if (holdTimer.current != null) clearTimeout(holdTimer.current)
+    holdTimer.current = null
+  }
+  const screenAnchor = (position: {
+    x: number
+    z: number
+  }): { x: number; y: number } => {
+    const projected = new Vector3(position.x, 9, position.z).project(camera)
+    return {
+      x: ((projected.x + 1) * size.width) / 2,
+      y: ((1 - projected.y) * size.height) / 2
+    }
+  }
   const gestureId = useRef(0)
   const dragGeneration = useRef(0)
   const [preview, setPreview] = useState<MoveDraft | null>(null)
@@ -129,6 +149,11 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
   useEffect(() => {
     setPreview(null)
     return () => {
+      clearHold()
+      if (runnerDrag.current != null) {
+        runnerDrag.current = null
+        callbacks.current.onRunnerCancel?.()
+      }
       for (const player of players)
         if (player.keyboardOrigin != null) {
           player.target = { ...player.keyboardOrigin }
@@ -158,6 +183,17 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
       return
     event.stopPropagation()
     previewMove(drag.current, point)
+    if (runnerDrag.current != null) {
+      if (
+        Math.hypot(
+          drag.current.goal.x - drag.current.origin.x,
+          drag.current.goal.z - drag.current.origin.z
+        ) > 2
+      ) {
+        runnerDrag.current.moved = true
+        clearHold()
+      }
+    }
     setPreview({ ...drag.current })
     invalidate()
   }
@@ -220,6 +256,19 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     props.onGestureActive?.(true)
     onSelect(player.id)
     drag.current = beginMove(player, event.pointerId, point, nearest != null)
+    if (props.interaction?.runnerIds?.includes(player.id) === true) {
+      drag.current.next = null
+      runnerDrag.current = { id: player.id, held: false, moved: false }
+      clearHold()
+      holdTimer.current = setTimeout(() => {
+        if (runnerDrag.current?.id !== player.id) return
+        runnerDrag.current.held = true
+        callbacks.current.onRunnerHold?.(
+          player.id,
+          screenAnchor(player.position)
+        )
+      }, 350)
+    }
     if (isTouch(event)) {
       // Body/name picking uses the original ray. Only the destination is lifted.
       drag.current.offset = { x: 0, z: 0 }
@@ -237,6 +286,9 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
   const up = (event: ThreeEvent<PointerEvent>, cancel = false): void => {
     if (drag.current?.pointer !== event.pointerId) return
     event.stopPropagation()
+    clearHold()
+    const runner = runnerDrag.current
+    runnerDrag.current = null
     const player = players.find(item => item.id === drag.current?.id)
     if (player != null) {
       finishMove(player, drag.current, cancel)
@@ -244,14 +296,27 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
         !cancel &&
         dragGeneration.current === (props.interaction?.generation ?? 0)
       ) {
-        props.onPlayerPlacement?.(player.id, { ...player.target })
-        props.onFieldPlacement?.({
-          entityId: player.id,
-          point: { ...player.target },
-          generation: dragGeneration.current,
-          gestureId: gestureId.current
-        })
-      }
+        if (runner != null) {
+          const destination = runner.moved ? player.target : drag.current.origin
+          if (runner.moved || runner.held)
+            props.onRunnerPlacement?.(
+              player.id,
+              { ...destination },
+              screenAnchor(destination),
+              dragGeneration.current
+            )
+          else props.onRunnerCancel?.()
+          player.target = { ...drag.current.origin }
+        } else {
+          props.onPlayerPlacement?.(player.id, { ...player.target })
+          props.onFieldPlacement?.({
+            entityId: player.id,
+            point: { ...player.target },
+            generation: dragGeneration.current,
+            gestureId: gestureId.current
+          })
+        }
+      } else if (runner != null) props.onRunnerCancel?.()
     }
     drag.current = null
     props.onGestureActive?.(false)
@@ -282,6 +347,11 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
   } | null>(null)
   useEffect(() => {
     const cancel = (): void => {
+      clearHold()
+      if (runnerDrag.current != null) {
+        runnerDrag.current = null
+        callbacks.current.onRunnerCancel?.()
+      }
       const moving = drag.current
       drag.current = null
       if (moving != null) {
@@ -484,6 +554,7 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
           key={player.id}
           player={player}
           fabric={textures.cloth}
+          onMovementComplete={props.onMovementComplete}
           selected={
             selected === player.id &&
             eligible.some(item => item.id === player.id)

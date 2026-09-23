@@ -10,15 +10,17 @@ import { ActivityIndicator, Pressable, Text, View } from 'react-native'
 
 import type { GameStationClient } from '../../common/api'
 import { BaseballScreen } from '../field/BaseballScreen'
+import { BASES, type FieldPlayer } from '../field/fieldModel'
 import { useFieldSurface } from '../field/useFieldSurface'
 import { allowedAngle, trajectoryLabel } from './battedBall'
-import { fieldPlayersFor } from './fieldAdapter'
 import { OutcomePicker } from './OutcomePicker'
 import { OverridesEditor } from './OverridesEditor'
 import { RosterEditor } from './RosterEditor'
+import { RunnerControls } from './RunnerControls'
 import { initialScoringState, scoringReducer } from './scoringMachine'
+import { scoringFieldPlayers } from './scoringMotion'
 import { scoringPreferences } from './scoringPreferences'
-import { canSwitchBatter, scoreboardFor } from './scoringSelectors'
+import { baseIds, canSwitchBatter, scoreboardFor } from './scoringSelectors'
 import { ScoringSettings } from './ScoringSettings'
 import { ScoringButton, ScoringSheet } from './ScoringSheet'
 import {
@@ -27,6 +29,7 @@ import {
 } from './scoringStateSource'
 import type { ScoringSessionState } from './scoringTypes'
 import { SwitchHitterHint } from './SwitchHitterHint'
+import { useScoringClock } from './useScoringClock'
 import { useScoringExit } from './useScoringExit'
 
 const developmentSource = new DevelopmentScoringStateSource()
@@ -110,6 +113,12 @@ function ScoringSession(props: {
     props.initial,
     initialScoringState
   )
+  const [runnerAnchor, setRunnerAnchor] = useState<{
+    x: number
+    y: number
+  } | null>(null)
+  const [heldRunner, setHeldRunner] = useState<string | null>(null)
+  const [gestureActive, setGestureActive] = useState(false)
   const [outcomeMenu, setOutcomeMenu] = useState(false)
   const [angle, setAngle] = useState(45)
   const [menu, setMenu] = useState(false)
@@ -139,6 +148,18 @@ function ScoringSession(props: {
   )
   const [hint, setHint] = useState(false)
   const [saveFailed, setSaveFailed] = useState(false)
+  const pauseClock = useScoringClock(
+    state,
+    menu || sheet != null || outcomeMenu || gestureActive,
+    dispatch
+  )
+  const setGesture = useCallback(
+    (active: boolean) => {
+      if (active) pauseClock()
+      setGestureActive(active)
+    },
+    [pauseClock]
+  )
   const stateRef = useRef(state)
   stateRef.current = state
   const session = state.session
@@ -149,32 +170,16 @@ function ScoringSession(props: {
     props.onExit,
     requestConfirmation
   )
-  const selectingDefense = [
-    'locateFielder',
-    'trajectory',
-    'chooseThrower',
-    'chooseDefender'
-  ].includes(state.phase)
-  const players = useMemo(
-    () =>
-      fieldPlayersFor(session).map(player => ({
-        ...player,
-        suppressed: selectingDefense && player.team === 'runner',
-        ...(player.playerId === state.pendingPlay?.fielder &&
-        state.pendingPlay?.location != null
-          ? {
-              position: { ...state.pendingPlay.location },
-              target: { ...state.pendingPlay.location }
-            }
-          : {})
-      })),
-    [
-      session,
-      selectingDefense,
-      state.pendingPlay?.fielder,
-      state.pendingPlay?.location
-    ]
-  )
+  const { phase, pendingPlay, motions, homeQueue, runnerAction } = state
+  const previousPlayers = useRef<FieldPlayer[]>([])
+  const players = useMemo(() => {
+    const next = scoringFieldPlayers(
+      { session, phase, pendingPlay, motions, homeQueue, runnerAction },
+      previousPlayers.current
+    )
+    previousPlayers.current = next
+    return next
+  }, [session, phase, pendingPlay, motions, homeQueue, runnerAction])
   useEffect(() => {
     setAngle(state.pendingPlay?.angle ?? 45)
   }, [state.pendingPlay?.angle, state.generation])
@@ -220,12 +225,39 @@ function ScoringSession(props: {
       live = false
     }
   }, [props.source, session])
+  const unresolvedRunner = [...(state.pendingPlay?.movements ?? [])]
+    .filter(move => move.decision === 'pending' && move.to < 4)
+    .sort((a, b) => b.from - a.from)[0]
+  const runnerEnabled =
+    ['ready', 'correctionWindow', 'resolveBatter', 'runnerDecision'].includes(
+      state.phase
+    ) && !state.motions.some(motion => !motion.complete)
+  const runnerIds = runnerEnabled
+    ? players
+        .filter(
+          player =>
+            player.team === 'runner' &&
+            (state.phase === 'resolveBatter' ||
+            state.runnerAction?.returnPhase === 'resolveBatter'
+              ? player.playerId === unresolvedRunner?.playerId
+              : player.batting !== true)
+        )
+        .map(player => player.id)
+    : []
   const instruction =
     state.phase === 'locateFielder'
       ? 'Drag fielder to location of fielded ball.'
       : state.phase === 'trajectory'
         ? 'Drag up and down for ball trajectory.'
-        : undefined
+        : state.phase === 'chooseThrower'
+          ? 'Tap and Drag Thrower.'
+          : state.phase === 'chooseDefender'
+            ? 'Tap and Drag Defender or Hit Done if the same defender created the out'
+            : state.phase === 'resolveBatter'
+              ? unresolvedRunner?.from === 0
+                ? 'Drag batter to a base, or hold to mark Out'
+                : `Resolve ${session.gameData.players[unresolvedRunner?.playerId ?? 0]?.fullName ?? 'runner'}: drag to a base, or hold to mark Out`
+              : undefined
   const fieldScoreboard = {
     ...scoreboardFor(session),
     instruction,
@@ -242,6 +274,35 @@ function ScoringSession(props: {
     <BaseballScreen
       field={{
         players,
+        onGestureActive: setGesture,
+        onRunnerHold: (id, anchor) => {
+          setHeldRunner(id)
+          setRunnerAnchor(anchor)
+        },
+        onRunnerCancel: () => {
+          setHeldRunner(null)
+        },
+        onRunnerPlacement: (id, point, anchor, generation) => {
+          setHeldRunner(null)
+          if (generation !== state.generation) return
+          const player = players.find(player => player.id === id)
+          if (player?.playerId == null) return
+          let base = 0
+          let distance = Infinity
+          BASES.forEach((location, index) => {
+            const next = Math.hypot(location.x - point.x, location.z - point.z)
+            if (next < distance) {
+              distance = next
+              base = index
+            }
+          })
+          if (base === 0 && baseIds(session).includes(player.playerId)) base = 4
+          setRunnerAnchor(anchor)
+          dispatch({ type: 'RUNNER_PROPOSE', id: player.playerId, to: base })
+        },
+        onMovementComplete: (id, generation) => {
+          dispatch({ type: 'MOTION_DONE', id, generation })
+        },
         hintBatSide: hint
           ? session.liveData.plays.currentPlay?.matchup.batSide.code === 'R'
             ? 'L'
@@ -250,16 +311,22 @@ function ScoringSession(props: {
         scoreboard: fieldScoreboard,
         interaction: {
           generation: state.generation,
+          runnerIds,
           selectableIds:
             menu || sheet != null || outcomeMenu
               ? []
-              : state.phase === 'locateFielder'
+              : ['locateFielder', 'chooseThrower', 'chooseDefender'].includes(
+                    state.phase
+                  )
                 ? players
                     .filter(player => player.team !== 'runner')
                     .map(player => player.id)
-                : switchable && batterId != null
-                  ? [`offense-${batterId}`]
-                  : [],
+                : [
+                    ...runnerIds,
+                    ...(switchable && batterId != null
+                      ? [`offense-${batterId}`]
+                      : [])
+                  ],
           gestures:
             menu || sheet != null || outcomeMenu
               ? []
@@ -285,6 +352,17 @@ function ScoringSession(props: {
           const id = players.find(
             player => player.id === event.entityId
           )?.playerId
+          if (
+            id != null &&
+            (state.phase === 'chooseThrower' ||
+              state.phase === 'chooseDefender')
+          )
+            dispatch({
+              type: state.phase === 'chooseThrower' ? 'THROWER' : 'DEFENDER',
+              id,
+              point: event.point,
+              generation: event.generation
+            })
           if (id != null && state.phase === 'locateFielder')
             dispatch({
               type: 'FIELDER',
@@ -324,6 +402,7 @@ function ScoringSession(props: {
         />
       }
       onMenu={() => {
+        pauseClock()
         setOutcomeMenu(false)
         setMenu(value => !value)
       }}
@@ -335,12 +414,38 @@ function ScoringSession(props: {
         setHint(false)
       }}
       historyLabel={state.past.at(-1)?.label}
+      remainingMs={state.correctionWindow?.remainingMs}
+      onCameraGesture={setGesture}
       canPitch={
         state.phase === 'ready' && !menu && sheet == null && !outcomeMenu
       }
       summary={summary}
       accessibilitySummary={`${summary} · Batter ${line.offense.batter?.fullName ?? 'waiting'} ${session.liveData.plays.currentPlay?.matchup.batSide.code === 'L' ? 'left handed' : 'right handed'} · Pitcher ${line.defense.P?.fullName ?? 'unassigned'}`}
     >
+      {!menu && sheet == null && (
+        <RunnerControls
+          state={state}
+          anchor={runnerAnchor}
+          dispatch={dispatch}
+        />
+      )}
+      {heldRunner != null &&
+        runnerAnchor != null &&
+        state.runnerAction == null && (
+          <View
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              left: Math.max(8, runnerAnchor.x - 35),
+              top: Math.max(90, runnerAnchor.y - 60),
+              backgroundColor: '#a83535',
+              padding: 12,
+              borderRadius: 8
+            }}
+          >
+            <Text style={{ color: 'white' }}>Out</Text>
+          </View>
+        )}
       {hint && !menu && sheet == null && (
         <SwitchHitterHint
           onDismiss={() => {

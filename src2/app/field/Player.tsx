@@ -51,11 +51,13 @@ function Part({
 export function Player({
   player,
   selected,
-  fabric
+  fabric,
+  onMovementComplete
 }: {
   player: FieldPlayer
   selected: boolean
   fabric?: Texture
+  onMovementComplete?: (id: string, generation: number) => void
 }): React.ReactElement {
   const batting = player.batting === true
   const invalidate = useThree(state => state.invalidate)
@@ -129,6 +131,24 @@ export function Player({
   const shirt = player.team === 'runner' ? p.runner : p.defense
   useFrame(({ camera, size }, dt) => {
     advancePlayer(player, dt)
+    const motion = player.motion
+    if (
+      motion != null &&
+      !motion.reported &&
+      Math.hypot(
+        player.position.x - player.target.x,
+        player.position.z - player.target.z
+      ) < 0.04
+    ) {
+      if (motion.index + 1 < motion.waypoints.length) {
+        motion.index++
+        player.target = { ...motion.waypoints[motion.index] }
+        invalidate()
+      } else {
+        motion.reported = true
+        onMovementComplete?.(motion.id, motion.generation)
+      }
+    }
     if (player.speed > 0) invalidate()
     if (root.current == null || body.current == null) return
     root.current.position.set(
@@ -175,7 +195,7 @@ export function Player({
             ref={label}
             position={[0, 12, 0]}
             scale={[0, 0, 1]}
-            renderOrder={5}
+            renderOrder={player.labelOrder ?? 5}
             name={`player-label-${player.id}`}
           >
             <spriteMaterial

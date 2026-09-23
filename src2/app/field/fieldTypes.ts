@@ -5,6 +5,7 @@ import type { ScoreboardState } from './scoreboardModel'
 export interface FieldInteractionPolicy {
   generation: number
   selectableIds: readonly string[]
+  runnerIds?: readonly string[]
   gestures: ReadonlyArray<'place' | 'trajectory'>
 }
 export interface FieldPlacement {
@@ -14,6 +15,15 @@ export interface FieldPlacement {
   gestureId: number
 }
 export interface FieldCanvasProps {
+  onRunnerHold?: (id: string, anchor: { x: number; y: number }) => void
+  onRunnerPlacement?: (
+    id: string,
+    point: GroundPoint,
+    anchor: { x: number; y: number },
+    generation: number
+  ) => void
+  onRunnerCancel?: () => void
+  onMovementComplete?: (id: string, generation: number) => void
   registerInterruption?: (cancel: (() => void) | null) => void
   interaction?: FieldInteractionPolicy
   onFieldPlacement?: (event: FieldPlacement) => void

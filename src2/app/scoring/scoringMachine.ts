@@ -1,4 +1,5 @@
 import { acceptTrajectory, chooseOutcome, placeFielder } from './battedBall'
+import { prepareTerminalPitch, runnerReducer } from './runnerRules'
 import { asScoringPlay } from './scoringContract'
 import { applyOverrideDraft, applyRosterDraft } from './scoringEdits'
 import {
@@ -27,6 +28,9 @@ export function initialScoringState(
     owned.liveData.plays.currentPlay == null ? startAppearance(owned) : null
   return {
     session: owned,
+    motions: [],
+    runnerAction: null,
+    correctionWindow: null,
     phase: awaitingBatter == null ? 'ready' : 'awaitingBatter',
     pendingPlay: null,
     homeQueue: [],
@@ -49,6 +53,11 @@ export function accepted(
     past: [...state.past, { label, snapshot: snapshotOf(state) }]
   }
   edit(next)
+  if (next.correctionWindow != null)
+    next.correctionWindow = {
+      remainingMs: 10000,
+      revision: next.correctionWindow.revision + 1
+    }
   next.session.meta.sequence++
   return next
 }
@@ -63,6 +72,9 @@ export function nextHalf(state: ScoringState): void {
   line.strikes = 0
   line.outs = 0
   line.offense = { batter: null, first: null, second: null, third: null }
+  state.motions = []
+  state.runnerAction = null
+  state.correctionWindow = null
   state.pendingPlay = null
   state.homeQueue = []
   state.generation++
@@ -82,6 +94,9 @@ function closePlay(state: ScoringState): ScoringState {
   session.liveData.plays.allPlays.push(asScoringPlay(play))
   const lineup = session.liveData.boxscore.teams[battingSide(session)]
   lineup.battingIndex = (lineup.battingIndex + 1) % lineup.battingOrder.length
+  next.motions = []
+  next.runnerAction = null
+  next.correctionWindow = null
   next.pendingPlay = null
   next.homeQueue = []
   if (session.liveData.linescore.outs >= 3) nextHalf(next)
@@ -100,14 +115,42 @@ export function scoringReducer(
 ): ScoringState {
   if (event.type === 'UNDO') {
     const last = state.past.at(-1)
-    return last == null
-      ? state
-      : {
-          ...copyState(last.snapshot),
-          generation: state.generation + 1,
-          past: state.past.slice(0, -1)
-        }
+    if (last == null) return state
+    const next = {
+      ...copyState(last.snapshot),
+      generation: state.generation + 1,
+      past: state.past.slice(0, -1)
+    }
+    for (const motion of next.motions) motion.generation = next.generation
+    if (next.correctionWindow != null)
+      next.correctionWindow = {
+        remainingMs: 10000,
+        revision: next.correctionWindow.revision + 1
+      }
+    return next
   }
+  if (event.type === 'TIMER_TICK') {
+    const timer = state.correctionWindow
+    if (
+      state.phase !== 'correctionWindow' ||
+      timer == null ||
+      event.generation !== state.generation ||
+      event.revision !== timer.revision ||
+      !Number.isFinite(event.elapsedMs) ||
+      event.elapsedMs <= 0
+    )
+      return state
+    const next = {
+      ...state,
+      correctionWindow: {
+        ...timer,
+        remainingMs: Math.max(0, timer.remainingMs - event.elapsedMs)
+      }
+    }
+    return next.correctionWindow.remainingMs === 0 ? closePlay(next) : next
+  }
+  const runnerResult = runnerReducer(state, event)
+  if (runnerResult != null) return runnerResult
   if (event.type === 'OUTCOME') return chooseOutcome(state, event.outcome)
   if (event.type === 'FIELDER')
     return placeFielder(state, event.id, event.point, event.generation)
@@ -154,6 +197,7 @@ export function scoringReducer(
       }
     )
   }
+  if (event.type !== 'PITCH') return state
   const labels = {
     ball: 'Ball',
     called: 'Called Strike',
@@ -188,6 +232,7 @@ export function scoringReducer(
       const originalBases = baseIds(session)
       next.pendingPlay = {
         outcome: walk ? 'Walk' : 'Strikeout',
+        originalRunnerRecordCount: play.runners.length,
         originalBases,
         originalRuns: line.teams[battingSide(session)].runs,
         originalOuts: line.outs,
@@ -226,6 +271,7 @@ export function scoringReducer(
       } else line.outs++
       next.phase =
         next.homeQueue.length === 0 ? 'correctionWindow' : 'homeDecision'
+      prepareTerminalPitch(next)
     }
     play.count = { balls: line.balls, strikes: line.strikes, outs: line.outs }
     asScoringPlay(play)

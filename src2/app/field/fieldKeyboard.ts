@@ -25,16 +25,28 @@ export function fieldKey(props: FieldCanvasProps, key: string): boolean {
   if (eligible.length === 0) return false
   const index = eligible.findIndex(player => player.id === props.selected)
   const player = eligible[Math.max(0, index)]
-  if (key === '[' || key === ']')
+  if (key === '[' || key === ']') {
+    if (player.keyboardOrigin != null) {
+      player.target = { ...player.keyboardOrigin }
+      delete player.keyboardOrigin
+      props.onGestureActive?.(false)
+    }
     props.onSelect(
       eligible[
         (Math.max(0, index) + (key === ']' ? 1 : eligible.length - 1)) %
           eligible.length
       ].id
     )
-  else if (key === 'Enter') {
+  } else if (key === 'Enter') {
     delete player.keyboardOrigin
-    props.onPlayerPlacement?.(player.id, { ...player.target })
+    if (policy?.runnerIds?.includes(player.id) === true)
+      props.onRunnerPlacement?.(
+        player.id,
+        { ...player.target },
+        { x: 0, y: 0 },
+        policy.generation
+      )
+    else props.onPlayerPlacement?.(player.id, { ...player.target })
     props.onFieldPlacement?.({
       entityId: player.id,
       point: { ...player.target },
