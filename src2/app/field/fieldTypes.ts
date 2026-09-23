@@ -9,6 +9,13 @@ export interface FieldInteractionPolicy {
   generation: number
   selectableIds: readonly string[]
   runnerIds?: readonly string[]
+  /** Runner field ids that may drag one base backward (unforced hit-offer undo). */
+  retreatIds?: readonly string[]
+  /**
+   * When set, only these runner field ids may drag forward. Others in
+   * `runnerIds` are retreat-only (homeDecision trailer on the offered base).
+   */
+  advanceIds?: readonly string[]
   gestures: ReadonlyArray<'place' | 'trajectory'>
 }
 export interface FieldPlacement {

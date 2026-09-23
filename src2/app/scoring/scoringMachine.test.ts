@@ -218,6 +218,148 @@ describe('local scoring sessions', function () {
     expect(moved).not.equals(state)
     expect(moved.session.liveData.linescore.offense.second?.id).equals(1)
   })
+
+  it('retreats an auto-advanced unforced runner on a single without Safe/Out', function () {
+    let session = createDevelopmentSession(gameFixture, roster, [])
+    for (const action of [
+      { type: 'ballInPlay' as const, contact: 'swing' as const },
+      { type: 'result' as const, eventType: 'single' as const },
+      { type: 'gameFlow' as const, kind: 'closePlay' as const },
+      { type: 'baseRunning' as const, kind: 'steal' as const, runner: 1 },
+      { type: 'ballInPlay' as const, contact: 'swing' as const },
+      { type: 'result' as const, eventType: 'single' as const }
+    ])
+      session = applyAction(session, action).state
+    // Resume into the correction window with motions already settled.
+    let state: ScoringState = {
+      ...initialScoringState(session),
+      phase: 'correctionWindow',
+      presentation: null,
+      motions: [],
+      correctionWindow: {
+        remainingMs: 10000,
+        revision: session.meta.sequence
+      }
+    }
+    expect(baseIds(state.session)).deep.equals([2, null, 1])
+    const retreated = scoringReducer(state, {
+      type: 'RUNNER_DROP',
+      id: 1,
+      to: 2,
+      decision: 'safe',
+      generation: state.generation
+    })
+    expect(baseIds(retreated.session)).deep.equals([2, 1, null])
+    expect(
+      retreated.session.liveData.plays.currentPlay!.runners
+        .filter(r => r.details.movementReason === 'Single')
+        .map(r => r.details.runner.id)
+    ).deep.equals([2])
+  })
+
+  it('puts a hit-offer re-take out instead of forcing safe', function () {
+    let state = initialScoringState(
+      createDevelopmentSession(gameFixture, roster, [])
+    )
+    for (const [base, id] of [
+      ['second', 3],
+      ['third', 4]
+    ] as const)
+      state.session.liveData.linescore.offense[base] = playerRef(
+        state.session,
+        id
+      )
+    state = scoringReducer(state, { type: 'OUTCOME', outcome: 'Single' })
+    state = scoringReducer(state, {
+      type: 'FIELDER',
+      id: 10,
+      point: { x: 10, z: -40 },
+      generation: state.generation
+    })
+    state = completeMotions(
+      scoringReducer(state, {
+        type: 'TRAJECTORY',
+        angle: 25,
+        generation: state.generation
+      })
+    )
+    state = completeMotions(
+      scoringReducer(state, {
+        type: 'RUNNER_DROP',
+        id: 3,
+        to: 2,
+        decision: 'safe',
+        generation: state.generation
+      })
+    )
+    expect(baseIds(state.session)).deep.equals([1, 3, null])
+    const outed = scoringReducer(state, {
+      type: 'RUNNER_DROP',
+      id: 3,
+      to: 3,
+      decision: 'out',
+      generation: state.generation
+    })
+    expect(outed.phase).equals('chooseDefender')
+    expect(outed.runnerAction?.decision).equals('out')
+    expect(baseIds(outed.session)).deep.equals([1, 3, null])
+  })
+
+  it('waits out trailer retreat motion before homeDecision and allows re-take', function () {
+    // Second and third occupied (unforced trailer on a single).
+    let state = initialScoringState(
+      createDevelopmentSession(gameFixture, roster, [])
+    )
+    for (const [base, id] of [
+      ['second', 3],
+      ['third', 4]
+    ] as const)
+      state.session.liveData.linescore.offense[base] = playerRef(
+        state.session,
+        id
+      )
+    state = scoringReducer(state, { type: 'OUTCOME', outcome: 'Single' })
+    state = scoringReducer(state, {
+      type: 'FIELDER',
+      id: 10,
+      point: { x: 10, z: -40 },
+      generation: state.generation
+    })
+    state = completeMotions(
+      scoringReducer(state, {
+        type: 'TRAJECTORY',
+        angle: 25,
+        generation: state.generation
+      })
+    )
+    expect(state.phase).equals('homeDecision')
+    expect(state.session.homeQueue).deep.equals([4])
+    expect(baseIds(state.session)).deep.equals([1, null, 3])
+    const retreated = scoringReducer(state, {
+      type: 'RUNNER_DROP',
+      id: 3,
+      to: 2,
+      decision: 'safe',
+      generation: state.generation
+    })
+    expect(baseIds(retreated.session)).deep.equals([1, 3, null])
+    expect(retreated.phase).equals('runnerMovement')
+    expect(retreated.motions.some(m => !m.complete)).equals(true)
+    expect(
+      scoringReducer(retreated, { type: 'HOME', decision: 'safe' })
+    ).equals(retreated)
+    const settled = completeMotions(retreated)
+    expect(settled.phase).equals('homeDecision')
+    const retaken = scoringReducer(settled, {
+      type: 'RUNNER_DROP',
+      id: 3,
+      to: 3,
+      decision: 'safe',
+      generation: settled.generation
+    })
+    expect(baseIds(retaken.session)).deep.equals([1, null, 3])
+    expect(completeMotions(retaken).phase).equals('homeDecision')
+  })
   it('guards Done by play identity, generation and timer revision and races expiry once', function () {
     const state = singleCorrection(initial())
     const done = {

@@ -4,6 +4,8 @@ import { BASES, type FieldPlayer, type GroundPoint } from './fieldModel'
 import type { FieldCanvasProps } from './fieldTypes'
 import { homeRunLanding } from './stadiumBoundary'
 const keyboardDrags = new WeakMap<FieldPlayer, RunnerDragView>()
+/** Signed drag progress for runners: +forward, −retreat. Survives near-zero flips. */
+const keyboardAlong = new WeakMap<FieldPlayer, number>()
 /** Keyboard input uses the same eligibility and accepted-placement boundary as pointers. */
 export interface KeyboardProjection {
   project: (point: GroundPoint) => { x: number; y: number }
@@ -71,6 +73,7 @@ export function fieldKey(
       delete player.keyboardOrigin
     }
     keyboardDrags.delete(player)
+    keyboardAlong.delete(player)
     props.onRunnerDrag?.(null)
     props.onGestureActive?.(false)
     props.onSelect('')
@@ -101,6 +104,7 @@ export function fieldKey(
         return true
       }
       props.onRunnerDrop?.(player.id, view.to, view.hovered, policy.generation)
+      keyboardAlong.delete(player)
       cancel()
     } else {
       const destination = { ...player.target }
@@ -128,20 +132,26 @@ export function fieldKey(
       if (projection == null) return false
       const from = player.runnerBase ?? (player.batting === true ? 0 : 1)
       const start = BASES[from % 4]
-      const end = BASES[(from + 1) % 4]
-      const previous = keyboardDrags.get(player)
-      const progress = Math.max(
-        0,
-        Math.min(
-          1,
-          (previous?.progress ?? 0) +
-            (key === 'ArrowRight' || key === 'ArrowUp'
-              ? 0.1
-              : key === 'ArrowLeft' || key === 'ArrowDown'
-                ? -0.1
-                : 0)
-        )
+      const canRetreat =
+        policy?.retreatIds?.includes(player.id) === true
+      const canAdvance =
+        policy?.advanceIds == null || policy.advanceIds.includes(player.id)
+      // Signed progress: +forward toward the next base, −back when retreat
+      // is allowed. Kept in its own map so a small back step is not rewritten
+      // as a forward progress when runnerDragView still reports to === from.
+      const delta =
+        key === 'ArrowRight' || key === 'ArrowUp'
+          ? 0.1
+          : key === 'ArrowLeft' || key === 'ArrowDown'
+            ? -0.1
+            : 0
+      const along = Math.max(
+        canRetreat && from > 1 ? -1 : 0,
+        Math.min(canAdvance ? 1 : 0, (keyboardAlong.get(player) ?? 0) + delta)
       )
+      keyboardAlong.set(player, along)
+      const end = along >= 0 ? BASES[(from + 1) % 4] : BASES[(from - 1) % 4]
+      const progress = Math.abs(along)
       const view = runnerDragView(
         player.id,
         from,
@@ -151,16 +161,26 @@ export function fieldKey(
         },
         projection.project,
         projection.width,
-        projection.height
+        projection.height,
+        canRetreat,
+        canAdvance
       )
       view.keyboard = true
       view.safeDisabled = props.runnerSafeError?.(player.id, view.to)
+      // Retreat commits without S/O, but not onto an occupied start base.
+      // Retreat-only runners (no advanceIds) also have no Safe/Out at rest.
       view.hovered =
-        key === 's' && view.safeDisabled == null
-          ? 'safe'
-          : key === 'o'
-            ? 'out'
+        view.to < from
+          ? view.safeDisabled == null
+            ? 'safe'
             : undefined
+          : !canAdvance
+            ? undefined
+            : key === 's' && view.safeDisabled == null
+              ? 'safe'
+              : key === 'o'
+                ? 'out'
+                : undefined
       keyboardDrags.set(player, view)
       player.target = { ...view.point }
       props.onRunnerDrag?.(view)

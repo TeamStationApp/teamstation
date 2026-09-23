@@ -113,6 +113,129 @@ describe('field keyboard policy', function () {
     fieldKey(props, 'Escape')
     expect(calls).has.length(2)
   })
+  it('retreats one base with ArrowDown when retreatIds allows it', function () {
+    const players = createPlayers()
+    const runner = players[9]
+    runner.runnerBase = 3
+    const calls: unknown[] = []
+    const props: FieldCanvasProps = {
+      players,
+      selected: '',
+      onSelect: id => {
+        props.selected = id
+      },
+      view: 'home',
+      zoom: 1,
+      interaction: {
+        generation: 3,
+        selectableIds: [runner.id],
+        runnerIds: [runner.id],
+        retreatIds: [runner.id],
+        gestures: ['place']
+      },
+      onRunnerDrop: (...args) => {
+        calls.push(args)
+      }
+    }
+    fieldKey(props, ' ')
+    for (let i = 0; i < 8; i++) fieldKey(props, 'ArrowDown')
+    fieldKey(props, 'Enter')
+    expect(calls[0]).deep.equals([runner.id, 2, 'safe', 3])
+  })
+  it('does not advance when advanceIds excludes the runner', function () {
+    const players = createPlayers()
+    const runner = players[9]
+    runner.runnerBase = 3
+    const calls: unknown[] = []
+    const props: FieldCanvasProps = {
+      players,
+      selected: '',
+      onSelect: id => {
+        props.selected = id
+      },
+      view: 'home',
+      zoom: 1,
+      interaction: {
+        generation: 3,
+        selectableIds: [runner.id],
+        runnerIds: [runner.id],
+        retreatIds: [runner.id],
+        advanceIds: [],
+        gestures: ['place']
+      },
+      onRunnerDrop: (...args) => {
+        calls.push(args)
+      }
+    }
+    fieldKey(props, ' ')
+    for (let i = 0; i < 8; i++) fieldKey(props, 'ArrowUp')
+    fieldKey(props, 'Enter')
+    expect(calls).deep.equals([])
+  })
+  it('does not commit Safe/Out at rest when advanceIds excludes the runner', function () {
+    const players = createPlayers()
+    const runner = players[9]
+    runner.runnerBase = 3
+    const calls: unknown[] = []
+    const props: FieldCanvasProps = {
+      players,
+      selected: '',
+      onSelect: id => {
+        props.selected = id
+      },
+      view: 'home',
+      zoom: 1,
+      interaction: {
+        generation: 3,
+        selectableIds: [runner.id],
+        runnerIds: [runner.id],
+        retreatIds: [runner.id],
+        advanceIds: [],
+        gestures: ['place']
+      },
+      onRunnerDrop: (...args) => {
+        calls.push(args)
+      }
+    }
+    fieldKey(props, ' ')
+    fieldKey(props, 's')
+    fieldKey(props, 'Enter')
+    fieldKey(props, ' ')
+    fieldKey(props, 'o')
+    fieldKey(props, 'Enter')
+    expect(calls).deep.equals([])
+  })
+  it('does not commit a retreat when runnerSafeError disables the start base', function () {
+    const players = createPlayers()
+    const runner = players[9]
+    runner.runnerBase = 3
+    const calls: unknown[] = []
+    const props: FieldCanvasProps = {
+      players,
+      selected: '',
+      onSelect: id => {
+        props.selected = id
+      },
+      view: 'home',
+      zoom: 1,
+      interaction: {
+        generation: 3,
+        selectableIds: [runner.id],
+        runnerIds: [runner.id],
+        retreatIds: [runner.id],
+        gestures: ['place']
+      },
+      runnerSafeError: (_id, to) =>
+        to === 2 ? 'That base is occupied. Move the lead runner first.' : undefined,
+      onRunnerDrop: (...args) => {
+        calls.push(args)
+      }
+    }
+    fieldKey(props, ' ')
+    for (let i = 0; i < 8; i++) fieldKey(props, 'ArrowDown')
+    fieldKey(props, 'Enter')
+    expect(calls).deep.equals([])
+  })
   it('edits and accepts a trajectory through the same callbacks', function () {
     let accepted = 0
     const props: FieldCanvasProps = {

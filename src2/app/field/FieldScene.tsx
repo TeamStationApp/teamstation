@@ -257,14 +257,30 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
           point,
           screenAnchor,
           size.width,
-          size.height
+          size.height,
+          props.interaction?.retreatIds?.includes(runner.id) === true,
+          props.interaction?.advanceIds == null ||
+            props.interaction.advanceIds.includes(runner.id)
         )
       }
       runner.view.safeDisabled = props.runnerSafeError?.(
         runner.id,
         runner.view.to
       )
-      runner.view.hovered = runnerTargetAt(runner.view, pointer)
+      // A retreat drop commits without the Safe/Out strip, but still honors
+      // safeDisabled (occupied start base after the batter took it).
+      // Retreat-only (no advanceIds) has no Safe/Out while resting on the offer.
+      const canAdvance =
+        props.interaction?.advanceIds == null ||
+        props.interaction.advanceIds.includes(runner.id)
+      runner.view.hovered =
+        runner.view.to < runner.view.from
+          ? runner.view.safeDisabled == null
+            ? 'safe'
+            : undefined
+          : canAdvance
+            ? runnerTargetAt(runner.view, pointer)
+            : undefined
       drag.current.goal =
         runner.view.progress > 0.5 + 1e-12
           ? { ...BASES[runner.view.to % 4] }
@@ -373,7 +389,10 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
         drag.current.origin,
         screenAnchor,
         size.width,
-        size.height
+        size.height,
+        props.interaction?.retreatIds?.includes(player.id) === true,
+        props.interaction?.advanceIds == null ||
+          props.interaction.advanceIds.includes(player.id)
       )
       runnerDrag.current = { id: player.id, held: false, moved: false, view }
       clearHold()
