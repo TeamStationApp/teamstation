@@ -22,5 +22,9 @@
   "src2/app/field/movePreview.ts",
   "src2/app/field/FieldCanvas.tsx",
   "src2/app/field/scoreboardTexture.ts",
-  "src2/app/field/fieldKeyboard.ts"
+  "src2/app/field/fieldKeyboard.ts",
+  "src2/app/field/scoreboardBounds.ts",
+  "src2/app/theme/gsBallpark.ts",
+  "src2/app/theme/gsDark.ts",
+  "src2/app/components/Button.tsx"
 ]

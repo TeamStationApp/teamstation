@@ -113,7 +113,7 @@ describe('scoring renderer identities', function () {
 })
 
 describe('scoring field policy', function () {
-  it('removes offensive name and number meshes and halves height during defensive selection', async function () {
+  it('removes offensive labels and keeps full height at half opacity during defensive selection', async function () {
     const player = fieldPlayersFor(
       createDevelopmentSession(gameFixture, roster, [])
     ).find(item => item.batting === true)!
@@ -133,13 +133,13 @@ describe('scoring field policy', function () {
       const torso = renderer.scene.findByProps({ name: 'jersey-torso' })
       expect(torso.parent!.props.scale).deep.equals([
         PLAYER_SCALE,
-        PLAYER_SCALE / 2,
+        PLAYER_SCALE,
         PLAYER_SCALE
       ])
       expect(
         (torso.instance as Mesh<BufferGeometry, MeshStandardMaterial>).material
           .opacity
-      ).equals(0.4)
+      ).equals(0.5)
       await renderer.update(
         React.createElement(Player, { player, selected: false })
       )

@@ -118,6 +118,15 @@ export const gsBallpark: Theme = {
 
   // Status
   activeColor: palette.forest,
+  scoringInstructionBackground: '#665016',
+  scoringInstructionBorder: '#c5a13c',
+  scoringInstructionText: '#ffffff',
+  scoringCountdownColor: '#f1cf55',
+  scoringSafeColor: '#24713d',
+  scoringSafeIdleColor: '#a9d7b5',
+  scoringOutColor: '#a83535',
+  scoringOutIdleColor: '#e8aaa5',
+  scoringDecisionText: '#ffffff',
   successColor: palette.winInk,
   warningColor: palette.gold,
   dangerColor: palette.crimson,

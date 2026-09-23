@@ -44,8 +44,8 @@ describe('ball-in-play outcome menu', function () {
     })
     await click('Ball in Play')
     expect(
-      Array.from(document.querySelectorAll('[data-outcome]')).map(
-        node => node.textContent
+      Array.from(document.querySelectorAll('[data-outcome]')).map(node =>
+        node.getAttribute('aria-label')
       )
     ).deep.equals([...PRIMARY_OUTCOMES])
     await click('Batter Out')
@@ -110,8 +110,8 @@ describe('ball-in-play outcome menu', function () {
       await pointer('pointerdown', 900, 800)
       await pointer('pointermove', 900, 700)
       expect(
-        Array.from(document.querySelectorAll('[data-outcome]')).map(
-          node => node.textContent
+        Array.from(document.querySelectorAll('[data-outcome]')).map(node =>
+          node.getAttribute('aria-label')
         )
       ).deep.equals([...PRIMARY_OUTCOMES].reverse())
       hit = [button('Batter Out')]

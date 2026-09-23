@@ -175,7 +175,20 @@ export function scoringReducer(
       }
     )
   }
-  if (event.type === 'CLOSE_PLAY') return closePlay(state)
+  if (event.type === 'CLOSE_PLAY') {
+    if (
+      (event.generation != null && event.generation !== state.generation) ||
+      (event.revision != null &&
+        event.revision !== state.correctionWindow?.revision) ||
+      (event.sequence != null &&
+        event.sequence !== state.session.meta.sequence) ||
+      state.runnerAction != null ||
+      state.homeQueue.length > 0 ||
+      state.motions.some(motion => !motion.complete)
+    )
+      return state
+    return closePlay(state)
+  }
   if (event.type === 'END_HALF')
     return state.phase !== 'ready'
       ? state

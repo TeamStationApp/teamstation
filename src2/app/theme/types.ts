@@ -58,6 +58,17 @@ export interface Theme {
   inputFocusBorderColor: string
   inputTextColor: string
 
+  // Scoring instruction and decision surfaces
+  scoringInstructionBackground: string
+  scoringInstructionBorder: string
+  scoringInstructionText: string
+  scoringCountdownColor: string
+  scoringSafeColor: string
+  scoringSafeIdleColor: string
+  scoringOutColor: string
+  scoringOutIdleColor: string
+  scoringDecisionText: string
+
   // Status
   activeColor: string
   successColor: string

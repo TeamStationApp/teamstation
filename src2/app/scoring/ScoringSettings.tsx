@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { Text, View } from 'react-native'
 
+import { useTheme } from '../theme/ThemeContext'
 import { scoringPreferences } from './scoringPreferences'
 import type { ScoringPreferences } from './scoringPreferenceStore'
 import { ScoringButton } from './ScoringSheet'
@@ -9,6 +10,7 @@ export function ScoringSettings({
 }: {
   userId: string
 }): React.ReactElement {
+  const theme = useTheme()
   const [value, setValue] = useState<ScoringPreferences>()
   useEffect(() => {
     let live = true
@@ -28,7 +30,12 @@ export function ScoringSettings({
   }
   return (
     <View style={{ gap: 12 }}>
-      <Text style={{ color: 'white' }}>
+      <Text
+        style={{
+          color: theme.primaryTextColor,
+          fontFamily: theme.regularTextFont
+        }}
+      >
         Switch-hitter help: {value?.help === false ? 'Off' : 'On'}
       </Text>
       <ScoringButton
@@ -45,7 +52,12 @@ export function ScoringSettings({
           if (value != null) update({ ...value, shown: 0 })
         }}
       />
-      <Text style={{ color: 'white' }}>
+      <Text
+        style={{
+          color: theme.primaryTextColor,
+          fontFamily: theme.regularTextFont
+        }}
+      >
         Shown {value?.shown ?? 0} of 3 times
       </Text>
     </View>

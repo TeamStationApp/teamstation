@@ -84,3 +84,48 @@ if (
   )
   process.exitCode = 1
 }
+
+// Keep the whole changed-source aggregate honest as this plan grows.
+const changes = spawnSync(
+  'git',
+  [
+    'diff',
+    '--name-only',
+    '6d383fd876fa9e028b426b297968ee5a6ac09e75',
+    '--',
+    'src2/app'
+  ],
+  { encoding: 'utf8' }
+)
+const untracked = spawnSync(
+  'git',
+  ['ls-files', '--others', '--exclude-standard', 'src2/app'],
+  { encoding: 'utf8' }
+)
+const paths = new Set(
+  (changes.stdout + '\n' + untracked.stdout)
+    .trim()
+    .split('\n')
+    .filter(path => /\.tsx?$/.test(path) && !/\.(test|e2e)\./.test(path))
+)
+let covered = 0
+let total = 0
+for (const path of paths) {
+  const entry = summary[resolve(path)]
+  if (entry == null) {
+    // Pure type declarations carry no executable counters.
+    const source = readFileSync(path, 'utf8')
+    if (source.includes('export function') || source.includes('export const')) {
+      console.error('Changed executable source missing from coverage:', path)
+      process.exitCode = 1
+    }
+    continue
+  }
+  covered += entry.lines.covered
+  total += entry.lines.total
+}
+const changedPercent = total === 0 ? 100 : (100 * covered) / total
+console.log(
+  `Whole changed-file line coverage: ${changedPercent.toFixed(2)}% (${covered}/${total})`
+)
+if (changedPercent < 90) process.exitCode = 1

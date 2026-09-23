@@ -174,6 +174,11 @@ export type ScoringEvent =
   | { type: 'OVERRIDE'; draft: OverrideDraft }
   | { type: 'PITCH'; kind: 'ball' | 'called' | 'swing' | 'foul' }
   | { type: 'UNDO' }
-  | { type: 'CLOSE_PLAY' }
+  | {
+      type: 'CLOSE_PLAY'
+      generation?: number
+      revision?: number
+      sequence?: number
+    }
   | { type: 'END_HALF' }
   | { type: 'SWITCH_SIDE'; side: BatSide }

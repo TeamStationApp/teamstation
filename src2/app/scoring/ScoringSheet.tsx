@@ -1,35 +1,63 @@
 import React from 'react'
 import { Modal, Pressable, ScrollView, Text, View } from 'react-native'
 
+import { useTheme } from '../theme/ThemeContext'
+
 export function ScoringButton({
   label,
   text,
   onPress,
   disabled = false,
-  color = '#28624b'
+  color,
+  row = false,
+  submenu = false
 }: {
   label: string
   text?: string
   onPress: () => void
   disabled?: boolean
   color?: string
+  row?: boolean
+  submenu?: boolean
 }): React.ReactElement {
+  const theme = useTheme()
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={label}
       disabled={disabled}
-      onPress={onPress}
-      style={{
+      style={({ pressed }) => ({
         minHeight: 44,
         padding: 10,
         justifyContent: 'center',
-        borderRadius: 6,
-        backgroundColor: color,
+        borderRadius: row ? 0 : theme.rem(theme.radiusRem),
+        borderBottomWidth: row ? 1 : 0,
+        borderBottomColor: theme.defaultBorderColor,
+        backgroundColor:
+          color ??
+          (row
+            ? pressed
+              ? theme.inactiveBackgroundColor
+              : theme.backgroundColor
+            : theme.primaryButtonColor),
         opacity: disabled ? 0.4 : 1
-      }}
+      })}
+      onPress={onPress}
     >
-      <Text style={{ color: 'white', textAlign: 'center' }}>
+      <Text
+        selectable={false}
+        style={{
+          fontFamily: theme.semiBoldTextFont,
+          color:
+            color != null
+              ? theme.scoringDecisionText
+              : row
+                ? theme.primaryTextColor
+                : theme.buttonTextColor,
+          textAlign: row ? 'left' : 'center'
+        }}
+      >
+        {submenu ? '‹  ' : ''}
         {text ?? label}
       </Text>
     </Pressable>
@@ -44,21 +72,26 @@ export function ScoringSheet({
   onClose: () => void
   children: React.ReactNode
 }): React.ReactElement {
+  const theme = useTheme()
   return (
     <Modal transparent animationType="slide" onRequestClose={onClose}>
       <View style={{ flex: 1, justifyContent: 'flex-end' }}>
         <Pressable
           accessibilityLabel="Dismiss sheet"
           onPress={onClose}
-          style={{ position: 'absolute', inset: 0, backgroundColor: '#0008' }}
+          style={{
+            position: 'absolute',
+            inset: 0,
+            backgroundColor: theme.overlayBackgroundColor
+          }}
         />
         <View
           accessibilityViewIsModal
           style={{
             maxHeight: '92%',
-            backgroundColor: '#15382e',
-            borderTopLeftRadius: 20,
-            borderTopRightRadius: 20,
+            backgroundColor: theme.backgroundColor,
+            borderTopLeftRadius: theme.rem(theme.radiusLargeRem),
+            borderTopRightRadius: theme.rem(theme.radiusLargeRem),
             padding: 16,
             gap: 12
           }}
@@ -74,9 +107,9 @@ export function ScoringSheet({
             <Text
               accessibilityRole="header"
               style={{
+                fontFamily: theme.boldTextFont,
                 fontSize: 22,
-                fontWeight: '700',
-                color: 'white',
+                color: theme.primaryTextColor,
                 flex: 1
               }}
             >
@@ -86,7 +119,7 @@ export function ScoringSheet({
           </View>
           <ScrollView
             keyboardShouldPersistTaps="handled"
-            contentContainerStyle={{ gap: 12 }}
+            contentContainerStyle={{ gap: 0 }}
           >
             {children}
           </ScrollView>
@@ -100,8 +133,12 @@ export function ScoringError({
 }: {
   message?: string
 }): React.ReactElement | null {
+  const theme = useTheme()
   return message == null ? null : (
-    <Text accessibilityRole="alert" style={{ color: '#ffb7b7' }}>
+    <Text
+      accessibilityRole="alert"
+      style={{ color: theme.dangerColor, fontFamily: theme.regularTextFont }}
+    >
       {message}
     </Text>
   )

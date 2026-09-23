@@ -39,6 +39,7 @@ import {
 } from './movePreview'
 import { Player } from './Player'
 import { PlayerShadows } from './PlayerShadows'
+import { scoreboardBounds } from './scoreboardBounds'
 import { useSurfaceTextures } from './surfaceTextures'
 import { TERRAIN } from './terrain'
 
@@ -63,7 +64,16 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
   callbacks.current = props
   const textures = useSurfaceTextures()
   const ready = useRef(false)
+  const boundsKey = useRef('')
   useFrame(() => {
+    if (callbacks.current.onScoreboardBounds != null) {
+      const bounds = scoreboardBounds(camera, size.width, size.height)
+      const key = JSON.stringify(bounds)
+      if (boundsKey.current !== key) {
+        boundsKey.current = key
+        callbacks.current.onScoreboardBounds(bounds)
+      }
+    }
     if (!ready.current) {
       gl.domElement.setAttribute?.('data-field-ready', 'true')
       ready.current = true

@@ -14,6 +14,7 @@ export type ButtonKind = 'primary' | 'secondary' | 'text'
 
 export interface ButtonProps {
   label: string
+  shape?: 'pill' | 'rounded'
   onPress: () => void
   kind?: ButtonKind
   disabled?: boolean
@@ -42,6 +43,7 @@ export interface ButtonProps {
 export function Button(props: ButtonProps): React.ReactElement {
   const {
     label,
+    shape = 'pill',
     onPress,
     kind = 'primary',
     disabled = false,
@@ -68,6 +70,7 @@ export function Button(props: ButtonProps): React.ReactElement {
         pressed && !inert && styles[`${kind}Pressed`],
         pressed && !inert && kind !== 'text' && styles.lowered,
         inert && styles.inert,
+        shape === 'rounded' && { borderRadius: theme.rem(theme.radiusRem) },
         style
       ]}
     >

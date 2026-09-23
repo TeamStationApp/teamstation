@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 
 import { PitchIcon } from '../field/PitchIcon'
+import { useTheme } from '../theme/ThemeContext'
 import type { OutcomePickerProps } from './outcomePickerProps'
 import type { Outcome } from './scoringContract'
 export const PRIMARY_OUTCOMES = [
@@ -18,6 +19,8 @@ export function OutcomePicker({
   onChoose,
   onActive
 }: OutcomePickerProps): React.ReactElement {
+  const theme = useTheme()
+  const trigger = useRef<HTMLButtonElement>(null)
   const [mode, setMode] = useState<'tap' | 'drag'>()
   const [submenu, setSubmenu] = useState(false)
   const [hover, setHover] = useState('')
@@ -33,6 +36,7 @@ export function OutcomePicker({
     setSubmenu(false)
     setHover('')
     onActive(false)
+    trigger.current?.focus()
   }
   useEffect(() => {
     if (disabled) {
@@ -102,18 +106,31 @@ export function OutcomePicker({
   const buttonStyle: React.CSSProperties = {
     minHeight: 44,
     border: 0,
-    borderRadius: 7,
+    borderRadius: theme.rem(theme.radiusRem),
     padding: '9px 12px',
-    color: 'white',
-    background: '#14382df5',
-    font: 'inherit',
+    color: theme.primaryTextColor,
+    background: theme.backgroundColor,
+    fontFamily: theme.semiBoldTextFont,
+    fontWeight: 600,
     fontSize: 14,
     cursor: 'pointer',
-    touchAction: 'none'
+    touchAction: 'none',
+    userSelect: 'none',
+    WebkitUserSelect: 'none',
+    WebkitTouchCallout: 'none'
   }
   return (
     <div
-      style={{ flex: 1, minWidth: 0 }}
+      style={{
+        flex: 1,
+        minWidth: 0,
+        userSelect: 'none',
+        WebkitUserSelect: 'none',
+        WebkitTouchCallout: 'none'
+      }}
+      onContextMenu={event => {
+        event.preventDefault()
+      }}
       onPointerMove={move}
       onPointerUp={event => {
         release(event, false)
@@ -130,10 +147,16 @@ export function OutcomePicker({
       }}
     >
       <button
+        ref={trigger}
         aria-label="Ball in Play"
+        title="Tap for outcomes or drag up to choose"
         disabled={disabled}
         style={{
           ...buttonStyle,
+          background: theme.primaryButtonColor,
+          color: theme.buttonTextColor,
+          position: 'relative',
+          padding: '6px 13px 6px 3px',
           width: '100%',
           height: '100%',
           opacity: disabled ? 0.5 : 1,
@@ -167,9 +190,27 @@ export function OutcomePicker({
       >
         <PitchIcon kind="play" />
         Ball in Play
+        <span
+          aria-hidden="true"
+          style={{
+            position: 'absolute',
+            right: 3,
+            top: '35%',
+            pointerEvents: 'none',
+            lineHeight: 0.6,
+            fontSize: 15
+          }}
+        >
+          ⌃<br />⌃
+        </span>
       </button>
       {mode != null && (
         <>
+          <div
+            aria-label="Dismiss outcomes"
+            onClick={close}
+            style={{ position: 'fixed', inset: 0, zIndex: 19 }}
+          />
           <div
             ref={main}
             role="menu"
@@ -182,7 +223,9 @@ export function OutcomePicker({
               width: 'min(230px, 46vw)',
               display: 'flex',
               flexDirection: 'column',
-              gap: 3,
+              gap: 0,
+              borderRadius: theme.rem(theme.radiusRem),
+              background: theme.backgroundColor,
               maxHeight: '75vh',
               overflowY: 'auto'
             }}
@@ -198,7 +241,13 @@ export function OutcomePicker({
                 aria-label={value}
                 style={{
                   ...buttonStyle,
-                  background: hover === value ? '#987b32' : '#14382df5'
+                  borderRadius: 0,
+                  textAlign: 'left',
+                  borderBottom: `1px solid ${theme.defaultBorderColor}`,
+                  background:
+                    hover === value
+                      ? theme.inactiveBackgroundColor
+                      : theme.backgroundColor
                 }}
                 onClick={event => {
                   if (value === 'Batter Out')
@@ -211,6 +260,7 @@ export function OutcomePicker({
                   select(value)
                 }}
               >
+                {value === 'Batter Out' ? '‹  ' : ''}
                 {value}
               </button>
             ))}
@@ -227,7 +277,10 @@ export function OutcomePicker({
                 width: 'min(230px, 46vw)',
                 display: 'flex',
                 flexDirection: 'column',
-                gap: 3
+                gap: 0,
+                borderRadius: theme.rem(theme.radiusRem),
+                overflow: 'hidden',
+                background: theme.backgroundColor
               }}
             >
               {(['Throw Out', 'Ball Caught'] as const).map(value => (
@@ -238,7 +291,13 @@ export function OutcomePicker({
                   aria-label={value}
                   style={{
                     ...buttonStyle,
-                    background: hover === value ? '#987b32' : '#14382df5'
+                    borderRadius: 0,
+                    textAlign: 'left',
+                    borderBottom: `1px solid ${theme.defaultBorderColor}`,
+                    background:
+                      hover === value
+                        ? theme.inactiveBackgroundColor
+                        : theme.backgroundColor
                   }}
                   onClick={() => {
                     select(value)

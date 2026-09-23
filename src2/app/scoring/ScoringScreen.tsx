@@ -12,6 +12,7 @@ import type { GameStationClient } from '../../common/api'
 import { BaseballScreen } from '../field/BaseballScreen'
 import { BASES, type FieldPlayer } from '../field/fieldModel'
 import { useFieldSurface } from '../field/useFieldSurface'
+import { useTheme } from '../theme/ThemeContext'
 import { allowedAngle, trajectoryLabel } from './battedBall'
 import { OutcomePicker } from './OutcomePicker'
 import { OverridesEditor } from './OverridesEditor'
@@ -28,7 +29,7 @@ import {
   type ScoringStateSource
 } from './scoringStateSource'
 import type { ScoringSessionState } from './scoringTypes'
-import { SwitchHitterHint } from './SwitchHitterHint'
+import { useMenuEscape } from './useMenuEscape'
 import { useScoringClock } from './useScoringClock'
 import { useScoringExit } from './useScoringExit'
 
@@ -41,6 +42,7 @@ export interface ScoringScreenProps {
   source?: ScoringStateSource
 }
 export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
+  const theme = useTheme()
   const [session, setSession] = useState<ScoringSessionState>()
   const [failed, setFailed] = useState(false)
   const surface = useFieldSurface()
@@ -71,14 +73,21 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
         style={[
           surface.root,
           {
-            backgroundColor: '#102b23',
+            backgroundColor: theme.backgroundColor,
             justifyContent: 'center',
             alignItems: 'center'
           }
         ]}
       >
         {failed ? (
-          <Text style={{ color: 'white' }}>Game not found.</Text>
+          <Text
+            style={{
+              color: theme.primaryTextColor,
+              fontFamily: theme.regularTextFont
+            }}
+          >
+            Game not found.
+          </Text>
         ) : (
           <ActivityIndicator accessibilityLabel="Loading game" />
         )}
@@ -88,7 +97,14 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
           onPress={props.onExit}
           style={{ padding: 20 }}
         >
-          <Text style={{ color: 'white' }}>Exit Current Game</Text>
+          <Text
+            style={{
+              color: theme.primaryTextColor,
+              fontFamily: theme.regularTextFont
+            }}
+          >
+            Exit Current Game
+          </Text>
         </Pressable>
       </View>
     )
@@ -108,6 +124,7 @@ function ScoringSession(props: {
   onExit: () => void
   userId: string
 }): React.ReactElement {
+  const theme = useTheme()
   const [state, dispatch] = useReducer(
     scoringReducer,
     props.initial,
@@ -145,6 +162,13 @@ function ScoringSession(props: {
       confirmation.current?.(false)
     },
     []
+  )
+  useMenuEscape(
+    menu,
+    () => {
+      setMenu(false)
+    },
+    'Open scoring menu'
   )
   const [hint, setHint] = useState(false)
   const [saveFailed, setSaveFailed] = useState(false)
@@ -258,12 +282,7 @@ function ScoringSession(props: {
                 ? 'Drag batter to a base, or hold to mark Out'
                 : `Resolve ${session.gameData.players[unresolvedRunner?.playerId ?? 0]?.fullName ?? 'runner'}: drag to a base, or hold to mark Out`
               : undefined
-  const fieldScoreboard = {
-    ...scoreboardFor(session),
-    instruction,
-    detail:
-      instruction == null ? undefined : `${angle}° ${trajectoryLabel(angle)}`
-  }
+  const fieldScoreboard = scoreboardFor(session)
   const summary =
     instruction == null
       ? state.phase === 'awaitingBatter'
@@ -391,6 +410,13 @@ function ScoringSession(props: {
           }
         }
       }}
+      onDismissHint={
+        hint && !menu && sheet == null
+          ? () => {
+              setHint(false)
+            }
+          : undefined
+      }
       ballInPlayControl={
         <OutcomePicker
           disabled={state.phase !== 'ready' || menu || sheet != null}
@@ -414,7 +440,35 @@ function ScoringSession(props: {
         setHint(false)
       }}
       historyLabel={state.past.at(-1)?.label}
-      remainingMs={state.correctionWindow?.remainingMs}
+      instruction={
+        instruction == null
+          ? state.phase === 'awaitingBatter'
+            ? 'Next batter is on base. Update lineup to continue.'
+            : undefined
+          : `${instruction}${state.phase === 'trajectory' ? ` ${angle}° ${trajectoryLabel(angle)}` : ''}`
+      }
+      remainingMs={
+        state.phase === 'correctionWindow'
+          ? state.correctionWindow?.remainingMs
+          : undefined
+      }
+      canFinish={
+        state.phase === 'correctionWindow' &&
+        !menu &&
+        sheet == null &&
+        !outcomeMenu &&
+        !gestureActive &&
+        !state.motions.some(motion => !motion.complete)
+      }
+      onFinish={() => {
+        if (gestureActive || menu || sheet != null || outcomeMenu) return
+        dispatch({
+          type: 'CLOSE_PLAY',
+          generation: state.generation,
+          revision: state.correctionWindow?.revision,
+          sequence: session.meta.sequence
+        })
+      }}
       onCameraGesture={setGesture}
       canPitch={
         state.phase === 'ready' && !menu && sheet == null && !outcomeMenu
@@ -438,72 +492,81 @@ function ScoringSession(props: {
               position: 'absolute',
               left: Math.max(8, runnerAnchor.x - 35),
               top: Math.max(90, runnerAnchor.y - 60),
-              backgroundColor: '#a83535',
+              backgroundColor: theme.scoringOutColor,
               padding: 12,
               borderRadius: 8
             }}
           >
-            <Text style={{ color: 'white' }}>Out</Text>
+            <Text
+              style={{
+                color: theme.primaryTextColor,
+                fontFamily: theme.regularTextFont
+              }}
+            >
+              Out
+            </Text>
           </View>
         )}
-      {hint && !menu && sheet == null && (
-        <SwitchHitterHint
-          onDismiss={() => {
-            setHint(false)
-          }}
-        />
-      )}
       {menu && (
-        <View
-          style={{
-            position: 'absolute',
-            right: 12,
-            top: 64,
-            padding: 12,
-            gap: 6,
-            backgroundColor: '#14382df2',
-            borderRadius: 8
-          }}
-        >
-          {(
-            [
-              'Exit Current Game',
-              'Settings',
-              'Overrides',
-              'End Half Inning',
-              'Set Team Rosters',
-              'Resume Game'
-            ] as const
-          ).map((label, index) => (
-            <ScoringButton
-              key={label}
-              label={label}
-              disabled={
-                index === 3
-                  ? state.phase !== 'ready'
-                  : (index === 2 || index === 4) &&
-                    state.phase !== 'ready' &&
-                    state.phase !== 'awaitingBatter'
-              }
-              onPress={() => {
-                setMenu(false)
-                if (index === 0) exit()
-                else if (index !== 5)
-                  setSheet(
-                    (
-                      [
-                        'exit',
-                        'settings',
-                        'overrides',
-                        'half',
-                        'rosters'
-                      ] as const
-                    )[index]
-                  )
-              }}
-            />
-          ))}
-        </View>
+        <>
+          <Pressable
+            accessibilityLabel="Dismiss scoring menu"
+            onPress={() => {
+              setMenu(false)
+            }}
+            style={{ position: 'absolute', inset: 0 }}
+          />
+          <View
+            style={{
+              position: 'absolute',
+              right: 12,
+              top: 64,
+              overflow: 'hidden',
+              backgroundColor: theme.backgroundColor,
+              borderRadius: 8
+            }}
+          >
+            {(
+              [
+                'Exit Current Game',
+                'Settings',
+                'Overrides',
+                'End Half Inning',
+                'Set Team Rosters',
+                'Resume Game'
+              ] as const
+            ).map((label, index) => (
+              <ScoringButton
+                key={label}
+                row
+                label={label}
+                disabled={
+                  index === 3
+                    ? state.phase !== 'ready'
+                    : (index === 2 || index === 4) &&
+                      state.phase !== 'ready' &&
+                      state.phase !== 'awaitingBatter'
+                }
+                onPress={() => {
+                  setMenu(false)
+                  if (index === 0) exit()
+                  else if (index !== 5)
+                    setSheet(
+                      (
+                        [
+                          'exit',
+                          'settings',
+                          'overrides',
+                          'half',
+                          'rosters'
+                        ] as const
+                      )[index]
+                    )
+                }}
+              />
+            ))}
+          </View>
+        </>
       )}
       {sheet != null && (
         <ScoringSheet
@@ -520,12 +583,17 @@ function ScoringSession(props: {
         >
           {sheet === 'exit' && (
             <>
-              <Text style={{ color: 'white' }}>
+              <Text
+                style={{
+                  color: theme.primaryTextColor,
+                  fontFamily: theme.regularTextFont
+                }}
+              >
                 Your local development scoring will be discarded.
               </Text>
               <ScoringButton
                 label="Discard and Exit"
-                color="#963f3f"
+                color={theme.dangerColor}
                 onPress={() => {
                   confirmation.current?.(true)
                   confirmation.current = null
@@ -555,7 +623,12 @@ function ScoringSession(props: {
           )}
           {sheet === 'half' && (
             <>
-              <Text style={{ color: 'white' }}>
+              <Text
+                style={{
+                  color: theme.primaryTextColor,
+                  fontFamily: theme.regularTextFont
+                }}
+              >
                 End {line.inningState} of the {line.currentInningOrdinal}{' '}
                 inning?
               </Text>
