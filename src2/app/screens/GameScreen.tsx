@@ -1855,6 +1855,9 @@ const getStyles = cacheStyles((theme: Theme) =>
     },
     head: {
       width: '100%',
+      // The same inset the card keeps at the sides, so the gap under the
+      // header matches the gap at the left and right of the screen.
+      paddingTop: theme.rem(theme.spaceMdRem),
       paddingHorizontal: theme.rem(theme.spaceMdRem),
       gap: theme.rem(theme.spaceSmRem)
     },
