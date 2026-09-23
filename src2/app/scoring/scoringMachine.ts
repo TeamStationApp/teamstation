@@ -185,6 +185,17 @@ export function scoringReducer(
   state: ScoringState,
   event: ScoringEvent
 ): ScoringState {
+  if (event.type === 'PRESENTATION_CONTACT') {
+    const sequence = state.presentation
+    if (
+      sequence?.kind !== 'hit' ||
+      sequence.stage !== 'swing' ||
+      sequence.id !== event.id ||
+      sequence.generation !== event.generation
+    )
+      return state
+    return { ...state, presentation: { ...sequence, stage: 'flight' } }
+  }
   if (event.type === 'PRESENTATION_DONE') {
     const sequence = state.presentation
     if (
@@ -195,7 +206,15 @@ export function scoringReducer(
       return state
     return { ...state, presentation: null }
   }
-  if (state.presentation != null && !['UNDO', 'GESTURE'].includes(event.type))
+  if (
+    state.presentation != null &&
+    !['UNDO', 'GESTURE'].includes(event.type) &&
+    !(
+      event.type === 'MOTION_DONE' &&
+      state.presentation.kind === 'hit' &&
+      state.presentation.stage === 'flight'
+    )
+  )
     return state
   if (event.type === 'MORE') return moreReducer(state, event)
   if (event.type === 'GESTURE')

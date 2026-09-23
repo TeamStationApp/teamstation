@@ -4,7 +4,13 @@ export interface GroundPoint {
   z: number
 }
 export interface FieldPlayer {
-  pose?: { windup: number; swing: number; catch: number; throwSide: 'R' | 'L' }
+  pose?: {
+    windup: number
+    swing: number
+    catch: number
+    throwSide: 'R' | 'L'
+    run?: number
+  }
   suppressed?: boolean
   keyboardOrigin?: GroundPoint
   labelOrder?: number

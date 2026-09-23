@@ -15,7 +15,10 @@ export function scoringFieldPlayers(
   >,
   previous: FieldPlayer[] = []
 ): FieldPlayer[] {
-  if (state.presentation?.kind === 'pitch')
+  if (
+    state.presentation?.kind === 'pitch' ||
+    (state.presentation?.kind === 'hit' && state.presentation.stage === 'swing')
+  )
     return state.presentation.players.map(player => ({
       ...player,
       position: { ...player.position },
@@ -102,7 +105,8 @@ export function scoringFieldPlayers(
     if (
       pending != null &&
       player.playerId === pending.fielder &&
-      pending.location != null
+      pending.location != null &&
+      state.presentation?.kind !== 'hit'
     ) {
       player.position = { ...pending.location }
       player.target = { ...pending.location }

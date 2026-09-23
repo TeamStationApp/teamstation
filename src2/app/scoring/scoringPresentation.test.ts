@@ -24,6 +24,7 @@ describe('pitch presentation coordination', function () {
       const before = initial()
       const state = scoringReducer(before, { type: 'PITCH', kind })
       const sequence = state.presentation!
+      if (sequence.kind !== 'pitch') throw new Error('Expected pitch')
       expect(sequence.pitch).equals(kind)
       expect(scoringReducer(state, { type: 'PITCH', kind })).equals(state)
       const runtime = presentationRuntime()
@@ -72,6 +73,7 @@ describe('pitch presentation coordination', function () {
     expect(players.find(p => p.playerId === 1)?.batting).equals(true)
     expect(players.every(p => p.motion == null)).equals(true)
     const sequence = state.presentation!
+    if (sequence.kind !== 'pitch') throw new Error('Expected pitch')
     const after = scoringReducer(state, {
       type: 'PRESENTATION_DONE',
       id: sequence.id,
@@ -103,4 +105,65 @@ describe('pitch presentation coordination', function () {
     const caught = samplePitch(pitchPresentation(state, 'called'), 900)
     expect(caught.catch).greaterThan(0)
   })
+})
+
+describe('hit presentation coordination', function () {
+  for (const [outcome, angle] of [
+    ['Single', -5],
+    ['Double', 25],
+    ['Triple', 50],
+    ['Home Run', -45]
+  ] as const)
+    it(`holds ${outcome} through trajectory, then releases runners at contact`, function () {
+      let state = scoringReducer(initial(), { type: 'OUTCOME', outcome })
+      const origin = scoringFieldPlayers(state).find(
+        p => p.playerId === 10
+      )!.position
+      state = scoringReducer(state, {
+        type: 'FIELDER',
+        id: 10,
+        point: { x: 25, z: -75 },
+        generation: 0
+      })
+      expect(state.motions).has.length(0)
+      expect(state.pendingPlay!.movements).has.length(0)
+      state = scoringReducer(state, {
+        type: 'TRAJECTORY',
+        angle,
+        generation: 0
+      })
+      const seq = state.presentation!
+      if (seq.kind !== 'hit') throw new Error('Expected hit')
+      expect(seq.fielderStart).deep.equals(origin)
+      expect(scoringFieldPlayers(state).every(p => p.motion == null)).equals(
+        true
+      )
+      const clock = presentationRuntime()
+      expect(stepPresentation(clock, seq, 449, false).contact).equals(false)
+      expect(stepPresentation(clock, seq, 1, false).contact).equals(true)
+      const contact = {
+        type: 'PRESENTATION_CONTACT' as const,
+        id: seq.id,
+        generation: seq.generation
+      }
+      expect(scoringReducer(state, { ...contact, id: 'stale' })).equals(state)
+      state = scoringReducer(state, contact)
+      expect(scoringReducer(state, contact)).equals(state)
+      expect(scoringFieldPlayers(state).some(p => p.motion != null)).equals(
+        true
+      )
+      const flight = state.presentation!
+      const frame = stepPresentation(clock, flight, seq.durationMs, false)
+      expect(frame.done).equals(true)
+      expect(frame.cues).deep.equals(['pop'])
+      const done = {
+        type: 'PRESENTATION_DONE' as const,
+        id: seq.id,
+        generation: seq.generation,
+        stage: flight.stage
+      }
+      const undone = scoringReducer(state, { type: 'UNDO' })
+      expect(scoringReducer(undone, done)).equals(undone)
+      expect(scoringReducer(state, done).presentation).equals(null)
+    })
 })
