@@ -28,6 +28,9 @@ public struct RootView: View {
         }
       }
     }
+    .onChange(of: environment.isShowingSettings) { _, showing in
+      InterfaceOrientation.setSettingsVisible(showing)
+    }
     .task { await environment.start() }
   }
 }

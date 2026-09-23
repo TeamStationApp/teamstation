@@ -96,14 +96,17 @@
   <string>Dark</string>
   <key>UIRequiresFullScreen</key>
   <true/>
-  <!-- Landscape only, so the encoded dimensions never change mid-stream. -->
+  <!-- The camera window stays landscape. Portrait is listed so Settings can
+       turn; the app delegate withholds it until that sheet is up. -->
   <key>UISupportedInterfaceOrientations</key>
   <array>
+    <string>UIInterfaceOrientationPortrait</string>
     <string>UIInterfaceOrientationLandscapeLeft</string>
     <string>UIInterfaceOrientationLandscapeRight</string>
   </array>
   <key>UISupportedInterfaceOrientations~ipad</key>
   <array>
+    <string>UIInterfaceOrientationPortrait</string>
     <string>UIInterfaceOrientationLandscapeLeft</string>
     <string>UIInterfaceOrientationLandscapeRight</string>
   </array>

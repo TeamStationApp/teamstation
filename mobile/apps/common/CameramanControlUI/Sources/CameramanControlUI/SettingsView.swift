@@ -26,9 +26,10 @@ struct SettingsView<Model: CameraControlling>: View {
 
   var body: some View {
     NavigationStack {
-      // One shared scroll. Landscape: two rows of two (video/audio/output + lenses, then name +
-      // stream), which is the phone's layout. Portrait, on a rotating client: the six cards
-      // stacked. The draft lives above this switch, so rotating mid-edit keeps every edited value.
+      // One shared scroll. Landscape: video, audio and output beside lenses, then name beside
+      // stream. Portrait stacks one column, alternating those columns:
+      // account, video, lenses, audio, stream, name, radar, scoreboard, then the HDMI output card.
+      // The draft lives above this switch, so rotating mid-edit keeps every edited value.
       GeometryReader { geo in
         let columns = SettingsLayout.columns(for: geo.size)
         ScrollView {
@@ -51,14 +52,16 @@ struct SettingsView<Model: CameraControlling>: View {
               }
             } else {
               videoSection
-              audioSection
-              outputSection
               lensesSection
-              nameSection
+              audioSection
               serverSection
+              nameSection
             }
             radarSection
             scoreboardSection
+            if columns == 1 {
+              outputSection
+            }
             // A flow reads which layout is up. A marker rather than an identifier on the
             // container, which would hide every control inside it.
             Color.clear

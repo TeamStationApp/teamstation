@@ -63,6 +63,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
@@ -112,8 +113,9 @@ private val SettingsMint = darkColorScheme(
  * changed. A reconfigure that fires because the operator wanted to read the URL would look like the
  * camera glitching.
  *
- * Two columns because the app is landscape-only: video, audio and the name on the left, lenses,
- * the stream and the radar on the right. The cards follow the settings design: round containers,
+ * Landscape keeps two columns: video, audio and the name on the left, lenses, the stream and the
+ * radar on the right. Portrait stacks one column, alternating those: account, video, lenses,
+ * audio, stream, name, radar, scoreboard. The cards follow the settings design: round containers,
  * a mint primary, and the same test tags the flows already look for.
  *
  * A single list on a 411dp-tall window put everything below the bitrate off the bottom — the
@@ -234,78 +236,113 @@ fun SettingsScreen(environment: AppEnvironment, onDone: () -> Unit) {
         },
         containerColor = MaterialTheme.colorScheme.background
     ) { padding ->
-        // The iPhone's landscape arrangement: its first row is video, audio and output beside
-        // lenses, its second is name beside stream. Android has no output card. Both columns are
-        // in the one scroll, so the second row's cards sit at the foot of the column above them.
+        val configuration = LocalConfiguration.current
+        val columns = SettingsLayout.columns(
+            configuration.screenWidthDp,
+            configuration.screenHeightDp
+        )
+        val account: @Composable () -> Unit = {
+            GameStationLoginCard(
+                state = scoreboard,
+                onSendCode = { environment.scoreboard.sendCode(it) },
+                onVerify = { email, code -> environment.scoreboard.verify(email, code) },
+                onSignOut = { environment.scoreboard.signOut() }
+            )
+        }
+        val video: @Composable () -> Unit = {
+            VideoCard(
+                draft = draft,
+                options = options,
+                selected = selected,
+                onDraftChange = { draft = it }
+            )
+        }
+        val audio: @Composable () -> Unit = {
+            AudioCard(
+                audioEnabled = draft.audioEnabled,
+                onAudioChange = { draft = draft.copy(audioEnabled = it) }
+            )
+        }
+        val name: @Composable () -> Unit = {
+            NameCard(
+                draftName = draftName,
+                onNameChange = { draftName = it },
+                identifier = identity.cname
+            )
+        }
+        val lenses: @Composable () -> Unit = {
+            LensesCard(
+                catalog = lensCatalog,
+                selection = LensSelection(draft.disabledLensIDs),
+                onToggle = { lens, enabled ->
+                    val next = LensSelection(draft.disabledLensIDs)
+                        .toggling(lens, enabled, lensCatalog)
+                    draft = draft.copy(disabledLensIDs = next.disabledIDs)
+                }
+            )
+        }
+        val stream: @Composable () -> Unit = {
+            StreamCard(environment, serverStatus, didCopyURL) {
+                val clipboard =
+                    context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                clipboard?.setPrimaryClip(ClipData.newPlainText("rtsp", environment.streamURL))
+                didCopyURL = true
+            }
+        }
+        val radarCard: @Composable () -> Unit = {
+            RadarSettingsCard(
+                state = radar,
+                onPair = { environment.openRadarPicker() },
+                onUnpair = { environment.unpairRadar() },
+                onChoose = { environment.pairRadar(it) },
+                onDismiss = { environment.dismissRadarPicker() },
+                onStep = { environment.setRadarStep(it) },
+                onEnabled = { environment.setRadarEnabled(it) }
+            )
+        }
+        val scoreboardCard: @Composable () -> Unit = {
+            ScoreboardSettingsCard(
+                state = scoreboard,
+                onRoute = { environment.scoreboard.selectRoute(it) },
+                onV1 = { server, event -> environment.scoreboard.setV1(server, event) },
+                onOpenEvents = { environment.scoreboard.openEvents() },
+                onDismissEvents = { environment.scoreboard.dismissEvents() },
+                onChoose = { environment.scoreboard.choose(it) }
+            )
+        }
+        // Landscape: left is video, audio, name; right is lenses, stream, radar.
+        // Portrait alternates those, with the account first and the scoreboard last.
         SettingsBody(
             modifier = Modifier.padding(padding),
-            header = {
-                GameStationLoginCard(
-                    state = scoreboard,
-                    onSendCode = { environment.scoreboard.sendCode(it) },
-                    onVerify = { email, code -> environment.scoreboard.verify(email, code) },
-                    onSignOut = { environment.scoreboard.signOut() }
-                )
-            },
+            columns = columns,
+            header = { if (columns == 2) account() },
             left = {
-                VideoCard(
-                    draft = draft,
-                    options = options,
-                    selected = selected,
-                    onDraftChange = { draft = it }
-                )
-                AudioCard(
-                    audioEnabled = draft.audioEnabled,
-                    onAudioChange = { draft = draft.copy(audioEnabled = it) }
-                )
-                NameCard(
-                    draftName = draftName,
-                    onNameChange = { draftName = it },
-                    identifier = identity.cname
-                )
+                video()
+                audio()
+                name()
             },
             right = {
-                LensesCard(
-                    catalog = lensCatalog,
-                    selection = LensSelection(draft.disabledLensIDs),
-                    onToggle = { lens, enabled ->
-                        val next = LensSelection(draft.disabledLensIDs)
-                            .toggling(lens, enabled, lensCatalog)
-                        draft = draft.copy(disabledLensIDs = next.disabledIDs)
-                    }
-                )
-
-                StreamCard(environment, serverStatus, didCopyURL) {
-                    val clipboard =
-                        context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                    clipboard?.setPrimaryClip(ClipData.newPlainText("rtsp", environment.streamURL))
-                    didCopyURL = true
-                }
-
-                RadarSettingsCard(
-                    state = radar,
-                    onPair = { environment.openRadarPicker() },
-                    onUnpair = { environment.unpairRadar() },
-                    onChoose = { environment.pairRadar(it) },
-                    onDismiss = { environment.dismissRadarPicker() },
-                    onStep = { environment.setRadarStep(it) },
-                    onEnabled = { environment.setRadarEnabled(it) }
-                )
-
+                lenses()
+                stream()
+                radarCard()
                 if (environment.launch.isUITest) {
                     ThermalTestCard { environment.previewThermal(it) }
                 }
             },
-            footer = {
-                ScoreboardSettingsCard(
-                    state = scoreboard,
-                    onRoute = { environment.scoreboard.selectRoute(it) },
-                    onV1 = { server, event -> environment.scoreboard.setV1(server, event) },
-                    onOpenEvents = { environment.scoreboard.openEvents() },
-                    onDismissEvents = { environment.scoreboard.dismissEvents() },
-                    onChoose = { environment.scoreboard.choose(it) }
-                )
-            }
+            stack = {
+                account()
+                video()
+                lenses()
+                audio()
+                stream()
+                name()
+                radarCard()
+                scoreboardCard()
+                if (environment.launch.isUITest) {
+                    ThermalTestCard { environment.previewThermal(it) }
+                }
+            },
+            footer = { if (columns == 2) scoreboardCard() }
         )
     }
     }
