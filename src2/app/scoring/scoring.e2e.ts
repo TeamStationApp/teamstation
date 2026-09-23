@@ -1,8 +1,10 @@
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 import puppeteer, { type Browser, type Page } from 'puppeteer'
+import { PerspectiveCamera, Vector3 } from 'three'
 
 import { asGameDetail } from '../../common/api'
+import { applyFieldCamera } from '../field/cameraModel'
 
 const game = asGameDetail({
   id: 'g1',
@@ -54,6 +56,21 @@ async function open(
         body = { error: 'Not found' }
       }
     } else if (url.pathname === '/api/v1/teams') body = []
+    else if (url.pathname.endsWith('/roster'))
+      body = url.pathname.includes('/away/')
+        ? [
+            {
+              userId: 'usr_jordan',
+              shortName: 'Jordan K.',
+              jersey: '00',
+              positions: ['P'],
+              isPlayer: true,
+              role: 'member',
+              bats: 'switch',
+              throws: 'right'
+            }
+          ]
+        : []
     else if (url.pathname.endsWith('/live-streams')) body = { streams: [] }
     else {
       unexpected.push(url.pathname)
@@ -142,13 +159,83 @@ describe('scoring browser', function () {
     }
     const direct = await open('/games/g1/score')
     try {
-      await click(direct.page, 'Open field menu')
-      await click(direct.page, 'Exit field')
+      await click(direct.page, 'Open scoring menu')
+      await click(direct.page, 'Exit Current Game')
       await direct.page.waitForSelector('[aria-label="Score Game"]')
       expect(new URL(direct.page.url()).pathname).equals('/games/g1')
       expect(direct.unexpected).deep.equals([])
     } finally {
       await direct.page.close()
+    }
+  })
+  it('shows real identities, switches the hitter before a pitch, and repeatedly undoes pitches', async function () {
+    const { page, unexpected } = await open('/games/g1/score')
+    try {
+      await page.waitForSelector(
+        '[aria-label*="Batter Jordan K. right handed"]'
+      )
+      await page.waitForSelector('[aria-label="OK"]')
+      await page.waitForSelector('canvas[data-field-ready="true"]')
+      const box = await page.$eval('canvas', canvas => {
+        const rect = canvas.getBoundingClientRect()
+        return { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+      })
+      const camera = new PerspectiveCamera(
+        43,
+        box.width / box.height,
+        0.1,
+        1000
+      )
+      applyFieldCamera(camera, {
+        width: box.width,
+        height: box.height,
+        view: 'home',
+        zoom: 1.25,
+        tilt: (-11 * Math.PI) / 180,
+        heightOffset: 33
+      })
+      camera.updateMatrixWorld()
+      const project = (x: number, y: number, z: number): [number, number] => {
+        const point = new Vector3(x, y, z).project(camera)
+        return [
+          box.x + ((point.x + 1) * box.width) / 2,
+          box.y + ((1 - point.y) * box.height) / 2
+        ]
+      }
+      const start = project(-4, 6, 0)
+      const end = project(7, 6, 0)
+      await page.mouse.move(...start)
+      await page.mouse.down()
+      await page.mouse.move(...end, { steps: 12 })
+      await page.mouse.up()
+      if (process.env.GS_SCORING_ARTIFACT_DIR != null)
+        await page.screenshot({
+          path: `${process.env.GS_SCORING_ARTIFACT_DIR}/field.png`
+        })
+      await page.waitForSelector('[aria-label*="Batter Jordan K. left handed"]')
+      expect(await page.$('[aria-label="OK"]')).equals(null)
+      await click(page, 'Ball')
+      await click(page, 'Called Strike')
+      await click(page, 'Foul Ball')
+      await page.waitForSelector(
+        '[aria-label*="1 balls 2 strikes 0 outs · Pitches 3"]'
+      )
+      await page.mouse.move(...end)
+      await page.mouse.down()
+      await page.mouse.move(...start, { steps: 12 })
+      await page.mouse.up()
+      expect(
+        await page.$('[aria-label*="Batter Jordan K. left handed"]')
+      ).not.equals(null)
+      await click(page, 'Undo Foul Ball')
+      await click(page, 'Undo Called Strike')
+      await click(page, 'Undo Ball')
+      await page.waitForSelector(
+        '[aria-label*="0 balls 0 strikes 0 outs · Pitches 0"]'
+      )
+      expect(unexpected).deep.equals([])
+    } finally {
+      await page.close()
     }
   })
   it('allows exit when the game cannot be read', async function () {

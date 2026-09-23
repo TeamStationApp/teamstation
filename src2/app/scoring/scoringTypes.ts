@@ -1,0 +1,129 @@
+import type { GroundPoint } from '../field/fieldModel'
+import type { PlayerIdentityMap } from './playerIdentity'
+import type { Outcome, PlayerRef, ScoringPlay } from './scoringContract'
+
+export const POSITIONS = [
+  'P',
+  'C',
+  '1B',
+  '2B',
+  'SS',
+  '3B',
+  'LF',
+  'CF',
+  'RF'
+] as const
+export type Position = (typeof POSITIONS)[number]
+export type Side = 'away' | 'home'
+export type BatSide = 'R' | 'L'
+export interface ScoringPlayer {
+  id: number
+  sourceUserId: string | number | null
+  teamId: string
+  fullName: string
+  jersey: string
+  bats: 'left' | 'right' | 'switch'
+  throws: 'left' | 'right' | null
+  positions: string[]
+  local: boolean
+}
+export interface ScoringTeam {
+  id: string
+  name: string
+}
+export interface ScoringSide {
+  players: number[]
+  battingOrder: number[]
+  battingIndex: number
+  defense: Record<Position, number | null>
+  pitchCounts: Record<number, number>
+}
+export interface ScoringSessionState {
+  gamePk: string
+  gameData: {
+    teams: Record<Side, ScoringTeam>
+    players: Record<number, ScoringPlayer>
+  }
+  liveData: {
+    linescore: {
+      currentInning: number
+      currentInningOrdinal: string
+      inningState: 'Top' | 'Bottom'
+      isTopInning: boolean
+      balls: number
+      strikes: number
+      outs: number
+      teams: Record<Side, { runs: number; hits: number; errors: number }>
+      offense: {
+        batter: PlayerRef | null
+        first: PlayerRef | null
+        second: PlayerRef | null
+        third: PlayerRef | null
+      }
+      defense: Record<Position, PlayerRef | null>
+    }
+    boxscore: { teams: Record<Side, ScoringSide> }
+    plays: { allPlays: ScoringPlay[]; currentPlay: ScoringPlay | null }
+  }
+  meta: {
+    source: 'local-development' | 'api'
+    sequence: number
+    identities: PlayerIdentityMap
+  }
+}
+export type ScoringPhase =
+  | 'ready'
+  | 'awaitingBatter'
+  | 'locateFielder'
+  | 'trajectory'
+  | 'runnerMovement'
+  | 'homeDecision'
+  | 'resolveBatter'
+  | 'chooseThrower'
+  | 'chooseDefender'
+  | 'runnerDecision'
+  | 'runnerReason'
+  | 'correctionWindow'
+export interface Movement {
+  playerId: number
+  from: number
+  to: number
+  force: boolean
+  decision: 'pending' | 'safe' | 'out'
+}
+export interface PendingPlay {
+  outcome: Outcome | 'Walk' | 'Strikeout'
+  originalBases: Array<number | null>
+  originalRuns: number
+  originalOuts: number
+  movements: Movement[]
+  fielder?: number
+  location?: GroundPoint
+  angle?: number
+  trajectoryAccepted: boolean
+}
+export interface ScoringSnapshot {
+  session: ScoringSessionState
+  phase: ScoringPhase
+  pendingPlay: PendingPlay | null
+  homeQueue: number[]
+  awaitingBatter: {
+    teamId: string
+    dueIndex: number
+    duePlayerId: number
+  } | null
+  generation: number
+}
+export interface HistoryEntry {
+  label: string
+  snapshot: ScoringSnapshot
+}
+export interface ScoringState extends ScoringSnapshot {
+  past: HistoryEntry[]
+}
+export type ScoringEvent =
+  | { type: 'PITCH'; kind: 'ball' | 'called' | 'swing' | 'foul' }
+  | { type: 'UNDO' }
+  | { type: 'CLOSE_PLAY' }
+  | { type: 'END_HALF' }
+  | { type: 'SWITCH_SIDE'; side: BatSide }

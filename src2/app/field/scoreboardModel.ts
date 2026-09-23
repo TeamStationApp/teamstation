@@ -28,6 +28,8 @@ export const DEMO_SCOREBOARD: ScoreboardState = {
   outs: 1
 }
 export function shortName(person: ScoreboardState['batter']): string {
+  if (person.lastName.trim() === '')
+    return person.firstName.trim().toUpperCase()
   return `${person.firstName.trim()} ${person.lastName.trim().slice(0, 1)}.`
     .trim()
     .toUpperCase()

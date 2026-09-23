@@ -18,7 +18,7 @@ import {
   useBreakpoint,
   useHandoffSlot
 } from './components'
-import { BaseballScreen } from './field/BaseballScreen'
+import { StandaloneField } from './field/StandaloneField'
 import { lstrings, sprintf } from './locales/strings'
 import type { Route, When } from './navigation/routes'
 import { stacksAfterTabPress } from './navigation/tabPress'
@@ -596,7 +596,7 @@ function Shell(props: AppProps): React.ReactElement {
 
   const body =
     props.fieldPreview === true ? (
-      <BaseballScreen
+      <StandaloneField
         onExit={() => {
           selectTab('home')
         }}
@@ -715,6 +715,7 @@ function Shell(props: AppProps): React.ReactElement {
       />
     ) : top.name === 'scoreGame' ? (
       <ScoringScreen
+        userId={session?.user.id}
         client={client}
         gameId={top.gameId}
         onExit={() => {

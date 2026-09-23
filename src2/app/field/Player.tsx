@@ -62,14 +62,15 @@ export function Player({
   const labels = useMemo(
     () => ({
       badge: showLabel ? makePlayerLabel(player.displayName, true) : null,
-      jersey: makePlayerLabel(String(player.number), false)
+      jersey:
+        player.jersey === '' ? null : makePlayerLabel(player.jersey, false)
     }),
-    [player.number, player.displayName, showLabel]
+    [player.jersey, player.displayName, showLabel]
   )
   useEffect(
     () => () => {
       labels.badge?.dispose()
-      labels.jersey.dispose()
+      labels.jersey?.dispose()
     },
     [labels]
   )
@@ -150,26 +151,27 @@ export function Player({
             <cylinderGeometry args={[0.43, 0.33, 0.97, 10]} />
             <meshStandardMaterial color={shirt} map={fabric} roughness={0.85} />
           </mesh>
-          {[-1, 1].map(side => (
-            <mesh
-              key={side}
-              name="jersey-number"
-              position={[0, 1.63, side * 0.32]}
-              rotation={[0, side === -1 ? Math.PI : 0, 0]}
-            >
-              <planeGeometry args={[0.6, 0.65]} />
-              <meshBasicMaterial
-                map={labels.jersey}
-                transparent
-                alphaTest={0.1}
-                polygonOffset
-                polygonOffsetFactor={-2}
-                polygonOffsetUnits={-2}
-                depthWrite={false}
-                toneMapped={false}
-              />
-            </mesh>
-          ))}
+          {labels.jersey != null &&
+            [-1, 1].map(side => (
+              <mesh
+                key={side}
+                name="jersey-number"
+                position={[0, 1.63, side * 0.32]}
+                rotation={[0, side === -1 ? Math.PI : 0, 0]}
+              >
+                <planeGeometry args={[0.6, 0.65]} />
+                <meshBasicMaterial
+                  map={labels.jersey}
+                  transparent
+                  alphaTest={0.1}
+                  polygonOffset
+                  polygonOffsetFactor={-2}
+                  polygonOffsetUnits={-2}
+                  depthWrite={false}
+                  toneMapped={false}
+                />
+              </mesh>
+            ))}
           <Part
             position={[0, 1.08, 0]}
             size={[0.82, 0.16, 0.5]}
@@ -192,7 +194,11 @@ export function Player({
               color={shirt}
             />
           </group>
-          {batting && <BattingPose />}
+          {batting && (
+            <group scale={[player.batSide === 'L' ? -1 : 1, 1, 1]}>
+              <BattingPose />
+            </group>
+          )}
           <group visible={!batting}>
             <group ref={leftArm} position={[-0.56, 1.93, 0]}>
               <Part
