@@ -109,10 +109,86 @@ function closePlay(state: ScoringState): ScoringState {
   session.meta.sequence++
   return next
 }
+function cancelRunnerDraft(state: ScoringState): ScoringState {
+  const draft = state.runnerDraft
+  if (draft == null) return state
+  const restored: ScoringState = {
+    ...copyState(draft.checkpoint),
+    past: state.past.slice(0, draft.historyLength),
+    generation: state.generation + 1
+  }
+  for (const motion of restored.motions) motion.generation = restored.generation
+  if (restored.correctionWindow != null) restored.correctionWindow.revision++
+  return restored
+}
+function runnerTransition(
+  state: ScoringState,
+  event: ScoringEvent
+): ScoringState | undefined {
+  const result = runnerReducer(state, event)
+  if (result == null || result === state) return result
+  if (event.type === 'RUNNER_PROPOSE')
+    return {
+      ...result,
+      runnerDraft: state.runnerDraft ?? {
+        checkpoint: { ...snapshotOf(state), activeGesture: false },
+        historyLength: state.past.length
+      }
+    }
+  const draft = state.runnerDraft
+  if (draft == null) return result
+  if (
+    [
+      'runnerDecision',
+      'runnerReason',
+      'chooseThrower',
+      'chooseDefender'
+    ].includes(result.phase)
+  )
+    return {
+      ...result,
+      runnerDraft: draft,
+      session: state.session,
+      past: state.past,
+      correctionWindow: state.correctionWindow
+    }
+  const label =
+    state.runnerAction?.reason ?? result.past.at(-1)?.label ?? 'Runner movement'
+  delete result.runnerDraft
+  result.past = [
+    ...state.past.slice(0, draft.historyLength),
+    { label, snapshot: copyState(draft.checkpoint) }
+  ]
+  result.session.meta.sequence = draft.checkpoint.session.meta.sequence + 1
+  if (result.correctionWindow != null)
+    result.correctionWindow = {
+      remainingMs: 10000,
+      revision: result.correctionWindow.revision + 1
+    }
+  return result
+}
 export function scoringReducer(
   state: ScoringState,
   event: ScoringEvent
 ): ScoringState {
+  if (event.type === 'GESTURE')
+    return state.activeGesture === event.active
+      ? state
+      : { ...state, activeGesture: event.active }
+  if (
+    event.type === 'RUNNER_CANCEL' ||
+    event.type === 'CANCEL_RUNNER' ||
+    (event.type === 'UNDO' && state.runnerDraft != null)
+  )
+    return cancelRunnerDraft(state)
+  if (
+    event.type === 'RUNNER_DECIDE' &&
+    event.decision === 'safe' &&
+    state.runnerAction?.origin === 'current' &&
+    state.runnerAction.from === state.runnerAction.to &&
+    state.runnerAction.returnPhase !== 'resolveBatter'
+  )
+    return cancelRunnerDraft(state)
   if (event.type === 'UNDO') {
     const last = state.past.at(-1)
     if (last == null) return state
@@ -132,6 +208,7 @@ export function scoringReducer(
   if (event.type === 'TIMER_TICK') {
     const timer = state.correctionWindow
     if (
+      state.activeGesture === true ||
       state.phase !== 'correctionWindow' ||
       timer == null ||
       event.generation !== state.generation ||
@@ -153,20 +230,21 @@ export function scoringReducer(
     if (event.generation !== state.generation) return state
     const from = baseIds(state.session).indexOf(event.id) + 1
     if (event.to !== from && event.to !== from + 1) return state
-    const proposed = runnerReducer(state, {
+    const proposed = scoringReducer(state, {
       type: 'RUNNER_PROPOSE',
       id: event.id,
       to: event.to
     })
     if (proposed == null || proposed === state) return state
-    return (
-      runnerReducer(proposed, {
-        type: 'RUNNER_DECIDE',
-        decision: event.decision
-      }) ?? state
-    )
+    const decided = scoringReducer(proposed, {
+      type: 'RUNNER_DECIDE',
+      decision: event.decision
+    })
+    return decided.phase === 'runnerDecision'
+      ? cancelRunnerDraft(decided)
+      : decided
   }
-  const runnerResult = runnerReducer(state, event)
+  const runnerResult = runnerTransition(state, event)
   if (runnerResult != null) return runnerResult
   if (event.type === 'OUTCOME') return chooseOutcome(state, event.outcome)
   if (event.type === 'FIELDER')
@@ -194,6 +272,7 @@ export function scoringReducer(
   }
   if (event.type === 'CLOSE_PLAY') {
     if (
+      state.activeGesture === true ||
       (event.generation != null && event.generation !== state.generation) ||
       (event.revision != null &&
         event.revision !== state.correctionWindow?.revision) ||

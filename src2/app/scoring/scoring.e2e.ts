@@ -648,6 +648,42 @@ describe('scoring browser', function () {
       await page.close()
     }
   })
+  it('cancels an entire runner draft by button, outside or Escape and commits one edit', async function () {
+    const { page } = await open('/games/g1/score')
+    try {
+      await click(page, 'Open scoring menu')
+      await click(page, 'Overrides')
+      await click(page, 'First base')
+      await click(page, 'Choose First base Player 6')
+      await click(page, 'Apply Override')
+      await click(page, 'Ball')
+      const propose = async (): Promise<void> => {
+        await page.focus('[role="application"]')
+        await page.keyboard.press('Space')
+        for (let i = 0; i < 8; i++) await page.keyboard.press('ArrowUp')
+        await page.keyboard.press('s')
+        await page.keyboard.press('Enter')
+        await page.waitForSelector('[aria-label="Steal"]')
+      }
+      for (const how of ['Cancel', 'Dismiss sheet', 'Escape']) {
+        await propose()
+        if (how === 'Escape') await page.keyboard.press('Escape')
+        else await click(page, how)
+        await page.waitForSelector('[aria-label="Steal"]', { hidden: true })
+        expect(await page.$('[aria-label="Safe drag target"]')).equals(null)
+        expect(await page.$('[aria-label="Safe"]')).equals(null)
+        expect(await page.$('[aria-label="Undo Ball"]')).not.equals(null)
+      }
+      await propose()
+      await click(page, 'Steal')
+      await waitReady(page)
+      await click(page, 'Undo Steal')
+      expect(await page.$('[aria-label="Safe"]')).equals(null)
+      expect(await page.$('[aria-label="Undo Ball"]')).not.equals(null)
+    } finally {
+      await page.close()
+    }
+  })
   it('requires a grab and cancels constrained drags at each base with only one target pair', async function () {
     for (const base of [1, 2, 3]) {
       const { page } = await open('/games/g1/score')

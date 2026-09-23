@@ -94,7 +94,7 @@ describe('runner decisions', function () {
     ])
       await click(reason)
     await click('Cancel')
-    expect(received.at(-1)).deep.equals({ type: 'UNDO' })
+    expect(received.at(-1)).deep.equals({ type: 'RUNNER_CANCEL' })
     state.phase = 'runnerDecision'
     state.runnerAction!.to = 2
     state.runnerAction!.decision = undefined
