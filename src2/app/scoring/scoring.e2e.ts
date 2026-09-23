@@ -320,6 +320,117 @@ describe('scoring browser', function () {
       await page.close()
     }
   })
+  it('opens the out submenu under one drag and returns to the right without a Back button', async function () {
+    const { page, unexpected } = await open('/games/g1/score')
+    try {
+      const center = async (label: string): Promise<{ x: number; y: number }> =>
+        await page.$eval(`[aria-label="${label}"]`, node => {
+          const r = node.getBoundingClientRect()
+          return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
+        })
+      await page.waitForSelector('[aria-label="Ball in Play"]')
+      const button = await center('Ball in Play')
+      await page.mouse.move(button.x, button.y)
+      await page.mouse.down()
+      await page.mouse.move(button.x, button.y - 20, { steps: 3 })
+      await page.waitForSelector('[aria-label="Batter Out"]')
+      const parent = await center('Batter Out')
+      await page.mouse.move(parent.x, parent.y, { steps: 3 })
+      await page.waitForSelector('[aria-label="Throw Out"]')
+      const right = await center('Single')
+      await page.mouse.move(right.x, right.y, { steps: 3 })
+      await page.waitForSelector('[aria-label="Throw Out"]', { hidden: true })
+      await page.mouse.move(parent.x, parent.y, { steps: 3 })
+      await page.waitForSelector('[aria-label="Ball Caught"]')
+      const leaf = await center('Ball Caught')
+      await page.mouse.move(leaf.x, leaf.y, { steps: 8 })
+      await page.mouse.up()
+      await page.waitForSelector('[aria-label^="Drag fielder to location"]')
+      expect(await page.$('[aria-label="Back"]')).equals(null)
+      await page.waitForSelector('canvas[data-field-ready="true"]')
+      const field = '[role="application"]'
+      await page.focus(field)
+      await page.keyboard.press('ArrowRight')
+      await page.keyboard.press('Enter')
+      await page.waitForSelector(
+        '[aria-label^="Drag up and down for ball trajectory."]'
+      )
+      for (let i = 0; i < 40; i++) await page.keyboard.press('ArrowDown')
+      await page.waitForSelector('[aria-label*="10° Line Drive"]')
+      await page.keyboard.press('Enter')
+      await page.waitForSelector('[aria-label="Undo 10° Line Drive"]')
+      await click(page, 'Undo 10° Line Drive')
+      await page.waitForSelector(
+        '[aria-label^="Drag up and down for ball trajectory."]'
+      )
+      expect(unexpected).deep.equals([])
+    } finally {
+      await page.close()
+    }
+  })
+  it('places a fielder on the rendered field and cancels then accepts a trajectory drag', async function () {
+    const { page, unexpected } = await open('/games/g1/score')
+    try {
+      await click(page, 'Ball in Play')
+      await click(page, 'Single')
+      await page.waitForSelector('canvas[data-field-ready="true"]')
+      const box = await page.$eval('canvas', canvas => {
+        const r = canvas.getBoundingClientRect()
+        return { x: r.x, y: r.y, width: r.width, height: r.height }
+      })
+      const camera = new PerspectiveCamera(43, box.width / box.height, 2, 1100)
+      applyFieldCamera(camera, {
+        width: box.width,
+        height: box.height,
+        view: 'home',
+        zoom: 1.25,
+        tilt: (-11 * Math.PI) / 180,
+        heightOffset: 33
+      })
+      const point = (x: number, z: number): [number, number] => {
+        const p = new Vector3(x, 6, z).project(camera)
+        return [
+          box.x + ((p.x + 1) * box.width) / 2,
+          box.y + ((1 - p.y) * box.height) / 2
+        ]
+      }
+      await page.mouse.move(...point(0, -18.44))
+      await page.mouse.down()
+      await page.mouse.move(...point(12, -40), { steps: 12 })
+      await page.mouse.up()
+      await page.waitForSelector(
+        '[aria-label^="Drag up and down for ball trajectory."]'
+      )
+      if (process.env.GS_SCORING_ARTIFACT_DIR != null)
+        await page.screenshot({
+          path: `${process.env.GS_SCORING_ARTIFACT_DIR}/fielder-trajectory.png`
+        })
+      await page.mouse.move(500, 500)
+      await page.mouse.down()
+      await page.mouse.move(500, 620, { steps: 12 })
+      await page.$eval('[role="application"]', node =>
+        node.dispatchEvent(
+          new PointerEvent('pointercancel', {
+            bubbles: true,
+            pointerId: 1,
+            pointerType: 'mouse',
+            clientX: 500,
+            clientY: 620
+          })
+        )
+      )
+      await page.mouse.up()
+      await page.waitForSelector('[aria-label*="45° Fly Ball"]')
+      await page.mouse.move(500, 500)
+      await page.mouse.down()
+      await page.mouse.move(500, 620, { steps: 12 })
+      await page.mouse.up()
+      await page.waitForSelector('[aria-label="Undo -15° Ground Ball"]')
+      expect(unexpected).deep.equals([])
+    } finally {
+      await page.close()
+    }
+  })
   it('allows exit when the game cannot be read', async function () {
     const { page, unexpected } = await open('/games/g1/score', false, true)
     try {

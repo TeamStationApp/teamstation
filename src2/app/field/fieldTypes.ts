@@ -2,7 +2,23 @@ import type { ArcMode, BallArcState } from './ballArcModel'
 import type { CameraView, FieldPlayer, GroundPoint } from './fieldModel'
 import type { ScoreboardState } from './scoreboardModel'
 
+export interface FieldInteractionPolicy {
+  generation: number
+  selectableIds: readonly string[]
+  gestures: ReadonlyArray<'place' | 'trajectory'>
+}
+export interface FieldPlacement {
+  entityId: string
+  point: GroundPoint
+  generation: number
+  gestureId: number
+}
 export interface FieldCanvasProps {
+  registerInterruption?: (cancel: (() => void) | null) => void
+  interaction?: FieldInteractionPolicy
+  onFieldPlacement?: (event: FieldPlacement) => void
+  onGestureActive?: (active: boolean) => void
+  onTrajectoryAccepted?: (angle: number, generation: number) => void
   hintBatSide?: 'L' | 'R'
   selectableIds?: readonly string[]
   onPlayerPlacement?: (id: string, point: GroundPoint) => void

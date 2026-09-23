@@ -123,6 +123,9 @@ export interface ScoringState extends ScoringSnapshot {
   past: HistoryEntry[]
 }
 export type ScoringEvent =
+  | { type: 'OUTCOME'; outcome: Outcome }
+  | { type: 'FIELDER'; id: number; point: GroundPoint; generation: number }
+  | { type: 'TRAJECTORY'; angle: number; generation: number }
   | { type: 'ROSTER'; draft: ScoringSessionState; nextBatter?: number }
   | { type: 'OVERRIDE'; draft: OverrideDraft }
   | { type: 'PITCH'; kind: 'ball' | 'called' | 'swing' | 'foul' }

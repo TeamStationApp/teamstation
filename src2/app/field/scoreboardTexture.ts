@@ -105,6 +105,20 @@ export function makeScoreboardPixels(state: ScoreboardState): Uint8Array {
       })
     })
   }
+  if (state.instruction != null) {
+    const words = state.instruction.split(' ')
+    const lines: string[] = ['']
+    for (const word of words) {
+      const index = lines.length - 1
+      if (`${lines[index]} ${word}`.trim().length > 35) lines.push(word)
+      else lines[index] = `${lines[index]} ${word}`.trim()
+    }
+    lines.forEach((line, index) => {
+      text(line, 45, 35 + index * 52, 4, 38)
+    })
+    if (state.detail != null) text(state.detail, 180, 200, 4, 30)
+    return pixels
+  }
   const brass = [86, 92, 65]
   rect(14, 10, 996, 2, brass)
   rect(14, 244, 996, 2, brass)
@@ -133,7 +147,13 @@ export function makeScoreboardPixels(state: ScoreboardState): Uint8Array {
   text(shortName(state.batter), 40, 204, 3.5, 12)
   text(battingLine(state), 315, 204, 3.5, 7)
   text(shortName(state.pitcher), 485, 204, 3.5, 12)
-  text(`P:${Math.max(0, Math.min(999, state.pitchCount))}`, 790, 204, 3.5, 6)
+  text(
+    `PITCHES ${Math.max(0, Math.min(999, state.pitchCount))}`,
+    785,
+    204,
+    2.9,
+    11
+  )
   return pixels
 }
 export function makeScoreboardTexture(state: ScoreboardState): DataTexture {

@@ -1,4 +1,6 @@
 export interface ScoreboardState {
+  instruction?: string
+  detail?: string
   homeTeam: string
   awayTeam: string
   homeScore: number

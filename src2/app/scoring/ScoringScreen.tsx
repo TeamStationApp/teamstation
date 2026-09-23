@@ -11,7 +11,9 @@ import { ActivityIndicator, Pressable, Text, View } from 'react-native'
 import type { GameStationClient } from '../../common/api'
 import { BaseballScreen } from '../field/BaseballScreen'
 import { useFieldSurface } from '../field/useFieldSurface'
+import { allowedAngle, trajectoryLabel } from './battedBall'
 import { fieldPlayersFor } from './fieldAdapter'
+import { OutcomePicker } from './OutcomePicker'
 import { OverridesEditor } from './OverridesEditor'
 import { RosterEditor } from './RosterEditor'
 import { initialScoringState, scoringReducer } from './scoringMachine'
@@ -108,6 +110,8 @@ function ScoringSession(props: {
     props.initial,
     initialScoringState
   )
+  const [outcomeMenu, setOutcomeMenu] = useState(false)
+  const [angle, setAngle] = useState(45)
   const [menu, setMenu] = useState(false)
   const [sheet, setSheet] = useState<
     'exit' | 'settings' | 'overrides' | 'half' | 'rosters'
@@ -145,7 +149,35 @@ function ScoringSession(props: {
     props.onExit,
     requestConfirmation
   )
-  const players = useMemo(() => fieldPlayersFor(session), [session])
+  const selectingDefense = [
+    'locateFielder',
+    'trajectory',
+    'chooseThrower',
+    'chooseDefender'
+  ].includes(state.phase)
+  const players = useMemo(
+    () =>
+      fieldPlayersFor(session).map(player => ({
+        ...player,
+        suppressed: selectingDefense && player.team === 'runner',
+        ...(player.playerId === state.pendingPlay?.fielder &&
+        state.pendingPlay?.location != null
+          ? {
+              position: { ...state.pendingPlay.location },
+              target: { ...state.pendingPlay.location }
+            }
+          : {})
+      })),
+    [
+      session,
+      selectingDefense,
+      state.pendingPlay?.fielder,
+      state.pendingPlay?.location
+    ]
+  )
+  useEffect(() => {
+    setAngle(state.pendingPlay?.angle ?? 45)
+  }, [state.pendingPlay?.angle, state.generation])
   const [selected, setSelected] = useState('')
   const switchable = state.phase === 'ready' && canSwitchBatter(session)
   const batterId = line.offense.batter?.id
@@ -188,10 +220,24 @@ function ScoringSession(props: {
       live = false
     }
   }, [props.source, session])
+  const instruction =
+    state.phase === 'locateFielder'
+      ? 'Drag fielder to location of fielded ball.'
+      : state.phase === 'trajectory'
+        ? 'Drag up and down for ball trajectory.'
+        : undefined
+  const fieldScoreboard = {
+    ...scoreboardFor(session),
+    instruction,
+    detail:
+      instruction == null ? undefined : `${angle}° ${trajectoryLabel(angle)}`
+  }
   const summary =
-    state.phase === 'awaitingBatter'
-      ? 'Next batter is on base. Update lineup to continue.'
-      : `${session.gameData.teams.away.name} ${line.teams.away.runs} · ${session.gameData.teams.home.name} ${line.teams.home.runs} · ${line.inningState} ${line.currentInningOrdinal} · ${line.balls} balls ${line.strikes} strikes ${line.outs} outs · Pitches ${scoreboardFor(session).pitchCount}`
+    instruction == null
+      ? state.phase === 'awaitingBatter'
+        ? 'Next batter is on base. Update lineup to continue.'
+        : `${session.gameData.teams.away.name} ${line.teams.away.runs} · ${session.gameData.teams.home.name} ${line.teams.home.runs} · ${line.inningState} ${line.currentInningOrdinal} · ${line.balls} balls ${line.strikes} strikes ${line.outs} outs · Pitches ${scoreboardFor(session).pitchCount}`
+      : `${instruction}${state.phase === 'trajectory' ? ` ${angle}° ${trajectoryLabel(angle)}` : ''}`
   return (
     <BaseballScreen
       field={{
@@ -201,7 +247,52 @@ function ScoringSession(props: {
             ? 'L'
             : 'R'
           : undefined,
-        scoreboard: scoreboardFor(session),
+        scoreboard: fieldScoreboard,
+        interaction: {
+          generation: state.generation,
+          selectableIds:
+            menu || sheet != null || outcomeMenu
+              ? []
+              : state.phase === 'locateFielder'
+                ? players
+                    .filter(player => player.team !== 'runner')
+                    .map(player => player.id)
+                : switchable && batterId != null
+                  ? [`offense-${batterId}`]
+                  : [],
+          gestures:
+            menu || sheet != null || outcomeMenu
+              ? []
+              : state.phase === 'trajectory'
+                ? ['trajectory']
+                : ['place']
+        },
+        arc:
+          state.pendingPlay?.location == null
+            ? null
+            : { target: state.pendingPlay.location, angle },
+        arcMode:
+          state.phase === 'trajectory' && !menu && sheet == null
+            ? 'edit'
+            : 'off',
+        onArcChange: arc => {
+          setAngle(allowedAngle(arc.angle, state.pendingPlay?.outcome ?? ''))
+        },
+        onTrajectoryAccepted: (value, generation) => {
+          dispatch({ type: 'TRAJECTORY', angle: value, generation })
+        },
+        onFieldPlacement: event => {
+          const id = players.find(
+            player => player.id === event.entityId
+          )?.playerId
+          if (id != null && state.phase === 'locateFielder')
+            dispatch({
+              type: 'FIELDER',
+              id,
+              point: event.point,
+              generation: event.generation
+            })
+        },
         selected,
         onSelect: setSelected,
         view: 'home',
@@ -222,7 +313,18 @@ function ScoringSession(props: {
           }
         }
       }}
+      ballInPlayControl={
+        <OutcomePicker
+          disabled={state.phase !== 'ready' || menu || sheet != null}
+          onActive={setOutcomeMenu}
+          onChoose={outcome => {
+            setHint(false)
+            dispatch({ type: 'OUTCOME', outcome })
+          }}
+        />
+      }
       onMenu={() => {
+        setOutcomeMenu(false)
         setMenu(value => !value)
       }}
       onUndo={() => {
@@ -233,7 +335,9 @@ function ScoringSession(props: {
         setHint(false)
       }}
       historyLabel={state.past.at(-1)?.label}
-      canPitch={state.phase === 'ready' && !menu && sheet == null}
+      canPitch={
+        state.phase === 'ready' && !menu && sheet == null && !outcomeMenu
+      }
       summary={summary}
       accessibilitySummary={`${summary} · Batter ${line.offense.batter?.fullName ?? 'waiting'} ${session.liveData.plays.currentPlay?.matchup.batSide.code === 'L' ? 'left handed' : 'right handed'} · Pitcher ${line.defense.P?.fullName ?? 'unassigned'}`}
     >

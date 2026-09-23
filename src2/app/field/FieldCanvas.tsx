@@ -1,9 +1,10 @@
 import { Canvas } from '@react-three/fiber'
-import React, { useState } from 'react'
+import React, { useCallback, useRef, useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
 
 import { useBreakpoint } from '../components'
 import { useTheme } from '../theme/ThemeContext'
+import { fieldKey } from './fieldKeyboard'
 import { FieldScene } from './FieldScene'
 import type { FieldCanvasProps } from './fieldTypes'
 
@@ -97,6 +98,10 @@ export function FieldCanvas(props: FieldCanvasProps): React.ReactElement {
       window.matchMedia('(pointer: coarse)').matches
   )
   const [available, setAvailable] = useState(supportsWebGL)
+  const cancelGesture = useRef<(() => void) | null>(null)
+  const registerInterruption = useCallback((cancel: (() => void) | null) => {
+    cancelGesture.current = cancel
+  }, [])
   const [generation, setGeneration] = useState(0)
   const retry = (): void => {
     setAvailable(supportsWebGL())
@@ -105,6 +110,18 @@ export function FieldCanvas(props: FieldCanvasProps): React.ReactElement {
   if (!available) return <Unavailable retry={retry} />
   return (
     <div
+      onPointerCancelCapture={() => {
+        cancelGesture.current?.()
+      }}
+      onLostPointerCaptureCapture={() => {
+        cancelGesture.current?.()
+      }}
+      tabIndex={0}
+      role="application"
+      aria-label="Baseball field. Brackets select a player, arrows move, Enter places."
+      onKeyDown={event => {
+        if (fieldKey(props, event.key)) event.preventDefault()
+      }}
       ref={node => {
         if (node != null) setEventHost(node)
       }}
@@ -127,6 +144,7 @@ export function FieldCanvas(props: FieldCanvasProps): React.ReactElement {
               gl.domElement.addEventListener(
                 'webglcontextlost',
                 () => {
+                  cancelGesture.current?.()
                   setAvailable(false)
                 },
                 { once: true }
@@ -142,6 +160,7 @@ export function FieldCanvas(props: FieldCanvasProps): React.ReactElement {
           >
             <FieldScene
               {...props}
+              registerInterruption={registerInterruption}
               touchPlacement={props.touchPlacement === true || mobileInput}
             />
           </Canvas>
