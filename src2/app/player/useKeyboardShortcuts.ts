@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 
 import type { KeyboardShortcuts } from './keyboardShortcuts'
 import { seekBy, STEP_SECONDS } from './zones'
@@ -20,8 +20,15 @@ export type { KeyboardShortcuts }
  * left where it was this was a `TypeError` on every mount of the watch tab.
  */
 export function useKeyboardShortcuts(shortcuts: KeyboardShortcuts): void {
-  const { video, act, beginSlow, endSlow, holding } = shortcuts
+  const { enabled = true, video } = shortcuts
+  // Through a ref, so a caller may pass fresh closures on every render —
+  // which the multi-camera view does, because its actions close over which
+  // tile is heard and where the take is — without tearing the listeners down
+  // and putting them back each time.
+  const latest = useRef(shortcuts)
+  latest.current = shortcuts
   useEffect(() => {
+    if (!enabled) return
     const isTyping = (target: EventTarget | null): boolean => {
       const node = target as HTMLElement | null
       const tag = node?.tagName.toLowerCase()
@@ -32,6 +39,7 @@ export function useKeyboardShortcuts(shortcuts: KeyboardShortcuts): void {
       )
     }
     const down = (event: KeyboardEvent): void => {
+      const { act, beginSlow, holding, seek } = latest.current
       const player = video()
       if (player == null) return
       if (event.ctrlKey || event.metaKey || event.altKey) {
@@ -40,10 +48,12 @@ export function useKeyboardShortcuts(shortcuts: KeyboardShortcuts): void {
       if (isTyping(event.target)) return
       if (event.key === 'ArrowLeft') {
         event.preventDefault()
-        seekBy(player, -STEP_SECONDS)
+        if (seek != null) seek(-STEP_SECONDS)
+        else seekBy(player, -STEP_SECONDS)
       } else if (event.key === 'ArrowRight') {
         event.preventDefault()
-        seekBy(player, STEP_SECONDS)
+        if (seek != null) seek(STEP_SECONDS)
+        else seekBy(player, STEP_SECONDS)
       } else if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
         event.preventDefault()
         if (event.repeat || holding()) return
@@ -54,11 +64,13 @@ export function useKeyboardShortcuts(shortcuts: KeyboardShortcuts): void {
       }
     }
     const up = (event: KeyboardEvent): void => {
-      if (event.key === 'ArrowUp' || event.key === 'ArrowDown') endSlow()
+      if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+        latest.current.endSlow()
+      }
     }
     // A key held while the tab changes never delivers its `keyup`.
     const blur = (): void => {
-      endSlow()
+      latest.current.endSlow()
     }
     window.addEventListener('keydown', down, true)
     window.addEventListener('keyup', up, true)
@@ -67,10 +79,9 @@ export function useKeyboardShortcuts(shortcuts: KeyboardShortcuts): void {
       window.removeEventListener('keydown', down, true)
       window.removeEventListener('keyup', up, true)
       window.removeEventListener('blur', blur)
-      endSlow()
+      latest.current.endSlow()
     }
     // Rebound only when the player itself changes; the callbacks are recreated
     // on every render and binding to them would rebind on every render too.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [video])
+  }, [enabled, video])
 }
