@@ -1,0 +1,26 @@
+{
+  "recent": [
+    {
+      "gameId": "gam_scoreboardFixture1",
+      "startAt": "2026-09-28T17:50:00.000Z",
+      "venue": "Pioneer Field",
+      "homeTeamName": "Pioneers",
+      "awayTeamName": "Visitors",
+      "homeLogoUrl": null,
+      "awayLogoUrl": null,
+      "liveState": "none"
+    }
+  ],
+  "upcoming": [
+    {
+      "gameId": "gam_scoreboardFixture2",
+      "startAt": "2026-09-28T19:00:00.000Z",
+      "venue": null,
+      "homeTeamName": "Pioneers",
+      "awayTeamName": "Visitors",
+      "homeLogoUrl": null,
+      "awayLogoUrl": null,
+      "liveState": "idle"
+    }
+  ]
+}

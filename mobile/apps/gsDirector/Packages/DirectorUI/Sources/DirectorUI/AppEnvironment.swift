@@ -143,6 +143,18 @@ public final class AppEnvironment {
   /// screens watch is the state inside it, and the reference never changes.
   @ObservationIgnored
   public private(set) lazy var gameStation: GameStationAccount = makeAccount()
+  /// The rules for the chosen event: which takes it files, and when it is
+  /// claimed. Every decision is in there, where it is tested.
+  @ObservationIgnored
+  public private(set) lazy var eventCoordinator = EventCoordinator(
+    events: gameStation,
+    linker: index,
+    currentTake: { [weak self] in self?.activeRecordingID }
+  )
+  /// Keeps each Scoreboard content item's page on the sample, the chosen
+  /// event's board, or nothing, with this environment running the pages.
+  @ObservationIgnored
+  private lazy var scoreboardDriver = ScoreboardOverlayDriver(host: self)
   public private(set) var snapshot = TelemetrySnapshot()
   public private(set) var isRecording = false {
     didSet {
@@ -151,6 +163,7 @@ public final class AppEnvironment {
       // recordings it lists.
       distributorEvents.publish(.recordingStateChanged(isRecording: isRecording))
       distributorEvents.publish(.recordingsChanged)
+      updateScoreboards()
     }
   }
   /// GS Distributor is attached by cable and talking to this Director.
@@ -170,6 +183,7 @@ public final class AppEnvironment {
     didSet {
       guard isStreaming != oldValue else { return }
       distributorEvents.publish(.streamingStateChanged(isStreaming: isStreaming))
+      updateScoreboards()
     }
   }
   public private(set) var streamMegabitsPerSecond = 0.0
@@ -544,6 +558,7 @@ public final class AppEnvironment {
     let manifest = overlayStore.loadManifest()
     apply(manifest)
     reloadOverlayMedia()
+    watchChosenEvent()
     apply(remoteStore.loadManifest())
     remoteInput.onDown = { [weak self] id, pressed in
       self?.handleRemoteDown(id, pressed: pressed)
@@ -2013,10 +2028,9 @@ public final class AppEnvironment {
       $0.dvr.lastDowntimeSeconds = 0
     }
     beginLiveSession(recording: recordingID)
-    // A take started while the stream is already up belongs to the game the
-    // stream is going to, just as much as one started by the stream does —
-    // this is the take that follows a recording somebody stopped mid-game.
-    if isStreaming { rememberStreamedGame() }
+    // Every take started with an event chosen is filed under it, streamed or
+    // not; the one started by streaming included.
+    eventCoordinator.recordingStarted(take: recordingID)
     startRetentionSweeps()
     syncLiveSessionPresentation()
   }
@@ -2056,11 +2070,14 @@ public final class AppEnvironment {
       statusMessage = "GS Distributor is exporting — stream once it has finished"
       return
     }
-    let url = streamDestinationURL
-    guard !url.isEmpty else {
-      // Chosen an event and not yet taken it — signed out, or the list was
-      // never opened. Saying which of the two destinations is empty is the
-      // difference between a fixable message and a shrug.
+    // An event with no address yet is claimed as the stream is dialled, so
+    // only an event that was never chosen stops it here.
+    let ready = config.streamDestination == .event
+      ? gameStation.chosen != nil
+      : !config.streamURL.isEmpty
+    guard ready else {
+      // Saying which of the two destinations is empty is the difference
+      // between a fixable message and a shrug.
       reportStreamError(
         config.streamDestination == .event
           ? "Pick a GameStation event in Settings first"
@@ -2080,30 +2097,26 @@ public final class AppEnvironment {
     // back. Stopping the stream deliberately does not stop it: an operator who
     // drops the publish is usually still filming.
     if !isRecording { startRecording() }
-    rememberStreamedGame()
     beginLiveSession(streaming: true)
     dialStream()
   }
 
-  /// Writes the game this take is being streamed to onto the take itself.
-  ///
-  /// This is what lets an upload afterwards need no question asked: the take
-  /// already knows its event, so pressing Upload sends it there instead of
-  /// opening a list of games and asking somebody to remember which one this
-  /// was. Only for a game that was picked — a bare RTSP publish names nothing,
-  /// and that take is the one an operator is asked about.
-  private func rememberStreamedGame() {
-    guard config.streamDestination == .event,
-      let chosen = gameStation.chosen,
-      let take = recordingID
-    else { return }
-    let day = ISO8601DateFormatter()
-    day.formatOptions = [.withFullDate]
-    try? index.setGame(
-      take,
-      gameId: chosen.gameId,
-      title: "\(day.string(from: chosen.startAt)) \(chosen.title)"
-    )
+  /// Chooses the game this Director covers, from Settings' event picker.
+  @discardableResult
+  public func pickEvent(_ event: GameStationEvent, destination: StreamDestination) async -> Bool {
+    defer { updateScoreboards() }
+    return await eventCoordinator.pick(event: event, destination: destination)
+  }
+
+  /// Settings' Clear: this Director covers no game.
+  public func clearEvent() {
+    eventCoordinator.clear()
+    updateScoreboards()
+  }
+
+  /// Settings' destination radio. Choosing the event claims it now.
+  public func streamDestinationChanged(to destination: StreamDestination) {
+    Task { await eventCoordinator.destinationChanged(to: destination) }
   }
 
   /// How long to wait before dialling the ingest again, and how far that backs off. A squeezed
@@ -2124,15 +2137,17 @@ public final class AppEnvironment {
     router.setStreamRate(session.streamFrameRate)
     Task { [weak self] in
       guard let self else { return }
-      // A key can have been rotated since the game was picked — on the website,
-      // or by another Director taking the same game — and the first anybody
-      // would know is a stream that will not start at the first pitch. Asked
-      // again here, where it is about to be used, and on every redial with it:
-      // offline, the cached address is what there is and it is usually right.
-      if destination == .event {
-        await self.gameStation.refreshChosen()
+      // The event is claimed here if it never was, and asked for again if it
+      // was: a key can have been rotated since, and offline the cached address
+      // is what there is. A refusal goes the way a failed publish does.
+      let publishTo: String
+      do {
+        publishTo = try await self.eventCoordinator.streamURLForDial(destination: destination)
+          ?? self.config.streamURL
+      } catch {
+        self.handleStreamDrop(error.localizedDescription)
+        return
       }
-      let publishTo = self.streamDestinationURL
       do {
         try await self.programStreamer.start(urlString: publishTo, config: session) { [weak self] message in
           Task { @MainActor in
@@ -3022,7 +3037,7 @@ public final class AppEnvironment {
 
   private func composedOverlayItems() -> [MetalCompositor.OverlayItem] {
     let canvas = overlayCanvas
-    let source = programOverlays
+    let source = OverlayComposition.drawable(programOverlays, scoreboardURL: scoreboardContext.url)
     let rects = OverlayLayout.displayRects(
       overlays: source,
       canvas: canvas,
@@ -3033,7 +3048,7 @@ public final class AppEnvironment {
       guard rect.width > 0.5, rect.height > 0.5 else { return nil }
       let image: CGImage?
       switch overlay.kind {
-      case .web: image = webSnapshots[overlay.id]?.0
+      case .web, .scoreboard: image = webSnapshots[overlay.id]?.0
       case .image, .text: image = overlayImages[overlay.id]
       }
       guard let image else { return nil }
@@ -3058,32 +3073,93 @@ public final class AppEnvironment {
         loadOverlayImage(overlay)
       case .text:
         rasterizeText(overlay)
+      case .scoreboard:
+        // The driver decides its page; handed over below.
+        break
       }
     }
-    applyProgramOverlays()
+    updateScoreboards()
   }
 
   private func startWebOverlay(_ overlay: ProgramOverlay) {
     guard overlay.kind == .web else { return }
     if overlay.url.isEmpty {
-      webControllers[overlay.id]?.stop()
-      webControllers[overlay.id] = nil
-      pendingWebNative[overlay.id] = nil
+      stop(id: overlay.id)
       return
     }
-    pendingWebNative[overlay.id] = nil
+    startWebOverlay(id: overlay.id, urlString: overlay.url)
+  }
+
+  /// Loads a page into the overlay's controller, making the controller first
+  /// if it has none.
+  private func startWebOverlay(id: UUID, urlString: String) {
+    pendingWebNative[id] = nil
     let controller: WebOverlayController
-    if let existing = webControllers[overlay.id] {
+    if let existing = webControllers[id] {
       controller = existing
     } else {
       controller = WebOverlayController(size: overlayCanvas)
-      let id = overlay.id
       controller.onSnapshot = { [weak self] image, size in
         self?.handleWebSnapshot(id: id, image: image, size: size)
       }
+      controller.onLoadFailed = { [weak self] in
+        self?.scoreboardDriver.loadFailed(id: id)
+      }
       webControllers[id] = controller
     }
-    controller.load(urlString: overlay.url)
+    controller.load(urlString: urlString)
+  }
+
+  // MARK: - Scoreboard content
+
+  /// What decides every scoreboard's page right now.
+  private var scoreboardContext: ScoreboardContext {
+    ScoreboardContext(
+      live: gameStation.chosen.map { gameStation.scoreboardURL(for: $0.gameId) },
+      sample: AppServer.url.appending(path: "scoreboard-sample"),
+      editorOpen: editingTemplateID != nil,
+      capturing: isRecording || isStreaming
+    )
+  }
+
+  /// Hands the scoreboards being edited and on the programme to the driver,
+  /// and redraws the programme without any that resolve to nothing.
+  private func updateScoreboards() {
+    let programme = programOverlays.filter { overlay in
+      !overlays.contains { $0.id == overlay.id }
+    }
+    scoreboardDriver.update(overlays: overlays + programme, context: scoreboardContext)
+    applyProgramOverlays()
+  }
+
+  /// The chosen event changes in Settings, on signing out, and when it is
+  /// claimed; the scoreboards follow it whichever way it changed.
+  private func watchChosenEvent() {
+    withObservationTracking {
+      _ = gameStation.chosen
+    } onChange: { [weak self] in
+      Task { @MainActor in
+        self?.updateScoreboards()
+        self?.watchChosenEvent()
+      }
+    }
+  }
+
+  /// True while the template being edited has no scoreboard, which is when
+  /// one can be added.
+  public var canAddScoreboard: Bool {
+    !overlays.contains { $0.kind == .scoreboard }
+  }
+
+  /// Adds the chosen event's scoreboard to the template being edited.
+  public func addScoreboardOverlay() {
+    guard
+      let next = OverlayTemplate(name: "", overlays: overlays)
+        .addingScoreboard(canvas: overlayCanvas)
+    else { return }
+    overlays = next.overlays
+    persistActiveTemplate()
+    updateScoreboards()
   }
 
   private func loadOverlayImage(_ overlay: ProgramOverlay) {
@@ -3126,93 +3202,25 @@ public final class AppEnvironment {
     )
   }
 
-  /// Web overlays keep their top-left. Display size is natural page size times the user's scale,
-  /// so a refresh that grows the page grows the box down and to the right instead of cropping.
-  ///
-  /// After a relaunch the first snapshot is often larger than the saved page (unfinished CSS or a
-  /// 1× image.scale on retina). Applying that native size immediately is what made Output jump to
-  /// about half the frame until the content editor forced a second layout.
+  /// Lays the overlay out from its page's new measure (`OverlayLayout.fitWebSnapshot`).
   ///
   /// Returns whether the overlay was laid out, so the caller knows the new bitmap fits the box.
   @discardableResult
   private func fitWebOverlay(id: UUID, native incoming: CGSize) -> Bool {
     guard let index = overlays.firstIndex(where: { $0.id == id }) else { return false }
-    let canvas = overlayCanvas
-    let firstMeasure = overlays[index].nativeWidth < 1
-    var native = incoming
-    if overlays[index].hasLaidOut, !firstMeasure {
-      let saved = CGSize(
-        width: overlays[index].nativeWidth,
-        height: overlays[index].nativeHeight
-      )
-      let resolved = OverlayLayout.resolveWebNative(
-        incoming: incoming,
-        saved: saved,
-        pending: pendingWebNative[id],
-        now: Date()
-      )
-      pendingWebNative[id] = resolved.pending
-      guard resolved.applyLayout else { return false }
-      native = resolved.native
-      // The page picks its own CSS scale from the layout viewport it happens to load into, so the
-      // NPLL scoreboard measures 637x170 on one load and 405x108 on the next for the same graphic.
-      // Only a change of shape means the content itself changed, so that is the only thing allowed
-      // to move a box the operator has already sized.
-      if OverlayLayout.aspectsAgree(
-        Double(saved.width / max(saved.height, 1)),
-        Double(native.width / max(native.height, 1))
-      ) {
-        overlays[index].scale = OverlayLayout.scalePreservingDisplay(
-          scale: overlays[index].scale,
-          from: saved,
-          to: native
-        )
-      }
-    } else {
-      pendingWebNative[id] = nil
-    }
-    overlays[index].nativeWidth = Double(native.width)
-    overlays[index].nativeHeight = Double(native.height)
-    if !overlays[index].hasLaidOut {
-      if overlays[index].placement == .topLeftNative {
-        overlays[index].scale = 1
-        overlays[index].originX = Double(OverlayLayout.topLeftInset.x / canvas.width)
-        overlays[index].originY = Double(OverlayLayout.topLeftInset.y / canvas.height)
-      } else {
-        overlays[index].scale = OverlayLayout.scaleFittingQuarter(native: native, canvas: canvas)
-        let size = CGSize(
-          width: native.width * overlays[index].scale,
-          height: native.height * overlays[index].scale
-        )
-        overlays[index].originX = Double((canvas.width - size.width) / 2 / canvas.width)
-        overlays[index].originY = Double((canvas.height - size.height) / 2 / canvas.height)
-      }
-    } else if firstMeasure, overlays[index].width > 0 {
-      overlays[index].scale = (overlays[index].width * canvas.width) / max(Double(native.width), 1)
-    }
-    let size = OverlayLayout.scaledNormalized(
-      native: native,
-      scale: overlays[index].scale,
-      canvas: canvas
+    let fit = OverlayLayout.fitWebSnapshot(
+      overlays[index],
+      native: incoming,
+      canvas: overlayCanvas,
+      pending: pendingWebNative[id],
+      now: Date()
     )
-    overlays[index].width = size.width
-    overlays[index].height = size.height
-    overlays[index].hasLaidOut = true
+    pendingWebNative[id] = fit.pending
+    guard fit.applied else { return false }
+    overlays[index] = fit.overlay
     applyAnchoredChildren(of: id)
     persistActiveTemplate()
     return true
-  }
-
-  private func syncDisplaySize(at index: Int, canvas: CGSize) {
-    let overlay = overlays[index]
-    guard overlay.kind == .web, overlay.nativeWidth >= 1 else { return }
-    let size = OverlayLayout.scaledNormalized(
-      native: CGSize(width: overlay.nativeWidth, height: overlay.nativeHeight),
-      scale: overlay.scale,
-      canvas: canvas
-    )
-    overlays[index].width = size.width
-    overlays[index].height = size.height
   }
 
   private func applyInitialLayout(id: UUID, native: CGSize) {
@@ -3458,7 +3466,7 @@ public final class AppEnvironment {
     switch overlay.kind {
     case .image:
       return overlayImages[overlay.id]
-    case .web:
+    case .web, .scoreboard:
       return webSnapshots[overlay.id]?.0
     case .text:
       return overlayImages[overlay.id]
@@ -3483,7 +3491,7 @@ public final class AppEnvironment {
     overlays[index].originX = originX
     overlays[index].originY = originY
     overlays[index].hasLaidOut = true
-    if overlays[index].kind == .web {
+    if overlays[index].kind.isWebBacked {
       shiftDescendants(of: id, dx: dx, dy: dy)
     }
     applyProgramOverlays()
@@ -3503,18 +3511,12 @@ public final class AppEnvironment {
     height: Double
   ) {
     guard let index = overlays.firstIndex(where: { $0.id == id }) else { return }
-    overlays[index].originX = originX
-    overlays[index].originY = originY
-    overlays[index].width = min(max(width, 0.02), 4)
-    overlays[index].height = min(max(height, 0.02), 4)
-    overlays[index].hasLaidOut = true
-    if overlays[index].kind == .text, overlays[index].hugText {
-      overlays[index].hugText = false
-    }
-    let canvas = overlayCanvas
-    if overlays[index].kind == .web, overlays[index].nativeWidth >= 1 {
-      overlays[index].scale = (overlays[index].width * canvas.width) / overlays[index].nativeWidth
-      syncDisplaySize(at: index, canvas: canvas)
+    overlays[index] = OverlayLayout.applyResize(
+      overlays[index],
+      to: CGRect(x: originX, y: originY, width: width, height: height),
+      canvas: overlayCanvas
+    )
+    if overlays[index].kind.isWebBacked, overlays[index].nativeWidth >= 1 {
       applyAnchoredChildren(of: id)
     }
     if overlays[index].kind == .text {
@@ -3545,7 +3547,7 @@ public final class AppEnvironment {
     if overlay.kind == .image {
       overlayStore.removeImage(filename: overlay.imageFilename)
     }
-    applyProgramOverlays()
+    updateScoreboards()
   }
 
   public func beginEditingTemplate(id: UUID) {
@@ -3638,7 +3640,7 @@ public final class AppEnvironment {
 
   public func overlayPreviewUIImage(for overlay: ProgramOverlay) -> UIImage? {
     guard let image = overlayPreviewImage(for: overlay) else { return nil }
-    if overlay.kind == .web {
+    if overlay.kind.isWebBacked {
       return Self.topLeftSquare(image)
     }
     return UIImage(cgImage: image)
@@ -3930,7 +3932,7 @@ public final class AppEnvironment {
       let child = overlays[i]
       let childRect = OverlayLayout.pixelRect(child, canvas: displayCanvas)
       var best: (id: UUID, edge: OverlayAnchorEdge, gap: CGFloat, distance: CGFloat)?
-      for parent in overlays where parent.kind == .web && parent.id != child.id {
+      for parent in overlays where parent.kind.isWebBacked && parent.id != child.id {
         if isDescendant(parent.id, of: child.id) { continue }
         let parentRect = OverlayLayout.pixelRect(parent, canvas: displayCanvas)
         guard let found = OverlayLayout.attachment(parent: parentRect, child: childRect) else {
@@ -5030,5 +5032,29 @@ public final class AppEnvironment {
     } catch {
       statusMessage = "Control server unavailable: \(error.localizedDescription)"
     }
+  }
+}
+
+/// The pages of web-rendered overlays run here, in `webControllers`, so the
+/// scoreboard driver's pages are seen by the same teardown, sweep and status
+/// as every other web overlay's.
+extension AppEnvironment: WebOverlayHosting {
+  public func start(id: UUID, url: URL) {
+    startWebOverlay(id: id, urlString: url.absoluteString)
+  }
+
+  public func load(id: UUID, url: URL) {
+    webControllers[id]?.load(urlString: url.absoluteString)
+  }
+
+  public func stop(id: UUID) {
+    webControllers[id]?.stop()
+    webControllers[id] = nil
+    webSnapshots[id] = nil
+    pendingWebNative[id] = nil
+  }
+
+  public func isRunning(id: UUID) -> Bool {
+    webControllers[id] != nil
   }
 }

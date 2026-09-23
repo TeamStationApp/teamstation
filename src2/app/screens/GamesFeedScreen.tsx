@@ -126,7 +126,9 @@ export function GamesFeedScreen(
   useEffect(() => {
     let cancelled = false
     const load = async (): Promise<void> => {
-      const all = await client.games()
+      const all = await client.games(
+        mode === 'schedule' && when !== 'all' ? { when } : {}
+      )
       if (!cancelled) setGames(all)
     }
     load()
@@ -141,7 +143,7 @@ export function GamesFeedScreen(
     return () => {
       cancelled = true
     }
-  }, [client])
+  }, [client, mode, when])
 
   // Videos offers no filter. Nothing that has not been played can have a
   // recording, so `Upcoming` was always empty and `Past` was always the whole

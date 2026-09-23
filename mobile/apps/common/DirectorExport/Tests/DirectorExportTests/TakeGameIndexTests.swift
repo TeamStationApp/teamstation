@@ -60,6 +60,31 @@ struct TakeGameIndexTests {
     #expect(try index.recordings().first?.gameId == "gam_1")
   }
 
+  @Test("A corrected pick moves the take from the game it replaces, and from no other")
+  func movesOnlyFromTheGameItReplaces() throws {
+    let root = try scratch()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let index = try ArchiveIndex(url: root.appendingPathComponent("index.sqlite"))
+    let picked = try index.beginRecording(at: WallClock(seconds: 1_000))
+    let uploaded = try index.beginRecording(at: WallClock(seconds: 2_000))
+
+    try index.setGame(picked, gameId: "gam_wrong", title: "2026-09-20 Wrong Game")
+    try index.setGame(
+      picked, gameId: "gam_1", title: "2026-09-20 Trosky at Rangers", replacing: "gam_wrong"
+    )
+    // Filed under a game some other way: a pick replacing a different game
+    // leaves it where it is.
+    try index.setGame(uploaded, gameId: "gam_9", title: "2026-09-19 Earlier Game")
+    try index.setGame(
+      uploaded, gameId: "gam_1", title: "2026-09-20 Trosky at Rangers", replacing: "gam_wrong"
+    )
+
+    let takes = try index.recordings()
+    #expect(takes.first { $0.id == picked }?.gameId == "gam_1")
+    #expect(takes.first { $0.id == picked }?.gameTitle == "2026-09-20 Trosky at Rangers")
+    #expect(takes.first { $0.id == uploaded }?.gameId == "gam_9")
+  }
+
   @Test("A take of one game leaves the others alone")
   func staysOnItsOwnTake() throws {
     let root = try scratch()

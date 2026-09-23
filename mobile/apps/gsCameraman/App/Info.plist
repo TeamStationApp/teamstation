@@ -2,6 +2,14 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+  <!--
+    Where this build signs in. A host with no scheme; empty — which is every
+    build that does not say otherwise — means gamestation.co.
+
+        GS_PRIMARY_HOST=develop3.gamestation.co xcodebuild …
+  -->
+  <key>GSPrimaryHost</key>
+  <string>$(GS_PRIMARY_HOST)</string>
   <key>CFBundleDevelopmentRegion</key>
   <string>en</string>
   <key>CFBundleDisplayName</key>
@@ -88,14 +96,17 @@
   <string>Dark</string>
   <key>UIRequiresFullScreen</key>
   <true/>
-  <!-- Landscape only, so the encoded dimensions never change mid-stream. -->
+  <!-- The camera window stays landscape. Portrait is listed so Settings can
+       turn; the app delegate withholds it until that sheet is up. -->
   <key>UISupportedInterfaceOrientations</key>
   <array>
+    <string>UIInterfaceOrientationPortrait</string>
     <string>UIInterfaceOrientationLandscapeLeft</string>
     <string>UIInterfaceOrientationLandscapeRight</string>
   </array>
   <key>UISupportedInterfaceOrientations~ipad</key>
   <array>
+    <string>UIInterfaceOrientationPortrait</string>
     <string>UIInterfaceOrientationLandscapeLeft</string>
     <string>UIInterfaceOrientationLandscapeRight</string>
   </array>

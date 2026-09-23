@@ -7,14 +7,28 @@ enum SlideToStopTarget {
 
 /// Compact confirm for stopping STREAMING or RECORDING. Start stays a single tap.
 struct SlideToStopOverlay: View {
-  var target: SlideToStopTarget
+  private let phrase: String
+  var trackIdentifier: String
   var onStop: () -> Void
 
-  private var phrase: String {
+  init(target: SlideToStopTarget, onStop: @escaping () -> Void) {
     switch target {
-    case .stream: "Slide to Stop Stream"
-    case .record: "Slide to Stop Recording"
+    case .stream: phrase = "Slide to Stop Stream"
+    case .record: phrase = "Slide to Stop Recording"
     }
+    trackIdentifier = "slide-to-stop-track"
+    self.onStop = onStop
+  }
+
+  /// The broadcast track, with the words a logout row shows.
+  init(
+    phrase: String,
+    trackIdentifier: String = "slide-to-stop-track",
+    onStop: @escaping () -> Void
+  ) {
+    self.phrase = phrase
+    self.trackIdentifier = trackIdentifier
+    self.onStop = onStop
   }
 
   @Environment(AppEnvironment.self) private var environment
@@ -65,7 +79,7 @@ struct SlideToStopOverlay: View {
       }
       .contentShape(trackShape)
       .gesture(drag(travel: travel))
-      .accessibilityIdentifier("slide-to-stop-track")
+      .accessibilityIdentifier(trackIdentifier)
       .accessibilityValue(String(format: "%.0f percent", progress * 100))
       .onAppear { startPulse() }
     }

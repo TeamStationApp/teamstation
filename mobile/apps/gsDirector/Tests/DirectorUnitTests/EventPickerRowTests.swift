@@ -42,13 +42,11 @@ struct EventPickerRowTests {
     let at = calendar.date(
       from: DateComponents(year: 2026, month: 9, day: 17, hour: 15, minute: 15)
     )!
-    let text = GameStationEventPicker.when(at)
-    #expect(text.contains("Thursday"))
-    #expect(text.contains("September"))
-    #expect(text.contains("17"))
-    // Lower-cased `pm` is the formatter's business, not ours; what matters is
-    // that the hour is there in a form somebody reads rather than 15:15.
-    #expect(text.lowercased().contains("3:15"))
+    #expect(GameStationEventPicker.when(at) == "Thu Sep 17, 2026 3:15 PM")
+    let tuesday = calendar.date(
+      from: DateComponents(year: 2026, month: 12, day: 22, hour: 16, minute: 35)
+    )!
+    #expect(EventWhenLabel.format(tuesday, zone: calendar.timeZone) == "Tue Dec 22, 2026 4:35 PM")
   }
 
   @Test("A team with no mark gets its initials")

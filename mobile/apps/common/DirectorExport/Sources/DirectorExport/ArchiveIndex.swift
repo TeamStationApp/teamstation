@@ -326,19 +326,25 @@ public final class ArchiveIndex: @unchecked Sendable {
     )
   }
 
-  /// Writes down the game a take is being streamed to.
+  /// Writes down the game a take is of.
   ///
-  /// Called when a publish to a claimed event starts, which may be after the
-  /// recording began — recording starts with the stream, and an operator may
-  /// also have been recording already. Written once and not overwritten: the
-  /// first game a take was streamed to is the game it is of.
-  public func setGame(_ id: Int64, gameId: String, title: String) throws {
+  /// Called when a take starts with a GameStation event chosen, and when an
+  /// event is picked while a take is recording. Written only over a take with
+  /// no game, or over `replacing`: the event picker passes the game it linked
+  /// the same take to earlier, so correcting a wrong pick moves the take,
+  /// while a game written any other way is never overwritten.
+  public func setGame(
+    _ id: Int64,
+    gameId: String,
+    title: String,
+    replacing: String? = nil
+  ) throws {
     _ = try store.execute(
       """
       UPDATE recordings SET game_id = ?, game_title = ?
-      WHERE id = ? AND (game_id IS NULL OR game_id = '');
+      WHERE id = ? AND (game_id IS NULL OR game_id = '' OR game_id = ?);
       """,
-      [ .text(gameId), .text(title), .integer(id) ]
+      [ .text(gameId), .text(title), .integer(id), replacing.map { .text($0) } ?? .null ]
     )
   }
 

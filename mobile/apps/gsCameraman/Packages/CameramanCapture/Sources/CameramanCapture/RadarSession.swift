@@ -8,6 +8,8 @@ import Foundation
 /// byte is the standard Battery Level characteristic, already a percent from 0 to 100.
 public final class RadarSession: NSObject, @unchecked Sendable {
   public var onChange: (@MainActor (RadarSnapshot) -> Void)?
+  /// A pitch or exit that just arrived. Expiry to a dash does not call this.
+  public var onSpeeds: (@Sendable (Int, Int) -> Void)?
 
   private let defaults: UserDefaults
   private var central: CBCentralManager?
@@ -166,6 +168,7 @@ public final class RadarSession: NSObject, @unchecked Sendable {
     let now = Date()
     if pitchMph > 0 { pitch = (pitchMph, now) }
     if exitMph > 0 { exit = (exitMph, now) }
+    if pitchMph > 0 || exitMph > 0 { onSpeeds?(pitchMph, exitMph) }
   }
 
   private static func isTag(_ name: String?) -> Bool {

@@ -42,7 +42,7 @@ import {
 } from '../components'
 import { navClearanceAboveInset } from '../components/navClearance'
 import { highlightColumnsFor } from '../layout/grid'
-import { watchLayout, type WatchMode } from '../layout/watch'
+import { SHORT_WINDOW_MAX, watchLayout, type WatchMode } from '../layout/watch'
 import { lstrings } from '../locales/strings'
 import { useInsets } from '../platform/safeArea'
 import { sameMoment } from '../player/angleSwitch'
@@ -54,6 +54,7 @@ import { useVideoAspect } from '../player/useVideoAspect'
 import { HAVE_METADATA, type VideoHandle } from '../player/videoHandle'
 import { VideoView } from '../player/VideoView'
 import { windowOf } from '../player/wallClock'
+import { ScoreGameOptions } from '../scoreboard/ScoreGameScreen'
 import { scoringEntry } from '../scoring/isUnscoredGame'
 import { cacheStyles, useTheme } from '../theme/ThemeContext'
 import type { Theme } from '../theme/types'
@@ -64,7 +65,14 @@ import { openableTeams as teamsWithAPage } from './openableTeams'
 export interface GameScreenProps {
   client: GameStationClient
   gameId: string
-  onScoreGame?: () => void
+  /** Opens the full scorer from the Score Game tab. */
+  onFullScoring?: () => void
+  /** Opens the simplified scoreboard from the Score Game tab. */
+  onScoreboard?: () => void
+  /**
+   * Which section to open on. A bare address is Videos. Box score and Score
+   * Game are the other two pills.
+   */
   /** Opens DJ Game, for a songkeeper of either team. */
   onDjGame?: () => void
   /**
@@ -72,7 +80,6 @@ export interface GameScreenProps {
    * there is music to play them with: never on the web.
    */
   music?: { available: boolean }
-  /** Which half to open on. A `Box Score` button means the box score. */
   initialTab?: Tab
   /** Start the video. Arriving here by pressing `Watch Replay` is a gesture a
    * browser accepts, which is what makes an unmuted autoplay legal. */
@@ -135,7 +142,7 @@ export interface GameScreenProps {
   ) => void
 }
 
-type Tab = 'watch' | 'boxScore'
+type Tab = 'boxScore' | 'watch' | 'score'
 
 /**
  * What each of a game's videos is called on the strip under the picture.
@@ -298,10 +305,10 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    * same thing, because it is the same code.
    *
    * The default is repeated rather than guarded against. An address that names
-   * no half means **the first one**, which is what `parseRoute` says and what
-   * the initialiser above says; treating it as "leave things alone" is how
-   * Back from the box score went on showing the box score even once the
-   * address had been put right.
+   * no section means **Videos**, which is what `parseRoute` says and what the
+   * initialiser above says; treating it as "leave things alone" is how Back
+   * from the box score went on showing the box score even once the address
+   * had been put right.
    */
   useEffect(() => {
     setTab(initialTab ?? 'watch')
@@ -389,6 +396,13 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    */
   const [tabsHeight, setTabsHeight] = useState(0)
   /**
+   * The hero and the pills, measured, so the picture leaves room for them.
+   *
+   * They stay on the page while the section under them changes, so the
+   * picture can no longer assume the whole window under the header is its.
+   */
+  const [sectionChrome, setSectionChrome] = useState(0)
+  /**
    * How tall the camera-angle buttons are, so the picture can leave room.
    *
    * Measured rather than guessed at, because it is nothing at all on the games
@@ -446,13 +460,16 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   // nothing left over for a black bar to fill. Until the browser knows, 16:9.
   const aspect = useVideoAspect(playerRef, video?.id)
   const mode = useRef<WatchMode>('stacked')
+  // Tall enough that the score card stays above the picture. Below this the
+  // card is not drawn there at all, so it must not be subtracted from the
+  // picture — doing both is how the two fight and the card flickers.
+  const cardStays = height - headerHeight > SHORT_WINDOW_MAX
   const layout = watchLayout({
     // The width the content actually gets, not the width of the screen.
     width: width - insets.left - insets.right,
     height,
-    // The header is what the picture pegs under; the card and the section
-    // pills scroll away above it.
-    chromeHeight: headerHeight,
+    // The header, and — where the card stays put — the card and the pills.
+    chromeHeight: headerHeight + (cardStays ? sectionChrome : 0),
     // The camera-angle buttons are pegged with the picture and have to stay
     // on the screen with it. Twice the small space as well: `onLayout`
     // measures the card and not the margin above it, and the second keeps the
@@ -908,26 +925,21 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     />
   )
 
+  const showScore =
+    Platform.OS === 'web' &&
+    game.canScore &&
+    (scoringEntry(game) != null || game.scoreboard?.open === true)
   const tabs = (
     <PillTabs
       tabs={[
-        { id: 'watch', label: lstrings.game_videos },
-        { id: 'boxScore', label: lstrings.game_box_score },
-        // Only for a scorekeeper of either team: the server refuses anybody
-        // else's plays, and a button that ends in a refusal is worse than none.
-        ...(game.canScore &&
-        scoringEntry(game) != null &&
-        props.onScoreGame != null
-          ? [
-              {
-                id: 'score' as const,
-                label:
-                  scoringEntry(game) === 'continue'
-                    ? 'Continue Scoring'
-                    : 'Score Game',
-                role: 'button' as const
-              }
-            ]
+        { id: 'boxScore' as const, label: lstrings.game_box_score },
+        { id: 'watch' as const, label: lstrings.game_videos },
+        // The one scoring pill, for the people whose plays the server would
+        // take, and only while there is something behind it to use. It is a
+        // tab, like the other two: the hero stays and the choices appear
+        // under the pills.
+        ...(showScore
+          ? [{ id: 'score' as const, label: lstrings.game_score_game }]
           : []),
         // For a songkeeper of either team, on a phone, whatever the game's
         // status: songs are set and played before, during and after.
@@ -945,10 +957,6 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       ]}
       selected={tab}
       onSelect={next => {
-        if (next === 'score') {
-          props.onScoreGame?.()
-          return
-        }
         if (next === 'dj') {
           props.onDjGame?.()
           return
@@ -1234,79 +1242,93 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     />
   ) : null
 
-  if (tab === 'watch') {
-    return (
-      <>
-        <GameWatchLayout
-          head={head}
-          player={player}
-          description={description}
-          sections={sections}
-          highlightList={highlightList}
-          footer={
-            <>
-              {/*
-                Under the highlights, and only for the people who run the team:
-                everybody else is answered `404` and sees nothing here at all.
-              */}
-              <StreamPanel client={client} gameId={gameId} />
-            </>
-          }
-          layout={layout}
-          short={short}
-          sideBySide={sideBySide}
-          headerHeight={headerHeight}
-          tabsHeight={tabsHeight}
-          height={height}
-          onScroll={handleWatchScroll}
-          style={styles.watch}
-          contentStyle={[
-            styles.watchContent,
-            sideBySide ? styles.watchSplit : styles.watchStacked,
-            short && styles.watchSplitShort
-          ]}
-          headStyle={styles.head}
-          columnHeadStyle={styles.columnHead}
+  // One hero and one pill row for every section. Videos used to pad them one
+  // way and Box score another, so switching moved the card. The row stays
+  // mounted here, and only the pane under it changes.
+  const chrome = cardStays ? (
+    <View
+      style={styles.head}
+      onLayout={event => {
+        const next = event.nativeEvent.layout.height
+        setSectionChrome(current => (current === next ? current : next))
+      }}
+    >
+      {head}
+    </View>
+  ) : null
+  const below = (
+    <View style={styles.tabBody}>
+      {tab === 'score' ? (
+        <ScoreGameOptions
+          game={game}
+          onFullScoring={props.onFullScoring}
+          onScoreboard={props.onScoreboard}
         />
-        {anglePicker}
-        {multiCam}
-      </>
-    )
-  }
+      ) : (
+        <BoxScore
+          game={game}
+          box={box}
+          theme={theme}
+          sideBySide={sideBySide}
+          onOpenPlayer={onOpenPlayer}
+        />
+      )}
+    </View>
+  )
 
   return (
     <>
-      {/*
-        The same frame the videos tab gives the card, so the card keeps its
-        width when the two tabs trade places.
-      */}
-      <ScrollView
-        style={styles.screen}
-        onScroll={handleWatchScroll}
-        scrollEventThrottle={16}
-        contentContainerStyle={{
-          paddingTop: headerHeight,
-          paddingBottom:
-            navClearanceAboveInset(
-              Platform.OS,
-              theme.rem(NAV_CLEARANCE_REM),
-              theme.rem(FLOATING_BOTTOM_REM)
-            ) + (Platform.OS === 'web' ? 0 : insets.bottom),
-          paddingLeft: Platform.OS === 'web' ? 0 : insets.left,
-          paddingRight: Platform.OS === 'web' ? 0 : insets.right
-        }}
-      >
-        <View style={styles.head}>{head}</View>
-        <View style={styles.boxSheet}>
-          <BoxScore
-            game={game}
-            box={box}
-            theme={theme}
-            sideBySide={sideBySide}
-            onOpenPlayer={onOpenPlayer}
-          />
+      <View style={[styles.watch, cardStays && { paddingTop: headerHeight }]}>
+        {chrome}
+        <View style={styles.tabPane}>
+          {tab === 'watch' ? (
+            <GameWatchLayout
+              head={cardStays ? null : head}
+              player={player}
+              description={description}
+              sections={sections}
+              highlightList={highlightList}
+              footer={
+                <>
+                  {/*
+                    Under the highlights, and only for the people who run the
+                    team: everybody else is answered `404` and sees nothing
+                    here at all.
+                  */}
+                  <StreamPanel client={client} gameId={gameId} />
+                </>
+              }
+              layout={layout}
+              short={short}
+              sideBySide={sideBySide}
+              headerHeight={cardStays ? 0 : headerHeight}
+              tabsHeight={cardStays ? 0 : tabsHeight}
+              height={height}
+              onScroll={handleWatchScroll}
+              style={styles.tabPane}
+              contentStyle={[
+                styles.watchContent,
+                sideBySide ? styles.watchSplit : styles.watchStacked,
+                short && styles.watchSplitShort
+              ]}
+              headStyle={styles.head}
+              columnHeadStyle={styles.columnHead}
+            />
+          ) : (
+            <ScrollView
+              style={styles.tabPane}
+              onScroll={handleWatchScroll}
+              scrollEventThrottle={16}
+              contentContainerStyle={
+                cardStays ? undefined : { paddingTop: headerHeight }
+              }
+            >
+              {cardStays ? null : <View style={styles.head}>{head}</View>}
+              {below}
+            </ScrollView>
+          )}
         </View>
-      </ScrollView>
+      </View>
       {anglePicker}
       {multiCam}
     </>
@@ -1720,7 +1742,6 @@ export function timecode(seconds: number): string {
 
 const getStyles = cacheStyles((theme: Theme) =>
   StyleSheet.create({
-    screen: { flex: 1, backgroundColor: theme.backgroundColor },
     centre: {
       flex: 1,
       alignItems: 'center',
@@ -1870,6 +1891,19 @@ const getStyles = cacheStyles((theme: Theme) =>
     watch: {
       flex: 1,
       backgroundColor: theme.backgroundColor
+    },
+    // The section under the pills. It fills whatever the hero and the pills
+    // have not taken, so those two stay where they are while this swaps.
+    tabPane: {
+      flex: 1
+    },
+    // The same side inset as the hero above it, so a table or a scoring card
+    // starts where the card starts.
+    tabBody: {
+      width: '100%',
+      paddingHorizontal: theme.rem(theme.spaceMdRem),
+      paddingBottom: theme.rem(NAV_CLEARANCE_REM),
+      gap: theme.rem(theme.spaceMdRem)
     },
     watchContent: {
       // No padding here: the picture is edge to edge on a phone, so the

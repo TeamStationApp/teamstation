@@ -20,6 +20,10 @@ import {
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 
+export interface EventRouteOptions {
+  onGameWritten?: (gameId: string) => void
+}
+
 /**
  * Post, read, and summarise a game's plays.
  *
@@ -55,8 +59,16 @@ import { withAsync } from '../middleware/withErrors'
  *
  * The write itself is `postGamePlays` in `events/postPlays.ts`, which the
  * refold script calls too.
+ *
+ * `options.onGameWritten` is called with the game's id once a post has
+ * committed, so the game's scoreboard can be brought up to date. It is fire
+ * and forget: it never delays the answer, and whatever it throws is logged
+ * and never fails the post.
  */
-export function eventRoutes(db: Kysely<Database>): Router {
+export function eventRoutes(
+  db: Kysely<Database>,
+  options: EventRouteOptions = {}
+): Router {
   const router = Router()
 
   router.post(
@@ -87,6 +99,11 @@ export function eventRoutes(db: Kysely<Database>): Router {
           }
         }
       )
+      try {
+        options.onGameWritten?.(gameId)
+      } catch (error) {
+        console.error(`onGameWritten ${gameId}`, error)
+      }
       res.json(response)
     })
   )

@@ -3,7 +3,12 @@ import { type Kysely, sql } from 'kysely'
 
 import type { SeasonGame } from '../../common/api'
 import { badRequest, notFound, unauthorized } from '../../common/errors'
-import { visibleGamesWhere, type VisibleScopes, visibleScopes } from '../access'
+import {
+  type AdminScopes,
+  visibleGamesWhere,
+  type VisibleScopes,
+  visibleScopes
+} from '../access'
 import type { Database } from '../db/database'
 import { isRealVideo } from '../db/realVideos'
 import { imageUrl } from '../media/imageUrls'
@@ -185,70 +190,6 @@ export function seasonRoutes(
     })
   )
 
-  router.get(
-    '/seasons/:seasonId/games',
-    requireActor,
-    withAsync(async (req, res) => {
-      const actor = req.actor
-      if (actor == null) throw unauthorized()
-      const seasonId = pathParam(req.params.seasonId)
-      const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
-      if (!scopes.isAdmin && !scopes.seasonIds.has(seasonId)) throw notFound()
-      res.json(await scheduleOf(db, media, { seasonIds: [seasonId] }))
-    })
-  )
-
-  /**
-   * Every game this person can see, by the rule `canSeeGame` applies to one:
-   * their teams' games, and every game of a season opened to them. A site
-   * administrator sees every game. The shape is a season's schedule, and one
-   * query answers it, so a schedule of every team does not cost a request per
-   * season.
-   *
-   * `externalId` narrows it to the games another service knows by those ids —
-   * an importer records one for each game it brings in. It may be given more
-   * than once, to ask after a whole schedule at once, and each game answers
-   * with the external ids it has, so the asker can tell which were found.
-   * An `externalId` that is empty, or not a plain value, is refused rather
-   * than read as no filter, which would answer every game.
-   */
-  router.get(
-    '/games',
-    requireActor,
-    withAsync(async (req, res) => {
-      const actor = req.actor
-      if (actor == null) throw unauthorized()
-      const externalIds = externalIdsAsked(req.query.externalId)
-      const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
-      res.json(await scheduleOf(db, media, { visible: scopes, externalIds }))
-    })
-  )
-
-  /**
-   * The most recent played game the signed-in person can see, anywhere.
-   *
-   * The newest season is not the season with the newest game, and somebody on
-   * several teams has games in more than one, so this looks across all of
-   * them rather than inside the first season.
-   */
-  router.get(
-    '/games/recent',
-    requireActor,
-    withAsync(async (req, res) => {
-      const actor = req.actor
-      if (actor == null) throw unauthorized()
-      const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
-      // Played, which is what `recent` means here: a fixture nobody turned
-      // up to is not the game somebody opened the app to see.
-      const [game] = await scheduleOf(db, media, {
-        visible: scopes,
-        played: true,
-        limit: 1
-      })
-      res.json(game ?? null)
-    })
-  )
-
   return router
 }
 
@@ -264,28 +205,58 @@ function toIso(value: Date | string | null): string | null {
     : new Date(value).toISOString()
 }
 
+/** A schedule row plus the logo paths the event list turns into URLs. */
+export interface ScheduleRow extends SeasonGame {
+  homeLogoPath: string | null
+  awayLogoPath: string | null
+}
+
+export interface ScheduleFilter {
+  seasonIds?: string[]
+  /** Games `canSeeGame` lets that person see. */
+  visible?: VisibleScopes
+  /**
+   * Games this account may score. A site admin is unfiltered. Somebody who
+   * runs no team gets an empty list.
+   */
+  run?: AdminScopes
+  /**
+   * Games this account may film. A site admin is unfiltered. Somebody who
+   * films no team gets an empty list.
+   */
+  film?: { teamIds: Set<string>; isAdmin: boolean }
+  externalIds?: string[]
+  played?: boolean
+  limit?: number
+  omitCancelled?: boolean
+  since?: Date
+  until?: Date
+  untilInclusive?: boolean
+  /** No score yet, and the start is still ahead. */
+  upcoming?: boolean
+  /** The complement of `upcoming`, including a game with no start. */
+  past?: boolean
+  /** The start is still ahead, whether or not it has a score. */
+  future?: boolean
+  now?: Date
+  order?: 'asc' | 'desc'
+}
+
 /**
  * Games in the shape a schedule shows them: both teams, the score, how many
  * videos and whether one is live, and a poster. Each game carries the
- * external ids it has. Every filter given narrows the list:
- *
- * - `seasonIds`: games in those seasons.
- * - `visible`: games `canSeeGame` lets that person see.
- * - `externalIds`: games another service knows by any of those ids.
- * - `played`: games with a score.
- * - `limit`: the newest few.
+ * external ids it has. Every filter given narrows the list. `GET /events`
+ * is the route that asks.
  */
-async function scheduleOf(
+export async function scheduleOf(
   db: Kysely<Database>,
   media: MediaContext,
-  filter: {
-    seasonIds?: string[]
-    visible?: VisibleScopes
-    externalIds?: string[]
-    played?: boolean
-    limit?: number
+  filter: ScheduleFilter
+): Promise<ScheduleRow[]> {
+  const teamScope = filter.run ?? filter.film
+  if (teamScope != null && !teamScope.isAdmin && teamScope.teamIds.size === 0) {
+    return []
   }
-): Promise<SeasonGame[]> {
   let query = db
     .selectFrom('games')
     .innerJoin('teams as home', 'home.id', 'games.home_team_id')
@@ -308,7 +279,9 @@ async function scheduleOf(
       'games.status as status',
       'games.home_score as homeScore',
       'games.away_score as awayScore',
-      'games.ingest_status as ingestStatus'
+      'games.ingest_status as ingestStatus',
+      'home.logo_path as homeLogoPath',
+      'away.logo_path as awayLogoPath'
     ])
     .select(eb => eb.fn.count<number>('videos.id').as('videoCount'))
     // The longest video of the game: on a multi-camera game that is the
@@ -321,9 +294,15 @@ async function scheduleOf(
         .max(eb.case().when('videos.status', '=', 'live').then(1).else(0).end())
         .as('liveNow')
     )
-    .groupBy(['games.id', 'home.name', 'away.name', 'home.kind', 'away.kind'])
-    // Newest first: last night's game is the one people look for.
-    .orderBy('games.start_at', 'desc')
+    .groupBy([
+      'games.id',
+      'home.name',
+      'away.name',
+      'home.kind',
+      'away.kind',
+      'home.logo_path',
+      'away.logo_path'
+    ])
 
   if (filter.seasonIds != null) {
     query = query.where('games.season_id', 'in', filter.seasonIds)
@@ -334,6 +313,48 @@ async function scheduleOf(
   if (filter.played === true) {
     query = query.where('games.home_score', 'is not', null)
   }
+  if (filter.omitCancelled === true) {
+    query = query.where('games.status', '<>', 'cancelled')
+  }
+  if (teamScope != null && !teamScope.isAdmin) {
+    const teamIds = [...teamScope.teamIds]
+    query = query.where(eb =>
+      eb.or([
+        eb('games.home_team_id', 'in', teamIds),
+        eb('games.away_team_id', 'in', teamIds)
+      ])
+    )
+  }
+  if (filter.since != null) {
+    query = query.where('games.start_at', '>=', filter.since)
+  }
+  if (filter.until != null) {
+    query = query.where(
+      'games.start_at',
+      filter.untilInclusive === true ? '<=' : '<',
+      filter.until
+    )
+  }
+  if (filter.now != null && filter.future === true) {
+    query = query.where('games.start_at', '>', filter.now)
+  }
+  if (filter.now != null && filter.upcoming === true) {
+    query = query
+      .where('games.start_at', '>', filter.now)
+      .where('games.away_score', 'is', null)
+  }
+  if (filter.now != null && filter.past === true) {
+    const now = filter.now
+    query = query.where(eb =>
+      eb.or([
+        eb('games.start_at', 'is', null),
+        eb('games.start_at', '<=', now),
+        eb('games.away_score', 'is not', null)
+      ])
+    )
+  }
+  // Newest first, unless the caller is looking forward.
+  query = query.orderBy('games.start_at', filter.order ?? 'desc')
   if (filter.limit != null) query = query.limit(filter.limit)
   if (filter.externalIds != null) {
     const externalIds = filter.externalIds
@@ -371,10 +392,12 @@ async function scheduleOf(
   )
   const now = Date.now()
 
-  const answer = games.map((game): SeasonGame => {
+  const answer = games.map((game): ScheduleRow => {
     const poster = posters.get(game.id)
     return {
       id: game.id,
+      homeLogoPath: game.homeLogoPath,
+      awayLogoPath: game.awayLogoPath,
       homeTeamId: game.homeTeamId,
       awayTeamId: game.awayTeamId,
       homeTeamName: game.homeTeamName,
@@ -411,7 +434,7 @@ async function scheduleOf(
 }
 
 /**
- * The `externalId` filter of `GET /games` and `GET /users`: undefined when it
+ * The `externalId` filter of `GET /events` and `GET /users`: undefined when it
  * is not asked for, and otherwise every value, each a non-empty string.
  */
 export function externalIdsAsked(asked: unknown): string[] | undefined {

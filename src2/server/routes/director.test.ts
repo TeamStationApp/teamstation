@@ -13,21 +13,43 @@ import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
+import type { MediaContext } from '../media/mediaContext'
 import { withAudit } from '../middleware/withAudit'
 import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
 import { directorRoutes } from './director'
+import { eventListRoutes } from './eventList'
 
 /**
- * The list GS Director shows, which Paul specified to the row.
+ * The games GS Director is offered, which Paul specified to the row.
  *
- * Soonest first, reaching two hours backwards — a game called for one o'clock
- * that somebody starts filming at ten past three is still the game they mean —
- * and never more than ten, because a longer list is a worse one. Of the games
- * the account **films** — a videographer of the team, which its administrators
- * are — not the games it may watch: a parent's forty watchable games would
- * bury the one they are holding a camera for.
+ * `GET /events?scope=film` is soonest first, reaching two hours backwards — a
+ * game called for one o'clock that somebody starts filming at ten past three
+ * is still the game they mean — and the Director asks for ten, because a
+ * longer list is a worse one. Of the games the account **films** — a
+ * videographer of the team, which its administrators are — not the games it
+ * may watch: a parent's forty watchable games would bury the one they are
+ * holding a camera for.
  */
+
+const NEXT_TEN = '/events?scope=film&lookbackHours=2&limit=10'
+const NEXT_TWENTY = '/events?scope=film&lookbackHours=2&limit=20'
+
+const media: MediaContext = {
+  ffmpegPath: 'ffmpeg',
+  mediaRoot: '/tmp',
+  mediaSecret: 'secret',
+  publicUrl: 'http://127.0.0.1',
+  space: {
+    endpoint: '',
+    region: '',
+    bucket: '',
+    accessKeyId: '',
+    secretAccessKey: '',
+    pathStyle: false
+  },
+  workDir: '/tmp'
+}
 const adminUrl = testDatabaseUrl
 const scratchName = `gamestation_director_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
@@ -85,6 +107,7 @@ describe('what GS Director is offered', function () {
     app.use(express.json())
     app.use(withActor(db))
     app.use(withAudit(db))
+    app.use('/api/v1', eventListRoutes(db, media))
     app.use(
       '/api/v1',
       directorRoutes(db, {
@@ -293,7 +316,7 @@ describe('what GS Director is offered', function () {
 
   it('offers ten, soonest first, reaching two hours back', async function () {
     if (db == null) this.skip()
-    const answer = await ask('/director/events', COACH)
+    const answer = await ask(NEXT_TEN, COACH)
     expect(answer.status).equals(200)
     const events = answer.body as Array<{ gameId: string; startAt: string }>
     const ids = events.map(event => event.gameId)
@@ -351,7 +374,7 @@ describe('what GS Director is offered', function () {
         .execute()
     }
 
-    const answer = await ask('/director/events', COACH)
+    const answer = await ask(NEXT_TEN, COACH)
     const events = answer.body as Array<{ gameId: string; liveState: string }>
     const appearances = events.filter(event => event.gameId === 'gam_third')
     expect(appearances.length, 'once, not once per camera').equals(1)
@@ -360,16 +383,50 @@ describe('what GS Director is offered', function () {
     expect(events.length, 'and the ten are still ten games').equals(10)
   })
 
+  it('lists the next twenty and leaves out a twenty-first', async function () {
+    if (db == null) this.skip()
+    const now = new Date()
+    for (let index = 0; index < 20; index += 1) {
+      await db
+        .insertInto('games')
+        .values({
+          id: `gam_extra_${index}`,
+          home_team_id: 'tem_ours',
+          away_team_id: 'tem_theirs',
+          start_at: new Date(now.getTime() + (12 + index) * HOUR),
+          created_at: now,
+          updated_at: now
+        })
+        .execute()
+    }
+    const answer = await ask(NEXT_TWENTY, COACH)
+    expect(answer.status).equals(200)
+    const events = answer.body as Array<{ gameId: string; startAt: string }>
+    const ids = events.map(event => event.gameId)
+    expect(ids.length).equals(20)
+    expect(ids[0]).equals('gam_thisAfternoon')
+    expect(ids).does.not.contain('gam_longGone')
+    expect(ids).does.not.contain('gam_cancelled')
+    expect(ids).does.not.contain('gam_notOurs')
+    expect(ids).does.not.contain('gam_extra_8')
+    expect(ids).contains('gam_extra_7')
+    const times = events.map(event => Date.parse(event.startAt))
+    expect([...times].sort((a, b) => a - b)).deep.equals(times)
+    const parent = await ask(NEXT_TWENTY, PARENT)
+    expect(parent.status).equals(200)
+    expect(parent.body).deep.equals([])
+  })
+
   it('offers a parent nothing, however many games they can watch', async function () {
     if (db == null) this.skip()
-    const answer = await ask('/director/events', PARENT)
+    const answer = await ask(NEXT_TEN, PARENT)
     expect(answer.status).equals(200)
     expect(answer.body).deep.equals([])
   })
 
   it('names both sides, and carries no relay fields', async function () {
     if (db == null) this.skip()
-    const answer = await ask('/director/events', COACH)
+    const answer = await ask(NEXT_TEN, COACH)
     const first = (answer.body as Array<Record<string, unknown>>)[0]
     expect(first.homeTeamName).equals('Rangers')
     expect(first.awayTeamName).equals('Trosky')
@@ -467,7 +524,7 @@ describe('what GS Director is offered', function () {
 
   it('offers a videographer the team\u2019s games, and lets them claim one', async function () {
     if (db == null) this.skip()
-    const listed = await ask('/director/events', FILMER)
+    const listed = await ask(NEXT_TEN, FILMER)
     const events = listed.body as Array<{ gameId: string }>
     expect(events.length).equals(10)
     expect(events.map(event => event.gameId)).includes('gam_fourth')
@@ -482,7 +539,7 @@ describe('what GS Director is offered', function () {
 
   it('offers a scorekeeper nothing to film, and refuses their claim', async function () {
     if (db == null) this.skip()
-    const listed = await ask('/director/events', SCORER)
+    const listed = await ask(NEXT_TEN, SCORER)
     expect(listed.body).deep.equals([])
     const claimed = await ask(
       '/director/events/gam_fifth/claim',

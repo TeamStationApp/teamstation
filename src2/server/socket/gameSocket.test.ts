@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events'
-import { createServer } from 'node:http'
+import { createServer, type IncomingMessage } from 'node:http'
 import type { AddressInfo } from 'node:net'
+import { PassThrough } from 'node:stream'
 
 import { expect } from 'chai'
 import express from 'express'
@@ -454,6 +455,17 @@ describe('the game socket (U14)', function () {
           authorization: `Bearer ${VIEWER}`
         })
       ).equals(404)
+    })
+
+    it('declines a scoreboard path without writing a response', function () {
+      const raw = new PassThrough()
+      const req = {
+        url: '/api/v1/scoreboard/gam_x/dashboard',
+        headers: {}
+      } as unknown as IncomingMessage
+      expect(socket?.acceptUpgrade(req, raw, Buffer.alloc(0))).equals(false)
+      expect(raw.writableEnded).equals(false)
+      raw.destroy()
     })
 
     it('is taken with the session cookie, as a browser sends it', async function () {

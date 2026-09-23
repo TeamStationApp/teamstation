@@ -1,5 +1,7 @@
 import CameramanControlUI
+import CameramanCore
 import DirectorCore
+import GameStationKit
 import SwiftUI
 
 private enum SettingsCover: String, Identifiable {
@@ -21,6 +23,7 @@ public struct SettingsView: View {
 
   @State private var draft = AppConfig.default
   @State private var cover: SettingsCover?
+  @State private var logout = LoginFlow()
   @State private var showingClearCameraMemory = false
   @State private var showingTestThermal = false
   @State private var deleting: OverlayTemplate?
@@ -40,6 +43,10 @@ public struct SettingsView: View {
         .stackedBehind(depth: cover == nil ? 0 : 1)
         .accessibilityHidden(cover != nil)
         .allowsHitTesting(cover == nil)
+        // A tap off the slide disarms an armed logout. A Form row button with
+        // the default style never runs under this gesture, so those rows set
+        // an explicit button style.
+        .simultaneousGesture(TapGesture().onEnded { logout.tapElsewhere() })
 
       if let cover {
         StackedSceneLayer(onDismiss: dismissCover) {
@@ -155,48 +162,29 @@ public struct SettingsView: View {
         // destination, and an operator who wanted neither had nowhere obvious
         // to go.
         Section {
-          Button {
-            cover = .gameStationSignIn
-          } label: {
-            HStack(spacing: 12) {
-              Image(systemName: environment.gameStation.isSignedIn
-                ? "person.crop.circle.fill.badge.checkmark"
-                : "person.crop.circle.badge.plus")
-                .font(.title2)
-                .foregroundStyle(
-                  environment.gameStation.isSignedIn ? Color.accentColor : .secondary
-                )
-              VStack(alignment: .leading, spacing: 2) {
-                Text(environment.gameStation.isSignedIn
-                  ? "GameStation account"
-                  : "Sign in to GameStation")
-                  .font(.headline)
-                  .foregroundStyle(.primary)
-                Text(gameStationAccountSummary)
-                  .font(.subheadline)
-                  .foregroundStyle(.secondary)
-              }
-              Spacer()
-              Image(systemName: "chevron.right")
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(.tertiary)
-            }
-            .contentShape(Rectangle())
+          if LoginFlow.showsDevelopmentHost(AppServer.url.absoluteString) {
+            Text(AppServer.url.absoluteString)
+              .font(.footnote)
+              .foregroundStyle(.secondary)
+              .accessibilityIdentifier("settings-gamestation-host")
           }
-          .buttonStyle(.plain)
-          .accessibilityIdentifier("settings-gamestation-account")
+          accountRow
         } header: {
-          Text("GameStation")
-        } footer: {
-          Text("""
-          Signed in, this Director can list the games your teams are playing and stream to one \
-          without a URL being typed. Signing in changes nothing about where the Stream button \
-          publishes today — that is the section below.
-          """)
+          Text(environment.gameStation.isSignedIn
+            ? "Gamestation account"
+            : "Log in to Gamestation")
         }
 
         Section {
-          // Two destinations, one chosen. The event row is first because it is
+          gameStationEventRow
+        } header: {
+          Text("Gamestation Event")
+        } footer: {
+          Text("Pick event for video stream and scoreboard overlay")
+        }
+
+        Section {
+          // Two destinations, one chosen. The event is first because it is
           // the one somebody uses every week; the typed URL is what a one-off
           // to somebody else's service needs, and it keeps working exactly as
           // it did for every Director that already has one.
@@ -275,11 +263,15 @@ public struct SettingsView: View {
             )
           }
 
-          Button("Add New Template") {
+          Button {
             copyFromID = environment.activeTemplateID
             newTemplateName = ""
             cover = .newTemplate
+          } label: {
+            Text("Add New Template")
+              .frame(maxWidth: .infinity, alignment: .leading)
           }
+          .buttonStyle(.borderless)
           .accessibilityIdentifier("settings-add-content-template")
         } header: {
           Text("Content Templates")
@@ -304,11 +296,15 @@ public struct SettingsView: View {
             )
           }
 
-          Button("Add New Template") {
+          Button {
             copyRemoteFromID = environment.activeRemoteTemplateID
             newRemoteName = ""
             cover = .newRemote
+          } label: {
+            Text("Add New Template")
+              .frame(maxWidth: .infinity, alignment: .leading)
           }
+          .buttonStyle(.borderless)
           .accessibilityIdentifier("settings-add-remote-template")
         } header: {
           Text("Remote Control")
@@ -520,6 +516,7 @@ public struct SettingsView: View {
           Button("Clear camera memory", role: .destructive) {
             showingClearCameraMemory = true
           }
+          .buttonStyle(.borderless)
           .accessibilityIdentifier("settings-clear-camera-memory")
         } header: {
           Text("Sources")
@@ -539,6 +536,7 @@ public struct SettingsView: View {
           Button("Test Thermal Visuals") {
             showingTestThermal = true
           }
+          .buttonStyle(.borderless)
           .accessibilityIdentifier("settings-test-thermal")
         } header: {
           Text("Diagnostics")
@@ -580,60 +578,118 @@ public struct SettingsView: View {
 
   // MARK: - The account
 
-  /// The line under the account heading: who this Director is, or that it is
-  /// nobody yet.
-  private var gameStationAccountSummary: String {
-    guard environment.gameStation.isSignedIn else { return "Not signed in" }
-    return environment.gameStation.user?.email
+  private var accountEmail: String {
+    environment.gameStation.user?.email
       ?? environment.gameStation.user?.displayName
-      ?? "Signed in"
+      ?? ""
+  }
+
+  @ViewBuilder
+  private var accountRow: some View {
+    if environment.gameStation.isSignedIn {
+      VStack(alignment: .leading, spacing: 8) {
+        HStack {
+          Text(LoginFlow.loggedInLine(accountEmail))
+            .font(.body)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .onTapGesture { logout.tapElsewhere() }
+            .accessibilityIdentifier("settings-gamestation-account")
+          if !logout.logoutArmed {
+            Button("Logout") { logout.armLogout() }
+            // Nested in the account row, and under the form's tap-elsewhere
+            // gesture. Without its own style the tap never arms the slide.
+            .buttonStyle(.borderless)
+            .font(.body.weight(.semibold))
+            .foregroundStyle(.red)
+            .accessibilityIdentifier("gamestation-sign-out")
+          }
+        }
+        if logout.logoutArmed {
+          SlideToStopOverlay(
+            phrase: "Slide to log out",
+            trackIdentifier: "gamestation-slide-logout",
+            onStop: {
+              if logout.slide(progress: 1) {
+                environment.gameStation.signOut()
+              }
+            }
+          )
+          .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+      }
+    } else {
+      Button {
+        cover = .gameStationSignIn
+      } label: {
+        Text("Tap to Login")
+          .font(.body)
+          .frame(maxWidth: .infinity, alignment: .leading)
+      }
+      .buttonStyle(.plain)
+      .accessibilityIdentifier("settings-gamestation-account")
+    }
+  }
+
+  // MARK: - The event
+
+  /// The game this Director is covering. Tapping the row opens the list; the
+  /// Clear button beside it forgets the game.
+  @ViewBuilder
+  private var gameStationEventRow: some View {
+    let chosen = environment.gameStation.chosen
+    HStack(spacing: 12) {
+      Button {
+        cover = environment.gameStation.isSignedIn
+          ? .eventPicker
+          : .gameStationSignIn
+      } label: {
+        HStack {
+          VStack(alignment: .leading, spacing: 2) {
+            if let chosen {
+              Text(GameStationEventPicker.when(chosen.startAt))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+              Text(chosen.title)
+                .foregroundStyle(.primary)
+            } else {
+              Text("Tap to pick an event")
+                .foregroundStyle(.primary)
+            }
+          }
+          Spacer()
+          Image(systemName: "chevron.right")
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(.tertiary)
+        }
+        .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .accessibilityIdentifier("settings-gamestation-event")
+
+      if chosen != nil {
+        Button("Clear", role: .destructive) {
+          environment.clearEvent()
+        }
+        .buttonStyle(.borderless)
+        .accessibilityIdentifier("settings-gamestation-event-clear")
+      }
+    }
   }
 
   // MARK: - Where the stream goes
 
-  /// The row that stands for "a game on GameStation".
-  ///
-  /// Tapping the row opens the list; tapping the radio to its left chooses this
-  /// as the destination. Two targets in one row, deliberately: picking a game
-  /// and deciding to stream to it are separate decisions, and somebody opening
-  /// the list to see what is on should not have their destination changed by
-  /// looking.
+  /// The radio for "the GameStation event", which is picked in the section
+  /// above.
   @ViewBuilder
   private var streamEventRow: some View {
     let chosen = environment.gameStation.chosen
     VStack(alignment: .leading, spacing: 8) {
       HStack(spacing: 12) {
         destinationButton(.event, label: "Use a GameStation event")
-        Button {
-          cover = environment.gameStation.isSignedIn
-            ? .eventPicker
-            : .gameStationSignIn
-        } label: {
-          HStack {
-            VStack(alignment: .leading, spacing: 2) {
-              Text("Stream to a GameStation event")
-                .foregroundStyle(.primary)
-              // What is chosen, or why nothing can be: the picker needs an
-              // account, and saying so here is kinder than opening a sign-in
-              // screen somebody did not ask for and leaving them to work out
-              // why.
-              Text(
-                environment.gameStation.isSignedIn
-                  ? (chosen?.title ?? "Tap to choose a game")
-                  : "Sign in above to choose a game"
-              )
-              .font(.caption)
-              .foregroundStyle(.secondary)
-            }
-            Spacer()
-            Image(systemName: "chevron.right")
-              .font(.footnote.weight(.semibold))
-              .foregroundStyle(.tertiary)
-          }
-          .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("settings-stream-event-row")
+        Text("GameStation event — \(chosen?.title ?? "pick one above")")
+          .foregroundStyle(.primary)
+        Spacer()
       }
 
       if let message = environment.gameStation.lastError {
@@ -651,6 +707,7 @@ public struct SettingsView: View {
   ) -> some View {
     Button {
       draft.streamDestination = destination
+      environment.streamDestinationChanged(to: destination)
     } label: {
       Image(
         systemName: draft.streamDestination == destination
@@ -682,7 +739,11 @@ public struct SettingsView: View {
       RemoteControlEditorView(onClose: dismissCover)
         .environment(environment)
     case .eventPicker:
-      GameStationEventPicker(onChosen: dismissCover, onCancel: dismissCover)
+      GameStationEventPicker(
+        destination: draft.streamDestination,
+        onChosen: dismissCover,
+        onCancel: dismissCover
+      )
         .environment(environment)
     case .gameStationSignIn:
       GameStationSignIn(onClose: dismissCover)

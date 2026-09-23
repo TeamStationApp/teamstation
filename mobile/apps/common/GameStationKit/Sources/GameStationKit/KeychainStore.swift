@@ -12,11 +12,34 @@ import Security
 /// across two stores would only mean two places to leak from.
 public struct KeychainStore: Sendable {
   private let service: String
+  private let memory: Memory?
   private static let tokenKey = "gameStationToken"
   private static let eventKey = "gameStationChosenEvent"
 
   public init(service: String) {
     self.service = service
+    memory = nil
+  }
+
+  /// A store that never touches the keychain, for tests: each one starts
+  /// empty and forgets everything when it goes.
+  public static func inMemory() -> KeychainStore {
+    KeychainStore(memory: Memory())
+  }
+
+  private init(memory: Memory) {
+    service = "inMemory"
+    self.memory = memory
+  }
+
+  private final class Memory: @unchecked Sendable {
+    private let lock = NSLock()
+    private var items: [String: Data] = [:]
+
+    subscript(key: String) -> Data? {
+      get { lock.withLock { items[key] } }
+      set { lock.withLock { items[key] = newValue } }
+    }
   }
 
   public func token() -> String? {
@@ -57,6 +80,7 @@ public struct KeychainStore: Sendable {
   }
 
   private func read(_ key: String) -> Data? {
+    if let memory { return memory[key] }
     var request = query(key)
     request[kSecReturnData as String] = true
     request[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -67,6 +91,10 @@ public struct KeychainStore: Sendable {
   }
 
   private func write(_ key: String, data: Data?) {
+    if let memory {
+      memory[key] = data
+      return
+    }
     SecItemDelete(query(key) as CFDictionary)
     guard let data else { return }
     var request = query(key)

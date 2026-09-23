@@ -28,7 +28,9 @@ export const asErrorCode = asValue(
   'tooLarge',
   'unsupportedMedia',
   'rateLimited',
-  'internal'
+  'internal',
+  /** A service the answer depends on is away for now; ask again later. */
+  'unavailable'
 )
 export type ErrorCode = ReturnType<typeof asErrorCode>
 
@@ -65,7 +67,8 @@ export const errorStatus: Record<ErrorCode, number> = {
   tooLarge: 413,
   unsupportedMedia: 415,
   rateLimited: 429,
-  internal: 500
+  internal: 500,
+  unavailable: 503
 }
 
 /**
@@ -123,6 +126,10 @@ export const rateLimited = (
   message: string,
   retryAfterSec: number
 ): HttpError => new HttpError('rateLimited', message, { retryAfterSec })
+
+/** Something the answer needs is away for now, and will be back. */
+export const unavailable = (message: string): HttpError =>
+  new HttpError('unavailable', message)
 
 /** Turns anything at all into the one shape, without leaking internals. */
 export function toApiError(error: unknown): ApiError {

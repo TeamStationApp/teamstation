@@ -17,16 +17,24 @@ struct SettingsView<Model: CameraControlling>: View {
   @FocusState private var nameFocused: Bool
   @State private var didCopyURL = false
   @State private var showingTestThermal = false
+  @State private var v1Server = ""
+  @State private var v1EventId = ""
+  @State private var login = LoginFlow()
+  @State private var loginOpen = false
+  @State private var didLoadScoreboard = false
+  @FocusState private var loginFocused: Bool
 
   var body: some View {
     NavigationStack {
-      // One shared scroll. Landscape: two rows of two (video/audio/output + lenses, then name +
-      // stream), which is the phone's layout. Portrait, on a rotating client: the six cards
-      // stacked. The draft lives above this switch, so rotating mid-edit keeps every edited value.
+      // One shared scroll. Landscape: video, audio and output beside lenses, then name beside
+      // stream. Portrait stacks one column, alternating those columns:
+      // account, video, lenses, audio, stream, name, radar, scoreboard, then the HDMI output card.
+      // The draft lives above this switch, so rotating mid-edit keeps every edited value.
       GeometryReader { geo in
         let columns = SettingsLayout.columns(for: geo.size)
         ScrollView {
           VStack(alignment: .leading, spacing: 16) {
+            gameStationSection
             if columns == 2 {
               HStack(alignment: .top, spacing: 12) {
                 VStack(spacing: 16) {
@@ -44,13 +52,16 @@ struct SettingsView<Model: CameraControlling>: View {
               }
             } else {
               videoSection
-              audioSection
-              outputSection
               lensesSection
-              nameSection
+              audioSection
               serverSection
+              nameSection
             }
             radarSection
+            scoreboardSection
+            if columns == 1 {
+              outputSection
+            }
             // A flow reads which layout is up. A marker rather than an identifier on the
             // container, which would hide every control inside it.
             Color.clear
@@ -60,6 +71,7 @@ struct SettingsView<Model: CameraControlling>: View {
           .padding(.horizontal, 12)
           .padding(.bottom, 80)
         }
+        .simultaneousGesture(TapGesture().onEnded { login.tapElsewhere() })
       }
       .background(Color(uiColor: .systemGroupedBackground))
       .navigationTitle("Camera")
@@ -105,11 +117,201 @@ struct SettingsView<Model: CameraControlling>: View {
         Button("Cancel", role: .cancel) {}
       }
     }
+    .overlay {
+      if loginOpen, let board = model as? any ScoreboardControlling, !board.scoreboard.signedIn {
+        cameramanLoginModal(board)
+      }
+    }
     .onAppear {
       draftName = model.name
       draftSettings = model.settings
       didCopyURL = false
     }
+  }
+
+  /// Sign-in, alone, above every other card. The account server is the build's.
+  @ViewBuilder
+  private var gameStationSection: some View {
+    if let board = model as? any ScoreboardControlling {
+      VStack(alignment: .leading, spacing: 8) {
+        settingsCard(board.scoreboard.signedIn ? "Gamestation account" : "Log in to Gamestation") {
+          if LoginFlow.showsDevelopmentHost(board.scoreboard.accountHost) {
+            Text(board.scoreboard.accountHost)
+              .font(.footnote)
+              .foregroundStyle(.secondary)
+              .frame(maxWidth: .infinity, alignment: .leading)
+              .padding(.horizontal, 16)
+              .padding(.top, 8)
+              .accessibilityIdentifier("scoreboard-account-server")
+          }
+          if board.scoreboard.signedIn {
+            VStack(alignment: .leading, spacing: 8) {
+              HStack {
+                Text(LoginFlow.loggedInLine(board.scoreboard.accountLabel))
+                  .frame(maxWidth: .infinity, alignment: .leading)
+                  .contentShape(Rectangle())
+                  .onTapGesture { login.tapElsewhere() }
+                  .accessibilityIdentifier("scoreboard-account")
+                if !login.logoutArmed {
+                  Button("Logout") { login.armLogout() }
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.red)
+                    .accessibilityIdentifier("scoreboard-sign-out")
+                }
+              }
+              if login.logoutArmed {
+                SlideToStop(
+                  label: "Slide to log out",
+                  trackIdentifier: "gamestation-slide-logout",
+                  animate: model.animatesChrome
+                ) {
+                  if login.slide(progress: 1) {
+                    board.signOutScoreboard()
+                  }
+                }
+                .frame(maxWidth: .infinity, alignment: .trailing)
+              }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+          } else {
+            Button {
+              login.cancel()
+              loginOpen = true
+            } label: {
+              Text("Tap to Login")
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("scoreboard-login-row")
+          }
+        }
+      }
+      .onChange(of: board.scoreboard.awaitingCode) { _, waiting in
+        if waiting { login.codeSent() }
+      }
+      .onChange(of: board.scoreboard.status) { _, status in
+        if login.step == .code && (status.contains("wrong") || status.contains("expired")) {
+          login.codeRejected()
+        }
+      }
+      .onChange(of: board.scoreboard.signedIn) { _, signedIn in
+        if signedIn { loginOpen = false }
+      }
+    }
+  }
+
+  private func cameramanLoginModal(_ board: any ScoreboardControlling) -> some View {
+    GeometryReader { geo in
+      ZStack {
+        Color.black.opacity(0.92).ignoresSafeArea()
+        VStack(spacing: 20) {
+          Text("GameStation")
+            .font(.largeTitle.weight(.bold))
+            .foregroundStyle(Color(red: 0.50, green: 0.85, blue: 0.61))
+            .accessibilityIdentifier("gamestation-logo")
+          if login.fieldIsCode {
+            Text(login.notice ?? LoginFlow.checkEmail)
+              .font(.subheadline)
+              .foregroundStyle(.secondary)
+          } else if !board.scoreboard.status.isEmpty && !Self.isRouteStatus(board.scoreboard.status) {
+            Text(board.scoreboard.status)
+              .font(.subheadline)
+              .foregroundStyle(.secondary)
+              .accessibilityIdentifier("scoreboard-account-status")
+          }
+          Group {
+            if login.fieldIsCode {
+              TextField(
+                "123456",
+                text: Binding(
+                  get: { login.code },
+                  set: { raw in
+                    // The binding's set runs before `code` changes. `onChange`
+                    // would see the digits already stored and never submit.
+                    if login.replaceCode(raw) {
+                      board.verifyScoreboardCode(email: login.email, code: login.code)
+                    }
+                  }
+                )
+              )
+              .keyboardType(.numberPad)
+              .accessibilityIdentifier("scoreboard-code")
+            } else {
+              TextField("email", text: $login.email)
+                .keyboardType(.emailAddress)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .accessibilityIdentifier("scoreboard-email")
+            }
+          }
+          .multilineTextAlignment(.center)
+          .focused($loginFocused)
+          .frame(width: geo.size.width / 2)
+          .padding(.vertical, 12)
+          .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+          Button(login.buttonLabel) {
+            if login.fieldIsCode {
+              guard login.code.count == LoginFlow.codeLength else { return }
+              board.verifyScoreboardCode(email: login.email, code: login.code)
+            } else {
+              board.sendScoreboardCode(email: login.email)
+            }
+          }
+          .disabled(login.fieldIsCode && login.code.count < LoginFlow.codeLength)
+          .buttonStyle(.plain)
+          .font(.body.weight(.semibold))
+          .foregroundStyle(Color(red: 0.07, green: 0.14, blue: 0.09))
+          .padding(.horizontal, 18)
+          .padding(.vertical, 10)
+          .background(Color(red: 0.50, green: 0.85, blue: 0.61), in: Capsule())
+          .accessibilityIdentifier(login.fieldIsCode ? "scoreboard-verify" : "scoreboard-send-code")
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+      }
+      .overlay(alignment: .topTrailing) {
+        Button("Cancel") {
+          login.cancel()
+          loginOpen = false
+        }
+        .font(.body.weight(.semibold))
+        .foregroundStyle(.red)
+        .padding()
+        .accessibilityIdentifier("gamestation-cancel")
+      }
+      .onAppear { loginFocused = true }
+      .onChange(of: login.step) { _, _ in loginFocused = true }
+    }
+  }
+
+  /// Route hints belong under the scoreboard card. Sign-in answers stay with the account.
+  private static func isRouteStatus(_ text: String) -> Bool {
+    text == "Choose an event" || text == "Enter a V1 event id"
+  }
+
+  /// A filled capsule, so Sign In, Sign Out and Send Code read as buttons.
+  private func pillButton(
+    _ title: String,
+    tag: String,
+    action: @escaping () -> Void
+  ) -> some View {
+    Button(action: action) {
+      Text(title)
+        .font(.body.weight(.semibold))
+        .foregroundStyle(Color(red: 0.07, green: 0.14, blue: 0.09))
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 12)
+        .background(
+          Color(red: 0.50, green: 0.85, blue: 0.61),
+          in: Capsule()
+        )
+    }
+    .buttonStyle(.plain)
+    .padding(.horizontal, 16)
+    .padding(.vertical, 8)
+    .accessibilityIdentifier(tag)
   }
 
   @ViewBuilder
@@ -178,6 +380,146 @@ struct SettingsView<Model: CameraControlling>: View {
         }
       }
     }
+  }
+
+  @ViewBuilder
+  private var scoreboardSection: some View {
+    if let board = model as? any ScoreboardControlling {
+      settingsCard("Scoreboard") {
+        routeButton(
+          "GameStation V1",
+          selected: board.scoreboard.route == .v1,
+          enabled: true,
+          tag: "scoreboard-route-v1"
+        ) {
+          board.selectScoreboardRoute(.v1)
+        }
+        cardRow {
+          TextField("V1 server", text: $v1Server)
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            .accessibilityIdentifier("scoreboard-v1-server")
+            .onChange(of: v1Server) { _, value in
+              guard didLoadScoreboard else { return }
+              board.setScoreboardV1(apiServer: value, eventId: v1EventId)
+            }
+        }
+        Divider().padding(.leading, 16)
+        cardRow {
+          TextField("V1 event id", text: $v1EventId)
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            .accessibilityIdentifier("scoreboard-v1-event")
+            .onChange(of: v1EventId) { _, value in
+              guard didLoadScoreboard else { return }
+              board.setScoreboardV1(apiServer: v1Server, eventId: value)
+            }
+        }
+        routeButton(
+          "GameStation event",
+          selected: board.scoreboard.route == .event,
+          enabled: board.scoreboard.signedIn,
+          tag: "scoreboard-route-event"
+        ) {
+          board.selectScoreboardRoute(.event)
+        }
+        Text("Gamestation Event")
+          .font(.headline)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .padding(.horizontal, 16)
+        Text("Pick event for radar data")
+          .font(.footnote)
+          .foregroundStyle(.secondary)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .padding(.horizontal, 16)
+        Button {
+          board.openScoreboardEvents()
+        } label: {
+          VStack(alignment: .leading, spacing: 2) {
+            if !board.scoreboard.gameWhen.isEmpty {
+              Text(board.scoreboard.gameWhen)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            }
+            Text(board.scoreboard.gameTitle.isEmpty ? "Tap to pick an event" : board.scoreboard.gameTitle)
+          }
+          .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .disabled(!board.scoreboard.signedIn)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .accessibilityIdentifier("scoreboard-choose-event")
+        if Self.isRouteStatus(board.scoreboard.status) {
+          Text(board.scoreboard.status)
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 8)
+            .accessibilityIdentifier("scoreboard-status")
+        }
+      }
+      .onAppear {
+        guard !didLoadScoreboard else { return }
+        didLoadScoreboard = true
+        v1Server = board.scoreboard.apiServer
+        v1EventId = board.scoreboard.v1EventId
+      }
+      .sheet(isPresented: Binding(
+        get: { board.scoreboard.pickerOpen },
+        set: { if !$0 { board.dismissScoreboardEvents() } }
+      )) {
+        NavigationStack {
+          List {
+            Section("Events") {
+              if board.scoreboard.upcoming.isEmpty {
+                Text("None")
+              }
+              ForEach(board.scoreboard.upcoming) { event in
+                Button {
+                  board.chooseScoreboardEvent(event.gameId)
+                } label: {
+                  VStack(alignment: .leading) {
+                    Text(event.whenLabel).font(.footnote).foregroundStyle(.secondary)
+                    Text(event.title)
+                  }
+                }
+                .accessibilityIdentifier("scoreboard-event-\(event.gameId)")
+              }
+            }
+          }
+          .navigationTitle("Events")
+          .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+              Button("Close") { board.dismissScoreboardEvents() }
+                .accessibilityIdentifier("scoreboard-events-close")
+            }
+          }
+        }
+      }
+    }
+  }
+
+  private func routeButton(
+    _ title: String,
+    selected: Bool,
+    enabled: Bool,
+    tag: String,
+    action: @escaping () -> Void
+  ) -> some View {
+    Button(action: action) {
+      HStack {
+        Image(systemName: selected ? "largecircle.fill.circle" : "circle")
+        Text(title)
+        Spacer()
+      }
+      .foregroundStyle(enabled ? Color.primary : Color.secondary.opacity(0.45))
+      .padding(.horizontal, 16)
+      .padding(.vertical, 10)
+    }
+    .buttonStyle(.plain)
+    .disabled(!enabled)
+    .accessibilityIdentifier(tag)
   }
 
   /// Intrinsic-height grouped card so the outer ScrollView is the only scroller.

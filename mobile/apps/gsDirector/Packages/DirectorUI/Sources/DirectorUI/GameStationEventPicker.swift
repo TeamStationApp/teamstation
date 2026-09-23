@@ -1,3 +1,4 @@
+import DirectorCore
 import GameStationKit
 import SwiftUI
 
@@ -14,10 +15,18 @@ import SwiftUI
 /// and the sentence is spoken as a schedule is written. Paul chose both.
 public struct GameStationEventPicker: View {
   @Environment(AppEnvironment.self) private var environment
+  /// Where the stream is set to go. The game is claimed on picking only when
+  /// the stream goes to it.
+  let destination: StreamDestination
   let onChosen: () -> Void
   let onCancel: () -> Void
 
-  init(onChosen: @escaping () -> Void, onCancel: @escaping () -> Void) {
+  init(
+    destination: StreamDestination,
+    onChosen: @escaping () -> Void,
+    onCancel: @escaping () -> Void
+  ) {
+    self.destination = destination
     self.onChosen = onChosen
     self.onCancel = onCancel
   }
@@ -83,19 +92,19 @@ public struct GameStationEventPicker: View {
   private func row(for event: GameStationEvent) -> some View {
     Button {
       Task {
-        let taken = await environment.gameStation.choose(event: event)
+        let taken = await environment.pickEvent(event, destination: destination)
         if taken { onChosen() }
       }
     } label: {
       HStack(spacing: 12) {
         mark(url: event.homeLogoURL, name: event.homeTeamName)
         VStack(alignment: .leading, spacing: 2) {
-          Text(event.title)
-            .font(.body.weight(.semibold))
-            .foregroundStyle(.primary)
           Text(Self.when(event.startAt))
             .font(.subheadline)
             .foregroundStyle(.secondary)
+          Text(event.title)
+            .font(.body.weight(.semibold))
+            .foregroundStyle(.primary)
         }
         Spacer(minLength: 8)
         if event.isLive {
@@ -110,7 +119,7 @@ public struct GameStationEventPicker: View {
       }
       .padding(.vertical, 4)
     }
-    .accessibilityIdentifier("event-picker-row")
+    .accessibilityIdentifier("event-picker-row-\(event.gameId)")
     .listRowBackground(Color.black)
   }
 
@@ -141,17 +150,8 @@ public struct GameStationEventPicker: View {
     return words.compactMap { $0.first }.map(String.init).joined().uppercased()
   }
 
-  /// `Thursday, September 17, 3:15 pm`, in the iPad's own clock.
-  ///
-  /// `nonisolated` for the same reason as `initials`.
+  /// `Thu Sep 17, 2026 3:15 PM`, in the iPad's own clock.
   public nonisolated static func when(_ date: Date) -> String {
-    date.formatted(
-      .dateTime
-        .weekday(.wide)
-        .month(.wide)
-        .day()
-        .hour(.defaultDigits(amPM: .abbreviated))
-        .minute()
-    )
+    EventWhenLabel.format(date)
   }
 }

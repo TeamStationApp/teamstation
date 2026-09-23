@@ -1,5 +1,9 @@
 package co.gamestation.cameraman.ui
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.pm.ActivityInfo
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -22,12 +26,14 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -47,11 +53,32 @@ fun RootScreen(environment: AppEnvironment) {
     // Held by the environment rather than here, so the test harness can open and close Settings.
     val isShowingSettings by environment.settingsShown.collectAsStateWithLifecycle()
 
+    val context = LocalContext.current
+    DisposableEffect(isShowingSettings) {
+        // The camera stays landscape. Settings may be portrait or landscape. Leaving settings
+        // turns the window back, so the operating screen never stays upright.
+        context.findActivity()?.requestedOrientation = if (isShowingSettings) {
+            ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+        } else {
+            ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        }
+        onDispose { }
+    }
+
     when {
         !permissions.camera -> DiagnosticScreen(environment)
         isShowingSettings -> SettingsScreen(environment) { environment.settingsShown.value = false }
         else -> CameraScreen(environment) { environment.settingsShown.value = true }
     }
+}
+
+private fun Context.findActivity(): Activity? {
+    var current: Context = this
+    while (current is ContextWrapper) {
+        if (current is Activity) return current
+        current = current.baseContext
+    }
+    return null
 }
 
 /**

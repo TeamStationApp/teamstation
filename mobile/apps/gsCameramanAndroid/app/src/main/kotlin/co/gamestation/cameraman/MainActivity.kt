@@ -54,8 +54,9 @@ import co.gamestation.cameraman.ui.theme.CameramanTheme
  * Otherwise the service is stopped, so a quiet camera is not a background process. The iOS build
  * cannot keep a broadcast up either way, because iOS suspends a backgrounded app.
  *
- * Landscape only, so the encoded dimensions never change mid-stream. `sensorLandscape` rather than a
- * fixed side because both holds are legitimate on a tripod; the 180° that separates them is applied
+ * The camera stays landscape, so the encoded dimensions never change mid-stream. `sensorLandscape`
+ * is the launch orientation; Settings switches the window to either orientation and back.
+ * Both landscape holds are legitimate on a tripod; the 180° that separates them is applied
  * to the buffers by `CaptureRenderer`, not to the layout.
  */
 class MainActivity : ComponentActivity() {

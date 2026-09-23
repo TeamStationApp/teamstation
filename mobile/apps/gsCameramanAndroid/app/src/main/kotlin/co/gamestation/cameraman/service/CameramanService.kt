@@ -270,9 +270,9 @@ class CameramanService : Service() {
     companion object {
 
         /**
-         * Landscape-only, so only the two landscape holds are meaningful and a portrait reading is
-         * held rather than applied — the app cannot be in portrait, and a phone tipped upright on
-         * its way to being re-clamped should not send a quarter-turned picture on the way past.
+         * Only the two landscape holds move the picture. Settings may be portrait, and a phone
+         * tipped upright on its way to being re-clamped must not send a quarter-turned picture
+         * on the way past, so a portrait reading is held rather than applied.
          * `ORIENTATION_UNKNOWN`, which is what a handset lying flat reports, is held for the same
          * reason.
          */

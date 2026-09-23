@@ -28,6 +28,9 @@ public final class WebOverlayController: NSObject {
     return "\(Int(latestSize.width))x\(Int(latestSize.height)) n=\(snapshotCount)"
   }
   public var onSnapshot: ((CGImage?, CGSize) -> Void)?
+  /// The page could not be loaded: not fetched at all, or failed part way.
+  /// Nothing here tries again; the owner decides whether to.
+  public var onLoadFailed: (() -> Void)?
 
   private let webView: WKWebView
   private let maximumSize: CGSize
@@ -35,8 +38,7 @@ public final class WebOverlayController: NSObject {
   private var watchdog: Timer?
   private var hasRequested = false
   private var hasLoaded = false
-  private var isSnapshotting = false
-  private var pendingSnapshot = false
+  private var gate = OverlaySnapshotGate()
 
   public init(size: CGSize = CGSize(width: 1920, height: 1080)) {
     maximumSize = size
@@ -90,6 +92,7 @@ public final class WebOverlayController: NSObject {
     watchdog = nil
     hasLoaded = false
     hasRequested = false
+    gate.cancel()
     webView.stopLoading()
     webView.removeFromSuperview()
     latestImage = nil
@@ -102,12 +105,10 @@ public final class WebOverlayController: NSObject {
     // view with no page never calls back at all, which used to wedge `isSnapshotting` true forever
     // and stop the overlay updating for the rest of the session.
     guard hasLoaded else { return }
-    guard !isSnapshotting else {
-      pendingSnapshot = true
-      return
-    }
-    isSnapshotting = true
-    armWatchdog()
+    // A change while a snapshot runs is not lost: it gets one snapshot of its own as soon as this
+    // one ends, however it ends.
+    guard let run = gate.request() else { return }
+    armWatchdog(run)
     attachToWindow()
 
     // Measure before capturing. The web view is laid out to the page's own content size so the
@@ -117,11 +118,7 @@ public final class WebOverlayController: NSObject {
     measureContent { [weak self] size in
       guard let self else { return }
       guard size.width >= 1, size.height >= 1 else {
-        self.finishSnapshot()
-        if self.pendingSnapshot {
-          self.pendingSnapshot = false
-          self.snapshot()
-        }
+        self.finishSnapshot(run)
         return
       }
       self.webView.frame = CGRect(origin: .zero, size: size)
@@ -134,7 +131,7 @@ public final class WebOverlayController: NSObject {
       self.webView.takeSnapshot(with: configuration) { [weak self] image, error in
         Task { @MainActor in
           guard let self else { return }
-          self.finishSnapshot()
+          let outcome = self.endSnapshot(run)
           if let image, let cgImage = image.cgImage {
             let displayScale = max(
               self.webView.window?.screen.scale ?? 0,
@@ -158,10 +155,7 @@ public final class WebOverlayController: NSObject {
           } else if let error {
             self.loadError = error.localizedDescription
           }
-          if self.pendingSnapshot {
-            self.pendingSnapshot = false
-            self.snapshot()
-          }
+          if outcome == .again { self.snapshot() }
         }
       }
     }
@@ -185,22 +179,34 @@ public final class WebOverlayController: NSObject {
   }
 
   /// Releases the snapshot path if a measure or capture never calls back, so one wedged callback
-  /// costs a single missed update instead of every update after it.
-  private func armWatchdog() {
+  /// costs a single missed update instead of every update after it. A change that arrived while it
+  /// was wedged is snapshotted straight away, not at the next heartbeat.
+  private func armWatchdog(_ run: Int) {
     watchdog?.invalidate()
     watchdog = Timer.scheduledTimer(withTimeInterval: 4, repeats: false) { [weak self] _ in
       Task { @MainActor in
-        guard let self, self.isSnapshotting else { return }
-        self.isSnapshotting = false
+        guard let self, self.gate.isRunning(run) else { return }
         self.loadError = "overlay snapshot timed out"
+        self.finishSnapshot(run)
       }
     }
   }
 
-  private func finishSnapshot() {
-    watchdog?.invalidate()
-    watchdog = nil
-    isSnapshotting = false
+  /// Ends snapshot `run` and says whether a change arrived during it.
+  private func endSnapshot(_ run: Int) -> OverlaySnapshotGate.Outcome {
+    let outcome = gate.finish(run)
+    // A capture that returns after the watchdog released it must not stop the watchdog of the
+    // snapshot that has started since.
+    if outcome != .stale {
+      watchdog?.invalidate()
+      watchdog = nil
+    }
+    return outcome
+  }
+
+  /// Ends snapshot `run`, and takes the next one now if a change arrived during it.
+  private func finishSnapshot(_ run: Int) {
+    if endSnapshot(run) == .again { snapshot() }
   }
 
   /// Lays the page out in a large viewport, then shrink-wraps to the graphic — not to the
@@ -296,6 +302,62 @@ public final class WebOverlayController: NSObject {
   """
 }
 
+/// One overlay snapshot at a time, and a change that arrives during one owed exactly one more.
+///
+/// A page can change while its snapshot is being measured or captured, or while a wedged capture
+/// waits for the watchdog. That change must not wait for the page's next change or the 5 s
+/// heartbeat: the snapshot running may have measured the page before it. So the gate marks
+/// itself dirty, and the run's end, however it ends, starts one more. Several changes during one
+/// run still cost one more snapshot, which sees them all.
+///
+/// Runs are numbered, so a callback that returns after the watchdog released its run, or after
+/// the page was stopped, cannot end the run that has started since.
+struct OverlaySnapshotGate: Equatable {
+  enum Outcome: Equatable {
+    /// The run ended and nothing changed during it.
+    case done
+    /// The run ended and something changed during it: snapshot again now.
+    case again
+    /// Not the running run: it was already released. Nothing changes.
+    case stale
+  }
+
+  private var running: Int?
+  private var next = 0
+  private(set) var isDirty = false
+
+  /// A snapshot is wanted. Returns its run number when it may start now, or nil when one is
+  /// already running, which then owes one more.
+  mutating func request() -> Int? {
+    guard running == nil else {
+      isDirty = true
+      return nil
+    }
+    next += 1
+    running = next
+    return next
+  }
+
+  func isRunning(_ run: Int) -> Bool {
+    running == run
+  }
+
+  /// Run `run` ended: captured, refused by the measure, failed, or released by the watchdog.
+  mutating func finish(_ run: Int) -> Outcome {
+    guard running == run else { return .stale }
+    running = nil
+    guard isDirty else { return .done }
+    isDirty = false
+    return .again
+  }
+
+  /// The page stopped: whatever runs now is stale, and nothing is owed.
+  mutating func cancel() {
+    running = nil
+    isDirty = false
+  }
+}
+
 extension WebOverlayController: WKNavigationDelegate {
   public nonisolated func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
     Task { @MainActor in
@@ -310,7 +372,8 @@ extension WebOverlayController: WKNavigationDelegate {
     didFail navigation: WKNavigation!,
     withError error: Error
   ) {
-    Task { @MainActor in self.loadError = error.localizedDescription }
+    let said = error.localizedDescription
+    Task { @MainActor in self.failed(said) }
   }
 
   public nonisolated func webView(
@@ -318,7 +381,13 @@ extension WebOverlayController: WKNavigationDelegate {
     didFailProvisionalNavigation navigation: WKNavigation!,
     withError error: Error
   ) {
-    Task { @MainActor in self.loadError = error.localizedDescription }
+    let said = error.localizedDescription
+    Task { @MainActor in self.failed(said) }
+  }
+
+  private func failed(_ said: String) {
+    loadError = said
+    onLoadFailed?()
   }
 }
 

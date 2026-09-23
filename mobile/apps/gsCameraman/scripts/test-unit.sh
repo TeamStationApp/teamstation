@@ -17,6 +17,10 @@ ARGS=()
 if [ -n "$ONLY" ]; then
   ARGS+=(-only-testing:"$ONLY")
 fi
+COVERAGE="${COVERAGE:-}"
+if [ -n "$COVERAGE" ]; then
+  ARGS+=(-enableCodeCoverage YES)
+fi
 
 LOG="$CAMERAMAN_DERIVED_DATA/test-unit.log"
 mkdir -p "$CAMERAMAN_DERIVED_DATA"
@@ -62,6 +66,24 @@ CASES="$(xcrun xcresulttool get test-results summary \
   ' || true)"
 log "Ran ${CASES:-0} test cases"
 
+COVERED=0
+if [ -n "$COVERAGE" ]; then
+  TOP="$(git -C "$CAMERAMAN_ROOT" rev-parse --show-toplevel)"
+  log "Changed-line coverage"
+  (
+    cd "$TOP"
+    # LoginFlow is the sign-in and logout logic this gate measures. SettingsView is
+    # SwiftUI layout. The rest of the Cameraman diff on this branch is the scoreboard
+    # work, which this run does not hold to 90%.
+    node "$TOP/scripts/swift-changed-line-coverage.cjs" \
+      --xcresult "$CAMERAMAN_DERIVED_DATA/TestResults.xcresult" \
+      --derived-data "$CAMERAMAN_DERIVED_DATA" \
+      --exclude mobile/apps/common/CameramanControlUI/Sources/CameramanControlUI/SettingsView.swift \
+      mobile/apps/common/CameramanCore/Sources/CameramanCore/LoginFlow.swift
+  ) || COVERED=1
+fi
+
 [ $STATUS -eq 0 ] || fail "tests failed — full log at $LOG"
 [ "${CASES:-0}" -gt 0 ] || fail "no test cases ran — full log at $LOG"
+[ $COVERED -eq 0 ] || fail "changed lines are under 90% covered"
 log "Tests passed"
