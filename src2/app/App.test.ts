@@ -53,5 +53,12 @@ describe('app layout', function () {
     )
     // One measured number, read from the slot rather than copied.
     expect(screen).contains('paddingTop: headerHeight')
+    // The event page does not go through Screen. Its web layout has to ask
+    // for the same inset, or the hero starts under the glass header.
+    const watch = readFileSync(
+      join(__dirname, 'screens/GameWatchLayout.tsx'),
+      'utf8'
+    )
+    expect(watch).contains('paddingTop: headerHeight')
   })
 })
