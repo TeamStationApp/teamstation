@@ -648,6 +648,125 @@ describe('scoring browser', function () {
       await page.close()
     }
   })
+  it('opens More on upward drag and releases an action or escapes right', async function () {
+    const { page } = await open('/games/g1/score')
+    try {
+      const trigger = await page.$eval('[aria-label="More"]', node => {
+        const r = node.getBoundingClientRect()
+        return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
+      })
+      await page.mouse.move(trigger.x, trigger.y)
+      await page.mouse.down()
+      await page.mouse.move(trigger.x, trigger.y - 20)
+      await page.waitForSelector('[aria-label="Hit by Pitch"]')
+      const row = await page.$eval('[aria-label="Hit by Pitch"]', node => {
+        const r = node.getBoundingClientRect()
+        return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
+      })
+      await page.mouse.move(row.x, row.y)
+      await page.mouse.up()
+      await page.waitForSelector('[aria-label="Undo Hit by Pitch"]')
+      await page.waitForSelector('[aria-label="Finish at-bat"]', {
+        timeout: 30000
+      })
+      await click(page, 'Finish at-bat')
+      await page.mouse.move(trigger.x, trigger.y)
+      await page.mouse.down()
+      await page.mouse.move(trigger.x, trigger.y - 20)
+      await page.mouse.move(500, trigger.y - 100)
+      await page.mouse.up()
+      expect(await page.$('[aria-label="Hit by Pitch"]')).not.equals(null)
+      await click(page, 'Dismiss More')
+    } finally {
+      await page.close()
+    }
+  })
+  for (const action of [
+    'Hit by Pitch',
+    'Intentional Walk',
+    "Catcher's Interference",
+    'Put Batter on Base',
+    'Place a Runner (Tiebreaker)',
+    'Balk',
+    'Wild Pitch',
+    'Passed Ball',
+    'Batter Out — Other',
+    'Strike Three, Not Caught'
+  ])
+    it(`More executes ${action} locally`, async function () {
+      const { page, unexpected } = await open('/games/g1/score')
+      try {
+        if (['Balk', 'Wild Pitch', 'Passed Ball'].includes(action)) {
+          await click(page, 'Open scoring menu')
+          await click(page, 'Overrides')
+          await click(page, 'First base')
+          await click(page, 'Choose First base Player 6')
+          await click(page, 'Apply Override')
+        }
+        if (action === 'Wild Pitch' || action === 'Passed Ball')
+          await click(page, 'Ball')
+        if (action === 'Strike Three, Not Caught') {
+          await click(page, 'Called Strike')
+          await click(page, 'Called Strike')
+        }
+        await click(page, 'More')
+        await click(page, action)
+        if (action === 'Put Batter on Base') {
+          await click(page, 'Third')
+          await click(page, 'Confirm Placements')
+        }
+        if (action === 'Place a Runner (Tiebreaker)') {
+          await click(page, 'Placed runner')
+          await click(page, 'Choose Placed runner Player 6')
+          await click(page, 'Destination base')
+          await click(page, 'Choose Destination base Second')
+          await click(page, 'Place Runner')
+        }
+        if (
+          ['Wild Pitch', 'Passed Ball', 'Strike Three, Not Caught'].includes(
+            action
+          )
+        ) {
+          await page.focus('[role="application"]')
+          await page.keyboard.press('Space')
+          for (let i = 0; i < 8; i++) await page.keyboard.press('ArrowUp')
+          await page.keyboard.press('s')
+          await page.keyboard.press('Enter')
+        }
+        if (action === 'Batter Out — Other') {
+          await page.focus('[role="application"]')
+          await page.keyboard.press('Space')
+          await page.keyboard.press('ArrowUp')
+          await page.keyboard.press('Enter')
+          await click(page, 'Done')
+        }
+        const windowExpected = ![
+          'Place a Runner (Tiebreaker)',
+          'Wild Pitch',
+          'Passed Ball',
+          'Balk'
+        ].includes(action)
+        if (windowExpected) {
+          await page.waitForSelector('[aria-label="Finish at-bat"]', {
+            timeout: 30000
+          })
+          await click(page, 'Finish at-bat')
+          await page.waitForSelector('[aria-label*="Batter Player 2"]')
+        } else await waitReady(page)
+        const expected =
+          action === 'Hit by Pitch'
+            ? 1
+            : action === 'Strike Three, Not Caught'
+              ? 3
+              : ['Wild Pitch', 'Passed Ball'].includes(action)
+                ? 1
+                : 0
+        await page.waitForSelector(`[aria-label*="Pitches ${expected}"]`)
+        expect(unexpected).deep.equals([])
+      } finally {
+        await page.close()
+      }
+    })
   it('cancels an entire runner draft by button, outside or Escape and commits one edit', async function () {
     const { page } = await open('/games/g1/score')
     try {

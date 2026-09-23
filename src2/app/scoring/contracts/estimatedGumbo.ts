@@ -91,6 +91,9 @@ export const asEstimatedGumboPlay = asObject({
             origin: asNumber,
             destination: asNumber,
             reason: asString,
+            pitchReference: asOptional(
+              asObject({ atBatIndex: asSessionId, index: asSessionId })
+            ),
             isOut: asBoolean,
             forceOut: asBoolean,
             runScored: asBoolean,
