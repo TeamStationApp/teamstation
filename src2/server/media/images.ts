@@ -190,6 +190,13 @@ export async function putObject(options: {
 
 /** How long a stalled upload waits before it is given up on. */
 const IDLE_LIMIT_MS = 60_000
+/**
+ * A Space refuses a single PUT over 5 GB (`EntityTooLarge`). Files larger
+ * than that go as a multipart object instead.
+ */
+export const SINGLE_PUT_LIMIT_BYTES = 5 * 1024 * 1024 * 1024
+/** 100 MB parts: above S3's 5 MB minimum, well under its 5 GB maximum. */
+export const MULTIPART_PART_BYTES = 100 * 1024 * 1024
 
 /**
  * Writes a **file** into the Space, a block at a time.
@@ -206,6 +213,9 @@ const IDLE_LIMIT_MS = 60_000
  * anybody is reading it — and 138 MB here, nearly all of that the interpreter
  * itself. The length is sent up front, from `stat`, so the request is a
  * plain sized PUT: chunked encoding is what a presigned S3 signature refuses.
+ *
+ * Over 5 GB the same stream is cut into parts. A DigitalOcean Space will not
+ * accept one PUT that large, and the archive has camera files that size.
  */
 export async function putObjectFile(options: {
   space: SpaceSettings
@@ -214,9 +224,164 @@ export async function putObjectFile(options: {
   contentType: string
 }): Promise<void> {
   const { space, key, path, contentType } = options
-  const url = new URL(signedPutUrl(space, key))
   const info = await stat(path)
+  if (info.size > SINGLE_PUT_LIMIT_BYTES) {
+    await putObjectMultipart({
+      space,
+      key,
+      path,
+      contentType,
+      size: info.size,
+      partSize: MULTIPART_PART_BYTES
+    })
+    return
+  }
+  await streamPutFile({
+    space,
+    key,
+    path,
+    contentType,
+    start: 0,
+    end: info.size - 1
+  })
+}
 
+/**
+ * One object as an S3 multipart upload.
+ *
+ * Exported so a test can use a small part size without writing a 5 GB file.
+ * An incomplete upload is aborted: Spaces bills the parts until somebody
+ * says they will not be completed.
+ */
+export async function putObjectMultipart(options: {
+  space: SpaceSettings
+  key: string
+  path: string
+  contentType: string
+  size: number
+  partSize: number
+}): Promise<void> {
+  const { space, key, path, contentType, size, partSize } = options
+  const uploadId = await initiateMultipart(space, key)
+  const parts: Array<{ partNumber: number; etag: string }> = []
+  try {
+    let start = 0
+    let partNumber = 1
+    while (start < size) {
+      const end = Math.min(start + partSize, size) - 1
+      const etag = await streamPutFile({
+        space,
+        key,
+        path,
+        contentType,
+        start,
+        end,
+        query: { partNumber: String(partNumber), uploadId }
+      })
+      if (etag == null || etag === '') {
+        throw new Error(`Upload of ${key} part ${partNumber} returned no ETag`)
+      }
+      parts.push({ partNumber, etag })
+      start = end + 1
+      partNumber += 1
+    }
+    await completeMultipart(space, key, uploadId, parts)
+  } catch (error) {
+    await abortMultipart(space, key, uploadId).catch(() => undefined)
+    throw error
+  }
+}
+
+async function initiateMultipart(
+  space: SpaceSettings,
+  key: string
+): Promise<string> {
+  const response = await fetch(
+    signedSpaceUrl(space, key, 'POST', { uploads: '' }),
+    {
+      method: 'POST'
+    }
+  )
+  const body = await response.text().catch(() => '')
+  if (!response.ok) {
+    throw new Error(
+      `Upload of ${key} initiate answered ${response.status} ${body.slice(0, 200)}`
+    )
+  }
+  const id = /<UploadId>([^<]+)<\/UploadId>/.exec(body)?.[1]
+  if (id == null || id === '') {
+    throw new Error(`Upload of ${key} initiate returned no UploadId`)
+  }
+  return id
+}
+
+async function completeMultipart(
+  space: SpaceSettings,
+  key: string,
+  uploadId: string,
+  parts: Array<{ partNumber: number; etag: string }>
+): Promise<void> {
+  const xml =
+    '<CompleteMultipartUpload>' +
+    parts
+      .map(part => {
+        const etag = part.etag.includes('"') ? part.etag : `"${part.etag}"`
+        return `<Part><PartNumber>${part.partNumber}</PartNumber><ETag>${etag}</ETag></Part>`
+      })
+      .join('') +
+    '</CompleteMultipartUpload>'
+  const response = await fetch(
+    signedSpaceUrl(space, key, 'POST', { uploadId }),
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/xml' },
+      body: xml
+    }
+  )
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '')
+    throw new Error(
+      `Upload of ${key} complete answered ${response.status} ${detail.slice(0, 200)}`
+    )
+  }
+}
+
+async function abortMultipart(
+  space: SpaceSettings,
+  key: string,
+  uploadId: string
+): Promise<void> {
+  const response = await fetch(
+    signedSpaceUrl(space, key, 'DELETE', { uploadId }),
+    { method: 'DELETE' }
+  )
+  if (!response.ok && response.status !== 404) {
+    const detail = await response.text().catch(() => '')
+    throw new Error(
+      `Upload of ${key} abort answered ${response.status} ${detail.slice(0, 200)}`
+    )
+  }
+}
+
+/**
+ * Streams a byte range of a file as one sized PUT.
+ *
+ * `start`/`end` are inclusive. A single-PUT object is the whole file; a
+ * multipart part is a slice. The `ETag` is what CompleteMultipartUpload
+ * needs, and is ignored for a single PUT.
+ */
+async function streamPutFile(options: {
+  space: SpaceSettings
+  key: string
+  path: string
+  contentType: string
+  start: number
+  end: number
+  query?: Record<string, string>
+}): Promise<string | undefined> {
+  const { space, key, path, contentType, start, end, query } = options
+  const length = end - start + 1
+  const url = new URL(signedSpaceUrl(space, key, 'PUT', query))
   const send = url.protocol === 'https:' ? httpsRequest : httpRequest
   const request = send({
     protocol: url.protocol,
@@ -226,7 +391,7 @@ export async function putObjectFile(options: {
     path: `${url.pathname}${url.search}`,
     headers: {
       'content-type': contentType,
-      'content-length': String(info.size)
+      'content-length': String(length)
     }
   })
 
@@ -238,23 +403,31 @@ export async function putObjectFile(options: {
     request.destroy(new Error('The Space stopped answering'))
   })
 
-  const answered = new Promise<{ status: number; detail: string }>(
-    (resolve, reject) => {
-      request.once('response', response => {
-        response.setEncoding('utf8')
-        let detail = ''
-        response.on('data', (chunk: string) => {
-          // Enough of the refusal to read; the rest is XML boilerplate.
-          if (detail.length < 400) detail += chunk
-        })
-        response.on('end', () => {
-          resolve({ status: response.statusCode ?? 0, detail })
-        })
-        response.on('error', reject)
+  const answered = new Promise<{
+    status: number
+    detail: string
+    etag: string | undefined
+  }>((resolve, reject) => {
+    request.once('response', response => {
+      response.setEncoding('utf8')
+      let detail = ''
+      response.on('data', (chunk: string) => {
+        // Enough of the refusal to read; the rest is XML boilerplate.
+        if (detail.length < 400) detail += chunk
       })
-      request.once('error', reject)
-    }
-  )
+      response.on('end', () => {
+        const raw = response.headers.etag
+        const etag = Array.isArray(raw) ? raw[0] : raw
+        resolve({
+          status: response.statusCode ?? 0,
+          detail,
+          etag
+        })
+      })
+      response.on('error', reject)
+    })
+    request.once('error', reject)
+  })
 
   // The answer is listened for *while* the file goes out, not after it. A
   // Space that refuses — a stale signature, a bucket over quota — says so in
@@ -263,11 +436,12 @@ export async function putObjectFile(options: {
   // refusal already in hand. Measured: the 403 at 12 ms, the write giving up
   // at 6 s.
   let sendFailed: Error | undefined
-  const sending = pipeline(createReadStream(path), request).catch(
-    (error: unknown) => {
-      sendFailed = error instanceof Error ? error : new Error(String(error))
-    }
-  )
+  const sending = pipeline(
+    createReadStream(path, { start, end }),
+    request
+  ).catch((error: unknown) => {
+    sendFailed = error instanceof Error ? error : new Error(String(error))
+  })
   const result = await Promise.race([
     answered,
     sending.then(async () => await answered)
@@ -285,13 +459,23 @@ export async function putObjectFile(options: {
   // A yes before the last byte went out is not a yes to the whole file.
   await sending
   if (sendFailed != null) throw sendFailed
+  return result.etag
 }
 
-/** The one presigned `PUT` both uploaders write against. */
+/** The one presigned URL both uploaders write against. */
 function signedPutUrl(space: SpaceSettings, key: string): string {
+  return signedSpaceUrl(space, key, 'PUT')
+}
+
+function signedSpaceUrl(
+  space: SpaceSettings,
+  key: string,
+  method: 'GET' | 'PUT' | 'POST' | 'DELETE',
+  query?: Record<string, string>
+): string {
   if (!spaceConfigured(space)) throw new Error('No Space is configured')
   return presignGetUrl({
-    method: 'PUT',
+    method,
     endpoint: space.endpoint,
     region: space.region,
     bucket: space.bucket,
@@ -299,6 +483,7 @@ function signedPutUrl(space: SpaceSettings, key: string): string {
     secretAccessKey: space.secretAccessKey,
     key,
     expiresSec: 300,
+    query,
     pathStyle: space.pathStyle
   })
 }
