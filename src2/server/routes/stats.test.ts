@@ -10,15 +10,14 @@ import { migrateUp } from '../../migrate/runner'
 import type { Database } from '../db/database'
 import { statsRoutes } from './stats'
 
-/**
- * One player's figures, asked for the way the page asks for them.
- *
- * The filter is the thing a reader touches, so it is the thing under test: a
- * season, a team, a year, a career, and the answer a filter that matches
- * nothing gives. The rows are written straight into `game_player_stats`
- * because what is being tested is the reading of them: the counting belongs
- * to the stats engine that writes them.
- */
+// One player's figures, asked for the way the page asks for them.
+//
+// The filter is the thing a reader touches, so it is the thing under test: a
+// season, a team, a year, a career, and the answer a filter that matches
+// nothing gives. The rows are written straight into `game_player_stats`
+// because what is being tested is the reading of them: the counting belongs
+// to the stats engine that writes them.
+
 const adminUrl =
   process.env.GS_TEST_DATABASE_URL ?? 'postgres://localhost:5432/postgres'
 const scratchName = `gamestation_statsroute_${Date.now()}`

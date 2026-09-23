@@ -1,12 +1,12 @@
-/**
- * The figures on a screen, added up out of the stored stat lines.
- *
- * One row per player per game is written when the game's plays are taken in,
- * by walking its game stream. Everything here is arithmetic on those rows: a
- * box score is one game's, a season is a season's, a career is all of them.
- * There is no second way of working a figure out, so a box score and a career
- * total cannot disagree.
- */
+// The figures on a screen, added up out of the stored stat lines.
+//
+// One row per player per game is written by a stats engine outside these
+// routes, which recomputes a game's rows whenever its plays change. A game it
+// has written no rows for has no box score and adds nothing to a total.
+// Everything here is arithmetic on those rows: a box score is one game's, a
+// season is a season's, a career is all of them. There is no second way of
+// working a figure out, so a box score and a career total cannot disagree.
+
 export interface StatRow {
   userId: string
   teamId: string | null

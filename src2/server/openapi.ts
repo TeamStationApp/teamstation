@@ -536,8 +536,10 @@ export function openApiDocument(version: string): OpenApiDocument {
           summary: "A game's batting and pitching lines",
           description:
             'Added up from the stored stat lines, one row per player per ' +
-            'game, counted by walking the archived game stream. Earned runs ' +
-            'are included, which a play-by-play cannot produce.',
+            'game. A stats engine outside these routes writes them, and ' +
+            "recomputes a game's lines whenever its plays change. A game " +
+            'with no lines yet has no box score: `batting` and `pitching` are ' +
+            'empty.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam],
           responses: {

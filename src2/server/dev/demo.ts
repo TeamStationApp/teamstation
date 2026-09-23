@@ -4,15 +4,19 @@ import { makeDatabase } from '../db/database'
 import { rebuildAll } from '../rollups'
 import { serverConfig } from '../serverConfig'
 
-/**
- * Builds a league, a season, two teams, a roster, a game and a video, and
- * prints a token so the whole watch path can be walked with `curl`.
- *
- *   npm run demo
- *
- * It refuses to run in production: it writes fictional people and would be
- * nonsense in a real database.
- */
+// Builds a league, two seasons, two teams, a roster, a finished game in each
+// season and a video of the first, and prints tokens so the schedule, roster
+// and video routes can be walked with `curl`.
+//
+// No plays are stored: plays arrive through
+// `POST /api/v1/games/:gameId/events`. Until some are posted the games have no
+// highlights and the stat rollups are empty.
+//
+//   npm run demo
+//
+// It refuses to run in production: it writes fictional people and would be
+// nonsense in a real database.
+
 /** The home team's players, so the roster and box score have names. */
 const ROSTER = ['Robin Hale', 'Ash Berger', 'Sam Ortiz']
 
@@ -212,7 +216,10 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.message : error)
-  process.exit(1)
-})
+const entry = process.argv[1] ?? ''
+if (entry.endsWith('/demo.ts') || entry.endsWith('/demo.js')) {
+  main().catch((error: unknown) => {
+    console.error(error instanceof Error ? error.message : error)
+    process.exit(1)
+  })
+}

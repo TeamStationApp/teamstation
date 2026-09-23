@@ -226,7 +226,10 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.message : error)
-  process.exit(1)
-})
+const entry = process.argv[1] ?? ''
+if (entry.endsWith('/repairPeople.ts') || entry.endsWith('/repairPeople.js')) {
+  main().catch((error: unknown) => {
+    console.error(error instanceof Error ? error.message : error)
+    process.exit(1)
+  })
+}
