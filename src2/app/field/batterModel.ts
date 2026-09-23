@@ -9,7 +9,7 @@ export function createStartingPlayers(): FieldPlayer[] {
       label: 'B',
       name: 'Batter',
       displayName: 'Alex R.',
-      number: 14,
+      jersey: '14',
       team: 'runner',
       position: { x: -4, z: 0 },
       target: { x: -4, z: 0 },

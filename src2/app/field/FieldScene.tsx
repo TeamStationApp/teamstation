@@ -3,6 +3,7 @@ import { type ThreeEvent, useFrame, useThree } from '@react-three/fiber'
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import {
   type Mesh,
+  type MeshBasicMaterial,
   type Object3D,
   PerspectiveCamera,
   Plane,
@@ -58,6 +59,13 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
   } = props
   const { camera, size, gl, invalidate, scene } = useThree()
   const textures = useSurfaceTextures()
+  const ready = useRef(false)
+  useFrame(() => {
+    if (!ready.current) {
+      gl.domElement.setAttribute?.('data-field-ready', 'true')
+      ready.current = true
+    }
+  })
   useEffect(() => {
     invalidate()
   }, [invalidate, props.movementRevision])
@@ -131,6 +139,10 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     setPreview({ ...drag.current })
     invalidate()
   }
+  const eligible = players.filter(
+    player =>
+      props.selectableIds == null || props.selectableIds.includes(player.id)
+  )
   const down = (event: ThreeEvent<PointerEvent>): void => {
     if (
       arcMode !== 'off' ||
@@ -142,7 +154,7 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     event.stopPropagation()
     picker.ray.copy(event.ray)
     picker.camera = camera
-    const roots = players
+    const roots = eligible
       .map(player => scene.getObjectByName(`player-${player.id}`))
       .filter((object): object is Object3D => object != null)
     scene.updateMatrixWorld(true)
@@ -151,16 +163,16 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     let object: Object3D | undefined = hit?.object
     while (
       object != null &&
-      !players.some(player => object?.name === `player-${player.id}`)
+      !eligible.some(player => object?.name === `player-${player.id}`)
     )
       object = object.parent ?? undefined
-    let nearest: FieldPlayer | undefined = players.find(
+    let nearest: FieldPlayer | undefined = eligible.find(
       player => object?.name === `player-${player.id}`
     )
     // Also retain a small touch allowance when tapping beside a narrow limb.
     if (nearest == null) {
       let best = 20
-      for (const player of players) {
+      for (const player of eligible) {
         point.set(player.position.x, 5, player.position.z).project(camera)
         const distance = Math.hypot(
           ((point.x - event.pointer.x) * size.width) / 2,
@@ -172,7 +184,7 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
         }
       }
     }
-    const player = nearest ?? players.find(item => item.id === selected)
+    const player = nearest ?? eligible.find(item => item.id === selected)
     if (player == null) return
     if (event.ray.intersectPlane(ground, point) == null) {
       if (nearest == null) return
@@ -198,7 +210,10 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     if (drag.current?.pointer !== event.pointerId) return
     event.stopPropagation()
     const player = players.find(item => item.id === drag.current?.id)
-    if (player != null) finishMove(player, drag.current, cancel)
+    if (player != null) {
+      finishMove(player, drag.current, cancel)
+      if (!cancel) props.onPlayerPlacement?.(player.id, { ...player.target })
+    }
     drag.current = null
     setPreview(null)
     const capture = event.target as Element
@@ -328,6 +343,7 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
       />
       <Ballpark textures={textures} scoreboard={props.scoreboard} />
       <PlayerShadows players={players} />
+      {props.hintBatSide != null && <BatterBoxHint side={props.hintBatSide} />}
       {arc != null && <BallArc arc={arc} editing={arcMode === 'edit'} />}
       {preview != null && <MoveGuide draft={preview} />}
       <mesh
@@ -368,5 +384,30 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
         />
       ))}
     </>
+  )
+}
+
+function BatterBoxHint({ side }: { side: 'L' | 'R' }): React.ReactElement {
+  const material = useRef<MeshBasicMaterial>(null)
+  const invalidate = useThree(state => state.invalidate)
+  useFrame(({ clock }) => {
+    if (material.current != null)
+      material.current.opacity = 0.45 + Math.sin(clock.elapsedTime * 5) * 0.25
+    invalidate()
+  })
+  return (
+    <mesh
+      name="switch-hitter-destination"
+      position={[side === 'L' ? 4 : -4, TERRAIN.players + 0.1, 0]}
+      rotation={[-Math.PI / 2, 0, 0]}
+    >
+      <ringGeometry args={[1.7, 2.3, 32]} />
+      <meshBasicMaterial
+        ref={material}
+        color="#ffe38d"
+        transparent
+        depthWrite={false}
+      />
+    </mesh>
   )
 }

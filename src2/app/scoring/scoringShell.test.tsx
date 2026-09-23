@@ -5,7 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 
 import { GameStationClient } from '../../common/api'
 import { App, stackFor } from '../App'
-import { BaseballScreen } from '../field/BaseballScreen'
+import { StandaloneField } from '../field/StandaloneField'
 import { parseRoute } from '../navigation/routes'
 import {
   currentRoute,
@@ -114,8 +114,8 @@ describe('scoring shell and exit', function () {
     await click('Ball')
     expect(document.querySelector('[aria-label="Undo Ball"]')).not.equals(null)
     await click('Undo Ball')
-    await click('Open field menu')
-    await click('Exit field')
+    await click('Open scoring menu')
+    await click('Exit Current Game')
     expect(currentRoute().name).equals('game')
   })
   it('has a visible failure exit and ignores a late response after unmount', async function () {
@@ -160,11 +160,11 @@ describe('scoring shell and exit', function () {
       const unload = new window.Event('beforeunload', { cancelable: true })
       window.dispatchEvent(unload)
       expect(unload.defaultPrevented).equals(true)
-      await click('Open field menu')
-      await click('Exit field')
+      await click('Open scoring menu')
+      await click('Exit Current Game')
       expect(exits).equals(0)
       accepts = true
-      await click('Exit field')
+      await click('Exit Current Game')
       expect(exits).equals(1)
       await click('Undo Ball')
       const cleanUnload = new window.Event('beforeunload', { cancelable: true })
@@ -177,7 +177,7 @@ describe('scoring shell and exit', function () {
   it('retains the standalone field controls and repeated undo', async function () {
     let exits = 0
     await render(
-      <BaseballScreen
+      <StandaloneField
         onExit={() => {
           exits++
         }}

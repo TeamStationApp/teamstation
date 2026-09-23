@@ -30,7 +30,10 @@ export function beginMove(
     offset: grabbed
       ? { x: player.position.x - ground.x, z: player.position.z - ground.z }
       : { x: 0, z: 0 },
-    next: player.team === 'runner' ? nextBase(player) : null,
+    next:
+      player.team === 'runner' && player.batting !== true
+        ? nextBase(player)
+        : null,
     commit: false
   }
 }

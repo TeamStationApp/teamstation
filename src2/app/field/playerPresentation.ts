@@ -8,7 +8,9 @@ export const LABEL_WIDTH = 56
 export const LABEL_HEIGHT = 14
 export const LABEL_GAP = 0.3048 // One real-world foot, in game metres.
 export function hasPlayerLabel(player: FieldPlayer): boolean {
-  return player.team !== 'runner' && player.id !== 'P'
+  return (
+    player.playerId != null || (player.team !== 'runner' && player.id !== 'P')
+  )
 }
 /** Screen-relative left/right/below placement remains useful in every camera view.
  * Sprite anchors keep the box outside the player instead of centred on the head. */
@@ -20,11 +22,11 @@ export function placePlayerLabel(
 ): void {
   const right = new Vector3(1, 0, 0).applyQuaternion(camera.quaternion)
   const up = new Vector3(0, 1, 0).applyQuaternion(camera.quaternion)
-  if (player.id === 'C') {
+  if (player.label === 'C') {
     label.center.set(0.5, 1)
     label.position.copy(up).multiplyScalar(-LABEL_GAP)
-  } else if (player.id === '3B' || player.id === '1B') {
-    const side = player.id === '3B' ? -1 : 1
+  } else if (player.label === '3B' || player.label === '1B') {
+    const side = player.label === '3B' ? -1 : 1
     label.center.set(side === -1 ? 1 : 0, 0.5)
     label.position
       .copy(right)

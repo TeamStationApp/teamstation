@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
+import { createStartingPlayers } from './batterModel'
 import {
   cameraDragValue,
   fieldViewportHeight,
@@ -35,6 +36,15 @@ describe('runner planning and viewport controls', function () {
       expect(runner.position).deep.equals(next)
       expect(nextBase(runner)).deep.equals(BASES[(index - 6) % 4])
     }
+  })
+  it('lets a batter cross between boxes without snapping toward first', function () {
+    const batter = createStartingPlayers().find(
+      player => player.batting === true
+    )!
+    const draft = beginMove(batter, 1, batter.position)
+    previewMove(draft, { x: 4, z: 0 })
+    finishMove(batter, draft)
+    expect(batter.target).deep.equals({ x: 4, z: 0 })
   })
   it('uses a width-based 4:5 viewport with a fixed cap and drag zoom in both directions', function () {
     expect(fieldViewportHeight(360)).equals(450)

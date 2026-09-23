@@ -8,7 +8,9 @@ export interface FieldPlayer {
   label: string
   name: string
   displayName: string
-  number: number
+  jersey: string
+  playerId?: number
+  batSide?: 'R' | 'L'
   team: 'defense' | 'runner'
   position: GroundPoint
   target: GroundPoint
@@ -61,7 +63,7 @@ export function createPlayers(): FieldPlayer[] {
       'Leo T.',
       'Max P.'
     ][index],
-    number: [18, 2, 24, 7, 12, 5, 21, 9, 33, 14, 6, 27][index],
+    jersey: String([18, 2, 24, 7, 12, 5, 21, 9, 33, 14, 6, 27][index]),
     team: index < 9 ? 'defense' : 'runner',
     position: { x, z },
     target: { x, z },
