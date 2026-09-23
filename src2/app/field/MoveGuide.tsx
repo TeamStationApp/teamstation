@@ -12,7 +12,8 @@ export function MoveGuide({ draft }: { draft: MoveDraft }): React.ReactElement {
     TERRAIN.players + 0.08,
     draft.origin.z
   )
-  const to = new Vector3(draft.goal.x, from.y, draft.goal.z)
+  const destination = draft.next ?? draft.goal
+  const to = new Vector3(destination.x, from.y, destination.z)
   const direction = to.clone().sub(from)
   const length = direction.length()
   const rotation = new Quaternion().setFromUnitVectors(

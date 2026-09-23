@@ -118,8 +118,9 @@ export function FieldCanvas(props: FieldCanvasProps): React.ReactElement {
       }}
       tabIndex={0}
       role="application"
-      aria-label="Baseball field. Brackets select a player, arrows move, Enter places."
+      aria-label="Baseball field. Brackets focus a player, Space grabs, arrows move, S or O chooses runner Safe or Out, Enter releases, Escape cancels."
       onKeyDown={event => {
+        if (event.key === 'Escape') cancelGesture.current?.()
         if (fieldKey(props, event.key)) event.preventDefault()
       }}
       ref={node => {

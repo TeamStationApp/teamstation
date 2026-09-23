@@ -10,7 +10,7 @@ import { ActivityIndicator, Pressable, Text, View } from 'react-native'
 
 import type { GameStationClient } from '../../common/api'
 import { BaseballScreen } from '../field/BaseballScreen'
-import { BASES, type FieldPlayer } from '../field/fieldModel'
+import type { FieldPlayer } from '../field/fieldModel'
 import { useFieldSurface } from '../field/useFieldSurface'
 import { useTheme } from '../theme/ThemeContext'
 import { allowedAngle, trajectoryLabel } from './battedBall'
@@ -18,6 +18,8 @@ import { OutcomePicker } from './OutcomePicker'
 import { OverridesEditor } from './OverridesEditor'
 import { RosterEditor } from './RosterEditor'
 import { RunnerControls } from './RunnerControls'
+import type { RunnerDragView } from './runnerDrag'
+import { RunnerDragTargets } from './RunnerDragTargets'
 import { initialScoringState, scoringReducer } from './scoringMachine'
 import { scoringFieldPlayers } from './scoringMotion'
 import { scoringPreferences } from './scoringPreferences'
@@ -130,11 +132,6 @@ function ScoringSession(props: {
     props.initial,
     initialScoringState
   )
-  const [runnerAnchor, setRunnerAnchor] = useState<{
-    x: number
-    y: number
-  } | null>(null)
-  const [heldRunner, setHeldRunner] = useState<string | null>(null)
   const [gestureActive, setGestureActive] = useState(false)
   const [outcomeMenu, setOutcomeMenu] = useState(false)
   const [angle, setAngle] = useState(45)
@@ -207,6 +204,7 @@ function ScoringSession(props: {
   useEffect(() => {
     setAngle(state.pendingPlay?.angle ?? 45)
   }, [state.pendingPlay?.angle, state.generation])
+  const [runnerDrag, setRunnerDrag] = useState<RunnerDragView | null>(null)
   const [selected, setSelected] = useState('')
   const switchable = state.phase === 'ready' && canSwitchBatter(session)
   const batterId = line.offense.batter?.id
@@ -222,7 +220,6 @@ function ScoringSession(props: {
       .then(async preferences => {
         if (!live || !preferences.help || preferences.shown >= 3) return
         shownAppearances.current.add(helpKey)
-        setSelected(`offense-${batterId}`)
         setHint(true)
         await scoringPreferences.write(props.userId, {
           ...preferences,
@@ -294,30 +291,26 @@ function ScoringSession(props: {
       field={{
         players,
         onGestureActive: setGesture,
-        onRunnerHold: (id, anchor) => {
-          setHeldRunner(id)
-          setRunnerAnchor(anchor)
+        onRunnerDrag: setRunnerDrag,
+        runnerSafeError: (id, to) => {
+          const player = players.find(item => item.id === id)
+          if (player?.playerId == null) return 'Runner unavailable'
+          const occupant = to < 4 ? baseIds(session)[to - 1] : null
+          return occupant != null && occupant !== player.playerId
+            ? 'Destination base is occupied'
+            : undefined
         },
-        onRunnerCancel: () => {
-          setHeldRunner(null)
-        },
-        onRunnerPlacement: (id, point, anchor, generation) => {
-          setHeldRunner(null)
+        onRunnerDrop: (id, to, decision, generation) => {
           if (generation !== state.generation) return
-          const player = players.find(player => player.id === id)
+          const player = players.find(item => item.id === id)
           if (player?.playerId == null) return
-          let base = 0
-          let distance = Infinity
-          BASES.forEach((location, index) => {
-            const next = Math.hypot(location.x - point.x, location.z - point.z)
-            if (next < distance) {
-              distance = next
-              base = index
-            }
+          dispatch({
+            type: 'RUNNER_DROP',
+            id: player.playerId,
+            to,
+            decision,
+            generation
           })
-          if (base === 0 && baseIds(session).includes(player.playerId)) base = 4
-          setRunnerAnchor(anchor)
-          dispatch({ type: 'RUNNER_PROPOSE', id: player.playerId, to: base })
         },
         onMovementComplete: (id, generation) => {
           dispatch({ type: 'MOTION_DONE', id, generation })
@@ -476,37 +469,10 @@ function ScoringSession(props: {
       summary={summary}
       accessibilitySummary={`${summary} · Batter ${line.offense.batter?.fullName ?? 'waiting'} ${session.liveData.plays.currentPlay?.matchup.batSide.code === 'L' ? 'left handed' : 'right handed'} · Pitcher ${line.defense.P?.fullName ?? 'unassigned'}`}
     >
+      <RunnerDragTargets view={runnerDrag} />
       {!menu && sheet == null && (
-        <RunnerControls
-          state={state}
-          anchor={runnerAnchor}
-          dispatch={dispatch}
-        />
+        <RunnerControls state={state} anchor={null} dispatch={dispatch} />
       )}
-      {heldRunner != null &&
-        runnerAnchor != null &&
-        state.runnerAction == null && (
-          <View
-            pointerEvents="none"
-            style={{
-              position: 'absolute',
-              left: Math.max(8, runnerAnchor.x - 35),
-              top: Math.max(90, runnerAnchor.y - 60),
-              backgroundColor: theme.scoringOutColor,
-              padding: 12,
-              borderRadius: 8
-            }}
-          >
-            <Text
-              style={{
-                color: theme.primaryTextColor,
-                fontFamily: theme.regularTextFont
-              }}
-            >
-              Out
-            </Text>
-          </View>
-        )}
       {menu && (
         <>
           <Pressable

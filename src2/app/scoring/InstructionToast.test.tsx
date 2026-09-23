@@ -7,6 +7,8 @@ import { gsBallpark } from '../theme/gsBallpark'
 import { gsDark } from '../theme/gsDark'
 import { changeTheme, ThemeProvider } from '../theme/ThemeContext'
 import { CORRECTION_INSTRUCTION, InstructionToast } from './InstructionToast'
+import { runnerDragView } from './runnerDrag'
+import { RunnerDragTargets } from './RunnerDragTargets'
 let root: Root | undefined
 let host: HTMLDivElement
 async function render(element: React.ReactElement): Promise<void> {
@@ -26,6 +28,31 @@ afterEach(async () => {
   })
   root = undefined
   host?.remove()
+})
+describe('runner drag targets', function () {
+  it('shows only two plain targets with idle and hover colors', async function () {
+    const view = runnerDragView(
+      'r',
+      1,
+      { x: 0, z: -40 },
+      () => ({ x: 200, y: 300 }),
+      390,
+      700
+    )
+    for (const hovered of [undefined, 'safe', 'out'] as const) {
+      await render(<RunnerDragTargets view={{ ...view, hovered }} />)
+      expect(host.textContent).equals('SafeOut')
+      const safe = host.querySelector<HTMLElement>(
+        '[aria-label="Safe drag target"]'
+      )!
+      expect(safe.style.backgroundColor).equals(
+        hovered === 'safe' ? 'rgb(36, 113, 61)' : 'rgb(169, 215, 181)'
+      )
+      expect((host.firstChild as HTMLElement).style.backgroundColor).equals('')
+    }
+    await render(<RunnerDragTargets view={null} />)
+    expect(host.textContent).equals('')
+  })
 })
 describe('scoring instruction and completion toast', function () {
   it('uses one clock for the numeric countdown and left-anchored shrinking line', async function () {

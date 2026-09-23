@@ -65,5 +65,9 @@ export function finishMove(
   cancel = false
 ): void {
   player.dragging = false
+  if (cancel) {
+    player.position = { ...draft.origin }
+    player.target = { ...draft.origin }
+  }
   if (!cancel) player.target = { ...(draft.commit ? draft.goal : draft.origin) }
 }
