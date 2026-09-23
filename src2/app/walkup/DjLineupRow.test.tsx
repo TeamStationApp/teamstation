@@ -205,7 +205,7 @@ describe('the DJ Game button (U30)', function () {
     return made
   }
 
-  it('comes right after Score Game, for a songkeeper with music', async function () {
+  it('comes after Score Game, for a songkeeper with music', async function () {
     let opened = 0
     await render(
       <GameScreen
@@ -226,8 +226,9 @@ describe('the DJ Game button (U30)', function () {
       all.indexOf('Continue Scoring')
     )
     expect(score).greaterThan(-1)
+    expect(all.indexOf('Videos')).lessThan(all.indexOf('Box score'))
+    expect(all.indexOf('Box score')).lessThan(score)
     expect(score).lessThan(all.indexOf('DJ Game'))
-    expect(all.indexOf('DJ Game')).lessThan(all.indexOf('Box score'))
     await act(async () => {
       dj?.click()
     })
