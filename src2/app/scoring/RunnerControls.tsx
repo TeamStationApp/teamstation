@@ -25,7 +25,7 @@ export function RunnerControls({
       <ScoringSheet
         title={action?.decision === 'safe' ? 'Runner advance' : 'Runner out'}
         onClose={() => {
-          dispatch({ type: 'UNDO' })
+          dispatch({ type: 'RUNNER_CANCEL' })
         }}
       >
         {runnerReasons(state).map(reason => (

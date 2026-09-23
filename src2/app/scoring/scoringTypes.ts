@@ -131,6 +131,9 @@ export interface CorrectionWindow {
   revision: number
 }
 export interface ScoringSnapshot {
+  activeGesture?: boolean
+  runnerDraft?: { checkpoint: ScoringSnapshot; historyLength: number }
+
   motions: MotionCommand[]
   runnerAction: RunnerAction | null
   correctionWindow: CorrectionWindow | null
@@ -153,6 +156,7 @@ export interface ScoringState extends ScoringSnapshot {
   past: HistoryEntry[]
 }
 export type ScoringEvent =
+  | { type: 'GESTURE'; active: boolean }
   | { type: 'MOTION_DONE'; id: string; generation: number }
   | {
       type: 'TIMER_TICK'
@@ -172,6 +176,7 @@ export type ScoringEvent =
   | { type: 'RUNNER_DECIDE'; decision: 'safe' | 'out' }
   | { type: 'RUNNER_REASON'; reason: string }
   | { type: 'CANCEL_RUNNER' }
+  | { type: 'RUNNER_CANCEL' }
   | { type: 'THROWER'; id: number; point: GroundPoint; generation: number }
   | { type: 'DEFENDER'; id?: number; point?: GroundPoint; generation: number }
   | { type: 'OUTCOME'; outcome: Outcome }

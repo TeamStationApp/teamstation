@@ -178,6 +178,7 @@ function ScoringSession(props: {
     (active: boolean) => {
       if (active) pauseClock()
       setGestureActive(active)
+      dispatch({ type: 'GESTURE', active })
     },
     [pauseClock]
   )

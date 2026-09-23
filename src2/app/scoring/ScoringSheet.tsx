@@ -2,6 +2,7 @@ import React from 'react'
 import { Modal, Pressable, ScrollView, Text, View } from 'react-native'
 
 import { useTheme } from '../theme/ThemeContext'
+import { useMenuEscape } from './useMenuEscape'
 
 export function ScoringButton({
   label,
@@ -73,6 +74,7 @@ export function ScoringSheet({
   children: React.ReactNode
 }): React.ReactElement {
   const theme = useTheme()
+  useMenuEscape(true, onClose, '')
   return (
     <Modal transparent animationType="slide" onRequestClose={onClose}>
       <View style={{ flex: 1, justifyContent: 'flex-end' }}>
