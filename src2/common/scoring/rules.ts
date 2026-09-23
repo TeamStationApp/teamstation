@@ -425,3 +425,45 @@ export function closesAutomatically(state: GameState): boolean {
       state.liveData.linescore.outs >= 3)
   )
 }
+
+/** The hit movement that left this runner with an unforced one-base offer. */
+export function hitOfferMovement(
+  state: GameState,
+  runnerId: number
+): Movement | undefined {
+  const move = state.pending?.movements.find(m => m.playerId === runnerId)
+  if (move?.offeredTo == null || move.force) return undefined
+  return move
+}
+
+/**
+ * A one-base forward drop re-takes the unforced hit offer after a retreat
+ * (second → third again on a single).
+ */
+export function completesHitOffer(
+  state: GameState,
+  runnerId: number,
+  from: number,
+  to: number
+): boolean {
+  const move = hitOfferMovement(state, runnerId)
+  if (move == null) return false
+  const start = move.start ?? move.from
+  return to === from + 1 && to === move.offeredTo && from === start
+}
+
+/**
+ * A one-base backward drop returns an auto-advanced unforced runner to the
+ * start base on this play (third → second on a single with first open).
+ */
+export function undoesHitOffer(
+  state: GameState,
+  runnerId: number,
+  from: number,
+  to: number
+): boolean {
+  const move = hitOfferMovement(state, runnerId)
+  if (move == null) return false
+  const start = move.start ?? move.from
+  return to === from - 1 && to === start && from === move.offeredTo
+}
