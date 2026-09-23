@@ -7,6 +7,10 @@
  * something new adds it here rather than styling it in place, which is the only
  * thing that keeps the next screen looking like the last one.
  */
+export {
+  AnglePickerModal,
+  type AnglePickerModalProps
+} from './AnglePickerModal'
 export { AppHeader, type AppHeaderProps } from './AppHeader'
 export { AppNav, NAV_CLEARANCE_REM, NAV_TABS, type NavTabId } from './AppNav'
 export { Badge, type BadgeTone } from './Badge'
