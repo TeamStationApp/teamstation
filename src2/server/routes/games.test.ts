@@ -20,7 +20,7 @@ import { jsonBody } from '../jsonBody'
 import type { MediaContext } from '../media/mediaContext'
 import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
-import { seasonRoutes } from './seasons'
+import { eventListRoutes } from './eventList'
 import { teamRoutes } from './teams'
 
 /**
@@ -268,7 +268,7 @@ describe('every game somebody can see', function () {
     const app = express()
     app.use(jsonBody)
     app.use(withActor(db))
-    app.use('/api/v1', seasonRoutes(db, media))
+    app.use('/api/v1', eventListRoutes(db, media))
     app.use(errorHandler)
     server = app.listen(0, '127.0.0.1')
     await new Promise<void>(resolve => server?.once('listening', resolve))
@@ -290,7 +290,7 @@ describe('every game somebody can see', function () {
     token: string | null,
     query = ''
   ): Promise<{ status: number; ids: string[]; body: unknown }> {
-    const response = await fetch(`${base}/games${query}`, {
+    const response = await fetch(`${base}/events${query}`, {
       headers: token == null ? {} : { authorization: `Bearer ${token}` }
     })
     const body = await response.json().catch(() => null)
@@ -328,7 +328,7 @@ describe('every game somebody can see', function () {
   })
 
   it('holds a season’s schedule among its games', async function () {
-    const response = await fetch(`${base}/seasons/${spring}/games`, {
+    const response = await fetch(`${base}/events?season=${spring}`, {
       headers: { authorization: `Bearer ${MEMBER}` }
     })
     const schedule = (await response.json()) as Array<{ seasonId: string }>
@@ -401,21 +401,26 @@ describe('every game somebody can see', function () {
   })
 
   it('finds the newest played game each person can see', async function () {
-    const recent = async (token: string): Promise<unknown> =>
+    const recent = async (
+      token: string
+    ): Promise<Array<{ id: string; homeScore?: number | null }>> =>
       await (
-        await fetch(`${base}/games/recent`, {
+        await fetch(`${base}/events?played=1&limit=1`, {
           headers: { authorization: `Bearer ${token}` }
         })
       ).json()
-    expect(await recent(ADMIN)).deep.include({ id: crowsGame, homeScore: 3 })
+    expect((await recent(ADMIN))[0]).deep.include({
+      id: crowsGame,
+      homeScore: 3
+    })
     // The newer spring and loose games have no score.
-    expect(await recent(MEMBER)).deep.include({
+    expect((await recent(MEMBER))[0]).deep.include({
       id: olderGame,
       homeTeamName: 'Rivals',
       awayScore: 5
     })
-    expect(await recent(TEAMMATE)).deep.include({ id: owlsGame })
-    expect(await recent(LONER)).equals(null)
+    expect((await recent(TEAMMATE))[0]).deep.include({ id: owlsGame })
+    expect(await recent(LONER)).deep.equals([])
   })
 })
 
