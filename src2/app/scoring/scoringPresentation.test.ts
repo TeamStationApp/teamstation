@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
+import { BASES } from '../field/fieldModel'
 import { foulPoint, samplePitch } from '../field/playAnimationModel'
 import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
@@ -166,4 +167,183 @@ describe('hit presentation coordination', function () {
       expect(scoringReducer(undone, done)).equals(undone)
       expect(scoringReducer(state, done).presentation).equals(null)
     })
+})
+
+describe('defensive presentation barriers', function () {
+  for (const caught of [true, false])
+    for (const home of [false, true])
+      it(`keeps ${home ? 'home' : 'away'} batter out of dugout until ${caught ? 'catch' : 'throw'}`, function () {
+        let state = initial()
+        if (home) state.session.liveData.linescore.isTopInning = false
+        state = scoringReducer(state, {
+          type: 'OUTCOME',
+          outcome: caught ? 'Ball Caught' : 'Throw Out'
+        })
+        state = scoringReducer(state, {
+          type: 'FIELDER',
+          id: 10,
+          point: { x: 15, z: -40 },
+          generation: 0
+        })
+        state = scoringReducer(state, {
+          type: 'TRAJECTORY',
+          angle: 45,
+          generation: 0
+        })
+        const hit = state.presentation!
+        if (hit.kind !== 'hit') throw new Error('Expected hit')
+        state = scoringReducer(state, {
+          type: 'PRESENTATION_CONTACT',
+          id: hit.id,
+          generation: 0
+        })
+        const batter = scoringFieldPlayers(state).find(
+          p => p.playerId === hit.batter
+        )!
+        expect(batter.batting).equals(false)
+        expect(batter.motion).equals(undefined)
+        state = scoringReducer(state, {
+          type: 'PRESENTATION_DONE',
+          id: hit.id,
+          generation: 0,
+          stage: 'flight'
+        })
+        expect(state.pendingPlay!.batterPoint!.x).greaterThan(0)
+        if (!caught) {
+          expect(state.phase).equals('chooseDefender')
+          state = scoringReducer(state, {
+            type: 'DEFENDER',
+            id: 12,
+            point: { x: 19, z: -19 },
+            generation: 0
+          })
+          const transfer = state.presentation!
+          if (transfer.kind !== 'throw') throw new Error('Expected throw')
+          expect(transfer.unassisted).equals(false)
+          expect(
+            scoringFieldPlayers(state).every(p => p.motion == null)
+          ).equals(true)
+          const clock = presentationRuntime()
+          expect(
+            stepPresentation(clock, transfer, 900, false).cues
+          ).deep.equals(['swish', 'pop'])
+          state = scoringReducer(state, {
+            type: 'PRESENTATION_DONE',
+            id: transfer.id,
+            generation: 0,
+            stage: 'transfer'
+          })
+        }
+        const motion = state.motions.find(m => m.playerId === hit.batter)!
+        expect(motion.waypoints[0]).deep.equals(state.pendingPlay!.batterPoint)
+        expect(motion.waypoints.at(-1)!.x > 0).equals(home)
+        expect(state.session.liveData.linescore.outs).equals(1)
+      })
+  for (const completed of [false, true])
+    it(`continues to first and captures the visible runner when receiver is chosen ${completed ? 'after' : 'during'} approach`, function () {
+      let state = initial()
+      state = scoringReducer(state, { type: 'OUTCOME', outcome: 'Throw Out' })
+      state = scoringReducer(state, {
+        type: 'FIELDER',
+        id: 10,
+        point: { x: 0, z: -20 },
+        generation: 0
+      })
+      state = scoringReducer(state, {
+        type: 'TRAJECTORY',
+        angle: 45,
+        generation: 0
+      })
+      const hit = state.presentation!
+      state = scoringReducer(state, {
+        type: 'PRESENTATION_DONE',
+        id: hit.id,
+        generation: 0,
+        stage: hit.stage
+      })
+      const approach = state.motions.find(m => m.purpose === 'approachFirst')!
+      const end = approach.waypoints.at(-1)!
+      expect(Math.hypot(end.x - BASES[1].x, end.z - BASES[1].z)).lessThan(1.5)
+      expect(
+        scoringFieldPlayers(state).find(p => p.playerId === approach.playerId)!
+          .motion
+      ).not.equals(undefined)
+      if (completed)
+        state = scoringReducer(state, {
+          type: 'MOTION_DONE',
+          id: approach.id,
+          generation: 0
+        })
+      expect(state.phase).equals('chooseDefender')
+      const visible = completed ? end : { x: 12, z: -12 }
+      if (completed)
+        expect(
+          scoringFieldPlayers(state).find(
+            p => p.playerId === approach.playerId
+          )!.position
+        ).deep.equals(end)
+      state = scoringReducer(state, {
+        type: 'DEFENDER',
+        id: 12,
+        runnerPoint: visible,
+        generation: 0
+      })
+      expect(state.presentation!.kind).equals('throw')
+      expect(
+        scoringFieldPlayers(state).find(p => p.playerId === approach.playerId)!
+          .position
+      ).deep.equals(visible)
+      expect(
+        state.motions.find(m => m.playerId === approach.playerId)!.waypoints[0]
+      ).deep.equals(visible)
+      expect(state.motions.some(m => m.purpose === 'approachFirst')).equals(
+        false
+      )
+    })
+  it('uses an unassisted touch without a self-throw and invalidates it on undo', function () {
+    let state = initial()
+    state = scoringReducer(state, { type: 'OUTCOME', outcome: 'Throw Out' })
+    state = scoringReducer(state, {
+      type: 'FIELDER',
+      id: 10,
+      point: { x: 15, z: -40 },
+      generation: 0
+    })
+    state = scoringReducer(state, {
+      type: 'TRAJECTORY',
+      angle: 0,
+      generation: 0
+    })
+    const hit = state.presentation!
+    state = scoringReducer(state, {
+      type: 'PRESENTATION_DONE',
+      id: hit.id,
+      generation: 0,
+      stage: hit.stage
+    })
+    state = scoringReducer(state, { type: 'DEFENDER', generation: 0 })
+    const seq = state.presentation!
+    if (seq.kind !== 'throw') throw new Error('Expected throw')
+    expect(seq.unassisted).equals(true)
+    expect(
+      state.session.liveData.plays.currentPlay!.source.gamestation.runnerActions!.at(
+        -1
+      )!.defenderLocation
+    ).deep.equals({ x: seq.to.x, z: seq.to.z })
+    const clock = presentationRuntime()
+    expect(
+      stepPresentation(clock, seq, seq.durationMs, false).cues
+    ).deep.equals(['pop'])
+    const undone = scoringReducer(state, { type: 'UNDO' })
+    expect(undone.presentation).equals(null)
+    expect(undone.session.liveData.linescore.outs).equals(0)
+    expect(
+      scoringReducer(undone, {
+        type: 'PRESENTATION_DONE',
+        id: seq.id,
+        generation: 0,
+        stage: seq.stage
+      })
+    ).equals(undone)
+  })
 })

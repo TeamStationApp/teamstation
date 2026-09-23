@@ -50,6 +50,7 @@ export interface FieldCanvasProps {
   ) => void
   onRunnerCancel?: () => void
   onMovementComplete?: (id: string, generation: number) => void
+  registerKeyboard?: (handler: ((key: string) => boolean) | null) => void
   registerInterruption?: (cancel: (() => void) | null) => void
   interaction?: FieldInteractionPolicy
   onFieldPlacement?: (event: FieldPlacement) => void

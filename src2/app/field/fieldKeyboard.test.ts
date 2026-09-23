@@ -1,9 +1,16 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { fieldKey } from './fieldKeyboard'
+import { fieldKey as rawFieldKey } from './fieldKeyboard'
 import { createPlayers } from './fieldModel'
 import type { FieldCanvasProps } from './fieldTypes'
+const projection = {
+  project: () => ({ x: 420, y: 380 }),
+  width: 1200,
+  height: 900
+}
+const fieldKey = (props: FieldCanvasProps, key: string): boolean =>
+  rawFieldKey(props, key, projection)
 describe('field keyboard policy', function () {
   it('uses allowed players for selection and placement, cancels previews and ignores blocked keys', function () {
     const calls: string[] = []
@@ -73,6 +80,13 @@ describe('field keyboard policy', function () {
         selectableIds: [runner.id],
         runnerIds: [runner.id],
         gestures: ['place']
+      },
+      onRunnerDrag: view => {
+        if (view != null) {
+          expect(view.safe.x).equals(336)
+          expect(view.safe.y).equals(322)
+          expect(view.keyboard).equals(true)
+        }
       },
       onRunnerDrop: (...args) => {
         calls.push(args)

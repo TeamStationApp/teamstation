@@ -1,6 +1,7 @@
 import { BALL_CONTACT, type BallArcState } from '../field/ballArcModel'
-import type { FieldPlayer, GroundPoint } from '../field/fieldModel'
+import { BASES, type FieldPlayer, type GroundPoint } from '../field/fieldModel'
 import { fieldPlayersFor } from './fieldAdapter'
+import { scoringFieldPlayers } from './scoringMotion'
 import type { ScoringState } from './scoringTypes'
 export type PitchKind = 'ball' | 'called' | 'swing' | 'foul'
 export interface Point3 extends GroundPoint {
@@ -80,7 +81,93 @@ export interface HitSequence {
   batSide: 'R' | 'L'
   out: boolean
 }
-export type PresentationSequence = PitchSequence | HitSequence
+export interface ThrowSequence {
+  id: string
+  generation: number
+  kind: 'throw'
+  stage: 'transfer'
+  durationMs: number
+  players: FieldPlayer[]
+  thrower: number
+  receiver: number
+  runner: number
+  from: Point3
+  to: Point3
+  unassisted: boolean
+}
+export type PresentationSequence = PitchSequence | HitSequence | ThrowSequence
+export function outBatterPoint(
+  sequence: HitSequence,
+  elapsedMs = sequence.durationMs
+): GroundPoint {
+  const start = sequence.players.find(
+    p => p.playerId === sequence.batter
+  )!.position
+  const end = BASES[1]
+  const distance = Math.hypot(end.x - start.x, end.z - start.z)
+  const t = Math.max(
+    0,
+    Math.min(0.96, (((elapsedMs - sequence.contactMs) / 1000) * 8) / distance)
+  )
+  return {
+    x: start.x + (end.x - start.x) * t,
+    z: start.z + (end.z - start.z) * t
+  }
+}
+export function throwPresentation(
+  state: ScoringState,
+  receiver: number,
+  point?: GroundPoint
+): ThrowSequence {
+  const action = state.runnerAction!
+  const players = scoringFieldPlayers(state).map(player => ({
+    ...player,
+    motion: undefined,
+    suppressed: false
+  }))
+  const thrower = action.thrower!
+  const from =
+    action.throwerPoint ??
+    state.pendingPlay?.location ??
+    players.find(p => p.playerId === thrower)!.position
+  const to = point ?? BASES[action.to % 4]
+  const runner = players.find(p => p.playerId === action.playerId)!
+  const runnerPoint =
+    action.runnerPoint ??
+    (action.purpose === 'batterRetirement' &&
+    state.pendingPlay?.batterPoint != null
+      ? state.pendingPlay.batterPoint
+      : runner.position)
+  runner.position = { ...runnerPoint }
+  runner.target = { ...runnerPoint }
+  runner.batting = false
+  for (const player of players) {
+    if (player.playerId === thrower) {
+      player.position = { ...from }
+      player.target = { ...from }
+    } else if (player.playerId === receiver) {
+      player.position = { ...to }
+      player.target = { ...to }
+    }
+  }
+  const unassisted = thrower === receiver
+  return {
+    id: `${state.generation}:${state.session.meta.sequence + 1}:throw`,
+    generation: state.generation,
+    kind: 'throw',
+    stage: 'transfer',
+    players,
+    thrower,
+    receiver,
+    runner: action.playerId,
+    from: { ...from, y: 6 },
+    to: { ...to, y: 5.2 },
+    unassisted,
+    durationMs: unassisted
+      ? Math.max(650, (Math.hypot(to.x - from.x, to.z - from.z) / 10) * 1000)
+      : 900
+  }
+}
 export function hitPresentation(
   state: ScoringState,
   angle: number
@@ -153,11 +240,16 @@ export function stepPresentation(
             'bat'
           ]
         ]
-      : [
-          ['swing', sequence.contactMs - 120, 'swish'],
-          ['contact', sequence.contactMs, 'bat'],
-          ['fielded', sequence.durationMs, 'pop']
-        ]
+      : sequence.kind === 'throw'
+        ? [
+            ['release', sequence.unassisted ? Infinity : 150, 'swish'],
+            ['catch', sequence.durationMs, 'pop']
+          ]
+        : [
+            ['swing', sequence.contactMs - 120, 'swish'],
+            ['contact', sequence.contactMs, 'bat'],
+            ['fielded', sequence.durationMs, 'pop']
+          ]
   for (const [id, at, cue] of schedule) {
     if (runtime.elapsedMs >= at && !runtime.fired.has(id)) {
       runtime.fired.add(id)

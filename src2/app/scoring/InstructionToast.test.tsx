@@ -30,6 +30,61 @@ afterEach(async () => {
   host?.remove()
 })
 describe('runner drag targets', function () {
+  it('exposes keyboard decisions as focusable buttons and disables an illegal Safe choice', async function () {
+    const view = {
+      ...runnerDragView(
+        'r',
+        1,
+        { x: 0, z: -40 },
+        () => ({ x: 200, y: 300 }),
+        390,
+        700
+      ),
+      keyboard: true
+    }
+    const choices: string[] = []
+    let cancelled = false
+    await render(
+      <RunnerDragTargets
+        view={view}
+        onChoose={choice => {
+          choices.push(choice)
+        }}
+        onCancel={() => {
+          cancelled = true
+        }}
+      />
+    )
+    const safe = host.querySelector<HTMLElement>(
+      '[aria-label="Safe drag target"]'
+    )!
+    expect(safe.getAttribute('role')).equals('button')
+    expect(safe.tabIndex).equals(0)
+    await act(async () => {
+      safe.focus()
+      safe.click()
+    })
+    expect(choices).deep.equals(['safe'])
+    await act(async () => {
+      safe.dispatchEvent(
+        new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
+      )
+    })
+    expect(cancelled).equals(true)
+    await render(
+      <RunnerDragTargets
+        view={{ ...view, safeDisabled: 'Occupied' }}
+        onChoose={choice => {
+          choices.push(choice)
+        }}
+      />
+    )
+    expect(safe.getAttribute('aria-disabled')).equals('true')
+    await act(async () => {
+      safe.click()
+    })
+    expect(choices).deep.equals(['safe'])
+  })
   it('shows only two plain targets with idle and hover colors', async function () {
     const view = runnerDragView(
       'r',

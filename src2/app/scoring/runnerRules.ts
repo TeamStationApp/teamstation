@@ -1,6 +1,7 @@
 import { BASES, type GroundPoint } from '../field/fieldModel'
 import { asScoringPlay } from './scoringContract'
 import { accepted, copyState, nextHalf, snapshotOf } from './scoringMachine'
+import { throwPresentation } from './scoringPresentation'
 import { baseIds, battingSide, playerRef } from './scoringSelectors'
 import {
   type Movement,
@@ -61,6 +62,15 @@ function enqueue(
     waypoints: copyState(waypoints),
     complete: waypoints.length < 2
   })
+}
+export function approachFirst(
+  state: ScoringState,
+  id: number,
+  start: GroundPoint,
+  end: GroundPoint
+): void {
+  enqueue(state, id, [start, end])
+  state.motions.find(m => m.playerId === id)!.purpose = 'approachFirst'
 }
 function runMotion(state: ScoringState, movement: Movement): void {
   const path = basePath(movement.from, movement.to)
@@ -375,6 +385,7 @@ export function prepareBatterResult(state: ScoringState): void {
     )
   ) {
     state.runnerAction = {
+      purpose: 'batterRetirement',
       playerId: batter,
       from: 0,
       to: pending.outcome === 'Throw Out' ? 1 : 0,
@@ -466,7 +477,12 @@ function finishOut(state: ScoringState, defender: number): void {
   dugout(
     state,
     action.playerId,
-    queueIndex >= 0 ? homeQueuePoint(queueIndex) : BASES[action.from % 4]
+    action.runnerPoint ??
+      (queueIndex >= 0
+        ? homeQueuePoint(queueIndex)
+        : action.from === 0 && pending?.batterPoint != null
+          ? pending.batterPoint
+          : BASES[action.from % 4])
   )
   state.homeQueue = state.homeQueue.filter(id => id !== action.playerId)
   if (queueIndex >= 0 && line.outs < 3)
@@ -618,6 +634,10 @@ export function runnerReducer(
       return state
     const next = { ...snapshotOf(state), past: state.past }
     next.motions.find(motion => motion.id === event.id)!.complete = true
+    if (command.purpose === 'approachFirst' && next.pendingPlay != null)
+      next.pendingPlay.batterPoint = {
+        ...command.waypoints[command.waypoints.length - 1]
+      }
     settleRunners(next)
     return next
   }
@@ -737,15 +757,25 @@ export function runnerReducer(
       event.generation !== state.generation ||
       !validDefender(state, id) ||
       (event.point != null &&
-        (!Number.isFinite(event.point.x) || !Number.isFinite(event.point.z)))
+        (!Number.isFinite(event.point.x) || !Number.isFinite(event.point.z))) ||
+      (event.runnerPoint != null &&
+        (!Number.isFinite(event.runnerPoint.x) ||
+          !Number.isFinite(event.runnerPoint.z)))
     )
       return state
     return accepted(
       state,
       `Out by ${state.session.gameData.players[id].fullName}`,
       next => {
+        next.runnerAction!.runnerPoint = event.runnerPoint
+        if (state.presentationEnabled === true)
+          next.presentation = throwPresentation(next, id, event.point)
         next.runnerAction!.defender = id
-        next.runnerAction!.defenderPoint = event.point
+        next.runnerAction!.defenderPoint =
+          event.point ??
+          (next.presentation?.kind === 'throw'
+            ? { x: next.presentation.to.x, z: next.presentation.to.z }
+            : undefined)
         finishOut(next, id)
       }
     )

@@ -1,9 +1,18 @@
 import { type RunnerDragView, runnerDragView } from '../scoring/runnerDrag'
-import { BASES, type FieldPlayer } from './fieldModel'
+import { BASES, type FieldPlayer, type GroundPoint } from './fieldModel'
 import type { FieldCanvasProps } from './fieldTypes'
 const keyboardDrags = new WeakMap<FieldPlayer, RunnerDragView>()
 /** Keyboard input uses the same eligibility and accepted-placement boundary as pointers. */
-export function fieldKey(props: FieldCanvasProps, key: string): boolean {
+export interface KeyboardProjection {
+  project: (point: GroundPoint) => { x: number; y: number }
+  width: number
+  height: number
+}
+export function fieldKey(
+  props: FieldCanvasProps,
+  key: string,
+  projection?: KeyboardProjection
+): boolean {
   const policy = props.interaction
   if (policy?.gestures.includes('trajectory') === true && props.arc != null) {
     if (key === 'Enter')
@@ -51,6 +60,7 @@ export function fieldKey(props: FieldCanvasProps, key: string): boolean {
       ].id
     )
   } else if (key === ' ' && player.keyboardOrigin == null) {
+    keyboardDrags.delete(player)
     player.keyboardOrigin = { ...player.position }
     props.onSelect(player.id)
     props.onGestureActive?.(true)
@@ -81,7 +91,8 @@ export function fieldKey(props: FieldCanvasProps, key: string): boolean {
     ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 's', 'o'].includes(key)
   ) {
     if (policy?.runnerIds?.includes(player.id) === true) {
-      const from = player.runnerBase ?? 1
+      if (projection == null) return false
+      const from = player.runnerBase ?? (player.batting === true ? 0 : 1)
       const start = BASES[from % 4]
       const end = BASES[(from + 1) % 4]
       const previous = keyboardDrags.get(player)
@@ -104,11 +115,18 @@ export function fieldKey(props: FieldCanvasProps, key: string): boolean {
           x: start.x + (end.x - start.x) * progress,
           z: start.z + (end.z - start.z) * progress
         },
-        () => ({ x: 100, y: 150 }),
-        300,
-        300
+        projection.project,
+        projection.width,
+        projection.height
       )
-      view.hovered = key === 's' ? 'safe' : key === 'o' ? 'out' : undefined
+      view.keyboard = true
+      view.safeDisabled = props.runnerSafeError?.(player.id, view.to)
+      view.hovered =
+        key === 's' && view.safeDisabled == null
+          ? 'safe'
+          : key === 'o'
+            ? 'out'
+            : undefined
       keyboardDrags.set(player, view)
       player.target = { ...view.point }
       props.onRunnerDrag?.(view)
