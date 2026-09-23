@@ -5,7 +5,7 @@ import Foundation
 /// Distributor works with the iPad away and nothing edited meanwhile is lost.
 ///
 /// Every field decodes with a default when it is missing, so settings written by an older build
-/// still load in a newer one.
+/// still load in a newer one; a group the older build had and this one does not is left unread.
 public struct DistributorSettings: Codable, Equatable, Sendable {
   public var version: Int
   /// Download folder per Mac, keyed by the Mac's `IOPlatformUUID`, so a second Mac gets its own
@@ -14,9 +14,8 @@ public struct DistributorSettings: Codable, Equatable, Sendable {
   public var createCombined: Bool
   /// Whether the iPad takes a share of an export's stitching. Off, the Mac stitches every file;
   /// files the iPad already stitched are still fetched from it.
-  public var iPadStitching: Bool
   public var combinedLayout: CombinedLayoutSettings
-  public var peerTube: PeerTubeSettings
+  public var upload: UploadSettings
   /// When each group last changed and on which device, by `SettingsGroup.key`. A group with no
   /// stamp has not changed since before stamps were kept.
   public var stamps: [String: SettingsStamp]
@@ -26,18 +25,33 @@ public struct DistributorSettings: Codable, Equatable, Sendable {
   public init(
     destinations: [String: String] = [:],
     createCombined: Bool = false,
-    iPadStitching: Bool = false,
     combinedLayout: CombinedLayoutSettings = CombinedLayoutSettings(),
-    peerTube: PeerTubeSettings = PeerTubeSettings(),
+    upload: UploadSettings = UploadSettings(),
     stamps: [String: SettingsStamp] = [:]
   ) {
     self.version = Self.currentVersion
     self.destinations = destinations
     self.createCombined = createCombined
-    self.iPadStitching = iPadStitching
     self.combinedLayout = combinedLayout
-    self.peerTube = peerTube
+    self.upload = upload
     self.stamps = stamps
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case version, destinations, createCombined, combinedLayout, upload, stamps
+    /// Where the ticked files were kept when uploads went to PeerTube. Read,
+    /// never written.
+    case peerTube
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(version, forKey: .version)
+    try container.encode(destinations, forKey: .destinations)
+    try container.encode(createCombined, forKey: .createCombined)
+    try container.encode(combinedLayout, forKey: .combinedLayout)
+    try container.encode(upload, forKey: .upload)
+    try container.encode(stamps, forKey: .stamps)
   }
 
   public init(from decoder: Decoder) throws {
@@ -45,52 +59,52 @@ public struct DistributorSettings: Codable, Equatable, Sendable {
     version = try container.decodeIfPresent(Int.self, forKey: .version) ?? Self.currentVersion
     destinations = try container.decodeIfPresent([String: String].self, forKey: .destinations) ?? [:]
     createCombined = try container.decodeIfPresent(Bool.self, forKey: .createCombined) ?? false
-    iPadStitching = try container.decodeIfPresent(Bool.self, forKey: .iPadStitching) ?? false
     combinedLayout = try container.decodeIfPresent(CombinedLayoutSettings.self, forKey: .combinedLayout)
       ?? CombinedLayoutSettings()
-    peerTube = try container.decodeIfPresent(PeerTubeSettings.self, forKey: .peerTube) ?? PeerTubeSettings()
-    stamps = try container.decodeIfPresent([String: SettingsStamp].self, forKey: .stamps) ?? [:]
+    // Settings written before uploads stopped going to PeerTube kept the
+    // ticked files inside that block. The account it sat beside is gone; the
+    // ticks are the same ticks, so they are read from wherever they are.
+    upload = try container.decodeIfPresent(UploadSettings.self, forKey: .upload)
+      ?? UploadSettings(
+        choice: try container.decodeIfPresent(LegacyPeerTubeSettings.self, forKey: .peerTube)?.uploadChoice
+          ?? UploadChoice()
+      )
+    // A group this build does not have is not read, and neither is its stamp, so neither is
+    // written back.
+    stamps = (try container.decodeIfPresent([String: SettingsStamp].self, forKey: .stamps) ?? [:])
+      .filter { SettingsGroup(key: $0.key) != nil }
   }
 }
 
-public struct PeerTubeSettings: Codable, Equatable, Sendable {
-  public var enabled: Bool
-  /// Bare host, optionally with a port: `videos.example.org`. Always reached over https.
-  public var host: String?
-  public var username: String?
-  public var channelID: Int?
-  /// Nil until the user picks one; `PeerTubePrivacy.preferred` decides until then.
-  public var privacy: Int?
-  public var uploadChoice: UploadChoice
+/// Which files of an export are sent, remembered between exports.
+public struct UploadSettings: Codable, Equatable, Sendable {
+  public var choice: UploadChoice
 
-  public init(
-    enabled: Bool = false,
-    host: String? = nil,
-    username: String? = nil,
-    channelID: Int? = nil,
-    privacy: Int? = nil,
-    uploadChoice: UploadChoice = UploadChoice()
-  ) {
-    self.enabled = enabled
-    self.host = host
-    self.username = username
-    self.channelID = channelID
-    self.privacy = privacy
-    self.uploadChoice = uploadChoice
+  public init(choice: UploadChoice = UploadChoice()) {
+    self.choice = choice
   }
 
   public init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
-    enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
-    host = try container.decodeIfPresent(String.self, forKey: .host)
-    username = try container.decodeIfPresent(String.self, forKey: .username)
-    channelID = try container.decodeIfPresent(Int.self, forKey: .channelID)
-    privacy = try container.decodeIfPresent(Int.self, forKey: .privacy)
-    uploadChoice = try container.decodeIfPresent(UploadChoice.self, forKey: .uploadChoice) ?? UploadChoice()
+    choice = try container.decodeIfPresent(UploadChoice.self, forKey: .choice) ?? UploadChoice()
   }
 }
 
-/// Which files of an export go to PeerTube. Cameras are remembered by name.
+/// Only what is still wanted from the block uploads used to keep: which files
+/// were ticked. Read when settings written by an older build are loaded, and
+/// never written.
+struct LegacyPeerTubeSettings: Decodable {
+  var uploadChoice: UploadChoice
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    uploadChoice = try container.decodeIfPresent(UploadChoice.self, forKey: .uploadChoice) ?? UploadChoice()
+  }
+
+  enum CodingKeys: String, CodingKey { case uploadChoice }
+}
+
+/// Which files of an export are ticked to be sent. Cameras are remembered by name.
 public struct UploadChoice: Codable, Equatable, Sendable {
   public var primary: Bool
   public var cameras: [String]

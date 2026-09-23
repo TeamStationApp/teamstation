@@ -6,23 +6,25 @@
  * it: the position becomes a wall-clock instant and then a position in the
  * other video.
  *
- * The arithmetic is the inverse of the highlights', deliberately. That file
- * defines an offset as
+ * The arithmetic itself lives in `wallClock.ts` and is not repeated here. It
+ * used to be, with a comment warning that two places computing "the same
+ * moment" differently is a bug that hides — and then the multi-camera view
+ * needed the same conversion for four recordings at once, which is exactly the
+ * second place that comment was afraid of. So there is one conversion, used
+ * twice, and the tests beside this file are what hold the two together.
  *
- *     offset = (wallMs − videoStartMs) / 1000 + syncOffsetSec
- *
- * and two places computing "the same moment" differently is a bug that hides:
- * get the sign of `syncOffsetSec` wrong and it lands out by twice the
- * correction, which on a well-synced pair looks like a rounding error and
- * never gets fixed.
+ * What stays here is the *policy* an angle switch wants and the multi-camera
+ * view does not: a recording that cannot be placed on the clock copies the
+ * position rather than refusing, and a moment outside the other recording
+ * lands at its nearest end rather than outside it. Four tiles need the
+ * opposite — they have to know a camera was not running yet — which is why
+ * `secondsAt` answers honestly and the clamping is done by whoever wants it.
  */
 
-export interface AngleVideo {
-  /** When the recording started, in wall-clock time. Null when unknown. */
-  startAt: string | null
-  syncOffsetSec: number
-  durationSec: number | null
-}
+import type { AngleVideo } from './wallClock'
+import { secondsAt, wallAt } from './wallClock'
+
+export type { AngleVideo } from './wallClock'
 
 /**
  * The position in `to` that is the same instant as `atSec` in `from`.
@@ -37,21 +39,9 @@ export function sameMoment(
   to: AngleVideo,
   atSec: number
 ): number {
-  const fromStart = from.startAt == null ? null : Date.parse(from.startAt)
-  const toStart = to.startAt == null ? null : Date.parse(to.startAt)
-
-  let target: number
-  if (
-    fromStart == null ||
-    toStart == null ||
-    Number.isNaN(fromStart) ||
-    Number.isNaN(toStart)
-  ) {
-    target = atSec
-  } else {
-    const wallMs = fromStart + (atSec - from.syncOffsetSec) * 1000
-    target = (wallMs - toStart) / 1000 + to.syncOffsetSec
-  }
+  const wallMs = wallAt(from, atSec)
+  const there = wallMs == null ? null : secondsAt(to, wallMs)
+  const target = there ?? atSec
 
   if (target < 0) return 0
   if (to.durationSec != null && target > to.durationSec) return to.durationSec

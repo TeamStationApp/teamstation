@@ -213,9 +213,15 @@ struct RecordingsView: View {
               tracks: tracks,
               makesCombined: combined != nil,
               model: model,
-              onContinue: { upload in
+              onContinue: { gameStation in
                 self.step = nil
-                model.export(recording, tracks: tracks, reprocess: reprocess, combined: combined, upload: upload)
+                model.export(
+                  recording,
+                  tracks: tracks,
+                  reprocess: reprocess,
+                  combined: combined,
+                  gameStation: gameStation
+                )
               },
               onCancel: { self.step = nil }
             )
@@ -231,7 +237,7 @@ struct RecordingsView: View {
   enum ExportStep: Identifiable {
     /// The combined video's layout.
     case combine(recording: RecordingListing, tracks: [Track], candidates: [CombinedCandidate])
-    /// The title and which files go to PeerTube.
+    /// The game it belongs to and which files go up.
     case upload(recording: RecordingListing, tracks: [Track], combined: CombinedPlan?)
 
     var id: String {
@@ -243,8 +249,8 @@ struct RecordingsView: View {
   }
 
   /// With a combined video on and two or more files ticked that it can take (cameras, and the
-  /// primary output), the layout comes first; with PeerTube uploads on, the title next; then the
-  /// export starts.
+  /// primary output), the layout comes first; then the game and the files to
+  /// send; then the export starts.
   private func startExport(_ recording: RecordingListing) {
     let tracks = chosenTracks(recording)
     let candidates = CombinedCandidate.all(for: recording, tracks: tracks)
@@ -255,16 +261,11 @@ struct RecordingsView: View {
     }
   }
 
+  /// The upload sheet always comes next: it is where the game is chosen, and
+  /// it is also where an export that only saves files is started from, so the
+  /// choice between the two is made in one place rather than in the settings.
   private func proceed(_ recording: RecordingListing, tracks: [Track], combined: CombinedPlan?) {
-    if model.settings.peerTube.enabled {
-      if case .signedIn = model.peerTube {
-        step = .upload(recording: recording, tracks: tracks, combined: combined)
-        return
-      }
-      model.problem = "PeerTube uploads are on, but this Mac is not signed in to PeerTube, so nothing is uploaded."
-    }
-    step = nil
-    model.export(recording, tracks: tracks, reprocess: reprocess, combined: combined)
+    step = .upload(recording: recording, tracks: tracks, combined: combined)
   }
 
   /// The primary output first, then the cameras in the take's order, as they are ticked.

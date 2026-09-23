@@ -22,6 +22,20 @@ public struct GameStationClient: Sendable {
     baseURL.appending(path: "api/v1")
   }
 
+  /// An endpoint, with its query where it belongs.
+  ///
+  /// `appending(path:)` escapes what it is given, so a `?` handed to it
+  /// becomes `%3F` and the request asks for a path nothing serves. The
+  /// server answers **404**, which reads as "that game is not there" rather
+  /// than "this app built the URL wrongly" — an hour went on that.
+  static func url(_ baseURL: URL, _ path: String, _ query: [URLQueryItem]) -> URL {
+    let endpoint = apiBase(baseURL).appending(path: path)
+    guard !query.isEmpty else { return endpoint }
+    var parts = URLComponents(url: endpoint, resolvingAgainstBaseURL: false)
+    parts?.queryItems = query
+    return parts?.url ?? endpoint
+  }
+
   // MARK: - Signing in
 
   /// Asks GameStation to send a code and a link, and answers with what this
@@ -88,6 +102,112 @@ public struct GameStationClient: Sendable {
     try await send("director/events", method: "GET")
   }
 
+  /// The last ten games already played, latest first.
+  ///
+  /// The list an **upload** needs, which is the opposite of the one claiming
+  /// needs: claiming is about the game starting now, uploading is about the
+  /// game that has just finished.
+  public func finishedEvents() async throws -> [GameStationEvent] {
+    try await send(
+      "director/events",
+      method: "GET",
+      query: [URLQueryItem(name: "when", value: "finished")]
+    )
+  }
+
+  // MARK: - Sending a recording in
+
+  /// Opens an upload, and is told how the server wants it sent.
+  ///
+  /// `startedAt` is when the **recording** began, which is not when this
+  /// upload began and is not negotiable: the library places a video on the
+  /// game's wall clock, and the multi-camera view lays a take's angles side by
+  /// side on it. Sent with every file of a take, the same instant each time,
+  /// however long the one before took to go up.
+  public func openUpload(
+    gameId: String,
+    title: String,
+    kind: String,
+    filename: String,
+    sizeBytes: Int,
+    startedAt: Date
+  ) async throws -> GameStationUpload {
+    try await send(
+      "director/uploads",
+      method: "POST",
+      body: [
+        "gameId": gameId,
+        "title": title,
+        "kind": kind,
+        "filename": filename,
+        "sizeBytes": sizeBytes,
+        "startAt": Self.instant(startedAt)
+      ]
+    )
+  }
+
+  /// ISO 8601 with fractional seconds, which is what the server reads.
+  ///
+  /// Made per call rather than shared: `ISO8601DateFormatter` is a class with
+  /// mutable options and is not `Sendable`, and this is called twice per file
+  /// of a take.
+  static func instant(_ date: Date) -> String {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [ .withInternetDateTime, .withFractionalSeconds ]
+    return formatter.string(from: date)
+  }
+
+  /// What the server already has, so the app can send only what is missing.
+  public func uploadState(uploadId: String) async throws -> GameStationUploadState {
+    try await send("director/uploads/\(escape(uploadId))", method: "GET")
+  }
+
+  /// One part of the recording.
+  public func sendPart(
+    uploadId: String,
+    index: Int,
+    bytes: Data
+  ) async throws -> GameStationPartTaken {
+    try await sendBytes(
+      "director/uploads/\(escape(uploadId))/parts/\(index)",
+      bytes: bytes
+    )
+  }
+
+  /// Every part is there: turn it into a video, and let it replace the stream.
+  ///
+  /// The server does the work before it answers — assembles the parts, probes
+  /// and remuxes the recording, copies it to storage — which for a two-hour
+  /// take is **minutes**, measured at 282 to 406 seconds for 3.5 GB. Asked
+  /// with the twenty seconds a question gets, this timed out while the server
+  /// was still working and reported an upload as failed that had in fact
+  /// landed.
+  public func finishUpload(uploadId: String) async throws -> GameStationUploadFinished {
+    try await send(
+      "director/uploads/\(escape(uploadId))/finish",
+      method: "POST",
+      body: [:],
+      timeout: 900
+    )
+  }
+
+  /// Given up on, so the server can drop the parts rather than keep them.
+  ///
+  /// Nothing comes back but a 204, and nothing is done with a failure: the
+  /// upload the app has stopped caring about is the server's to time out.
+  public func abandonUpload(uploadId: String) async {
+    var request = URLRequest(
+      url: Self.apiBase(baseURL).appending(
+        path: "director/uploads/\(escape(uploadId))"
+      )
+    )
+    request.httpMethod = "DELETE"
+    if let token {
+      request.setValue("Bearer \(token)", forHTTPHeaderField: "authorization")
+    }
+    _ = try? await session.data(for: request)
+  }
+
   /// Takes a game, and gets the URL to publish it to.
   public func claim(gameId: String) async throws -> GameStationClaim {
     try await send(
@@ -126,13 +246,52 @@ public struct GameStationClient: Sendable {
     }
   }
 
+  /// A request whose body is bytes rather than JSON.
+  ///
+  /// Its own path because a part is megabytes of recording: it is handed over
+  /// as a body, and the timeout is minutes rather than the twenty seconds a
+  /// question deserves — a part on a field's uplink is not a question.
+  private func sendBytes<Reply: Decodable>(
+    _ path: String,
+    bytes: Data
+  ) async throws -> Reply {
+    var request = URLRequest(url: Self.apiBase(baseURL).appending(path: path))
+    request.httpMethod = "PUT"
+    request.setValue("application/json", forHTTPHeaderField: "accept")
+    request.setValue("application/octet-stream", forHTTPHeaderField: "content-type")
+    if let token {
+      request.setValue("Bearer \(token)", forHTTPHeaderField: "authorization")
+    }
+    request.timeoutInterval = 300
+
+    let data: Data
+    let response: URLResponse
+    do {
+      (data, response) = try await session.upload(for: request, from: bytes)
+    } catch {
+      throw GameStationError.offline
+    }
+    let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+    if status == 401 || status == 403 { throw GameStationError.notSignedIn }
+    guard (200 ..< 300).contains(status) else {
+      throw GameStationError.server(Self.message(from: data, status: status))
+    }
+    do {
+      return try Self.decoder.decode(Reply.self, from: data)
+    } catch {
+      throw GameStationError.server("GameStation sent something unreadable")
+    }
+  }
+
   private func send<Reply: Decodable>(
     _ path: String,
     method: String,
     body: [String: any Sendable]? = nil,
-    waitingIsNil: Bool = false
+    query: [URLQueryItem] = [],
+    waitingIsNil: Bool = false,
+    timeout: TimeInterval = 20
   ) async throws -> Reply {
-    var request = URLRequest(url: Self.apiBase(baseURL).appending(path: path))
+    var request = URLRequest(url: Self.url(baseURL, path, query))
     request.httpMethod = method
     request.setValue("application/json", forHTTPHeaderField: "accept")
     if let token {
@@ -143,8 +302,9 @@ public struct GameStationClient: Sendable {
       request.httpBody = try JSONSerialization.data(withJSONObject: body)
     }
     // A field with no signal is the ordinary case, not the exception, and the
-    // wait must not be the whole of a pre-game.
-    request.timeoutInterval = 20
+    // wait must not be the whole of a pre-game. A request that asks the server
+    // to *do* something lengthy says so.
+    request.timeoutInterval = timeout
 
     let data: Data
     let response: URLResponse
@@ -156,7 +316,15 @@ public struct GameStationClient: Sendable {
 
     let status = (response as? HTTPURLResponse)?.statusCode ?? 0
     if status == 202 && waitingIsNil { throw GameStationWaiting.notYet }
-    if status == 401 || status == 403 { throw GameStationError.notSignedIn }
+    // Only a *signed-in* request can be told it is not signed in. Signing in
+    // is unauthenticated by definition, and its 401 means something else
+    // entirely — a wrong code, an expired one — so it keeps the server's own
+    // sentence. Mapping it to `notSignedIn` told somebody halfway through
+    // signing in to "Sign in to GameStation first", which is the least useful
+    // true statement the app can make.
+    if status == 401 || status == 403, token != nil {
+      throw GameStationError.notSignedIn
+    }
     guard (200 ..< 300).contains(status) else {
       throw GameStationError.server(Self.message(from: data, status: status))
     }

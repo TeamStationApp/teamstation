@@ -14,7 +14,6 @@ let package = Package(
     .package(path: "../../../common/DistributorWire"),
     // Tests only: the client is exercised against the server GS Director actually runs.
     .package(path: "../../../gsDirector/Packages/DirectorLink"),
-    .package(path: "../../../common/PeerTubeKit")
   ],
   targets: [
     .target(
@@ -24,7 +23,7 @@ let package = Package(
     ),
     .testTarget(
       name: "DirectorClientTests",
-      dependencies: [ "DirectorClient", "DirectorCore", "DirectorExport", "DistributorWire", "DirectorLink", "PeerTubeKit" ],
+      dependencies: [ "DirectorClient", "DirectorCore", "DirectorExport", "DistributorWire", "DirectorLink" ],
       swiftSettings: [ .swiftLanguageMode(.v6) ]
     )
   ]

@@ -15,7 +15,6 @@ import DirectorTestHarness
 import DirectorLink
 import DistributorWire
 import GameStationKit
-import PeerTubeKit
 import UIKit
 
 /// One-shot latch, so the replay latency is recorded for the first decoded frame and not
@@ -301,7 +300,6 @@ public final class AppEnvironment {
       backend: DistributorLinkBackend(environment: self, index: index, exporter: exporter, roots: roots),
       roots: roots,
       settings: DistributorSettingsStore(),
-      peerTube: PeerTubeAccount(storage: KeychainAccountStorage()),
       events: distributorEvents
     )
   }()
@@ -1790,6 +1788,10 @@ public final class AppEnvironment {
       $0.dvr.lastDowntimeSeconds = 0
     }
     beginLiveSession(recording: recordingID)
+    // A take started while the stream is already up belongs to the game the
+    // stream is going to, just as much as one started by the stream does —
+    // this is the take that follows a recording somebody stopped mid-game.
+    if isStreaming { rememberStreamedGame() }
     startRetentionSweeps()
     syncLiveSessionPresentation()
   }
@@ -1845,8 +1847,38 @@ public final class AppEnvironment {
     streamWanted = true
     streamRetryDelay = Self.firstStreamRetrySeconds
     isStreaming = true
+    // A stream is always recorded. The local take is the only copy that is not
+    // at the mercy of the uplink, it is what replay cuts from during the game,
+    // and it is what gets uploaded afterwards to replace a live stream that
+    // was squeezed through a field's connection. Recording without streaming
+    // stays possible; streaming without recording is a game nobody can get
+    // back. Stopping the stream deliberately does not stop it: an operator who
+    // drops the publish is usually still filming.
+    if !isRecording { startRecording() }
+    rememberStreamedGame()
     beginLiveSession(streaming: true)
     dialStream()
+  }
+
+  /// Writes the game this take is being streamed to onto the take itself.
+  ///
+  /// This is what lets an upload afterwards need no question asked: the take
+  /// already knows its event, so pressing Upload sends it there instead of
+  /// opening a list of games and asking somebody to remember which one this
+  /// was. Only for a game that was picked — a bare RTSP publish names nothing,
+  /// and that take is the one an operator is asked about.
+  private func rememberStreamedGame() {
+    guard config.streamDestination == .event,
+      let chosen = gameStation.chosen,
+      let take = recordingID
+    else { return }
+    let day = ISO8601DateFormatter()
+    day.formatOptions = [.withFullDate]
+    try? index.setGame(
+      take,
+      gameId: chosen.gameId,
+      title: "\(day.string(from: chosen.startAt)) \(chosen.title)"
+    )
   }
 
   /// How long to wait before dialling the ingest again, and how far that backs off. A squeezed
@@ -3949,6 +3981,109 @@ public final class AppEnvironment {
           }
           self.lastRecordingShare = urls
           self.isSharingRecordings = true
+        }
+      } catch {
+        await MainActor.run {
+          self?.isExporting = false
+          self?.statusMessage = "Export failed: \(error)"
+        }
+      }
+    }
+  }
+
+  /**
+   Exports a recording the way the share button does, and sends the files to a
+   game on GameStation instead of to a share sheet.
+
+   The selection is the operator's own — the programme, a camera, several —
+   because upload is that choice sent somewhere else rather than a second
+   differently-shaped choice. Every file goes to the same game; the first is
+   the one that takes the live stream's place, and the rest arrive beside it.
+   */
+  public func uploadRecording(
+    _ recording: RecordingSummary,
+    cameras: [(SourceID, String)],
+    includeProgram: Bool,
+    gameId: String,
+    title: String
+  ) {
+    guard !isExporting else { return }
+    var items: [ExportService.ItemProgress] = []
+    if includeProgram && recording.programFilename != nil {
+      items.append(ExportService.ItemProgress(id: "program", name: "Primary output", fraction: 0))
+    }
+    for camera in cameras {
+      items.append(ExportService.ItemProgress(id: camera.0.rawValue, name: camera.1, fraction: 0))
+    }
+    exportItems = items
+    isExporting = true
+
+    let exporter = self.exporter
+    let cameraList = cameras.map { (sourceID: $0.0, name: $0.1) }
+    Task { [weak self] in
+      do {
+        let urls = try await Task.detached(priority: .userInitiated) {
+          try await exporter.exportRecording(
+            recording,
+            cameras: cameraList,
+            includeProgram: includeProgram,
+            reprocess: false,
+            progress: { item in
+              Task { @MainActor in
+                guard let self else { return }
+                if let index = self.exportItems.firstIndex(where: { $0.id == item.id }) {
+                  self.exportItems[index].fraction = item.fraction
+                } else {
+                  self.exportItems.append(item)
+                }
+              }
+            }
+          )
+        }.value
+        await MainActor.run { self?.isExporting = false }
+        guard let self else { return }
+        guard !urls.isEmpty else {
+          await MainActor.run { self.statusMessage = "Nothing to upload for that recording" }
+          return
+        }
+        // What each file is, in the order `exportRecording` writes them: the
+        // programme first where it was asked for, then the cameras as given.
+        // Taken from the request rather than from the file names, which carry
+        // the take's date and not the camera — reading those named a camera
+        // `2026-09-20-12-16-49` and gave the library a video to match.
+        var labels: [(kind: String, suffix: String)] = []
+        if includeProgram && recording.programFilename != nil {
+          // The primary output carries **no** suffix. That is how the library
+          // tells it from the cameras: the one upload with nothing added.
+          labels.append((kind: "program", suffix: ""))
+        }
+        for camera in cameraList { labels.append((kind: camera.name, suffix: " \(camera.name)")) }
+
+        guard labels.count == urls.count else {
+          await MainActor.run {
+            self.statusMessage = "Exported \(urls.count) files for \(labels.count) tracks; not uploading"
+          }
+          return
+        }
+
+        for (url, label) in zip(urls, labels) {
+          let videoId = await self.gameStation.upload(
+            file: url,
+            recordingID: recording.id,
+            gameId: gameId,
+            title: title + label.suffix,
+            kind: label.kind,
+            // The take's own wall clock, which every file of the export
+            // starts at — `ExportWindow` begins at `recording.startedAt` and
+            // each track is padded to it. The same instant for every file,
+            // whatever order they go up in and however long each takes.
+            startedAt: recording.startedAt.date
+          )
+          if videoId == nil { break }
+        }
+        await MainActor.run {
+          self.statusMessage = self.gameStation.uploads[recording.id]?.failed
+            ?? "Uploaded to GameStation"
         }
       } catch {
         await MainActor.run {

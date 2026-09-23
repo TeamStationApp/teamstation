@@ -93,3 +93,65 @@ import Testing
     #expect(GameStationClient.message(from: Data("<html>".utf8), status: 502) == "GameStation answered 502")
   }
 }
+
+/// What a 401 means depends on whether the request carried a token.
+///
+/// Written after a sign-in that could not be finished: the code was from an
+/// e-mail that had been superseded, the server said so plainly, and the app
+/// showed "Sign in to GameStation first" — a message that is true of every
+/// unauthenticated request and useless on the one screen where somebody is
+/// already trying to.
+private final class OneAnswer: URLProtocol, @unchecked Sendable {
+  nonisolated(unsafe) static var status = 401
+  nonisolated(unsafe) static var body = ""
+
+  override class func canInit(with request: URLRequest) -> Bool { true }
+  override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+  override func startLoading() {
+    let response = HTTPURLResponse(
+      url: request.url!,
+      statusCode: Self.status,
+      httpVersion: nil,
+      headerFields: [ "content-type": "application/json" ]
+    )!
+    client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+    client?.urlProtocol(self, didLoad: Data(Self.body.utf8))
+    client?.urlProtocolDidFinishLoading(self)
+  }
+
+  override func stopLoading() {}
+}
+
+@Suite("What a 401 means", .serialized)
+struct RefusalTests {
+  private func client(token: String?) -> GameStationClient {
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [ OneAnswer.self ]
+    return GameStationClient(
+      baseURL: URL(string: "https://develop.example")!,
+      token: token,
+      session: URLSession(configuration: configuration)
+    )
+  }
+
+  @Test func keepsTheServersSentenceWhenSigningIn() async throws {
+    OneAnswer.status = 401
+    OneAnswer.body = #"{"code":"unauthorized","message":"That code is wrong or has expired"}"#
+
+    await #expect(throws: GameStationError.server("That code is wrong or has expired")) {
+      _ = try await client(token: nil).completeSignIn(
+        email: "paul@example.com", code: "000000", deviceName: "a Mac"
+      )
+    }
+  }
+
+  @Test func saysToSignInAgainWhenATokenWasRefused() async throws {
+    OneAnswer.status = 401
+    OneAnswer.body = #"{"code":"unauthorized","message":"Sign in to continue"}"#
+
+    await #expect(throws: GameStationError.notSignedIn) {
+      _ = try await client(token: "stale").whoAmI()
+    }
+  }
+}

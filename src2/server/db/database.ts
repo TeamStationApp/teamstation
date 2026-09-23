@@ -204,6 +204,45 @@ export interface GamesTable {
   updated_at: Timestamp
 }
 
+/**
+ * One recording on its way in from a Director, in parts.
+ *
+ * The parts are files; this is what the server cannot learn from a directory
+ * — whose upload it is, the game it lands on, and how far it has got.
+ */
+export interface DirectorUploadsTable {
+  id: string
+  user_id: string
+  game_id: string | null
+  title: string
+  kind: Generated<string>
+  filename: string
+  /** Postgres `bigint` arrives as a string, like every other one here. */
+  size_bytes: string
+  part_size: number
+  state: Generated<'open' | 'assembling' | 'ready' | 'failed' | 'abandoned'>
+  received_bytes: Generated<string>
+  video_id: string | null
+  message: string | null
+  /**
+   * When the recording began, as the app that holds it says. What the video's
+   * own `start_at` becomes, and so what the multi-camera view aligns a take's
+   * angles on. Null from an app too old to say, and then the game's own time
+   * is used — never the moment the upload happened to be opened.
+   */
+  started_at: Timestamp | null
+  /**
+   * Which part of taking the upload in the server is on — `assembling`,
+   * `probing`, `remuxing`, `uploading`, `writing` — while `state` says
+   * `assembling`. Null before the finish is asked for and after it is done.
+   * What lets an app say "converting" instead of showing a bar that has not
+   * moved for four minutes.
+   */
+  step: string | null
+  created_at: Timestamp
+  updated_at: Timestamp
+}
+
 export interface VideosTable {
   id: string
   game_id: string | null
@@ -213,6 +252,11 @@ export interface VideosTable {
   status: Generated<'live' | 'processing' | 'ready' | 'unavailable' | 'error'>
   status_message: string | null
   start_at: Timestamp | null
+  /**
+   * How `start_at` was worked out — a method, not a source of the file. An
+   * upload says `distributor` whichever app sent it, because both read the
+   * instant off the take's own index.
+   */
   start_at_source:
     | 'obsFilename'
     | 'liveSession'
@@ -232,6 +276,10 @@ export interface VideosTable {
   sha256: string | null
   spaces_verified_at: Timestamp | null
   local_delete_after: Timestamp | null
+  /** When a replaced recording may be deleted, objects and all. */
+  purge_after: Timestamp | null
+  /** The recording that took its place, which is why it is hidden. */
+  replaced_by: string | null
   legacy_description: string | null
   published_at: Timestamp | null
   hidden: Generated<boolean>
@@ -549,6 +597,7 @@ export interface Database {
   user_emails: UserEmailsTable
   users: UsersTable
   videos: VideosTable
+  director_uploads: DirectorUploadsTable
 }
 
 export function makeDatabase(connectionString: string): Kysely<Database> {

@@ -18,10 +18,9 @@ public protocol DistributorActions: AnyObject, Sendable {
   func cancelRun(_ id: UUID) throws(HTTPError) -> APIRun
   func settings() -> DistributorSettings
   func updateSettings(_ patch: APISettingsPatch) async throws(HTTPError) -> DistributorSettings
-  func peerTube() -> APIPeerTube
-  func peerTubeSignIn(_ request: APISignIn) async throws(HTTPError) -> APIPeerTube
-  func peerTubeSignOut() async -> APIPeerTube
-  func peerTubeVideos(search: String?) async throws(HTTPError) -> [APIVideo]
+  /// The account, and the games an upload may name. Asks GameStation for the
+  /// games, so it is the one call here that needs the network.
+  func gameStation() async -> APIGameStation
 }
 
 /// GS Distributor's REST API: JSON over HTTP/1.1 on 127.0.0.1, so only this Mac can reach it.
@@ -31,7 +30,7 @@ public enum DistributorAPI {
 
   public static let about = """
     GS Distributor exports GS Director's recordings from an iPad on the USB-C cable into this Mac's \
-    export folder, makes the combined video, and uploads to PeerTube. A recording's files are named \
+    export folder, makes the combined video, and uploads to a game on GameStation. A recording's files are named \
     by track: "primary", or "camera:<source id>"; a camera's name also works. Starting work answers \
     202 with the run; follow it with GET /api/v1/runs/{id} or /api/v1/events. One run at a time: a \
     second answers 409. Work that needs the iPad answers 412 iPadNotAttached while none is attached, \
@@ -46,7 +45,7 @@ public enum DistributorAPI {
   public static func router(actions: any DistributorActions, events: JSONEventHub<APIEvent>) -> Router {
     var router = Router()
 
-    router.add("GET", "/api/v1/status", summary: "The iPad, this Mac's export folder, the run under way, and PeerTube") { _, _ in
+    router.add("GET", "/api/v1/status", summary: "The iPad, this Mac's export folder, the run under way, and GameStation") { _, _ in
       .apiJSON(await actions.status())
     }
     router.add("GET", "/api/v1/events", summary: "The status again, as a line of JSON, each time it changes") { _, _ in
@@ -81,7 +80,7 @@ public enum DistributorAPI {
       ("download", .download, "Brings files onto this Mac, stitched on the Mac and the iPad: {tracks?, reprocess?}"),
       ("export", .export, "Files, then the combined video and uploads as the settings say: {tracks?, reprocess?, combined?, upload?}"),
       ("combined", .combined, "Makes the combined video, fetching any file it needs: {combined: {include?, audioCamera?}}"),
-      ("upload", .upload, "Uploads files already on this Mac to PeerTube: {upload: {tracks?, title?, channel?, privacy?}}")
+      ("upload", .upload, "Uploads files already on this Mac to a game on GameStation: {upload: {game, tracks?, title?}}")
     ]
     for (verb, kind, summary) in verbs {
       router.add("POST", "/api/v1/recordings/{id}/\(verb)", summary: summary) { request, parameters in
@@ -114,21 +113,12 @@ public enum DistributorAPI {
     router.add("GET", "/api/v1/settings", summary: "The settings, as this Mac holds them") { _, _ in
       .apiJSON(await actions.settings())
     }
-    router.add("PATCH", "/api/v1/settings", summary: "Changes settings; what is left out stays: {destination?, createCombined?, iPadStitching?, uploadToPeerTube?, peerTubeChannel?, peerTubePrivacy?}") { request, _ in
+    router.add("PATCH", "/api/v1/settings", summary: "Changes settings; what is left out stays: {destination?, createCombined?}") { request, _ in
       .apiJSON(try await actions.updateSettings(try request.decode()))
     }
 
-    router.add("GET", "/api/v1/peertube", summary: "The PeerTube account this Mac uploads with: channels, privacies, and what an upload starts on") { _, _ in
-      .apiJSON(await actions.peerTube())
-    }
-    router.add("POST", "/api/v1/peertube/signin", summary: "Signs this Mac in; the login is kept in its Keychain and given to the iPad: {host, username, password, code?}") { request, _ in
-      .apiJSON(try await actions.peerTubeSignIn(try request.decode()))
-    }
-    router.add("POST", "/api/v1/peertube/signout", summary: "Signs this Mac and the iPad out of PeerTube") { _, _ in
-      .apiJSON(await actions.peerTubeSignOut())
-    }
-    router.add("GET", "/api/v1/peertube/videos", summary: "Every video of the account, on all its channels, newest first: ?search=") { request, _ in
-      .apiJSON(try await actions.peerTubeVideos(search: request.query["search"]))
+    router.add("GET", "/api/v1/gamestation", summary: "The GameStation account this Mac uploads with, and the games already played that an upload can name") { _, _ in
+      .apiJSON(await actions.gameStation())
     }
 
     let index = APIRoute(method: "GET", path: "/api/v1", summary: "This list")

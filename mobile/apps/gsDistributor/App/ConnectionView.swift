@@ -43,6 +43,12 @@ struct ConnectionView: View {
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .accessibilityIdentifier("connection-state")
   }
+
+  /// The moment between GS Director answering and its recordings showing.
+  private var isConnecting: Bool {
+    if case .connected = model.link { return true }
+    return false
+  }
 }
 
 /// Recordings once GS Director answers, otherwise what to do to reach it.

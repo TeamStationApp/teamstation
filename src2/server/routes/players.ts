@@ -313,7 +313,7 @@ export function playerRoutes(
         })
         if (mine.length === 0) continue
 
-        // The video that was running when the play happened. The programme
+        // The video that was running when the play happened. The program
         // recording first, which is the one a game is normally watched on.
         for (const video of videos.filter(item => item.gameId === row.gameId)) {
           const computed = withDropped(

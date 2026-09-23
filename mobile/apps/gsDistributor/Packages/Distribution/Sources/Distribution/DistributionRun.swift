@@ -6,45 +6,69 @@ import DirectorExport
 import DistributorWire
 import Foundation
 import Observation
-import PeerTubeKit
 
-/// What goes to PeerTube once an export's files are saved, one video per file.
-public struct UploadPlan: Sendable {
-  public var host: String
-  public var channelID: Int
-  public var privacy: Int
-  /// What the title field held: the recording's date and what the user typed, unless they changed it.
+/// What goes to GameStation once an export's files are saved, one video per
+/// file, all on the same game.
+///
+/// The sending itself is handed in rather than done here: it is
+/// `UploadService` in `GameStationKit`, which GS Director uses for exactly the
+/// same job. One implementation of "send a recording in parts, ask what landed,
+/// carry on where it stopped" — two apps calling it — because two of them
+/// would drift, and the half that drifted would be the resume.
+public struct GameStationPlan: Sendable {
+  /// The game every file of this export belongs to.
+  public var gameId: String
+  /// `2026-09-20 Monument Trails at Badgers`; each file adds what it is.
   public var title: String
   public var tracks: [UploadTrack]
-  /// An access token good for a while yet; asked for before every chunk.
-  public var token: @Sendable () async throws -> String
+  /// Sends one file and answers with the video it became.
+  public var send: @Sendable (
+    _ file: URL,
+    _ title: String,
+    _ kind: String,
+    _ progress: @escaping @Sendable (Int64, Int64, String?) -> Void
+  ) async throws -> String
 
   public init(
-    host: String,
-    channelID: Int,
-    privacy: Int,
+    gameId: String,
     title: String,
     tracks: [UploadTrack],
-    token: @escaping @Sendable () async throws -> String
+    send: @escaping @Sendable (URL, String, String, @escaping @Sendable (Int64, Int64, String?) -> Void) async throws -> String
   ) {
-    self.host = host
-    self.channelID = channelID
-    self.privacy = privacy
+    self.gameId = gameId
     self.title = title
     self.tracks = tracks
-    self.token = token
+    self.send = send
   }
 
+  /// What one file is called in the library: the take's title and the camera.
   public func title(for track: UploadTrack) -> String {
-    PeerTubeTitle.make(title: title, track: track)
+    switch track {
+    case .primary: title
+    case .camera(let name): "\(title) \(name)"
+    case .combined: "\(title) combined"
+    }
+  }
+
+  /// The slot the server files it under.
+  public func kind(for track: UploadTrack) -> String {
+    switch track {
+    case .primary: "program"
+    case .camera(let name): name
+    case .combined: "combined"
+    }
   }
 }
 
 public enum UploadState: Sendable, Equatable {
   case queued
   case uploading(sent: Int64, total: Int64)
-  /// Uploaded; the video's page, when PeerTube said where it is.
-  case done(URL?)
+  /// Every byte is there and the server is turning it into a video —
+  /// assembling, converting, copying to the library. Minutes, for a
+  /// two-hour take, which is why it is a state of its own rather than a
+  /// progress bar left sitting at full.
+  case finishing(step: String)
+  case done
   case failed(String)
 }
 
@@ -67,8 +91,8 @@ public struct CombinedPlan: Sendable {
 /// Where one file of an export has got to.
 public enum TrackState: Sendable, Equatable {
   case queued
-  case fetching(worker: DistributionPlan.Worker, received: Int64, total: Int64)
-  case stitching(worker: DistributionPlan.Worker, fraction: Double)
+  case fetching(received: Int64, total: Int64)
+  case stitching(fraction: Double)
   case downloading(received: Int64, total: Int64)
   case done(URL)
   case failed(String)
@@ -81,7 +105,7 @@ public enum TrackState: Sendable, Equatable {
   }
 }
 
-/// One export of one recording: the chosen tracks, stitched by the Mac and the iPad together and
+/// One export of one recording: the chosen tracks, stitched on the Mac and
 /// saved into `<destination>/<yyyy-MM-dd>/` under the names GS Director gives them.
 @MainActor
 @Observable
@@ -91,24 +115,20 @@ public final class DistributionRun {
   public private(set) var states: [Track: TrackState]
   public private(set) var isFinished = false
   /// Which worker stitched each track, for the record.
-  public private(set) var stitchedBy: [Track: DistributionPlan.Worker] = [:]
   /// The combined video, when one was asked for.
   public let combined: CombinedPlan?
   public private(set) var combinedState: TrackState?
   /// Whose sound the combined video carries, once it is being made.
   public private(set) var combinedSound: String?
   /// The uploads, when any were asked for.
-  public let upload: UploadPlan?
+  public let gameStation: GameStationPlan?
   public private(set) var uploadStates: [UploadTrack: UploadState] = [:]
-  /// The videos the uploads made, for adding highlights to once they are up.
-  public private(set) var uploadedVideos: [UploadTrack: UploadedVideo] = [:]
 
   /// Nil with no iPad attached, which is enough when every file the run needs is already here.
   private let connection: DirectorConnection?
   private let jobs: JobWatcher
   private let destination: URL
   private let reprocess: Bool
-  private let iPadMayStitch: @MainActor () -> Bool
   private var plan = DistributionPlan(tracks: [])
   private var downloads: [Task<Void, Never>] = []
 
@@ -120,10 +140,9 @@ public final class DistributionRun {
     destination: URL,
     reprocess: Bool = false,
     combined: CombinedPlan? = nil,
-    upload: UploadPlan? = nil,
+    gameStation: GameStationPlan? = nil,
     lockRenewal: Duration = .seconds(10),
     spaceCheck: SpaceCheck = .system,
-    iPadMayStitch: @escaping @MainActor () -> Bool
   ) {
     self.lockRenewal = lockRenewal
     self.spaceCheck = spaceCheck
@@ -131,13 +150,14 @@ public final class DistributionRun {
     self.tracks = tracks
     self.combined = combined
     self.combinedState = combined == nil ? nil : .queued
-    self.upload = upload
-    self.uploadStates = Dictionary(uniqueKeysWithValues: (upload?.tracks ?? []).map { ($0, UploadState.queued) })
+    self.gameStation = gameStation
+    self.uploadStates = Dictionary(
+      uniqueKeysWithValues: (gameStation?.tracks ?? []).map { ($0, UploadState.queued) }
+    )
     self.connection = connection
     self.jobs = jobs
     self.destination = destination
     self.reprocess = reprocess
-    self.iPadMayStitch = iPadMayStitch
     self.states = Dictionary(uniqueKeysWithValues: tracks.map { ($0, TrackState.queued) })
   }
 
@@ -149,7 +169,7 @@ public final class DistributionRun {
 
   /// `<destination>/<yyyy-MM-dd>/`, where `recording`'s files go.
   public nonisolated static func folder(for recording: RecordingListing, in destination: URL) -> URL {
-    destination.appendingPathComponent(PeerTubeTitle.datePrefix(for: recording.startedAt.date), isDirectory: true)
+    destination.appendingPathComponent(UploadTitle.datePrefix(for: recording.startedAt.date), isDirectory: true)
   }
 
   public nonisolated static func filename(for track: Track, of recording: RecordingListing) -> String {
@@ -259,13 +279,13 @@ public final class DistributionRun {
       for track in toStitch + toFetch { states[track] = .failed(Self.noIPad) }
     }
     if let combined, !wasCancelled { await renderCombined(combined) }
-    if let upload, !wasCancelled { await uploadAll(upload) }
+    if let gameStation, !wasCancelled { await uploadAllToGameStation(gameStation) }
   }
 
   /// Why a file the iPad would have to provide was not made.
   public nonisolated static let noIPad = "Not on this Mac, and no iPad is attached to get it from"
 
-  /// Stitches `toStitch` on the Mac and the iPad and fetches `toFetch` from the iPad, holding GS
+  /// Stitches `toStitch` on the Mac and fetches `toFetch` from the iPad, holding GS
   /// Director's export lock throughout. False when the export stops here.
   private func workWithIPad(toStitch: [Track], toFetch: [Track], connection: DirectorConnection) async -> Bool {
     let needed = toStitch + toFetch
@@ -335,15 +355,9 @@ public final class DistributionRun {
     for track in toFetch { fetchPrepared(track) }
     plan = DistributionPlan(tracks: toStitch)
 
-    // First to the Mac, second to the iPad, then whichever is free first.
+    // Every track, on the Mac.
     let mac = MacStitcher(connection: connection, scratch: scratch)
-    let iPad = IPadStitcher(connection: connection, jobs: jobs)
-    let firstForMac = plan.next(for: .mac)
-    let firstForIPad = iPadMayStitch() ? plan.next(for: .iPad) : nil
-    await withTaskGroup(of: Void.self) { group in
-      group.addTask { await self.macLoop(mac, first: firstForMac, window: window) }
-      group.addTask { await self.iPadLoop(iPad, first: firstForIPad, window: window) }
-    }
+    await macLoop(mac, first: plan.next(), window: window)
     for download in downloads { await download.value }
     await release()
     return true
@@ -364,35 +378,42 @@ public final class DistributionRun {
     )
   }
 
-  /// One file at a time, in the order asked. A file that did not save is not uploaded. Each video's
-  /// original publication date is when its recording started, which is where every file of the
-  /// export starts, so highlights can be timed from the video alone.
-  private func uploadAll(_ plan: UploadPlan) async {
-    let api = PeerTubeAPI(host: plan.host)
-    for track in plan.tracks {
+  /// Every saved file of this export, to one game on GameStation.
+  ///
+  /// The primary output leads, so the game's own recording is the first thing
+  /// to land and the live stream steps aside as early as it can. A file that
+  /// fails stops the run: the rest belong to the same game, and sending three
+  /// of four is a game that looks complete and is not.
+  private func uploadAllToGameStation(_ plan: GameStationPlan) async {
+    let ordered = plan.tracks.sorted { a, _ in a == .primary }
+    for track in ordered {
       guard !Task.isCancelled else { return }
       guard let file = savedFile(for: track) else {
         uploadStates[track] = .failed("not saved, so not uploaded")
         continue
       }
-      uploadStates[track] = .uploading(sent: 0, total: Self.size(of: file))
+      let total = Self.size(of: file)
+      uploadStates[track] = .uploading(sent: 0, total: total)
       do {
-        let video = try await api.upload(
-          file: file,
-          name: plan.title(for: track),
-          channelID: plan.channelID,
-          privacy: plan.privacy,
-          originallyPublishedAt: recording.startedAt.date,
-          token: plan.token
-        ) { sent, total in
+        _ = try await plan.send(
+          file,
+          plan.title(for: track),
+          plan.kind(for: track)
+        ) { sent, of, step in
           Task { @MainActor in
-            if case .uploading = self.uploadStates[track] { self.uploadStates[track] = .uploading(sent: sent, total: total) }
+            switch self.uploadStates[track] {
+            case .uploading, .finishing:
+              self.uploadStates[track] = step.map { UploadState.finishing(step: $0) }
+                ?? .uploading(sent: sent, total: of)
+            default:
+              break
+            }
           }
         }
-        uploadedVideos[track] = video
-        uploadStates[track] = .done(video.shortUUID.flatMap { URL(string: "https://\(plan.host)/w/\($0)") })
+        uploadStates[track] = .done
       } catch {
         uploadStates[track] = .failed("\(error)")
+        return
       }
     }
   }
@@ -467,7 +488,7 @@ public final class DistributionRun {
     combinedSound = sound?.camera
     let rate = (try? await AVURLAsset(url: inputs[0].url).loadTracks(withMediaType: .video).first?.load(.nominalFrameRate)) ?? 30
     let partial = folder.appendingPathComponent(combinedFilename + ".partial.mov")
-    combinedState = .stitching(worker: .mac, fraction: 0)
+    combinedState = .stitching(fraction: 0)
     do {
       try await CombinedRenderer.render(
         inputs: inputs,
@@ -476,7 +497,7 @@ public final class DistributionRun {
         frameRate: Int32(max(1, rate.rounded())),
         to: partial
       ) { fraction in
-        Task { @MainActor in self.combinedState = .stitching(worker: .mac, fraction: fraction) }
+        Task { @MainActor in self.combinedState = .stitching(fraction: fraction) }
       }
       try? FileManager.default.removeItem(at: target)
       try FileManager.default.moveItem(at: partial, to: target)
@@ -492,22 +513,17 @@ public final class DistributionRun {
   private func macLoop(_ stitcher: MacStitcher, first: Track?, window: ExportWindow) async {
     var track = first
     while !Task.isCancelled {
-      if track == nil { track = plan.next(for: .mac) }
-      guard let current = track else {
-        // The iPad may yet hand a track back; wait while it still holds any.
-        if plan.held(by: .iPad).isEmpty { return }
-        try? await Task.sleep(for: .milliseconds(200))
-        continue
-      }
+      if track == nil { track = plan.next() }
+      guard let current = track else { return }
       track = nil
       do {
         let stitched = try await stitcher.stitch(recording: recording, track: current, window: window) { stage in
           Task { @MainActor in
             switch stage {
             case let .fetching(received, total):
-              self.states[current] = .fetching(worker: .mac, received: received, total: total)
+              self.states[current] = .fetching(received: received, total: total)
             case let .stitching(fraction):
-              self.states[current] = .stitching(worker: .mac, fraction: fraction)
+              self.states[current] = .stitching(fraction: fraction)
             }
           }
         }
@@ -517,7 +533,6 @@ public final class DistributionRun {
         // The segments it was stitched from go now rather than at the end of the export, so the
         // Mac holds one camera's working copy at a time.
         if let work = stitcher.workFolder(of: stitched) { try? FileManager.default.removeItem(at: work) }
-        stitchedBy[current] = .mac
         states[current] = .done(target)
       } catch {
         if !wasCancelled { states[current] = .failed("\(error)") }
@@ -526,40 +541,6 @@ public final class DistributionRun {
     }
   }
 
-  private func iPadLoop(_ stitcher: IPadStitcher, first: Track?, window: ExportWindow) async {
-    var track = first
-    while !Task.isCancelled {
-      if track == nil {
-        guard iPadMayStitch() else { return }
-        track = plan.next(for: .iPad)
-      }
-      guard let current = track else { return }
-      track = nil
-      do {
-        let file = try await stitcher.stitch(
-          recording: recording,
-          track: current,
-          window: window,
-          reprocess: reprocess
-        ) { fraction in
-          Task { @MainActor in self.states[current] = .stitching(worker: .iPad, fraction: fraction) }
-        }
-        stitchedBy[current] = .iPad
-        plan.finish(current)
-        // Free for the next track at once; the download goes on alongside.
-        fetch(file, for: current)
-      } catch let DirectorClientError.http(status, _) where status == 409 {
-        // Recording started: the iPad takes nothing more, and the Mac does this one.
-        plan.giveBack(current)
-        states[current] = .queued
-        return
-      } catch {
-        plan.giveBack(current)
-        states[current] = .queued
-        if case DistributionError.directorGone = error { return }
-      }
-    }
-  }
 
   // MARK: - Downloads
 

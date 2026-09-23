@@ -84,6 +84,11 @@ type Pushed =
       /** Which video, and where in it, from a link to a moment. */
       videoId?: string
       at?: number
+      /** The angles showing at once, in the order they are laid out. */
+      angles?: string[]
+      /** Which angle is heard, and which fills the picture. */
+      audio?: string
+      zoom?: string
     }
   | { name: 'account' }
   /**
@@ -698,6 +703,39 @@ function Shell(props: AppProps): React.ReactElement {
             }
           })
         }}
+        angles={top.angles}
+        audioId={top.audio}
+        zoomedId={top.zoom}
+        onAngles={next => {
+          // In place: arranging the tiles is not a new page, and a history
+          // entry per drag would make Back mean "undo one drag".
+          inPlace.current = true
+          setStacks(current => {
+            const held = current[tab]
+            const last = held[held.length - 1]
+            if (last?.name !== 'game') return current
+            return {
+              ...current,
+              [tab]: [
+                ...held.slice(0, -1),
+                {
+                  ...last,
+                  angles: next.angles ?? last.angles,
+                  // `null` clears, `undefined` leaves alone.
+                  audio:
+                    next.audio === undefined
+                      ? last.audio
+                      : (next.audio ?? undefined),
+                  zoom:
+                    next.zoom === undefined
+                      ? last.zoom
+                      : (next.zoom ?? undefined),
+                  at: next.at === undefined ? last.at : (next.at ?? undefined)
+                }
+              ]
+            }
+          })
+        }}
         onMoment={(videoId, atSec) => {
           inPlace.current = true
           setStacks(current => {
@@ -816,7 +854,10 @@ function stackFor(route: Route): Partial<Record<NavTabId, Pushed[]>> {
           tab: route.tab,
           autoPlay: route.at != null,
           videoId: route.videoId,
-          at: route.at
+          at: route.at,
+          angles: route.angles,
+          audio: route.audio,
+          zoom: route.zoom
         }
       ]
     }
@@ -902,7 +943,10 @@ function routeOf(tab: NavTabId, top: Pushed | undefined, when?: When): Route {
       gameId: top.gameId,
       tab: top.tab,
       videoId: top.videoId,
-      at: top.at
+      at: top.at,
+      angles: top.angles,
+      audio: top.audio,
+      zoom: top.zoom
     }
   }
   if (tab === 'videos') return { name: 'videos', when: when ?? 'past' }

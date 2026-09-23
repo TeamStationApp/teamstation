@@ -13,13 +13,11 @@ import Network
 ///   /set-destination?path=/some/folder   this Mac's download folder, saved here and on the iPad
 ///   /clear-destination                   forget it again
 ///   /export?recording=361&tracks=primary,camera:<source id>[&reprocess=1][&combined=1[&audio=<name>]]
-///          [&upload=primary,camera:<name>,combined&title=<title>]
+///          [&upload=primary,camera:<name>,combined&game=<game id>[&title=<title>]]
 ///   /inventory?recording=361             which of its files are already on this Mac
 ///   /cancel                              stop the export under way
 ///   /dismiss-export                      put a finished export's progress away, as Done does
-///   /peertube-enable?on=1|0              PeerTube uploads on or off
-///   /peertube-signin?host=<host>&credentials=<json file with username, password>[&code=<otp>]
-///   /peertube-channel?name=<channel>     upload to that channel
+///   /games                               the GameStation account, and the games an upload can name
 @MainActor
 final class DebugHarness {
   static let port: UInt16 = 8768
@@ -39,6 +37,7 @@ final class DebugHarness {
   static var ignoresCable: Bool {
     ProcessInfo.processInfo.arguments.contains("-noIPad")
   }
+
 
   func start() {
     guard listener == nil else { return }
@@ -110,36 +109,13 @@ final class DebugHarness {
       // As Done does. AppKit will not quit while the progress sheet is up.
       model.dismissRun()
       return [ "ok": model.run == nil ]
-    case "/peertube-enable":
-      let on = query["on"] != "0"
-      await model.updateSettings { $0.peerTube.enabled = on }
-      await model.loadPeerTube()
-      return [ "ok": model.settings.peerTube.enabled == on ]
-    case "/peertube-signin":
-      // The user name and password come from a file, so the password is never on a command line.
-      guard let host = query["host"], let path = query["credentials"],
-            let data = FileManager.default.contents(atPath: path),
-            let credentials = (try? JSONSerialization.jsonObject(with: data)) as? [String: String],
-            let username = credentials["username"], let password = credentials["password"]
-      else { return [ "ok": false, "error": "host and credentials=<file with username and password> required" ] }
-      switch await model.signInToPeerTube(host: host, username: username, password: password, code: query["code"]) {
-      case .signedIn: return [ "ok": true ]
-      case .needsCode: return [ "ok": false, "error": "two-factor code needed" ]
-      case .failed(let reason): return [ "ok": false, "error": reason ]
-      }
-    case "/peertube-channel":
-      guard case .signedIn(let account) = model.peerTube else { return [ "ok": false, "error": "not signed in" ] }
-      let names = account.channels.map { "\($0.id): \($0.displayName)" }
-      // curl's --data-urlencode sends spaces as `+`, which URLComponents leaves alone.
-      let wanted = (query["name"] ?? "").replacingOccurrences(of: "+", with: " ")
-        .trimmingCharacters(in: .whitespaces).lowercased()
-      func matches(_ text: String) -> Bool {
-        text.trimmingCharacters(in: .whitespaces).lowercased() == wanted
-      }
-      guard let channel = account.channels.first(where: { matches($0.displayName) || matches($0.name) || String($0.id) == wanted })
-      else { return [ "ok": false, "error": "no channel by that name", "channels": names ] }
-      await model.updateSettings { $0.peerTube.channelID = channel.id }
-      return [ "ok": model.uploadChannelID == channel.id, "channels": names ]
+    case "/games":
+      await model.gameStation.refreshFinishedEvents()
+      return [
+        "ok": model.gameStation.isSignedIn,
+        "account": model.gameStation.user?.email ?? NSNull(),
+        "games": model.gameStation.finishedEvents.map { [ "id": $0.gameId, "title": $0.title ] }
+      ]
     case "/export":
       guard let id = query["recording"].flatMap(Int64.init),
             let recording = model.recordings.first(where: { $0.id == id })
@@ -157,10 +133,10 @@ final class DebugHarness {
         let audio = query["audio"].map { $0.replacingOccurrences(of: "+", with: " ") }
         plan = CombinedPlan.automatic(for: recording, tracks: tracks, saved: model.settings.combinedLayout, audioCamera: audio)
       }
-      // `upload=primary,camera:<name>,combined&title=<title>` uploads those files, as the title
-      // sheet would, to the channel and with the privacy it would start on. Without a title, the
-      // field's starting text (the date and a space) is used.
-      var upload: UploadPlan?
+      // `upload=primary,camera:<name>,combined&game=<id>` sends those files to
+      // that game, as the sheet would. The title is the game's own unless one
+      // is given; `/games` lists the ids.
+      var upload: GameStationPlan?
       if let list = query["upload"], !list.isEmpty {
         let wanted: [UploadTrack] = list.split(separator: ",").compactMap { item in
           if item == "primary" { return .primary }
@@ -168,17 +144,20 @@ final class DebugHarness {
           if item.hasPrefix("camera:") { return .camera(String(item.dropFirst("camera:".count))) }
           return nil
         }
-        let title = query["title"] ?? PeerTubeTitle.initialTitle(for: recording.startedAt.date)
-        upload = model.uploadPlan(
-          for: recording,
-          title: title,
-          channelID: model.uploadChannelID,
-          privacy: model.uploadPrivacy,
-          tracks: wanted
+        await model.gameStation.refreshFinishedEvents()
+        guard let gameId = query["game"],
+              let game = model.gameStation.finishedEvents.first(where: { $0.gameId == gameId })
+        else { return [ "ok": false, "error": "game=<id> required; /games lists them" ] }
+        let day = DateFormatter()
+        day.dateFormat = "yyyy-MM-dd"
+        upload = model.gameStationPlan(
+          gameId: gameId,
+          title: query["title"] ?? "\(day.string(from: game.startAt)) \(game.title)",
+          tracks: wanted,
+          startedAt: recording.startedAt.date
         )
-        if upload == nil { return [ "ok": false, "error": "not signed in to PeerTube, or no channel" ] }
       }
-      model.export(recording, tracks: tracks, reprocess: query["reprocess"] == "1", combined: plan, upload: upload)
+      model.export(recording, tracks: tracks, reprocess: query["reprocess"] == "1", combined: plan, gameStation: upload)
       return [ "ok": model.run != nil ]
     default:
       return state()
@@ -211,26 +190,19 @@ final class DebugHarness {
           [
             "track": Self.name(track),
             "state": Self.describe(run.states[track] ?? .queued),
-            "stitchedBy": run.stitchedBy[track]?.rawValue ?? NSNull()
           ]
         },
         "combined": run.combinedState.map { Self.describe($0) } ?? NSNull(),
         "combinedSound": run.combinedSound ?? NSNull(),
-        "uploads": (run.upload?.tracks ?? []).map { track -> [String: Any] in
+        "uploads": (run.gameStation?.tracks ?? []).map { track -> [String: Any] in
           [
-            "title": run.upload?.title(for: track) ?? "",
+            "title": run.gameStation?.title(for: track) ?? "",
             "state": Self.describe(run.uploadStates[track] ?? .queued)
           ]
         }
       ] as [String: Any]
     }
-    let peerTube: String = switch model.peerTube {
-    case .unknown: "unknown"
-    case .signedOut: "signedOut"
-    case .signedIn(let account):
-      "signedIn \(account.username)@\(account.host) channel=\(model.uploadChannelID.map(String.init) ?? "none") privacy=\(model.uploadPrivacy)"
-    case .unreachable(let reason): "unreachable \(reason)"
-    }
+    let gameStation = model.gameStation.user.map { "signedIn \($0.email ?? $0.displayName)" } ?? "signedOut"
     return [
       "link": link,
       "isRecording": model.isRecording,
@@ -246,7 +218,7 @@ final class DebugHarness {
       },
       "destination": model.destination?.path ?? NSNull(),
       "export": export,
-      "peerTube": peerTube,
+      "gameStation": gameStation,
       "problem": model.problem ?? NSNull()
     ]
   }
@@ -261,8 +233,8 @@ final class DebugHarness {
   private static func describe(_ state: TrackState) -> String {
     switch state {
     case .queued: "queued"
-    case let .fetching(worker, received, total): "fetching(\(worker.rawValue)) \(received)/\(total)"
-    case let .stitching(worker, fraction): String(format: "stitching(%@) %.2f", worker.rawValue, fraction)
+    case let .fetching(received, total): "fetching \(received)/\(total)"
+    case let .stitching(fraction): String(format: "stitching %.2f", fraction)
     case let .downloading(received, total): "downloading \(received)/\(total)"
     case .done(let url): "done \(url.path)"
     case .failed(let reason): "failed \(reason)"
@@ -273,7 +245,8 @@ final class DebugHarness {
     switch state {
     case .queued: "queued"
     case let .uploading(sent, total): "uploading \(sent)/\(total)"
-    case .done(let page): "done \(page?.absoluteString ?? "")"
+    case .finishing(let step): "finishing \(step)"
+    case .done: "done"
     case .failed(let reason): "failed \(reason)"
     }
   }

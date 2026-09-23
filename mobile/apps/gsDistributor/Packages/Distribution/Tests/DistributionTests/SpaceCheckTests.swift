@@ -5,7 +5,6 @@ import DirectorLink
 import Distribution
 import DistributorWire
 import Foundation
-import PeerTubeKit
 import Testing
 
 /// A GS Director with one ten-gigabyte camera to export.
@@ -85,8 +84,7 @@ struct SpaceCheckTests {
         program: base.appendingPathComponent("Program", isDirectory: true),
         prepared: base.appendingPathComponent("Prepared", isDirectory: true)
       ),
-      settings: DistributorSettingsStore(url: base.appendingPathComponent("settings.json")),
-      peerTube: PeerTubeAccount(storage: MemoryAccountStorage())
+      settings: DistributorSettingsStore(url: base.appendingPathComponent("settings.json"))
     )
     let server = LinkServer(port: 0) { await service.handle($0) }
     let port = try await server.start()
@@ -104,7 +102,7 @@ struct SpaceCheckTests {
       jobs: JobWatcher(),
       destination: base.appendingPathComponent("Mac", isDirectory: true),
       spaceCheck: Self.check(free: Self.gigabyte)
-    ) { false }
+    )
     await run.run()
 
     guard case .failed(let reason) = run.states[.camera(camera)] else {

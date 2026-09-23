@@ -124,3 +124,57 @@ struct GameStationApiError: Decodable {
   let code: String
   let message: String
 }
+
+// MARK: - Sending a recording in
+
+/// An upload the server has opened, and how it wants the recording sent.
+public struct GameStationUpload: Sendable, Codable, Equatable {
+  public let uploadId: String
+  public let partSize: Int
+  public let parts: Int
+  public let received: [Int]
+}
+
+/// What the server has of an upload so far.
+///
+/// Asked before sending anything, which is the whole reason an upload from a
+/// ball field can be resumed: the app sends what is missing rather than
+/// starting a nine-gigabyte recording again because the network blinked.
+public struct GameStationUploadState: Sendable, Codable, Equatable {
+  public let uploadId: String
+  /// `open`, `assembling`, `ready`, `failed` or `abandoned`.
+  public let state: String
+  public let partSize: Int
+  public let parts: Int
+  public let received: [Int]
+  public let missing: [Int]
+  public let receivedBytes: Int
+  /// Which part of taking it in the server is on, while `state` is
+  /// `assembling`: `probing`, `remuxing`, `uploading`, `writing`.
+  public let step: String?
+  public let videoId: String?
+  public let message: String?
+}
+
+/// What one part landing tells the app.
+public struct GameStationPartTaken: Sendable, Codable, Equatable {
+  public let received: Int
+  public let parts: Int
+  public let missing: [Int]
+}
+
+/// The recording is in the library.
+/// The answer to "every part is there, take it in".
+///
+/// **202 with no video.** The server assembles, probes, remuxes and copies
+/// the recording before there is a video to name, which for a two-hour take
+/// is minutes, so it acknowledges and works behind the request. `videoId`
+/// arrives only when the upload was already finished — asking twice gets the
+/// same video rather than a second one. Otherwise the app watches
+/// `uploadState` until the server says `ready`.
+public struct GameStationUploadFinished: Sendable, Codable, Equatable {
+  public let videoId: String?
+  public let state: String
+  /// Which part of taking it in, when it has started.
+  public let step: String?
+}

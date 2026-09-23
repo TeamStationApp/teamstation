@@ -25,7 +25,7 @@ export interface PresignOptions {
    * signed for `GET` cannot be used to write, nor to delete. Defaults to
    * `GET`.
    */
-  method?: 'GET' | 'PUT' | 'DELETE'
+  method?: 'GET' | 'PUT' | 'POST' | 'DELETE'
   /** e.g. `https://sfo3.digitaloceanspaces.com`. */
   endpoint: string
   region: string
