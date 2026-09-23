@@ -4,6 +4,7 @@ import { Pool } from 'pg'
 
 import { mintUserId } from '../common/mintUserId'
 import { migrations } from './migrations'
+import { migration037GameStatsState } from './migrations/037gameStatsState'
 import { migrateDown, migrateUp } from './runner'
 import { testDatabaseUrl } from './testDatabase'
 
@@ -498,5 +499,193 @@ async function seed(pool: Pool): Promise<void> {
     `insert into event_players (id, event_id, user_id, team_id, role)
      values ('evp_ada', 'evt_single', $1, 'tem_away', 'batter')`,
     [ada.legacyId]
+  )
+}
+
+const through036 = migrations.filter(migration => migration.name < '037')
+
+const batter = mintUserId(() => false)
+const pitcher = mintUserId(id => id === batter.userId)
+const otherRunner = mintUserId(
+  id => id === batter.userId || id === pitcher.userId
+)
+
+/**
+ * Migration 037's table and its change to the events trigger: a batter who
+ * reaches is not also listed as their own runner, and rolling the migration
+ * back restores the old rows.
+ */
+describe('migration 037gameStatsState', function () {
+  this.timeout(60000)
+
+  const scratchName = `gamestation_upgrade_037_${Date.now()}`
+  const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
+
+  let admin: Pool
+  let pool: Pool
+
+  before(async function () {
+    admin = new Pool({ connectionString: adminUrl })
+    await admin.query(`create database ${scratchName}`)
+    pool = new Pool({ connectionString: scratchUrl })
+    await migrateUp(pool, through036)
+    await seedPost031(pool)
+  })
+
+  after(async function () {
+    if (pool != null) await pool.end()
+    if (admin != null) {
+      await admin.query(`drop database if exists ${scratchName}`)
+      await admin.end()
+    }
+  })
+
+  it('skips the batter as a runner and leaves game_player_stats alone', async function () {
+    const applied = await migrateUp(pool, migrations)
+    expect(applied.applied).deep.equals([migration037GameStatsState.name])
+
+    const table = await pool.query(
+      `select to_regclass('game_stats_state')::text as name`
+    )
+    expect(table.rows).deep.equals([{ name: 'game_stats_state' }])
+
+    const before = await pool.query<{
+      id: string
+      pa: number
+      ab: number
+      h: number
+    }>(
+      `select id, pa, ab, h from game_player_stats where game_id = 'gam_037'`
+    )
+
+    await pool.query(`update events set gumbo = gumbo where id = 'evt_037'`)
+
+    const players = await pool.query<{ role: string; userId: string }>(
+      `select role, user_id::text as "userId"
+       from event_players
+       where event_id = 'evt_037' and role in ('batter', 'runner')
+       order by role, user_id`
+    )
+    expect(players.rows).deep.equals([
+      { role: 'batter', userId: String(batter.userId) },
+      { role: 'runner', userId: String(otherRunner.userId) }
+    ])
+
+    const after = await pool.query<{
+      id: string
+      pa: number
+      ab: number
+      h: number
+    }>(
+      `select id, pa, ab, h from game_player_stats where game_id = 'gam_037'`
+    )
+    expect(after.rows).deep.equals(before.rows)
+  })
+
+  it('restores the batter as a runner when 037 is rolled back', async function () {
+    const rolled = await migrateDown(pool, migrations, 1)
+    expect(rolled).deep.equals([migration037GameStatsState.name])
+
+    const table = await pool.query(
+      `select to_regclass('game_stats_state')::text as name`
+    )
+    expect(table.rows).deep.equals([{ name: null }])
+
+    await pool.query(`update events set gumbo = gumbo where id = 'evt_037'`)
+
+    const players = await pool.query<{ role: string; userId: string }>(
+      `select role, user_id::text as "userId"
+       from event_players
+       where event_id = 'evt_037' and role in ('batter', 'runner')
+       order by role, user_id`
+    )
+    const runnerRows =
+      batter.userId < otherRunner.userId
+        ? [
+            { role: 'runner', userId: String(batter.userId) },
+            { role: 'runner', userId: String(otherRunner.userId) }
+          ]
+        : [
+            { role: 'runner', userId: String(otherRunner.userId) },
+            { role: 'runner', userId: String(batter.userId) }
+          ]
+    expect(players.rows).deep.equals([
+      { role: 'batter', userId: String(batter.userId) },
+      ...runnerRows
+    ])
+  })
+})
+
+/**
+ * A game, three people, a stats row, and one double whose runners name the
+ * batter twice (null→1B, 1B→2B) plus one other runner — the post-031 shape.
+ */
+async function seedPost031(pool: Pool): Promise<void> {
+  for (const [made, name] of [
+    [batter, 'Batter'],
+    [pitcher, 'Pitcher'],
+    [otherRunner, 'Runner']
+  ] as const) {
+    await pool.query(
+      `insert into users (id, "legacyId", display_name) values ($1, $2, $3)`,
+      [made.userId, made.legacyId, name]
+    )
+  }
+  await pool.query(
+    `insert into teams (id, name) values
+       ('tem_home037', 'Home'), ('tem_away037', 'Away')`
+  )
+  await pool.query(
+    `insert into games (id, home_team_id, away_team_id, start_at)
+     values ('gam_037', 'tem_home037', 'tem_away037', $1)`,
+    [PLAYED]
+  )
+  await pool.query(
+    `insert into game_player_stats (id, game_id, user_id, team_id, pa, ab, h)
+     values ('gps_037', 'gam_037', $1, 'tem_away037', 3, 2, 1)`,
+    [batter.userId]
+  )
+
+  const gumbo = {
+    about: {
+      atBatIndex: 0,
+      inning: 1,
+      halfInning: 'top',
+      isScoringPlay: false
+    },
+    result: { eventType: 'double', awayScore: 0, homeScore: 0 },
+    matchup: {
+      batter: { id: batter.userId },
+      pitcher: { id: pitcher.userId }
+    },
+    runners: [
+      {
+        movement: { start: null, end: '1B', isOut: false },
+        details: {
+          eventType: 'double',
+          runner: { id: batter.userId }
+        }
+      },
+      {
+        movement: { start: '1B', end: '2B', isOut: false },
+        details: {
+          eventType: 'double',
+          runner: { id: batter.userId }
+        }
+      },
+      {
+        movement: { start: null, end: '3B', isOut: false },
+        details: {
+          eventType: 'double',
+          runner: { id: otherRunner.userId }
+        }
+      }
+    ]
+  }
+
+  await pool.query(
+    `insert into events (id, "gameId", "battingTeamId", gumbo)
+     values ('evt_037', 'gam_037', 'tem_away037', $1::jsonb)`,
+    [JSON.stringify(gumbo)]
   )
 }

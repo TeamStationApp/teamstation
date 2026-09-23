@@ -851,6 +851,24 @@ describe('posting and reading plays', function () {
       .executeTakeFirstOrThrow()
     expect(game).deep.equals({ status: 'scheduled', away_score: null })
   })
+
+  it('leaves the game owed in game_stats_state after a post', async function () {
+    if (db == null) this.skip()
+    const posted = await ask(`/games/${pendingId}/events`, 'POST', {
+      plays: [play({ atBatIndex: 0, awayScore: 0, homeScore: 0 })],
+      source: { system: 'manual' }
+    })
+    expect(posted.status).equals(200)
+    const owed = await db
+      .selectFrom('game_stats_state')
+      .select(['requested_generation', 'built_generation', 'status'])
+      .where('game_id', '=', pendingId)
+      .executeTakeFirstOrThrow()
+    expect(Number(owed.requested_generation)).greaterThan(
+      Number(owed.built_generation)
+    )
+    expect(owed.status).equals('pending')
+  })
 })
 
 describe('the status a post leaves', function () {

@@ -550,7 +550,24 @@ export function openApiDocument(version: string): OpenApiDocument {
             'the game `final`, and a final game refuses every later post with ' +
             '409, so a game is posted once it is over. Otherwise a ' +
             '`scheduled` game with plays becomes `inProgress`, and any other ' +
-            'status, `cancelled` included, is kept.',
+            'status, `cancelled` included, is kept. ' +
+            'The stats builder counts batting and pitching lines from these ' +
+            'plays. Every counted play needs `about.inning`, ' +
+            '`about.halfInning`, `matchup.pitcher`, `count.outs` and ' +
+            '`runners[]`. A plate appearance also needs `matchup.batter` and ' +
+            "the batter's own runner entry (`movement.start` null, " +
+            '`details.runner` naming the batter). Every runner entry with a ' +
+            '`movement` needs `details.runner`, `details.eventType`, and ' +
+            '`movement.end` (or null when `movement.isOut` is true). A ' +
+            'scoring entry also needs `details.responsiblePitcher`, ' +
+            '`details.earned` and `details.rbi`. A player object may omit ' +
+            '`id` (an unmapped opponent); a present `id` must name a ' +
+            'GameStation user. When the last play carries ' +
+            '`result.awayScore` and `result.homeScore`, the runs from ' +
+            "the 'score' runner entries must equal that score. A play that " +
+            'lacks a required field is still stored: the builder marks the ' +
+            'game `incomplete` with the reason and leaves any earlier ' +
+            '`game_player_stats` rows untouched.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam],
           requestBody: {
@@ -689,15 +706,20 @@ export function openApiDocument(version: string): OpenApiDocument {
           summary: "A game's batting and pitching lines",
           description:
             'Added up from the stored stat lines, one row per player per ' +
-            'game. A stats engine outside these routes writes them, and ' +
-            "recomputes a game's lines whenever its plays change. A game " +
-            'with no lines yet has no box score: `batting` and `pitching` are ' +
-            'empty.',
+            "game. The stats builder writes them whenever the game's plays " +
+            'change. `stats` is where that build stands: `none` when nothing ' +
+            'has asked for this game yet, `pending` while a build is owed, ' +
+            '`built` when the lines match the plays, `incomplete` when a ' +
+            'required Gumbo field is missing (with `detail` naming the play ' +
+            'and field), or `failed` after a build threw. A game with no ' +
+            'lines yet has empty `batting` and `pitching`.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam],
           responses: {
             200: {
-              description: 'A line per batter, with rates worked out on read'
+              description:
+                'A line per batter and pitcher, with rates, and `stats` for ' +
+                "the builder's status"
             },
             404: errorResponse
           }

@@ -154,4 +154,27 @@ describe('the API document', function () {
       `promised but not served: ${invented.join(', ')}`
     ).deep.equals([])
   })
+
+  it('describes the box-score stats field and the events play contract', function () {
+    const paths = openApiDocument('0.0.0').paths as Record<
+      string,
+      {
+        get?: {
+          description?: string
+          responses?: Record<string, { description?: string }>
+        }
+        post?: { description?: string }
+      }
+    >
+    const box = paths['/games/{gameId}/box-score']?.get
+    expect(box?.description ?? '').includes('`stats`')
+    expect(box?.description ?? '').includes('incomplete')
+    expect(box?.responses?.['200']?.description ?? '').includes('stats')
+
+    const events = paths['/games/{gameId}/events']?.post
+    const eventsDescription = events?.description ?? ''
+    expect(eventsDescription).includes('matchup.pitcher')
+    expect(eventsDescription).includes('incomplete')
+    expect(eventsDescription).includes('game_player_stats')
+  })
 })
