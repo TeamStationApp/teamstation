@@ -31,7 +31,6 @@ import {
   LivePill,
   NAV_CLEARANCE_REM,
   PillTabs,
-  Screen,
   StreamPanel,
   type TeamStatLine,
   useHandoff,
@@ -913,6 +912,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     <PillTabs
       tabs={[
         { id: 'watch', label: lstrings.game_videos },
+        { id: 'boxScore', label: lstrings.game_box_score },
         // Only for a scorekeeper of either team: the server refuses anybody
         // else's plays, and a button that ends in a refusal is worse than none.
         ...(game.canScore &&
@@ -941,8 +941,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
                 role: 'button' as const
               }
             ]
-          : []),
-        { id: 'boxScore', label: lstrings.game_box_score }
+          : [])
       ]}
       selected={tab}
       onSelect={next => {
@@ -1277,10 +1276,28 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
 
   return (
     <>
-      <ScrollView style={styles.screen}>
-        <Screen wide scroll={false}>
-          {scoreboard}
-          {tabs}
+      {/*
+        The same frame the videos tab gives the card, so the card keeps its
+        width when the two tabs trade places.
+      */}
+      <ScrollView
+        style={styles.screen}
+        onScroll={handleWatchScroll}
+        scrollEventThrottle={16}
+        contentContainerStyle={{
+          paddingTop: headerHeight,
+          paddingBottom:
+            navClearanceAboveInset(
+              Platform.OS,
+              theme.rem(NAV_CLEARANCE_REM),
+              theme.rem(FLOATING_BOTTOM_REM)
+            ) + (Platform.OS === 'web' ? 0 : insets.bottom),
+          paddingLeft: Platform.OS === 'web' ? 0 : insets.left,
+          paddingRight: Platform.OS === 'web' ? 0 : insets.right
+        }}
+      >
+        <View style={styles.head}>{head}</View>
+        <View style={styles.boxSheet}>
           <BoxScore
             game={game}
             box={box}
@@ -1288,7 +1305,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
             sideBySide={sideBySide}
             onOpenPlayer={onOpenPlayer}
           />
-        </Screen>
+        </View>
       </ScrollView>
       {anglePicker}
       {multiCam}
@@ -1893,6 +1910,14 @@ const getStyles = cacheStyles((theme: Theme) =>
       paddingTop: theme.rem(theme.spaceMdRem),
       paddingHorizontal: theme.rem(theme.spaceMdRem),
       gap: theme.rem(theme.spaceSmRem)
+    },
+    // The tables under that card. The same side inset, so they share its
+    // edges rather than sitting in a wider column of their own.
+    boxSheet: {
+      width: '100%',
+      paddingHorizontal: theme.rem(theme.spaceMdRem),
+      paddingBottom: theme.rem(theme.spaceLgRem),
+      gap: theme.rem(theme.spaceLgRem)
     },
     // The same pieces, stacked in the column on the right on a short window.
     columnHead: {

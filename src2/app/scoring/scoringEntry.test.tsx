@@ -34,7 +34,7 @@ afterEach(async function () {
   root = undefined
 })
 describe('actual game scoring entry', function () {
-  it('renders Score Game between Videos and Box score and launches only on press', async function () {
+  it('renders Score Game after Box score and launches only on press', async function () {
     const client = new GameStationClient({ baseUrl: '/api/v1' })
     client.game = async () => gameFixture
     client.teams = async () => []
@@ -51,8 +51,8 @@ describe('actual game scoring entry', function () {
     expect(opened).equals(0)
     expect(button('Score Game')?.getAttribute('role')).equals('button')
     const text = document.body.textContent ?? ''
-    expect(text.indexOf('Videos')).lessThan(text.indexOf('Score Game'))
-    expect(text.indexOf('Score Game')).lessThan(text.indexOf('Box score'))
+    expect(text.indexOf('Videos')).lessThan(text.indexOf('Box score'))
+    expect(text.indexOf('Box score')).lessThan(text.indexOf('Score Game'))
     await act(async () => {
       button('Score Game')?.click()
     })
