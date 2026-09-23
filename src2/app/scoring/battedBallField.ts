@@ -41,6 +41,7 @@ export function battedBallField(
   FieldCanvasProps,
   | 'homeRunPlacement'
   | 'acceptDefenderTap'
+  | 'deferDefenderPlacement'
   | 'constrainPlacement'
   | 'onLandingAccepted'
   | 'arc'
@@ -50,6 +51,7 @@ export function battedBallField(
   const locating = state.phase === 'locateLanding'
   return {
     homeRunPlacement: locating,
+    deferDefenderPlacement: state.phase === 'locateFielder',
     acceptDefenderTap:
       state.phase === 'locateFielder' ||
       state.phase === 'chooseThrower' ||

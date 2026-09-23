@@ -5,14 +5,14 @@ import React, {
   useRef,
   useState
 } from 'react'
-import { ScrollView, Text, View } from 'react-native'
+import { ScrollView, View } from 'react-native'
 
-import { useTheme } from '../theme/ThemeContext'
 import {
   RosterGesture,
   type RosterPreview,
   type RosterRect
 } from './rosterGesture'
+import { ROSTER_CARD_GAP } from './rosterLayout'
 export const RosterContext = createContext<RosterGesture | null>(null)
 export const RosterClipContext = createContext<
   (() => Promise<RosterRect>) | undefined
@@ -37,7 +37,6 @@ export function RosterDragGroup({
 }: {
   children: React.ReactNode
 }): React.ReactElement {
-  const theme = useTheme()
   const [preview, setPreview] = useState<RosterPreview | null>(null)
   const [engine] = useState(() => new RosterGesture(setPreview))
   const root = useRef<React.ComponentRef<typeof View>>(null)
@@ -74,6 +73,7 @@ export function RosterDragGroup({
     <RosterContext.Provider value={engine}>
       <View
         ref={root}
+        style={{ flex: 1, minHeight: 0 }}
         onLayout={() => {
           measureRosterView(root.current)
             .then(setOrigin)
@@ -83,25 +83,24 @@ export function RosterDragGroup({
         {children}
         {preview != null && (
           <View
+            testID="Roster dragged card"
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants"
+            aria-hidden
             pointerEvents="none"
             style={{
               position: 'absolute',
-              left: preview.x - origin.x + 10,
-              top: preview.y - origin.y - 48,
-              padding: 10,
-              borderRadius: 8,
-              backgroundColor: theme.scoringMenuActiveBackground,
+              left: preview.x - origin.x - (preview.grab?.x ?? 0),
+              top: preview.y - origin.y - (preview.grab?.y ?? 0),
+              width: preview.cardRect?.width,
+              height: preview.cardRect?.height,
               zIndex: 100
             }}
           >
-            <Text
-              style={{
-                color: theme.scoringMenuActiveText,
-                fontFamily: theme.semiBoldTextFont
-              }}
-            >
-              {preview.label}
-            </Text>
+            {preview.source == null
+              ? null
+              : (engine.sources.get(preview.source)
+                  ?.content as React.ReactNode)}
           </View>
         )}
       </View>
@@ -114,7 +113,7 @@ export function RosterScrollArea({
   children
 }: {
   name: string
-  height: number
+  height?: number
   children: React.ReactNode
 }): React.ReactElement {
   const engine = useRosterGesture()
@@ -129,13 +128,14 @@ export function RosterScrollArea({
   }, [engine])
   const offset = useRef(0)
   const content = useRef(0)
-  const visible = useRef(height)
+  const visible = useRef(height ?? 0)
   const measure = useRef(
     async () => await measureRosterView(port.current)
   ).current
   useEffect(() => {
     engine.scrolls.set(name, {
       measure,
+      offset: () => offset.current,
       scroll: delta => {
         offset.current = Math.max(
           0,
@@ -151,7 +151,7 @@ export function RosterScrollArea({
   return (
     <View
       ref={port}
-      style={{ height }}
+      style={height == null ? { flex: 1, minHeight: 0 } : { height }}
       onLayout={event => {
         visible.current = event.nativeEvent.layout.height
       }}
@@ -172,8 +172,8 @@ export function RosterScrollArea({
           scrollEventThrottle={16}
           contentContainerStyle={{
             paddingHorizontal: 8,
-            paddingVertical: 4,
-            gap: 6
+            paddingVertical: 8,
+            gap: ROSTER_CARD_GAP
           }}
         >
           {children}

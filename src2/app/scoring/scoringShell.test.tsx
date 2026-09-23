@@ -120,9 +120,11 @@ describe('scoring shell and exit', function () {
     await click('Exit Current Game')
     expect(currentRoute().name).equals('game')
   })
-  it('has a visible failure exit and ignores a late response after unmount', async function () {
+  it('has a visible failure exit, retries the load, and ignores a late response after unmount', async function () {
     const client = new GameStationClient({ baseUrl: '/api/v1' })
+    let loads = 0
     client.game = async () => {
+      loads++
       throw new Error('missing')
     }
     let exits = 0
@@ -135,7 +137,10 @@ describe('scoring shell and exit', function () {
         }}
       />
     )
-    expect(document.body.textContent).includes('Game not found.')
+    expect(document.body.textContent).includes('Unable to load scoring.')
+    expect(loads).equals(1)
+    await click('Retry loading scoring')
+    expect(loads).equals(2)
     await click('Exit Current Game')
     expect(exits).equals(1)
   })

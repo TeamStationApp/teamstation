@@ -74,6 +74,9 @@ describe('outcome-specific fielding', function () {
     expect(fieldStageInstruction(state)).equals(
       'Tap or drag a player to where the ball was fielded.'
     )
+    expect(field().deferDefenderPlacement).equals(
+      state.phase === 'locateFielder'
+    )
     expect(field().acceptDefenderTap).equals(true)
     expect(field().constrainPlacement!({ x: 40, z: -10 })).deep.equals({
       x: 10,
@@ -83,6 +86,9 @@ describe('outcome-specific fielding', function () {
     expect(fieldStageInstruction(state)).contains('Tap or drag')
     state = { ...state, phase: 'chooseDefender' }
     expect(fieldStageInstruction(state)).contains('finish the out')
+    expect(field().deferDefenderPlacement).equals(
+      state.phase === 'locateFielder'
+    )
     expect(field().acceptDefenderTap).equals(true)
     state = {
       ...state,

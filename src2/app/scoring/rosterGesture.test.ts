@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { RosterGesture, type RosterPreview } from './rosterGesture'
+import { ROSTER_CARD_GAP } from './rosterLayout'
 
 const box = { x: 100, y: 100, width: 100, height: 200 }
 describe('shared roster dragging', function () {
@@ -131,5 +132,127 @@ describe('shared roster dragging', function () {
     })
     await engine.tick()
     expect(deltas).deep.equals([-18, 18])
+  })
+  it('freezes full-card geometry, keeps the grab offset and follows scroll without gap feedback', async function () {
+    const engine = new RosterGesture(() => undefined)
+    const observed: Array<RosterPreview | null> = []
+    engine.listeners.add(p => observed.push(p))
+    const clip = async (): Promise<typeof box> => ({
+      x: 0,
+      y: 0,
+      width: 300,
+      height: 500
+    })
+    let offset = 0
+    let targetY = 100
+    const drops: Array<[number, string | undefined]> = []
+    engine.scrolls.set('lineup', {
+      measure: clip,
+      offset: () => offset,
+      scroll: dy => {
+        offset += dy
+      }
+    })
+    engine.sources.set('source', {
+      measure: async () => ({ x: 100, y: 40, width: 120, height: 48 }),
+      clip,
+      content: 'full card'
+    })
+    engine.targets.set('lineup-source', {
+      measure: async () => ({ x: 100, y: 40, width: 120, height: 48 }),
+      clip,
+      insertion: 'row',
+      drop: () => {
+        throw new Error('source cannot receive itself')
+      }
+    })
+    engine.targets.set('lineup-1', {
+      measure: async () => ({ x: 100, y: targetY, width: 120, height: 48 }),
+      clip,
+      insertion: 'row',
+      drop: (id, edge) => drops.push([id, edge])
+    })
+    engine.begin(7, 'Seven', { x: 111, y: 53 }, true, 'source')
+    await engine.move({ x: 120, y: 55 })
+    expect(engine.preview?.cardRect).deep.equals({
+      x: 100,
+      y: 40,
+      width: 120,
+      height: 48
+    })
+    expect(engine.preview?.grab).deep.equals({ x: 11, y: 13 })
+    expect(engine.preview?.target).equals('lineup-1')
+    expect(engine.preview?.edge).equals('before')
+    targetY = 250 // opening the preview gap cannot move its logical target
+    await engine.move({ x: 120, y: 80 })
+    expect(engine.preview?.edge).equals('after')
+    offset = 20
+    await engine.move({ x: 120, y: 35 })
+    expect(engine.preview?.target).equals('lineup-1')
+    expect(engine.preview?.edge).equals('before')
+    await engine.release({ x: 120, y: 35 })
+    expect(drops).deep.equals([[7, 'before']])
+    expect(observed.at(-1)).equals(null)
+    engine.begin(7, 'Seven', { x: 111, y: 53 }, true, 'source')
+    await engine.move({ x: 450, y: 35 })
+    expect(engine.preview?.target).equals(undefined)
+    engine.cancel()
+    expect(engine.preview).equals(null)
+  })
+  it('closes the gap a dragged card leaves by its height plus the card gap', async function () {
+    const engine = new RosterGesture(() => undefined)
+    const clip = async (): Promise<typeof box> => ({
+      x: 0,
+      y: 0,
+      width: 300,
+      height: 500
+    })
+    engine.sources.set('source', {
+      measure: async () => ({ x: 100, y: 40, width: 120, height: 48 }),
+      clip,
+      content: 'full card'
+    })
+    // The next card down, one card and one gap below the dragged one.
+    const below = 40 + 48 + ROSTER_CARD_GAP
+    engine.targets.set('lineup-1', {
+      measure: async () => ({ x: 100, y: below, width: 120, height: 48 }),
+      clip,
+      insertion: 'row',
+      drop: () => undefined
+    })
+    engine.begin(7, 'Seven', { x: 111, y: 53 }, true, 'source')
+    // With the dragged card lifted out, the next card moves up into its place:
+    // its top is exactly where the dragged card's top was.
+    await engine.move({ x: 120, y: 40 })
+    expect(engine.preview?.target).equals('lineup-1')
+    await engine.move({ x: 120, y: 39 })
+    expect(engine.preview?.target).equals(undefined)
+    engine.cancel()
+  })
+
+  it('ignores stale source measurements and cancels failed measurements', async function () {
+    const engine = new RosterGesture(() => undefined)
+    let finish!: (value: typeof box) => void
+    engine.sources.set('source', {
+      measure: async () =>
+        await new Promise(resolve => {
+          finish = resolve
+        }),
+      content: null
+    })
+    engine.begin(1, 'One', { x: 0, y: 0 }, true, 'source')
+    engine.cancel()
+    finish(box)
+    await engine.move({ x: 10, y: 10 })
+    expect(engine.preview).equals(null)
+    engine.sources.set('source', {
+      measure: async () => {
+        throw new Error('unmounted')
+      },
+      content: null
+    })
+    engine.begin(1, 'One', { x: 0, y: 0 }, true, 'source')
+    await engine.move({ x: 10, y: 10 })
+    expect(engine.active).equals(null)
   })
 })

@@ -141,6 +141,87 @@ afterEach(async function () {
   HTMLCanvasElement.prototype.getContext = getContext
 })
 describe('scoring slide-up sheets', function () {
+  it('names the teams inside the Away/Home pill and nowhere else', async function () {
+    await mount()
+    // The scoreboard behind the sheet names the teams too; the sheet adds each
+    // name exactly once, inside the pill.
+    const count = (name: string): number =>
+      document.body.textContent!.split(name).length - 1
+    const owls = count('Owls')
+    const hawks = count('Hawks')
+    await menu('Set Team Rosters')
+    try {
+      const captions = document.querySelector(
+        '[data-testid="Roster selector captions"]'
+      )!
+      expect(captions.textContent).equals('AwayHome')
+      expect(
+        document.querySelector('[aria-label="Away Team"]')!.textContent
+      ).equals('Owls')
+      expect(
+        document.querySelector('[aria-label="Home Team"]')!.textContent
+      ).equals('Hawks')
+      expect(count('Owls') - owls).equals(1)
+      expect(count('Hawks') - hawks).equals(1)
+      await click('Home Team')
+      expect(count('Owls') - owls).equals(1)
+      expect(count('Hawks') - hawks).equals(1)
+    } finally {
+      await click('Cancel')
+    }
+  })
+
+  it('lists the roster by jersey number, numbers first and no number last, in both modes', async function () {
+    await mount()
+    await menu('Set Team Rosters')
+    try {
+      // Added out of order: the player with no number first.
+      for (const [first, last, jersey] of [
+        ['Amy', 'Blank', ''],
+        ['Zed', 'Ten', '10']
+      ]) {
+        await click('Create Player')
+        await input('First Name', first)
+        await input('Last Name', last)
+        if (jersey !== '') await input('Jersey Number', jersey)
+        await click('Add Player')
+      }
+      const roster = (): string[] =>
+        Array.from(
+          document.querySelectorAll(
+            '[data-roster-target="roster"] [data-roster-player]'
+          )
+        ).map(node => node.textContent!.trim())
+      const inOrder = (rows: string[]): void => {
+        const numbers = rows.map(row => /^#(\d+)/.exec(row)?.[1])
+        const numbered = numbers.filter(number => number != null)
+        expect(numbers.slice(0, numbered.length)).deep.equals(numbered)
+        expect(numbered.map(Number)).deep.equals(
+          [...numbered].map(Number).sort((a, b) => a - b)
+        )
+        expect(rows.at(-1)).includes('Amy')
+      }
+      const lineup = roster()
+      inOrder(lineup)
+      expect(lineup.findIndex(row => row.includes('Zed'))).equals(
+        lineup.findIndex(row => row.startsWith('#10 '))
+      )
+      await click('Set Defense')
+      expect(roster()).deep.equals(lineup)
+      await click('Set Lineup')
+      // Adding to the lineup puts him last there; the lineup is not sorted.
+      await click('Add Zed Ten to Lineup')
+      const last = Array.from(
+        document.querySelectorAll(
+          '[data-roster-target^="lineup-"][data-roster-player]'
+        )
+      ).at(-1)!
+      expect(last.textContent).includes('Zed')
+    } finally {
+      await click('Cancel')
+    }
+  })
+
   it('edits both lineups and defense, adds local players and commits once with undo', async function () {
     await mount()
     await menu('Set Team Rosters')
@@ -271,7 +352,7 @@ describe('scoring slide-up sheets', function () {
           .querySelector(`[aria-label="${label}"]`)
           ?.getAttribute('aria-disabled')
       ).equals('true')
-    await click('Resume Game')
+    await click('Dismiss scoring menu')
     await menu('Settings')
     await click('Cancel')
     await menu('Exit Current Game')

@@ -141,6 +141,7 @@ export function ScoringSheet({
   title,
   textCancel = false,
   fullScreen = false,
+  scroll = true,
   onShow,
   onClose,
   children
@@ -148,12 +149,14 @@ export function ScoringSheet({
   title: string
   textCancel?: boolean
   fullScreen?: boolean
+  scroll?: boolean
   onShow?: () => void
   onClose: () => void
   children: React.ReactNode
 }): React.ReactElement {
   const theme = useTheme()
   const [contentHeight, setContentHeight] = useState<number>()
+  const Content = scroll ? ScrollView : View
   return (
     <Modal
       transparent={!fullScreen}
@@ -259,7 +262,8 @@ export function ScoringSheet({
                   <ScoringButton label="Cancel" onPress={onClose} />
                 )}
               </View>
-              <ScrollView
+              <Content
+                style={{ flex: fullScreen ? 1 : undefined, minHeight: 0 }}
                 onLayout={event => {
                   setContentHeight(event.nativeEvent.layout.height)
                 }}
@@ -269,7 +273,7 @@ export function ScoringSheet({
                 <ScoringSheetHeight.Provider value={contentHeight}>
                   {children}
                 </ScoringSheetHeight.Provider>
-              </ScrollView>
+              </Content>
             </View>
           </SheetArea>
         </KeyboardAvoidingView>

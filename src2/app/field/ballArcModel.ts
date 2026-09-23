@@ -1,3 +1,4 @@
+import { MAX_LAUNCH_ANGLE } from '../../common/scoring/rules'
 import type { GroundPoint } from './fieldModel'
 import { TERRAIN } from './terrain'
 import { guideOffset } from './trajectoryGuide'
@@ -10,6 +11,7 @@ export interface BallArcState {
   guideBearing?: number
 }
 export type ArcMode = 'off' | 'aim' | 'edit'
+export { MAX_LAUNCH_ANGLE }
 export const BALL_GROUND = TERRAIN.players + 0.16
 export const BALL_CONTACT = TERRAIN.players + 7.2
 export function arcTarget(point: GroundPoint): GroundPoint {
@@ -21,7 +23,7 @@ export function arcTarget(point: GroundPoint): GroundPoint {
   return { x: point.x * scale, z: z * scale }
 }
 export function dragLaunchAngle(start: number, pixelsUp: number): number {
-  return Math.max(-45, Math.min(70, start + pixelsUp * 0.5))
+  return Math.max(-45, Math.min(MAX_LAUNCH_ANGLE, start + pixelsUp * 0.5))
 }
 export function firstBounceFraction(angle: number): number {
   return 0.5 - Math.max(0, Math.min(1, -angle / 45)) * 0.44

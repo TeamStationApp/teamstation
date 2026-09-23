@@ -445,6 +445,8 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
         }
       } else if (runner != null) props.onRunnerCancel?.()
     }
+    if (player?.team === 'defense' && props.deferDefenderPlacement === true)
+      finishMove(player, drag.current, true)
     drag.current = null
     props.onLandingPreview?.(null)
     props.onRunnerDrag?.(null)
