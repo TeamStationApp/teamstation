@@ -307,19 +307,21 @@ function ScoringSession(props: {
         .map(player => player.id)
     : []
   const instruction =
-    state.phase === 'locateFielder'
-      ? 'Drag fielder to location of fielded ball.'
-      : state.phase === 'trajectory'
-        ? 'Drag up and down for ball trajectory.'
-        : state.phase === 'chooseThrower'
-          ? 'Tap and Drag Thrower.'
-          : state.phase === 'chooseDefender'
-            ? 'Tap and Drag Defender or Hit Done if the same defender created the out'
-            : state.phase === 'resolveBatter'
-              ? unresolvedRunner?.from === 0
-                ? 'Drag batter to a base, or hold to mark Out'
-                : `Resolve ${session.gameData.players[unresolvedRunner?.playerId ?? 0]?.fullName ?? 'runner'}: drag to a base, or hold to mark Out`
-              : undefined
+    state.presentation != null
+      ? undefined
+      : state.phase === 'locateFielder'
+        ? 'Drag fielder to location of fielded ball.'
+        : state.phase === 'trajectory'
+          ? 'Drag up and down for ball trajectory.'
+          : state.phase === 'chooseThrower'
+            ? 'Tap and Drag Thrower.'
+            : state.phase === 'chooseDefender'
+              ? 'Tap and Drag Defender or Hit Done if the same defender created the out'
+              : state.phase === 'resolveBatter'
+                ? unresolvedRunner?.from === 0
+                  ? 'Drag batter to a base, or hold to mark Out'
+                  : `Resolve ${session.gameData.players[unresolvedRunner?.playerId ?? 0]?.fullName ?? 'runner'}: drag to a base, or hold to mark Out`
+                : undefined
   const fieldScoreboard = scoreboardFor(session)
   const summary =
     instruction == null
@@ -333,6 +335,9 @@ function ScoringSession(props: {
         players,
         presentation: state.presentation,
         presentationPaused: menu || sheet != null || outcomeMenu || moreOpen,
+        onPresentationContact: (id, generation) => {
+          dispatch({ type: 'PRESENTATION_CONTACT', id, generation })
+        },
         onPresentationDone: (id, generation, stage) => {
           dispatch({ type: 'PRESENTATION_DONE', id, generation, stage })
         },
@@ -401,7 +406,7 @@ function ScoringSession(props: {
                 : ['place']
         },
         arc:
-          state.pendingPlay?.location == null
+          state.phase !== 'trajectory' || state.pendingPlay?.location == null
             ? null
             : { target: state.pendingPlay.location, angle },
         arcMode:
@@ -412,6 +417,7 @@ function ScoringSession(props: {
           setAngle(allowedAngle(arc.angle, state.pendingPlay?.outcome ?? ''))
         },
         onTrajectoryAccepted: (value, generation) => {
+          scoringAudio.unlock()
           dispatch({ type: 'TRAJECTORY', angle: value, generation })
         },
         onFieldPlacement: event => {
@@ -497,6 +503,7 @@ function ScoringSession(props: {
           }
           onActive={setOutcomeMenu}
           onChoose={outcome => {
+            scoringAudio.unlock()
             setHint(false)
             dispatch({ type: 'OUTCOME', outcome })
           }}
@@ -527,7 +534,7 @@ function ScoringSession(props: {
             : `${instruction}${state.phase === 'trajectory' ? ` ${angle}° ${trajectoryLabel(angle)}` : ''}`
       }
       remainingMs={
-        state.phase === 'correctionWindow'
+        state.phase === 'correctionWindow' && state.presentation == null
           ? state.correctionWindow?.remainingMs
           : undefined
       }
@@ -576,7 +583,7 @@ function ScoringSession(props: {
           />
         </View>
       )}
-      {!menu && sheet == null && (
+      {!menu && sheet == null && state.presentation == null && (
         <RunnerControls state={state} anchor={null} dispatch={dispatch} />
       )}
       {menu && (

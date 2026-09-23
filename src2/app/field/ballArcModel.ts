@@ -8,7 +8,7 @@ export interface BallArcState {
 }
 export type ArcMode = 'off' | 'aim' | 'edit'
 export const BALL_GROUND = TERRAIN.players + 0.16
-export const BALL_CONTACT = BALL_GROUND + 1.2
+export const BALL_CONTACT = TERRAIN.players + 7.2
 export function arcTarget(point: GroundPoint): GroundPoint {
   if (!Number.isFinite(point.x) || !Number.isFinite(point.z))
     return { x: 0, z: -3 }

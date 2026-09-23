@@ -2,6 +2,7 @@ import type { GroundPoint } from '../field/fieldModel'
 import { prepareBatterResult, prepareHit } from './runnerRules'
 import { type Outcome, outcomeEvents } from './scoringContract'
 import { accepted } from './scoringMachine'
+import { hitPresentation } from './scoringPresentation'
 import {
   baseIds,
   battingSide,
@@ -94,7 +95,6 @@ export function placeFielder(
       pending.fielder = id
       pending.location = { ...point }
       pending.angle = 45
-      prepareHit(next)
       next.phase = 'trajectory'
     }
   )
@@ -112,6 +112,8 @@ export function acceptTrajectory(
     return state
   const value = allowedAngle(angle, state.pendingPlay!.outcome)
   return accepted(state, `${value}° ${trajectoryLabel(value)}`, next => {
+    if (state.presentationEnabled === true)
+      next.presentation = hitPresentation(state, value)
     const pending = next.pendingPlay!
     pending.angle = value
     pending.trajectoryAccepted = true
@@ -121,6 +123,7 @@ export function acceptTrajectory(
       coordinates: { ...pending.location! },
       fielder: playerRef(next.session, pending.fielder!)!
     }
+    prepareHit(next)
     prepareBatterResult(next)
   })
 }

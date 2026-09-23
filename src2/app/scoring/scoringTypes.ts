@@ -176,6 +176,7 @@ export interface ScoringState extends ScoringSnapshot {
   past: HistoryEntry[]
 }
 export type ScoringEvent =
+  | { type: 'PRESENTATION_CONTACT'; id: string; generation: number }
   | {
       type: 'PRESENTATION_DONE'
       id: string

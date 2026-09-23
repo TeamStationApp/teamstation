@@ -132,7 +132,7 @@ export function Player({
   }, [player.suppressed, invalidate])
   const shirt = player.team === 'runner' ? p.runner : p.defense
   useFrame(({ camera, size }, dt) => {
-    if (!paused) advancePlayer(player, dt)
+    if (!paused && player.pose?.run == null) advancePlayer(player, dt)
     const motion = player.motion
     if (
       !paused &&
@@ -163,7 +163,7 @@ export function Player({
       placePlayerLabel(label.current, player, camera, size.height)
     }
     body.current.rotation.y = player.heading
-    const running = Math.min(1, player.speed / 5)
+    const running = player.pose?.run ?? Math.min(1, player.speed / 5)
     const swing = Math.sin(player.stride) * 0.8 * running
     if (leftArm.current != null) leftArm.current.rotation.x = swing
     if (rightArm.current != null) rightArm.current.rotation.x = -swing
@@ -184,8 +184,22 @@ export function Player({
       if (throwingArm != null) throwingArm.rotation.x -= windup * 2.7
       if (leftArm.current != null) leftArm.current.rotation.x -= catching * 0.8
       body.current.rotation.x -= windup * 0.18
-      if (batPose.current != null) batPose.current.rotation.y = batSwing * 2.8
-    } else if (batPose.current != null) batPose.current.rotation.y = 0
+      if (batPose.current != null) {
+        batPose.current.rotation.y = batSwing * 0.4
+        const bat = batPose.current.getObjectByName('held-bat')
+        if (bat != null) {
+          bat.rotation.x = -1.4 * batSwing
+          bat.rotation.z = 0.35 * (1 - batSwing)
+        }
+      }
+    } else if (batPose.current != null) {
+      batPose.current.rotation.y = 0
+      const bat = batPose.current.getObjectByName('held-bat')
+      if (bat != null) {
+        bat.rotation.x = 0
+        bat.rotation.z = 0.35
+      }
+    }
     if (target.current != null) {
       target.current.position.set(
         player.target.x,

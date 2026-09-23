@@ -19,6 +19,7 @@ export interface FieldPlacement {
 export interface FieldCanvasProps {
   presentation?: PresentationSequence | null
   presentationPaused?: boolean
+  onPresentationContact?: (id: string, generation: number) => void
   onPresentationDone?: (
     id: string,
     generation: number,

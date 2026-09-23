@@ -22,6 +22,11 @@ describe('owned runner animations', function () {
       point: { x: 5, z: -50 },
       generation: 0
     })
+    state = scoringReducer(state, {
+      type: 'TRAJECTORY',
+      angle: 45,
+      generation: 0
+    })
     const original = JSON.stringify(state)
     const players = scoringFieldPlayers(state)
     const batter = players.find(player => player.playerId === 1)!

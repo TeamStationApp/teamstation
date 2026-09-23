@@ -1,3 +1,4 @@
+import { BALL_CONTACT, type BallArcState } from '../field/ballArcModel'
 import type { FieldPlayer, GroundPoint } from '../field/fieldModel'
 import { fieldPlayersFor } from './fieldAdapter'
 import type { ScoringState } from './scoringTypes'
@@ -5,7 +6,7 @@ export type PitchKind = 'ball' | 'called' | 'swing' | 'foul'
 export interface Point3 extends GroundPoint {
   y: number
 }
-export interface PresentationSequence {
+export interface PitchSequence {
   id: string
   generation: number
   stage: 'delivery'
@@ -32,7 +33,7 @@ export const PITCH_TIMING = {
 export function pitchPresentation(
   state: ScoringState,
   kind: PitchKind
-): PresentationSequence {
+): PitchSequence {
   const session = state.session
   const play = session.liveData.plays.currentPlay!
   const players = fieldPlayersFor(session)
@@ -60,8 +61,60 @@ export function pitchPresentation(
       x: location(pitcher).x + (throwSide === 'R' ? 1.7 : -1.7),
       y: 7
     },
-    plate: { x: 0, y: 5, z: 0 },
+    plate: { x: 0, y: BALL_CONTACT, z: 0 },
     glove: { ...location(catcher), y: 5.2 }
+  }
+}
+export interface HitSequence {
+  id: string
+  generation: number
+  stage: 'swing' | 'flight'
+  kind: 'hit'
+  durationMs: number
+  contactMs: number
+  players: FieldPlayer[]
+  batter: number
+  fielder: number
+  fielderStart: GroundPoint
+  arc: BallArcState
+  batSide: 'R' | 'L'
+  out: boolean
+}
+export type PresentationSequence = PitchSequence | HitSequence
+export function hitPresentation(
+  state: ScoringState,
+  angle: number
+): HitSequence {
+  const pending = state.pendingPlay!
+  const players = fieldPlayersFor(state.session)
+  const start = players.find(
+    player => player.playerId === pending.fielder
+  )!.position
+  const target = pending.location!
+  const flight = Math.max(
+    1100,
+    (Math.hypot(target.x - start.x, target.z - start.z) / 20) * 1000
+  )
+  return {
+    id: `${state.generation}:${state.session.meta.sequence + 1}:hit`,
+    generation: state.generation,
+    stage: 'swing',
+    kind: 'hit',
+    durationMs: 450 + flight,
+    contactMs: 450,
+    players,
+    batter: state.session.liveData.plays.currentPlay!.matchup.batter.id,
+    fielder: pending.fielder!,
+    fielderStart: { ...start },
+    arc: {
+      target: { ...target },
+      angle,
+      landingHeight: pending.outcome === 'Ball Caught' ? 5.2 : undefined
+    },
+    batSide: state.session.liveData.plays.currentPlay!.matchup.batSide.code,
+    out: ['Ball Caught', 'Throw Out', 'Batter Interference'].includes(
+      pending.outcome
+    )
   }
 }
 export interface PresentationRuntime {
@@ -78,30 +131,48 @@ export function stepPresentation(
   sequence: PresentationSequence,
   deltaMs: number,
   paused: boolean
-): { cues: Array<'swish' | 'pop' | 'bat'>; done: boolean } {
+): { cues: Array<'swish' | 'pop' | 'bat'>; done: boolean; contact?: boolean } {
   if (paused || runtime.complete || !Number.isFinite(deltaMs) || deltaMs <= 0)
     return { cues: [], done: false }
   runtime.elapsedMs = Math.min(sequence.durationMs, runtime.elapsedMs + deltaMs)
   const cues: Array<'swish' | 'pop' | 'bat'> = []
-  for (const [id, at, cue] of [
-    ['release', PITCH_TIMING.release, 'swish'],
-    [
-      'impact',
-      sequence.pitch === 'foul' ? PITCH_TIMING.plate : PITCH_TIMING.catch,
-      'pop'
-    ],
-    [
-      'contact',
-      sequence.pitch === 'foul' ? PITCH_TIMING.plate : Infinity,
-      'bat'
-    ]
-  ] as const) {
+  const schedule: ReadonlyArray<
+    readonly [string, number, 'swish' | 'pop' | 'bat']
+  > =
+    sequence.kind === 'pitch'
+      ? [
+          ['release', PITCH_TIMING.release, 'swish'],
+          [
+            'impact',
+            sequence.pitch === 'foul' ? PITCH_TIMING.plate : PITCH_TIMING.catch,
+            'pop'
+          ],
+          [
+            'contact',
+            sequence.pitch === 'foul' ? PITCH_TIMING.plate : Infinity,
+            'bat'
+          ]
+        ]
+      : [
+          ['swing', sequence.contactMs - 120, 'swish'],
+          ['contact', sequence.contactMs, 'bat'],
+          ['fielded', sequence.durationMs, 'pop']
+        ]
+  for (const [id, at, cue] of schedule) {
     if (runtime.elapsedMs >= at && !runtime.fired.has(id)) {
       runtime.fired.add(id)
       cues.push(cue)
     }
   }
-  const done = runtime.elapsedMs >= sequence.durationMs
+  const contact =
+    sequence.kind === 'hit' &&
+    sequence.stage === 'swing' &&
+    runtime.elapsedMs >= sequence.contactMs &&
+    !runtime.fired.has('stage-contact')
+  if (contact) runtime.fired.add('stage-contact')
+  const done =
+    runtime.elapsedMs >= sequence.durationMs &&
+    (sequence.kind !== 'hit' || sequence.stage === 'flight')
   runtime.complete = done
-  return { cues, done }
+  return { cues, done, contact }
 }

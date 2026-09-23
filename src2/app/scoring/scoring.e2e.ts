@@ -159,6 +159,27 @@ describe('scoring browser', function () {
   after(async function () {
     await browser?.close()
   })
+  it('finishes coordinated hit flight before exposing correction or home decisions', async function () {
+    for (const outcome of ['Single', 'Double', 'Triple', 'Home Run']) {
+      const { page, unexpected } = await open('/games/g1/score')
+      try {
+        await chooseHit(page, outcome)
+        expect(await page.$('[aria-label="Time to edit play"]')).equals(null)
+        if (outcome === 'Home Run') {
+          await page.waitForSelector('[aria-label="Safe"]', { timeout: 30000 })
+          await click(page, 'Safe')
+        }
+        await page.waitForSelector('[aria-label="Time to edit play"]', {
+          timeout: 30000
+        })
+        await click(page, 'Finish at-bat')
+        await waitReady(page)
+        expect(unexpected).deep.equals([])
+      } finally {
+        await page.close()
+      }
+    }
+  })
   it('pauses a pitch while a menu or hidden document blocks the field', async function () {
     const { page } = await open('/games/g1/score')
     try {

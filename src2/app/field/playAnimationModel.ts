@@ -1,8 +1,11 @@
 import {
+  type HitSequence,
   PITCH_TIMING,
-  type Point3,
-  type PresentationSequence
+  type PitchSequence,
+  type Point3
 } from '../scoring/scoringPresentation'
+import { arcPoint } from './ballArcModel'
+import type { GroundPoint } from './fieldModel'
 export interface PitchSample {
   ball: Point3
   visible: boolean
@@ -33,7 +36,7 @@ export function foulPoint(
   }
 }
 export function samplePitch(
-  sequence: PresentationSequence,
+  sequence: PitchSequence,
   time: number
 ): PitchSample {
   const foul = sequence.pitch === 'foul'
@@ -73,5 +76,34 @@ export function samplePitch(
     windup: Math.sin(clamp(time / 600) * Math.PI),
     swing: swinging ? Math.sin(clamp((time - 500) / 420) * Math.PI) : 0,
     catch: !foul ? Math.sin(clamp((time - 800) / 200) * Math.PI) : 0
+  }
+}
+
+export function sampleHit(
+  sequence: HitSequence,
+  time: number
+): {
+  ball: Point3
+  visible: boolean
+  swing: number
+  fielder: GroundPoint
+  running: boolean
+} {
+  const flight = clamp(
+    (time - sequence.contactMs) / (sequence.durationMs - sequence.contactMs)
+  )
+  return {
+    ball: arcPoint(sequence.arc, flight),
+    visible: time >= sequence.contactMs && time < sequence.durationMs,
+    swing: Math.sin(clamp((time - 250) / 400) * Math.PI),
+    fielder: {
+      x:
+        sequence.fielderStart.x +
+        (sequence.arc.target.x - sequence.fielderStart.x) * flight,
+      z:
+        sequence.fielderStart.z +
+        (sequence.arc.target.z - sequence.fielderStart.z) * flight
+    },
+    running: flight > 0 && flight < 1
   }
 }

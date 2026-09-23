@@ -589,6 +589,7 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
           sequence={props.presentation}
           players={players}
           paused={props.presentationPaused === true}
+          onContact={props.onPresentationContact}
           onComplete={(id, generation, stage) => {
             props.onPresentationDone?.(id, generation, stage)
           }}

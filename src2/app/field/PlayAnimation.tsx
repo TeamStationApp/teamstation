@@ -10,16 +10,18 @@ import {
   stepPresentation
 } from '../scoring/scoringPresentation'
 import type { FieldPlayer } from './fieldModel'
-import { samplePitch } from './playAnimationModel'
+import { sampleHit, samplePitch } from './playAnimationModel'
 export function PlayAnimation({
   sequence,
   players,
   paused,
-  onComplete
+  onComplete,
+  onContact
 }: {
   sequence: PresentationSequence
   players: FieldPlayer[]
   paused: boolean
+  onContact?: (id: string, generation: number) => void
   onComplete: (
     id: string,
     generation: number,
@@ -34,10 +36,15 @@ export function PlayAnimation({
   useEffect(() => {
     invalidate()
     return () => {
-      scoringAudio.stop()
       for (const player of players) delete player.pose
     }
   }, [invalidate, players])
+  useEffect(
+    () => () => {
+      scoringAudio.stop()
+    },
+    []
+  )
   useEffect(() => {
     skipElapsed.current = true
     if (paused) scoringAudio.stop()
@@ -51,20 +58,49 @@ export function PlayAnimation({
       paused
     )
     skipElapsed.current = false
-    const sample = samplePitch(sequence, runtime.current.elapsedMs)
+    const sample =
+      sequence.kind === 'pitch'
+        ? samplePitch(sequence, runtime.current.elapsedMs)
+        : sampleHit(sequence, runtime.current.elapsedMs)
     if (ball.current != null) {
       ball.current.position.set(sample.ball.x, sample.ball.y, sample.ball.z)
       ball.current.visible = sample.visible
     }
-    if (material.current != null) material.current.opacity = sample.opacity
+    if (material.current != null)
+      material.current.opacity = 'opacity' in sample ? sample.opacity : 1
     for (const player of players) {
       player.pose = {
-        windup: player.playerId === sequence.pitcher ? sample.windup : 0,
+        windup:
+          sequence.kind === 'pitch' &&
+          player.playerId === sequence.pitcher &&
+          'windup' in sample
+            ? sample.windup
+            : 0,
         swing: player.playerId === sequence.batter ? sample.swing : 0,
-        catch: player.playerId === sequence.catcher ? sample.catch : 0,
-        throwSide: sequence.throwSide
+        catch:
+          sequence.kind === 'pitch' &&
+          player.playerId === sequence.catcher &&
+          'catch' in sample
+            ? sample.catch
+            : 0,
+        throwSide: sequence.kind === 'pitch' ? sequence.throwSide : 'R'
+      }
+      if (
+        sequence.kind === 'hit' &&
+        'fielder' in sample &&
+        player.playerId === sequence.fielder
+      ) {
+        player.position = { ...sample.fielder }
+        player.target = { ...sample.fielder }
+        player.heading = Math.atan2(
+          sequence.arc.target.x - sequence.fielderStart.x,
+          sequence.arc.target.z - sequence.fielderStart.z
+        )
+        player.stride = runtime.current.elapsedMs * 0.012
+        player.pose.run = sample.running ? 1 : 0
       }
     }
+    if (frame.contact === true) onContact?.(sequence.id, sequence.generation)
     for (const cue of frame.cues) scoringAudio.cue(cue)
     if (frame.done) onComplete(sequence.id, sequence.generation, sequence.stage)
     if (!paused && !runtime.current.complete) invalidate()
