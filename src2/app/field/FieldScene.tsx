@@ -28,7 +28,7 @@ import { Ballpark } from './Ballpark'
 import { applyFieldCamera } from './cameraModel'
 import { fieldKey } from './fieldKeyboard'
 import type { FieldPlayer } from './fieldModel'
-import { BASES } from './fieldModel'
+import { BASES, clampToField } from './fieldModel'
 import { fieldPalette as p } from './fieldPalette'
 import type { FieldCanvasProps } from './fieldTypes'
 import {
@@ -47,6 +47,7 @@ import { PlayAnimation } from './PlayAnimation'
 import { Player } from './Player'
 import { PlayerShadows } from './PlayerShadows'
 import { scoreboardBounds } from './scoreboardBounds'
+import { homeRunLanding } from './stadiumBoundary'
 import { useSurfaceTextures } from './surfaceTextures'
 import { TERRAIN } from './terrain'
 
@@ -254,6 +255,13 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
         player.target = { ...runner.view.point }
       }
       callbacks.current.onRunnerDrag?.({ ...runner.view })
+    } else if (props.homeRunPlacement === true) {
+      const landing = landingAt(event)
+      if (landing == null) return
+      drag.current.goal = homeRunLanding(landing.target)
+      drag.current.landingHeight = landing.landingHeight
+      drag.current.commit = true
+      props.onLandingPreview?.(drag.current.goal)
     } else {
       if (event.ray.intersectPlane(ground, point) == null) return
       previewMove(drag.current, offsetTouchTarget(point, isTouch(event)))
@@ -374,6 +382,9 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     const player = players.find(item => item.id === drag.current?.id)
     if (player != null) {
       finishMove(player, drag.current, cancel)
+      const landing = { ...player.target }
+      if (props.homeRunPlacement === true)
+        player.target = clampToField(player.target)
       if (
         !cancel &&
         dragGeneration.current === (props.interaction?.generation ?? 0)
@@ -398,7 +409,8 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
           props.onPlayerPlacement?.(player.id, { ...player.target })
           props.onFieldPlacement?.({
             entityId: player.id,
-            point: { ...player.target },
+            point: landing,
+            landingHeight: drag.current.landingHeight,
             generation: dragGeneration.current,
             gestureId: gestureId.current
           })
@@ -406,6 +418,7 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
       } else if (runner != null) props.onRunnerCancel?.()
     }
     drag.current = null
+    props.onLandingPreview?.(null)
     props.onRunnerDrag?.(null)
     onSelect('')
     props.onGestureActive?.(false)
@@ -423,6 +436,7 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
       runnerDrag.current = null
       props.onRunnerDrag?.(null)
       props.onRunnerCancel?.()
+      props.onLandingPreview?.(null)
       onSelect('')
       props.onGestureActive?.(false)
       setPreview(null)
@@ -463,6 +477,7 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
         active.capture.releasePointerCapture(active.pointer)
       }
       callbacks.current.onRunnerDrag?.(null)
+      callbacks.current.onLandingPreview?.(null)
       callbacks.current.onSelect('')
       callbacks.current.onGestureActive?.(false)
       invalidate()

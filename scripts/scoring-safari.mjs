@@ -193,139 +193,324 @@ async function fieldAndTrajectory() {
   await gesture([start, { x: start.x, y: start.y + 35 }])
 }
 
-try {
-  await m.setOrientation('portrait')
+async function freshGame() {
   url.searchParams.set('safariAcceptance', String(Date.now()))
   await m.openLink({ link: url.href, browser: true })
   await visible('^Ball in Play$')
   if ((await nodes()).some(n => n.text === 'OK')) await tap('OK')
-  await shot('ready-portrait')
-  await m.longPressOn({ text: '^Ball in Play$', enabled: true })
-  await visible('^Single$')
-  await absent('^(Copy|Look Up|Translate|Select All)$')
-  await shot('long-touch-menu')
-  let g = await geometry()
-  await touch({ x: g.field.x + 15, y: g.field.y + g.field.height * 0.45 })
-  await absent('^Single$')
+}
+async function moreTraversal(orientation) {
+  await m.setOrientation(orientation)
+  await pause(900)
   await touch(center(await find(/^More$/)))
-  await m.assertVisible({ text: '^Wild Pitch$', timeout: 5000 })
-  await shot('more-menu')
-  await touch({ x: g.field.x + g.field.width - 15, y: g.field.y + 200 })
-  await absent('^Wild Pitch$')
-
-  for (const pitch of [
-    'Ball',
-    'Called Strike',
-    'Swing and Miss',
-    'Foul Ball'
-  ]) {
-    await tap(pitch)
-    await visible('^Ball$')
-    await shot(pitch.toLowerCase().replaceAll(' ', '-'))
-  }
-  await visible('Pitches 4')
-  // Captured upward drag starts on the decorative chevrons. Relative menu row
-  // offset follows the current eight-row reversed drag layout, checked below.
-  const button = await find(/^Ball in Play$/)
-  await gesture([
-    { x: button.x + button.width - 12, y: button.y + button.height / 2 },
-    { x: button.x + button.width / 2, y: button.y - 132 }
-  ])
-  await fieldAndTrajectory()
-  await visible('^Finish at-bat$')
-  await visible(
-    'Drag any other runners to advance them or have them called out'
-  )
-  await shot('correction-countdown')
-  await tap('Finish at-bat')
-  await visible('Batter Player 2')
-  await absent('^Finish at-bat$')
-
-  await dragRunner(1, 'out')
-  await visible('^Caught Stealing$')
-  await shot('out-reason-portrait')
-  await cancelRunner()
-  await dragRunner(1, 'safe')
-  await visible('^Steal$')
-  await shot('safe-reason-portrait')
-  await cancelRunner()
-
-  g = await geometry()
-  const along = fraction => {
-    const a = BASES[1]
-    const b = BASES[2]
-    const p = g.project(
-      { x: a.x + (b.x - a.x) * fraction, z: a.z + (b.z - a.z) * fraction },
-      TERRAIN.players
+  if (orientation === 'landscape') {
+    const g = await geometry()
+    const button = await find(/^More$/)
+    await gesture(
+      [
+        { x: button.x + 80, y: button.y - 25 },
+        { x: button.x + 80, y: g.field.y + 25 }
+      ],
+      80
     )
-    return { ...p, y: p.y, pause: 700 }
+    await touch(center(await find(/^Put Batter on Base$/)))
+    const child = await find(/^Second$/)
+    assert(child.x >= g.field.x + g.field.width / 2)
+    await touch(center(child))
+    await find(/^Cancel$/)
+    await shot('more-submenu-landscape')
+    await touch(center(await find(/^Cancel$/)))
+    return
   }
+  const parent = await find(/^Put Batter on Base$/)
+  const button = await find(/^More$/)
+  const g = await geometry()
+  assert(parent.x + parent.width <= g.field.x + g.field.width / 2 + 1)
+  await touch({ x: g.field.x + g.field.width - 15, y: g.field.y + 100 })
+  // Cross to the right child, return left, reopen it, and release on Second.
+  const right = { x: g.field.x + g.field.width * 0.75, y: button.y - 128 + 44 }
+  // Child panel is bottom:128 with three 44px rows; use its middle row.
+  right.y = g.field.y + g.field.height - 128 - 66
   await gesture([
-    g.project(BASES[1]),
-    along(0.35),
-    along(0.7),
-    along(0.35),
-    { x: g.field.x + g.field.width - 8, y: g.field.y + g.field.height * 0.65 }
+    center(button),
+    { ...center(button), y: center(button).y - 20, pause: 500 },
+    center(parent),
+    { ...center(parent), x: center(parent).x + 1, pause: 500 },
+    { x: right.x, y: center(parent).y },
+    right,
+    { x: right.x, y: center(parent).y },
+    center(parent),
+    { ...center(parent), x: center(parent).x + 1, pause: 500 },
+    { x: right.x, y: center(parent).y },
+    right
   ])
-  await absent('^(Safe|Out) drag target$')
-  await absent('^Runner (advance|out)$')
-  await shot('reverse-halfway-cancelled')
-
-  await m.setOrientation('landscape')
-  await pause(500)
-  await shot('ready-landscape')
-  await dragRunner(1, 'out')
-  await visible('^Caught Stealing$')
-  await shot('out-reason-landscape')
-  await cancelRunner()
-  await dragRunner(1, 'safe')
-  await visible('^Steal$')
-  await shot('safe-reason-landscape')
-  await cancelRunner()
-  await m.setOrientation('portrait')
-  await dragRunner(1, 'safe')
-  await visible('^Steal$')
-  await tap('Steal')
-  await visible('^Ball in Play$')
-  await shot('steal-accepted')
-
+  await visible('^Put Batter on Base$')
+  await shot(`more-submenu-${orientation}`)
+  await tap('Cancel')
+  await absent('^First$')
+}
+async function tapInSheet(label) {
+  // Safari exposes offscreen DOM rows in AX, even under its address toolbar.
+  // Scroll inside the actual web viewport before using a row's coordinates.
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const g = await geometry()
+    const node = (await nodes()).find(
+      n => n.text === label && n.enabled !== false
+    )
+    assert(node?.bounds, `Missing sheet row ${label}`)
+    const b = node.bounds
+    const top = g.field.y + 160
+    const bottom = g.field.y + g.field.height - 25
+    if (b.y >= top && b.y + b.height / 2 <= bottom) {
+      await touch(center(b))
+      return
+    }
+    const lower = bottom - 35
+    const upper = top + 40
+    await gesture(
+      [
+        { x: g.field.x + g.field.width / 2, y: b.y < top ? upper : lower },
+        { x: g.field.x + g.field.width / 2, y: b.y < top ? lower : upper }
+      ],
+      80
+    )
+  }
+  assert.fail(`Cannot scroll to sheet row ${label}`)
+}
+async function homeRunScenario(outside, loaded) {
+  await freshGame()
+  if (loaded) {
+    await tap('Open scoring menu')
+    await tap('Overrides')
+    for (const [base, name] of [
+      ['First base', 'Player 6'],
+      ['Second base', 'Player 7'],
+      ['Third base', 'Player 8']
+    ]) {
+      await tapInSheet(base)
+      await tapInSheet(`Choose ${base} ${name}`)
+    }
+    await tapInSheet('Apply Override')
+  }
   await tap('Ball in Play')
-  await tap('Batter Out')
-  await tap('Throw Out')
-  await fieldAndTrajectory()
-  await visible('Tap and drag the next defender')
-  await shot('receiver-choice')
-  g = await geometry()
-  const destination = g.project(BASES[1], TERRAIN.players)
+  await tap('Home Run')
+  const g = await geometry()
   await gesture([
-    g.project({ x: 24, z: -23 }),
-    { ...destination, y: destination.y }
+    g.project({ x: 0, z: -18.44 }),
+    g.project({ x: 0, z: -100 }, 0.7),
+    ...(outside ? [g.project({ x: 0, z: -129 }, 7)] : [])
   ])
-  await visible('Tap and drag the next defender')
-  await tap('Finish defensive play')
-  await visible('^Finish at-bat$')
-  await shot('throw-out-correction')
-  await visible('Batter Player 3')
+  await visible(
+    outside
+      ? 'fielded ball. Home Run|trajectory.*Home Run'
+      : 'In-the-park Home Run'
+  )
+  await shot(
+    `home-run-${outside ? 'stands' : 'inside'}-${loaded ? 'loaded' : 'empty'}-trajectory`
+  )
+  const start = {
+    x: g.field.x + g.field.width / 2,
+    y: g.field.y + g.field.height * 0.55
+  }
+  await gesture([start, { x: start.x, y: start.y + 35 }])
+  if (loaded && !outside) {
+    for (const name of ['Player 8', 'Player 7', 'Player 6']) {
+      await visible(`Home plate decision for ${name}`)
+      await tap('Safe')
+    }
+  }
+  await m.assertVisible({ text: 'Batter Player 2', timeout: 45000 })
+  await visible(`Owls ${loaded ? 4 : 1} · Hawks 0`)
   await absent('^Finish at-bat$')
-  await shot('natural-countdown-next-batter')
+  await absent('Home plate decision')
+  await shot(
+    `home-run-${outside ? 'stands' : 'inside'}-${loaded ? 'loaded' : 'empty'}-complete`
+  )
+  await m.tapOn({ text: '^Undo ', enabled: true })
+  await absent('Batter Player 2')
+}
 
-  await tap('Open scoring menu')
-  await tap('Settings')
-  await tap('Toggle scoring sound')
-  await shot('sound-toggled')
-  await tap('Cancel')
-  await tap('Ball')
-  await visible('^Ball$')
-  await tap('Open scoring menu')
-  await tap('Settings')
-  await tap('Toggle scoring sound')
-  await tap('Cancel')
-  await touch(center(await find(/^More$/)))
-  await tap('Hit by Pitch')
-  await visible('^Finish at-bat$')
-  await tap('Finish at-bat')
-  await visible('Batter Player 4')
-  await shot('more-award-completed')
+try {
+  if (process.env.SCORING_SAFARI_PHASE === 'motion') {
+    await m.setOrientation('portrait')
+    await freshGame()
+    await shot('motion-ready')
+    for (const pitch of [
+      'Ball',
+      'Called Strike',
+      'Swing and Miss',
+      'Foul Ball'
+    ]) {
+      await tap(pitch)
+      await pause(2000)
+      await visible('^Ball$')
+      await shot(`motion-${pitch.toLowerCase().replaceAll(' ', '-')}`)
+    }
+    await tap('Ball in Play')
+    await tap('Single')
+    await fieldAndTrajectory()
+    await visible('^Finish at-bat$')
+    await tap('Finish at-bat')
+  } else if (
+    !['refinements', 'home'].includes(process.env.SCORING_SAFARI_PHASE)
+  ) {
+    await m.setOrientation('portrait')
+    url.searchParams.set('safariAcceptance', String(Date.now()))
+    await m.openLink({ link: url.href, browser: true })
+    await visible('^Ball in Play$')
+    if ((await nodes()).some(n => n.text === 'OK')) await tap('OK')
+    await shot('ready-portrait')
+    await m.longPressOn({ text: '^Ball in Play$', enabled: true })
+    await visible('^Single$')
+    await absent('^(Copy|Look Up|Translate|Select All)$')
+    await shot('long-touch-menu')
+    let g = await geometry()
+    await touch({ x: g.field.x + 15, y: g.field.y + g.field.height * 0.45 })
+    await absent('^Single$')
+    await touch(center(await find(/^More$/)))
+    await m.assertVisible({ text: '^Wild Pitch$', timeout: 5000 })
+    await shot('more-menu')
+    await touch({ x: g.field.x + g.field.width - 15, y: g.field.y + 200 })
+    await absent('^Wild Pitch$')
+
+    for (const pitch of [
+      'Ball',
+      'Called Strike',
+      'Swing and Miss',
+      'Foul Ball'
+    ]) {
+      await tap(pitch)
+      await visible('^Ball$')
+      await shot(pitch.toLowerCase().replaceAll(' ', '-'))
+    }
+    await visible('Pitches 4')
+    // Captured upward drag starts on the decorative chevrons. Relative menu row
+    // offset follows the current eight-row reversed drag layout, checked below.
+    const button = await find(/^Ball in Play$/)
+    await gesture([
+      { x: button.x + button.width - 12, y: button.y + button.height / 2 },
+      { x: button.x + button.width / 2, y: button.y - 132 }
+    ])
+    await fieldAndTrajectory()
+    await visible('^Finish at-bat$')
+    await visible(
+      'Drag any other runners to advance them or have them called out'
+    )
+    await shot('correction-countdown')
+    await tap('Finish at-bat')
+    await visible('Batter Player 2')
+    await absent('^Finish at-bat$')
+
+    await dragRunner(1, 'out')
+    await visible('^Caught Stealing$')
+    await shot('out-reason-portrait')
+    await cancelRunner()
+    await dragRunner(1, 'safe')
+    await visible('^Steal$')
+    await shot('safe-reason-portrait')
+    await cancelRunner()
+
+    g = await geometry()
+    const along = fraction => {
+      const a = BASES[1]
+      const b = BASES[2]
+      const p = g.project(
+        { x: a.x + (b.x - a.x) * fraction, z: a.z + (b.z - a.z) * fraction },
+        TERRAIN.players
+      )
+      return { ...p, y: p.y, pause: 700 }
+    }
+    await gesture([
+      g.project(BASES[1]),
+      along(0.35),
+      along(0.7),
+      along(0.35),
+      { x: g.field.x + g.field.width - 8, y: g.field.y + g.field.height * 0.65 }
+    ])
+    await absent('^(Safe|Out) drag target$')
+    await absent('^Runner (advance|out)$')
+    await shot('reverse-halfway-cancelled')
+
+    await m.setOrientation('landscape')
+    await pause(500)
+    await shot('ready-landscape')
+    await dragRunner(1, 'out')
+    await visible('^Caught Stealing$')
+    await shot('out-reason-landscape')
+    await cancelRunner()
+    await dragRunner(1, 'safe')
+    await visible('^Steal$')
+    await shot('safe-reason-landscape')
+    await cancelRunner()
+    await m.setOrientation('portrait')
+    await dragRunner(1, 'safe')
+    await visible('^Steal$')
+    await tap('Steal')
+    await visible('^Ball in Play$')
+    await shot('steal-accepted')
+
+    await tap('Ball in Play')
+    await tap('Batter Out')
+    await tap('Throw Out')
+    await fieldAndTrajectory()
+    await visible('Tap and drag the next defender')
+    await shot('receiver-choice')
+    g = await geometry()
+    const destination = g.project(BASES[1], TERRAIN.players)
+    await gesture([
+      g.project({ x: 24, z: -23 }),
+      { ...destination, y: destination.y }
+    ])
+    await visible('Tap and drag the next defender')
+    for (const point of [
+      { x: 15, z: -41 },
+      { x: -15, z: -41 }
+    ]) {
+      await gesture([g.project(point), g.project(point, TERRAIN.players)])
+      await visible('Tap and drag the next defender')
+      await shot('relay-possession')
+    }
+    await tap('Finish defensive play')
+    await visible('^Finish at-bat$')
+    await shot('throw-out-correction')
+    await visible('Batter Player 3')
+    await absent('^Finish at-bat$')
+    await shot('natural-countdown-next-batter')
+
+    await tap('Open scoring menu')
+    await tap('Settings')
+    await tap('Toggle scoring sound')
+    await shot('sound-toggled')
+    await tap('Cancel')
+    await tap('Ball')
+    await visible('^Ball$')
+    await tap('Open scoring menu')
+    await tap('Settings')
+    await tap('Toggle scoring sound')
+    await tap('Cancel')
+    await touch(center(await find(/^More$/)))
+    await tap('Hit by Pitch')
+    await visible('^Finish at-bat$')
+    await tap('Finish at-bat')
+    await visible('Batter Player 4')
+    await shot('more-award-completed')
+  } else {
+    await m.setOrientation('portrait')
+    await freshGame()
+  }
+  if (process.env.SCORING_SAFARI_PHASE !== 'motion') {
+    if (process.env.SCORING_SAFARI_PHASE !== 'home') {
+      await moreTraversal('portrait')
+      await moreTraversal('landscape')
+    }
+    await m.setOrientation('portrait')
+    let homeCase = 0
+    for (const outside of [false, true])
+      for (const loaded of [false, true]) {
+        if (homeCase++ < Number(process.env.SCORING_HOME_SKIP ?? 0)) continue
+        await homeRunScenario(outside, loaded)
+      }
+  }
   await shot('completed')
   log(
     'PASS: Safari interaction sequence. Inspect images/video for visual acceptance; actual listening remains a separate gate.'

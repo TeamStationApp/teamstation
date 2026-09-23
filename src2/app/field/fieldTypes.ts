@@ -11,12 +11,15 @@ export interface FieldInteractionPolicy {
   gestures: ReadonlyArray<'place' | 'trajectory'>
 }
 export interface FieldPlacement {
+  landingHeight?: number
   entityId: string
   point: GroundPoint
   generation: number
   gestureId: number
 }
 export interface FieldCanvasProps {
+  homeRunPlacement?: boolean
+  onLandingPreview?: (point: GroundPoint | null) => void
   presentation?: PresentationSequence | null
   presentationPaused?: boolean
   onPresentationContact?: (id: string, generation: number) => void

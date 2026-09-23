@@ -1,4 +1,4 @@
-import { BASES, type FieldPlayer } from '../field/fieldModel'
+import { BASES, clampToField, type FieldPlayer } from '../field/fieldModel'
 import { fieldPlayersFor } from './fieldAdapter'
 import { homeQueuePoint } from './runnerRules'
 import type { ScoringState } from './scoringTypes'
@@ -73,6 +73,24 @@ export function scoringFieldPlayers(
     player.labelOrder = 100 - index
     player.runnerBase = 4
   })
+  for (const move of pending?.movements ?? [])
+    if (
+      move.automaticHome === true &&
+      move.resolved !== true &&
+      move.homeReleased !== true &&
+      !state.motions.some(m => m.playerId === move.playerId && !m.complete)
+    ) {
+      const player = addRunner(move.playerId)
+      player.batting = false
+      player.position = {
+        ...(state.motions
+          .find(m => m.playerId === move.playerId)
+          ?.waypoints.at(-1) ?? homeQueuePoint(state.homeQueue.length))
+      }
+      player.target = { ...player.position }
+      player.labelOrder = 100 - state.homeQueue.length
+      player.runnerBase = 4
+    }
   for (const command of state.motions) {
     if (
       command.complete ||
@@ -132,8 +150,11 @@ export function scoringFieldPlayers(
       pending.location != null &&
       state.presentation?.kind !== 'hit'
     ) {
-      player.position = { ...pending.location }
-      player.target = { ...pending.location }
+      player.position =
+        pending.homeRunKind === 'out-of-park'
+          ? clampToField(pending.location)
+          : { ...pending.location }
+      player.target = { ...player.position }
     }
     if (pending != null && player.team === 'defense') {
       for (const action of session.liveData.plays.currentPlay?.source

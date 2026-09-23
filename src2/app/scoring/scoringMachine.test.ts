@@ -273,10 +273,8 @@ describe('local scoring sessions', function () {
     let state = initial()
     for (let out = 0; out < 3; out++) {
       state = pitch(state, out % 2 === 0 ? 'called' : 'swing', 3)
-      expect(state.phase).equals('correctionWindow')
-      expect(scoringReducer(state, { type: 'PITCH', kind: 'ball' })).equals(
-        state
-      )
+      expect(state.phase).equals('ready')
+      expect(state.correctionWindow).equals(null)
       state = scoringReducer(state, { type: 'CLOSE_PLAY' })
       expect(scoringReducer(state, { type: 'CLOSE_PLAY' })).equals(state)
     }

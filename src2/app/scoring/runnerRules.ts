@@ -1,6 +1,12 @@
 import { BASES, type GroundPoint } from '../field/fieldModel'
 import { asScoringPlay } from './scoringContract'
-import { accepted, copyState, nextHalf, snapshotOf } from './scoringMachine'
+import {
+  accepted,
+  closePlay,
+  copyState,
+  nextHalf,
+  snapshotOf
+} from './scoringMachine'
 import { throwPresentation, type ThrowSequence } from './scoringPresentation'
 import { baseIds, battingSide, playerRef } from './scoringSelectors'
 import {
@@ -86,6 +92,14 @@ function runMotion(state: ScoringState, movement: Movement): void {
     path[path.length - 1] = homeQueuePoint(
       state.homeQueue.indexOf(movement.playerId)
     )
+  if (movement.automaticHome === true) {
+    if (state.homeQueue.length > 0)
+      path[path.length - 1] = homeQueuePoint(state.homeQueue.length)
+    else {
+      movement.homeReleased = true
+      path.push({ x: battingSide(state.session) === 'home' ? 32 : -32, z: 6 })
+    }
+  }
   enqueue(state, movement.playerId, path)
 }
 function dugout(state: ScoringState, id: number, origin: GroundPoint): void {
@@ -191,12 +205,16 @@ export function prepareHit(state: ScoringState): void {
     const forced =
       row.from === 0 ||
       pending.originalBases.slice(0, row.from).every(id => id != null)
+    const automaticHome =
+      pending.outcome === 'Home Run' &&
+      (pending.homeRunKind === 'out-of-park' || row.from === 0)
     return {
       playerId: row.id,
       from: row.from,
       to,
+      automaticHome,
       force: forced && to === row.from + 1,
-      decision: to === 4 ? 'pending' : 'safe',
+      decision: to === 4 && !automaticHome ? 'pending' : 'safe',
       resolved: false
     }
   })
@@ -291,6 +309,47 @@ function commitChoiceIfResolved(state: ScoringState): void {
       runMotion(state, move)
     }
 }
+function resolveAutomaticHomes(state: ScoringState): void {
+  const pending = state.pendingPlay
+  if (pending == null || state.presentation != null) return
+  for (const move of pending.movements) {
+    if (
+      move.automaticHome !== true ||
+      move.resolved === true ||
+      state.motions.some(m => m.playerId === move.playerId && !m.complete)
+    )
+      continue
+    const origin =
+      state.motions.find(m => m.playerId === move.playerId)?.waypoints.at(-1) ??
+      homeQueuePoint(state.homeQueue.length)
+    if (state.session.liveData.linescore.outs >= 3) {
+      move.resolved = true
+      dugout(state, move.playerId, origin)
+      continue
+    }
+    if (state.homeQueue.length > 0) {
+      const destination = homeQueuePoint(state.homeQueue.length)
+      if (
+        Math.hypot(origin.x - destination.x, origin.z - destination.z) > 0.001
+      )
+        enqueue(state, move.playerId, [origin, destination])
+      continue
+    }
+    if (move.homeReleased !== true) {
+      move.homeReleased = true
+      enqueue(state, move.playerId, [
+        origin,
+        BASES[0],
+        { x: battingSide(state.session) === 'home' ? 32 : -32, z: 6 }
+      ])
+      continue
+    }
+    move.resolved = true
+    state.session.liveData.linescore.teams[battingSide(state.session)].runs++
+    state.session.liveData.plays.currentPlay!.result.rbi++
+    recordRunner(state, move, pending.outcome)
+  }
+}
 export function settleRunners(state: ScoringState): void {
   if (
     [
@@ -315,6 +374,7 @@ export function settleRunners(state: ScoringState): void {
     return
   }
   commitChoiceIfResolved(state)
+  resolveAutomaticHomes(state)
   const lead = state.homeQueue[0]
   if (
     lead != null &&
@@ -350,6 +410,12 @@ export function settleRunners(state: ScoringState): void {
       remainingMs: 10000,
       revision: state.session.meta.sequence
     }
+    if (
+      state.presentation == null &&
+      (baseIds(state.session).every(id => id == null) ||
+        state.session.liveData.linescore.outs >= 3)
+    )
+      Object.assign(state, closePlay(state))
   } else state.phase = 'ready'
 }
 export function prepareBatterResult(state: ScoringState): void {

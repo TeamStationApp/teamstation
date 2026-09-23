@@ -7,6 +7,7 @@ import { type Camera, Ray, Sprite, Vector2, Vector3 } from 'three'
 import type { BallArcState } from './ballArcModel'
 import { createPlayers } from './fieldModel'
 import { FieldScene } from './FieldScene'
+import type { FieldPlacement } from './fieldTypes'
 import { TERRAIN } from './terrain'
 
 describe('rendered field interaction', function () {
@@ -236,6 +237,63 @@ describe('mobile finger clearance', function () {
           0.001
         )
       }
+    } finally {
+      await renderer.unmount()
+    }
+  })
+})
+
+describe('scoring home-run landing surface', function () {
+  it('previews both sides of the visible fence and commits an elevated stands landing while the defender stays in bounds', async function () {
+    const players = createPlayers()
+    let placement: FieldPlacement | undefined
+    const previews: number[] = []
+    const renderer = await create(
+      React.createElement(FieldScene, {
+        players,
+        selected: '',
+        onSelect: () => undefined,
+        view: 'home',
+        zoom: 1,
+        homeRunPlacement: true,
+        onLandingPreview: point => {
+          if (point != null) previews.push(point.z)
+        },
+        onFieldPlacement: value => {
+          placement = value
+        }
+      })
+    )
+    try {
+      await renderer.advanceFrames(1, 1 / 60)
+      renderer.scene.instance.updateMatrixWorld(true)
+      const surface = renderer.scene.findByProps({
+        name: 'interaction-surface'
+      })
+      const event = {
+        button: 0,
+        pointerId: 44,
+        pointerType: 'mouse',
+        pointer: new Vector2(0, 0),
+        ray: new Ray(new Vector3(0, 100, -18.44), new Vector3(0, -1, 0)),
+        target: {
+          setPointerCapture: () => undefined,
+          releasePointerCapture: () => undefined
+        }
+      }
+      await renderer.fireEvent(surface, 'pointerDown', event)
+      event.ray.origin.z = -116
+      await renderer.fireEvent(surface, 'pointerMove', event)
+      event.ray.origin.z = -127
+      await renderer.fireEvent(surface, 'pointerMove', event)
+      await renderer.fireEvent(surface, 'pointerUp', event)
+      expect(previews).includes(-116)
+      expect(previews).includes(-127)
+      expect(placement!.point.z).equals(-127)
+      expect(placement!.landingHeight).greaterThan(1)
+      expect(Math.hypot(players[0].target.x, players[0].target.z)).at.most(
+        110.00001
+      )
     } finally {
       await renderer.unmount()
     }

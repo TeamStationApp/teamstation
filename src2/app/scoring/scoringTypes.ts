@@ -1,4 +1,5 @@
 import type { GroundPoint } from '../field/fieldModel'
+import type { HomeRunKind } from '../field/stadiumBoundary'
 import type { MoreAction, MoreInput } from './moreActions'
 import type { PlayerIdentityMap } from './playerIdentity'
 import type { Outcome, PlayerRef, ScoringPlay } from './scoringContract'
@@ -88,6 +89,8 @@ export type ScoringPhase =
   | 'runnerReason'
   | 'correctionWindow'
 export interface Movement {
+  automaticHome?: boolean
+  homeReleased?: boolean
   playerId: number
   from: number
   to: number
@@ -96,6 +99,8 @@ export interface Movement {
   resolved?: boolean
 }
 export interface PendingPlay {
+  homeRunKind?: HomeRunKind
+  landingHeight?: number
   ballHolder?: number
   ballLocation?: GroundPoint
   batterPoint?: GroundPoint
@@ -221,7 +226,13 @@ export type ScoringEvent =
       generation: number
     }
   | { type: 'OUTCOME'; outcome: Outcome }
-  | { type: 'FIELDER'; id: number; point: GroundPoint; generation: number }
+  | {
+      type: 'FIELDER'
+      id: number
+      point: GroundPoint
+      landingHeight?: number
+      generation: number
+    }
   | { type: 'TRAJECTORY'; angle: number; generation: number }
   | { type: 'ROSTER'; draft: ScoringSessionState; nextBatter?: number }
   | { type: 'OVERRIDE'; draft: OverrideDraft }

@@ -52,7 +52,7 @@ function expire(state: ScoringState): ScoringState {
     type: 'TIMER_TICK',
     elapsedMs: 10000,
     generation: state.generation,
-    revision: state.correctionWindow!.revision
+    revision: state.correctionWindow?.revision ?? 0
   })
 }
 function retire(state: ScoringState, defender = 11): ScoringState {
@@ -77,7 +77,7 @@ describe('runner progression and correction deadline', function () {
     let state = completeMotions(hit(initial(7), 'Home Run'))
     state = scoringReducer(state, { type: 'HOME', decision: 'out' })
     state = retire(state)
-    expect(state.homeQueue).deep.equals([3, 2, 1])
+    expect(state.homeQueue).deep.equals([3, 2])
     expect(
       state.motions.find(motion => motion.playerId === 3)!.waypoints
     ).deep.equals([homeQueuePoint(1), homeQueuePoint(0)])
@@ -108,7 +108,6 @@ describe('runner progression and correction deadline', function () {
         const queue = [3, 2, 1]
           .filter(base => (mask & (1 << (base - 1))) !== 0 && base + bases >= 4)
           .map(base => base + 1)
-        if (bases === 4) queue.push(1)
         expect(state.homeQueue).deep.equals(queue)
         expect(state.correctionWindow).equals(null)
         state = completeMotions(state)
@@ -117,11 +116,12 @@ describe('runner progression and correction deadline', function () {
           state = scoringReducer(state, { type: 'HOME', decision: 'safe' })
           state = completeMotions(state)
         }
-        expect(state.phase).equals('correctionWindow')
+        expect(state.phase).equals(bases === 4 ? 'ready' : 'correctionWindow')
         expect(state.session.liveData.linescore.teams.away.runs).equals(
-          queue.length
+          queue.length + (bases === 4 ? 1 : 0)
         )
-        expect(state.correctionWindow!.remainingMs).equals(10000)
+        if (bases !== 4)
+          expect(state.correctionWindow!.remainingMs).equals(10000)
         const beforeClose = state
         state = expire(state)
         expect(state.session.liveData.plays.allPlays).has.length(1)
@@ -136,7 +136,7 @@ describe('runner progression and correction deadline', function () {
             type: 'TIMER_TICK',
             elapsedMs: 10000,
             generation: beforeClose.generation,
-            revision: beforeClose.correctionWindow!.revision
+            revision: beforeClose.correctionWindow?.revision ?? 0
           })
         ).equals(state)
         const undone = scoringReducer(state, { type: 'UNDO' })
@@ -145,8 +145,8 @@ describe('runner progression and correction deadline', function () {
           undone.session.liveData.plays.currentPlay?.matchup.batter.id
         ).equals(1)
       })
-  it('keeps earlier runs when the batter is tagged out at home for the third out', function () {
-    const start = initial(4)
+  it('keeps earlier runs when a runner is tagged out at home for the third out', function () {
+    const start = initial(6)
     start.session.liveData.linescore.outs = 2
     let state = completeMotions(hit(start, 'Home Run'))
     state = completeMotions(
@@ -155,14 +155,14 @@ describe('runner progression and correction deadline', function () {
     expect(state.session.liveData.linescore.teams.away.runs).equals(1)
     state = scoringReducer(state, { type: 'HOME', decision: 'out' })
     state = completeMotions(retire(state))
-    expect(state.session.liveData.linescore.outs).equals(3)
+    expect(state.session.liveData.linescore.inningState).equals('Bottom')
     expect(state.session.liveData.linescore.teams.away.runs).equals(1)
-    const runners = state.session.liveData.plays.currentPlay!.runners
+    const runners = state.session.liveData.plays.allPlays.at(-1)!.runners
     expect(
       runners.find(move => move.details.runner.id === 4)!.movement.runScored
     ).equals(true)
     expect(
-      runners.find(move => move.details.runner.id === 1)!.movement.forceOut
+      runners.find(move => move.details.runner.id === 3)!.movement.forceOut
     ).equals(false)
     state = expire(state)
     expect(state.session.liveData.linescore.inningState).equals('Bottom')
@@ -245,10 +245,11 @@ describe('runner progression and correction deadline', function () {
     // This runner was not forced home from second, so the earlier run stands.
     expect(state.session.liveData.linescore.teams.away.runs).equals(1)
     expect(state.homeQueue).has.length(0)
-    expect(state.session.liveData.linescore.outs).equals(3)
+    expect(state.session.liveData.linescore.inningState).equals('Bottom')
     expect(
-      state.session.liveData.plays
-        .currentPlay!.runners.at(-1)!
+      state.session.liveData.plays.allPlays
+        .at(-1)!
+        .runners.at(-1)!
         .credits.map(credit => credit.credit)
     ).deep.equals(['f_assist', 'f_putout'])
     state = expire(state)
@@ -260,8 +261,9 @@ describe('runner progression and correction deadline', function () {
     forced = completeMotions(retire(forced, 10))
     expect(forced.session.liveData.linescore.teams.away.runs).equals(0)
     expect(
-      forced.session.liveData.plays
-        .currentPlay!.runners.at(-1)!
+      forced.session.liveData.plays.allPlays
+        .at(-1)!
+        .runners.at(-1)!
         .credits.map(credit => credit.credit)
     ).deep.equals(['f_putout'])
   })

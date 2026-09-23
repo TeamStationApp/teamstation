@@ -190,7 +190,10 @@ export function PlayAnimation({
         player.stride = runtime.current.elapsedMs * 0.012
         player.pose.run = sample.running ? 1 : 0
         player.pose.catch =
-          runtime.current.elapsedMs > sequence.durationMs - 200 ? 1 : 0
+          sequence.outOfPark !== true &&
+          runtime.current.elapsedMs > sequence.durationMs - 200
+            ? 1
+            : 0
       }
     }
     if (frame.contact === true) onContact?.(sequence.id, sequence.generation)
