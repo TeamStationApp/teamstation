@@ -43,6 +43,7 @@ import {
   type MoveDraft,
   previewMove
 } from './movePreview'
+import { PlayAnimation } from './PlayAnimation'
 import { Player } from './Player'
 import { PlayerShadows } from './PlayerShadows'
 import { scoreboardBounds } from './scoreboardBounds'
@@ -86,7 +87,7 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
   })
   useEffect(() => {
     invalidate()
-  }, [invalidate, props.movementRevision])
+  }, [invalidate, props.movementRevision, props.presentationPaused])
   useEffect(() => {
     gl.shadowMap.autoUpdate = false
     gl.shadowMap.needsUpdate = true
@@ -582,6 +583,18 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
       />
       <Ballpark textures={textures} scoreboard={props.scoreboard} />
       <PlayerShadows players={players} />
+      {props.presentation != null && (
+        <PlayAnimation
+          key={props.presentation.id}
+          sequence={props.presentation}
+          players={players}
+          paused={props.presentationPaused === true}
+          onComplete={(id, generation, stage) => {
+            props.onPresentationDone?.(id, generation, stage)
+          }}
+        />
+      )}
+
       {props.hintBatSide != null && <BatterBoxHint side={props.hintBatSide} />}
       {arc != null && <BallArc arc={arc} editing={arcMode === 'edit'} />}
       {preview != null && <MoveGuide draft={preview} />}
@@ -626,6 +639,7 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
           player={player}
           fabric={textures.cloth}
           onMovementComplete={props.onMovementComplete}
+          paused={props.presentationPaused}
           selected={
             (preview?.id === player.id || player.keyboardOrigin != null) &&
             eligible.some(item => item.id === player.id)

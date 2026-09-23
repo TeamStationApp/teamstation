@@ -6,9 +6,11 @@ import { scoringPreferences } from './scoringPreferences'
 import type { ScoringPreferences } from './scoringPreferenceStore'
 import { ScoringButton } from './ScoringSheet'
 export function ScoringSettings({
-  userId
+  userId,
+  onSoundChange
 }: {
   userId: string
+  onSoundChange?: (enabled: boolean) => void
 }): React.ReactElement {
   const theme = useTheme()
   const [value, setValue] = useState<ScoringPreferences>()
@@ -30,6 +32,19 @@ export function ScoringSettings({
   }
   return (
     <View style={{ gap: 12 }}>
+      <ScoringButton
+        label="Toggle scoring sound"
+        text={`Scoring sound: ${value?.sound === false ? 'Off' : 'On'}`}
+        disabled={value == null}
+        onPress={() => {
+          if (value != null) {
+            const enabled = value.sound === false
+            update({ ...value, sound: enabled })
+            onSoundChange?.(enabled)
+          }
+        }}
+      />
+
       <Text
         style={{
           color: theme.primaryTextColor,

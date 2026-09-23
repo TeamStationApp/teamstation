@@ -21,6 +21,7 @@ import { RosterEditor } from './RosterEditor'
 import { RunnerControls } from './RunnerControls'
 import type { RunnerDragView } from './runnerDrag'
 import { RunnerDragTargets } from './RunnerDragTargets'
+import { scoringAudio } from './scoringAudio'
 import { initialScoringState, scoringReducer } from './scoringMachine'
 import { scoringFieldPlayers } from './scoringMotion'
 import { scoringPreferences } from './scoringPreferences'
@@ -128,11 +129,26 @@ function ScoringSession(props: {
   userId: string
 }): React.ReactElement {
   const theme = useTheme()
-  const [state, dispatch] = useReducer(
-    scoringReducer,
-    props.initial,
-    initialScoringState
+  const [state, dispatch] = useReducer(scoringReducer, props.initial, session =>
+    initialScoringState(session, true)
   )
+  const [sound, setSound] = useState(true)
+  useEffect(() => {
+    let live = true
+    scoringPreferences
+      .read(props.userId)
+      .then(value => {
+        if (live) setSound(value.sound !== false)
+      })
+      .catch(() => undefined)
+    return () => {
+      live = false
+      scoringAudio.stop()
+    }
+  }, [props.userId])
+  useEffect(() => {
+    scoringAudio.setEnabled(sound)
+  }, [sound])
   const [gestureActive, setGestureActive] = useState(false)
   const [outcomeMenu, setOutcomeMenu] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
@@ -173,7 +189,12 @@ function ScoringSession(props: {
   const [saveFailed, setSaveFailed] = useState(false)
   const pauseClock = useScoringClock(
     state,
-    menu || sheet != null || outcomeMenu || moreOpen || gestureActive,
+    menu ||
+      sheet != null ||
+      outcomeMenu ||
+      moreOpen ||
+      gestureActive ||
+      state.presentation != null,
     dispatch
   )
   const setGesture = useCallback(
@@ -194,16 +215,33 @@ function ScoringSession(props: {
     props.onExit,
     requestConfirmation
   )
-  const { phase, pendingPlay, motions, homeQueue, runnerAction } = state
+  const { phase, pendingPlay, motions, homeQueue, runnerAction, presentation } =
+    state
   const previousPlayers = useRef<FieldPlayer[]>([])
   const players = useMemo(() => {
     const next = scoringFieldPlayers(
-      { session, phase, pendingPlay, motions, homeQueue, runnerAction },
+      {
+        session,
+        phase,
+        pendingPlay,
+        motions,
+        homeQueue,
+        runnerAction,
+        presentation
+      },
       previousPlayers.current
     )
     previousPlayers.current = next
     return next
-  }, [session, phase, pendingPlay, motions, homeQueue, runnerAction])
+  }, [
+    session,
+    phase,
+    pendingPlay,
+    motions,
+    homeQueue,
+    runnerAction,
+    presentation
+  ])
   useEffect(() => {
     setAngle(state.pendingPlay?.angle ?? 45)
   }, [state.pendingPlay?.angle, state.generation])
@@ -293,6 +331,11 @@ function ScoringSession(props: {
     <BaseballScreen
       field={{
         players,
+        presentation: state.presentation,
+        presentationPaused: menu || sheet != null || outcomeMenu || moreOpen,
+        onPresentationDone: (id, generation, stage) => {
+          dispatch({ type: 'PRESENTATION_DONE', id, generation, stage })
+        },
         onGestureActive: setGesture,
         onRunnerDrag: setRunnerDrag,
         runnerSafeError: (id, to) => {
@@ -328,7 +371,11 @@ function ScoringSession(props: {
           generation: state.generation,
           runnerIds,
           selectableIds:
-            menu || sheet != null || outcomeMenu || moreOpen
+            menu ||
+            sheet != null ||
+            outcomeMenu ||
+            moreOpen ||
+            state.presentation != null
               ? []
               : ['locateFielder', 'chooseThrower', 'chooseDefender'].includes(
                     state.phase
@@ -343,7 +390,11 @@ function ScoringSession(props: {
                       : [])
                   ],
           gestures:
-            menu || sheet != null || outcomeMenu || moreOpen
+            menu ||
+            sheet != null ||
+            outcomeMenu ||
+            moreOpen ||
+            state.presentation != null
               ? []
               : state.phase === 'trajectory'
                 ? ['trajectory']
@@ -421,6 +472,7 @@ function ScoringSession(props: {
             sheet != null ||
             outcomeMenu ||
             state.phase !== 'ready' ||
+            state.presentation != null ||
             state.moreDraft != null
           }
           onActive={active => {
@@ -437,6 +489,7 @@ function ScoringSession(props: {
         <OutcomePicker
           disabled={
             state.phase !== 'ready' ||
+            state.presentation != null ||
             menu ||
             sheet != null ||
             moreOpen ||
@@ -455,9 +508,11 @@ function ScoringSession(props: {
         setMenu(value => !value)
       }}
       onUndo={() => {
+        scoringAudio.stop()
         dispatch({ type: 'UNDO' })
       }}
       onPitch={kind => {
+        scoringAudio.unlock()
         if (kind !== 'play') dispatch({ type: 'PITCH', kind })
         setHint(false)
       }}
@@ -482,6 +537,7 @@ function ScoringSession(props: {
         sheet == null &&
         !outcomeMenu &&
         !gestureActive &&
+        state.presentation == null &&
         !state.motions.some(motion => !motion.complete)
       }
       onFinish={() => {
@@ -501,7 +557,8 @@ function ScoringSession(props: {
         sheet == null &&
         !outcomeMenu &&
         !moreOpen &&
-        state.moreDraft == null
+        state.moreDraft == null &&
+        state.presentation == null
       }
       summary={summary}
       accessibilitySummary={`${summary} · Batter ${line.offense.batter?.fullName ?? 'waiting'} ${session.liveData.plays.currentPlay?.matchup.batSide.code === 'L' ? 'left handed' : 'right handed'} · Pitcher ${line.defense.P?.fullName ?? 'unassigned'}`}
@@ -557,10 +614,14 @@ function ScoringSession(props: {
                 label={label}
                 disabled={
                   index === 3
-                    ? state.phase !== 'ready'
+                    ? state.phase !== 'ready' ||
+                      state.presentation != null ||
+                      state.moreDraft != null
                     : (index === 2 || index === 4) &&
-                      state.phase !== 'ready' &&
-                      state.phase !== 'awaitingBatter'
+                      (state.presentation != null ||
+                        state.moreDraft != null ||
+                        (state.phase !== 'ready' &&
+                          state.phase !== 'awaitingBatter'))
                 }
                 onPress={() => {
                   setMenu(false)
@@ -617,7 +678,9 @@ function ScoringSession(props: {
               />
             </>
           )}
-          {sheet === 'settings' && <ScoringSettings userId={props.userId} />}
+          {sheet === 'settings' && (
+            <ScoringSettings userId={props.userId} onSoundChange={setSound} />
+          )}
           {sheet === 'rosters' && (
             <RosterEditor
               state={state}

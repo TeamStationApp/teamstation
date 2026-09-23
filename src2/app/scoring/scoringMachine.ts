@@ -3,6 +3,7 @@ import { moreReducer } from './moreActions'
 import { prepareTerminalPitch, runnerReducer } from './runnerRules'
 import { asScoringPlay } from './scoringContract'
 import { applyOverrideDraft, applyRosterDraft } from './scoringEdits'
+import { pitchPresentation } from './scoringPresentation'
 import {
   baseIds,
   battingSide,
@@ -22,13 +23,16 @@ export function copyState<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
 }
 export function initialScoringState(
-  session: ScoringSessionState
+  session: ScoringSessionState,
+  presentationEnabled = false
 ): ScoringState {
   const owned = copyState(session)
   const awaitingBatter =
     owned.liveData.plays.currentPlay == null ? startAppearance(owned) : null
   return {
     session: owned,
+    presentationEnabled,
+    presentation: null,
     motions: [],
     runnerAction: null,
     correctionWindow: null,
@@ -181,6 +185,18 @@ export function scoringReducer(
   state: ScoringState,
   event: ScoringEvent
 ): ScoringState {
+  if (event.type === 'PRESENTATION_DONE') {
+    const sequence = state.presentation
+    if (
+      sequence?.id !== event.id ||
+      sequence.generation !== event.generation ||
+      sequence.stage !== event.stage
+    )
+      return state
+    return { ...state, presentation: null }
+  }
+  if (state.presentation != null && !['UNDO', 'GESTURE'].includes(event.type))
+    return state
   if (event.type === 'MORE') return moreReducer(state, event)
   if (event.type === 'GESTURE')
     return state.activeGesture === event.active
@@ -206,6 +222,7 @@ export function scoringReducer(
     if (last == null) return state
     const next = {
       ...copyState(last.snapshot),
+      presentation: null,
       generation: state.generation + 1,
       past: state.past.slice(0, -1)
     }
@@ -339,6 +356,8 @@ export function scoringReducer(
     const line = session.liveData.linescore
     const play = session.liveData.plays.currentPlay
     if (play == null) throw new Error('Ready requires an active play')
+    if (state.presentationEnabled === true)
+      next.presentation = pitchPresentation(state, event.kind)
     const before = { balls: line.balls, strikes: line.strikes, outs: line.outs }
     const pitcher = play.matchup.pitcher.id
     const counts =

@@ -27,5 +27,8 @@
   "src2/app/theme/gsBallpark.ts",
   "src2/app/theme/gsDark.ts",
   "src2/app/components/Button.tsx",
-  "src2/app/field/MoveGuide.tsx"
+  "src2/app/field/MoveGuide.tsx",
+  "src2/app/field/PlayAnimation.tsx",
+  "src2/app/field/playAnimationModel.ts",
+  "src2/app/field/FieldCanvas.native.tsx"
 ]
