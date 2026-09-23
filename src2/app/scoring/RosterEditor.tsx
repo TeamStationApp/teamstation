@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import {
+  Platform,
   Pressable,
   ScrollView,
   Text,
@@ -35,6 +36,23 @@ export interface RosterEditorDraft {
   defense: boolean
   nextBatter?: number
 }
+/**
+ * A roster, lineup or defence card's name, on one line. A phone scales text
+ * by the reader's text size (the iPhone 13 Pro on the bench reads 12% larger
+ * than the web), which wrapped "1. #27 Trey H" after "Trey" in a column
+ * 159 points wide; the phone shrinks the line to fit instead, down to three
+ * quarters. The web keeps its wrap, as a browser cannot shrink to fit.
+ */
+export const rosterNameProps = (
+  os: string
+): {
+  numberOfLines?: number
+  adjustsFontSizeToFit?: boolean
+  minimumFontScale?: number
+} =>
+  os === 'web'
+    ? {}
+    : { numberOfLines: 1, adjustsFontSizeToFit: true, minimumFontScale: 0.75 }
 export function RosterEditor({
   state,
   initialDraft,
@@ -106,6 +124,7 @@ export function RosterEditor({
     fontFamily: theme.regularTextFont,
     fontSize: 14
   }
+  const nameProps = rosterNameProps(Platform.OS)
   const row = {
     flexDirection: 'row' as const,
     alignItems: 'center' as const,
@@ -209,7 +228,11 @@ export function RosterEditor({
                     }
                   >
                     <View style={row}>
-                      <Text selectable={false} style={{ ...text, flex: 1 }}>
+                      <Text
+                        selectable={false}
+                        {...nameProps}
+                        style={{ ...text, flex: 1 }}
+                      >
                         {display(id)}
                       </Text>
                     </View>
@@ -276,7 +299,7 @@ export function RosterEditor({
                             {position}
                           </Text>
                         </View>
-                        <Text style={{ ...text, flex: 1 }}>
+                        <Text {...nameProps} style={{ ...text, flex: 1 }}>
                           {id == null ? 'Unassigned' : display(id)}
                         </Text>
                         <RosterRemoveButton
@@ -318,7 +341,11 @@ export function RosterEditor({
                         >
                           ≡
                         </Text>
-                        <Text selectable={false} style={{ ...text, flex: 1 }}>
+                        <Text
+                          selectable={false}
+                          {...nameProps}
+                          style={{ ...text, flex: 1 }}
+                        >
                           {index + 1}. {display(id)}
                         </Text>
                         <RosterRemoveButton

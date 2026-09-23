@@ -16,6 +16,11 @@ export type When = 'upcoming' | 'past' | 'all'
 export type Route =
   | { name: 'home' }
   | { name: 'scoreGame'; gameId: string }
+  /**
+   * DJ Game: both teams' batters and their walk-up songs, on a phone. The
+   * web has no music to play, and shows the game instead.
+   */
+  | { name: 'djGame'; gameId: string }
   | { name: 'videos'; when: When }
   | { name: 'schedule'; when: When }
   | { name: 'account' }
@@ -27,14 +32,20 @@ export type Route =
    * somebody a link to one child's spring rather than to a career total. Only
    * the Stats tab has a filter, so the three narrowing parameters are written
    * only beside `tab=stats`.
+   *
+   * `onTeam` is something else: the team the page was opened for — the roster
+   * row or the box-score side that was tapped. It is on every tab, the filter
+   * never changes it, and it is what the Settings and Walk-up tabs edit the
+   * player on, so `settings` and `walkup` are only tabs at all beside it.
    */
   | {
       name: 'player'
       userId: string
-      tab?: 'videos' | 'stats'
+      tab?: 'videos' | 'stats' | 'settings' | 'walkup'
       seasonId?: string
       teamId?: string
       year?: number
+      onTeam?: string
     }
   | { name: 'season'; seasonId: string; tab?: string; when?: When }
   | { name: 'league'; leagueId: string }
@@ -131,8 +142,22 @@ export function parseRoute(path: string, search = ''): Route {
       }
     case 'players': {
       if (id == null) return { name: 'home' }
-      const tab = query.get('tab') === 'stats' ? 'stats' : 'videos'
-      if (tab !== 'stats') return { name: 'player', userId: id }
+      const onTeam = query.get('onTeam') ?? undefined
+      const asked = query.get('tab')
+      // Settings and Walk-up edit the player on the team the page was opened
+      // for, so without one there is nothing for them to edit, and the page
+      // opens on its first tab instead.
+      const tab =
+        asked === 'stats'
+          ? 'stats'
+          : (asked === 'settings' || asked === 'walkup') && onTeam != null
+            ? asked
+            : 'videos'
+      const on = onTeam == null ? {} : { onTeam }
+      if (tab === 'videos') return { name: 'player', userId: id, ...on }
+      if (tab === 'settings' || tab === 'walkup') {
+        return { name: 'player', userId: id, tab, ...on }
+      }
       const year = Number(query.get('year'))
       return {
         name: 'player',
@@ -140,7 +165,8 @@ export function parseRoute(path: string, search = ''): Route {
         tab,
         seasonId: query.get('season') ?? undefined,
         teamId: query.get('team') ?? undefined,
-        year: Number.isInteger(year) && year > 1900 ? year : undefined
+        year: Number.isInteger(year) && year > 1900 ? year : undefined,
+        ...on
       }
     }
     case 'teams':
@@ -172,6 +198,7 @@ export function parseRoute(path: string, search = ''): Route {
     case 'games': {
       if (id == null) return { name: 'home' }
       if (parts[2] === 'score') return { name: 'scoreGame', gameId: id }
+      if (parts[2] === 'dj') return { name: 'djGame', gameId: id }
       const at = Number(query.get('t'))
       // Empty entries dropped, and capped at four: the address is somewhere
       // anybody can type, and the view draws four tiles at most.
@@ -207,6 +234,8 @@ export function routePath(route: Route): string {
       return '/'
     case 'scoreGame':
       return `/games/${route.gameId}/score`
+    case 'djGame':
+      return `/games/${route.gameId}/dj`
     case 'videos':
       return route.when === 'past' ? '/videos' : `/videos?when=${route.when}`
     case 'schedule':
@@ -239,13 +268,24 @@ export function routePath(route: Route): string {
     case 'player': {
       // Videos is the tab a bare address opens on, and it has no filter: the
       // narrowing belongs to Stats, so it is written only where it is read.
-      if (route.tab !== 'stats') return `/players/${route.userId}`
+      // The team the page was opened for is written on every tab.
       const query = new URLSearchParams()
-      query.set('tab', 'stats')
-      if (route.seasonId != null) query.set('season', route.seasonId)
-      if (route.teamId != null) query.set('team', route.teamId)
-      if (route.year != null) query.set('year', String(route.year))
-      return `/players/${route.userId}?${query.toString()}`
+      if (route.tab === 'stats') {
+        query.set('tab', 'stats')
+        if (route.seasonId != null) query.set('season', route.seasonId)
+        if (route.teamId != null) query.set('team', route.teamId)
+        if (route.year != null) query.set('year', String(route.year))
+      } else if (
+        (route.tab === 'settings' || route.tab === 'walkup') &&
+        route.onTeam != null
+      ) {
+        query.set('tab', route.tab)
+      }
+      if (route.onTeam != null) query.set('onTeam', route.onTeam)
+      const text = query.toString()
+      return text === ''
+        ? `/players/${route.userId}`
+        : `/players/${route.userId}?${text}`
     }
     case 'league':
       return `/leagues/${route.leagueId}`

@@ -1051,4 +1051,151 @@ describe('a scoring session', function () {
     expect(store.posts).length(1)
     expect(session.pending).equals(0)
   })
+  it('undoes and syncs from the newest play it finished, to the same game as a replay from the start', async function () {
+    const { session } = await open()
+    const walk = [ball, ball, ball, ball, close]
+    const log = Array.from({ length: 30 }, (_, index) =>
+      index % 3 === 0 ? walk : out
+    ).flat()
+    applyAll(session, [...log, ball, strike])
+    // The game and what it folds to, leaving out the times: a play an Undo
+    // reopens keeps the time it ended, as it always has.
+    const seen = (from: ScoringSession): string => {
+      const { plays, current } = from.picture()
+      const timeless = (play: { about: object } | null): unknown =>
+        play == null
+          ? null
+          : { ...play, about: { ...play.about, startTime: 0, endTime: 0 } }
+      return JSON.stringify([
+        from.state,
+        [...plays].map(([index, play]) => [index, timeless(play)]),
+        timeless(current)
+      ])
+    }
+    const replayed = async (actions: ScoringAction[]): Promise<string> => {
+      const fresh = (await open()).session
+      applyAll(fresh, actions)
+      return seen(fresh)
+    }
+    // Back across plays it finished, one step at a time.
+    for (let step = 1; step <= 9; step++) {
+      session.undo()
+      expect(session.actions).length(log.length + 2 - step)
+      expect(seen(session)).equals(
+        await replayed([...log, ball, strike].slice(0, log.length + 2 - step))
+      )
+    }
+    // A screen's shorter log, then its longer one again.
+    session.sync(log.slice(0, 40))
+    expect(seen(session)).equals(await replayed(log.slice(0, 40)))
+    session.sync(log)
+    expect(seen(session)).equals(await replayed(log))
+  })
+
+  it('folds only the plays completed since it last folded, as folding them all again would', async function () {
+    const store = new FakeStore()
+    const { session } = await open(store)
+    // What the session folds, and the same folded again from nothing.
+    const check = (): number => {
+      const before = PlayFolder.steps
+      const picture = session.picture()
+      const steps = PlayFolder.steps - before
+      // Its caches, emptied for the second fold and put back after.
+      const inner = session as unknown as {
+        folded: unknown
+        foldedPlays: unknown
+      }
+      const held = { ...inner }
+      inner.folded = null
+      inner.foldedPlays = null
+      const again = session.picture()
+      inner.folded = held.folded
+      inner.foldedPlays = held.foldedPlays
+      expect(JSON.stringify([...picture.plays])).equals(
+        JSON.stringify([...again.plays])
+      )
+      expect(JSON.stringify(picture.current)).equals(
+        JSON.stringify(again.current)
+      )
+      return steps
+    }
+    const walk = [ball, ball, ball, ball, close]
+    const bench: ScoringAction = {
+      type: 'lineup',
+      kind: 'addPlayer',
+      side: 'away',
+      name: 'Away Bench'
+    }
+    const sub: ScoringAction = {
+      type: 'lineup',
+      kind: 'substitute',
+      side: 'away',
+      player: 19,
+      replaces: 2
+    }
+    const log = [
+      ...Array.from({ length: 24 }, (_, index) =>
+        index % 2 === 0 ? walk : out
+      ).flat(),
+      bench,
+      ball,
+      sub,
+      ...out,
+      ...walk,
+      ...out
+    ]
+    const most: number[] = []
+    for (const action of log) {
+      expect(session.apply(action).problems).deep.equals([])
+      const steps = check()
+      // A change of players folds the game again; nothing else does.
+      if (action !== bench && action !== sub) most.push(steps)
+    }
+    expect(Math.max(...most)).lessThan(4)
+    // A player renamed changes every play he was in, so all are folded again.
+    const renamed = setupOf(session.state)
+    renamed.players[2] = { ...renamed.players[2], fullName: 'Renamed Two' }
+    expect(
+      session.apply({ type: 'lineup', kind: 'roster', setup: renamed }).problems
+    ).deep.equals([])
+    expect(session.state.gameData.players[2].fullName).equals('Renamed Two')
+    expect(check()).greaterThan(20)
+    // Including the plays he was in before.
+    const first = [...session.picture().plays.values()].find(play =>
+      JSON.stringify(play).includes('Renamed Two')
+    )
+    expect(first?.about.atBatIndex).lessThan(5)
+    // Back across plays it finished, and on again.
+    for (let step = 0; step < 12; step++) {
+      session.undo()
+      check()
+    }
+    expect(session.sync(log)).deep.equals([])
+    check()
+    session.apply({ type: 'lineup', kind: 'roster', setup: renamed })
+    check()
+    // Another scorer's pitch, read again, folds as the server holds it.
+    await session.flush()
+    const other = (await open(store)).session
+    other.apply(ball)
+    await other.flush()
+    expect(await session.reload()).equals(true)
+    check()
+    session.apply(ball)
+    expect(check()).lessThan(4)
+  })
+
+  it('folds the game once per change, however often it is asked', async function () {
+    const { session } = await open()
+    applyAll(session, [...out, ...out, ball])
+    const first = session.picture()
+    const steps = PlayFolder.steps
+    expect(session.picture()).equals(first)
+    expect(session.pending).greaterThan(0)
+    expect(PlayFolder.steps).equals(steps)
+    session.apply(strike)
+    const next = session.picture()
+    expect(next).not.equals(first)
+    expect(next.current).not.deep.equals(first.current)
+  })
 })

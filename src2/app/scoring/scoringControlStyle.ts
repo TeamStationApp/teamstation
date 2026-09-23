@@ -1,7 +1,7 @@
 import type { ViewStyle } from 'react-native'
 
 export type ControlKind =
-  'more' | 'undo' | 'ball' | 'called' | 'swing' | 'foul' | 'contact'
+  'more' | 'undo' | 'ball' | 'called' | 'swing' | 'foul' | 'contact' | 'music'
 export const CONTROL_HEIGHT = 56
 export const CONTROL_GAP = 8
 export const CONTROL_DECK_HEIGHT = CONTROL_HEIGHT * 2 + CONTROL_GAP
@@ -46,6 +46,12 @@ export const CONTROL_COLORS = {
     top: '#b88656',
     bottom: '#6f4219',
     border: '#d6a575',
+    text: '#ffffff'
+  },
+  music: {
+    top: '#7c3aed',
+    bottom: '#5b21b6',
+    border: '#c4b5fd',
     text: '#ffffff'
   }
 } as const

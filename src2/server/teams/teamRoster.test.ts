@@ -325,6 +325,79 @@ describe('scoring roster HTTP contract', function () {
       ).equals(404)
     }
   })
+  it('carries each player\u2019s walk-up song on this team, and no other team\u2019s', async function () {
+    const song = {
+      provider: 'appleMusic' as const,
+      provider_id: '1440857781',
+      isrc: null,
+      title: 'Centerfield',
+      artist: 'John Fogerty',
+      album: null,
+      artwork_url: null,
+      duration_ms: 230000,
+      start_ms: 10000,
+      end_ms: 25000,
+      set_by: coach
+    }
+    await db!
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        user_id: child,
+        team_id: opponent,
+        is_player: true
+      })
+      .execute()
+    await db!
+      .insertInto('walk_up_songs')
+      .values([
+        { ...song, team_id: team, user_id: child },
+        {
+          ...song,
+          team_id: opponent,
+          user_id: child,
+          provider: 'localFile',
+          provider_id: 'lf:0123456789abcdef',
+          title: 'Walkup Fixture',
+          artist: 'GameStation'
+        }
+      ])
+      .execute()
+    const read = async (path: string): Promise<unknown> => {
+      const response = await fetch(new URL(address).origin + path, {
+        headers: { 'x-test-user': String(child) }
+      })
+      expect(response.status, path).equals(200)
+      return await response.json()
+    }
+    const here = await read(`/teams/${team}/roster`)
+    // Still a bare array.
+    if (!Array.isArray(here)) throw new Error('Expected roster array')
+    const roster = here.map(asRosterEntry)
+    const byUser = new Map(roster.map(row => [row.userId, row.walkUpSong]))
+    expect(byUser.get(child)).deep.equals({
+      provider: 'appleMusic',
+      providerId: '1440857781',
+      isrc: null,
+      title: 'Centerfield',
+      artist: 'John Fogerty',
+      album: null,
+      artworkUrl: null,
+      durationMs: 230000,
+      startMs: 10000,
+      endMs: 25000
+    })
+    expect(byUser.get(coach)).equals(null)
+    expect(byUser.get(follower)).equals(null)
+    const there = await read(`/teams/${opponent}/roster`)
+    if (!Array.isArray(there)) throw new Error('Expected roster array')
+    const theirs = there.map(asRosterEntry)
+    expect(theirs.find(row => row.userId === child)?.walkUpSong).to.include({
+      provider: 'localFile',
+      providerId: 'lf:0123456789abcdef',
+      title: 'Walkup Fixture'
+    })
+  })
   it('preserves authorization and does not reveal a hidden team roster', async function () {
     expect((await fetch(address)).status).equals(401)
     expect(

@@ -3,7 +3,14 @@ import { type Kysely, sql } from 'kysely'
 
 import { notFound, unauthorized } from '../../common/errors'
 import { shortNames } from '../../common/names'
-import { canSeeGame, canSeeTeam, visibleScopes } from '../access'
+import {
+  canKeepSongs,
+  canScore,
+  canSeeGame,
+  canSeeTeam,
+  roleScopes,
+  visibleScopes
+} from '../access'
 import type { Database } from '../db/database'
 import { isRealVideo } from '../db/realVideos'
 import { teamNames, teamStandings } from '../db/teamLookups'
@@ -314,6 +321,10 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
         .execute()
 
       const names = await teamNames(db, [game.home_team_id, game.away_team_id])
+      // Whether to offer Score Game: a scorekeeper of either team, which
+      // every administrator of it is. The events route holds the same rule.
+      // And whether to offer DJ Game: a songkeeper of either team.
+      const roles = await roleScopes(db, actor.userId, actor.isAdmin)
 
       // Each side's record in the season this game was played in.
       const recordRows = await db
@@ -377,6 +388,12 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
         homeLogoUrl: logoOf(game.home_team_id),
         linescore: game.linescore,
         fenceDistanceFt: Number(game.resolved_fence_distance_ft),
+        canScore:
+          canScore(roles, game.home_team_id) ||
+          canScore(roles, game.away_team_id),
+        canDj:
+          canKeepSongs(roles, game.home_team_id) ||
+          canKeepSongs(roles, game.away_team_id),
         videos: videos.map(video => ({
           id: video.id,
           numCameras: video.num_cameras,
@@ -515,7 +532,8 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
       const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
       if (!canSeeTeam(scopes, teamId)) throw notFound()
 
-      res.json(await teamRoster(db, media.space, teamId))
+      const roles = await roleScopes(db, actor.userId, actor.isAdmin)
+      res.json(await teamRoster(db, media.space, teamId, roles))
     })
   )
 

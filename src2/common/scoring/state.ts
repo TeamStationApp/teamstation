@@ -517,6 +517,33 @@ export function copyState<T>(value: T): T {
 }
 
 /**
+ * The finished plays that `copyGame` made. Nothing changes a play once it is
+ * finished, so every later copy of a game holds the same one.
+ */
+const finishedPlays = new WeakSet<object>()
+
+/**
+ * A copy of a game, as `copyState` makes one, that shares the finished plays
+ * an earlier copy made rather than copying them again. They are nearly the
+ * whole of a game (97% of one 70 plate appearances long), so copying them for
+ * every action made a phone stall longer the longer the game went on.
+ */
+export function copyGame(game: GameState): GameState {
+  const { plays } = game.liveData
+  const copy = copyState<GameState>({
+    ...game,
+    liveData: { ...game.liveData, plays: { ...plays, allPlays: [] } }
+  })
+  copy.liveData.plays.allPlays = plays.allPlays.map(play => {
+    if (finishedPlays.has(play)) return play
+    const own = copyState(play)
+    finishedPlays.add(own)
+    return own
+  })
+  return copy
+}
+
+/**
  * A cleaner's result keeps every optional key, set to `undefined` when it was
  * absent. This types those keys as optional and drops them, so a cleaned
  * value equals the one that was sent.
@@ -532,9 +559,14 @@ export type Optional<T> = {
 export function withoutUndefined<T>(value: T): T {
   if (Array.isArray(value)) return value.map(withoutUndefined) as T
   if (value == null || typeof value !== 'object') return value
+  // Keys, not entries: an entry pair per key made this the most of what
+  // folding a game cost on a phone.
+  const source = value as Record<string, unknown>
   const out: Record<string, unknown> = {}
-  for (const [key, item] of Object.entries(value))
+  for (const key of Object.keys(source)) {
+    const item = source[key]
     if (item !== undefined) out[key] = withoutUndefined(item)
+  }
   return out as T
 }
 export function exactly<T>(cleaner: Cleaner<T>): Cleaner<T> {

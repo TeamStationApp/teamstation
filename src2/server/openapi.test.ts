@@ -16,15 +16,19 @@ import { directorRoutes } from './routes/director'
 import { eventRoutes } from './routes/events'
 import { healthRoutes } from './routes/health'
 import { inviteRoutes } from './routes/invites'
+import { lineupRoutes } from './routes/lineups'
 import { liveRoutes } from './routes/live'
 import { logRoutes } from './routes/logs'
 import { manageRoutes } from './routes/manage'
+import { meRoutes } from './routes/me'
 import { mediaRoutes } from './routes/media'
+import { playerRoutes } from './routes/players'
 import { scheduleRoutes } from './routes/schedule'
 import { seasonRoutes } from './routes/seasons'
 import { statsRoutes } from './routes/stats'
 import { teamRoutes } from './routes/teams'
 import { userRoutes } from './routes/users'
+import { walkUpSongRoutes } from './routes/walkUpSongs'
 
 /**
  * The document says what the API promises; the routers are what it does. This
@@ -107,6 +111,7 @@ describe('the API document', function () {
       ...routesOf(teamRoutes(db, media)),
       ...routesOf(scheduleRoutes(db)),
       ...routesOf(eventRoutes(db)),
+      ...routesOf(lineupRoutes(db)),
       ...routesOf(logRoutes()),
       ...routesOf(statsRoutes(db)),
       ...routesOf(mediaRoutes(db, media)),
@@ -114,7 +119,9 @@ describe('the API document', function () {
       ...routesOf(directorRoutes(db, live)),
       ...routesOf(inviteRoutes(db, { sendCode: async () => undefined })),
       ...routesOf(manageRoutes(db, { sendInvite: async () => undefined })),
-      ...routesOf(userRoutes(db))
+      ...routesOf(meRoutes(db)),
+      ...routesOf(userRoutes(db)),
+      ...routesOf(walkUpSongRoutes(db))
     ]
 
     const documented = new Set<string>()
@@ -139,6 +146,7 @@ describe('the API document', function () {
       ...routesOf(teamRoutes(db, media)),
       ...routesOf(scheduleRoutes(db)),
       ...routesOf(eventRoutes(db)),
+      ...routesOf(lineupRoutes(db)),
       ...routesOf(logRoutes()),
       ...routesOf(statsRoutes(db)),
       ...routesOf(mediaRoutes(db, media)),
@@ -146,7 +154,12 @@ describe('the API document', function () {
       ...routesOf(directorRoutes(db, live)),
       ...routesOf(inviteRoutes(db, { sendCode: async () => undefined })),
       ...routesOf(manageRoutes(db, { sendInvite: async () => undefined })),
-      ...routesOf(userRoutes(db))
+      ...routesOf(meRoutes(db)),
+      ...routesOf(userRoutes(db)),
+      ...routesOf(walkUpSongRoutes(db)),
+      // Only the player routes the document describes: the reads of a
+      // player's page are left out of it, as they always have been.
+      ...routesOf(playerRoutes(db, media))
     ])
 
     const paths = openApiDocument('0.0.0').paths
@@ -162,6 +175,17 @@ describe('the API document', function () {
       invented,
       `promised but not served: ${invented.join(', ')}`
     ).deep.equals([])
+  })
+
+  it('describes a player\u2019s settings, with the positions a coach may give', function () {
+    const paths = openApiDocument('0.0.0').paths as Record<
+      string,
+      { put?: { description?: string; requestBody?: unknown } }
+    >
+    const settings = paths['/teams/{teamId}/players/{userId}/settings']?.put
+    expect(settings?.description ?? '').includes('coach')
+    expect(settings?.description ?? '').includes('404')
+    expect(JSON.stringify(settings?.requestBody)).includes('"DH"')
   })
 
   it('describes the box-score stats field and the events play contract', function () {

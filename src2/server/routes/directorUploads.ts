@@ -7,7 +7,7 @@ import type { Kysely, Selectable } from 'kysely'
 
 import { badRequest, notFound, unauthorized } from '../../common/errors'
 import { makeId } from '../../common/ids'
-import { adminScopes } from '../access'
+import { canFilm, roleScopes } from '../access'
 import type { Database, DirectorUploadsTable } from '../db/database'
 import {
   assembleParts,
@@ -122,9 +122,9 @@ export function directorUploadRoutes(
   /**
    * A game this account may put a recording on.
    *
-   * The same rule as claiming one to stream: the person holding the camera is
-   * the person who runs the team. An upload naming a game they do not run is
-   * not found, for the same reason as above.
+   * The same rule as claiming one to stream: a videographer of either team,
+   * which its administrators are. An upload naming a game they do not film
+   * is not found, for the same reason as above.
    */
   const gameIRun = async (
     gameId: string,
@@ -142,11 +142,9 @@ export function directorUploadRoutes(
       .where('id', '=', gameId)
       .executeTakeFirst()
     if (game == null) throw notFound()
-    const scopes = await adminScopes(db, userId, isAdmin)
-    const allowed =
-      scopes.isAdmin ||
-      scopes.teamIds.has(game.home) ||
-      scopes.teamIds.has(game.away)
+    // A videographer of either team, which an administrator of it is.
+    const scopes = await roleScopes(db, userId, isAdmin)
+    const allowed = canFilm(scopes, game.home) || canFilm(scopes, game.away)
     if (!allowed) throw notFound()
     return { id: game.id, startAt: new Date(game.startAt) }
   }

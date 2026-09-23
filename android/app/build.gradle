@@ -1,6 +1,9 @@
 apply plugin: "com.android.application"
 apply plugin: "org.jetbrains.kotlin.android"
 apply plugin: "com.facebook.react"
+// Links the Expo modules into the app, which here stands where the `expo`
+// package's own library would, and generates `expo.modules.ExpoModulesPackageList`.
+apply plugin: "expo-autolinking"
 
 /**
  * This is the configuration block to customize your React Native Android app.
@@ -52,6 +55,14 @@ react {
 
     /* Autolinking */
     autolinkLibrariesWithApp()
+}
+
+// Babel inlines GS_API_BASE_URL into the bundle (babel.config.js), but the
+// variable is not one of the bundle task's inputs, so Gradle called a bundle
+// made for another URL up to date and packed it again. Declared here, a new
+// value rebuilds the bundle and the same value does not.
+tasks.withType(com.facebook.react.tasks.BundleHermesCTask).configureEach {
+    inputs.property("GS_API_BASE_URL", providers.environmentVariable("GS_API_BASE_URL").orElse(""))
 }
 
 /**
@@ -111,6 +122,13 @@ dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
 
+    // Walk-up songs play through ExoPlayer, at the version react-native-video
+    // already brings (RNVideo_media3Version), so the app carries one copy.
+    implementation("androidx.media3:media3-exoplayer:1.8.0")
+    // LocalFileIdTest reads the fixtures it shares with localFileId.test.ts.
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
+
     if (hermesEnabled.toBoolean()) {
         implementation("com.facebook.react:hermes-android")
     } else {
@@ -133,7 +151,7 @@ dependencies {
  * regular and the app would lose two of its four weights.
  */
 def gsFontRes = layout.buildDirectory.dir("generated/gsFonts/res")
-def gsFontSource = file("$rootDir/../app/assets/fonts")
+def gsFontSource = file("$rootDir/../src2/app/assets/fonts")
 
 tasks.register('gsFonts', Copy) {
     description = 'Copies the shared fonts into a generated resource directory'

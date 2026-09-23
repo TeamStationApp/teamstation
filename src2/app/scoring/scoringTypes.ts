@@ -111,14 +111,10 @@ export interface ScoringSnapshot {
   presentationEnabled?: boolean
   presentation?: PresentationSequence | null
 
-  moreDraft?: {
-    action: MoreAction
-    checkpoint: ScoringSnapshot
-    historyLength: number
-  }
+  moreDraft?: ScoringDraft & { action: MoreAction }
 
   activeGesture?: boolean
-  runnerDraft?: { checkpoint: ScoringSnapshot; historyLength: number }
+  runnerDraft?: ScoringDraft
 
   motions: MotionCommand[]
   runnerAction: RunnerAction | null
@@ -132,12 +128,48 @@ export interface ScoringSnapshot {
   /** The server refused this game's changes: nothing more is scored. */
   readOnly?: boolean
 }
+/**
+ * The screen without the game: the step, what is drawn, the drafts. It is
+ * what an Undo restores beside the game, which is rebuilt from the log.
+ */
+export type ScoringScreenState = Omit<ScoringSnapshot, 'session' | 'log'>
+
+/**
+ * Where a runner or More draft began: the Undo history's length, the log's
+ * length, and the screen. Cancelling it goes back there.
+ */
+export interface ScoringDraft {
+  historyLength: number
+  logLength: number
+  screen: ScoringScreenState
+}
+
+/**
+ * One step Undo can take back: its label, how long the log was before it,
+ * and the screen as it was. The game itself is not kept per step.
+ */
 export interface HistoryEntry {
   label: string
-  snapshot: ScoringSnapshot
+  logLength: number
+  screen: ScoringScreenState
 }
+
+/**
+ * The game as a plate appearance opened, and the log's length then. Only the
+ * first checkpoint, every tenth and the newest two hold a copy of the game
+ * (`session`); the others are null, and are rebuilt from the nearest earlier
+ * copy by replaying the log.
+ */
+export interface GameCheckpoint {
+  logLength: number
+  /** Which plate appearance: the number of plays the game had finished. */
+  appearance: number
+  session: ScoringSessionState | null
+}
+
 export interface ScoringState extends ScoringSnapshot {
   past: HistoryEntry[]
+  checkpoints: GameCheckpoint[]
 }
 export type ScoringEvent =
   | { type: 'CELEBRATION_DONE'; id: string; generation: number }

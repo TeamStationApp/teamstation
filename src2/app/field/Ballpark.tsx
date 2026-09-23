@@ -156,7 +156,23 @@ function Box({
     </mesh>
   )
 }
-export function Ballpark({
+/**
+ * The park draws again only when the board or the teams say something new:
+ * the scoring screen hands the scene new objects on every render, and
+ * reconciling the whole park each time cost a phone part of every tap.
+ */
+export const Ballpark = React.memo(BallparkView, sameBallpark)
+export function sameBallpark(
+  a: Parameters<typeof BallparkView>[0],
+  b: Parameters<typeof BallparkView>[0]
+): boolean {
+  return (
+    a.textures === b.textures &&
+    JSON.stringify(a.teams) === JSON.stringify(b.teams) &&
+    JSON.stringify(a.scoreboard) === JSON.stringify(b.scoreboard)
+  )
+}
+function BallparkView({
   textures,
   teams,
   scoreboard

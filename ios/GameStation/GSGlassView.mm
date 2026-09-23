@@ -27,6 +27,7 @@
 @property (nonatomic, assign) BOOL glassInteractive;
 @property (nonatomic, assign) BOOL glassClear;
 @property (nonatomic, assign) CGFloat glassRadius;
+@property (nonatomic, assign) BOOL glassDark;
 @end
 
 @implementation GSGlassView {
@@ -141,6 +142,21 @@
   [self applyShape];
 }
 
+/**
+ * The app's appearance, not the phone's.
+ *
+ * The app draws one theme whatever the phone is set to, but the glass follows
+ * the phone: with the phone in Dark Mode, `UIGlassEffect` goes dark under the
+ * light theme's dark text, and the scoring menu button's ☰ all but vanishes
+ * into it. So the glass is told which theme it sits in.
+ */
+- (void)setGlassDark:(BOOL)value
+{
+  _glassDark = value;
+  self.overrideUserInterfaceStyle =
+      value ? UIUserInterfaceStyleDark : UIUserInterfaceStyleLight;
+}
+
 @end
 
 @interface GSGlassViewManager : RCTViewManager
@@ -158,5 +174,6 @@ RCT_EXPORT_MODULE(GSGlassView)
 RCT_EXPORT_VIEW_PROPERTY(glassInteractive, BOOL)
 RCT_EXPORT_VIEW_PROPERTY(glassClear, BOOL)
 RCT_EXPORT_VIEW_PROPERTY(glassRadius, CGFloat)
+RCT_EXPORT_VIEW_PROPERTY(glassDark, BOOL)
 
 @end

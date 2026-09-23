@@ -9,6 +9,7 @@ import {
 } from '../../common/scoring/linescore'
 import type { Database, EventsTable } from '../db/database'
 import { gameHasPlays, resolvedFenceDistance } from '../games/fenceDistance'
+import { notifyGameChange } from '../socket/gameChanges'
 import {
   type PlaySource,
   type PlayWrite,
@@ -16,6 +17,7 @@ import {
   teamIdsOnCredits,
   upsertGameEvents
 } from './eventWrite'
+import { keepLineups, storedLineupGame } from './teamLineups'
 
 type Trx = Kysely<Database>
 
@@ -79,7 +81,9 @@ export async function postGamePlays(
           'home_score',
           'ingest_status',
           'ingest_message',
-          'currentPlay'
+          'currentPlay',
+          'lineup_started_at',
+          'lineups_digest'
         ])
         .where('id', '=', gameId)
         .forUpdate()
@@ -156,6 +160,22 @@ export async function postGamePlays(
             game.ingest_status,
             game.ingest_message
           )
+      // A live post keeps the lineups' digest, and a GameStation one the
+      // teams' default lineups, from what it leaves stored.
+      const lineups = live
+        ? await keepLineups(
+            trx,
+            {
+              id: gameId,
+              home_team_id: game.home_team_id,
+              away_team_id: game.away_team_id,
+              lineup_started_at: game.lineup_started_at
+            },
+            storedLineupGame(stored, currentPlay),
+            system === 'gamestation',
+            new Date()
+          )
+        : {}
       const halves = halfOutcomes(documents)
       const status = live
         ? statusAfterLivePost(game.status, stored, currentPlay != null)
@@ -181,10 +201,21 @@ export async function postGamePlays(
           ...(live && body.currentPlay !== undefined
             ? { currentPlay: body.currentPlay }
             : {}),
+          ...lineups,
           updated_at: new Date()
         })
         .where('id', '=', gameId)
         .execute()
+      // Told to the game socket when this commits. The lineups only when a
+      // reader of them would see something new: the digest is of what they
+      // show, so a pitch leaves it alone and an undone change moves it.
+      await notifyGameChange(trx, { game: gameId, kind: 'plays' })
+      await notifyGameChange(trx, { game: gameId, kind: 'game' })
+      if (
+        'lineups_digest' in lineups &&
+        lineups.lineups_digest !== game.lineups_digest
+      )
+        await notifyGameChange(trx, { game: gameId, kind: 'lineups' })
       return {
         plays: stored.map(playJson),
         currentPlay: currentPlay ?? null

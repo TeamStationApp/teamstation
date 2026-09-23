@@ -1,6 +1,7 @@
 import type { Kysely } from 'kysely'
 
 import { makeId } from '../../common/ids'
+import { type Role, type RoleFlag, ROLES } from '../../common/roles'
 import type { Database } from '../db/database'
 import type { InviteScopeType } from './invites'
 
@@ -41,7 +42,18 @@ export interface ScopePerson {
   teams: Grant[]
   seasons: Grant[]
   leagues: Grant[]
-  /** The levels of this tree they administer, if any. */
+  /**
+   * Every role they hold anywhere in this tree, one entry per level, named.
+   *
+   * A role set above the level being managed is listed under that level, so
+   * the page can say "Scorekeeper · from Spring league" rather than showing a
+   * right that nothing on the page explains.
+   */
+  grants: RoleGrant[]
+  /**
+   * The levels of this tree they administer: `grants` narrowed to `admin`.
+   * Kept for the phone builds that read it from before the role flags.
+   */
   adminOf: Array<{ kind: InviteScopeType; id: string; name: string }>
   /** When the account was made. */
   createdAt: string
@@ -56,6 +68,15 @@ export interface ScopePerson {
    */
   lastSignInAt: string | null
   lastSeenAt: string | null
+}
+
+/** The roles one person holds on one level. */
+export interface RoleGrant {
+  kind: InviteScopeType
+  id: string
+  name: string
+  /** Administrator first, then the flags in their own order. */
+  roles: Role[]
 }
 
 /** Somebody invited by name who has not opened the link yet. */
@@ -191,6 +212,7 @@ export async function peopleInScope(
       teams: [],
       seasons: [],
       leagues: [],
+      grants: [],
       adminOf: [],
       createdAt: '',
       lastSignInAt: null,
@@ -269,26 +291,44 @@ export async function peopleInScope(
   const scopeIds = [...teamIds, ...seasonIds, ...leagueIds]
   if (scopeIds.length > 0) {
     const rows = await db
-      .selectFrom('admin_roles')
-      .innerJoin('users', 'users.id', 'admin_roles.user_id')
+      .selectFrom('scope_roles')
+      .innerJoin('users', 'users.id', 'scope_roles.user_id')
       .select([
-        'admin_roles.user_id as userId',
-        'admin_roles.scope_type as scopeType',
-        'admin_roles.scope_id as scopeId',
+        'scope_roles.user_id as userId',
+        'scope_roles.scope_type as scopeType',
+        'scope_roles.scope_id as scopeId',
+        'scope_roles.role as role',
         'users.display_name as displayName'
       ])
-      .where('admin_roles.scope_id', 'in', scopeIds)
+      .where('scope_roles.scope_id', 'in', scopeIds)
       .where('users.merged_into', 'is', null)
       .execute()
     for (const row of rows) {
-      // An administrator is listed even with no membership of their own: they
-      // are one of the people with access, and the commonest way to lock
-      // yourself out is to remove the only one.
-      person(row.userId, row.displayName).adminOf.push({
-        kind: row.scopeType,
-        id: row.scopeId,
-        name: named.get(row.scopeId) ?? row.scopeId
-      })
+      // Somebody holding a role is listed even with no membership of their
+      // own: they are one of the people with access, and the commonest way
+      // to lock yourself out is to remove the only administrator.
+      const held = person(row.userId, row.displayName)
+      let grant = held.grants.find(
+        item => item.kind === row.scopeType && item.id === row.scopeId
+      )
+      if (grant == null) {
+        grant = {
+          kind: row.scopeType,
+          id: row.scopeId,
+          name: named.get(row.scopeId) ?? row.scopeId,
+          roles: []
+        }
+        held.grants.push(grant)
+      }
+      grant.roles.push(row.role)
+    }
+    for (const held of people.values()) {
+      for (const grant of held.grants) {
+        grant.roles = ROLES.filter(role => grant.roles.includes(role))
+      }
+      held.adminOf = held.grants
+        .filter(grant => grant.roles.includes('admin'))
+        .map(grant => ({ kind: grant.kind, id: grant.id, name: grant.name }))
     }
   }
 
@@ -460,40 +500,68 @@ export async function addToScope(
   return { added: made != null }
 }
 
-/** Makes somebody an administrator of this scope. */
-export async function addAdmin(
-  db: Kysely<Database>,
-  scopeType: InviteScopeType,
-  scopeId: string,
-  userId: number,
-  grantedBy: number
-): Promise<void> {
-  await db
-    .insertInto('admin_roles')
-    .values({
-      id: makeId('adminRole'),
-      user_id: userId,
-      scope_type: scopeType,
-      scope_id: scopeId,
-      role: 'admin',
-      granted_by: grantedBy
-    })
-    .onConflict(oc =>
-      oc.columns(['user_id', 'scope_type', 'scope_id']).doNothing()
-    )
-    .execute()
-}
-
-export async function removeAdmin(
+/** The roles somebody holds on this one level, set here and nowhere else. */
+export async function rolesAt(
   db: Kysely<Database>,
   scopeType: InviteScopeType,
   scopeId: string,
   userId: number
-): Promise<void> {
-  await db
-    .deleteFrom('admin_roles')
+): Promise<Role[]> {
+  const rows = await db
+    .selectFrom('scope_roles')
+    .select(['role'])
     .where('scope_type', '=', scopeType)
     .where('scope_id', '=', scopeId)
     .where('user_id', '=', userId)
     .execute()
+  return ROLES.filter(role => rows.some(row => row.role === role))
+}
+
+/**
+ * Makes somebody's roles on this one level exactly these.
+ *
+ * A role they keep keeps its row, and so who granted it and when. The rest
+ * are taken away and the new ones added, in one transaction, so a reader
+ * never sees half of a change.
+ */
+export async function setScopeRoles(
+  db: Kysely<Database>,
+  scopeType: InviteScopeType,
+  scopeId: string,
+  userId: number,
+  wanted: { admin: boolean; flags: RoleFlag[] },
+  grantedBy: number
+): Promise<Role[]> {
+  const roles: Role[] = ROLES.filter(
+    role =>
+      (role === 'admin' && wanted.admin) ||
+      wanted.flags.includes(role as RoleFlag)
+  )
+  await db.transaction().execute(async trx => {
+    let gone = trx
+      .deleteFrom('scope_roles')
+      .where('scope_type', '=', scopeType)
+      .where('scope_id', '=', scopeId)
+      .where('user_id', '=', userId)
+    if (roles.length > 0) gone = gone.where('role', 'not in', roles)
+    await gone.execute()
+    if (roles.length === 0) return
+    await trx
+      .insertInto('scope_roles')
+      .values(
+        roles.map(role => ({
+          id: makeId('scopeRole'),
+          user_id: userId,
+          scope_type: scopeType,
+          scope_id: scopeId,
+          role,
+          granted_by: grantedBy
+        }))
+      )
+      .onConflict(oc =>
+        oc.columns(['user_id', 'scope_type', 'scope_id', 'role']).doNothing()
+      )
+      .execute()
+  })
+  return roles
 }

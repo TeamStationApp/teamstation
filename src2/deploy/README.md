@@ -49,6 +49,28 @@ ssh root@gamestation.co git -C /srv/gamestation/repo log --oneline -1
    to the previous version automatically** and the deploy fails loudly.
 7. Removes all but the newest five builds.
 
+## Caddy must send `/socket` to the server
+
+The game socket (`server/socket/gameSocket.ts`) answers WebSocket upgrades at
+`/socket`, in every worker. Caddy sends only `/api/*` to the Node server, so
+every Caddyfile that fronts a GameStation server needs a second rule, next to
+the `/api/*` one, sending `/socket` to the **same upstream**:
+
+```caddyfile
+handle /socket {
+	reverse_proxy <the same upstream as /api/*>
+}
+```
+
+Caddy passes a WebSocket upgrade through as it is, so nothing else is needed.
+Without the rule the upgrade never reaches the server, every client
+fails to connect and retries every 15 seconds, and screens fall back to reading
+over REST: nothing breaks loudly, it just stops being live.
+
+**The Caddyfile lives on the box and not in this repository**, so nothing here
+enforces this. Add it to a branch seat's Caddyfile when its branch has the
+socket, and to production's when that branch is deployed there.
+
 ## Caddy must not cache a playlist
 
 `/media/*` is served by Caddy, and everything under it used to carry

@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -64,6 +63,13 @@ export interface GameScreenProps {
   client: GameStationClient
   gameId: string
   onScoreGame?: () => void
+  /** Opens DJ Game, for a songkeeper of either team. */
+  onDjGame?: () => void
+  /**
+   * The phone's music. DJ Game plays songs, so it is offered only where
+   * there is music to play them with: never on the web.
+   */
+  music?: { available: boolean }
   /** Which half to open on. A `Box Score` button means the box score. */
   initialTab?: Tab
   /** Start the video. Arriving here by pressing `Watch Replay` is a gesture a
@@ -123,7 +129,7 @@ export interface GameScreenProps {
   onOpenPlayer?: (
     userId: number,
     name: string,
-    from?: { seasonId?: string; teamId?: string }
+    from?: { seasonId?: string; teamId?: string; onTeam?: string }
   ) => void
 }
 
@@ -904,7 +910,9 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     <PillTabs
       tabs={[
         { id: 'watch', label: lstrings.game_videos },
-        ...(Platform.OS === 'web' &&
+        // Only for a scorekeeper of either team: the server refuses anybody
+        // else's plays, and a button that ends in a refusal is worse than none.
+        ...(game.canScore &&
         scoringEntry(game) != null &&
         props.onScoreGame != null
           ? [
@@ -918,12 +926,29 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
               }
             ]
           : []),
+        // For a songkeeper of either team, on a phone, whatever the game's
+        // status: songs are set and played before, during and after.
+        ...(game.canDj &&
+        props.music?.available === true &&
+        props.onDjGame != null
+          ? [
+              {
+                id: 'dj' as const,
+                label: lstrings.dj_game,
+                role: 'button' as const
+              }
+            ]
+          : []),
         { id: 'boxScore', label: lstrings.game_box_score }
       ]}
       selected={tab}
       onSelect={next => {
         if (next === 'score') {
           props.onScoreGame?.()
+          return
+        }
+        if (next === 'dj') {
+          props.onDjGame?.()
           return
         }
         // Leaving the video unmounts it, so where it had got to is written
@@ -1278,12 +1303,13 @@ interface BoxScoreProps {
   /**
    * Opening a line. The game's season and the side that line belongs to go
    * with it, so the player's stats open on the season being read rather than
-   * on a career total nobody asked for.
+   * on a career total nobody asked for. The side goes again as `onTeam`, the
+   * team a coach's Settings tab edits the player on.
    */
   onOpenPlayer?: (
     userId: number,
     name: string,
-    from?: { seasonId?: string; teamId?: string }
+    from?: { seasonId?: string; teamId?: string; onTeam?: string }
   ) => void
 }
 
@@ -1328,7 +1354,8 @@ function BoxScore(props: BoxScoreProps): React.ReactElement {
         : (userId: number, name: string) => {
             onOpenPlayer(userId, name, {
               seasonId: game.seasonId ?? undefined,
-              teamId: side.teamId
+              teamId: side.teamId,
+              onTeam: side.teamId
             })
           }
     return (

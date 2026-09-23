@@ -79,6 +79,8 @@ sibling is for. What exists twice:
 | `player/VideoView`, `attachHls`, `engine` | a `<video>` and `hls.js` there; `react-native-video` here |
 | `player/useKeyboardShortcuts` | arrow keys there; nothing to bind here |
 | `screens/GameWatchLayout` | the one forked **region**, below |
+| `field/FieldCanvas` | a `<canvas>` and WebGL2 there; expo-gl's `GLView` here, below |
+| `scoring/OutcomePicker`, `scoring/MoreMenu` | the web's drop menus; here `DropMenuView` over `dropMenu.ts`: tap opens above the button, drag up and release chooses, with hover and submenus |
 
 **A native sibling may not import from its own web twin.** Metro resolves
 `./foo` inside `foo.native.tsx` back to `foo.native.tsx`, and the binding is
@@ -96,6 +98,176 @@ crash on a device. Run all three:
 npm run typecheck          # the page, and the server
 npm run typecheck.native   # the app
 ```
+
+## The scoring field: expo-gl without Expo
+
+The scoring field is three.js through `@react-three/fiber`, and on a phone
+Fiber draws through **expo-gl**, which needs **expo-modules-core**. Those two
+are the only Expo packages installed; there is no `expo` package and no other
+`expo-*`. Never a WebView.
+
+### Versions, and why these
+
+| | |
+|---|---|
+| `expo-gl` | **58.0.1** |
+| `expo-modules-core` | **58.0.4** |
+| `expo-modules-autolinking` | **58.0.3** (the Podfile and Gradle tooling, not app code) |
+| `expo-modules-jsi` | **58.0.3**, pinned by an override |
+
+React Native 0.87 falls between two Expo SDKs. SDK 57 (targets 0.86) was
+tried first and **does not build** against 0.87:
+
+- Android: its Gradle plugins compile with Kotlin 2.1.20, and 0.87's
+  Gradle 9.4.1 ships a Kotlin 2.3 standard library that compiler cannot read.
+- iOS: `ExpoModulesCore` precompiles React from 0.87's prebuilt
+  `React.framework` and fails on `-Werror=non-modular-include-in-framework-module`.
+
+SDK 58 (targets 0.88) carries the 0.87 fixes by name in its changelogs: the
+Gradle plugins on Kotlin 2.2.21 and AGP 9.2.1 (0.87's), headers resolved from
+0.87's self-contained XCFrameworks, and Expo module views receiving props on
+0.87. Each version is the newest one at least seven days old when it was
+chosen (the machine's `min-release-age`); `expo-modules-core` 58.0.4 asks for
+`expo-modules-jsi ~58.0.3`, which would otherwise resolve to a newer release.
+
+`overrides` also lets `expo-modules-core` accept the app's
+`react-native-worklets` 0.12: its optional peer range stops at 0.10. The
+worklets integration is not used by expo-gl.
+
+`ios/Podfile` sets **iOS 16.4**, the floor `ExpoModulesCore` and `expo-gl`
+declare; React Native's own is 15.1. The project's deployment target moved
+with it.
+
+### What stands in for the `expo` package
+
+Installing `expo` would bring its CLI, `expo-asset`, `expo-file-system`,
+`expo-font`, `expo-constants` and `expo-keep-awake`, and autolinking would
+link every one of them into both apps. What this app needs from it is small,
+and lives in `src2/app/native/expoStandIn/`, installed as `expo` by a `file:`
+dependency (so `npm ci` on the droplet installs it too):
+
+- **The peer.** `expo-gl` names `expo` as a peer, and imports its
+  `expo-modules-core` API from it. `index.js` re-exports that API.
+- **`bin/autolinking`**, the one line Expo's Podfile and Gradle tooling run.
+- **`assets.js`**, which `metro.config.js` resolves `expo-asset` and
+  `expo-file-system` to. Fiber's native entry imports both, to load textures
+  and files by URL. The field computes every surface and loads nothing by URL
+  except a team's logo, so on a phone **the dugouts show no logo**; the load
+  fails and `useTeamLogo` already treats that as no logo.
+
+And the three pieces of native glue the `expo` package would otherwise own:
+
+| | |
+|---|---|
+| `ios/Podfile` | `use_expo_modules!`, defined in place from `expo-modules-autolinking` (what `expo/scripts/autolinking.rb` does) |
+| `ios/GameStation/GSExpoModules.mm` | installs the Expo modules into each JavaScript runtime, as `EXReactNativeFactory` does — a category on `RCTReactNativeFactory`, which overrides nothing |
+| `android/settings.gradle`, `build.gradle`, `app/build.gradle` | the `expo-autolinking-settings` plugin and `useExpoModules()`, `expo-root-project`, and `expo-autolinking` applied to the app |
+| `android/.../ExpoModulesPackage.kt` | the `expo` package's `ExpoModulesPackage`, over the list `expo-autolinking` generates, added in `MainApplication` |
+
+When bumping Expo, take one SDK line for all four packages and diff those
+files against the same version of the `expo` package; they are copies.
+
+### What the phone's field does differently
+
+- **No shadow maps.** With `shadows` on, expo-gl on the Pixel 10 drew frames
+  with the field missing or speckled whenever players moved. The players'
+  blob shadows (`PlayerShadows`) still draw.
+- **A new Canvas when the size changes.** expo-gl sizes its drawing buffer
+  once, so a rotated phone drew the old frame stretched and torn.
+- **Its own touch bridge** (`field/fieldTouches.ts`). Fiber's native Canvas
+  sends the press from `onPanResponderStart`, and on the iPhone no press ever
+  reached the scene. The bridge sends the same DOM pointer events from the
+  responder grant, so the raycast hit-testing is the web's own.
+- **Nameplates are views over the canvas** (`field/NativeNameplates.tsx`), as
+  the browser's are HTML over its canvas, from the same `onNameplates` report.
+  What a plate says is rendered by React when it changes; where it is moves
+  each frame on the UI thread through a Reanimated shared value, so a moving
+  player re-renders nothing.
+- **The browser's resolution cap** (`fieldResolution.ts`, 1.25 on a phone).
+  expo-gl always draws at the screen's full ratio, so the Canvas is laid out
+  smaller and stretched over the field, and `FieldRenderScale` holds the
+  scene at the field's own size so framing and hit-testing match the web.
+  The scene's props come through a relay (`fieldPropsRelay.ts`) so the
+  Canvas element never changes: Fiber reconfigures, and resizes, on every
+  render of it.
+- **The scoreboard texture is drawn when its words change**, not when the
+  scoring screen hands over a new object with the same words: redrawing the
+  1024×512 bulbs cost about 120 ms a render on the Pixel.
+- **One trajectory angle a frame.** The drag reports every touch move and
+  each report re-renders the scoring screen; `frameThrottle.ts` hands on the
+  latest once a frame (on both ends).
+- **The menu button is filled**, not glass: iOS 26's glass cannot see into
+  the GL field and drew it empty.
+- three's CommonJS build calls Node's `process.emitWarning`, so
+  `metro.config.js` resolves `three` to its ES module, and `babel.config.js`
+  adds the class static block transform three's classes need.
+
+`tsconfig.native.json` includes `field/fiberNativeEvents.d.ts`, which declares
+the DOM pointer members `FieldScene` reads, as Fiber's native events carry
+them.
+
+### Testing it on a phone against this Mac
+
+A **Release** build embeds the bundle, so it needs no Metro; set
+`GS_API_BASE_URL` on the build and Babel inlines it. Android's release
+variant refuses cleartext HTTP, so a local run needs a variant that allows it
+(a `localRelease` copied from `release` with
+`manifestPlaceholders.usesCleartextTraffic = "true"`, not committed).
+
+The URL is part of the bundle, so a build for a new URL has to make a new
+bundle. Xcode's bundle phase always does, with `--reset-cache`. Gradle's
+bundle task skips work it calls up to date, and the environment is not
+something it compares, so `app/build.gradle` declares `GS_API_BASE_URL` as an
+input of every bundle task: a changed value rebuilds the bundle, and the same
+value leaves it alone. Build, install, then read the URL out of what is on
+the phone rather than trusting the build:
+
+```sh
+cd android
+GS_API_BASE_URL=http://<lan-ip>:9120/api/v1 ./gradlew assembleLocalRelease --console=plain \
+  | grep createBundle        # no UP-TO-DATE after a URL change
+adb install -r app/build/outputs/apk/localRelease/app-localRelease.apk
+adb pull "$(adb shell pm path co.gamestation.app | sed -n 's/^package://p' | head -1)" installed.apk
+unzip -p installed.apk assets/index.android.bundle | grep -ao 'http://[0-9.]*:[0-9]*/api/v1' | sort -u
+```
+
+On iOS the same check is
+`grep -ao 'http://[0-9.]*:[0-9]*/api/v1' build-device/Build/Products/Release-iphoneos/GameStation.app/main.jsbundle`.
+
+WDA on the iPhone can report the phone as landscape while it is upright; a
+point tap then lands at the transposed position. Tap by text wherever you
+can.
+
+## Walk-up music: the app's own TurboModule
+
+`WalkUpMusic` is the one native module the app writes itself. Its spec is
+`src2/app/walkup/NativeWalkUpMusic.ts`, which `codegenConfig` in
+`package.json` names `GameStationWalkUpMusicSpec`; the screens use it through
+`walkUpMusic.native.ts`, which is one call to the shared `makeWalkUpMusic.ts`.
+
+- **iOS** (`ios/GameStation/WalkUpMusic/`): `RCTWalkUpMusic.mm` over
+  `WalkUpMusic.swift` (MusicKit) and `SystemVolume.swift` (the fades).
+  `codegenConfig.ios.modulesProvider` maps the name to the class, so a new
+  spec needs `pod install`. Catalog search and playback need the **MusicKit
+  App Service** enabled on the `co.gamestation.app` App ID, and playback an
+  Apple Music subscription on the phone; without them a search fails with
+  Apple's own words, which the picker shows. The library search is only
+  asked with media-library access: MediaPlayer crashes without it.
+- **Android** (`android/.../co/gamestation/app/walkup/`): MediaStore, the
+  system file picker and Media3 ExoPlayer, registered in `MainApplication`
+  through `WalkUpMusicPackage`. The app's codegen library is linked by CMake
+  only if it existed when CMake was configured: after adding or renaming a
+  spec, `rm -rf android/app/.cxx` or the app starts with "'WalkUpMusic' could
+  not be found".
+- **Local files are matched by a hash** of the normalised title and artist
+  and the length (`localFileId.ts`, `LocalFileId.kt`), held together by
+  `localFileId.fixtures.json`; `(cd android && ./gradlew :app:testDebugUnitTest
+  --tests '*LocalFileIdTest')` is the Kotlin half.
+- **On a phone under test**: Maestro's `launchApp` grants every permission,
+  so a check that starts without music access launches with `adb shell
+  monkey` instead (`scripts/walkup-native-android.mjs`). Every playback
+  report is logged under the `WalkUpMusic` tag and posted to `/api/v1/logs`
+  as `[client walkUpMusic-<platform>]`.
 
 ## The video
 

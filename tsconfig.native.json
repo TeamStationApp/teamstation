@@ -32,6 +32,7 @@
   "include": [
     "src2/app/native/index.tsx",
     "src2/app/native.d.ts",
+    "src2/app/field/fiberNativeEvents.d.ts",
     "src2/app/scoring/RosterEditor.tsx"
   ],
   // The tests run under mocha in Node, not on a phone: they read fixtures off

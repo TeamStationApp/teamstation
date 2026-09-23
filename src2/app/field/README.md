@@ -36,13 +36,11 @@ independently. Camera presets, zoom, next-base/run-a-play and reset are local.
   Units are metres, home is `(0, 0)`, center field is negative z. Basepaths are
   27.432m. Player scale is deliberately exaggerated for interaction.
 - `FieldCanvas.tsx`: browser renderer, WebGL2 capability check and recovery.
-- `FieldCanvas.native.tsx`: explicit unavailable state for this web milestone.
-  **It does not render native 3D yet.** The repository is bare React Native and
-  has no Expo GL host. The native integrator must install/configure compatible
-  Expo modules (`expo-gl` and R3F's native asset peers), use `Canvas` from
-  `@react-three/fiber/native`, and mount `FieldScene` in this adapter. Adjust
-  pointer event types/capture for the native event bridge and verify on devices.
-  No WebView is introduced, and native builds retain their existing host setup.
+- `FieldCanvas.native.tsx`: the phone renderer — Fiber's native `Canvas`
+  (expo-gl) around the same `FieldScene`, with touches from
+  `fieldTouches.ts`. No WebView. `src2/MOBILE.md` covers the Expo setup and
+  what the phone does differently (no shadow maps, no logos; nameplates are
+  views over the canvas, `NativeNameplates.tsx`).
 
 React and React DOM are pinned to 19.2.4 because Fiber 9.7.0 declares React
 `>=19 <19.3`; React Native 0.87.1 accepts 19.2.4. Keep renderer versions aligned

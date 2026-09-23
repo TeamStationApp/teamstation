@@ -1,7 +1,7 @@
 import { moreEligibility as gameEligibility } from '../../common/scoring/rules'
 import { moreEvents } from './scoringContract'
 import { accepted, act, settleRunners } from './scoringFlow'
-import { snapshotOf } from './scoringMachine'
+import { checkpointsFor, draftAt } from './scoringMachine'
 import type { ScoringEvent, ScoringState } from './scoringTypes'
 
 /**
@@ -60,11 +60,8 @@ export function moreReducer(
   if (action === 'Wild Pitch' || action === 'Passed Ball')
     return {
       ...state,
-      moreDraft: {
-        action,
-        checkpoint: snapshotOf(state),
-        historyLength: state.past.length
-      }
+      moreDraft: { action, ...draftAt(state) },
+      checkpoints: checkpointsFor(state)
     }
   const bases = ['1B', '2B', '3B'] as const
   if (

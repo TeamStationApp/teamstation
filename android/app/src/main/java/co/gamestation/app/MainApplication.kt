@@ -1,6 +1,8 @@
 package co.gamestation.app
 
 import android.app.Application
+import co.gamestation.app.glass.GlassPackage
+import co.gamestation.app.walkup.WalkUpMusicPackage
 import com.facebook.react.PackageList
 import com.facebook.react.ReactApplication
 import com.facebook.react.ReactHost
@@ -15,8 +17,13 @@ class MainApplication : Application(), ReactApplication {
       context = applicationContext,
       packageList =
         PackageList(this).packages.apply {
-          // Packages that cannot be autolinked yet can be added manually here, for example:
-          // add(MyReactNativePackage())
+          // Expo's modules are linked by `expo-autolinking`, not by React
+          // Native's autolinking, so they are added by hand.
+          add(ExpoModulesPackage())
+          // The app's own TurboModule, which autolinking does not see.
+          add(WalkUpMusicPackage())
+          // The backdrop blur under the scoring menu button.
+          add(GlassPackage())
         },
     )
   }

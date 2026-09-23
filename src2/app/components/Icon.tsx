@@ -38,6 +38,9 @@ export type IconName =
   | 'content_copy'
   | 'forward_10'
   | 'replay_10'
+  | 'music_note'
+  | 'description'
+  | 'stop'
 
 export interface IconProps {
   name: IconName

@@ -21,6 +21,20 @@ export const rosterSegmentAt = (
     0,
     Math.min(count - 1, Math.floor(((x - left) / Math.max(1, width)) * count))
   )
+/**
+ * The thumb's width: one segment of the measured pill. Yoga resolves an
+ * absolutely placed child's percentage width against the space the
+ * content-sized pill was offered, not the pill's own width, so on a phone a
+ * `50%` thumb ran over most of Set Defense. Until the pill is measured the
+ * web keeps the percentage, which the browser resolves correctly, and a phone
+ * draws no thumb.
+ */
+export const rosterThumbWidth = (
+  width: number,
+  count: number,
+  web: boolean
+): number | `${number}%` =>
+  width > 0 ? width / count : web ? `${100 / count}%` : 0
 export function RosterSelector({
   labels,
   captions,
@@ -139,7 +153,7 @@ export function RosterSelector({
             position: 'absolute',
             top: 0,
             bottom: 0,
-            width: `${100 / count}%`,
+            width: rosterThumbWidth(width, count, Platform.OS === 'web'),
             borderRadius: theme.radiusPill,
             backgroundColor: theme.scoringMenuActiveBackground
           }
@@ -172,10 +186,11 @@ export function RosterSelector({
         >
           <Text
             onLayout={event => {
+              // Read before the updater runs: React Native has released the
+              // event by then, and `nativeEvent` is null on a phone.
+              const { width: measured } = event.nativeEvent.layout
               if (fitContent)
-                setLabelWidth(previous =>
-                  Math.max(previous, event.nativeEvent.layout.width)
-                )
+                setLabelWidth(previous => Math.max(previous, measured))
             }}
             selectable={false}
             numberOfLines={1}

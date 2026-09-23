@@ -39,7 +39,9 @@ export function useFieldSurface(): { root: ViewStyle; safe: ViewStyle } {
     } as unknown as ViewStyle,
     safe: {
       paddingTop: 'max(8px, env(safe-area-inset-top))',
-      paddingBottom: 'max(8px, env(safe-area-inset-bottom))',
+      // The gap sits beyond the home indicator's inset, as on a phone
+      // (`fieldSafeArea.ts`); it is the same 8px wherever there is none.
+      paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 8px)',
       paddingLeft: 'max(8px, env(safe-area-inset-left))',
       paddingRight: 'max(8px, env(safe-area-inset-right))'
     }

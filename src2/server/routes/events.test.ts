@@ -6,10 +6,22 @@ import type { Kysely } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
-import { asGumboPlay, asPostEventsBody } from '../../common/gumboPlay'
+import {
+  asGumboPlay,
+  asPostEventsBody,
+  type CurrentPlay,
+  type GumboPlay
+} from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
 import { mintUserId } from '../../common/mintUserId'
+import type { ScoringAction } from '../../common/scoring/actions'
 import { halfOutcomes } from '../../common/scoring/linescore'
+import { newSetup } from '../../common/scoring/lineup'
+import {
+  type EventStore,
+  ScoringSession,
+  type StoredGame
+} from '../../common/scoring/session'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
@@ -43,6 +55,34 @@ const member = mintUserId(id => id === admin.userId || id === stranger.userId)
 const manager = mintUserId(
   id => id === admin.userId || id === stranger.userId || id === member.userId
 )
+/** One person per role flag on the home team, each a member of it. */
+const FLAGS = ['scorekeeper', 'coach', 'songkeeper', 'videographer'] as const
+const flagged = new Map<
+  (typeof FLAGS)[number],
+  { userId: number; legacyId: string; token: string }
+>()
+for (const flag of FLAGS) {
+  const taken = new Set([
+    admin.userId,
+    stranger.userId,
+    member.userId,
+    manager.userId,
+    ...[...flagged.values()].map(one => one.userId)
+  ])
+  flagged.set(flag, {
+    ...mintUserId(id => taken.has(id)),
+    token: `tok_${flag}_`.padEnd(35, '0')
+  })
+}
+function flagUser(flag: (typeof FLAGS)[number]): {
+  userId: number
+  legacyId: string
+  token: string
+} {
+  const held = flagged.get(flag)
+  if (held == null) throw new Error(flag)
+  return held
+}
 
 function play(input: {
   atBatIndex: number
@@ -108,6 +148,7 @@ describe('posting and reading plays', function () {
   const liveCancelledId = makeId('game')
   const liveRefusedId = makeId('game')
   const ownerlessFinalId = makeId('game')
+  const flagsId = makeId('game')
 
   before(async function () {
     adminPool = new Pool({ connectionString: adminUrl })
@@ -156,7 +197,14 @@ describe('posting and reading plays', function () {
           display_name: 'Dee',
           created_at: now,
           updated_at: now
-        }
+        },
+        ...FLAGS.map(flag => ({
+          id: flagUser(flag).userId,
+          legacyId: flagUser(flag).legacyId,
+          display_name: flag,
+          created_at: now,
+          updated_at: now
+        }))
       ])
       .execute()
     await db
@@ -189,7 +237,14 @@ describe('posting and reading plays', function () {
           token_hash: hashToken(MANAGER),
           created_at: now,
           expires_at: new Date(now.getTime() + 3_600_000)
-        }
+        },
+        ...FLAGS.map(flag => ({
+          id: `ses_events_${flag}`,
+          user_id: flagUser(flag).userId,
+          token_hash: hashToken(flagUser(flag).token),
+          created_at: now,
+          expires_at: new Date(now.getTime() + 3_600_000)
+        }))
       ])
       .execute()
     await db
@@ -289,7 +344,8 @@ describe('posting and reading plays', function () {
           liveId,
           liveAtBatId,
           liveFinalId,
-          liveRefusedId
+          liveRefusedId,
+          flagsId
         ].map(id => ({
           id,
           home_team_id: home,
@@ -326,8 +382,26 @@ describe('posting and reading plays', function () {
           user_id: manager.userId,
           team_id: home,
           role: 'manager'
-        }
+        },
+        ...FLAGS.map(flag => ({
+          id: makeId('membership'),
+          user_id: flagUser(flag).userId,
+          team_id: home,
+          role: 'member' as const
+        }))
       ])
+      .execute()
+    await db
+      .insertInto('scope_roles')
+      .values(
+        FLAGS.map(flag => ({
+          id: makeId('scopeRole'),
+          user_id: flagUser(flag).userId,
+          scope_type: 'team' as const,
+          scope_id: home,
+          role: flag
+        }))
+      )
       .execute()
 
     const app = express()
@@ -483,6 +557,31 @@ describe('posting and reading plays', function () {
       },
       MANAGER
     )
+    expect(posted.status).equals(200)
+  })
+
+  it('lets a scorekeeper post, and refuses a coach, a songkeeper and a videographer', async function () {
+    const body = {
+      plays: [play({ atBatIndex: 0, awayScore: 1, homeScore: 0 })],
+      source: { system: 'manual' }
+    }
+    for (const flag of ['coach', 'songkeeper', 'videographer'] as const) {
+      const refused = await ask(
+        `/games/${flagsId}/events`,
+        'POST',
+        body,
+        flagUser(flag).token
+      )
+      expect(refused.status, flag).equals(403)
+    }
+    const posted = await ask(
+      `/games/${flagsId}/events`,
+      'POST',
+      body,
+      flagUser('scorekeeper').token
+    )
+    // An administrator of the team, who holds every flag, still may: the
+    // test above has the manager posting.
     expect(posted.status).equals(200)
   })
 
@@ -1574,5 +1673,386 @@ describe('a play naming a user who does not exist', function () {
     expect(unknownUser({ code: '22003' }, plays)).equals(undefined)
     expect(unknownUser(new Error('boom'), plays)).equals(undefined)
     expect(unknownUser(null, plays)).equals(undefined)
+  })
+})
+
+/**
+ * U10: the default lineup a live post keeps. Every game here is scored by a
+ * real `ScoringSession` whose store is `POST /games/:gameId/events`.
+ */
+describe('the team default lineup a live post keeps (U10)', function () {
+  this.timeout(60000)
+
+  const name = `gamestation_lineup_defaults_${Date.now()}`
+  const url = adminUrl.replace(/\/[^/]*$/, `/${name}`)
+  const OWNER = 'tok_lineups_0000000000000000000000'
+  let adminPool: Pool | undefined
+  let db: Kysely<Database> | undefined
+  let server: ReturnType<express.Express['listen']> | undefined
+  let base = ''
+  const owner = mintUserId(() => false)
+  const taken = new Set([owner.userId])
+  const mint = (): number => {
+    const minted = mintUserId(id => taken.has(id))
+    taken.add(minted.userId)
+    players.push(minted)
+    return minted.userId
+  }
+  const players: Array<{ userId: number; legacyId: string }> = []
+  const awayIds = Array.from({ length: 10 }, mint)
+  const homeIds = Array.from({ length: 9 }, mint)
+  const awayTeam = makeId('team')
+  const homeTeam = makeId('team')
+  const TEAMS = {
+    away: { id: awayTeam, name: 'Away' },
+    home: { id: homeTeam, name: 'Home' }
+  }
+  const rosterOf = (
+    ids: number[]
+  ): Array<{ userId: number; shortName: string; jersey: string }> =>
+    ids.map((userId, i) => ({
+      userId,
+      shortName: `P${i + 1}`,
+      jersey: String(i + 1)
+    }))
+  const setup = newSetup(TEAMS, {
+    away: rosterOf(awayIds),
+    home: rosterOf(homeIds)
+  })
+  setup.sides.away.battingOrder = setup.sides.away.battingOrder.slice(0, 9)
+  const games = Array.from({ length: 8 }, () => makeId('game'))
+
+  before(async function () {
+    adminPool = new Pool({ connectionString: adminUrl })
+    try {
+      await adminPool.query('select 1')
+    } catch {
+      await adminPool.end()
+      adminPool = undefined
+      this.skip()
+      return
+    }
+    await adminPool.query(`create database ${name}`)
+    const pool = new Pool({ connectionString: url })
+    await migrateUp(pool, migrations)
+    await pool.end()
+    db = makeDatabase(url)
+    const now = new Date()
+    await db
+      .insertInto('users')
+      .values(
+        [{ ...owner, is_admin: true }, ...players].map(user => ({
+          id: user.userId,
+          legacyId: user.legacyId,
+          display_name: `User ${user.userId}`,
+          is_admin: 'is_admin' in user,
+          created_at: now,
+          updated_at: now
+        }))
+      )
+      .execute()
+    await db
+      .insertInto('auth_sessions')
+      .values({
+        id: 'ses_lineups_owner',
+        user_id: owner.userId,
+        token_hash: hashToken(OWNER),
+        created_at: now,
+        expires_at: new Date(now.getTime() + 3_600_000)
+      })
+      .execute()
+    await db
+      .insertInto('teams')
+      .values([
+        { id: homeTeam, name: 'Home', kind: 'full' },
+        { id: awayTeam, name: 'Away', kind: 'full' }
+      ])
+      .execute()
+    await db
+      .insertInto('games')
+      .values(
+        games.map(id => ({
+          id,
+          home_team_id: homeTeam,
+          away_team_id: awayTeam,
+          start_at: now
+        }))
+      )
+      .execute()
+    const app = express()
+    app.use(jsonBody)
+    app.use(withActor(db))
+    app.use('/api/v1', eventRoutes(db))
+    app.use(errorHandler)
+    server = app.listen(0, '127.0.0.1')
+    await new Promise<void>(resolve => server?.once('listening', resolve))
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/v1`
+  })
+
+  after(async function () {
+    server?.close()
+    if (db != null) await db.destroy()
+    if (adminPool != null) {
+      await adminPool.query(`drop database if exists ${name}`)
+      await adminPool.end()
+    }
+  })
+
+  async function post(
+    gameId: string,
+    body: Record<string, unknown>
+  ): Promise<{ status: number; body: StoredGame & { plays: unknown[] } }> {
+    const response = await fetch(`${base}/games/${gameId}/events`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${OWNER}`
+      },
+      body: JSON.stringify(body)
+    })
+    return {
+      status: response.status,
+      body: (await response.json()) as StoredGame & { plays: unknown[] }
+    }
+  }
+
+  /** The route, as the scoring screen's store. */
+  const store = (gameId: string): EventStore => ({
+    load: async () => {
+      const response = await fetch(`${base}/games/${gameId}/events`, {
+        headers: { authorization: `Bearer ${OWNER}` }
+      })
+      const read = (await response.json()) as {
+        plays: Array<{ gumbo: GumboPlay }>
+        currentPlay: CurrentPlay | null
+      }
+      return {
+        plays: read.plays.map(row => row.gumbo),
+        currentPlay: read.currentPlay
+      }
+    },
+    save: async (_gameId, change) => {
+      const answer = await post(gameId, {
+        mode: 'live',
+        source: { system: 'gamestation' },
+        plays: change.plays,
+        remove: change.remove,
+        ...(change.currentPlay === undefined
+          ? {}
+          : { currentPlay: change.currentPlay })
+      })
+      expect(answer.status, JSON.stringify(answer.body)).equals(200)
+      const plays = answer.body.plays as Array<{ gumbo: GumboPlay }>
+      return {
+        plays: plays.map(row => row.gumbo),
+        currentPlay: answer.body.currentPlay
+      }
+    }
+  })
+  async function scoring(gameId: string): Promise<ScoringSession> {
+    return await ScoringSession.open(store(gameId), gameId, {
+      gamePk: gameId,
+      teams: TEAMS,
+      setup
+    })
+  }
+  async function apply(
+    session: ScoringSession,
+    ...actions: ScoringAction[]
+  ): Promise<void> {
+    for (const action of actions)
+      expect(
+        session.apply(action).problems,
+        JSON.stringify(action)
+      ).deep.equals([])
+    await session.flush()
+    expect(session.problem).equals(null)
+  }
+  const ball: ScoringAction = { type: 'pitch', call: 'B' }
+  const strike: ScoringAction = { type: 'pitch', call: 'C' }
+  const close: ScoringAction = { type: 'gameFlow', kind: 'closePlay' }
+  const reorder = (order: number[]): ScoringAction => ({
+    type: 'lineup',
+    kind: 'battingOrder',
+    side: 'away',
+    order
+  })
+  async function gameRow(gameId: string): Promise<{
+    lineup_started_at: Date | null
+    lineups_digest: string | null
+  }> {
+    return await db!
+      .selectFrom('games')
+      .select(['lineup_started_at', 'lineups_digest'])
+      .where('id', '=', gameId)
+      .executeTakeFirstOrThrow()
+  }
+  async function defaultOf(teamId: string): Promise<{
+    lineup: { batters: Array<{ userId: number | null }> }
+    fromGameId: string
+    setAt: string
+  } | null> {
+    const row = await db!
+      .selectFrom('teams')
+      .select('default_lineup')
+      .where('id', '=', teamId)
+      .executeTakeFirstOrThrow()
+    return row.default_lineup as never
+  }
+  const battersOf = (value: Awaited<ReturnType<typeof defaultOf>>): unknown =>
+    value?.lineup.batters.map(person => person.userId)
+
+  it('takes both starting lineups once the game begins, and keeps a default that is the same', async function () {
+    const [g1, g2] = games
+    const first = await scoring(g1)
+    await apply(first, reorder([2, 1, 3, 4, 5, 6, 7, 8, 9]))
+    expect((await gameRow(g1)).lineup_started_at).equals(null)
+    const before = (await gameRow(g1)).lineups_digest
+    expect(before).a('string')
+    expect(await defaultOf(awayTeam)).equals(null)
+    await apply(first, ball)
+    expect((await gameRow(g1)).lineup_started_at).instanceOf(Date)
+    const away = await defaultOf(awayTeam)
+    expect(away?.fromGameId).equals(g1)
+    expect(battersOf(away)).deep.equals([
+      awayIds[1],
+      awayIds[0],
+      ...awayIds.slice(2, 9)
+    ])
+    expect(battersOf(await defaultOf(homeTeam))).deep.equals(homeIds)
+    expect((await defaultOf(homeTeam))?.fromGameId).equals(g1)
+
+    // The same arrangement in the next game keeps the default's setAt.
+    const second = await scoring(g2)
+    await apply(second, reorder([2, 1, 3, 4, 5, 6, 7, 8, 9]), ball)
+    expect((await gameRow(g2)).lineup_started_at).instanceOf(Date)
+    expect(await defaultOf(awayTeam)).deep.equals(away)
+  })
+
+  it('takes the lineup again after an undo back to before the first pitch', async function () {
+    const g3 = games[2]
+    const session = await scoring(g3)
+    await apply(session, ball)
+    const taken = await defaultOf(awayTeam)
+    expect((await gameRow(g3)).lineup_started_at).instanceOf(Date)
+    session.undo()
+    await session.flush()
+    expect((await gameRow(g3)).lineup_started_at).equals(null)
+    // The default stays as the first pitch left it.
+    expect(await defaultOf(awayTeam)).deep.equals(taken)
+    await apply(session, reorder([9, 8, 7, 6, 5, 4, 3, 2, 1]), ball)
+    const retaken = await defaultOf(awayTeam)
+    expect(retaken?.fromGameId).equals(g3)
+    expect(battersOf(retaken)).deep.equals(awayIds.slice(0, 9).reverse())
+    expect((await gameRow(g3)).lineup_started_at).instanceOf(Date)
+
+    // Later changes, however many, leave it alone.
+    await apply(
+      session,
+      strike,
+      strike,
+      strike,
+      close,
+      {
+        type: 'lineup',
+        kind: 'substitute',
+        side: 'away',
+        player: 10,
+        replaces: 8
+      },
+      reorder([10, 9, 7, 6, 5, 4, 3, 2, 1])
+    )
+    expect(await defaultOf(awayTeam)).deep.equals(retaken)
+  })
+
+  it('is never taken by a replace post or an outside post', async function () {
+    const [, , , g4, g5, g6] = games
+    const session = await scoring(g4)
+    await apply(
+      session,
+      reorder([3, 1, 2, 4, 5, 6, 7, 8, 9]),
+      strike,
+      strike,
+      strike,
+      close,
+      ball
+    )
+    const kept = await defaultOf(awayTeam)
+    expect(battersOf(kept)).deep.equals([
+      awayIds[2],
+      awayIds[0],
+      awayIds[1],
+      ...awayIds.slice(3, 9)
+    ])
+    // With no default kept, either post would take one if it could.
+    await db!
+      .updateTable('teams')
+      .set({ default_lineup: null })
+      .where('id', '=', awayTeam)
+      .execute()
+    const stored = await store(g4).load(g4)
+    const replaced = await post(g5, {
+      mode: 'replace',
+      source: { system: 'gamestation' },
+      plays: stored.plays
+    })
+    expect(replaced.status).equals(200)
+    const outside = await post(g6, {
+      mode: 'live',
+      source: { system: 'acme' },
+      plays: stored.plays,
+      currentPlay: stored.currentPlay
+    })
+    expect(outside.status).equals(200)
+    for (const gameId of [g5, g6]) {
+      expect((await gameRow(gameId)).lineup_started_at, gameId).equals(null)
+    }
+    expect((await gameRow(g5)).lineups_digest).equals(null)
+    expect((await gameRow(g6)).lineups_digest).a('string')
+    expect(await defaultOf(awayTeam)).equals(null)
+  })
+
+  it('leaves the default alone, answers 200 and warns once when the record does not replay', async function () {
+    const g7 = games[6]
+    const session = await scoring(g7)
+    await apply(session, ball)
+    const stored = await store(g7).load(g7)
+    // With no default kept and the game not marked, a post that replayed
+    // would take one.
+    await db!
+      .updateTable('teams')
+      .set({ default_lineup: null })
+      .where('id', '=', awayTeam)
+      .execute()
+    await db!
+      .updateTable('games')
+      .set({ lineup_started_at: null })
+      .where('id', '=', g7)
+      .execute()
+    const broken = JSON.parse(JSON.stringify(stored.currentPlay)) as {
+      gameStation: { actions: unknown[] }
+    }
+    broken.gameStation.actions = [reorder([99, 1, 2, 3, 4, 5, 6, 7, 8]), ball]
+    const warned: unknown[][] = []
+    const warn = console.warn
+    console.warn = (...args: unknown[]) => {
+      warned.push(args)
+    }
+    let answer
+    try {
+      answer = await post(g7, {
+        mode: 'live',
+        source: { system: 'gamestation' },
+        plays: [],
+        currentPlay: broken
+      })
+    } finally {
+      console.warn = warn
+    }
+    expect(answer.status).equals(200)
+    expect(warned).length(1)
+    expect(String(warned[0][0])).includes(g7)
+    expect(await defaultOf(awayTeam)).equals(null)
+    expect((await gameRow(g7)).lineup_started_at).equals(null)
   })
 })

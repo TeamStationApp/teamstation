@@ -1,17 +1,21 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import { ScrollView, Text, View } from 'react-native'
+import { Pressable, ScrollView, Text, View } from 'react-native'
 
-import type {
-  GameStationClient,
-  ManagePage,
-  ScopePerson
+import {
+  type GameStationClient,
+  grantsOf,
+  type ManagePage,
+  type RoleGrant,
+  type ScopePerson
 } from '../../common/api'
+import type { Role } from '../../common/roles'
 import {
   adminLabel,
   Button,
   Card,
+  flagLabel,
   InvitePanel,
-  RoleModal,
+  RolesModal,
   Screen,
   SectionHeader,
   TextField
@@ -37,13 +41,15 @@ export interface ManageScreenProps {
  * holds two at once, and an administrator who removes the one they can see
  * and finds nothing has changed will conclude the software is lying to them.
  * So every grant gets a tick in the column it came from, and the role box
- * beside it says the same thing in words.
+ * beside it says the same thing in words, with every role somebody holds —
+ * administrator, coach, scorekeeper, songkeeper, videographer — and where a
+ * role set above this level comes from. Tapping it changes their roles here.
  *
  * What can be changed is only ever what this administrator administers. A
  * team's manager sees the season membership that lets a parent watch and
  * cannot remove it, because it is not theirs and taking it away would drop
  * that parent from four other teams as well — and for the same reason the
- * role a team's page hands out is "team admin" and never anything wider.
+ * roles a team's page hands out are the team's and never anything wider.
  *
  * Accounts with no address are kept in their own group at the bottom.
  * Nobody can sign in to them, so they are a roster rather than a list of
@@ -180,6 +186,7 @@ export function ManageScreen(props: ManageScreenProps): React.ReactElement {
   const rowProps = {
     columns,
     scopeKind,
+    scopeId,
     busy,
     onRemove: (person: ScopePerson) => {
       run(async () => {
@@ -352,20 +359,21 @@ export function ManageScreen(props: ManageScreenProps): React.ReactElement {
       />
 
       {changing != null && (
-        <RoleModal
+        <RolesModal
           displayName={changing.displayName}
           scopeKind={scopeKind}
           scopeName={page.scope.name}
-          role={roleAt(changing, scopeId)}
+          held={heldAt(changing, scopeId)}
+          inherited={inheritedAt(changing, scopeKind)}
           busy={busy}
           onClose={() => {
             setChanging(undefined)
           }}
-          onSave={role => {
+          onSave={roles => {
             const who = changing
             setChanging(undefined)
             run(async () => {
-              await client.setRole(scopeKind, scopeId, who.userId, role)
+              await client.setRoles(scopeKind, scopeId, who.userId, roles)
             })
           }}
         />
@@ -380,9 +388,36 @@ function labelFor(column: 'team' | 'season' | 'league'): string {
   return lstrings.manage_via_league
 }
 
-/** What somebody is at this one level, which is all this page may change. */
-function roleAt(person: ScopePerson, scopeId: string): 'admin' | 'member' {
-  return person.adminOf.some(role => role.id === scopeId) ? 'admin' : 'member'
+/** The roles set on this one level, which is all this page may change. */
+function heldAt(person: ScopePerson, scopeId: string): Role[] {
+  return grantsOf(person).find(grant => grant.id === scopeId)?.roles ?? []
+}
+
+const HEIGHT = { league: 0, season: 1, team: 2 }
+
+/** Whether a level sits above the one being managed, and so reaches it. */
+function isAbove(
+  kind: RoleGrant['kind'],
+  scopeKind: 'league' | 'season' | 'team'
+): boolean {
+  return HEIGHT[kind] < HEIGHT[scopeKind]
+}
+
+/**
+ * The roles a level above carries down to this one, each with the name of
+ * the level it is set on. A page's tree holds only the levels above that
+ * contain it, so any grant higher than this page reaches it.
+ */
+function inheritedAt(
+  person: ScopePerson,
+  scopeKind: 'league' | 'season' | 'team'
+): Partial<Record<Role, string>> {
+  const from: Partial<Record<Role, string>> = {}
+  for (const grant of grantsOf(person)) {
+    if (!isAbove(grant.kind, scopeKind)) continue
+    for (const role of grant.roles) from[role] ??= grant.name
+  }
+  return from
 }
 
 /** One person, with a tick under every level their access comes through. */
@@ -390,11 +425,13 @@ function PersonRow(props: {
   person: ScopePerson
   columns: Array<'team' | 'season' | 'league'>
   scopeKind: 'league' | 'season' | 'team'
+  scopeId: string
   busy: boolean
   onRemove: (person: ScopePerson) => void
   onChangeRole: (person: ScopePerson) => void
 }): React.ReactElement {
-  const { person, columns, scopeKind, busy, onRemove, onChangeRole } = props
+  const { person, columns, scopeKind, scopeId, busy, onRemove, onChangeRole } =
+    props
   const styles = getStyles(useTheme())
 
   const grantsFor = (
@@ -411,7 +448,7 @@ function PersonRow(props: {
   // A role belongs to somebody who can sign in. An account with no address
   // cannot, so there is nothing to make an administrator of.
   const canHoldRole = person.emails.length > 0
-  const roles = rolesOf(person)
+  const roles = rolesOf(person, scopeKind, scopeId)
 
   return (
     <View style={styles.row}>
@@ -423,7 +460,19 @@ function PersonRow(props: {
             : person.emails.join(', ')}
         </Text>
       </View>
-      <View style={styles.roleBox}>
+      <Pressable
+        style={styles.roleBox}
+        disabled={!canHoldRole || busy}
+        accessibilityRole={canHoldRole ? 'button' : undefined}
+        accessibilityLabel={
+          canHoldRole
+            ? sprintf(lstrings.role_title, person.displayName)
+            : undefined
+        }
+        onPress={() => {
+          onChangeRole(person)
+        }}
+      >
         {roles.length === 0 ? (
           <Text style={styles.muted}>{lstrings.manage_role_none}</Text>
         ) : (
@@ -436,7 +485,7 @@ function PersonRow(props: {
             </Text>
           ))
         )}
-      </View>
+      </Pressable>
       {columns.map(column => (
         <Text
           key={column}
@@ -498,20 +547,49 @@ function PersonRow(props: {
 /**
  * Every role this person holds in this tree, in words.
  *
- * Administrators first, then the widest membership down to the narrowest,
- * because "league admin" is the fact that explains all the others. One line
- * each rather than a single strongest role: somebody can be a team's manager
- * and a season's spectator at once, and a box saying only "manager" would
- * hide the half that is not removable from here.
+ * Roles first — this level's, then those carried down from above, then those
+ * on levels inside it — and then the widest membership down to the
+ * narrowest, because "league admin" is the fact that explains all the
+ * others. One line each rather than a single strongest role: somebody can be
+ * a team's manager and a season's spectator at once, and a box saying only
+ * "manager" would hide the half that is not removable from here.
+ *
+ * A level's roles share a line: `Coach · Songkeeper` for this level,
+ * `Scorekeeper · from Spring league` from above, `Team admin · Owls` inside.
  */
 function rolesOf(
-  person: ScopePerson
+  person: ScopePerson,
+  scopeKind: 'league' | 'season' | 'team',
+  scopeId: string
 ): Array<{ text: string; isAdmin: boolean }> {
   const lines: Array<{ text: string; isAdmin: boolean }> = []
-  for (const role of person.adminOf) {
+  const grants = grantsOf(person)
+  const here = grants.filter(grant => grant.id === scopeId)
+  const above = grants.filter(
+    grant => grant.id !== scopeId && isAbove(grant.kind, scopeKind)
+  )
+  const inside = grants.filter(
+    grant => grant.id !== scopeId && !isAbove(grant.kind, scopeKind)
+  )
+  const words = (grant: RoleGrant): string =>
+    grant.roles
+      .map(role =>
+        role === 'admin' ? adminLabel(grant.kind) : flagLabel(role)
+      )
+      .join(' · ')
+  for (const grant of here) {
+    lines.push({ text: words(grant), isAdmin: grant.roles.includes('admin') })
+  }
+  for (const grant of above) {
     lines.push({
-      text: `${adminLabel(role.kind)} · ${role.name}`,
-      isAdmin: true
+      text: sprintf(lstrings.manage_role_from, words(grant), grant.name),
+      isAdmin: grant.roles.includes('admin')
+    })
+  }
+  for (const grant of inside) {
+    lines.push({
+      text: `${words(grant)} · ${grant.name}`,
+      isAdmin: grant.roles.includes('admin')
     })
   }
   for (const grant of person.leagues) {

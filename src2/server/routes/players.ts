@@ -2,13 +2,17 @@ import { Router } from 'express'
 import type { Kysely } from 'kysely'
 
 import { notFound, unauthorized } from '../../common/errors'
-import { shortName } from '../../common/names'
+import { fullName, shortName } from '../../common/names'
 import { outcomeName } from '../../common/outcomes'
+import { asPlayerSettings } from '../../common/playerSettings'
 import { asUserId } from '../../common/userIdNumber'
 import {
+  canCoach,
   canSeePerson,
   canSeePlayedFor,
   mayEditName,
+  maySeeFullName,
+  roleScopes,
   visibleScopes
 } from '../access'
 import { onePerson } from '../admin/people'
@@ -21,14 +25,17 @@ import {
   highlightEvent,
   withDropped
 } from '../highlights'
+import { cleanBody } from '../jsonBody'
 import { imageUrl, PROFILE_SIZE } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
 import { mediaUrlPath } from '../media/mediaTokens'
 import { stillSecond } from '../media/stills'
 import { warmVideoStills } from '../media/videoStills'
+import { setAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import { highlightSettings } from '../settings'
+import { teamRoster } from '../teams/teamRoster'
 
 /**
  * One person: their picture, their name, how they bat and throw, and the teams
@@ -95,17 +102,21 @@ export function playerRoutes(
         throw notFound()
       }
 
-      // `Jensen P`, for everybody, always. There is no viewer who gets the
-      // whole name because of who they are: this endpoint does not know how to
-      // send one. The surname lives behind `/name` below, which is the field
-      // you type it into rather than a page you read.
-      const mayEdit = await mayEditName(db, actor.userId, userId, {
-        isAdmin: actor.isAdmin
-      })
+      // `Jensen P` for everybody. The whole name as well for a coach or an
+      // administrator of a team the player plays on, a parent, the player
+      // and a site administrator: `maySeeFullName`. Scorekeepers,
+      // songkeepers, videographers and everybody watching read the short
+      // name alone. Changing it is narrower still — `mayEditName`, behind
+      // `/name` below, which a coach does not pass.
+      const about = { isAdmin: actor.isAdmin }
+      const mayEdit = await mayEditName(db, actor.userId, userId, about)
+      const maySee =
+        mayEdit || (await maySeeFullName(db, actor.userId, userId, about))
 
       res.json({
         userId,
         name: shortName({ ...user, id: userId }),
+        fullName: maySee ? fullName(user) : null,
         /** Whether to offer this person the name field at all. */
         canEditName: mayEdit,
         avatarUrl: imageUrl(media.space, user.avatarPath, PROFILE_SIZE),
@@ -373,6 +384,98 @@ export function playerRoutes(
           () => undefined
         )
       }
+    })
+  )
+
+  /**
+   * What a coach sets for one player on one team: the jersey number and the
+   * positions, which are the player's place on this team, and how they bat
+   * and throw, which is the player's own and reads the same on every team.
+   *
+   * A coach of the team (set on it, or on its season or league), an
+   * administrator of any of those, and a site administrator. Anybody else,
+   * and anybody who is not a player on this team, is answered 404: the
+   * question "may I change this?" is not asked of a page nobody offered.
+   *
+   * Setting either hand marks it `manual`, so the next roster import
+   * leaves the coach's answer alone. The answer is the player's roster
+   * entry as it now reads, the same shape `GET /teams/:teamId/roster` lists.
+   */
+  router.put(
+    '/teams/:teamId/players/:userId/settings',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const teamId = pathParam(req.params.teamId)
+      const userId = userIdParam(req.params.userId)
+      const scopes = await roleScopes(db, actor.userId, actor.isAdmin)
+      if (!canCoach(scopes, teamId)) throw notFound()
+
+      const place = await db
+        .selectFrom('memberships')
+        .innerJoin('users', 'users.id', 'memberships.user_id')
+        .select([
+          'memberships.id as membershipId',
+          'memberships.jersey as jersey',
+          'memberships.positions as positions',
+          'users.bats as bats',
+          'users.throws as throws'
+        ])
+        .where('memberships.team_id', '=', teamId)
+        .where('memberships.user_id', '=', userId)
+        .where('memberships.is_player', '=', true)
+        .where('users.merged_into', 'is', null)
+        .executeTakeFirst()
+      if (place == null) throw notFound()
+
+      const body = cleanBody(asPlayerSettings, req.body)
+
+      await db.transaction().execute(async trx => {
+        if (body.jersey !== undefined || body.positions !== undefined) {
+          await trx
+            .updateTable('memberships')
+            .set({
+              ...(body.jersey === undefined ? {} : { jersey: body.jersey }),
+              ...(body.positions === undefined
+                ? {}
+                : { positions: body.positions })
+            })
+            .where('id', '=', place.membershipId)
+            .execute()
+        }
+        if (body.bats !== undefined || body.throws !== undefined) {
+          await trx
+            .updateTable('users')
+            .set({
+              ...(body.bats === undefined ? {} : { bats: body.bats }),
+              ...(body.throws === undefined ? {} : { throws: body.throws }),
+              bats_source: 'manual',
+              updated_at: new Date()
+            })
+            .where('id', '=', userId)
+            .execute()
+        }
+      })
+
+      const before = {
+        teamId,
+        jersey: place.jersey,
+        positions: place.positions,
+        bats: place.bats,
+        throws: place.throws
+      }
+      setAudit(res.locals, {
+        entityType: 'playerSettings',
+        entityId: userId,
+        before,
+        after: { ...before, ...body }
+      })
+
+      const roster = await teamRoster(db, media.space, teamId, scopes)
+      const entry = roster.find(row => row.userId === userId)
+      if (entry == null) throw notFound()
+      res.json(entry)
     })
   )
 

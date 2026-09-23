@@ -1,7 +1,7 @@
 /* eslint-disable react/no-unknown-property -- React Three Fiber scene elements. */
 import { useFrame, useThree } from '@react-three/fiber'
 import React, { useEffect, useRef } from 'react'
-import type { Mesh, MeshBasicMaterial } from 'three'
+import { type Mesh, MeshBasicMaterial, SphereGeometry } from 'three'
 
 import { scoringAudio } from '../scoring/scoringAudio'
 import {
@@ -40,7 +40,7 @@ export function PlayAnimation({
   const runtime = useRef(presentationRuntime())
   const skipElapsed = useRef(true)
   const ball = useRef<Mesh>(null)
-  const material = useRef<MeshBasicMaterial>(null)
+  const material = ballLook()
   const camera = useThree(state => state.camera)
   const invalidate = useThree(state => state.invalidate)
   useEffect(() => {
@@ -79,8 +79,7 @@ export function PlayAnimation({
       ball.current.position.set(sample.ball.x, sample.ball.y, sample.ball.z)
       ball.current.visible = sample.visible
     }
-    if (material.current != null)
-      material.current.opacity = 'opacity' in sample ? sample.opacity : 1
+    material.opacity = 'opacity' in sample ? sample.opacity : 1
     for (const player of players) {
       player.pose = {
         windup:
@@ -214,14 +213,38 @@ export function PlayAnimation({
     if (!paused && !runtime.current.complete) invalidate()
   }, -1)
   return (
-    <mesh ref={ball} name="animated-baseball" visible={false}>
-      <sphereGeometry args={[0.45, 12, 8]} />
-      <meshBasicMaterial
-        ref={material}
-        color="#fff7de"
-        transparent
-        toneMapped={false}
-      />
-    </mesh>
+    <mesh
+      ref={ball}
+      name="animated-baseball"
+      visible={false}
+      geometry={ballShape()}
+      material={material}
+      // Shared by every presentation (`ballLook`), so never disposed.
+      dispose={null}
+    />
   )
+}
+
+/**
+ * The ball's shape and look, one of each for every presentation. A look made
+ * for each one was disposed with it, and three.js then dropped its shader, so
+ * every pitch compiled it again on its first frame.
+ */
+let ball: { shape: SphereGeometry; look: MeshBasicMaterial } | null = null
+function ballParts(): { shape: SphereGeometry; look: MeshBasicMaterial } {
+  ball ??= {
+    shape: new SphereGeometry(0.45, 12, 8),
+    look: new MeshBasicMaterial({
+      color: '#fff7de',
+      transparent: true,
+      toneMapped: false
+    })
+  }
+  return ball
+}
+function ballShape(): SphereGeometry {
+  return ballParts().shape
+}
+function ballLook(): MeshBasicMaterial {
+  return ballParts().look
 }

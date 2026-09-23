@@ -2,7 +2,7 @@ import { HttpError } from '../errors'
 import type { CurrentPlay, GumboPlay } from '../gumboPlay'
 import type { Problem, ScoringAction } from './actions'
 import { type Applied, applyAction } from './apply'
-import { fenceOf } from './document'
+import { fenceOf, foldInputsOf, type PlayFolder } from './document'
 import {
   FINAL_INDEX,
   foldFinal,
@@ -13,6 +13,7 @@ import {
 } from './gumbo'
 import { awaitingResult } from './rules'
 import {
+  copyGame,
   type GamePlay,
   type GameSetup,
   type GameState,
@@ -85,6 +86,28 @@ interface Completed {
   segment: Segment
 }
 
+/**
+ * Where the log stood just after an action that finished a play: enough to
+ * pick the game up there again without applying everything before it.
+ */
+interface Mark {
+  logLength: number
+  game: GameState
+  completed: number
+  segment: Segment
+}
+
+/** A folded play as the server is sent it, written out once per play. */
+const writtenPlays = new WeakMap<GumboPlay, string>()
+function written(play: GumboPlay): string {
+  let text = writtenPlays.get(play)
+  if (text == null) {
+    text = JSON.stringify(play)
+    writtenPlays.set(play, text)
+  }
+  return text
+}
+
 export class ScoringSession {
   private log: ScoringAction[] = []
   /** The log as far as the server has acknowledged it. */
@@ -92,6 +115,33 @@ export class ScoringSession {
   private game: GameState
   private completed: Completed[] = []
   private segment: Segment
+  /**
+   * One per play the log finishes, in order. An Undo or a sync rebuilds the
+   * game from the newest one the shorter log still reaches, rather than from
+   * the start: from there it applied every action of the game again, about
+   * 0.8 s on a phone 70 plate appearances in.
+   */
+  private marks: Mark[] = []
+  /** Counts every change to what `picture` folds, so it folds only once per change. */
+  private revision = 0
+
+  private folded: {
+    revision: number
+    picture: { plays: Map<number, GumboPlay>; current: CurrentPlay | null }
+  } | null = null
+
+  /**
+   * The completed plays folded so far, and a folder carried past them, so
+   * the next fold folds only the plays completed since (`fold`).
+   */
+  private foldedPlays: {
+    inputs: string
+    count: number
+    last: Completed | undefined
+    plays: Map<number, GumboPlay>
+    folder: PlayFolder
+  } | null = null
+
   private readonly times = new Map<number, { start?: string; end?: string }>()
   /** What the server acknowledged, per index. */
   private readonly posted = new Map<number, string>()
@@ -292,8 +342,15 @@ export class ScoringSession {
         play: this.game.liveData.plays.currentPlay,
         problems: [{ code: 'notNow', message: 'Finish the at-bat first' }]
       }
-    const applied = applyAction(this.game, action)
-    if (applied.problems.length > 0) return applied
+    // The copy shares the finished plays (`copyGame`), and the action is
+    // applied to it in place: `applyAction`'s own copy is of the whole game.
+    const applied = applyAction(copyGame(this.game), action, { inPlace: true })
+    if (applied.problems.length > 0)
+      return {
+        ...applied,
+        state: this.game,
+        play: this.game.liveData.plays.currentPlay
+      }
     this.log.push(action)
     this.record(action, applied)
     this.blocked = false
@@ -335,7 +392,11 @@ export class ScoringSession {
     while (
       same < this.log.length &&
       same < target.length &&
-      JSON.stringify(this.log[same]) === JSON.stringify(target[same])
+      // The screen hands back the very actions it applied here, so most
+      // compare as the same object; writing each out again every sync cost
+      // a phone about 25 ms a pitch by the 30th plate appearance.
+      (this.log[same] === target[same] ||
+        JSON.stringify(this.log[same]) === JSON.stringify(target[same]))
     )
       same++
     if (same < this.log.length) {
@@ -381,7 +442,10 @@ export class ScoringSession {
     this.savedLog = fresh.savedLog
     this.game = fresh.game
     this.completed = fresh.completed
+    // Its plays carry the times the server holds.
+    this.foldedPlays = null
     this.segment = fresh.segment
+    this.marks = fresh.marks
     this.postedCurrent = fresh.postedCurrent
     this.failure = fresh.failure
     // A game somebody else left unreadable is shown, never written to.
@@ -401,6 +465,7 @@ export class ScoringSession {
       target.clear()
       for (const value of source) target.add(value)
     }
+    this.revision++
     this.notify()
     return true
   }
@@ -437,6 +502,14 @@ export class ScoringSession {
     })
     this.segment = split.current
     this.game = applied.state
+    this.revision++
+    if (split.finished.length > 0)
+      this.marks.push({
+        logLength: this.log.length,
+        game: this.game,
+        completed: this.completed.length,
+        segment: this.segment
+      })
     if (this.segment.actions.length > 0) {
       const index =
         split.finished.length > 0
@@ -449,23 +522,39 @@ export class ScoringSession {
   }
 
   private rebuild(): void {
-    let game = this.base
-    let segment: Segment = { setupBefore: setupOf(game), actions: [] }
-    const completed: Completed[] = []
-    const kept: ScoringAction[] = []
-    for (const action of this.log) {
-      const applied = applyAction(game, action)
+    while ((this.marks.at(-1)?.logLength ?? 0) > this.log.length)
+      this.marks.pop()
+    const mark = this.marks.at(-1)
+    let game = mark?.game ?? this.base
+    let segment: Segment = mark?.segment ?? {
+      setupBefore: setupOf(game),
+      actions: []
+    }
+    const completed = this.completed.slice(0, mark?.completed ?? 0)
+    const kept = this.log.slice(0, mark?.logLength ?? 0)
+    for (const action of this.log.slice(kept.length)) {
+      // Each step on a copy that shares the finished plays: a whole copy per
+      // action made the replay grow with the game.
+      const applied = applyAction(copyGame(game), action, { inPlace: true })
       if (applied.problems.length > 0) break
       const split = segmentAfter(game, action, applied, segment)
       completed.push(...split.finished)
       segment = split.current
       game = applied.state
       kept.push(action)
+      if (split.finished.length > 0)
+        this.marks.push({
+          logLength: kept.length,
+          game,
+          completed: completed.length,
+          segment
+        })
     }
     this.log = kept
     this.game = game
     this.completed = completed
     this.segment = segment
+    this.revision++
   }
 
   // ---- What the server should hold, and what it does not yet ----
@@ -478,6 +567,17 @@ export class ScoringSession {
     plays: Map<number, GumboPlay>
     current: CurrentPlay | null
   } {
+    // Folding every play takes a phone about 25 ms 70 plate appearances in,
+    // and the save, its status and the pending count all ask after a change.
+    if (this.folded?.revision !== this.revision)
+      this.folded = { revision: this.revision, picture: this.fold() }
+    return this.folded.picture
+  }
+
+  private fold(): {
+    plays: Map<number, GumboPlay>
+    current: CurrentPlay | null
+  } {
     const plays = new Map<number, GumboPlay>()
     const time = (
       index: number
@@ -487,8 +587,22 @@ export class ScoringSession {
     }
     // One pass over the game folds every play: each is folded with who has
     // been announced as the plays before it left it.
-    const folder = playFolder(this.game)
-    for (const { play, segment } of this.completed)
+    // A completed play folds the same until an undo or a reload takes it
+    // back, or its players or teams change: folding every one of them again
+    // on each change cost a phone about 10 ms, and writing each out again to
+    // compare with what was posted 20 ms more, at 70 plate appearances, on
+    // the frame a pitch starts. So only the plays completed since are folded.
+    const inputs = foldInputsOf(this.game)
+    let kept = this.foldedPlays
+    if (
+      kept?.inputs !== inputs ||
+      kept.count > this.completed.length ||
+      (kept.count > 0 && this.completed[kept.count - 1] !== kept.last)
+    )
+      kept = null
+    const folder = (kept?.folder ?? playFolder(this.game)).continuing(this.game)
+    for (const [index, play] of kept?.plays ?? []) plays.set(index, play)
+    for (const { play, segment } of this.completed.slice(kept?.count ?? 0))
       plays.set(
         play.about.atBatIndex,
         folder.play(play, {
@@ -496,6 +610,15 @@ export class ScoringSession {
           ...time(play.about.atBatIndex)
         })
       )
+    this.foldedPlays = {
+      inputs,
+      count: this.completed.length,
+      last: this.completed.at(-1),
+      plays: new Map(plays),
+      // The at-bat in progress is folded by this one below, which carries it
+      // past that play too; the next fold carries on from before it.
+      folder: folder.continuing(this.game)
+    }
     if (this.game.final) {
       plays.set(
         FINAL_INDEX,
@@ -518,9 +641,7 @@ export class ScoringSession {
     if (this.refusal != null) return { plays: [], remove: [] }
     const picture = this.picture()
     const plays = [...picture.plays]
-      .filter(
-        ([index, play]) => this.posted.get(index) !== JSON.stringify(play)
-      )
+      .filter(([index, play]) => this.posted.get(index) !== written(play))
       .map(([, play]) => play)
     // A play reopened by an undo keeps its row while it has an action of its
     // own; the close of the play before it is not one.
@@ -545,6 +666,7 @@ export class ScoringSession {
     if (this.game.final && !this.times.has(FINAL_INDEX)) {
       const now = this.now().toISOString()
       this.times.set(FINAL_INDEX, { start: now, end: now })
+      this.revision++
     }
     this.notify()
     this.schedule(0)
@@ -581,7 +703,7 @@ export class ScoringSession {
         return
       }
       for (const play of change.plays) {
-        this.posted.set(play.about.atBatIndex, JSON.stringify(play))
+        this.posted.set(play.about.atBatIndex, written(play))
         this.stored.add(play.about.atBatIndex)
       }
       for (const index of change.remove) {
@@ -622,6 +744,7 @@ export class ScoringSession {
       this.refusal = message
       this.isOffline = false
       this.log = [...this.savedLog]
+      this.marks = []
       this.rebuild()
       this.notify()
       return
