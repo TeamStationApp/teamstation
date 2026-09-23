@@ -4,6 +4,7 @@ import type { Kysely } from 'kysely'
 
 import { badRequest, unauthorized } from '../../common/errors'
 import { makeId } from '../../common/ids'
+import { asUserId } from '../../common/userIdNumber'
 import {
   claimApprovedRequest,
   claimSignInLink,
@@ -112,7 +113,7 @@ const asSession = asObject({
   token: asString,
   expiresAt: asString,
   user: asObject({
-    id: asString,
+    id: asUserId,
     displayName: asString,
     email: asOptional(asString),
     isAdmin: asBoolean
@@ -246,7 +247,7 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
   }
 
   /** The signed-in person's own picture, for the header. */
-  const avatarFor = async (userId: string): Promise<string | null> => {
+  const avatarFor = async (userId: number): Promise<string | null> => {
     if (options.space == null) return null
     const row = await db
       .selectFrom('users')

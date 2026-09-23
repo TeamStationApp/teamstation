@@ -14,9 +14,9 @@ import type { StatRow } from '../stats'
  */
 export interface StatRowFilter {
   gameId?: string
-  userId?: string
+  userId?: number
   /** Every id one person has had — see `admin/people.ts`. */
-  userIds?: string[]
+  userIds?: number[]
   teamId?: string
   seasonId?: string
   /** The calendar year the game was played in. */

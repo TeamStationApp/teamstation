@@ -11,6 +11,7 @@ import {
 } from 'cleaners'
 
 import { type ApiError, asApiError, HttpError } from './errors'
+import { asUserId } from './userIdNumber'
 
 /**
  * The client the app talks to the server through.
@@ -206,7 +207,7 @@ const asPitchingRates = asObject({
 })
 
 export const asBattingRow = asObject({
-  userId: asString,
+  userId: asUserId,
   /** First name, last initial. Never the whole name. */
   shortName: asOptional(asString),
   teamId: asNullable(asString),
@@ -247,7 +248,7 @@ export type BattingRow = ReturnType<typeof asBattingRow>
  * an ERA is earned runs per game.
  */
 export const asPitchingRow = asObject({
-  userId: asString,
+  userId: asUserId,
   shortName: asOptional(asString),
   teamId: asNullable(asString),
   /** `5.2`, the way it is always written. */
@@ -275,7 +276,7 @@ export type PitchingRow = ReturnType<typeof asPitchingRow>
  * answer, which is what the page opens on unless the reader arrived from a game.
  */
 export const asPlayerStats = asObject({
-  userId: asString,
+  userId: asUserId,
   filter: asObject({
     seasonId: asNullable(asString),
     teamId: asNullable(asString),
@@ -306,7 +307,7 @@ export const asBoxScore = asObject({
 export type BoxScore = ReturnType<typeof asBoxScore>
 
 export const asRosterEntry = asObject({
-  userId: asString,
+  userId: asUserId,
   /**
    * First name, last initial. The field is named for what it is so a full
    * name cannot be shipped here by accident — the compiler visits every call
@@ -358,7 +359,7 @@ export type PlayerTeam = ReturnType<typeof asPlayerTeam>
  * the team's roster and in the box score, where that context exists.
  */
 export const asPlayerName = asObject({
-  userId: asString,
+  userId: asUserId,
   displayName: asString,
   firstName: asNullable(asString),
   lastName: asNullable(asString)
@@ -366,7 +367,7 @@ export const asPlayerName = asObject({
 export type PlayerName = ReturnType<typeof asPlayerName>
 
 export const asPlayerDetail = asObject({
-  userId: asString,
+  userId: asUserId,
   name: asString,
   /** Whether to offer this person the name field. A parent or an admin. */
   canEditName: asOptional(asBoolean, false),
@@ -392,6 +393,8 @@ export const asPlayerHighlight = asObject({
   teamName: asNullable(asString),
   /** `Run scored`, `Strikeout pitching`, `Single`. Never their own name. */
   outcome: asString,
+  /** The line under the video, which names who did it. */
+  title: asString,
   /** When the play happened, corrected — not when the scorekeeper tapped. */
   playAt: asString,
   startOffsetSec: asNumber,
@@ -521,7 +524,7 @@ export const asLiveStream = asObject({
   id: asString,
   gameId: asString,
   /** Whose camera it is, and what they are called. */
-  userId: asString,
+  userId: asUserId,
   ownerName: asString,
   /** Which of that person's four, and what they call it. */
   slot: asNumber,
@@ -611,7 +614,7 @@ export const asLiveNow = asObject({
 export type LiveNow = ReturnType<typeof asLiveNow>
 
 export const asSessionUser = asObject({
-  id: asString,
+  id: asUserId,
   displayName: asString,
   email: asOptional(asString),
   isAdmin: asBoolean,
@@ -713,7 +716,7 @@ export const asNamed = asObject({ id: asString, name: asString })
  * one and sees nothing change has been told a half-truth.
  */
 export const asScopePerson = asObject({
-  userId: asString,
+  userId: asUserId,
   displayName: asString,
   emails: asArray(asString),
   teams: asArray(asScopeGrant),
@@ -771,7 +774,7 @@ export type ManagePage = ReturnType<typeof asManagePage>
 export const asAddedPerson = asObject({
   added: asBoolean,
   person: asOptional(
-    asObject({ userId: asString, displayName: asString, email: asString })
+    asObject({ userId: asUserId, displayName: asString, email: asString })
   ),
   invited: asOptional(asPendingPerson)
 })
@@ -1259,7 +1262,7 @@ export class GameStationClient {
   async removePerson(
     kind: 'league' | 'season' | 'team',
     id: string,
-    userId: string
+    userId: number
   ): Promise<{ removed: boolean }> {
     return await this.request(
       'DELETE',
@@ -1278,13 +1281,13 @@ export class GameStationClient {
   async setRole(
     kind: 'league' | 'season' | 'team',
     id: string,
-    userId: string,
+    userId: number,
     role: 'admin' | 'member'
   ): Promise<void> {
     await this.request(
       'PUT',
       `/manage/${kind}/${encodeURIComponent(id)}/people/${encodeURIComponent(userId)}/role`,
-      asObject({ userId: asString, role: asString }),
+      asObject({ userId: asUserId, role: asString }),
       { role }
     )
   }

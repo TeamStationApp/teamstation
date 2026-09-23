@@ -4,11 +4,14 @@ import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
 import { makeId } from '../../common/ids'
+import { mintUserId } from '../../common/mintUserId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
+import { testDatabaseUrl } from '../../migrate/testDatabase'
 import type { Database } from '../db/database'
+import { attachInt8Parser } from '../db/int8'
+import { bothPlayedTogether } from '../events/playedTogether'
 import {
-  bothPlayedTogether,
   closeInto,
   isFullerName,
   onePerson,
@@ -16,10 +19,21 @@ import {
   tidyClosedRows
 } from './people'
 
-const adminUrl =
-  process.env.GS_TEST_DATABASE_URL ?? 'postgres://localhost:5432/postgres'
+const adminUrl = testDatabaseUrl
 const scratchName = `gamestation_people_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
+
+const legacyOf = new Map<number, string>()
+function mintUser(): number {
+  const made = mintUserId(id => legacyOf.has(id))
+  legacyOf.set(made.userId, made.legacyId)
+  return made.userId
+}
+function legacyId(userId: number): string {
+  const id = legacyOf.get(userId)
+  if (id == null) throw new Error(`no legacy id for ${userId}`)
+  return id
+}
 
 describe('one person, however many rows', function () {
   this.timeout(60000)
@@ -27,12 +41,13 @@ describe('one person, however many rows', function () {
   let admin: Pool | undefined
   let pool: Pool | undefined
   let db: Kysely<Database> | undefined
-  const survivor = makeId('user')
-  const closed = makeId('user')
-  const closedTwice = makeId('user')
-  const stranger = makeId('user')
+  const survivor = mintUser()
+  const closed = mintUser()
+  const closedTwice = mintUser()
+  const stranger = mintUser()
 
   before(async function () {
+    attachInt8Parser()
     admin = new Pool({ connectionString: adminUrl })
     try {
       await admin.query('select 1')
@@ -50,12 +65,30 @@ describe('one person, however many rows', function () {
     await db
       .insertInto('users')
       .values([
-        { id: survivor, display_name: 'Jordan Pujols' },
+        {
+          id: survivor,
+          legacyId: legacyId(survivor),
+          display_name: 'Jordan Pujols'
+        },
         // Closed into the survivor, and one closed into that one: a child can
         // be merged twice as more teams turn up.
-        { id: closed, display_name: 'Jordan Pujols', merged_into: survivor },
-        { id: closedTwice, display_name: 'Jordan Pujols', merged_into: closed },
-        { id: stranger, display_name: 'Somebody Else' }
+        {
+          id: closed,
+          legacyId: legacyId(closed),
+          display_name: 'Jordan Pujols',
+          merged_into: survivor
+        },
+        {
+          id: closedTwice,
+          legacyId: legacyId(closedTwice),
+          display_name: 'Jordan Pujols',
+          merged_into: closed
+        },
+        {
+          id: stranger,
+          legacyId: legacyId(stranger),
+          display_name: 'Somebody Else'
+        }
       ])
       .execute()
   })
@@ -73,8 +106,8 @@ describe('one person, however many rows', function () {
     if (db == null) this.skip()
     const person = await onePerson(db, survivor)
     expect(person.userId).equals(survivor)
-    expect([...person.userIds].sort()).deep.equals(
-      [survivor, closed, closedTwice].sort()
+    expect([...person.userIds].sort((a, b) => a - b)).deep.equals(
+      [survivor, closed, closedTwice].sort((a, b) => a - b)
     )
   })
 
@@ -99,7 +132,7 @@ describe('one person, however many rows', function () {
     if (db == null) this.skip()
     const hawks = makeId('team')
     const ravens = makeId('team')
-    const mover = makeId('user')
+    const mover = mintUser()
     await db
       .insertInto('teams')
       .values([
@@ -109,7 +142,11 @@ describe('one person, however many rows', function () {
       .execute()
     await db
       .insertInto('users')
-      .values({ id: mover, display_name: 'Miles Mikolas' })
+      .values({
+        id: mover,
+        legacyId: legacyId(mover),
+        display_name: 'Miles Mikolas'
+      })
       .execute()
     await db
       .insertInto('memberships')
@@ -136,8 +173,8 @@ describe('one person, however many rows', function () {
   it('keeps the jersey the other row had', async function () {
     if (db == null) this.skip()
     const team = makeId('team')
-    const keeper = makeId('user')
-    const other = makeId('user')
+    const keeper = mintUser()
+    const other = mintUser()
     await db
       .insertInto('teams')
       .values({ id: team, name: 'Hawks II' })
@@ -145,8 +182,12 @@ describe('one person, however many rows', function () {
     await db
       .insertInto('users')
       .values([
-        { id: keeper, display_name: 'Casey Mize' },
-        { id: other, display_name: 'Casey Mize' }
+        {
+          id: keeper,
+          legacyId: legacyId(keeper),
+          display_name: 'Casey Mize'
+        },
+        { id: other, legacyId: legacyId(other), display_name: 'Casey Mize' }
       ])
       .execute()
     await db
@@ -184,10 +225,14 @@ describe('one person, however many rows', function () {
       .select(['team_id'])
       .where('user_id', '=', survivor)
       .executeTakeFirstOrThrow()
-    const twin = makeId('user')
+    const twin = mintUser()
     await db
       .insertInto('users')
-      .values({ id: twin, display_name: 'Miles Mikolas' })
+      .values({
+        id: twin,
+        legacyId: legacyId(twin),
+        display_name: 'Miles Mikolas'
+      })
       .execute()
     await db
       .insertInto('memberships')
@@ -212,16 +257,16 @@ describe('one person, however many rows', function () {
     if (db == null) this.skip()
     const team = makeId('team')
     const game = makeId('game')
-    const one = makeId('user')
-    const other = makeId('user')
-    const benched = makeId('user')
+    const one = mintUser()
+    const other = mintUser()
+    const benched = mintUser()
     await db.insertInto('teams').values({ id: team, name: 'Widows' }).execute()
     await db
       .insertInto('users')
       .values([
-        { id: one, display_name: 'Rowan' },
-        { id: other, display_name: 'Rowan Wick' },
-        { id: benched, display_name: 'Rowan W' }
+        { id: one, legacyId: legacyId(one), display_name: 'Rowan' },
+        { id: other, legacyId: legacyId(other), display_name: 'Rowan Wick' },
+        { id: benched, legacyId: legacyId(benched), display_name: 'Rowan W' }
       ])
       .execute()
     await db
@@ -301,7 +346,7 @@ describe('one person, however many rows', function () {
   it('moves what an earlier merge left behind', async function () {
     if (db == null) this.skip()
     const team = makeId('team')
-    const stranded = makeId('user')
+    const stranded = mintUser()
     await db.insertInto('teams').values({ id: team, name: 'Badgers' }).execute()
     // Closed the way the first merge did it: the row was closed and its
     // membership was not moved with it.
@@ -309,6 +354,7 @@ describe('one person, however many rows', function () {
       .insertInto('users')
       .values({
         id: stranded,
+        legacyId: legacyId(stranded),
         display_name: 'Jordan Pujols',
         merged_into: survivor
       })

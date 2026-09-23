@@ -5,9 +5,13 @@ import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
 import { makeId } from '../../common/ids'
+import { mintUserId } from '../../common/mintUserId'
+import { asUserId } from '../../common/userIdNumber'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
+import { testDatabaseUrl } from '../../migrate/testDatabase'
 import type { Database } from '../db/database'
+import { attachInt8Parser } from '../db/int8'
 import { statsRoutes } from './stats'
 
 // One player's figures, asked for the way the page asks for them.
@@ -18,8 +22,7 @@ import { statsRoutes } from './stats'
 // because what is being tested is the reading of them: the counting belongs
 // to the stats engine that writes them.
 
-const adminUrl =
-  process.env.GS_TEST_DATABASE_URL ?? 'postgres://localhost:5432/postgres'
+const adminUrl = testDatabaseUrl
 const scratchName = `gamestation_statsroute_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
@@ -27,9 +30,21 @@ const spring = makeId('season')
 const fall = makeId('season')
 const hawks = makeId('team')
 const ravens = makeId('team')
-const jordan = makeId('user')
-const jordanClosed = makeId('user')
-const stranger = makeId('user')
+const legacyOf = new Map<number, string>()
+function mintUser(): number {
+  const made = mintUserId(id => legacyOf.has(id))
+  legacyOf.set(made.userId, made.legacyId)
+  return made.userId
+}
+function legacyId(userId: number): string {
+  const id = legacyOf.get(userId)
+  if (id == null) throw new Error(`no legacy id for ${userId}`)
+  return id
+}
+
+const jordan = mintUser()
+const jordanClosed = mintUser()
+const stranger = mintUser()
 
 describe('one player’s figures', function () {
   this.timeout(60000)
@@ -45,7 +60,7 @@ describe('one player’s figures', function () {
     actor = jordan
   ): Promise<{ status: number; body: any }> => {
     const res = await fetch(`${base}${path}`, {
-      headers: { 'x-test-actor': actor }
+      headers: { 'x-test-actor': String(actor) }
     })
     // A refusal from the bare router is Express's own page rather than our
     // error body: this mounts the routes and not the whole server.
@@ -58,6 +73,7 @@ describe('one player’s figures', function () {
   }
 
   before(async function () {
+    attachInt8Parser()
     admin = new Pool({ connectionString: adminUrl })
     try {
       await admin.query('select 1')
@@ -89,14 +105,23 @@ describe('one player’s figures', function () {
     await db
       .insertInto('users')
       .values([
-        { id: jordan, display_name: 'Jordan Pujols' },
+        {
+          id: jordan,
+          legacyId: legacyId(jordan),
+          display_name: 'Jordan Pujols'
+        },
         // The same child, on another team, closed into the row above.
         {
           id: jordanClosed,
+          legacyId: legacyId(jordanClosed),
           display_name: 'Jordan Pujols',
           merged_into: jordan
         },
-        { id: stranger, display_name: 'Somebody Else' }
+        {
+          id: stranger,
+          legacyId: legacyId(stranger),
+          display_name: 'Somebody Else'
+        }
       ])
       .execute()
 
@@ -147,7 +172,9 @@ describe('one player’s figures', function () {
     // reading itself is what is under test.
     app.use((req, _res, next) => {
       const id = req.header('x-test-actor')
-      if (id != null) req.actor = { userId: id, isAdmin: false, tokenId: null }
+      if (id != null) {
+        req.actor = { userId: asUserId(id), isAdmin: false, tokenId: null }
+      }
       next()
     })
     app.use('/api/v1', statsRoutes(db))

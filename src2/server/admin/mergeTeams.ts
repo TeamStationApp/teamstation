@@ -117,7 +117,7 @@ export async function mergeTeams(
     ['memberships', 'team_id'],
     ['games', 'home_team_id'],
     ['games', 'away_team_id'],
-    ['events', 'batting_team_id'],
+    ['events', 'battingTeamId'],
     ['event_players', 'team_id']
   ]
 
@@ -220,7 +220,7 @@ async function planFixtures(
       expression
         .selectFrom('events')
         .select(inner => inner.fn.countAll<string>().as('n'))
-        .whereRef('events.game_id', '=', 'games.id')
+        .whereRef('events.gameId', '=', 'games.id')
         .as('events'),
       expression
         .selectFrom('videos')

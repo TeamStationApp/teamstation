@@ -87,7 +87,7 @@ describe('api client', function () {
     const session = {
       token: 'tok_abc',
       expiresAt: '2026-10-01T00:00:00.000Z',
-      user: { id: 'usr_1', displayName: 'Robin', isAdmin: false }
+      user: { id: 1, displayName: 'Robin', isAdmin: false }
     }
     const { fetch, calls } = stubFetch(200, session)
     const client = new GameStationClient({ baseUrl: 'http://x/api/v1', fetch })

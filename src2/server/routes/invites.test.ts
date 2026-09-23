@@ -6,8 +6,10 @@ import type { Kysely } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
+import { mintUserId } from '../../common/mintUserId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
+import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { visibleScopes } from '../access'
 import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
@@ -34,14 +36,29 @@ import { inviteRoutes } from './invites'
  *    the link is opened and does exist once the code is typed, and that spans
  *    two routers and the e-mail code table.
  */
-const adminUrl =
-  process.env.GS_TEST_DATABASE_URL ?? 'postgres://localhost:5432/postgres'
+const adminUrl = testDatabaseUrl
 const scratchName = `gamestation_invites_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
 const BOSS = 'tok_boss_00000000000000000000000000'
 const COACH = 'tok_coach_0000000000000000000000000'
 const PARENT = 'tok_parent_000000000000000000000000'
+
+const legacyOf = new Map<number, string>()
+function mintUser(): number {
+  const made = mintUserId(id => legacyOf.has(id))
+  legacyOf.set(made.userId, made.legacyId)
+  return made.userId
+}
+function legacyId(userId: number): string {
+  const id = legacyOf.get(userId)
+  if (id == null) throw new Error(`no legacy id for ${userId}`)
+  return id
+}
+
+const bossId = mintUser()
+const coachId = mintUser()
+const parentId = mintUser()
 
 describe('invite codes', function () {
   this.timeout(60000)
@@ -114,20 +131,26 @@ describe('invite codes', function () {
   async function seed(db: Kysely<Database>): Promise<void> {
     const now = new Date()
     for (const [id, name] of [
-      ['usr_boss', 'Sam Boss'],
-      ['usr_coach', 'Robin Coach'],
-      ['usr_parent', 'Parent']
-    ]) {
+      [bossId, 'Sam Boss'],
+      [coachId, 'Robin Coach'],
+      [parentId, 'Parent']
+    ] as Array<[number, string]>) {
       await db
         .insertInto('users')
-        .values({ id, display_name: name, created_at: now, updated_at: now })
+        .values({
+          id,
+          legacyId: legacyId(id),
+          display_name: name,
+          created_at: now,
+          updated_at: now
+        })
         .execute()
     }
     for (const [id, user, token] of [
-      ['ses_boss', 'usr_boss', BOSS],
-      ['ses_coach', 'usr_coach', COACH],
-      ['ses_parent', 'usr_parent', PARENT]
-    ]) {
+      ['ses_boss', bossId, BOSS],
+      ['ses_coach', coachId, COACH],
+      ['ses_parent', parentId, PARENT]
+    ] as Array<[string, number, string]>) {
       await db
         .insertInto('auth_sessions')
         .values({
@@ -166,7 +189,7 @@ describe('invite codes', function () {
       .insertInto('admin_roles')
       .values({
         id: 'adm_boss',
-        user_id: 'usr_boss',
+        user_id: bossId,
         scope_type: 'season',
         scope_id: 'sea_spring'
       })
@@ -175,7 +198,7 @@ describe('invite codes', function () {
       .insertInto('memberships')
       .values({
         id: 'mem_coach',
-        user_id: 'usr_coach',
+        user_id: coachId,
         team_id: 'tem_hawks',
         role: 'manager'
       })
@@ -184,7 +207,7 @@ describe('invite codes', function () {
       .insertInto('memberships')
       .values({
         id: 'mem_parent',
-        user_id: 'usr_parent',
+        user_id: parentId,
         team_id: 'tem_hawks',
         role: 'member'
       })
@@ -281,7 +304,7 @@ describe('invite codes', function () {
 
   it('redeems for somebody already signed in, once', async function () {
     if (db == null) this.skip()
-    const before = await visibleScopes(db, 'usr_parent', false)
+    const before = await visibleScopes(db, parentId, false)
     expect(before.seasonIds.has('sea_spring')).equals(false)
 
     const first = await ask('/join/spring26/redeem', PARENT, 'POST', {})
@@ -290,7 +313,7 @@ describe('invite codes', function () {
 
     // A season member sees every team in the season, including the one they
     // are not on. That is the rule the row is there to produce.
-    const after = await visibleScopes(db, 'usr_parent', false)
+    const after = await visibleScopes(db, parentId, false)
     expect(after.seasonIds.has('sea_spring')).equals(true)
     expect(after.teamIds.has('tem_ravens')).equals(true)
 
@@ -378,7 +401,7 @@ describe('invite codes', function () {
       .insertInto('user_emails')
       .values({
         id: 'uem_parent',
-        user_id: 'usr_parent',
+        user_id: parentId,
         email: 'parent@example.com',
         is_primary: true
       })
@@ -400,15 +423,15 @@ describe('invite codes', function () {
       code: mail.code
     })
     expect(session.status).equals(200)
-    const user = session.body.user as { id: string; displayName: string }
+    const user = session.body.user as { id: number; displayName: string }
     // The same account, not a second one, and the name they already had.
-    expect(user.id).equals('usr_parent')
+    expect(user.id).equals(parentId)
     expect(user.displayName).equals('Parent')
 
     const membership = await db
       .selectFrom('memberships')
       .select(['is_spectator'])
-      .where('user_id', '=', 'usr_parent')
+      .where('user_id', '=', parentId)
       .where('team_id', '=', 'tem_ravens')
       .executeTakeFirst()
     expect(membership?.is_spectator).equals(true)
@@ -430,7 +453,7 @@ describe('invite codes', function () {
       .insertInto('admin_roles')
       .values({
         id: 'adm_boss_league',
-        user_id: 'usr_boss',
+        user_id: bossId,
         scope_type: 'league',
         scope_id: 'lea_npll'
       })
@@ -446,7 +469,7 @@ describe('invite codes', function () {
     expect(joined.status).equals(200)
 
     // Nothing to see yet: the league has no seasons.
-    const before = await visibleScopes(db, 'usr_coach', false)
+    const before = await visibleScopes(db, coachId, false)
     expect(before.seasonIds.has('sea_autumn')).equals(false)
 
     // A season created afterwards is in the league from the moment it exists,
@@ -477,7 +500,7 @@ describe('invite codes', function () {
       .values({ season_id: 'sea_autumn', team_id: 'tem_badgers' })
       .execute()
 
-    const after = await visibleScopes(db, 'usr_coach', false)
+    const after = await visibleScopes(db, coachId, false)
     expect(after.seasonIds.has('sea_autumn')).equals(true)
     expect(after.teamIds.has('tem_badgers')).equals(true)
   })

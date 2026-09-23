@@ -1,4 +1,5 @@
 import { makeId } from '../../common/ids'
+import { mintUserId } from '../../common/mintUserId'
 import { createSession } from '../auth/sessions'
 import { makeDatabase } from '../db/database'
 import { rebuildAll } from '../rollups'
@@ -35,7 +36,12 @@ async function main(): Promise<void> {
     const awayTeamId = makeId('team')
     const gameId = makeId('game')
     const videoId = makeId('video')
-    const viewerId = makeId('user')
+    const heldIds = new Set(
+      (await db.selectFrom('users').select('id').execute()).map(row => row.id)
+    )
+    const viewer = mintUserId(id => heldIds.has(id))
+    heldIds.add(viewer.userId)
+    const viewerId = viewer.userId
 
     await db
       .insertInto('leagues')
@@ -85,7 +91,11 @@ async function main(): Promise<void> {
     // do rather than waving everything through.
     await db
       .insertInto('users')
-      .values({ id: viewerId, display_name: 'Demo Viewer' })
+      .values({
+        id: viewerId,
+        legacyId: viewer.legacyId,
+        display_name: 'Demo Viewer'
+      })
       .execute()
     await db
       .insertInto('memberships')
@@ -101,10 +111,16 @@ async function main(): Promise<void> {
     // Every name on the roster is a player, so plays posted later can credit
     // them and the box score has somebody to name.
     for (const displayName of ROSTER) {
-      const userId = makeId('user')
+      const minted = mintUserId(id => heldIds.has(id))
+      heldIds.add(minted.userId)
+      const userId = minted.userId
       await db
         .insertInto('users')
-        .values({ id: userId, display_name: displayName })
+        .values({
+          id: userId,
+          legacyId: minted.legacyId,
+          display_name: displayName
+        })
         .execute()
 
       await db
@@ -182,10 +198,16 @@ async function main(): Promise<void> {
     // Somebody who belongs to nothing, so the access rules can be shown to
     // actually withhold rather than merely be present. Not an administrator:
     // an administrator sees everything, which proves nothing.
-    const strangerId = makeId('user')
+    const stranger = mintUserId(id => heldIds.has(id))
+    heldIds.add(stranger.userId)
+    const strangerId = stranger.userId
     await db
       .insertInto('users')
-      .values({ id: strangerId, display_name: 'Demo Stranger' })
+      .values({
+        id: strangerId,
+        legacyId: stranger.legacyId,
+        display_name: 'Demo Stranger'
+      })
       .execute()
     const strangerSession = await createSession(db, strangerId, 'demo script')
 

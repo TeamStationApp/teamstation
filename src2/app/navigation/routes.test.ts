@@ -206,22 +206,20 @@ describe('addresses', function () {
 
 describe('a player', function () {
   it('opens on Videos, with nothing else on the address', function () {
-    expect(parseRoute('/players/usr_1')).deep.equals({
+    expect(parseRoute('/players/1')).deep.equals({
       name: 'player',
-      userId: 'usr_1'
+      userId: '1'
     })
-    expect(routePath({ name: 'player', userId: 'usr_1' })).equals(
-      '/players/usr_1'
+    expect(routePath({ name: 'player', userId: '1' })).equals('/players/1')
+    expect(routePath({ name: 'player', userId: '1', tab: 'videos' })).equals(
+      '/players/1'
     )
-    expect(
-      routePath({ name: 'player', userId: 'usr_1', tab: 'videos' })
-    ).equals('/players/usr_1')
   })
 
   it('carries what the stats are narrowed to, and reads it back', function () {
     const route = {
       name: 'player' as const,
-      userId: 'usr_1',
+      userId: '1',
       tab: 'stats' as const,
       seasonId: 'sea_2',
       teamId: 'tem_3',
@@ -229,7 +227,7 @@ describe('a player', function () {
     }
     const path = routePath(route)
     expect(path).equals(
-      '/players/usr_1?tab=stats&season=sea_2&team=tem_3&year=2026'
+      '/players/1?tab=stats&season=sea_2&team=tem_3&year=2026'
     )
     const [head, search] = path.split('?')
     expect(parseRoute(head, search)).deep.equals(route)
@@ -238,18 +236,16 @@ describe('a player', function () {
   // The filter belongs to the Stats tab alone, so a narrowing on a Videos
   // address is a setting no screen honours. Dropped rather than carried.
   it('drops a filter from the tab that has none', function () {
-    expect(parseRoute('/players/usr_1', 'season=sea_2&team=tem_3')).deep.equals(
-      {
-        name: 'player',
-        userId: 'usr_1'
-      }
-    )
+    expect(parseRoute('/players/1', 'season=sea_2&team=tem_3')).deep.equals({
+      name: 'player',
+      userId: '1'
+    })
   })
 
   it('ignores a year that is not one', function () {
-    expect(parseRoute('/players/usr_1', 'tab=stats&year=soon')).deep.equals({
+    expect(parseRoute('/players/1', 'tab=stats&year=soon')).deep.equals({
       name: 'player',
-      userId: 'usr_1',
+      userId: '1',
       tab: 'stats',
       seasonId: undefined,
       teamId: undefined,

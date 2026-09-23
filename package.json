@@ -14,7 +14,7 @@
     "build.web": "node src2/build.mjs",
     "camera-sweep": "node -r sucrase/register src2/server/dev/cameraSweep.ts",
     "clean": "rimraf lib",
-    "coverage": "c8 --all --reporter=text --check-coverage --lines 90 --include src2/common/userIdNumber.ts mocha -r sucrase/register --extension ts --spec 'src2/**/*.test.ts' --ignore '**/node_modules/**' --ignore 'lib/**'",
+    "coverage": "node src2/migrate/requirePostgres18.js && c8 --all --reporter=text --check-coverage --lines 90 --include src2/common/userIdNumber.ts --include src2/server/db/int8.ts --include src2/common/gumboEventTypes.ts --include src2/common/gumboPlay.ts --include src2/server/events/**/*.ts mocha -r sucrase/register --extension ts --spec 'src2/**/*.test.ts' --ignore '**/node_modules/**' --ignore 'lib/**'",
     "demo": "node -r sucrase/register src2/server/dev/demo.ts",
     "duplicate-people": "node -r sucrase/register src2/server/dev/duplicatePeople.ts",
     "fake-space": "node -r sucrase/register src2/server/dev/fakeSpace.ts",

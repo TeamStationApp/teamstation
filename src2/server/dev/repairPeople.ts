@@ -1,5 +1,4 @@
 import {
-  bothPlayedTogether,
   closeInto,
   isFullerName,
   keepTheFullerName,
@@ -8,6 +7,7 @@ import {
   tidyClosedRows
 } from '../admin/people'
 import { makeDatabase } from '../db/database'
+import { bothPlayedTogether } from '../events/playedTogether'
 import { serverConfig } from '../serverConfig'
 
 /**
@@ -55,7 +55,7 @@ async function main(): Promise<void> {
       .select(['id', 'merged_into', 'first_name', 'last_name', 'display_name'])
       .execute()
 
-    const groups = new Map<string, string[]>()
+    const groups = new Map<number, number[]>()
     for (const row of everybody) {
       const person = await onePerson(db, row.id)
       groups.set(person.userId, person.userIds)
@@ -66,7 +66,7 @@ async function main(): Promise<void> {
       everybody.map(row => row.id)
     )
 
-    const plays = new Map<string, number>()
+    const plays = new Map<number, number>()
     for (const row of await db
       .selectFrom('event_players')
       .select(['user_id'])
@@ -77,11 +77,14 @@ async function main(): Promise<void> {
     }
 
     let opened = 0
-    const split = new Set<string>()
+    const split = new Set<number>()
     for (const [survivor, ids] of groups) {
       if (ids.length < 2) continue
       const people = splitByClash(
-        ids.map(id => ({ userId: id, weight: plays.get(id) ?? 0 })),
+        ids.map(id => ({
+          userId: id,
+          weight: plays.get(id) ?? 0
+        })),
         together
       )
       if (people.length < 2) continue
@@ -91,9 +94,11 @@ async function main(): Promise<void> {
         .select(['id', 'display_name'])
         .where('id', 'in', ids)
         .execute()
-      const shown = (group: string[]): string =>
+      const shown = (group: number[]): string =>
         group
-          .map(id => names.find(row => row.id === id)?.display_name ?? id)
+          .map(
+            id => names.find(row => row.id === id)?.display_name ?? String(id)
+          )
           .join(' + ')
       console.log(
         `split ${people.map(shown).join('  |  ')} — they were in a game together`
@@ -110,7 +115,9 @@ async function main(): Promise<void> {
         .execute()
       for (const person of people) {
         const [keep, ...rest] = person
-        for (const id of rest) await closeInto(db, id, keep)
+        for (const id of rest) {
+          await closeInto(db, id, keep)
+        }
       }
     }
 
@@ -139,7 +146,9 @@ async function main(): Promise<void> {
           }
           continue
         }
-        if (await keepTheFullerName(db, id, survivor)) renamed += 1
+        if (await keepTheFullerName(db, id, survivor)) {
+          renamed += 1
+        }
       }
     }
 
@@ -151,7 +160,7 @@ async function main(): Promise<void> {
     // A row with no stat line behind it stays. Without a roster, nothing here
     // can tell a merge's leftover from a parent, a coach or a player who has
     // not played yet, so those rows are only reported.
-    const byPerson = new Map<string, string>()
+    const byPerson = new Map<number, number>()
     for (const row of await db.selectFrom('users').select(['id']).execute()) {
       byPerson.set(row.id, (await onePerson(db, row.id)).userId)
     }

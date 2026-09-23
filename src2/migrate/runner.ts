@@ -19,6 +19,28 @@ create table if not exists schema_migrations (
 )
 `
 
+/** The oldest server the migrations run on: 031's `virtual` columns need 18. */
+const MIN_SERVER_VERSION = 180000
+
+/**
+ * Refuses a server older than `MIN_SERVER_VERSION` before anything runs, so an
+ * old cluster stops with a message that says why rather than partway through
+ * the list with a syntax error.
+ */
+async function requireServerVersion(pool: Pool): Promise<void> {
+  const { rows } = await pool.query<{ server_version_num: string }>(
+    'show server_version_num'
+  )
+  const version = Number(rows[0]?.server_version_num)
+  if (!(version >= MIN_SERVER_VERSION)) {
+    throw new Error(
+      `Postgres ${Math.floor(version / 10000)} is too old: the migrations ` +
+        `need Postgres ${MIN_SERVER_VERSION / 10000} or later ` +
+        `(server_version_num ${version})`
+    )
+  }
+}
+
 /**
  * Applies whatever has not run yet, in name order, each in its own
  * transaction. A migration that throws leaves the ones before it applied and
@@ -28,6 +50,7 @@ export async function migrateUp(
   pool: Pool,
   migrations: Migration[]
 ): Promise<MigrationResult> {
+  await requireServerVersion(pool)
   await pool.query(SETUP)
   const { rows } = await pool.query<{ name: string }>(
     'select name from schema_migrations'

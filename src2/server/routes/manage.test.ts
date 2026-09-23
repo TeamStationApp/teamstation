@@ -6,8 +6,11 @@ import type { Kysely } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
+import { makeId } from '../../common/ids'
+import { mintUserId } from '../../common/mintUserId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
+import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
@@ -24,14 +27,37 @@ import { manageRoutes } from './manage'
  * remove the team's grant and *not* the season's. Everything else on the page
  * is a list; that is a rule, and a rule with a database behind it.
  */
-const adminUrl =
-  process.env.GS_TEST_DATABASE_URL ?? 'postgres://localhost:5432/postgres'
+const adminUrl = testDatabaseUrl
 const scratchName = `gamestation_manage_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
 const BOSS = 'tok_boss_00000000000000000000000000'
 const COACH = 'tok_coach_0000000000000000000000000'
 const PARENT = 'tok_parent_000000000000000000000000'
+
+const legacyOf = new Map<number, string>()
+function mintUser(): number {
+  const made = mintUserId(id => legacyOf.has(id))
+  legacyOf.set(made.userId, made.legacyId)
+  return made.userId
+}
+function legacyId(userId: number): string {
+  const id = legacyOf.get(userId)
+  if (id == null) throw new Error(`no legacy id for ${userId}`)
+  return id
+}
+function exampleEmail(): string {
+  return `${makeId('user').slice(4).toLowerCase()}@example.com`
+}
+
+const bossId = mintUser()
+const coachId = mintUser()
+const parentId = mintUser()
+const ghostId = mintUser()
+const bossEmail = exampleEmail()
+const coachEmail = exampleEmail()
+const parentEmail = exampleEmail()
+const ghostEmail = exampleEmail()
 
 describe('the manage page', function () {
   this.timeout(60000)
@@ -96,32 +122,38 @@ describe('the manage page', function () {
    */
   async function seed(db: Kysely<Database>): Promise<void> {
     const now = new Date()
-    for (const [id, name] of [
-      ['usr_boss', 'Sam Boss'],
-      ['usr_coach', 'Robin Coach'],
-      ['usr_parent', 'Jo Parent'],
+    for (const [id, name, email] of [
+      [bossId, 'Sam Boss', bossEmail],
+      [coachId, 'Robin Coach', coachEmail],
+      [parentId, 'Jo Parent', parentEmail],
       // No session, ever: the PeerTube import brought many of these.
-      ['usr_ghost', 'Pat Ghost']
-    ]) {
+      [ghostId, 'Pat Ghost', ghostEmail]
+    ] as Array<[number, string, string]>) {
       await db
         .insertInto('users')
-        .values({ id, display_name: name, created_at: now, updated_at: now })
+        .values({
+          id,
+          legacyId: legacyId(id),
+          display_name: name,
+          created_at: now,
+          updated_at: now
+        })
         .execute()
       await db
         .insertInto('user_emails')
         .values({
-          id: `uem_${id}`,
+          id: makeId('userEmail'),
           user_id: id,
-          email: `${id.replace('usr_', '')}@example.com`,
+          email,
           is_primary: true
         })
         .execute()
     }
     for (const [id, user, token] of [
-      ['ses_boss', 'usr_boss', BOSS],
-      ['ses_coach', 'usr_coach', COACH],
-      ['ses_parent', 'usr_parent', PARENT]
-    ]) {
+      ['ses_boss', bossId, BOSS],
+      ['ses_coach', coachId, COACH],
+      ['ses_parent', parentId, PARENT]
+    ] as Array<[string, number, string]>) {
       await db
         .insertInto('auth_sessions')
         .values({
@@ -170,7 +202,7 @@ describe('the manage page', function () {
       .insertInto('admin_roles')
       .values({
         id: 'adm_boss',
-        user_id: 'usr_boss',
+        user_id: bossId,
         scope_type: 'season',
         scope_id: 'sea_spring'
       })
@@ -179,7 +211,7 @@ describe('the manage page', function () {
       .insertInto('memberships')
       .values({
         id: 'mem_coach',
-        user_id: 'usr_coach',
+        user_id: coachId,
         team_id: 'tem_hawks',
         role: 'manager'
       })
@@ -188,7 +220,7 @@ describe('the manage page', function () {
       .insertInto('memberships')
       .values({
         id: 'mem_parent',
-        user_id: 'usr_parent',
+        user_id: parentId,
         team_id: 'tem_hawks',
         role: 'member'
       })
@@ -197,7 +229,7 @@ describe('the manage page', function () {
       .insertInto('memberships')
       .values({
         id: 'mem_ghost',
-        user_id: 'usr_ghost',
+        user_id: ghostId,
         team_id: 'tem_hawks',
         role: 'member'
       })
@@ -207,7 +239,7 @@ describe('the manage page', function () {
       .insertInto('season_members')
       .values({
         id: 'smb_parent',
-        user_id: 'usr_parent',
+        user_id: parentId,
         season_id: 'sea_spring',
         role: 'spectator',
         source: 'peertube'
@@ -238,7 +270,7 @@ describe('the manage page', function () {
   }
 
   interface Person {
-    userId: string
+    userId: number
     displayName: string
     emails: string[]
     createdAt: string
@@ -258,9 +290,9 @@ describe('the manage page', function () {
     const page = await ask('/manage/team/tem_hawks', COACH)
     expect(page.status).equals(200)
     const parent = peopleOf(page.body).find(
-      person => person.userId === 'usr_parent'
+      person => person.userId === parentId
     )
-    expect(parent?.emails).deep.equals(['parent@example.com'])
+    expect(parent?.emails).deep.equals([parentEmail])
     // Both grants, not the strongest of the two.
     expect(parent?.teams.map(team => team.name)).deep.equals(['Demo Hawks'])
     expect(parent?.seasons.map(season => season.name)).deep.equals([
@@ -276,7 +308,7 @@ describe('the manage page', function () {
     if (db == null) this.skip()
     const page = await ask('/manage/team/tem_hawks', COACH)
     const people = peopleOf(page.body)
-    const coach = people.find(person => person.userId === 'usr_coach')
+    const coach = people.find(person => person.userId === coachId)
     // The seeded session is this suite's own, so the coach has signed in and
     // has been here; the sign-in is a real date, not the empty string.
     expect(Number.isNaN(Date.parse(coach?.createdAt ?? ''))).equals(false)
@@ -285,7 +317,7 @@ describe('the manage page', function () {
 
     // Somebody with no session has never signed in, which is null and not a
     // date at the beginning of time.
-    const ghost = people.find(person => person.userId === 'usr_ghost')
+    const ghost = people.find(person => person.userId === ghostId)
     expect(Number.isNaN(Date.parse(ghost?.createdAt ?? ''))).equals(false)
     expect(ghost?.lastSignInAt).equals(null)
     expect(ghost?.lastSeenAt).equals(null)
@@ -300,7 +332,7 @@ describe('the manage page', function () {
   it('removes what this level grants and leaves the level above', async function () {
     if (db == null) this.skip()
     const gone = await ask(
-      '/manage/team/tem_hawks/people/usr_parent',
+      `/manage/team/tem_hawks/people/${parentId}`,
       COACH,
       'DELETE'
     )
@@ -309,7 +341,7 @@ describe('the manage page', function () {
 
     const page = await ask('/manage/team/tem_hawks', COACH)
     const parent = peopleOf(page.body).find(
-      person => person.userId === 'usr_parent'
+      person => person.userId === parentId
     )
     // Still there, still able to watch — through the season, which a team's
     // administrator has no business taking away.
@@ -320,7 +352,7 @@ describe('the manage page', function () {
   it('adds somebody who already has an account at once', async function () {
     if (db == null) this.skip()
     const added = await ask('/manage/team/tem_hawks/people', COACH, 'POST', {
-      email: 'parent@example.com'
+      email: parentEmail
     })
     expect(added.status).equals(201)
     expect(added.body.added).equals(true)
@@ -328,7 +360,7 @@ describe('the manage page', function () {
     const membership = await db
       .selectFrom('memberships')
       .select(['is_spectator'])
-      .where('user_id', '=', 'usr_parent')
+      .where('user_id', '=', parentId)
       .where('team_id', '=', 'tem_hawks')
       .executeTakeFirst()
     expect(membership?.is_spectator).equals(true)
@@ -360,7 +392,7 @@ describe('the manage page', function () {
   it('makes somebody an administrator of this level, and unmakes them', async function () {
     if (db == null) this.skip()
     const made = await ask(
-      '/manage/season/sea_spring/people/usr_coach/role',
+      `/manage/season/sea_spring/people/${coachId}/role`,
       BOSS,
       'PUT',
       { role: 'admin' }
@@ -376,13 +408,13 @@ describe('the manage page', function () {
     const membership = await db
       .selectFrom('season_members')
       .select(['id'])
-      .where('user_id', '=', 'usr_coach')
+      .where('user_id', '=', coachId)
       .where('season_id', '=', 'sea_spring')
       .executeTakeFirst()
     expect(membership == null).equals(false)
 
     const back = await ask(
-      '/manage/season/sea_spring/people/usr_coach/role',
+      `/manage/season/sea_spring/people/${coachId}/role`,
       BOSS,
       'PUT',
       { role: 'member' }
@@ -397,7 +429,7 @@ describe('the manage page', function () {
     // The coach administers their own team and nothing above it, so the
     // season's page is the door they might try.
     const refused = await ask(
-      '/manage/season/sea_spring/people/usr_coach/role',
+      `/manage/season/sea_spring/people/${coachId}/role`,
       COACH,
       'PUT',
       { role: 'admin' }
@@ -406,7 +438,7 @@ describe('the manage page', function () {
 
     // On their own team's page it works, and what it writes is a *team* role.
     const made = await ask(
-      '/manage/team/tem_hawks/people/usr_parent/role',
+      `/manage/team/tem_hawks/people/${parentId}/role`,
       COACH,
       'PUT',
       { role: 'admin' }
@@ -415,7 +447,7 @@ describe('the manage page', function () {
     const roles = await db
       .selectFrom('admin_roles')
       .select(['scope_type', 'scope_id'])
-      .where('user_id', '=', 'usr_parent')
+      .where('user_id', '=', parentId)
       .execute()
     expect(roles.map(row => `${row.scope_type}:${row.scope_id}`)).deep.equals([
       'team:tem_hawks'
@@ -425,7 +457,7 @@ describe('the manage page', function () {
   it('will not let an administrator demote themselves', async function () {
     if (db == null) this.skip()
     const refused = await ask(
-      '/manage/season/sea_spring/people/usr_boss/role',
+      `/manage/season/sea_spring/people/${bossId}/role`,
       BOSS,
       'PUT',
       { role: 'member' }

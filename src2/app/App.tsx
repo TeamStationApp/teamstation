@@ -468,14 +468,14 @@ function Shell(props: AppProps): React.ReactElement {
    * what strips a filter somebody actually asked for.
    */
   const openPlayer = (
-    userId: string,
+    userId: number,
     title: string,
     from: { seasonId?: string; teamId?: string } = {}
   ): void => {
     const narrowed = from.seasonId != null || from.teamId != null
     push({
       name: 'player',
-      userId,
+      userId: String(userId),
       title,
       tab: narrowed ? 'stats' : undefined,
       seasonId: from.seasonId,
