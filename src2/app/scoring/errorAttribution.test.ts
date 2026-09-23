@@ -30,6 +30,7 @@ describe('batted-ball error attribution', function () {
   for (let mask = 0; mask < 8; mask++)
     it(`advances occupancy ${mask} one base and credits one error after defenders`, function () {
       let state = errorState(mask)
+      // Error awards one base: every occupied base advances, including unforced.
       expect(baseIds(state.session)).deep.equals([
         1,
         (mask & 1) !== 0 ? 2 : null,
