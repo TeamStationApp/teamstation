@@ -1,6 +1,7 @@
 import React from 'react'
 import { Text, View } from 'react-native'
 
+import { useTheme } from '../theme/ThemeContext'
 import {
   homeBackProposal,
   runnerDecisionError,
@@ -17,6 +18,7 @@ export function RunnerControls({
   anchor: { x: number; y: number } | null
   dispatch: (event: ScoringEvent) => void
 }): React.ReactElement | null {
+  const theme = useTheme()
   const action = state.runnerAction
   if (state.phase === 'runnerReason')
     return (
@@ -28,6 +30,7 @@ export function RunnerControls({
       >
         {runnerReasons(state).map(reason => (
           <ScoringButton
+            row
             key={reason}
             label={reason}
             onPress={() => {
@@ -65,7 +68,7 @@ export function RunnerControls({
               alignSelf: 'center',
               gap: 6,
               padding: 10,
-              backgroundColor: '#15382eef',
+              backgroundColor: theme.backgroundColor,
               borderRadius: 8
             }
           : {
@@ -75,12 +78,18 @@ export function RunnerControls({
               width: 220,
               gap: 6,
               padding: 8,
-              backgroundColor: '#15382eef',
+              backgroundColor: theme.backgroundColor,
               borderRadius: 8
             }
       }
     >
-      <Text style={{ color: 'white', textAlign: 'center' }}>
+      <Text
+        style={{
+          color: theme.primaryTextColor,
+          fontFamily: theme.regularTextFont,
+          textAlign: 'center'
+        }}
+      >
         {state.session.gameData.players[id].fullName}
       </Text>
       <View
@@ -93,7 +102,7 @@ export function RunnerControls({
         {!currentHold && (home || action!.to > 0) && (
           <ScoringButton
             label={!home && stationary ? 'Safe from Pickoff' : 'Safe'}
-            color="#24713d"
+            color={theme.scoringSafeColor}
             disabled={error != null}
             onPress={() => {
               dispatch(
@@ -106,7 +115,7 @@ export function RunnerControls({
         )}
         <ScoringButton
           label="Out"
-          color="#a83535"
+          color={theme.scoringOutColor}
           onPress={() => {
             dispatch(
               home

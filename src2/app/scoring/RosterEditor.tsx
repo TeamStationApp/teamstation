@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { Text, TextInput, View } from 'react-native'
 
+import { useTheme } from '../theme/ThemeContext'
 import { addDevelopmentPlayer } from './developmentSession'
 import { RosterDrag, RosterDragGroup } from './RosterDrag'
 import { applyRosterDraft } from './scoringEdits'
@@ -21,6 +22,7 @@ export function RosterEditor({
   state: ScoringState
   onSave: (draft: ScoringSessionState, nextBatter?: number) => void
 }): React.ReactElement {
+  const theme = useTheme()
   const [draft, setDraft] = useState(() => copyState(state.session))
   const [side, setSide] = useState<Side>(battingSide(state.session))
   const [defense, setDefense] = useState(false)
@@ -62,7 +64,9 @@ export function RosterEditor({
             <ScoringButton
               key={value}
               label={value === 'home' ? 'Home Team' : 'Away Team'}
-              color={side === value ? '#927329' : undefined}
+              color={
+                side === value ? theme.scoringInstructionBackground : undefined
+              }
               onPress={() => {
                 setSide(value)
                 setSelected(undefined)
@@ -70,7 +74,14 @@ export function RosterEditor({
             />
           ))}
         </View>
-        <Text style={{ color: 'white', textAlign: 'center', fontSize: 20 }}>
+        <Text
+          style={{
+            color: theme.primaryTextColor,
+            fontFamily: theme.regularTextFont,
+            textAlign: 'center',
+            fontSize: 20
+          }}
+        >
           {draft.gameData.teams[side].name}
         </Text>
         <View style={{ flexDirection: 'row', gap: 8 }}>
@@ -91,7 +102,15 @@ export function RosterEditor({
         </View>
         <View style={{ flexDirection: 'row', gap: 12 }}>
           <View style={{ flex: 1, gap: 8 }}>
-            <Text style={{ color: 'white', fontWeight: '700' }}>Roster</Text>
+            <Text
+              style={{
+                color: theme.primaryTextColor,
+                fontFamily: theme.regularTextFont,
+                fontWeight: '700'
+              }}
+            >
+              Roster
+            </Text>
             <RosterDrag
               targetId="roster"
               onDropPlayer={defense ? undefined : remove}
@@ -107,10 +126,17 @@ export function RosterEditor({
                       padding: 6,
                       gap: 4,
                       borderBottomWidth: 1,
-                      borderColor: '#456657'
+                      borderColor: theme.defaultBorderColor
                     }}
                   >
-                    <Text style={{ color: 'white' }}>{names[id].fullName}</Text>
+                    <Text
+                      style={{
+                        color: theme.primaryTextColor,
+                        fontFamily: theme.regularTextFont
+                      }}
+                    >
+                      {names[id].fullName}
+                    </Text>
                     <ScoringButton
                       text={defense ? 'Select' : 'Add to Lineup'}
                       label={
@@ -135,10 +161,11 @@ export function RosterEditor({
                 onChangeText={setName}
                 placeholder="Player name"
                 style={{
-                  color: 'white',
+                  color: theme.primaryTextColor,
+                  fontFamily: theme.regularTextFont,
                   padding: 12,
                   borderWidth: 1,
-                  borderColor: '#8ab9a5'
+                  borderColor: theme.inputBorderColor
                 }}
               />
             )}
@@ -158,7 +185,13 @@ export function RosterEditor({
             />
           </View>
           <View style={{ flex: 1, gap: 8 }}>
-            <Text style={{ color: 'white', fontWeight: '700' }}>
+            <Text
+              style={{
+                color: theme.primaryTextColor,
+                fontFamily: theme.regularTextFont,
+                fontWeight: '700'
+              }}
+            >
               {defense ? 'Defense' : 'Lineup'}
             </Text>
             {defense ? (
@@ -187,7 +220,7 @@ export function RosterEditor({
                         gap: 4,
                         padding: 6,
                         borderWidth: 1,
-                        borderColor: '#456657'
+                        borderColor: theme.defaultBorderColor
                       }}
                     >
                       <View
@@ -199,16 +232,22 @@ export function RosterEditor({
                       >
                         <Text
                           style={{
-                            color: '#ffe38d',
+                            color: theme.primaryTextColor,
                             width: 36,
                             borderWidth: 1,
-                            borderColor: '#8ab9a5',
+                            borderColor: theme.inputBorderColor,
                             padding: 4
                           }}
                         >
                           {position}
                         </Text>
-                        <Text style={{ color: 'white', flex: 1 }}>
+                        <Text
+                          style={{
+                            color: theme.primaryTextColor,
+                            fontFamily: theme.regularTextFont,
+                            flex: 1
+                          }}
+                        >
                           {id == null ? 'Unassigned' : names[id].fullName}
                         </Text>
                         <ScoringButton
@@ -252,10 +291,15 @@ export function RosterEditor({
                         gap: 4,
                         padding: 6,
                         borderWidth: 1,
-                        borderColor: '#456657'
+                        borderColor: theme.defaultBorderColor
                       }}
                     >
-                      <Text style={{ color: 'white' }}>
+                      <Text
+                        style={{
+                          color: theme.primaryTextColor,
+                          fontFamily: theme.regularTextFont
+                        }}
+                      >
                         {index + 1}. {names[id].fullName}
                       </Text>
                       <View
@@ -298,7 +342,9 @@ export function RosterEditor({
                     place(id, team.battingOrder.length)
                   }}
                 >
-                  <Text style={{ color: '#9fcbb5', padding: 20 }}>
+                  <Text
+                    style={{ color: theme.secondaryTextColor, padding: 20 }}
+                  >
                     Drop at end of lineup
                   </Text>
                 </RosterDrag>
@@ -308,14 +354,25 @@ export function RosterEditor({
         </View>
         {state.phase === 'awaitingBatter' && (
           <View style={{ gap: 6 }}>
-            <Text style={{ color: 'white' }}>Choose Next Batter</Text>
+            <Text
+              style={{
+                color: theme.primaryTextColor,
+                fontFamily: theme.regularTextFont
+              }}
+            >
+              Choose Next Batter
+            </Text>
             {draft.liveData.boxscore.teams[battingSide(draft)].battingOrder.map(
               id => (
                 <ScoringButton
                   key={id}
                   label={`Next batter ${names[id].fullName}`}
                   disabled={baseIds(draft).includes(id)}
-                  color={nextBatter === id ? '#927329' : undefined}
+                  color={
+                    nextBatter === id
+                      ? theme.scoringInstructionBackground
+                      : undefined
+                  }
                   onPress={() => {
                     setNextBatter(id)
                   }}

@@ -107,8 +107,7 @@ export function Player({
           transparent: material.transparent,
           color: color?.clone()
         })
-        if (color != null) color.lerp(new Color('#929b96'), 0.7)
-        material.opacity = 0.4
+        material.opacity = 0.5
         material.transparent = true
         material.needsUpdate = true
       }
@@ -207,14 +206,7 @@ export function Player({
             />
           </sprite>
         )}
-        <group
-          ref={body}
-          scale={[
-            PLAYER_SCALE,
-            PLAYER_SCALE * (player.suppressed === true ? 0.5 : 1),
-            PLAYER_SCALE
-          ]}
-        >
+        <group ref={body} scale={[PLAYER_SCALE, PLAYER_SCALE, PLAYER_SCALE]}>
           <mesh
             name="jersey-torso"
             position={[0, 1.57, 0]}

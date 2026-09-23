@@ -145,6 +145,40 @@ describe('scoring browser', function () {
   after(async function () {
     await browser?.close()
   })
+  it('uses themed chrome and completes the toast with Done', async function () {
+    const { page, unexpected } = await open('/games/g1/score')
+    try {
+      expect(await page.$('[aria-label="Zoom in"]')).equals(null)
+      await click(page, 'Open scoring menu')
+      await click(page, 'Dismiss scoring menu')
+      expect(await page.$('[aria-label="Settings"]')).equals(null)
+      await click(page, 'Ball in Play')
+      await click(page, 'Dismiss outcomes')
+      expect(await page.$('[data-outcome]')).equals(null)
+      const styles = await page.evaluate(() => {
+        const play = document.querySelector('[aria-label="Ball in Play"]')!
+        return {
+          select: getComputedStyle(play.parentElement!).userSelect,
+          chevrons: play.textContent!.includes('⌃')
+        }
+      })
+      expect(styles).deep.equals({ select: 'none', chevrons: true })
+      await chooseHit(page, 'Single')
+      await page.waitForSelector('[aria-label="Time to edit play"]', {
+        timeout: 30000
+      })
+      expect(await page.evaluate(() => document.body.textContent)).includes(
+        'Drag any other runners to advance them or have them called out'
+      )
+      await click(page, 'Finish at-bat')
+      await page.waitForSelector('[aria-label*="Batter Player 2"]')
+      expect(await page.$('[aria-label="Time to edit play"]')).equals(null)
+      await click(page, 'Undo 45° Fly Ball')
+      expect(unexpected).deep.equals([])
+    } finally {
+      await page.close()
+    }
+  })
   it('opens an unscored game full screen and protects dirty browser Back', async function () {
     const { page, unexpected } = await open('/games/g1')
     try {

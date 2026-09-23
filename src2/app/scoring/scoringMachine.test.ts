@@ -200,6 +200,57 @@ describe('local scoring sessions', function () {
       ).has.length(1)
     }
   })
+  it('guards Done by play identity, generation and timer revision and races expiry once', function () {
+    const state = pitch(initial(), 'ball', 4)
+    const done = {
+      type: 'CLOSE_PLAY' as const,
+      generation: state.generation,
+      sequence: state.session.meta.sequence,
+      revision: state.correctionWindow!.revision
+    }
+    for (const key of ['generation', 'sequence', 'revision'] as const)
+      expect(scoringReducer(state, { ...done, [key]: done[key] + 1 })).equals(
+        state
+      )
+    const closed = scoringReducer(state, done)
+    expect(closed.session.liveData.plays.allPlays).has.length(1)
+    expect(closed.past).deep.equals(state.past)
+    expect(scoringReducer(closed, done)).equals(closed)
+    expect(
+      scoringReducer(closed, {
+        type: 'TIMER_TICK',
+        generation: done.generation,
+        revision: done.revision,
+        elapsedMs: 10000
+      })
+    ).equals(closed)
+    const expired = scoringReducer(state, {
+      type: 'TIMER_TICK',
+      generation: done.generation,
+      revision: done.revision,
+      elapsedMs: 10000
+    })
+    expect(scoringReducer(expired, done)).equals(expired)
+    expect(
+      scoringReducer(closed, { type: 'UNDO' }).session.liveData.linescore.balls
+    ).equals(3)
+    expect(scoringReducer({ ...state, homeQueue: [1] }, done).phase).equals(
+      'correctionWindow'
+    )
+    const moving = {
+      ...state,
+      motions: [
+        {
+          id: 'pending',
+          generation: state.generation,
+          playerId: 1,
+          waypoints: [],
+          complete: false
+        }
+      ]
+    }
+    expect(scoringReducer(moving, done)).equals(moving)
+  })
   it('closes once, advances a batter once, and turns over after the third strikeout', function () {
     let state = initial()
     for (let out = 0; out < 3; out++) {

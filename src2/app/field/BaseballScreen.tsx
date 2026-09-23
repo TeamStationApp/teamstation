@@ -1,11 +1,17 @@
 import React, { useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
 
-import { CameraDragControl } from './CameraDragControl'
+import { GlassView } from '../components/GlassView'
+import {
+  InstructionToast,
+  type ScoreboardBounds
+} from '../scoring/InstructionToast'
+import { SwitchHitterHint } from '../scoring/SwitchHitterHint'
+import { useTheme } from '../theme/ThemeContext'
 import { FieldCanvas } from './FieldCanvas'
 import type { FieldCanvasProps } from './fieldTypes'
 import { PitchIcon } from './PitchIcon'
-import { glassStyle, useFieldSurface } from './useFieldSurface'
+import { useFieldSurface } from './useFieldSurface'
 
 export const PITCH_CONTROLS = [
   { kind: 'ball', label: 'Ball' },
@@ -22,26 +28,46 @@ export interface BaseballScreenProps {
   historyLabel?: string
   canPitch: boolean
   remainingMs?: number
+  instruction?: string
+  canFinish?: boolean
+  onFinish?: () => void
   onCameraGesture?: (active: boolean) => void
   summary: string
   accessibilitySummary?: string
   children?: React.ReactNode
   ballInPlayControl?: React.ReactNode
+  moreControl?: React.ReactNode
+  onDismissHint?: () => void
 }
-/** The game owns scoring and history; this surface owns only the camera. */
+/** Immersive scoring surface, with one fixed responsive camera. */
 export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
   const surface = useFieldSurface()
-  const [zoom, setZoom] = useState(1.25)
-  const [tilt, setTilt] = useState((-11 * Math.PI) / 180)
-  const [height, setHeight] = useState(33)
+  const theme = useTheme()
+  const [bounds, setBounds] = useState<ScoreboardBounds>()
+  const button = {
+    minHeight: 52,
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: theme.rem(theme.radiusRem),
+    backgroundColor: theme.primaryButtonColor
+  } as const
+  const label = {
+    color: theme.buttonTextColor,
+    fontFamily: theme.semiBoldTextFont,
+    fontSize: 11,
+    fontWeight: '600',
+    textAlign: 'center'
+  } as const
   return (
-    <View style={[surface.root, { backgroundColor: '#102b23' }]}>
+    <View style={[surface.root, { backgroundColor: theme.backgroundColor }]}>
       <View style={{ flex: 1, marginBottom: 112 }}>
         <FieldCanvas
           {...props.field}
-          zoom={zoom}
-          cameraTilt={tilt}
-          cameraHeight={height}
+          zoom={1.25}
+          cameraTilt={(-11 * Math.PI) / 180}
+          cameraHeight={33}
+          onScoreboardBounds={setBounds}
         />
       </View>
       <View
@@ -53,116 +79,93 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
       >
         <View
           pointerEvents="box-none"
-          style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'space-between'
-          }}
+          style={{ flexDirection: 'row', justifyContent: 'flex-end' }}
         >
           <Text
             accessibilityLiveRegion="polite"
             accessibilityLabel={props.accessibilitySummary ?? props.summary}
             style={{
-              color: 'white',
-              fontSize: 12,
-              maxWidth: '44%',
-              backgroundColor: '#14382dcc',
-              padding: 6,
-              borderRadius: 6
+              position: 'absolute',
+              width: 1,
+              height: 1,
+              overflow: 'hidden',
+              opacity: 0
             }}
           >
             {props.summary}
           </Text>
-          <View style={{ flexDirection: 'row', gap: 4 }}>
-            <CameraDragControl
-              kind="zoom"
-              value={zoom}
-              onChange={setZoom}
-              onActive={props.onCameraGesture ?? (() => undefined)}
-            />
-            <CameraDragControl
-              kind="tilt"
-              value={tilt}
-              onChange={setTilt}
-              onActive={props.onCameraGesture ?? (() => undefined)}
-            />
-            <CameraDragControl
-              kind="height"
-              value={height}
-              onChange={setHeight}
-              onActive={props.onCameraGesture ?? (() => undefined)}
-            />
+          <GlassView
+            radius={24}
+            interactive
+            style={{
+              width: 48,
+              height: 48,
+              borderRadius: 24,
+              overflow: 'hidden'
+            }}
+          >
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Open scoring menu"
               onPress={props.onMenu}
               style={{
-                minWidth: 48,
-                minHeight: 48,
+                width: 48,
+                height: 48,
                 alignItems: 'center',
-                justifyContent: 'center',
-                backgroundColor: '#14382ddd',
-                borderRadius: 8
+                justifyContent: 'center'
               }}
             >
-              <Text style={{ color: 'white', fontSize: 24 }}>☰</Text>
+              <Text
+                selectable={false}
+                style={{ color: theme.primaryTextColor, fontSize: 26 }}
+              >
+                ☰
+              </Text>
             </Pressable>
-          </View>
+          </GlassView>
         </View>
+        <InstructionToast
+          instruction={props.instruction}
+          remainingMs={props.remainingMs}
+          canFinish={props.canFinish}
+          onFinish={props.onFinish}
+          bounds={bounds}
+        />
+        {props.onDismissHint != null && (
+          <SwitchHitterHint bounds={bounds} onDismiss={props.onDismissHint} />
+        )}
         {props.children}
         <View style={{ gap: 8 }}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={
-              props.historyLabel == null
-                ? 'Nothing to undo'
-                : `Undo ${props.historyLabel}`
-            }
-            accessibilityHint={
-              props.remainingMs == null
-                ? undefined
-                : `${Math.ceil(props.remainingMs / 1000)} seconds to edit this play`
-            }
-            disabled={props.historyLabel == null}
-            onPress={props.onUndo}
-            style={[
-              glassStyle,
-              {
-                minHeight: 48,
-                justifyContent: 'center',
-                borderRadius: 8,
-                padding: 12,
-                backgroundColor: '#14382ddd'
+          <View style={{ flexDirection: 'row', gap: 4 }}>
+            {props.moreControl}
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={
+                props.historyLabel == null
+                  ? 'Nothing to undo'
+                  : `Undo ${props.historyLabel}`
               }
-            ]}
-          >
-            {props.remainingMs != null && (
-              <View
-                accessibilityRole="progressbar"
-                accessibilityLabel="Time to edit play"
-                aria-valuemin={0}
-                aria-valuemax={10}
-                aria-valuenow={Math.ceil(props.remainingMs / 1000)}
-                pointerEvents="none"
+              disabled={props.historyLabel == null}
+              onPress={props.onUndo}
+              style={{
+                ...button,
+                alignItems: 'flex-start',
+                padding: 12,
+                opacity: props.historyLabel == null ? 0.5 : 1
+              }}
+            >
+              <Text
+                selectable={false}
                 style={{
-                  position: 'absolute',
-                  left: 0,
-                  top: 0,
-                  bottom: 0,
-                  width: `${Math.max(0, props.remainingMs / 100)}%`,
-                  backgroundColor: '#b69a3b66',
-                  borderRadius: 8
+                  color: theme.buttonTextColor,
+                  fontFamily: theme.semiBoldTextFont
                 }}
-              />
-            )}
-            <Text style={{ color: 'white' }}>
-              ↶ Undo
-              {props.historyLabel == null ? '' : ` · ${props.historyLabel}`}
-              {props.remainingMs == null
-                ? ''
-                : ` · ${Math.ceil(props.remainingMs / 1000)}s`}
-            </Text>
-          </Pressable>
+              >
+                ↶ Undo
+                {props.historyLabel == null ? '' : ` · ${props.historyLabel}`}
+              </Text>
+            </Pressable>
+          </View>
           <View style={{ flexDirection: 'row', gap: 4 }}>
             {PITCH_CONTROLS.map(control =>
               control.kind === 'play' && props.ballInPlayControl != null ? (
@@ -178,24 +181,10 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
                   onPress={() => {
                     props.onPitch(control.kind)
                   }}
-                  style={{
-                    minHeight: 52,
-                    flex: 1,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    borderRadius: 8,
-                    backgroundColor: '#14382ddd',
-                    opacity: props.canPitch ? 1 : 0.5
-                  }}
+                  style={{ ...button, opacity: props.canPitch ? 1 : 0.5 }}
                 >
                   <PitchIcon kind={control.kind} />
-                  <Text
-                    style={{
-                      color: 'white',
-                      fontSize: 11,
-                      textAlign: 'center'
-                    }}
-                  >
+                  <Text selectable={false} style={label}>
                     {control.label}
                   </Text>
                 </Pressable>

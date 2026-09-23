@@ -15,6 +15,12 @@ export interface FieldPlacement {
   gestureId: number
 }
 export interface FieldCanvasProps {
+  onScoreboardBounds?: (bounds: {
+    x: number
+    y: number
+    width: number
+    height: number
+  }) => void
   onRunnerHold?: (id: string, anchor: { x: number; y: number }) => void
   onRunnerPlacement?: (
     id: string,

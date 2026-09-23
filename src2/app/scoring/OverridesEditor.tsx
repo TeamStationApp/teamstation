@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { Text, TextInput, View } from 'react-native'
 
+import { useTheme } from '../theme/ThemeContext'
 import { ScoringChoice } from './ScoringChoice'
 import {
   applyOverrideDraft,
@@ -16,6 +17,7 @@ export function OverridesEditor({
   state: ScoringState
   onApply: (draft: OverrideDraft) => void
 }): React.ReactElement {
+  const theme = useTheme()
   const [draft, setDraft] = useState(() => overrideDraft(state.session))
   const [numbers, setNumbers] = useState(() => ({
     inning: String(draft.inning),
@@ -38,7 +40,9 @@ export function OverridesEditor({
           <ScoringButton
             key={String(top)}
             label={top ? 'Top' : 'Bottom'}
-            color={top === draft.top ? '#927329' : undefined}
+            color={
+              top === draft.top ? theme.scoringInstructionBackground : undefined
+            }
             onPress={() => {
               if (top !== draft.top)
                 setDraft({
@@ -54,7 +58,12 @@ export function OverridesEditor({
       </View>
       {(Object.keys(numbers) as Array<keyof typeof numbers>).map(key => (
         <View key={key} style={{ gap: 4 }}>
-          <Text style={{ color: 'white' }}>
+          <Text
+            style={{
+              color: theme.primaryTextColor,
+              fontFamily: theme.regularTextFont
+            }}
+          >
             {
               {
                 inning: 'Inning',
@@ -78,9 +87,10 @@ export function OverridesEditor({
               })
             }}
             style={{
-              color: 'white',
+              color: theme.primaryTextColor,
+              fontFamily: theme.regularTextFont,
               borderWidth: 1,
-              borderColor: '#8ab9a5',
+              borderColor: theme.inputBorderColor,
               padding: 10
             }}
           />
