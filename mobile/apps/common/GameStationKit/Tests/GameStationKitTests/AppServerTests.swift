@@ -86,18 +86,23 @@ struct GameStationClientURLTests {
   @Test func queryIsAQueryAndNotPartOfThePath() {
     let url = GameStationClient.url(
       URL(string: "https://devhost.examplegs.test")!,
-      "director/events",
-      [URLQueryItem(name: "when", value: "finished")]
+      "events",
+      [
+        URLQueryItem(name: "scope", value: "run"),
+        URLQueryItem(name: "when", value: "finished"),
+        URLQueryItem(name: "lookbackHours", value: "2"),
+        URLQueryItem(name: "limit", value: "10")
+      ]
     )
-    #expect(url.absoluteString == "https://devhost.examplegs.test/api/v1/director/events?when=finished")
+    #expect(url.absoluteString == "https://devhost.examplegs.test/api/v1/events?scope=run&when=finished&lookbackHours=2&limit=10")
   }
 
   @Test func noQueryLeavesTheAddressAlone() {
     let url = GameStationClient.url(
       URL(string: "https://gamestation.co")!,
-      "director/events",
+      "events",
       []
     )
-    #expect(url.absoluteString == "https://gamestation.co/api/v1/director/events")
+    #expect(url.absoluteString == "https://gamestation.co/api/v1/events")
   }
 }

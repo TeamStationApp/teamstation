@@ -33,6 +33,7 @@ import { authRoutes } from './routes/auth'
 import { devMediaRoutes } from './routes/devMedia'
 import { directorRoutes } from './routes/director'
 import { directorUploadRoutes } from './routes/directorUploads'
+import { eventListRoutes } from './routes/eventList'
 import { eventRoutes } from './routes/events'
 import { healthRoutes } from './routes/health'
 import { inviteRoutes } from './routes/invites'
@@ -474,6 +475,7 @@ function runWorker(): void {
   app.use('/api/v1', inviteRoutes(db, { sendCode, publicUrl }))
   app.use('/api/v1', manageRoutes(db, { sendInvite, publicUrl }))
   app.use('/api/v1', seasonRoutes(db, mediaContext))
+  app.use('/api/v1', eventListRoutes(db, mediaContext))
   app.use('/api/v1', teamRoutes(db, mediaContext))
   app.use('/api/v1', scheduleRoutes(db))
   app.use('/api/v1', eventRoutes(db))

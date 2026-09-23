@@ -607,7 +607,8 @@ export function openApiDocument(version: string): OpenApiDocument {
                 'tooLarge',
                 'unsupportedMedia',
                 'rateLimited',
-                'internal'
+                'internal',
+                'unavailable'
               ]
             },
             message: { type: 'string' },
@@ -2105,72 +2106,6 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
-      '/seasons/{seasonId}/games': {
-        get: {
-          summary: "A season's schedule",
-          security: [{ bearer: [] }],
-          parameters: [
-            {
-              name: 'seasonId',
-              in: 'path',
-              required: true,
-              schema: { type: 'string' }
-            },
-            {
-              name: 'when',
-              in: 'query',
-              schema: { type: 'string', enum: ['past', 'upcoming'] },
-              description: 'Which half of the schedule. Both, when unset'
-            }
-          ],
-          responses: {
-            200: { description: 'Newest first' },
-            404: errorResponse
-          }
-        }
-      },
-      '/games': {
-        get: {
-          summary: 'Every game you can see',
-          description:
-            "Your teams' games, and every game of a season opened to you; a " +
-            'site administrator sees every game. ' +
-            "Each game as a season's schedule has it, newest first, in one " +
-            'answer, with `externalIds`: the ids other services know it by, ' +
-            'as its importers recorded them. `externalId` narrows it to the ' +
-            'games known by that id, and may be given more than once; an ' +
-            'empty one is refused.',
-          security: [{ bearer: [] }],
-          parameters: [
-            {
-              name: 'externalId',
-              in: 'query',
-              schema: { type: 'array', items: { type: 'string' } },
-              style: 'form',
-              explode: true,
-              description: "Other services' ids for the games"
-            }
-          ],
-          responses: {
-            200: { description: 'Newest first; empty when there are none' },
-            400: errorResponse,
-            401: errorResponse
-          }
-        }
-      },
-      '/games/recent': {
-        get: {
-          summary: 'The newest played game anywhere you can see',
-          description:
-            'What the home screen leads with: the newest game with a score ' +
-            'among those `GET /games` lists. Null when there is none.',
-          security: [{ bearer: [] }],
-          responses: {
-            200: { description: 'One game, or null' },
-            401: errorResponse
-          }
-        }
-      },
       '/users': {
         get: {
           summary: 'Who people are here, by the ids another service has',
@@ -3082,21 +3017,113 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
-      '/director/events': {
+      '/events': {
         get: {
-          summary: 'The next ten games of the teams you film',
+          summary: 'Games, filtered by the query string',
           description:
-            'Soonest first, reaching two hours backwards \u2014 a one o\u2019clock ' +
-            'game somebody starts filming at ten past three is still the game ' +
-            'they mean. The teams are those the caller is a videographer of, ' +
-            'set on the team, its season or its league, which every admin of ' +
-            'them is.',
+            'The one list. `scope=visible` (the default) is every game you ' +
+            'may see: your teams, and every game of a season opened to you. ' +
+            'A site administrator sees every game. `scope=run` is every game ' +
+            'you may score — owner, manager, or an admin of the team, its ' +
+            'season or its league — and omits cancelled games. Somebody who ' +
+            'runs nothing gets an empty array. `scope=film` is every game ' +
+            'you may film — a videographer of the team, its season or its ' +
+            'league, which every admin of them is — and omits cancelled ' +
+            'games. Somebody who films nothing gets an empty array.\n\n' +
+            '`season` may be repeated. On `scope=visible`, a season you ' +
+            'cannot see is 404. `when` is `all` (newest first), `upcoming` ' +
+            '(no score and still ahead, soonest first), `past` (the rest), ' +
+            '`future` (still ahead, scored or not, soonest first), ' +
+            '`finished` (started before the look-back, latest first), or ' +
+            '`recent` (started inside the look-back, up to now, latest ' +
+            'first). `lookbackHours` is how far `finished` (default 2), ' +
+            '`recent` (default 3), and `when=all` reach; on `when=all` the ' +
+            'list runs forward from that instant. `since` and `until` are ' +
+            'instants, `until` exclusive. `order` is `asc` or `desc`. ' +
+            '`limit` is a whole number of at least 1; omit it for no cap. ' +
+            '`externalId` may be repeated. `played=1` keeps games that have ' +
+            'a score. `scoreboard=open` keeps games whose scoreboard is ' +
+            'still open, and answers 503 while that store is away.\n\n' +
+            'Each row is a schedule game plus `gameId`, both teams\u2019 logo ' +
+            'URLs, and `liveState`.',
           security: [{ bearer: [] }],
-          responses: {
-            200: {
-              description: 'At most ten, each with both teams\u2019 marks'
+          parameters: [
+            {
+              name: 'scope',
+              in: 'query',
+              schema: { type: 'string', enum: ['visible', 'run', 'film'] }
             },
-            401: errorResponse
+            {
+              name: 'season',
+              in: 'query',
+              schema: { type: 'array', items: { type: 'string' } },
+              style: 'form',
+              explode: true
+            },
+            {
+              name: 'when',
+              in: 'query',
+              schema: {
+                type: 'string',
+                enum: [
+                  'all',
+                  'upcoming',
+                  'past',
+                  'future',
+                  'finished',
+                  'recent'
+                ]
+              }
+            },
+            {
+              name: 'lookbackHours',
+              in: 'query',
+              schema: { type: 'number' }
+            },
+            {
+              name: 'since',
+              in: 'query',
+              schema: { type: 'string', format: 'date-time' }
+            },
+            {
+              name: 'until',
+              in: 'query',
+              schema: { type: 'string', format: 'date-time' }
+            },
+            {
+              name: 'order',
+              in: 'query',
+              schema: { type: 'string', enum: ['asc', 'desc'] }
+            },
+            {
+              name: 'limit',
+              in: 'query',
+              schema: { type: 'integer', minimum: 1 }
+            },
+            {
+              name: 'externalId',
+              in: 'query',
+              schema: { type: 'array', items: { type: 'string' } },
+              style: 'form',
+              explode: true
+            },
+            {
+              name: 'played',
+              in: 'query',
+              schema: { type: 'string', enum: ['1', 'true'] }
+            },
+            {
+              name: 'scoreboard',
+              in: 'query',
+              schema: { type: 'string', enum: ['open'] }
+            }
+          ],
+          responses: {
+            200: { description: 'The games that match' },
+            400: errorResponse,
+            401: errorResponse,
+            404: errorResponse,
+            503: errorResponse
           }
         }
       },
