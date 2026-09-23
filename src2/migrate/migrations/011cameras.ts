@@ -8,8 +8,8 @@ import type { Migration } from '../runner'
  * whether a viewer is about to see one view or several.
  *
  * The count is **cameras**, not tiles. A multi-angle recording lays the
- * programme output alongside them, so a mosaic of four tiles is three cameras
- * and one of three tiles is two. One tile is always the programme, which is
+ * program output alongside them, so a mosaic of four tiles is three cameras
+ * and one of three tiles is two. One tile is always the program, which is
  * not a camera.
  *
  * Nine is not a real limit, just a bound that catches a mistake: a value in
