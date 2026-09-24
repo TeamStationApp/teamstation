@@ -12,8 +12,8 @@ export function fieldStageInstruction(state: ScoringState): string | undefined {
     return 'Drag up and down for ball trajectory.'
   if (state.phase === 'chooseDefender')
     return state.runnerAction?.purpose === 'errorAttribution'
-      ? 'Tap and drag another defender, or hit Done to choose who committed the error.'
-      : 'Tap and drag the next defender, or hit Done to finish the out.'
+      ? 'Tap or drag another defender, or hit Done to choose who committed the error.'
+      : 'Tap or drag the next defender, or hit Done to finish the out.'
 }
 /** Renderer callbacks and preview use the same phase and constraints as reducer events. */
 export function battedBallField(
@@ -40,7 +40,9 @@ export function battedBallField(
   return {
     homeRunPlacement: locating,
     acceptDefenderTap:
-      state.phase === 'locateFielder' || state.phase === 'chooseThrower',
+      state.phase === 'locateFielder' ||
+      state.phase === 'chooseThrower' ||
+      state.phase === 'chooseDefender',
     constrainPlacement:
       state.phase === 'locateFielder'
         ? point => fieldingLocation(state.pendingPlay!.outcome, point)

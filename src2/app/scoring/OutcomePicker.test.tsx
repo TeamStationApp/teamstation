@@ -48,7 +48,15 @@ describe('ball-in-play outcome menu', function () {
         node.getAttribute('aria-label')
       )
     ).deep.equals([...PRIMARY_OUTCOMES])
+    expect(document.querySelector('[aria-label="Batter Interference"]')).equals(
+      null
+    )
     await click('Batter Out')
+    expect(
+      Array.from(
+        button('Batter Out options').querySelectorAll('[data-outcome]')
+      ).map(n => n.getAttribute('data-outcome'))
+    ).deep.equals(['Throw Out', 'Ball Caught', 'Batter Interference'])
     expect(button('Throw Out')).not.equals(null)
     expect(chosen).has.length(0)
     await click('Batter Out')
@@ -66,6 +74,7 @@ describe('ball-in-play outcome menu', function () {
       'Batter Interference'
     ]) {
       await click('Ball in Play')
+      if (label === 'Batter Interference') await click('Batter Out')
       await click(label)
     }
     expect(chosen).has.length(8)
@@ -125,10 +134,10 @@ describe('ball-in-play outcome menu', function () {
       expect(document.querySelector('[aria-label="Ball Caught"]')).equals(null)
       hit = [button('Batter Out')]
       await pointer('pointermove', 900, 680)
-      hit = [button('Ball Caught')]
+      hit = [button('Batter Interference')]
       await pointer('pointermove', 200, 680)
       await pointer('pointerup', 200, 680)
-      expect(chosen).deep.equals(['Ball Caught'])
+      expect(chosen).deep.equals(['Batter Interference'])
       // Consume the browser's post-drag click; it must not reopen the menu.
       await click('Ball in Play')
       expect(document.querySelector('[role="menu"]')).equals(null)

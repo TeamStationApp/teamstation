@@ -157,12 +157,26 @@ describe('articulated athlete motion', function () {
         renderer.scene.findAllByProps({ name: 'active-grab-ring' })
       ).has.length(0)
       player.hasBall = false
+      player.receivingBall = true
       await renderer.update(
         React.createElement(Player, { player, selected: false })
       )
       expect(
         renderer.scene.findAllByProps({ name: 'possession-ball' })
       ).has.length(0)
+      expect(renderer.scene.findAllByProps({ name: 'receiving-ring' })).length(
+        4
+      )
+      expect(renderer.scene.findAllByProps({ name: 'possession-ring' })).length(
+        0
+      )
+      player.receivingBall = false
+      await renderer.update(
+        React.createElement(Player, { player, selected: false })
+      )
+      expect(renderer.scene.findAllByProps({ name: 'receiving-ring' })).length(
+        0
+      )
     } finally {
       await renderer.unmount()
     }

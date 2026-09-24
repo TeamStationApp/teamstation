@@ -22,6 +22,9 @@ export function scoringFieldPlayers(
   )
     return state.presentation.players.map(player => ({
       ...player,
+      receivingBall:
+        state.presentation?.kind === 'throw' &&
+        state.presentation.receiver === player.playerId,
       position: { ...player.position },
       target: { ...player.target }
     }))

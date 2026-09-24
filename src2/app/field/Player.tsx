@@ -229,11 +229,15 @@ export function Player({
         ref={root}
         position={[player.position.x, TERRAIN.players, player.position.z]}
       >
-        {player.hasBall === true &&
+        {(player.hasBall === true || player.receivingBall === true) &&
           [0, 1, 2, 3].map(index => (
             <mesh
               key={`possession-${index}`}
-              name="possession-ring"
+              name={
+                player.receivingBall === true
+                  ? 'receiving-ring'
+                  : 'possession-ring'
+              }
               rotation={[-Math.PI / 2, 0, 0]}
               position={[0, 0.04 + index * 0.003, 0]}
             >

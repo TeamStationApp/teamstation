@@ -70,6 +70,7 @@ describe('outcome-specific fielding', function () {
     expect(fieldStageInstruction(state)).contains('Tap or drag')
     state = { ...state, phase: 'chooseDefender' }
     expect(fieldStageInstruction(state)).contains('finish the out')
+    expect(field().acceptDefenderTap).equals(true)
     state = {
       ...state,
       runnerAction: {

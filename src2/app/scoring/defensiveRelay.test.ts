@@ -85,8 +85,22 @@ describe('defensive relay draft', function () {
         expect(undo.runnerAction!.defensiveRoute).deep.equals(
           old.runnerAction!.defensiveRoute
         )
+        const receiving = scoringFieldPlayers(state)
+        expect(
+          receiving.filter(p => p.receivingBall === true).map(p => p.playerId)
+        ).deep.equals([id])
+        expect(receiving.some(p => p.hasBall === true)).equals(false)
+        expect(
+          scoringFieldPlayers(undo).some(p => p.receivingBall === true)
+        ).equals(false)
+        expect(
+          scoringFieldPlayers(cancel).some(p => p.receivingBall === true)
+        ).equals(false)
         const flight = state.presentation!
         state = done(state)
+        expect(
+          scoringFieldPlayers(state).some(p => p.receivingBall === true)
+        ).equals(false)
         expect(
           scoringReducer(state, {
             type: 'PRESENTATION_DONE',
