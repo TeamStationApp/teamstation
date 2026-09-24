@@ -5,11 +5,12 @@ import { join } from 'node:path'
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 import puppeteer, { type Browser, type Page } from 'puppeteer'
-import { PerspectiveCamera, Vector3 } from 'three'
+import { PerspectiveCamera, type Scene, Vector3 } from 'three'
 
 import { asGameDetail } from '../../common/api'
 import { applyFieldCamera } from '../field/cameraModel'
 import { BASES } from '../field/fieldModel'
+import { initialHitTarget } from '../field/trajectoryGuide'
 
 const game = asGameDetail({
   id: 'g1',
@@ -27,6 +28,16 @@ const game = asGameDetail({
   ingestMessage: null,
   videos: []
 })
+interface ProbeFiber {
+  memoizedProps?: { value?: { getState?: () => { scene?: Scene } } }
+  child?: ProbeFiber
+  sibling?: ProbeFiber
+}
+interface SceneProbeWindow {
+  qaRoots: Array<{ current: ProbeFiber }>
+  qaScene?: Scene
+  __REACT_DEVTOOLS_GLOBAL_HOOK__: unknown
+}
 const base = process.env.GS_SCORING_TEST_URL ?? 'http://127.0.0.1:8080'
 let browser: Browser
 async function open(
@@ -34,9 +45,26 @@ async function open(
   scored: boolean | number = false,
   failed = false,
   failedRoster = false,
-  bats: 'switch' | 'left' | 'right' = 'switch'
+  bats: 'switch' | 'left' | 'right' = 'switch',
+  probe = false
 ): Promise<{ page: Page; unexpected: string[] }> {
   const page = await browser.newPage()
+  if (probe)
+    await page.evaluateOnNewDocument(() => {
+      const host = window as unknown as SceneProbeWindow
+      host.qaRoots = []
+      host.__REACT_DEVTOOLS_GLOBAL_HOOK__ = {
+        supportsFiber: true,
+        renderers: new Map(),
+        inject(): number {
+          return 1
+        },
+        onCommitFiberRoot(_id: number, root: { current: ProbeFiber }): void {
+          if (!host.qaRoots.includes(root)) host.qaRoots.push(root)
+        },
+        onCommitFiberUnmount(): void {}
+      }
+    })
   const unexpected: string[] = []
   page.on('pageerror', error => {
     console.error('Browser error:', error)
@@ -103,6 +131,30 @@ async function open(
   await page.goto(`${base}${path}`)
   return { page, unexpected }
 }
+/* eslint-disable @typescript-eslint/prefer-optional-chain -- Browser evaluation cannot reference generated Sucrase helpers. */
+async function readGuide(
+  page: Page
+): Promise<{ bearing: number; x: number; z: number }> {
+  return await page.evaluate(() => {
+    const host = window as unknown as SceneProbeWindow
+    const scan = (fiber?: ProbeFiber): void => {
+      if (fiber == null) return
+      const value =
+        fiber.memoizedProps == null ? undefined : fiber.memoizedProps.value
+
+      const state =
+        value == null || value.getState == null ? undefined : value.getState()
+      if (state != null && state.scene != null) host.qaScene = state.scene
+      scan(fiber.child)
+      scan(fiber.sibling)
+    }
+    for (const root of host.qaRoots) scan(root.current)
+    const arc = host.qaScene!.getObjectByName('ball-arc')!
+    const target = arc.getObjectByName('destination-marker')!.position
+    return { bearing: Number(arc.userData.bearing), x: target.x, z: target.z }
+  })
+}
+/* eslint-enable @typescript-eslint/prefer-optional-chain */
 async function click(page: Page, label: string): Promise<void> {
   const selector = `[aria-label="${label}"]`
   await page.waitForFunction(
@@ -2228,6 +2280,107 @@ describe('scoring browser', function () {
       await page.close()
     }
   })
+  it('defaults home-run guidance by batting side and eases through the center gap', async function () {
+    this.timeout(150000)
+    for (const bats of ['right', 'left'] as const) {
+      const { page } = await open(
+        '/games/g1/score',
+        false,
+        false,
+        false,
+        bats,
+        true
+      )
+      try {
+        await click(page, 'Ball in Play')
+        await click(page, 'Home Run')
+        await page.waitForSelector('canvas[data-field-ready="true"]')
+        expect((await readGuide(page)).bearing).closeTo(
+          bats === 'right' ? -15 : 15,
+          0.01
+        )
+        await page.focus('[role="application"]')
+        const toward = bats === 'right' ? 'ArrowRight' : 'ArrowLeft'
+        for (let i = 0; i < 5; i++) {
+          await page.keyboard.press(toward)
+          await new Promise(resolve => setTimeout(resolve, 60))
+        }
+        await page.waitForFunction(() => {
+          const arc = (
+            window as unknown as SceneProbeWindow
+          ).qaScene!.getObjectByName('ball-arc')!
+          return Math.abs(Math.abs(Number(arc.userData.bearing)) - 5) < 0.01
+        })
+        const start = await readGuide(page)
+        expect(start.bearing).closeTo(bats === 'right' ? -5 : 5, 0.01)
+        for (const key of [
+          toward,
+          bats === 'right' ? 'ArrowLeft' : 'ArrowRight'
+        ] as const) {
+          const samples = page.evaluate(
+            async () =>
+              await new Promise<number[]>(resolve => {
+                const out: number[] = []
+                const sample = (): void => {
+                  out.push(
+                    Number(
+                      (
+                        window as unknown as SceneProbeWindow
+                      ).qaScene!.getObjectByName('ball-arc')!.userData.bearing
+                    )
+                  )
+                  if (out.length < 35) requestAnimationFrame(sample)
+                  else resolve(out)
+                }
+                requestAnimationFrame(sample)
+              })
+          )
+          await page.keyboard.press(key)
+          const values = await samples
+          expect(
+            values.some(
+              value => Math.abs(value) > 0.05 && Math.abs(value) < 4.95
+            )
+          ).equals(true)
+          expect(Math.abs(values.at(-1)!)).closeTo(5, 0.01)
+        }
+        const final = await readGuide(page)
+        expect(final.x).closeTo(start.x, 0.01)
+        expect(final.z).closeTo(start.z, 0.01)
+        await page.keyboard.press('Enter')
+        await page.keyboard.press('Enter')
+        await page.waitForSelector('[aria-label*="Batter Player 2"]', {
+          timeout: 45000
+        })
+        for (let undo = 0; undo < 4; undo++) {
+          if (
+            await page.$eval(
+              '[aria-label="Ball in Play"]',
+              n => n.getAttribute('aria-disabled') !== 'true'
+            )
+          )
+            break
+          await page.locator('[aria-label^="Undo "]').click()
+        }
+        await click(page, 'Ball in Play')
+        await click(page, 'Single')
+        await page.focus('[role="application"]')
+        await page.keyboard.press('Space')
+        await page.keyboard.press('Enter')
+        await page.waitForSelector('[aria-label^="Ball trajectory:"]')
+        const central = await readGuide(page)
+        expect(central.x).equals(0)
+        expect(Math.abs(central.bearing)).equals(5)
+        await page.keyboard.press('Enter')
+        await page.waitForSelector('[aria-label="Finish at-bat"]', {
+          timeout: 45000
+        })
+        await click(page, 'Finish at-bat')
+      } finally {
+        await page.close()
+      }
+    }
+  })
   for (const outside of [false, true])
     for (const loaded of [false, true]) {
       it(`classifies ${outside ? 'stands' : 'in-park'} home run with ${loaded ? 'loaded' : 'empty'} bases and finishes automatically`, async function () {
@@ -2278,7 +2431,8 @@ describe('scoring browser', function () {
           // Start away from the target; apply a screen-space displacement from
           // the initial landing rather than aiming directly under the mouse.
           const origin = project(loaded ? 32 : -32, -25, 0)
-          const initial = project(0, -60, 0.7)
+          const initialTarget = initialHitTarget('R')
+          const initial = project(initialTarget.x, initialTarget.z, 0.7)
           const target = project(0, outside ? -133 : -100, outside ? 8 : 0.7)
           await page.mouse.move(...origin)
           await page.mouse.down()

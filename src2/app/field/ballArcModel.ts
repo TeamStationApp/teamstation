@@ -1,10 +1,13 @@
 import type { GroundPoint } from './fieldModel'
 import { TERRAIN } from './terrain'
+import { guideOffset } from './trajectoryGuide'
 
 export interface BallArcState {
   target: GroundPoint
   angle: number
   landingHeight?: number
+  /** Visual guide only; omitted from the actual hit flight. */
+  guideBearing?: number
 }
 export type ArcMode = 'off' | 'aim' | 'edit'
 export const BALL_GROUND = TERRAIN.players + 0.16
@@ -49,7 +52,13 @@ export function arcPoint(
     }
   }
   return {
-    x: t === 0 ? 0 : arc.target.x * t,
+    x:
+      t === 0
+        ? 0
+        : arc.target.x * t +
+          (arc.guideBearing == null
+            ? 0
+            : guideOffset(arc.target, arc.guideBearing, t)),
     y,
     z: t === 0 ? 0 : arc.target.z * t
   }

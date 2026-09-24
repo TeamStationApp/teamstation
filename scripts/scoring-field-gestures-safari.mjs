@@ -16,6 +16,7 @@ const client = process.env.MAESTRO_D_CLIENT_ROOT
 const { MaestroD } = client('maestro-d')
 require('sucrase/register')
 const { PerspectiveCamera, Vector3 } = require('three')
+const { initialHitTarget } = require('../src2/app/field/trajectoryGuide')
 const { applyFieldCamera } = require('../src2/app/field/cameraModel')
 const required = key => {
   assert(process.env[key], `${key} is required`)
@@ -169,11 +170,22 @@ try {
       x: g.field.x + g.field.width * 0.25,
       y: g.field.y + g.field.height * 0.64
     }
-    const initial = g.project(0, -60)
+    const initialTarget = initialHitTarget('R')
+    const initial = g.project(initialTarget.x, initialTarget.z)
     const target = g.project(0, outside ? -133 : -95, outside ? 8 : 0.7)
     await gesture(
       [
         start,
+        ...(!outside
+          ? [10, -10].map(x => {
+              const cross = g.project(x, -95, 0.7)
+              return {
+                x: start.x + cross.x - initial.x,
+                y: start.y + cross.y - initial.y,
+                pause: 300
+              }
+            })
+          : []),
         { x: start.x + target.x - initial.x, y: start.y + target.y - initial.y }
       ],
       80

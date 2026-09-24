@@ -8,6 +8,7 @@ import { fieldKey } from '../field/fieldKeyboard'
 import { createPlayers } from '../field/fieldModel'
 import type { FieldCanvasProps } from '../field/fieldTypes'
 import { homeRunKind, homeRunLanding } from '../field/stadiumBoundary'
+import { initialHitTarget } from '../field/trajectoryGuide'
 import { battedBallField, fieldStageInstruction } from './battedBallField'
 import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
@@ -17,6 +18,18 @@ import { playerRef } from './scoringSelectors'
 const initial = (): ReturnType<typeof initialScoringState> =>
   initialScoringState(createDevelopmentSession(gameFixture, [], []))
 describe('outcome-specific fielding', function () {
+  it('uses the current batting side for home-run default guidance and restores it with Undo', function () {
+    for (const code of ['L', 'R'] as const) {
+      let state = initial()
+      state.session.liveData.plays.currentPlay!.matchup.batSide.code = code
+      state = scoringReducer(state, { type: 'OUTCOME', outcome: 'Home Run' })
+      expect(state.pendingPlay!.location).deep.equals(initialHitTarget(code))
+      state = scoringReducer(state, { type: 'UNDO' })
+      expect(
+        state.session.liveData.plays.currentPlay!.matchup.batSide.code
+      ).equals(code)
+    }
+  })
   it('coordinates the rendered landing, placement and trajectory phases with reducer events', function () {
     let state = initial()
     let landing: BallArcState | null = null
@@ -40,7 +53,7 @@ describe('outcome-specific fielding', function () {
     expect(angle).equals(-45)
     state = scoringReducer(state, { type: 'OUTCOME', outcome: 'Home Run' })
     expect(fieldStageInstruction(state)).equals('Drag where the ball was hit')
-    expect(field().arc!.target).deep.equals({ x: 0, z: -60 })
+    expect(field().arc!.target).deep.equals(initialHitTarget('R'))
     expect(field().arcMode).equals('aim')
     expect(field(true).arcMode).equals('off')
     field().onArcChange!({
@@ -154,7 +167,7 @@ describe('outcome-specific fielding', function () {
       outcome: 'Home Run'
     })
     expect(state.phase).equals('locateLanding')
-    expect(state.pendingPlay!.location).deep.equals({ x: 0, z: -60 })
+    expect(state.pendingPlay!.location).deep.equals(initialHitTarget('R'))
     expect(
       scoringReducer(state, {
         type: 'FIELDER',
