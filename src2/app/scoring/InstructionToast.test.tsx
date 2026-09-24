@@ -116,9 +116,25 @@ describe('scoring instruction and completion toast', function () {
       <InstructionToast
         instruction="Drag up and down for ball trajectory."
         detail="45° Fly Ball"
+        status="Home Run"
       />
     )
     expect(host.textContent).includes('45° Fly Ball')
+    const status = host.querySelector<HTMLElement>(
+      '[aria-label="Home run type: Home Run"]'
+    )!
+    const trajectory = host.querySelector<HTMLElement>(
+      '[aria-label="Ball trajectory: 45° Fly Ball"]'
+    )!
+    expect(status.style.marginTop).equals('16px')
+    expect(getComputedStyle(status).borderTopLeftRadius).not.equals('')
+    expect(status.style.backgroundColor).equals('rgb(241, 207, 85)')
+    expect(trajectory.style.backgroundColor).equals(
+      status.style.backgroundColor
+    )
+    expect((trajectory.firstChild as HTMLElement).style.color).equals(
+      'rgb(102, 80, 22)'
+    )
     expect(host.querySelector('[role="progressbar"]')).equals(null)
     await render(
       <InstructionToast

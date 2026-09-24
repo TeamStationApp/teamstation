@@ -75,7 +75,7 @@ function retire(state: ScoringState, defender = 11): ScoringState {
 }
 describe('runner progression and correction deadline', function () {
   it('reflows the home queue after an out and lets the unresolved batter adjust a preview', function () {
-    let state = completeMotions(hit(initial(7), 'Home Run'))
+    let state = completeMotions(hit(initial(7), 'Triple'))
     state = scoringReducer(state, { type: 'HOME', decision: 'out' })
     state = retire(state)
     expect(state.homeQueue).deep.equals([3, 2])
@@ -102,8 +102,7 @@ describe('runner progression and correction deadline', function () {
     for (const [outcome, bases] of [
       ['Single', 1],
       ['Double', 2],
-      ['Triple', 3],
-      ['Home Run', 4]
+      ['Triple', 3]
     ] as const)
       it(`${outcome} advances occupancy ${mask} with explicit home decisions`, function () {
         const start = initial(mask)
@@ -120,12 +119,11 @@ describe('runner progression and correction deadline', function () {
           state = scoringReducer(state, { type: 'HOME', decision: 'safe' })
           state = completeMotions(state)
         }
-        expect(state.phase).equals(bases === 4 ? 'ready' : 'correctionWindow')
+        expect(state.phase).equals('correctionWindow')
         expect(state.session.liveData.linescore.teams.away.runs).equals(
-          queue.length + (bases === 4 ? 1 : 0)
+          queue.length
         )
-        if (bases !== 4)
-          expect(state.correctionWindow!.remainingMs).equals(10000)
+        expect(state.correctionWindow!.remainingMs).equals(10000)
         const beforeClose = state
         state = expire(state)
         expect(state.session.liveData.plays.allPlays).has.length(1)
@@ -152,7 +150,7 @@ describe('runner progression and correction deadline', function () {
   it('keeps earlier runs when a runner is tagged out at home for the third out', function () {
     const start = initial(6)
     start.session.liveData.linescore.outs = 2
-    let state = completeMotions(hit(start, 'Home Run'))
+    let state = completeMotions(hit(start, 'Triple'))
     state = completeMotions(
       scoringReducer(state, { type: 'HOME', decision: 'safe' })
     )
@@ -239,7 +237,7 @@ describe('runner progression and correction deadline', function () {
   it('records assisted and unassisted home outs, voids runs on a force third out and stops the queue', function () {
     let state = initial(7)
     state.session.liveData.linescore.outs = 2
-    state = completeMotions(hit(state, 'Home Run'))
+    state = completeMotions(hit(state, 'Triple'))
     state = completeMotions(
       scoringReducer(state, { type: 'HOME', decision: 'safe' })
     )

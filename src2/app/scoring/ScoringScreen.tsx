@@ -595,13 +595,20 @@ function ScoringSession(props: {
       instruction={
         state.moreDraft != null
           ? `Drag a runner for ${state.moreDraft.action}`
-          : state.pendingPlay?.outcome === 'Home Run' &&
-              ['locateLanding', 'trajectory'].includes(state.phase)
-            ? `${instruction} ${homeRunLabel(landingPreview != null ? homeRunKind(landingPreview) : (state.pendingPlay.homeRunKind ?? 'in-park'))}`
-            : (instruction ??
-              (state.phase === 'awaitingBatter'
-                ? 'Next batter is on base. Update lineup to continue.'
-                : undefined))
+          : (instruction ??
+            (state.phase === 'awaitingBatter'
+              ? 'Next batter is on base. Update lineup to continue.'
+              : undefined))
+      }
+      instructionStatus={
+        state.pendingPlay?.outcome === 'Home Run' &&
+        ['locateLanding', 'trajectory'].includes(state.phase)
+          ? homeRunLabel(
+              landingPreview != null
+                ? homeRunKind(landingPreview)
+                : (state.pendingPlay.homeRunKind ?? 'in-park')
+            )
+          : undefined
       }
       instructionDetail={
         state.phase === 'trajectory'

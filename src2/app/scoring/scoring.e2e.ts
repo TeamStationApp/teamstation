@@ -2152,31 +2152,27 @@ describe('scoring browser', function () {
               rect.y + ((1 - p.y) * rect.height) / 2
             ]
           }
-          await page.mouse.move(...project(0, -18.44, 6))
+          // Start away from the target; apply a screen-space displacement from
+          // the initial landing rather than aiming directly under the mouse.
+          const origin = project(loaded ? 32 : -32, -25, 0)
+          const initial = project(0, -60, 0.7)
+          const target = project(0, outside ? -133 : -100, outside ? 8 : 0.7)
+          await page.mouse.move(...origin)
           await page.mouse.down()
-          await page.mouse.move(...project(0, -100, 0.7), { steps: 10 })
-          await page.waitForFunction(() =>
-            String(document.body.textContent).includes('In-the-park Home Run')
+          await page.waitForSelector(
+            '[aria-label="Home run type: In-the-park Home Run"]'
           )
-          if (outside) {
-            await page.mouse.move(...project(0, -129, 7), { steps: 10 })
-            await page.waitForFunction(() =>
-              String(document.body.textContent).includes(
-                'Drag where the ball was hit Home Run'
-              )
-            )
-          }
+          await page.mouse.move(
+            origin[0] + target[0] - initial[0],
+            origin[1] + target[1] - initial[1],
+            { steps: 10 }
+          )
+          await page.waitForSelector(
+            `[aria-label="Home run type: ${outside ? 'Home Run' : 'In-the-park Home Run'}"]`
+          )
           await page.mouse.up()
           await page.focus('[role="application"]')
           await page.keyboard.press('Enter')
-          if (loaded && !outside)
-            for (const name of ['Player 8', 'Player 7', 'Player 6']) {
-              await page.waitForSelector(
-                `[aria-label="Home plate decision for ${name}"]`,
-                { timeout: 30000 }
-              )
-              await click(page, 'Safe')
-            }
           await page.waitForSelector('[aria-label*="Batter Player 2"]', {
             timeout: 45000
           })
@@ -2192,7 +2188,7 @@ describe('scoring browser', function () {
         }
       })
     }
-  it('scores all four loaded home-run arrivals and keeps phone home decisions usable', async function () {
+  it('scores all four loaded home-run arrivals automatically on a phone', async function () {
     this.timeout(90000)
     const { page } = await open('/games/g1/score')
     try {
@@ -2214,24 +2210,6 @@ describe('scoring browser', function () {
       }
       await click(page, 'Apply Override')
       await chooseHit(page, 'Home Run')
-      for (const name of ['Player 8', 'Player 7', 'Player 6']) {
-        await page.waitForSelector(
-          `[aria-label="Home plate decision for ${name}"]`,
-          { timeout: 30000 }
-        )
-        if (name === 'Player 8') {
-          await new Promise(resolve => setTimeout(resolve, 10500))
-          await page.waitForSelector(
-            '[aria-label="Home plate decision for Player 8"]'
-          )
-        }
-        expect(await page.$('[aria-label="Back"]')).equals(null)
-        if (name === 'Player 8' && process.env.GS_SCORING_ARTIFACT_DIR != null)
-          await page.screenshot({
-            path: `${process.env.GS_SCORING_ARTIFACT_DIR}/home-queue-phone.png`
-          })
-        await click(page, 'Safe')
-      }
       await page.waitForSelector('[aria-label*="Owls 4 · Hawks 0"]', {
         timeout: 30000
       })
@@ -2239,6 +2217,7 @@ describe('scoring browser', function () {
         timeout: 30000
       })
       expect(await page.$('[aria-label="Time to edit play"]')).equals(null)
+      expect(await page.$('[aria-label="Safe"]')).equals(null)
     } finally {
       await page.close()
     }

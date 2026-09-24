@@ -7,6 +7,7 @@ import {
   type Object3D,
   PerspectiveCamera,
   Plane,
+  type Ray,
   Raycaster,
   Sprite,
   Vector3
@@ -46,6 +47,7 @@ import {
 import { PlayAnimation } from './PlayAnimation'
 import { Player } from './Player'
 import { PlayerShadows } from './PlayerShadows'
+import { relativeLandingPointer } from './relativeLanding'
 import { scoreboardBounds } from './scoreboardBounds'
 import { homeRunLanding } from './stadiumBoundary'
 import { useSurfaceTextures } from './surfaceTextures'
@@ -275,7 +277,7 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
       }
       callbacks.current.onRunnerDrag?.({ ...runner.view })
     } else if (props.homeRunPlacement === true) {
-      const landing = landingAt(event)
+      const landing = landingAt(event.ray, isTouch(event))
       if (landing == null) return
       drag.current.goal = homeRunLanding(landing.target)
       drag.current.landingHeight = landing.landingHeight
@@ -474,6 +476,8 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     pointer: number
     kind: 'target' | 'angle'
     startY: number
+    startPointer: { x: number; y: number }
+    moved: boolean
     initial: BallArcState
     latest: BallArcState
     generation: number
@@ -554,9 +558,9 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     [arcMode, view, props.interaction?.generation]
   )
   const landingAt = (
-    event: ThreeEvent<PointerEvent>
+    ray: Ray,
+    touch = false
   ): Pick<BallArcState, 'target' | 'landingHeight'> | null => {
-    const ray = event.ray
     const onGround = ray.intersectPlane(ground, point)
     const groundDistance =
       onGround == null ? Infinity : ray.origin.distanceTo(point)
@@ -567,18 +571,34 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     const hit = picker.intersectObjects(stands, false)[0]
     if (hit != null && hit.distance < groundDistance)
       return {
-        target: arcTarget(offsetTouchTarget(hit.point, isTouch(event))),
+        target: arcTarget(offsetTouchTarget(hit.point, touch)),
         landingHeight: hit.point.y + 0.25
       }
     return onGround == null
       ? null
-      : { target: arcTarget(offsetTouchTarget(point, isTouch(event))) }
+      : { target: arcTarget(offsetTouchTarget(point, touch)) }
   }
   const aim = (
     event: ThreeEvent<PointerEvent>,
     initial: BallArcState
   ): void => {
-    const landing = landingAt(event)
+    const active = arcDrag.current
+    const relative = props.homeRunPlacement === true && active != null
+    if (relative) {
+      picker.setFromCamera(
+        relativeLandingPointer(
+          initial,
+          active.startPointer,
+          event.pointer,
+          camera
+        ),
+        camera
+      )
+    }
+    const landing = landingAt(
+      relative ? picker.ray : event.ray,
+      !relative && isTouch(event)
+    )
     if (landing == null) return
     const next = {
       ...landing,
@@ -602,7 +622,12 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
         !props.interaction.gestures.includes('trajectory'))
     )
       return
-    if (arcMode === 'aim' && landingAt(event) == null) return
+    if (
+      arcMode === 'aim' &&
+      props.homeRunPlacement !== true &&
+      landingAt(event.ray, isTouch(event)) == null
+    )
+      return
     const initial = arc ?? { target: { x: 0, z: -60 }, angle: 30 }
     if (arcMode === 'edit' && props.interaction == null) {
       const tip = arcHandle(initial)
@@ -615,6 +640,8 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
       pointer: event.pointerId,
       kind: arcMode === 'aim' ? 'target' : 'angle',
       startY: (event.pointer.y * size.height) / 2,
+      startPointer: { x: event.pointer.x, y: event.pointer.y },
+      moved: false,
       initial,
       latest: initial,
       generation: props.interaction?.generation ?? 0,
@@ -623,12 +650,18 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     props.onGestureActive?.(true)
     const capture = event.target as Element
     capture.setPointerCapture(event.pointerId)
-    if (arcMode === 'aim') aim(event, initial)
+    if (arcMode === 'aim' && props.homeRunPlacement !== true)
+      aim(event, initial)
   }
   const arcMove = (event: ThreeEvent<PointerEvent>): void => {
     const active = arcDrag.current
     if (active?.pointer !== event.pointerId) return
     event.stopPropagation()
+    active.moved ||=
+      Math.hypot(
+        ((event.pointer.x - active.startPointer.x) * size.width) / 2,
+        ((event.pointer.y - active.startPointer.y) * size.height) / 2
+      ) > 3
     if (active.kind === 'target') aim(event, active.initial)
     else {
       const next = {
@@ -651,7 +684,8 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     props.onGestureActive?.(false)
     const capture = event.target as Element
     capture.releasePointerCapture(event.pointerId)
-    if (cancel) onArcChange?.(active.initial)
+    if (cancel || (props.homeRunPlacement === true && !active.moved))
+      onArcChange?.(active.initial)
     else if (active.generation === (props.interaction?.generation ?? 0)) {
       onArcFinish?.()
       if (active.kind === 'target')
