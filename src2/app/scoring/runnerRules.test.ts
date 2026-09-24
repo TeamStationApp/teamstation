@@ -84,13 +84,16 @@ describe('runner progression and correction deadline', function () {
     state = completeMotions(state)
     expect(state.phase).equals('homeDecision')
     expect(state.homeQueue[0]).equals(3)
-    state = hit(initial(), 'Error')
-    state = scoringReducer(state, { type: 'RUNNER_PROPOSE', id: 1, to: 0 })
-    state = scoringReducer(state, { type: 'RUNNER_PROPOSE', id: 1, to: 1 })
-    expect(state.runnerAction!.to).equals(1)
-    state = completeMotions(
-      scoringReducer(state, { type: 'RUNNER_DECIDE', decision: 'safe' })
-    )
+    state = completeMotions(hit(initial(), 'Error'))
+    state = scoringReducer(state, {
+      type: 'DEFENDER',
+      generation: state.generation
+    })
+    state = scoringReducer(state, {
+      type: 'ERROR_CREDIT',
+      id: 10,
+      generation: state.generation
+    })
     expect(state.phase).equals('correctionWindow')
     expect(baseIds(state.session)).deep.equals([1, null, null])
   })
@@ -345,8 +348,8 @@ describe('runner progression and correction deadline', function () {
         .description
     ).equals('Safe from Pickoff')
   })
-  it('resolves Error and Fielder’s Choice without inventing a batter base or displacing a runner silently', function () {
-    for (const outcome of ['Error', "Fielder's Choice"] as const) {
+  it('resolves Fielder’s Choice without inventing a batter base or displacing a runner silently', function () {
+    for (const outcome of ["Fielder's Choice"] as const) {
       let state = hit(initial(1), outcome)
       expect(state.phase).equals('resolveBatter')
       state = scoringReducer(state, { type: 'RUNNER_PROPOSE', id: 1, to: 1 })

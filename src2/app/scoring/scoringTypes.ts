@@ -77,6 +77,7 @@ export interface ScoringSessionState {
 }
 export type ScoringPhase =
   | 'ready'
+  | 'errorCredit'
   | 'awaitingBatter'
   | 'locateFielder'
   | 'trajectory'
@@ -99,6 +100,7 @@ export interface Movement {
   resolved?: boolean
 }
 export interface PendingPlay {
+  errorPending?: boolean
   homeRunKind?: HomeRunKind
   landingHeight?: number
   ballHolder?: number
@@ -134,7 +136,7 @@ export interface MotionCommand {
 }
 export interface RunnerAction {
   defensiveRoute?: Array<{ id: number; point: GroundPoint }>
-  purpose?: 'batterRetirement'
+  purpose?: 'batterRetirement' | 'errorAttribution'
   runnerPoint?: GroundPoint
   playerId: number
   from: number
@@ -188,6 +190,8 @@ export interface ScoringState extends ScoringSnapshot {
   past: HistoryEntry[]
 }
 export type ScoringEvent =
+  | { type: 'ERROR_CREDIT'; id: number; generation: number }
+  | { type: 'ERROR_CANCEL' }
   | { type: 'PRESENTATION_CONTACT'; id: string; generation: number }
   | {
       type: 'PRESENTATION_DONE'

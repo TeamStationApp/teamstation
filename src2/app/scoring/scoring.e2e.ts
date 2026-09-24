@@ -178,6 +178,63 @@ describe('scoring browser', function () {
   after(async function () {
     await browser?.close()
   })
+  for (const loaded of [false, true])
+    it(`advances and credits an Error with ${loaded ? 'loaded' : 'empty'} bases`, async function () {
+      const { page } = await open('/games/g1/score')
+      try {
+        if (loaded) {
+          await click(page, 'Open scoring menu')
+          await click(page, 'Overrides')
+          for (const [base, name] of [
+            ['First base', 'Player 6'],
+            ['Second base', 'Player 7'],
+            ['Third base', 'Player 8']
+          ]) {
+            await click(page, base)
+            await click(page, `Choose ${base} ${name}`)
+          }
+          await click(page, 'Apply Override')
+        }
+        await chooseHit(page, 'Error')
+        await page.waitForSelector(
+          '[aria-label^="Tap and drag another defender"]',
+          { timeout: 30000 }
+        )
+        expect(await page.$('[aria-label^="Home plate decision"]')).equals(null)
+        if (loaded) {
+          await placeDefenderWithKeyboard(page, true)
+          await page.waitForSelector(
+            '[aria-label^="Tap and drag another defender"]',
+            { timeout: 10000 }
+          )
+        }
+        await click(page, 'Finish defensive play')
+        await page.waitForSelector('[aria-label^="Error by "]')
+        const credits = await page.$$eval('[aria-label^="Error by "]', nodes =>
+          nodes.map(n => n.getAttribute('aria-label')!)
+        )
+        expect(credits).has.length(loaded ? 2 : 1)
+        await click(page, 'Cancel')
+        await click(page, 'Finish defensive play')
+        await click(page, credits.at(-1)!)
+        if (loaded) {
+          await page.waitForSelector(
+            '[aria-label="Home plate decision for Player 8"]'
+          )
+          await click(page, 'Safe')
+        }
+        await page.waitForSelector('[aria-label="Time to edit play"]', {
+          timeout: 30000
+        })
+        await click(page, 'Finish at-bat')
+        await page.waitForSelector('[aria-label*="Batter Player 2"]')
+        await page.waitForSelector(
+          `[aria-label*="Owls ${loaded ? 1 : 0} · Hawks 0"]`
+        )
+      } finally {
+        await page.close()
+      }
+    })
   it('hides empty-base fielder choice and clamps a stands home-run arc to Line Drive', async function () {
     const { page } = await open('/games/g1/score')
     try {
@@ -1589,7 +1646,7 @@ describe('scoring browser', function () {
       await page.close()
     }
   })
-  it('backs up a legal home arrival and completes Error and Fielder’s Choice explicitly', async function () {
+  it('backs up a legal home arrival and completes Fielder’s Choice explicitly', async function () {
     this.timeout(120000)
     const rollback = await open('/games/g1/score')
     try {
@@ -1613,7 +1670,7 @@ describe('scoring browser', function () {
     } finally {
       await rollback.page.close()
     }
-    for (const outcome of ['Error', "Fielder's Choice"]) {
+    for (const outcome of ["Fielder's Choice"]) {
       const { page } = await open('/games/g1/score')
       try {
         if (outcome !== 'Error') {
