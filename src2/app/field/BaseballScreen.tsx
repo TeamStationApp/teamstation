@@ -58,7 +58,12 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: theme.rem(theme.radiusRem),
-    backgroundColor: theme.primaryButtonColor
+    backgroundColor: theme.primaryButtonColor,
+    shadowColor: theme.buttonShadowColor,
+    shadowOpacity: 1,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 3
   } as const
   const label = {
     color: theme.buttonTextColor,

@@ -757,6 +757,157 @@ describe('scoring browser', function () {
       await page.close()
     }
   })
+  it('appends tapped names, reorders immediately, drags both selectors, and auto-scrolls the lineup', async function () {
+    const { page, unexpected } = await open('/games/g1/score')
+    try {
+      await page.setViewport({
+        width: 390,
+        height: 844,
+        isMobile: true,
+        hasTouch: true
+      })
+      await click(page, 'Open scoring menu')
+      await click(page, 'Set Team Rosters')
+      const center = async (
+        selector: string
+      ): Promise<{ x: number; y: number }> =>
+        await page.$eval(selector, node => {
+          const r = node.getBoundingClientRect()
+          return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
+        })
+      const swipe = async (from: string, to: string): Promise<void> => {
+        const a = await center(from)
+        const b = await center(to)
+        await page.touchscreen.touchStart(a.x, a.y)
+        for (let i = 1; i <= 12; i++)
+          await page.touchscreen.touchMove(
+            a.x + ((b.x - a.x) * i) / 12,
+            a.y + ((b.y - a.y) * i) / 12
+          )
+        await page.touchscreen.touchEnd()
+      }
+      await click(page, 'Remove Player 2')
+      await click(page, 'Remove Player 3')
+      await click(page, 'Add Player 3 to Lineup')
+      await click(page, 'Add Player 2 to Lineup')
+      expect(
+        await page.$$eval(
+          '[data-roster-target^="lineup-"][data-roster-player]',
+          nodes =>
+            nodes.map(n => n.getAttribute('data-roster-player')).slice(-2)
+        )
+      ).deep.equals(['3', '2'])
+      expect(await page.$$('[aria-label^="Move Player"]')).length(0)
+      await swipe('[aria-label="Away Team"]', '[aria-label="Home Team"]')
+      await page.waitForSelector(
+        '[aria-label="Home Team"][aria-selected="true"]'
+      )
+      await swipe('[aria-label="Set Lineup"]', '[aria-label="Set Defense"]')
+      await page.waitForSelector(
+        '[aria-label="Set Defense"][aria-selected="true"]'
+      )
+      await click(page, 'Clear P')
+      // A tap in defense never implies a slot; a direct drag replaces C.
+      await click(page, 'Player 1')
+      expect(
+        await page.$eval('[data-roster-target="defense-P"]', n => n.textContent)
+      ).includes('Unassigned')
+      await swipe(
+        '[data-roster-target="roster"] [data-roster-player="10"]',
+        '[data-roster-target="defense-C"]'
+      )
+      await page.waitForFunction(() =>
+        document
+          .querySelector('[data-roster-target="defense-C"]')!
+          .textContent!.includes('Player 1')
+      )
+      expect(
+        await page.$eval(
+          '[data-roster-target="roster"] [data-roster-player="11"]',
+          n => n.getAttribute('aria-disabled')
+        )
+      ).equals('false')
+      await swipe('[aria-label="Home Team"]', '[aria-label="Away Team"]')
+      await swipe('[aria-label="Set Defense"]', '[aria-label="Set Lineup"]')
+      await page.waitForSelector(
+        '[aria-label="Set Lineup"][aria-selected="true"]'
+      )
+      await page.$eval('[aria-label="Batting lineup"]', n => {
+        n.scrollTop = 0
+      })
+      const from = await center('[aria-label="Drag Jordan K."]')
+      const edge = await page.$eval('[aria-label="Batting lineup"]', n => {
+        const r = n.getBoundingClientRect()
+        return { x: r.x + r.width / 2, y: r.bottom - 12 }
+      })
+      await page.touchscreen.touchStart(from.x, from.y)
+      await page.touchscreen.touchMove(edge.x, edge.y)
+      await page.waitForFunction(
+        () =>
+          document.querySelector('[aria-label="Batting lineup"]')!.scrollTop >
+          80
+      )
+      await page.touchscreen.touchEnd()
+      await page.waitForFunction(
+        () =>
+          document
+            .querySelector('[data-roster-target="lineup-0"]')!
+            .getAttribute('data-roster-player') !== '1'
+      )
+      if (process.env.GS_SCORING_ARTIFACT_DIR != null)
+        await page.screenshot({
+          path: `${process.env.GS_SCORING_ARTIFACT_DIR}/roster-slider-drag.png`
+        })
+      await click(page, 'Cancel')
+      await click(page, 'Open scoring menu')
+      await click(page, 'Set Team Rosters')
+      expect(
+        await page.$eval('[data-roster-target="lineup-0"]', n =>
+          n.getAttribute('data-roster-player')
+        )
+      ).equals('1')
+      expect(unexpected).deep.equals([])
+    } finally {
+      await page.close()
+    }
+  })
+  it('cancels only the keyboard roster grab on Escape and retains prior draft edits', async function () {
+    const { page } = await open('/games/g1/score')
+    try {
+      await click(page, 'Open scoring menu')
+      await click(page, 'Set Team Rosters')
+      await click(page, 'Remove Player 2')
+      await click(page, 'Remove Player 3')
+      await click(page, 'Add Player 3 to Lineup')
+      await click(page, 'Add Player 2 to Lineup')
+      await page.focus('[aria-label="Reorder Jordan K."]')
+      for (const key of ['Space', 'ArrowDown', 'ArrowDown', 'Enter'])
+        await page.keyboard.press(key as 'Space' | 'ArrowDown' | 'Enter')
+      const order = async (): Promise<Array<string | null>> =>
+        await page.$$eval(
+          '[data-roster-target^="lineup-"][data-roster-player]',
+          nodes => nodes.map(n => n.getAttribute('data-roster-player'))
+        )
+      const before = await order()
+      expect(before.slice(0, 3)).deep.equals(['4', '5', '1'])
+      expect(before.slice(-2)).deep.equals(['3', '2'])
+      await page.keyboard.press('Space')
+      await page.keyboard.press('ArrowDown')
+      await page.keyboard.press('Escape')
+      await page.waitForSelector('[aria-label="Save Rosters"]')
+      expect(await order()).deep.equals(before)
+      await click(page, 'Save Rosters')
+      await page.waitForSelector('[aria-label="Undo Set team roster"]')
+      await click(page, 'Open scoring menu')
+      await click(page, 'Set Team Rosters')
+      expect(await order()).deep.equals(before)
+      await page.focus('[aria-label="Reorder Jordan K."]')
+      await page.keyboard.press('Escape')
+      expect(await page.$('[aria-label="Save Rosters"]')).equals(null)
+    } finally {
+      await page.close()
+    }
+  })
   it('assigns a defender with a touch drag on a phone-sized sheet', async function () {
     const { page, unexpected } = await open('/games/g1/score')
     try {

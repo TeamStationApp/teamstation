@@ -10,6 +10,7 @@ import type { Theme } from './types'
  * Nothing outside this file names a colour.
  */
 const palette = {
+  selectorGray: '#575D54',
   white: '#FFFFFF',
   black: '#000000',
   transparent: '#00000000',
@@ -148,6 +149,7 @@ export const gsDark: Theme = {
   gridGutterRem: 0.75,
 
   shadowColor: palette.black,
+  scoringSelectorIdle: palette.selectorGray,
   buttonShadowColor: palette.blackOp35,
   backgroundGradientColors: [palette.gsVeryDarkGreen, palette.gsDarkOlive],
   backgroundGradientStart: { x: 0, y: 0 },

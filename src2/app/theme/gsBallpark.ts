@@ -17,6 +17,7 @@ import type { Theme } from './types'
  * active pill and header follows.
  */
 const palette = {
+  selectorGray: '#D9DDD6',
   white: '#FFFFFF',
   transparent: '#00000000',
 
@@ -180,6 +181,7 @@ export const gsBallpark: Theme = {
   gridGutterRem: 1,
 
   shadowColor: palette.shadow,
+  scoringSelectorIdle: palette.selectorGray,
   buttonShadowColor: palette.buttonShadow,
   backgroundGradientColors: [palette.bone, palette.bone],
   backgroundGradientStart: { x: 0, y: 0 },

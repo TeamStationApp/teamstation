@@ -140,6 +140,7 @@ export interface Theme {
    * for large surfaces: the same 10% that reads on a card the width of the
    * screen is invisible under something three centimetres wide.
    */
+  scoringSelectorIdle: string
   buttonShadowColor: string
   backgroundGradientColors: string[]
   backgroundGradientStart: ThemeGradientPoint

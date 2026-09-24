@@ -1,14 +1,130 @@
-import React from 'react'
-import { View } from 'react-native'
+import React, { useContext, useEffect, useRef, useState } from 'react'
+import { type GestureResponderEvent, View, type ViewProps } from 'react-native'
 
+import { useTheme } from '../theme/ThemeContext'
+import {
+  measureRosterView,
+  RosterClipContext,
+  useRosterGesture
+} from './RosterDragContext'
 import type { RosterDragProps } from './rosterDragProps'
-export function RosterDragGroup({
-  children
-}: {
-  children: React.ReactNode
-}): React.ReactElement {
-  return <View>{children}</View>
+import type { RosterGesture } from './rosterGesture'
+export { RosterDragGroup, RosterScrollArea } from './RosterDragContext'
+/** Extracted responder adapter also exercised with native page coordinates in unit tests. */
+export function rosterResponder(
+  engine: RosterGesture,
+  props: RosterDragProps
+): ViewProps {
+  const point = (e: GestureResponderEvent): { x: number; y: number } => ({
+    x: e.nativeEvent.pageX,
+    y: e.nativeEvent.pageY
+  })
+  return {
+    onStartShouldSetResponder: () =>
+      props.playerId != null && props.disabled !== true,
+    onResponderGrant: (e: GestureResponderEvent) => {
+      engine.begin(props.playerId!, props.label ?? '', point(e))
+    },
+    onResponderMove: (e: GestureResponderEvent) => {
+      engine.move(point(e)).catch(() => {
+        engine.cancel()
+      })
+    },
+    onResponderRelease: (e: GestureResponderEvent) => {
+      if (engine.active?.id !== props.playerId) return
+      engine
+        .release(point(e))
+        .then(moved => {
+          if (!moved && props.disabled !== true) props.onTap?.()
+        })
+        .catch(() => {
+          engine.cancel()
+        })
+    },
+    onResponderTerminate: () => {
+      engine.cancel()
+    },
+    onResponderTerminationRequest: () => false
+  }
 }
-export function RosterDrag({ children }: RosterDragProps): React.ReactElement {
-  return <View>{children}</View>
+export function rosterAccessibilityAction(
+  props: RosterDragProps,
+  action: string
+): void {
+  if (props.disabled === true) return
+  if (action === 'activate') props.onTap?.()
+  else if (action === 'increment' || action === 'decrement')
+    props.onReorder?.(action === 'increment' ? 1 : -1)
+}
+export function RosterDrag(props: RosterDragProps): React.ReactElement {
+  const engine = useRosterGesture()
+  const clip = useContext(RosterClipContext)
+  const theme = useTheme()
+  const ref = useRef<React.ComponentRef<typeof View>>(null)
+  const latest = useRef(props)
+  latest.current = props
+  const [hover, setHover] = useState(false)
+  const token = props.targetId
+  useEffect(() => {
+    if (token == null || props.onDropPlayer == null) return
+    engine.targets.set(token, {
+      measure: async () => await measureRosterView(ref.current),
+      clip,
+      drop: id => {
+        latest.current.onDropPlayer?.(id)
+      }
+    })
+    const timer = setInterval(() => {
+      const point = engine.active?.point
+      if (point == null) {
+        setHover(false)
+        return
+      }
+      measureRosterView(ref.current)
+        .then(rect => {
+          setHover(
+            engine.active?.moved === true &&
+              point.x >= rect.x &&
+              point.x <= rect.x + rect.width &&
+              point.y >= rect.y &&
+              point.y <= rect.y + rect.height
+          )
+        })
+        .catch(() => undefined)
+    }, 80)
+    return () => {
+      clearInterval(timer)
+      engine.targets.delete(token)
+    }
+  }, [engine, clip, token, props.onDropPlayer])
+  return (
+    <View
+      ref={ref}
+      {...rosterResponder(engine, props)}
+      accessibilityRole={props.onTap != null ? 'button' : undefined}
+      accessibilityLabel={props.label}
+      accessibilityState={{ disabled: props.disabled }}
+      accessibilityActions={
+        props.onReorder == null
+          ? undefined
+          : [
+              { name: 'increment', label: 'Move down' },
+              { name: 'decrement', label: 'Move up' }
+            ]
+      }
+      onAccessibilityAction={event => {
+        rosterAccessibilityAction(props, event.nativeEvent.actionName)
+      }}
+      style={{
+        opacity: props.disabled === true ? 0.4 : 1,
+        borderWidth: 2,
+        borderColor: hover
+          ? theme.scoringMenuActiveBackground
+          : theme.backgroundColor,
+        borderRadius: 6
+      }}
+    >
+      {props.children}
+    </View>
+  )
 }
