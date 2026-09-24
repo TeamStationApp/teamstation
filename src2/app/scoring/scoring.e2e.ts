@@ -386,6 +386,37 @@ describe('scoring browser', function () {
         await page.close()
       }
     })
+  for (const bats of ['right', 'left'] as const)
+    for (const width of [390, 1200])
+      it(`presents a camera-facing ${bats} foul at width ${width} and rewinds it`, async function () {
+        const { page } = await open(
+          '/games/g1/score',
+          false,
+          false,
+          false,
+          bats
+        )
+        try {
+          await page.setViewport({ width, height: width === 390 ? 844 : 900 })
+          await page.waitForSelector('canvas[data-field-ready="true"]')
+          await click(page, 'Foul Ball')
+          if (process.env.GS_SCORING_ARTIFACT_DIR != null) {
+            await new Promise(resolve => setTimeout(resolve, 900))
+            for (let frame = 0; frame < 4; frame++) {
+              await page.screenshot({
+                path: `${process.env.GS_SCORING_ARTIFACT_DIR}/foul-${bats}-${width}-${frame}.png`
+              })
+              await new Promise(resolve => setTimeout(resolve, 70))
+            }
+          }
+          await waitReady(page)
+          await page.waitForSelector('[aria-label*="0 balls 1 strikes 0 outs"]')
+          await page.locator('[aria-label^="Undo "]').click()
+          await page.waitForSelector('[aria-label*="0 balls 0 strikes 0 outs"]')
+        } finally {
+          await page.close()
+        }
+      })
   it('routes batter interference through two receiving defenders before one out', async function () {
     const { page } = await open('/games/g1/score')
     try {

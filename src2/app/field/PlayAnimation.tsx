@@ -14,7 +14,12 @@ import {
 import { battingPose, pitchingPose } from './athletePose'
 import { BALL_CONTACT } from './ballArcModel'
 import type { FieldPlayer } from './fieldModel'
-import { sampleHit, samplePitch, sampleThrow } from './playAnimationModel'
+import {
+  DEFENDER_SPEED,
+  sampleHit,
+  samplePitch,
+  sampleThrow
+} from './playAnimationModel'
 export function PlayAnimation({
   sequence,
   players,
@@ -36,6 +41,7 @@ export function PlayAnimation({
   const skipElapsed = useRef(true)
   const ball = useRef<Mesh>(null)
   const material = useRef<MeshBasicMaterial>(null)
+  const camera = useThree(state => state.camera)
   const invalidate = useThree(state => state.invalidate)
   useEffect(() => {
     invalidate()
@@ -64,7 +70,7 @@ export function PlayAnimation({
     skipElapsed.current = false
     const sample =
       sequence.kind === 'pitch'
-        ? samplePitch(sequence, runtime.current.elapsedMs)
+        ? samplePitch(sequence, runtime.current.elapsedMs, camera.position)
         : sequence.kind === 'hit'
           ? sampleHit(sequence, runtime.current.elapsedMs)
           : sampleThrow(sequence, runtime.current.elapsedMs)
@@ -145,8 +151,8 @@ export function PlayAnimation({
               sequence.to.x - sequence.from.x,
               sequence.to.z - sequence.from.z
             )
-            player.stride = runtime.current.elapsedMs * 0.012
-            player.pose.run = sample.progress < 1 ? 1 : 0
+            player.stride = runtime.current.elapsedMs * 0.012 * DEFENDER_SPEED
+            player.pose.run = sample.defenderProgress < 1 ? 1 : 0
           } else {
             player.pose.athlete = pitchingPose(
               runtime.current.elapsedMs,
@@ -188,7 +194,7 @@ export function PlayAnimation({
           sequence.arc.target.x - sequence.fielderStart.x,
           sequence.arc.target.z - sequence.fielderStart.z
         )
-        player.stride = runtime.current.elapsedMs * 0.012
+        player.stride = runtime.current.elapsedMs * 0.012 * DEFENDER_SPEED
         player.pose.run = sample.running ? 1 : 0
         player.pose.catch =
           sequence.outOfPark !== true &&

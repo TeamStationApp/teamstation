@@ -46,6 +46,7 @@ describe('rendered pitch timeline', function () {
       const ball = renderer.scene.findByProps({ name: 'animated-baseball' })
         .instance as Mesh
       expect(ball.visible).equals(true)
+      expect(ball.scale.toArray()).deep.equals([1, 1, 1])
       expect(cues).deep.equals(['swish'])
       const before = ball.position.clone()
       await renderer.update(view(true))
@@ -126,6 +127,11 @@ describe('rendered hit timeline', function () {
           expect(batter.position.z).lessThan(0)
         }
         expect(fielder.position).not.deep.equals(sequence.fielderStart)
+        expect(completions).equals(0)
+        await renderer.advanceFrames(12, 0.05)
+        expect(fielder.position).deep.equals(sequence.arc.target)
+        expect(fielder.pose!.run).equals(0)
+        expect(completions).equals(0)
         const ball = renderer.scene.findByProps({ name: 'animated-baseball' })
           .instance as Mesh
         expect(ball.visible).equals(true)
@@ -199,7 +205,8 @@ describe('rendered defensive transfers', function () {
           const defender = players.find(p => p.playerId === sequence.thrower)!
           const progress =
             (defender.position.z - sequence.holderOrigin.z) /
-            (sequence.to.z - sequence.holderOrigin.z)
+            (sequence.to.z - sequence.holderOrigin.z) /
+            3
           expect(runner.position.x).closeTo(
             sequence.runnerFrom.x +
               (sequence.to.x - sequence.runnerFrom.x) * progress,
