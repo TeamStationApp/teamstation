@@ -14,7 +14,7 @@ import {
 } from './scoringSelectors'
 import type { Movement, ScoringEvent, ScoringState } from './scoringTypes'
 export const MORE_GROUPS = [
-  { label: 'Between pitches', actions: ['Wild Pitch', 'Passed Ball', 'Balk'] },
+  { label: 'Between pitches', actions: ['Balk'] },
   {
     label: "Didn't see it",
     actions: [
@@ -33,14 +33,14 @@ export const MORE_GROUPS = [
     ]
   }
 ] as const
-export type MoreAction = (typeof MORE_GROUPS)[number]['actions'][number]
+export type MoreAction = keyof typeof moreEvents
 export interface MoreInput {
   action: MoreAction
   base?: number
   playerId?: number
   destinations?: Record<number, number>
 }
-function hasEligiblePitch(state: ScoringState): boolean {
+export function hasEligiblePitch(state: ScoringState): boolean {
   const ref = state.recentPitch
   if (ref == null) return false
   const plays = [
@@ -63,6 +63,11 @@ export function moreEligibility(
     state.motions.some(m => !m.complete)
   )
     return 'Finish the current play first'
+  if (
+    action === 'Put Batter on Base' &&
+    baseIds(state.session).some(id => id != null)
+  )
+    return 'Requires empty bases'
   if (state.session.liveData.plays.currentPlay == null)
     return 'Choose the next batter first'
   if (
@@ -109,7 +114,7 @@ export function moreReducer(
   state: ScoringState,
   event: Extract<ScoringEvent, { type: 'MORE' }>
 ): ScoringState {
-  const { action, base, playerId, destinations } = event.input
+  const { action, base, playerId } = event.input
   if (!(action in moreEvents) || moreEligibility(state, action) != null)
     return state
   const occupied = baseIds(state.session)
@@ -136,27 +141,11 @@ export function moreReducer(
       ].players.includes(playerId))
   )
     return state
-  if (action === 'Put Batter on Base') {
-    if (base == null || ![1, 2, 3].includes(base)) return state
-    const places = [base]
-    for (const id of occupied)
-      if (id != null) {
-        const to = destinations?.[id]
-        if (
-          to == null ||
-          ![1, 2, 3, 4].includes(to) ||
-          to <= base ||
-          (to < 4 && places.includes(to))
-        )
-          return state
-        places.push(to)
-      }
-    const ordered = occupied
-      .filter((id): id is number => id != null)
-      .map(id => destinations![id])
-    if (ordered.some((to, index) => index > 0 && to < ordered[index - 1]))
-      return state
-  }
+  if (
+    action === 'Put Batter on Base' &&
+    (base == null || ![1, 2, 3].includes(base))
+  )
+    return state
   return accepted(state, action, next => {
     next.recentPitch = null
     recordMoreEvent(
@@ -187,7 +176,8 @@ export function moreReducer(
         'Hit by Pitch',
         'Intentional Walk',
         "Catcher's Interference",
-        'Balk'
+        'Balk',
+        'Put Batter on Base'
       ].includes(action),
       outcome:
         action === 'Balk'
@@ -252,16 +242,6 @@ export function moreReducer(
         to: base!,
         force: false,
         decision: 'safe'
-      })
-      occupied.forEach((id, index) => {
-        if (id != null)
-          movements.push({
-            playerId: id,
-            from: index + 1,
-            to: destinations![id],
-            force: false,
-            decision: destinations![id] === 4 ? 'pending' : 'safe'
-          })
       })
     } else {
       movements.push({

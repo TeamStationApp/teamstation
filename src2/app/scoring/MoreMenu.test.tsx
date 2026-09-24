@@ -22,9 +22,10 @@ async function click(label: string): Promise<void> {
     button(label).click()
   })
 }
-async function mount(native = false): Promise<void> {
+async function mount(native = false, occupied = false): Promise<void> {
   let state = initialScoringState(createDevelopmentSession(gameFixture, [], []))
-  state.session.liveData.linescore.offense.first = playerRef(state.session, 2)
+  if (occupied)
+    state.session.liveData.linescore.offense.first = playerRef(state.session, 2)
   state = scoringReducer(state, { type: 'PITCH', kind: 'called' })
   state = scoringReducer(state, { type: 'PITCH', kind: 'called' })
   const host = document.createElement('div')
@@ -99,30 +100,25 @@ describe('More scoring menu', function () {
     await click('Dismiss More')
   })
   for (const native of [false, true])
-    it(`groups real scoring actions and confirms placements on ${native ? 'native' : 'web'}`, async function () {
+    it(`groups real scoring actions and places immediately on ${native ? 'native' : 'web'}`, async function () {
       await mount(native)
       await click('More')
       for (const group of MORE_GROUPS)
         expect(document.body.textContent).includes(group.label)
-      expect(
-        document.querySelector('[aria-label="Strike Three, Not Caught"]')
-      ).equals(null)
+      expect(document.querySelector('[aria-label="Wild Pitch"]')).equals(null)
+      expect(document.querySelector('[aria-label="Passed Ball"]')).equals(null)
       await click('Hit by Pitch')
       expect(inputs.pop()?.action).equals('Hit by Pitch')
       await click('More')
       await click('Put Batter on Base')
       await click('Third')
-      expect(button('Confirm Placements').getAttribute('aria-disabled')).equals(
-        'true'
-      )
-      await click('Destination for Player 2')
-      await click('Choose Destination for Player 2 Home')
-      await click('Confirm Placements')
       expect(inputs.pop()).deep.equals({
         action: 'Put Batter on Base',
-        base: 3,
-        destinations: { 2: 4 }
+        base: 3
       })
+      expect(
+        document.querySelector('[aria-label="Confirm Placements"]')
+      ).equals(null)
       await click('More')
       await click('Place a Runner (Tiebreaker)')
       await click('Placed runner')
@@ -138,9 +134,21 @@ describe('More scoring menu', function () {
       await click('More')
       await click('Put Batter on Base')
       await click('First')
-      await click('Cancel')
+      expect(inputs.pop()).deep.equals({
+        action: 'Put Batter on Base',
+        base: 1
+      })
       expect(inputs).has.length(0)
       await click('More')
+      await click(native ? 'Cancel' : 'Dismiss More')
+    })
+  for (const native of [false, true])
+    it(`hides placement on occupied bases on ${native ? 'native' : 'web'}`, async () => {
+      await mount(native, true)
+      await click('More')
+      expect(
+        document.querySelector('[aria-label="Put Batter on Base"]')
+      ).equals(null)
       await click(native ? 'Cancel' : 'Dismiss More')
     })
   it('supports captured release and rightward escape without scoring an opened menu', async function () {
@@ -168,16 +176,16 @@ describe('More scoring menu', function () {
     try {
       await pointer('pointerdown', 50, 800)
       await pointer('pointermove', 50, 700)
-      hit = [button('Wild Pitch')]
+      hit = [button('Hit by Pitch')]
       await pointer('pointermove', 50, 680)
       await pointer('pointerup', 50, 680)
-      expect(inputs.pop()?.action).equals('Wild Pitch')
+      expect(inputs.pop()?.action).equals('Hit by Pitch')
       // iOS Safari can omit the synthetic click after captured release.
       // The next real tap must still open More on its first press.
       await pointer('pointerdown', 50, 800)
       await pointer('pointerup', 50, 800)
       await click('More')
-      expect(button('Wild Pitch')).not.equals(null)
+      expect(button('Hit by Pitch')).not.equals(null)
       await click('Dismiss More')
       hit = []
       await pointer('pointerdown', 50, 800)
@@ -185,20 +193,20 @@ describe('More scoring menu', function () {
       await pointer('pointermove', 500, 600)
       await pointer('pointerup', 500, 600)
       expect(inputs).has.length(0)
-      expect(button('Wild Pitch')).not.equals(null)
+      expect(button('Hit by Pitch')).not.equals(null)
       await click('More')
       await click('Dismiss More')
       await pointer('pointerdown', 50, 800)
       await pointer('pointermove', 50, 700)
       await pointer('pointercancel', 50, 700)
-      expect(document.querySelector('[aria-label="Wild Pitch"]')).equals(null)
+      expect(document.querySelector('[aria-label="Hit by Pitch"]')).equals(null)
       await click('More')
       await act(async () => {
         document.dispatchEvent(
           new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
         )
       })
-      expect(document.querySelector('[aria-label="Wild Pitch"]')).equals(null)
+      expect(document.querySelector('[aria-label="Hit by Pitch"]')).equals(null)
     } finally {
       document.elementsFromPoint = saved
     }

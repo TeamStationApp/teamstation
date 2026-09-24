@@ -830,6 +830,30 @@ describe('scoring browser', function () {
         await page.close()
       }
     })
+  for (const base of ['First', 'Second', 'Third'])
+    it(`places batter directly on ${base} and hides placement while occupied`, async () => {
+      const { page, unexpected } = await open('/games/g1/score')
+      try {
+        await click(page, 'More')
+        expect(await page.$('[aria-label="Wild Pitch"]')).equals(null)
+        expect(await page.$('[aria-label="Passed Ball"]')).equals(null)
+        await click(page, 'Put Batter on Base')
+        await click(page, base)
+        expect(await page.$('[aria-label="Confirm Placements"]')).equals(null)
+        expect(await page.$('[aria-label="Batter base"]')).equals(null)
+        await waitReady(page)
+        await page.waitForSelector('[aria-label*="Batter Player 2"]')
+        expect(await page.$('[aria-label="Finish at-bat"]')).equals(null)
+        await click(page, 'More')
+        expect(await page.$('[aria-label="Put Batter on Base"]')).equals(null)
+        await click(page, 'Dismiss More')
+        await click(page, 'Undo Put Batter on Base')
+        await page.waitForSelector('[aria-label*="Batter Jordan K."]')
+        expect(unexpected).deep.equals([])
+      } finally {
+        await page.close()
+      }
+    })
   for (const action of [
     'Hit by Pitch',
     'Intentional Walk',
@@ -1909,8 +1933,6 @@ describe('scoring browser', function () {
     'Put Batter on Base',
     'Place a Runner (Tiebreaker)',
     'Balk',
-    'Wild Pitch',
-    'Passed Ball',
     'Batter Out — Other',
     'Strike Three, Not Caught'
   ])
@@ -1934,7 +1956,6 @@ describe('scoring browser', function () {
         await click(page, action)
         if (action === 'Put Batter on Base') {
           await click(page, 'Third')
-          await click(page, 'Confirm Placements')
         }
         if (action === 'Place a Runner (Tiebreaker)') {
           await click(page, 'Placed runner')
@@ -1963,6 +1984,7 @@ describe('scoring browser', function () {
         }
         const windowExpected = ![
           'Place a Runner (Tiebreaker)',
+          'Put Batter on Base',
           'Hit by Pitch',
           'Intentional Walk',
           "Catcher's Interference",
@@ -2559,6 +2581,8 @@ describe('scoring browser', function () {
       true,
       [
         'Steal',
+        'Wild Pitch',
+        'Passed Ball',
         'Throwing Error',
         'Fielding Error',
         'Defensive Indifference',

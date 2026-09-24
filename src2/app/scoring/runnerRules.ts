@@ -1,4 +1,5 @@
 import { BASES, type GroundPoint } from '../field/fieldModel'
+import { hasEligiblePitch } from './moreActions'
 import { asScoringPlay } from './scoringContract'
 import {
   accepted,
@@ -18,6 +19,8 @@ import {
 
 export const ADVANCE_SAFE_REASONS = [
   'Steal',
+  'Wild Pitch',
+  'Passed Ball',
   'Throwing Error',
   'Fielding Error',
   'Defensive Indifference',
@@ -156,7 +159,11 @@ export function recordRunner(
     destination: movement.to,
     reason,
     pitchReference:
-      state.moreDraft == null ? undefined : (state.recentPitch ?? undefined),
+      state.moreDraft != null ||
+      (['Wild Pitch', 'Passed Ball'].includes(reason) &&
+        hasEligiblePitch(state))
+        ? (state.recentPitch ?? undefined)
+        : undefined,
     isOut: out,
     forceOut: out && movement.force,
     runScored: !out && movement.to === 4,
@@ -181,7 +188,15 @@ function actionEvent(state: ScoringState, id: number, reason: string): void {
     index: play.playEvents.length,
     isPitch: false,
     type: 'action',
-    details: { description: reason, code: 'runner_action' },
+    details: {
+      description: reason,
+      code:
+        reason === 'Wild Pitch'
+          ? 'wild_pitch'
+          : reason === 'Passed Ball'
+            ? 'passed_ball'
+            : 'runner_action'
+    },
     count: { balls: line.balls, strikes: line.strikes, outs: line.outs },
     player: playerRef(state.session, id)!
   })
