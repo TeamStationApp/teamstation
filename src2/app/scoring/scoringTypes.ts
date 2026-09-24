@@ -25,6 +25,8 @@ export interface ScoringPlayer {
   sourceUserId: string | number | null
   teamId: string
   fullName: string
+  firstName?: string
+  lastName?: string
   jersey: string
   bats: 'left' | 'right' | 'switch'
   throws: 'left' | 'right' | null

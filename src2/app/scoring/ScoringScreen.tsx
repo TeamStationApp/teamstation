@@ -772,6 +772,7 @@ function ScoringSession(props: {
       {sheet != null && (
         <ScoringSheet
           textCancel={sheet === 'rosters'}
+          fullScreen={sheet === 'rosters'}
           title={
             {
               exit: 'Exit Current Game',

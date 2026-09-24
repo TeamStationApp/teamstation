@@ -1,14 +1,15 @@
-import React, { useState } from 'react'
-import { Text, TextInput, useWindowDimensions, View } from 'react-native'
+import React, { useContext, useState } from 'react'
+import { Text, useWindowDimensions, View } from 'react-native'
 
 import { useTheme } from '../theme/ThemeContext'
-import { addDevelopmentPlayer } from './developmentSession'
+import { addPlayerDraft } from './playerDraft'
+import { PlayerEntrySheet } from './PlayerEntrySheet'
 import { RosterDrag, RosterDragGroup, RosterScrollArea } from './RosterDrag'
 import { RosterSelector } from './RosterSelector'
 import { applyRosterDraft } from './scoringEdits'
 import { copyState } from './scoringMachine'
 import { baseIds, battingSide } from './scoringSelectors'
-import { ScoringButton, ScoringError } from './ScoringSheet'
+import { ScoringButton, ScoringError, ScoringSheetHeight } from './ScoringSheet'
 import {
   POSITIONS,
   type ScoringSessionState,
@@ -25,11 +26,11 @@ export function RosterEditor({
 }): React.ReactElement {
   const theme = useTheme()
   const { height } = useWindowDimensions()
+  const contentHeight = useContext(ScoringSheetHeight)
   const [draft, setDraft] = useState(() => copyState(state.session))
   const [side, setSide] = useState<Side>(battingSide(state.session))
   const [defense, setDefense] = useState(false)
   const [adding, setAdding] = useState(false)
-  const [name, setName] = useState('')
   const [nextBatter, setNextBatter] = useState<number>()
   const edit = (change: (next: ScoringSessionState) => void): void => {
     setDraft(previous => {
@@ -88,7 +89,7 @@ export function RosterEditor({
     borderRadius: 6,
     backgroundColor: theme.scoringSelectorIdle
   }
-  const listHeight = Math.max(120, Math.min(420, height * 0.92 - 330))
+  const listHeight = Math.max(120, (contentHeight ?? height - 80) - 300)
   return (
     <View style={{ gap: 12 }}>
       <RosterSelector
@@ -192,8 +193,8 @@ export function RosterEditor({
                       <View style={row}>
                         <View
                           style={{
-                            width: 34,
-                            height: 34,
+                            width: 24,
+                            height: 24,
                             borderRadius: 6,
                             backgroundColor: '#fff',
                             alignItems: 'center',
@@ -216,6 +217,8 @@ export function RosterEditor({
                         <ScoringButton
                           text="×"
                           label={`Clear ${position}`}
+                          shape="circle"
+                          color={theme.scoringOutColor}
                           disabled={id == null}
                           onPress={() => {
                             edit(next => {
@@ -292,16 +295,14 @@ export function RosterEditor({
         </View>
       </RosterDragGroup>
       {adding && (
-        <TextInput
-          accessibilityLabel="New player name"
-          value={name}
-          onChangeText={setName}
-          placeholder="Player name"
-          style={{
-            ...text,
-            padding: 12,
-            borderWidth: 1,
-            borderColor: theme.inputBorderColor
+        <PlayerEntrySheet
+          onClose={() => {
+            setAdding(false)
+          }}
+          onAdd={player => {
+            edit(next => {
+              addPlayerDraft(next, side, player)
+            })
           }}
         />
       )}
@@ -309,17 +310,10 @@ export function RosterEditor({
         <View style={{ flex: 1 }}>
           <ScoringButton
             shape="pill"
-            label={adding ? 'Create Player' : 'Add Player'}
-            disabled={adding && name.trim().length === 0}
+            label="Create Player"
+            text="Add Player"
             onPress={() => {
-              if (!adding) setAdding(true)
-              else {
-                edit(next => {
-                  addDevelopmentPlayer(next, side, name)
-                })
-                setName('')
-                setAdding(false)
-              }
+              setAdding(true)
             }}
           />
         </View>
