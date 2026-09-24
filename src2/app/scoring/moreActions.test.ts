@@ -42,7 +42,7 @@ describe('More local scoring actions', function () {
       for (let mask = 0; mask < 8; mask++) {
         const start = initial(mask)
         const state = resolveHomes(more(start, { action }))
-        expect(state.phase).equals('correctionWindow')
+        expect(state.phase).oneOf(['ready', 'awaitingBatter'])
         expect(state.session.liveData.linescore.offense.first?.id).equals(1)
         expect(state.session.liveData.linescore.teams.away.runs).equals(
           mask === 7 ? 1 : 0
@@ -50,7 +50,7 @@ describe('More local scoring actions', function () {
         expect(
           state.session.liveData.boxscore.teams.home.pitchCounts[10] ?? 0
         ).equals(action === 'Hit by Pitch' ? 1 : 0)
-        const play = state.session.liveData.plays.currentPlay!
+        const play = state.session.liveData.plays.allPlays.at(-1)!
         expect(play.result.event).equals(action)
         expect(play.hitData).equals(undefined)
         expect(

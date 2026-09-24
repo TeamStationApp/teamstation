@@ -1,7 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { completeMotions } from '../../test/scoringHelpers'
+import { completeMotions, singleCorrection } from '../../test/scoringHelpers'
 import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { initialScoringState, scoringReducer } from './scoringMachine'
@@ -77,9 +77,7 @@ describe('atomic runner drafts', function () {
     let state = initialScoringState(
       createDevelopmentSession(gameFixture, [], [])
     )
-    for (let i = 0; i < 4; i++)
-      state = scoringReducer(state, { type: 'PITCH', kind: 'ball' })
-    state = completeMotions(state)
+    state = singleCorrection(state)
     state = scoringReducer(state, {
       type: 'TIMER_TICK',
       generation: state.generation,

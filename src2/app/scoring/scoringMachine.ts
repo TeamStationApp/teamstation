@@ -464,6 +464,7 @@ export function scoringReducer(
       const originalBases = baseIds(session)
       next.pendingPlay = {
         outcome: walk ? 'Walk' : 'Strikeout',
+        automaticAward: walk,
         originalRunnerRecordCount: play.runners.length,
         originalBases,
         originalRuns: line.teams[battingSide(session)].runs,
@@ -491,13 +492,13 @@ export function scoringReducer(
           })
         }
         if (carry != null) {
-          next.homeQueue = [carry]
           next.pendingPlay.movements.push({
             playerId: carry,
             from: 3,
             to: 4,
             force: true,
-            decision: 'pending'
+            decision: 'safe',
+            automaticHome: true
           })
         }
       } else line.outs++
