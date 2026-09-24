@@ -33,7 +33,8 @@ async function open(
   path: string,
   scored: boolean | number = false,
   failed = false,
-  failedRoster = false
+  failedRoster = false,
+  bats: 'switch' | 'left' | 'right' = 'switch'
 ): Promise<{ page: Page; unexpected: string[] }> {
   const page = await browser.newPage()
   const unexpected: string[] = []
@@ -80,7 +81,7 @@ async function open(
               positions: ['P'],
               isPlayer: true,
               role: 'member',
-              bats: 'switch',
+              bats,
               throws: 'right'
             }
           ]
@@ -628,6 +629,102 @@ describe('scoring browser', function () {
       await direct.page.close()
     }
   })
+  for (const bats of ['right', 'left'] as const)
+    it(`drags a ${bats} batter across the plate before a pitch without switch help`, async function () {
+      const { page } = await open('/games/g1/score', false, false, false, bats)
+      try {
+        await page.waitForSelector('canvas[data-field-ready="true"]')
+        expect(await page.$('[aria-label="OK"]')).equals(null)
+        const box = await page.$eval('canvas', n => {
+          const r = n.getBoundingClientRect()
+          return { x: r.x, y: r.y, width: r.width, height: r.height }
+        })
+        const camera = new PerspectiveCamera()
+        applyFieldCamera(camera, {
+          width: box.width,
+          height: box.height,
+          view: 'home',
+          zoom: 1.25,
+          tilt: (-11 * Math.PI) / 180,
+          heightOffset: 33,
+          bottomExtension: 112
+        })
+        const project = (x: number): [number, number] => {
+          const p = new Vector3(x, 6, 0).project(camera)
+          return [
+            box.x + ((p.x + 1) * box.width) / 2,
+            box.y + ((1 - p.y) * box.height) / 2
+          ]
+        }
+        const start = project(bats === 'right' ? -4 : 4),
+          end = project(bats === 'right' ? 7 : -7)
+        await page.mouse.move(...start)
+        await page.mouse.down()
+        await page.mouse.move(...end, { steps: 12 })
+        await page.mouse.up()
+        const side = bats === 'right' ? 'left' : 'right'
+        await page.waitForSelector(
+          `[aria-label*="Batter Jordan K. ${side} handed"]`
+        )
+        await click(page, 'Ball')
+        await waitReady(page)
+        await page.mouse.move(...end)
+        await page.mouse.down()
+        await page.mouse.move(...start, { steps: 12 })
+        await page.mouse.up()
+        expect(
+          await page.$(`[aria-label*="Batter Jordan K. ${side} handed"]`)
+        ).not.equals(null)
+        await click(page, 'Undo Ball')
+      } finally {
+        await page.close()
+      }
+    })
+  for (const action of [
+    'Hit by Pitch',
+    'Intentional Walk',
+    "Catcher's Interference",
+    'Walk',
+    'Balk'
+  ])
+    it(`automatically scores a forced run for ${action} with no correction prompt`, async function () {
+      const { page } = await open('/games/g1/score')
+      try {
+        await click(page, 'Open scoring menu')
+        await click(page, 'Overrides')
+        for (const [base, player] of [
+          ['First base', 'Player 6'],
+          ['Second base', 'Player 7'],
+          ['Third base', 'Player 8']
+        ]) {
+          await click(page, base)
+          await click(page, `Choose ${base} ${player}`)
+        }
+        await click(page, 'Apply Override')
+        if (action === 'Walk')
+          for (let i = 0; i < 4; i++) {
+            await click(page, 'Ball')
+            await waitReady(page)
+          }
+        else {
+          await click(page, 'More')
+          await click(page, action)
+          await waitReady(page)
+        }
+        await page.waitForSelector('[aria-label*="Owls 1 · Hawks 0"]', {
+          timeout: 30000
+        })
+        await page.waitForSelector(
+          `[aria-label*="Batter ${action === 'Balk' ? 'Jordan K.' : 'Player 2'}"]`
+        )
+        expect(await page.$('[aria-label="Finish at-bat"]')).equals(null)
+        expect(await page.$('[aria-label="Safe at home"]')).equals(null)
+        await click(page, `Undo ${action === 'Walk' ? 'Ball' : action}`)
+        await page.waitForSelector('[aria-label*="Owls 0 · Hawks 0"]')
+      } finally {
+        await page.close()
+      }
+    })
   it('shows real identities, switches the hitter before a pitch, and repeatedly undoes pitches', async function () {
     const { page, unexpected } = await open('/games/g1/score')
     try {
@@ -1430,10 +1527,8 @@ describe('scoring browser', function () {
       await page.mouse.move(row.x, row.y)
       await page.mouse.up()
       await page.waitForSelector('[aria-label="Undo Hit by Pitch"]')
-      await page.waitForSelector('[aria-label="Finish at-bat"]', {
-        timeout: 30000
-      })
-      await click(page, 'Finish at-bat')
+      await waitReady(page)
+      expect(await page.$('[aria-label="Finish at-bat"]')).equals(null)
       await page.mouse.move(trigger.x, trigger.y)
       await page.mouse.down()
       await page.mouse.move(trigger.x, trigger.y - 20)
@@ -1506,6 +1601,9 @@ describe('scoring browser', function () {
         }
         const windowExpected = ![
           'Place a Runner (Tiebreaker)',
+          'Hit by Pitch',
+          'Intentional Walk',
+          "Catcher's Interference",
           'Batter Out — Other',
           'Wild Pitch',
           'Passed Ball',
@@ -2105,16 +2203,13 @@ describe('scoring browser', function () {
       try {
         for (let i = 0; i < (walk ? 4 : 3); i++)
           await click(page, walk ? 'Ball' : 'Called Strike')
-        if (walk)
-          await page.waitForSelector('[aria-label="Time to edit play"]', {
-            timeout: 30000
-          })
         await page.waitForSelector('[aria-label*="Batter Player 2"]', {
           timeout: 20000
         })
         await page.waitForSelector(
           `[aria-label*="0 balls 0 strikes ${walk ? 0 : 1} outs · Pitches ${walk ? 4 : 3}"]`
         )
+        expect(await page.$('[aria-label="Time to edit play"]')).equals(null)
         await page.locator('[aria-label^="Undo "]').click()
         await page.waitForSelector(
           `[aria-label*="${walk ? '3 balls 0' : '0 balls 2'} strikes 0 outs"]`

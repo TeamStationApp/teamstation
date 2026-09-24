@@ -288,7 +288,12 @@ function ScoringSession(props: {
     let live = true
     setHint(false)
     const helpKey = `${props.userId}:${appearance}:${batterId}`
-    if (!switchable || shownAppearances.current.has(helpKey)) return
+    if (
+      !switchable ||
+      session.gameData.players[batterId ?? 0]?.bats !== 'switch' ||
+      shownAppearances.current.has(helpKey)
+    )
+      return
     scoringPreferences
       .read(props.userId)
       .then(async preferences => {
@@ -305,7 +310,7 @@ function ScoringSession(props: {
       live = false
     }
     // A box change does not present the same appearance's help again.
-  }, [props.userId, batterId, appearance, switchable])
+  }, [props.userId, batterId, appearance, switchable, session.gameData.players])
   useEffect(() => {
     let live = true
     props.source.save(session).then(

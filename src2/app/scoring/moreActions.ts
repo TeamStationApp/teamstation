@@ -183,6 +183,12 @@ export function moreReducer(
       return
     }
     next.pendingPlay = {
+      automaticAward: [
+        'Hit by Pitch',
+        'Intentional Walk',
+        "Catcher's Interference",
+        'Balk'
+      ].includes(action),
       outcome:
         action === 'Balk'
           ? 'Balk'
@@ -281,6 +287,11 @@ export function moreReducer(
         })
       })
     }
+    if (next.pendingPlay.automaticAward === true)
+      for (const movement of movements) {
+        movement.decision = 'safe'
+        movement.automaticHome = movement.to === 4
+      }
     next.pendingPlay.movements = movements
     applyAwardMovements(next, action)
     next.phase = 'runnerMovement'

@@ -100,6 +100,7 @@ export interface Movement {
   resolved?: boolean
 }
 export interface PendingPlay {
+  automaticAward?: boolean
   errorPending?: boolean
   homeRunKind?: HomeRunKind
   landingHeight?: number

@@ -128,9 +128,5 @@ export function scoreboardFor(session: ScoringSessionState): ScoreboardState {
 }
 export function canSwitchBatter(session: ScoringSessionState): boolean {
   const play = session.liveData.plays.currentPlay
-  return (
-    play != null &&
-    session.gameData.players[play.matchup.batter.id].bats === 'switch' &&
-    !play.playEvents.some(event => event.isPitch)
-  )
+  return play != null && !play.playEvents.some(event => event.isPitch)
 }

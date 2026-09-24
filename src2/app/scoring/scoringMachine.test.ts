@@ -2,7 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { asRosterEntry } from '../../common/api'
-import { completeMotions } from '../../test/scoringHelpers'
+import { completeMotions, singleCorrection } from '../../test/scoringHelpers'
 import { advancePlayer } from '../field/fieldModel'
 import { asSessionId } from './contracts/estimatedGumbo'
 import {
@@ -170,7 +170,7 @@ describe('local scoring sessions', function () {
       fieldPlayersFor(left).find(player => player.batting === true)?.jersey
     ).equals('')
   })
-  it('walks only forced runners and leaves home runs undecided until the scorer acts', function () {
+  it('walks forced runners, scores awarded runs safely and completes the appearance', function () {
     for (let mask = 0; mask < 8; mask++) {
       let state = initial()
       const offense = state.session.liveData.linescore.offense
@@ -187,21 +187,21 @@ describe('local scoring sessions', function () {
       expect(bases.filter(id => id != null)).has.length(
         new Set(bases.filter(id => id != null)).size
       )
-      expect(state.session.liveData.linescore.teams.away.runs).equals(0)
-      expect(state.homeQueue).has.length(mask === 7 ? 1 : 0)
-      expect(state.phase).equals(
-        mask === 7 ? 'homeDecision' : 'correctionWindow'
+      expect(state.session.liveData.linescore.teams.away.runs).equals(
+        mask === 7 ? 1 : 0
       )
+      expect(state.homeQueue).has.length(0)
+      expect(state.phase).oneOf(['ready', 'awaitingBatter'])
       const closed = scoringReducer(state, { type: 'CLOSE_PLAY' })
-      if (mask === 7) expect(closed).equals(state)
-      else expect(closed.session.liveData.plays.allPlays).has.length(1)
+      expect(closed).equals(state)
+      expect(closed.session.liveData.plays.allPlays).has.length(1)
       expect(
         fieldPlayersFor(state.session).filter(player => player.playerId === 1)
       ).has.length(1)
     }
   })
   it('accepts runner release decisions only for this generation and the next base', function () {
-    const state = pitch(initial(), 'ball', 4)
+    const state = singleCorrection(initial())
     const drop = {
       type: 'RUNNER_DROP' as const,
       id: 1,
@@ -219,7 +219,7 @@ describe('local scoring sessions', function () {
     expect(moved.session.liveData.linescore.offense.second?.id).equals(1)
   })
   it('guards Done by play identity, generation and timer revision and races expiry once', function () {
-    const state = pitch(initial(), 'ball', 4)
+    const state = singleCorrection(initial())
     const done = {
       type: 'CLOSE_PLAY' as const,
       generation: state.generation,
@@ -251,7 +251,7 @@ describe('local scoring sessions', function () {
     expect(scoringReducer(expired, done)).equals(expired)
     expect(
       scoringReducer(closed, { type: 'UNDO' }).session.liveData.linescore.balls
-    ).equals(3)
+    ).equals(0)
     expect(scoringReducer({ ...state, homeQueue: [1] }, done).phase).equals(
       'correctionWindow'
     )

@@ -348,8 +348,15 @@ function resolveAutomaticHomes(state: ScoringState): void {
     }
     move.resolved = true
     state.session.liveData.linescore.teams[battingSide(state.session)].runs++
-    state.session.liveData.plays.currentPlay!.result.rbi++
-    recordRunner(state, move, pending.outcome)
+    if (pending.outcome !== 'Balk')
+      state.session.liveData.plays.currentPlay!.result.rbi++
+    recordRunner(
+      state,
+      move,
+      pending.automaticAward === true && pending.outcome !== 'Balk'
+        ? state.session.liveData.plays.currentPlay!.result.event
+        : pending.outcome
+    )
   }
 }
 export function settleRunners(state: ScoringState): void {
@@ -411,6 +418,10 @@ export function settleRunners(state: ScoringState): void {
     state.phase = 'runnerMovement'
     return
   }
+  if (pending?.automaticAward === true && state.presentation != null) {
+    state.phase = 'runnerMovement'
+    return
+  }
   if (pending?.sameAppearance === true) {
     state.pendingPlay = null
     state.runnerAction = null
@@ -434,7 +445,8 @@ export function settleRunners(state: ScoringState): void {
     }
     if (
       state.presentation == null &&
-      (baseIds(state.session).every(id => id == null) ||
+      (pending.automaticAward === true ||
+        baseIds(state.session).every(id => id == null) ||
         state.session.liveData.linescore.outs >= 3)
     )
       Object.assign(state, closePlay(state))

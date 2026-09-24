@@ -52,7 +52,9 @@ async function click(label: string): Promise<void> {
     element?.click()
   })
 }
-function clientForSwitchHitter(): GameStationClient {
+function clientForSwitchHitter(
+  bats: 'switch' | 'left' | 'right' = 'switch'
+): GameStationClient {
   const client = new GameStationClient({ baseUrl: '/api/v1' })
   client.game = async () => gameFixture
   client.roster = async team =>
@@ -65,7 +67,7 @@ function clientForSwitchHitter(): GameStationClient {
             positions: ['P'],
             isPlayer: true,
             role: 'member',
-            bats: 'switch'
+            bats
           })
         ]
       : []
@@ -112,6 +114,14 @@ describe('local scoring controls', function () {
     expect(document.querySelector('[aria-label="OK"]')).not.equals(null)
     await click('Ball')
     expect(document.querySelector('[aria-label="OK"]')).equals(null)
+  })
+  it('reserves the limited batting-side tutorial for switch profiles', async function () {
+    for (const side of ['left', 'right'] as const) {
+      await scoringPreferences.write('scorer', { help: true, shown: 0 })
+      await mount(clientForSwitchHitter(side))
+      expect(document.querySelector('[aria-label="OK"]')).equals(null)
+      expect((await scoringPreferences.read('scorer')).shown).equals(0)
+    }
   })
   it('keeps real team names when roster reads fail and supports a failing replaceable source', async function () {
     const client = clientForSwitchHitter()

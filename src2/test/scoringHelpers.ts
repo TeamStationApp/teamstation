@@ -12,3 +12,20 @@ export function completeMotions(state: ScoringState): ScoringState {
   }
   return state
 }
+
+export function singleCorrection(state: ScoringState): ScoringState {
+  state = scoringReducer(state, { type: 'OUTCOME', outcome: 'Single' })
+  state = scoringReducer(state, {
+    type: 'FIELDER',
+    id: state.session.liveData.linescore.defense.P!.id,
+    point: { x: 0, z: -25 },
+    generation: state.generation
+  })
+  return completeMotions(
+    scoringReducer(state, {
+      type: 'TRAJECTORY',
+      angle: 25,
+      generation: state.generation
+    })
+  )
+}

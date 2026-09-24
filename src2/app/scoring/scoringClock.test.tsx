@@ -3,7 +3,7 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act, useReducer } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
-import { completeMotions } from '../../test/scoringHelpers'
+import { singleCorrection } from '../../test/scoringHelpers'
 import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { runCorrectionClock, type ScoringClock } from './scoringClock'
@@ -83,9 +83,7 @@ describe('correction clock', function () {
     let initial = initialScoringState(
       createDevelopmentSession(gameFixture, [], [])
     )
-    for (let pitch = 0; pitch < 4; pitch++)
-      initial = scoringReducer(initial, { type: 'PITCH', kind: 'ball' })
-    initial = completeMotions(initial)
+    initial = singleCorrection(initial)
     const clock = new FakeClock()
     const host = document.createElement('div')
     document.body.appendChild(host)
