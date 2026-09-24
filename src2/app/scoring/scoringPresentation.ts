@@ -82,6 +82,9 @@ export interface HitSequence {
   kind: 'hit'
   durationMs: number
   contactMs: number
+  flightEndMs: number
+  fielderStartMs: number
+  fielderEndMs: number
   players: FieldPlayer[]
   batter: number
   fielder?: number
@@ -218,6 +221,9 @@ export function hitPresentation(
     1100,
     (Math.hypot(target.x - start.x, target.z - start.z) / 20) * 1000
   )
+  const flightEndMs = 450 + flight
+  const caught = pending.outcome === 'Ball Caught' || pending.fielder == null
+  const fielderEndMs = caught ? 450 + flight / 3 : flightEndMs + 300
   return {
     id: `${state.generation}:${state.session.meta.sequence + 1}:hit`,
     generation: state.generation,
@@ -228,7 +234,13 @@ export function hitPresentation(
       pending.homeRunKind === 'out-of-park'
         ? clampToField(target)
         : { ...target },
-    durationMs: 450 + flight,
+    durationMs:
+      pending.fielder == null
+        ? flightEndMs
+        : Math.max(flightEndMs, fielderEndMs),
+    flightEndMs,
+    fielderStartMs: fielderEndMs - flight / 3,
+    fielderEndMs,
     contactMs: 450,
     players,
     batter: state.session.liveData.plays.currentPlay!.matchup.batter.id,

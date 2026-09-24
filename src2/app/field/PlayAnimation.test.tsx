@@ -126,15 +126,20 @@ describe('rendered hit timeline', function () {
           )
           expect(batter.position.z).lessThan(0)
         }
-        expect(fielder.position).not.deep.equals(sequence.fielderStart)
         expect(completions).equals(0)
-        await renderer.advanceFrames(12, 0.05)
-        expect(fielder.position).deep.equals(sequence.arc.target)
-        expect(fielder.pose!.run).equals(0)
-        expect(completions).equals(0)
+        if (outcome === 'Ball Caught') {
+          expect(fielder.position).not.deep.equals(sequence.fielderStart)
+        }
+        // Advance to just after landing without crossing the delayed pickup.
+        const frames = Math.ceil((sequence.flightEndMs - 1200) / 50)
+        await renderer.advanceFrames(frames, 0.05)
+        if (outcome === 'Single') {
+          expect(fielder.position).not.deep.equals(sequence.arc.target)
+          expect(completions).equals(0)
+        }
         const ball = renderer.scene.findByProps({ name: 'animated-baseball' })
           .instance as Mesh
-        expect(ball.visible).equals(true)
+        expect(ball.visible).equals(outcome === 'Single')
         await renderer.advanceFrames(200, 0.05)
         expect(completions).equals(1)
         expect(fielder.position).deep.equals(sequence.arc.target)

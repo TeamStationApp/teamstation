@@ -160,7 +160,7 @@ async function geometry() {
 try {
   await m.launchApp()
   await m.setOrientation('portrait')
-  for (const reason of process.env.SCORING_FEEDBACK_PHASE === 'hr' ? [] : ['Wild Pitch', 'Passed Ball']) {
+  for (const reason of ['hr','field'].includes(process.env.SCORING_FEEDBACK_PHASE) ? [] : ['Wild Pitch', 'Passed Ball']) {
     await freshGame()
     await tap('More')
     await absent('^Wild Pitch$')
@@ -203,7 +203,7 @@ try {
     await tap(`Undo ${reason}`)
     await visible('Batter Player 2')
   }
-  for (const outside of process.env.SCORING_FEEDBACK_PHASE === 'actions' ? [] : [false, true]) {
+  for (const outside of ['actions','field'].includes(process.env.SCORING_FEEDBACK_PHASE) ? [] : [false, true]) {
     await freshGame()
     await tap('Ball in Play')
     await tap('Home Run')
@@ -250,8 +250,25 @@ try {
     await absent('Time to edit play')
     await shot(outside ? 'stands-finished' : 'in-park-finished')
   }
+  if (process.env.SCORING_FEEDBACK_PHASE === 'field') for (const caught of [false,true]) {
+    await freshGame()
+    await tap('Ball in Play')
+    if(caught) {await tap('Batter Out');await tap('Ball Caught')}
+    else await tap('Single')
+    await visible('Tap or drag a player to where the ball was fielded')
+    const g=await geometry()
+    await gesture([g.project(0,-18.44,6),g.project(20,-40,0.7)],80)
+    await visible('Drag up and down for ball trajectory')
+    await shot(caught?'caught-trajectory':'single-trajectory')
+    const start={x:g.field.x+g.field.width*.25,y:g.field.y+g.field.height*.6}
+    await gesture([start,{x:start.x,y:start.y-25}],80)
+    if(caught) await visible('Batter Player 2')
+    else {await visible('Finish at-bat');await tap('Finish at-bat')}
+    await visible('Batter Player 2')
+    await shot(caught?'caught-finished':'single-finished')
+  }
   log(
-    'PASS Safari immediate empty-base placement, hidden occupied placement, runner Wild Pitch/Passed Ball and Undo'
+    'PASS Safari selected scoring-feedback scenarios'
   )
 } catch (error) {
   await shot('failure').catch(() => {})
