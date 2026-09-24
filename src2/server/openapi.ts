@@ -635,6 +635,54 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/logs': {
+        post: {
+          summary: "A client's own log lines, written to the server's log",
+          description:
+            'For the GameStation app, or any client that runs ' +
+            "away from the server. Each line is written to the server's log " +
+            'tagged `[client <source>]` with `run`, `build` and the signed-in ' +
+            'user, if any. No session is needed. At most 200 lines per post; ' +
+            'each line is cut at 2000 characters. Nothing is stored.',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['source', 'lines'],
+                  properties: {
+                    source: { type: 'string' },
+                    run: { type: 'string' },
+                    build: { type: 'string' },
+                    lines: {
+                      type: 'array',
+                      maxItems: 200,
+                      items: {
+                        type: 'object',
+                        required: ['at', 'level', 'text'],
+                        properties: {
+                          at: { type: 'string' },
+                          level: {
+                            type: 'string',
+                            enum: ['debug', 'info', 'warn', 'error']
+                          },
+                          text: { type: 'string' },
+                          data: {}
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            204: { description: 'Written' },
+            400: { description: 'Malformed, or more than 200 lines' }
+          }
+        }
+      },
       '/games/{gameId}/box-score': {
         get: {
           summary: "A game's batting and pitching lines",

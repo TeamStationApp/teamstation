@@ -11,6 +11,7 @@ import { eventRoutes } from './routes/events'
 import { healthRoutes } from './routes/health'
 import { inviteRoutes } from './routes/invites'
 import { liveRoutes } from './routes/live'
+import { logRoutes } from './routes/logs'
 import { manageRoutes } from './routes/manage'
 import { mediaRoutes } from './routes/media'
 import { seasonRoutes } from './routes/seasons'
@@ -97,6 +98,7 @@ describe('the API document', function () {
       ...routesOf(seasonRoutes(db, media)),
       ...routesOf(teamRoutes(db, media)),
       ...routesOf(eventRoutes(db)),
+      ...routesOf(logRoutes()),
       ...routesOf(statsRoutes(db)),
       ...routesOf(mediaRoutes(db, media)),
       ...routesOf(liveRoutes(db, live)),
@@ -126,6 +128,7 @@ describe('the API document', function () {
       ...routesOf(seasonRoutes(db, media)),
       ...routesOf(teamRoutes(db, media)),
       ...routesOf(eventRoutes(db)),
+      ...routesOf(logRoutes()),
       ...routesOf(statsRoutes(db)),
       ...routesOf(mediaRoutes(db, media)),
       ...routesOf(liveRoutes(db, live)),
