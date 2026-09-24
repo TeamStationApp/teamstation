@@ -3,6 +3,7 @@ import React, { useRef } from 'react'
 import type { RosterSelectorDragProps } from './rosterSelectorDragProps'
 export function RosterSelectorDrag({
   children,
+  count = 2,
   value,
   width,
   onMove,
@@ -38,7 +39,10 @@ export function RosterSelectorDrag({
         onMove(
           Math.max(
             0,
-            Math.min(drag.width / 2, event.clientX - drag.left - drag.width / 4)
+            Math.min(
+              drag.width * (1 - 1 / count),
+              event.clientX - drag.left - drag.width / (2 * count)
+            )
           )
         )
       }}
@@ -46,20 +50,28 @@ export function RosterSelectorDrag({
         const drag = pointer.current
         pointer.current = undefined
         if (drag?.moved !== true) return
-        const next = event.clientX - drag.left < drag.width / 2 ? 0 : 1
+        const next = Math.max(
+          0,
+          Math.min(
+            count - 1,
+            Math.floor(
+              ((event.clientX - drag.left) / Math.max(1, drag.width)) * count
+            )
+          )
+        )
         onChange(next)
-        onMove((next * drag.width) / 2)
+        onMove((next * drag.width) / count)
       }}
       onPointerCancel={() => {
         pointer.current = undefined
         suppressClick.current = true
-        onMove((value * width) / 2)
+        onMove((value * width) / count)
       }}
       onLostPointerCapture={event => {
         if (event.target !== event.currentTarget || pointer.current == null)
           return
         pointer.current = undefined
-        onMove((value * width) / 2)
+        onMove((value * width) / count)
       }}
       onClickCapture={event => {
         if (!suppressClick.current) return

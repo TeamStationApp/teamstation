@@ -920,6 +920,61 @@ describe('scoring browser', function () {
       await page.close()
     }
   })
+  it('creates detailed players in a full-screen roster and cancels only the active sheet', async function () {
+    const { page, unexpected } = await open('/games/g1/score')
+    try {
+      await click(page, 'Open scoring menu')
+      await click(page, 'Set Team Rosters')
+      await click(page, 'Create Player')
+      await page.waitForFunction(
+        () =>
+          document.activeElement!.getAttribute('aria-label') === 'First Name'
+      )
+      await page.locator('[aria-label="First Name"]').fill('Alex')
+      await page.locator('[aria-label="Last Name"]').fill('Local')
+      await page.locator('[aria-label="Jersey Number"]').fill('07')
+      await click(page, 'Throws L')
+      await click(page, 'Bats S')
+      await click(page, 'Player position P')
+      await click(page, 'Player position DH')
+      await click(page, 'Save and Add Another Player')
+      await page.waitForFunction(
+        () =>
+          document.activeElement!.getAttribute('aria-label') === 'First Name' &&
+          (document.activeElement as HTMLInputElement).value === ''
+      )
+      expect(
+        await page.$eval('[aria-label="Bats R"]', n =>
+          n.getAttribute('aria-selected')
+        )
+      ).equals('true')
+      await page.keyboard.press('Escape')
+      await page.waitForSelector('[aria-label="Create Player"]')
+      expect(await page.$('[aria-label="First Name"]')).equals(null)
+      expect(
+        await page.$eval(
+          '[aria-label="Add Alex Local to Lineup"]',
+          n => n.textContent
+        )
+      ).includes('#07 Alex Local')
+      await click(page, 'Home Team')
+      expect(await page.$('[aria-label="Add Alex Local to Lineup"]')).equals(
+        null
+      )
+      await click(page, 'Away Team')
+      await click(page, 'Save Rosters')
+      await click(page, 'Undo Set team roster')
+      await click(page, 'Open scoring menu')
+      await click(page, 'Set Team Rosters')
+      expect(await page.$('[aria-label="Add Alex Local to Lineup"]')).equals(
+        null
+      )
+      await click(page, 'Cancel')
+      expect(unexpected).deep.equals([])
+    } finally {
+      await page.close()
+    }
+  })
   it('shows one lineup insertion line and numbered themed rows before dropping', async function () {
     const { page } = await open('/games/g1/score')
     try {
@@ -1081,7 +1136,7 @@ describe('scoring browser', function () {
     try {
       await page.setViewport({
         width: 390,
-        height: 844,
+        height: 740,
         isMobile: true,
         hasTouch: true
       })
@@ -1507,9 +1562,10 @@ describe('scoring browser', function () {
       })
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
-      await click(page, 'Add Player')
-      await page.locator('[aria-label="New player name"]').fill('Relief Batter')
       await click(page, 'Create Player')
+      await page.locator('[aria-label="First Name"]').fill('Relief')
+      await page.locator('[aria-label="Last Name"]').fill('Batter')
+      await click(page, 'Add Player')
       await click(page, 'Add Relief Batter to Lineup')
       await click(page, 'Next batter Relief Batter')
       await click(page, 'Save Rosters')

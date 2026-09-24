@@ -1,8 +1,21 @@
-import React, { useState } from 'react'
-import { Modal, Pressable, ScrollView, Text, View } from 'react-native'
+import React, { createContext, useState } from 'react'
+import {
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  SafeAreaView as WebSafeAreaView,
+  ScrollView,
+  Text,
+  View
+} from 'react-native'
+import {
+  initialWindowMetrics,
+  SafeAreaProvider,
+  SafeAreaView
+} from 'react-native-safe-area-context'
 
 import { useTheme } from '../theme/ThemeContext'
-import { useMenuEscape } from './useMenuEscape'
 
 export function ScoringButton({
   label,
@@ -113,93 +126,147 @@ export function ScoringButton({
     </Pressable>
   )
 }
+export const ScoringSheetHeight = createContext<number | undefined>(undefined)
+// eslint-disable-next-line @typescript-eslint/no-deprecated -- Web implementation uses CSS env() and avoids measuring a sliding portal. Native uses safe-area-context.
+const SheetArea = Platform.OS === 'web' ? WebSafeAreaView : SafeAreaView
+
 export function ScoringSheet({
   title,
   textCancel = false,
+  fullScreen = false,
+  onShow,
   onClose,
   children
 }: {
   title: string
   textCancel?: boolean
+  fullScreen?: boolean
+  onShow?: () => void
   onClose: () => void
   children: React.ReactNode
 }): React.ReactElement {
   const theme = useTheme()
-  useMenuEscape(true, onClose, '')
+  const [contentHeight, setContentHeight] = useState<number>()
   return (
-    <Modal transparent animationType="slide" onRequestClose={onClose}>
-      <View style={{ flex: 1, justifyContent: 'flex-end' }}>
-        <Pressable
-          accessibilityLabel="Dismiss sheet"
-          onPress={onClose}
-          style={{
-            position: 'absolute',
-            inset: 0,
-            backgroundColor: theme.overlayBackgroundColor
-          }}
-        />
-        <View
-          accessibilityViewIsModal
-          style={{
-            maxHeight: '92%',
-            backgroundColor: theme.backgroundColor,
-            borderTopLeftRadius: theme.rem(theme.radiusLargeRem),
-            borderTopRightRadius: theme.rem(theme.radiusLargeRem),
-            padding: 16,
-            gap: 12
-          }}
+    <Modal
+      transparent={!fullScreen}
+      animationType="slide"
+      onShow={onShow}
+      onRequestClose={onClose}
+    >
+      <SafeAreaProvider
+        initialMetrics={
+          initialWindowMetrics ?? {
+            frame: { x: 0, y: 0, width: 0, height: 0 },
+            insets: { top: 0, bottom: 0, left: 0, right: 0 }
+          }
+        }
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={
+            Platform.OS === 'web'
+              ? { height: '100dvh', width: '100%' }
+              : { flex: 1 }
+          }
         >
-          <View
+          <SheetArea
+            edges={
+              fullScreen
+                ? ['top', 'bottom', 'left', 'right']
+                : ['bottom', 'left', 'right']
+            }
             style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: 12
+              flex: 1,
+              justifyContent: 'flex-end',
+              backgroundColor: fullScreen ? theme.backgroundColor : undefined
             }}
           >
-            <Text
-              accessibilityRole="header"
-              style={{
-                fontFamily: theme.boldTextFont,
-                fontSize: 22,
-                color: theme.primaryTextColor,
-                flex: 1
-              }}
-            >
-              {title}
-            </Text>
-            {textCancel ? (
+            {!fullScreen && (
               <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Cancel"
+                accessibilityLabel="Dismiss sheet"
                 onPress={onClose}
                 style={{
-                  minHeight: 44,
-                  paddingHorizontal: 10,
-                  justifyContent: 'center'
+                  position: 'absolute',
+                  inset: 0,
+                  backgroundColor: theme.overlayBackgroundColor
+                }}
+              />
+            )}
+            <View
+              accessibilityViewIsModal
+              style={{
+                maxHeight: fullScreen ? undefined : '92%',
+                flex: fullScreen ? 1 : undefined,
+                backgroundColor: theme.backgroundColor,
+                borderTopLeftRadius: fullScreen
+                  ? 0
+                  : theme.rem(theme.radiusLargeRem),
+                borderTopRightRadius: fullScreen
+                  ? 0
+                  : theme.rem(theme.radiusLargeRem),
+                padding: 16,
+                gap: 12
+              }}
+            >
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 12
                 }}
               >
                 <Text
+                  accessibilityRole="header"
                   style={{
-                    fontFamily: theme.semiBoldTextFont,
-                    color: theme.dangerColor
+                    fontFamily: theme.boldTextFont,
+                    fontSize: 22,
+                    color: theme.primaryTextColor,
+                    flex: 1
                   }}
                 >
-                  Cancel
+                  {title}
                 </Text>
-              </Pressable>
-            ) : (
-              <ScoringButton label="Cancel" onPress={onClose} />
-            )}
-          </View>
-          <ScrollView
-            keyboardShouldPersistTaps="handled"
-            contentContainerStyle={{ gap: 0 }}
-          >
-            {children}
-          </ScrollView>
-        </View>
-      </View>
+                {textCancel ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Cancel"
+                    onPress={onClose}
+                    style={{
+                      minHeight: 44,
+                      paddingHorizontal: 10,
+                      justifyContent: 'center'
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontFamily: theme.semiBoldTextFont,
+                        color: theme.dangerColor
+                      }}
+                    >
+                      Cancel
+                    </Text>
+                  </Pressable>
+                ) : (
+                  <ScoringButton label="Cancel" onPress={onClose} />
+                )}
+              </View>
+              <ScrollView
+                onLayout={event => {
+                  setContentHeight(event.nativeEvent.layout.height)
+                }}
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={{ gap: 0 }}
+              >
+                <ScoringSheetHeight.Provider value={contentHeight}>
+                  {children}
+                </ScoringSheetHeight.Provider>
+              </ScrollView>
+            </View>
+          </SheetArea>
+        </KeyboardAvoidingView>
+      </SafeAreaProvider>
     </Modal>
   )
 }

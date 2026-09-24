@@ -13,24 +13,34 @@ import { RosterSelectorDrag } from './RosterSelectorDrag'
 export const rosterSegmentAt = (
   x: number,
   left: number,
-  width: number
-): number => (x - left < width / 2 ? 0 : 1)
+  width: number,
+  count = 2
+): number =>
+  Math.max(
+    0,
+    Math.min(count - 1, Math.floor(((x - left) / Math.max(1, width)) * count))
+  )
 export function RosterSelector({
   labels,
+  labelPrefix = '',
+  compact = false,
   value,
   onChange
 }: {
-  labels: [string, string]
+  labels: string[]
+  labelPrefix?: string
+  compact?: boolean
   value: number
   onChange: (value: number) => void
 }): React.ReactElement {
   const theme = useTheme()
+  const count = labels.length
   const [width, setWidth] = useState(0)
   const root = useRef<React.ComponentRef<typeof View>>(null)
   const left = useRef(0)
   const thumb = useRef(new Animated.Value(0)).current
-  const latest = useRef({ value, width, onChange })
-  latest.current = { value, width, onChange }
+  const latest = useRef({ value, width, onChange, count })
+  latest.current = { value, width, onChange, count }
   const responder = useRef(
     PanResponder.create({
       onMoveShouldSetPanResponderCapture: (_, gesture) =>
@@ -40,31 +50,45 @@ export function RosterSelector({
           Math.max(
             0,
             Math.min(
-              latest.current.width / 2,
-              gesture.moveX - left.current - latest.current.width / 4
+              latest.current.width * (1 - 1 / latest.current.count),
+              gesture.moveX -
+                left.current -
+                latest.current.width / (2 * latest.current.count)
             )
           )
         )
       },
       onPanResponderRelease: (_, gesture) => {
         latest.current.onChange(
-          rosterSegmentAt(gesture.moveX, left.current, latest.current.width)
+          rosterSegmentAt(
+            gesture.moveX,
+            left.current,
+            latest.current.width,
+            latest.current.count
+          )
         )
         thumb.setValue(
-          (rosterSegmentAt(gesture.moveX, left.current, latest.current.width) *
+          (rosterSegmentAt(
+            gesture.moveX,
+            left.current,
+            latest.current.width,
+            latest.current.count
+          ) *
             latest.current.width) /
-            2
+            latest.current.count
         )
       },
       onPanResponderTerminate: () => {
-        thumb.setValue((latest.current.value * latest.current.width) / 2)
+        thumb.setValue(
+          (latest.current.value * latest.current.width) / latest.current.count
+        )
       },
       onPanResponderTerminationRequest: () => false
     })
   ).current
   useEffect(() => {
     const animation = Animated.timing(thumb, {
-      toValue: (value * width) / 2,
+      toValue: (value * width) / count,
       duration: 150,
       useNativeDriver: false
     })
@@ -72,7 +96,7 @@ export function RosterSelector({
     return () => {
       animation.stop()
     }
-  }, [thumb, value, width])
+  }, [thumb, value, width, count])
   const content = (
     <View
       ref={root}
@@ -85,7 +109,7 @@ export function RosterSelector({
       }}
       style={{
         flexDirection: 'row',
-        minHeight: 48,
+        minHeight: compact ? 40 : 48,
         borderRadius: theme.radiusPill,
         backgroundColor: theme.scoringSelectorIdle,
         shadowColor: theme.buttonShadowColor,
@@ -102,7 +126,7 @@ export function RosterSelector({
           top: 0,
           bottom: 0,
           left: thumb,
-          width: '50%',
+          width: `${100 / count}%`,
           borderRadius: theme.radiusPill,
           backgroundColor: theme.scoringMenuActiveBackground
         }}
@@ -111,15 +135,17 @@ export function RosterSelector({
         <Pressable
           key={label}
           accessibilityRole="tab"
-          accessibilityLabel={label}
+          accessibilityLabel={
+            labelPrefix === '' ? label : `${labelPrefix} ${label}`
+          }
           accessibilityState={{ selected: value === index }}
           aria-selected={value === index}
           onPress={() => {
             onChange(index)
           }}
           style={{
-            width: '50%',
-            minHeight: 48,
+            width: `${100 / count}%`,
+            minHeight: compact ? 40 : 48,
             justifyContent: 'center',
             alignItems: 'center'
           }}
@@ -142,6 +168,7 @@ export function RosterSelector({
   )
   return (
     <RosterSelectorDrag
+      count={count}
       value={value}
       width={width}
       onMove={x => {
