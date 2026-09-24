@@ -52,5 +52,9 @@
   "src2/app/field/relativeLanding.ts",
   "src2/app/scoring/rosterHold.ts",
   "src2/app/scoring/RosterRemoveButton.tsx",
-  "src2/app/field/trajectoryGuide.ts"
+  "src2/app/field/trajectoryGuide.ts",
+  "src2/app/field/Scoreboard.tsx",
+  "src2/app/field/HomeRunLights.tsx",
+  "src2/app/field/homeRunFireworks.ts",
+  "src2/app/scoring/useHomeRunCelebration.ts"
 ]

@@ -2302,6 +2302,91 @@ describe('scoring browser', function () {
       await page.close()
     }
   })
+  for (const outside of [false, true]) {
+    it(`celebrates ${outside ? 'stands' : 'in-park'} home run on the LED scoreboard`, async function () {
+      this.timeout(90000)
+      const { page } = await open(
+        '/games/g1/score',
+        false,
+        false,
+        false,
+        outside ? 'left' : 'right',
+        true
+      )
+      try {
+        await page.setViewport(
+          outside ? { width: 844, height: 390 } : { width: 390, height: 844 }
+        )
+        await click(page, 'Ball in Play')
+        await click(page, 'Home Run')
+        await page.waitForSelector('canvas[data-field-ready="true"]')
+        const target = await readGuide(page)
+        expect(Math.hypot(target.x, target.z)).closeTo(113.5, 0.01)
+        expect(target.bearing).closeTo(outside ? 15 : -15, 0.01)
+        await page.focus('[role="application"]')
+        if (outside)
+          for (let i = 0; i < 5; i++) await page.keyboard.press('ArrowUp')
+        await page.keyboard.press('Enter')
+        await page.keyboard.press('Enter')
+        await page.waitForFunction(
+          () =>
+            (window as unknown as SceneProbeWindow).qaScene!.getObjectByName(
+              'home-run-celebration'
+            ) != null
+        )
+        expect(await page.$('[aria-label^="Ball trajectory:"]')).equals(null)
+        const samples = (await page.evaluate(async () => {
+          const scene = (window as unknown as SceneProbeWindow).qaScene!
+          const sample = (): unknown => {
+            const lights = scene.getObjectByName(
+              'home-run-fireworks'
+            )! as unknown as { instanceMatrix: { array: ArrayLike<number> } }
+            const text = scene.getObjectByName(
+              'home-run-letters'
+            )! as unknown as {
+              material: {
+                opacity: number
+                map: { image: { data: ArrayLike<number> } }
+              }
+            }
+            return {
+              matrix: Array.from(lights.instanceMatrix.array),
+              opacity: text.material.opacity,
+              pixels: Array.from(text.material.map.image.data)
+            }
+          }
+          const before = sample()
+          await new Promise(resolve => setTimeout(resolve, 300))
+          return { before, after: sample() }
+        })) as {
+          before: { matrix: number[]; opacity: number; pixels: number[] }
+          after: { matrix: number[]; opacity: number; pixels: number[] }
+        }
+        expect(samples.before.matrix).not.deep.equals(samples.after.matrix)
+        expect(samples.before.opacity).not.equals(samples.after.opacity)
+        expect(samples.before.pixels).deep.equals(samples.after.pixels)
+        await page.screenshot({
+          path: join(
+            process.env.GS_SCORING_ARTIFACT_DIR!,
+            `celebration-${outside ? 'stands' : 'park'}.png`
+          )
+        })
+        await page.waitForFunction(
+          () =>
+            (window as unknown as SceneProbeWindow).qaScene!.getObjectByName(
+              'home-run-celebration'
+            ) == null,
+          { timeout: 10000 }
+        )
+        await page.waitForSelector('[aria-label*="Batter Player 2"]', {
+          timeout: 45000
+        })
+        expect(await page.$('[aria-label="Time to edit play"]')).equals(null)
+      } finally {
+        await page.close()
+      }
+    })
+  }
   it('defaults home-run guidance by batting side and eases through the center gap', async function () {
     this.timeout(150000)
     for (const bats of ['right', 'left'] as const) {
@@ -2323,7 +2408,7 @@ describe('scoring browser', function () {
         )
         await page.focus('[role="application"]')
         const toward = bats === 'right' ? 'ArrowRight' : 'ArrowLeft'
-        for (let i = 0; i < 5; i++) {
+        for (let i = 0; i < 9; i++) {
           await page.keyboard.press(toward)
           await new Promise(resolve => setTimeout(resolve, 60))
         }

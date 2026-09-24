@@ -18,7 +18,7 @@ describe('visible trajectory guide', function () {
     expect(guideBearing(initialHitTarget('L'))).closeTo(15, 1e-8)
     expect(initialHitTarget('S')).deep.equals(initialHitTarget('R'))
     expect(Math.hypot(...Object.values(initialHitTarget('R')))).closeTo(
-      60,
+      113.5,
       1e-8
     )
     for (const angle of [-15, -5, -1, 0, 1, 5, 15]) {

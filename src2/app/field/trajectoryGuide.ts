@@ -1,9 +1,11 @@
 import type { GroundPoint } from './fieldModel'
+import { OUTFIELD_RADIUS, WARNING_TRACK_INNER } from './stadiumBoundary'
 
 export const GUIDE_SETTLE_SECONDS = 0.18
 export function initialHitTarget(hand: string): GroundPoint {
   const bearing = ((hand === 'L' ? 15 : -15) * Math.PI) / 180
-  return { x: 60 * Math.sin(bearing), z: -60 * Math.cos(bearing) }
+  const radius = (WARNING_TRACK_INNER + OUTFIELD_RADIUS) / 2
+  return { x: radius * Math.sin(bearing), z: -radius * Math.cos(bearing) }
 }
 export function guideBearing(target: GroundPoint, previous = -5): number {
   const angle = (Math.atan2(target.x, Math.abs(target.z)) * 180) / Math.PI

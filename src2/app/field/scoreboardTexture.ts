@@ -105,6 +105,12 @@ export function makeScoreboardPixels(state: ScoreboardState): Uint8Array {
       })
     })
   }
+  if (state.celebration != null) {
+    const inPark = state.celebration.kind === 'in-park'
+    text('HOME RUN', (BOARD_WIDTH - 47 * 10) / 2, inPark ? 126 : 98, 10)
+    if (inPark) text('IN THE PARK', (BOARD_WIDTH - 65 * 3.8) / 2, 64, 3.8)
+    return pixels
+  }
   if (state.instruction != null) {
     const words = state.instruction.split(' ')
     const lines: string[] = ['']

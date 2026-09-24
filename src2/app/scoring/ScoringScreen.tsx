@@ -45,6 +45,7 @@ import {
   type ScoringStateSource
 } from './scoringStateSource'
 import type { ScoringEvent, ScoringSessionState } from './scoringTypes'
+import { useHomeRunCelebration } from './useHomeRunCelebration'
 import { useMenuEscape } from './useMenuEscape'
 import { useScoringClock } from './useScoringClock'
 import { useScoringExit } from './useScoringExit'
@@ -360,7 +361,15 @@ function ScoringSession(props: {
             ? 'Drag batter to a base, or hold to mark Out'
             : `Resolve ${session.gameData.players[unresolvedRunner?.playerId ?? 0]?.fullName ?? 'runner'}: drag to a base, or hold to mark Out`
           : undefined))
-  const fieldScoreboard = scoreboardFor(session)
+  const celebrationPaused = menu || sheet != null || outcomeMenu || moreOpen
+  useHomeRunCelebration(state.celebration, celebrationPaused, dispatch)
+  const fieldScoreboard = {
+    ...scoreboardFor(session),
+    celebration:
+      state.celebration == null
+        ? undefined
+        : { ...state.celebration, paused: celebrationPaused }
+  }
   const summary =
     instruction == null
       ? state.phase === 'awaitingBatter'
@@ -676,7 +685,7 @@ function ScoringSession(props: {
         state.presentation == null
       }
       summary={summary}
-      accessibilitySummary={`${summary} · Batter ${line.offense.batter?.fullName ?? 'waiting'} ${session.liveData.plays.currentPlay?.matchup.batSide.code === 'L' ? 'left handed' : 'right handed'} · Pitcher ${line.defense.P?.fullName ?? 'unassigned'}`}
+      accessibilitySummary={`${state.celebration == null ? '' : state.celebration.kind === 'in-park' ? 'IN THE PARK HOME RUN · ' : 'HOME RUN · '}${summary} · Batter ${line.offense.batter?.fullName ?? 'waiting'} ${session.liveData.plays.currentPlay?.matchup.batSide.code === 'L' ? 'left handed' : 'right handed'} · Pitcher ${line.defense.P?.fullName ?? 'unassigned'}`}
     >
       <ErrorCreditSheet state={state} dispatch={dispatch} />
       <RunnerDragTargets
