@@ -24,6 +24,9 @@ export function ScoringButton({
   disabled = false,
   color,
   row = false,
+  decision = false,
+  menuText = false,
+  upChevrons = false,
   shape,
   submenuRight = false,
   submenu = false
@@ -34,6 +37,9 @@ export function ScoringButton({
   disabled?: boolean
   color?: string
   row?: boolean
+  decision?: boolean
+  menuText?: boolean
+  upChevrons?: boolean
   shape?: 'pill' | 'circle'
   submenuRight?: boolean
   submenu?: boolean
@@ -69,7 +75,7 @@ export function ScoringButton({
         shadowRadius: row ? 0 : pressed ? 4 : 8,
         shadowOffset: { width: 0, height: pressed ? 1 : 3 },
         elevation: row ? 0 : pressed ? 1 : 3,
-        minHeight: 44,
+        minHeight: decision ? 66 : 44,
         flexDirection: submenuRight ? 'row' : undefined,
         alignItems: submenuRight ? 'center' : undefined,
         padding: 10,
@@ -94,10 +100,28 @@ export function ScoringButton({
       })}
       onPress={onPress}
     >
+      {upChevrons && (
+        <Text
+          aria-hidden
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            left: 3,
+            top: 4,
+            fontSize: 15,
+            lineHeight: 9,
+            color: theme.buttonTextColor
+          }}
+        >
+          {'⌃\n⌃\n⌃'}
+        </Text>
+      )}
       <Text
         selectable={false}
         style={{
           fontFamily: theme.semiBoldTextFont,
+          fontSize: decision ? 21 : menuText ? 16.8 : undefined,
+          fontWeight: decision || menuText ? '700' : undefined,
           color:
             color != null
               ? theme.scoringDecisionText

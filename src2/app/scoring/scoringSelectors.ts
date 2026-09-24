@@ -130,3 +130,16 @@ export function canSwitchBatter(session: ScoringSessionState): boolean {
   const play = session.liveData.plays.currentPlay
   return play != null && !play.playEvents.some(event => event.isPitch)
 }
+
+/** Bottom scoring actions remain locked until every current-play interaction settles. */
+export function bottomActionsAllowed(state: ScoringSnapshot): boolean {
+  return (
+    state.phase === 'ready' &&
+    state.presentation == null &&
+    state.activeGesture !== true &&
+    state.runnerAction == null &&
+    state.runnerDraft == null &&
+    state.moreDraft == null &&
+    !state.motions.some(motion => !motion.complete)
+  )
+}

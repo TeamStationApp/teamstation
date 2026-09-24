@@ -3,6 +3,9 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
+import { gsBallpark } from '../theme/gsBallpark'
+import { gsDark } from '../theme/gsDark'
+import { changeTheme, ThemeProvider } from '../theme/ThemeContext'
 import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { MORE_GROUPS, type MoreInput } from './moreActions'
@@ -34,25 +37,48 @@ async function mount(native = false, occupied = false): Promise<void> {
   const Component = native ? NativeMoreMenu : MoreMenu
   await act(async () => {
     root!.render(
-      <Component
-        state={state}
-        disabled={false}
-        onActive={() => undefined}
-        onChoose={input => {
-          inputs.push(input)
-        }}
-      />
+      <ThemeProvider>
+        <Component
+          state={state}
+          disabled={false}
+          onActive={() => undefined}
+          onChoose={input => {
+            inputs.push(input)
+          }}
+        />
+      </ThemeProvider>
     )
   })
 }
 afterEach(async () => {
   await act(async () => {
+    changeTheme(gsBallpark)
     root?.unmount()
   })
   root = undefined
   inputs.splice(0)
 })
 describe('More scoring menu', function () {
+  it('keeps every group heading readable and bold in both themes', async () => {
+    await mount()
+    await click('More')
+    for (const theme of [gsBallpark, gsDark]) {
+      await act(async () => {
+        changeTheme(theme)
+      })
+      const panel = button('More scoring actions')
+      for (const group of MORE_GROUPS) {
+        const heading = Array.from(
+          panel.querySelectorAll<HTMLElement>('div')
+        ).find(n => n.textContent === group.label)!
+        expect(heading).not.equals(undefined)
+        expect(heading.style.color).not.equals(panel.style.backgroundColor)
+        expect(heading.style.fontSize).equals('14.4px')
+        expect(heading.style.fontWeight).equals('700')
+      }
+    }
+  })
+
   it('keeps the primary menu left and the child right with dark green focus', async function () {
     await mount()
     await click('More')

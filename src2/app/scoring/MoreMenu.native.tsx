@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { Text, View } from 'react-native'
 
 import { useTheme } from '../theme/ThemeContext'
@@ -23,6 +23,14 @@ export function MoreMenu({
     setForm(undefined)
     onActive(false)
   }
+  useEffect(() => {
+    if (disabled) {
+      setOpen(false)
+      setBase(false)
+      setForm(undefined)
+      onActive(false)
+    }
+  }, [disabled, onActive])
   const choose = (input: MoreInput): void => {
     if (disabled || moreEligibility(state, input.action) != null) return
     if (input.action === 'Place a Runner (Tiebreaker)') {
@@ -37,9 +45,11 @@ export function MoreMenu({
     <>
       <ScoringButton
         label="More"
+        upChevrons
         text={'⋯\nMore'}
         disabled={disabled}
         onPress={() => {
+          if (disabled) return
           setOpen(true)
           onActive(true)
         }}
@@ -53,7 +63,9 @@ export function MoreMenu({
                   <Text
                     style={{
                       color: theme.primaryTextColor,
-                      fontFamily: theme.semiBoldTextFont
+                      fontFamily: theme.semiBoldTextFont,
+                      fontSize: 14.4,
+                      fontWeight: '700'
                     }}
                   >
                     {group.label}
@@ -77,6 +89,7 @@ export function MoreMenu({
                       >
                         <ScoringButton
                           row
+                          menuText
                           label={action}
                           submenuRight={action === 'Put Batter on Base'}
                           disabled={moreEligibility(state, action) != null}
@@ -103,6 +116,7 @@ export function MoreMenu({
                 {['First', 'Second', 'Third'].map((label, index) => (
                   <ScoringButton
                     row
+                    menuText
                     key={label}
                     label={label}
                     onPress={() => {
@@ -121,6 +135,7 @@ export function MoreMenu({
           input={form}
           onCancel={close}
           onSave={input => {
+            if (disabled) return
             close()
             onChoose(input)
           }}

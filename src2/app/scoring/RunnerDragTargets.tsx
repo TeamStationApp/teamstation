@@ -68,6 +68,8 @@ export function RunnerDragTargets({
             selectable={false}
             style={{
               fontFamily: theme.semiBoldTextFont,
+              fontSize: 21,
+              fontWeight: '700',
               color: theme.scoringDecisionText
             }}
           >

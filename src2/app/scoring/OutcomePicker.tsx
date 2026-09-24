@@ -44,13 +44,21 @@ export function OutcomePicker({
   }
   useEffect(() => {
     if (disabled) {
+      const pointer = gesture.current?.pointer
+      if (
+        pointer != null &&
+        trigger.current?.hasPointerCapture(pointer) === true
+      )
+        trigger.current.releasePointerCapture(pointer)
       gesture.current = null
       setMode(undefined)
       setSubmenu(false)
+      setHover('')
+      onActive(false)
     }
-  }, [disabled])
+  }, [disabled, onActive])
   const select = (value: string): void => {
-    if (!outcomeAvailable(value, hasRunners)) return
+    if (disabled || !outcomeAvailable(value, hasRunners)) return
     if (value === 'Batter Out') {
       setSubmenu(previous => !previous)
       return
@@ -68,7 +76,7 @@ export function OutcomePicker({
   }
   const move = (event: React.PointerEvent): void => {
     const active = gesture.current
-    if (active == null) return
+    if (disabled || active == null) return
     if (!active.drag && event.clientY < active.y - 8) {
       active.drag = true
       setMode('drag')
@@ -85,7 +93,7 @@ export function OutcomePicker({
       setSubmenuTop(
         Math.max(
           12,
-          Math.min(window.innerHeight - 170, item.getBoundingClientRect().top)
+          Math.min(window.innerHeight - 215, item.getBoundingClientRect().top)
         )
       )
     } else if (
@@ -100,7 +108,7 @@ export function OutcomePicker({
   ): void => {
     const active = gesture.current
     gesture.current = null
-    if (active?.drag === true) {
+    if (!disabled && active?.drag === true) {
       suppressClick.current = true
       const item = cancel ? undefined : hoverAt(event.clientX, event.clientY)
       const value = item?.dataset.outcome
@@ -124,8 +132,8 @@ export function OutcomePicker({
     color: theme.primaryTextColor,
     background: theme.backgroundColor,
     fontFamily: theme.semiBoldTextFont,
-    fontWeight: 600,
-    fontSize: 14,
+    fontWeight: 700,
+    fontSize: 16.8,
     cursor: 'pointer',
     touchAction: 'none',
     userSelect: 'none',
@@ -170,7 +178,7 @@ export function OutcomePicker({
           boxShadow: `0 3px 8px ${theme.buttonShadowColor}`,
           color: theme.buttonTextColor,
           position: 'relative',
-          padding: '6px 13px 6px 3px',
+          padding: '6px 3px',
           width: '100%',
           height: '100%',
           opacity: disabled ? 0.5 : 1,
@@ -178,9 +186,11 @@ export function OutcomePicker({
           flexDirection: 'column',
           alignItems: 'center',
           justifyContent: 'center',
-          fontSize: 11
+          fontSize: 11,
+          fontWeight: 600
         }}
         onPointerDown={event => {
+          if (disabled || event.button !== 0) return
           previousX.current = event.clientX
           suppressClick.current = false
           gesture.current = {
@@ -191,6 +201,7 @@ export function OutcomePicker({
           event.currentTarget.setPointerCapture(event.pointerId)
         }}
         onClick={() => {
+          if (disabled) return
           if (suppressClick.current) {
             suppressClick.current = false
             return
@@ -209,13 +220,13 @@ export function OutcomePicker({
           style={{
             position: 'absolute',
             right: 3,
-            top: '35%',
+            top: 4,
             pointerEvents: 'none',
             lineHeight: 0.6,
             fontSize: 15
           }}
         >
-          ⌃<br />⌃
+          ⌃<br />⌃<br />⌃
         </span>
       </button>
       {mode != null && (
@@ -240,7 +251,7 @@ export function OutcomePicker({
               gap: 0,
               borderRadius: theme.rem(theme.radiusRem),
               background: theme.backgroundColor,
-              maxHeight: '75vh',
+              maxHeight: 'calc(100vh - 140px)',
               overflowY: 'auto'
             }}
           >
@@ -283,7 +294,7 @@ export function OutcomePicker({
                         Math.max(
                           12,
                           Math.min(
-                            window.innerHeight - 170,
+                            window.innerHeight - 215,
                             event.currentTarget.getBoundingClientRect().top
                           )
                         )
@@ -352,6 +363,7 @@ export function OutcomePicker({
                         : theme.backgroundColor
                   }}
                   onClick={() => {
+                    if (disabled) return
                     select(value)
                   }}
                 >

@@ -160,7 +160,11 @@ async function geometry() {
 try {
   await m.launchApp()
   await m.setOrientation('portrait')
-  for (const reason of ['hr','field'].includes(process.env.SCORING_FEEDBACK_PHASE) ? [] : ['Wild Pitch', 'Passed Ball']) {
+  for (const reason of ['hr', 'field', 'controls'].includes(
+    process.env.SCORING_FEEDBACK_PHASE
+  )
+    ? []
+    : ['Wild Pitch', 'Passed Ball']) {
     await freshGame()
     await tap('More')
     await absent('^Wild Pitch$')
@@ -203,7 +207,11 @@ try {
     await tap(`Undo ${reason}`)
     await visible('Batter Player 2')
   }
-  for (const outside of ['actions','field'].includes(process.env.SCORING_FEEDBACK_PHASE) ? [] : [false, true]) {
+  for (const outside of ['actions', 'field', 'controls'].includes(
+    process.env.SCORING_FEEDBACK_PHASE
+  )
+    ? []
+    : [false, true]) {
     await freshGame()
     await tap('Ball in Play')
     await tap('Home Run')
@@ -250,26 +258,105 @@ try {
     await absent('Time to edit play')
     await shot(outside ? 'stands-finished' : 'in-park-finished')
   }
-  if (process.env.SCORING_FEEDBACK_PHASE === 'field') for (const caught of [false,true]) {
+  if (process.env.SCORING_FEEDBACK_PHASE === 'field')
+    for (const caught of [false, true]) {
+      await freshGame()
+      await tap('Ball in Play')
+      if (caught) {
+        await tap('Batter Out')
+        await tap('Ball Caught')
+      } else await tap('Single')
+      await visible('Tap or drag a player to where the ball was fielded')
+      const g = await geometry()
+      await gesture([g.project(0, -18.44, 6), g.project(20, -40, 0.7)], 80)
+      await visible('Drag up and down for ball trajectory')
+      await shot(caught ? 'caught-trajectory' : 'single-trajectory')
+      const start = {
+        x: g.field.x + g.field.width * 0.25,
+        y: g.field.y + g.field.height * 0.6
+      }
+      await gesture([start, { x: start.x, y: start.y - 25 }], 80)
+      if (caught) await visible('Batter Player 2')
+      else {
+        await visible('Finish at-bat')
+        await tap('Finish at-bat')
+      }
+      await visible('Batter Player 2')
+      await shot(caught ? 'caught-finished' : 'single-finished')
+    }
+  if (process.env.SCORING_FEEDBACK_PHASE === 'controls') {
     await freshGame()
     await tap('Ball in Play')
-    if(caught) {await tap('Batter Out');await tap('Ball Caught')}
-    else await tap('Single')
+    await tap('Single')
     await visible('Tap or drag a player to where the ball was fielded')
-    const g=await geometry()
-    await gesture([g.project(0,-18.44,6),g.project(20,-40,0.7)],80)
-    await visible('Drag up and down for ball trajectory')
-    await shot(caught?'caught-trajectory':'single-trajectory')
-    const start={x:g.field.x+g.field.width*.25,y:g.field.y+g.field.height*.6}
-    await gesture([start,{x:start.x,y:start.y-25}],80)
-    if(caught) await visible('Batter Player 2')
-    else {await visible('Finish at-bat');await tap('Finish at-bat')}
+    for (const label of [
+      'Ball',
+      'Called Strike',
+      'Swing and Miss',
+      'Foul Ball',
+      'More',
+      'Ball in Play'
+    ]) {
+      const n = (await nodes()).find(n => n.text === label)
+      assert(n?.bounds, `Missing ${label}`)
+      await gesture(
+        [
+          {
+            x: n.bounds.x + n.bounds.width / 2,
+            y: n.bounds.y + n.bounds.height / 2
+          }
+        ],
+        80
+      )
+      await absent('^Hit by Pitch$')
+      await absent('^Single$')
+      await visible('Tap or drag a player to where the ball was fielded')
+    }
+    await shot('disabled-bottom-controls')
+    await tap('Undo Single')
+    await tap('More')
+    await shot('larger-more-menu')
+    await tap('Put Batter on Base')
+    await shot('larger-more-submenu')
+    await tap('First')
     await visible('Batter Player 2')
-    await shot(caught?'caught-finished':'single-finished')
+    const g = await geometry()
+    const from = BASES[1]
+    const to = BASES[2]
+    const p = t =>
+      g.project(from.x + (to.x - from.x) * t, from.z + (to.z - from.z) * t, 0.7)
+    await gesture(
+      [g.project(from.x, from.z, 6), p(0.25), p(0.75), p(0.25), p(0)],
+      500
+    )
+    await absent('Safe drag target')
+    await absent('Runner advance')
+    const next = g.project(to.x, to.z, 9)
+    const rect = runnerTargets(
+      { x: next.x - g.field.x, y: next.y - g.field.y },
+      g.field.width,
+      g.field.height,
+      2
+    ).safe
+    await gesture(
+      [
+        g.project(from.x, from.z, 6),
+        p(0.75),
+        {
+          x: g.field.x + rect.x + rect.width / 2,
+          y: g.field.y + rect.y + rect.height / 2
+        }
+      ],
+      500
+    )
+    await visible('Runner advance')
+    await shot('runner-safe-reasons')
+    await tap('Cancel')
+    await absent('Safe drag target')
+    await absent('Runner advance')
+    await shot('cancelled-runner-return')
   }
-  log(
-    'PASS Safari selected scoring-feedback scenarios'
-  )
+  log('PASS Safari selected scoring-feedback scenarios')
 } catch (error) {
   await shot('failure').catch(() => {})
   throw error

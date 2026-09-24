@@ -28,6 +28,7 @@ export function MoreMenu({
     dragged: boolean
     escaped: boolean
   } | null>(null)
+  const trigger = useRef<HTMLButtonElement>(null)
   const skipClick = useRef(false)
   const primaryPanel = useRef<HTMLDivElement>(null)
   const childPanel = useRef<HTMLDivElement>(null)
@@ -62,6 +63,13 @@ export function MoreMenu({
   useMenuEscape(open, close, 'More')
   useEffect(() => {
     if (disabled) {
+      const pointer = gesture.current?.id
+      if (
+        pointer != null &&
+        trigger.current?.hasPointerCapture(pointer) === true
+      )
+        trigger.current.releasePointerCapture(pointer)
+      gesture.current = null
       setOpen(false)
       setChild(false)
       setForm(undefined)
@@ -69,10 +77,12 @@ export function MoreMenu({
     }
   }, [disabled, onActive])
   const show = (): void => {
+    if (disabled) return
     setOpen(true)
     onActive(true)
   }
   const choose = (key: string): void => {
+    if (disabled) return
     const base = Number(key)
     const input: MoreInput = [1, 2, 3].includes(base)
       ? { action: 'Put Batter on Base', base }
@@ -148,7 +158,8 @@ export function MoreMenu({
               ? theme.scoringMenuActiveText
               : theme.primaryTextColor,
           fontFamily: theme.semiBoldTextFont,
-          fontSize: 14,
+          fontSize: 16.8,
+          fontWeight: 700,
           opacity: reason == null ? 1 : 0.4
         }}
       >
@@ -172,12 +183,14 @@ export function MoreMenu({
       }}
     >
       <button
+        ref={trigger}
         aria-label="More"
         aria-haspopup="menu"
         aria-expanded={open}
         disabled={disabled}
         style={{
           width: '100%',
+          position: 'relative',
           minHeight: 52,
           border: 0,
           borderRadius: theme.rem(theme.radiusRem),
@@ -206,7 +219,7 @@ export function MoreMenu({
         }}
         onPointerMove={event => {
           const active = gesture.current
-          if (active == null) return
+          if (disabled || active == null) return
           if (active.y - event.clientY > 8) {
             active.dragged = true
             show()
@@ -237,7 +250,7 @@ export function MoreMenu({
         onPointerUp={event => {
           const active = gesture.current
           gesture.current = null
-          if (active == null) return
+          if (disabled || active == null) return
           event.currentTarget.releasePointerCapture(event.pointerId)
           if (active.dragged) {
             skipClick.current = true
@@ -264,6 +277,19 @@ export function MoreMenu({
           else show()
         }}
       >
+        <span
+          aria-hidden="true"
+          style={{
+            position: 'absolute',
+            left: 3,
+            top: 4,
+            pointerEvents: 'none',
+            lineHeight: 0.6,
+            fontSize: 15
+          }}
+        >
+          ⌃<br />⌃<br />⌃
+        </span>
         <span
           aria-hidden="true"
           style={{ display: 'block', fontSize: 22, lineHeight: '22px' }}
@@ -309,8 +335,9 @@ export function MoreMenu({
                   <div
                     style={{
                       padding: '8px 12px',
-                      color: theme.secondaryTextColor,
-                      fontSize: 12
+                      color: theme.primaryTextColor,
+                      fontSize: 14.4,
+                      fontWeight: 700
                     }}
                   >
                     {group.label}
@@ -360,6 +387,7 @@ export function MoreMenu({
           input={form}
           onCancel={close}
           onSave={input => {
+            if (disabled) return
             close()
             onChoose(input)
           }}
