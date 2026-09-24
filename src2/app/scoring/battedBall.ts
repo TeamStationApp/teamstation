@@ -213,6 +213,11 @@ export function acceptTrajectory(
           : playerRef(next.session, pending.fielder)!
     }
     if (pending.outcome === 'Home Run') {
+      next.celebration = {
+        id: `${next.generation}:${next.session.meta.sequence + 1}:home-run`,
+        generation: next.generation,
+        kind: pending.homeRunKind ?? 'in-park'
+      }
       next.session.liveData.plays.currentPlay!.source.gamestation.homeRunKind =
         pending.homeRunKind
       next.session.liveData.plays.currentPlay!.source.gamestation.landingHeight =

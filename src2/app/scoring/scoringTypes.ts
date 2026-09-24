@@ -158,7 +158,13 @@ export interface CorrectionWindow {
   remainingMs: number
   revision: number
 }
+export interface HomeRunCelebration {
+  id: string
+  generation: number
+  kind: HomeRunKind
+}
 export interface ScoringSnapshot {
+  celebration?: HomeRunCelebration | null
   presentationEnabled?: boolean
   presentation?: PresentationSequence | null
 
@@ -194,6 +200,7 @@ export interface ScoringState extends ScoringSnapshot {
   past: HistoryEntry[]
 }
 export type ScoringEvent =
+  | { type: 'CELEBRATION_DONE'; id: string; generation: number }
   | {
       type: 'LANDING'
       point: GroundPoint

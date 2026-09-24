@@ -1,4 +1,6 @@
+import type { HomeRunKind } from './stadiumBoundary'
 export interface ScoreboardState {
+  celebration?: { id: string; kind: HomeRunKind; paused: boolean }
   instruction?: string
   detail?: string
   homeTeam: string

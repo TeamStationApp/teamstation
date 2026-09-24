@@ -68,6 +68,7 @@ export function accepted(
     ...snapshotOf(state),
     past: [...state.past, { label, snapshot: snapshotOf(state) }]
   }
+  next.celebration = null
   edit(next)
   if (next.correctionWindow != null)
     next.correctionWindow = {
@@ -78,6 +79,7 @@ export function accepted(
   return next
 }
 export function nextHalf(state: ScoringState): void {
+  state.celebration = null
   const line = state.session.liveData.linescore
   if (!line.isTopInning) line.currentInning++
   line.isTopInning = !line.isTopInning
@@ -131,6 +133,7 @@ function cancelRunnerDraft(state: ScoringState): ScoringState {
   if (draft == null) return state
   const restored: ScoringState = {
     ...copyState(draft.checkpoint),
+    celebration: null,
     past: state.past.slice(0, draft.historyLength),
     generation: state.generation + 1
   }
@@ -198,6 +201,11 @@ export function scoringReducer(
   state: ScoringState,
   event: ScoringEvent
 ): ScoringState {
+  if (event.type === 'CELEBRATION_DONE')
+    return state.celebration?.id === event.id &&
+      state.celebration.generation === event.generation
+      ? { ...state, celebration: null }
+      : state
   if (event.type === 'PRESENTATION_CONTACT') {
     const sequence = state.presentation
     if (
@@ -298,6 +306,7 @@ export function scoringReducer(
     const next = {
       ...copyState(last.snapshot),
       presentation: null,
+      celebration: null,
       generation: state.generation + 1,
       past: state.past.slice(0, -1)
     }

@@ -16,6 +16,7 @@ const client = process.env.MAESTRO_D_CLIENT_ROOT
 const { MaestroD } = client('maestro-d')
 require('sucrase/register')
 const { PerspectiveCamera, Vector3 } = require('three')
+const { initialHitTarget } = require('../src2/app/field/trajectoryGuide')
 const { BASES } = require('../src2/app/field/fieldModel')
 const { runnerTargets } = require('../src2/app/scoring/runnerDrag')
 const { applyFieldCamera } = require('../src2/app/field/cameraModel')
@@ -159,7 +160,7 @@ async function geometry() {
 try {
   await m.launchApp()
   await m.setOrientation('portrait')
-  for (const reason of ['Wild Pitch', 'Passed Ball']) {
+  for (const reason of process.env.SCORING_FEEDBACK_PHASE === 'hr' ? [] : ['Wild Pitch', 'Passed Ball']) {
     await freshGame()
     await tap('More')
     await absent('^Wild Pitch$')
@@ -201,6 +202,53 @@ try {
     await shot(reason.toLowerCase().replaceAll(' ', '-'))
     await tap(`Undo ${reason}`)
     await visible('Batter Player 2')
+  }
+  for (const outside of process.env.SCORING_FEEDBACK_PHASE === 'actions' ? [] : [false, true]) {
+    await freshGame()
+    await tap('Ball in Play')
+    await tap('Home Run')
+    await visible('Home run type: In-the-park Home Run')
+    const g = await geometry()
+    const start = {
+      x: g.field.x + g.field.width * 0.25,
+      y: g.field.y + g.field.height * 0.64
+    }
+    const initialTarget = initialHitTarget('R')
+    const initial = g.project(initialTarget.x, initialTarget.z)
+    const target = g.project(0, outside ? -133 : -95, outside ? 8 : 0.7)
+    await gesture(
+      [
+        start,
+        ...(!outside
+          ? [10, -10].map(x => {
+              const cross = g.project(x, -95, 0.7)
+              return {
+                x: start.x + cross.x - initial.x,
+                y: start.y + cross.y - initial.y,
+                pause: 300
+              }
+            })
+          : []),
+        { x: start.x + target.x - initial.x, y: start.y + target.y - initial.y }
+      ],
+      80
+    )
+    await visible('Drag up and down for ball trajectory')
+    await visible(
+      outside
+        ? 'Home run type: Home Run'
+        : 'Home run type: In-the-park Home Run'
+    )
+    await shot(outside ? 'stands-trajectory-chip' : 'in-park-trajectory-chip')
+    await gesture([start, { x: start.x, y: start.y - 30 }], 80)
+    await visible('HOME RUN')
+    await shot(outside ? 'stands-led-celebration' : 'in-park-led-celebration')
+    await visible('Batter Player 2')
+    await new Promise(resolve => setTimeout(resolve, 6500))
+    await absent('HOME RUN')
+    await absent('^Safe$')
+    await absent('Time to edit play')
+    await shot(outside ? 'stands-finished' : 'in-park-finished')
   }
   log(
     'PASS Safari immediate empty-base placement, hidden occupied placement, runner Wild Pitch/Passed Ball and Undo'

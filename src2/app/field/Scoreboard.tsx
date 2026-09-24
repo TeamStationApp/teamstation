@@ -2,6 +2,7 @@
 import React, { useEffect, useMemo } from 'react'
 
 import { SCOREBOARD_SCALE, SCOREBOARD_Y, SCOREBOARD_Z } from './cameraModel'
+import { HomeRunLights } from './HomeRunLights'
 import { DEMO_SCOREBOARD, type ScoreboardState } from './scoreboardModel'
 import { makeScoreboardTexture } from './scoreboardTexture'
 
@@ -27,10 +28,21 @@ export function Scoreboard({
         <boxGeometry args={[66, 18, 2]} />
         <meshStandardMaterial color="#17372f" roughness={0.85} />
       </mesh>
-      <mesh position={[0, 0, 1.02]} name="scoreboard-bulbs">
+      <mesh
+        visible={state.celebration == null}
+        position={[0, 0, 1.02]}
+        name="scoreboard-bulbs"
+      >
         <planeGeometry args={[64, 16]} />
         <meshBasicMaterial map={texture} toneMapped={false} />
       </mesh>
+      {state.celebration != null && (
+        <HomeRunLights
+          key={state.celebration.id}
+          texture={texture}
+          paused={state.celebration.paused}
+        />
+      )}
       {[-1, 1].map(side => (
         <group key={side}>
           <mesh position={[side * 33, 0, 1]}>
