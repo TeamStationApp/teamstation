@@ -52,9 +52,9 @@ export function RunnerControls({
   const base = home ? 0 : action!.to % 4
   const point = projection?.bases[base] ?? anchor
   const vertical = base !== 2
-  const width = vertical ? 110 : 220
+  const width = vertical ? 130 : 220
   const tall =
-    home && homeBackProposal(state) != null ? 196 : vertical ? 144 : 100
+    home && homeBackProposal(state) != null ? 254 : vertical ? 204 : 138
   const position =
     point == null
       ? undefined
@@ -114,6 +114,7 @@ export function RunnerControls({
       >
         {!currentHold && (home || action!.to > 0) && (
           <ScoringButton
+            decision
             label={!home && stationary ? 'Safe from Pickoff' : 'Safe'}
             color={theme.scoringSafeColor}
             disabled={error != null}
@@ -127,6 +128,7 @@ export function RunnerControls({
           />
         )}
         <ScoringButton
+          decision
           label="Out"
           color={theme.scoringOutColor}
           onPress={() => {

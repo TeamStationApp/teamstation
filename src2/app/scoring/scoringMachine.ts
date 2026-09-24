@@ -18,6 +18,7 @@ import { outBatterPoint, pitchPresentation } from './scoringPresentation'
 import {
   baseIds,
   battingSide,
+  bottomActionsAllowed,
   canSwitchBatter,
   fieldingSide,
   playerRef,
@@ -273,6 +274,11 @@ export function scoringReducer(
       state.presentation.kind === 'hit' &&
       state.presentation.stage === 'flight'
     )
+  )
+    return state
+  if (
+    ['MORE', 'PITCH', 'OUTCOME'].includes(event.type) &&
+    !bottomActionsAllowed(state)
   )
     return state
   if (event.type === 'MORE') return moreReducer(state, event)

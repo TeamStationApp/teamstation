@@ -268,7 +268,10 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
         runner.view.to
       )
       runner.view.hovered = runnerTargetAt(runner.view, pointer)
-      drag.current.goal = { ...runner.view.point }
+      drag.current.goal =
+        runner.view.progress > 0.5 + 1e-12
+          ? { ...BASES[runner.view.to % 4] }
+          : { ...runner.view.point }
       drag.current.commit = false
       const player = players.find(item => item.id === runner.id)
       if (player != null) {

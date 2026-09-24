@@ -132,10 +132,8 @@ async function open(
   return { page, unexpected }
 }
 /* eslint-disable @typescript-eslint/prefer-optional-chain -- Browser evaluation cannot reference generated Sucrase helpers. */
-async function readGuide(
-  page: Page
-): Promise<{ bearing: number; x: number; z: number }> {
-  return await page.evaluate(() => {
+async function captureScene(page: Page): Promise<void> {
+  await page.evaluate(() => {
     const host = window as unknown as SceneProbeWindow
     const scan = (fiber?: ProbeFiber): void => {
       if (fiber == null) return
@@ -149,7 +147,16 @@ async function readGuide(
       scan(fiber.sibling)
     }
     for (const root of host.qaRoots) scan(root.current)
-    const arc = host.qaScene!.getObjectByName('ball-arc')!
+  })
+}
+async function readGuide(
+  page: Page
+): Promise<{ bearing: number; x: number; z: number }> {
+  await captureScene(page)
+  return await page.evaluate(() => {
+    const arc = (
+      window as unknown as SceneProbeWindow
+    ).qaScene!.getObjectByName('ball-arc')!
     const target = arc.getObjectByName('destination-marker')!.position
     return { bearing: Number(arc.userData.bearing), x: target.x, z: target.z }
   })
@@ -1846,11 +1853,11 @@ describe('scoring browser', function () {
       await page.close()
     }
   })
-  for (const width of [320, 390, 874]) {
+  for (const width of [320, 390, 844]) {
     it(`keeps More halves fixed and extends the field at ${width}px`, async function () {
       const { page } = await open('/games/g1/score')
       try {
-        await page.setViewport({ width, height: width === 874 ? 402 : 844 })
+        await page.setViewport({ width, height: width === 844 ? 390 : 844 })
         await click(page, 'More')
         const bounds = async (
           label: string
@@ -1873,6 +1880,37 @@ describe('scoring browser', function () {
           })
         const parent = await bounds('More scoring actions')
         expect(parent.right).at.most(width / 2)
+        const headings = await page.$eval(
+          '[aria-label="More scoring actions"]',
+          panel =>
+            Array.from(panel.querySelectorAll('div'))
+              .filter(n =>
+                ['Between pitches', "Didn't see it", 'This pitch'].includes(
+                  // Browser closures cannot reference Sucrase's nullish helper.
+                  // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
+                  n.textContent == null ? '' : n.textContent
+                )
+              )
+              .map(n => ({
+                color: getComputedStyle(n).color,
+                background: getComputedStyle(panel).backgroundColor,
+                size: getComputedStyle(n).fontSize,
+                weight: getComputedStyle(n).fontWeight
+              }))
+        )
+        expect(headings).has.length(3)
+        for (const heading of headings) {
+          expect(heading.color).not.equals(heading.background)
+          expect(heading.size).equals('14.4px')
+          expect(heading.weight).equals('700')
+        }
+
+        expect(
+          await page.$eval('[aria-label="Put Batter on Base"]', n => ({
+            font: getComputedStyle(n).fontSize,
+            weight: getComputedStyle(n).fontWeight
+          }))
+        ).deep.equals({ font: '16.8px', weight: '700' })
         await click(page, 'Put Batter on Base')
         expect(await bounds('More scoring actions')).deep.equals(parent)
         expect((await bounds('Batter base')).x).at.least(width / 2)
@@ -1883,8 +1921,42 @@ describe('scoring browser', function () {
             text: getComputedStyle(node).color
           }))
         ).deep.equals({ bg: 'rgb(36, 113, 61)', text: 'rgb(255, 255, 255)' })
+        const child = await bounds('Batter base')
+        expect(child.bottom).at.most(width === 844 ? 390 : 844)
+        if (process.env.GS_SCORING_ARTIFACT_DIR != null)
+          await page.screenshot({
+            path: join(
+              process.env.GS_SCORING_ARTIFACT_DIR,
+              `menus-more-${width}.png`
+            )
+          })
         await page.keyboard.press('Escape')
         expect(await page.$('[aria-label="More scoring actions"]')).equals(null)
+        await click(page, 'Ball in Play')
+        await click(page, 'Batter Out')
+        expect(
+          await page.$eval('[aria-label="Throw Out"]', n => ({
+            font: getComputedStyle(n).fontSize,
+            weight: getComputedStyle(n).fontWeight
+          }))
+        ).deep.equals({ font: '16.8px', weight: '700' })
+        for (const label of [
+          'Throw Out',
+          'Ball Caught',
+          'Batter Interference'
+        ]) {
+          const row = await bounds(label)
+          expect(row.y).at.least(0)
+          expect(row.bottom).at.most(width === 844 ? 390 : 844)
+        }
+        if (process.env.GS_SCORING_ARTIFACT_DIR != null)
+          await page.screenshot({
+            path: join(
+              process.env.GS_SCORING_ARTIFACT_DIR,
+              `menus-outcome-${width}.png`
+            )
+          })
+        await click(page, 'Dismiss outcomes')
         const geometry = await page.$eval('canvas', node => ({
           bottom: node.getBoundingClientRect().bottom,
           height: window.innerHeight
@@ -2056,8 +2128,11 @@ describe('scoring browser', function () {
           Math.min(rect.width - 176, ((projected.x + 1) * rect.width) / 2 - 84)
         )
         const expectedY = Math.max(
-          66,
-          Math.min(rect.height - 56, ((1 - projected.y) * rect.height) / 2 - 58)
+          8,
+          Math.min(
+            rect.height - 194,
+            ((1 - projected.y) * rect.height) / 2 - 80
+          )
         )
         await page.waitForFunction(
           (x, y) => {
@@ -2154,7 +2229,14 @@ describe('scoring browser', function () {
   })
   it('requires a grab and cancels constrained drags at each base with only one target pair', async function () {
     for (const base of [1, 2, 3]) {
-      const { page } = await open('/games/g1/score')
+      const { page } = await open(
+        '/games/g1/score',
+        false,
+        false,
+        false,
+        'right',
+        true
+      )
       try {
         await click(page, 'Open scoring menu')
         await click(page, 'Overrides')
@@ -2190,12 +2272,13 @@ describe('scoring browser', function () {
         }
         await page.mouse.click(...project(-60, 0.7, -60))
         expect(await page.$('[aria-label="Safe drag target"]')).equals(null)
+        await captureScene(page)
         const from = BASES[base]
         const to = BASES[(base + 1) % 4]
         await page.mouse.move(...project(from.x, 6, from.z))
         await page.mouse.down()
         const locations: number[] = []
-        for (const progress of [0.49, 0.51, 0.49]) {
+        for (const progress of [0.25, 0.75, 0.25, 0]) {
           await page.mouse.move(
             ...project(
               from.x + (to.x - from.x) * progress + (to.z - from.z) * 2,
@@ -2205,6 +2288,31 @@ describe('scoring browser', function () {
           )
           await page.waitForSelector('[aria-label="Safe drag target"]')
           expect(await page.$$('[aria-label="Safe drag target"]')).has.length(1)
+          const actual = await page.evaluate(() => {
+            const guide = (
+              window as unknown as SceneProbeWindow
+            ).qaScene!.getObjectByName('move-preview')!
+            const marker = guide.getObjectByName('destination-marker')!
+            const line = guide.getObjectByName('runner-transition-line')!
+            return {
+              x: marker.position.x,
+              z: marker.position.z,
+              line: line.visible
+            }
+          })
+          const expected = progress > 0.5 ? 1 : progress
+          expect(actual.x).closeTo(from.x + (to.x - from.x) * expected, 0.1)
+          expect(actual.z).closeTo(from.z + (to.z - from.z) * expected, 0.1)
+          expect(actual.line).equals(progress > 0)
+          const style = await page.$eval(
+            '[aria-label="Safe drag target"]',
+            n => ({
+              height: n.getBoundingClientRect().height,
+              size: getComputedStyle(n.firstElementChild!).fontSize,
+              weight: getComputedStyle(n.firstElementChild!).fontWeight
+            })
+          )
+          expect(style).deep.equals({ height: 66, size: '21px', weight: '700' })
           locations.push(
             await page.$eval(
               '[aria-label="Safe drag target"]',
@@ -2298,6 +2406,74 @@ describe('scoring browser', function () {
             .getAttribute('aria-disabled') === 'true'
       )
       expect(unexpected).deep.equals([])
+    } finally {
+      await page.close()
+    }
+  })
+  it('keeps gray bottom controls inert throughout fielding and trajectory decisions', async function () {
+    const { page } = await open('/games/g1/score')
+    try {
+      await click(page, 'Ball in Play')
+      await click(page, 'Batter Out')
+      await click(page, 'Throw Out')
+      const reject = async (): Promise<void> => {
+        const undo = await page.$eval('[aria-label^="Undo "]', n =>
+          n.getAttribute('aria-label')
+        )
+        for (const label of [
+          'Ball',
+          'Called Strike',
+          'Swing and Miss',
+          'Foul Ball',
+          'More',
+          'Ball in Play'
+        ]) {
+          const selector = `[aria-label="${label}"]`
+          const point = await page.$eval(selector, n => {
+            const r = n.getBoundingClientRect()
+            return {
+              x: r.x + r.width / 2,
+              y: r.y + r.height / 2,
+              disabled:
+                n.getAttribute('aria-disabled') === 'true' ||
+                (n instanceof HTMLButtonElement && n.disabled)
+            }
+          })
+          expect(point.disabled, label).equals(true)
+          await page.mouse.move(point.x, point.y)
+          await page.mouse.down()
+          await page.mouse.move(point.x, point.y - 30)
+          await page.mouse.up()
+          await page.$eval(selector, n => {
+            ;(n as HTMLElement).click()
+          })
+          await page.$eval(selector, n =>
+            n.dispatchEvent(
+              new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })
+            )
+          )
+        }
+        expect(await page.$('[role="menu"]')).equals(null)
+        expect(
+          await page.$eval('[aria-label^="Undo "]', n =>
+            n.getAttribute('aria-label')
+          )
+        ).equals(undo)
+      }
+      await reject()
+      await page.focus('[role="application"]')
+      await page.keyboard.press('Space')
+      await page.keyboard.press('Enter')
+      await reject()
+      await page.focus('[role="application"]')
+      await page.keyboard.press('Enter')
+      await reject()
+      await page.waitForSelector(
+        '[aria-label^="Tap or drag the next defender"]',
+        { timeout: 20000 }
+      )
+      await reject()
+      await page.locator('[aria-label^="Undo "]').click()
     } finally {
       await page.close()
     }

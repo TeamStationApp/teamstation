@@ -37,7 +37,12 @@ import { scoringAudio } from './scoringAudio'
 import { initialScoringState, scoringReducer } from './scoringMachine'
 import { scoringFieldPlayers } from './scoringMotion'
 import { scoringPreferences } from './scoringPreferences'
-import { baseIds, canSwitchBatter, scoreboardFor } from './scoringSelectors'
+import {
+  baseIds,
+  bottomActionsAllowed,
+  canSwitchBatter,
+  scoreboardFor
+} from './scoringSelectors'
 import { ScoringSettings } from './ScoringSettings'
 import { ScoringButton, ScoringSheet } from './ScoringSheet'
 import {
@@ -237,6 +242,7 @@ function ScoringSession(props: {
   )
   const stateRef = useRef(state)
   stateRef.current = state
+  const actionsAllowed = bottomActionsAllowed(state)
   const session = state.session
   const line = session.liveData.linescore
   const exit = useScoringExit(
@@ -549,19 +555,13 @@ function ScoringSession(props: {
       moreControl={
         <MoreMenu
           state={state}
-          disabled={
-            menu ||
-            sheet != null ||
-            outcomeMenu ||
-            state.phase !== 'ready' ||
-            state.presentation != null ||
-            state.moreDraft != null
-          }
+          disabled={menu || sheet != null || outcomeMenu || !actionsAllowed}
           onActive={active => {
             if (active) pauseClock()
             setMoreOpen(active)
           }}
           onChoose={input => {
+            if (!actionsAllowed || menu || sheet != null || outcomeMenu) return
             setHint(false)
             dispatch({ type: 'MORE', input })
           }}
@@ -571,8 +571,7 @@ function ScoringSession(props: {
         <OutcomePicker
           hasRunners={baseIds(session).some(id => id != null)}
           disabled={
-            state.phase !== 'ready' ||
-            state.presentation != null ||
+            !actionsAllowed ||
             menu ||
             sheet != null ||
             moreOpen ||
@@ -580,6 +579,7 @@ function ScoringSession(props: {
           }
           onActive={setOutcomeMenu}
           onChoose={outcome => {
+            if (!actionsAllowed || menu || sheet != null || moreOpen) return
             scoringAudio.unlock()
             setHint(false)
             dispatch({ type: 'OUTCOME', outcome })
@@ -596,6 +596,8 @@ function ScoringSession(props: {
         dispatch({ type: 'UNDO' })
       }}
       onPitch={kind => {
+        if (!actionsAllowed || menu || sheet != null || outcomeMenu || moreOpen)
+          return
         scoringAudio.unlock()
         if (kind !== 'play') dispatch({ type: 'PITCH', kind })
         setHint(false)
@@ -676,7 +678,7 @@ function ScoringSession(props: {
       }
       onCameraGesture={setGesture}
       canPitch={
-        state.phase === 'ready' &&
+        actionsAllowed &&
         !menu &&
         sheet == null &&
         !outcomeMenu &&

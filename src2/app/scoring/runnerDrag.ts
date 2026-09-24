@@ -42,7 +42,7 @@ export function runnerTargets(
 ): { safe: TargetRect; out: TargetRect } {
   const vertical = base % 4 !== 2
   const span = vertical ? 80 : 168
-  const tall = vertical ? 96 : 44
+  const tall = vertical ? 140 : 66
   const desiredX = vertical
     ? base % 4 === 3
       ? anchor.x - 100
@@ -51,15 +51,15 @@ export function runnerTargets(
   const x = Math.max(8, Math.min(width - span - 8, desiredX))
   const y = Math.max(
     8,
-    Math.min(height - 128 - tall, anchor.y - (vertical ? 48 : 58))
+    Math.min(height - 128 - tall, anchor.y - (vertical ? 70 : 80))
   )
   return {
-    safe: { x, y, width: 80, height: 44 },
+    safe: { x, y, width: 80, height: 66 },
     out: {
       x: vertical ? x : x + 88,
-      y: vertical ? y + 52 : y,
+      y: vertical ? y + 74 : y,
       width: 80,
-      height: 44
+      height: 66
     }
   }
 }
