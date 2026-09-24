@@ -125,8 +125,9 @@ describe('hit presentation coordination', function () {
         p => p.playerId === 10
       )!.position
       state = scoringReducer(state, {
-        type: 'FIELDER',
-        id: 10,
+        ...(outcome === 'Home Run'
+          ? { type: 'LANDING' as const }
+          : { type: 'FIELDER' as const, id: 10 }),
         point: { x: 25, z: -75 },
         generation: 0
       })
@@ -139,7 +140,11 @@ describe('hit presentation coordination', function () {
       })
       const seq = state.presentation!
       if (seq.kind !== 'hit') throw new Error('Expected hit')
-      expect(seq.fielderStart).deep.equals(origin)
+      expect(seq.fielderStart).deep.equals(
+        outcome === 'Home Run'
+          ? seq.players.find(p => p.playerId === seq.fielder)!.position
+          : origin
+      )
       expect(scoringFieldPlayers(state).every(p => p.motion == null)).equals(
         true
       )

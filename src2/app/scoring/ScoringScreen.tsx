@@ -15,6 +15,7 @@ import {
 } from 'react-native'
 
 import type { GameStationClient } from '../../common/api'
+import type { BallArcState } from '../field/ballArcModel'
 import { BaseballScreen } from '../field/BaseballScreen'
 import type { FieldPlayer } from '../field/fieldModel'
 import type { BaseProjection } from '../field/fieldTypes'
@@ -22,6 +23,7 @@ import { homeRunKind, homeRunLabel } from '../field/stadiumBoundary'
 import { useFieldSurface } from '../field/useFieldSurface'
 import { useTheme } from '../theme/ThemeContext'
 import { allowedAngle, trajectoryLabel } from './battedBall'
+import { battedBallField, fieldStageInstruction } from './battedBallField'
 import { ErrorCreditSheet } from './ErrorCreditSheet'
 import { MoreMenu } from './MoreMenu'
 import { OutcomePicker } from './OutcomePicker'
@@ -171,6 +173,11 @@ function ScoringSession(props: {
   const [moreOpen, setMoreOpen] = useState(false)
   const [baseProjection, setBaseProjection] = useState<BaseProjection>()
   const [angle, setAngle] = useState(45)
+  const [landingArc, setLandingArc] = useState<BallArcState | null>(null)
+  useEffect(() => {
+    setLandingArc(null)
+    setLandingPreview(null)
+  }, [state.phase, state.generation])
   const [landingPreview, setLandingPreview] = useState<{
     x: number
     z: number
@@ -347,21 +354,12 @@ function ScoringSession(props: {
   const instruction =
     state.presentation != null
       ? undefined
-      : state.phase === 'locateFielder'
-        ? 'Drag fielder to location of fielded ball.'
-        : state.phase === 'trajectory'
-          ? 'Drag up and down for ball trajectory.'
-          : state.phase === 'chooseThrower'
-            ? 'Tap and Drag Thrower.'
-            : state.phase === 'chooseDefender'
-              ? state.runnerAction?.purpose === 'errorAttribution'
-                ? 'Tap and drag another defender, or hit Done to choose who committed the error.'
-                : 'Tap and drag the next defender, or hit Done to finish the out.'
-              : state.phase === 'resolveBatter'
-                ? unresolvedRunner?.from === 0
-                  ? 'Drag batter to a base, or hold to mark Out'
-                  : `Resolve ${session.gameData.players[unresolvedRunner?.playerId ?? 0]?.fullName ?? 'runner'}: drag to a base, or hold to mark Out`
-                : undefined
+      : (fieldStageInstruction(state) ??
+        (state.phase === 'resolveBatter'
+          ? unresolvedRunner?.from === 0
+            ? 'Drag batter to a base, or hold to mark Out'
+            : `Resolve ${session.gameData.players[unresolvedRunner?.playerId ?? 0]?.fullName ?? 'runner'}: drag to a base, or hold to mark Out`
+          : undefined))
   const fieldScoreboard = scoreboardFor(session)
   const summary =
     instruction == null
@@ -387,9 +385,20 @@ function ScoringSession(props: {
       field={{
         players,
         onBaseProjection: setBaseProjection,
-        homeRunPlacement:
-          state.phase === 'locateFielder' &&
-          state.pendingPlay?.outcome === 'Home Run',
+        ...battedBallField(
+          state,
+          angle,
+          landingArc,
+          menu || sheet != null || outcomeMenu || moreOpen,
+          {
+            dispatch,
+            landing: arc => {
+              setLandingArc(arc)
+              setLandingPreview(arc.target)
+            },
+            angle: setAngle
+          }
+        ),
         onLandingPreview: setLandingPreview,
         presentation: state.presentation,
         presentationPaused: menu || sheet != null || outcomeMenu || moreOpen,
@@ -468,30 +477,9 @@ function ScoringSession(props: {
             moreOpen ||
             state.presentation != null
               ? []
-              : state.phase === 'trajectory'
+              : ['trajectory', 'locateLanding'].includes(state.phase)
                 ? ['trajectory']
                 : ['place']
-        },
-        arc:
-          state.phase !== 'trajectory' || state.pendingPlay?.location == null
-            ? null
-            : {
-                target: state.pendingPlay.location,
-                angle,
-                landingHeight: state.pendingPlay.landingHeight
-              },
-        arcMode:
-          state.phase === 'trajectory' && !menu && sheet == null
-            ? 'edit'
-            : 'off',
-        onArcChange: arc => {
-          setAngle(
-            allowedAngle(
-              arc.angle,
-              state.pendingPlay?.outcome ?? '',
-              state.pendingPlay?.homeRunKind
-            )
-          )
         },
         onTrajectoryAccepted: (value, generation) => {
           scoringAudio.unlock()
@@ -608,7 +596,7 @@ function ScoringSession(props: {
         state.moreDraft != null
           ? `Drag a runner for ${state.moreDraft.action}`
           : state.pendingPlay?.outcome === 'Home Run' &&
-              ['locateFielder', 'trajectory'].includes(state.phase)
+              ['locateLanding', 'trajectory'].includes(state.phase)
             ? `${instruction} ${homeRunLabel(landingPreview != null ? homeRunKind(landingPreview) : (state.pendingPlay.homeRunKind ?? 'in-park'))}`
             : (instruction ??
               (state.phase === 'awaitingBatter'

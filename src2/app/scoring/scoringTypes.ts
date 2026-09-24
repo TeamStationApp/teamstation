@@ -80,6 +80,7 @@ export type ScoringPhase =
   | 'errorCredit'
   | 'awaitingBatter'
   | 'locateFielder'
+  | 'locateLanding'
   | 'trajectory'
   | 'runnerMovement'
   | 'homeDecision'
@@ -191,6 +192,12 @@ export interface ScoringState extends ScoringSnapshot {
   past: HistoryEntry[]
 }
 export type ScoringEvent =
+  | {
+      type: 'LANDING'
+      point: GroundPoint
+      generation: number
+      landingHeight?: number
+    }
   | { type: 'ERROR_CREDIT'; id: number; generation: number }
   | { type: 'ERROR_CANCEL' }
   | { type: 'PRESENTATION_CONTACT'; id: string; generation: number }

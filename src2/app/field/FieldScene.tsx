@@ -284,6 +284,8 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     } else {
       if (event.ray.intersectPlane(ground, point) == null) return
       previewMove(drag.current, offsetTouchTarget(point, isTouch(event)))
+      if (props.constrainPlacement != null)
+        drag.current.goal = props.constrainPlacement(drag.current.goal)
     }
     if (runnerDrag.current != null) {
       if (
@@ -384,6 +386,8 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
       drag.current.offset = { x: 0, z: 0 }
       if (nearest == null && event.ray.intersectPlane(ground, point) != null)
         previewMove(drag.current, offsetTouchTarget(point, isTouch(event)))
+      if (props.constrainPlacement != null)
+        drag.current.goal = props.constrainPlacement(drag.current.goal)
     } else if (nearest == null)
       previewMove(drag.current, offsetTouchTarget(point, isTouch(event)))
     setPreview({ ...drag.current })
@@ -401,7 +405,9 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     const player = players.find(item => item.id === drag.current?.id)
     if (player != null) {
       finishMove(player, drag.current, cancel)
-      const landing = { ...player.target }
+      const landing = props.constrainPlacement?.(player.target) ?? {
+        ...player.target
+      }
       if (props.homeRunPlacement === true)
         player.target = clampToField(player.target)
       if (
@@ -420,6 +426,7 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
             )
           else props.onRunnerCancel?.()
         } else if (
+          (props.acceptDefenderTap === true && player.team === 'defense') ||
           Math.hypot(
             drag.current.goal.x - drag.current.origin.x,
             drag.current.goal.z - drag.current.origin.z
@@ -573,7 +580,15 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
   ): void => {
     const landing = landingAt(event)
     if (landing == null) return
-    const next = { ...landing, angle: initial.angle }
+    const next = {
+      ...landing,
+      target:
+        props.homeRunPlacement === true
+          ? homeRunLanding(landing.target)
+          : landing.target,
+      angle: initial.angle
+    }
+    if (props.homeRunPlacement === true) props.onLandingPreview?.(next.target)
     if (arcDrag.current != null) arcDrag.current.latest = next
     onArcChange?.(next)
     invalidate()
@@ -639,7 +654,9 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     if (cancel) onArcChange?.(active.initial)
     else if (active.generation === (props.interaction?.generation ?? 0)) {
       onArcFinish?.()
-      props.onTrajectoryAccepted?.(active.latest.angle, active.generation)
+      if (active.kind === 'target')
+        props.onLandingAccepted?.(active.latest, active.generation)
+      else props.onTrajectoryAccepted?.(active.latest.angle, active.generation)
     }
   }
   return (

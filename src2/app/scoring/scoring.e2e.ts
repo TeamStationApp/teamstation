@@ -123,7 +123,11 @@ async function chooseHit(page: Page, outcome: string): Promise<void> {
   await click(page, 'Ball in Play')
   await click(page, outcome)
   await page.waitForSelector('canvas[data-field-ready="true"]')
-  await page.waitForSelector('[aria-label^="Drag fielder to location"]')
+  await page.waitForSelector(
+    outcome === 'Home Run'
+      ? '[aria-label^="Drag where the ball was hit"]'
+      : '[aria-label^="Tap or drag a player to where the ball was fielded"]'
+  )
   await page.focus('[role="application"]')
   await page.keyboard.press('Space')
   await page.keyboard.press('ArrowUp')
@@ -382,6 +386,33 @@ describe('scoring browser', function () {
         await page.close()
       }
     })
+  it('routes batter interference through two receiving defenders before one out', async function () {
+    const { page } = await open('/games/g1/score')
+    try {
+      await chooseHit(page, 'Batter Interference')
+      await page.waitForSelector(
+        '[aria-label^="Tap and drag the next defender"]'
+      )
+      for (let i = 0; i < 2; i++) {
+        await placeDefenderWithKeyboard(page, true)
+        await page.waitForSelector(
+          '[aria-label^="Tap and drag the next defender"]'
+        )
+      }
+      await click(page, 'Finish defensive play')
+      await page.waitForSelector('[aria-label*="Batter Player 2"]', {
+        timeout: 30000
+      })
+      await page.waitForSelector('[aria-label*="1 outs"]')
+      await page.locator('[aria-label^="Undo "]').click()
+      await page.waitForSelector(
+        '[aria-label^="Tap and drag the next defender"]'
+      )
+      expect(await page.$('[aria-label*="Batter Player 2"]')).equals(null)
+    } finally {
+      await page.close()
+    }
+  })
   it('chains three recipients with no intermediate out and finishes from the toast', async function () {
     const { page } = await open('/games/g1/score')
     try {
@@ -656,8 +687,8 @@ describe('scoring browser', function () {
             box.y + ((1 - p.y) * box.height) / 2
           ]
         }
-        const start = project(bats === 'right' ? -4 : 4),
-          end = project(bats === 'right' ? 7 : -7)
+        const start = project(bats === 'right' ? -4 : 4)
+        const end = project(bats === 'right' ? 7 : -7)
         await page.mouse.move(...start)
         await page.mouse.down()
         await page.mouse.move(...end, { steps: 12 })
@@ -1235,7 +1266,9 @@ describe('scoring browser', function () {
         const leaf = await center(out)
         await page.mouse.move(leaf.x, leaf.y, { steps: 8 })
         await page.mouse.up()
-        await page.waitForSelector('[aria-label^="Drag fielder to location"]')
+        await page.waitForSelector(
+          '[aria-label^="Tap or drag a player to where the ball was fielded"]'
+        )
         expect(await page.$('[aria-label="Back"]')).equals(null)
         await page.waitForSelector('canvas[data-field-ready="true"]')
         const field = '[role="application"]'
@@ -1974,7 +2007,7 @@ describe('scoring browser', function () {
             await page.mouse.move(...project(0, -129, 7), { steps: 10 })
             await page.waitForFunction(() =>
               String(document.body.textContent).includes(
-                'fielded ball. Home Run'
+                'Drag where the ball was hit Home Run'
               )
             )
           }
@@ -2146,7 +2179,9 @@ describe('scoring browser', function () {
           await dropRunnerWithKeyboard(page, decision, advance)
           await click(page, reason)
           if (decision === 'Out') {
-            await page.waitForSelector('[aria-label^="Tap and Drag Thrower."]')
+            await page.waitForSelector(
+              '[aria-label^="Tap or drag a player to where the ball was fielded."]'
+            )
             await placeDefenderWithKeyboard(page)
             await page.waitForSelector(
               '[aria-label^="Tap and drag the next defender"]'
@@ -2349,9 +2384,9 @@ describe('scoring browser', function () {
       await click(page, 'Apply Override')
       await chooseHit(page, 'Home Run')
       await click(page, 'Undo 45° Fly Ball')
-      await click(page, 'Undo Fielded by Player 1')
+      await click(page, 'Undo Home-run landing')
       await new Promise(resolve => setTimeout(resolve, 11000))
-      await page.waitForSelector('[aria-label^="Drag fielder to location"]')
+      await page.waitForSelector('[aria-label^="Drag where the ball was hit"]')
       expect(await page.$('[aria-label="Time to edit play"]')).equals(null)
       await click(page, 'Undo Home Run')
       await page.waitForSelector(

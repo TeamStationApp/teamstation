@@ -491,14 +491,14 @@ export function prepareBatterResult(state: ScoringState): void {
       purpose: 'batterRetirement',
       playerId: batter,
       from: 0,
-      to: pending.outcome === 'Throw Out' ? 1 : 0,
+      to: pending.outcome === 'Ball Caught' ? 0 : 1,
       origin: 'current',
       returnPhase: 'correctionWindow',
       decision: 'out',
       reason: pending.outcome,
       thrower: pending.fielder
     }
-    if (pending.outcome === 'Throw Out') beginDefense(state)
+    if (pending.outcome !== 'Ball Caught') beginDefense(state)
     else finishOut(state, pending.fielder!)
   } else settleRunners(state)
 }

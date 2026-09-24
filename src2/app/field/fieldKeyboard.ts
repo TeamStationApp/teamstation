@@ -1,6 +1,7 @@
 import { type RunnerDragView, runnerDragView } from '../scoring/runnerDrag'
 import { BASES, type FieldPlayer, type GroundPoint } from './fieldModel'
 import type { FieldCanvasProps } from './fieldTypes'
+import { homeRunLanding } from './stadiumBoundary'
 const keyboardDrags = new WeakMap<FieldPlayer, RunnerDragView>()
 /** Keyboard input uses the same eligibility and accepted-placement boundary as pointers. */
 export interface KeyboardProjection {
@@ -15,6 +16,28 @@ export function fieldKey(
 ): boolean {
   const policy = props.interaction
   if (policy?.gestures.includes('trajectory') === true && props.arc != null) {
+    if (props.arcMode === 'aim') {
+      if (key === 'Enter')
+        props.onLandingAccepted?.(props.arc, policy.generation)
+      else if (
+        ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(key)
+      ) {
+        const target = {
+          x:
+            props.arc.target.x +
+            (key === 'ArrowLeft' ? -3 : key === 'ArrowRight' ? 3 : 0),
+          z:
+            props.arc.target.z +
+            (key === 'ArrowUp' ? -3 : key === 'ArrowDown' ? 3 : 0)
+        }
+        props.onArcChange?.({
+          ...props.arc,
+          target:
+            props.homeRunPlacement === true ? homeRunLanding(target) : target
+        })
+      } else if (key !== ' ') return false
+      return true
+    }
     if (key === 'Enter')
       props.onTrajectoryAccepted?.(props.arc.angle, policy.generation)
     else if (key === 'ArrowUp' || key === 'ArrowDown')
@@ -80,7 +103,9 @@ export function fieldKey(
       props.onPlayerPlacement?.(player.id, { ...player.target })
       props.onFieldPlacement?.({
         entityId: player.id,
-        point: { ...player.target },
+        point: props.constrainPlacement?.(player.target) ?? {
+          ...player.target
+        },
         generation: policy?.generation ?? 0,
         gestureId: 0
       })
@@ -140,6 +165,8 @@ export function fieldKey(
           player.target.z +
           (key === 'ArrowUp' ? -3 : key === 'ArrowDown' ? 3 : 0)
       }
+      if (props.constrainPlacement != null)
+        player.target = props.constrainPlacement(player.target)
     }
   } else return false
   return true

@@ -177,7 +177,7 @@ async function cancelRunner() {
   await absent('^Runner (advance|out)$')
 }
 async function fieldAndTrajectory() {
-  await visible('Drag fielder to location')
+  await visible('Tap or drag a player to where the ball was fielded')
   const g = await geometry()
   await gesture([
     g.project({ x: 0, z: -18.44 }),

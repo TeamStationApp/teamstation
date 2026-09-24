@@ -36,8 +36,9 @@ function hit(
 ): ScoringState {
   state = scoringReducer(state, { type: 'OUTCOME', outcome })
   state = scoringReducer(state, {
-    type: 'FIELDER',
-    id: 10,
+    ...(outcome === 'Home Run'
+      ? { type: 'LANDING' as const }
+      : { type: 'FIELDER' as const, id: 10 }),
     point: { x: 10, z: -40 },
     generation: state.generation
   })

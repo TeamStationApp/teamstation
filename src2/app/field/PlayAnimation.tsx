@@ -179,6 +179,7 @@ export function PlayAnimation({
       if (
         sequence.kind === 'hit' &&
         'fielder' in sample &&
+        sequence.fielder != null &&
         player.playerId === sequence.fielder
       ) {
         player.position = { ...sample.fielder }
