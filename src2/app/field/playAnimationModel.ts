@@ -16,6 +16,7 @@ export interface PitchSample {
   swing: number
   catch: number
 }
+export const DEFENDER_SPEED = 3
 const clamp = (n: number): number => Math.max(0, Math.min(1, n))
 function lerp(a: Point3, b: Point3, t: number): Point3 {
   return {
@@ -28,9 +29,27 @@ function lerp(a: Point3, b: Point3, t: number): Point3 {
 export function foulPoint(
   plate: Point3,
   side: 'R' | 'L',
-  progress: number
+  progress: number,
+  camera?: Point3
 ): Point3 {
   const t = clamp(progress)
+  if (camera != null) {
+    // Reach 40% of the contact depth before fading: fixed radius projects 2.5x larger.
+    const travel = Math.sin((t * Math.PI) / 2)
+    const approach = 0.6 * travel
+    const lateral =
+      Math.hypot(camera.x - plate.x, camera.y - plate.y, camera.z - plate.z) *
+      0.035 *
+      travel
+    return {
+      x:
+        plate.x +
+        (camera.x - plate.x) * approach +
+        (side === 'R' ? lateral : -lateral),
+      y: plate.y + (camera.y - plate.y) * approach,
+      z: plate.z + (camera.z - plate.z) * approach
+    }
+  }
   return {
     x: plate.x + (side === 'R' ? 1 : -1) * 18 * t,
     z: plate.z + 18 * t,
@@ -39,7 +58,8 @@ export function foulPoint(
 }
 export function samplePitch(
   sequence: PitchSequence,
-  time: number
+  time: number,
+  camera?: Point3
 ): PitchSample {
   const foul = sequence.pitch === 'foul'
   let ball: Point3
@@ -64,7 +84,8 @@ export function samplePitch(
       sequence.plate,
       sequence.batSide,
       (time - PITCH_TIMING.plate) /
-        (PITCH_TIMING.foulFinish - PITCH_TIMING.plate)
+        (PITCH_TIMING.foulFinish - PITCH_TIMING.plate),
+      camera
     )
   else
     ball = lerp(
@@ -104,6 +125,7 @@ export function sampleHit(
   const flight = clamp(
     (time - sequence.contactMs) / (sequence.durationMs - sequence.contactMs)
   )
+  const defender = clamp(flight * DEFENDER_SPEED)
   return {
     ball: arcPoint(sequence.arc, flight),
     visible: time >= sequence.contactMs && time < sequence.durationMs,
@@ -113,25 +135,32 @@ export function sampleHit(
         sequence.fielderStart.x +
         ((sequence.fielderTarget ?? sequence.arc.target).x -
           sequence.fielderStart.x) *
-          flight,
+          defender,
       z:
         sequence.fielderStart.z +
         ((sequence.fielderTarget ?? sequence.arc.target).z -
           sequence.fielderStart.z) *
-          flight
+          defender
     },
-    running: flight > 0 && flight < 1
+    running: defender > 0 && defender < 1
   }
 }
 
 export function sampleThrow(
   sequence: ThrowSequence,
   time: number
-): { ball: Point3; visible: boolean; progress: number; swing: number } {
+): {
+  ball: Point3
+  visible: boolean
+  progress: number
+  defenderProgress: number
+  swing: number
+} {
   const t = clamp(
     (time - (sequence.unassisted ? 0 : 150)) /
       (sequence.durationMs - (sequence.unassisted ? 0 : 150))
   )
+  const defender = sequence.unassisted ? clamp(t * DEFENDER_SPEED) : t
   const ball =
     !sequence.unassisted && time < 150
       ? pitchingHand(
@@ -141,12 +170,13 @@ export function sampleThrow(
           sequence.throwSide,
           sequence.heading
         )
-      : lerp(sequence.from, sequence.to, t)
+      : lerp(sequence.from, sequence.to, defender)
   ball.y += Math.sin(t * Math.PI) * (sequence.unassisted ? 0 : 3)
   return {
     ball,
     visible: !sequence.unassisted && time < sequence.durationMs,
     progress: t,
+    defenderProgress: defender,
     swing: 0
   }
 }
