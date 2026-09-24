@@ -124,6 +124,8 @@ async function gesture(points, hold = 500) {
   })
 }
 async function freshGame() {
+  await m.stopApp()
+  await m.launchApp()
   url.searchParams.set('safariAcceptance', String(Date.now()))
   await m.openLink({ link: url.href, browser: true })
   await visible('^Ball in Play$')
@@ -155,7 +157,9 @@ async function geometry() {
 try {
   await m.launchApp()
   await m.setOrientation('portrait')
-  for (const outside of [false, true]) {
+  for (const outside of process.env.SCORING_FIELD_PHASE === 'relay'
+    ? []
+    : [false, true]) {
     await freshGame()
     await tap('Ball in Play')
     await tap('Home Run')
@@ -187,8 +191,40 @@ try {
     await absent('Time to edit play')
     await shot(outside ? 'stands-finished' : 'in-park-finished')
   }
+  await freshGame()
+  await tap('Ball in Play')
+  await tap('Batter Out')
+  await tap('Batter Interference')
+  await visible('Tap or drag a player to where the ball was fielded')
+  const relay = await geometry()
+  await gesture([relay.project(0, -18.44, 6)], 80)
+  await visible('Drag up and down for ball trajectory')
+  const arcStart = {
+    x: relay.field.x + relay.field.width * 0.25,
+    y: relay.field.y + relay.field.height * 0.6
+  }
+  await gesture([arcStart, { x: arcStart.x, y: arcStart.y - 25 }], 80)
+  await visible('Tap or drag the next defender')
+  for (const [x, z, name] of [
+    [24, -23, 'Player 3'],
+    [15, -41, 'Player 4']
+  ]) {
+    await gesture([relay.project(x, z, 6)], 80)
+    await visible(`Undo Throw to ${name}`)
+    await visible('Tap or drag the next defender')
+  }
+  await gesture([relay.project(-15, -41, 6), relay.project(-10, -35, 6)], 80)
+  await visible('Undo Throw to Player 5')
+  await visible('Tap or drag the next defender')
+  await shot('three-recipient-relay')
+  await tap('Finish defensive play')
+  await visible('Batter Player 2')
+  await visible('1 outs')
+  await shot('interference-one-out')
   log(
-    'PASS Safari relative home-run dragging, status chips, trajectory and automatic scoring'
+    process.env.SCORING_FIELD_PHASE === 'relay'
+      ? 'PASS Safari interference submenu and tapped/dragged relays'
+      : 'PASS Safari relative home-run dragging, status chips, automatic scoring, interference submenu and tapped/dragged relays'
   )
 } catch (error) {
   await shot('failure').catch(() => {})

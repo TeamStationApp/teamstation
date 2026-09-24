@@ -12,8 +12,7 @@ export const PRIMARY_OUTCOMES = [
   'Triple',
   'Home Run',
   "Fielder's Choice",
-  'Error',
-  'Batter Interference'
+  'Error'
 ] as const
 export function OutcomePicker({
   disabled,
@@ -84,7 +83,10 @@ export function OutcomePicker({
     if (value === 'Batter Out' && item != null) {
       setSubmenu(true)
       setSubmenuTop(
-        Math.min(window.innerHeight - 130, item.getBoundingClientRect().top)
+        Math.max(
+          12,
+          Math.min(window.innerHeight - 170, item.getBoundingClientRect().top)
+        )
       )
     } else if (
       (item != null && main.current?.contains(item) === true) ||
@@ -278,9 +280,12 @@ export function OutcomePicker({
                   onClick={event => {
                     if (value === 'Batter Out')
                       setSubmenuTop(
-                        Math.min(
-                          window.innerHeight - 130,
-                          event.currentTarget.getBoundingClientRect().top
+                        Math.max(
+                          12,
+                          Math.min(
+                            window.innerHeight - 170,
+                            event.currentTarget.getBoundingClientRect().top
+                          )
                         )
                       )
                     select(value)
@@ -301,6 +306,8 @@ export function OutcomePicker({
                 zIndex: 20,
                 left: 12,
                 top: submenuTop,
+                maxHeight: 'calc(100dvh - 24px)',
+                overflowY: 'auto',
                 width: 'min(230px, 46vw)',
                 display: 'flex',
                 flexDirection: 'column',
@@ -310,7 +317,9 @@ export function OutcomePicker({
                 background: theme.backgroundColor
               }}
             >
-              {(['Throw Out', 'Ball Caught'] as const).map(value => (
+              {(
+                ['Throw Out', 'Ball Caught', 'Batter Interference'] as const
+              ).map(value => (
                 <button
                   role="menuitem"
                   key={value}
