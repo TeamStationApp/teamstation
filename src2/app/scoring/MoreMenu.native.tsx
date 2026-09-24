@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Text } from 'react-native'
+import { Text, View } from 'react-native'
 
 import { useTheme } from '../theme/ThemeContext'
 import { MoreActionEditor } from './MoreActionEditor'
@@ -15,6 +15,7 @@ export function MoreMenu({
   const theme = useTheme()
   const [open, setOpen] = useState(false)
   const [base, setBase] = useState(false)
+  const [baseY, setBaseY] = useState(0)
   const [form, setForm] = useState<MoreInput>()
   const close = (): void => {
     setOpen(false)
@@ -47,18 +48,9 @@ export function MoreMenu({
       />
       {open && (
         <ScoringSheet title="More" onClose={close}>
-          {base
-            ? ['First', 'Second', 'Third'].map((label, index) => (
-                <ScoringButton
-                  row
-                  key={label}
-                  label={label}
-                  onPress={() => {
-                    choose({ action: 'Put Batter on Base', base: index + 1 })
-                  }}
-                />
-              ))
-            : MORE_GROUPS.map(group => (
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+            <View style={{ width: '50%' }}>
+              {MORE_GROUPS.map(group => (
                 <React.Fragment key={group.label}>
                   <Text
                     style={{
@@ -75,20 +67,51 @@ export function MoreMenu({
                         moreEligibility(state, action) == null
                     )
                     .map(action => (
-                      <ScoringButton
-                        row
+                      <View
                         key={action}
-                        label={action}
-                        submenu={action === 'Put Batter on Base'}
-                        disabled={moreEligibility(state, action) != null}
-                        onPress={() => {
-                          if (action === 'Put Batter on Base') setBase(true)
-                          else choose({ action })
+                        onLayout={event => {
+                          if (action === 'Put Batter on Base')
+                            setBaseY(event.nativeEvent.layout.y)
                         }}
-                      />
+                      >
+                        <ScoringButton
+                          row
+                          label={action}
+                          submenuRight={action === 'Put Batter on Base'}
+                          disabled={moreEligibility(state, action) != null}
+                          onPress={() => {
+                            if (action === 'Put Batter on Base') setBase(!base)
+                            else choose({ action })
+                          }}
+                        />
+                      </View>
                     ))}
                 </React.Fragment>
               ))}
+            </View>
+            {base && (
+              <View
+                accessibilityLabel="Batter base"
+                style={{
+                  position: 'absolute',
+                  right: 0,
+                  top: baseY,
+                  width: '50%'
+                }}
+              >
+                {['First', 'Second', 'Third'].map((label, index) => (
+                  <ScoringButton
+                    row
+                    key={label}
+                    label={label}
+                    onPress={() => {
+                      choose({ action: 'Put Batter on Base', base: index + 1 })
+                    }}
+                  />
+                ))}
+              </View>
+            )}
+          </View>
         </ScoringSheet>
       )}
       {form != null && (

@@ -80,6 +80,28 @@ describe('shared roster dragging', function () {
     expect(previews.at(-1)).equals(null)
     expect(drops).deep.equals([])
   })
+  it('previews insertion edges and recomputes them at release', async function () {
+    const engine = new RosterGesture(() => undefined)
+    const drops: Array<string | undefined> = []
+    engine.targets.set('lineup', {
+      measure: async () => box,
+      insertion: 'row',
+      drop: (_, edge) => drops.push(edge)
+    })
+    engine.begin(1, 'One', { x: 0, y: 0 })
+    await engine.move({ x: 120, y: 120 })
+    expect(engine.preview?.edge).equals('before')
+    await engine.move({ x: 120, y: 220 })
+    expect(engine.preview?.edge).equals('after')
+    await engine.release({ x: 120, y: 120 })
+    expect(drops).deep.equals(['before'])
+    engine.targets.get('lineup')!.insertion = 'end'
+    engine.begin(1, 'One', { x: 0, y: 0 })
+    await engine.move({ x: 120, y: 220 })
+    expect(engine.preview?.edge).equals('before')
+    await engine.release({ x: 120, y: 220 })
+    expect(engine.preview).equals(null)
+  })
   it('auto-scrolls only an active drag at a visible edge and remeasures', async function () {
     const deltas: number[] = []
     const engine = new RosterGesture(() => undefined)

@@ -63,40 +63,27 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
   const ref = useRef<React.ComponentRef<typeof View>>(null)
   const latest = useRef(props)
   latest.current = props
-  const [hover, setHover] = useState(false)
+  const [hover, setHover] = useState<false | 'before' | 'after' | 'row'>(false)
   const token = props.targetId
   useEffect(() => {
     if (token == null || props.onDropPlayer == null) return
     engine.targets.set(token, {
       measure: async () => await measureRosterView(ref.current),
       clip,
-      drop: id => {
-        latest.current.onDropPlayer?.(id)
+      insertion: props.insertion,
+      drop: (id, edge) => {
+        latest.current.onDropPlayer?.(id, edge)
       }
     })
     const timer = setInterval(() => {
-      const point = engine.active?.point
-      if (point == null) {
-        setHover(false)
-        return
-      }
-      measureRosterView(ref.current)
-        .then(rect => {
-          setHover(
-            engine.active?.moved === true &&
-              point.x >= rect.x &&
-              point.x <= rect.x + rect.width &&
-              point.y >= rect.y &&
-              point.y <= rect.y + rect.height
-          )
-        })
-        .catch(() => undefined)
-    }, 80)
+      const preview = engine.preview
+      setHover(preview?.target === token ? (preview.edge ?? 'row') : false)
+    }, 40)
     return () => {
       clearInterval(timer)
       engine.targets.delete(token)
     }
-  }, [engine, clip, token, props.onDropPlayer])
+  }, [engine, clip, token, props.onDropPlayer, props.insertion])
   return (
     <View
       ref={ref}
@@ -118,13 +105,29 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
       style={{
         opacity: props.disabled === true ? 0.4 : 1,
         borderWidth: 2,
-        borderColor: hover
-          ? theme.scoringMenuActiveBackground
-          : theme.backgroundColor,
+        borderColor:
+          hover === 'row'
+            ? theme.scoringMenuActiveBackground
+            : theme.backgroundColor,
         borderRadius: 6
       }}
     >
       {props.children}
+      {(hover === 'before' || hover === 'after') && (
+        <View
+          pointerEvents="none"
+          accessibilityLabel="Lineup insertion point"
+          style={{
+            position: 'absolute',
+            left: 0,
+            right: 0,
+            height: 3,
+            top: hover === 'before' ? -2 : undefined,
+            bottom: hover === 'after' ? -2 : undefined,
+            backgroundColor: theme.scoringMenuActiveBackground
+          }}
+        />
+      )}
     </View>
   )
 }

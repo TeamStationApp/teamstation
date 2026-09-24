@@ -40,14 +40,26 @@ export function RosterEditor({
   }
   const team = draft.liveData.boxscore.teams[side]
   const names = draft.gameData.players
+  const display = (id: number): string =>
+    `${names[id].jersey === '' ? '' : `#${names[id].jersey} `}${names[id].fullName}`
   const assigned = defense ? Object.values(team.defense) : team.battingOrder
-  const place = (id: number, index: number): void => {
+  const place = (id: number, index: number, boundary = false): void => {
     if (!team.players.includes(id)) return
     edit(next => {
       const order = next.liveData.boxscore.teams[side].battingOrder
       const old = order.indexOf(id)
       if (old >= 0) order.splice(old, 1)
-      order.splice(Math.max(0, Math.min(index, order.length)), 0, id)
+      order.splice(
+        Math.max(
+          0,
+          Math.min(
+            index - (boundary && old >= 0 && old < index ? 1 : 0),
+            order.length
+          )
+        ),
+        0,
+        id
+      )
     })
   }
   const remove = (id: number): void => {
@@ -68,10 +80,13 @@ export function RosterEditor({
     minHeight: 48,
     gap: 6,
     paddingHorizontal: 6,
-    borderWidth: 1,
-    borderColor: theme.defaultBorderColor,
+    shadowColor: theme.buttonShadowColor,
+    shadowOpacity: 1,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 3,
     borderRadius: 6,
-    backgroundColor: theme.backgroundColor
+    backgroundColor: theme.scoringSelectorIdle
   }
   const listHeight = Math.max(120, Math.min(420, height * 0.92 - 330))
   return (
@@ -128,7 +143,7 @@ export function RosterEditor({
                   >
                     <View style={row}>
                       <Text selectable={false} style={{ ...text, flex: 1 }}>
-                        {names[id].fullName}
+                        {display(id)}
                       </Text>
                     </View>
                   </RosterDrag>
@@ -175,19 +190,28 @@ export function RosterEditor({
                       }}
                     >
                       <View style={row}>
-                        <Text
+                        <View
                           style={{
-                            ...text,
-                            borderWidth: 1,
-                            borderColor: theme.defaultBorderColor,
-                            padding: 4,
-                            minWidth: 30
+                            width: 34,
+                            height: 34,
+                            borderRadius: 6,
+                            backgroundColor: '#fff',
+                            alignItems: 'center',
+                            justifyContent: 'center'
                           }}
                         >
-                          {position}
-                        </Text>
+                          <Text
+                            style={{
+                              ...text,
+                              color: '#19251a',
+                              textAlign: 'center'
+                            }}
+                          >
+                            {position}
+                          </Text>
+                        </View>
                         <Text style={{ ...text, flex: 1 }}>
-                          {id == null ? 'Unassigned' : names[id].fullName}
+                          {id == null ? 'Unassigned' : display(id)}
                         </Text>
                         <ScoringButton
                           text="×"
@@ -213,8 +237,9 @@ export function RosterEditor({
                       playerId={id}
                       label={`Reorder ${names[id].fullName}`}
                       targetId={`lineup-${index}`}
-                      onDropPlayer={player => {
-                        place(player, index)
+                      insertion="row"
+                      onDropPlayer={(player, edge) => {
+                        place(player, index + (edge === 'after' ? 1 : 0), true)
                       }}
                       onReorder={delta => {
                         place(id, index + delta)
@@ -229,11 +254,13 @@ export function RosterEditor({
                           ≡
                         </Text>
                         <Text selectable={false} style={{ ...text, flex: 1 }}>
-                          {index + 1}. {names[id].fullName}
+                          {index + 1}. {display(id)}
                         </Text>
                         <ScoringButton
                           text="×"
                           label={`Remove ${names[id].fullName}`}
+                          shape="circle"
+                          color={theme.scoringOutColor}
                           onPress={() => {
                             remove(id)
                           }}
@@ -243,8 +270,9 @@ export function RosterEditor({
                   ))}
                   <RosterDrag
                     targetId="lineup-end"
+                    insertion="end"
                     onDropPlayer={id => {
-                      place(id, team.battingOrder.length)
+                      place(id, team.battingOrder.length, true)
                     }}
                   >
                     <Text
@@ -280,6 +308,7 @@ export function RosterEditor({
       <View style={{ flexDirection: 'row', gap: 12 }}>
         <View style={{ flex: 1 }}>
           <ScoringButton
+            shape="pill"
             label={adding ? 'Create Player' : 'Add Player'}
             disabled={adding && name.trim().length === 0}
             onPress={() => {
@@ -296,6 +325,7 @@ export function RosterEditor({
         </View>
         <View style={{ flex: 1 }}>
           <ScoringButton
+            shape="pill"
             label="Save Rosters"
             disabled={validation != null}
             onPress={() => {

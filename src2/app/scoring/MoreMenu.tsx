@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import { useTheme } from '../theme/ThemeContext'
 import { MoreActionEditor } from './MoreActionEditor'
@@ -31,6 +31,27 @@ export function MoreMenu({
   const skipClick = useRef(false)
   const primaryPanel = useRef<HTMLDivElement>(null)
   const childPanel = useRef<HTMLDivElement>(null)
+  const [childTop, setChildTop] = useState(8)
+  useLayoutEffect(() => {
+    if (!child) return
+    const measure = (): void => {
+      const parent = primaryPanel.current
+        ?.querySelector('[data-more="Put Batter on Base"]')
+        ?.getBoundingClientRect()
+      const height = childPanel.current?.getBoundingClientRect().height ?? 132
+      if (parent != null)
+        setChildTop(
+          Math.max(8, Math.min(parent.top, window.innerHeight - height - 8))
+        )
+    }
+    measure()
+    window.addEventListener('resize', measure)
+    window.addEventListener('scroll', measure, true)
+    return () => {
+      window.removeEventListener('resize', measure)
+      window.removeEventListener('scroll', measure, true)
+    }
+  }, [child])
   const close = (): void => {
     setOpen(false)
     setChild(false)
@@ -111,7 +132,10 @@ export function MoreMenu({
           choose(key)
         }}
         style={{
-          display: 'block',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 8,
           width: '100%',
           minHeight: 44,
           textAlign: 'left',
@@ -131,8 +155,8 @@ export function MoreMenu({
           opacity: reason == null ? 1 : 0.4
         }}
       >
-        {submenu ? '›  ' : ''}
-        {label}
+        <span>{label}</span>
+        {submenu && <span aria-hidden="true">›</span>}
       </button>
     )
   }
@@ -315,7 +339,7 @@ export function MoreMenu({
                   position: 'fixed',
                   left: 'calc(50vw + 8px)',
                   maxWidth: 300,
-                  bottom: 128,
+                  top: childTop,
                   width: 'calc(50vw - 16px)',
                   borderRadius: theme.rem(theme.radiusRem),
                   overflow: 'hidden',

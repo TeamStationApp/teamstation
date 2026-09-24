@@ -1,3 +1,7 @@
+import { mkdir, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 import puppeteer, { type Browser, type Page } from 'puppeteer'
@@ -753,6 +757,162 @@ describe('scoring browser', function () {
       await click(page, 'Undo Override game state')
       await click(page, 'Undo Set team roster')
       expect(unexpected).deep.equals([])
+    } finally {
+      await page.close()
+    }
+  })
+  it('shows one lineup insertion line and numbered themed rows before dropping', async function () {
+    const { page } = await open('/games/g1/score')
+    try {
+      await click(page, 'Open scoring menu')
+      await click(page, 'Set Team Rosters')
+      await page.evaluate(async () => {
+        await document.fonts.ready
+      })
+      await page.waitForFunction(() =>
+        document
+          .getAnimations()
+          .every(
+            animation =>
+              animation.effect == null ||
+              animation.effect.getComputedTiming().iterations === Infinity ||
+              (!animation.pending && animation.playState !== 'running')
+          )
+      )
+      await page.evaluate(() => {
+        const trace: unknown[] = []
+        ;(
+          window as Window & { rosterAcceptanceTrace?: unknown[] }
+        ).rosterAcceptanceTrace = trace
+        for (const type of [
+          'pointerdown',
+          'pointermove',
+          'pointerup',
+          'pointercancel',
+          'lostpointercapture'
+        ])
+          document.addEventListener(
+            type,
+            event => {
+              const e = event as PointerEvent
+              const row =
+                e.target instanceof Element
+                  ? e.target.closest('[data-roster-target]')
+                  : null
+              trace.push({
+                type,
+                at: performance.now(),
+                x: e.clientX,
+                y: e.clientY,
+                buttons: e.buttons,
+                row:
+                  row == null ? null : row.getAttribute('data-roster-target'),
+                bounds: Array.from(
+                  document.querySelectorAll('[data-roster-target]')
+                ).map(target => ({
+                  target: target.getAttribute('data-roster-target'),
+                  player: target.getAttribute('data-roster-player'),
+                  bounds: target.getBoundingClientRect().toJSON()
+                }))
+              })
+            },
+            true
+          )
+      })
+      const position = async (
+        selector: string,
+        bottom = false
+      ): Promise<{ x: number; y: number }> =>
+        await page.$eval(
+          selector,
+          (n, bottom) => {
+            const r = n.getBoundingClientRect()
+            return { x: r.x + 20, y: bottom ? r.bottom - 8 : r.top + 8 }
+          },
+          bottom
+        )
+      // Wait for the slide-up sheet to settle before measuring drag coordinates.
+      await page.locator('[aria-label="Reorder Jordan K."]').hover()
+      const a = await position('[aria-label="Reorder Jordan K."]')
+      await page.mouse.move(a.x, a.y)
+      await page.mouse.down()
+      // Measure the destination after the grab; focus and layout can settle independently.
+      const b = await position('[data-roster-target="lineup-2"]', true)
+      await page.mouse.move(b.x, b.y, { steps: 10 })
+      await page.waitForFunction(
+        () => {
+          const line = document.querySelector<HTMLElement>(
+            '[aria-label="Lineup insertion point"]'
+          )
+          if (line == null) return false
+          const parent = line.parentElement
+          if (parent == null) return false
+          return (
+            parent.getAttribute('data-roster-target') === 'lineup-2' &&
+            line.style.bottom === '-2px'
+          )
+        },
+        { timeout: 20000 }
+      )
+      expect(await page.$$('[aria-label="Lineup insertion point"]')).length(1)
+      expect(
+        await page.$eval(
+          '[data-roster-target="lineup-2"]',
+          n => getComputedStyle(n).outlineStyle
+        )
+      ).equals('none')
+      await page.mouse.up()
+      await page.waitForFunction(
+        () =>
+          document
+            .querySelector('[data-roster-target="lineup-2"]')!
+            .getAttribute('data-roster-player') === '1',
+        { timeout: 20000 }
+      )
+      expect(
+        await page.$eval('[data-roster-target="lineup-2"]', n => n.textContent)
+      ).includes('#00 Jordan K.')
+      await click(page, 'Cancel')
+      await click(page, 'More')
+      await click(page, 'Put Batter on Base')
+      const alignment = await page.evaluate(() => ({
+        parent: document
+          .querySelector('[aria-label="Put Batter on Base"]')!
+          .getBoundingClientRect().top,
+        child: document
+          .querySelector('[aria-label="First"]')!
+          .getBoundingClientRect().top
+      }))
+      expect(alignment.child).closeTo(alignment.parent, 1)
+    } catch (error) {
+      const directory =
+        process.env.GS_SCORING_ARTIFACT_DIR ??
+        join(homedir(), '.cursor', 'logs')
+      await mkdir(directory, { recursive: true })
+      const stem = join(directory, `roster-insertion-failure-${Date.now()}`)
+      const detail = await page.evaluate(() => ({
+        trace: (window as Window & { rosterAcceptanceTrace?: unknown[] })
+          .rosterAcceptanceTrace,
+        rows: Array.from(document.querySelectorAll('[data-roster-target]')).map(
+          row => ({
+            target: row.getAttribute('data-roster-target'),
+            player: row.getAttribute('data-roster-player'),
+            bounds: row.getBoundingClientRect().toJSON(),
+            text: row.textContent
+          })
+        ),
+        animations: document.getAnimations().map(animation => ({
+          state: animation.playState,
+          pending: animation.pending
+        })),
+        lines: Array.from(
+          document.querySelectorAll('[aria-label="Lineup insertion point"]')
+        ).map(line => line.getBoundingClientRect().toJSON())
+      }))
+      await writeFile(stem + '.json', JSON.stringify(detail, null, 2))
+      await page.screenshot({ path: stem + '.png' })
+      console.error('Insertion failure diagnostics:', stem)
+      throw error
     } finally {
       await page.close()
     }

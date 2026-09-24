@@ -6,6 +6,7 @@ import {
   rmSync,
   writeFileSync
 } from 'node:fs'
+import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -55,6 +56,7 @@ const report = spawnSync(
     '--all',
     '--reporter=text',
     '--reporter=json-summary',
+    '--reporter=json',
     '--check-coverage',
     '--lines=90',
     ...includes.flatMap(path => ['--include', path]),
@@ -129,3 +131,45 @@ console.log(
   `Whole changed-file line coverage: ${changedPercent.toFixed(2)}% (${covered}/${total})`
 )
 if (changedPercent < 90) process.exitCode = 1
+
+if (process.env.GS_COVERAGE_BASE != null) {
+  const { changedLines, lineReport } = createRequire(import.meta.url)(
+    './changed-line-coverage.cjs'
+  )
+  const diff = spawnSync(
+    'git',
+    ['diff', '--unified=0', process.env.GS_COVERAGE_BASE, '--', 'src2/app'],
+    { encoding: 'utf8' }
+  )
+  if (diff.status !== 0) throw new Error(diff.stderr)
+  const changes = changedLines(diff.stdout)
+  for (const path of untracked.stdout.trim().split('\n').filter(Boolean))
+    changes[path] = new Set(
+      readFileSync(path, 'utf8')
+        .split('\n')
+        .map((_, i) => i + 1)
+    )
+  for (const path of Object.keys(changes))
+    if (!/\.tsx?$/.test(path) || /\.(test|e2e)\./.test(path))
+      delete changes[path]
+  const raw = JSON.parse(readFileSync('coverage/coverage-final.json', 'utf8'))
+  const coverage = Object.fromEntries(
+    Object.keys(changes).map(path => [path, raw[resolve(path)]])
+  )
+  const report = lineReport(changes, coverage, path =>
+    /export (function|const|class)|(?:^|\n)const /.test(
+      readFileSync(path, 'utf8')
+    )
+  )
+  writeFileSync('coverage/changed-lines.json', JSON.stringify(report, null, 2))
+  console.log(
+    `Changed executable line coverage: ${report.covered}/${report.total} (${report.percent.toFixed(2)}%)`
+  )
+  if (!report.pass) {
+    console.error('Missing source maps:', report.missing)
+    for (const [path, rows] of Object.entries(report.files))
+      if (rows.uncovered.length > 0)
+        console.error(path + ':' + rows.uncovered.join(','))
+    process.exitCode = 1
+  }
+}

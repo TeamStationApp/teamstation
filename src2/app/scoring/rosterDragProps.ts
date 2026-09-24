@@ -6,6 +6,7 @@ export interface RosterDragProps {
   disabled?: boolean
   onTap?: () => void
   onReorder?: (delta: number) => void
-  onDropPlayer?: (id: number) => void
+  insertion?: 'row' | 'end'
+  onDropPlayer?: (id: number, edge?: 'before' | 'after') => void
   children: React.ReactNode
 }

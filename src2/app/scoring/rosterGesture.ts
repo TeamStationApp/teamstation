@@ -8,7 +8,8 @@ export interface RosterRect extends RosterPoint {
 }
 export interface RosterTarget {
   measure: () => Promise<RosterRect>
-  drop: (id: number) => void
+  drop: (id: number, edge?: 'before' | 'after') => void
+  insertion?: 'row' | 'end'
   clip?: () => Promise<RosterRect>
 }
 export interface RosterScroll {
@@ -18,6 +19,7 @@ export interface RosterScroll {
 export interface RosterPreview extends RosterPoint {
   label: string
   target?: string
+  edge?: 'before' | 'after'
 }
 export const containsRosterPoint = (r: RosterRect, p: RosterPoint): boolean =>
   p.x >= r.x && p.x <= r.x + r.width && p.y >= r.y && p.y <= r.y + r.height
@@ -34,6 +36,12 @@ export class RosterGesture {
     moved: boolean
   } | null = null
 
+  preview: RosterPreview | null = null
+  private publish(value: RosterPreview | null): void {
+    this.preview = value
+    this.notify(value)
+  }
+
   private revision = 0
   private moveRevision = 0
   constructor(
@@ -48,23 +56,36 @@ export class RosterGesture {
   cancel(): void {
     this.revision++
     this.active = null
-    this.notify(null)
+    this.publish(null)
   }
 
-  private async targetAt(point: RosterPoint): Promise<string | undefined> {
+  private async targetAt(
+    point: RosterPoint
+  ): Promise<{ key: string; edge?: 'before' | 'after' } | undefined> {
     const candidates = await Promise.all(
       [...this.targets].map(async ([key, target]) => {
         const rect = await target.measure()
         const clip = target.clip == null ? rect : await target.clip()
         return containsRosterPoint(rect, point) &&
           containsRosterPoint(clip, point)
-          ? { key, area: rect.width * rect.height }
+          ? {
+              key,
+              area: rect.width * rect.height,
+              edge:
+                target.insertion == null
+                  ? undefined
+                  : target.insertion === 'end' ||
+                      point.y < rect.y + rect.height / 2
+                    ? ('before' as const)
+                    : ('after' as const)
+            }
           : undefined
       })
     )
-    return candidates
-      .filter((c): c is { key: string; area: number } => c != null)
-      .sort((a, b) => a.area - b.area)[0]?.key
+    const hit = candidates
+      .filter((c): c is NonNullable<typeof c> => c != null)
+      .sort((a, b) => a.area - b.area)[0]
+    return hit
   }
 
   async move(point: RosterPoint): Promise<void> {
@@ -76,10 +97,15 @@ export class RosterGesture {
     if (!drag.moved) return
     const revision = this.revision
     const move = ++this.moveRevision
-    this.notify({ ...point, label: drag.label })
+    this.publish({ ...point, label: drag.label })
     const target = await this.targetAt(point)
     if (revision === this.revision && move === this.moveRevision)
-      this.notify({ ...point, label: drag.label, target })
+      this.publish({
+        ...point,
+        label: drag.label,
+        target: target?.key,
+        edge: target?.edge
+      })
   }
 
   async release(point: RosterPoint): Promise<boolean> {
@@ -89,7 +115,7 @@ export class RosterGesture {
     const target = drag.moved ? await this.targetAt(point) : undefined
     if (revision !== this.revision) return true
     this.cancel()
-    if (target != null) this.targets.get(target)?.drop(drag.id)
+    if (target != null) this.targets.get(target.key)?.drop(drag.id, target.edge)
     return drag.moved
   }
 

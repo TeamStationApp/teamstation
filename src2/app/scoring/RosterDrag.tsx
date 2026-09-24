@@ -13,7 +13,7 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
   const releasing = useRef(false)
   const cancelledGrabEscape = useRef(false)
   const [grab, setGrab] = useState<number>()
-  const [hover, setHover] = useState(false)
+  const [hover, setHover] = useState<false | 'before' | 'after' | 'row'>(false)
   const latest = useRef(props)
   latest.current = props
   const token = props.targetId
@@ -25,28 +25,20 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
         return { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
       },
       clip,
-      drop: id => {
-        latest.current.onDropPlayer?.(id)
+      insertion: props.insertion,
+      drop: (id, edge) => {
+        latest.current.onDropPlayer?.(id, edge)
       }
     })
     const timer = setInterval(() => {
-      const point = engine.active?.point
-      const rect = node.current?.getBoundingClientRect()
-      setHover(
-        engine.active?.moved === true &&
-          point != null &&
-          rect != null &&
-          point.x >= rect.left &&
-          point.x <= rect.right &&
-          point.y >= rect.top &&
-          point.y <= rect.bottom
-      )
-    }, 80)
+      const preview = engine.preview
+      setHover(preview?.target === token ? (preview.edge ?? 'row') : false)
+    }, 40)
     return () => {
       clearInterval(timer)
       engine.targets.delete(token)
     }
-  }, [engine, clip, token, props.onDropPlayer])
+  }, [engine, clip, token, props.onDropPlayer, props.insertion])
   const childButton = (target: EventTarget): boolean => {
     const button = (target as Element).closest('button,input,[role="button"]')
     return button != null && button !== node.current
@@ -99,10 +91,11 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
         WebkitUserSelect: 'none',
         opacity: props.disabled === true ? 0.4 : 1,
         outline:
-          hover || grab != null
+          hover === 'row' || grab != null
             ? `2px solid ${theme.scoringMenuActiveBackground}`
             : undefined,
         borderRadius: 6,
+        position: 'relative',
         cursor:
           props.disabled === true
             ? 'default'
@@ -190,6 +183,21 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
       }}
     >
       {props.children}
+      {(hover === 'before' || hover === 'after') && (
+        <div
+          aria-label="Lineup insertion point"
+          style={{
+            position: 'absolute',
+            pointerEvents: 'none',
+            left: 0,
+            right: 0,
+            height: 3,
+            top: hover === 'before' ? -2 : undefined,
+            bottom: hover === 'after' ? -2 : undefined,
+            background: theme.scoringMenuActiveBackground
+          }}
+        />
+      )}
     </div>
   )
 }
