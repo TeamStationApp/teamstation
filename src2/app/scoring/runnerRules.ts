@@ -38,6 +38,7 @@ export const STATIONARY_OUT_REASONS = [
 const baseKeys = ['first', 'second', 'third'] as const
 export const hitBases: Record<string, number> = {
   Single: 1,
+  Error: 1,
   Double: 2,
   Triple: 3,
   'Home Run': 4
@@ -228,7 +229,8 @@ export function prepareHit(state: ScoringState): void {
     }
     runMotion(state, movement)
   }
-  state.session.liveData.linescore.teams[battingSide(state.session)].hits++
+  if (pending.outcome !== 'Error')
+    state.session.liveData.linescore.teams[battingSide(state.session)].hits++
 }
 export function applyAwardMovements(state: ScoringState, reason: string): void {
   const pending = state.pendingPlay!
@@ -356,7 +358,8 @@ export function settleRunners(state: ScoringState): void {
       'chooseThrower',
       'chooseDefender',
       'runnerDecision',
-      'runnerReason'
+      'runnerReason',
+      'errorCredit'
     ].includes(state.phase)
   )
     return
@@ -375,6 +378,25 @@ export function settleRunners(state: ScoringState): void {
   }
   commitChoiceIfResolved(state)
   resolveAutomaticHomes(state)
+  if (pending?.errorPending === true) {
+    if (
+      state.presentation != null ||
+      state.motions.some(motion => !motion.complete)
+    ) {
+      state.phase = 'runnerMovement'
+      return
+    }
+    state.runnerAction = {
+      purpose: 'errorAttribution',
+      playerId: state.session.liveData.plays.currentPlay!.matchup.batter.id,
+      from: 0,
+      to: 1,
+      origin: 'current',
+      returnPhase: 'runnerMovement'
+    }
+    beginDefense(state)
+    return
+  }
   const lead = state.homeQueue[0]
   if (
     lead != null &&
@@ -421,9 +443,12 @@ export function settleRunners(state: ScoringState): void {
 export function prepareBatterResult(state: ScoringState): void {
   const pending = state.pendingPlay!
   const batter = state.session.liveData.plays.currentPlay!.matchup.batter.id
-  if (
+  if (pending.outcome === 'Error') {
+    pending.errorPending = true
+    pending.choiceApplied = true
+    settleRunners(state)
+  } else if (
     pending.outcome === "Fielder's Choice" ||
-    pending.outcome === 'Error' ||
     pending.outcome === 'Dropped Third Strike'
   ) {
     pending.movements = pending.originalBases
@@ -445,10 +470,6 @@ export function prepareBatterResult(state: ScoringState): void {
       decision: 'pending'
     })
     state.phase = 'resolveBatter'
-    if (pending.outcome === 'Error')
-      state.session.liveData.linescore.teams[
-        battingSide(state.session) === 'away' ? 'home' : 'away'
-      ].errors++
   } else if (
     ['Throw Out', 'Ball Caught', 'Batter Interference'].includes(
       pending.outcome
@@ -751,6 +772,41 @@ export function runnerReducer(
   state: ScoringState,
   event: ScoringEvent
 ): ScoringState | undefined {
+  if (event.type === 'ERROR_CANCEL')
+    return state.phase === 'errorCredit'
+      ? { ...state, phase: 'chooseDefender' }
+      : state
+  if (event.type === 'ERROR_CREDIT') {
+    const route = state.runnerAction?.defensiveRoute ?? []
+    if (
+      state.phase !== 'errorCredit' ||
+      state.pendingPlay?.errorPending !== true ||
+      event.generation !== state.generation ||
+      !route.some(hop => hop.id === event.id)
+    )
+      return state
+    return accepted(
+      state,
+      `Error by ${state.session.gameData.players[event.id].fullName}`,
+      next => {
+        next.session.liveData.plays.currentPlay!.source.gamestation.errorCredit =
+          {
+            player: playerRef(next.session, event.id)!,
+            defensiveRoute: route.map(hop => ({
+              player: playerRef(next.session, hop.id)!,
+              location: { ...hop.point }
+            }))
+          }
+        next.session.liveData.linescore.teams[
+          battingSide(next.session) === 'away' ? 'home' : 'away'
+        ].errors++
+        next.pendingPlay!.errorPending = false
+        next.runnerAction = null
+        next.phase = 'runnerMovement'
+        settleRunners(next)
+      }
+    )
+  }
   if (event.type === 'MOTION_DONE') {
     const command = state.motions.find(
       motion => motion.id === event.id && motion.generation === event.generation
@@ -900,6 +956,10 @@ export function runnerReducer(
           !Number.isFinite(event.runnerPoint.z)))
     )
       return state
+    if (event.id == null && action?.purpose === 'errorAttribution')
+      return accepted(state, 'Choose error fielder', next => {
+        next.phase = 'errorCredit'
+      })
     return accepted(
       state,
       event.id == null

@@ -16,6 +16,7 @@ import { homeRunKind, homeRunLabel } from '../field/stadiumBoundary'
 import { useFieldSurface } from '../field/useFieldSurface'
 import { useTheme } from '../theme/ThemeContext'
 import { allowedAngle, trajectoryLabel } from './battedBall'
+import { ErrorCreditSheet } from './ErrorCreditSheet'
 import { MoreMenu } from './MoreMenu'
 import { OutcomePicker } from './OutcomePicker'
 import { OverridesEditor } from './OverridesEditor'
@@ -342,7 +343,9 @@ function ScoringSession(props: {
           : state.phase === 'chooseThrower'
             ? 'Tap and Drag Thrower.'
             : state.phase === 'chooseDefender'
-              ? 'Tap and drag the next defender, or hit Done to finish the out.'
+              ? state.runnerAction?.purpose === 'errorAttribution'
+                ? 'Tap and drag another defender, or hit Done to choose who committed the error.'
+                : 'Tap and drag the next defender, or hit Done to finish the out.'
               : state.phase === 'resolveBatter'
                 ? unresolvedRunner?.from === 0
                   ? 'Drag batter to a base, or hold to mark Out'
@@ -669,6 +672,7 @@ function ScoringSession(props: {
       summary={summary}
       accessibilitySummary={`${summary} · Batter ${line.offense.batter?.fullName ?? 'waiting'} ${session.liveData.plays.currentPlay?.matchup.batSide.code === 'L' ? 'left handed' : 'right handed'} · Pitcher ${line.defense.P?.fullName ?? 'unassigned'}`}
     >
+      <ErrorCreditSheet state={state} dispatch={dispatch} />
       <RunnerDragTargets
         view={runnerDrag}
         onChoose={decision => {

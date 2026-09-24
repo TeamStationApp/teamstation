@@ -88,6 +88,17 @@ export const asEstimatedGumboPlay = asObject({
         asValue('out-of-park' as const, 'in-park' as const)
       ),
       landingHeight: asOptional(asNumber),
+      errorCredit: asOptional(
+        asObject({
+          player: asPlayerRef,
+          defensiveRoute: asArray(
+            asObject({
+              player: asPlayerRef,
+              location: asObject({ x: asNumber, z: asNumber })
+            })
+          )
+        })
+      ),
       runnerActions: asOptional(
         asArray(
           asObject({
