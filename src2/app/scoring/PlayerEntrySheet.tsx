@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { Pressable, Text, TextInput, View } from 'react-native'
 
+import { Button } from '../components/Button'
 import { useTheme } from '../theme/ThemeContext'
 import {
   emptyPlayerDraft,
@@ -9,7 +10,7 @@ import {
   playerDraftError
 } from './playerDraft'
 import { RosterSelector } from './RosterSelector'
-import { ScoringButton, ScoringError, ScoringSheet } from './ScoringSheet'
+import { ScoringError, ScoringSheet } from './ScoringSheet'
 
 export function PlayerEntrySheet({
   onClose,
@@ -199,8 +200,10 @@ export function PlayerEntrySheet({
         <ScoringError
           message={submitted ? playerDraftError(draft) : undefined}
         />
-        <ScoringButton
-          shape="pill"
+        <Button
+          color={theme.scoringMenuActiveBackground}
+          textColor={theme.scoringMenuActiveText}
+          accessibilityLabel="Add Player"
           label="Add Player"
           onPress={() => {
             add(false)

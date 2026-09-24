@@ -49,5 +49,7 @@
   "src2/app/scoring/PlayerCountPicker.native.tsx",
   "src2/app/scoring/PlayerCountWheel.tsx",
   "src2/app/scoring/PlaceholderPlayersSheet.tsx",
-  "src2/app/field/relativeLanding.ts"
+  "src2/app/field/relativeLanding.ts",
+  "src2/app/scoring/rosterHold.ts",
+  "src2/app/scoring/RosterRemoveButton.tsx"
 ]

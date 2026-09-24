@@ -9,42 +9,68 @@ import {
 } from './RosterDragContext'
 import type { RosterDragProps } from './rosterDragProps'
 import type { RosterGesture } from './rosterGesture'
+import { RosterHold } from './rosterHold'
 export { RosterDragGroup, RosterScrollArea } from './RosterDragContext'
 /** Extracted responder adapter also exercised with native page coordinates in unit tests. */
 export function rosterResponder(
   engine: RosterGesture,
-  props: RosterDragProps
-): ViewProps {
+  props: RosterDragProps,
+  current = (): RosterDragProps => props
+): ViewProps & { dispose: () => void } {
+  let owned = false
+  let contact = false
   const point = (e: GestureResponderEvent): { x: number; y: number } => ({
     x: e.nativeEvent.pageX,
     y: e.nativeEvent.pageY
   })
+  const hold = new RosterHold(p => {
+    const latest = current()
+    if (latest.playerId != null && latest.disabled !== true)
+      engine.begin(latest.playerId, latest.label ?? '', p, false)
+  })
+  const cancel = (): void => {
+    hold.cancel()
+    owned = false
+    contact = false
+    if (engine.active?.id === current().playerId) engine.cancel()
+  }
+  const move = (e: GestureResponderEvent): void => {
+    hold.move(point(e))
+    if (hold.active) engine.move(point(e)).catch(cancel)
+  }
+  const end = (e: GestureResponderEvent): void => {
+    if (!contact) return
+    const active = hold.active
+    const tap = hold.finish()
+    contact = false
+    owned = false
+    if (active) engine.release(point(e)).catch(cancel)
+    else if (tap && current().disabled !== true) current().onTap?.()
+  }
   return {
-    onStartShouldSetResponder: () =>
-      props.playerId != null && props.disabled !== true,
-    onResponderGrant: (e: GestureResponderEvent) => {
-      engine.begin(props.playerId!, props.label ?? '', point(e))
+    dispose: cancel,
+    onStartShouldSetResponder: () => false,
+    onTouchStart: e => {
+      if (current().playerId == null || current().disabled === true) return
+      contact = true
+      hold.start(point(e))
     },
-    onResponderMove: (e: GestureResponderEvent) => {
-      engine.move(point(e)).catch(() => {
-        engine.cancel()
-      })
+    onTouchMove: e => {
+      if (!owned) move(e)
     },
-    onResponderRelease: (e: GestureResponderEvent) => {
-      if (engine.active?.id !== props.playerId) return
-      engine
-        .release(point(e))
-        .then(moved => {
-          if (!moved && props.disabled !== true) props.onTap?.()
-        })
-        .catch(() => {
-          engine.cancel()
-        })
+    onTouchEnd: e => {
+      if (!owned) end(e)
     },
-    onResponderTerminate: () => {
-      engine.cancel()
+    onTouchCancel: cancel,
+    onMoveShouldSetResponder: () => hold.active,
+    onResponderGrant: () => {
+      owned = true
+      engine.setHeld(true)
     },
-    onResponderTerminationRequest: () => false
+    onResponderMove: move,
+    onResponderRelease: end,
+    onResponderTerminate: cancel,
+    onResponderTerminationRequest: () => !hold.active
   }
 }
 export function rosterAccessibilityAction(
@@ -63,6 +89,11 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
   const ref = useRef<React.ComponentRef<typeof View>>(null)
   const latest = useRef(props)
   latest.current = props
+  const [adapter] = useState(() =>
+    rosterResponder(engine, props, () => latest.current)
+  )
+  useEffect(() => adapter.dispose, [adapter, props.disabled, props.playerId])
+  const { dispose, ...handlers } = adapter
   const [hover, setHover] = useState<false | 'before' | 'after' | 'row'>(false)
   const token = props.targetId
   useEffect(() => {
@@ -87,7 +118,7 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
   return (
     <View
       ref={ref}
-      {...rosterResponder(engine, props)}
+      {...handlers}
       accessibilityRole={props.onTap != null ? 'button' : undefined}
       accessibilityLabel={props.label}
       accessibilityState={{ disabled: props.disabled }}

@@ -120,6 +120,13 @@ export function RosterScrollArea({
   const engine = useRosterGesture()
   const port = useRef<React.ComponentRef<typeof View>>(null)
   const scroll = useRef<React.ComponentRef<typeof ScrollView>>(null)
+  const [held, setHeld] = useState(false)
+  useEffect(() => {
+    engine.heldListeners.add(setHeld)
+    return () => {
+      engine.heldListeners.delete(setHeld)
+    }
+  }, [engine])
   const offset = useRef(0)
   const content = useRef(0)
   const visible = useRef(height)
@@ -152,6 +159,7 @@ export function RosterScrollArea({
       <RosterClipContext.Provider value={measure}>
         <ScrollView
           ref={scroll}
+          scrollEnabled={!held}
           nestedScrollEnabled
           keyboardShouldPersistTaps="handled"
           accessibilityLabel={name}

@@ -1,8 +1,15 @@
-import React, { useContext, useEffect, useRef, useState } from 'react'
+import React, {
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState
+} from 'react'
 
 import { useTheme } from '../theme/ThemeContext'
 import { RosterClipContext, useRosterGesture } from './RosterDragContext'
 import type { RosterDragProps } from './rosterDragProps'
+import { RosterHold } from './rosterHold'
 export { RosterDragGroup, RosterScrollArea } from './RosterDragContext'
 export function RosterDrag(props: RosterDragProps): React.ReactElement {
   const engine = useRosterGesture()
@@ -16,6 +23,88 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
   const [hover, setHover] = useState<false | 'before' | 'after' | 'row'>(false)
   const latest = useRef(props)
   latest.current = props
+  const contact = useRef<{ pointer: number; kind: string } | null>(null)
+  const [hold] = useState(
+    () =>
+      new RosterHold(point => {
+        const p = latest.current
+        if (p.playerId == null || p.disabled === true) return
+        moved.current = true
+        engine.begin(p.playerId, p.label ?? '', point)
+        if (contact.current?.kind !== 'touch' && contact.current != null)
+          node.current?.setPointerCapture(contact.current.pointer)
+      })
+  )
+  const cancel = useCallback((): void => {
+    hold.cancel()
+    contact.current = null
+    if (engine.active?.id === latest.current.playerId) engine.cancel()
+  }, [engine, hold])
+  useEffect(() => {
+    const host = node.current!
+    const start = (event: TouchEvent): void => {
+      if (
+        event.touches.length !== 1 ||
+        latest.current.disabled === true ||
+        latest.current.playerId == null ||
+        childButton(event.target!)
+      )
+        return
+      const touch = event.touches[0]
+      moved.current = false
+      contact.current = { pointer: touch.identifier, kind: 'touch' }
+      hold.start({ x: touch.clientX, y: touch.clientY })
+    }
+    const move = (event: TouchEvent): void => {
+      if (contact.current?.kind !== 'touch') return
+      if (event.touches.length !== 1) {
+        cancel()
+        return
+      }
+      const touch = event.touches[0]
+      const point = { x: touch.clientX, y: touch.clientY }
+      hold.move(point)
+      if (hold.active) {
+        event.preventDefault()
+        engine.move(point).catch(cancel)
+      } else moved.current = true
+    }
+    const end = (event: TouchEvent): void => {
+      if (contact.current?.kind !== 'touch') return
+      const active = hold.active
+      const tap = hold.finish()
+      const touch = event.changedTouches[0]
+      contact.current = null
+      // Prevent the synthetic click; short taps are handled exactly once here.
+      if (event.cancelable) event.preventDefault()
+      moved.current = true
+      if (active)
+        engine.release({ x: touch.clientX, y: touch.clientY }).catch(cancel)
+      else if (tap) latest.current.onTap?.()
+    }
+    const escape = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape' && contact.current != null) {
+        cancelledGrabEscape.current = true
+        moved.current = true
+        cancel()
+      }
+    }
+    host.addEventListener('touchstart', start, { passive: true })
+    host.addEventListener('touchmove', move, { passive: false })
+    host.addEventListener('touchend', end, { passive: false })
+    host.addEventListener('touchcancel', cancel)
+    window.addEventListener('blur', cancel)
+    window.addEventListener('keydown', escape)
+    return () => {
+      cancel()
+      host.removeEventListener('touchstart', start)
+      host.removeEventListener('touchmove', move)
+      host.removeEventListener('touchend', end)
+      host.removeEventListener('touchcancel', cancel)
+      window.removeEventListener('blur', cancel)
+      window.removeEventListener('keydown', escape)
+    }
+  }, [engine, hold, cancel, props.playerId, props.disabled])
   const token = props.targetId
   useEffect(() => {
     if (token == null || props.onDropPlayer == null) return
@@ -85,8 +174,8 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
             : undefined
       }
       style={{
-        touchAction:
-          props.playerId == null || props.disabled === true ? 'auto' : 'none',
+        touchAction: 'auto',
+        WebkitTouchCallout: 'none',
         userSelect: 'none',
         WebkitUserSelect: 'none',
         opacity: props.disabled === true ? 0.4 : 1,
@@ -105,6 +194,7 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
       }}
       onPointerDown={event => {
         if (
+          event.pointerType === 'touch' ||
           props.disabled === true ||
           props.playerId == null ||
           event.button !== 0 ||
@@ -114,13 +204,12 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
         event.stopPropagation()
         moved.current = false
         releasing.current = false
-        engine.begin(props.playerId, props.label ?? '', {
-          x: event.clientX,
-          y: event.clientY
-        })
-        event.currentTarget.setPointerCapture(event.pointerId)
+        contact.current = { pointer: event.pointerId, kind: event.pointerType }
+        hold.start({ x: event.clientX, y: event.clientY })
       }}
       onPointerMove={event => {
+        if (event.pointerType === 'touch') return
+        hold.move({ x: event.clientX, y: event.clientY })
         if (engine.active?.id === props.playerId) {
           engine.move({ x: event.clientX, y: event.clientY }).catch(() => {
             engine.cancel()
@@ -129,17 +218,29 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
         }
       }}
       onPointerUp={event => {
+        if (event.pointerType === 'touch') return
+        if (contact.current != null) moved.current ||= !hold.finish()
+        contact.current = null
         if (engine.active?.id === props.playerId)
           release(event, false).catch(() => {
             engine.cancel()
           })
       }}
       onPointerCancel={event => {
+        if (event.pointerType === 'touch') return
+        cancel()
         release(event, true).catch(() => {
           engine.cancel()
         })
       }}
-      onLostPointerCapture={() => {
+      onPointerLeave={() => {
+        if (!hold.active && contact.current?.kind !== 'touch') {
+          moved.current = true
+          cancel()
+        }
+      }}
+      onLostPointerCapture={event => {
+        if (event.pointerType === 'touch') return
         if (!releasing.current && engine.active?.id === props.playerId)
           engine.cancel()
       }}

@@ -1,12 +1,14 @@
 import React, { useContext, useState } from 'react'
 import { Pressable, Text, useWindowDimensions, View } from 'react-native'
 
+import { Button } from '../components/Button'
 import { useTheme } from '../theme/ThemeContext'
 import { addPlaceholderPlayers } from './placeholderPlayers'
 import { PlaceholderPlayersSheet } from './PlaceholderPlayersSheet'
 import { addPlayerDraft } from './playerDraft'
 import { PlayerEntrySheet } from './PlayerEntrySheet'
 import { RosterDrag, RosterDragGroup, RosterScrollArea } from './RosterDrag'
+import { RosterRemoveButton } from './RosterRemoveButton'
 import { RosterSelector } from './RosterSelector'
 import { applyRosterDraft } from './scoringEdits'
 import { copyState } from './scoringMachine'
@@ -114,8 +116,8 @@ export function RosterEditor({
       />
       <Text style={text}>
         {defense
-          ? 'Tap and drag players into their defensive positions.'
-          : 'Tap players to add them to the lineup, or drag them into position.'}
+          ? 'Hold a player briefly, then drag into a defensive position.'
+          : 'Tap to add to lineup. Hold briefly, then drag to reorder.'}
       </Text>
       <RosterDragGroup key={`${side}:${defense}`}>
         <View style={{ flexDirection: 'row', gap: 8 }}>
@@ -217,11 +219,8 @@ export function RosterEditor({
                         <Text style={{ ...text, flex: 1 }}>
                           {id == null ? 'Unassigned' : display(id)}
                         </Text>
-                        <ScoringButton
-                          text="×"
+                        <RosterRemoveButton
                           label={`Clear ${position}`}
-                          shape="circle"
-                          color={theme.scoringOutColor}
                           disabled={id == null}
                           onPress={() => {
                             edit(next => {
@@ -262,11 +261,8 @@ export function RosterEditor({
                         <Text selectable={false} style={{ ...text, flex: 1 }}>
                           {index + 1}. {display(id)}
                         </Text>
-                        <ScoringButton
-                          text="×"
+                        <RosterRemoveButton
                           label={`Remove ${names[id].fullName}`}
-                          shape="circle"
-                          color={theme.scoringOutColor}
                           onPress={() => {
                             remove(id)
                           }}
@@ -311,18 +307,23 @@ export function RosterEditor({
       )}
       <View style={{ flexDirection: 'row', gap: 12 }}>
         <View style={{ flex: 1 }}>
-          <ScoringButton
-            shape="pill"
-            label="Create Player"
-            text="Add Player"
+          <Button
+            color={theme.scoringMenuActiveBackground}
+            textColor={theme.scoringMenuActiveText}
+            compact
+            accessibilityLabel="Create Player"
+            label="Add Player"
             onPress={() => {
               setAdding(true)
             }}
           />
         </View>
         <View style={{ flex: 1 }}>
-          <ScoringButton
-            shape="pill"
+          <Button
+            color={theme.scoringMenuActiveBackground}
+            textColor={theme.scoringMenuActiveText}
+            compact
+            accessibilityLabel="Save Rosters"
             label="Save Rosters"
             disabled={validation != null}
             onPress={() => {

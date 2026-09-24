@@ -15,6 +15,10 @@ export type ButtonKind = 'primary' | 'secondary' | 'text'
 export interface ButtonProps {
   label: string
   shape?: 'pill' | 'rounded'
+  compact?: boolean
+  accessibilityLabel?: string
+  color?: string
+  textColor?: string
   onPress: () => void
   kind?: ButtonKind
   disabled?: boolean
@@ -44,6 +48,10 @@ export function Button(props: ButtonProps): React.ReactElement {
   const {
     label,
     shape = 'pill',
+    compact = false,
+    accessibilityLabel,
+    color,
+    textColor,
     onPress,
     kind = 'primary',
     disabled = false,
@@ -59,18 +67,21 @@ export function Button(props: ButtonProps): React.ReactElement {
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
       accessibilityState={{ disabled: inert, busy }}
       disabled={inert}
       onPress={onPress}
       style={({ pressed }) => [
         styles.base,
         styles[kind],
+        color != null && { backgroundColor: color },
         kind !== 'text' && styles.raised,
         block && styles.block,
         pressed && !inert && styles[`${kind}Pressed`],
         pressed && !inert && kind !== 'text' && styles.lowered,
         inert && styles.inert,
         shape === 'rounded' && { borderRadius: theme.rem(theme.radiusRem) },
+        compact && { minHeight: 36, borderRadius: 18, paddingHorizontal: 8 },
         style
       ]}
     >
@@ -95,7 +106,12 @@ export function Button(props: ButtonProps): React.ReactElement {
           )}
           <Text
             numberOfLines={1}
-            style={[styles.label, styles[`${kind}Label`]]}
+            style={[
+              styles.label,
+              styles[`${kind}Label`],
+              compact && { fontSize: 14 },
+              textColor != null && { color: textColor }
+            ]}
           >
             {label}
           </Text>
