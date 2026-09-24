@@ -865,11 +865,41 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/games': {
+        get: {
+          summary: 'Every game you can see',
+          description:
+            "Your teams' games, and every game of a season opened to you; a " +
+            'site administrator sees every game. ' +
+            "Each game as a season's schedule has it, newest first, in one " +
+            'answer, with `externalIds`: the ids other services know it by, ' +
+            'as its importers recorded them. `externalId` narrows it to the ' +
+            'games known by that id, and may be given more than once; an ' +
+            'empty one is refused.',
+          security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'externalId',
+              in: 'query',
+              schema: { type: 'array', items: { type: 'string' } },
+              style: 'form',
+              explode: true,
+              description: "Other services' ids for the games"
+            }
+          ],
+          responses: {
+            200: { description: 'Newest first; empty when there are none' },
+            400: errorResponse,
+            401: errorResponse
+          }
+        }
+      },
       '/games/recent': {
         get: {
           summary: 'The newest played game anywhere you can see',
           description:
-            'What the home screen leads with. Null when there is none.',
+            'What the home screen leads with: the newest game with a score ' +
+            'among those `GET /games` lists. Null when there is none.',
           security: [{ bearer: [] }],
           responses: {
             200: { description: 'One game, or null' },

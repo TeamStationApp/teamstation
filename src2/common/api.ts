@@ -478,7 +478,9 @@ export const asSeasonGame = asObject({
   /** A frame of the game's video, signed and short-lived. */
   posterUrl: asOptional(asNullable(asString), null),
   /** Being played, and being streamed, right now. */
-  isLive: asOptional(asBoolean, false)
+  isLive: asOptional(asBoolean, false),
+  /** Other services' ids for the game, as its importers recorded them. */
+  externalIds: asOptional(asArray(asString), () => [])
 })
 export type SeasonGame = ReturnType<typeof asSeasonGame>
 
@@ -875,6 +877,19 @@ export class GameStationClient {
   /** The seasons this person can see, which is what home leads with. */
   async seasons(): Promise<SeasonSummary[]> {
     return await this.request('GET', '/seasons', asArray(asSeasonSummary))
+  }
+
+  /**
+   * Every game this person can see, across all their seasons, in one request.
+   * `externalIds` narrows it to the games another service knows by those ids.
+   */
+  async games(options: { externalIds?: string[] } = {}): Promise<SeasonGame[]> {
+    const ids = options.externalIds ?? []
+    const query =
+      ids.length === 0
+        ? ''
+        : `?${ids.map(id => `externalId=${encodeURIComponent(id)}`).join('&')}`
+    return await this.request('GET', `/games${query}`, asArray(asSeasonGame))
   }
 
   async seasonGames(seasonId: string): Promise<SeasonGame[]> {
