@@ -178,6 +178,34 @@ describe('scoring browser', function () {
   after(async function () {
     await browser?.close()
   })
+  it('hides empty-base fielder choice and clamps a stands home-run arc to Line Drive', async function () {
+    const { page } = await open('/games/g1/score')
+    try {
+      await click(page, 'Ball in Play')
+      expect(await page.$('[aria-label="Fielder\'s Choice"]')).equals(null)
+      await click(page, 'Home Run')
+      await page.waitForSelector('canvas[data-field-ready="true"]')
+      await page.focus('[role="application"]')
+      await page.keyboard.press('Space')
+      for (let i = 0; i < 50; i++) await page.keyboard.press('ArrowUp')
+      await page.keyboard.press('Enter')
+      await page.waitForSelector(
+        '[aria-label^="Drag up and down for ball trajectory."]'
+      )
+      for (let i = 0; i < 100; i++) await page.keyboard.press('ArrowDown')
+      await page.waitForSelector('[aria-label*="10° Line Drive"]')
+      await page.keyboard.press('Enter')
+      await page.waitForSelector('[aria-label*="Batter Player 2"]', {
+        timeout: 30000
+      })
+      await chooseHit(page, 'Single')
+      await click(page, 'Finish at-bat')
+      await click(page, 'Ball in Play')
+      await page.waitForSelector('[aria-label="Fielder\'s Choice"]')
+    } finally {
+      await page.close()
+    }
+  })
   for (const defensive of [false, true])
     it(`keeps ${defensive ? 'defensive' : 'correction'} toast Done above controls in short landscape`, async function () {
       const { page } = await open('/games/g1/score')
@@ -1953,7 +1981,9 @@ describe('scoring browser', function () {
         })
       )
       expect(unexpected).deep.equals([])
-      expect(positions[0].x + positions[0].width).at.most(positions[1].x)
+      expect(positions[0].x).equals(positions[1].x)
+      expect(positions[0].y + positions[0].height).at.most(positions[1].y)
+      expect(positions[0].x).greaterThan(rect.x + ((pt.x + 1) * rect.width) / 2)
       await page.touchscreen.touchEnd()
       expect(await page.$('[aria-label="Safe drag target"]')).equals(null)
     } finally {

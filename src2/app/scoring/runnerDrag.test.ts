@@ -33,7 +33,7 @@ describe('constrained runner drag geometry', function () {
       const targets = runnerTargets(anchor, 390, 500)
       expect(targets.safe.x).at.least(8)
       expect(targets.out.x + targets.out.width).at.most(382)
-      expect(targets.safe.y).at.least(66)
+      expect(targets.safe.y).at.least(8)
       expect(targets.out.y + targets.out.height).at.most(500)
       for (const key of ['safe', 'out'] as const)
         expect(
@@ -51,4 +51,30 @@ describe('constrained runner drag geometry', function () {
       expect(runnerTargetAt(targets, { x: 0, y: 0 })).equals(undefined)
     }
   })
+})
+
+describe('base-specific Safe and Out placement', function () {
+  for (const base of [0, 1, 2, 3, 4])
+    it(`places base ${base} decisions beside the base and preserves release hit tests`, function () {
+      const anchor = { x: 450, y: 350 }
+      const pair = runnerTargets(anchor, 900, 900, base)
+      if (base === 2) {
+        expect(pair.safe.y).equals(pair.out.y)
+        expect(pair.safe.x).lessThan(anchor.x)
+        expect(pair.out.x).greaterThan(anchor.x)
+        expect(pair.safe.y + pair.safe.height).lessThan(anchor.y)
+      } else {
+        expect(pair.safe.x).equals(pair.out.x)
+        expect(pair.safe.y + pair.safe.height).lessThan(pair.out.y)
+        if (base === 3) expect(pair.out.x + pair.out.width).lessThan(anchor.x)
+        else expect(pair.safe.x).greaterThan(anchor.x)
+      }
+      for (const key of ['safe', 'out'] as const)
+        expect(
+          runnerTargetAt(pair, { x: pair[key].x + 40, y: pair[key].y + 22 })
+        ).equals(key)
+      const small = runnerTargets({ x: 900, y: 900 }, 320, 292, base)
+      expect(small.out.y + small.out.height).at.most(292 - 128)
+      expect(small.out.x + small.out.width).at.most(312)
+    })
 })

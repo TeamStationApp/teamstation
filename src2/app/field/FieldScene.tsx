@@ -72,7 +72,26 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
   const textures = useSurfaceTextures()
   const ready = useRef(false)
   const boundsKey = useRef('')
+  const baseKey = useRef('')
   useFrame(() => {
+    if (callbacks.current.onBaseProjection != null) {
+      const value = {
+        width: size.width,
+        height: size.height,
+        bases: BASES.map(point => {
+          const v = new Vector3(point.x, 9, point.z).project(camera)
+          return {
+            x: ((v.x + 1) * size.width) / 2,
+            y: ((1 - v.y) * size.height) / 2
+          }
+        })
+      }
+      const key = JSON.stringify(value)
+      if (baseKey.current !== key) {
+        baseKey.current = key
+        callbacks.current.onBaseProjection(value)
+      }
+    }
     if (callbacks.current.onScoreboardBounds != null) {
       const bounds = scoreboardBounds(camera, size.width, size.height)
       const key = JSON.stringify(bounds)

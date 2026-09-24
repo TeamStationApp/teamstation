@@ -17,7 +17,13 @@ export interface FieldPlacement {
   generation: number
   gestureId: number
 }
+export interface BaseProjection {
+  bases: Array<{ x: number; y: number }>
+  width: number
+  height: number
+}
 export interface FieldCanvasProps {
+  onBaseProjection?: (value: BaseProjection) => void
   homeRunPlacement?: boolean
   onLandingPreview?: (point: GroundPoint | null) => void
   presentation?: PresentationSequence | null
