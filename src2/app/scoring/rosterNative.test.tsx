@@ -14,7 +14,7 @@ const flush = async (): Promise<void> => {
   await new Promise(resolve => setTimeout(resolve, 0))
 }
 describe('native roster responder', function () {
-  it('appends on a tap, starts immediately, drops by native window coordinates and never taps after a drag', async function () {
+  it('appends on a tap, yields until a half-second hold, drops by native window coordinates and never taps after a drag', async function () {
     const drops: number[] = []
     let taps = 0
     const engine = new RosterGesture(() => undefined)
@@ -30,12 +30,16 @@ describe('native roster responder', function () {
         taps++
       }
     })
-    expect(handlers.onStartShouldSetResponder!(event(10, 10))).equals(true)
-    expect(handlers.onResponderTerminationRequest!(event(10, 10))).equals(false)
-    handlers.onResponderGrant!(event(10, 10))
-    handlers.onResponderRelease!(event(10, 10))
+    expect(handlers.onStartShouldSetResponder!(event(10, 10))).equals(false)
+    expect(handlers.onResponderTerminationRequest!(event(10, 10))).equals(true)
+    handlers.onTouchStart!(event(10, 10))
+    handlers.onTouchEnd!(event(10, 10))
     await flush()
     expect(taps).equals(1)
+    handlers.onTouchStart!(event(10, 10))
+    await new Promise(resolve => setTimeout(resolve, 510))
+    expect(handlers.onMoveShouldSetResponder!(event(10, 10))).equals(true)
+    expect(handlers.onResponderTerminationRequest!(event(10, 10))).equals(false)
     handlers.onResponderGrant!(event(10, 10))
     handlers.onResponderMove!(event(230, 320))
     await flush()
@@ -44,6 +48,10 @@ describe('native roster responder', function () {
     await flush()
     expect(drops).deep.equals([7])
     expect(taps).equals(1)
+    handlers.onTouchStart!(event(10, 10))
+    await new Promise(resolve => setTimeout(resolve, 510))
+    expect(handlers.onMoveShouldSetResponder!(event(10, 10))).equals(true)
+    expect(handlers.onResponderTerminationRequest!(event(10, 10))).equals(false)
     handlers.onResponderGrant!(event(10, 10))
     handlers.onResponderMove!(event(230, 320))
     handlers.onResponderTerminate!(event(230, 320))

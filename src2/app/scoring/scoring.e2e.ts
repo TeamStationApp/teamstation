@@ -924,6 +924,7 @@ describe('scoring browser', function () {
       })
       await page.mouse.move(from.x, from.y)
       await page.mouse.down()
+      await new Promise(resolve => setTimeout(resolve, 550))
       await page.mouse.move(to.x, to.y, { steps: 12 })
       await page.mouse.up()
       await page.waitForFunction(() =>
@@ -1154,6 +1155,7 @@ describe('scoring browser', function () {
       const a = await position('[aria-label="Reorder Jordan K."]')
       await page.mouse.move(a.x, a.y)
       await page.mouse.down()
+      await new Promise(resolve => setTimeout(resolve, 550))
       // Measure the destination after the grab; focus and layout can settle independently.
       const b = await position('[data-roster-target="lineup-2"]', true)
       await page.mouse.move(b.x, b.y, { steps: 10 })
@@ -1235,7 +1237,7 @@ describe('scoring browser', function () {
       await page.close()
     }
   })
-  it('appends tapped names, reorders immediately, drags both selectors, and auto-scrolls the lineup', async function () {
+  it('appends tapped names, reorders after a hold, drags both selectors, and auto-scrolls the lineup', async function () {
     const { page, unexpected } = await open('/games/g1/score')
     try {
       await page.setViewport({
@@ -1257,6 +1259,7 @@ describe('scoring browser', function () {
         const a = await center(from)
         const b = await center(to)
         await page.touchscreen.touchStart(a.x, a.y)
+        await new Promise(resolve => setTimeout(resolve, 550))
         for (let i = 1; i <= 12; i++)
           await page.touchscreen.touchMove(
             a.x + ((b.x - a.x) * i) / 12,
@@ -1319,6 +1322,7 @@ describe('scoring browser', function () {
         return { x: r.x + r.width / 2, y: r.bottom - 12 }
       })
       await page.touchscreen.touchStart(from.x, from.y)
+      await new Promise(resolve => setTimeout(resolve, 550))
       await page.touchscreen.touchMove(edge.x, edge.y)
       await page.waitForFunction(
         () =>
@@ -1390,6 +1394,83 @@ describe('scoring browser', function () {
       await page.close()
     }
   })
+  it('scrolls roster and lineup rows before the hold and adds only after a held drop', async function () {
+    const { page } = await open('/games/g1/score')
+    try {
+      await page.setViewport({
+        width: 390,
+        height: 740,
+        isMobile: true,
+        hasTouch: true
+      })
+      await click(page, 'Open scoring menu')
+      await click(page, 'Set Team Rosters')
+      await click(page, 'Remove Player 2')
+      await page.waitForSelector('[role="dialog"]')
+      const order = async (): Promise<string[]> =>
+        await page.$$eval(
+          '[data-roster-target^="lineup-"][data-roster-player]',
+          rows => rows.map(n => n.getAttribute('data-roster-player')!)
+        )
+      const before = await order()
+      for (const [list, selector] of [
+        [
+          'Roster players',
+          '[data-roster-target="roster"] [data-roster-player="2"]'
+        ],
+        ['Batting lineup', '[data-roster-target="lineup-1"]']
+      ]) {
+        const from = await page.$eval(selector, n => {
+          const r = n.getBoundingClientRect()
+          return { x: r.x + 20, y: r.y + r.height / 2 }
+        })
+        await page.touchscreen.touchStart(from.x, from.y)
+        for (let step = 1; step <= 8; step++)
+          await page.touchscreen.touchMove(from.x, from.y - step * 10)
+        await page.touchscreen.touchEnd()
+        await page.waitForFunction(
+          label =>
+            document.querySelector(`[aria-label="${label}"]`)!.scrollTop > 20,
+          {},
+          list
+        )
+        expect(await order()).deep.equals(before)
+      }
+      await page.$$eval(
+        '[aria-label="Roster players"], [aria-label="Batting lineup"]',
+        rows => {
+          rows.forEach(n => {
+            n.scrollTop = 0
+          })
+        }
+      )
+      await new Promise(resolve => setTimeout(resolve, 300))
+      const from = await page.$eval(
+        '[data-roster-target="roster"] [data-roster-player="2"]',
+        n => {
+          const r = n.getBoundingClientRect()
+          return { x: r.x + 20, y: r.y + 20 }
+        }
+      )
+      const to = await page.$eval('[data-roster-target="lineup-1"]', n => {
+        const r = n.getBoundingClientRect()
+        return { x: r.x + 20, y: r.y + 6 }
+      })
+      await page.touchscreen.touchStart(from.x, from.y)
+      await new Promise(resolve => setTimeout(resolve, 550))
+      await page.touchscreen.touchMove(to.x, to.y)
+      await page.touchscreen.touchEnd()
+      await page.waitForFunction(
+        () =>
+          document
+            .querySelector('[data-roster-target="lineup-1"]')!
+            .getAttribute('data-roster-player') === '2'
+      )
+      expect(await order()).length(before.length + 1)
+    } finally {
+      await page.close()
+    }
+  })
   it('assigns a defender with a touch drag on a phone-sized sheet', async function () {
     const { page, unexpected } = await open('/games/g1/score')
     try {
@@ -1414,6 +1495,7 @@ describe('scoring browser', function () {
         return { x: rect.x + 20, y: rect.y + 15 }
       })
       await page.touchscreen.touchStart(from.x, from.y)
+      await new Promise(resolve => setTimeout(resolve, 550))
       await page.touchscreen.touchMove(to.x, to.y)
       await page.touchscreen.touchEnd()
       await page.waitForFunction(() =>

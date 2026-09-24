@@ -26,6 +26,7 @@ export const containsRosterPoint = (r: RosterRect, p: RosterPoint): boolean =>
 
 /** Both platform adapters measure in window coordinates; tokens discard stale measures/releases. */
 export class RosterGesture {
+  readonly heldListeners = new Set<(held: boolean) => void>()
   targets = new Map<string, RosterTarget>()
   scrolls = new Map<string, RosterScroll>()
   active: {
@@ -48,14 +49,25 @@ export class RosterGesture {
     private readonly notify: (preview: RosterPreview | null) => void
   ) {}
 
-  begin(id: number, label: string, point: RosterPoint): void {
+  setHeld(held: boolean): void {
+    for (const listener of this.heldListeners) listener(held)
+  }
+
+  begin(
+    id: number,
+    label: string,
+    point: RosterPoint,
+    lockScroll = true
+  ): void {
     this.cancel()
     this.active = { id, label, start: point, point, moved: false }
+    if (lockScroll) this.setHeld(true)
   }
 
   cancel(): void {
     this.revision++
     this.active = null
+    this.setHeld(false)
     this.publish(null)
   }
 

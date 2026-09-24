@@ -75,7 +75,9 @@ async function drag(
         })
         Object.defineProperty(event, 'pointerId', { value: 1 })
         source.dispatchEvent(event)
-        await new Promise(resolve => setTimeout(resolve, 20))
+        await new Promise(resolve =>
+          setTimeout(resolve, type === 'pointerdown' ? 520 : 20)
+        )
       })
     }
   } finally {
@@ -185,6 +187,7 @@ describe('scoring slide-up sheets', function () {
     )
   })
   it('inserts at row boundaries, adjusts existing indices, and styles numbered roster rows', async function () {
+    this.timeout(5000)
     await mount()
     await menu('Set Team Rosters')
     const lineup = (): number[] =>
