@@ -29,6 +29,7 @@ export interface BaseballScreenProps {
   canPitch: boolean
   remainingMs?: number
   instruction?: string
+  instructionStatus?: string
   instructionDetail?: string
   finishLabel?: string
   canFinish?: boolean
@@ -148,6 +149,7 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
         </View>
         <InstructionToast
           instruction={props.instruction}
+          status={props.instructionStatus}
           detail={props.instructionDetail}
           finishLabel={props.finishLabel}
           remainingMs={props.remainingMs}

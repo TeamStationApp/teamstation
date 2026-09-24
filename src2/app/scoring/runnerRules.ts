@@ -206,9 +206,7 @@ export function prepareHit(state: ScoringState): void {
     const forced =
       row.from === 0 ||
       pending.originalBases.slice(0, row.from).every(id => id != null)
-    const automaticHome =
-      pending.outcome === 'Home Run' &&
-      (pending.homeRunKind === 'out-of-park' || row.from === 0)
+    const automaticHome = pending.outcome === 'Home Run'
     return {
       playerId: row.id,
       from: row.from,

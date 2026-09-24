@@ -121,6 +121,7 @@ export const gsBallpark: Theme = {
   activeColor: palette.forest,
   scoringInstructionBackground: '#665016',
   scoringInstructionBorder: '#c5a13c',
+  scoringStatusText: '#665016',
   scoringInstructionText: '#ffffff',
   scoringCountdownColor: '#f1cf55',
   scoringSafeColor: '#24713d',

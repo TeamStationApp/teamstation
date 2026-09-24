@@ -54,104 +54,62 @@ describe('home-run landing and automatic arrivals', function () {
       Math.hypot(...Object.values(homeRunLanding({ x: 300, z: -500 })))
     ).closeTo(160, 0.00001)
   })
-  for (const outside of [false, true])
-    for (let mask = 0; mask < 8; mask++)
-      it(`${outside ? 'stands' : 'in-park'} with occupancy ${mask} scores each runner once`, function () {
-        const before = initial(mask)
-        let state = homer(before, outside)
-        const kind = outside ? 'out-of-park' : 'in-park'
-        expect(state.pendingPlay!.homeRunKind).equals(kind)
-        expect(
-          state.session.liveData.plays.currentPlay!.source.gamestation
-            .homeRunKind
-        ).equals(kind)
-        expect(state.homeQueue.includes(1)).equals(false)
-        const expected =
-          1 + [0, 1, 2].filter(i => (mask & (1 << i)) !== 0).length
-        if (outside) expect(state.homeQueue).has.length(0)
-        else expect(state.homeQueue).has.length(expected - 1)
-        state = completeMotions(state)
-        let decisions = 0
-        while (state.phase === 'homeDecision') {
-          expect(state.homeQueue[0]).not.equals(1)
-          state = completeMotions(
-            scoringReducer(state, { type: 'HOME', decision: 'safe' })
+  for (const animate of [false, true])
+    for (const outside of [false, true])
+      for (let mask = 0; mask < 8; mask++)
+        it(`${outside ? 'stands' : 'in-park'} occupancy ${mask} animation ${animate} scores automatically once`, function () {
+          const before = initial(mask, animate)
+          let state = homer(before, outside)
+          const kind = outside ? 'out-of-park' : 'in-park'
+          expect(state.pendingPlay!.homeRunKind).equals(kind)
+          expect(state.homeQueue).length(0)
+          expect(
+            state.pendingPlay!.movements.every(
+              m => m.automaticHome === true && m.decision === 'safe'
+            )
+          ).equals(true)
+          const expected =
+            1 + [0, 1, 2].filter(i => (mask & (1 << i)) !== 0).length
+          if (animate) {
+            const sequence = state.presentation!
+            state = scoringReducer(state, {
+              type: 'PRESENTATION_CONTACT',
+              id: sequence.id,
+              generation: state.generation
+            })
+            // Runner completion cannot end the play while the ball is still flying.
+            state = completeMotions(state)
+            expect(state.phase).not.equals('ready')
+            state = scoringReducer(state, {
+              type: 'PRESENTATION_DONE',
+              id: sequence.id,
+              generation: state.generation,
+              stage: 'flight'
+            })
+          }
+          state = completeMotions(state)
+          expect(state.phase).equals('ready')
+          expect(state.correctionWindow).equals(null)
+          expect(state.homeQueue).length(0)
+          expect(state.session.liveData.linescore.teams.away.runs).equals(
+            expected
           )
-          decisions++
-        }
-        expect(decisions).equals(outside ? 0 : expected - 1)
-        expect(state.phase).equals('ready')
-        expect(state.correctionWindow).equals(null)
-        expect(state.session.liveData.linescore.teams.away.runs).equals(
-          expected
-        )
-        const play = state.session.liveData.plays.allPlays.at(-1)!
-        expect(play.result.eventType).equals('home_run')
-        expect(play.result.rbi).equals(expected)
-        expect(
-          play.runners.filter(r => r.movement.runScored === true)
-        ).has.length(expected)
-        expect(new Set(play.runners.map(r => r.details.runner.id)).size).equals(
-          expected
-        )
-        expect(scoringReducer(state, { type: 'CLOSE_PLAY' })).equals(state)
-        const undo = scoringReducer(state, { type: 'UNDO' })
-        expect(undo.session.liveData.plays.allPlays).has.length(0)
-        expect(undo.pendingPlay!.homeRunKind).equals(kind)
-        if (outside || mask === 0)
+          const play = state.session.liveData.plays.allPlays.at(-1)!
+          expect(play.result.eventType).equals('home_run')
+          expect(play.result.rbi).equals(expected)
+          expect(play.source.gamestation.homeRunKind).equals(kind)
+          expect(
+            play.runners.filter(r => r.movement.runScored === true)
+          ).length(expected)
+          expect(
+            new Set(play.runners.map(r => r.details.runner.id)).size
+          ).equals(expected)
+          expect(scoringReducer(state, { type: 'CLOSE_PLAY' })).equals(state)
+          const undo = scoringReducer(state, { type: 'UNDO' })
+          expect(undo.session.liveData.plays.allPlays).length(0)
+          expect(undo.pendingPlay!.homeRunKind).equals(kind)
           expect(undo.session.liveData.linescore.teams.away.runs).equals(0)
-      })
-  it('walks the automatic batter forward through the queue and releases without a position reset', function () {
-    let state = completeMotions(homer(initial(7), false))
-    for (let index = 0; index < 3; index++) {
-      const before = {
-        ...scoringFieldPlayers(state).find(p => p.playerId === 1)!.position
-      }
-      const checkpoint = state
-      state = scoringReducer(state, { type: 'HOME', decision: 'safe' })
-      const batter = scoringFieldPlayers(state).find(p => p.playerId === 1)!
-      expect(batter.position).deep.equals(before)
-      const command = state.motions.find(m => m.playerId === 1)!
-      expect(command.complete).equals(false)
-      expect(command.waypoints[0]).deep.equals(before)
-      expect(
-        Math.hypot(command.waypoints[1].x, command.waypoints[1].z)
-      ).lessThan(Math.hypot(before.x, before.z))
-      const undo = scoringReducer(state, { type: 'UNDO' })
-      expect(undo.homeQueue).deep.equals(checkpoint.homeQueue)
-      expect(
-        scoringFieldPlayers(undo).find(p => p.playerId === 1)!.position
-      ).deep.equals(before)
-      state = completeMotions(state)
-    }
-    expect(state.phase).equals('ready')
-    expect(state.session.liveData.linescore.teams.away.runs).equals(4)
-  })
-  it('finishes an in-flight approach before release when home decisions are made early', function () {
-    let state = homer(initial(7), false)
-    const approach = state.motions.find(m => m.playerId === 1)!
-    for (let index = 0; index < 3; index++) {
-      const lead = state.motions.find(m => m.playerId === state.homeQueue[0])!
-      state = scoringReducer(state, {
-        type: 'MOTION_DONE',
-        id: lead.id,
-        generation: lead.generation
-      })
-      state = scoringReducer(state, { type: 'HOME', decision: 'safe' })
-      expect(state.motions.find(m => m.playerId === 1)!.id).equals(approach.id)
-    }
-    state = scoringReducer(state, {
-      type: 'MOTION_DONE',
-      id: approach.id,
-      generation: approach.generation
-    })
-    const released = state.motions.find(m => m.playerId === 1)!
-    expect(released.id).not.equals(approach.id)
-    expect(released.waypoints[0]).deep.equals(approach.waypoints.at(-1))
-    state = completeMotions(state)
-    expect(state.phase).equals('ready')
-    expect(state.session.liveData.linescore.teams.away.runs).equals(4)
-  })
+        })
   it('keeps a stands flight elevated and defenders in the field without a fictional catch', function () {
     let state = homer(initial(7, true), true)
     const seq = state.presentation!
@@ -184,29 +142,5 @@ describe('home-run landing and automatic arrivals', function () {
     ).at.most(110.00001)
     state = completeMotions(state)
     expect(state.session.liveData.linescore.teams.away.runs).equals(4)
-  })
-  it('holds the automatic batter behind decisions and awards no late run after a third out', function () {
-    const start = initial(6)
-    start.session.liveData.linescore.outs = 2
-    let state = completeMotions(homer(start, false))
-    expect(
-      scoringFieldPlayers(state).find(p => p.playerId === 1)!.runnerBase
-    ).equals(4)
-    expect(state.session.liveData.linescore.teams.away.runs).equals(0)
-    state = completeMotions(
-      scoringReducer(state, { type: 'HOME', decision: 'safe' })
-    )
-    expect(state.session.liveData.linescore.teams.away.runs).equals(1)
-    state = scoringReducer(state, { type: 'HOME', decision: 'out' })
-    state = completeMotions(
-      scoringReducer(state, { type: 'DEFENDER', generation: 0 })
-    )
-    expect(state.session.liveData.linescore.inningState).equals('Bottom')
-    expect(state.session.liveData.linescore.teams.away.runs).equals(1)
-    expect(
-      state.session.liveData.plays.allPlays[0].runners.some(
-        r => r.details.runner.id === 1 && r.movement.runScored === true
-      )
-    ).equals(false)
   })
 })

@@ -302,70 +302,109 @@ describe('scoring home-run landing surface', function () {
 })
 
 describe('direct home-run landing authoring', function () {
-  it('accepts a fair stands target without a defender and restores canceled previews', async function () {
-    const players = createPlayers()
-    const before = players.map(p => ({ ...p.position }))
-    const initial: BallArcState = { target: { x: 0, z: -60 }, angle: 45 }
-    let preview = initial
-    const accepted: BallArcState[] = []
-    const renderer = await create(
-      React.createElement(FieldScene, {
+  for (const pointerType of ['mouse', 'touch'])
+    it(`moves the target relatively from an arbitrary ${pointerType} origin and cancels safely`, async function () {
+      const players = createPlayers()
+      const before = players.map(p => ({ ...p.position }))
+      const initial: BallArcState = { target: { x: 0, z: -60 }, angle: 45 }
+      let preview = initial
+      let camera: Camera | undefined
+      const accepted: BallArcState[] = []
+      const props = {
         players,
         selected: '',
         onSelect: () => undefined,
-        view: 'home',
+        view: 'home' as const,
         zoom: 1,
         homeRunPlacement: true,
         arc: initial,
-        arcMode: 'aim',
+        arcMode: 'aim' as const,
         interaction: {
           generation: 17,
           selectableIds: [],
-          gestures: ['trajectory']
+          gestures: ['trajectory' as const]
         },
-        onArcChange: arc => {
+        onArcChange: (arc: BallArcState) => {
           preview = arc
         },
-        onLandingAccepted: (arc, generation) => {
+        onLandingAccepted: (arc: BallArcState, generation: number) => {
           expect(generation).equals(17)
           accepted.push(arc)
         }
-      })
-    )
-    try {
-      await renderer.advanceFrames(1, 1 / 60)
-      renderer.scene.instance.updateMatrixWorld(true)
-      const surface = renderer.scene.findByProps({
-        name: 'arc-interaction-surface'
-      })
-      const event = {
-        button: 0,
-        pointerId: 45,
-        pointerType: 'touch',
-        pointer: new Vector2(),
-        ray: new Ray(new Vector3(0, 100, -60), new Vector3(0, -1, 0)),
-        target: {
-          setPointerCapture: () => undefined,
-          releasePointerCapture: () => undefined
-        }
       }
-      await renderer.fireEvent(surface, 'pointerDown', event)
-      event.ray.origin.set(0, 100, -129)
-      await renderer.fireEvent(surface, 'pointerMove', event)
-      expect(preview.target.z).closeTo(-132.048, 0.00001)
-      expect(preview.landingHeight).greaterThan(1)
-      await renderer.fireEvent(surface, 'pointerCancel', event)
-      expect(preview).deep.equals(initial)
-      expect(accepted).length(0)
-      await renderer.fireEvent(surface, 'pointerDown', event)
-      await renderer.fireEvent(surface, 'pointerUp', event)
-      expect(accepted).length(1)
-      expect(accepted[0].target.z).closeTo(-132.048, 0.00001)
-      expect(players.map(p => p.position)).deep.equals(before)
-    } finally {
-      await renderer.unmount()
-    }
-  })
+      const renderer = await create(React.createElement(FieldScene, props), {
+        width: 900,
+        height: 650,
+        onCreated: state => {
+          camera = state.camera
+        }
+      })
+      try {
+        await renderer.advanceFrames(1, 1 / 60)
+        renderer.scene.instance.updateMatrixWorld(true)
+        const surface = renderer.scene.findByProps({
+          name: 'arc-interaction-surface'
+        })
+        const event = {
+          button: 0,
+          pointerId: 45,
+          pointerType,
+          // Finger starts above the horizon; its own ray has no ground hit.
+          pointer: new Vector2(-0.7, 0.8),
+          ray: new Ray(new Vector3(0, 100, 0), new Vector3(0, 1, 0)),
+          target: {
+            setPointerCapture: () => undefined,
+            releasePointerCapture: () => undefined
+          }
+        }
+        await renderer.fireEvent(surface, 'pointerDown', event)
+        expect(preview).deep.equals(initial)
+        await renderer.fireEvent(surface, 'pointerUp', event)
+        expect(accepted).length(0)
+        const start = event.pointer.clone()
+        const projectedInitial = new Vector3(0, TERRAIN.players, -60).project(
+          camera!
+        )
+        const desired = new Vector3(0, 8, -133).project(camera!)
+        const move = async (): Promise<void> => {
+          event.pointer.copy(start)
+          await renderer.fireEvent(surface, 'pointerDown', event)
+          event.pointer.set(
+            start.x + desired.x - projectedInitial.x,
+            start.y + desired.y - projectedInitial.y
+          )
+          await renderer.fireEvent(surface, 'pointerMove', event)
+          expect(preview.target.z).lessThan(-120)
+          expect(preview.landingHeight).greaterThan(1)
+        }
+        await move()
+        await renderer.fireEvent(surface, 'pointerCancel', event)
+        expect(preview).deep.equals(initial)
+        expect(accepted).length(0)
+        await move()
+        const last = preview
+        const finalPointer = event.pointer.clone()
+        event.pointer.set(100, 100)
+        await renderer.fireEvent(surface, 'pointerMove', event)
+        expect(preview).deep.equals(last)
+        event.pointer.copy(finalPointer)
+        await renderer.fireEvent(surface, 'pointerUp', event)
+        expect(accepted).length(1)
+        expect(players.map(p => p.position)).deep.equals(before)
+        await move()
+        await renderer.update(
+          React.createElement(FieldScene, {
+            ...props,
+            interaction: { ...props.interaction, generation: 18 }
+          })
+        )
+        expect(preview).deep.equals(initial)
+        await renderer.fireEvent(surface, 'pointerUp', event)
+        expect(accepted).length(1)
+      } finally {
+        await renderer.unmount()
+      }
+    })
 })
 
 describe('outcome-constrained defender gestures', function () {

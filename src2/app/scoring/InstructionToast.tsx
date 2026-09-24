@@ -13,6 +13,7 @@ export interface ScoreboardBounds {
 export function InstructionToast({
   instruction,
   detail,
+  status,
   finishLabel = 'Finish at-bat',
   remainingMs,
   canFinish = false,
@@ -22,6 +23,7 @@ export function InstructionToast({
 }: {
   instruction?: string
   detail?: string
+  status?: string
   finishLabel?: string
   remainingMs?: number
   canFinish?: boolean
@@ -59,18 +61,37 @@ export function InstructionToast({
       >
         {instruction ?? CORRECTION_INSTRUCTION}
       </Text>
-      {detail != null && (
-        <Text
-          pointerEvents="none"
-          style={{
-            color: theme.scoringInstructionText,
-            fontFamily: theme.semiBoldTextFont,
-            fontSize: 16
-          }}
-        >
-          {detail}
-        </Text>
-      )}
+      {[
+        { label: 'Home run type', value: status },
+        { label: 'Ball trajectory', value: detail }
+      ]
+        .filter(item => item.value != null)
+        .map(item => (
+          <View
+            key={item.label}
+            pointerEvents="none"
+            accessibilityLabel={`${item.label}: ${item.value}`}
+            accessibilityLiveRegion="polite"
+            style={{
+              alignSelf: 'flex-start',
+              marginTop: item.label === 'Home run type' ? 16 : 0,
+              paddingVertical: 5,
+              paddingHorizontal: 10,
+              borderRadius: theme.rem(theme.radiusRem),
+              backgroundColor: theme.scoringCountdownColor
+            }}
+          >
+            <Text
+              style={{
+                color: theme.scoringStatusText,
+                fontFamily: theme.semiBoldTextFont,
+                fontSize: 16
+              }}
+            >
+              {item.value}
+            </Text>
+          </View>
+        ))}
       {(remainingMs != null || onFinish != null) && (
         <View
           pointerEvents="box-none"

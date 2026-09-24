@@ -69,10 +69,15 @@ describe('owned runner animations', function () {
     let state = initialScoringState(
       createDevelopmentSession(gameFixture, [], [])
     )
+    state.session.liveData.linescore.offense.second = playerRef(
+      state.session,
+      3
+    )
     state.session.liveData.linescore.offense.third = playerRef(state.session, 4)
-    state = scoringReducer(state, { type: 'OUTCOME', outcome: 'Home Run' })
+    state = scoringReducer(state, { type: 'OUTCOME', outcome: 'Triple' })
     state = scoringReducer(state, {
-      type: 'LANDING',
+      type: 'FIELDER',
+      id: 10,
       point: { x: 5, z: -50 },
       generation: 0
     })
@@ -81,7 +86,7 @@ describe('owned runner animations', function () {
     )
     const players = scoringFieldPlayers(state)
     const lead = players.find(player => player.playerId === 4)!
-    const tail = players.find(player => player.playerId === 1)!
+    const tail = players.find(player => player.playerId === 3)!
     expect(
       Math.hypot(
         lead.position.x - tail.position.x,
