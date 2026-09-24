@@ -975,6 +975,74 @@ describe('scoring browser', function () {
       await page.close()
     }
   })
+  it('adds selected placeholder batches, cancels, isolates teams and supports Save/Undo', async function () {
+    const { page, unexpected } = await open('/games/g1/score')
+    try {
+      await page.setViewport({ width: 390, height: 844 })
+      await click(page, 'Open scoring menu')
+      await click(page, 'Set Team Rosters')
+      await click(page, 'Add Placeholder Players')
+      await page.waitForSelector('[aria-label="Number of placeholder players"]')
+      await new Promise(resolve => setTimeout(resolve, 400))
+      const cancels = await page.$$('[aria-label="Cancel"]')
+      const cancelBox = await cancels.at(-1)!.boundingBox()
+      await page.mouse.click(
+        cancelBox!.x + cancelBox!.width / 2,
+        cancelBox!.y + cancelBox!.height / 2
+      )
+      await page.waitForSelector(
+        '[aria-label="Number of placeholder players"]',
+        { hidden: true }
+      )
+      await new Promise(resolve => setTimeout(resolve, 400))
+      const add = async (count: number): Promise<void> => {
+        await click(page, 'Add Placeholder Players')
+        // Let the slide-up Modal install its focus trap before keyboard input.
+        await new Promise(resolve => setTimeout(resolve, 400))
+        await page.focus('[aria-label="Number of placeholder players"]')
+        await page.keyboard.press(count === 16 ? 'End' : 'Home')
+        await page.waitForSelector(
+          `[aria-label="Player count ${count}"][aria-selected="true"]`
+        )
+        await click(page, 'Add')
+        await page.waitForSelector(
+          '[aria-label="Number of placeholder players"]',
+          { hidden: true }
+        )
+        await new Promise(resolve => setTimeout(resolve, 400))
+      }
+      await add(1)
+      await add(16)
+      expect(await page.$('[aria-label="Add Owls Q to Lineup"]')).not.equals(
+        null
+      )
+      expect(
+        await page.$$('[data-roster-target="roster"] [data-roster-player]')
+      ).length(26)
+      await click(page, 'Home Team')
+      expect(await page.$('[aria-label="Add Owls A to Lineup"]')).equals(null)
+      await add(1)
+      expect(await page.$('[aria-label="Add Hawks A to Lineup"]')).not.equals(
+        null
+      )
+      await click(page, 'Save Rosters')
+      await click(page, 'Undo Set team roster')
+      await click(page, 'Open scoring menu')
+      await click(page, 'Set Team Rosters')
+      expect(
+        await page.$$('[data-roster-target="roster"] [data-roster-player]')
+      ).length(9)
+      await add(1)
+      await click(page, 'Cancel')
+      await click(page, 'Open scoring menu')
+      await click(page, 'Set Team Rosters')
+      expect(await page.$('[aria-label="Add Owls A to Lineup"]')).equals(null)
+      await click(page, 'Cancel')
+      expect(unexpected).deep.equals([])
+    } finally {
+      await page.close()
+    }
+  })
   it('shows one lineup insertion line and numbered themed rows before dropping', async function () {
     const { page } = await open('/games/g1/score')
     try {

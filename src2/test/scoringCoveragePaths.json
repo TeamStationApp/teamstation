@@ -42,5 +42,11 @@
   "src2/app/field/stadiumBoundary.ts",
   "src2/app/field/fieldingLocation.ts",
   "src2/app/field/StadiumDetails.tsx",
-  "src2/app/field/Ballpark.tsx"
+  "src2/app/field/Ballpark.tsx",
+  "src2/app/scoring/placeholderPlayers.ts",
+  "src2/app/scoring/playerCount.ts",
+  "src2/app/scoring/PlayerCountPicker.tsx",
+  "src2/app/scoring/PlayerCountPicker.native.tsx",
+  "src2/app/scoring/PlayerCountWheel.tsx",
+  "src2/app/scoring/PlaceholderPlayersSheet.tsx"
 ]

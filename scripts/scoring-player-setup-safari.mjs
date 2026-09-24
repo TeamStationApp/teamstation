@@ -188,6 +188,41 @@ try {
   await tap('Set Team Rosters')
   await absent('^Add Alex Safari to Lineup$')
   await tap('Cancel')
+  await tap('Open scoring menu')
+  await tap('Set Team Rosters')
+  await tap('Add Placeholder Players')
+  await visible('^Number of placeholder players$')
+  await touch(
+    center((await nodes()).filter(n => n.text === 'Cancel').at(-1).bounds)
+  )
+  await absent('^Add Owls A to Lineup$')
+  await tap('Add Placeholder Players')
+  await tap('Add')
+  await m.scrollUntilVisible({
+    element: { text: '^Add Owls A to Lineup$' },
+    direction: 'DOWN'
+  })
+  await visible('^Add Owls A to Lineup$')
+  await tap('Add Placeholder Players')
+  const wheel = await find(/^Number of placeholder players$/)
+  await gesture([
+    { x: wheel.x + wheel.width / 2, y: wheel.y + wheel.height - 25 },
+    { x: wheel.x + wheel.width / 2, y: wheel.y + 25, duration: 800 }
+  ])
+  await shot('placeholder-wheel-scrolled')
+  await tap('Player count 3')
+  await tap('Add')
+  await gesture([
+    { x: 95, y: 570 },
+    { x: 95, y: 380, duration: 700 }
+  ])
+  await visible('^Add Owls D to Lineup$')
+  await shot('placeholder-batch-added')
+  await tap('Save Rosters')
+  await tap('Undo Set team roster')
+  log(
+    'PASS Safari player form, placeholder cancel, scrolling, repeat batch, save and undo'
+  )
   await m.setOrientation('landscape')
   await touch(center(await find(/^Open scoring menu$/)))
   await touch(center(await find(/^Set Team Rosters$/)))

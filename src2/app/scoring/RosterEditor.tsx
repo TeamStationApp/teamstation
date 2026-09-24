@@ -1,7 +1,9 @@
 import React, { useContext, useState } from 'react'
-import { Text, useWindowDimensions, View } from 'react-native'
+import { Pressable, Text, useWindowDimensions, View } from 'react-native'
 
 import { useTheme } from '../theme/ThemeContext'
+import { addPlaceholderPlayers } from './placeholderPlayers'
+import { PlaceholderPlayersSheet } from './PlaceholderPlayersSheet'
 import { addPlayerDraft } from './playerDraft'
 import { PlayerEntrySheet } from './PlayerEntrySheet'
 import { RosterDrag, RosterDragGroup, RosterScrollArea } from './RosterDrag'
@@ -31,6 +33,7 @@ export function RosterEditor({
   const [side, setSide] = useState<Side>(battingSide(state.session))
   const [defense, setDefense] = useState(false)
   const [adding, setAdding] = useState(false)
+  const [placeholders, setPlaceholders] = useState(false)
   const [nextBatter, setNextBatter] = useState<number>()
   const edit = (change: (next: ScoringSessionState) => void): void => {
     setDraft(previous => {
@@ -89,7 +92,7 @@ export function RosterEditor({
     borderRadius: 6,
     backgroundColor: theme.scoringSelectorIdle
   }
-  const listHeight = Math.max(120, (contentHeight ?? height - 80) - 300)
+  const listHeight = Math.max(120, (contentHeight ?? height - 80) - 356)
   return (
     <View style={{ gap: 12 }}>
       <RosterSelector
@@ -351,6 +354,40 @@ export function RosterEditor({
         </View>
       )}
       <ScoringError message={validation} />
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Add Placeholder Players"
+        onPress={() => {
+          setPlaceholders(true)
+        }}
+        style={{
+          minHeight: 44,
+          alignItems: 'center',
+          justifyContent: 'center'
+        }}
+      >
+        <Text
+          style={{
+            ...text,
+            color: theme.successColor,
+            fontFamily: theme.semiBoldTextFont
+          }}
+        >
+          Add Placeholder Players
+        </Text>
+      </Pressable>
+      {placeholders && (
+        <PlaceholderPlayersSheet
+          onClose={() => {
+            setPlaceholders(false)
+          }}
+          onAdd={count => {
+            edit(next => {
+              addPlaceholderPlayers(next, side, count)
+            })
+          }}
+        />
+      )}
     </View>
   )
 }
