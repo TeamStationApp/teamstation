@@ -82,10 +82,7 @@ export function MoreMenu({
       setChild(value => !value)
       return
     }
-    if (
-      input.action === 'Place a Runner (Tiebreaker)' ||
-      input.action === 'Put Batter on Base'
-    ) {
+    if (input.action === 'Place a Runner (Tiebreaker)') {
       setOpen(false)
       setForm(input)
       onActive(true)
@@ -321,7 +318,10 @@ export function MoreMenu({
                   {group.actions
                     .filter(
                       action =>
-                        action !== 'Strike Three, Not Caught' ||
+                        ![
+                          'Strike Three, Not Caught',
+                          'Put Batter on Base'
+                        ].includes(action) ||
                         moreEligibility(state, action) == null
                     )
                     .map(action =>

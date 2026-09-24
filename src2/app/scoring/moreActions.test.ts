@@ -5,6 +5,7 @@ import { completeMotions } from '../../test/scoringHelpers'
 import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { moreEligibility, type MoreInput } from './moreActions'
+import { runnerReasons } from './runnerRules'
 import { asScoringPlay } from './scoringContract'
 import { initialScoringState, scoringReducer } from './scoringMachine'
 import { baseIds, playerRef } from './scoringSelectors'
@@ -86,41 +87,84 @@ describe('More local scoring actions', function () {
       )
     }
   })
-  it('requires legal manual placements and keeps them distinct from hit and pitch records', function () {
-    const start = initial(7)
-    for (const input of [
-      { action: 'Put Batter on Base', base: 0 },
-      { action: 'Put Batter on Base', base: 2 },
-      {
-        action: 'Put Batter on Base',
-        base: 2,
-        destinations: { 2: 3, 3: 3, 4: 4 }
-      },
-      {
-        action: 'Put Batter on Base',
-        base: 1,
-        destinations: { 2: 3, 3: 2, 4: 4 }
-      }
-    ] as MoreInput[])
-      expect(more(start, input)).equals(start)
-    for (const base of [1, 2, 3]) {
-      const state = resolveHomes(
-        more(start, {
-          action: 'Put Batter on Base',
-          base,
-          destinations: { 2: 4, 3: 4, 4: 4 }
-        })
-      )
-      expect(baseIds(state.session)[base - 1]).equals(1)
-      expect(state.session.liveData.linescore.teams.away.runs).equals(3)
-      expect(
-        state.session.liveData.plays.currentPlay!.playEvents.some(
-          e => e.isPitch
+  it('places batters immediately only with empty bases and preserves counts and Undo', function () {
+    for (let mask = 0; mask < 8; mask++)
+      for (const base of [1, 2, 3]) {
+        const start = initial(mask)
+        const result = more(start, { action: 'Put Batter on Base', base })
+        if (mask !== 0) {
+          expect(result).equals(start)
+          continue
+        }
+        const state = completeMotions(result)
+        expect(state.phase).equals('ready')
+        expect(state.pendingPlay).equals(null)
+        expect(state.correctionWindow).equals(null)
+        expect(state.homeQueue).deep.equals([])
+        expect(baseIds(state.session)[base - 1]).equals(1)
+        expect(state.session.liveData.linescore.offense.batter?.id).equals(2)
+        expect(state.session.liveData.linescore.teams.away.hits).equals(0)
+        expect(
+          state.session.liveData.plays.allPlays
+            .at(-1)!
+            .playEvents.some(e => e.isPitch)
+        ).equals(false)
+        expect(scoringReducer(state, { type: 'UNDO' }).session).deep.equals(
+          start.session
         )
-      ).equals(false)
-      expect(state.session.liveData.linescore.teams.away.hits).equals(0)
+      }
+    for (const base of [undefined, 0, 4]) {
+      const start = initial()
+      expect(more(start, { action: 'Put Batter on Base', base })).equals(start)
     }
   })
+  for (const reason of ['Wild Pitch', 'Passed Ball'])
+    it(`${reason} advances just the chosen runner without a pitch or RBI`, () => {
+      for (const from of [1, 2, 3])
+        for (const pitch of [false, true]) {
+          let start = initial(1 << (from - 1))
+          const id = from + 1
+          if (pitch)
+            start = scoringReducer(start, { type: 'PITCH', kind: 'ball' })
+          const count =
+            start.session.liveData.boxscore.teams.home.pitchCounts[10] ?? 0
+          const draft = scoringReducer(start, {
+            type: 'RUNNER_DROP',
+            id,
+            to: from + 1,
+            decision: 'safe',
+            generation: start.generation
+          })
+          expect(runnerReasons(draft)).includes(reason)
+          expect(
+            scoringReducer(draft, { type: 'RUNNER_CANCEL' }).session
+          ).deep.equals(start.session)
+          const final = completeMotions(
+            scoringReducer(draft, { type: 'RUNNER_REASON', reason })
+          )
+          expect(final.phase).equals('ready')
+          expect(final.session.liveData.linescore.offense.batter?.id).equals(1)
+          expect(final.session.liveData.linescore.balls).equals(pitch ? 1 : 0)
+          expect(
+            final.session.liveData.boxscore.teams.home.pitchCounts[10] ?? 0
+          ).equals(count)
+          expect(final.session.liveData.linescore.teams.away.runs).equals(
+            from === 3 ? 1 : 0
+          )
+          const play = final.session.liveData.plays.currentPlay!
+          expect(play.result.rbi).equals(0)
+          expect(play.playEvents.at(-1)!.details.code).equals(
+            reason === 'Wild Pitch' ? 'wild_pitch' : 'passed_ball'
+          )
+          expect(play.playEvents.at(-1)!.isPitch).equals(false)
+          expect(
+            play.source.gamestation.runnerActions!.at(-1)!.pitchReference
+          ).deep.equals(pitch ? start.recentPitch : undefined)
+          expect(scoringReducer(final, { type: 'UNDO' }).session).deep.equals(
+            start.session
+          )
+        }
+    })
   it('places only a roster player on an empty base without a pitch or batter completion', function () {
     const start = initial(1)
     for (const input of [

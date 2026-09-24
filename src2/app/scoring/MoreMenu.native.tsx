@@ -24,10 +24,8 @@ export function MoreMenu({
     onActive(false)
   }
   const choose = (input: MoreInput): void => {
-    if (
-      input.action === 'Put Batter on Base' ||
-      input.action === 'Place a Runner (Tiebreaker)'
-    ) {
+    if (disabled || moreEligibility(state, input.action) != null) return
+    if (input.action === 'Place a Runner (Tiebreaker)') {
       setOpen(false)
       setForm(input)
     } else {
@@ -63,7 +61,10 @@ export function MoreMenu({
                   {group.actions
                     .filter(
                       action =>
-                        action !== 'Strike Three, Not Caught' ||
+                        ![
+                          'Strike Three, Not Caught',
+                          'Put Batter on Base'
+                        ].includes(action) ||
                         moreEligibility(state, action) == null
                     )
                     .map(action => (
