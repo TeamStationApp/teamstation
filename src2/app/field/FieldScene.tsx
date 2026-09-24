@@ -725,7 +725,13 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
       )}
 
       {props.hintBatSide != null && <BatterBoxHint side={props.hintBatSide} />}
-      {arc != null && <BallArc arc={arc} editing={arcMode === 'edit'} />}
+      {arc != null && (
+        <BallArc
+          key={props.interaction?.generation}
+          arc={arc}
+          editing={arcMode === 'edit'}
+        />
+      )}
       {preview != null && <MoveGuide draft={preview} />}
       <mesh
         ref={arcSurface}

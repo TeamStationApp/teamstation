@@ -5,6 +5,7 @@ import {
   homeRunKind,
   homeRunLanding
 } from '../field/stadiumBoundary'
+import { initialHitTarget } from '../field/trajectoryGuide'
 import { fieldPlayersFor } from './fieldAdapter'
 import { prepareBatterResult, prepareHit } from './runnerRules'
 import { type Outcome, outcomeEvents } from './scoringContract'
@@ -79,7 +80,8 @@ export function chooseOutcome(
       trajectoryAccepted: false
     }
     next.phase = outcome === 'Home Run' ? 'locateLanding' : 'locateFielder'
-    if (outcome === 'Home Run') next.pendingPlay.location = { x: 0, z: -60 }
+    if (outcome === 'Home Run')
+      next.pendingPlay.location = initialHitTarget(play.matchup.batSide.code)
     const counts =
       session.liveData.boxscore.teams[fieldingSide(session)].pitchCounts
     counts[play.matchup.pitcher.id] = (counts[play.matchup.pitcher.id] ?? 0) + 1

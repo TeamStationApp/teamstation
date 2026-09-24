@@ -1,6 +1,6 @@
 /* eslint-disable react/no-unknown-property -- Three.js scene elements. */
 import { useFrame } from '@react-three/fiber'
-import React, { useEffect, useMemo, useRef } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Color,
   Curve,
@@ -22,6 +22,7 @@ import {
 import { DESTINATION_RADIUS, DestinationMarker } from './DestinationMarker'
 import { ARROW_OVERLAY_ORDER, arrowPulse } from './interactionAffordances'
 import { TERRAIN } from './terrain'
+import { guideBearing, GuideBearingEase } from './trajectoryGuide'
 
 class FlightCurve extends Curve<Vector3> {
   constructor(
@@ -38,12 +39,28 @@ class FlightCurve extends Curve<Vector3> {
   }
 }
 export function BallArc({
-  arc,
+  arc: sourceArc,
   editing
 }: {
   arc: BallArcState
   editing: boolean
 }): React.ReactElement {
+  const [ease] = useState(
+    () => new GuideBearingEase(guideBearing(sourceArc.target))
+  )
+  const [bearing, setBearing] = useState(ease.value)
+  const desired = guideBearing(sourceArc.target, ease.value)
+  const targetBearing = useRef(desired)
+  const startingFrame = useRef(false)
+  if (desired !== targetBearing.current) {
+    targetBearing.current = desired
+    startingFrame.current = true
+    ease.target(desired)
+  }
+  const arc = useMemo(
+    () => ({ ...sourceArc, guideBearing: bearing }),
+    [sourceArc, bearing]
+  )
   const handle = useRef<Group>(null)
   const elapsed = useRef(0)
   const dark = useMemo(() => new Color('#4a3b00'), [])
@@ -101,6 +118,13 @@ export function BallArc({
     return shape
   }, [])
   useFrame(({ camera, size, invalidate }, dt) => {
+    if (ease.settling) {
+      // A demand renderer includes the idle interval in the first delta.
+      // Begin the easing clock at this frame, rather than consuming that idle time.
+      setBearing(ease.step(startingFrame.current ? 0 : Math.min(dt, 0.05)))
+      startingFrame.current = false
+      invalidate()
+    }
     if (handle.current == null) return
     elapsed.current += Math.min(dt, 0.05)
     handle.current.quaternion.copy(camera.quaternion)
@@ -126,7 +150,7 @@ export function BallArc({
     invalidate()
   })
   return (
-    <group name="ball-arc">
+    <group name="ball-arc" userData={{ bearing, settling: ease.settling }}>
       {direct != null && (
         <mesh geometry={direct} name="ball-direct-hit">
           <meshBasicMaterial color="#ffe044" toneMapped={false} />
