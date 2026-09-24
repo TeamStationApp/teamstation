@@ -13,7 +13,7 @@ const initial = (): ReturnType<typeof initialScoringState> =>
   initialScoringState(createDevelopmentSession(gameFixture, [], []), true)
 describe('defender speed and perspective foul flight', function () {
   for (const distance of [12, 90])
-    it(`finishes ${distance}-unit fielding travel in one third of flight time and waits`, function () {
+    it(`finishes ${distance}-unit fielding travel at triple speed after ball landing`, function () {
       let state = scoringReducer(initial(), {
         type: 'OUTCOME',
         outcome: 'Throw Out'
@@ -31,20 +31,20 @@ describe('defender speed and perspective foul flight', function () {
       })
       const hit = state.presentation!
       if (hit.kind !== 'hit') throw new Error('Expected hit')
-      const flight = hit.durationMs - hit.contactMs
+      const flight = hit.flightEndMs - hit.contactMs
       expect(sampleHit(hit, hit.contactMs).fielder).deep.equals(
         hit.fielderStart
       )
-      const half = sampleHit(hit, hit.contactMs + flight / 6)
+      const half = sampleHit(hit, hit.fielderStartMs + flight / 6)
       expect(half.fielder.z).closeTo(
         (hit.fielderStart.z + hit.arc.target.z) / 2,
         1e-8
       )
-      const arrived = sampleHit(hit, hit.contactMs + flight / 3)
+      const arrived = sampleHit(hit, hit.fielderEndMs)
       expect(arrived.fielder.z).closeTo(hit.arc.target.z, 1e-8)
-      expect(arrived.visible).equals(true)
-      expect(arrived.ball.z).not.equals(hit.arc.target.z)
-      expect(sampleHit(hit, hit.contactMs + flight / 2).running).equals(false)
+      expect(arrived.visible).equals(false)
+      expect(arrived.ball.z).equals(hit.arc.target.z)
+      expect(sampleHit(hit, hit.fielderEndMs).running).equals(false)
       state = scoringReducer(state, {
         type: 'PRESENTATION_DONE',
         id: hit.id,
@@ -64,6 +64,60 @@ describe('defender speed and perspective foul flight', function () {
       expect(sampleThrow({ ...tag, unassisted: false }, 150).ball).deep.equals(
         tag.from
       )
+    })
+  for (const outcome of [
+    'Single',
+    'Throw Out',
+    'Ball Caught',
+    'Error',
+    'Batter Interference',
+    'Home Run'
+  ] as const)
+    it(`separates landing and pickup for ${outcome}`, () => {
+      let state = scoringReducer(initial(), { type: 'OUTCOME', outcome })
+      state = scoringReducer(
+        state,
+        outcome === 'Home Run'
+          ? { type: 'LANDING', point: { x: 25, z: -130 }, generation: 0 }
+          : { type: 'FIELDER', id: 10, point: { x: 25, z: -75 }, generation: 0 }
+      )
+      state = scoringReducer(state, {
+        type: 'TRAJECTORY',
+        angle: 45,
+        generation: 0
+      })
+      const hit = state.presentation!
+      if (hit.kind !== 'hit') throw new Error('Expected hit')
+      const target = hit.fielderTarget!
+      const gap = (t: number): number => {
+        const p = sampleHit(hit, t).fielder
+        return Math.hypot(p.x - target.x, p.z - target.z)
+      }
+      const caught = outcome === 'Ball Caught'
+      const noFielder = outcome === 'Home Run'
+      expect(hit.durationMs - hit.flightEndMs).equals(
+        caught || noFielder ? 0 : 300
+      )
+      const landed = sampleHit(hit, hit.flightEndMs)
+      expect(landed.ball.x).closeTo(hit.arc.target.x, 1e-8)
+      expect(landed.ball.z).closeTo(hit.arc.target.z, 1e-8)
+      if (!noFielder) {
+        expect(gap(hit.flightEndMs)).satisfies((n: number) =>
+          caught ? n < 1e-8 : n > 0
+        )
+        if (!caught) {
+          expect(gap(hit.flightEndMs + 150)).greaterThan(0)
+          expect(sampleHit(hit, hit.flightEndMs + 150).ball).deep.equals(
+            landed.ball
+          )
+          expect(sampleHit(hit, hit.flightEndMs + 150).visible).equals(true)
+          expect(gap(hit.flightEndMs + 300)).closeTo(0, 1e-8)
+          expect(sampleHit(hit, hit.flightEndMs - 1).ball.z).not.equals(
+            hit.arc.target.z
+          )
+        }
+      }
+      expect(sampleHit(hit, hit.durationMs).visible).equals(false)
     })
   for (const [width, height] of [
     [1200, 900],

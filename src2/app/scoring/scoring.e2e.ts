@@ -2302,6 +2302,69 @@ describe('scoring browser', function () {
       await page.close()
     }
   })
+  for (const caught of [false, true]) {
+    it(`arrives ${caught ? 'before catch' : 'after landing'} on the live field`, async function () {
+      const { page } = await open(
+        '/games/g1/score',
+        false,
+        false,
+        false,
+        'right',
+        true
+      )
+      try {
+        await click(page, 'Ball in Play')
+        if (caught) {
+          await click(page, 'Batter Out')
+          await click(page, 'Ball Caught')
+        } else await click(page, 'Single')
+        await page.focus('[role="application"]')
+        await page.keyboard.press('Space')
+        for (let i = 0; i < 10; i++) await page.keyboard.press('ArrowUp')
+        await page.keyboard.press('Enter')
+        const target = await readGuide(page)
+        const samplesPromise = page.evaluate(
+          async () =>
+            await new Promise<Array<{ z: number; gap: number }>>(resolve => {
+              const scene = (window as unknown as SceneProbeWindow).qaScene!
+              const out: Array<{ z: number; gap: number }> = []
+              let seen = false
+              const run = (): void => {
+                const ball = scene.getObjectByName('animated-baseball')
+                const fielder = scene.getObjectByName('player-defense-10')
+                if (ball != null && ball.visible && fielder != null) {
+                  seen = true
+                  out.push({
+                    z: ball.position.z,
+                    gap: Math.hypot(
+                      ball.position.x - fielder.position.x,
+                      ball.position.z - fielder.position.z
+                    )
+                  })
+                }
+                if (seen && ball == null) resolve(out)
+                else requestAnimationFrame(run)
+              }
+              run()
+            })
+        )
+        await page.keyboard.press('Enter')
+        const samples = await samplesPromise
+        const landing = samples.filter(p => Math.abs(p.z - target.z) < 0.01)
+        if (caught) {
+          expect(landing.length).equals(0)
+          expect(samples.at(-1)!.gap).lessThan(3)
+        } else {
+          expect(landing.length).greaterThan(1)
+          expect(landing[0].gap).greaterThan(0.1)
+          expect(landing.at(-1)!.gap).lessThan(landing[0].gap)
+        }
+        await page.locator('[aria-label^="Undo "]').click()
+      } finally {
+        await page.close()
+      }
+    })
+  }
   for (const outside of [false, true]) {
     it(`celebrates ${outside ? 'stands' : 'in-park'} home run on the LED scoreboard`, async function () {
       this.timeout(90000)

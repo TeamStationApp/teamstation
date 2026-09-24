@@ -123,9 +123,12 @@ export function sampleHit(
   running: boolean
 } {
   const flight = clamp(
-    (time - sequence.contactMs) / (sequence.durationMs - sequence.contactMs)
+    (time - sequence.contactMs) / (sequence.flightEndMs - sequence.contactMs)
   )
-  const defender = clamp(flight * DEFENDER_SPEED)
+  const defender = clamp(
+    (time - sequence.fielderStartMs) /
+      (sequence.fielderEndMs - sequence.fielderStartMs)
+  )
   return {
     ball: arcPoint(sequence.arc, flight),
     visible: time >= sequence.contactMs && time < sequence.durationMs,
