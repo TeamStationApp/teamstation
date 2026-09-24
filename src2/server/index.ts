@@ -37,6 +37,7 @@ import { healthRoutes } from './routes/health'
 import { inviteRoutes } from './routes/invites'
 import type { LiveRouteOptions } from './routes/live'
 import { liveRoutes } from './routes/live'
+import { logRoutes } from './routes/logs'
 import { manageRoutes } from './routes/manage'
 import { mediaAuthRoute, mediaRoutes } from './routes/media'
 import { playerRoutes } from './routes/players'
@@ -432,6 +433,7 @@ function runWorker(): void {
   app.use('/api/v1', seasonRoutes(db, mediaContext))
   app.use('/api/v1', teamRoutes(db, mediaContext))
   app.use('/api/v1', eventRoutes(db))
+  app.use('/api/v1', logRoutes())
   app.use('/api/v1', statsRoutes(db))
   app.use('/api/v1', playerRoutes(db, mediaContext))
   app.use('/api/v1', mediaRoutes(db, mediaContext))
