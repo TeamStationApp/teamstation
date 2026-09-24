@@ -74,6 +74,30 @@ describe('More scoring menu', function () {
     expect(button('Batter base').style.left).includes('50vw')
     await click('Dismiss More')
   })
+  it('aligns the child with its parent, clamps to the viewport and follows scroll', async function () {
+    await mount()
+    await click('More')
+    const parent = button('Put Batter on Base')
+    let top = 230
+    parent.getBoundingClientRect = () => new window.DOMRect(0, top, 160, 44)
+    await click('Put Batter on Base')
+    expect(button('Batter base').style.top).equals('230px')
+    expect(parent.lastElementChild!.textContent).equals('›')
+    expect(parent.style.justifyContent).equals('space-between')
+    top = 10000
+    await act(async () => {
+      window.dispatchEvent(new window.Event('scroll'))
+    })
+    expect(Number.parseFloat(button('Batter base').style.top)).at.most(
+      window.innerHeight - 8
+    )
+    top = -10
+    await act(async () => {
+      window.dispatchEvent(new window.Event('resize'))
+    })
+    expect(button('Batter base').style.top).equals('8px')
+    await click('Dismiss More')
+  })
   for (const native of [false, true])
     it(`groups real scoring actions and confirms placements on ${native ? 'native' : 'web'}`, async function () {
       await mount(native)

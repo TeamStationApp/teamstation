@@ -11,6 +11,8 @@ export function ScoringButton({
   disabled = false,
   color,
   row = false,
+  shape,
+  submenuRight = false,
   submenu = false
 }: {
   label: string
@@ -19,6 +21,8 @@ export function ScoringButton({
   disabled?: boolean
   color?: string
   row?: boolean
+  shape?: 'pill' | 'circle'
+  submenuRight?: boolean
   submenu?: boolean
 }): React.ReactElement {
   const theme = useTheme()
@@ -53,9 +57,17 @@ export function ScoringButton({
         shadowOffset: { width: 0, height: pressed ? 1 : 3 },
         elevation: row ? 0 : pressed ? 1 : 3,
         minHeight: 44,
+        flexDirection: submenuRight ? 'row' : undefined,
+        alignItems: submenuRight ? 'center' : undefined,
         padding: 10,
         justifyContent: 'center',
-        borderRadius: row ? 0 : theme.rem(theme.radiusRem),
+        borderRadius:
+          shape != null
+            ? theme.radiusPill
+            : row
+              ? 0
+              : theme.rem(theme.radiusRem),
+        width: shape === 'circle' ? 44 : undefined,
         borderBottomWidth: row ? 1 : 0,
         borderBottomColor: theme.defaultBorderColor,
         backgroundColor:
@@ -81,21 +93,34 @@ export function ScoringButton({
                   ? theme.scoringMenuActiveText
                   : theme.primaryTextColor
                 : theme.buttonTextColor,
+          flex: submenuRight ? 1 : undefined,
           textAlign: row ? 'left' : 'center'
         }}
       >
-        {submenu ? '‹  ' : ''}
+        {submenu && !submenuRight ? '‹  ' : ''}
         {text ?? label}
       </Text>
+      {submenuRight && (
+        <Text
+          aria-hidden
+          style={{
+            color: active ? theme.scoringMenuActiveText : theme.primaryTextColor
+          }}
+        >
+          ›
+        </Text>
+      )}
     </Pressable>
   )
 }
 export function ScoringSheet({
   title,
+  textCancel = false,
   onClose,
   children
 }: {
   title: string
+  textCancel?: boolean
   onClose: () => void
   children: React.ReactNode
 }): React.ReactElement {
@@ -143,7 +168,29 @@ export function ScoringSheet({
             >
               {title}
             </Text>
-            <ScoringButton label="Cancel" onPress={onClose} />
+            {textCancel ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Cancel"
+                onPress={onClose}
+                style={{
+                  minHeight: 44,
+                  paddingHorizontal: 10,
+                  justifyContent: 'center'
+                }}
+              >
+                <Text
+                  style={{
+                    fontFamily: theme.semiBoldTextFont,
+                    color: theme.dangerColor
+                  }}
+                >
+                  Cancel
+                </Text>
+              </Pressable>
+            ) : (
+              <ScoringButton label="Cancel" onPress={onClose} />
+            )}
           </View>
           <ScrollView
             keyboardShouldPersistTaps="handled"

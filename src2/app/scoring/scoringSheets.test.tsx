@@ -39,7 +39,8 @@ async function keys(label: string, keys: string[]): Promise<void> {
 async function drag(
   sourceSelector: string,
   targetId: string,
-  cancel = false
+  cancel = false,
+  after = false
 ): Promise<void> {
   const source = document.querySelector(sourceSelector)!
   // eslint-disable-next-line @typescript-eslint/unbound-method
@@ -70,7 +71,7 @@ async function drag(
           bubbles: true,
           button: 0,
           clientX: x,
-          clientY: 10
+          clientY: after ? 600 : 10
         })
         Object.defineProperty(event, 'pointerId', { value: 1 })
         source.dispatchEvent(event)
@@ -182,6 +183,30 @@ describe('scoring slide-up sheets', function () {
       null
     )
   })
+  it('inserts at row boundaries, adjusts existing indices, and styles numbered roster rows', async function () {
+    await mount()
+    await menu('Set Team Rosters')
+    const lineup = (): number[] =>
+      Array.from(
+        document.querySelectorAll(
+          '[data-roster-target^="lineup-"][data-roster-player]'
+        )
+      ).map(n => Number(n.getAttribute('data-roster-player')))
+    await drag('[aria-label="Reorder Player 1"]', 'lineup-2', false, true)
+    expect(lineup().slice(0, 3)).deep.equals([2, 3, 1])
+    await drag('[aria-label="Reorder Player 1"]', 'lineup-0')
+    expect(lineup().slice(0, 3)).deep.equals([1, 2, 3])
+    await drag('[aria-label="Reorder Player 1"]', 'lineup-0', false, true)
+    expect(lineup().slice(0, 3)).deep.equals([1, 2, 3])
+    expect(
+      document.querySelector('[data-roster-target="roster"]')!.textContent
+    ).includes('#1 Player 1')
+    await click('Set Defense')
+    expect(
+      document.querySelector('[data-roster-target="defense-P"]')!.textContent
+    ).includes('P#1 Player 1')
+    await click('Cancel')
+  })
   it('validates override fields and player collisions, then reconciles the chosen half', async function () {
     await mount()
     await menu('Overrides')
@@ -287,14 +312,14 @@ describe('scoring slide-up sheets', function () {
       'lineup-0',
       true
     )
-    expect(target.textContent).includes('1. Player 1')
+    expect(target.textContent).includes('1. #1 Player 1')
     await drag(
       '[data-roster-target="roster"] [data-roster-player="2"]',
       'lineup-0'
     )
     expect(
       document.querySelector('[data-roster-target="lineup-0"]')!.textContent
-    ).includes('1. Player 2')
+    ).includes('1. #2 Player 2')
     expect(source.getAttribute('aria-disabled')).equals('true')
     await click('Cancel')
   })
