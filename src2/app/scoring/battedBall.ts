@@ -1,5 +1,11 @@
+import { fieldingLocation, isFairLocation } from '../field/fieldingLocation'
 import type { GroundPoint } from '../field/fieldModel'
-import { type HomeRunKind, homeRunKind } from '../field/stadiumBoundary'
+import {
+  type HomeRunKind,
+  homeRunKind,
+  homeRunLanding
+} from '../field/stadiumBoundary'
+import { fieldPlayersFor } from './fieldAdapter'
 import { prepareBatterResult, prepareHit } from './runnerRules'
 import { type Outcome, outcomeEvents } from './scoringContract'
 import { accepted } from './scoringMachine'
@@ -72,7 +78,8 @@ export function chooseOutcome(
       movements: [],
       trajectoryAccepted: false
     }
-    next.phase = 'locateFielder'
+    next.phase = outcome === 'Home Run' ? 'locateLanding' : 'locateFielder'
+    if (outcome === 'Home Run') next.pendingPlay.location = { x: 0, z: -60 }
     const counts =
       session.liveData.boxscore.teams[fieldingSide(session)].pitchCounts
     counts[play.matchup.pitcher.id] = (counts[play.matchup.pitcher.id] ?? 0) + 1
@@ -116,14 +123,61 @@ export function placeFielder(
     next => {
       const pending = next.pendingPlay!
       pending.fielder = id
-      pending.location = { ...point }
+      pending.location = fieldingLocation(pending.outcome, point)
       pending.landingHeight = landingHeight
-      if (pending.outcome === 'Home Run')
-        pending.homeRunKind = homeRunKind(point)
+      if (
+        pending.outcome === 'Ball Caught' &&
+        !isFairLocation(pending.location)
+      ) {
+        const play = next.session.liveData.plays.currentPlay!
+        play.source.gamestation.foulCaught = true
+        play.result.description = 'Foul ball caught'
+      }
       pending.angle = 45
       next.phase = 'trajectory'
     }
   )
+}
+export function placeLanding(
+  state: ScoringState,
+  point: GroundPoint,
+  generation: number,
+  landingHeight?: number
+): ScoringState {
+  if (
+    state.phase !== 'locateLanding' ||
+    state.pendingPlay?.outcome !== 'Home Run' ||
+    generation !== state.generation ||
+    !Number.isFinite(point.x) ||
+    !Number.isFinite(point.z) ||
+    (landingHeight != null && !Number.isFinite(landingHeight))
+  )
+    return state
+  return accepted(state, 'Home-run landing', next => {
+    const pending = next.pendingPlay!
+    pending.location = homeRunLanding(point)
+    pending.homeRunKind = homeRunKind(pending.location)
+    pending.landingHeight =
+      pending.homeRunKind === 'out-of-park' ? landingHeight : undefined
+    pending.angle = 45
+    if (pending.homeRunKind === 'in-park') {
+      pending.fielder = fieldPlayersFor(next.session)
+        .filter(p => p.team === 'defense' && p.playerId != null)
+        .sort((a, b) => {
+          const difference =
+            Math.hypot(
+              a.position.x - pending.location!.x,
+              a.position.z - pending.location!.z
+            ) -
+            Math.hypot(
+              b.position.x - pending.location!.x,
+              b.position.z - pending.location!.z
+            )
+          return difference === 0 ? a.playerId! - b.playerId! : difference
+        })[0]?.playerId
+    }
+    next.phase = 'trajectory'
+  })
 }
 export function acceptTrajectory(
   state: ScoringState,
@@ -151,7 +205,10 @@ export function acceptTrajectory(
       launchAngle: value,
       trajectory: trajectoryLabel(value),
       coordinates: { ...pending.location! },
-      fielder: playerRef(next.session, pending.fielder!)!
+      fielder:
+        pending.fielder == null
+          ? undefined
+          : playerRef(next.session, pending.fielder)!
     }
     if (pending.outcome === 'Home Run') {
       next.session.liveData.plays.currentPlay!.source.gamestation.homeRunKind =

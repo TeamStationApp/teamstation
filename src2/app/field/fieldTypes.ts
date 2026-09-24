@@ -23,6 +23,9 @@ export interface BaseProjection {
   height: number
 }
 export interface FieldCanvasProps {
+  constrainPlacement?: (point: GroundPoint) => GroundPoint
+  acceptDefenderTap?: boolean
+  onLandingAccepted?: (arc: BallArcState, generation: number) => void
   onBaseProjection?: (value: BaseProjection) => void
   homeRunPlacement?: boolean
   onLandingPreview?: (point: GroundPoint | null) => void

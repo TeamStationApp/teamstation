@@ -17,8 +17,7 @@ describe('owned runner animations', function () {
     )
     state = scoringReducer(state, { type: 'OUTCOME', outcome: 'Home Run' })
     state = scoringReducer(state, {
-      type: 'FIELDER',
-      id: 10,
+      type: 'LANDING',
       point: { x: 5, z: -50 },
       generation: 0
     })
@@ -73,8 +72,7 @@ describe('owned runner animations', function () {
     state.session.liveData.linescore.offense.third = playerRef(state.session, 4)
     state = scoringReducer(state, { type: 'OUTCOME', outcome: 'Home Run' })
     state = scoringReducer(state, {
-      type: 'FIELDER',
-      id: 10,
+      type: 'LANDING',
       point: { x: 5, z: -50 },
       generation: 0
     })

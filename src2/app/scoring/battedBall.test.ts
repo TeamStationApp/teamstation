@@ -28,8 +28,9 @@ describe('batted-ball draft', function () {
         chosen
       )
       const located = scoringReducer(chosen, {
-        type: 'FIELDER',
-        id: pitcher,
+        ...(outcome === 'Home Run'
+          ? { type: 'LANDING' as const }
+          : { type: 'FIELDER' as const, id: pitcher }),
         point: { x: 22, z: -30 },
         generation: 0
       })
@@ -131,8 +132,7 @@ describe('contextual batted-ball choices', function () {
         outcome: 'Home Run'
       })
       state = scoringReducer(state, {
-        type: 'FIELDER',
-        id: 10,
+        type: 'LANDING',
         point: { x: 0, z: outside ? -129 : -118 },
         generation: 0
       })

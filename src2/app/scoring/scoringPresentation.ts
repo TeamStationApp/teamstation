@@ -84,7 +84,7 @@ export interface HitSequence {
   contactMs: number
   players: FieldPlayer[]
   batter: number
-  fielder: number
+  fielder?: number
   fielderStart: GroundPoint
   arc: BallArcState
   batSide: 'R' | 'L'
@@ -210,9 +210,9 @@ export function hitPresentation(
 ): HitSequence {
   const pending = state.pendingPlay!
   const players = fieldPlayersFor(state.session)
-  const start = players.find(
-    player => player.playerId === pending.fielder
-  )!.position
+  const start =
+    players.find(player => player.playerId === pending.fielder)?.position ??
+    pending.location!
   const target = pending.location!
   const flight = Math.max(
     1100,
@@ -232,7 +232,7 @@ export function hitPresentation(
     contactMs: 450,
     players,
     batter: state.session.liveData.plays.currentPlay!.matchup.batter.id,
-    fielder: pending.fielder!,
+    fielder: pending.fielder,
     fielderStart: { ...start },
     arc: {
       target: { ...target },

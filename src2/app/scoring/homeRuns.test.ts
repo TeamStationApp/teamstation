@@ -31,8 +31,7 @@ function initial(mask: number, animate = false): ScoringState {
 function homer(state: ScoringState, outside: boolean): ScoringState {
   state = scoringReducer(state, { type: 'OUTCOME', outcome: 'Home Run' })
   state = scoringReducer(state, {
-    type: 'FIELDER',
-    id: 10,
+    type: 'LANDING',
     point: { x: 0, z: outside ? -129 : -100 },
     landingHeight: outside ? 7.75 : undefined,
     generation: state.generation

@@ -28,6 +28,7 @@ export function scoringFieldPlayers(
   const session = state.session
   const suppressed = [
     'locateFielder',
+    'locateLanding',
     'trajectory',
     'chooseThrower',
     'chooseDefender'

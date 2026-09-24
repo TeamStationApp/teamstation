@@ -13,9 +13,17 @@ export function homeRunKind(point: GroundPoint): HomeRunKind {
     : 'in-park'
 }
 export function homeRunLanding(point: GroundPoint): GroundPoint {
+  const distance = Math.hypot(point.x, point.z)
+  if (
+    point.z <= 0 &&
+    Math.abs(point.x) <= -point.z &&
+    distance >= 3 &&
+    distance <= 160
+  )
+    return { ...point }
   const angle = Math.max(
-    -OUTFIELD_HALF_ANGLE,
-    Math.min(OUTFIELD_HALF_ANGLE, Math.atan2(point.x, -point.z))
+    -Math.PI / 4,
+    Math.min(Math.PI / 4, Math.atan2(point.x, -point.z))
   )
   const radius = Math.max(3, Math.min(160, Math.hypot(point.x, point.z)))
   return { x: Math.sin(angle) * radius, z: -Math.cos(angle) * radius }

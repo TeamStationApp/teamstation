@@ -75,7 +75,7 @@ export const asEstimatedGumboPlay = asObject({
       launchAngle: asNumber,
       trajectory: asString,
       coordinates: asObject({ x: asNumber, z: asNumber }),
-      fielder: asPlayerRef
+      fielder: asOptional(asPlayerRef)
     })
   ),
   source: asObject({
@@ -84,6 +84,7 @@ export const asEstimatedGumboPlay = asObject({
       version: asValue('estimated-v1' as const),
       outcome: asString,
       outSubtype: asOptional(asString),
+      foulCaught: asOptional(asBoolean),
       homeRunKind: asOptional(
         asValue('out-of-park' as const, 'in-park' as const)
       ),

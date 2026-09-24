@@ -328,7 +328,7 @@ describe('scoring slide-up sheets', function () {
     await click('Ball in Play')
     await click('Single')
     expect(document.body.textContent).includes(
-      'Drag fielder to location of fielded ball.'
+      'Tap or drag a player to where the ball was fielded.'
     )
     await click('Undo Single')
     expect(document.body.textContent).includes(

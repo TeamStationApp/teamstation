@@ -5,6 +5,7 @@ import React from 'react'
 import { type Camera, Ray, Sprite, Vector2, Vector3 } from 'three'
 
 import type { BallArcState } from './ballArcModel'
+import { fieldingLocation } from './fieldingLocation'
 import { createPlayers } from './fieldModel'
 import { FieldScene } from './FieldScene'
 import type { FieldPlacement } from './fieldTypes'
@@ -294,6 +295,131 @@ describe('scoring home-run landing surface', function () {
       expect(Math.hypot(players[0].target.x, players[0].target.z)).at.most(
         110.00001
       )
+    } finally {
+      await renderer.unmount()
+    }
+  })
+})
+
+describe('direct home-run landing authoring', function () {
+  it('accepts a fair stands target without a defender and restores canceled previews', async function () {
+    const players = createPlayers()
+    const before = players.map(p => ({ ...p.position }))
+    const initial: BallArcState = { target: { x: 0, z: -60 }, angle: 45 }
+    let preview = initial
+    const accepted: BallArcState[] = []
+    const renderer = await create(
+      React.createElement(FieldScene, {
+        players,
+        selected: '',
+        onSelect: () => undefined,
+        view: 'home',
+        zoom: 1,
+        homeRunPlacement: true,
+        arc: initial,
+        arcMode: 'aim',
+        interaction: {
+          generation: 17,
+          selectableIds: [],
+          gestures: ['trajectory']
+        },
+        onArcChange: arc => {
+          preview = arc
+        },
+        onLandingAccepted: (arc, generation) => {
+          expect(generation).equals(17)
+          accepted.push(arc)
+        }
+      })
+    )
+    try {
+      await renderer.advanceFrames(1, 1 / 60)
+      renderer.scene.instance.updateMatrixWorld(true)
+      const surface = renderer.scene.findByProps({
+        name: 'arc-interaction-surface'
+      })
+      const event = {
+        button: 0,
+        pointerId: 45,
+        pointerType: 'touch',
+        pointer: new Vector2(),
+        ray: new Ray(new Vector3(0, 100, -60), new Vector3(0, -1, 0)),
+        target: {
+          setPointerCapture: () => undefined,
+          releasePointerCapture: () => undefined
+        }
+      }
+      await renderer.fireEvent(surface, 'pointerDown', event)
+      event.ray.origin.set(0, 100, -129)
+      await renderer.fireEvent(surface, 'pointerMove', event)
+      expect(preview.target.z).closeTo(-132.048, 0.00001)
+      expect(preview.landingHeight).greaterThan(1)
+      await renderer.fireEvent(surface, 'pointerCancel', event)
+      expect(preview).deep.equals(initial)
+      expect(accepted).length(0)
+      await renderer.fireEvent(surface, 'pointerDown', event)
+      await renderer.fireEvent(surface, 'pointerUp', event)
+      expect(accepted).length(1)
+      expect(accepted[0].target.z).closeTo(-132.048, 0.00001)
+      expect(players.map(p => p.position)).deep.equals(before)
+    } finally {
+      await renderer.unmount()
+    }
+  })
+})
+
+describe('outcome-constrained defender gestures', function () {
+  it('accepts a direct defender tap and clamps the visible drag and released location to fair territory', async function () {
+    const players = createPlayers()
+    const placements: FieldPlacement[] = []
+    const renderer = await create(
+      React.createElement(FieldScene, {
+        players,
+        selected: '',
+        onSelect: () => undefined,
+        view: 'home',
+        zoom: 1,
+        acceptDefenderTap: true,
+        constrainPlacement: point => fieldingLocation('Single', point),
+        interaction: {
+          generation: 4,
+          selectableIds: [players[0].id],
+          gestures: ['place']
+        },
+        onFieldPlacement: value => {
+          placements.push(value)
+        }
+      })
+    )
+    try {
+      await renderer.advanceFrames(1, 1 / 60)
+      const surface = renderer.scene.findByProps({
+        name: 'interaction-surface'
+      })
+      const event = {
+        button: 0,
+        pointerId: 46,
+        pointerType: 'mouse',
+        pointer: new Vector2(0, 0),
+        ray: new Ray(new Vector3(0, 100, -18.44), new Vector3(0, -1, 0)),
+        target: {
+          setPointerCapture: () => undefined,
+          releasePointerCapture: () => undefined
+        }
+      }
+      await renderer.fireEvent(surface, 'pointerDown', event)
+      await renderer.fireEvent(surface, 'pointerUp', event)
+      expect(placements).length(1)
+      expect(placements[0].point).deep.equals({ x: 0, z: -18.44 })
+      await renderer.fireEvent(surface, 'pointerDown', event)
+      event.ray.origin.set(80, 100, -20)
+      await renderer.fireEvent(surface, 'pointerMove', event)
+      const guide = renderer.scene.findByProps({ name: 'move-preview' })
+      expect(guide).not.equals(undefined)
+      await renderer.fireEvent(surface, 'pointerUp', event)
+      expect(placements).length(2)
+      expect(placements[1].point).deep.equals({ x: 20, z: -20 })
+      expect(placements[1].generation).equals(4)
     } finally {
       await renderer.unmount()
     }
