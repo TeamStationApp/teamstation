@@ -1,4 +1,4 @@
-import type { Kysely } from 'kysely'
+import type { Expression, ExpressionBuilder, Kysely, SqlBool } from 'kysely'
 
 import type { Database } from './db/database'
 
@@ -199,6 +199,33 @@ export function canSeeGame(scopes: VisibleScopes, game: GameScope): boolean {
   if (scopes.teamIds.has(game.awayTeamId)) return true
   if (game.seasonId != null && scopes.seasonIds.has(game.seasonId)) return true
   return false
+}
+
+/**
+ * `canSeeGame` as a condition on `games`, for a query that lists games rather
+ * than checking one. Undefined for an administrator, who sees every game, and
+ * a condition that matches nothing for somebody with no team and no season.
+ */
+export function visibleGamesWhere(
+  scopes: VisibleScopes
+):
+  | ((eb: ExpressionBuilder<Database, 'games'>) => Expression<SqlBool>)
+  | undefined {
+  if (scopes.isAdmin) return undefined
+  const teamIds = [...scopes.teamIds]
+  const seasonIds = [...scopes.seasonIds]
+  return eb =>
+    eb.or([
+      ...(teamIds.length === 0
+        ? []
+        : [
+            eb('games.home_team_id', 'in', teamIds),
+            eb('games.away_team_id', 'in', teamIds)
+          ]),
+      ...(seasonIds.length === 0
+        ? []
+        : [eb('games.season_id', 'in', seasonIds)])
+    ])
 }
 
 export function canSeeTeam(scopes: VisibleScopes, teamId: string): boolean {

@@ -541,8 +541,15 @@ $fn$;
 create trigger events_sync_children_trg
 after insert or update of gumbo, "battingTeamId" on events
 for each row execute function events_sync_children();
+
+-- GET /games finds games by another service's id alone, naming no system or
+-- kind, which the unique (system, kind, external_id) index cannot serve.
+create index external_ids_game_external on external_ids (external_id)
+where entity_type = 'game';
 `,
   down: `
+drop index if exists external_ids_game_external;
+
 drop trigger if exists events_sync_children_trg on events;
 drop trigger if exists events_credits_looked_at_trg on events;
 drop function if exists events_sync_children();
