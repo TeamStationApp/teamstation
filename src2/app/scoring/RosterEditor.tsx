@@ -1,9 +1,10 @@
 import React, { useState } from 'react'
-import { Text, TextInput, View } from 'react-native'
+import { Text, TextInput, useWindowDimensions, View } from 'react-native'
 
 import { useTheme } from '../theme/ThemeContext'
 import { addDevelopmentPlayer } from './developmentSession'
-import { RosterDrag, RosterDragGroup } from './RosterDrag'
+import { RosterDrag, RosterDragGroup, RosterScrollArea } from './RosterDrag'
+import { RosterSelector } from './RosterSelector'
 import { applyRosterDraft } from './scoringEdits'
 import { copyState } from './scoringMachine'
 import { baseIds, battingSide } from './scoringSelectors'
@@ -23,12 +24,12 @@ export function RosterEditor({
   onSave: (draft: ScoringSessionState, nextBatter?: number) => void
 }): React.ReactElement {
   const theme = useTheme()
+  const { height } = useWindowDimensions()
   const [draft, setDraft] = useState(() => copyState(state.session))
   const [side, setSide] = useState<Side>(battingSide(state.session))
   const [defense, setDefense] = useState(false)
   const [adding, setAdding] = useState(false)
   const [name, setName] = useState('')
-  const [selected, setSelected] = useState<number>()
   const [nextBatter, setNextBatter] = useState<number>()
   const edit = (change: (next: ScoringSessionState) => void): void => {
     setDraft(previous => {
@@ -46,7 +47,7 @@ export function RosterEditor({
       const order = next.liveData.boxscore.teams[side].battingOrder
       const old = order.indexOf(id)
       if (old >= 0) order.splice(old, 1)
-      order.splice(Math.min(index, order.length), 0, id)
+      order.splice(Math.max(0, Math.min(index, order.length)), 0, id)
     })
   }
   const remove = (id: number): void => {
@@ -56,198 +57,136 @@ export function RosterEditor({
     })
   }
   const validation = applyRosterDraft(state, draft, nextBatter).error
+  const text = {
+    color: theme.primaryTextColor,
+    fontFamily: theme.regularTextFont,
+    fontSize: 14
+  }
+  const row = {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    minHeight: 48,
+    gap: 6,
+    paddingHorizontal: 6,
+    borderWidth: 1,
+    borderColor: theme.defaultBorderColor,
+    borderRadius: 6,
+    backgroundColor: theme.backgroundColor
+  }
+  const listHeight = Math.max(120, Math.min(420, height * 0.92 - 330))
   return (
-    <RosterDragGroup>
-      <View style={{ gap: 12 }}>
+    <View style={{ gap: 12 }}>
+      <RosterSelector
+        labels={['Away Team', 'Home Team']}
+        value={side === 'away' ? 0 : 1}
+        onChange={index => {
+          setSide(index === 0 ? 'away' : 'home')
+        }}
+      />
+      <Text style={{ ...text, textAlign: 'center', fontSize: 20 }}>
+        {draft.gameData.teams[side].name}
+      </Text>
+      <RosterSelector
+        labels={['Set Lineup', 'Set Defense']}
+        value={defense ? 1 : 0}
+        onChange={index => {
+          setDefense(index === 1)
+        }}
+      />
+      <Text style={text}>
+        {defense
+          ? 'Tap and drag players into their defensive positions.'
+          : 'Tap players to add them to the lineup, or drag them into position.'}
+      </Text>
+      <RosterDragGroup key={`${side}:${defense}`}>
         <View style={{ flexDirection: 'row', gap: 8 }}>
-          {(['away', 'home'] as const).map(value => (
-            <ScoringButton
-              key={value}
-              label={value === 'home' ? 'Home Team' : 'Away Team'}
-              color={
-                side === value ? theme.scoringInstructionBackground : undefined
-              }
-              onPress={() => {
-                setSide(value)
-                setSelected(undefined)
-              }}
-            />
-          ))}
-        </View>
-        <Text
-          style={{
-            color: theme.primaryTextColor,
-            fontFamily: theme.regularTextFont,
-            textAlign: 'center',
-            fontSize: 20
-          }}
-        >
-          {draft.gameData.teams[side].name}
-        </Text>
-        <View style={{ flexDirection: 'row', gap: 8 }}>
-          <ScoringButton
-            label="Set Lineup"
-            onPress={() => {
-              setDefense(false)
-              setSelected(undefined)
-            }}
-          />
-          <ScoringButton
-            label="Set Defense"
-            onPress={() => {
-              setDefense(true)
-              setSelected(undefined)
-            }}
-          />
-        </View>
-        <View style={{ flexDirection: 'row', gap: 12 }}>
-          <View style={{ flex: 1, gap: 8 }}>
-            <Text
-              style={{
-                color: theme.primaryTextColor,
-                fontFamily: theme.regularTextFont,
-                fontWeight: '700'
-              }}
-            >
-              Roster
-            </Text>
-            <RosterDrag
-              targetId="roster"
-              onDropPlayer={defense ? undefined : remove}
-            >
-              {team.players.map(id => (
-                <RosterDrag
-                  key={id}
-                  playerId={id}
-                  disabled={assigned.includes(id)}
-                >
-                  <View
+          <View style={{ flex: 1, gap: 6 }}>
+            <Text style={{ ...text, fontWeight: '700' }}>Roster</Text>
+            <RosterScrollArea name="Roster players" height={listHeight}>
+              <RosterDrag
+                targetId="roster"
+                onDropPlayer={defense ? undefined : remove}
+              >
+                {team.players.map(id => (
+                  <RosterDrag
+                    key={id}
+                    playerId={id}
+                    label={
+                      defense
+                        ? names[id].fullName
+                        : `Add ${names[id].fullName} to Lineup`
+                    }
+                    disabled={assigned.includes(id)}
+                    onTap={
+                      defense
+                        ? undefined
+                        : () => {
+                            if (!assigned.includes(id))
+                              place(id, team.battingOrder.length)
+                          }
+                    }
+                  >
+                    <View style={row}>
+                      <Text selectable={false} style={{ ...text, flex: 1 }}>
+                        {names[id].fullName}
+                      </Text>
+                    </View>
+                  </RosterDrag>
+                ))}
+                {!defense && (
+                  <Text
                     style={{
-                      padding: 6,
-                      gap: 4,
-                      borderBottomWidth: 1,
-                      borderColor: theme.defaultBorderColor
+                      ...text,
+                      color: theme.secondaryTextColor,
+                      padding: 12
                     }}
                   >
-                    <Text
-                      style={{
-                        color: theme.primaryTextColor,
-                        fontFamily: theme.regularTextFont
-                      }}
-                    >
-                      {names[id].fullName}
-                    </Text>
-                    <ScoringButton
-                      text={defense ? 'Select' : 'Add to Lineup'}
-                      label={
-                        defense
-                          ? `Select ${names[id].fullName}`
-                          : `Add ${names[id].fullName} to Lineup`
-                      }
-                      disabled={assigned.includes(id)}
-                      onPress={() => {
-                        if (defense) setSelected(id)
-                        else place(id, team.battingOrder.length)
-                      }}
-                    />
-                  </View>
-                </RosterDrag>
-              ))}
-            </RosterDrag>
-            {adding && (
-              <TextInput
-                accessibilityLabel="New player name"
-                value={name}
-                onChangeText={setName}
-                placeholder="Player name"
-                style={{
-                  color: theme.primaryTextColor,
-                  fontFamily: theme.regularTextFont,
-                  padding: 12,
-                  borderWidth: 1,
-                  borderColor: theme.inputBorderColor
-                }}
-              />
-            )}
-            <ScoringButton
-              label={adding ? 'Create Player' : 'Add Player'}
-              disabled={adding && name.trim().length === 0}
-              onPress={() => {
-                if (!adding) setAdding(true)
-                else {
-                  edit(next => {
-                    addDevelopmentPlayer(next, side, name)
-                  })
-                  setName('')
-                  setAdding(false)
-                }
-              }}
-            />
+                    Drop here to remove
+                  </Text>
+                )}
+              </RosterDrag>
+            </RosterScrollArea>
           </View>
-          <View style={{ flex: 1, gap: 8 }}>
-            <Text
-              style={{
-                color: theme.primaryTextColor,
-                fontFamily: theme.regularTextFont,
-                fontWeight: '700'
-              }}
-            >
+          <View style={{ flex: 1, gap: 6 }}>
+            <Text style={{ ...text, fontWeight: '700' }}>
               {defense ? 'Defense' : 'Lineup'}
             </Text>
-            {defense ? (
-              POSITIONS.map(position => {
-                const id = team.defense[position]
-                const assign = (player: number): void => {
-                  if (
-                    !team.players.includes(player) ||
-                    assigned.includes(player)
-                  )
-                    return
-                  edit(next => {
-                    next.liveData.boxscore.teams[side].defense[position] =
-                      player
-                  })
-                  setSelected(undefined)
-                }
-                return (
-                  <RosterDrag
-                    key={position}
-                    targetId={`defense-${position}`}
-                    onDropPlayer={assign}
-                  >
-                    <View
-                      style={{
-                        gap: 4,
-                        padding: 6,
-                        borderWidth: 1,
-                        borderColor: theme.defaultBorderColor
+            <RosterScrollArea
+              name={defense ? 'Defensive positions' : 'Batting lineup'}
+              height={listHeight}
+            >
+              {defense ? (
+                POSITIONS.map(position => {
+                  const id = team.defense[position]
+                  return (
+                    <RosterDrag
+                      key={position}
+                      targetId={`defense-${position}`}
+                      onDropPlayer={player => {
+                        if (
+                          !team.players.includes(player) ||
+                          assigned.includes(player)
+                        )
+                          return
+                        edit(next => {
+                          next.liveData.boxscore.teams[side].defense[position] =
+                            player
+                        })
                       }}
                     >
-                      <View
-                        style={{
-                          flexDirection: 'row',
-                          gap: 8,
-                          alignItems: 'center'
-                        }}
-                      >
+                      <View style={row}>
                         <Text
                           style={{
-                            color: theme.primaryTextColor,
-                            width: 36,
+                            ...text,
                             borderWidth: 1,
-                            borderColor: theme.inputBorderColor,
-                            padding: 4
+                            borderColor: theme.defaultBorderColor,
+                            padding: 4,
+                            minWidth: 30
                           }}
                         >
                           {position}
                         </Text>
-                        <Text
-                          style={{
-                            color: theme.primaryTextColor,
-                            fontFamily: theme.regularTextFont,
-                            flex: 1
-                          }}
-                        >
+                        <Text style={{ ...text, flex: 1 }}>
                           {id == null ? 'Unassigned' : names[id].fullName}
                         </Text>
                         <ScoringButton
@@ -263,68 +202,35 @@ export function RosterEditor({
                           }}
                         />
                       </View>
-                      {selected != null && (
-                        <ScoringButton
-                          label={`Assign ${names[selected].fullName} to ${position}`}
-                          onPress={() => {
-                            assign(selected)
-                          }}
-                        />
-                      )}
-                    </View>
-                  </RosterDrag>
-                )
-              })
-            ) : (
-              <>
-                {team.battingOrder.map((id, index) => (
-                  <RosterDrag
-                    key={id}
-                    playerId={id}
-                    targetId={`lineup-${index}`}
-                    onDropPlayer={player => {
-                      place(player, index)
-                    }}
-                  >
-                    <View
-                      style={{
-                        gap: 4,
-                        padding: 6,
-                        borderWidth: 1,
-                        borderColor: theme.defaultBorderColor
+                    </RosterDrag>
+                  )
+                })
+              ) : (
+                <>
+                  {team.battingOrder.map((id, index) => (
+                    <RosterDrag
+                      key={id}
+                      playerId={id}
+                      label={`Reorder ${names[id].fullName}`}
+                      targetId={`lineup-${index}`}
+                      onDropPlayer={player => {
+                        place(player, index)
+                      }}
+                      onReorder={delta => {
+                        place(id, index + delta)
                       }}
                     >
-                      <Text
-                        style={{
-                          color: theme.primaryTextColor,
-                          fontFamily: theme.regularTextFont
-                        }}
-                      >
-                        {index + 1}. {names[id].fullName}
-                      </Text>
-                      <View
-                        style={{
-                          flexDirection: 'row',
-                          flexWrap: 'wrap',
-                          gap: 4
-                        }}
-                      >
-                        <ScoringButton
-                          text="↑"
-                          label={`Move ${names[id].fullName} Up`}
-                          disabled={index === 0}
-                          onPress={() => {
-                            place(id, index - 1)
-                          }}
-                        />
-                        <ScoringButton
-                          text="↓"
-                          label={`Move ${names[id].fullName} Down`}
-                          disabled={index === team.battingOrder.length - 1}
-                          onPress={() => {
-                            place(id, index + 1)
-                          }}
-                        />
+                      <View style={row}>
+                        <Text
+                          selectable={false}
+                          accessibilityLabel={`Drag ${names[id].fullName}`}
+                          style={{ ...text, fontSize: 24 }}
+                        >
+                          ≡
+                        </Text>
+                        <Text selectable={false} style={{ ...text, flex: 1 }}>
+                          {index + 1}. {names[id].fullName}
+                        </Text>
                         <ScoringButton
                           text="×"
                           label={`Remove ${names[id].fullName}`}
@@ -333,63 +239,94 @@ export function RosterEditor({
                           }}
                         />
                       </View>
-                    </View>
-                  </RosterDrag>
-                ))}
-                <RosterDrag
-                  targetId="lineup-end"
-                  onDropPlayer={id => {
-                    place(id, team.battingOrder.length)
-                  }}
-                >
-                  <Text
-                    style={{ color: theme.secondaryTextColor, padding: 20 }}
+                    </RosterDrag>
+                  ))}
+                  <RosterDrag
+                    targetId="lineup-end"
+                    onDropPlayer={id => {
+                      place(id, team.battingOrder.length)
+                    }}
                   >
-                    Drop at end of lineup
-                  </Text>
-                </RosterDrag>
-              </>
-            )}
+                    <Text
+                      style={{
+                        ...text,
+                        color: theme.secondaryTextColor,
+                        padding: 18
+                      }}
+                    >
+                      Drop at end of lineup
+                    </Text>
+                  </RosterDrag>
+                </>
+              )}
+            </RosterScrollArea>
           </View>
         </View>
-        {state.phase === 'awaitingBatter' && (
-          <View style={{ gap: 6 }}>
-            <Text
-              style={{
-                color: theme.primaryTextColor,
-                fontFamily: theme.regularTextFont
-              }}
-            >
-              Choose Next Batter
-            </Text>
-            {draft.liveData.boxscore.teams[battingSide(draft)].battingOrder.map(
-              id => (
-                <ScoringButton
-                  key={id}
-                  label={`Next batter ${names[id].fullName}`}
-                  disabled={baseIds(draft).includes(id)}
-                  color={
-                    nextBatter === id
-                      ? theme.scoringInstructionBackground
-                      : undefined
-                  }
-                  onPress={() => {
-                    setNextBatter(id)
-                  }}
-                />
-              )
-            )}
-          </View>
-        )}
-        <ScoringError message={validation} />
-        <ScoringButton
-          label="Save Rosters"
-          disabled={validation != null}
-          onPress={() => {
-            onSave(draft, nextBatter)
+      </RosterDragGroup>
+      {adding && (
+        <TextInput
+          accessibilityLabel="New player name"
+          value={name}
+          onChangeText={setName}
+          placeholder="Player name"
+          style={{
+            ...text,
+            padding: 12,
+            borderWidth: 1,
+            borderColor: theme.inputBorderColor
           }}
         />
+      )}
+      <View style={{ flexDirection: 'row', gap: 12 }}>
+        <View style={{ flex: 1 }}>
+          <ScoringButton
+            label={adding ? 'Create Player' : 'Add Player'}
+            disabled={adding && name.trim().length === 0}
+            onPress={() => {
+              if (!adding) setAdding(true)
+              else {
+                edit(next => {
+                  addDevelopmentPlayer(next, side, name)
+                })
+                setName('')
+                setAdding(false)
+              }
+            }}
+          />
+        </View>
+        <View style={{ flex: 1 }}>
+          <ScoringButton
+            label="Save Rosters"
+            disabled={validation != null}
+            onPress={() => {
+              onSave(draft, nextBatter)
+            }}
+          />
+        </View>
       </View>
-    </RosterDragGroup>
+      {state.phase === 'awaitingBatter' && (
+        <View style={{ gap: 6 }}>
+          <Text style={text}>Choose Next Batter</Text>
+          {draft.liveData.boxscore.teams[battingSide(draft)].battingOrder.map(
+            id => (
+              <ScoringButton
+                key={id}
+                label={`Next batter ${names[id].fullName}`}
+                disabled={baseIds(draft).includes(id)}
+                color={
+                  nextBatter === id
+                    ? theme.scoringMenuActiveBackground
+                    : theme.scoringSelectorIdle
+                }
+                onPress={() => {
+                  setNextBatter(id)
+                }}
+              />
+            )
+          )}
+        </View>
+      )}
+      <ScoringError message={validation} />
+    </View>
   )
 }

@@ -6,7 +6,13 @@ import React, {
   useRef,
   useState
 } from 'react'
-import { ActivityIndicator, Pressable, Text, View } from 'react-native'
+import {
+  ActivityIndicator,
+  Pressable,
+  ScrollView,
+  Text,
+  View
+} from 'react-native'
 
 import type { GameStationClient } from '../../common/api'
 import { BaseballScreen } from '../field/BaseballScreen'
@@ -710,13 +716,15 @@ function ScoringSession(props: {
             onPress={() => {
               setMenu(false)
             }}
-            style={{ position: 'absolute', inset: 0 }}
+            style={{ position: 'absolute', inset: 0, zIndex: 99 }}
           />
-          <View
+          <ScrollView
             style={{
               position: 'absolute',
               right: 12,
               top: 64,
+              maxHeight: '75%',
+              zIndex: 100,
               overflow: 'hidden',
               backgroundColor: theme.backgroundColor,
               borderRadius: 8
@@ -765,7 +773,7 @@ function ScoringSession(props: {
                 }}
               />
             ))}
-          </View>
+          </ScrollView>
         </>
       )}
       {sheet != null && (

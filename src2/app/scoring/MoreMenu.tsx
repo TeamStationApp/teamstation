@@ -161,6 +161,7 @@ export function MoreMenu({
           border: 0,
           borderRadius: theme.rem(theme.radiusRem),
           background: theme.primaryButtonColor,
+          boxShadow: `0 3px 8px ${theme.buttonShadowColor}`,
           color: theme.buttonTextColor,
           fontFamily: theme.semiBoldTextFont,
           fontSize: 11,

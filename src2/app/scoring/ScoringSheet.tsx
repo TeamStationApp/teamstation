@@ -47,6 +47,11 @@ export function ScoringButton({
         setActive(false)
       }}
       style={({ pressed }) => ({
+        shadowColor: row ? undefined : theme.buttonShadowColor,
+        shadowOpacity: row ? 0 : 1,
+        shadowRadius: row ? 0 : pressed ? 4 : 8,
+        shadowOffset: { width: 0, height: pressed ? 1 : 3 },
+        elevation: row ? 0 : pressed ? 1 : 3,
         minHeight: 44,
         padding: 10,
         justifyContent: 'center',

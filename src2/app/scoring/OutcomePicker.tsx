@@ -165,6 +165,7 @@ export function OutcomePicker({
         style={{
           ...buttonStyle,
           background: theme.primaryButtonColor,
+          boxShadow: `0 3px 8px ${theme.buttonShadowColor}`,
           color: theme.buttonTextColor,
           position: 'relative',
           padding: '6px 13px 6px 3px',

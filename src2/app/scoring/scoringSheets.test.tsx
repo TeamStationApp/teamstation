@@ -27,6 +27,60 @@ async function click(label: string): Promise<void> {
     node!.click()
   })
 }
+async function keys(label: string, keys: string[]): Promise<void> {
+  for (const key of keys)
+    for (const type of ['keydown', 'keyup'])
+      await act(async () => {
+        document
+          .querySelector(`[aria-label="${label}"]`)!
+          .dispatchEvent(new window.KeyboardEvent(type, { key, bubbles: true }))
+      })
+}
+async function drag(
+  sourceSelector: string,
+  targetId: string,
+  cancel = false
+): Promise<void> {
+  const source = document.querySelector(sourceSelector)!
+  // eslint-disable-next-line @typescript-eslint/unbound-method
+  const original = HTMLElement.prototype.getBoundingClientRect
+  HTMLElement.prototype.getBoundingClientRect = function () {
+    const target = this.getAttribute('data-roster-target')
+    const x = target == null ? 0 : target === targetId ? 200 : -1000
+    return {
+      x,
+      y: 0,
+      left: x,
+      top: 0,
+      right: x + 400,
+      bottom: 800,
+      width: 400,
+      height: 800,
+      toJSON: () => ({})
+    }
+  }
+  try {
+    for (const [type, x] of [
+      ['pointerdown', 0],
+      ['pointermove', 250],
+      [cancel ? 'pointercancel' : 'pointerup', 250]
+    ] as const) {
+      await act(async () => {
+        const event = new window.MouseEvent(type, {
+          bubbles: true,
+          button: 0,
+          clientX: x,
+          clientY: 10
+        })
+        Object.defineProperty(event, 'pointerId', { value: 1 })
+        source.dispatchEvent(event)
+        await new Promise(resolve => setTimeout(resolve, 20))
+      })
+    }
+  } finally {
+    HTMLElement.prototype.getBoundingClientRect = original
+  }
+}
 async function input(label: string, value: string): Promise<void> {
   const node = document.querySelector<HTMLInputElement>(
     `[aria-label="${label}"]`
@@ -87,8 +141,15 @@ describe('scoring slide-up sheets', function () {
     await menu('Set Team Rosters')
     await click('Remove Player 2')
     await click('Add Player 2 to Lineup')
-    await click('Move Player 2 Up')
-    await click('Move Player 2 Down')
+    await keys('Reorder Player 2', [' ', 'ArrowUp', 'Escape'])
+    expect(document.querySelector('[aria-label="Save Rosters"]')).not.equals(
+      null
+    )
+    expect(
+      document.querySelector('[data-roster-target="lineup-8"]')!.textContent
+    ).includes('Player 2')
+    await keys('Reorder Player 2', [' ', 'ArrowUp', 'Enter'])
+    await keys('Reorder Player 2', [' ', 'ArrowDown', 'Enter'])
     await click('Add Player')
     await input('New player name', 'Alex Local')
     await click('Create Player')
@@ -100,8 +161,10 @@ describe('scoring slide-up sheets', function () {
         .querySelector('[aria-label="Save Rosters"]')
         ?.getAttribute('aria-disabled')
     ).equals('true')
-    await click('Select Player 1')
-    await click('Assign Player 1 to P')
+    await drag(
+      '[data-roster-target="roster"] [data-roster-player="1"]',
+      'defense-P'
+    )
     await click('Home Team')
     expect(document.body.textContent).includes('Hawks')
     await click('Set Lineup')
@@ -219,36 +282,20 @@ describe('scoring slide-up sheets', function () {
     const target = document.querySelector<HTMLElement>(
       '[data-roster-target="lineup-0"]'
     )!
-    // Save the host method only for restoration.
-    // eslint-disable-next-line @typescript-eslint/unbound-method
-    const hitTest = document.elementsFromPoint
-    document.elementsFromPoint = () => [target]
-    const pointer = async (type: string, x: number): Promise<void> => {
-      await act(async () => {
-        const event = new window.MouseEvent(type, {
-          bubbles: true,
-          button: 0,
-          clientX: x,
-          clientY: 10
-        })
-        Object.defineProperty(event, 'pointerId', { value: 1 })
-        source.dispatchEvent(event)
-      })
-    }
-    try {
-      await pointer('pointerdown', 0)
-      await pointer('pointermove', 50)
-      await pointer('pointercancel', 50)
-      expect(target.textContent).includes('1. Player 1')
-      await pointer('pointerdown', 0)
-      await pointer('pointermove', 50)
-      await pointer('pointerup', 50)
-      expect(
-        document.querySelector('[data-roster-target="lineup-0"]')!.textContent
-      ).includes('1. Player 2')
-    } finally {
-      document.elementsFromPoint = hitTest
-    }
+    await drag(
+      '[data-roster-target="roster"] [data-roster-player="2"]',
+      'lineup-0',
+      true
+    )
+    expect(target.textContent).includes('1. Player 1')
+    await drag(
+      '[data-roster-target="roster"] [data-roster-player="2"]',
+      'lineup-0'
+    )
+    expect(
+      document.querySelector('[data-roster-target="lineup-0"]')!.textContent
+    ).includes('1. Player 2')
+    expect(source.getAttribute('aria-disabled')).equals('true')
     await click('Cancel')
   })
   it('enters fielder selection from a tapped outcome and restores ready with Undo', async function () {
@@ -263,7 +310,7 @@ describe('scoring slide-up sheets', function () {
       '0 balls 0 strikes 0 outs · Pitches 0'
     )
   })
-  it('renders the native fallback for the web-only gesture host', async function () {
+  it('mounts and cleans up the native gesture host', async function () {
     const host = document.createElement('div')
     document.body.appendChild(host)
     root = createRoot(host)
