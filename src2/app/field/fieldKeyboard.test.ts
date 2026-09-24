@@ -83,8 +83,8 @@ describe('field keyboard policy', function () {
       },
       onRunnerDrag: view => {
         if (view != null) {
-          expect(view.safe.x).equals(336)
-          expect(view.safe.y).equals(322)
+          expect(view.safe.x).equals(view.to === 1 ? 440 : 336)
+          expect(view.safe.y).equals(view.to === 1 ? 332 : 322)
           expect(view.keyboard).equals(true)
         }
       },

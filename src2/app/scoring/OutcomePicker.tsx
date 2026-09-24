@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 
 import { PitchIcon } from '../field/PitchIcon'
 import { useTheme } from '../theme/ThemeContext'
+import { outcomeAvailable } from './battedBall'
 import type { OutcomePickerProps } from './outcomePickerProps'
 import type { Outcome } from './scoringContract'
 export const PRIMARY_OUTCOMES = [
@@ -16,10 +17,14 @@ export const PRIMARY_OUTCOMES = [
 ] as const
 export function OutcomePicker({
   disabled,
+  hasRunners = true,
   onChoose,
   onActive
 }: OutcomePickerProps): React.ReactElement {
   const theme = useTheme()
+  const outcomes = PRIMARY_OUTCOMES.filter(value =>
+    outcomeAvailable(value, hasRunners)
+  )
   const trigger = useRef<HTMLButtonElement>(null)
   const [mode, setMode] = useState<'tap' | 'drag'>()
   const [submenu, setSubmenu] = useState(false)
@@ -46,6 +51,7 @@ export function OutcomePicker({
     }
   }, [disabled])
   const select = (value: string): void => {
+    if (!outcomeAvailable(value, hasRunners)) return
     if (value === 'Batter Out') {
       setSubmenu(previous => !previous)
       return
@@ -97,7 +103,12 @@ export function OutcomePicker({
       const item = cancel ? undefined : hoverAt(event.clientX, event.clientY)
       const value = item?.dataset.outcome
       close()
-      if (value != null && value !== 'Batter Out') onChoose(value as Outcome)
+      if (
+        value != null &&
+        value !== 'Batter Out' &&
+        outcomeAvailable(value, hasRunners)
+      )
+        onChoose(value as Outcome)
     }
     const capture = event.target as HTMLElement
     if (capture.hasPointerCapture(event.pointerId))
@@ -230,56 +241,55 @@ export function OutcomePicker({
               overflowY: 'auto'
             }}
           >
-            {(mode === 'drag'
-              ? [...PRIMARY_OUTCOMES].reverse()
-              : PRIMARY_OUTCOMES
-            ).map(value => (
-              <button
-                role="menuitem"
-                data-outcome={value}
-                key={value}
-                aria-label={value}
-                onPointerEnter={() => {
-                  setHover(value)
-                }}
-                onPointerLeave={() => {
-                  setHover('')
-                }}
-                onFocus={() => {
-                  setHover(value)
-                }}
-                onBlur={() => {
-                  setHover('')
-                }}
-                style={{
-                  ...buttonStyle,
-                  color:
-                    hover === value
-                      ? theme.scoringMenuActiveText
-                      : theme.primaryTextColor,
-                  borderRadius: 0,
-                  textAlign: 'left',
-                  borderBottom: `1px solid ${theme.defaultBorderColor}`,
-                  background:
-                    hover === value
-                      ? theme.scoringMenuActiveBackground
-                      : theme.backgroundColor
-                }}
-                onClick={event => {
-                  if (value === 'Batter Out')
-                    setSubmenuTop(
-                      Math.min(
-                        window.innerHeight - 130,
-                        event.currentTarget.getBoundingClientRect().top
+            {(mode === 'drag' ? [...outcomes].reverse() : outcomes).map(
+              value => (
+                <button
+                  role="menuitem"
+                  data-outcome={value}
+                  key={value}
+                  aria-label={value}
+                  onPointerEnter={() => {
+                    setHover(value)
+                  }}
+                  onPointerLeave={() => {
+                    setHover('')
+                  }}
+                  onFocus={() => {
+                    setHover(value)
+                  }}
+                  onBlur={() => {
+                    setHover('')
+                  }}
+                  style={{
+                    ...buttonStyle,
+                    color:
+                      hover === value
+                        ? theme.scoringMenuActiveText
+                        : theme.primaryTextColor,
+                    borderRadius: 0,
+                    textAlign: 'left',
+                    borderBottom: `1px solid ${theme.defaultBorderColor}`,
+                    background:
+                      hover === value
+                        ? theme.scoringMenuActiveBackground
+                        : theme.backgroundColor
+                  }}
+                  onClick={event => {
+                    if (value === 'Batter Out')
+                      setSubmenuTop(
+                        Math.min(
+                          window.innerHeight - 130,
+                          event.currentTarget.getBoundingClientRect().top
+                        )
                       )
-                    )
-                  select(value)
-                }}
-              >
-                {value === 'Batter Out' ? '‹  ' : ''}
-                {value}
-              </button>
-            ))}
+                    select(value)
+                  }}
+                >
+                  {value === 'Batter Out' ? '‹  ' : ''}
+                  {value}
+                </button>
+              )
+            )}
           </div>
           {submenu && (
             <div

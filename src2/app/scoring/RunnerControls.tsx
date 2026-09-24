@@ -1,6 +1,7 @@
 import React from 'react'
 import { Text, View } from 'react-native'
 
+import type { BaseProjection } from '../field/fieldTypes'
 import { useTheme } from '../theme/ThemeContext'
 import {
   homeBackProposal,
@@ -12,10 +13,12 @@ import type { ScoringEvent, ScoringState } from './scoringTypes'
 export function RunnerControls({
   state,
   anchor,
+  projection,
   dispatch
 }: {
   state: ScoringState
   anchor: { x: number; y: number } | null
+  projection?: BaseProjection
   dispatch: (event: ScoringEvent) => void
 }): React.ReactElement | null {
   const theme = useTheme()
@@ -46,30 +49,51 @@ export function RunnerControls({
   const stationary = action?.from === action?.to
   const currentHold = !home && stationary && action?.origin === 'current'
   const error = home ? undefined : runnerDecisionError(state)
+  const base = home ? 0 : action!.to % 4
+  const point = projection?.bases[base] ?? anchor
+  const vertical = base !== 2
+  const width = vertical ? 110 : 220
+  const tall =
+    home && homeBackProposal(state) != null ? 196 : vertical ? 144 : 100
+  const position =
+    point == null
+      ? undefined
+      : {
+          position: 'absolute' as const,
+          left: Math.max(
+            8,
+            Math.min(
+              (projection?.width ?? 10000) - width - 8,
+              point.x +
+                (base === 3 ? -width - 16 : base === 2 ? -width / 2 : 16)
+            )
+          ),
+          top: Math.max(
+            8,
+            Math.min(
+              (projection?.height ?? 10000) - 128 - tall,
+              point.y - tall / 2
+            )
+          ),
+          width,
+          gap: 6,
+          padding: 8,
+          borderRadius: 8,
+          backgroundColor: theme.backgroundColor
+        }
   return (
     <View
       accessibilityLabel={`${home ? 'Home plate' : 'Runner'} decision for ${state.session.gameData.players[id].fullName}`}
       style={
-        home || anchor == null
-          ? {
-              position: 'absolute',
-              bottom: 130,
-              alignSelf: 'center',
-              gap: 6,
-              padding: 10,
-              backgroundColor: theme.backgroundColor,
-              borderRadius: 8
-            }
-          : {
-              position: 'absolute',
-              left: Math.max(8, anchor.x - 110),
-              top: Math.max(90, anchor.y - 70),
-              width: 220,
-              gap: 6,
-              padding: 8,
-              backgroundColor: theme.backgroundColor,
-              borderRadius: 8
-            }
+        position ?? {
+          position: 'absolute',
+          bottom: 130,
+          alignSelf: 'center',
+          gap: 6,
+          padding: 10,
+          backgroundColor: theme.backgroundColor,
+          borderRadius: 8
+        }
       }
     >
       <Text
@@ -83,7 +107,7 @@ export function RunnerControls({
       </Text>
       <View
         style={{
-          flexDirection: !home && stationary ? 'column' : 'row',
+          flexDirection: vertical ? 'column' : 'row',
           gap: 8,
           justifyContent: 'center'
         }}

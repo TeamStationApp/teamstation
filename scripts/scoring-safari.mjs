@@ -152,7 +152,8 @@ async function geometry() {
     const result = runnerTargets(
       { x: p.x - field.x, y: p.y - field.y },
       field.width,
-      field.height
+      field.height,
+      base
     )
     return Object.fromEntries(
       Object.entries(result).map(([key, rect]) => [

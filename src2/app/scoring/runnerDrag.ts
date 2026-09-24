@@ -37,13 +37,30 @@ export function runnerProgress(
 export function runnerTargets(
   anchor: { x: number; y: number },
   width: number,
-  height: number
+  height: number,
+  base = 2
 ): { safe: TargetRect; out: TargetRect } {
-  const x = Math.max(8, Math.min(width - 176, anchor.x - 84))
-  const y = Math.max(66, Math.min(height - 56, anchor.y - 58))
+  const vertical = base % 4 !== 2
+  const span = vertical ? 80 : 168
+  const tall = vertical ? 96 : 44
+  const desiredX = vertical
+    ? base % 4 === 3
+      ? anchor.x - 100
+      : anchor.x + 20
+    : anchor.x - 84
+  const x = Math.max(8, Math.min(width - span - 8, desiredX))
+  const y = Math.max(
+    8,
+    Math.min(height - 128 - tall, anchor.y - (vertical ? 48 : 58))
+  )
   return {
     safe: { x, y, width: 80, height: 44 },
-    out: { x: x + 88, y, width: 80, height: 44 }
+    out: {
+      x: vertical ? x : x + 88,
+      y: vertical ? y + 52 : y,
+      width: 80,
+      height: 44
+    }
   }
 }
 export function runnerTargetAt(
@@ -82,6 +99,6 @@ export function runnerDragView(
       x: start.x + (end.x - start.x) * progress,
       z: start.z + (end.z - start.z) * progress
     },
-    ...runnerTargets(project(BASES[to % 4]), width, height)
+    ...runnerTargets(project(BASES[to % 4]), width, height, to)
   }
 }

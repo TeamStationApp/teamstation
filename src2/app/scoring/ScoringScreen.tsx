@@ -11,6 +11,7 @@ import { ActivityIndicator, Pressable, Text, View } from 'react-native'
 import type { GameStationClient } from '../../common/api'
 import { BaseballScreen } from '../field/BaseballScreen'
 import type { FieldPlayer } from '../field/fieldModel'
+import type { BaseProjection } from '../field/fieldTypes'
 import { homeRunKind, homeRunLabel } from '../field/stadiumBoundary'
 import { useFieldSurface } from '../field/useFieldSurface'
 import { useTheme } from '../theme/ThemeContext'
@@ -161,6 +162,7 @@ function ScoringSession(props: {
   const [gestureActive, setGestureActive] = useState(false)
   const [outcomeMenu, setOutcomeMenu] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
+  const [baseProjection, setBaseProjection] = useState<BaseProjection>()
   const [angle, setAngle] = useState(45)
   const [landingPreview, setLandingPreview] = useState<{
     x: number
@@ -256,8 +258,19 @@ function ScoringSession(props: {
     presentation
   ])
   useEffect(() => {
-    setAngle(state.pendingPlay?.angle ?? 45)
-  }, [state.pendingPlay?.angle, state.generation])
+    setAngle(
+      allowedAngle(
+        state.pendingPlay?.angle ?? 45,
+        state.pendingPlay?.outcome ?? '',
+        state.pendingPlay?.homeRunKind
+      )
+    )
+  }, [
+    state.pendingPlay?.angle,
+    state.pendingPlay?.outcome,
+    state.pendingPlay?.homeRunKind,
+    state.generation
+  ])
   const [runnerDrag, setRunnerDrag] = useState<RunnerDragView | null>(null)
   const [selected, setSelected] = useState('')
   const switchable = state.phase === 'ready' && canSwitchBatter(session)
@@ -359,6 +372,7 @@ function ScoringSession(props: {
     <BaseballScreen
       field={{
         players,
+        onBaseProjection: setBaseProjection,
         homeRunPlacement:
           state.phase === 'locateFielder' &&
           state.pendingPlay?.outcome === 'Home Run',
@@ -457,7 +471,13 @@ function ScoringSession(props: {
             ? 'edit'
             : 'off',
         onArcChange: arc => {
-          setAngle(allowedAngle(arc.angle, state.pendingPlay?.outcome ?? ''))
+          setAngle(
+            allowedAngle(
+              arc.angle,
+              state.pendingPlay?.outcome ?? '',
+              state.pendingPlay?.homeRunKind
+            )
+          )
         },
         onTrajectoryAccepted: (value, generation) => {
           scoringAudio.unlock()
@@ -538,6 +558,7 @@ function ScoringSession(props: {
       }
       ballInPlayControl={
         <OutcomePicker
+          hasRunners={baseIds(session).some(id => id != null)}
           disabled={
             state.phase !== 'ready' ||
             state.presentation != null ||
@@ -671,7 +692,12 @@ function ScoringSession(props: {
         </View>
       )}
       {!menu && sheet == null && state.presentation == null && (
-        <RunnerControls state={state} anchor={null} dispatch={dispatchRunner} />
+        <RunnerControls
+          state={state}
+          anchor={null}
+          projection={baseProjection}
+          dispatch={dispatchRunner}
+        />
       )}
       {menu && (
         <>

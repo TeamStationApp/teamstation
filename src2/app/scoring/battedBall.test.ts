@@ -6,12 +6,18 @@ import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { type Outcome, outcomeEvents } from './scoringContract'
 import { initialScoringState, scoringReducer } from './scoringMachine'
+import { playerRef } from './scoringSelectors'
 const initial = (): ReturnType<typeof initialScoringState> =>
   initialScoringState(createDevelopmentSession(gameFixture, [], []))
 describe('batted-ball draft', function () {
   for (const outcome of Object.keys(outcomeEvents) as Outcome[])
     it(`records ${outcome} once and stores the fielder and accepted trajectory`, function () {
       const start = initial()
+      if (outcome === "Fielder's Choice")
+        start.session.liveData.linescore.offense.first = playerRef(
+          start.session,
+          2
+        )
       const chosen = scoringReducer(start, { type: 'OUTCOME', outcome })
       const pitcher =
         chosen.session.liveData.plays.currentPlay!.matchup.pitcher.id
@@ -97,5 +103,52 @@ describe('batted-ball draft', function () {
     ])
     expect(allowedAngle(100, 'Single')).equals(70)
     expect(trajectoryLabel(47.5)).equals('Pop Fly')
+  })
+})
+
+describe('contextual batted-ball choices', function () {
+  it('rejects empty-base fielder choice without a pitch or history and allows every occupied base', function () {
+    const empty = initial()
+    expect(
+      scoringReducer(empty, { type: 'OUTCOME', outcome: "Fielder's Choice" })
+    ).equals(empty)
+    for (const base of ['first', 'second', 'third'] as const) {
+      const state = initial()
+      state.session.liveData.linescore.offense[base] = playerRef(
+        state.session,
+        2
+      )
+      expect(
+        scoringReducer(state, { type: 'OUTCOME', outcome: "Fielder's Choice" })
+          .phase
+      ).equals('locateFielder')
+    }
+  })
+  it('clamps only stands home runs to a line drive in both preview and committed trajectories', function () {
+    for (const outside of [false, true]) {
+      let state = scoringReducer(initial(), {
+        type: 'OUTCOME',
+        outcome: 'Home Run'
+      })
+      state = scoringReducer(state, {
+        type: 'FIELDER',
+        id: 10,
+        point: { x: 0, z: outside ? -129 : -118 },
+        generation: 0
+      })
+      const kind = state.pendingPlay!.homeRunKind
+      for (const requested of [-45, -5, 9, 10, 25, 70, 90]) {
+        const expected = Math.max(outside ? 10 : -45, Math.min(70, requested))
+        expect(allowedAngle(requested, 'Home Run', kind)).equals(expected)
+        const result = scoringReducer(state, {
+          type: 'TRAJECTORY',
+          angle: requested,
+          generation: 0
+        })
+        expect(
+          result.session.liveData.plays.currentPlay!.hitData!.launchAngle
+        ).equals(expected)
+      }
+    }
   })
 })

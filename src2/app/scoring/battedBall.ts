@@ -1,5 +1,5 @@
 import type { GroundPoint } from '../field/fieldModel'
-import { homeRunKind } from '../field/stadiumBoundary'
+import { type HomeRunKind, homeRunKind } from '../field/stadiumBoundary'
 import { prepareBatterResult, prepareHit } from './runnerRules'
 import { type Outcome, outcomeEvents } from './scoringContract'
 import { accepted } from './scoringMachine'
@@ -23,9 +23,25 @@ export function trajectoryLabel(angle: number): string {
           ? 'Ground Ball'
           : 'Chopper'
 }
-export function allowedAngle(angle: number, outcome: Outcome | string): number {
+export function outcomeAvailable(
+  outcome: string,
+  hasRunners: boolean
+): boolean {
+  return outcome !== "Fielder's Choice" || hasRunners
+}
+export function allowedAngle(
+  angle: number,
+  outcome: Outcome | string,
+  kind?: HomeRunKind
+): number {
   return Math.round(
-    Math.max(outcome === 'Ball Caught' ? 10 : -45, Math.min(70, angle))
+    Math.max(
+      outcome === 'Ball Caught' ||
+        (outcome === 'Home Run' && kind === 'out-of-park')
+        ? 10
+        : -45,
+      Math.min(70, angle)
+    )
   )
 }
 export function chooseOutcome(
@@ -35,7 +51,11 @@ export function chooseOutcome(
   if (
     state.phase !== 'ready' ||
     state.moreDraft != null ||
-    !(outcome in outcomeEvents)
+    !(outcome in outcomeEvents) ||
+    !outcomeAvailable(
+      outcome,
+      baseIds(state.session).some(id => id != null)
+    )
   )
     return state
   return accepted(state, outcome, next => {
@@ -116,7 +136,11 @@ export function acceptTrajectory(
     !Number.isFinite(angle)
   )
     return state
-  const value = allowedAngle(angle, state.pendingPlay!.outcome)
+  const value = allowedAngle(
+    angle,
+    state.pendingPlay!.outcome,
+    state.pendingPlay!.homeRunKind
+  )
   return accepted(state, `${value}° ${trajectoryLabel(value)}`, next => {
     if (state.presentationEnabled === true)
       next.presentation = hitPresentation(state, value)
