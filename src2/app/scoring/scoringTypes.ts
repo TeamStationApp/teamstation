@@ -147,7 +147,7 @@ export interface MotionCommand {
 }
 export interface RunnerAction {
   defensiveRoute?: Array<{ id: number; point: GroundPoint }>
-  purpose?: 'batterRetirement' | 'errorAttribution'
+  purpose?: 'batterRetirement' | 'errorAttribution' | 'droppedThirdStrike'
   runnerPoint?: GroundPoint
   playerId: number
   from: number

@@ -12,6 +12,7 @@ import {
   type ScoreboardState,
   shortName
 } from './scoreboardModel'
+import { BALL_LAMP, STRIKE_LAMP } from './scoreboardPalette'
 
 export const BOARD_WIDTH = 1024
 export const BOARD_HEIGHT = 256
@@ -99,7 +100,7 @@ export function makeScoreboardPixels(state: ScoreboardState): Uint8Array {
               pitch * 0.3,
               [255, 190, 91],
               true,
-              1.875
+              2.8125
             )
         })
       })
@@ -141,10 +142,10 @@ export function makeScoreboardPixels(state: ScoreboardState): Uint8Array {
   text('STRIKES', 680, 72, 3)
   text('OUTS', 680, 116, 3)
   countLights(state.balls, 3).forEach((lit, i) => {
-    lamp(866 + i * 35, 37, 9, [70, 244, 105], lit)
+    lamp(866 + i * 35, 37, 9, BALL_LAMP, lit)
   })
   countLights(state.strikes, 2).forEach((lit, i) => {
-    lamp(866 + i * 35, 81, 9, [255, 211, 55], lit)
+    lamp(866 + i * 35, 81, 9, STRIKE_LAMP, lit)
   })
   countLights(state.outs, 2).forEach((lit, i) => {
     lamp(866 + i * 35, 125, 9, [255, 73, 54], lit)

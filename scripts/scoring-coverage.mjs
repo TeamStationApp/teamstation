@@ -92,7 +92,7 @@ const { coverageSources } = createRequire(import.meta.url)(
   './coverage-source-paths.cjs'
 )
 const { paths, untracked } = coverageSources(
-  '6d383fd876fa9e028b426b297968ee5a6ac09e75'
+  process.env.GS_COVERAGE_BASE ?? '6d383fd876fa9e028b426b297968ee5a6ac09e75'
 )
 
 let covered = 0

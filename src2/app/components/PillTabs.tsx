@@ -1,6 +1,7 @@
 import React from 'react'
 import { Pressable, ScrollView, Text, View } from 'react-native'
 
+import { lstrings } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
 export interface PillTab<Id extends string = string> {
@@ -119,6 +120,37 @@ export function PillTabs<Id extends string = string>(
     >
       {row}
     </ScrollView>
+  )
+}
+
+/** A single action with the exact compact Schedule pill appearance. */
+export function CompactPillButton({
+  onPress,
+  disabled = false,
+  accessibilityLabel
+}: {
+  onPress?: () => void
+  disabled?: boolean
+  accessibilityLabel: string
+}): React.ReactElement {
+  const styles = getStyles(useTheme())
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      disabled={disabled}
+      onPress={onPress}
+      style={[styles.target, { opacity: disabled ? 0.5 : 1 }]}
+    >
+      <View style={[styles.pill, styles.pillCompact, styles.pillActive]}>
+        <Text
+          selectable={false}
+          style={[styles.label, styles.labelCompact, styles.labelActive]}
+        >
+          {lstrings.common_done}
+        </Text>
+      </View>
+    </Pressable>
   )
 }
 

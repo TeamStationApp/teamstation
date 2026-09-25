@@ -2,10 +2,21 @@ import React, { useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
 
 import { GlassView } from '../components/GlassView'
+import { CompactPillButton } from '../components/PillTabs'
+import { lstrings, sprintf } from '../locales/strings'
 import {
   InstructionToast,
   type ScoreboardBounds
 } from '../scoring/InstructionToast'
+import {
+  CONTROL_COLORS,
+  CONTROL_DECK_HEIGHT,
+  CONTROL_HEIGHT,
+  ControlBackdrop,
+  ControlFace,
+  controlFrame,
+  ControlIcon
+} from '../scoring/ScoringControlAppearance'
 import { SwitchHitterHint } from '../scoring/SwitchHitterHint'
 import { useTheme } from '../theme/ThemeContext'
 import { FieldCanvas } from './FieldCanvas'
@@ -52,26 +63,7 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
   const toastBounds = compact
     ? { ...header, width: Math.max(100, header.width - 56) }
     : bounds
-  const button = {
-    minHeight: 52,
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: theme.rem(theme.radiusRem),
-    backgroundColor: theme.scoringControlBackground,
-    shadowColor: theme.buttonShadowColor,
-    shadowOpacity: 1,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 3
-  } as const
-  const label = {
-    color: theme.scoringControlText,
-    fontFamily: theme.semiBoldTextFont,
-    fontSize: 11,
-    fontWeight: '600',
-    textAlign: 'center'
-  } as const
+  const button = { ...controlFrame, flex: 1 } as const
   return (
     <View
       style={[surface.root, { backgroundColor: theme.backgroundColor }]}
@@ -161,39 +153,130 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
           <SwitchHitterHint bounds={bounds} onDismiss={props.onDismissHint} />
         )}
         {props.children}
-        <View style={{ flexDirection: 'row', gap: 4, height: 112 }}>
-          <View style={{ flex: 4, gap: 8, minWidth: 0 }}>
-            <View style={{ flexDirection: 'row', gap: 4, height: 52 }}>
+        <View
+          style={{ flexDirection: 'row', gap: 6, height: CONTROL_DECK_HEIGHT }}
+        >
+          <View style={{ flex: 4, flexBasis: 18, gap: 8, minWidth: 0 }}>
+            <View
+              style={{ flexDirection: 'row', gap: 6, height: CONTROL_HEIGHT }}
+            >
               {props.moreControl}
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={
-                  props.historyLabel == null
-                    ? 'Nothing to undo'
-                    : `Undo ${props.historyLabel}`
-                }
-                disabled={props.historyLabel == null}
-                onPress={props.onUndo}
-                style={{
-                  ...button,
-                  alignItems: 'flex-start',
-                  padding: 12,
-                  opacity: props.historyLabel == null ? 0.5 : 1
-                }}
-              >
-                <Text
-                  selectable={false}
+              <View style={{ flex: 3, flexBasis: 12 }}>
+                {(props.instruction != null || props.remainingMs != null) &&
+                  (props.onFinish != null || props.remainingMs != null) && (
+                    <View
+                      pointerEvents="box-none"
+                      style={{
+                        position: 'absolute',
+                        bottom: '100%',
+                        left: 0,
+                        right: 0,
+                        alignItems: 'center'
+                      }}
+                    >
+                      <CompactPillButton
+                        accessibilityLabel={sprintf(
+                          lstrings.scoring_bottom_action,
+                          props.finishLabel ?? lstrings.scoring_finish_at_bat
+                        )}
+                        disabled={props.canFinish !== true}
+                        onPress={props.onFinish}
+                      />
+                    </View>
+                  )}
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    props.historyLabel == null
+                      ? 'Nothing to undo'
+                      : `Undo ${props.historyLabel}`
+                  }
+                  disabled={props.historyLabel == null}
+                  onPress={props.onUndo}
                   style={{
-                    color: theme.scoringControlText,
-                    fontFamily: theme.semiBoldTextFont
+                    ...button,
+                    flexDirection: 'row',
+                    borderColor: CONTROL_COLORS.undo.border,
+                    backgroundColor: CONTROL_COLORS.undo.bottom,
+                    paddingHorizontal: 8,
+                    opacity: props.historyLabel == null ? 0.5 : 1
                   }}
                 >
-                  ↶ Undo
-                  {props.historyLabel == null ? '' : ` · ${props.historyLabel}`}
-                </Text>
-              </Pressable>
+                  <ControlBackdrop kind="undo" />
+                  <View
+                    pointerEvents="none"
+                    style={{
+                      alignItems: 'center',
+                      paddingRight: 8,
+                      borderRightWidth: 1,
+                      borderRightColor: '#ffffff1a',
+                      gap: 2
+                    }}
+                  >
+                    <View
+                      style={{
+                        width: 20,
+                        height: 20,
+                        borderRadius: 4,
+                        backgroundColor: '#273a30',
+                        borderWidth: 1,
+                        borderColor: '#176448',
+                        alignItems: 'center',
+                        justifyContent: 'center'
+                      }}
+                    >
+                      <ControlIcon kind="undo" size={14} />
+                    </View>
+                    <Text
+                      selectable={false}
+                      style={{
+                        color: '#fbbf24',
+                        fontFamily: theme.regularTextFont,
+                        fontSize: 8,
+                        fontWeight: '900',
+                        letterSpacing: 1
+                      }}
+                    >
+                      {lstrings.scoring_control_undo}
+                    </Text>
+                  </View>
+                  <View
+                    pointerEvents="none"
+                    style={{ flex: 1, minWidth: 0, paddingLeft: 8, gap: 3 }}
+                  >
+                    <Text
+                      selectable={false}
+                      numberOfLines={1}
+                      testID="scoring-control-label"
+                      style={{
+                        color: '#ffffff',
+                        fontFamily: theme.regularTextFont,
+                        fontSize: 12,
+                        fontWeight: '900'
+                      }}
+                    >
+                      {props.historyLabel ?? lstrings.scoring_no_plays}
+                    </Text>
+                    <Text
+                      selectable={false}
+                      numberOfLines={1}
+                      style={{
+                        color: '#cbd5e1',
+                        fontFamily: theme.regularTextFont,
+                        fontSize: 9
+                      }}
+                    >
+                      {props.historyLabel == null
+                        ? lstrings.scoring_history_hint
+                        : lstrings.scoring_undo_hint}
+                    </Text>
+                  </View>
+                </Pressable>
+              </View>
             </View>
-            <View style={{ flexDirection: 'row', gap: 4, height: 52 }}>
+            <View
+              style={{ flexDirection: 'row', gap: 6, height: CONTROL_HEIGHT }}
+            >
               {PITCH_CONTROLS.filter(control => control.kind !== 'play').map(
                 control => (
                   <Pressable
@@ -204,11 +287,15 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
                     onPress={() => {
                       props.onPitch(control.kind)
                     }}
-                    style={{ ...button, opacity: props.canPitch ? 1 : 0.5 }}
+                    style={{
+                      ...button,
+                      backgroundColor: CONTROL_COLORS[control.kind].bottom,
+                      borderColor: CONTROL_COLORS[control.kind].border,
+                      opacity: props.canPitch ? 1 : 0.5
+                    }}
                   >
-                    <Text selectable={false} style={label}>
-                      {control.label}
-                    </Text>
+                    <ControlBackdrop kind={control.kind} />
+                    <ControlFace kind={control.kind} />
                   </Pressable>
                 )
               )}
@@ -225,9 +312,8 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
                 }}
                 style={{ ...button, opacity: props.canPitch ? 1 : 0.5 }}
               >
-                <Text selectable={false} style={label}>
-                  Swing in Play
-                </Text>
+                <ControlBackdrop kind="contact" />
+                <ControlFace kind="contact" contact="swing" />
               </Pressable>
             )}
           </View>

@@ -61,7 +61,7 @@ function clientForSwitchHitter(
     team === 'away'
       ? [
           asRosterEntry({
-            userId: 'usr_jordan',
+            userId: 101,
             shortName: 'Jordan K.',
             jersey: '00',
             positions: ['P'],

@@ -4,6 +4,7 @@ import { View } from 'react-native'
 import { OutcomePicker } from './OutcomePicker'
 import type { OutcomePickerProps } from './outcomePickerProps'
 import type { ContactKind, Outcome } from './scoringContract'
+import { CONTROL_DECK_HEIGHT, CONTROL_GAP } from './ScoringControlAppearance'
 
 /** One active picker owns both menus, including delayed pointer releases. */
 export function OutcomeControls({
@@ -18,8 +19,8 @@ export function OutcomeControls({
     onActive(active != null)
   }, [active, onActive])
   return (
-    <View style={{ gap: 8, height: 112 }}>
-      {(['swing', 'bunt'] as const).map(kind => (
+    <View style={{ gap: CONTROL_GAP, height: CONTROL_DECK_HEIGHT }}>
+      {(['bunt', 'swing'] as const).map(kind => (
         <OutcomePicker
           {...props}
           key={kind}

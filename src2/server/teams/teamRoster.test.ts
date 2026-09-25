@@ -18,12 +18,13 @@ import { makeId } from '../../common/ids'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import type { Database } from '../db/database'
+import { attachInt8Parser } from '../db/int8'
 import { errorHandler } from '../middleware/withErrors'
 import { teamRoutes } from '../routes/teams'
 
 const adminUrl =
-  process.env.GS_TEST_DATABASE_URL ?? 'postgres://localhost:5432/postgres'
-const name = `GameStation_gameStationScoringUi_roster_${Date.now()}`
+  process.env.GS_TEST_DATABASE_URL ?? 'postgres://localhost:5433/postgres'
+const name = `GameStation_scoringUiUpdates_roster_${Date.now()}`
 const url = new URL(adminUrl)
 url.pathname = `/${name}`
 describe('scoring roster HTTP contract', function () {
@@ -38,11 +39,12 @@ describe('scoring roster HTTP contract', function () {
   const opponent = makeId('team')
   const game = makeId('game')
   const video = makeId('video')
-  const child = makeId('user')
-  const coach = makeId('user')
-  const follower = makeId('user')
-  const outsider = makeId('user')
+  const child = 1
+  const coach = 2
+  const follower = 3
+  const outsider = 4
   before(async function () {
+    attachInt8Parser()
     admin = new Pool({ connectionString: adminUrl })
     await admin.query(`create database "${name}"`)
     created = true
@@ -69,20 +71,28 @@ describe('scoring roster HTTP contract', function () {
       .values([
         {
           id: child,
+          legacyId: 'usr_child',
           display_name: 'Jordan King',
           first_name: 'Jordan',
           last_name: 'King',
           bats: 'switch',
           throws: 'left'
         },
-        { id: coach, display_name: 'Alex Coach', bats: null, throws: null },
+        {
+          id: coach,
+          legacyId: 'usr_coach',
+          display_name: 'Alex Coach',
+          bats: null,
+          throws: null
+        },
         {
           id: follower,
+          legacyId: 'usr_follower',
           display_name: 'Frank Fan',
           bats: 'left',
           throws: 'right'
         },
-        { id: outsider, display_name: 'Outsider' }
+        { id: outsider, legacyId: 'usr_outsider', display_name: 'Outsider' }
       ])
       .execute()
     await db
@@ -165,22 +175,21 @@ describe('scoring roster HTTP contract', function () {
       .insertInto('events')
       .values({
         id: 'event-single',
-        game_id: game,
-        at_bat_index: 0,
-        start_time: new Date('2026-09-22T10:00:30Z'),
-        inning: 1,
-        half_inning: 'top',
-        batting_team_id: team,
-        event_type: 'single',
-        description: 'Jordan singles.',
-        title_override: 'Single: Jordan K',
-        gumbo: {}
+        gameId: game,
+        startTime: new Date('2026-09-22T10:00:30Z'),
+        battingTeamId: team,
+        titleOverride: 'Single: Jordan K',
+        gumbo: JSON.stringify({
+          about: { atBatIndex: 0, inning: 1, halfInning: 'top' },
+          result: { eventType: 'single', description: 'Jordan singles.' }
+        })
       })
       .execute()
     const app = express()
     app.use((req, _res, next) => {
       const id = req.header('x-test-user')
-      if (id != null) req.actor = { userId: id, isAdmin: false, scopes: [] }
+      if (id != null)
+        req.actor = { userId: Number(id), isAdmin: false, scopes: [] }
       next()
     })
     app.use(
@@ -226,7 +235,9 @@ describe('scoring roster HTTP contract', function () {
     await admin?.end()
   })
   it('returns handedness and exact ids for members and followers in the existing group order', async function () {
-    const response = await fetch(address, { headers: { 'x-test-user': coach } })
+    const response = await fetch(address, {
+      headers: { 'x-test-user': String(coach) }
+    })
     expect(response.status).equals(200)
     const raw: unknown = await response.json()
     if (!Array.isArray(raw)) throw new Error('Expected roster array')
@@ -253,7 +264,7 @@ describe('scoring roster HTTP contract', function () {
     })
     expect(roster[0]).includes({ bats: null, throws: null })
     const followerResponse = await fetch(address, {
-      headers: { 'x-test-user': follower }
+      headers: { 'x-test-user': String(follower) }
     })
     expect(followerResponse.status).equals(200)
   })
@@ -261,7 +272,7 @@ describe('scoring roster HTTP contract', function () {
     const origin = new URL(address).origin
     const get = async (path: string): Promise<unknown> => {
       const response = await fetch(origin + path, {
-        headers: { 'x-test-user': coach }
+        headers: { 'x-test-user': String(coach) }
       })
       expect(response.status, path).equals(200)
       return await response.json()
@@ -303,15 +314,19 @@ describe('scoring roster HTTP contract', function () {
       `/videos/${video}/highlights`
     ]) {
       expect(
-        (await fetch(origin + path, { headers: { 'x-test-user': outsider } }))
-          .status
+        (
+          await fetch(origin + path, {
+            headers: { 'x-test-user': String(outsider) }
+          })
+        ).status
       ).equals(404)
     }
   })
   it('preserves authorization and does not reveal a hidden team roster', async function () {
     expect((await fetch(address)).status).equals(401)
     expect(
-      (await fetch(address, { headers: { 'x-test-user': outsider } })).status
+      (await fetch(address, { headers: { 'x-test-user': String(outsider) } }))
+        .status
     ).equals(404)
   })
 })

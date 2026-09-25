@@ -59,7 +59,7 @@ afterEach(async () => {
   inputs.splice(0)
 })
 describe('More scoring menu', function () {
-  it('keeps only This pitch readable and bold in both themes', async () => {
+  it('omits headings and unavailable Balk in both themes', async () => {
     await mount()
     await click('More')
     for (const theme of [gsBallpark, gsDark]) {
@@ -67,15 +67,11 @@ describe('More scoring menu', function () {
         changeTheme(theme)
       })
       const panel = button('More scoring actions')
-      for (const group of MORE_GROUPS.filter(g => g.label === 'This pitch')) {
-        const heading = Array.from(
-          panel.querySelectorAll<HTMLElement>('div')
-        ).find(n => n.textContent === group.label)!
-        expect(heading).not.equals(undefined)
-        expect(heading.style.color).not.equals(panel.style.backgroundColor)
-        expect(heading.style.fontSize).equals('14.4px')
-        expect(heading.style.fontWeight).equals('700')
-      }
+      for (const group of MORE_GROUPS)
+        expect(panel.textContent).not.includes(group.label)
+      expect(document.querySelector('[aria-label="Balk"]')).equals(null)
+      expect(button('More').style.fontSize).equals('16px')
+      expect(button('More').style.fontWeight).equals('400')
     }
   })
 
@@ -89,8 +85,8 @@ describe('More scoring menu', function () {
     await act(async () => {
       button('Put Batter on Base').focus()
     })
-    expect(button('Put Batter on Base').style.backgroundColor).equals(
-      'rgb(36, 113, 61)'
+    expect(button('Put Batter on Base').style.backgroundImage).includes(
+      'linear-gradient'
     )
     expect(button('Put Batter on Base').style.color).equals(
       'rgb(255, 255, 255)'
@@ -109,8 +105,12 @@ describe('More scoring menu', function () {
     parent.getBoundingClientRect = () => new window.DOMRect(0, top, 160, 44)
     await click('Put Batter on Base')
     expect(button('Batter base').style.top).equals('230px')
-    expect(parent.lastElementChild!.textContent).equals('›')
-    expect(parent.style.justifyContent).equals('space-between')
+    expect(
+      parent.lastElementChild!.lastElementChild!.textContent?.endsWith('›')
+    ).equals(true)
+    expect(
+      parent.querySelector('[data-testid="scoring-menu-label"]')
+    ).not.equals(null)
     top = 10000
     await act(async () => {
       window.dispatchEvent(new window.Event('scroll'))
@@ -129,7 +129,7 @@ describe('More scoring menu', function () {
     it(`groups real scoring actions and places immediately on ${native ? 'native' : 'web'}`, async function () {
       await mount(native)
       await click('More')
-      expect(document.body.textContent).includes('This pitch')
+      expect(document.body.textContent).not.includes('This pitch')
       expect(document.body.textContent).not.includes('Between pitches')
       expect(document.body.textContent).not.includes("Didn't see it")
       expect(document.querySelector('[aria-label="Wild Pitch"]')).equals(null)
@@ -173,6 +173,7 @@ describe('More scoring menu', function () {
     it(`hides placement on occupied bases on ${native ? 'native' : 'web'}`, async () => {
       await mount(native, true)
       await click('More')
+      expect(button('Balk')).not.equals(null)
       expect(
         document.querySelector('[aria-label="Put Batter on Base"]')
       ).equals(null)
