@@ -8,6 +8,7 @@ import { Bat } from './BattingPose'
 import type { FieldPlayer } from './fieldModel'
 import { fieldPalette as p } from './fieldPalette'
 import { PLAYER_SCALE } from './playerPresentation'
+import { uniformColor } from './teamUniform'
 
 /** Joint endpoints and the displayed bat use exactly the same sampled pose. */
 export function AthleteRig({
@@ -59,7 +60,7 @@ export function AthleteRig({
       )
     }
   })
-  const shirt = player.team === 'runner' ? p.runner : p.defense
+  const shirt = uniformColor(player)
   return (
     <group name="athlete-rig" ref={root} scale={PLAYER_SCALE} visible={false}>
       <group name="animated-torso" position={[0, 1.57, 0]}>

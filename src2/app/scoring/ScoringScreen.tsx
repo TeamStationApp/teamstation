@@ -398,6 +398,7 @@ function ScoringSession(props: {
   return (
     <BaseballScreen
       field={{
+        teams: session.gameData.teams,
         players,
         onBaseProjection: setBaseProjection,
         ...battedBallField(

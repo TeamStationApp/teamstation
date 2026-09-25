@@ -712,7 +712,11 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
         shadow-camera-far={350}
         shadow-bias={-0.001}
       />
-      <Ballpark textures={textures} scoreboard={props.scoreboard} />
+      <Ballpark
+        textures={textures}
+        scoreboard={props.scoreboard}
+        teams={props.teams}
+      />
       <PlayerShadows players={players} />
       {props.presentation != null && (
         <PlayAnimation

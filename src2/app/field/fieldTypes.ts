@@ -3,6 +3,7 @@ import type { PresentationSequence } from '../scoring/scoringPresentation'
 import type { ArcMode, BallArcState } from './ballArcModel'
 import type { CameraView, FieldPlayer, GroundPoint } from './fieldModel'
 import type { ScoreboardState } from './scoreboardModel'
+import type { FieldTeams } from './teamUniform'
 
 export interface FieldInteractionPolicy {
   generation: number
@@ -23,6 +24,7 @@ export interface BaseProjection {
   height: number
 }
 export interface FieldCanvasProps {
+  teams?: FieldTeams
   constrainPlacement?: (point: GroundPoint) => GroundPoint
   acceptDefenderTap?: boolean
   onLandingAccepted?: (arc: BallArcState, generation: number) => void

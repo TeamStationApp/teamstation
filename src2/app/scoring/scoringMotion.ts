@@ -60,6 +60,8 @@ export function scoringFieldPlayers(
       name: person.fullName,
       displayName: person.fullName,
       jersey: person.jersey,
+      uniformSide:
+        person.teamId === session.gameData.teams.home.id ? 'home' : 'away',
       team: 'runner',
       position: { ...BASES[0] },
       target: { ...BASES[0] },

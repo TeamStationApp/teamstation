@@ -34,6 +34,7 @@ export interface ScoringPlayer {
   local: boolean
 }
 export interface ScoringTeam {
+  logoUrl?: string | null
   id: string
   name: string
 }

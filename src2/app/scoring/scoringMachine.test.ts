@@ -62,8 +62,8 @@ describe('local scoring sessions', function () {
     const session = initial().session
     expect(session).deep.equals(initial().session)
     expect(session.gameData.teams).deep.equals({
-      away: { id: 'away', name: 'Owls' },
-      home: { id: 'home', name: 'Hawks' }
+      away: { id: 'away', name: 'Owls', logoUrl: null },
+      home: { id: 'home', name: 'Hawks', logoUrl: null }
     })
     expect(session.gameData.players[1]).includes({
       sourceUserId: 'usr_real-player',

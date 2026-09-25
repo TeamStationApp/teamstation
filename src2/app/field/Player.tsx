@@ -21,6 +21,7 @@ import {
   placePlayerLabel,
   PLAYER_SCALE
 } from './playerPresentation'
+import { uniformColor } from './teamUniform'
 import { TERRAIN } from './terrain'
 
 function Part({
@@ -142,7 +143,7 @@ export function Player({
       }
     }
   }, [player.suppressed, invalidate])
-  const shirt = player.team === 'runner' ? p.runner : p.defense
+  const shirt = uniformColor(player)
   useFrame(({ camera, size }, dt) => {
     if (!paused && player.pose?.run == null) advancePlayer(player, dt)
     const motion = player.motion

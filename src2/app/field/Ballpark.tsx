@@ -2,6 +2,7 @@
 import React, { useMemo } from 'react'
 import { Shape, type Texture } from 'three'
 
+import { Dugout } from './Dugout'
 import { BASE, BASES } from './fieldModel'
 import { fieldPalette as p } from './fieldPalette'
 import { Scoreboard } from './Scoreboard'
@@ -13,6 +14,7 @@ import {
 } from './stadiumBoundary'
 import { StadiumDetails } from './StadiumDetails'
 import type { useSurfaceTextures } from './surfaceTextures'
+import type { FieldTeams } from './teamUniform'
 import { groundDepth, TERRAIN } from './terrain'
 
 function sector(radius: number, inner = 0, angle = Math.PI / 4): Shape {
@@ -155,8 +157,10 @@ function Box({
 }
 export function Ballpark({
   textures,
+  teams,
   scoreboard
 }: {
+  teams?: FieldTeams
   scoreboard?: ScoreboardState
   textures: ReturnType<typeof useSurfaceTextures>
 }): React.ReactElement {
@@ -297,17 +301,9 @@ export function Ballpark({
             size={[0.45, 16, 0.45]}
             color={p.selection}
           />
-          <Box
-            position={[side * 28, 1, 0]}
-            size={[14, 2, 5]}
-            rotation={(side * Math.PI) / 4}
-            color={p.wall}
-          />
-          <Box
-            position={[side * 28, 2.3, 0]}
-            size={[16, 0.35, 6]}
-            rotation={(side * Math.PI) / 4}
-            color={p.concrete}
+          <Dugout
+            side={side === -1 ? 'away' : 'home'}
+            team={teams?.[side === -1 ? 'away' : 'home']}
           />
         </group>
       ))}
