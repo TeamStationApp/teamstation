@@ -180,6 +180,32 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === 'object' && !Array.isArray(value)
 }
 
+/**
+ * The at-bat still in progress: a Gumbo play with no outcome yet. It is stored
+ * on the game, never as an `events` row, so every row is a completed play.
+ * Only its place in the game is checked; the rest is kept as sent.
+ */
+const asCurrentPlayShape = asObject({
+  about: asObject({
+    atBatIndex: asCount,
+    inning: asNullable(asCount),
+    halfInning: asNullable(asValue('top', 'bottom')),
+    isComplete: asValue(false)
+  }).withRest
+}).withRest
+
+export type CurrentPlay = ReturnType<typeof asCurrentPlayShape> &
+  Record<string, unknown>
+
+export function asCurrentPlay(raw: unknown): CurrentPlay {
+  try {
+    return asCurrentPlayShape(raw)
+  } catch (error) {
+    const why = error instanceof Error ? error.message : String(error)
+    throw new TypeError(`the current play: ${why}`)
+  }
+}
+
 export const asPostEventsBody = asObject({
   plays: asArray(asGumboPlay),
   source: asOptional(

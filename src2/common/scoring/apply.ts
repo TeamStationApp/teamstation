@@ -1309,7 +1309,13 @@ function lineup(ctx: Ctx, action: LineupAction): void {
           team.defense[position as keyof typeof team.defense] = incoming
     } else refuse('malformed', 'A roster change carries its setup')
   }
-  const applied = applyRoster(state, setup, action.nextBatter)
+  const replaced: Record<number, number> =
+    action.kind === 'substitute' &&
+    action.replaces != null &&
+    action.player != null
+      ? { [action.replaces]: action.player }
+      : {}
+  const applied = applyRoster(state, setup, action.nextBatter, replaced)
   if (applied.state == null)
     refuse('illegal', applied.error ?? 'Invalid lineup')
   ctx.state = applied.state

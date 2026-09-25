@@ -1,7 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { GUMBO_EVENT_TYPES } from '../../common/gumboEventTypes'
+import { GUMBO_EVENT_TYPES } from '../gumboEventTypes'
 import { EVENT_CLASS, hitsAndErrors } from './hitsAndErrors'
 
 describe('the line score', function () {
