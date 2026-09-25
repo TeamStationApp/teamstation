@@ -59,7 +59,7 @@ afterEach(async () => {
   inputs.splice(0)
 })
 describe('More scoring menu', function () {
-  it('keeps every group heading readable and bold in both themes', async () => {
+  it('keeps only This pitch readable and bold in both themes', async () => {
     await mount()
     await click('More')
     for (const theme of [gsBallpark, gsDark]) {
@@ -67,7 +67,7 @@ describe('More scoring menu', function () {
         changeTheme(theme)
       })
       const panel = button('More scoring actions')
-      for (const group of MORE_GROUPS) {
+      for (const group of MORE_GROUPS.filter(g => g.label === 'This pitch')) {
         const heading = Array.from(
           panel.querySelectorAll<HTMLElement>('div')
         ).find(n => n.textContent === group.label)!
@@ -129,8 +129,9 @@ describe('More scoring menu', function () {
     it(`groups real scoring actions and places immediately on ${native ? 'native' : 'web'}`, async function () {
       await mount(native)
       await click('More')
-      for (const group of MORE_GROUPS)
-        expect(document.body.textContent).includes(group.label)
+      expect(document.body.textContent).includes('This pitch')
+      expect(document.body.textContent).not.includes('Between pitches')
+      expect(document.body.textContent).not.includes("Didn't see it")
       expect(document.querySelector('[aria-label="Wild Pitch"]')).equals(null)
       expect(document.querySelector('[aria-label="Passed Ball"]')).equals(null)
       await click('Hit by Pitch')
@@ -219,9 +220,9 @@ describe('More scoring menu', function () {
       await pointer('pointermove', 500, 600)
       await pointer('pointerup', 500, 600)
       expect(inputs).has.length(0)
-      expect(button('Hit by Pitch')).not.equals(null)
-      await click('More')
-      await click('Dismiss More')
+      expect(document.querySelector('[aria-label="Hit by Pitch"]')).equals(null)
+      await click('More') // compatibility click is ignored
+      expect(document.querySelector('[role="menu"]')).equals(null)
       await pointer('pointerdown', 50, 800)
       await pointer('pointermove', 50, 700)
       await pointer('pointercancel', 50, 700)
@@ -233,6 +234,70 @@ describe('More scoring menu', function () {
         )
       })
       expect(document.querySelector('[aria-label="Hit by Pitch"]')).equals(null)
+    } finally {
+      document.elementsFromPoint = saved
+    }
+  })
+})
+
+describe('More drag boundary', () => {
+  it('permits upward approach and the submenu bridge, then cancels a departed gesture permanently', async () => {
+    await mount()
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    const saved = document.elementsFromPoint
+    let hit: Element[] = []
+    document.elementsFromPoint = () => hit
+    const pointer = async (
+      type: string,
+      x: number,
+      y: number
+    ): Promise<void> => {
+      await act(async () => {
+        const e = new window.MouseEvent(type, {
+          bubbles: true,
+          button: 0,
+          clientX: x,
+          clientY: y
+        })
+        Object.defineProperty(e, 'pointerId', { value: 1 })
+        button('More').dispatchEvent(e)
+      })
+    }
+    try {
+      for (const submenu of [false, true]) {
+        hit = []
+        await pointer('pointerdown', 50, 800)
+        await pointer('pointermove', 50, 780)
+        button('More scoring actions').getBoundingClientRect = () =>
+          new window.DOMRect(8, 200, 176, 450)
+        await pointer('pointermove', 50, 720)
+        expect(button('Hit by Pitch')).not.equals(null)
+        if (submenu) {
+          hit = [button('Put Batter on Base')]
+          await pointer('pointermove', 60, 300)
+          button('Batter base').getBoundingClientRect = () =>
+            new window.DOMRect(208, 300, 176, 132)
+          hit = []
+          await pointer('pointermove', 196, 320)
+          expect(button('Batter base')).not.equals(null)
+          hit = [button('First')]
+          await pointer('pointermove', 250, 320)
+          expect(button('Batter base')).not.equals(null)
+        }
+        hit = []
+        await pointer('pointermove', 500, 150)
+        expect(document.querySelector('[role="menu"]')).equals(null)
+        await pointer('pointermove', 50, 300)
+        await pointer('pointerup', 50, 300)
+        await click('More')
+        expect(document.querySelector('[role="menu"]')).equals(null)
+        expect(inputs).has.length(0)
+        await pointer('pointerdown', 50, 800)
+        await pointer('pointerup', 50, 800)
+        await click('More')
+        expect(button('Hit by Pitch')).not.equals(null)
+        await click('Dismiss More')
+      }
     } finally {
       document.elementsFromPoint = saved
     }

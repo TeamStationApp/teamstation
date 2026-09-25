@@ -35,13 +35,16 @@ const game = asGameDetail({
   videos: []
 })
 interface ProbeFiber {
-  memoizedProps?: { value?: { getState?: () => { scene?: Scene } } }
+  memoizedProps?: {
+    value?: { getState?: () => { scene?: Scene; camera?: PerspectiveCamera } }
+  }
   child?: ProbeFiber
   sibling?: ProbeFiber
 }
 interface SceneProbeWindow {
   qaRoots: Array<{ current: ProbeFiber }>
   qaScene?: Scene
+  qaCamera?: PerspectiveCamera
   __REACT_DEVTOOLS_GLOBAL_HOOK__: unknown
 }
 const base = process.env.GS_SCORING_TEST_URL ?? 'http://127.0.0.1:8080'
@@ -167,7 +170,10 @@ async function captureScene(page: Page): Promise<void> {
 
       const state =
         value == null || value.getState == null ? undefined : value.getState()
-      if (state != null && state.scene != null) host.qaScene = state.scene
+      if (state != null && state.scene != null) {
+        host.qaScene = state.scene
+        host.qaCamera = state.camera
+      }
       scan(fiber.child)
       scan(fiber.sibling)
     }
@@ -204,7 +210,7 @@ async function click(page: Page, label: string): Promise<void> {
   await page.locator(selector).click()
 }
 async function chooseHit(page: Page, outcome: string): Promise<void> {
-  await click(page, 'Ball in Play')
+  await click(page, 'Swing in Play')
   if (outcome === 'Batter Interference') await click(page, 'Batter Out')
   await click(page, outcome)
   await page.waitForSelector('canvas[data-field-ready="true"]')
@@ -332,7 +338,7 @@ describe('scoring browser', function () {
   it('hides empty-base fielder choice and clamps a stands home-run arc to Line Drive', async function () {
     const { page } = await open('/games/g1/score')
     try {
-      await click(page, 'Ball in Play')
+      await click(page, 'Swing in Play')
       expect(await page.$('[aria-label="Fielder\'s Choice"]')).equals(null)
       await click(page, 'Home Run')
       await page.waitForSelector('canvas[data-field-ready="true"]')
@@ -351,7 +357,7 @@ describe('scoring browser', function () {
       })
       await chooseHit(page, 'Single')
       await click(page, 'Finish at-bat')
-      await click(page, 'Ball in Play')
+      await click(page, 'Swing in Play')
       await page.waitForSelector('[aria-label="Fielder\'s Choice"]')
     } finally {
       await page.close()
@@ -362,7 +368,7 @@ describe('scoring browser', function () {
       const { page } = await open('/games/g1/score')
       try {
         if (defensive) {
-          await click(page, 'Ball in Play')
+          await click(page, 'Swing in Play')
           await click(page, 'Batter Out')
           await click(page, 'Throw Out')
           await page.waitForSelector('canvas[data-field-ready="true"]')
@@ -443,7 +449,7 @@ describe('scoring browser', function () {
       const { page, unexpected } = await open('/games/g1/score')
       let recorder: Awaited<ReturnType<Page['record']>> | undefined
       try {
-        await click(page, 'Ball in Play')
+        await click(page, 'Swing in Play')
         await click(page, 'Batter Out')
         await click(page, 'Throw Out')
         await page.waitForSelector('canvas[data-field-ready="true"]')
@@ -737,11 +743,11 @@ describe('scoring browser', function () {
       await click(page, 'Open scoring menu')
       await click(page, 'Dismiss scoring menu')
       expect(await page.$('[aria-label="Settings"]')).equals(null)
-      await click(page, 'Ball in Play')
+      await click(page, 'Swing in Play')
       await click(page, 'Dismiss outcomes')
       expect(await page.$('[data-outcome]')).equals(null)
       const styles = await page.evaluate(() => {
-        const play = document.querySelector('[aria-label="Ball in Play"]')!
+        const play = document.querySelector('[aria-label="Swing in Play"]')!
         return {
           select: getComputedStyle(play.parentElement!).userSelect,
           chevrons: play.textContent!.includes('⌃')
@@ -1633,8 +1639,8 @@ describe('scoring browser', function () {
             const r = node.getBoundingClientRect()
             return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
           })
-        await page.waitForSelector('[aria-label="Ball in Play"]')
-        const button = await center('Ball in Play')
+        await page.waitForSelector('[aria-label="Swing in Play"]')
+        const button = await center('Swing in Play')
         await page.mouse.move(button.x, button.y)
         await page.mouse.down()
         await page.mouse.move(button.x, button.y - 20, { steps: 3 })
@@ -1681,7 +1687,7 @@ describe('scoring browser', function () {
   it('places a fielder on the rendered field and cancels then accepts a trajectory drag', async function () {
     const { page, unexpected } = await open('/games/g1/score')
     try {
-      await click(page, 'Ball in Play')
+      await click(page, 'Swing in Play')
       await click(page, 'Single')
       await page.waitForSelector('canvas[data-field-ready="true"]')
       const box = await page.$eval('canvas', canvas => {
@@ -1923,7 +1929,7 @@ describe('scoring browser', function () {
                 weight: getComputedStyle(n).fontWeight
               }))
         )
-        expect(headings).has.length(3)
+        expect(headings).has.length(1)
         for (const heading of headings) {
           expect(heading.color).not.equals(heading.background)
           expect(heading.size).equals('14.4px')
@@ -1957,7 +1963,7 @@ describe('scoring browser', function () {
           })
         await page.keyboard.press('Escape')
         expect(await page.$('[aria-label="More scoring actions"]')).equals(null)
-        await click(page, 'Ball in Play')
+        await click(page, 'Swing in Play')
         await click(page, 'Batter Out')
         expect(
           await page.$eval('[aria-label="Throw Out"]', n => ({
@@ -2017,7 +2023,9 @@ describe('scoring browser', function () {
       await page.mouse.move(trigger.x, trigger.y - 20)
       await page.mouse.move(500, trigger.y - 100)
       await page.mouse.up()
-      expect(await page.$('[aria-label="Hit by Pitch"]')).not.equals(null)
+      expect(await page.$('[aria-label="Hit by Pitch"]')).equals(null)
+      await click(page, 'More')
+      await page.waitForSelector('[aria-label="Hit by Pitch"]')
       await click(page, 'Dismiss More')
     } finally {
       await page.close()
@@ -2438,7 +2446,7 @@ describe('scoring browser', function () {
   it('keeps gray bottom controls inert throughout fielding and trajectory decisions', async function () {
     const { page } = await open('/games/g1/score')
     try {
-      await click(page, 'Ball in Play')
+      await click(page, 'Swing in Play')
       await click(page, 'Batter Out')
       await click(page, 'Throw Out')
       const reject = async (): Promise<void> => {
@@ -2451,7 +2459,8 @@ describe('scoring browser', function () {
           'Swing and Miss',
           'Foul Ball',
           'More',
-          'Ball in Play'
+          'Swing in Play',
+          'Bunt in Play'
         ]) {
           const selector = `[aria-label="${label}"]`
           const point = await page.$eval(selector, n => {
@@ -2514,7 +2523,7 @@ describe('scoring browser', function () {
         true
       )
       try {
-        await click(page, 'Ball in Play')
+        await click(page, 'Swing in Play')
         if (caught) {
           await click(page, 'Batter Out')
           await click(page, 'Ball Caught')
@@ -2595,7 +2604,7 @@ describe('scoring browser', function () {
         await page.setViewport(
           outside ? { width: 844, height: 390 } : { width: 390, height: 844 }
         )
-        await click(page, 'Ball in Play')
+        await click(page, 'Swing in Play')
         await click(page, 'Home Run')
         await page.waitForSelector('canvas[data-field-ready="true"]')
         const target = await readGuide(page)
@@ -2677,7 +2686,7 @@ describe('scoring browser', function () {
         true
       )
       try {
-        await click(page, 'Ball in Play')
+        await click(page, 'Swing in Play')
         await click(page, 'Home Run')
         await page.waitForSelector('canvas[data-field-ready="true"]')
         expect((await readGuide(page)).bearing).closeTo(
@@ -2740,14 +2749,14 @@ describe('scoring browser', function () {
         for (let undo = 0; undo < 4; undo++) {
           if (
             await page.$eval(
-              '[aria-label="Ball in Play"]',
+              '[aria-label="Swing in Play"]',
               n => n.getAttribute('aria-disabled') !== 'true'
             )
           )
             break
           await page.locator('[aria-label^="Undo "]').click()
         }
-        await click(page, 'Ball in Play')
+        await click(page, 'Swing in Play')
         await click(page, 'Single')
         await page.focus('[role="application"]')
         await page.keyboard.press('Space')
@@ -2786,7 +2795,7 @@ describe('scoring browser', function () {
             }
             await click(page, 'Apply Override')
           }
-          await click(page, 'Ball in Play')
+          await click(page, 'Swing in Play')
           await click(page, 'Home Run')
           await page.waitForSelector('canvas[data-field-ready="true"]')
           const rect = await page.$eval('canvas', node => {
@@ -3279,7 +3288,7 @@ describe('scoring browser', function () {
   it('completes a tapped caught pop fly and undoes after automatic completion', async function () {
     const { page } = await open('/games/g1/score')
     try {
-      await click(page, 'Ball in Play')
+      await click(page, 'Swing in Play')
       await click(page, 'Batter Out')
       await click(page, 'Ball Caught')
       await page.waitForSelector('canvas[data-field-ready="true"]')
@@ -3422,4 +3431,262 @@ describe('scoring browser', function () {
       await page.close()
     }
   })
+  for (const width of [320, 390, 844])
+    it(`keeps paired controls and camera framing fixed at ${width}px`, async () => {
+      const { page } = await open(
+        '/games/g1/score',
+        false,
+        false,
+        false,
+        'right',
+        true
+      )
+      try {
+        const height = width === 844 ? 390 : 844
+        await page.setViewport({ width, height })
+        await page.waitForSelector('canvas[data-field-ready="true"]')
+        await captureScene(page)
+        const actual = await page.evaluate(() => {
+          const camera = (window as unknown as SceneProbeWindow).qaCamera!
+          const labels = [
+            'More',
+            'Nothing to undo',
+            'Ball',
+            'Called Strike',
+            'Swing and Miss',
+            'Foul Ball',
+            'Swing in Play',
+            'Bunt in Play'
+          ]
+          return {
+            matrix: camera.matrixWorld.toArray(),
+            projection: camera.projectionMatrix.toArray(),
+            controls: labels.map(label => {
+              const n = document.querySelector(`[aria-label="${label}"]`)!
+              const r = n.getBoundingClientRect()
+              const st = getComputedStyle(n)
+              return {
+                label,
+                x: r.x,
+                y: r.y,
+                bottom: r.bottom,
+                right: r.right,
+                h: r.height,
+                bg: st.backgroundColor,
+                shadow: st.boxShadow,
+                images: n.querySelectorAll('img').length
+              }
+            }),
+            canvas: {
+              width: document.querySelector('canvas')!.clientWidth,
+              height: document.querySelector('canvas')!.clientHeight
+            }
+          }
+        })
+        const camera = new PerspectiveCamera()
+        applyFieldCamera(camera, {
+          ...actual.canvas,
+          view: 'home',
+          zoom: 1.25,
+          tilt: (-11 * Math.PI) / 180,
+          heightOffset: 33,
+          bottomExtension: 112
+        })
+        for (const [a, b] of [
+          [actual.matrix, camera.matrixWorld.toArray()],
+          [actual.projection, camera.projectionMatrix.toArray()]
+        ])
+          a.forEach((v, i) => expect(v).closeTo(b[i], 1e-8))
+        // Equal matrices preserve every projected landmark, including plate and scoreboard.
+        for (const point of [
+          new Vector3(0, 0, 0),
+          new Vector3(27, 0, -27),
+          new Vector3(0, 28.2, -135)
+        ]) {
+          const comparison = camera.clone()
+          comparison.matrixWorld.fromArray(actual.matrix)
+          comparison.matrixWorldInverse.copy(comparison.matrixWorld).invert()
+          comparison.projectionMatrix.fromArray(actual.projection)
+          expect(
+            point
+              .clone()
+              .project(comparison)
+              .distanceTo(point.clone().project(camera))
+          ).lessThan(1e-8)
+        }
+        const swing = actual.controls.find(c => c.label === 'Swing in Play')!
+        const bunt = actual.controls.find(c => c.label === 'Bunt in Play')!
+        expect(bunt.bottom - swing.y).closeTo(112, 0.1)
+        expect(bunt.y - swing.bottom).closeTo(8, 0.1)
+        for (const c of actual.controls) {
+          expect(c.h, c.label).closeTo(52, 0.1)
+          expect(c.bg).equals(actual.controls[0].bg)
+          expect(c.shadow).not.equals('none')
+          expect(c.images).equals(0)
+          expect(c.right).at.most(width)
+          expect(c.bottom).at.most(height)
+        }
+        await click(page, 'Open scoring menu')
+        expect(
+          await page.$eval('[aria-label="Set Team Rosters"]', n => {
+            const t = n.querySelector('[dir="auto"]')!
+            return {
+              font: getComputedStyle(t).fontSize,
+              weight: getComputedStyle(t).fontWeight
+            }
+          })
+        ).deep.equals({ font: '16.8px', weight: '700' })
+        await page.screenshot({
+          path: join(
+            process.env.GS_SCORING_ARTIFACT_DIR!,
+            `paired-controls-${width}.png`
+          )
+        })
+      } finally {
+        await page.close()
+      }
+    })
+  for (const outcome of ['Single', 'Throw Out'])
+    it(`completes a bunt ${outcome} with distinct menus and Undo`, async () => {
+      const { page } = await open('/games/g1/score')
+      try {
+        await click(page, 'Bunt in Play')
+        expect(await page.$('[aria-label="Home Run"]')).equals(null)
+        expect(await page.$('[aria-label="Swing in Play outcomes"]')).equals(
+          null
+        )
+        expect(await page.$('[aria-label="Fielder\'s Choice"]')).equals(null)
+        if (outcome === 'Throw Out') await click(page, 'Batter Out')
+        await click(page, outcome)
+        await page.waitForSelector(`[aria-label="Undo Bunt: ${outcome}"]`)
+        await page.focus('[role="application"]')
+        await page.keyboard.press('Space')
+        await page.keyboard.press('ArrowUp')
+        await page.keyboard.press('Enter')
+        await page.waitForSelector(
+          '[aria-label^="Drag up and down for ball trajectory"]'
+        )
+        await page.keyboard.press('Enter')
+        if (outcome === 'Throw Out') {
+          await page.waitForSelector(
+            '[aria-label^="Tap or drag the next defender"]'
+          )
+          await placeDefenderWithKeyboard(page, true)
+          await click(page, 'Finish defensive play')
+        } else await click(page, 'Finish at-bat')
+        await waitReady(page)
+        await page.waitForSelector('[aria-label*="Batter Player 2"]')
+        await page.locator('[aria-label^="Undo "]').click()
+        await page.screenshot({
+          path: join(
+            process.env.GS_SCORING_ARTIFACT_DIR!,
+            `bunt-${outcome}.png`
+          )
+        })
+      } finally {
+        await page.close()
+      }
+    })
+  for (const kind of ['Swing', 'Bunt'])
+    for (const touch of [false, true])
+      it(`drags ${kind} outcomes with ${touch ? 'touch' : 'mouse'} through both menu levels`, async () => {
+        const { page } = await open('/games/g1/score')
+        try {
+          await page.setViewport({
+            width: 390,
+            height: 844,
+            hasTouch: touch,
+            isMobile: touch
+          })
+          await page.waitForSelector(`[aria-label="${kind} in Play"]`)
+          const center = async (
+            label: string
+          ): Promise<{ x: number; y: number }> =>
+            await page.$eval(`[aria-label="${label}"]`, n => {
+              const r = n.getBoundingClientRect()
+              return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
+            })
+          const move = async (p: { x: number; y: number }): Promise<void> => {
+            if (touch) await page.touchscreen.touchMove(p.x, p.y)
+            else await page.mouse.move(p.x, p.y)
+          }
+          const trigger = await center(`${kind} in Play`)
+          if (touch) await page.touchscreen.touchStart(trigger.x, trigger.y)
+          else {
+            await page.mouse.move(trigger.x, trigger.y)
+            await page.mouse.down()
+          }
+          await move({ x: trigger.x, y: trigger.y - 25 })
+          await page.waitForSelector('[aria-label="Batter Out"]')
+          const parent = await center('Batter Out')
+          await move(parent)
+          await page.waitForSelector('[aria-label="Ball Caught"]')
+          await move(await center('Single'))
+          await page.waitForSelector('[aria-label="Ball Caught"]', {
+            hidden: true
+          })
+          await move(parent)
+          await page.waitForSelector('[aria-label="Ball Caught"]')
+          await move(await center('Ball Caught'))
+          if (touch) await page.touchscreen.touchEnd()
+          else await page.mouse.up()
+          await page.waitForSelector(
+            `[aria-label="Undo ${kind === 'Bunt' ? 'Bunt: ' : ''}Ball Caught"]`
+          )
+          expect(await page.$('[role="menu"]')).equals(null)
+        } finally {
+          await page.close()
+        }
+      })
+  for (const touch of [false, true])
+    it(`closes More after crossing its submenu bridge with ${touch ? 'touch' : 'mouse'}`, async () => {
+      const { page } = await open('/games/g1/score')
+      try {
+        await page.setViewport({
+          width: 390,
+          height: 844,
+          hasTouch: touch,
+          isMobile: touch
+        })
+        await page.waitForSelector('[aria-label="More"]')
+        const center = async (
+          label: string
+        ): Promise<{ x: number; y: number }> =>
+          await page.$eval(`[aria-label="${label}"]`, n => {
+            const r = n.getBoundingClientRect()
+            return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
+          })
+        const move = async (p: { x: number; y: number }): Promise<void> => {
+          if (touch) await page.touchscreen.touchMove(p.x, p.y)
+          else await page.mouse.move(p.x, p.y)
+        }
+        const trigger = await center('More')
+        if (touch) await page.touchscreen.touchStart(trigger.x, trigger.y)
+        else {
+          await page.mouse.move(trigger.x, trigger.y)
+          await page.mouse.down()
+        }
+        await move({ x: trigger.x, y: trigger.y - 20 })
+        await page.waitForSelector('[aria-label="Put Batter on Base"]')
+        const parent = await center('Put Batter on Base')
+        await move(parent)
+        await page.waitForSelector('[aria-label="First"]')
+        const first = await center('First')
+        await move({ x: 195, y: first.y })
+        expect(await page.$('[aria-label="First"]')).not.equals(null)
+        await move(first)
+        await move({ x: 350, y: 140 })
+        await page.waitForSelector('[aria-label="First"]', { hidden: true })
+        expect(await page.$('[aria-label="First"]')).equals(null)
+        await move(parent)
+        if (touch) await page.touchscreen.touchEnd()
+        else await page.mouse.up()
+        expect(await page.$('[role="menu"]')).equals(null)
+        expect(await page.$('[aria-label^="Undo Put Batter"]')).equals(null)
+        await click(page, 'More')
+        await page.waitForSelector('[aria-label="Hit by Pitch"]')
+      } finally {
+        await page.close()
+      }
+    })
 })

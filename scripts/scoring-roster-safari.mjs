@@ -126,7 +126,7 @@ const touch = point => gesture([point], 80)
 async function freshGame() {
   url.searchParams.set('safariAcceptance', String(Date.now()))
   await m.openLink({ link: url.href, browser: true })
-  await visible('^Ball in Play$')
+  await visible('^Swing in Play$')
   if ((await nodes()).some(n => n.text === 'OK')) await tap('OK')
 }
 
@@ -135,7 +135,7 @@ try {
   await m.launchApp()
   await m.setOrientation('portrait')
   await freshGame()
-  await tap('Ball in Play')
+  await tap('Swing in Play')
   await absent("^Fielder's Choice$")
   await touch({ x: 20, y: 300 })
   await tap('Open scoring menu')

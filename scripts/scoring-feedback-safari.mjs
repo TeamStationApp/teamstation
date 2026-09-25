@@ -131,7 +131,7 @@ async function freshGame() {
   await m.launchApp()
   url.searchParams.set('safariAcceptance', String(Date.now()))
   await m.openLink({ link: url.href, browser: true })
-  await visible('^Ball in Play$')
+  await visible('^Swing in Play$')
   if ((await nodes()).some(n => n.text === 'OK')) await tap('OK')
 }
 
@@ -160,7 +160,7 @@ async function geometry() {
 try {
   await m.launchApp()
   await m.setOrientation('portrait')
-  for (const reason of ['hr', 'field', 'controls'].includes(
+  for (const reason of ['hr', 'field', 'controls', 'bunt'].includes(
     process.env.SCORING_FEEDBACK_PHASE
   )
     ? []
@@ -207,13 +207,13 @@ try {
     await tap(`Undo ${reason}`)
     await visible('Batter Player 2')
   }
-  for (const outside of ['actions', 'field', 'controls'].includes(
+  for (const outside of ['actions', 'field', 'controls', 'bunt'].includes(
     process.env.SCORING_FEEDBACK_PHASE
   )
     ? []
     : [false, true]) {
     await freshGame()
-    await tap('Ball in Play')
+    await tap('Swing in Play')
     await tap('Home Run')
     await visible('Home run type: In-the-park Home Run')
     const g = await geometry()
@@ -258,11 +258,19 @@ try {
     await absent('Time to edit play')
     await shot(outside ? 'stands-finished' : 'in-park-finished')
   }
-  if (process.env.SCORING_FEEDBACK_PHASE === 'field')
-    for (const outcome of ['Single', 'Ball Caught', 'Throw Out']) {
+  if (['field', 'bunt'].includes(process.env.SCORING_FEEDBACK_PHASE))
+    for (const outcome of process.env.SCORING_FEEDBACK_PHASE === 'bunt'
+      ? ['Single', 'Throw Out']
+      : ['Single', 'Ball Caught', 'Throw Out']) {
       const caught = outcome === 'Ball Caught'
       await freshGame()
-      await tap('Ball in Play')
+      await tap(
+        process.env.SCORING_FEEDBACK_PHASE === 'bunt'
+          ? 'Bunt in Play'
+          : 'Swing in Play'
+      )
+      if (process.env.SCORING_FEEDBACK_PHASE === 'bunt')
+        await absent('^Home Run$')
       if (outcome !== 'Single') {
         await tap('Batter Out')
         await tap(outcome)
@@ -294,9 +302,41 @@ try {
       await visible('Batter Player 2')
       await shot(`${outcome}-finished`)
     }
+  if (process.env.SCORING_FEEDBACK_PHASE === 'bunt') {
+    await freshGame()
+    await tap('More')
+    await absent('^Between pitches$')
+    await absent("^Didn't see it$")
+    await visible('^This pitch$')
+    await tap('Dismiss More')
+    const more = await find(/^More$/)
+    const start = { x: more.x + more.width / 2, y: more.y + more.height / 2 }
+    const field = await find(/^Baseball field\./)
+    await gesture(
+      [
+        start,
+        { x: start.x, y: start.y - 25 },
+        { x: field.x + field.width * 0.9, y: start.y - 160 }
+      ],
+      80
+    )
+    await absent('^Hit by Pitch$')
+    await tap('More')
+    await visible('^Hit by Pitch$')
+    await tap('Dismiss More')
+    await tap('Bunt in Play')
+    await absent('^Home Run$')
+    await tap('Single')
+    await tap('Undo Bunt: Single')
+    await visible('Pitches 0')
+    await tap('Swing in Play')
+    await visible('^Home Run$')
+    await shot('bunt-undo-swing-menu')
+    await tap('Dismiss outcomes')
+  }
   if (process.env.SCORING_FEEDBACK_PHASE === 'controls') {
     await freshGame()
-    await tap('Ball in Play')
+    await tap('Swing in Play')
     await tap('Single')
     await visible('Tap or drag a player to where the ball was fielded')
     for (const label of [
@@ -305,7 +345,7 @@ try {
       'Swing and Miss',
       'Foul Ball',
       'More',
-      'Ball in Play'
+      'Swing in Play'
     ]) {
       const n = (await nodes()).find(n => n.text === label)
       assert(n?.bounds, `Missing ${label}`)

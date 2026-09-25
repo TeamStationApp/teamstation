@@ -10,7 +10,6 @@ import { SwitchHitterHint } from '../scoring/SwitchHitterHint'
 import { useTheme } from '../theme/ThemeContext'
 import { FieldCanvas } from './FieldCanvas'
 import type { FieldCanvasProps } from './fieldTypes'
-import { PitchIcon } from './PitchIcon'
 import { useFieldSurface } from './useFieldSurface'
 
 export const PITCH_CONTROLS = [
@@ -59,7 +58,7 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: theme.rem(theme.radiusRem),
-    backgroundColor: theme.primaryButtonColor,
+    backgroundColor: theme.scoringControlBackground,
     shadowColor: theme.buttonShadowColor,
     shadowOpacity: 1,
     shadowRadius: 8,
@@ -67,7 +66,7 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
     elevation: 3
   } as const
   const label = {
-    color: theme.buttonTextColor,
+    color: theme.scoringControlText,
     fontFamily: theme.semiBoldTextFont,
     fontSize: 11,
     fontWeight: '600',
@@ -162,60 +161,74 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
           <SwitchHitterHint bounds={bounds} onDismiss={props.onDismissHint} />
         )}
         {props.children}
-        <View style={{ gap: 8 }}>
-          <View style={{ flexDirection: 'row', gap: 4 }}>
-            {props.moreControl}
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={
-                props.historyLabel == null
-                  ? 'Nothing to undo'
-                  : `Undo ${props.historyLabel}`
-              }
-              disabled={props.historyLabel == null}
-              onPress={props.onUndo}
-              style={{
-                ...button,
-                alignItems: 'flex-start',
-                padding: 12,
-                opacity: props.historyLabel == null ? 0.5 : 1
-              }}
-            >
-              <Text
-                selectable={false}
+        <View style={{ flexDirection: 'row', gap: 4, height: 112 }}>
+          <View style={{ flex: 4, gap: 8, minWidth: 0 }}>
+            <View style={{ flexDirection: 'row', gap: 4, height: 52 }}>
+              {props.moreControl}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={
+                  props.historyLabel == null
+                    ? 'Nothing to undo'
+                    : `Undo ${props.historyLabel}`
+                }
+                disabled={props.historyLabel == null}
+                onPress={props.onUndo}
                 style={{
-                  color: theme.buttonTextColor,
-                  fontFamily: theme.semiBoldTextFont
+                  ...button,
+                  alignItems: 'flex-start',
+                  padding: 12,
+                  opacity: props.historyLabel == null ? 0.5 : 1
                 }}
               >
-                ↶ Undo
-                {props.historyLabel == null ? '' : ` · ${props.historyLabel}`}
-              </Text>
-            </Pressable>
-          </View>
-          <View style={{ flexDirection: 'row', gap: 4 }}>
-            {PITCH_CONTROLS.map(control =>
-              control.kind === 'play' && props.ballInPlayControl != null ? (
-                <React.Fragment key={control.kind}>
-                  {props.ballInPlayControl}
-                </React.Fragment>
-              ) : (
-                <Pressable
-                  key={control.kind}
-                  accessibilityRole="button"
-                  accessibilityLabel={control.label}
-                  disabled={!props.canPitch}
-                  onPress={() => {
-                    props.onPitch(control.kind)
+                <Text
+                  selectable={false}
+                  style={{
+                    color: theme.scoringControlText,
+                    fontFamily: theme.semiBoldTextFont
                   }}
-                  style={{ ...button, opacity: props.canPitch ? 1 : 0.5 }}
                 >
-                  <PitchIcon kind={control.kind} />
-                  <Text selectable={false} style={label}>
-                    {control.label}
-                  </Text>
-                </Pressable>
-              )
+                  ↶ Undo
+                  {props.historyLabel == null ? '' : ` · ${props.historyLabel}`}
+                </Text>
+              </Pressable>
+            </View>
+            <View style={{ flexDirection: 'row', gap: 4, height: 52 }}>
+              {PITCH_CONTROLS.filter(control => control.kind !== 'play').map(
+                control => (
+                  <Pressable
+                    key={control.kind}
+                    accessibilityRole="button"
+                    accessibilityLabel={control.label}
+                    disabled={!props.canPitch}
+                    onPress={() => {
+                      props.onPitch(control.kind)
+                    }}
+                    style={{ ...button, opacity: props.canPitch ? 1 : 0.5 }}
+                  >
+                    <Text selectable={false} style={label}>
+                      {control.label}
+                    </Text>
+                  </Pressable>
+                )
+              )}
+            </View>
+          </View>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            {props.ballInPlayControl ?? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Swing in Play"
+                disabled={!props.canPitch}
+                onPress={() => {
+                  props.onPitch('play')
+                }}
+                style={{ ...button, opacity: props.canPitch ? 1 : 0.5 }}
+              >
+                <Text selectable={false} style={label}>
+                  Swing in Play
+                </Text>
+              </Pressable>
             )}
           </View>
         </View>

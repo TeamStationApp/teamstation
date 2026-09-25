@@ -131,6 +131,8 @@ export interface Theme {
   // The watch path's own names
   highlightRowBackground: string
   highlightRowActiveBackground: string
+  scoringControlBackground: string
+  scoringControlText: string
   scoringPlayColor: string
   videoBackgroundColor: string
   gridGutterRem: number

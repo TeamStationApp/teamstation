@@ -197,7 +197,7 @@ async function fieldAndTrajectory() {
 async function freshGame() {
   url.searchParams.set('safariAcceptance', String(Date.now()))
   await m.openLink({ link: url.href, browser: true })
-  await visible('^Ball in Play$')
+  await visible('^Swing in Play$')
   if ((await nodes()).some(n => n.text === 'OK')) await tap('OK')
 }
 async function moreTraversal(orientation) {
@@ -293,7 +293,7 @@ async function homeRunScenario(outside, loaded) {
     }
     await tapInSheet('Apply Override')
   }
-  await tap('Ball in Play')
+  await tap('Swing in Play')
   await tap('Home Run')
   const g = await geometry()
   await gesture([
@@ -347,7 +347,7 @@ try {
       await visible('^Ball$')
       await shot(`motion-${pitch.toLowerCase().replaceAll(' ', '-')}`)
     }
-    await tap('Ball in Play')
+    await tap('Swing in Play')
     await tap('Single')
     await fieldAndTrajectory()
     await visible('^Finish at-bat$')
@@ -358,10 +358,10 @@ try {
     await m.setOrientation('portrait')
     url.searchParams.set('safariAcceptance', String(Date.now()))
     await m.openLink({ link: url.href, browser: true })
-    await visible('^Ball in Play$')
+    await visible('^Swing in Play$')
     if ((await nodes()).some(n => n.text === 'OK')) await tap('OK')
     await shot('ready-portrait')
-    await m.longPressOn({ text: '^Ball in Play$', enabled: true })
+    await m.longPressOn({ text: '^Swing in Play$', enabled: true })
     await visible('^Single$')
     await absent('^(Copy|Look Up|Translate|Select All)$')
     await shot('long-touch-menu')
@@ -387,7 +387,7 @@ try {
     await visible('Pitches 4')
     // Captured upward drag starts on the decorative chevrons. Relative menu row
     // offset follows the current eight-row reversed drag layout, checked below.
-    const button = await find(/^Ball in Play$/)
+    const button = await find(/^Swing in Play$/)
     await gesture([
       { x: button.x + button.width - 12, y: button.y + button.height / 2 },
       { x: button.x + button.width / 2, y: button.y - 132 }
@@ -447,10 +447,10 @@ try {
     await dragRunner(1, 'safe')
     await visible('^Steal$')
     await tap('Steal')
-    await visible('^Ball in Play$')
+    await visible('^Swing in Play$')
     await shot('steal-accepted')
 
-    await tap('Ball in Play')
+    await tap('Swing in Play')
     await tap('Batter Out')
     await tap('Throw Out')
     await fieldAndTrajectory()

@@ -8,7 +8,11 @@ import {
 import { initialHitTarget } from '../field/trajectoryGuide'
 import { fieldPlayersFor } from './fieldAdapter'
 import { prepareBatterResult, prepareHit } from './runnerRules'
-import { type Outcome, outcomeEvents } from './scoringContract'
+import {
+  type ContactKind,
+  type Outcome,
+  outcomeEvents
+} from './scoringContract'
 import { accepted } from './scoringMachine'
 import { hitPresentation } from './scoringPresentation'
 import {
@@ -53,9 +57,11 @@ export function allowedAngle(
 }
 export function chooseOutcome(
   state: ScoringState,
-  outcome: Outcome
+  outcome: Outcome,
+  contactKind: ContactKind = 'swing'
 ): ScoringState {
   if (
+    (contactKind === 'bunt' && outcome === 'Home Run') ||
     state.phase !== 'ready' ||
     state.moreDraft != null ||
     !(outcome in outcomeEvents) ||
@@ -65,41 +71,51 @@ export function chooseOutcome(
     )
   )
     return state
-  return accepted(state, outcome, next => {
-    next.recentPitch = null
-    const session = next.session
-    const line = session.liveData.linescore
-    const play = session.liveData.plays.currentPlay!
-    next.pendingPlay = {
-      outcome,
-      originalRunnerRecordCount: play.runners.length,
-      originalBases: baseIds(session),
-      originalRuns: line.teams[battingSide(session)].runs,
-      originalOuts: line.outs,
-      movements: [],
-      trajectoryAccepted: false
+  return accepted(
+    state,
+    contactKind === 'bunt' ? `Bunt: ${outcome}` : outcome,
+    next => {
+      next.recentPitch = null
+      const session = next.session
+      const line = session.liveData.linescore
+      const play = session.liveData.plays.currentPlay!
+      next.pendingPlay = {
+        outcome,
+        contactKind,
+        originalRunnerRecordCount: play.runners.length,
+        originalBases: baseIds(session),
+        originalRuns: line.teams[battingSide(session)].runs,
+        originalOuts: line.outs,
+        movements: [],
+        trajectoryAccepted: false
+      }
+      next.phase = outcome === 'Home Run' ? 'locateLanding' : 'locateFielder'
+      if (outcome === 'Home Run')
+        next.pendingPlay.location = initialHitTarget(play.matchup.batSide.code)
+      const counts =
+        session.liveData.boxscore.teams[fieldingSide(session)].pitchCounts
+      counts[play.matchup.pitcher.id] =
+        (counts[play.matchup.pitcher.id] ?? 0) + 1
+      play.playEvents.push({
+        index: play.playEvents.length,
+        isPitch: true,
+        type: 'pitch',
+        details: {
+          description: contactKind === 'bunt' ? 'Bunt in Play' : 'Ball in Play',
+          code: 'X'
+        },
+        count: { balls: line.balls, strikes: line.strikes, outs: line.outs },
+        player: play.matchup.pitcher
+      })
+      play.result.event = outcome
+      play.result.eventType = outcomeEvents[outcome]
+      play.result.description = outcome
+      play.source.gamestation.outcome = outcome
+      play.source.gamestation.contactKind = contactKind
+      if (outcome === 'Throw Out' || outcome === 'Ball Caught')
+        play.source.gamestation.outSubtype = outcome
     }
-    next.phase = outcome === 'Home Run' ? 'locateLanding' : 'locateFielder'
-    if (outcome === 'Home Run')
-      next.pendingPlay.location = initialHitTarget(play.matchup.batSide.code)
-    const counts =
-      session.liveData.boxscore.teams[fieldingSide(session)].pitchCounts
-    counts[play.matchup.pitcher.id] = (counts[play.matchup.pitcher.id] ?? 0) + 1
-    play.playEvents.push({
-      index: play.playEvents.length,
-      isPitch: true,
-      type: 'pitch',
-      details: { description: 'Ball in Play', code: 'X' },
-      count: { balls: line.balls, strikes: line.strikes, outs: line.outs },
-      player: play.matchup.pitcher
-    })
-    play.result.event = outcome
-    play.result.eventType = outcomeEvents[outcome]
-    play.result.description = outcome
-    play.source.gamestation.outcome = outcome
-    if (outcome === 'Throw Out' || outcome === 'Ball Caught')
-      play.source.gamestation.outSubtype = outcome
-  })
+  )
 }
 export function placeFielder(
   state: ScoringState,

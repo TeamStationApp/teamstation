@@ -196,7 +196,7 @@ async function fieldAndTrajectory() {
 async function freshGame() {
   url.searchParams.set('safariAcceptance', String(Date.now()))
   await m.openLink({ link: url.href, browser: true })
-  await visible('^Ball in Play$')
+  await visible('^Swing in Play$')
   if ((await nodes()).some(n => n.text === 'OK')) await tap('OK')
 }
 async function tapInSheet(label) {
@@ -231,7 +231,7 @@ async function tapInSheet(label) {
 try {
   await m.setOrientation('portrait')
   await freshGame()
-  await tap('Ball in Play')
+  await tap('Swing in Play')
   await absent("^Fielder's Choice$")
   await tap('Home Run')
   let g = await geometry()
@@ -291,7 +291,7 @@ try {
     await tapInSheet(`Choose ${base} ${name}`)
   }
   await tapInSheet('Apply Override')
-  await tap('Ball in Play')
+  await tap('Swing in Play')
   await visible("^Fielder's Choice$")
   await tap('Error')
   await fieldAndTrajectory()
