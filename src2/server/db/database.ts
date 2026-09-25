@@ -326,7 +326,6 @@ export interface EventsTable {
   isScoringPlay: Filled<boolean | null>
   inning: Filled<number | null>
   halfInning: Filled<'top' | 'bottom' | string | null>
-  description: Filled<string | null>
   rbi: Filled<number | null>
   awayScore: Filled<number | null>
   homeScore: Filled<number | null>

@@ -42,6 +42,10 @@ export function teamIdsOnCredits<T extends { teamId?: string | null }>(
   }))
 }
 
+/**
+ * Who wrote a play: `gamestation` for GameStation's own scoring, `manual` for a
+ * person typing it in, and `external` for any outside scorer.
+ */
 export type PlaySource = 'external' | 'manual' | 'gamestation'
 
 export interface PlayWrite {
@@ -83,10 +87,34 @@ function withKeptCredits(gumbo: GumboPlay, previous: unknown): GumboPlay {
 /**
  * The stored document is the posted Gumbo play, without the `source` a sender
  * keeps beside it while it builds the play.
+ *
+ * Gumbo's descriptions — `result.description` and each `playEvents[]` one —
+ * are dropped from a play an outside scorer sent (`external`): they are that
+ * service's words, and GameStation shows a play in its own reading of the
+ * type and credits, written when it is shown. A `manual` or `gamestation`
+ * play keeps them, because they are a person's or GameStation's own words,
+ * and the document is otherwise stored as it was sent.
  */
-export function storedGumbo(gumbo: GumboPlay): Record<string, unknown> {
+export function storedGumbo(
+  gumbo: GumboPlay,
+  source: PlaySource
+): Record<string, unknown> {
   const next: Record<string, unknown> = { ...gumbo }
   delete next.source
+  if (source !== 'external') return next
+  const { description, ...result } = gumbo.result
+  next.result = result
+  // `playEvents` is not checked by the cleaner, so each entry is looked at.
+  if (Array.isArray(gumbo.playEvents)) {
+    next.playEvents = gumbo.playEvents.map((event: unknown) => {
+      if (event == null || typeof event !== 'object' || Array.isArray(event)) {
+        return event
+      }
+      const kept = { ...(event as Record<string, unknown>) }
+      delete kept.description
+      return kept
+    })
+  }
   return next
 }
 
@@ -153,7 +181,10 @@ export async function replaceGameEvents(
         startTime: play.startTime ?? null,
         endTime: play.endTime ?? null,
         battingTeamId: battingTeamForHalf(play.gumbo.about.halfInning, teams),
-        gumbo: storedGumbo(withKeptCredits(play.gumbo, previous?.gumbo)),
+        gumbo: storedGumbo(
+          withKeptCredits(play.gumbo, previous?.gumbo),
+          play.source
+        ),
         source: play.source,
         hidden: previous?.hidden ?? false,
         titleOverride: previous?.titleOverride ?? null,

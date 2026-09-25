@@ -50,7 +50,8 @@ export interface HalfOutcome {
  * `source.system` is `gamestation`, `manual`, or an outside system spelled as
  * an external id's system is, stored as `external`. A post that names none
  * counts as an outside one, so that a sender has to say it is GameStation's
- * own before it may write a game GameStation scores.
+ * own before it may write a game GameStation scores or have its play text
+ * kept.
  *
  * A post whose plays carry both teams' scores sets the game `final`, with the
  * last score each side's plays carry, and a final game refuses every later

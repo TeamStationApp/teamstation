@@ -543,9 +543,10 @@ export function openApiDocument(version: string): OpenApiDocument {
             '`gamestation`, `manual`, or an outside system spelled as an ' +
             "external id's system is, and a post with no `source` or no " +
             '`source.system` counts as an outside one. `gamestation` sets ' +
-            '`scoringOwner`. An outside post is stored as `external` and is ' +
-            'rejected once that owner is set. A post ' +
-            "whose plays carry both teams' scores sets " +
+            '`scoringOwner`. An outside post is stored as `external`, is ' +
+            'rejected once that owner is set, and its ' +
+            "plays' `result.description` and `playEvents[].description` are " +
+            "not stored. A post whose plays carry both teams' scores sets " +
             'the game `final`, and a final game refuses every later post with ' +
             '409, so a game is posted once it is over. Otherwise a ' +
             '`scheduled` game with plays becomes `inProgress`, and any other ' +
