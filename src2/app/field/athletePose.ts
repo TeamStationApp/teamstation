@@ -191,3 +191,49 @@ export function battingPose(
     bat: { knob, direction }
   }
 }
+
+/** Square to the pitcher and hold a horizontal bat, with no follow-through. */
+export function buntingPose(
+  time: number,
+  contactMs: number,
+  side: 'R' | 'L',
+  origin: GroundPoint,
+  contact: Point3
+): AthletePose {
+  const sign = side === 'R' ? 1 : -1
+  const relative = time - contactMs
+  const set = ease((relative + 350) / 300) * (1 - ease((relative - 150) / 500))
+  const angle = (set * Math.PI) / 2
+  const direction: Joint = [sign * Math.sin(angle), Math.cos(angle), 0]
+  const ready: Joint = [-sign * 0.3, 2.02, 0.4]
+  const contactKnob: Joint = [
+    (contact.x - origin.x) / PLAYER_SCALE - sign * BAT_CONTACT_DISTANCE,
+    (contact.y - TERRAIN.players) / PLAYER_SCALE,
+    (contact.z - origin.z) / PLAYER_SCALE
+  ]
+  const knob = mix(ready, contactKnob, set)
+  const grip = 0.15 + 0.6 * set
+  const hands: [Joint, Joint] = [
+    knob,
+    knob.map((v, i) => v + direction[i] * grip) as Joint
+  ]
+  const torso = sign * (Math.PI / 2 + (Math.PI / 2) * set)
+  const shoulder = shoulders(torso, 0.12)
+  return {
+    pelvis: sign * (Math.PI / 2 + 0.8 * set),
+    torso,
+    lean: 0.12,
+    shoulders: shoulder,
+    elbows: elbows(shoulder, hands),
+    hands,
+    knees: [
+      [-sign * 0.12, 0.53 - 0.08 * set, -0.35],
+      [sign * 0.12, 0.53 - 0.08 * set, 0.35]
+    ],
+    feet: [
+      [-sign * 0.05, 0.12, -0.43],
+      [sign * 0.05, 0.12, 0.43]
+    ],
+    bat: { knob, direction }
+  }
+}

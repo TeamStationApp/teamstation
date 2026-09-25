@@ -8,6 +8,7 @@ import {
   OUT_APPROACH_SPEED
 } from '../field/fieldModel'
 import { fieldPlayersFor } from './fieldAdapter'
+import type { ContactKind } from './scoringContract'
 import { scoringFieldPlayers } from './scoringMotion'
 import type { ScoringState } from './scoringTypes'
 export type PitchKind = 'ball' | 'called' | 'swing' | 'foul'
@@ -75,6 +76,7 @@ export function pitchPresentation(
   }
 }
 export interface HitSequence {
+  contactKind?: ContactKind
   outOfPark?: boolean
   fielderTarget?: GroundPoint
   id: string
@@ -237,6 +239,7 @@ export function hitPresentation(
     generation: state.generation,
     stage: 'swing',
     kind: 'hit',
+    contactKind: pending.contactKind ?? 'swing',
     outOfPark: pending.homeRunKind === 'out-of-park',
     fielderTarget:
       pending.homeRunKind === 'out-of-park'

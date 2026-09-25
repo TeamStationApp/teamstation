@@ -11,7 +11,7 @@ import {
   type PresentationSequence,
   stepPresentation
 } from '../scoring/scoringPresentation'
-import { battingPose, pitchingPose } from './athletePose'
+import { battingPose, buntingPose, pitchingPose } from './athletePose'
 import { BALL_CONTACT } from './ballArcModel'
 import type { FieldPlayer } from './fieldModel'
 import {
@@ -117,7 +117,11 @@ export function PlayAnimation({
         const origin = sequence.players.find(
           p => p.playerId === sequence.batter
         )!.position
-        player.pose.athlete = battingPose(
+        const pose =
+          sequence.kind === 'hit' && sequence.contactKind === 'bunt'
+            ? buntingPose
+            : battingPose
+        player.pose.athlete = pose(
           runtime.current.elapsedMs,
           sequence.kind === 'pitch' ? PITCH_TIMING.plate : sequence.contactMs,
           sequence.batSide,
