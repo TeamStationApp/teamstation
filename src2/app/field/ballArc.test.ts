@@ -16,6 +16,8 @@ import {
 import { createPlayers } from './fieldModel'
 import { FieldScene } from './FieldScene'
 import { TERRAIN } from './terrain'
+import { trajectoryGrip } from './trajectoryGrip'
+import { guideBearing } from './trajectoryGuide'
 
 describe('ball flight authoring', function () {
   it('starts at home, lands on target, and uses a 30 degree launch slope', function () {
@@ -128,8 +130,12 @@ describe('ball flight authoring', function () {
       )
       await renderer.advanceFrames(1, 1 / 60)
       if (camera == null) throw new Error('No camera')
-      const tip = arcHandle(current)
-      const screen = new Vector3(tip.x, tip.y, tip.z).project(camera)
+      const grip = trajectoryGrip(
+        { ...current, guideBearing: guideBearing(current.target) },
+        camera,
+        { width: 390, height: 556 }
+      )
+      const screen = grip.position.project(camera)
       event.pointer.set(screen.x + (90 * 2) / 390, screen.y)
       const edit = renderer.scene.findByProps({
         name: 'arc-interaction-surface'
