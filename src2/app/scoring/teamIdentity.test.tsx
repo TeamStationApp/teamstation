@@ -69,6 +69,48 @@ describe('team identity and dugouts', () => {
     expect(uniformColor(legacy[9])).equals('#e17842')
   })
 
+  it('puts heads in the open front with brims facing the infield on both sides', async () => {
+    for (const side of ['away', 'home'] as const) {
+      const renderer = await create(<Dugout side={side} />)
+      try {
+        renderer.scene.instance.updateMatrixWorld(true)
+        const opening = renderer.scene.findByProps({
+          name: 'dugout-opening'
+        }).instance
+        const front = new Vector3(0, 0, 1).transformDirection(
+          opening.matrixWorld
+        )
+        const center = opening.getWorldPosition(new Vector3())
+        const inward = new Vector3(0, 0, -40).sub(center).normalize()
+        expect(front.dot(inward)).greaterThan(0.9)
+        const rail = opening.getObjectByName('dugout-rail')!
+        const roof = opening.getObjectByName('dugout-roof')!
+        for (let i = 0; i < 3; i++) {
+          const occupant = opening.getObjectByName(
+            `dugout-player-${side}-${i}`
+          )!
+          const head = occupant.getObjectByName('dugout-head')!
+          const brim = occupant.getObjectByName('dugout-brim')!
+          const headWorld = head.getWorldPosition(new Vector3())
+          const brimWorld = brim.getWorldPosition(new Vector3())
+          expect(brimWorld.clone().sub(headWorld).dot(front)).greaterThan(0.4)
+          expect(headWorld.y - 0.7).greaterThan(2.5)
+          expect(headWorld.y + 0.74).lessThan(
+            roof.getWorldPosition(new Vector3()).y - 0.175
+          )
+          expect(
+            headWorld
+              .clone()
+              .sub(rail.getWorldPosition(new Vector3()))
+              .dot(front)
+          ).greaterThan(0)
+        }
+      } finally {
+        await renderer.unmount()
+      }
+    }
+  })
+
   it('loads each roof logo independently, faces the stands and survives stale/error/unmounted loads', async () => {
     // eslint-disable-next-line @typescript-eslint/unbound-method -- Restore the prototype method without invoking it detached.
     const original = TextureLoader.prototype.load
