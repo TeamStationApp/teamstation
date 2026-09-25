@@ -908,6 +908,38 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/users': {
+        get: {
+          summary: 'Who people are here, by the ids another service has',
+          description:
+            'A play names people by GameStation user id alone, so a sender ' +
+            'asks this with the ids it holds first. Each answer is ' +
+            '`{ userId, externalIds }`: a person, and which of the asked ids ' +
+            'are theirs. A merged row answers as the person it was merged ' +
+            'into. Only people you could see the page of are answered. ' +
+            '`externalId` is required and may be given more than once; an ' +
+            'empty one is refused.',
+          security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'externalId',
+              in: 'query',
+              required: true,
+              schema: { type: 'array', items: { type: 'string' } },
+              style: 'form',
+              explode: true,
+              description: "Another service's ids for the people"
+            }
+          ],
+          responses: {
+            200: {
+              description: 'In user id order; empty when nobody matches'
+            },
+            400: errorResponse,
+            401: errorResponse
+          }
+        }
+      },
       '/teams/{teamId}/roster': {
         get: {
           summary: "A team's players, coaches and followers",

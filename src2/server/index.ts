@@ -44,6 +44,7 @@ import { playerRoutes } from './routes/players'
 import { seasonRoutes } from './routes/seasons'
 import { statsRoutes } from './routes/stats'
 import { teamRoutes } from './routes/teams'
+import { userRoutes } from './routes/users'
 import { primaryHost, publicUrl, serverConfig } from './serverConfig'
 import { stopWorker } from './stopWorker'
 
@@ -435,6 +436,7 @@ function runWorker(): void {
   app.use('/api/v1', logRoutes())
   app.use('/api/v1', statsRoutes(db))
   app.use('/api/v1', playerRoutes(db, mediaContext))
+  app.use('/api/v1', userRoutes(db))
   app.use('/api/v1', mediaRoutes(db, mediaContext))
   app.use('/api/v1', liveRoutes(db, liveRouteOptions()))
   app.use(

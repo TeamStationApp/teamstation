@@ -5,7 +5,12 @@ import { notFound, unauthorized } from '../../common/errors'
 import { shortName } from '../../common/names'
 import { outcomeName } from '../../common/outcomes'
 import { asUserId } from '../../common/userIdNumber'
-import { mayEditName, visibleScopes } from '../access'
+import {
+  canSeePerson,
+  canSeePlayedFor,
+  mayEditName,
+  visibleScopes
+} from '../access'
 import { onePerson } from '../admin/people'
 import type { Database } from '../db/database'
 import { isRealVideo } from '../db/realVideos'
@@ -86,15 +91,9 @@ export function playerRoutes(
       // The same rule as every other read: you may see somebody if you can
       // already see a team they are on, or a season opened up to you. Their
       // own page is always theirs.
-      const visible =
-        scopes.isAdmin ||
-        userId === actor.userId ||
-        teams.some(
-          team =>
-            scopes.teamIds.has(team.teamId) ||
-            (team.seasonId != null && scopes.seasonIds.has(team.seasonId))
-        )
-      if (!visible) throw notFound()
+      if (!canSeePerson(scopes, userId === actor.userId, teams)) {
+        throw notFound()
+      }
 
       // `Jordan P`, for everybody, always. There is no viewer who gets the
       // whole name because of who they are: this endpoint does not know how to
@@ -113,11 +112,7 @@ export function playerRoutes(
         bats: user.bats,
         throws: user.throws,
         teams: teams.filter(
-          team =>
-            scopes.isAdmin ||
-            userId === actor.userId ||
-            scopes.teamIds.has(team.teamId) ||
-            (team.seasonId != null && scopes.seasonIds.has(team.seasonId))
+          team => userId === actor.userId || canSeePlayedFor(scopes, team)
         )
       })
     })

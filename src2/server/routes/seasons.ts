@@ -411,10 +411,10 @@ async function scheduleOf(
 }
 
 /**
- * The `externalId` filter of `GET /games`: undefined when it is not asked
- * for, and otherwise every value, each a non-empty string.
+ * The `externalId` filter of `GET /games` and `GET /users`: undefined when it
+ * is not asked for, and otherwise every value, each a non-empty string.
  */
-function externalIdsAsked(asked: unknown): string[] | undefined {
+export function externalIdsAsked(asked: unknown): string[] | undefined {
   if (asked === undefined) return undefined
   const values = Array.isArray(asked) ? asked : [asked]
   if (values.some(value => typeof value !== 'string' || value === '')) {
