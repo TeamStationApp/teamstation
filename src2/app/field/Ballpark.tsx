@@ -5,6 +5,7 @@ import { Shape, type Texture } from 'three'
 import { Dugout } from './Dugout'
 import { BASE, BASES } from './fieldModel'
 import { fieldPalette as p } from './fieldPalette'
+import { grassApron } from './grassApron'
 import { Scoreboard } from './Scoreboard'
 import type { ScoreboardState } from './scoreboardModel'
 import {
@@ -164,7 +165,7 @@ export function Ballpark({
   scoreboard?: ScoreboardState
   textures: ReturnType<typeof useSurfaceTextures>
 }): React.ReactElement {
-  const grass = useMemo(() => sector(114, 0, OUTFIELD_HALF_ANGLE), [])
+  const grass = useMemo(grassApron, [])
   const infield = useMemo(() => sector(47.5), [])
   const track = useMemo(
     () => sector(OUTFIELD_RADIUS, WARNING_TRACK_INNER, OUTFIELD_HALF_ANGLE),
@@ -180,7 +181,7 @@ export function Ballpark({
         <circleGeometry args={[180, 80]} />
         <meshStandardMaterial color={p.ground} map={textures.grass} />
       </mesh>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+      <mesh name="grass-apron" rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
         <shapeGeometry args={[grass]} />
         <meshStandardMaterial
           color={p.grass}
