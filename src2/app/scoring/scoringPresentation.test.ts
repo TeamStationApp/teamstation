@@ -292,6 +292,10 @@ describe('defensive presentation barriers', function () {
           id: approach.id,
           generation: 0
         })
+      expect(
+        scoringFieldPlayers(state).find(p => p.playerId === approach.playerId)!
+          .slowApproach
+      ).equals(!completed ? true : undefined)
       expect(state.phase).equals('chooseDefender')
       const visible = completed ? end : { x: 12, z: -12 }
       if (completed)

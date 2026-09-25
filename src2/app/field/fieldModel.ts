@@ -6,6 +6,7 @@ export interface GroundPoint {
   z: number
 }
 export interface FieldPlayer {
+  slowApproach?: boolean
   uniformSide?: 'away' | 'home'
   hasBall?: boolean
   receivingBall?: boolean
@@ -112,6 +113,14 @@ export function clampToField(point: GroundPoint): GroundPoint {
 export function setDestination(player: FieldPlayer, point: GroundPoint): void {
   player.target = clampToField(point)
 }
+export const OUT_APPROACH_SPEED = 1.4 * 17
+export function locomotionSpeed(
+  distance: number,
+  offense: boolean,
+  slow = false
+): number {
+  return 1.4 * Math.min(17, 4 + distance * 1.1) * (offense && !slow ? 2 : 1)
+}
 /** Frame-rate independent locomotion; cap elapsed time after a backgrounded tab. */
 export function advancePlayer(player: FieldPlayer, elapsed: number): void {
   if (player.dragging === true) {
@@ -139,7 +148,11 @@ export function advancePlayer(player: FieldPlayer, elapsed: number): void {
     Math.cos(desired - player.heading)
   )
   player.heading += turn * (1 - Math.exp(-16 * dt))
-  const speed = 1.4 * Math.min(17, 4 + distance * 1.1)
+  const speed = locomotionSpeed(
+    distance,
+    player.team === 'runner',
+    player.slowApproach === true
+  )
   const step = Math.min(distance, speed * dt)
   player.position.x += (dx / distance) * step
   player.position.z += (dz / distance) * step

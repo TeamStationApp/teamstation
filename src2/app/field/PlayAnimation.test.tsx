@@ -208,10 +208,13 @@ describe('rendered defensive transfers', function () {
         if (unassisted) {
           const runner = players.find(p => p.playerId === sequence.runner)!
           const defender = players.find(p => p.playerId === sequence.thrower)!
-          const progress =
-            (defender.position.z - sequence.holderOrigin.z) /
-            (sequence.to.z - sequence.holderOrigin.z) /
-            3
+          const progress = Math.min(1, 350 / sequence.durationMs)
+          const defenderProgress = Math.min(1, progress * 3)
+          expect(defender.position.z).closeTo(
+            sequence.holderOrigin.z +
+              (sequence.to.z - sequence.holderOrigin.z) * defenderProgress,
+            1e-8
+          )
           expect(runner.position.x).closeTo(
             sequence.runnerFrom.x +
               (sequence.to.x - sequence.runnerFrom.x) * progress,
@@ -224,7 +227,7 @@ describe('rendered defensive transfers', function () {
           )
           expect(
             players.find(p => p.playerId === sequence.thrower)!.pose!.run
-          ).equals(1)
+          ).equals(defenderProgress < 1 ? 1 : 0)
         }
         await renderer.advanceFrames(200, 0.05)
         expect(complete).equals(1)
@@ -234,4 +237,68 @@ describe('rendered defensive transfers', function () {
         await renderer.unmount()
       }
     })
+})
+
+describe('presentation mounted over an existing field', () => {
+  it('updates persistent player meshes in the same frame as the ball landing', async () => {
+    let state = initialScoringState(
+      createDevelopmentSession(gameFixture, [], []),
+      true
+    )
+    state = scoringReducer(state, { type: 'OUTCOME', outcome: 'Single' })
+    state = scoringReducer(state, {
+      type: 'FIELDER',
+      id: 10,
+      point: { x: 25, z: -75 },
+      generation: 0
+    })
+    state = scoringReducer(state, {
+      type: 'TRAJECTORY',
+      angle: 45,
+      generation: 0
+    })
+    const sequence = state.presentation!
+    if (sequence.kind !== 'hit') throw new Error('Expected hit')
+    const players = sequence.players.map(p => ({
+      ...p,
+      position: { ...p.position },
+      target: { ...p.target }
+    }))
+    const view = (active: boolean): React.ReactElement => (
+      <>
+        {players.map(player => (
+          <Player key={player.id} player={player} selected={false} />
+        ))}
+        {active && (
+          <PlayAnimation
+            sequence={sequence}
+            players={players}
+            paused={false}
+            onComplete={() => undefined}
+          />
+        )}
+      </>
+    )
+    const renderer = await create(view(false))
+    try {
+      await renderer.update(view(true))
+      await renderer.advanceFrames(1, 0.01) // mounted timeline begins at zero
+      await renderer.advanceFrames(1, sequence.flightEndMs / 1000)
+      const fielder = players.find(p => p.playerId === 10)!
+      const mesh = renderer.scene.findByProps({
+        name: `player-${fielder.id}`
+      }).instance
+      const ball = renderer.scene.findByProps({
+        name: 'animated-baseball'
+      }).instance
+      expect(ball.position.z).closeTo(sequence.arc.target.z, 1e-8)
+      expect(
+        (fielder.position.z - sequence.fielderStart.z) /
+          (sequence.arc.target.z - sequence.fielderStart.z)
+      ).closeTo(0.8, 1e-8)
+      expect(mesh.position.z).closeTo(fielder.position.z, 1e-8)
+    } finally {
+      await renderer.unmount()
+    }
+  })
 })

@@ -13,7 +13,7 @@ const initial = (): ReturnType<typeof initialScoringState> =>
   initialScoringState(createDevelopmentSession(gameFixture, [], []), true)
 describe('defender speed and perspective foul flight', function () {
   for (const distance of [12, 90])
-    it(`finishes ${distance}-unit fielding travel at triple speed after ball landing`, function () {
+    it(`finishes ${distance}-unit fielding travel from contact at eighty percent of catching speed`, function () {
       let state = scoringReducer(initial(), {
         type: 'OUTCOME',
         outcome: 'Throw Out'
@@ -35,7 +35,7 @@ describe('defender speed and perspective foul flight', function () {
       expect(sampleHit(hit, hit.contactMs).fielder).deep.equals(
         hit.fielderStart
       )
-      const half = sampleHit(hit, hit.fielderStartMs + flight / 6)
+      const half = sampleHit(hit, hit.contactMs + flight / 0.8 / 2)
       expect(half.fielder.z).closeTo(
         (hit.fielderStart.z + hit.arc.target.z) / 2,
         1e-8
@@ -95,9 +95,15 @@ describe('defender speed and perspective foul flight', function () {
       }
       const caught = outcome === 'Ball Caught'
       const noFielder = outcome === 'Home Run'
-      expect(hit.durationMs - hit.flightEndMs).equals(
-        caught || noFielder ? 0 : 300
+      expect(hit.durationMs - hit.flightEndMs).closeTo(
+        caught || noFielder ? 0 : (hit.flightEndMs - hit.contactMs) * 0.25,
+        1e-8
       )
+      expect(hit.fielderStartMs).equals(hit.contactMs)
+      const startDistance = gap(hit.contactMs)
+      expect(
+        gap(hit.contactMs + (hit.flightEndMs - hit.contactMs) / 2)
+      ).closeTo(startDistance * (caught || noFielder ? 0.5 : 0.6), 1e-8)
       const landed = sampleHit(hit, hit.flightEndMs)
       expect(landed.ball.x).closeTo(hit.arc.target.x, 1e-8)
       expect(landed.ball.z).closeTo(hit.arc.target.z, 1e-8)
@@ -106,12 +112,14 @@ describe('defender speed and perspective foul flight', function () {
           caught ? n < 1e-8 : n > 0
         )
         if (!caught) {
-          expect(gap(hit.flightEndMs + 150)).greaterThan(0)
-          expect(sampleHit(hit, hit.flightEndMs + 150).ball).deep.equals(
-            landed.ball
-          )
-          expect(sampleHit(hit, hit.flightEndMs + 150).visible).equals(true)
-          expect(gap(hit.flightEndMs + 300)).closeTo(0, 1e-8)
+          expect(gap((hit.flightEndMs + hit.durationMs) / 2)).greaterThan(0)
+          expect(
+            sampleHit(hit, (hit.flightEndMs + hit.durationMs) / 2).ball
+          ).deep.equals(landed.ball)
+          expect(
+            sampleHit(hit, (hit.flightEndMs + hit.durationMs) / 2).visible
+          ).equals(true)
+          expect(gap(hit.durationMs)).closeTo(0, 1e-8)
           expect(sampleHit(hit, hit.flightEndMs - 1).ball.z).not.equals(
             hit.arc.target.z
           )
@@ -119,6 +127,29 @@ describe('defender speed and perspective foul flight', function () {
       }
       expect(sampleHit(hit, hit.durationMs).visible).equals(false)
     })
+  it('keeps a stationary fielder and landed ball until the pickup boundary', () => {
+    let state = scoringReducer(initial(), {
+      type: 'OUTCOME',
+      outcome: 'Single'
+    })
+    state = scoringReducer(state, {
+      type: 'FIELDER',
+      id: 10,
+      point: { x: 0, z: -18.44 },
+      generation: 0
+    })
+    state = scoringReducer(state, {
+      type: 'TRAJECTORY',
+      angle: 20,
+      generation: 0
+    })
+    const hit = state.presentation!
+    if (hit.kind !== 'hit') throw new Error('Expected hit')
+    const sample = sampleHit(hit, hit.flightEndMs)
+    expect(sample.fielder).deep.equals(hit.fielderStart)
+    expect(sample.visible).equals(true)
+    expect(sampleHit(hit, hit.durationMs).visible).equals(false)
+  })
   for (const [width, height] of [
     [1200, 900],
     [390, 844],

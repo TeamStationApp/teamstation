@@ -4,7 +4,8 @@ import {
   BASES,
   clampToField,
   type FieldPlayer,
-  type GroundPoint
+  type GroundPoint,
+  OUT_APPROACH_SPEED
 } from '../field/fieldModel'
 import { fieldPlayersFor } from './fieldAdapter'
 import { scoringFieldPlayers } from './scoringMotion'
@@ -91,6 +92,7 @@ export interface HitSequence {
   fielderStart: GroundPoint
   arc: BallArcState
   batSide: 'R' | 'L'
+  slowRunner: boolean
   out: boolean
 }
 export interface ThrowSequence {
@@ -123,7 +125,13 @@ export function outBatterPoint(
   const distance = Math.hypot(end.x - start.x, end.z - start.z)
   const t = Math.max(
     0,
-    Math.min(0.96, (((elapsedMs - sequence.contactMs) / 1000) * 8) / distance)
+    Math.min(
+      0.96,
+      (((elapsedMs - sequence.contactMs) / 1000) *
+        OUT_APPROACH_SPEED *
+        (sequence.slowRunner ? 1 : 2)) /
+        distance
+    )
   )
   return {
     x: start.x + (end.x - start.x) * t,
@@ -201,7 +209,7 @@ export function throwPresentation(
             Math.hypot(to.x - from.x, to.z - from.z),
             Math.hypot(to.x - runnerPoint.x, to.z - runnerPoint.z)
           ) /
-            10) *
+            OUT_APPROACH_SPEED) *
             1000
         )
       : 900
@@ -223,7 +231,7 @@ export function hitPresentation(
   )
   const flightEndMs = 450 + flight
   const caught = pending.outcome === 'Ball Caught' || pending.fielder == null
-  const fielderEndMs = caught ? 450 + flight / 3 : flightEndMs + 300
+  const fielderEndMs = 450 + flight / (caught ? 1 : 0.8)
   return {
     id: `${state.generation}:${state.session.meta.sequence + 1}:hit`,
     generation: state.generation,
@@ -239,7 +247,7 @@ export function hitPresentation(
         ? flightEndMs
         : Math.max(flightEndMs, fielderEndMs),
     flightEndMs,
-    fielderStartMs: fielderEndMs - flight / 3,
+    fielderStartMs: 450,
     fielderEndMs,
     contactMs: 450,
     players,
@@ -254,6 +262,7 @@ export function hitPresentation(
         (pending.outcome === 'Ball Caught' ? 5.2 : undefined)
     },
     batSide: state.session.liveData.plays.currentPlay!.matchup.batSide.code,
+    slowRunner: pending.outcome !== 'Ball Caught',
     out: ['Ball Caught', 'Throw Out', 'Batter Interference'].includes(
       pending.outcome
     )

@@ -259,12 +259,13 @@ try {
     await shot(outside ? 'stands-finished' : 'in-park-finished')
   }
   if (process.env.SCORING_FEEDBACK_PHASE === 'field')
-    for (const caught of [false, true]) {
+    for (const outcome of ['Single', 'Ball Caught', 'Throw Out']) {
+      const caught = outcome === 'Ball Caught'
       await freshGame()
       await tap('Ball in Play')
-      if (caught) {
+      if (outcome !== 'Single') {
         await tap('Batter Out')
-        await tap('Ball Caught')
+        await tap(outcome)
       } else await tap('Single')
       await visible('Tap or drag a player to where the ball was fielded')
       const g = await geometry()
@@ -276,13 +277,22 @@ try {
         y: g.field.y + g.field.height * 0.6
       }
       await gesture([start, { x: start.x, y: start.y - 25 }], 80)
-      if (caught) await visible('Batter Player 2')
+      if (outcome === 'Throw Out') {
+        await visible('Tap or drag the next defender')
+        const receiver = g.project(24, -23, 6)
+        await m.tapOnPoint({
+          x: Math.round(receiver.x),
+          y: Math.round(receiver.y)
+        })
+        await tap('Finish defensive play')
+      }
+      if (caught || outcome === 'Throw Out') await visible('Batter Player 2')
       else {
         await visible('Finish at-bat')
         await tap('Finish at-bat')
       }
       await visible('Batter Player 2')
-      await shot(caught ? 'caught-finished' : 'single-finished')
+      await shot(`${outcome}-finished`)
     }
   if (process.env.SCORING_FEEDBACK_PHASE === 'controls') {
     await freshGame()

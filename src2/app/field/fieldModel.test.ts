@@ -6,6 +6,7 @@ import {
   BASES,
   clampToField,
   createPlayers,
+  locomotionSpeed,
   nextBase,
   setDestination
 } from './fieldModel'
@@ -18,6 +19,27 @@ describe('field locomotion', function () {
     setDestination(players[0], { x: 10, z: -30 })
     expect(players[1].target).deep.equals({ x: 0, z: 4 })
     expect(createPlayers()[0].target).deep.equals({ x: 0, z: -18.44 })
+  })
+  it('doubles normal offense while out approaches retain the slower pace', () => {
+    for (const distance of [0.5, 5, 40]) {
+      const prior = 1.4 * Math.min(17, 4 + distance * 1.1)
+      expect(locomotionSpeed(distance, false)).equals(prior)
+      expect(locomotionSpeed(distance, true)).equals(prior * 2)
+      expect(locomotionSpeed(distance, true, true)).equals(prior)
+    }
+    const runner = {
+      ...createPlayers()[9],
+      position: { x: 0, z: 0 },
+      target: { x: 50, z: 0 }
+    }
+    const slow = {
+      ...runner,
+      position: { ...runner.position },
+      slowApproach: true
+    }
+    advancePlayer(runner, 0.05)
+    advancePlayer(slow, 0.05)
+    expect(runner.position.x).closeTo(slow.position.x * 2, 1e-10)
   })
   it('arrives without overshooting and stops animating', function () {
     const player = createPlayers()[0]
