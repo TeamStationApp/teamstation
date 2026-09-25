@@ -2526,31 +2526,41 @@ describe('scoring browser', function () {
         const target = await readGuide(page)
         const samplesPromise = page.evaluate(
           async () =>
-            await new Promise<Array<{ z: number; gap: number }>>(resolve => {
-              const scene = (window as unknown as SceneProbeWindow).qaScene!
-              const out: Array<{ z: number; gap: number }> = []
-              let seen = false
-              const run = (): void => {
-                const ball = scene.getObjectByName('animated-baseball')
-                const fielder = scene.getObjectByName('player-defense-10')
-                if (ball != null && ball.visible && fielder != null) {
-                  seen = true
-                  out.push({
-                    z: ball.position.z,
-                    gap: Math.hypot(
-                      ball.position.x - fielder.position.x,
-                      ball.position.z - fielder.position.z
-                    )
-                  })
+            await new Promise<Array<{ z: number; gap: number; fz: number }>>(
+              resolve => {
+                const scene = (window as unknown as SceneProbeWindow).qaScene!
+                const out: Array<{ z: number; gap: number; fz: number }> = []
+                let seen = false
+                const run = (): void => {
+                  const ball = scene.getObjectByName('animated-baseball')
+                  const fielder = scene.getObjectByName('player-defense-10')
+                  if (ball != null && ball.visible && fielder != null) {
+                    seen = true
+                    out.push({
+                      z: ball.position.z,
+                      fz: fielder.position.z,
+                      gap: Math.hypot(
+                        ball.position.x - fielder.position.x,
+                        ball.position.z - fielder.position.z
+                      )
+                    })
+                  }
+                  if (seen && ball == null) resolve(out)
+                  else requestAnimationFrame(run)
                 }
-                if (seen && ball == null) resolve(out)
-                else requestAnimationFrame(run)
+                run()
               }
-              run()
-            })
+            )
         )
         await page.keyboard.press('Enter')
         const samples = await samplesPromise
+        const moving = samples
+          .filter(p => p.z < -3 && p.z > target.z / 2)
+          .at(-1)
+        expect(moving, 'defender starts during early ball flight').not.equals(
+          undefined
+        )
+        expect(moving!.fz).lessThan(-18.44)
         const landing = samples.filter(p => Math.abs(p.z - target.z) < 0.01)
         if (caught) {
           expect(landing.length).equals(0)
@@ -2558,6 +2568,10 @@ describe('scoring browser', function () {
         } else {
           expect(landing.length).greaterThan(1)
           expect(landing[0].gap).greaterThan(0.1)
+          expect((landing[0].fz + 18.44) / (target.z + 18.44)).closeTo(
+            0.8,
+            0.08
+          )
           expect(landing.at(-1)!.gap).lessThan(landing[0].gap)
         }
         await page.locator('[aria-label^="Undo "]').click()

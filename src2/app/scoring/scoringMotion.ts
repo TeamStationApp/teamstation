@@ -107,6 +107,7 @@ export function scoringFieldPlayers(
       continue
     const player = addRunner(command.playerId)
     player.batting = false
+    player.slowApproach = command.purpose === 'approachFirst'
     const prior = previous.find(
       old =>
         old.id === player.id &&

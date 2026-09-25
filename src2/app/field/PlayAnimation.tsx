@@ -60,6 +60,7 @@ export function PlayAnimation({
     if (paused) scoringAudio.stop()
     invalidate()
   }, [paused, invalidate])
+  // Update the shared pose before persistent Player/AthleteRig mesh subscribers.
   useFrame((_, dt) => {
     const frame = stepPresentation(
       runtime.current,
@@ -207,7 +208,7 @@ export function PlayAnimation({
     for (const cue of frame.cues) scoringAudio.cue(cue)
     if (frame.done) onComplete(sequence.id, sequence.generation, sequence.stage)
     if (!paused && !runtime.current.complete) invalidate()
-  })
+  }, -1)
   return (
     <mesh ref={ball} name="animated-baseball" visible={false}>
       <sphereGeometry args={[0.45, 12, 8]} />
