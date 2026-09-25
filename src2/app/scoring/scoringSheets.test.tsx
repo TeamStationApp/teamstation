@@ -120,7 +120,7 @@ async function mount(
           client={client}
           gameId="g1"
           source={source}
-          userId="sheets"
+          userId={12}
           onExit={() => undefined}
         />
       </ThemeProvider>
@@ -249,7 +249,7 @@ describe('scoring slide-up sheets', function () {
     await menu('Settings')
     await click('Toggle switch-hitter help')
     await click('Reset shown count')
-    expect(await scoringPreferences.read('sheets')).deep.equals({
+    expect(await scoringPreferences.read('12')).deep.equals({
       help: false,
       shown: 0
     })
