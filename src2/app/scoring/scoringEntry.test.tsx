@@ -92,7 +92,7 @@ describe('game actions preserve box score and videos', function () {
     client.boxScore = async () => ({
       batting: [
         asBattingRow({
-          userId: 'p1',
+          userId: 1,
           shortName: 'Alex',
           teamId: 'away',
           pa: 2,
@@ -111,7 +111,7 @@ describe('game actions preserve box score and videos', function () {
       ],
       pitching: [
         asPitchingRow({
-          userId: 'p2',
+          userId: 2,
           shortName: 'Blake',
           teamId: 'home',
           ip: '1.0',
@@ -127,7 +127,7 @@ describe('game actions preserve box score and videos', function () {
         })
       ]
     })
-    const opened: string[] = []
+    const opened: number[] = []
     await render(
       <GameScreen
         client={client}
@@ -146,7 +146,7 @@ describe('game actions preserve box score and videos', function () {
       button('Alex')?.click()
       button('Blake')?.click()
     })
-    expect(opened).deep.equals(['p1', 'p2'])
+    expect(opened).deep.equals([1, 2])
     await act(async () => {
       button('Videos')?.click()
     })

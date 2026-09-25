@@ -369,7 +369,7 @@ export function MoreMenu({
                     .filter(
                       action =>
                         ![
-                          'Strike Three, Not Caught',
+                          'Dropped Third Strike',
                           'Put Batter on Base'
                         ].includes(action) ||
                         moreEligibility(state, action) == null

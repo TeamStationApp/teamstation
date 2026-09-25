@@ -29,7 +29,7 @@ export const MORE_GROUPS = [
       'Hit by Pitch',
       'Intentional Walk',
       "Catcher's Interference",
-      'Strike Three, Not Caught'
+      'Dropped Third Strike'
     ]
   }
 ] as const
@@ -71,7 +71,7 @@ export function moreEligibility(
   if (state.session.liveData.plays.currentPlay == null)
     return 'Choose the next batter first'
   if (
-    action === 'Strike Three, Not Caught' &&
+    action === 'Dropped Third Strike' &&
     (state.session.liveData.linescore.strikes !== 2 ||
       (baseIds(state.session)[0] != null &&
         state.session.liveData.linescore.outs < 2))
@@ -151,7 +151,7 @@ export function moreReducer(
     recordMoreEvent(
       next,
       action,
-      action === 'Hit by Pitch' || action === 'Strike Three, Not Caught'
+      action === 'Hit by Pitch' || action === 'Dropped Third Strike'
     )
     const current = next.session.liveData.plays.currentPlay!
     const line = next.session.liveData.linescore
@@ -184,7 +184,7 @@ export function moreReducer(
           ? 'Balk'
           : action === 'Batter Out — Other'
             ? 'Batter Out — Other'
-            : action === 'Strike Three, Not Caught'
+            : action === 'Dropped Third Strike'
               ? 'Dropped Third Strike'
               : action === 'Put Batter on Base'
                 ? 'Manual placement'
@@ -199,12 +199,12 @@ export function moreReducer(
     }
     if (action !== 'Balk') {
       current.result.event =
-        action === 'Strike Three, Not Caught' ? 'Strikeout' : action
+        action === 'Dropped Third Strike' ? 'Strikeout' : action
       current.result.eventType = moreEvents[action]
       current.result.description = action
       current.source.gamestation.outcome = action
     }
-    if (action === 'Strike Three, Not Caught') {
+    if (action === 'Dropped Third Strike') {
       line.strikes = 3
       current.count.strikes = 3
       prepareBatterResult(next)
