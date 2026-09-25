@@ -301,6 +301,66 @@ describe('the batter on a ball in play', function () {
     expect(scored.liveData.plays.currentPlay!.result.rbi).equals(0)
   })
 
+  it('turns a 6-4-3 with the lead runner forced at second before the batter', function () {
+    let state = after(
+      walk(game()),
+      { type: 'ballInPlay', contact: 'swing', fielder: F.SS },
+      result('field_out', { outBy: 'throw' })
+    )
+    state = after(state, out(1, '2B', [F.SS, F['2B']], 'Force Out'))
+    expect(outs(state)).equals(1)
+    expect(bases(state)).deep.equals([null, null, null])
+    state = after(state, out(2, '1B', [F['2B'], F['1B']]), close)
+    const play = state.liveData.plays.allPlays.at(-1)!
+    expect(play.result.eventType).equals('grounded_into_double_play')
+    expect(
+      play.runners.map(runner => [
+        runner.details.runner.id,
+        runner.movement.outNumber,
+        runner.movement.forceOut,
+        runner.credits.map(credit => `${credit.credit} ${credit.player.id}`)
+      ])
+    ).deep.equals([
+      [1, 1, true, [`f_assist ${F.SS}`, `f_putout ${F['2B']}`]],
+      [2, 2, true, [`f_assist ${F['2B']}`, `f_putout ${F['1B']}`]]
+    ])
+  })
+
+  it('forces only a runner with every base behind him taken, while the batter runs', function () {
+    const twoOn = after(
+      walk(walk(game())),
+      { type: 'ballInPlay', contact: 'swing', fielder: F['3B'] },
+      result('field_out', { outBy: 'throw' })
+    )
+    const atThird = after(twoOn, out(1, '3B', [F['3B']], 'Force Out'))
+    expect(
+      atThird.liveData.plays.currentPlay!.runners[0].movement.forceOut
+    ).equals(true)
+    // Once the runner behind him is out, the lead runner must be tagged.
+    expect(bases(twoOn)).deep.equals([2, 1, null])
+    const afterForce = after(
+      twoOn,
+      out(2, '2B', [F['3B'], F['2B']], 'Force Out')
+    )
+    expect(
+      afterForce.liveData.plays.currentPlay!.runners.at(-1)!.movement.forceOut
+    ).equals(true)
+    const tag = after(afterForce, out(1, '3B', [F['2B'], F['3B']]))
+    expect(
+      tag.liveData.plays.currentPlay!.runners.at(-1)!.movement.forceOut
+    ).equals(false)
+    const secondAndThird = after(
+      walk(game()),
+      move(1, '2B', { reason: 'Steal' }),
+      { type: 'ballInPlay', contact: 'swing', fielder: F['3B'] },
+      result('field_out', { outBy: 'throw' })
+    )
+    const tagged = after(secondAndThird, out(1, '3B', [F['3B']]))
+    expect(
+      tagged.liveData.plays.currentPlay!.runners.at(-1)!.movement.forceOut
+    ).equals(false)
+  })
+
   it('puts the batter out another way', function () {
     let state = after(game(), result('other_out'))
     state = after(state, out(1, 'batter', [F.C]), close)

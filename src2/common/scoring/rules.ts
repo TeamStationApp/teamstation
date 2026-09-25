@@ -305,6 +305,34 @@ export function batterRetired(state: GameState): boolean {
   )
 }
 
+/**
+ * The runner on `from` is forced to the next base: the batter is still
+ * running on a ball in play he has not been put out on, and every base
+ * behind the runner was taken when the ball was hit by a runner who has not
+ * been put out on this play. Once a runner behind him is out, he must be
+ * tagged.
+ */
+export function forcedFrom(state: GameState, from: number): boolean {
+  const pending = state.pending
+  if (pending == null || from < 1 || from > 3 || batterRetired(state))
+    return false
+  const batterRunning =
+    pending.outcome === 'Throw Out' ||
+    (["Fielder's Choice", 'Error'].includes(pending.outcome) &&
+      pending.movements.some(
+        move => move.from === 0 && move.decision !== 'out'
+      ))
+  const out = new Set(
+    pending.movements
+      .filter(move => move.decision === 'out')
+      .map(move => move.playerId)
+  )
+  return (
+    batterRunning &&
+    pending.originalBases.slice(0, from).every(id => id != null && !out.has(id))
+  )
+}
+
 export type Decision =
   | 'awaitingBatter'
   | 'ready'

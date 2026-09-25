@@ -10,6 +10,7 @@ import {
   accepted,
   act,
   completeDefense,
+  forceOutInRelay,
   Refused,
   runnerReducer,
   settleRunners
@@ -317,6 +318,17 @@ export function scoringReducer(
   }
   if (event.type === 'RUNNER_DROP') {
     if (event.generation !== state.generation) return state
+    if (
+      state.phase === 'chooseDefender' &&
+      state.runnerAction?.purpose === 'batterRetirement'
+    )
+      return forceOutInRelay(
+        state,
+        event.id,
+        event.to,
+        event.decision,
+        event.generation
+      )
     const offense = state.session.liveData.linescore.offense
     const from =
       [offense.first?.id, offense.second?.id, offense.third?.id].indexOf(

@@ -1,3 +1,4 @@
+import { forcedFrom } from '../../common/scoring/rules'
 import type { BallArcState } from '../field/ballArcModel'
 import { fieldingLocation } from '../field/fieldingLocation'
 import type { FieldCanvasProps } from '../field/fieldTypes'
@@ -10,10 +11,20 @@ export function fieldStageInstruction(state: ScoringState): string | undefined {
     return 'Tap or drag a player to where the ball was fielded.'
   if (state.phase === 'trajectory')
     return 'Drag up and down for ball trajectory.'
-  if (state.phase === 'chooseDefender')
-    return state.runnerAction?.purpose === 'errorAttribution'
-      ? 'Tap or drag another defender, or hit Done to choose who committed the error.'
+  if (state.phase === 'chooseDefender') {
+    if (state.runnerAction?.purpose === 'errorAttribution')
+      return 'Tap or drag another defender, or hit Done to choose who committed the error.'
+    const offense = state.session.liveData.linescore.offense
+    const forced =
+      state.runnerAction?.purpose === 'batterRetirement' &&
+      [offense.first, offense.second, offense.third].some(
+        (runner, index) =>
+          runner != null && forcedFrom(state.session, index + 1)
+      )
+    return forced
+      ? 'Tap or drag the next defender, drag a forced runner out at the next base, or hit Done to finish the out.'
       : 'Tap or drag the next defender, or hit Done to finish the out.'
+  }
 }
 /** Renderer callbacks and preview use the same phase and constraints as reducer events. */
 export function battedBallField(
