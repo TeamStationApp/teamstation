@@ -231,31 +231,28 @@ describe('More local scoring actions', function () {
       for (const outs of [0, 2]) {
         let state = initial(occupied ? 1 : 0)
         state.session.liveData.linescore.outs = outs
-        expect(moreEligibility(state, 'Strike Three, Not Caught')).not.equals(
+        expect(moreEligibility(state, 'Dropped Third Strike')).not.equals(
           undefined
         )
         state = scoringReducer(state, { type: 'PITCH', kind: 'called' })
         state = scoringReducer(state, { type: 'PITCH', kind: 'swing' })
         if (occupied && outs === 0) {
-          expect(more(state, { action: 'Strike Three, Not Caught' })).equals(
-            state
-          )
+          expect(more(state, { action: 'Dropped Third Strike' })).equals(state)
           continue
         }
-        state = more(state, { action: 'Strike Three, Not Caught' })
-        expect(state.phase).equals('resolveBatter')
+        state = more(state, { action: 'Dropped Third Strike' })
+        expect(state.phase).equals('runnerMovement')
         expect(state.session.liveData.linescore.outs).equals(outs)
         expect(
           state.session.liveData.boxscore.teams.home.pitchCounts[10]
         ).equals(3)
+        state = completeMotions(state)
+        expect(state.phase).equals('runnerDecision')
         if (!occupied) {
           state = resolveHomes(
             scoringReducer(state, {
-              type: 'RUNNER_DROP',
-              id: 1,
-              to: 1,
-              decision: 'safe',
-              generation: state.generation
+              type: 'RUNNER_DECIDE',
+              decision: 'safe'
             })
           )
           expect(baseIds(state.session)[0]).equals(1)

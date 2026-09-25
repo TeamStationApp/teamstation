@@ -1,18 +1,23 @@
 import React, { useEffect, useState } from 'react'
-import { Text, View } from 'react-native'
+import { Pressable, View } from 'react-native'
 
-import { useTheme } from '../theme/ThemeContext'
 import { MoreActionEditor } from './MoreActionEditor'
 import { MORE_GROUPS, moreEligibility, type MoreInput } from './moreActions'
 import type { MoreMenuProps } from './moreMenuProps'
-import { ScoringButton, ScoringSheet } from './ScoringSheet'
+import {
+  CONTROL_COLORS,
+  ControlBackdrop,
+  ControlFace,
+  controlFrame
+} from './ScoringControlAppearance'
+import { SCORING_MENU, ScoringMenuButton } from './ScoringMenuAppearance'
+import { ScoringSheet } from './ScoringSheet'
 export function MoreMenu({
   state,
   disabled,
   onActive,
   onChoose
 }: MoreMenuProps): React.ReactElement {
-  const theme = useTheme()
   const [open, setOpen] = useState(false)
   const [base, setBase] = useState(false)
   const [baseY, setBaseY] = useState(0)
@@ -43,42 +48,48 @@ export function MoreMenu({
   }
   return (
     <>
-      <ScoringButton
-        label="More"
-        control
-        upChevrons
-        text={'⋯\nMore'}
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="More"
         disabled={disabled}
+        style={{
+          ...controlFrame,
+          flex: 1,
+          borderColor: CONTROL_COLORS.more.border,
+          backgroundColor: CONTROL_COLORS.more.bottom,
+          opacity: disabled ? 0.5 : 1
+        }}
         onPress={() => {
           if (disabled) return
           setOpen(true)
           onActive(true)
         }}
-      />
+      >
+        <ControlBackdrop kind="more" />
+        <ControlFace kind="more" />
+      </Pressable>
       {open && (
         <ScoringSheet title="More" onClose={close}>
           <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
-            <View style={{ width: '50%' }}>
+            <View
+              style={{
+                width: '50%',
+                backgroundColor: SCORING_MENU.background,
+                borderColor: SCORING_MENU.border,
+                borderWidth: 1,
+                borderRadius: 12,
+                overflow: 'hidden'
+              }}
+            >
               {MORE_GROUPS.map(group => (
                 <React.Fragment key={group.label}>
-                  {group.label === 'This pitch' && (
-                    <Text
-                      style={{
-                        color: theme.primaryTextColor,
-                        fontFamily: theme.semiBoldTextFont,
-                        fontSize: 14.4,
-                        fontWeight: '700'
-                      }}
-                    >
-                      {group.label}
-                    </Text>
-                  )}
                   {group.actions
                     .filter(
                       action =>
                         ![
-                          'Strike Three, Not Caught',
-                          'Put Batter on Base'
+                          'Dropped Third Strike',
+                          'Put Batter on Base',
+                          'Balk'
                         ].includes(action) ||
                         moreEligibility(state, action) == null
                     )
@@ -90,9 +101,7 @@ export function MoreMenu({
                             setBaseY(event.nativeEvent.layout.y)
                         }}
                       >
-                        <ScoringButton
-                          row
-                          menuText
+                        <ScoringMenuButton
                           label={action}
                           submenuRight={action === 'Put Batter on Base'}
                           disabled={moreEligibility(state, action) != null}
@@ -113,13 +122,16 @@ export function MoreMenu({
                   position: 'absolute',
                   right: 0,
                   top: baseY,
-                  width: '50%'
+                  width: '50%',
+                  backgroundColor: SCORING_MENU.background,
+                  borderColor: SCORING_MENU.border,
+                  borderWidth: 1,
+                  borderRadius: 12,
+                  overflow: 'hidden'
                 }}
               >
                 {['First', 'Second', 'Third'].map((label, index) => (
-                  <ScoringButton
-                    row
-                    menuText
+                  <ScoringMenuButton
                     key={label}
                     label={label}
                     onPress={() => {

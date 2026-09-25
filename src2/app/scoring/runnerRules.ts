@@ -393,6 +393,25 @@ export function settleRunners(state: ScoringState): void {
     state.session.liveData.linescore.outs < 3 &&
     pending.movements.some(move => move.to < 4 && move.decision === 'pending')
   ) {
+    if (pending.outcome === 'Dropped Third Strike') {
+      if (state.motions.some(motion => !motion.complete)) {
+        state.phase = 'runnerMovement'
+      } else {
+        const batter = pending.movements.find(move => move.from === 0)!
+        state.runnerAction = {
+          purpose: 'droppedThirdStrike',
+          playerId: batter.playerId,
+          from: 0,
+          to: 1,
+          origin: 'current',
+          returnPhase: 'correctionWindow',
+          reason: 'Dropped Third Strike',
+          runnerPoint: { ...BASES[1] }
+        }
+        state.phase = 'runnerDecision'
+      }
+      return
+    }
     state.phase = 'resolveBatter'
     return
   }
@@ -472,10 +491,49 @@ export function prepareBatterResult(state: ScoringState): void {
     pending.errorPending = true
     pending.choiceApplied = true
     settleRunners(state)
-  } else if (
-    pending.outcome === "Fielder's Choice" ||
-    pending.outcome === 'Dropped Third Strike'
-  ) {
+  } else if (pending.outcome === 'Dropped Third Strike') {
+    // With loaded bases, the scoring UI asks only about the forced runner at
+    // home; the batter is assumed safe. Other occupancies require a first-base decision.
+    const loaded = pending.originalBases.every(id => id != null)
+    pending.choiceApplied = true
+    pending.movements = [
+      {
+        playerId: batter,
+        from: 0,
+        to: 1,
+        force: true,
+        decision: loaded ? 'safe' : 'pending',
+        resolved: loaded
+      }
+    ]
+    let forced = true
+    pending.originalBases.forEach((id, index) => {
+      if (id == null) {
+        forced = false
+        return
+      }
+      const to = index + 1 + (forced ? 1 : 0)
+      pending.movements.push({
+        playerId: id,
+        from: index + 1,
+        to,
+        force: forced,
+        decision: to === 4 ? 'pending' : 'safe',
+        resolved: to !== 4
+      })
+    })
+    for (const key of baseKeys)
+      state.session.liveData.linescore.offense[key] = null
+    rebuildQueue(state)
+    for (const move of pending.movements) {
+      if (move.to < 4) setBase(state, move.playerId, move.to)
+      if (move.from !== move.to) {
+        if (move.decision === 'safe') recordRunner(state, move, pending.outcome)
+        runMotion(state, move)
+      }
+    }
+    settleRunners(state)
+  } else if (pending.outcome === "Fielder's Choice") {
     pending.movements = pending.originalBases
       .map((id, index) => ({ id, from: index + 1 }))
       .filter((row): row is { id: number; from: number } => row.id != null)
@@ -753,7 +811,14 @@ function commitSafe(state: ScoringState): void {
       pending.outcome === 'Error' ||
       pending.outcome === 'Dropped Third Strike') &&
     action.returnPhase === 'resolveBatter'
-  if (choice) {
+  if (action.purpose === 'droppedThirdStrike') {
+    movement.force = true
+    const old = pending!.movements.find(
+      move => move.playerId === action.playerId
+    )!
+    Object.assign(old, movement)
+    recordRunner(state, movement, 'Dropped Third Strike')
+  } else if (choice) {
     const old = pending.movements.find(
       move => move.playerId === action.playerId
     )!
@@ -865,6 +930,7 @@ export function runnerReducer(
   }
   if (event.type === 'RUNNER_PROPOSE') {
     if (
+      state.runnerAction?.purpose === 'droppedThirdStrike' ||
       ![
         'ready',
         'correctionWindow',
@@ -1069,7 +1135,9 @@ export function runnerReducer(
         move.decision = 'safe'
         move.resolved = true
         next.session.liveData.linescore.teams[battingSide(next.session)].runs++
-        if (next.pendingPlay!.outcome !== 'Error')
+        if (
+          !['Error', 'Dropped Third Strike'].includes(next.pendingPlay!.outcome)
+        )
           next.session.liveData.plays.currentPlay!.result.rbi++
         recordRunner(next, move, 'Safe at home')
         enqueue(next, id, [

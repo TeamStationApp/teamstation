@@ -21,6 +21,7 @@ import type { FieldPlayer } from '../field/fieldModel'
 import type { BaseProjection } from '../field/fieldTypes'
 import { homeRunKind, homeRunLabel } from '../field/stadiumBoundary'
 import { useFieldSurface } from '../field/useFieldSurface'
+import { lstrings } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
 import { allowedAngle, trajectoryLabel } from './battedBall'
 import { battedBallField, fieldStageInstruction } from './battedBallField'
@@ -59,7 +60,7 @@ const developmentSource = new DevelopmentScoringStateSource()
 export interface ScoringScreenProps {
   client: GameStationClient
   gameId: string
-  userId?: string
+  userId?: string | number
   onExit: () => void
   source?: ScoringStateSource
 }
@@ -136,7 +137,7 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
       initial={session}
       source={source}
       onExit={props.onExit}
-      userId={props.userId ?? 'local-scorer'}
+      userId={String(props.userId ?? 'local-scorer')}
     />
   )
 }
@@ -343,9 +344,11 @@ function ScoringSession(props: {
     .filter(move => move.decision === 'pending' && move.to < 4)
     .sort((a, b) => b.from - a.from)[0]
   const runnerEnabled =
+    state.runnerAction?.purpose !== 'droppedThirdStrike' &&
     ['ready', 'correctionWindow', 'resolveBatter', 'runnerDecision'].includes(
       state.phase
-    ) && !state.motions.some(motion => !motion.complete)
+    ) &&
+    !state.motions.some(motion => !motion.complete)
   const runnerIds = runnerEnabled
     ? players
         .filter(
@@ -629,8 +632,8 @@ function ScoringSession(props: {
       }
       finishLabel={
         state.phase === 'chooseDefender'
-          ? 'Finish defensive play'
-          : 'Finish at-bat'
+          ? lstrings.scoring_finish_defensive_play
+          : lstrings.scoring_finish_at_bat
       }
       remainingMs={
         state.phase === 'correctionWindow' && state.presentation == null

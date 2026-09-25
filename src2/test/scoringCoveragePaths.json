@@ -23,6 +23,7 @@
   "src2/app/field/movePreview.ts",
   "src2/app/field/FieldCanvas.tsx",
   "src2/app/field/scoreboardTexture.ts",
+  "src2/app/field/scoreboardPalette.ts",
   "src2/app/field/fieldKeyboard.ts",
   "src2/app/field/scoreboardBounds.ts",
   "src2/app/theme/gsBallpark.ts",
