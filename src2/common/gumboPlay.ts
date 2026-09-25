@@ -206,11 +206,38 @@ export function asCurrentPlay(raw: unknown): CurrentPlay {
   }
 }
 
-export const asPostEventsBody = asObject({
+const asPostEventsShape = asObject({
   plays: asArray(asGumboPlay),
   source: asOptional(
     asObject({
       system: asOptional(asSourceSystem)
     })
-  )
+  ),
+  /**
+   * `replace`, the default, is a finished game arriving whole: every stored
+   * play the body does not name is deleted. `live` is a game being scored:
+   * the plays sent are written in place, and only the indexes in `remove`
+   * are deleted.
+   */
+  mode: asOptional(asValue('replace', 'live'), 'replace'),
+  remove: asOptional(asArray(asCount)),
+  /** On a live post: the at-bat in progress, or null when there is none. */
+  currentPlay: (raw: unknown): CurrentPlay | null | undefined =>
+    raw === undefined ? undefined : raw === null ? null : asCurrentPlay(raw)
 })
+
+export type PostEventsBody = ReturnType<typeof asPostEventsShape>
+
+export function asPostEventsBody(raw: unknown): PostEventsBody {
+  const body = asPostEventsShape(raw)
+  if (body.mode === 'replace') {
+    if (body.remove !== undefined)
+      throw new TypeError('remove is for a live post')
+    if (body.currentPlay !== undefined)
+      throw new TypeError('currentPlay is for a live post')
+  }
+  const posted = new Set(body.plays.map(play => play.about.atBatIndex))
+  if ((body.remove ?? []).some(index => posted.has(index)))
+    throw new TypeError('A play is both posted and removed')
+  return body
+}

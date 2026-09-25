@@ -1,7 +1,9 @@
 import { sql } from 'kysely'
 
+import type { GumboPlay } from '../../common/gumboPlay'
+import { halfOutcomes, lineScore } from '../../common/scoring/linescore'
 import { makeDatabase } from '../db/database'
-import { halfOutcomes, lineScore, readPlays } from '../routes/events'
+import { readPlays } from '../routes/events'
 import { serverConfig } from '../serverConfig'
 
 /**
@@ -29,7 +31,8 @@ async function main(): Promise<void> {
     let written = 0
     let skipped = 0
     for (const game of games) {
-      const plays = await readPlays(db, game.id)
+      const rows = await readPlays(db, game.id)
+      const plays = rows.map(row => row.gumbo as GumboPlay)
       if (plays.length === 0) {
         skipped += 1
         continue
