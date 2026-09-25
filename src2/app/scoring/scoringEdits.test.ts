@@ -2,25 +2,39 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import {
+  overrideError,
+  overrideOf as overrideDraft,
+  rosterError,
+  validateRoster
+} from '../../common/scoring/rules'
+import { setupOf } from '../../common/scoring/state'
+import {
   addDevelopmentPlayer,
   createDevelopmentSession
 } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import {
-  applyOverrideDraft,
-  applyRosterDraft,
-  overrideDraft,
-  validateRoster
-} from './scoringEdits'
-import {
   copyState,
   initialScoringState,
   scoringReducer
 } from './scoringMachine'
-import { playerRef, startAppearance } from './scoringSelectors'
+import { playerRef } from './scoringSelectors'
 import { POSITIONS } from './scoringTypes'
 const initial = (): ReturnType<typeof initialScoringState> =>
   initialScoringState(createDevelopmentSession(gameFixture, [], []))
+/** What taking a roster would do: the error, or the game it leaves. */
+function applyRosterDraft(
+  state: ReturnType<typeof initial>,
+  draft: ReturnType<typeof initial>['session'],
+  nextBatter?: number
+): { error?: string; session?: ReturnType<typeof initial>['session'] } {
+  const error = rosterError(state.session, setupOf(draft), nextBatter)
+  if (error != null) return { error }
+  return {
+    session: scoringReducer(state, { type: 'ROSTER', draft, nextBatter })
+      .session
+  }
+}
 describe('atomic scoring edits', function () {
   it('preserves batter identity, count and pitches through reordered rosters and pitcher replacement', function () {
     const state = scoringReducer(initial(), { type: 'PITCH', kind: 'ball' })
@@ -95,7 +109,13 @@ describe('atomic scoring edits', function () {
     const session = state.session
     session.liveData.boxscore.teams.away.battingOrder = [1]
     session.liveData.linescore.offense.first = playerRef(session, 1)
-    state.awaitingBatter = startAppearance(session)
+    session.liveData.plays.currentPlay = null
+    session.liveData.linescore.offense.batter = null
+    state.session.awaitingBatter = {
+      teamId: session.gameData.teams.away.id,
+      dueIndex: 0,
+      duePlayerId: 1
+    }
     state.phase = 'awaitingBatter'
     const draft = copyState(session)
     const newId = addDevelopmentPlayer(draft, 'away', 'Relief batter')
@@ -125,21 +145,19 @@ describe('atomic scoring edits', function () {
       ['strikes', 3],
       ['outs', 3]
     ] as const)
-      expect(applyOverrideDraft(state, { ...good, [key]: value }).error).is.a(
+      expect(overrideError(state.session, { ...good, [key]: value })).is.a(
         'string'
       )
     for (const batter of [null, 10, 999])
-      expect(applyOverrideDraft(state, { ...good, batter }).error).includes(
+      expect(overrideError(state.session, { ...good, batter })).includes(
         'batter'
       )
     for (const pitcher of [null, 1, 999])
-      expect(applyOverrideDraft(state, { ...good, pitcher }).error).includes(
+      expect(overrideError(state.session, { ...good, pitcher })).includes(
         'pitcher'
       )
     for (const bases of [[1, null, null], [2, 2, null], [10, null, null], []])
-      expect(applyOverrideDraft(state, { ...good, bases }).error).includes(
-        'Bases'
-      )
+      expect(overrideError(state.session, { ...good, bases })).includes('Bases')
     expect(
       scoringReducer(state, { type: 'OVERRIDE', draft: { ...good, balls: 4 } })
     ).equals(state)

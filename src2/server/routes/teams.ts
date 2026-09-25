@@ -368,6 +368,7 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
         awayScore: game.away_score,
         ingestStatus: game.ingest_status,
         ingestMessage: game.ingest_message,
+        scoringOwner: game.scoringOwner,
         awayRecord: recordOf(game.away_team_id),
         homeRecord: recordOf(game.home_team_id),
         awayLogoUrl: logoOf(game.away_team_id),

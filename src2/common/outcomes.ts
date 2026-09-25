@@ -1,3 +1,5 @@
+import type { GumboEventType } from './gumboEventTypes'
+
 /**
  * What one player did on a play, in two or three words.
  *
@@ -21,18 +23,52 @@ export interface CreditedOutcomeLike {
   credit: { role: string } | null
 }
 
-/** The few where the event type alone reads better than the label's head. */
-const BY_TYPE: Record<string, string> = {
-  run: 'Run scored',
+/**
+ * Where the event type alone reads better than the label's head, and null
+ * where the label says more. Every stored event type has an entry.
+ */
+export const OUTCOME_BY_TYPE: Record<GumboEventType, string | null> = {
   single: 'Single',
   double: 'Double',
   triple: 'Triple',
   home_run: 'Home run',
+  strikeout: null,
+  strikeout_double_play: null,
   walk: 'Walk',
   intent_walk: 'Intentional walk',
   hit_by_pitch: 'Hit by pitch',
+  field_out: null,
+  other_out: null,
+  grounded_into_double_play: null,
+  triple_play: null,
+  field_error: null,
+  fielders_choice: null,
+  catcher_interference: null,
+  manual_placement: 'Placed on base',
   sac_fly: 'Sacrifice fly',
+  sac_fly_double_play: 'Sacrifice fly',
   sac_bunt: 'Sacrifice bunt',
+  stolen_base: null,
+  caught_stealing: null,
+  pickoff_1b: null,
+  pickoff_2b: null,
+  pickoff_3b: null,
+  pickoff_caught_stealing_2b: null,
+  pickoff_caught_stealing_3b: null,
+  pickoff_caught_stealing_home: null,
+  defensive_indiff: null,
+  placed_runner: 'Placed runner',
+  wild_pitch: null,
+  passed_ball: null,
+  balk: null,
+  game_advisory: null,
+  score_correction: null,
+  final_score: null
+}
+
+/** Credit types that are not play types but read best by their type. */
+const BY_CREDIT: Record<string, string> = {
+  run: 'Run scored',
   double_play: 'Double play'
 }
 
@@ -42,11 +78,16 @@ export function outcomeName(outcome: CreditedOutcomeLike): string {
   // A strikeout belongs to whoever is credited with it, and the two readings
   // are opposite sides of the same play: the pitcher earned it, the catcher
   // picked up a dropped third strike.
-  if (outcome.eventType === 'strikeout') {
+  if (
+    outcome.eventType === 'strikeout' ||
+    outcome.eventType === 'strikeout_double_play'
+  ) {
     return role === 'pitcher' ? 'Strikeout pitching' : 'Dropped third strike'
   }
 
-  const known = BY_TYPE[outcome.eventType]
+  const known =
+    (OUTCOME_BY_TYPE as Record<string, string | null>)[outcome.eventType] ??
+    BY_CREDIT[outcome.eventType]
   if (known != null) return known
 
   return headOf(outcome.label)

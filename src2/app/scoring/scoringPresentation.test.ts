@@ -132,7 +132,7 @@ describe('hit presentation coordination', function () {
         generation: 0
       })
       expect(state.motions).has.length(0)
-      expect(state.pendingPlay!.movements).has.length(0)
+      expect(state.session.pending).equals(null)
       state = scoringReducer(state, {
         type: 'TRAJECTORY',
         angle,

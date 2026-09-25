@@ -1,5 +1,7 @@
 export interface ScoringPreferences {
   sound?: boolean
+  /** Plays are drawn as they happen; off, the field just shows the result. */
+  animations?: boolean
   help: boolean
   shown: number
 }
@@ -28,6 +30,9 @@ export function scoringPreferenceStore(storage: PreferenceStorage): {
           return { help: true, shown: 0 }
         return {
           ...('sound' in value ? { sound: value.sound !== false } : {}),
+          ...('animations' in value
+            ? { animations: value.animations !== false }
+            : {}),
           help: value.help !== false,
           shown:
             typeof value.shown === 'number' && Number.isInteger(value.shown)

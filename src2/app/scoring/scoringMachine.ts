@@ -1,3 +1,4 @@
+import { setupOf } from '../../common/scoring/state'
 import {
   acceptTrajectory,
   chooseOutcome,
@@ -6,30 +7,32 @@ import {
 } from './battedBall'
 import { moreReducer } from './moreActions'
 import {
-  approachFirst,
+  accepted,
+  act,
   completeDefense,
-  prepareTerminalPitch,
+  forceOutInRelay,
+  Refused,
   runnerReducer,
   settleRunners
-} from './runnerRules'
-import { asScoringPlay } from './scoringContract'
-import { applyOverrideDraft, applyRosterDraft } from './scoringEdits'
+} from './scoringFlow'
+import { approachFirst } from './scoringMotion'
 import { outBatterPoint, pitchPresentation } from './scoringPresentation'
-import {
-  baseIds,
-  battingSide,
-  bottomActionsAllowed,
-  canSwitchBatter,
-  fieldingSide,
-  playerRef,
-  startAppearance
-} from './scoringSelectors'
+import { bottomActionsAllowed, canSwitchBatter } from './scoringSelectors'
 import type {
   ScoringEvent,
   ScoringSessionState,
   ScoringSnapshot,
   ScoringState
 } from './scoringTypes'
+
+/**
+ * The scoring screen's reducer. It turns what the scorer does — a tap, a drag,
+ * a menu choice — into actions the scoring library applies, and keeps the
+ * screen's own state: the step the scorer is on, what is being drawn, and the
+ * history Undo walks back through.
+ */
+
+export { accepted }
 
 export function copyState<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
@@ -39,94 +42,53 @@ export function initialScoringState(
   presentationEnabled = false
 ): ScoringState {
   const owned = copyState(session)
-  const awaitingBatter =
-    owned.liveData.plays.currentPlay == null ? startAppearance(owned) : null
-  return {
+  const state: ScoringState = {
     session: owned,
     presentationEnabled,
     presentation: null,
     motions: [],
     runnerAction: null,
     correctionWindow: null,
-    phase: awaitingBatter == null ? 'ready' : 'awaitingBatter',
+    phase: owned.awaitingBatter == null ? 'ready' : 'awaitingBatter',
     pendingPlay: null,
-    homeQueue: [],
-    awaitingBatter,
+    log: [],
     generation: 0,
     past: []
   }
+  // A game picked up in the middle of a play resumes at that play's step.
+  if (owned.pending != null) {
+    state.pendingPlay = {
+      outcome: owned.pending.outcome,
+      trajectoryAccepted: true
+    }
+    state.phase = 'runnerMovement'
+    settleRunners(state)
+    // A decided play picked up here waits for the scorer: no countdown
+    // closes it, and so nothing is saved until they finish it or pitch.
+    state.correctionWindow = null
+  }
+  return state
 }
 export function snapshotOf(state: ScoringState): ScoringSnapshot {
   const { past: _past, ...snapshot } = state
   return copyState(snapshot)
 }
-export function accepted(
-  state: ScoringState,
-  label: string,
-  edit: (next: ScoringState) => void
-): ScoringState {
-  const next: ScoringState = {
-    ...snapshotOf(state),
-    past: [...state.past, { label, snapshot: snapshotOf(state) }]
-  }
-  next.celebration = null
-  edit(next)
-  if (next.correctionWindow != null)
-    next.correctionWindow = {
-      remainingMs: 10000,
-      revision: next.correctionWindow.revision + 1
-    }
-  next.session.meta.sequence++
-  return next
-}
-export function nextHalf(state: ScoringState): void {
-  state.celebration = null
-  const line = state.session.liveData.linescore
-  if (!line.isTopInning) line.currentInning++
-  line.isTopInning = !line.isTopInning
-  line.inningState = line.isTopInning ? 'Top' : 'Bottom'
-  const number = line.currentInning
-  line.currentInningOrdinal = `${number}${number % 100 >= 11 && number % 100 <= 13 ? 'th' : (['th', 'st', 'nd', 'rd'][number % 10] ?? 'th')}`
-  line.balls = 0
-  line.strikes = 0
-  line.outs = 0
-  line.offense = { batter: null, first: null, second: null, third: null }
-  state.motions = []
-  state.runnerAction = null
-  state.correctionWindow = null
-  state.pendingPlay = null
-  state.homeQueue = []
-  state.generation++
-  state.recentPitch = null
-  state.awaitingBatter = startAppearance(state.session)
-  state.phase = state.awaitingBatter == null ? 'ready' : 'awaitingBatter'
-}
+
+/** Closes the decided play: the game moves on to the next batter. */
 export function closePlay(state: ScoringState): ScoringState {
-  if (state.phase !== 'correctionWindow' || state.pendingPlay == null)
-    return state
+  if (state.phase !== 'correctionWindow') return state
   const next = { ...snapshotOf(state), past: state.past }
-  const session = next.session
-  const play = session.liveData.plays.currentPlay
-  if (play == null) return state
-  play.about.isComplete = true
-  play.result.awayScore = session.liveData.linescore.teams.away.runs
-  play.result.homeScore = session.liveData.linescore.teams.home.runs
-  session.liveData.plays.allPlays.push(asScoringPlay(play))
-  const lineup = session.liveData.boxscore.teams[battingSide(session)]
-  lineup.battingIndex = (lineup.battingIndex + 1) % lineup.battingOrder.length
+  try {
+    act(next, { type: 'gameFlow', kind: 'closePlay' })
+  } catch (error) {
+    if (error instanceof Refused) return state
+    throw error
+  }
   next.motions = []
   next.runnerAction = null
   next.correctionWindow = null
   next.pendingPlay = null
-  next.homeQueue = []
-  if (session.liveData.linescore.outs >= 3) nextHalf(next)
-  else {
-    session.liveData.linescore.balls = 0
-    session.liveData.linescore.strikes = 0
-    next.awaitingBatter = startAppearance(session)
-    next.phase = next.awaitingBatter == null ? 'ready' : 'awaitingBatter'
-  }
-  session.meta.sequence++
+  next.phase = next.session.awaitingBatter == null ? 'ready' : 'awaitingBatter'
   return next
 }
 function cancelRunnerDraft(state: ScoringState): ScoringState {
@@ -179,6 +141,7 @@ function runnerTransition(
       ...result,
       runnerDraft: draft,
       session: state.session,
+      log: state.log,
       past: state.past,
       correctionWindow: state.correctionWindow
     }
@@ -190,7 +153,6 @@ function runnerTransition(
     ...state.past.slice(0, draft.historyLength),
     { label, snapshot: copyState(draft.checkpoint) }
   ]
-  result.session.meta.sequence = draft.checkpoint.session.meta.sequence + 1
   if (result.correctionWindow != null)
     result.correctionWindow = {
       remainingMs: 10000,
@@ -202,6 +164,16 @@ export function scoringReducer(
   state: ScoringState,
   event: ScoringEvent
 ): ScoringState {
+  if (event.type === 'PRESENTATION')
+    return state.presentationEnabled === event.enabled
+      ? state
+      : { ...state, presentationEnabled: event.enabled }
+  if (event.type === 'RESET')
+    return {
+      ...initialScoringState(event.session, state.presentationEnabled),
+      log: [...event.log],
+      ...(event.readOnly === true ? { readOnly: true } : {})
+    }
   if (event.type === 'CELEBRATION_DONE')
     return state.celebration?.id === event.id &&
       state.celebration.generation === event.generation
@@ -238,7 +210,6 @@ export function scoringReducer(
             snapshot: copyState(draft.checkpoint)
           }
         ]
-        next.session.meta.sequence = draft.checkpoint.session.meta.sequence + 1
         delete next.runnerDraft
         delete next.moreDraft
       }
@@ -308,7 +279,7 @@ export function scoringReducer(
     return cancelRunnerDraft(state)
   if (event.type === 'UNDO') {
     const last = state.past.at(-1)
-    if (last == null) return state
+    if (last == null || state.readOnly === true) return state
     const next = {
       ...copyState(last.snapshot),
       presentation: null,
@@ -347,14 +318,29 @@ export function scoringReducer(
   }
   if (event.type === 'RUNNER_DROP') {
     if (event.generation !== state.generation) return state
-    const from = baseIds(state.session).indexOf(event.id) + 1
+    if (
+      state.phase === 'chooseDefender' &&
+      state.runnerAction?.purpose === 'batterRetirement'
+    )
+      return forceOutInRelay(
+        state,
+        event.id,
+        event.to,
+        event.decision,
+        event.generation
+      )
+    const offense = state.session.liveData.linescore.offense
+    const from =
+      [offense.first?.id, offense.second?.id, offense.third?.id].indexOf(
+        event.id
+      ) + 1
     if (event.to !== from && event.to !== from + 1) return state
     const proposed = scoringReducer(state, {
       type: 'RUNNER_PROPOSE',
       id: event.id,
       to: event.to
     })
-    if (proposed == null || proposed === state) return state
+    if (proposed === state) return state
     let decided = scoringReducer(proposed, {
       type: 'RUNNER_DECIDE',
       decision: event.decision
@@ -395,19 +381,28 @@ export function scoringReducer(
       (state.phase !== 'ready' && state.phase !== 'awaitingBatter')
     )
       return state
-    const result =
-      event.type === 'ROSTER'
-        ? applyRosterDraft(state, event.draft, event.nextBatter)
-        : applyOverrideDraft(state, event.draft)
-    if (result.session == null) return state
     return accepted(
       state,
       event.type === 'ROSTER' ? 'Set team roster' : 'Override game state',
       next => {
-        next.recentPitch = null
-        next.session = result.session!
+        if (event.type === 'ROSTER')
+          act(next, {
+            type: 'lineup',
+            kind: 'roster',
+            setup: setupOf(event.draft),
+            ...(event.nextBatter == null
+              ? {}
+              : { nextBatter: event.nextBatter })
+          })
+        else
+          act(next, {
+            type: 'gameFlow',
+            kind: 'override',
+            ...event.draft,
+            batter: event.draft.batter ?? undefined,
+            pitcher: event.draft.pitcher ?? undefined
+          })
         next.phase = 'ready'
-        next.awaitingBatter = null
         next.generation++
       }
     )
@@ -421,7 +416,7 @@ export function scoringReducer(
       (event.sequence != null &&
         event.sequence !== state.session.meta.sequence) ||
       state.runnerAction != null ||
-      state.homeQueue.length > 0 ||
+      state.session.homeQueue.length > 0 ||
       state.motions.some(motion => !motion.complete)
     )
       return state
@@ -430,7 +425,21 @@ export function scoringReducer(
   if (event.type === 'END_HALF')
     return state.phase !== 'ready' || state.moreDraft != null
       ? state
-      : accepted(state, 'End half inning', nextHalf)
+      : accepted(state, 'End half inning', next => {
+          act(next, { type: 'gameFlow', kind: 'endHalf' })
+          next.motions = []
+          next.pendingPlay = null
+          next.generation++
+          next.phase =
+            next.session.awaitingBatter == null ? 'ready' : 'awaitingBatter'
+        })
+  if (event.type === 'END_GAME')
+    return (state.phase !== 'ready' && state.phase !== 'awaitingBatter') ||
+      state.moreDraft != null
+      ? state
+      : accepted(state, 'End game', next => {
+          act(next, { type: 'gameFlow', kind: 'endGame' })
+        })
   if (state.phase !== 'ready') return state
   if (event.type === 'SWITCH_SIDE') {
     if (
@@ -443,8 +452,7 @@ export function scoringReducer(
       state,
       `Batter ${event.side === 'L' ? 'left' : 'right'} handed`,
       next => {
-        const play = next.session.liveData.plays.currentPlay
-        if (play != null) play.matchup.batSide.code = event.side
+        act(next, { type: 'lineup', kind: 'batterSide', batSide: event.side })
       }
     )
   }
@@ -456,85 +464,14 @@ export function scoringReducer(
     foul: 'Foul Ball'
   }
   return accepted(state, labels[event.kind], next => {
-    const session = next.session
-    const line = session.liveData.linescore
-    const play = session.liveData.plays.currentPlay
-    if (play == null) throw new Error('Ready requires an active play')
     if (state.presentationEnabled === true)
       next.presentation = pitchPresentation(state, event.kind)
-    const before = { balls: line.balls, strikes: line.strikes, outs: line.outs }
-    const pitcher = play.matchup.pitcher.id
-    const counts =
-      session.liveData.boxscore.teams[fieldingSide(session)].pitchCounts
-    counts[pitcher] = (counts[pitcher] ?? 0) + 1
-    play.playEvents.push({
-      index: play.playEvents.length,
-      isPitch: true,
+    act(next, {
       type: 'pitch',
-      details: {
-        code: { ball: 'B', called: 'C', swing: 'S', foul: 'F' }[event.kind],
-        description: labels[event.kind]
-      },
-      count: before,
-      player: play.matchup.pitcher
+      call: ({ ball: 'B', called: 'C', swing: 'S', foul: 'F' } as const)[
+        event.kind
+      ]
     })
-    next.recentPitch =
-      event.kind === 'foul'
-        ? null
-        : {
-            atBatIndex: play.about.atBatIndex,
-            index: play.playEvents.length - 1
-          }
-    if (event.kind === 'ball') line.balls++
-    else if (event.kind !== 'foul' || line.strikes < 2) line.strikes++
-    if (line.balls >= 4 || line.strikes >= 3) {
-      const walk = line.balls >= 4
-      const originalBases = baseIds(session)
-      next.pendingPlay = {
-        outcome: walk ? 'Walk' : 'Strikeout',
-        automaticAward: walk,
-        originalRunnerRecordCount: play.runners.length,
-        originalBases,
-        originalRuns: line.teams[battingSide(session)].runs,
-        originalOuts: line.outs,
-        movements: [],
-        trajectoryAccepted: true
-      }
-      play.result.event = walk ? 'Walk' : 'Strikeout'
-      play.result.eventType = walk ? 'walk' : 'strikeout'
-      play.result.description = play.result.event
-      play.source.gamestation.outcome = play.result.event
-      if (walk) {
-        let carry: number | null = play.matchup.batter.id
-        for (let base = 1; base <= 3 && carry != null; base++) {
-          const id: number = carry
-          carry = originalBases[base - 1]
-          const key = (['first', 'second', 'third'] as const)[base - 1]
-          line.offense[key] = playerRef(session, id)
-          next.pendingPlay.movements.push({
-            playerId: id,
-            from: base - 1,
-            to: base,
-            force: true,
-            decision: 'safe'
-          })
-        }
-        if (carry != null) {
-          next.pendingPlay.movements.push({
-            playerId: carry,
-            from: 3,
-            to: 4,
-            force: true,
-            decision: 'safe',
-            automaticHome: true
-          })
-        }
-      } else line.outs++
-      next.phase =
-        next.homeQueue.length === 0 ? 'correctionWindow' : 'homeDecision'
-      prepareTerminalPitch(next)
-    }
-    play.count = { balls: line.balls, strikes: line.strikes, outs: line.outs }
-    asScoringPlay(play)
+    settleRunners(next)
   })
 }

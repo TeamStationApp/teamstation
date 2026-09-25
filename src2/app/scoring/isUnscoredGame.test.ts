@@ -2,7 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { asGameDetail } from '../../common/api'
-import { isUnscoredGame } from './isUnscoredGame'
+import { isUnscoredGame, scoringEntry } from './isUnscoredGame'
 
 export const gameFixture = asGameDetail({
   id: 'g1',
@@ -55,5 +55,47 @@ describe('unscored entry', function () {
     ]) {
       expect(isUnscoredGame({ ...gameFixture, ...patch })).equals(false)
     }
+  })
+})
+
+describe('the scoring entry on the Game page', function () {
+  it('scores an unscored game, continues one GameStation scores, and offers nothing else', function () {
+    expect(scoringEntry(gameFixture)).equals('score')
+    expect(
+      scoringEntry({
+        ...gameFixture,
+        scoringOwner: 'gamestation',
+        status: 'inProgress',
+        awayScore: 1
+      })
+    ).equals('continue')
+    expect(
+      scoringEntry({
+        ...gameFixture,
+        scoringOwner: 'gamestation',
+        status: 'final',
+        awayScore: 3,
+        homeScore: 1
+      })
+    ).equals('continue')
+    expect(
+      scoringEntry({
+        ...gameFixture,
+        scoringOwner: 'external',
+        status: 'final',
+        awayScore: 3,
+        homeScore: 1
+      })
+    ).equals(null)
+    expect(scoringEntry({ ...gameFixture, status: 'final' })).equals(null)
+    expect(scoringEntry({ ...gameFixture, status: 'cancelled' })).equals(null)
+    expect(
+      scoringEntry({
+        ...gameFixture,
+        scoringOwner: 'gamestation',
+        status: 'cancelled'
+      })
+    ).equals(null)
+    expect(scoringEntry({ ...gameFixture, awayScore: 2 })).equals(null)
   })
 })

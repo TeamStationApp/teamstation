@@ -215,6 +215,8 @@ export interface GamesTable {
   >
   ingest_status: Generated<'none' | 'ok' | 'scoreMismatch' | 'error'>
   ingest_message: string | null
+  /** The at-bat GameStation is scoring now, as a Gumbo document. */
+  currentPlay: Json | null
   created_at: Timestamp
   updated_at: Timestamp
 }

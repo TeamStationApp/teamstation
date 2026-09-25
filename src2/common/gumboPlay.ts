@@ -180,11 +180,64 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === 'object' && !Array.isArray(value)
 }
 
-export const asPostEventsBody = asObject({
+/**
+ * The at-bat still in progress: a Gumbo play with no outcome yet. It is stored
+ * on the game, never as an `events` row, so every row is a completed play.
+ * Only its place in the game is checked; the rest is kept as sent.
+ */
+const asCurrentPlayShape = asObject({
+  about: asObject({
+    atBatIndex: asCount,
+    inning: asNullable(asCount),
+    halfInning: asNullable(asValue('top', 'bottom')),
+    isComplete: asValue(false)
+  }).withRest
+}).withRest
+
+export type CurrentPlay = ReturnType<typeof asCurrentPlayShape> &
+  Record<string, unknown>
+
+export function asCurrentPlay(raw: unknown): CurrentPlay {
+  try {
+    return asCurrentPlayShape(raw)
+  } catch (error) {
+    const why = error instanceof Error ? error.message : String(error)
+    throw new TypeError(`the current play: ${why}`)
+  }
+}
+
+const asPostEventsShape = asObject({
   plays: asArray(asGumboPlay),
   source: asOptional(
     asObject({
       system: asOptional(asSourceSystem)
     })
-  )
+  ),
+  /**
+   * `replace`, the default, is a finished game arriving whole: every stored
+   * play the body does not name is deleted. `live` is a game being scored:
+   * the plays sent are written in place, and only the indexes in `remove`
+   * are deleted.
+   */
+  mode: asOptional(asValue('replace', 'live'), 'replace'),
+  remove: asOptional(asArray(asCount)),
+  /** On a live post: the at-bat in progress, or null when there is none. */
+  currentPlay: (raw: unknown): CurrentPlay | null | undefined =>
+    raw === undefined ? undefined : raw === null ? null : asCurrentPlay(raw)
 })
+
+export type PostEventsBody = ReturnType<typeof asPostEventsShape>
+
+export function asPostEventsBody(raw: unknown): PostEventsBody {
+  const body = asPostEventsShape(raw)
+  if (body.mode === 'replace') {
+    if (body.remove !== undefined)
+      throw new TypeError('remove is for a live post')
+    if (body.currentPlay !== undefined)
+      throw new TypeError('currentPlay is for a live post')
+  }
+  const posted = new Set(body.plays.map(play => play.about.atBatIndex))
+  if ((body.remove ?? []).some(index => posted.has(index)))
+    throw new TypeError('A play is both posted and removed')
+  return body
+}

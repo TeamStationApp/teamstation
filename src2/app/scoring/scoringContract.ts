@@ -1,11 +1,12 @@
 import {
-  asEstimatedGumboPlay,
-  type EstimatedGumboPlay
-} from './contracts/estimatedGumbo'
+  asGamePlay,
+  type GamePlay,
+  type PlayerRef
+} from '../../common/scoring/state'
 
-export type ScoringPlay = EstimatedGumboPlay
-export const asScoringPlay = asEstimatedGumboPlay
-export type PlayerRef = ScoringPlay['matchup']['batter']
+export type ScoringPlay = GamePlay
+export const asScoringPlay = asGamePlay
+export type { PlayerRef }
 export const outcomeEvents = {
   Single: 'single',
   Double: 'double',
@@ -25,10 +26,10 @@ export const moreEvents = {
   'Passed Ball': 'passed_ball',
   Balk: 'balk',
   'Put Batter on Base': 'manual_placement',
-  'Batter Out — Other': 'field_out',
+  'Batter Out — Other': 'other_out',
   'Place a Runner (Tiebreaker)': 'placed_runner',
   'Hit by Pitch': 'hit_by_pitch',
   'Intentional Walk': 'intent_walk',
-  "Catcher's Interference": 'catcher_interf',
+  "Catcher's Interference": 'catcher_interference',
   'Dropped Third Strike': 'strikeout'
 } as const

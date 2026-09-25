@@ -1,9 +1,11 @@
 /**
  * The event types a stored play may name: Gumbo's own names for what happened
- * at the plate or on the bases, plus `score_correction` and `final_score`. A
- * new type is added here.
+ * at the plate or on the bases, plus `score_correction`, `final_score` and
+ * GameStation's own `manual_placement` and `placed_runner`. A new type is
+ * added here, and every classifier of event types (`hitsAndErrors`,
+ * `outcomeName`, `describePlay`) is told what it is.
  */
-const GUMBO_EVENT_TYPES = [
+export const GUMBO_EVENT_TYPES = [
   'single',
   'double',
   'triple',
@@ -25,8 +27,19 @@ const GUMBO_EVENT_TYPES = [
   'wild_pitch',
   'passed_ball',
   'balk',
+  'pickoff_1b',
+  'pickoff_2b',
+  'pickoff_3b',
+  'pickoff_caught_stealing_2b',
+  'pickoff_caught_stealing_3b',
+  'pickoff_caught_stealing_home',
+  'defensive_indiff',
+  'strikeout_double_play',
+  'sac_fly_double_play',
   'other_out',
   'game_advisory',
+  'manual_placement',
+  'placed_runner',
   'score_correction',
   'final_score'
 ] as const
@@ -66,8 +79,19 @@ const EVENT_TYPE_NAMES: Record<GumboEventType, string> = {
   wild_pitch: 'Wild pitch',
   passed_ball: 'Passed ball',
   balk: 'Balk',
+  pickoff_1b: 'Pickoff at first',
+  pickoff_2b: 'Pickoff at second',
+  pickoff_3b: 'Pickoff at third',
+  pickoff_caught_stealing_2b: 'Picked off stealing second',
+  pickoff_caught_stealing_3b: 'Picked off stealing third',
+  pickoff_caught_stealing_home: 'Picked off stealing home',
+  defensive_indiff: 'Defensive indifference',
+  strikeout_double_play: 'Strikeout double play',
+  sac_fly_double_play: 'Sacrifice fly double play',
   other_out: 'Out',
   game_advisory: 'Scorekeeper note',
+  manual_placement: 'Batter placed on base',
+  placed_runner: 'Runner placed',
   score_correction: 'Score correction',
   final_score: 'Final score'
 }

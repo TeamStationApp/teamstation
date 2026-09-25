@@ -53,7 +53,7 @@ import { useVideoAspect } from '../player/useVideoAspect'
 import { HAVE_METADATA, type VideoHandle } from '../player/videoHandle'
 import { VideoView } from '../player/VideoView'
 import { windowOf } from '../player/wallClock'
-import { isUnscoredGame } from '../scoring/isUnscoredGame'
+import { scoringEntry } from '../scoring/isUnscoredGame'
 import { cacheStyles, useTheme } from '../theme/ThemeContext'
 import type { Theme } from '../theme/types'
 import { gameStatusLine, shortDate, winnerOf } from './format'
@@ -907,12 +907,15 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       tabs={[
         { id: 'watch', label: lstrings.game_videos },
         ...(Platform.OS === 'web' &&
-        isUnscoredGame(game) &&
+        scoringEntry(game) != null &&
         props.onScoreGame != null
           ? [
               {
                 id: 'score' as const,
-                label: 'Score Game',
+                label:
+                  scoringEntry(game) === 'continue'
+                    ? 'Continue Scoring'
+                    : 'Score Game',
                 role: 'button' as const
               }
             ]

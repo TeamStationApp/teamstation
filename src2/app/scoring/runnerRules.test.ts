@@ -1,16 +1,13 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
+import { homeBackProposal } from '../../common/scoring/rules'
 import { completeMotions } from '../../test/scoringHelpers'
 import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
-import {
-  basePath,
-  homeBackProposal,
-  homeQueuePoint,
-  runnerReasons
-} from './runnerRules'
+import { runnerReasons } from './scoringFlow'
 import { initialScoringState, scoringReducer } from './scoringMachine'
+import { basePath, homeQueuePoint } from './scoringMotion'
 import { baseIds, playerRef } from './scoringSelectors'
 import type { ScoringState } from './scoringTypes'
 function initial(mask = 0): ScoringState {
@@ -78,13 +75,13 @@ describe('runner progression and correction deadline', function () {
     let state = completeMotions(hit(initial(7), 'Triple'))
     state = scoringReducer(state, { type: 'HOME', decision: 'out' })
     state = retire(state)
-    expect(state.homeQueue).deep.equals([3, 2])
+    expect(state.session.homeQueue).deep.equals([3, 2])
     expect(
       state.motions.find(motion => motion.playerId === 3)!.waypoints
     ).deep.equals([homeQueuePoint(1), homeQueuePoint(0)])
     state = completeMotions(state)
     expect(state.phase).equals('homeDecision')
-    expect(state.homeQueue[0]).equals(3)
+    expect(state.session.homeQueue[0]).equals(3)
     state = completeMotions(hit(initial(), 'Error'))
     state = scoringReducer(state, {
       type: 'DEFENDER',
@@ -111,11 +108,11 @@ describe('runner progression and correction deadline', function () {
         const queue = [3, 2, 1]
           .filter(base => (mask & (1 << (base - 1))) !== 0 && base + bases >= 4)
           .map(base => base + 1)
-        expect(state.homeQueue).deep.equals(queue)
+        expect(state.session.homeQueue).deep.equals(queue)
         expect(state.correctionWindow).equals(null)
         state = completeMotions(state)
         for (const id of queue) {
-          expect(state.homeQueue[0]).equals(id)
+          expect(state.session.homeQueue[0]).equals(id)
           state = scoringReducer(state, { type: 'HOME', decision: 'safe' })
           state = completeMotions(state)
         }
@@ -173,7 +170,7 @@ describe('runner progression and correction deadline', function () {
   it('backs a legal single up atomically and hides Back for forced or fixed-batter collisions', function () {
     let state = completeMotions(hit(initial(6)))
     expect(
-      homeBackProposal(state)
+      homeBackProposal(state.session)
         ?.filter(move => move.decision !== 'out')
         .map(move => [move.playerId, move.to])
     ).deep.equals([
@@ -185,10 +182,10 @@ describe('runner progression and correction deadline', function () {
       scoringReducer(state, { type: 'HOME', decision: 'back' })
     )
     expect(baseIds(state.session)).deep.equals([1, 3, 4])
-    expect(state.homeQueue).has.length(0)
+    expect(state.session.homeQueue).has.length(0)
     for (const outcome of ['Single', 'Triple', 'Home Run'] as const)
       expect(
-        homeBackProposal(completeMotions(hit(initial(7), outcome)))
+        homeBackProposal(completeMotions(hit(initial(7), outcome)).session)
       ).equals(null)
   })
   it('waits for animations, ignores duplicates, resets edits and guards stale deadlines after Undo', function () {
@@ -246,7 +243,7 @@ describe('runner progression and correction deadline', function () {
     state = completeMotions(retire(state))
     // This runner was not forced home from second, so the earlier run stands.
     expect(state.session.liveData.linescore.teams.away.runs).equals(1)
-    expect(state.homeQueue).has.length(0)
+    expect(state.session.homeQueue).has.length(0)
     expect(state.session.liveData.linescore.inningState).equals('Bottom')
     expect(
       state.session.liveData.plays.allPlays
