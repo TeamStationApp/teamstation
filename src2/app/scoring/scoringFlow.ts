@@ -7,6 +7,7 @@ import {
 } from '../../common/scoring/actions'
 import {
   closesAutomatically,
+  forcedFrom,
   homeBackProposal,
   nextDecision,
   runnerDecisionError as gameRunnerError,
@@ -200,6 +201,66 @@ export function beginDefense(state: ScoringState): void {
     action.defensiveRoute = [{ id: holder, point: { ...point } }]
     state.phase = 'chooseDefender'
   } else state.phase = 'chooseThrower'
+}
+
+/**
+ * During the relay that retires the batter, a forced runner the throw beat to
+ * the next base is out there: the fielder holding the ball puts him out, with
+ * the relay so far behind him. The relay then goes on for the batter from that
+ * fielder, so a 6-4-3 records the lead runner first and the batter second.
+ */
+export function forceOutInRelay(
+  state: ScoringState,
+  runner: number,
+  to: number,
+  decision: 'safe' | 'out',
+  generation: number
+): ScoringState {
+  const action = state.runnerAction
+  const route = action?.defensiveRoute ?? []
+  const game = state.session
+  const offense = game.liveData.linescore.offense
+  const from =
+    [offense.first?.id, offense.second?.id, offense.third?.id].indexOf(runner) +
+    1
+  if (
+    state.phase !== 'chooseDefender' ||
+    action?.purpose !== 'batterRetirement' ||
+    state.presentation != null ||
+    decision !== 'out' ||
+    generation !== state.generation ||
+    route.length === 0 ||
+    from === 0 ||
+    to !== from + 1 ||
+    !forcedFrom(game, from)
+  )
+    return state
+  return accepted(
+    state,
+    `Force out ${game.gameData.players[runner].fullName}`,
+    next => {
+      act(next, {
+        type: 'runnerMovement',
+        runner,
+        to: destination(to),
+        out: true,
+        reason: 'Force Out',
+        fielders: route.map(hop => hop.id),
+        locations: route.map(hop => ({ ...hop.point })),
+        runnerLocation: { ...BASES[to % 4] }
+      })
+      const holder = route[route.length - 1]
+      const relay = next.runnerAction!
+      relay.thrower = holder.id
+      relay.throwerPoint = { ...holder.point }
+      relay.defensiveRoute = [{ id: holder.id, point: { ...holder.point } }]
+      if (next.session.liveData.linescore.outs >= 3) {
+        next.runnerAction = null
+        next.phase = 'runnerMovement'
+        settleRunners(next)
+      }
+    }
+  )
 }
 
 /** A throw the screen drew has arrived: another hop, or the out. */

@@ -185,3 +185,134 @@ describe('defensive relay draft', function () {
     expect(state.phase).equals('chooseDefender')
   })
 })
+
+describe('a relay that forces the lead runner before the batter', function () {
+  // Walk the first batter, then the next one grounds to short.
+  function grounder(): ScoringState {
+    let state = initialScoringState(
+      createDevelopmentSession(gameFixture, [], [])
+    )
+    for (let i = 0; i < 4; i++)
+      state = completeMotions(
+        scoringReducer(state, { type: 'PITCH', kind: 'ball' })
+      )
+    state = scoringReducer(state, {
+      type: 'CLOSE_PLAY',
+      generation: state.generation
+    })
+    state = scoringReducer(state, { type: 'OUTCOME', outcome: 'Throw Out' })
+    state = scoringReducer(state, {
+      type: 'FIELDER',
+      id: 14,
+      point: { x: -20, z: -40 },
+      generation: state.generation
+    })
+    state = scoringReducer(state, {
+      type: 'TRAJECTORY',
+      angle: -10,
+      generation: state.generation
+    })
+    return completeMotions(state)
+  }
+  const drop = (
+    state: ScoringState,
+    decision: 'safe' | 'out',
+    to = 2
+  ): ScoringState =>
+    scoringReducer(state, {
+      type: 'RUNNER_DROP',
+      id: 1,
+      to,
+      decision,
+      generation: state.generation
+    })
+
+  it('records 6-4-3 as the lead runner out at second, then the batter at first', function () {
+    let state = grounder()
+    expect(state.phase).equals('chooseDefender')
+    expect(state.runnerAction).includes({
+      purpose: 'batterRetirement',
+      thrower: 14
+    })
+    state = completeMotions(
+      scoringReducer(state, {
+        type: 'DEFENDER',
+        id: 13,
+        point: { ...BASES[2] },
+        generation: state.generation
+      })
+    )
+    // Safe, a base too far, or no throw yet: nothing happens.
+    expect(drop(state, 'safe')).equals(state)
+    expect(drop(state, 'out', 3)).equals(state)
+    expect(drop(grounder(), 'out')).not.equals(state)
+    const beforeForce = state
+    state = drop(state, 'out')
+    expect(state.phase).equals('chooseDefender')
+    expect(state.session.liveData.linescore.outs).equals(1)
+    // Undo takes the force out back and leaves the relay where it was.
+    const undone = scoringReducer(state, { type: 'UNDO' })
+    expect(undone.session).deep.equals(beforeForce.session)
+    expect(undone.runnerAction).deep.equals(beforeForce.runnerAction)
+    expect(state.runnerAction).includes({ thrower: 13, playerId: 2 })
+    state = completeMotions(
+      scoringReducer(state, {
+        type: 'DEFENDER',
+        id: 12,
+        point: { ...BASES[1] },
+        generation: state.generation
+      })
+    )
+    state = completeMotions(
+      scoringReducer(state, { type: 'DEFENDER', generation: state.generation })
+    )
+    state = scoringReducer(state, {
+      type: 'CLOSE_PLAY',
+      generation: state.generation
+    })
+    const play = state.session.liveData.plays.allPlays.at(-1)!
+    expect(play.result.eventType).equals('grounded_into_double_play')
+    expect(
+      play.runners.map(runner => [
+        runner.details.runner.id,
+        runner.details.movementReason,
+        runner.movement.outNumber,
+        runner.movement.forceOut,
+        runner.credits.map(credit => `${credit.credit} ${credit.player.id}`)
+      ])
+    ).deep.equals([
+      [1, 'Force Out', 1, true, ['f_assist 14', 'f_putout 13']],
+      [2, 'Throw Out', 2, true, ['f_assist 13', 'f_putout 12']]
+    ])
+    expect(state.log.filter(action => action.type === 'runnerMovement')).length(
+      2
+    )
+  })
+
+  it('ends the half when the force is the third out', function () {
+    let state = grounder()
+    state = completeMotions(
+      scoringReducer(state, {
+        type: 'DEFENDER',
+        id: 13,
+        point: { ...BASES[2] },
+        generation: state.generation
+      })
+    )
+    const ended = completeMotions(drop(withTwoOuts(state), 'out'))
+    expect(ended.session.liveData.linescore.outs).equals(0)
+    expect(ended.session.liveData.linescore.isTopInning).equals(false)
+    // The batter was never put out: he reached on a fielder's choice.
+    const play = ended.session.liveData.plays.allPlays.at(-1)!
+    expect(play.result.eventType).equals('fielders_choice')
+    expect(play.runners.filter(runner => runner.movement.isOut)).length(1)
+    expect(ended.runnerAction).equals(null)
+  })
+})
+
+/** The same moment, with two out before the ball was hit. */
+function withTwoOuts(state: ScoringState): ScoringState {
+  const next = structuredClone(state)
+  next.session.liveData.linescore.outs = 2
+  return next
+}

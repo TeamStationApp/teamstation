@@ -343,26 +343,31 @@ describe('scoring into the server', function () {
       await pitch(page, 'Ball')
       await pitch(page, 'Called Strike')
       await pitch(page, 'Swing and Miss')
-      // A ground ball to the shortstop: 6, then 4, then 3 for the batter…
+      // A ground ball to the shortstop: 6 to 4, forcing the runner at
+      // second, then 4 to 3 for the batter.
       await hitTo(page, 'Throw Out', 4, -10)
       await page.waitForSelector(
-        '[aria-label^="Tap or drag the next defender"]'
+        '[aria-label^="Tap or drag the next defender, drag a forced runner"]'
       )
       // The shortstop holds the ball, so the second baseman is fourth.
       await placeWithKeyboard(page, 4)
       await page.waitForSelector(
-        '[aria-label^="Tap or drag the next defender"]'
+        '[aria-label^="Tap or drag the next defender, drag a forced runner"]'
       )
-      // The second baseman holds it, so the first baseman is third.
-      await placeWithKeyboard(page, 3)
-      await click(page, 'Finish defensive play')
-      // …and the runner from first out at second.
-      await page.waitForSelector('[aria-label="Time to edit play"]', {
-        timeout: 30000
-      })
-      await dropRunnerWithKeyboard(page, 'Out', true)
+      // The forced runner is the last player the field offers: [ from
+      // nothing selected goes to him. The throw beat him to second.
+      await frame(page)
+      await frame(page)
+      await page.focus('[role="application"]')
+      await page.keyboard.press('[')
+      await frame(page)
+      await page.keyboard.press('Space')
+      for (let i = 0; i < 8; i++) await page.keyboard.press('ArrowUp')
+      await page.keyboard.press('o')
+      await page.keyboard.press('Enter')
+      // The second baseman still holds it, so the first baseman is third.
       await page.waitForSelector(
-        '[aria-label^="Tap or drag the next defender"]'
+        '[aria-label^="Tap or drag the next defender, or hit Done"]'
       )
       await placeWithKeyboard(page, 3)
       await click(page, 'Finish defensive play')
@@ -374,7 +379,7 @@ describe('scoring into the server', function () {
         result: { eventType: string }
         matchup: { batter: { id?: number }; pitcher: { id?: number } }
         runners: Array<{
-          movement: { isOut: boolean }
+          movement: { isOut: boolean; outNumber?: number; forceOut: boolean }
           details: { runner: { id: number } }
           credits: Array<{ player: { id: number }; credit: string }>
         }>
@@ -385,12 +390,27 @@ describe('scoring into the server', function () {
           .flatMap(entry => entry.credits)
           .map(credit => `${credit.credit} ${credit.player.id}`)
       const [, , first, second, short] = fixture.home
-      expect(credits(fixture.away[1])).deep.equals([
+      expect(credits(fixture.away[0])).deep.equals([
         `f_assist ${short}`,
+        `f_putout ${second}`
+      ])
+      expect(credits(fixture.away[1])).deep.equals([
         `f_assist ${second}`,
         `f_putout ${first}`
       ])
-      expect(credits(fixture.away[0])).includes(`f_putout ${second}`)
+      // The lead runner is out first, and forced.
+      expect(
+        dp.runners
+          .filter(runner => runner.movement.isOut)
+          .map(runner => [
+            runner.details.runner.id,
+            runner.movement.outNumber,
+            runner.movement.forceOut
+          ])
+      ).deep.equals([
+        [fixture.away[0], 1, true],
+        [fixture.away[1], 2, true]
+      ])
       expect(walk.result.eventType).equals('walk')
       expect(dp.result.eventType).equals('grounded_into_double_play')
       expect(dp.runners.filter(runner => runner.movement.isOut)).length(2)

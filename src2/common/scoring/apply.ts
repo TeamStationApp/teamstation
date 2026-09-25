@@ -36,6 +36,7 @@ import {
 import { homeRunKind, isFair } from './park'
 import {
   choiceOpen,
+  forcedFrom,
   hasEligiblePitch,
   HIT_BASES,
   homeBackProposal,
@@ -309,7 +310,20 @@ function refineEventType(play: GamePlay, pending: Resolution | null): void {
   if (type === 'strikeout' && outs >= 2)
     play.result.eventType = 'strikeout_double_play'
   if (type !== 'field_out' || pending == null) return
-  if (pending.outcome === 'Ball Caught' && pending.originalOuts < 2 && scored)
+  const batterOut = play.runners.some(
+    runner =>
+      runner.movement.isOut &&
+      runner.details.runner.id === play.matchup.batter.id
+  )
+  // A runner forced out for the third out, with the batter never put out:
+  // the batter is scored as reaching on a fielder's choice, not as out.
+  if (pending.outcome === 'Throw Out' && !batterOut && outs === 1)
+    play.result.eventType = 'fielders_choice'
+  else if (
+    pending.outcome === 'Ball Caught' &&
+    pending.originalOuts < 2 &&
+    scored
+  )
     play.result.eventType = outs >= 2 ? 'sac_fly_double_play' : 'sac_fly'
   else if (pending.outcome === 'Throw Out' && outs === 2)
     play.result.eventType = 'grounded_into_double_play'
@@ -573,15 +587,11 @@ function finishOut(ctx: Ctx, call: OutCall): void {
   const l = line(ctx)
   if (l.outs >= 3) return
   const old = pending?.movements.find(move => move.playerId === call.runner)
-  const choiceForce =
-    pending != null &&
-    ["Fielder's Choice", 'Error'].includes(pending.outcome) &&
-    call.from > 0 &&
-    call.to === call.from + 1 &&
-    pending.originalBases.slice(0, call.from).every(id => id != null) &&
-    pending.movements.some(move => move.from === 0 && move.decision !== 'out')
+  // Put out at the next base while the batter is still running, and with
+  // every base behind him taken, a runner is forced: the lead runner of a
+  // double play, retired before the batter.
   const force =
-    choiceForce ||
+    (call.to === call.from + 1 && forcedFrom(ctx.state, call.from)) ||
     (old?.force === true && old.decision === 'pending') ||
     (call.from === 0 && call.to <= 1)
   l.outs++

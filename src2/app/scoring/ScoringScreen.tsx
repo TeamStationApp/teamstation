@@ -15,7 +15,7 @@ import {
 } from 'react-native'
 
 import type { GameStationClient } from '../../common/api'
-import { awaitingResult } from '../../common/scoring/rules'
+import { awaitingResult, forcedFrom } from '../../common/scoring/rules'
 import type { ScoringSession as GameSession } from '../../common/scoring/session'
 import type { BallArcState } from '../field/ballArcModel'
 import { BaseballScreen } from '../field/BaseballScreen'
@@ -382,18 +382,35 @@ function ScoringPanel(props: {
       state.phase
     ) &&
     !state.motions.some(motion => !motion.complete)
-  const runnerIds = runnerEnabled
+  // While the throw is going round to retire the batter, a runner forced to
+  // the next base can be put out there first.
+  const relayForce =
+    state.phase === 'chooseDefender' &&
+    state.runnerAction?.purpose === 'batterRetirement' &&
+    state.presentation == null &&
+    !status.readOnly
+  const runnerIds = relayForce
     ? players
         .filter(
           player =>
             player.team === 'runner' &&
-            (state.phase === 'resolveBatter' ||
-            state.runnerAction?.returnPhase === 'resolveBatter'
-              ? player.playerId === unresolvedRunner?.playerId
-              : player.batting !== true)
+            player.batting !== true &&
+            player.playerId != null &&
+            forcedFrom(session, baseIds(session).indexOf(player.playerId) + 1)
         )
         .map(player => player.id)
-    : []
+    : runnerEnabled
+      ? players
+          .filter(
+            player =>
+              player.team === 'runner' &&
+              (state.phase === 'resolveBatter' ||
+              state.runnerAction?.returnPhase === 'resolveBatter'
+                ? player.playerId === unresolvedRunner?.playerId
+                : player.batting !== true)
+          )
+          .map(player => player.id)
+      : []
   const instruction =
     state.presentation != null
       ? undefined
@@ -511,12 +528,15 @@ function ScoringPanel(props: {
               : ['locateFielder', 'chooseThrower', 'chooseDefender'].includes(
                     state.phase
                   )
-                ? players
-                    .filter(
-                      player =>
-                        player.team !== 'runner' && player.hasBall !== true
-                    )
-                    .map(player => player.id)
+                ? [
+                    ...players
+                      .filter(
+                        player =>
+                          player.team !== 'runner' && player.hasBall !== true
+                      )
+                      .map(player => player.id),
+                    ...(relayForce ? runnerIds : [])
+                  ]
                 : [
                     ...runnerIds,
                     ...(switchable && batterId != null

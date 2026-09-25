@@ -94,6 +94,7 @@ export const RUNNER_REASONS = [
   'Fielding Error',
   'Defensive Indifference',
   'Caught Stealing',
+  'Force Out',
   'Picked Off',
   'Offensive Interference',
   'Out on Appeal',
