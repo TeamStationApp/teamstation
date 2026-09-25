@@ -95,6 +95,8 @@ describe('posting and reading plays', function () {
   const unscoredId = makeId('game')
   const cancelledId = makeId('game')
   const pendingId = makeId('game')
+  const outsideId = makeId('game')
+  const ownId = makeId('game')
   const twiceId = makeId('game')
 
   before(async function () {
@@ -264,7 +266,7 @@ describe('posting and reading plays', function () {
           away_team_id: away,
           start_at: now
         },
-        ...[twiceId].map(id => ({
+        ...[outsideId, ownId, twiceId].map(id => ({
           id,
           home_team_id: home,
           away_team_id: away,
@@ -781,6 +783,49 @@ describe('posting and reading plays', function () {
     })
     expect(started.status).equals(200)
     expect(await statusOf(pendingId)).equals('inProgress')
+  })
+
+  it("drops an outside sender's play text and keeps GameStation's own", async function () {
+    const worded = {
+      ...play({ atBatIndex: 0, awayScore: 1, homeScore: 0 }),
+      playEvents: [{ type: 'pitch', description: 'Ball 1' }],
+      source: { id: 'kept nowhere' }
+    }
+    const described = async (
+      id: string,
+      source?: { system: string }
+    ): Promise<unknown[]> => {
+      const posted = await ask(`/games/${id}/events`, 'POST', {
+        plays: [worded],
+        ...(source == null ? {} : { source })
+      })
+      expect(posted.status).equals(200)
+      const read = await ask(`/games/${id}/events`)
+      const [stored] = read.body.plays as Array<{
+        gumbo: {
+          result: { description?: string }
+          playEvents: Array<{ description?: string }>
+          source?: unknown
+        }
+      }>
+      expect(stored.gumbo.source).equals(undefined)
+      return [
+        stored.gumbo.result.description,
+        stored.gumbo.playEvents[0].description
+      ]
+    }
+    // No source counts as an outside sender, like `acme`.
+    expect(await described(outsideId)).deep.equals([undefined, undefined])
+    expect(await described(ownId, { system: 'gamestation' })).deep.equals([
+      'Single',
+      'Ball 1'
+    ])
+    const row = await db!
+      .selectFrom('events')
+      .select('gumbo')
+      .where('gameId', '=', outsideId)
+      .executeTakeFirstOrThrow()
+    expect(JSON.stringify(row.gumbo)).not.contains('description')
   })
 
   it('refuses two plays at one atBatIndex and writes nothing', async function () {

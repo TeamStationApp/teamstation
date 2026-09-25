@@ -11,7 +11,11 @@ import type { Database } from '../db/database'
 import { isRealVideo } from '../db/realVideos'
 import { teamNames, teamStandings } from '../db/teamLookups'
 import { creditsForPlayer } from '../events/credits'
-import { withDropped } from '../highlights'
+import {
+  HIGHLIGHT_EVENT_COLUMNS,
+  highlightEvent,
+  withDropped
+} from '../highlights'
 import { imageUrl, PROFILE_SIZE } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
 import { mediaUrlPath } from '../media/mediaTokens'
@@ -205,16 +209,8 @@ export function playerRoutes(
         .selectFrom('events')
         .innerJoin('games', 'games.id', 'events.gameId')
         .select([
-          'events.id as eventId',
+          ...HIGHLIGHT_EVENT_COLUMNS,
           'events.gameId as gameId',
-          'events.atBatIndex as atBatIndex',
-          'events.startTime as startTime',
-          'events.eventType as eventType',
-          'events.description as description',
-          'events.titleOverride as titleOverride',
-          'events.timeNudgeSec as timeNudgeSec',
-          'events.hidden as hidden',
-          'events.isScoringPlay as isScoringPlay',
           'games.home_team_id as homeTeamId',
           'games.away_team_id as awayTeamId',
           'games.season_id as seasonId',
@@ -298,7 +294,7 @@ export function playerRoutes(
       const out: Row[] = []
 
       for (const row of usable) {
-        const credits = creditsByEvent.get(row.eventId) ?? []
+        const credits = creditsByEvent.get(row.id) ?? []
         // The play's credits for this person, by any of their rows.
         const mine = credits.filter(
           outcome =>
@@ -311,21 +307,7 @@ export function playerRoutes(
         // recording first, which is the one a game is normally watched on.
         for (const video of videos.filter(item => item.gameId === row.gameId)) {
           const computed = withDropped(
-            [
-              {
-                id: row.eventId,
-                atBatIndex: row.atBatIndex,
-                startTime:
-                  row.startTime == null ? null : new Date(row.startTime),
-                eventType: row.eventType,
-                description: row.description,
-                titleOverride: row.titleOverride,
-                timeNudgeSec: row.timeNudgeSec,
-                hidden: row.hidden,
-                isScoringPlay: row.isScoringPlay === true,
-                credits
-              }
-            ],
+            [highlightEvent(row, credits)],
             {
               startAt: video.startAt == null ? null : new Date(video.startAt),
               syncOffsetSec: video.syncOffsetSec,
@@ -340,7 +322,7 @@ export function playerRoutes(
           const outcome = mine[0]
           const teamId = (outcome as { teamId?: string | null }).teamId ?? null
           out.push({
-            eventId: row.eventId,
+            eventId: row.id,
             gameId: row.gameId,
             videoId: video.id,
             teamId,

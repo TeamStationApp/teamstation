@@ -178,8 +178,9 @@ export const asHighlight = asObject({
   /** One frame of the video at the moment of the play. */
   stillUrl: asString,
   /**
-   * The whole sentence, for the panel under the video. The list draws `title`;
-   * only that panel draws this.
+   * The play in a sentence, for the panel under the video: GameStation's own
+   * reading of it, written by the server when it answers. The list draws
+   * `title`; only that panel draws this.
    */
   description: asOptional(asNullable(asString), null)
 })

@@ -9,7 +9,11 @@ import { isRealVideo } from '../db/realVideos'
 import { teamNames, teamStandings } from '../db/teamLookups'
 import { creditsForHighlight } from '../events/credits'
 import { whyEmpty } from '../events/whyEmpty'
-import { withDropped } from '../highlights'
+import {
+  HIGHLIGHT_EVENT_COLUMNS,
+  highlightEvent,
+  withDropped
+} from '../highlights'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
 import { mediaUrlPath } from '../media/mediaTokens'
@@ -427,17 +431,7 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
 
       const events = await db
         .selectFrom('events')
-        .select([
-          'id',
-          'atBatIndex',
-          'startTime',
-          'eventType',
-          'description',
-          'titleOverride',
-          'timeNudgeSec',
-          'hidden',
-          'isScoringPlay'
-        ])
+        .select(HIGHLIGHT_EVENT_COLUMNS)
         .where('gameId', '=', video.gameId)
         .orderBy('atBatIndex')
         .execute()
@@ -450,20 +444,9 @@ export function teamRoutes(db: Kysely<Database>, media: MediaContext): Router {
 
       const settings = await highlightSettings(db)
       const computed = withDropped(
-        events.map(row => ({
-          id: row.id,
-          atBatIndex: row.atBatIndex,
-          startTime: row.startTime == null ? null : new Date(row.startTime),
-          eventType: row.eventType,
-          description: row.description,
-          titleOverride: row.titleOverride,
-          timeNudgeSec: row.timeNudgeSec,
-          hidden: row.hidden,
-          isScoringPlay: row.isScoringPlay === true,
-          // `undefined` keeps a play nobody has looked at; `[]` drops one
-          // that was looked at and credited to nobody.
-          credits: credits.get(row.id)
-        })),
+        // `undefined` keeps a play nobody has looked at; `[]` drops one that
+        // was looked at and credited to nobody.
+        events.map(row => highlightEvent(row, credits.get(row.id))),
         {
           startAt: video.startAt == null ? null : new Date(video.startAt),
           syncOffsetSec: video.syncOffsetSec,
