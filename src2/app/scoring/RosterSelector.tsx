@@ -25,18 +25,21 @@ export function RosterSelector({
   labels,
   labelPrefix = '',
   compact = false,
+  fitContent = false,
   value,
   onChange
 }: {
   labels: string[]
   labelPrefix?: string
   compact?: boolean
+  fitContent?: boolean
   value: number
   onChange: (value: number) => void
 }): React.ReactElement {
   const theme = useTheme()
   const count = labels.length
   const [width, setWidth] = useState(0)
+  const [labelWidth, setLabelWidth] = useState(0)
   const root = useRef<React.ComponentRef<typeof View>>(null)
   const left = useRef(0)
   const thumb = useSharedValue(0)
@@ -110,7 +113,8 @@ export function RosterSelector({
       }}
       style={{
         flexDirection: 'row',
-        minHeight: compact ? 40 : 48,
+        minHeight: fitContent ? 36 : compact ? 40 : 48,
+        alignSelf: fitContent ? 'center' : undefined,
         borderRadius: theme.radiusPill,
         backgroundColor: theme.scoringSelectorIdle,
         shadowColor: theme.buttonShadowColor,
@@ -139,6 +143,7 @@ export function RosterSelector({
         <Pressable
           key={label}
           accessibilityRole="tab"
+          hitSlop={fitContent ? { top: 6, bottom: 6 } : undefined}
           accessibilityLabel={
             labelPrefix === '' ? label : `${labelPrefix} ${label}`
           }
@@ -148,13 +153,22 @@ export function RosterSelector({
             onChange(index)
           }}
           style={{
-            width: `${100 / count}%`,
-            minHeight: compact ? 40 : 48,
+            width: fitContent ? undefined : `${100 / count}%`,
+            minWidth: fitContent ? labelWidth + 24 : undefined,
+            paddingHorizontal: fitContent ? 12 : 0,
+            minHeight: fitContent ? 36 : compact ? 40 : 48,
+            alignSelf: fitContent ? 'center' : undefined,
             justifyContent: 'center',
             alignItems: 'center'
           }}
         >
           <Text
+            onLayout={event => {
+              if (fitContent)
+                setLabelWidth(previous =>
+                  Math.max(previous, event.nativeEvent.layout.width)
+                )
+            }}
             selectable={false}
             style={{
               fontFamily: theme.semiBoldTextFont,
@@ -170,7 +184,7 @@ export function RosterSelector({
       ))}
     </View>
   )
-  return (
+  const control = (
     <RosterSelectorDrag
       count={count}
       value={value}
@@ -183,5 +197,10 @@ export function RosterSelector({
     >
       {content}
     </RosterSelectorDrag>
+  )
+  return fitContent ? (
+    <View style={{ alignSelf: 'center', paddingVertical: 6 }}>{control}</View>
+  ) : (
+    control
   )
 }

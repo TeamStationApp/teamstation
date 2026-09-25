@@ -1,7 +1,8 @@
-import React, { useContext, useEffect, useRef, useState } from 'react'
+import React, { useContext, useEffect, useId, useRef, useState } from 'react'
 import { type GestureResponderEvent, View, type ViewProps } from 'react-native'
 
 import { useTheme } from '../theme/ThemeContext'
+import { RosterCardSlot } from './RosterCardSlot'
 import {
   measureRosterView,
   RosterClipContext,
@@ -15,7 +16,8 @@ export { RosterDragGroup, RosterScrollArea } from './RosterDragContext'
 export function rosterResponder(
   engine: RosterGesture,
   props: RosterDragProps,
-  current = (): RosterDragProps => props
+  current = (): RosterDragProps => props,
+  source?: string
 ): ViewProps & { dispose: () => void } {
   let owned = false
   let contact = false
@@ -26,7 +28,7 @@ export function rosterResponder(
   const hold = new RosterHold(p => {
     const latest = current()
     if (latest.playerId != null && latest.disabled !== true)
-      engine.begin(latest.playerId, latest.label ?? '', p, false)
+      engine.begin(latest.playerId, latest.label ?? '', p, false, source)
   })
   const cancel = (): void => {
     hold.cancel()
@@ -84,17 +86,29 @@ export function rosterAccessibilityAction(
 }
 export function RosterDrag(props: RosterDragProps): React.ReactElement {
   const engine = useRosterGesture()
+  const source = useId()
   const clip = useContext(RosterClipContext)
   const theme = useTheme()
   const ref = useRef<React.ComponentRef<typeof View>>(null)
   const latest = useRef(props)
   latest.current = props
   const [adapter] = useState(() =>
-    rosterResponder(engine, props, () => latest.current)
+    rosterResponder(engine, props, () => latest.current, source)
   )
   useEffect(() => adapter.dispose, [adapter, props.disabled, props.playerId])
   const { dispose, ...handlers } = adapter
   const [hover, setHover] = useState<false | 'before' | 'after' | 'row'>(false)
+  useEffect(() => {
+    if (props.playerId == null) return
+    engine.sources.set(source, {
+      measure: async () => await measureRosterView(ref.current),
+      clip,
+      content: props.children
+    })
+    return () => {
+      engine.sources.delete(source)
+    }
+  }, [engine, source, clip, props.playerId, props.children])
   const token = props.targetId
   useEffect(() => {
     if (token == null || props.onDropPlayer == null) return
@@ -134,6 +148,7 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
         rosterAccessibilityAction(props, event.nativeEvent.actionName)
       }}
       style={{
+        gap: 4,
         opacity: props.disabled === true ? 0.4 : 1,
         borderWidth: 2,
         borderColor:
@@ -143,7 +158,17 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
         borderRadius: 6
       }}
     >
-      {props.children}
+      {props.targetId === 'roster' ? (
+        props.children
+      ) : (
+        <RosterCardSlot
+          source={source}
+          target={props.targetId}
+          player={props.playerId}
+        >
+          {props.children}
+        </RosterCardSlot>
+      )}
       {(hover === 'before' || hover === 'after') && (
         <View
           pointerEvents="none"

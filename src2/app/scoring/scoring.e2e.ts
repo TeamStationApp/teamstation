@@ -61,7 +61,11 @@ async function open(
   logos?: 'valid' | 'broken',
   uiAnimations = false
 ): Promise<{ page: Page; unexpected: string[] }> {
-  const page = await browser.newPage()
+  const context = await browser.createBrowserContext()
+  const page = await context.newPage()
+  page.once('close', () => {
+    void context.close().catch(() => undefined)
+  })
   if (probe)
     await page.evaluateOnNewDocument(() => {
       const host = window as unknown as SceneProbeWindow
@@ -690,7 +694,7 @@ describe('scoring browser', function () {
       ).equals('true')
       await waitReady(page)
       await click(page, 'Foul Ball')
-      const background = await browser.newPage()
+      const background = await page.browserContext().newPage()
       await background.bringToFront()
       await new Promise(resolve => setTimeout(resolve, 1700))
       expect(await page.evaluate(() => document.hidden)).equals(true)
@@ -1427,8 +1431,14 @@ describe('scoring browser', function () {
       const a = await position('[aria-label="Reorder Jordan K."]')
       await page.mouse.move(a.x, a.y)
       await page.mouse.down()
-      await new Promise(resolve => setTimeout(resolve, 550))
-      // Measure the destination after the grab; focus and layout can settle independently.
+      await new Promise(resolve => setTimeout(resolve, 750))
+      await page.waitForFunction(
+        () =>
+          document
+            .querySelector('[data-roster-target="lineup-0"]')!
+            .getBoundingClientRect().height < 1
+      )
+      // Measure the destination only once source collapse completes.
       const b = await position('[data-roster-target="lineup-2"]', true)
       await page.mouse.move(b.x, b.y, { steps: 10 })
       await page.waitForFunction(
@@ -1595,11 +1605,17 @@ describe('scoring browser', function () {
       })
       await page.touchscreen.touchStart(from.x, from.y)
       await new Promise(resolve => setTimeout(resolve, 550))
+      await page.waitForFunction(
+        () =>
+          document
+            .querySelector('[data-roster-target="lineup-0"]')!
+            .getBoundingClientRect().height < 1
+      )
       await page.touchscreen.touchMove(edge.x, edge.y)
       await page.waitForFunction(
         () =>
           document.querySelector('[aria-label="Batting lineup"]')!.scrollTop >
-          80
+          40
       )
       await page.touchscreen.touchEnd()
       await page.waitForFunction(
@@ -1696,10 +1712,18 @@ describe('scoring browser', function () {
           const r = n.getBoundingClientRect()
           return { x: r.x + 20, y: r.y + r.height / 2 }
         })
-        await page.touchscreen.touchStart(from.x, from.y)
-        for (let step = 1; step <= 8; step++)
-          await page.touchscreen.touchMove(from.x, from.y - step * 10)
-        await page.touchscreen.touchEnd()
+        // Browser-timed touch input stays below the 500ms hold threshold even
+        // when Node/CDP round trips are slow during a complete test batch.
+        const input = await page.createCDPSession()
+        await input.send('Input.synthesizeScrollGesture', {
+          x: from.x,
+          y: from.y,
+          yDistance: -80,
+          speed: 800,
+          gestureSourceType: 'touch',
+          preventFling: true
+        })
+        await input.detach()
         await page.waitForFunction(
           label =>
             document.querySelector(`[aria-label="${label}"]`)!.scrollTop > 20,
@@ -1730,6 +1754,7 @@ describe('scoring browser', function () {
       })
       await page.touchscreen.touchStart(from.x, from.y)
       await new Promise(resolve => setTimeout(resolve, 550))
+      await page.waitForSelector('[data-testid="Roster dragged card"]')
       await page.touchscreen.touchMove(to.x, to.y)
       await page.touchscreen.touchEnd()
       await page.waitForFunction(
@@ -1928,7 +1953,7 @@ describe('scoring browser', function () {
         )
       ).equals(seconds)
       await click(page, 'Cancel')
-      const background = await browser.newPage()
+      const background = await page.browserContext().newPage()
       await background.bringToFront()
       expect(await page.evaluate(() => document.hidden)).equals(true)
       await new Promise(resolve => setTimeout(resolve, 10500))
@@ -4309,4 +4334,143 @@ describe('scoring browser', function () {
       }
     })
   }
+  it('roster flow keeps compact selectors and footer visible while full cards animate between columns', async function () {
+    const { page } = await open(
+      '/games/g1/score',
+      false,
+      false,
+      false,
+      'switch',
+      false,
+      undefined,
+      true
+    )
+    const rect = async (
+      selector: string
+    ): Promise<{
+      x: number
+      y: number
+      width: number
+      height: number
+      bottom: number
+    }> =>
+      await page.$eval(selector, n => {
+        const r = n.getBoundingClientRect()
+        return {
+          x: r.x,
+          y: r.y,
+          width: r.width,
+          height: r.height,
+          bottom: r.bottom
+        }
+      })
+    try {
+      await page.setViewport({
+        width: 390,
+        height: 844,
+        isMobile: true,
+        hasTouch: true
+      })
+      await click(page, 'Open scoring menu')
+      await click(page, 'Set Team Rosters')
+      await click(page, 'Remove Player 2')
+      await new Promise(resolve => setTimeout(resolve, 350))
+      for (const [width, height] of [
+        [390, 844],
+        [844, 390]
+      ]) {
+        await page.setViewport({
+          width,
+          height,
+          isMobile: true,
+          hasTouch: true
+        })
+        await new Promise(resolve => setTimeout(resolve, 250))
+        expect((await rect('[aria-label="Away Team"]')).width).lessThan(140)
+        expect((await rect('[aria-label="Set Lineup"]')).height).equals(36)
+        const footer = await rect('[data-testid="Roster footer"]')
+        expect(footer.bottom).at.most(height)
+        expect(height - footer.bottom).lessThan(30)
+        for (const label of ['Roster players', 'Batting lineup']) {
+          const list = await rect(`[aria-label="${label}"]`)
+          expect(list.height).greaterThan(60)
+          expect(list.bottom).at.most(footer.y)
+        }
+        if (process.env.GS_SCORING_ARTIFACT_DIR != null)
+          await page.screenshot({
+            path: `${process.env.GS_SCORING_ARTIFACT_DIR}/roster-flow-${width}.png`
+          })
+      }
+      await page.setViewport({
+        width: 390,
+        height: 844,
+        isMobile: true,
+        hasTouch: true
+      })
+      await new Promise(resolve => setTimeout(resolve, 250))
+      const source = '[data-roster-target="roster"] [data-roster-player="2"]'
+      const third = '[data-roster-target="roster"] [data-roster-player="3"]'
+      const a = await rect(source)
+      const following = await rect(third)
+      expect(following.y - a.bottom).closeTo(4, 0.5)
+      const destination = await rect('[data-roster-target="lineup-1"]')
+      const next = await rect('[data-roster-target="lineup-2"]')
+      expect(next.y - destination.bottom).closeTo(4, 0.5)
+      await page.touchscreen.touchStart(a.x + 17, a.y + 13)
+      await new Promise(resolve => setTimeout(resolve, 750))
+      const ghost = '[data-testid="Roster dragged card"]'
+      await page.waitForFunction(
+        selector =>
+          document.querySelector(selector)!.getBoundingClientRect().height < 1,
+        {},
+        source
+      )
+      expect((await rect(source)).height).lessThan(1)
+      expect((await rect(third)).y).lessThan(following.y - 40)
+      await page.touchscreen.touchMove(destination.x + 17, destination.y + 10)
+      await new Promise(resolve => setTimeout(resolve, 250))
+      const floating = await rect(ghost)
+      expect(floating.width).closeTo(a.width, 1)
+      expect(floating.height).closeTo(a.height, 1)
+      expect(floating.x).closeTo(destination.x, 1)
+      expect(floating.y).closeTo(destination.y - 3, 1)
+      expect(await page.$eval(ghost, n => n.textContent)).includes(
+        '#2 Player 2'
+      )
+      await page.waitForFunction(
+        y =>
+          document
+            .querySelector('[data-roster-target="lineup-2"]')!
+            .getBoundingClientRect().y >
+          y + 40,
+        {},
+        next.y
+      )
+      expect((await rect('[data-roster-target="lineup-2"]')).y).greaterThan(
+        next.y + 40
+      )
+      if (process.env.GS_SCORING_ARTIFACT_DIR != null)
+        await page.screenshot({
+          path: `${process.env.GS_SCORING_ARTIFACT_DIR}/roster-flow-drag.png`
+        })
+      await page.touchscreen.touchEnd()
+      await page.waitForFunction(
+        () =>
+          document
+            .querySelector('[data-roster-target="lineup-1"]')!
+            .getAttribute('data-roster-player') === '2'
+      )
+      expect(await page.$(ghost)).equals(null)
+      await page.waitForFunction(
+        selector =>
+          document.querySelector(selector)!.getBoundingClientRect().height > 40,
+        {},
+        source
+      )
+      await click(page, 'Save Rosters')
+      await page.waitForSelector('[aria-label="Undo Set team roster"]')
+    } finally {
+      await page.close()
+    }
+  })
 })
