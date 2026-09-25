@@ -478,9 +478,7 @@ function battingStats(line: NonNullable<PlayerStats['batting']>): Stat[] {
 /**
  * And a pitching line.
  *
- * The ERA is missing rather than zero where nobody has worked out how long a
- * game in that league runs — it is earned runs per game, and a figure divided by
- * a guess is worse than no figure.
+ * The ERA is missing rather than zero for a pitcher with no outs.
  */
 function pitchingStats(line: NonNullable<PlayerStats['pitching']>): Stat[] {
   return [

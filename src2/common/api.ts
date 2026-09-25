@@ -202,7 +202,7 @@ const asRates = asObject({
 })
 
 const asPitchingRates = asObject({
-  /** Earned runs per game, where a game's length is known. */
+  /** Earned runs per game; absent for a pitcher with no outs. */
   era: asOptional(asNumber),
   whip: asOptional(asNumber)
 })
@@ -244,9 +244,9 @@ export type BattingRow = ReturnType<typeof asBattingRow>
  *
  * An earned run is not a figure a play-by-play can produce — telling one from
  * an unearned one means replaying the inning without the mistakes — so these
- * come from the stat lines the stats engine writes. `rates.era` is absent
- * until something has worked out how long a game in that league runs, because
- * an ERA is earned runs per game.
+ * come from the stat lines the stats engine writes. `rates.era` is earned runs
+ * per game, a game being the season's or its league's ERA innings, six where
+ * neither sets one.
  */
 export const asPitchingRow = asObject({
   userId: asUserId,

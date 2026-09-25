@@ -736,9 +736,9 @@ export function openApiDocument(version: string): OpenApiDocument {
             'so a total here and a line in a box score are the same rows ' +
             'added up differently. Unfiltered is a career. The answer carries ' +
             'the seasons, teams and years there are to choose from, which is ' +
-            'what the filter on the page offers. `rates.era` is absent until ' +
-            "something has worked out the league's regulation length: an ERA " +
-            'is earned runs per game.',
+            'what the filter on the page offers. `rates.era` is earned runs ' +
+            "per game, a game being the season's or league's ERA innings " +
+            '(six unless set), and is absent for a pitcher with no outs.',
           security: [{ bearer: [] }],
           parameters: [
             userIdParam,

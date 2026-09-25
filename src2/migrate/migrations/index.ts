@@ -30,6 +30,7 @@ import { migration029UploadStep } from './029uploadStep'
 import { migration030ReplacementCanBeDeleted } from './030replacementCanBeDeleted'
 import { migration031Scoring } from './031scoring'
 import { migration033DropEventDescription } from './033dropEventDescription'
+import { migration035EraInnings } from './035eraInnings'
 
 /** Every migration, in the order they were written. */
 export const migrations: Migration[] = [
@@ -63,5 +64,6 @@ export const migrations: Migration[] = [
   migration029UploadStep,
   migration030ReplacementCanBeDeleted,
   migration031Scoring,
-  migration033DropEventDescription
+  migration033DropEventDescription,
+  migration035EraInnings
 ]

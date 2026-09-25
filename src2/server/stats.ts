@@ -7,14 +7,21 @@
 // season is a season's, a career is all of them. There is no second way of
 // working a figure out, so a box score and a career total cannot disagree.
 
+/**
+ * The innings an ERA divides by where neither the season nor its league says:
+ * six, the length of a game in the leagues GameStation serves.
+ */
+export const DEFAULT_ERA_INNINGS = 6
+
 export interface StatRow {
   userId: number
   teamId: string | null
   /**
-   * The regulation length of the game's season, which is what an ERA divides
-   * by. Null where nobody has worked it out — see `stats/regulation.ts`.
+   * The innings a game in this game's season runs, which is what an ERA
+   * divides by: the season's `era_innings`, else its league's, else
+   * `DEFAULT_ERA_INNINGS`. `statRows` fills it in its query.
    */
-  inningsPerGame?: number | null
+  eraInnings: number
   pa: number
   ab: number
   h: number
@@ -87,10 +94,10 @@ export interface PitchingLine {
   bb: number
   k: number
   /**
-   * The innings-weighted regulation length of the games in this line, which an
-   * ERA divides by. Null where none of them say.
+   * The ERA divisor of the games in this line, weighted by the innings thrown
+   * under each.
    */
-  inningsPerGame: number | null
+  eraInnings: number
 }
 
 function emptyBatting(userId: number, teamId: string | null): BattingLine {
@@ -130,7 +137,7 @@ function emptyPitching(userId: number, teamId: string | null): PitchingLine {
     er: 0,
     bb: 0,
     k: 0,
-    inningsPerGame: null
+    eraInnings: DEFAULT_ERA_INNINGS
   }
 }
 
@@ -189,16 +196,15 @@ export function pitchingLines(rows: StatRow[]): PitchingLine[] {
     held.k += row.pitchK
     byPlayer.set(row.userId, held)
 
-    if (row.inningsPerGame == null) continue
     const sum = weighted.get(row.userId) ?? { outs: 0, product: 0 }
     sum.outs += row.pitchOuts
-    sum.product += row.pitchOuts * row.inningsPerGame
+    sum.product += row.pitchOuts * row.eraInnings
     weighted.set(row.userId, sum)
   }
   for (const [userId, sum] of weighted) {
     const line = byPlayer.get(userId)
     if (line == null || sum.outs === 0) continue
-    line.inningsPerGame = sum.product / sum.outs
+    line.eraInnings = sum.product / sum.outs
   }
   return [...byPlayer.values()].sort((a, b) => b.outs - a.outs)
 }
@@ -232,9 +238,8 @@ export function battingRates(line: BattingLine): BattingRates {
 
 export interface PitchingRates {
   /**
-   * Earned runs per game — and a game is six innings here, not nine. Undefined
-   * until something has worked out how long a game in this league is, because a
-   * divisor we guessed would be wrong by a third.
+   * Earned runs per game — and a game is the season's `eraInnings`, six unless
+   * the season or league says otherwise, not nine. Undefined with no outs.
    */
   era?: number
   /** Walks and hits per inning. */
@@ -245,9 +250,7 @@ export function pitchingRates(line: PitchingLine): PitchingRates {
   const rates: PitchingRates = {}
   if (line.outs === 0) return rates
   const innings = line.outs / 3
-  if (line.inningsPerGame != null) {
-    rates.era = round2((line.inningsPerGame * line.er) / innings)
-  }
+  rates.era = round2((line.eraInnings * line.er) / innings)
   rates.whip = round2((line.h + line.bb) / innings)
   return rates
 }
