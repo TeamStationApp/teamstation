@@ -3689,4 +3689,109 @@ describe('scoring browser', function () {
         await page.close()
       }
     })
+
+  for (const bats of ['right', 'left'] as const)
+    for (const bunt of [true, false])
+      it(`renders a ${bats} ${bunt ? 'ninety-degree bunt' : 'full swing'} from the outcome choice`, async () => {
+        const { page } = await open(
+          '/games/g1/score',
+          false,
+          false,
+          false,
+          bats,
+          true
+        )
+        try {
+          await page.setViewport({ width: 390, height: 844 })
+          await click(page, bunt ? 'Bunt in Play' : 'Swing in Play')
+          await click(page, 'Single')
+          await page.waitForSelector('canvas[data-field-ready="true"]')
+          await page.focus('[role="application"]')
+          await page.keyboard.press('Space')
+          await page.keyboard.press('ArrowUp')
+          await page.keyboard.press('Enter')
+          await page.waitForSelector('[aria-label^="Ball trajectory:"]')
+          await captureScene(page)
+          const sampling = page.evaluate(async () => {
+            const scene = (window as unknown as SceneProbeWindow).qaScene!
+            const samples: Array<{ x: number; y: number; z: number }> = []
+            const start = performance.now()
+            let started = false
+            let completed = false
+            while (performance.now() - start < 12000) {
+              await new Promise(requestAnimationFrame)
+              const player = scene.getObjectByName('player-offense-1')
+              const rig =
+                player == null
+                  ? undefined
+                  : player.getObjectByName('athlete-rig')
+              const bat =
+                rig == null ? undefined : rig.getObjectByName('animated-bat')
+              if (rig != null && rig.visible && bat != null) {
+                started = true
+                const d = bat.position
+                  .clone()
+                  .set(0, 1, 0)
+                  .applyQuaternion(bat.quaternion)
+                samples.push({ x: d.x, y: d.y, z: d.z })
+              } else if (started) {
+                completed = true
+                break
+              }
+            }
+            return { samples, completed }
+          })
+          await page.keyboard.press('Enter')
+          if (bunt) {
+            await page.waitForFunction(
+              () => {
+                const scene = (window as unknown as SceneProbeWindow).qaScene!
+                const player = scene.getObjectByName('player-offense-1')
+                const rig =
+                  player == null
+                    ? undefined
+                    : player.getObjectByName('athlete-rig')
+                const bat =
+                  rig == null ? undefined : rig.getObjectByName('animated-bat')
+                return (
+                  rig != null &&
+                  rig.visible &&
+                  bat != null &&
+                  Math.abs(
+                    bat.position
+                      .clone()
+                      .set(0, 1, 0)
+                      .applyQuaternion(bat.quaternion).x
+                  ) > 0.98
+                )
+              },
+              { polling: 'raf' }
+            )
+            await page.screenshot({
+              path: join(
+                process.env.GS_SCORING_ARTIFACT_DIR ?? '/tmp',
+                `bunt-contact-${bats}.png`
+              )
+            })
+          }
+          const { samples, completed } = await sampling
+          expect(completed, 'rendered batting motion must finish').equals(true)
+          expect(samples.length, 'observe actual rendered motion').greaterThan(
+            0
+          )
+          if (bunt) {
+            expect(
+              samples.every(d => d.y >= -0.00001 && Math.abs(d.z) < 0.00001)
+            ).equals(true)
+            expect(
+              samples.some(d => (bats === 'right' ? d.x > 0.98 : d.x < -0.98))
+            ).equals(true)
+          } else expect(samples.some(d => Math.abs(d.z) > 0.4)).equals(true)
+          await click(page, 'Finish at-bat')
+          await page.waitForSelector('[aria-label*="Batter Player 2"]')
+          await page.locator('[aria-label^="Undo "]').click()
+        } finally {
+          await page.close()
+        }
+      })
 })

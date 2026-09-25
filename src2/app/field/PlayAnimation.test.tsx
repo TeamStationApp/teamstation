@@ -2,7 +2,7 @@ import { create } from '@react-three/test-renderer'
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 import React from 'react'
-import type { Mesh } from 'three'
+import { type Mesh, Vector3 } from 'three'
 
 import { createDevelopmentSession } from '../scoring/developmentSession'
 import { gameFixture } from '../scoring/isUnscoredGame.test'
@@ -301,4 +301,70 @@ describe('presentation mounted over an existing field', () => {
       await renderer.unmount()
     }
   })
+})
+
+describe('rendered bunt timeline', () => {
+  for (const side of ['R', 'L'] as const) {
+    it(`selects and pauses the ${side} bunt pose from scoring contact identity`, async () => {
+      let state = initialScoringState(
+        createDevelopmentSession(gameFixture, [], []),
+        true
+      )
+      state.session.liveData.plays.currentPlay!.matchup.batSide.code = side
+      state = scoringReducer(state, {
+        type: 'OUTCOME',
+        outcome: 'Single',
+        contactKind: 'bunt'
+      })
+      state = scoringReducer(state, {
+        type: 'FIELDER',
+        id: 10,
+        point: { x: 20, z: -40 },
+        generation: 0
+      })
+      state = scoringReducer(state, {
+        type: 'TRAJECTORY',
+        angle: -5,
+        generation: 0
+      })
+      const sequence = state.presentation!
+      expect(sequence.kind).equals('hit')
+      if (sequence.kind !== 'hit') throw new Error('Expected hit')
+      expect(sequence.contactKind).equals('bunt')
+      const player = sequence.players.find(p => p.playerId === sequence.batter)!
+      const view = (paused: boolean): React.ReactElement => (
+        <>
+          <PlayAnimation
+            sequence={sequence}
+            players={sequence.players}
+            paused={paused}
+            onComplete={() => {}}
+          />
+          <Player player={player} selected={false} />
+        </>
+      )
+      const renderer = await create(view(false))
+      try {
+        await renderer.advanceFrames(1, 0)
+        await renderer.advanceFrames(1, sequence.contactMs / 1000)
+        const bat = renderer.scene.findByProps({
+          name: 'animated-bat'
+        }).instance
+        const direction = new Vector3(0, 1, 0).applyQuaternion(bat.quaternion)
+        expect(direction.x).closeTo(side === 'R' ? 1 : -1, 1e-6)
+        expect(direction.y).closeTo(0, 1e-6)
+        const held = bat.quaternion.clone()
+        await renderer.update(view(true))
+        await renderer.advanceFrames(5, 0.1)
+        expect(bat.quaternion.equals(held)).equals(true)
+        await renderer.update(view(false))
+        await renderer.advanceFrames(1, 0)
+        await renderer.advanceFrames(1, 0.1)
+        expect(bat.quaternion.angleTo(held)).lessThan(1e-6)
+      } finally {
+        await renderer.unmount()
+      }
+      expect(player.pose).equals(undefined)
+    })
+  }
 })
