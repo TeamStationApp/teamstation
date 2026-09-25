@@ -2,6 +2,7 @@ import React from 'react'
 import { Pressable, Text, View } from 'react-native'
 
 import { useTheme } from '../theme/ThemeContext'
+import { GuidanceDetail } from './GuidanceDetail'
 export const CORRECTION_INSTRUCTION =
   'Drag any other runners to advance them or have them called out'
 export interface ScoreboardBounds {
@@ -67,30 +68,11 @@ export function InstructionToast({
       ]
         .filter(item => item.value != null)
         .map(item => (
-          <View
+          <GuidanceDetail
             key={item.label}
-            pointerEvents="none"
-            accessibilityLabel={`${item.label}: ${item.value}`}
-            accessibilityLiveRegion="polite"
-            style={{
-              alignSelf: 'flex-start',
-              marginTop: item.label === 'Home run type' ? 16 : 0,
-              paddingVertical: 5,
-              paddingHorizontal: 10,
-              borderRadius: theme.rem(theme.radiusRem),
-              backgroundColor: theme.scoringCountdownColor
-            }}
-          >
-            <Text
-              style={{
-                color: theme.scoringStatusText,
-                fontFamily: theme.semiBoldTextFont,
-                fontSize: 16
-              }}
-            >
-              {item.value}
-            </Text>
-          </View>
+            label={item.label}
+            value={item.value!}
+          />
         ))}
       {(remainingMs != null || onFinish != null) && (
         <View
