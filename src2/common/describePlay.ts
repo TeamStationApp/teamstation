@@ -1,4 +1,4 @@
-import { eventTypeName } from './gumboEventTypes'
+import { eventTypeName, type GumboEventType } from './gumboEventTypes'
 
 // A play in a sentence, written by GameStation from what it knows about the
 // play — its type, who is credited with what, the half-inning, the score —
@@ -24,21 +24,52 @@ export interface DescribedPlay {
   credits: DescribedCredit[]
 }
 
-/** What somebody credited with each outcome did, after their name. */
-const DID: Record<string, string> = {
+/**
+ * What somebody credited with each outcome did, after their name, or null
+ * where the engine's label says it better. Every stored event type has an
+ * entry.
+ */
+export const DID_BY_TYPE: Record<GumboEventType, string | null> = {
   single: 'singles',
   double: 'doubles',
   triple: 'triples',
   home_run: 'hits a home run',
+  strikeout: null,
+  strikeout_double_play: null,
   walk: 'walks',
   intent_walk: 'is walked intentionally',
   hit_by_pitch: 'is hit by a pitch',
+  field_out: null,
+  other_out: null,
+  grounded_into_double_play: null,
+  triple_play: null,
+  field_error: null,
+  fielders_choice: null,
+  catcher_interference: "reaches on catcher's interference",
+  manual_placement: 'is placed on base',
   sac_fly: 'hits a sacrifice fly',
+  sac_fly_double_play: 'hits a sacrifice fly',
   sac_bunt: 'lays down a sacrifice bunt',
-  run: 'scores',
   stolen_base: 'steals a base',
-  catcher_interference: "reaches on catcher's interference"
+  caught_stealing: null,
+  pickoff_1b: null,
+  pickoff_2b: null,
+  pickoff_3b: null,
+  pickoff_caught_stealing_2b: null,
+  pickoff_caught_stealing_3b: null,
+  pickoff_caught_stealing_home: null,
+  defensive_indiff: null,
+  placed_runner: 'is placed on base',
+  wild_pitch: null,
+  passed_ball: null,
+  balk: null,
+  game_advisory: null,
+  score_correction: null,
+  final_score: null
 }
+
+/** Credit types that are not play types. */
+const DID_BY_CREDIT: Record<string, string> = { run: 'scores' }
 
 function ordinal(n: number): string {
   const tens = n % 100
@@ -52,12 +83,17 @@ function clause(outcome: DescribedCredit): string {
   const [head, ...rest] = outcome.label.split(':')
   const detail = rest.join(':').trim()
   if (name === '') return head.trim() === '' ? 'Play' : head.trim()
-  if (outcome.eventType === 'strikeout') {
+  if (
+    outcome.eventType === 'strikeout' ||
+    outcome.eventType === 'strikeout_double_play'
+  ) {
     return outcome.credit?.role === 'pitcher'
       ? `${name} strikes out the batter`
       : `${name} picks up a dropped third strike`
   }
-  const did = DID[outcome.eventType]
+  const did =
+    (DID_BY_TYPE as Record<string, string | null>)[outcome.eventType] ??
+    DID_BY_CREDIT[outcome.eventType]
   if (did != null) return `${name} ${did}`
   // A fielding credit: the engine's label already says who and where,
   // `Ground out: Jordan P (SS) to Casey B (1B)`.

@@ -1,7 +1,8 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { hitsAndErrors } from './hitsAndErrors'
+import { GUMBO_EVENT_TYPES } from '../../common/gumboEventTypes'
+import { EVENT_CLASS, hitsAndErrors } from './hitsAndErrors'
 
 describe('the line score', function () {
   const play = (
@@ -83,5 +84,68 @@ describe('the line score', function () {
     expect(hitsAndErrors([]).known).equals(false)
     expect(hitsAndErrors([play('top', 'field_out')]).known).equals(true)
     expect(hitsAndErrors([play('top', 'single')]).known).equals(true)
+  })
+})
+
+describe('event classes', function () {
+  it('classifies every stored event type', function () {
+    const expected: Record<string, [boolean, string | undefined]> = {
+      single: [true, 'hit'],
+      double: [true, 'hit'],
+      triple: [true, 'hit'],
+      home_run: [true, 'hit'],
+      strikeout: [true, 'strikeout'],
+      strikeout_double_play: [true, 'strikeout'],
+      walk: [true, 'walk'],
+      intent_walk: [false, undefined],
+      hit_by_pitch: [true, 'hitByPitch'],
+      field_out: [true, undefined],
+      other_out: [true, undefined],
+      grounded_into_double_play: [true, undefined],
+      triple_play: [false, undefined],
+      field_error: [true, 'reachedOnError'],
+      fielders_choice: [true, undefined],
+      catcher_interference: [false, undefined],
+      manual_placement: [true, undefined],
+      sac_fly: [true, undefined],
+      sac_fly_double_play: [true, undefined],
+      sac_bunt: [true, undefined],
+      stolen_base: [false, undefined],
+      caught_stealing: [false, undefined],
+      pickoff_1b: [false, undefined],
+      pickoff_2b: [false, undefined],
+      pickoff_3b: [false, undefined],
+      pickoff_caught_stealing_2b: [false, undefined],
+      pickoff_caught_stealing_3b: [false, undefined],
+      pickoff_caught_stealing_home: [false, undefined],
+      defensive_indiff: [false, undefined],
+      placed_runner: [false, undefined],
+      wild_pitch: [false, undefined],
+      passed_ball: [false, undefined],
+      balk: [false, undefined],
+      game_advisory: [false, undefined],
+      score_correction: [false, undefined],
+      final_score: [false, undefined]
+    }
+    expect(Object.keys(expected).sort()).deep.equals(
+      [...GUMBO_EVENT_TYPES].sort()
+    )
+    for (const type of GUMBO_EVENT_TYPES) {
+      const [countable, stat] = expected[type]
+      expect(EVENT_CLASS[type], type).deep.equals(
+        stat == null ? { countable } : { countable, stat }
+      )
+      const counted = hitsAndErrors([{ halfInning: 'top', eventType: type }])
+      expect(counted.known, type).equals(countable)
+    }
+  })
+
+  it('counts a strikeout double play as a strikeout and ignores unknown types', function () {
+    const counted = hitsAndErrors([
+      { halfInning: 'bottom', eventType: 'strikeout_double_play' },
+      { halfInning: 'bottom', eventType: 'no_such_type' }
+    ])
+    expect(counted.strikeouts).deep.equals({ away: 0, home: 1 })
+    expect(counted.known).equals(true)
   })
 })

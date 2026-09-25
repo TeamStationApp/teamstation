@@ -29,6 +29,6 @@ export const moreEvents = {
   'Place a Runner (Tiebreaker)': 'placed_runner',
   'Hit by Pitch': 'hit_by_pitch',
   'Intentional Walk': 'intent_walk',
-  "Catcher's Interference": 'catcher_interf',
+  "Catcher's Interference": 'catcher_interference',
   'Dropped Third Strike': 'strikeout'
 } as const

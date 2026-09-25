@@ -1,21 +1,67 @@
-const HIT_TYPES = new Set(['single', 'double', 'triple', 'home_run'])
+import type { GumboEventType } from '../../common/gumboEventTypes'
 
 /**
- * The plays that prove somebody was keeping a sheet a hit could appear on.
- * A game with only a score correction on it proves nothing.
+ * What each event type counts toward in a line score.
+ *
+ * `countable` is whether a play of the type proves somebody was keeping a
+ * sheet a hit could appear on. A game with only a score correction on it proves
+ * nothing, and neither does a runner moving on his own. `stat` is the column
+ * the play adds one to, for the side it belongs to.
+ *
+ * Every event type has an entry, so a new type cannot be counted by accident.
  */
-const COUNTABLE = new Set([
-  ...HIT_TYPES,
-  'field_out',
-  'strikeout',
-  'walk',
-  'field_error',
-  'hit_by_pitch',
-  'sac_fly',
-  'sac_bunt',
-  'grounded_into_double_play',
-  'fielders_choice'
-])
+export const EVENT_CLASS: Record<
+  GumboEventType,
+  {
+    countable: boolean
+    stat?: 'hit' | 'walk' | 'hitByPitch' | 'strikeout' | 'reachedOnError'
+  }
+> = {
+  single: { countable: true, stat: 'hit' },
+  double: { countable: true, stat: 'hit' },
+  triple: { countable: true, stat: 'hit' },
+  home_run: { countable: true, stat: 'hit' },
+  strikeout: { countable: true, stat: 'strikeout' },
+  strikeout_double_play: { countable: true, stat: 'strikeout' },
+  walk: { countable: true, stat: 'walk' },
+  intent_walk: { countable: false },
+  hit_by_pitch: { countable: true, stat: 'hitByPitch' },
+  field_out: { countable: true },
+  other_out: { countable: true },
+  grounded_into_double_play: { countable: true },
+  triple_play: { countable: false },
+  field_error: { countable: true, stat: 'reachedOnError' },
+  fielders_choice: { countable: true },
+  catcher_interference: { countable: false },
+  manual_placement: { countable: true },
+  sac_fly: { countable: true },
+  sac_fly_double_play: { countable: true },
+  sac_bunt: { countable: true },
+  stolen_base: { countable: false },
+  caught_stealing: { countable: false },
+  pickoff_1b: { countable: false },
+  pickoff_2b: { countable: false },
+  pickoff_3b: { countable: false },
+  pickoff_caught_stealing_2b: { countable: false },
+  pickoff_caught_stealing_3b: { countable: false },
+  pickoff_caught_stealing_home: { countable: false },
+  defensive_indiff: { countable: false },
+  placed_runner: { countable: false },
+  wild_pitch: { countable: false },
+  passed_ball: { countable: false },
+  balk: { countable: false },
+  game_advisory: { countable: false },
+  score_correction: { countable: false },
+  final_score: { countable: false }
+}
+
+function classOf(
+  eventType: string
+): (typeof EVENT_CLASS)[GumboEventType] | undefined {
+  return (EVENT_CLASS as Record<string, (typeof EVENT_CLASS)[GumboEventType]>)[
+    eventType
+  ]
+}
 
 /**
  * Hits and errors per side, counted from the plays given.
@@ -58,9 +104,10 @@ export function hitsAndErrors(
   for (const event of events) {
     if (event.halfInning == null) continue
     // A play we recognise at all means the sheet was kept.
-    if (COUNTABLE.has(event.eventType)) known = true
+    const kind = classOf(event.eventType)
+    if (kind?.countable === true) known = true
     const battingIsHome = event.halfInning === 'bottom'
-    if (HIT_TYPES.has(event.eventType)) {
+    if (kind?.stat === 'hit') {
       if (battingIsHome) hits.home += 1
       else hits.away += 1
     }
@@ -71,22 +118,22 @@ export function hitsAndErrors(
     // A walk, and only a walk. `hit_by_pitch` reaches base the same way and is
     // a different column in every box score ever printed; merging the two here
     // would make the game card disagree with the box score two taps away.
-    if (event.eventType === 'walk') {
+    if (kind?.stat === 'walk') {
       if (battingIsHome) walks.home += 1
       else walks.away += 1
     }
-    if (event.eventType === 'hit_by_pitch') {
+    if (kind?.stat === 'hitByPitch') {
       if (battingIsHome) hitByPitch.home += 1
       else hitByPitch.away += 1
     }
     // Charged to the side that was batting — these are the batters who struck
     // out. A side's *defensive* strikeouts are the other side's, which is why
     // they are not counted again.
-    if (event.eventType === 'strikeout') {
+    if (kind?.stat === 'strikeout') {
       if (battingIsHome) strikeouts.home += 1
       else strikeouts.away += 1
     }
-    if (event.eventType === 'field_error') {
+    if (kind?.stat === 'reachedOnError') {
       if (battingIsHome) errors.away += 1
       else errors.home += 1
     }

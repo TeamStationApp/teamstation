@@ -1,0 +1,475 @@
+import {
+  asArray,
+  asBoolean,
+  asEither,
+  asNull,
+  asNumber,
+  asObject,
+  asOptional,
+  asString,
+  asValue,
+  type Cleaner
+} from 'cleaners'
+
+/**
+ * A game as the scoring library holds it: GUMBO's own `gameData` and
+ * `liveData`, with every player named by a **session id** — a small integer
+ * the game hands out — and each player's server identity kept beside it as
+ * `userId`. Nothing here is geometry, timing or presentation.
+ */
+
+export const POSITIONS = [
+  'P',
+  'C',
+  '1B',
+  '2B',
+  'SS',
+  '3B',
+  'LF',
+  'CF',
+  'RF'
+] as const
+export type Position = (typeof POSITIONS)[number]
+export type Side = 'away' | 'home'
+export type BatSide = 'R' | 'L'
+
+export function asSessionId(raw: unknown): number {
+  const id = asNumber(raw)
+  if (!Number.isSafeInteger(id) || id < 0)
+    throw new Error('Invalid local player id')
+  return id
+}
+
+const asPoint = asObject({ x: asNumber, z: asNumber })
+export type Point = ReturnType<typeof asPoint>
+
+export const asPlayerRef = asObject({ id: asSessionId, fullName: asString })
+export type PlayerRef = ReturnType<typeof asPlayerRef>
+const asCount = asObject({ balls: asNumber, strikes: asNumber, outs: asNumber })
+const asCredit = asObject({
+  player: asPlayerRef,
+  credit: asValue(
+    'f_assist' as const,
+    'f_putout' as const,
+    'f_fielded_ball' as const,
+    'f_fielding_error' as const,
+    'f_throwing_error' as const
+  ),
+  position: asString
+})
+export type RunnerCredit = ReturnType<typeof asCredit>
+const asRoute = asArray(asObject({ player: asPlayerRef, location: asPoint }))
+
+/** One play as the game holds it, in GUMBO's shape, with session ids. */
+export const asGamePlay = asObject({
+  about: asObject({
+    atBatIndex: asSessionId,
+    inning: asNumber,
+    halfInning: asValue('top' as const, 'bottom' as const),
+    isComplete: asBoolean
+  }),
+  result: asObject({
+    event: asString,
+    eventType: asString,
+    description: asString,
+    awayScore: asNumber,
+    homeScore: asNumber,
+    rbi: asNumber
+  }),
+  count: asCount,
+  matchup: asObject({
+    batter: asPlayerRef,
+    pitcher: asPlayerRef,
+    batSide: asObject({ code: asValue('R' as const, 'L' as const) })
+  }),
+  runners: asArray(
+    asObject({
+      movement: asObject({
+        originBase: asNumber,
+        start: asNumber,
+        end: asNumber,
+        isOut: asBoolean,
+        outNumber: asOptional(asNumber),
+        forceOut: asBoolean,
+        runScored: asOptional(asBoolean)
+      }),
+      details: asObject({ runner: asPlayerRef, movementReason: asString }),
+      credits: asArray(asCredit)
+    })
+  ),
+  playEvents: asArray(
+    asObject({
+      index: asSessionId,
+      isPitch: asBoolean,
+      type: asString,
+      details: asObject({ description: asString, code: asString }),
+      count: asCount,
+      player: asPlayerRef
+    })
+  ),
+  hitData: asOptional(
+    asObject({
+      launchAngle: asNumber,
+      trajectory: asString,
+      coordinates: asPoint,
+      fielder: asOptional(asPlayerRef)
+    })
+  ),
+  source: asObject({
+    system: asValue('gamestation' as const),
+    gamestation: asObject({
+      version: asValue('estimated-v1' as const),
+      outcome: asString,
+      outSubtype: asOptional(asString),
+      contactKind: asOptional(asValue('swing' as const, 'bunt' as const)),
+      foulCaught: asOptional(asBoolean),
+      homeRunKind: asOptional(
+        asValue('out-of-park' as const, 'in-park' as const)
+      ),
+      landingHeight: asOptional(asNumber),
+      errorCredit: asOptional(
+        asObject({ player: asPlayerRef, defensiveRoute: asRoute })
+      ),
+      runnerActions: asOptional(
+        asArray(
+          asObject({
+            runner: asPlayerRef,
+            origin: asNumber,
+            destination: asNumber,
+            reason: asString,
+            pitchReference: asOptional(
+              asObject({ atBatIndex: asSessionId, index: asSessionId })
+            ),
+            isOut: asBoolean,
+            forceOut: asBoolean,
+            runScored: asBoolean,
+            credits: asArray(asCredit),
+            defensiveRoute: asOptional(asRoute),
+            throwerLocation: asOptional(asPoint),
+            defenderLocation: asOptional(asPoint)
+          })
+        )
+      )
+    })
+  })
+})
+export type GamePlay = ReturnType<typeof asGamePlay>
+
+export interface GamePlayer {
+  id: number
+  /** The server's identity for this person, or null for one made up here. */
+  userId: number | null
+  teamId: string
+  fullName: string
+  firstName?: string
+  lastName?: string
+  jersey: string
+  bats: 'left' | 'right' | 'switch'
+  throws: 'left' | 'right' | null
+  positions: string[]
+  local: boolean
+}
+export interface GameTeam {
+  logoUrl?: string | null
+  id: string
+  name: string
+}
+export interface GameSide {
+  players: number[]
+  battingOrder: number[]
+  battingIndex: number
+  defense: Record<Position, number | null>
+  pitchCounts: Record<number, number>
+}
+export interface PlayerIdentityMap {
+  /** Type-prefixed source identities, `number:123`, to their session ids. */
+  sourceToSession: Record<string, number>
+  sessionToSource: Record<number, string | number | null>
+  nextId: number
+}
+
+/** A runner's part in the play being resolved. Base 0 is the plate, 4 home. */
+export interface Movement {
+  automaticHome?: boolean
+  homeReleased?: boolean
+  playerId: number
+  from: number
+  to: number
+  force: boolean
+  decision: 'pending' | 'safe' | 'out'
+  resolved?: boolean
+}
+
+/** What happened at the plate, in the words the play records it with. */
+export type ResolutionOutcome =
+  | 'Single'
+  | 'Double'
+  | 'Triple'
+  | 'Home Run'
+  | "Fielder's Choice"
+  | 'Error'
+  | 'Throw Out'
+  | 'Ball Caught'
+  | 'Batter Interference'
+  | 'Walk'
+  | 'Strikeout'
+  | 'Balk'
+  | 'Batter Out — Other'
+  | 'Dropped Third Strike'
+  | 'Manual placement'
+
+/**
+ * The play being resolved: a result is known and some runners' fates are not.
+ * It is baseball, not drawing: who moves where, who is still to be decided,
+ * and what the half looked like before the play, so a third out can take back
+ * the runs a force made.
+ */
+export interface Resolution {
+  outcome: ResolutionOutcome
+  contactKind?: 'swing' | 'bunt'
+  automaticAward?: boolean
+  errorPending?: boolean
+  homeRunKind?: 'out-of-park' | 'in-park'
+  /** A balk moves runners without ending the appearance. */
+  sameAppearance?: boolean
+  choiceApplied?: boolean
+  /** The fielder who first handled the ball, and who holds it now. */
+  fielder?: number
+  ballHolder?: number
+  originalRunnerRecordCount: number
+  originalBases: Array<number | null>
+  originalRuns: number
+  originalOuts: number
+  movements: Movement[]
+}
+
+export interface GameState {
+  gamePk: string
+  gameData: {
+    teams: Record<Side, GameTeam>
+    players: Record<number, GamePlayer>
+  }
+  liveData: {
+    linescore: {
+      currentInning: number
+      currentInningOrdinal: string
+      inningState: 'Top' | 'Bottom'
+      isTopInning: boolean
+      balls: number
+      strikes: number
+      outs: number
+      teams: Record<Side, { runs: number; hits: number; errors: number }>
+      offense: {
+        batter: PlayerRef | null
+        first: PlayerRef | null
+        second: PlayerRef | null
+        third: PlayerRef | null
+      }
+      defense: Record<Position, PlayerRef | null>
+    }
+    boxscore: { teams: Record<Side, GameSide> }
+    plays: { allPlays: GamePlay[]; currentPlay: GamePlay | null }
+  }
+  /** The play being resolved, or null between plays. */
+  pending: Resolution | null
+  /** Runners headed home whose fate is not yet decided, lead runner first. */
+  homeQueue: number[]
+  /** The last pitch a wild pitch or passed ball may be charged to. */
+  recentPitch: { atBatIndex: number; index: number } | null
+  /** The batter due is already on base, so the lineup must change first. */
+  awaitingBatter: {
+    teamId: string
+    dueIndex: number
+    duePlayerId: number
+  } | null
+  /** The game has ended; only an undo reopens it. */
+  final: boolean
+  meta: {
+    source?: 'local-development' | 'api'
+    sequence: number
+    identities: PlayerIdentityMap
+    /** Some plays were rebuilt from their documents rather than their actions. */
+    derived?: boolean
+  }
+}
+
+export function copyState<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T
+}
+
+/**
+ * A cleaner's result keeps every optional key, set to `undefined` when it was
+ * absent. This types those keys as optional and drops them, so a cleaned
+ * value equals the one that was sent.
+ */
+export type Optional<T> = {
+  [K in keyof T as undefined extends T[K] ? never : K]: T[K]
+} & {
+  [K in keyof T as undefined extends T[K] ? K : never]?: Exclude<
+    T[K],
+    undefined
+  >
+}
+export function withoutUndefined<T>(value: T): T {
+  if (Array.isArray(value)) return value.map(withoutUndefined) as T
+  if (value == null || typeof value !== 'object') return value
+  const out: Record<string, unknown> = {}
+  for (const [key, item] of Object.entries(value))
+    if (item !== undefined) out[key] = withoutUndefined(item)
+  return out as T
+}
+export function exactly<T>(cleaner: Cleaner<T>): Cleaner<T> {
+  return raw => withoutUndefined(cleaner(raw))
+}
+
+const asSide = asObject({
+  players: asArray(asSessionId),
+  battingOrder: asArray(asSessionId),
+  battingIndex: asNumber,
+  defense: asObject(
+    Object.fromEntries(
+      POSITIONS.map(position => [position, asEither(asNull, asSessionId)])
+    ) as Record<Position, Cleaner<number | null>>
+  ),
+  pitchCounts: asObject(asNumber)
+})
+const asPlayer = asObject({
+  id: asSessionId,
+  userId: asEither(asNull, asNumber),
+  teamId: asString,
+  fullName: asString,
+  firstName: asOptional(asString),
+  lastName: asOptional(asString),
+  jersey: asString,
+  bats: asValue('left' as const, 'right' as const, 'switch' as const),
+  throws: asEither(asNull, asValue('left' as const, 'right' as const)),
+  positions: asArray(asString),
+  local: asBoolean
+})
+const asIdentities = asObject({
+  sourceToSession: asObject(asNumber),
+  sessionToSource: asObject(asEither(asNull, asString, asNumber)),
+  nextId: asNumber
+})
+
+/**
+ * What no GUMBO play carries and a scorer must not lose: both rosters, each
+ * side's batting order and place in it, the defence, and the players made up
+ * at the field. A play stores the setup as it stood before its first action.
+ */
+export interface GameSetup {
+  players: Record<number, GamePlayer>
+  sides: Record<Side, GameSide>
+  identities: PlayerIdentityMap
+}
+export const asGameSetup: Cleaner<GameSetup> = exactly(
+  asObject({
+    players: asObject(asPlayer),
+    sides: asObject({ away: asSide, home: asSide }),
+    identities: asIdentities
+  })
+)
+
+export function setupOf(state: GameState): GameSetup {
+  return {
+    players: copyState(state.gameData.players),
+    sides: copyState(state.liveData.boxscore.teams),
+    identities: copyState(state.meta.identities)
+  }
+}
+
+const asTeam = asObject({
+  logoUrl: asOptional(asEither(asNull, asString)),
+  id: asString,
+  name: asString
+})
+const asMovement = asObject({
+  automaticHome: asOptional(asBoolean),
+  homeReleased: asOptional(asBoolean),
+  playerId: asSessionId,
+  from: asNumber,
+  to: asNumber,
+  force: asBoolean,
+  decision: asValue('pending' as const, 'safe' as const, 'out' as const),
+  resolved: asOptional(asBoolean)
+})
+const asRef = asEither(asNull, asPlayerRef)
+
+/** Checks a whole game, such as one a session kept or a test built. */
+export const asGameState: Cleaner<GameState> = exactly(
+  asObject({
+    gamePk: asString,
+    gameData: asObject({
+      teams: asObject({ away: asTeam, home: asTeam }),
+      players: asObject(asPlayer)
+    }),
+    liveData: asObject({
+      linescore: asObject({
+        currentInning: asNumber,
+        currentInningOrdinal: asString,
+        inningState: asValue('Top' as const, 'Bottom' as const),
+        isTopInning: asBoolean,
+        balls: asNumber,
+        strikes: asNumber,
+        outs: asNumber,
+        teams: asObject({
+          away: asObject({ runs: asNumber, hits: asNumber, errors: asNumber }),
+          home: asObject({ runs: asNumber, hits: asNumber, errors: asNumber })
+        }),
+        offense: asObject({
+          batter: asRef,
+          first: asRef,
+          second: asRef,
+          third: asRef
+        }),
+        defense: asObject(
+          Object.fromEntries(
+            POSITIONS.map(position => [position, asRef])
+          ) as Record<Position, Cleaner<PlayerRef | null>>
+        )
+      }),
+      boxscore: asObject({ teams: asObject({ away: asSide, home: asSide }) }),
+      plays: asObject({
+        allPlays: asArray(asGamePlay),
+        currentPlay: asEither(asNull, asGamePlay)
+      })
+    }),
+    pending: asEither(
+      asNull,
+      asObject({
+        outcome: asString as Cleaner<ResolutionOutcome>,
+        contactKind: asOptional(asValue('swing' as const, 'bunt' as const)),
+        automaticAward: asOptional(asBoolean),
+        errorPending: asOptional(asBoolean),
+        homeRunKind: asOptional(
+          asValue('out-of-park' as const, 'in-park' as const)
+        ),
+        sameAppearance: asOptional(asBoolean),
+        choiceApplied: asOptional(asBoolean),
+        fielder: asOptional(asSessionId),
+        ballHolder: asOptional(asSessionId),
+        originalRunnerRecordCount: asNumber,
+        originalBases: asArray(asEither(asNull, asSessionId)),
+        originalRuns: asNumber,
+        originalOuts: asNumber,
+        movements: asArray(asMovement)
+      })
+    ),
+    homeQueue: asArray(asSessionId),
+    recentPitch: asEither(
+      asNull,
+      asObject({ atBatIndex: asNumber, index: asNumber })
+    ),
+    awaitingBatter: asEither(
+      asNull,
+      asObject({ teamId: asString, dueIndex: asNumber, duePlayerId: asNumber })
+    ),
+    final: asBoolean,
+    meta: asObject({
+      source: asOptional(asValue('local-development' as const, 'api' as const)),
+      sequence: asNumber,
+      identities: asIdentities,
+      derived: asOptional(asBoolean)
+    })
+  })
+)
