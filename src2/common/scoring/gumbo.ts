@@ -408,6 +408,8 @@ export function segmentAfter(
 
 export interface Replayed {
   state: GameState
+  /** The game before any logged action: fresh, or after the derived plays. */
+  base: GameState
   /** Each logged play's actions, in order: completed plays, then the current one. */
   segments: Array<{ atBatIndex: number; actions: ScoringAction[] }>
   /** Plays rebuilt from their documents, which cannot be undone into. */
@@ -442,6 +444,7 @@ export function replayPlays(
     context.setup
   let state = freshGame(context.gamePk, context.teams, setup)
   if (prefix.length > 0) state = fromDocuments(state, prefix)
+  const base = state
   const segments: Replayed['segments'] = []
   const problems: Problem[] = []
   const logged: Array<{ atBatIndex: number; record: GameStationRecord }> = []
@@ -470,7 +473,7 @@ export function replayPlays(
     }
     segments.push({ atBatIndex, actions: kept })
   }
-  return { state, segments, derived: prefix.length, problems }
+  return { state, base, segments, derived: prefix.length, problems }
 }
 
 /** A player named on a stored play, by his user id, as this game knows him. */
