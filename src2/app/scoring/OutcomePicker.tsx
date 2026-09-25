@@ -1,9 +1,21 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import { useTheme } from '../theme/ThemeContext'
 import { outcomeAvailable } from './battedBall'
 import type { OutcomePickerProps } from './outcomePickerProps'
 import type { Outcome } from './scoringContract'
+import {
+  CONTROL_COLORS,
+  CONTROL_HEIGHT,
+  ControlBackdrop,
+  ControlFace
+} from './ScoringControlAppearance'
+import {
+  OutTypeHeader,
+  SCORING_MENU,
+  ScoringMenuLabel
+} from './ScoringMenuAppearance'
+import { scoringMenuPanel, scoringMenuRow } from './scoringMenuWebStyle'
 export const PRIMARY_OUTCOMES = [
   'Batter Out',
   'Single',
@@ -37,6 +49,26 @@ export function OutcomePicker({
   const suppressClick = useRef(false)
   const previousX = useRef(0)
   const main = useRef<HTMLDivElement>(null)
+  const outPanel = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    if (!submenu) return
+    const measure = (): void => {
+      const height =
+        outPanel.current?.getBoundingClientRect().height ??
+        SCORING_MENU.outPanelHeight
+      setSubmenuTop(top =>
+        Math.max(
+          12,
+          Math.min(top, window.innerHeight - SCORING_MENU.bottom - height)
+        )
+      )
+    }
+    measure()
+    window.addEventListener('resize', measure)
+    return () => {
+      window.removeEventListener('resize', measure)
+    }
+  }, [submenu, submenuTop])
   const close = (): void => {
     setMode(undefined)
     setSubmenu(false)
@@ -95,7 +127,12 @@ export function OutcomePicker({
       setSubmenuTop(
         Math.max(
           12,
-          Math.min(window.innerHeight - 215, item.getBoundingClientRect().top)
+          Math.min(
+            window.innerHeight -
+              SCORING_MENU.bottom -
+              SCORING_MENU.outPanelHeight,
+            item.getBoundingClientRect().top
+          )
         )
       )
     } else if (
@@ -172,20 +209,23 @@ export function OutcomePicker({
         disabled={disabled}
         style={{
           ...buttonStyle,
-          background: theme.scoringControlBackground,
-          boxShadow: `0 3px 8px ${theme.buttonShadowColor}`,
-          color: theme.scoringControlText,
+          background: CONTROL_COLORS.contact.bottom,
+          border: `1px solid ${CONTROL_COLORS.contact.border}`,
+          borderRadius: 12,
+          boxShadow: '0 4px 3px rgba(0, 0, 0, 0.4)',
+          color: '#ffffff',
           position: 'relative',
-          padding: '6px 13px',
+          padding: '0 3px',
           width: '100%',
-          height: 52,
+          height: CONTROL_HEIGHT,
           opacity: disabled ? 0.5 : 1,
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
           justifyContent: 'center',
-          fontSize: 11,
-          fontWeight: 600
+          fontFamily: theme.regularTextFont,
+          fontSize: 16,
+          fontWeight: 400
         }}
         onPointerDown={event => {
           if (disabled || event.button !== 0) return
@@ -211,20 +251,8 @@ export function OutcomePicker({
           }
         }}
       >
-        {label}
-        <span
-          aria-hidden="true"
-          style={{
-            position: 'absolute',
-            right: 2,
-            top: 3,
-            pointerEvents: 'none',
-            lineHeight: 0.6,
-            fontSize: 11
-          }}
-        >
-          ⌃<br />⌃<br />⌃
-        </span>
+        <ControlBackdrop kind="contact" />
+        <ControlFace kind="contact" contact={contactKind} />
       </button>
       {mode != null && (
         <>
@@ -238,17 +266,16 @@ export function OutcomePicker({
             role="menu"
             aria-label={`${label} outcomes`}
             style={{
+              ...scoringMenuPanel,
               position: 'fixed',
               zIndex: 20,
               right: 12,
-              bottom: 126,
+              bottom: SCORING_MENU.bottom,
               width: 'min(230px, 46vw)',
               display: 'flex',
               flexDirection: 'column',
               gap: 0,
-              borderRadius: theme.rem(theme.radiusRem),
-              background: theme.backgroundColor,
-              maxHeight: 'calc(100vh - 140px)',
+              maxHeight: `calc(100dvh - ${SCORING_MENU.bottom + 12}px)`,
               overflowY: 'auto'
             }}
           >
@@ -272,18 +299,7 @@ export function OutcomePicker({
                     setHover('')
                   }}
                   style={{
-                    ...buttonStyle,
-                    color:
-                      hover === value
-                        ? theme.scoringMenuActiveText
-                        : theme.primaryTextColor,
-                    borderRadius: 0,
-                    textAlign: 'left',
-                    borderBottom: `1px solid ${theme.defaultBorderColor}`,
-                    background:
-                      hover === value
-                        ? theme.scoringMenuActiveBackground
-                        : theme.backgroundColor
+                    ...scoringMenuRow(hover === value)
                   }}
                   onClick={event => {
                     if (value === 'Batter Out')
@@ -291,7 +307,9 @@ export function OutcomePicker({
                         Math.max(
                           12,
                           Math.min(
-                            window.innerHeight - 215,
+                            window.innerHeight -
+                              SCORING_MENU.bottom -
+                              SCORING_MENU.outPanelHeight,
                             event.currentTarget.getBoundingClientRect().top
                           )
                         )
@@ -299,8 +317,11 @@ export function OutcomePicker({
                     select(value)
                   }}
                 >
-                  {value === 'Batter Out' ? '‹  ' : ''}
-                  {value}
+                  <ScoringMenuLabel
+                    label={value}
+                    active={hover === value}
+                    chevron={value === 'Batter Out' ? 'left' : undefined}
+                  />
                 </button>
               )
             )}
@@ -309,22 +330,22 @@ export function OutcomePicker({
             <div
               role="menu"
               aria-label="Batter Out options"
+              ref={outPanel}
               style={{
+                ...scoringMenuPanel,
                 position: 'fixed',
                 zIndex: 20,
                 left: 12,
                 top: submenuTop,
-                maxHeight: 'calc(100dvh - 24px)',
+                maxHeight: `calc(100dvh - ${SCORING_MENU.bottom + 12}px)`,
                 overflowY: 'auto',
                 width: 'min(230px, 46vw)',
                 display: 'flex',
                 flexDirection: 'column',
-                gap: 0,
-                borderRadius: theme.rem(theme.radiusRem),
-                overflow: 'hidden',
-                background: theme.backgroundColor
+                gap: 0
               }}
             >
+              <OutTypeHeader />
               {(
                 ['Throw Out', 'Ball Caught', 'Batter Interference'] as const
               ).map(value => (
@@ -346,25 +367,14 @@ export function OutcomePicker({
                     setHover('')
                   }}
                   style={{
-                    ...buttonStyle,
-                    color:
-                      hover === value
-                        ? theme.scoringMenuActiveText
-                        : theme.primaryTextColor,
-                    borderRadius: 0,
-                    textAlign: 'left',
-                    borderBottom: `1px solid ${theme.defaultBorderColor}`,
-                    background:
-                      hover === value
-                        ? theme.scoringMenuActiveBackground
-                        : theme.backgroundColor
+                    ...scoringMenuRow(hover === value)
                   }}
                   onClick={() => {
                     if (disabled) return
                     select(value)
                   }}
                 >
-                  {value}
+                  <ScoringMenuLabel label={value} active={hover === value} />
                 </button>
               ))}
             </div>

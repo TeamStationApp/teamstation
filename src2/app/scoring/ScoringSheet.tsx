@@ -25,11 +25,8 @@ export function ScoringButton({
   color,
   row = false,
   decision = false,
-  control = false,
   menuText = false,
-  upChevrons = false,
   shape,
-  submenuRight = false,
   submenu = false
 }: {
   label: string
@@ -39,11 +36,8 @@ export function ScoringButton({
   color?: string
   row?: boolean
   decision?: boolean
-  control?: boolean
   menuText?: boolean
-  upChevrons?: boolean
   shape?: 'pill' | 'circle'
-  submenuRight?: boolean
   submenu?: boolean
 }): React.ReactElement {
   const theme = useTheme()
@@ -77,9 +71,7 @@ export function ScoringButton({
         shadowRadius: row ? 0 : pressed ? 4 : 8,
         shadowOffset: { width: 0, height: pressed ? 1 : 3 },
         elevation: row ? 0 : pressed ? 1 : 3,
-        minHeight: decision ? 66 : control ? 52 : 44,
-        flexDirection: submenuRight ? 'row' : undefined,
-        alignItems: submenuRight ? 'center' : undefined,
+        minHeight: decision ? 66 : 44,
         padding: 10,
         justifyContent: 'center',
         borderRadius:
@@ -93,65 +85,35 @@ export function ScoringButton({
         borderBottomColor: theme.defaultBorderColor,
         backgroundColor:
           color ??
-          (control
-            ? theme.scoringControlBackground
-            : row
-              ? (pressed || active) && !disabled
-                ? theme.scoringMenuActiveBackground
-                : theme.backgroundColor
-              : theme.primaryButtonColor),
+          (row
+            ? (pressed || active) && !disabled
+              ? theme.scoringMenuActiveBackground
+              : theme.backgroundColor
+            : theme.primaryButtonColor),
         opacity: disabled ? 0.4 : 1
       })}
       onPress={onPress}
     >
-      {upChevrons && (
-        <Text
-          aria-hidden
-          pointerEvents="none"
-          style={{
-            position: 'absolute',
-            left: 3,
-            top: 4,
-            fontSize: 15,
-            lineHeight: 9,
-            color: control ? theme.scoringControlText : theme.buttonTextColor
-          }}
-        >
-          {'⌃\n⌃\n⌃'}
-        </Text>
-      )}
       <Text
         selectable={false}
         style={{
           fontFamily: theme.semiBoldTextFont,
           fontSize: decision ? 21 : menuText ? 16.8 : undefined,
           fontWeight: decision || menuText ? '700' : undefined,
-          color: control
-            ? theme.scoringControlText
-            : color != null
+          color:
+            color != null
               ? theme.scoringDecisionText
               : row
                 ? active && !disabled
                   ? theme.scoringMenuActiveText
                   : theme.primaryTextColor
                 : theme.buttonTextColor,
-          flex: submenuRight ? 1 : undefined,
           textAlign: row ? 'left' : 'center'
         }}
       >
-        {submenu && !submenuRight ? '‹  ' : ''}
+        {submenu ? '‹  ' : ''}
         {text ?? label}
       </Text>
-      {submenuRight && (
-        <Text
-          aria-hidden
-          style={{
-            color: active ? theme.scoringMenuActiveText : theme.primaryTextColor
-          }}
-        >
-          ›
-        </Text>
-      )}
     </Pressable>
   )
 }

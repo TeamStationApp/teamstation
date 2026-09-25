@@ -9,6 +9,14 @@ import {
   type MoreInput
 } from './moreActions'
 import type { MoreMenuProps } from './moreMenuProps'
+import {
+  CONTROL_COLORS,
+  CONTROL_HEIGHT,
+  ControlBackdrop,
+  ControlFace
+} from './ScoringControlAppearance'
+import { SCORING_MENU, ScoringMenuLabel } from './ScoringMenuAppearance'
+import { scoringMenuPanel, scoringMenuRow } from './scoringMenuWebStyle'
 import { useMenuEscape } from './useMenuEscape'
 export function MoreMenu({
   state,
@@ -139,32 +147,16 @@ export function MoreMenu({
           choose(key)
         }}
         style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: 8,
-          width: '100%',
-          minHeight: 44,
-          textAlign: 'left',
-          border: 0,
-          borderBottom: `1px solid ${theme.defaultBorderColor}`,
-          padding: '9px 12px',
-          background:
-            hover === key && reason == null
-              ? theme.scoringMenuActiveBackground
-              : theme.backgroundColor,
-          color:
-            hover === key && reason == null
-              ? theme.scoringMenuActiveText
-              : theme.primaryTextColor,
-          fontFamily: theme.semiBoldTextFont,
-          fontSize: 16.8,
-          fontWeight: 700,
+          ...scoringMenuRow(hover === key && reason == null),
+          fontFamily: theme.regularTextFont,
           opacity: reason == null ? 1 : 0.4
         }}
       >
-        <span>{label}</span>
-        {submenu && <span aria-hidden="true">›</span>}
+        <ScoringMenuLabel
+          label={label}
+          active={hover === key && reason == null}
+          chevron={submenu ? 'right' : undefined}
+        />
       </button>
     )
   }
@@ -172,7 +164,7 @@ export function MoreMenu({
     <div
       style={{
         flex: 1,
-        maxWidth: '25%',
+        minWidth: 0,
         userSelect: 'none',
         WebkitUserSelect: 'none',
         WebkitTouchCallout: 'none',
@@ -191,15 +183,20 @@ export function MoreMenu({
         style={{
           width: '100%',
           position: 'relative',
-          minHeight: 52,
-          border: 0,
-          borderRadius: theme.rem(theme.radiusRem),
-          background: theme.scoringControlBackground,
-          boxShadow: `0 3px 8px ${theme.buttonShadowColor}`,
+          height: CONTROL_HEIGHT,
+          border: `1px solid ${open ? SCORING_MENU.accent : CONTROL_COLORS.more.border}`,
+          outline: open ? `1px solid ${SCORING_MENU.accent}` : undefined,
+          borderRadius: 12,
+          background: CONTROL_COLORS.more.bottom,
+          boxShadow: '0 4px 3px rgba(0, 0, 0, 0.4)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 0,
           color: theme.scoringControlText,
-          fontFamily: theme.semiBoldTextFont,
-          fontSize: 11,
-          fontWeight: 600,
+          fontFamily: theme.regularTextFont,
+          fontSize: 16,
+          fontWeight: 400,
           touchAction: 'none',
           opacity: disabled ? 0.5 : 1
         }}
@@ -298,26 +295,8 @@ export function MoreMenu({
           else show()
         }}
       >
-        <span
-          aria-hidden="true"
-          style={{
-            position: 'absolute',
-            left: 3,
-            top: 4,
-            pointerEvents: 'none',
-            lineHeight: 0.6,
-            fontSize: 15
-          }}
-        >
-          ⌃<br />⌃<br />⌃
-        </span>
-        <span
-          aria-hidden="true"
-          style={{ display: 'block', fontSize: 22, lineHeight: '22px' }}
-        >
-          ⋯
-        </span>
-        More
+        <ControlBackdrop kind="more" />
+        <ControlFace kind="more" />
       </button>
       {open && (
         <>
@@ -337,40 +316,30 @@ export function MoreMenu({
             aria-label="More scoring actions"
             ref={primaryPanel}
             style={{
+              ...scoringMenuPanel,
               position: 'fixed',
               left: 'max(8px, env(safe-area-inset-left))',
-              bottom: 128,
+              bottom: SCORING_MENU.bottom,
               width: 'calc(50vw - 16px)',
               maxWidth: 300,
-              zIndex: 20,
-              background: theme.backgroundColor,
-              borderRadius: theme.rem(theme.radiusRem),
-              border: `1px solid ${theme.defaultBorderColor}`
+              zIndex: 20
             }}
           >
             <div
-              style={{ maxHeight: 'calc(100vh - 200px)', overflowY: 'auto' }}
+              style={{
+                maxHeight: `calc(100dvh - ${SCORING_MENU.bottom + 12}px)`,
+                overflowY: 'auto'
+              }}
             >
               {MORE_GROUPS.map(group => (
                 <React.Fragment key={group.label}>
-                  {group.label === 'This pitch' && (
-                    <div
-                      style={{
-                        padding: '8px 12px',
-                        color: theme.primaryTextColor,
-                        fontSize: 14.4,
-                        fontWeight: 700
-                      }}
-                    >
-                      {group.label}
-                    </div>
-                  )}
                   {group.actions
                     .filter(
                       action =>
                         ![
                           'Dropped Third Strike',
-                          'Put Batter on Base'
+                          'Put Batter on Base',
+                          'Balk'
                         ].includes(action) ||
                         moreEligibility(state, action) == null
                     )
@@ -380,28 +349,27 @@ export function MoreMenu({
                 </React.Fragment>
               ))}
             </div>
-            {child && (
-              <div
-                role="menu"
-                aria-label="Batter base"
-                ref={childPanel}
-                style={{
-                  position: 'fixed',
-                  left: 'calc(50vw + 8px)',
-                  maxWidth: 300,
-                  top: childTop,
-                  width: 'calc(50vw - 16px)',
-                  borderRadius: theme.rem(theme.radiusRem),
-                  overflow: 'hidden',
-                  background: theme.backgroundColor
-                }}
-              >
-                {['First', 'Second', 'Third'].map((label, index) =>
-                  row(label, String(index + 1))
-                )}
-              </div>
-            )}
           </div>
+          {child && (
+            <div
+              role="menu"
+              aria-label="Batter base"
+              ref={childPanel}
+              style={{
+                ...scoringMenuPanel,
+                position: 'fixed',
+                left: 'calc(50vw + 8px)',
+                maxWidth: 300,
+                top: childTop,
+                zIndex: 20,
+                width: 'calc(50vw - 16px)'
+              }}
+            >
+              {['First', 'Second', 'Third'].map((label, index) =>
+                row(label, String(index + 1))
+              )}
+            </div>
+          )}
         </>
       )}
       {form != null && (
