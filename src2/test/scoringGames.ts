@@ -31,7 +31,10 @@ export function game(): GameState {
   return freshGame('g1', TEAMS, newSetup(TEAMS, { away: [], home: [] }))
 }
 
-/** Applies each action, failing the test on the first one refused. */
+/**
+ * Applies each action, failing the test on the first one refused. The
+ * transitions are every action's, in order.
+ */
 export function play(state: GameState, ...actions: ScoringAction[]): Applied {
   let applied: Applied = {
     state,
@@ -40,8 +43,12 @@ export function play(state: GameState, ...actions: ScoringAction[]): Applied {
     problems: []
   }
   for (const action of actions) {
-    applied = applyAction(applied.state, action)
-    expect(applied.problems, JSON.stringify(action)).deep.equals([])
+    const next = applyAction(applied.state, action)
+    expect(next.problems, JSON.stringify(action)).deep.equals([])
+    applied = {
+      ...next,
+      transitions: [...applied.transitions, ...next.transitions]
+    }
   }
   return applied
 }
