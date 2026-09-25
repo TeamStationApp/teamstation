@@ -5,7 +5,8 @@ import {
   computeHighlights,
   type HighlightEvent,
   type HighlightVideo,
-  leadFor
+  leadFor,
+  withDropped
 } from './highlights'
 import type { HighlightSettings } from './settings'
 
@@ -108,6 +109,29 @@ describe('highlights', function () {
     expect(computeHighlights([hidden, untimed], video, settings)).deep.equals(
       []
     )
+  })
+
+  it('leaves out a fielding error, for either team, unless somebody titled it', function () {
+    const error = event({
+      id: 'evt_err',
+      atBatIndex: 2,
+      eventType: 'field_error',
+      description:
+        'Graham R hits a ground ball and reaches on an error by second baseman Dylan L'
+    })
+    const { highlights, dropped } = withDropped(
+      [event(), error],
+      video,
+      settings
+    )
+    expect(highlights.map(h => h.eventId)).deep.equals(['evt_1'])
+    expect(dropped).equals(0)
+    const titled = computeHighlights(
+      [{ ...error, titleOverride: 'The one that got away' }],
+      video,
+      settings
+    )
+    expect(titled.map(h => h.title)).deep.equals(['The one that got away'])
   })
 
   it('returns them in game order, oldest first', function () {

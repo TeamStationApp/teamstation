@@ -131,6 +131,12 @@ export function withDropped(
   for (const event of events) {
     if (event.hidden) continue
     if (event.startTime == null) continue
+    // A fielding error is nobody's highlight: not the fielder's, and not the
+    // batter's either, who reached on somebody else's mistake. A person who
+    // gave the play a title of their own has said otherwise, and that stands.
+    if (event.eventType === 'field_error' && event.titleOverride == null) {
+      continue
+    }
 
     const tapMs = event.startTime.getTime() + event.timeNudgeSec * 1000
     const playMs = tapMs - settings.lagSec * 1000
