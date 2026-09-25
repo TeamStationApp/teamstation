@@ -20,6 +20,8 @@ export function fieldPlayersFor(session: ScoringSessionState): FieldPlayer[] {
       playerId: ref.id,
       name: ref.fullName,
       displayName: ref.fullName,
+      uniformSide:
+        player.teamId === session.gameData.teams.home.id ? 'home' : 'away',
       jersey: player.jersey
     })
   }
@@ -33,6 +35,8 @@ export function fieldPlayersFor(session: ScoringSessionState): FieldPlayer[] {
       label: `R${index + 1}`,
       name: player.fullName,
       displayName: player.fullName,
+      uniformSide:
+        player.teamId === session.gameData.teams.home.id ? 'home' : 'away',
       jersey: player.jersey,
       team: 'runner',
       position: { ...BASES[index + 1] },
@@ -58,6 +62,8 @@ export function fieldPlayersFor(session: ScoringSessionState): FieldPlayer[] {
       playerId: batter.id,
       name: batter.fullName,
       displayName: batter.fullName,
+      uniformSide:
+        player.teamId === session.gameData.teams.home.id ? 'home' : 'away',
       jersey: player.jersey,
       batSide: side,
       position,

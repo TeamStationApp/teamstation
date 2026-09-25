@@ -6,6 +6,7 @@ export interface GroundPoint {
   z: number
 }
 export interface FieldPlayer {
+  uniformSide?: 'away' | 'home'
   hasBall?: boolean
   receivingBall?: boolean
   pose?: {

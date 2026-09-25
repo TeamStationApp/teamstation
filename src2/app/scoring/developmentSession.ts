@@ -34,8 +34,16 @@ export function createDevelopmentSession(
     gamePk: game.id,
     gameData: {
       teams: {
-        away: { id: game.awayTeamId, name: game.awayTeamName },
-        home: { id: game.homeTeamId, name: game.homeTeamName }
+        away: {
+          id: game.awayTeamId,
+          name: game.awayTeamName,
+          logoUrl: game.awayLogoUrl
+        },
+        home: {
+          id: game.homeTeamId,
+          name: game.homeTeamName,
+          logoUrl: game.homeLogoUrl
+        }
       },
       players: {}
     },

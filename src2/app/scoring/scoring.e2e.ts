@@ -5,7 +5,13 @@ import { join } from 'node:path'
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 import puppeteer, { type Browser, type Page } from 'puppeteer'
-import { PerspectiveCamera, type Scene, Vector3 } from 'three'
+import {
+  type Mesh,
+  type MeshStandardMaterial,
+  PerspectiveCamera,
+  type Scene,
+  Vector3
+} from 'three'
 
 import { asGameDetail } from '../../common/api'
 import { applyFieldCamera } from '../field/cameraModel'
@@ -46,7 +52,8 @@ async function open(
   failed = false,
   failedRoster = false,
   bats: 'switch' | 'left' | 'right' = 'switch',
-  probe = false
+  probe = false,
+  logos?: 'valid' | 'broken'
 ): Promise<{ page: Page; unexpected: string[] }> {
   const page = await browser.newPage()
   if (probe)
@@ -74,6 +81,20 @@ async function open(
   await page.setRequestInterception(true)
   page.on('request', request => {
     const url = new URL(request.url())
+    if (url.pathname.startsWith('/qa-logo-')) {
+      const away = url.pathname.includes('away')
+      request
+        .respond({
+          status: logos === 'broken' ? 404 : 200,
+          contentType: 'image/svg+xml',
+          body:
+            logos === 'broken'
+              ? 'Missing image'
+              : `<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128"><rect width="128" height="128" fill="${away ? '#e17842' : '#b74242'}"/><path d="M64 8L98 45H78V74H50V45H30Z" fill="white"/><text x="64" y="115" text-anchor="middle" font-size="36" fill="white">${away ? 'A' : 'H'}</text></svg>`
+        })
+        .catch(() => undefined)
+      return
+    }
     if (!url.pathname.startsWith('/api/')) {
       request.continue().catch(() => undefined)
       return
@@ -87,7 +108,11 @@ async function open(
     else if (url.pathname === '/api/v1/games/g1') {
       body =
         scored === false
-          ? game
+          ? {
+              ...game,
+              awayLogoUrl: logos == null ? null : `${base}/qa-logo-away.svg`,
+              homeLogoUrl: logos == null ? null : `${base}/qa-logo-home.svg`
+            }
           : {
               ...game,
               awayScore: typeof scored === 'number' ? scored : 0,
@@ -3012,6 +3037,88 @@ describe('scoring browser', function () {
         await page.close()
       }
     })
+  for (const logos of ['valid', 'broken', undefined] as const) {
+    it(`keeps team colors and dugout identities across halves with ${logos ?? 'absent'} logos`, async function () {
+      const { page, unexpected } = await open(
+        '/games/g1/score',
+        false,
+        false,
+        false,
+        'right',
+        true,
+        logos
+      )
+      try {
+        await page.setViewport({ width: 390, height: 844 })
+        await page.waitForSelector('canvas[data-field-ready="true"]')
+        await captureScene(page)
+        if (logos === 'valid')
+          await page.waitForFunction(() =>
+            Boolean(
+              (window as unknown as SceneProbeWindow).qaScene!.getObjectByName(
+                'dugout-logo-home'
+              )
+            )
+          )
+        for (const half of ['top', 'bottom']) {
+          const data = await page.evaluate(() => {
+            const scene = (window as unknown as SceneProbeWindow).qaScene!
+            const color = (name: string): string =>
+              (
+                (
+                  scene
+                    .getObjectByName(name)!
+                    .getObjectByName('jersey-torso') as Mesh
+                ).material as MeshStandardMaterial
+              ).color.getHexString()
+            const heads: string[] = []
+            scene.traverse(n => {
+              if (n.name === 'dugout-head') heads.push(n.name)
+            })
+            return {
+              offense: color(
+                'player-offense-' +
+                  (scene.getObjectByName('player-offense-1') == null
+                    ? '10'
+                    : '1')
+              ),
+              defense: color(
+                'player-defense-' +
+                  (scene.getObjectByName('player-defense-10') == null
+                    ? '1'
+                    : '10')
+              ),
+              heads: heads.length,
+              logos: ['away', 'home'].filter(
+                s => scene.getObjectByName('dugout-logo-' + s) != null
+              )
+            }
+          })
+          expect(data.offense).equals(half === 'top' ? 'e17842' : 'b74242')
+          expect(data.defense).equals(half === 'top' ? 'b74242' : 'e17842')
+          expect(data.heads).equals(6)
+          expect(data.logos).has.length(logos === 'valid' ? 2 : 0)
+          await page.screenshot({
+            path: join(
+              process.env.GS_SCORING_ARTIFACT_DIR ?? '/tmp',
+              `dugouts-${logos ?? 'absent'}-${half}.png`
+            )
+          })
+          if (half === 'top') {
+            await click(page, 'Open scoring menu')
+            await click(page, 'End Half Inning')
+            await click(page, 'Confirm End Half Inning')
+            await page.waitForFunction(() =>
+              document.body.textContent!.includes('Bottom')
+            )
+          }
+        }
+        expect(unexpected).deep.equals([])
+      } finally {
+        await page.close()
+      }
+    })
+  }
   it('confirms and undoes a manual half and a runner-only third out', async function () {
     const { page } = await open('/games/g1/score')
     try {
