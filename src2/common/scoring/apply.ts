@@ -14,7 +14,13 @@ import {
   type RunnerMovementAction,
   type ScoringAction
 } from './actions'
-import { earnsRbi, errorCredit, fieldedCredit, outCredits } from './credits'
+import {
+  advanceEarnsRbi,
+  earnsRbi,
+  errorCredit,
+  fieldedCredit,
+  outCredits
+} from './credits'
 import {
   addPlayer,
   applyOverride,
@@ -1099,10 +1105,8 @@ function commitSafe(
     action.reason ??
     (pending == null && from === to ? 'Safe from Pickoff' : 'Advance')
   setBase(ctx, action.runner, to)
-  if (to === 4 && from !== 4) {
-    line(ctx).teams[battingSide(ctx.state)].runs++
-    ctx.out.push({ type: 'runScored', runner: action.runner, rbi: false })
-  }
+  if (to === 4 && from !== 4)
+    scoreRun(ctx, action.runner, advanceEarnsRbi(pending?.outcome, reason))
   const old = pending?.movements.find(move => move.playerId === action.runner)
   if (old != null) Object.assign(old, movement)
   else pending?.movements.push(movement)
