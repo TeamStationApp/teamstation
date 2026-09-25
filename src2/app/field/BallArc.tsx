@@ -7,14 +7,12 @@ import {
   type Group,
   Mesh,
   MeshBasicMaterial,
-  PerspectiveCamera,
   Shape,
   TubeGeometry,
   Vector3
 } from 'three'
 
 import {
-  arcHandle,
   arcPoint,
   type BallArcState,
   firstBounceFraction
@@ -22,6 +20,7 @@ import {
 import { DESTINATION_RADIUS, DestinationMarker } from './DestinationMarker'
 import { ARROW_OVERLAY_ORDER, arrowPulse } from './interactionAffordances'
 import { TERRAIN } from './terrain'
+import { trajectoryGrip } from './trajectoryGrip'
 import { guideBearing, GuideBearingEase } from './trajectoryGuide'
 
 class FlightCurve extends Curve<Vector3> {
@@ -65,7 +64,6 @@ export function BallArc({
   const elapsed = useRef(0)
   const dark = useMemo(() => new Color('#4a3b00'), [])
   const yellow = useMemo(() => new Color('#ffe000'), [])
-  const viewPoint = useMemo(() => new Vector3(), [])
   const geometry = useMemo(
     () =>
       new TubeGeometry(
@@ -105,7 +103,6 @@ export function BallArc({
     },
     [direct]
   )
-  const tip = arcHandle(arc)
   const arrow = useMemo(() => {
     const shape = new Shape()
     shape.moveTo(-9, 0)
@@ -128,22 +125,21 @@ export function BallArc({
     if (handle.current == null) return
     elapsed.current += Math.min(dt, 0.05)
     handle.current.quaternion.copy(camera.quaternion)
-    viewPoint
-      .copy(handle.current.position)
-      .applyMatrix4(camera.matrixWorldInverse)
-    const fov = camera instanceof PerspectiveCamera ? camera.fov : 43
-    const pixel =
-      (2 * Math.max(1, -viewPoint.z) * Math.tan((fov * Math.PI) / 360)) /
-      Math.max(1, size.height)
-    handle.current.scale.setScalar(pixel)
-    handle.current.children.forEach((child, index) => {
+    const grip = trajectoryGrip(arc, camera, size)
+    handle.current.position.copy(grip.position)
+    handle.current.scale.setScalar(grip.scale)
+    handle.current.children.forEach(child => {
       if (
+        child.name === 'arc-pulse-arrow' &&
         child instanceof Mesh &&
         child.material instanceof MeshBasicMaterial
       ) {
         child.material.color
           .copy(dark)
-          .lerp(yellow, arrowPulse(index % 3, elapsed.current))
+          .lerp(
+            yellow,
+            arrowPulse((Math.abs(child.position.y) - 13) / 9, elapsed.current)
+          )
       }
     })
     // Only the editing arrows keep the demand renderer alive. Done stops it.
@@ -165,15 +161,32 @@ export function BallArc({
           (arc.landingHeight ?? TERRAIN.players) + 0.1,
           arc.target.z
         ]}
-        radius={DESTINATION_RADIUS}
+        radius={DESTINATION_RADIUS * (editing ? 0.5 : 1)}
+        color={editing ? '#ffffff' : '#ffe000'}
       />
       {editing && (
         <group
           ref={handle}
           name="arc-angle-handle"
           renderOrder={ARROW_OVERLAY_ORDER}
-          position={[tip.x, tip.y, tip.z]}
         >
+          {[3, 5, 7].map((radius, index) => (
+            <mesh
+              key={radius}
+              name="arc-grab-ring"
+              renderOrder={ARROW_OVERLAY_ORDER}
+            >
+              <ringGeometry args={[radius - 0.8, radius, 32]} />
+              <meshBasicMaterial
+                color="#ffe000"
+                transparent
+                opacity={1 - index * 0.2}
+                depthTest={false}
+                depthWrite={false}
+                toneMapped={false}
+              />
+            </mesh>
+          ))}
           {[-1, 1].flatMap(side =>
             [0, 1, 2].map(stop => (
               <mesh

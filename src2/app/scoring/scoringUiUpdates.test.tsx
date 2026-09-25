@@ -26,7 +26,7 @@ afterEach(async () => {
   root = undefined
 })
 describe('scoring UI updates', () => {
-  it('shares Schedule pill styling and routes both Done buttons through one guarded action', async () => {
+  it('shares camera-view pill styling and routes both Done buttons through one guarded action', async () => {
     const host = document.createElement('div')
     document.body.appendChild(host)
     root = createRoot(host)
@@ -56,8 +56,8 @@ describe('scoring UI updates', () => {
         root!.render(
           <ThemeProvider>
             <PillTabs
-              tabs={[{ id: 'schedule', label: 'Schedule' }]}
-              selected="schedule"
+              tabs={[{ id: 'camera', label: 'Home Plate Camera' }]}
+              selected="camera"
               onSelect={() => undefined}
             />
             <BaseballScreen
@@ -89,17 +89,20 @@ describe('scoring UI updates', () => {
         canFinish: true
       })
       const bottom = node('Bottom Finish at-bat')!
-      const schedule = node('Schedule')!
+      const schedule = node('Home Plate Camera')!
       for (const property of [
-        'backgroundColor',
         'borderRadius',
         'boxShadow',
         'minHeight',
-        'paddingLeft'
+        'paddingLeft',
+        'backgroundColor'
       ] as const)
         expect(style(bottom.firstElementChild!)[property], property).equals(
           style(schedule.firstElementChild!)[property]
         )
+      expect(style(bottom.querySelector('[dir="auto"]')!).color).equals(
+        style(schedule.querySelector('[dir="auto"]')!).color
+      )
       expect(style(bottom).minHeight).equals('48px')
       expect(style(bottom.firstElementChild!).minHeight).equals('36px')
       await act(async () => {

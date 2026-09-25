@@ -6,10 +6,12 @@ export const DESTINATION_RADIUS = 11
 /** Broad target with a bright outer rim and progressively dimmer inner rings. */
 export function DestinationMarker({
   position,
-  radius
+  radius,
+  color = '#ffe000'
 }: {
   position: [number, number, number]
   radius: number
+  color?: string
 }): React.ReactElement {
   return (
     <group
@@ -28,7 +30,7 @@ export function DestinationMarker({
             ]}
           />
           <meshBasicMaterial
-            color="#ffe000"
+            color={color}
             transparent
             opacity={Math.pow(0.57, index)}
             depthTest={false}
