@@ -44,6 +44,7 @@ function game(over: Partial<StatRow> = {}): StatRow {
     pitchK: 0,
     pitchR: 0,
     pitchEr: 0,
+    eraInnings: 6,
     ...over
   }
 }
@@ -132,27 +133,26 @@ describe('stats', function () {
         pitchEr: 2,
         pitchH: 4,
         pitchBb: 2,
-        inningsPerGame: 6
+        eraInnings: 6
       })
     ])
     expect(pitchingRates(line).era).equals(4)
     expect(pitchingRates(line).whip).equals(2)
   })
 
-  it('has no ERA at all where nobody knows how long a game is', function () {
-    const [line] = pitchingLines([game({ pitchOuts: 9, pitchEr: 2 })])
+  it('has no ERA for a pitcher who got nobody out', function () {
+    const [line] = pitchingLines([game({ pitchBf: 2, pitchEr: 2 })])
     expect(pitchingRates(line).era).equals(undefined)
-    expect(pitchingRates(line).whip).equals(0)
   })
 
   it('weights the divisor by the innings thrown under it', function () {
     // Three innings in a six-inning league and three in a nine-inning one: the
     // divisor lands between them rather than on whichever came last.
     const [line] = pitchingLines([
-      game({ pitchOuts: 9, pitchEr: 1, inningsPerGame: 6 }),
-      game({ pitchOuts: 9, pitchEr: 1, inningsPerGame: 9 })
+      game({ pitchOuts: 9, pitchEr: 1, eraInnings: 6 }),
+      game({ pitchOuts: 9, pitchEr: 1, eraInnings: 9 })
     ])
-    expect(line.inningsPerGame).equals(7.5)
+    expect(line.eraInnings).equals(7.5)
     expect(pitchingRates(line).era).equals(2.5)
   })
 

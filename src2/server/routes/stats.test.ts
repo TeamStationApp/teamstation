@@ -12,6 +12,7 @@ import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
 import type { Database } from '../db/database'
 import { attachInt8Parser } from '../db/int8'
+import { statRows } from '../stats/rows'
 import { statsRoutes } from './stats'
 
 // One player's figures, asked for the way the page asks for them.
@@ -93,8 +94,8 @@ describe('one player’s figures', function () {
     await db
       .insertInto('seasons')
       .values([
-        { id: spring, name: 'Spring 2026', year: 2026, innings_per_game: 6 },
-        { id: fall, name: 'Fall 2025', year: 2025, innings_per_game: 6 }
+        { id: spring, name: 'Spring 2026', year: 2026, era_innings: 6 },
+        { id: fall, name: 'Fall 2025', year: 2025, era_innings: 6 }
       ])
       .execute()
     await db
@@ -269,6 +270,46 @@ describe('one player’s figures', function () {
     if (db == null) this.skip()
     const { status } = await ask(`/players/${jensen}/stats`, stranger)
     expect(status).equals(404)
+  })
+
+  it('divides an ERA by the season’s innings, else its league’s, else six', async function () {
+    if (db == null) return this.skip()
+    const divisor = async (): Promise<number[]> =>
+      (await statRows(db!, { seasonId: spring })).map(row => row.eraInnings)
+    const league = makeId('league')
+    await db
+      .insertInto('leagues')
+      .values({ id: league, name: 'NPLL' })
+      .execute()
+    try {
+      await db
+        .updateTable('seasons')
+        .set({ era_innings: null, league_id: league })
+        .where('id', '=', spring)
+        .execute()
+      expect(await divisor()).deep.equals([6])
+
+      await db
+        .updateTable('leagues')
+        .set({ era_innings: 7 })
+        .where('id', '=', league)
+        .execute()
+      expect(await divisor()).deep.equals([7])
+
+      await db
+        .updateTable('seasons')
+        .set({ era_innings: 5 })
+        .where('id', '=', spring)
+        .execute()
+      expect(await divisor()).deep.equals([5])
+    } finally {
+      await db
+        .updateTable('seasons')
+        .set({ era_innings: 6, league_id: null })
+        .where('id', '=', spring)
+        .execute()
+      await db.deleteFrom('leagues').where('id', '=', league).execute()
+    }
   })
 
   describe('the plays behind them', function () {

@@ -71,6 +71,11 @@ export interface LeaguesTable {
   logo_source: string | null
   logo_updated_at: Timestamp | null
   notes: string | null
+  /**
+   * The innings an ERA divides by, for seasons that do not set their own. Set
+   * by hand in the database; nothing writes it.
+   */
+  era_innings: number | null
   spectator_access: Generated<'team' | 'league'>
   created_at: Timestamp
   updated_at: Timestamp
@@ -91,11 +96,11 @@ export interface SeasonsTable {
   starts_on: string | null
   ends_on: string | null
   /**
-   * The regulation length of a game here, which is what an ERA divides by.
-   * Null until it has been worked out from the games themselves — see
-   * `024seasonInnings`.
+   * The innings a game here runs, which is what an ERA divides by. Set by hand
+   * in the database; nothing writes it. Null takes the league's, and six where
+   * that is unset too.
    */
-  innings_per_game: number | null
+  era_innings: number | null
   spectator_access: Generated<'team' | 'season'>
   created_at: Timestamp
   updated_at: Timestamp
