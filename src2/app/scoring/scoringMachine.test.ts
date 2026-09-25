@@ -2,16 +2,17 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { asRosterEntry } from '../../common/api'
+import { allocatePlayer, createIdentityMap } from '../../common/scoring/rules'
+import { applyAction } from '../../common/scoring/session'
+import { asSessionId } from '../../common/scoring/state'
 import { completeMotions, singleCorrection } from '../../test/scoringHelpers'
 import { advancePlayer } from '../field/fieldModel'
-import { asSessionId } from './contracts/estimatedGumbo'
 import {
   addDevelopmentPlayer,
   createDevelopmentSession
 } from './developmentSession'
 import { fieldPlayersFor } from './fieldAdapter'
 import { gameFixture } from './isUnscoredGame.test'
-import { allocatePlayer, createIdentityMap } from './playerIdentity'
 import { asScoringPlay } from './scoringContract'
 import { initialScoringState, scoringReducer } from './scoringMachine'
 import { scoringPreferenceStore } from './scoringPreferenceStore'
@@ -19,10 +20,9 @@ import {
   baseIds,
   canSwitchBatter,
   playerRef,
-  scoreboardFor,
-  startAppearance
+  scoreboardFor
 } from './scoringSelectors'
-import { DevelopmentScoringStateSource } from './scoringStateSource'
+import { DevelopmentScoringSource } from './scoringSource'
 import type { ScoringState } from './scoringTypes'
 
 const roster = [
@@ -66,7 +66,7 @@ describe('local scoring sessions', function () {
       home: { id: 'home', name: 'Hawks', logoUrl: null }
     })
     expect(session.gameData.players[1]).includes({
-      sourceUserId: 102,
+      userId: 102,
       fullName: 'Jordan K.',
       jersey: '00',
       bats: 'switch'
@@ -95,7 +95,7 @@ describe('local scoring sessions', function () {
     const local = addDevelopmentPlayer(session, 'away', '  Casey  ')
     expect(session.gameData.players[local]).includes({
       fullName: 'Casey',
-      sourceUserId: null,
+      userId: null,
       jersey: '',
       local: true
     })
@@ -190,7 +190,7 @@ describe('local scoring sessions', function () {
       expect(state.session.liveData.linescore.teams.away.runs).equals(
         mask === 7 ? 1 : 0
       )
-      expect(state.homeQueue).has.length(0)
+      expect(state.session.homeQueue).has.length(0)
       expect(state.phase).oneOf(['ready', 'awaitingBatter'])
       const closed = scoringReducer(state, { type: 'CLOSE_PLAY' })
       expect(closed).equals(state)
@@ -252,9 +252,12 @@ describe('local scoring sessions', function () {
     expect(
       scoringReducer(closed, { type: 'UNDO' }).session.liveData.linescore.balls
     ).equals(0)
-    expect(scoringReducer({ ...state, homeQueue: [1] }, done).phase).equals(
-      'correctionWindow'
-    )
+    expect(
+      scoringReducer(
+        { ...state, session: { ...state.session, homeQueue: [1] } },
+        done
+      ).phase
+    ).equals('correctionWindow')
     const moving = {
       ...state,
       motions: [
@@ -308,7 +311,7 @@ describe('local scoring sessions', function () {
     state = pitch(state, 'ball', 4)
     state = scoringReducer(state, { type: 'CLOSE_PLAY' })
     expect(state.phase).equals('awaitingBatter')
-    expect(state.awaitingBatter?.dueIndex).equals(0)
+    expect(state.session.awaitingBatter?.dueIndex).equals(0)
     expect(state.session.liveData.linescore.offense.batter).equals(null)
     expect(state.session.liveData.plays.currentPlay).equals(null)
     expect(
@@ -321,15 +324,17 @@ describe('local scoring sessions', function () {
       scoringReducer(state, { type: 'UNDO' }).session.liveData.linescore.balls
     ).equals(3)
     const broken = initial().session
-    broken.liveData.boxscore.teams.away.battingOrder = []
-    expect(() => startAppearance(broken)).throws('lineup')
     expect(() => playerRef(broken, 900)).throws('Unknown')
   })
-  it('loads and saves local state without invoking any transport', async function () {
-    const source = new DevelopmentScoringStateSource()
-    const session = await source.load(gameFixture, roster, [])
-    await source.save(session)
-    expect(session.meta.source).equals('local-development')
+  it('keeps a local game in memory and picks it up again without any transport', async function () {
+    const source = new DevelopmentScoringSource()
+    const game = await source.open(gameFixture, roster, [])
+    game.apply({ type: 'pitch', call: 'B' })
+    await game.flush()
+    expect(game.pending).equals(0)
+    const again = await source.open(gameFixture, roster, [])
+    expect(again.state.liveData.linescore.balls).equals(1)
+    expect(again.state.gameData.players[1].userId).equals(102)
   })
   it('stores per-user help, bounds counts, handles unavailable storage and resets', async function () {
     const items = new Map<string, string>()
@@ -365,5 +370,158 @@ describe('local scoring sessions', function () {
     })
     expect(await unavailable.read('one')).deep.equals({ help: true, shown: 0 })
     await unavailable.write('one', { help: false, shown: 3 })
+  })
+})
+
+describe('the screen and the actions it logs', function () {
+  it('makes the same game from the taps as from the actions they logged', function () {
+    let state = initial()
+    const tap = (event: Parameters<typeof scoringReducer>[1]): void => {
+      state = completeMotions(scoringReducer(state, event))
+    }
+    tap({ type: 'PITCH', kind: 'ball' })
+    tap({ type: 'PITCH', kind: 'swing' })
+    tap({ type: 'OUTCOME', outcome: 'Double' })
+    tap({ type: 'FIELDER', id: 16, point: { x: -40, z: -70 }, generation: 0 })
+    tap({ type: 'TRAJECTORY', angle: 18, generation: 0 })
+    tap({ type: 'CLOSE_PLAY', generation: state.generation })
+    tap({ type: 'PITCH', kind: 'ball' })
+    tap({ type: 'PITCH', kind: 'ball' })
+    tap({ type: 'PITCH', kind: 'ball' })
+    tap({ type: 'PITCH', kind: 'ball' })
+    expect(state.session.liveData.plays.allPlays).length(2)
+    let replayed = initial().session
+    for (const action of state.log) {
+      const applied = applyAction(replayed, action)
+      expect(applied.problems, JSON.stringify(action)).deep.equals([])
+      replayed = applied.state
+    }
+    expect(replayed).deep.equals(state.session)
+  })
+})
+
+describe('a decided play picked up by the screen', function () {
+  function decided(): ScoringState {
+    let session = createDevelopmentSession(gameFixture, roster, [])
+    for (const action of [
+      { type: 'ballInPlay', contact: 'swing' },
+      { type: 'result', eventType: 'single' }
+    ] as const)
+      session = applyAction(session, action).state
+    return initialScoringState(session)
+  }
+
+  it('waits for the scorer with no countdown, and closes on Done', function () {
+    const state = decided()
+    expect(state.phase).equals('correctionWindow')
+    expect(state.correctionWindow).equals(null)
+    const ticked = scoringReducer(state, {
+      type: 'TIMER_TICK',
+      generation: state.generation,
+      revision: 0,
+      elapsedMs: 60000
+    })
+    expect(ticked).equals(state)
+    const closed = scoringReducer(state, {
+      type: 'CLOSE_PLAY',
+      generation: state.generation
+    })
+    expect(closed.phase).equals('ready')
+    expect(closed.log.at(-1)).deep.equals({
+      type: 'gameFlow',
+      kind: 'closePlay'
+    })
+  })
+
+  it('stays as it is when read-only, and does not throw', function () {
+    const state = decided()
+    const refused = scoringReducer(state, {
+      type: 'RESET',
+      session: state.session,
+      log: state.log,
+      readOnly: true
+    })
+    const closed = scoringReducer(refused, {
+      type: 'CLOSE_PLAY',
+      generation: refused.generation
+    })
+    expect(closed.phase).equals('correctionWindow')
+    expect(closed.log).deep.equals(refused.log)
+  })
+})
+
+describe('a read-only screen', function () {
+  it('changes the game for nothing it is sent, and undoes nothing', function () {
+    const scored = pitch(initial(), 'ball')
+    const refused = scoringReducer(scored, {
+      type: 'RESET',
+      session: scored.session,
+      log: scored.log,
+      readOnly: true
+    })
+    expect(refused.readOnly).equals(true)
+    const pitched = pitch({ ...refused, past: scored.past }, 'called')
+    expect(pitched.log).deep.equals(scored.log)
+    expect(pitched.session).deep.equals(scored.session)
+    for (const event of [
+      { type: 'END_HALF' },
+      { type: 'END_GAME' },
+      { type: 'OUTCOME', outcome: 'Single', contactKind: 'swing' },
+      { type: 'UNDO' }
+    ] as const) {
+      const next = scoringReducer({ ...refused, past: scored.past }, event)
+      expect(next.log, event.type).deep.equals(scored.log)
+      expect(next.session, event.type).deep.equals(scored.session)
+    }
+  })
+})
+
+describe('the play animation setting', function () {
+  it('keeps the setting with the other preferences and turns animation on and off', async function () {
+    const items = new Map<string, string>()
+    const preferences = scoringPreferenceStore({
+      getItem: async key => items.get(key) ?? null,
+      setItem: async (key, value) => {
+        items.set(key, value)
+      }
+    })
+    await preferences.write('one', { help: true, shown: 0, animations: false })
+    expect(await preferences.read('one')).deep.equals({
+      help: true,
+      shown: 0,
+      animations: false
+    })
+    const state = initial()
+    const off = scoringReducer(state, { type: 'PRESENTATION', enabled: false })
+    expect(off.presentationEnabled).equals(false)
+    expect(
+      scoringReducer(off, { type: 'PRESENTATION', enabled: false })
+    ).equals(off)
+    const pitched = scoringReducer(off, { type: 'PITCH', kind: 'ball' })
+    expect(pitched.presentation).equals(null)
+    expect(
+      scoringReducer(
+        scoringReducer(off, { type: 'PRESENTATION', enabled: true }),
+        { type: 'PITCH', kind: 'ball' }
+      ).presentation?.kind
+    ).equals('pitch')
+  })
+
+  it('resumes a game picked up in the middle of a play at that play’s step', function () {
+    let state = initial()
+    state = scoringReducer(state, {
+      type: 'MORE',
+      input: { action: 'Hit by Pitch' }
+    })
+    state = completeMotions(state)
+    let session = state.session
+    session = applyAction(session, { type: 'pitch', call: 'B' }).state
+    session = applyAction(session, {
+      type: 'result',
+      eventType: 'single'
+    }).state
+    const resumed = initialScoringState(session, false)
+    expect(resumed.phase).equals('correctionWindow')
+    expect(resumed.pendingPlay?.outcome).equals('Single')
   })
 })

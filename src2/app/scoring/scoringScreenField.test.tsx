@@ -43,8 +43,11 @@ function props(): Props {
   const key = Object.keys(container ?? {}).find(name =>
     name.startsWith('__reactContainer$')
   )
-  const rootFiber = (container as unknown as Record<string, Fiber>)[key ?? '']
-  const found = find(rootFiber, 'BaseballScreen')
+  const host = (container as unknown as Record<string, Fiber>)[key ?? '']
+  // The container keeps the fiber it was created with; the tree on screen is
+  // whichever of the two buffers its root committed last.
+  const root = (host as { stateNode?: { current?: Fiber } }).stateNode
+  const found = find(root?.current ?? host, 'BaseballScreen')
   if (found == null) throw new Error('The screen has not rendered')
   return found.memoizedProps as Props
 }

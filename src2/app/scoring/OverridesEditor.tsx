@@ -1,15 +1,11 @@
 import React, { useState } from 'react'
 import { Text, TextInput, View } from 'react-native'
 
+import { overrideError, overrideOf } from '../../common/scoring/rules'
 import { useTheme } from '../theme/ThemeContext'
 import { ScoringChoice } from './ScoringChoice'
-import {
-  applyOverrideDraft,
-  type OverrideDraft,
-  overrideDraft
-} from './scoringEdits'
 import { ScoringButton, ScoringError } from './ScoringSheet'
-import type { ScoringState } from './scoringTypes'
+import type { OverrideDraft, ScoringState } from './scoringTypes'
 export function OverridesEditor({
   state,
   onApply
@@ -18,7 +14,7 @@ export function OverridesEditor({
   onApply: (draft: OverrideDraft) => void
 }): React.ReactElement {
   const theme = useTheme()
-  const [draft, setDraft] = useState(() => overrideDraft(state.session))
+  const [draft, setDraft] = useState(() => overrideOf(state.session))
   const [numbers, setNumbers] = useState(() => ({
     inning: String(draft.inning),
     awayScore: String(draft.awayScore),
@@ -32,7 +28,7 @@ export function OverridesEditor({
   const fielders = session.liveData.boxscore.teams[draft.top ? 'home' : 'away']
   const options = (ids: number[]): Array<{ id: number; name: string }> =>
     ids.map(id => ({ id, name: session.gameData.players[id].fullName }))
-  const error = applyOverrideDraft(state, draft).error
+  const error = overrideError(state.session, draft)
   return (
     <View style={{ gap: 12 }}>
       <View style={{ flexDirection: 'row', gap: 8 }}>

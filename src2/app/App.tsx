@@ -29,6 +29,7 @@ import {
   useBrowserBack
 } from './navigation/useAddressBar'
 import { ScoringScreen } from './scoring/ScoringScreen'
+import { ServerScoringSource } from './scoring/scoringSource'
 import { AccountScreen } from './screens/AccountScreen'
 import { GameScreen } from './screens/GameScreen'
 import { GamesFeedScreen } from './screens/GamesFeedScreen'
@@ -166,6 +167,7 @@ function Shell(props: AppProps): React.ReactElement {
     () => new GameStationClient({ baseUrl: apiBaseUrl, token: initialToken }),
     [apiBaseUrl, initialToken]
   )
+  const scoringSource = useMemo(() => new ServerScoringSource(client), [client])
   /**
    * A sign-in, or a sign-out, and what the platform should remember of it.
    *
@@ -717,6 +719,7 @@ function Shell(props: AppProps): React.ReactElement {
       <ScoringScreen
         userId={session?.user.id}
         client={client}
+        source={scoringSource}
         gameId={top.gameId}
         onExit={() => {
           inPlace.current = true

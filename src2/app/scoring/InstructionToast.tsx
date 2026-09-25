@@ -33,7 +33,8 @@ export function InstructionToast({
   compact?: boolean
 }): React.ReactElement | null {
   const theme = useTheme()
-  if (instruction == null && remainingMs == null) return null
+  if (instruction == null && remainingMs == null && onFinish == null)
+    return null
   return (
     <View
       pointerEvents="box-none"

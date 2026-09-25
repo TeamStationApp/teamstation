@@ -15,6 +15,8 @@ import {
 } from 'react-native'
 
 import type { GameStationClient } from '../../common/api'
+import { awaitingResult } from '../../common/scoring/rules'
+import type { ScoringSession as GameSession } from '../../common/scoring/session'
 import type { BallArcState } from '../field/ballArcModel'
 import { BaseballScreen } from '../field/BaseballScreen'
 import type { FieldPlayer } from '../field/fieldModel'
@@ -33,8 +35,8 @@ import { RosterEditor } from './RosterEditor'
 import { RunnerControls } from './RunnerControls'
 import type { RunnerDragView } from './runnerDrag'
 import { RunnerDragTargets } from './RunnerDragTargets'
-import { runnerDecisionError } from './runnerRules'
 import { scoringAudio } from './scoringAudio'
+import { runnerDecisionError } from './scoringFlow'
 import { initialScoringState, scoringReducer } from './scoringMachine'
 import { scoringFieldPlayers } from './scoringMotion'
 import { scoringPreferences } from './scoringPreferences'
@@ -46,33 +48,30 @@ import {
 } from './scoringSelectors'
 import { ScoringSettings } from './ScoringSettings'
 import { ScoringButton, ScoringSheet } from './ScoringSheet'
-import {
-  DevelopmentScoringStateSource,
-  type ScoringStateSource
-} from './scoringStateSource'
-import type { ScoringEvent, ScoringSessionState } from './scoringTypes'
+import { DevelopmentScoringSource, type ScoringSource } from './scoringSource'
+import type { ScoringEvent } from './scoringTypes'
 import { useHomeRunCelebration } from './useHomeRunCelebration'
 import { useMenuEscape } from './useMenuEscape'
 import { useScoringClock } from './useScoringClock'
 import { useScoringExit } from './useScoringExit'
 
-const developmentSource = new DevelopmentScoringStateSource()
 export interface ScoringScreenProps {
   client: GameStationClient
   gameId: string
   userId?: string | number
   onExit: () => void
-  source?: ScoringStateSource
+  source?: ScoringSource
 }
 export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
   const theme = useTheme()
-  const [session, setSession] = useState<ScoringSessionState>()
+  const [opened, setOpened] = useState<GameSession>()
   const [failed, setFailed] = useState(false)
   const surface = useFieldSurface()
-  const source = props.source ?? developmentSource
+  const fallback = useMemo(() => new DevelopmentScoringSource(), [])
+  const source = props.source ?? fallback
   useEffect(() => {
     let live = true
-    setSession(undefined)
+    setOpened(undefined)
     setFailed(false)
     const load = async (): Promise<void> => {
       const game = await props.client.game(props.gameId)
@@ -80,8 +79,8 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
         props.client.roster(game.awayTeamId).catch(() => []),
         props.client.roster(game.homeTeamId).catch(() => [])
       ])
-      const value = await source.load(game, away, home)
-      if (live) setSession(value)
+      const value = await source.open(game, away, home)
+      if (live) setOpened(value)
     }
     load().catch(() => {
       if (live) setFailed(true)
@@ -90,7 +89,7 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
       live = false
     }
   }, [props.client, props.gameId, source])
-  if (session == null)
+  if (opened == null)
     return (
       <View
         style={[
@@ -132,32 +131,91 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
       </View>
     )
   return (
-    <ScoringSession
+    <ScoringPanel
       key={props.gameId}
-      initial={session}
-      source={source}
+      game={opened}
+      persistent={source.persistent === true}
       onExit={props.onExit}
       userId={String(props.userId ?? 'local-scorer')}
     />
   )
 }
-function ScoringSession(props: {
-  initial: ScoringSessionState
-  source: ScoringStateSource
+interface SaveStatus {
+  pending: number
+  offline: boolean
+  readOnly: boolean
+  problem: string | null
+}
+function statusOf(game: GameSession): SaveStatus {
+  return {
+    pending: game.pending,
+    offline: game.offline,
+    readOnly: game.readOnly,
+    problem: game.problem
+  }
+}
+/** What the save is doing, in a line, or nothing when everything is saved. */
+export function saveStatusText(status: SaveStatus): string | null {
+  if (status.readOnly) return null
+  if (status.pending > 0 && status.offline)
+    return `Offline — ${status.pending} ${status.pending === 1 ? 'play' : 'plays'} waiting`
+  if (status.problem != null) return `Not saved: ${status.problem}`
+  if (status.pending > 0) return 'Saving…'
+  return null
+}
+function ScoringPanel(props: {
+  game: GameSession
+  persistent: boolean
   onExit: () => void
   userId: string
 }): React.ReactElement {
   const theme = useTheme()
-  const [state, dispatch] = useReducer(scoringReducer, props.initial, session =>
-    initialScoringState(session, true)
+  // A ball in play saved without its result cannot be shown, because the
+  // outcome chosen for it is logged only with the result: the screen picks
+  // the game up at the pitch before it, and saves that only once the scorer
+  // does something from there.
+  const [state, dispatch] = useReducer(scoringReducer, props.game, game => {
+    const resumed = game.resumable()
+    return {
+      ...initialScoringState(resumed.state, true),
+      log: resumed.actions
+    }
+  })
+  const openedLog = useRef(state.log)
+  const [status, setStatus] = useState(() => statusOf(props.game))
+  useEffect(
+    () =>
+      props.game.subscribe(() => {
+        setStatus(statusOf(props.game))
+        // Refused, the session went back to what the server holds, and so
+        // does the screen.
+        if (props.game.readOnly)
+          dispatch({
+            type: 'RESET',
+            session: props.game.state,
+            log: [...props.game.actions],
+            readOnly: true
+          })
+      }),
+    [props.game]
   )
+  // The screen's log is the game: the session saves whatever it says.
+  useEffect(() => {
+    if (state.log !== openedLog.current) props.game.sync(state.log)
+  }, [props.game, state.log])
   const [sound, setSound] = useState(true)
   useEffect(() => {
     let live = true
     scoringPreferences
       .read(props.userId)
       .then(value => {
-        if (live) setSound(value.sound !== false)
+        if (live) {
+          setSound(value.sound !== false)
+          dispatch({
+            type: 'PRESENTATION',
+            enabled: value.animations !== false
+          })
+        }
       })
       .catch(() => undefined)
     return () => {
@@ -191,7 +249,7 @@ function ScoringSession(props: {
   } | null>(null)
   const [menu, setMenu] = useState(false)
   const [sheet, setSheet] = useState<
-    'exit' | 'settings' | 'overrides' | 'half' | 'rosters'
+    'exit' | 'settings' | 'overrides' | 'half' | 'rosters' | 'game'
   >()
   const confirmation = useRef<((value: boolean) => void) | null>(null)
   const requestConfirmation = useCallback(
@@ -222,7 +280,6 @@ function ScoringSession(props: {
     'Open scoring menu'
   )
   const [hint, setHint] = useState(false)
-  const [saveFailed, setSaveFailed] = useState(false)
   const pauseClock = useScoringClock(
     state,
     menu ||
@@ -241,19 +298,18 @@ function ScoringSession(props: {
     },
     [pauseClock]
   )
-  const stateRef = useRef(state)
-  stateRef.current = state
-  const actionsAllowed = bottomActionsAllowed(state)
+  // Read-only takes no input at all, from the pointer, the keyboard or a
+  // screen reader.
+  const actionsAllowed = bottomActionsAllowed(state) && !status.readOnly
   const session = state.session
   const line = session.liveData.linescore
   const exit = useScoringExit(
     session.gamePk,
-    state.past.length > 0,
+    props.persistent ? status.pending > 0 : state.past.length > 0,
     props.onExit,
     requestConfirmation
   )
-  const { phase, pendingPlay, motions, homeQueue, runnerAction, presentation } =
-    state
+  const { phase, pendingPlay, motions, runnerAction, presentation } = state
   const previousPlayers = useRef<FieldPlayer[]>([])
   const players = useMemo(() => {
     const next = scoringFieldPlayers(
@@ -262,7 +318,6 @@ function ScoringSession(props: {
         phase,
         pendingPlay,
         motions,
-        homeQueue,
         runnerAction,
         presentation
       },
@@ -270,15 +325,7 @@ function ScoringSession(props: {
     )
     previousPlayers.current = next
     return next
-  }, [
-    session,
-    phase,
-    pendingPlay,
-    motions,
-    homeQueue,
-    runnerAction,
-    presentation
-  ])
+  }, [session, phase, pendingPlay, motions, runnerAction, presentation])
   useEffect(() => {
     setAngle(
       allowedAngle(
@@ -326,21 +373,7 @@ function ScoringSession(props: {
     }
     // A box change does not present the same appearance's help again.
   }, [props.userId, batterId, appearance, switchable, session.gameData.players])
-  useEffect(() => {
-    let live = true
-    props.source.save(session).then(
-      () => {
-        if (live) setSaveFailed(false)
-      },
-      () => {
-        if (live) setSaveFailed(true)
-      }
-    )
-    return () => {
-      live = false
-    }
-  }, [props.source, session])
-  const unresolvedRunner = [...(state.pendingPlay?.movements ?? [])]
+  const unresolvedRunner = [...(session.pending?.movements ?? [])]
     .filter(move => move.decision === 'pending' && move.to < 4)
     .sort((a, b) => b.from - a.from)[0]
   const runnerEnabled =
@@ -468,6 +501,7 @@ function ScoringSession(props: {
           generation: state.generation,
           runnerIds,
           selectableIds:
+            status.readOnly ||
             menu ||
             sheet != null ||
             outcomeMenu ||
@@ -490,6 +524,7 @@ function ScoringSession(props: {
                       : [])
                   ],
           gestures:
+            status.readOnly ||
             menu ||
             sheet != null ||
             outcomeMenu ||
@@ -535,7 +570,11 @@ function ScoringSession(props: {
         zoom: 1.25,
         movementRevision: state.generation + session.meta.sequence,
         selectableIds:
-          switchable && !menu && sheet == null && batterId != null
+          switchable &&
+          !status.readOnly &&
+          !menu &&
+          sheet == null &&
+          batterId != null
             ? [`offense-${batterId}`]
             : [],
         onPlayerPlacement: (id, point) => {
@@ -567,6 +606,7 @@ function ScoringSession(props: {
           onChoose={input => {
             if (!actionsAllowed || menu || sheet != null || outcomeMenu) return
             setHint(false)
+            setMoreOpen(false)
             dispatch({ type: 'MORE', input })
           }}
         />
@@ -586,6 +626,8 @@ function ScoringSession(props: {
             if (!actionsAllowed || menu || sheet != null || moreOpen) return
             scoringAudio.unlock()
             setHint(false)
+            // Closed with the choice, so the field takes input the moment it asks.
+            setOutcomeMenu(false)
             dispatch({ type: 'OUTCOME', outcome, contactKind })
           }}
         />
@@ -597,7 +639,24 @@ function ScoringSession(props: {
       }}
       onUndo={() => {
         scoringAudio.stop()
-        dispatch({ type: 'UNDO' })
+        if (status.readOnly) return
+        if (state.past.length > 0 || state.log.length === 0) {
+          dispatch({ type: 'UNDO' })
+          return
+        }
+        // Scored before this screen opened: the game steps back one action,
+        // or, from a ball in play still waiting for its result, back to the
+        // pitch before it, where the screen can pick the play up again.
+        props.game.sync(state.log)
+        let undone = props.game.undo()
+        while (undone.problems.length === 0 && awaitingResult(props.game.state))
+          undone = props.game.undo()
+        if (undone.problems.length === 0)
+          dispatch({
+            type: 'RESET',
+            session: props.game.state,
+            log: [...props.game.actions]
+          })
       }}
       onPitch={kind => {
         if (!actionsAllowed || menu || sheet != null || outcomeMenu || moreOpen)
@@ -606,14 +665,22 @@ function ScoringSession(props: {
         if (kind !== 'play') dispatch({ type: 'PITCH', kind })
         setHint(false)
       }}
-      historyLabel={state.past.at(-1)?.label}
+      historyLabel={
+        status.readOnly
+          ? undefined
+          : (state.past.at(-1)?.label ??
+            (state.log.length > 0 ? 'Last play' : undefined))
+      }
+      // Read-only asks nothing of the scorer, so it shows no instruction.
       instruction={
-        state.moreDraft != null
-          ? `Drag a runner for ${state.moreDraft.action}`
-          : (instruction ??
-            (state.phase === 'awaitingBatter'
-              ? 'Next batter is on base. Update lineup to continue.'
-              : undefined))
+        status.readOnly
+          ? undefined
+          : state.moreDraft != null
+            ? `Drag a runner for ${state.moreDraft.action}`
+            : (instruction ??
+              (state.phase === 'awaitingBatter'
+                ? 'Next batter is on base. Update lineup to continue.'
+                : undefined))
       }
       instructionStatus={
         state.pendingPlay?.outcome === 'Home Run' &&
@@ -636,11 +703,14 @@ function ScoringSession(props: {
           : lstrings.scoring_finish_at_bat
       }
       remainingMs={
-        state.phase === 'correctionWindow' && state.presentation == null
+        !status.readOnly &&
+        state.phase === 'correctionWindow' &&
+        state.presentation == null
           ? state.correctionWindow?.remainingMs
           : undefined
       }
       canFinish={
+        !status.readOnly &&
         (state.phase === 'correctionWindow' ||
           (state.phase === 'chooseDefender' &&
             state.runnerAction?.thrower != null)) &&
@@ -654,7 +724,8 @@ function ScoringSession(props: {
         )
       }
       onFinish={
-        state.phase !== 'chooseDefender' && state.phase !== 'correctionWindow'
+        status.readOnly ||
+        (state.phase !== 'chooseDefender' && state.phase !== 'correctionWindow')
           ? undefined
           : () => {
               if (
@@ -752,7 +823,8 @@ function ScoringSession(props: {
                 'Overrides',
                 'End Half Inning',
                 'Set Team Rosters',
-                'Resume Game'
+                'Resume Game',
+                'End Game'
               ] as const
             ).map((label, index) => (
               <ScoringButton
@@ -761,19 +833,31 @@ function ScoringSession(props: {
                 menuText
                 label={label}
                 disabled={
-                  index === 3
-                    ? state.phase !== 'ready' ||
+                  // Read-only leaves only leaving, settings and resuming.
+                  (status.readOnly && [2, 3, 4, 6].includes(index)) ||
+                  (index === 6
+                    ? !(
+                        state.phase === 'ready' ||
+                        state.phase === 'awaitingBatter'
+                      ) ||
                       state.presentation != null ||
-                      state.moreDraft != null
-                    : (index === 2 || index === 4) &&
-                      (state.presentation != null ||
-                        state.moreDraft != null ||
-                        (state.phase !== 'ready' &&
-                          state.phase !== 'awaitingBatter'))
+                      state.moreDraft != null ||
+                      state.session.final ||
+                      props.game.atBatOpen
+                    : index === 3
+                      ? state.phase !== 'ready' ||
+                        state.presentation != null ||
+                        state.moreDraft != null
+                      : (index === 2 || index === 4) &&
+                        (state.presentation != null ||
+                          state.moreDraft != null ||
+                          (state.phase !== 'ready' &&
+                            state.phase !== 'awaitingBatter')))
                 }
                 onPress={() => {
                   setMenu(false)
                   if (index === 0) exit()
+                  else if (index === 6) setSheet('game')
                   else if (index !== 5)
                     setSheet(
                       (
@@ -802,7 +886,8 @@ function ScoringSession(props: {
               settings: 'Settings',
               overrides: 'Overrides',
               half: 'End Half Inning',
-              rosters: 'Set Team Rosters'
+              rosters: 'Set Team Rosters',
+              game: 'End Game'
             }[sheet]
           }
           onClose={closeSheet}
@@ -815,7 +900,9 @@ function ScoringSession(props: {
                   fontFamily: theme.regularTextFont
                 }}
               >
-                Your local development scoring will be discarded.
+                {props.persistent
+                  ? `${status.pending} ${status.pending === 1 ? 'change has' : 'changes have'} not reached the server yet and will be lost.`
+                  : 'Your local development scoring will be discarded.'}
               </Text>
               <ScoringButton
                 label="Discard and Exit"
@@ -829,7 +916,13 @@ function ScoringSession(props: {
             </>
           )}
           {sheet === 'settings' && (
-            <ScoringSettings userId={props.userId} onSoundChange={setSound} />
+            <ScoringSettings
+              userId={props.userId}
+              onSoundChange={setSound}
+              onAnimationsChange={enabled => {
+                dispatch({ type: 'PRESENTATION', enabled })
+              }}
+            />
           )}
           {sheet === 'rosters' && (
             <RosterEditor
@@ -848,6 +941,27 @@ function ScoringSession(props: {
                 closeSheet()
               }}
             />
+          )}
+          {sheet === 'game' && (
+            <>
+              <Text
+                style={{
+                  color: theme.primaryTextColor,
+                  fontFamily: theme.regularTextFont
+                }}
+              >
+                End the game at {session.gameData.teams.away.name}{' '}
+                {line.teams.away.runs}, {session.gameData.teams.home.name}{' '}
+                {line.teams.home.runs}? Undo takes it back.
+              </Text>
+              <ScoringButton
+                label="Confirm End Game"
+                onPress={() => {
+                  dispatch({ type: 'END_GAME' })
+                  closeSheet()
+                }}
+              />
+            </>
           )}
           {sheet === 'half' && (
             <>
@@ -871,21 +985,71 @@ function ScoringSession(props: {
           )}
         </ScoringSheet>
       )}
-      {saveFailed && (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Retry saving"
-          onPress={() => {
-            props.source
-              .save(stateRef.current.session)
-              .then(() => {
-                setSaveFailed(false)
-              })
-              .catch(() => undefined)
+      {saveStatusText(status) != null && (
+        <View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            top: 8,
+            alignSelf: 'center',
+            paddingHorizontal: 12,
+            paddingVertical: 4,
+            borderRadius: 12,
+            backgroundColor: theme.backgroundColor
           }}
         >
-          <Text>Unable to save. Retry</Text>
-        </Pressable>
+          <Text
+            accessibilityRole="text"
+            accessibilityLabel="Save status"
+            style={{
+              color: theme.primaryTextColor,
+              fontFamily: theme.regularTextFont
+            }}
+          >
+            {saveStatusText(status)}
+          </Text>
+        </View>
+      )}
+      {state.session.final && (
+        <View
+          pointerEvents="none"
+          style={{ position: 'absolute', top: 36, alignSelf: 'center' }}
+        >
+          <Text
+            accessibilityLabel="Game over"
+            style={{
+              color: theme.primaryTextColor,
+              fontFamily: theme.regularTextFont
+            }}
+          >
+            Game over
+          </Text>
+        </View>
+      )}
+      {status.readOnly && (
+        <View
+          accessibilityLabel="Scoring is read-only"
+          style={{
+            position: 'absolute',
+            inset: 0,
+            zIndex: 200,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: 'rgba(0,0,0,0.55)'
+          }}
+        >
+          <Text
+            style={{
+              color: '#fff',
+              fontFamily: theme.regularTextFont,
+              padding: 20,
+              textAlign: 'center'
+            }}
+          >
+            {status.problem}
+          </Text>
+          <ScoringButton label="Exit Current Game" onPress={props.onExit} />
+        </View>
       )}
     </BaseballScreen>
   )

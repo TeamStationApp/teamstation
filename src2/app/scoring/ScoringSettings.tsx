@@ -7,10 +7,12 @@ import type { ScoringPreferences } from './scoringPreferenceStore'
 import { ScoringButton } from './ScoringSheet'
 export function ScoringSettings({
   userId,
-  onSoundChange
+  onSoundChange,
+  onAnimationsChange
 }: {
   userId: string
   onSoundChange?: (enabled: boolean) => void
+  onAnimationsChange?: (enabled: boolean) => void
 }): React.ReactElement {
   const theme = useTheme()
   const [value, setValue] = useState<ScoringPreferences>()
@@ -41,6 +43,18 @@ export function ScoringSettings({
             const enabled = value.sound === false
             update({ ...value, sound: enabled })
             onSoundChange?.(enabled)
+          }
+        }}
+      />
+      <ScoringButton
+        label="Toggle play animations"
+        text={`Animate plays: ${value?.animations === false ? 'Off' : 'On'}`}
+        disabled={value == null}
+        onPress={() => {
+          if (value != null) {
+            const enabled = value.animations === false
+            update({ ...value, animations: enabled })
+            onAnimationsChange?.(enabled)
           }
         }}
       />

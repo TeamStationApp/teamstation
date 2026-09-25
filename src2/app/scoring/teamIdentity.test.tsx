@@ -54,8 +54,14 @@ describe('team identity and dugouts', () => {
         await renderer.unmount()
       }
       const id = batter.playerId!
-      const copy = { ...state, homeQueue: [id], motions: [], pendingPlay: null }
+      const copy = {
+        ...state,
+        session: { ...state.session, homeQueue: [id] },
+        motions: [],
+        pendingPlay: null
+      }
       copy.session = structuredClone(state.session)
+      copy.session.homeQueue = [id]
       copy.session.liveData.linescore.offense.batter = null
       const reconstructed = scoringFieldPlayers(copy).find(
         p => p.playerId === id

@@ -1,11 +1,11 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
+import { homeBackProposal } from '../../common/scoring/rules'
 import { completeMotions } from '../../test/scoringHelpers'
 import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { moreEligibility } from './moreActions'
-import { homeBackProposal } from './runnerRules'
 import { initialScoringState, scoringReducer } from './scoringMachine'
 import { baseIds, playerRef } from './scoringSelectors'
 import type { ScoringState } from './scoringTypes'
@@ -88,8 +88,8 @@ describe('automatic dropped third strike', () => {
       )
       expect(baseIds(state.session)).deep.equals(expectedBases[mask])
       expect(
-        state
-          .pendingPlay!.movements.filter(m => m.playerId !== 1)
+        state.session
+          .pending!.movements.filter(m => m.playerId !== 1)
           .map(m => [m.playerId, m.from, m.to])
       ).deep.equals(expectedDestinations[mask])
       for (const [id, from, to] of expectedDestinations[mask])
@@ -108,9 +108,9 @@ describe('automatic dropped third strike', () => {
       state = completeMotions(state)
       if (mask === 7) {
         expect(state.phase).equals('homeDecision')
-        expect(state.homeQueue).deep.equals([4])
+        expect(state.session.homeQueue).deep.equals([4])
         expect(baseIds(state.session)).deep.equals([1, 2, 3])
-        expect(homeBackProposal(state)).equals(null)
+        expect(homeBackProposal(state.session)).equals(null)
         state = completeMotions(
           scoringReducer(state, { type: 'HOME', decision: 'safe' })
         )
