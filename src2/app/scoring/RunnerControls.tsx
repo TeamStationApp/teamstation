@@ -2,6 +2,7 @@ import React from 'react'
 import { Text, View } from 'react-native'
 
 import type { BaseProjection } from '../field/fieldTypes'
+import { lstrings } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
 import {
   homeBackProposal,
@@ -50,6 +51,12 @@ export function RunnerControls({
   const currentHold = !home && stationary && action?.origin === 'current'
   const error = home ? undefined : runnerDecisionError(state)
   const base = home ? 0 : action!.to % 4
+  const baseLabel = [
+    lstrings.scoring_at_home,
+    lstrings.scoring_at_first,
+    lstrings.scoring_at_second,
+    lstrings.scoring_at_third
+  ][base]
   const point = projection?.bases[base] ?? anchor
   const vertical = base !== 2
   const width = vertical ? 130 : 220
@@ -115,6 +122,7 @@ export function RunnerControls({
         {!currentHold && (home || action!.to > 0) && (
           <ScoringButton
             decision
+            secondaryLabel={baseLabel}
             label={!home && stationary ? 'Safe from Pickoff' : 'Safe'}
             color={theme.scoringSafeColor}
             disabled={error != null}
@@ -129,6 +137,7 @@ export function RunnerControls({
         )}
         <ScoringButton
           decision
+          secondaryLabel={baseLabel}
           label="Out"
           color={theme.scoringOutColor}
           onPress={() => {

@@ -967,6 +967,18 @@ describe('scoring browser', function () {
         expect(await page.$('[aria-label="Time to edit play"]')).equals(null)
         expect(await page.$('[aria-label="Back"]')).equals(null)
         expect(await page.$$('[aria-label="Safe"]')).has.length(1)
+        for (const label of ['Safe', 'Out']) {
+          const copy = await page.$eval(`[aria-label="${label}"]`, button => ({
+            text: button.textContent,
+            subtitleSize: getComputedStyle(button.lastElementChild!).fontSize,
+            align: getComputedStyle(button.lastElementChild!).textAlign
+          }))
+          expect(copy.text).equals(
+            label + (scenario.startsWith('loaded') ? 'At Home' : 'At First')
+          )
+          expect(copy.subtitleSize).equals('10.5px')
+          expect(copy.align).equals('center')
+        }
         await page.screenshot({
           path: join(
             process.env.GS_SCORING_ARTIFACT_DIR ?? '/tmp',
@@ -979,6 +991,12 @@ describe('scoring browser', function () {
             timeout: 30000
           })
           await page.waitForSelector('[aria-label*="Owls 1 · Hawks 0"]')
+          expect(
+            await page.$eval(
+              '[aria-label="Bottom Finish at-bat"]',
+              node => getComputedStyle(node.firstElementChild!).backgroundColor
+            )
+          ).equals('rgb(43, 66, 33)')
           await click(page, 'Bottom Finish at-bat')
           await page.waitForSelector('[aria-label*="Batter Player 2"]')
         } else {
@@ -4136,4 +4154,125 @@ describe('scoring browser', function () {
       await page.close()
     }
   })
+  for (const [width, height, direction, outcome] of [
+    [390, 844, -1, 'Single'],
+    [844, 390, 1, 'Single'],
+    [390, 844, -1, 'Home Run'],
+    [844, 390, 1, 'Home Run']
+  ] as const) {
+    it(`shows the trajectory polish grip and grass apron for ${outcome} at ${width}px`, async function () {
+      const { page } = await open(
+        '/games/g1/score',
+        false,
+        false,
+        false,
+        'right',
+        true
+      )
+      try {
+        await page.setViewport({ width, height })
+        await click(page, 'Swing in Play')
+        await click(page, outcome)
+        await page.waitForSelector('canvas[data-field-ready="true"]')
+        await page.focus('[role="application"]')
+        if (outcome === 'Single') {
+          await page.keyboard.press('Space')
+          for (let n = 0; n < 8; n++)
+            await page.keyboard.press(
+              direction < 0 ? 'ArrowLeft' : 'ArrowRight'
+            )
+          for (let n = 0; n < 10; n++) await page.keyboard.press('ArrowUp')
+        } else {
+          await captureScene(page)
+          expect(
+            await page.evaluate(() => {
+              const ring = (
+                window as unknown as SceneProbeWindow
+              ).qaScene!.getObjectByName('destination-ring') as Mesh
+              return (
+                ring.geometry as unknown as {
+                  parameters: { outerRadius: number }
+                }
+              ).parameters.outerRadius
+            })
+          ).equals(11)
+          if (direction > 0)
+            for (let n = 0; n < 5; n++) await page.keyboard.press('ArrowUp')
+        }
+        await page.keyboard.press('Enter')
+        await page.waitForSelector(
+          '[aria-label^="Drag up and down for ball trajectory."]'
+        )
+        await captureScene(page)
+        await page.waitForFunction(() => {
+          const scene = (window as unknown as SceneProbeWindow).qaScene!
+          return scene.getObjectByName('arc-angle-handle')!.scale.x !== 1
+        })
+        const data = await page.evaluate(() => {
+          const host = window as unknown as SceneProbeWindow
+          const scene = host.qaScene!
+          const camera = host.qaCamera!
+          const box = document.querySelector('canvas')!.getBoundingClientRect()
+          const handle = scene.getObjectByName('arc-angle-handle')!
+          const target = scene.getObjectByName('destination-marker')!
+          const ring = scene.getObjectByName('destination-ring') as Mesh
+          const world = handle.position.clone()
+          const screen = world.clone().project(camera)
+          const home = world.clone().set(0, 0.7, 0).project(camera)
+          const landing = target.position
+            .clone()
+            .setY(target.position.y - 0.1)
+            .project(camera)
+          const footprint = (scene.getObjectByName('grass-apron') as Mesh)
+            .geometry
+          footprint.computeBoundingBox()
+          return {
+            x: box.x + ((screen.x + 1) * box.width) / 2,
+            y: box.y + ((1 - screen.y) * box.height) / 2,
+            midpointError:
+              (Math.abs(screen.y - (home.y + landing.y) / 2) * box.height) / 2,
+            radius: (
+              ring.geometry as unknown as {
+                parameters: { outerRadius: number }
+              }
+            ).parameters.outerRadius,
+            color: (
+              ring.material as unknown as {
+                color: { getHexString: () => string }
+              }
+            ).color.getHexString(),
+            rings: handle.children.filter(c => c.name === 'arc-grab-ring')
+              .length,
+            arrows: handle.children.filter(c => c.name === 'arc-pulse-arrow')
+              .length,
+            grassBack: -footprint.boundingBox!.min.y,
+            camera: camera.matrixWorld.toArray()
+          }
+        })
+        expect(data.midpointError).lessThan(1)
+        expect(data.radius).equals(5.5)
+        expect(data.color).equals('ffffff')
+        expect(data.rings).equals(3)
+        expect(data.arrows).equals(6)
+        expect(data.grassBack).closeTo(15.24, 0.01)
+        await page.screenshot({
+          path: `${process.env.GS_SCORING_ARTIFACT_DIR}/trajectory-polish-${outcome}-${width}.png`
+        })
+        await page.mouse.move(data.x, data.y)
+        await page.mouse.down()
+        await page.mouse.move(data.x, data.y - 30, { steps: 8 })
+        await page.mouse.up()
+        await page.waitForSelector('[aria-label^="Undo "]')
+        expect(
+          await page.evaluate(() =>
+            (
+              window as unknown as SceneProbeWindow
+            ).qaCamera!.matrixWorld.toArray()
+          )
+        ).deep.equals(data.camera)
+      } finally {
+        await page.close()
+      }
+    })
+  }
 })

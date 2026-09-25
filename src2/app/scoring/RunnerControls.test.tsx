@@ -65,6 +65,13 @@ describe('runner decisions', function () {
       scoringReducer(state, { type: 'TRAJECTORY', angle: 20, generation: 0 })
     )
     await render(state)
+    for (const label of ['Safe', 'Out']) {
+      const button = document.querySelector(`[aria-label="${label}"]`)!
+      expect(button.textContent).contains('At Home')
+      const subtitle = button.lastElementChild!
+      expect(getComputedStyle(subtitle).fontSize).equals('10.5px')
+      expect(getComputedStyle(subtitle).textAlign).equals('center')
+    }
     await click('Safe')
     await click('Out')
     await click('Back')
@@ -76,6 +83,37 @@ describe('runner decisions', function () {
     state.pendingPlay!.movements.find(move => move.playerId === 4)!.force = true
     await render(state)
     expect(document.querySelector('[aria-label="Back"]')).equals(null)
+  })
+  it('identifies each automatic destination below Safe and Out', async () => {
+    for (const [base, subtitle] of [
+      [1, 'At First'],
+      [2, 'At Second'],
+      [3, 'At Third']
+    ] as const) {
+      const state = initial()
+      state.phase = 'runnerDecision'
+      state.runnerAction = {
+        playerId: 1,
+        from: 0,
+        to: base,
+        origin: 'current',
+        returnPhase: 'ready',
+        purpose: 'droppedThirdStrike'
+      }
+      await render(state)
+      for (const label of ['Safe', 'Out']) {
+        const button = document.querySelector(`[aria-label="${label}"]`)!
+        expect(button.textContent).equals(label + subtitle)
+        expect(getComputedStyle(button.lastElementChild!).fontSize).equals(
+          '10.5px'
+        )
+      }
+      await click('Safe')
+      expect(received.at(-1)).deep.equals({
+        type: 'RUNNER_DECIDE',
+        decision: 'safe'
+      })
+    }
   })
   it('presents stationary pickoff and advance reasons, and keeps an occupied destination disabled', async function () {
     let state = initial()

@@ -2,7 +2,7 @@ import React, { useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
 
 import { GlassView } from '../components/GlassView'
-import { CompactPillButton } from '../components/PillTabs'
+import { PillButton } from '../components/PillTabs'
 import { lstrings, sprintf } from '../locales/strings'
 import {
   InstructionToast,
@@ -174,7 +174,8 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
                         alignItems: 'center'
                       }}
                     >
-                      <CompactPillButton
+                      <PillButton
+                        label={lstrings.common_done}
                         accessibilityLabel={sprintf(
                           lstrings.scoring_bottom_action,
                           props.finishLabel ?? lstrings.scoring_finish_at_bat
