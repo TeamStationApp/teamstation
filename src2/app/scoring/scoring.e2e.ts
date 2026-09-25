@@ -49,6 +49,8 @@ interface SceneProbeWindow {
 }
 const base = process.env.GS_SCORING_TEST_URL ?? 'http://127.0.0.1:8080'
 let browser: Browser
+/** Leaves every save unanswered, as a server that never replies would. */
+let holdSaves = false
 async function open(
   path: string,
   scored: boolean | number = false,
@@ -105,7 +107,10 @@ async function open(
     }
     let body: unknown
     let status = 200
-    if (request.method() !== 'GET')
+    const saving =
+      request.method() === 'POST' && url.pathname.endsWith('/events')
+    if (saving && holdSaves) return
+    if (request.method() !== 'GET' && !saving)
       unexpected.push(`${request.method()} ${url.pathname}`)
     if (uiAnimations && url.pathname.endsWith('/playback')) {
       body = {
@@ -120,6 +125,8 @@ async function open(
       body = { withheld: null, droppedCount: 0, highlights: [] }
     } else if (url.pathname === '/api/v1/auth/me')
       body = { id: 100, displayName: 'Scorer', isAdmin: false }
+    else if (url.pathname === '/api/v1/games/g1/events')
+      body = { plays: [], currentPlay: null }
     else if (url.pathname === '/api/v1/games/g1') {
       body =
         scored === false
@@ -814,19 +821,45 @@ describe('scoring browser', function () {
       await page.close()
     }
   })
-  it('opens an unscored game full screen and protects dirty browser Back', async function () {
+  it('opens an unscored game full screen and protects unsaved plays from browser Back', async function () {
     const { page, unexpected } = await open('/games/g1')
     try {
       await click(page, 'Score Game')
       await page.waitForFunction(() => location.pathname === '/games/g1/score')
       await page.waitForSelector('canvas')
       expect(await page.$('[aria-label="Schedule"]')).equals(null)
+      const saved = page.waitForResponse(
+        response =>
+          response.request().method() === 'POST' &&
+          response.url().endsWith('/games/g1/events')
+      )
       await click(page, 'Ball')
       await page.waitForSelector('[aria-label="Undo Ball"]')
+      // Saved: Back leaves without asking.
+      await saved
+      await page.waitForFunction(
+        () => document.querySelector('[aria-label="Save status"]') == null
+      )
+      await page.evaluate(() => {
+        history.back()
+      })
+      await page.waitForSelector('[aria-label="Score Game"]')
+      expect(await page.$('[aria-label="Discard and Exit"]')).equals(null)
+      holdSaves = true
+      await click(page, 'Score Game')
+      await page.waitForSelector('canvas')
+      await click(page, 'Ball')
+      await page.waitForSelector('[aria-label="Undo Ball"]')
+      await page.waitForSelector('[aria-label="Save status"]')
       const length = await page.evaluate(() => history.length)
       await page.evaluate(() => {
         history.back()
       })
+      await page.waitForFunction(() =>
+        document.body.innerText.includes(
+          '1 change has not reached the server yet and will be lost.'
+        )
+      )
       await click(page, 'Cancel')
       await page.waitForFunction(() => location.pathname === '/games/g1/score')
       expect(await page.evaluate(() => history.length)).equals(length)
@@ -838,6 +871,7 @@ describe('scoring browser', function () {
       expect(new URL(page.url()).pathname).equals('/games/g1')
       expect(unexpected).deep.equals([])
     } finally {
+      holdSaves = false
       await page.close()
     }
   })

@@ -62,9 +62,9 @@ describe('home-run landing and automatic arrivals', function () {
           let state = homer(before, outside)
           const kind = outside ? 'out-of-park' : 'in-park'
           expect(state.pendingPlay!.homeRunKind).equals(kind)
-          expect(state.homeQueue).length(0)
+          expect(state.session.homeQueue).length(0)
           expect(
-            state.pendingPlay!.movements.every(
+            state.session.pending!.movements.every(
               m => m.automaticHome === true && m.decision === 'safe'
             )
           ).equals(true)
@@ -90,7 +90,7 @@ describe('home-run landing and automatic arrivals', function () {
           state = completeMotions(state)
           expect(state.phase).equals('ready')
           expect(state.correctionWindow).equals(null)
-          expect(state.homeQueue).length(0)
+          expect(state.session.homeQueue).length(0)
           expect(state.session.liveData.linescore.teams.away.runs).equals(
             expected
           )

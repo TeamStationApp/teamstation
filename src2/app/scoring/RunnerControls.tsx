@@ -1,14 +1,11 @@
 import React from 'react'
 import { Text, View } from 'react-native'
 
+import { homeBackProposal } from '../../common/scoring/rules'
 import type { BaseProjection } from '../field/fieldTypes'
 import { lstrings } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
-import {
-  homeBackProposal,
-  runnerDecisionError,
-  runnerReasons
-} from './runnerRules'
+import { runnerDecisionError, runnerReasons } from './scoringFlow'
 import { ScoringButton, ScoringError, ScoringSheet } from './ScoringSheet'
 import type { ScoringEvent, ScoringState } from './scoringTypes'
 export function RunnerControls({
@@ -46,7 +43,7 @@ export function RunnerControls({
     )
   const home = state.phase === 'homeDecision'
   if (!home && (state.phase !== 'runnerDecision' || action == null)) return null
-  const id = home ? state.homeQueue[0] : action!.playerId
+  const id = home ? state.session.homeQueue[0] : action!.playerId
   const stationary = action?.from === action?.to
   const currentHold = !home && stationary && action?.origin === 'current'
   const error = home ? undefined : runnerDecisionError(state)
@@ -61,7 +58,7 @@ export function RunnerControls({
   const vertical = base !== 2
   const width = vertical ? 130 : 220
   const tall =
-    home && homeBackProposal(state) != null ? 254 : vertical ? 204 : 138
+    home && homeBackProposal(state.session) != null ? 254 : vertical ? 204 : 138
   const position =
     point == null
       ? undefined
@@ -148,7 +145,7 @@ export function RunnerControls({
             )
           }}
         />
-        {home && homeBackProposal(state) != null && (
+        {home && homeBackProposal(state.session) != null && (
           <ScoringButton
             label="Back"
             onPress={() => {

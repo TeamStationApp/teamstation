@@ -78,7 +78,7 @@ describe('automatic awarded bases', function () {
             action === 'Balk' ? 1 : 2
           )
           expect(state.correctionWindow).equals(null)
-          expect(state.homeQueue).length(0)
+          expect(state.session.homeQueue).length(0)
           const play =
             action === 'Balk'
               ? state.session.liveData.plays.currentPlay!

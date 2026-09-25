@@ -1,18 +1,14 @@
-import {
-  applyAwardMovements,
-  prepareBatterResult,
-  recordRunner,
-  settleRunners
-} from './runnerRules'
+import { moreEligibility as gameEligibility } from '../../common/scoring/rules'
 import { moreEvents } from './scoringContract'
-import { accepted, snapshotOf } from './scoringMachine'
-import {
-  baseIds,
-  battingSide,
-  fieldingSide,
-  playerRef
-} from './scoringSelectors'
-import type { Movement, ScoringEvent, ScoringState } from './scoringTypes'
+import { accepted, act, settleRunners } from './scoringFlow'
+import { snapshotOf } from './scoringMachine'
+import type { ScoringEvent, ScoringState } from './scoringTypes'
+
+/**
+ * The "more" menu: the things that happen at the plate or between pitches
+ * without a ball in play. The game decides what each one does; the screen
+ * adds its own reason to wait, and drafts the runner a wild pitch moved.
+ */
 export const MORE_GROUPS = [
   { label: 'Between pitches', actions: ['Balk'] },
   {
@@ -40,17 +36,6 @@ export interface MoreInput {
   playerId?: number
   destinations?: Record<number, number>
 }
-export function hasEligiblePitch(state: ScoringState): boolean {
-  const ref = state.recentPitch
-  if (ref == null) return false
-  const plays = [
-    ...state.session.liveData.plays.allPlays,
-    state.session.liveData.plays.currentPlay
-  ]
-  const pitch = plays.find(play => play?.about.atBatIndex === ref.atBatIndex)
-    ?.playEvents[ref.index]
-  return pitch?.isPitch === true && ['B', 'C', 'S'].includes(pitch.details.code)
-}
 export function moreEligibility(
   state: ScoringState,
   action: MoreAction
@@ -63,52 +48,7 @@ export function moreEligibility(
     state.motions.some(m => !m.complete)
   )
     return 'Finish the current play first'
-  if (
-    action === 'Put Batter on Base' &&
-    baseIds(state.session).some(id => id != null)
-  )
-    return 'Requires empty bases'
-  if (state.session.liveData.plays.currentPlay == null)
-    return 'Choose the next batter first'
-  if (
-    action === 'Dropped Third Strike' &&
-    (state.session.liveData.linescore.strikes !== 2 ||
-      (baseIds(state.session)[0] != null &&
-        state.session.liveData.linescore.outs < 2))
-  )
-    return 'Requires two strikes and first empty or two outs'
-  if (
-    (action === 'Wild Pitch' || action === 'Passed Ball') &&
-    !hasEligiblePitch(state)
-  )
-    return 'Record an eligible pitch first'
-  if (
-    ['Wild Pitch', 'Passed Ball', 'Balk'].includes(action) &&
-    !baseIds(state.session).some(id => id != null)
-  )
-    return 'No runners on base'
-}
-export function recordMoreEvent(
-  state: ScoringState,
-  action: MoreAction,
-  isPitch = false
-): void {
-  const play = state.session.liveData.plays.currentPlay!
-  const line = state.session.liveData.linescore
-  play.playEvents.push({
-    index: play.playEvents.length,
-    isPitch,
-    type: isPitch ? 'pitch' : 'action',
-    details: { description: action, code: moreEvents[action] },
-    count: { balls: line.balls, strikes: line.strikes, outs: line.outs },
-    player: play.matchup.pitcher
-  })
-  if (isPitch) {
-    const counts =
-      state.session.liveData.boxscore.teams[fieldingSide(state.session)]
-        .pitchCounts
-    counts[play.matchup.pitcher.id] = (counts[play.matchup.pitcher.id] ?? 0) + 1
-  }
+  return gameEligibility(state.session, action)
 }
 export function moreReducer(
   state: ScoringState,
@@ -117,8 +57,6 @@ export function moreReducer(
   const { action, base, playerId } = event.input
   if (!(action in moreEvents) || moreEligibility(state, action) != null)
     return state
-  const occupied = baseIds(state.session)
-  const play = state.session.liveData.plays.currentPlay!
   if (action === 'Wild Pitch' || action === 'Passed Ball')
     return {
       ...state,
@@ -128,91 +66,39 @@ export function moreReducer(
         historyLength: state.past.length
       }
     }
+  const bases = ['1B', '2B', '3B'] as const
   if (
-    action === 'Place a Runner (Tiebreaker)' &&
-    (base == null ||
-      ![1, 2, 3].includes(base) ||
-      occupied[base - 1] != null ||
-      playerId == null ||
-      playerId === play.matchup.batter.id ||
-      occupied.includes(playerId) ||
-      !state.session.liveData.boxscore.teams[
-        battingSide(state.session)
-      ].players.includes(playerId))
-  )
-    return state
-  if (
-    action === 'Put Batter on Base' &&
+    (action === 'Place a Runner (Tiebreaker)' ||
+      action === 'Put Batter on Base') &&
     (base == null || ![1, 2, 3].includes(base))
   )
     return state
+  if (action === 'Place a Runner (Tiebreaker)' && playerId == null) return state
   return accepted(state, action, next => {
-    next.recentPitch = null
-    recordMoreEvent(
-      next,
-      action,
-      action === 'Hit by Pitch' || action === 'Dropped Third Strike'
-    )
-    const current = next.session.liveData.plays.currentPlay!
-    const line = next.session.liveData.linescore
+    const batter = next.session.liveData.plays.currentPlay!.matchup.batter.id
     if (action === 'Place a Runner (Tiebreaker)') {
-      line.offense[(['first', 'second', 'third'] as const)[base! - 1]] =
-        playerRef(next.session, playerId!)
-      recordRunner(
-        next,
-        {
-          playerId: playerId!,
-          from: 0,
-          to: base!,
-          force: false,
-          decision: 'safe'
-        },
-        action
-      )
+      act(next, {
+        type: 'gameFlow',
+        kind: 'placeRunner',
+        runner: playerId!,
+        base: bases[base! - 1]
+      })
+      next.motions = []
       return
     }
-    next.pendingPlay = {
-      automaticAward: [
-        'Hit by Pitch',
-        'Intentional Walk',
-        "Catcher's Interference",
-        'Balk',
-        'Put Batter on Base'
-      ].includes(action),
-      outcome:
-        action === 'Balk'
-          ? 'Balk'
-          : action === 'Batter Out — Other'
-            ? 'Batter Out — Other'
-            : action === 'Dropped Third Strike'
-              ? 'Dropped Third Strike'
-              : action === 'Put Batter on Base'
-                ? 'Manual placement'
-                : 'Walk',
-      sameAppearance: action === 'Balk',
-      originalBases: occupied,
-      originalRuns: line.teams[battingSide(next.session)].runs,
-      originalOuts: line.outs,
-      originalRunnerRecordCount: current.runners.length,
-      movements: [],
-      trajectoryAccepted: true
-    }
-    if (action !== 'Balk') {
-      current.result.event =
-        action === 'Dropped Third Strike' ? 'Strikeout' : action
-      current.result.eventType = moreEvents[action]
-      current.result.description = action
-      current.source.gamestation.outcome = action
-    }
-    if (action === 'Dropped Third Strike') {
-      line.strikes = 3
-      current.count.strikes = 3
-      prepareBatterResult(next)
-      return
-    }
-    if (action === 'Batter Out — Other') {
+    if (action === 'Balk') act(next, { type: 'batteryEvent', kind: 'balk' })
+    else if (action === 'Put Batter on Base')
+      act(next, {
+        type: 'result',
+        eventType: 'manual_placement',
+        base: bases[base! - 1]
+      })
+    else if (action === 'Dropped Third Strike')
+      act(next, { type: 'result', eventType: 'strikeout' })
+    else if (action === 'Batter Out — Other') {
+      act(next, { type: 'result', eventType: 'other_out' })
       next.runnerAction = {
-        playerId: current.matchup.batter.id,
+        playerId: batter,
         from: 0,
         to: 0,
         origin: 'current',
@@ -222,58 +108,11 @@ export function moreReducer(
       }
       next.phase = 'chooseThrower'
       return
-    }
-    const movements: Movement[] = []
-    if (action === 'Balk') {
-      occupied.forEach((id, index) => {
-        if (id != null)
-          movements.push({
-            playerId: id,
-            from: index + 1,
-            to: index + 2,
-            force: true,
-            decision: index === 2 ? 'pending' : 'safe'
-          })
+    } else
+      act(next, {
+        type: 'result',
+        eventType: moreEvents[action]
       })
-    } else if (action === 'Put Batter on Base') {
-      movements.push({
-        playerId: current.matchup.batter.id,
-        from: 0,
-        to: base!,
-        force: false,
-        decision: 'safe'
-      })
-    } else {
-      movements.push({
-        playerId: current.matchup.batter.id,
-        from: 0,
-        to: 1,
-        force: true,
-        decision: 'safe'
-      })
-      let forced = true
-      occupied.forEach((id, index) => {
-        if (id == null) {
-          forced = false
-          return
-        }
-        const to = forced ? index + 2 : index + 1
-        movements.push({
-          playerId: id,
-          from: index + 1,
-          to,
-          force: forced,
-          decision: to === 4 ? 'pending' : 'safe'
-        })
-      })
-    }
-    if (next.pendingPlay.automaticAward === true)
-      for (const movement of movements) {
-        movement.decision = 'safe'
-        movement.automaticHome = movement.to === 4
-      }
-    next.pendingPlay.movements = movements
-    applyAwardMovements(next, action)
     next.phase = 'runnerMovement'
     settleRunners(next)
   })

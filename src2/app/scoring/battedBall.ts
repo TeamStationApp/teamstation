@@ -1,60 +1,31 @@
-import { fieldingLocation, isFairLocation } from '../field/fieldingLocation'
-import type { GroundPoint } from '../field/fieldModel'
 import {
-  type HomeRunKind,
+  allowedAngle,
   homeRunKind,
-  homeRunLanding
-} from '../field/stadiumBoundary'
+  outcomeAvailable,
+  trajectoryLabel
+} from '../../common/scoring/rules'
+import { fieldingLocation } from '../field/fieldingLocation'
+import type { GroundPoint } from '../field/fieldModel'
+import { homeRunLanding } from '../field/stadiumBoundary'
 import { initialHitTarget } from '../field/trajectoryGuide'
 import { fieldPlayersFor } from './fieldAdapter'
-import { prepareBatterResult, prepareHit } from './runnerRules'
 import {
   type ContactKind,
   type Outcome,
   outcomeEvents
 } from './scoringContract'
-import { accepted } from './scoringMachine'
+import { accepted, act, settleRunners } from './scoringFlow'
 import { hitPresentation } from './scoringPresentation'
-import {
-  baseIds,
-  battingSide,
-  fieldingSide,
-  playerRef
-} from './scoringSelectors'
+import { baseIds } from './scoringSelectors'
 import type { ScoringState } from './scoringTypes'
-export function trajectoryLabel(angle: number): string {
-  const value = Math.round(angle)
-  return value >= 48
-    ? 'Pop Fly'
-    : value >= 35
-      ? 'Fly Ball'
-      : value >= 10
-        ? 'Line Drive'
-        : value >= -25
-          ? 'Ground Ball'
-          : 'Chopper'
-}
-export function outcomeAvailable(
-  outcome: string,
-  hasRunners: boolean
-): boolean {
-  return outcome !== "Fielder's Choice" || hasRunners
-}
-export function allowedAngle(
-  angle: number,
-  outcome: Outcome | string,
-  kind?: HomeRunKind
-): number {
-  return Math.round(
-    Math.max(
-      outcome === 'Ball Caught' ||
-        (outcome === 'Home Run' && kind === 'out-of-park')
-        ? 10
-        : -45,
-      Math.min(70, angle)
-    )
-  )
-}
+
+/**
+ * A ball in play as the scorer draws it: the outcome, then the fielder or the
+ * landing, then the trajectory. Only when the trajectory is accepted does the
+ * game hear of it, as the ball in play and its result.
+ */
+export { allowedAngle, outcomeAvailable, trajectoryLabel }
+
 export function chooseOutcome(
   state: ScoringState,
   outcome: Outcome,
@@ -75,45 +46,16 @@ export function chooseOutcome(
     state,
     contactKind === 'bunt' ? `Bunt: ${outcome}` : outcome,
     next => {
-      next.recentPitch = null
-      const session = next.session
-      const line = session.liveData.linescore
-      const play = session.liveData.plays.currentPlay!
+      const play = next.session.liveData.plays.currentPlay!
+      act(next, { type: 'ballInPlay', contact: contactKind })
       next.pendingPlay = {
         outcome,
         contactKind,
-        originalRunnerRecordCount: play.runners.length,
-        originalBases: baseIds(session),
-        originalRuns: line.teams[battingSide(session)].runs,
-        originalOuts: line.outs,
-        movements: [],
         trajectoryAccepted: false
       }
       next.phase = outcome === 'Home Run' ? 'locateLanding' : 'locateFielder'
       if (outcome === 'Home Run')
         next.pendingPlay.location = initialHitTarget(play.matchup.batSide.code)
-      const counts =
-        session.liveData.boxscore.teams[fieldingSide(session)].pitchCounts
-      counts[play.matchup.pitcher.id] =
-        (counts[play.matchup.pitcher.id] ?? 0) + 1
-      play.playEvents.push({
-        index: play.playEvents.length,
-        isPitch: true,
-        type: 'pitch',
-        details: {
-          description: contactKind === 'bunt' ? 'Bunt in Play' : 'Ball in Play',
-          code: 'X'
-        },
-        count: { balls: line.balls, strikes: line.strikes, outs: line.outs },
-        player: play.matchup.pitcher
-      })
-      play.result.event = outcome
-      play.result.eventType = outcomeEvents[outcome]
-      play.result.description = outcome
-      play.source.gamestation.outcome = outcome
-      play.source.gamestation.contactKind = contactKind
-      if (outcome === 'Throw Out' || outcome === 'Ball Caught')
-        play.source.gamestation.outSubtype = outcome
     }
   )
 }
@@ -143,14 +85,6 @@ export function placeFielder(
       pending.fielder = id
       pending.location = fieldingLocation(pending.outcome, point)
       pending.landingHeight = landingHeight
-      if (
-        pending.outcome === 'Ball Caught' &&
-        !isFairLocation(pending.location)
-      ) {
-        const play = next.session.liveData.plays.currentPlay!
-        play.source.gamestation.foulCaught = true
-        play.result.description = 'Foul ball caught'
-      }
       pending.angle = 45
       next.phase = 'trajectory'
     }
@@ -219,27 +153,40 @@ export function acceptTrajectory(
     const pending = next.pendingPlay!
     pending.angle = value
     pending.trajectoryAccepted = true
-    next.session.liveData.plays.currentPlay!.hitData = {
-      launchAngle: value,
-      trajectory: trajectoryLabel(value),
-      coordinates: { ...pending.location! },
-      fielder:
-        pending.fielder == null
-          ? undefined
-          : playerRef(next.session, pending.fielder)!
-    }
-    if (pending.outcome === 'Home Run') {
+    const homeRun = pending.outcome === 'Home Run'
+    if (homeRun)
       next.celebration = {
         id: `${next.generation}:${next.session.meta.sequence + 1}:home-run`,
         generation: next.generation,
         kind: pending.homeRunKind ?? 'in-park'
       }
-      next.session.liveData.plays.currentPlay!.source.gamestation.homeRunKind =
-        pending.homeRunKind
-      next.session.liveData.plays.currentPlay!.source.gamestation.landingHeight =
-        pending.landingHeight
-    }
-    prepareHit(next)
-    prepareBatterResult(next)
+    act(next, {
+      type: 'ballInPlay',
+      contact: pending.contactKind ?? 'swing',
+      launchAngle: value,
+      ...(pending.location == null
+        ? {}
+        : { location: { ...pending.location } }),
+      ...(pending.fielder == null ? {} : { fielder: pending.fielder }),
+      ...(homeRun && pending.landingHeight != null
+        ? { landingHeight: pending.landingHeight }
+        : {}),
+      ...(homeRun ? { homeRunKind: pending.homeRunKind ?? 'in-park' } : {})
+    })
+    const outcome = pending.outcome as Outcome
+    act(next, {
+      type: 'result',
+      eventType: outcomeEvents[outcome],
+      ...(outcome === 'Throw Out'
+        ? { outBy: 'throw' as const }
+        : outcome === 'Ball Caught'
+          ? { outBy: 'catch' as const }
+          : outcome === 'Batter Interference'
+            ? { outBy: 'interference' as const }
+            : {})
+    })
+    next.pendingPlay ??= pending
+    next.phase = 'runnerMovement'
+    settleRunners(next)
   })
 }

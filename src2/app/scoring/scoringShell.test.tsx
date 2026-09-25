@@ -58,11 +58,13 @@ function fixtureFetch(signedIn = true): void {
     ).split('?')[0]
     const data = path.endsWith('/auth/me')
       ? { id: 100, displayName: 'Scorer', isAdmin: false }
-      : path.endsWith('/games/g1')
-        ? gameFixture
-        : path.endsWith('/live-streams')
-          ? { streams: [] }
-          : []
+      : path.endsWith('/games/g1/events')
+        ? { plays: [], currentPlay: null }
+        : path.endsWith('/games/g1')
+          ? gameFixture
+          : path.endsWith('/live-streams')
+            ? { streams: [] }
+            : []
     return new Response(JSON.stringify(data), {
       status: path.endsWith('/auth/me') && !signedIn ? 401 : 200,
       headers: { 'Content-Type': 'application/json' }
