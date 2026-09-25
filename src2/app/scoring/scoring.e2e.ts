@@ -3794,4 +3794,107 @@ describe('scoring browser', function () {
           await page.close()
         }
       })
+  for (const width of [390, 844])
+    for (const homeRun of [false, true])
+      it(`pulses yellow guidance text without badges for ${homeRun ? 'home run' : 'single'} at ${width}px`, async () => {
+        const { page } = await open(
+          '/games/g1/score',
+          false,
+          false,
+          false,
+          'right'
+        )
+        try {
+          await page.setViewport({ width, height: width === 390 ? 844 : 390 })
+          await click(page, 'Swing in Play')
+          await click(page, homeRun ? 'Home Run' : 'Single')
+          await page.waitForSelector('canvas[data-field-ready="true"]')
+          if (homeRun)
+            await page.waitForSelector('[aria-label^="Home run type:"]')
+          await page.focus('[role="application"]')
+          if (!homeRun) {
+            await page.keyboard.press('Space')
+            await page.keyboard.press('ArrowUp')
+          }
+          await page.keyboard.press('Enter')
+          await page.waitForSelector('[aria-label^="Ball trajectory:"]')
+          const style = await page.$$eval('[data-testid$=" value"]', nodes =>
+            nodes.map(node => {
+              const st = getComputedStyle(node)
+              const parent = getComputedStyle(node.parentElement!)
+              return {
+                color: st.color,
+                weight: st.fontWeight,
+                background: parent.backgroundColor,
+                radius: parent.borderRadius
+              }
+            })
+          )
+          expect(style).has.length(homeRun ? 2 : 1)
+          for (const row of style)
+            expect(row).deep.equals({
+              color: 'rgb(241, 207, 85)',
+              weight: '700',
+              background: 'rgba(0, 0, 0, 0)',
+              radius: '0px'
+            })
+          const samples = await page.evaluate(async () => {
+            const shadow = document.querySelector(
+              '[data-testid="Ball trajectory shadow"]'
+            )!
+            const foreground = document.querySelector(
+              '[data-testid="Ball trajectory value"]'
+            )!
+            const result: Array<{ shadow: number; foreground: number }> = []
+            const begin = performance.now()
+            while (performance.now() - begin < 3500) {
+              await new Promise(requestAnimationFrame)
+              result.push({
+                shadow: Number(getComputedStyle(shadow).opacity),
+                foreground: Number(getComputedStyle(foreground).opacity)
+              })
+            }
+            return result
+          })
+          expect(Math.max(...samples.map(s => s.shadow))).greaterThan(0.8)
+          expect(Math.min(...samples.map(s => s.shadow))).lessThan(0.2)
+          expect(samples.every(s => s.foreground === 1)).equals(true)
+          await page.screenshot({
+            path: join(
+              process.env.GS_SCORING_ARTIFACT_DIR ?? '/tmp',
+              `guidance-${homeRun ? 'home-run' : 'single'}-${width}.png`
+            )
+          })
+          await page.emulateMediaFeatures([
+            { name: 'prefers-reduced-motion', value: 'reduce' }
+          ])
+          await page.waitForFunction(
+            () =>
+              getComputedStyle(
+                document.querySelector(
+                  '[data-testid="Ball trajectory shadow"]'
+                )!
+              ).opacity === '0'
+          )
+          await page.emulateMediaFeatures([
+            { name: 'prefers-reduced-motion', value: 'no-preference' }
+          ])
+          await page.waitForFunction(
+            () =>
+              Number(
+                getComputedStyle(
+                  document.querySelector(
+                    '[data-testid="Ball trajectory shadow"]'
+                  )!
+                ).opacity
+              ) > 0.5
+          )
+          await page.locator('[aria-label^="Undo "]').click()
+          expect(await page.$('[data-testid="Ball trajectory shadow"]')).equals(
+            null
+          )
+        } finally {
+          await page.close()
+        }
+      })
 })

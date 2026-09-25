@@ -59,5 +59,6 @@
   "src2/app/scoring/useHomeRunCelebration.ts",
   "src2/app/field/teamUniform.ts",
   "src2/app/field/Dugout.tsx",
-  "src2/app/field/useTeamLogo.ts"
+  "src2/app/field/useTeamLogo.ts",
+  "src2/app/components/useMotionPreference.ts"
 ]

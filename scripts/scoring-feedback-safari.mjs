@@ -216,6 +216,9 @@ try {
     await tap('Swing in Play')
     await tap('Home Run')
     await visible('Home run type: In-the-park Home Run')
+    await shot(
+      outside ? 'stands-location-guidance' : 'in-park-location-guidance'
+    )
     const g = await geometry()
     const start = {
       x: g.field.x + g.field.width * 0.25,
@@ -247,7 +250,9 @@ try {
         ? 'Home run type: Home Run'
         : 'Home run type: In-the-park Home Run'
     )
-    await shot(outside ? 'stands-trajectory-chip' : 'in-park-trajectory-chip')
+    await shot(
+      outside ? 'stands-trajectory-guidance' : 'in-park-trajectory-guidance'
+    )
     await gesture([start, { x: start.x, y: start.y - 30 }], 80)
     await visible('HOME RUN')
     await shot(outside ? 'stands-led-celebration' : 'in-park-led-celebration')

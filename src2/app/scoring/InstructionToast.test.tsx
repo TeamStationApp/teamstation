@@ -127,14 +127,18 @@ describe('scoring instruction and completion toast', function () {
       '[aria-label="Ball trajectory: 45° Fly Ball"]'
     )!
     expect(status.style.marginTop).equals('16px')
-    expect(getComputedStyle(status).borderTopLeftRadius).not.equals('')
-    expect(status.style.backgroundColor).equals('rgb(241, 207, 85)')
+    expect(status.style.backgroundColor).equals('')
+    expect(status.style.borderRadius).equals('')
     expect(trajectory.style.backgroundColor).equals(
       status.style.backgroundColor
     )
     expect((trajectory.firstChild as HTMLElement).style.color).equals(
-      'rgb(102, 80, 22)'
+      'rgb(241, 207, 85)'
     )
+    expect((trajectory.firstChild as HTMLElement).style.fontWeight).equals(
+      '700'
+    )
+    expect(trajectory.querySelector('[aria-hidden="true"]')).not.equals(null)
     expect(host.querySelector('[role="progressbar"]')).equals(null)
     await render(
       <InstructionToast
