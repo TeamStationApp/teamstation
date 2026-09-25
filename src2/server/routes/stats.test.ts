@@ -45,6 +45,8 @@ function legacyId(userId: number): string {
 const jordan = mintUser()
 const jordanClosed = mintUser()
 const stranger = mintUser()
+const teammate = mintUser()
+const seasonFan = mintUser()
 
 describe('one player’s figures', function () {
   this.timeout(60000)
@@ -267,5 +269,163 @@ describe('one player’s figures', function () {
     if (db == null) this.skip()
     const { status } = await ask(`/players/${jordan}/stats`, stranger)
     expect(status).equals(404)
+  })
+
+  describe('the plays behind them', function () {
+    const springGame = makeId('game')
+    const fallGame = makeId('game')
+    const single = makeId('event')
+    const hiddenOut = makeId('event')
+    const double = makeId('event')
+
+    before(async function () {
+      if (db == null) return this.skip()
+      const now = new Date()
+      await db
+        .insertInto('users')
+        .values([
+          {
+            id: teammate,
+            legacyId: legacyId(teammate),
+            display_name: 'Hawks Parent'
+          },
+          {
+            id: seasonFan,
+            legacyId: legacyId(seasonFan),
+            display_name: 'Fall Watcher'
+          }
+        ])
+        .execute()
+      await db
+        .insertInto('memberships')
+        .values({
+          id: makeId('membership'),
+          user_id: teammate,
+          team_id: hawks,
+          role: 'member'
+        })
+        .execute()
+      await db
+        .insertInto('season_members')
+        .values({
+          id: makeId('seasonMember'),
+          user_id: seasonFan,
+          season_id: fall,
+          joined_at: now
+        })
+        .execute()
+      await db
+        .insertInto('games')
+        .values([
+          {
+            id: springGame,
+            home_team_id: hawks,
+            away_team_id: ravens,
+            season_id: spring,
+            start_at: new Date('2026-05-20T18:00:00Z'),
+            status: 'final'
+          },
+          {
+            id: fallGame,
+            home_team_id: ravens,
+            away_team_id: hawks,
+            season_id: fall,
+            start_at: new Date('2025-10-10T18:00:00Z'),
+            status: 'final'
+          }
+        ])
+        .execute()
+      // Each play names its batter, so the events trigger writes the
+      // event_players row the route reads.
+      const play = (
+        id: string,
+        gameId: string,
+        battingTeamId: string,
+        atBatIndex: number,
+        eventType: string,
+        batter: number,
+        hidden = false
+      ): Record<string, unknown> => ({
+        id,
+        gameId,
+        battingTeamId,
+        hidden,
+        startTime: new Date('2026-05-20T18:30:00Z'),
+        createdAt: now,
+        updatedAt: now,
+        gumbo: JSON.stringify({
+          about: { atBatIndex, inning: 1, halfInning: 'bottom' },
+          result: { eventType, rbi: 1 },
+          matchup: { batter: { id: batter } }
+        })
+      })
+      await db
+        .insertInto('events')
+        .values([
+          play(single, springGame, hawks, 0, 'single', jordan),
+          play(hiddenOut, springGame, hawks, 1, 'strikeout', jordan, true),
+          // Written under the row that was later closed into Jordan's.
+          play(double, fallGame, ravens, 0, 'double', jordanClosed)
+        ] as never)
+        .execute()
+    })
+
+    const plays = async (
+      query = '',
+      actor = jordan
+    ): Promise<{ status: number; ids: string[]; body: any }> => {
+      const answer = await ask(`/players/${jordan}/plays${query}`, actor)
+      return {
+        status: answer.status,
+        ids: Array.isArray(answer.body)
+          ? answer.body.map((row: { eventId: string }) => row.eventId)
+          : [],
+        body: answer.body
+      }
+    }
+
+    it('lists a person’s plays across a closed row, newest game first', async function () {
+      const answer = await plays()
+      expect(answer.status).equals(200)
+      expect(answer.ids).deep.equals([single, double])
+      expect(answer.body[0]).deep.equals({
+        eventId: single,
+        gameId: springGame,
+        atBatIndex: 0,
+        inning: 1,
+        halfInning: 'bottom',
+        eventType: 'single',
+        rbi: 1,
+        role: 'batter',
+        seasonId: spring,
+        startTime: '2026-05-20T18:30:00.000Z'
+      })
+      for (const row of answer.body) {
+        expect(row).not.have.property('description')
+      }
+    })
+
+    it('leaves a hidden play out', async function () {
+      expect((await plays()).ids).not.include(hiddenOut)
+    })
+
+    it('narrows to a season and to an event type', async function () {
+      expect((await plays(`?seasonId=${fall}`)).ids).deep.equals([double])
+      expect((await plays('?eventType=single')).ids).deep.equals([single])
+      expect((await plays('?role=pitcher')).ids).deep.equals([])
+    })
+
+    it('shows another reader only the plays of teams and seasons they see', async function () {
+      expect((await plays('', teammate)).ids).deep.equals([single])
+      expect((await plays('', seasonFan)).ids).deep.equals([double])
+      const hidden = await plays('', stranger)
+      expect(hidden.status).equals(200)
+      expect(hidden.ids).deep.equals([])
+    })
+
+    it('answers 404 for a user id that is not a number', async function () {
+      if (db == null) return this.skip()
+      expect((await ask('/players/usr_notanumber/plays')).status).equals(404)
+    })
   })
 })
