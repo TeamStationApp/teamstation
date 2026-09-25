@@ -9,6 +9,7 @@ import {
   unauthorized
 } from '../../common/errors'
 import { asPostEventsBody, type GumboPlay } from '../../common/gumboPlay'
+import { hitsAndErrors } from '../../common/scoring/hitsAndErrors'
 import {
   adminScopes,
   canManageTeam,
@@ -22,7 +23,6 @@ import {
   replaceGameEvents,
   teamIdsOnCredits
 } from '../events/eventWrite'
-import { hitsAndErrors } from '../events/hitsAndErrors'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 

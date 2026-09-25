@@ -177,7 +177,9 @@ export function validateRoster(state: {
 export function applyRoster(
   state: GameState,
   setup: GameSetup,
-  nextBatter?: number
+  nextBatter?: number,
+  /** Who took whose place in the order: a substitute bats when his man was due. */
+  replaced: Record<number, number> = {}
 ): { state?: GameState; error?: string } {
   const draft = {
     gameData: { teams: state.gameData.teams, players: setup.players },
@@ -194,7 +196,10 @@ export function applyRoster(
     const before = state.liveData.boxscore.teams[side]
     const after: GameSide = copyState(setup.sides[side])
     after.pitchCounts = copyState(before.pitchCounts)
-    const oldId = before.battingOrder[before.battingIndex]
+    const due = before.battingOrder[before.battingIndex]
+    const oldId = after.battingOrder.includes(due)
+      ? due
+      : (replaced[due] ?? due)
     let id: number | undefined = after.battingOrder.includes(oldId)
       ? oldId
       : undefined
