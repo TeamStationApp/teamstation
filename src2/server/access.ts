@@ -232,6 +232,38 @@ export function canSeeTeam(scopes: VisibleScopes, teamId: string): boolean {
   return scopes.isAdmin || scopes.teamIds.has(teamId)
 }
 
+/** A team a person played for, in the season they played for it. */
+export interface PlayedFor {
+  teamId: string
+  seasonId: string | null
+}
+
+/** Whether a team a person played for is one this viewer can see. */
+export function canSeePlayedFor(
+  scopes: VisibleScopes,
+  team: PlayedFor
+): boolean {
+  if (scopes.isAdmin) return true
+  if (scopes.teamIds.has(team.teamId)) return true
+  return team.seasonId != null && scopes.seasonIds.has(team.seasonId)
+}
+
+/**
+ * Whether a person may be seen: by themselves, and by anybody who can see a
+ * team they have played for, or the season they played for it in.
+ */
+export function canSeePerson(
+  scopes: VisibleScopes,
+  isSelf: boolean,
+  teams: PlayedFor[]
+): boolean {
+  return (
+    scopes.isAdmin ||
+    isSelf ||
+    teams.some(team => canSeePlayedFor(scopes, team))
+  )
+}
+
 export function canManageTeam(scopes: AdminScopes, teamId: string): boolean {
   return scopes.isAdmin || scopes.teamIds.has(teamId)
 }

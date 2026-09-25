@@ -485,6 +485,13 @@ export const asSeasonGame = asObject({
 })
 export type SeasonGame = ReturnType<typeof asSeasonGame>
 
+/** A person another service knows, and which of the asked ids are theirs. */
+export const asUserMatch = asObject({
+  userId: asUserId,
+  externalIds: asArray(asString)
+})
+export type UserMatch = ReturnType<typeof asUserMatch>
+
 /**
  * A live stream's own state, as the ingest last reported it.
  *
@@ -891,6 +898,17 @@ export class GameStationClient {
         ? ''
         : `?${ids.map(id => `externalId=${encodeURIComponent(id)}`).join('&')}`
     return await this.request('GET', `/games${query}`, asArray(asSeasonGame))
+  }
+
+  /**
+   * The people another service knows by these ids, as far as this person may
+   * see them. A merged row answers as whoever it was merged into.
+   */
+  async users(options: { externalIds: string[] }): Promise<UserMatch[]> {
+    const query = options.externalIds
+      .map(id => `externalId=${encodeURIComponent(id)}`)
+      .join('&')
+    return await this.request('GET', `/users?${query}`, asArray(asUserMatch))
   }
 
   async seasonGames(seasonId: string): Promise<SeasonGame[]> {

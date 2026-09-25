@@ -17,6 +17,7 @@ import { mediaRoutes } from './routes/media'
 import { seasonRoutes } from './routes/seasons'
 import { statsRoutes } from './routes/stats'
 import { teamRoutes } from './routes/teams'
+import { userRoutes } from './routes/users'
 
 /**
  * The document says what the API promises; the routers are what it does. This
@@ -104,7 +105,8 @@ describe('the API document', function () {
       ...routesOf(liveRoutes(db, live)),
       ...routesOf(directorRoutes(db, live)),
       ...routesOf(inviteRoutes(db, { sendCode: async () => undefined })),
-      ...routesOf(manageRoutes(db, { sendInvite: async () => undefined }))
+      ...routesOf(manageRoutes(db, { sendInvite: async () => undefined })),
+      ...routesOf(userRoutes(db))
     ]
 
     const documented = new Set<string>()
@@ -134,7 +136,8 @@ describe('the API document', function () {
       ...routesOf(liveRoutes(db, live)),
       ...routesOf(directorRoutes(db, live)),
       ...routesOf(inviteRoutes(db, { sendCode: async () => undefined })),
-      ...routesOf(manageRoutes(db, { sendInvite: async () => undefined }))
+      ...routesOf(manageRoutes(db, { sendInvite: async () => undefined })),
+      ...routesOf(userRoutes(db))
     ])
 
     const paths = openApiDocument('0.0.0').paths
