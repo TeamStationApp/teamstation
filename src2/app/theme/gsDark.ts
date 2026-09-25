@@ -10,6 +10,7 @@ import type { Theme } from './types'
  * Nothing outside this file names a colour.
  */
 const palette = {
+  selectorGray: '#575D54',
   white: '#FFFFFF',
   black: '#000000',
   transparent: '#00000000',
@@ -88,6 +89,18 @@ export const gsDark: Theme = {
   inputTextColor: palette.gsVeryDarkGreen,
 
   activeColor: palette.coralRed,
+  scoringInstructionBackground: '#665016',
+  scoringInstructionBorder: '#c5a13c',
+  scoringStatusText: '#665016',
+  scoringInstructionText: '#ffffff',
+  scoringCountdownColor: '#f1cf55',
+  scoringSafeColor: '#24713d',
+  scoringMenuActiveBackground: '#24713d',
+  scoringMenuActiveText: '#ffffff',
+  scoringSafeIdleColor: '#a9d7b5',
+  scoringOutColor: '#a83535',
+  scoringOutIdleColor: '#e8aaa5',
+  scoringDecisionText: '#ffffff',
   successColor: palette.gsLightOlive,
   warningColor: palette.amber,
   dangerColor: palette.coralRed,
@@ -132,11 +145,14 @@ export const gsDark: Theme = {
   // The watch path
   highlightRowBackground: palette.gsDarkOlive,
   highlightRowActiveBackground: palette.gsMediumOlive,
+  scoringControlBackground: palette.gsBeige,
+  scoringControlText: palette.gsVeryDarkGreen,
   scoringPlayColor: palette.gold,
   videoBackgroundColor: palette.black,
   gridGutterRem: 0.75,
 
   shadowColor: palette.black,
+  scoringSelectorIdle: palette.selectorGray,
   buttonShadowColor: palette.blackOp35,
   backgroundGradientColors: [palette.gsVeryDarkGreen, palette.gsDarkOlive],
   backgroundGradientStart: { x: 0, y: 0 },

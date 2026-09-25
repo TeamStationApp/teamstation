@@ -18,6 +18,7 @@ import {
   useBreakpoint,
   useHandoffSlot
 } from './components'
+import { StandaloneField } from './field/StandaloneField'
 import { lstrings, sprintf } from './locales/strings'
 import type { Route, When } from './navigation/routes'
 import { stacksAfterTabPress } from './navigation/tabPress'
@@ -27,6 +28,7 @@ import {
   showRoute,
   useBrowserBack
 } from './navigation/useAddressBar'
+import { ScoringScreen } from './scoring/ScoringScreen'
 import { AccountScreen } from './screens/AccountScreen'
 import { GameScreen } from './screens/GameScreen'
 import { GamesFeedScreen } from './screens/GamesFeedScreen'
@@ -46,6 +48,8 @@ import {
 } from './theme/ThemeContext'
 
 export interface AppProps {
+  /** Standalone field preview: never contact the API or restore a session. */
+  fieldPreview?: boolean
   apiBaseUrl?: string
   /**
    * A session token kept from the last launch, where the platform can keep
@@ -71,6 +75,7 @@ export interface AppProps {
 
 /** A screen pushed on top of a tab, rather than one of the tabs itself. */
 type Pushed =
+  | { name: 'scoreGame'; gameId: string }
   | { name: 'season'; season: SeasonSummary; tab?: string; when?: When }
   | { name: 'team'; team: TeamSummary; tab?: string }
   | {
@@ -225,9 +230,15 @@ function Shell(props: AppProps): React.ReactElement {
     return { home: [], videos: [], schedule: [], ...opened }
   })
 
+  const needsSession = props.fieldPreview !== true
+
   // The session lives in an `HttpOnly` cookie this code cannot read, so the
   // only way to know is to ask.
   useEffect(() => {
+    if (!needsSession) {
+      setAskedAboutSession(true)
+      return
+    }
     let live = true
     client
       .whoAmI()
@@ -253,7 +264,7 @@ function Shell(props: AppProps): React.ReactElement {
     return () => {
       live = false
     }
-  }, [client, onToken])
+  }, [client, needsSession, onToken])
 
   /**
    * A link to a team or a season is still being turned into a screen.
@@ -277,6 +288,7 @@ function Shell(props: AppProps): React.ReactElement {
   // link that arrives while the app is *running* would empty the tab and stop
   // there, on Home. Cold start only worked because this ran on mount.
   useEffect(() => {
+    if (props.fieldPreview === true) return
     if (route.name !== 'team' && route.name !== 'season') return
     let live = true
     resolvingLink.current = true
@@ -306,7 +318,7 @@ function Shell(props: AppProps): React.ReactElement {
     }
     // `push` is recreated every render and would restart the fetch each time.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [client, route])
+  }, [client, route, props.fieldPreview])
 
   const stack = stacks[tab]
   const top = stack[stack.length - 1]
@@ -353,6 +365,13 @@ function Shell(props: AppProps): React.ReactElement {
   const selectTab = (next: NavTabId): void => {
     setTab(next)
     setStacks(current => stacksAfterTabPress(current, tab, next))
+    if (session == null || props.fieldPreview === true) {
+      if (next === tab) return
+      const destination = routeOf(next, undefined)
+      setRoute(destination)
+      setJoining(undefined)
+      showRoute(destination)
+    }
   }
 
   const push = (next: Pushed): void => {
@@ -493,7 +512,7 @@ function Shell(props: AppProps): React.ReactElement {
     push({ name: 'season', season })
   }
 
-  if (session == null) {
+  if (session == null && props.fieldPreview !== true) {
     // The sign-in screen must not be drawn until the question is answered: a
     // flash of it is how a link to a game becomes a link to the sign-in
     // screen. The mark and a spinner rather than a blank page, because on a
@@ -529,6 +548,11 @@ function Shell(props: AppProps): React.ReactElement {
         <AppHeader
           title={route.name === 'join' ? lstrings.join_header : 'Sign in'}
           showMark
+          nav={
+            isWide ? (
+              <AppNav mode="header" selected={tab} onSelect={selectTab} />
+            ) : undefined
+          }
         />
         {route.name === 'join' ? (
           <JoinScreen
@@ -547,6 +571,9 @@ function Shell(props: AppProps): React.ReactElement {
           />
         ) : (
           <LoginScreen client={client} onSignedIn={rememberSession} />
+        )}
+        {!isWide && (
+          <AppNav mode="floating" selected={tab} onSelect={selectTab} />
         )}
       </View>
     )
@@ -568,7 +595,13 @@ function Shell(props: AppProps): React.ReactElement {
   }
 
   const body =
-    top == null ? (
+    props.fieldPreview === true ? (
+      <StandaloneField
+        onExit={() => {
+          selectTab('home')
+        }}
+      />
+    ) : top == null ? (
       tab === 'home' ? (
         <HomeScreen
           client={client}
@@ -593,7 +626,7 @@ function Shell(props: AppProps): React.ReactElement {
           onOpenGame={openGame}
         />
       )
-    ) : top.name === 'account' ? (
+    ) : top.name === 'account' && session != null ? (
       <AccountScreen
         session={session}
         onSignOut={() => {
@@ -680,10 +713,23 @@ function Shell(props: AppProps): React.ReactElement {
           })
         }}
       />
+    ) : top.name === 'scoreGame' ? (
+      <ScoringScreen
+        userId={session?.user.id}
+        client={client}
+        gameId={top.gameId}
+        onExit={() => {
+          inPlace.current = true
+          goToRoute({ name: 'game', gameId: top.gameId })
+        }}
+      />
     ) : top.name === 'game' ? (
       <GameScreen
         client={client}
         gameId={top.gameId}
+        onScoreGame={() => {
+          push({ name: 'scoreGame', gameId: top.gameId })
+        }}
         onOpenPlayer={openPlayer}
         onOpenTeam={team => {
           push({ name: 'team', team })
@@ -781,7 +827,7 @@ function Shell(props: AppProps): React.ReactElement {
       }
       onBack={stack.length > 0 ? pop : undefined}
       account={
-        top?.name === 'account'
+        session == null || top?.name === 'account'
           ? undefined
           : {
               name: session.user.displayName,
@@ -804,19 +850,22 @@ function Shell(props: AppProps): React.ReactElement {
   // crossed the boundary and unmount everything below it — the `<video>`
   // element with it, which is what used to stop playback dead mid-drag. Keyed,
   // the pane is matched to the pane and nothing below it notices.
+  const immersiveField =
+    props.fieldPreview === true || top?.name === 'scoreGame'
+
   return (
     <GestureHandlerRootView style={styles.root}>
       <View style={styles.app}>
         <View key="pane" style={styles.pane}>
           <HeaderSlotProvider
-            headerHeight={headerHeight}
+            headerHeight={immersiveField ? 0 : headerHeight}
             onHandoff={setHandoff}
           >
             <View style={styles.body}>{body}</View>
           </HeaderSlotProvider>
-          <View style={styles.headerLayer}>{header}</View>
+          {!immersiveField && <View style={styles.headerLayer}>{header}</View>}
         </View>
-        {!isWide && (
+        {!isWide && !immersiveField && (
           <AppNav
             key="nav"
             mode="floating"
@@ -844,6 +893,7 @@ export /**
  */
 function stackFor(route: Route): Partial<Record<NavTabId, Pushed[]>> {
   const tab = tabOf(route)
+  if (route.name === 'scoreGame') return { [tab]: [route] }
   if (route.name === 'game') {
     return {
       [tab]: [
@@ -909,6 +959,7 @@ function tabOf(route: Route): NavTabId {
 /** The address of wherever the app currently is. */
 function routeOf(tab: NavTabId, top: Pushed | undefined, when?: When): Route {
   if (top != null) {
+    if (top.name === 'scoreGame') return top
     if (top.name === 'team') {
       return { name: 'team', teamId: top.team.id, tab: top.tab }
     }

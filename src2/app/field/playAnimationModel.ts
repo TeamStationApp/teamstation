@@ -1,0 +1,185 @@
+import {
+  type HitSequence,
+  PITCH_TIMING,
+  type PitchSequence,
+  type Point3,
+  type ThrowSequence
+} from '../scoring/scoringPresentation'
+import { pitchingHand } from './athletePose'
+import { arcPoint } from './ballArcModel'
+import type { GroundPoint } from './fieldModel'
+export interface PitchSample {
+  ball: Point3
+  visible: boolean
+  opacity: number
+  windup: number
+  swing: number
+  catch: number
+}
+export const DEFENDER_SPEED = 3
+const clamp = (n: number): number => Math.max(0, Math.min(1, n))
+function lerp(a: Point3, b: Point3, t: number): Point3 {
+  return {
+    x: a.x + (b.x - a.x) * t,
+    y: a.y + (b.y - a.y) * t,
+    z: a.z + (b.z - a.z) * t
+  }
+}
+/** Foul flight deliberately bypasses the fair-ball target clamp behind home. */
+export function foulPoint(
+  plate: Point3,
+  side: 'R' | 'L',
+  progress: number,
+  camera?: Point3
+): Point3 {
+  const t = clamp(progress)
+  if (camera != null) {
+    // Reach 40% of the contact depth before fading: fixed radius projects 2.5x larger.
+    const travel = Math.sin((t * Math.PI) / 2)
+    const approach = 0.6 * travel
+    const lateral =
+      Math.hypot(camera.x - plate.x, camera.y - plate.y, camera.z - plate.z) *
+      0.035 *
+      travel
+    return {
+      x:
+        plate.x +
+        (camera.x - plate.x) * approach +
+        (side === 'R' ? lateral : -lateral),
+      y: plate.y + (camera.y - plate.y) * approach,
+      z: plate.z + (camera.z - plate.z) * approach
+    }
+  }
+  return {
+    x: plate.x + (side === 'R' ? 1 : -1) * 18 * t,
+    z: plate.z + 18 * t,
+    y: plate.y + Math.SQRT2 * 18 * t - 3 * t * t
+  }
+}
+export function samplePitch(
+  sequence: PitchSequence,
+  time: number,
+  camera?: Point3
+): PitchSample {
+  const foul = sequence.pitch === 'foul'
+  let ball: Point3
+  if (time < PITCH_TIMING.release)
+    ball = pitchingHand(
+      sequence.players.find(p => p.playerId === sequence.pitcher)!.position,
+      time,
+      PITCH_TIMING.release,
+      sequence.throwSide
+    )
+  else if (time < PITCH_TIMING.plate)
+    ball = lerp(
+      sequence.from,
+      sequence.plate,
+      clamp(
+        (time - PITCH_TIMING.release) /
+          (PITCH_TIMING.plate - PITCH_TIMING.release)
+      )
+    )
+  else if (foul)
+    ball = foulPoint(
+      sequence.plate,
+      sequence.batSide,
+      (time - PITCH_TIMING.plate) /
+        (PITCH_TIMING.foulFinish - PITCH_TIMING.plate),
+      camera
+    )
+  else
+    ball = lerp(
+      sequence.plate,
+      sequence.glove,
+      clamp(
+        (time - PITCH_TIMING.plate) / (PITCH_TIMING.catch - PITCH_TIMING.plate)
+      )
+    )
+  const swinging = sequence.pitch === 'swing' || foul
+  return {
+    ball,
+    visible:
+      time >= 0 &&
+      (foul ? time < sequence.durationMs : time < PITCH_TIMING.catch),
+    opacity: foul ? 1 - clamp((time - (sequence.durationMs - 200)) / 200) : 1,
+    windup: Math.sin(clamp(time / (PITCH_TIMING.release * 2)) * Math.PI),
+    swing: swinging
+      ? Math.sin(clamp((time - (PITCH_TIMING.plate - 200)) / 500) * Math.PI)
+      : 0,
+    catch: !foul
+      ? Math.sin(clamp((time - (PITCH_TIMING.catch - 60)) / 200) * Math.PI)
+      : 0
+  }
+}
+
+export function sampleHit(
+  sequence: HitSequence,
+  time: number
+): {
+  ball: Point3
+  visible: boolean
+  swing: number
+  fielder: GroundPoint
+  running: boolean
+} {
+  const flight = clamp(
+    (time - sequence.contactMs) / (sequence.flightEndMs - sequence.contactMs)
+  )
+  const defender = clamp(
+    (time - sequence.fielderStartMs) /
+      (sequence.fielderEndMs - sequence.fielderStartMs)
+  )
+  return {
+    ball: arcPoint(sequence.arc, flight),
+    visible: time >= sequence.contactMs && time < sequence.durationMs,
+    swing: Math.sin(clamp((time - 250) / 400) * Math.PI),
+    fielder: {
+      x:
+        sequence.fielderStart.x +
+        ((sequence.fielderTarget ?? sequence.arc.target).x -
+          sequence.fielderStart.x) *
+          defender,
+      z:
+        sequence.fielderStart.z +
+        ((sequence.fielderTarget ?? sequence.arc.target).z -
+          sequence.fielderStart.z) *
+          defender
+    },
+    running: defender > 0 && defender < 1
+  }
+}
+
+export function sampleThrow(
+  sequence: ThrowSequence,
+  time: number
+): {
+  ball: Point3
+  visible: boolean
+  progress: number
+  defenderProgress: number
+  swing: number
+} {
+  const t = clamp(
+    (time - (sequence.unassisted ? 0 : 150)) /
+      (sequence.durationMs - (sequence.unassisted ? 0 : 150))
+  )
+  const defender = sequence.unassisted ? clamp(t * DEFENDER_SPEED) : t
+  const ball =
+    !sequence.unassisted && time < 150
+      ? pitchingHand(
+          sequence.holderOrigin,
+          time,
+          150,
+          sequence.throwSide,
+          sequence.heading
+        )
+      : lerp(sequence.from, sequence.to, defender)
+  ball.y += Math.sin(t * Math.PI) * (sequence.unassisted ? 0 : 3)
+  return {
+    ball,
+    visible: !sequence.unassisted && time < sequence.durationMs,
+    progress: t,
+    defenderProgress: defender,
+    swing: 0
+  }
+}

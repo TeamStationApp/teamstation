@@ -91,6 +91,7 @@ describe('addresses', function () {
 
   it('round-trips every kind of screen', function () {
     const routes: Route[] = [
+      { name: 'scoreGame', gameId: 'g1' },
       { name: 'home' },
       { name: 'videos', when: 'past' },
       { name: 'videos', when: 'all' },

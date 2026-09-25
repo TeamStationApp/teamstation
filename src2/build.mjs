@@ -1,8 +1,9 @@
-import babel from '@babel/core'
 import { build, context } from 'esbuild'
 import { copyFile, mkdir, readFile, rm, writeFile } from 'fs/promises'
 import path from 'path'
 import { fileURLToPath } from 'url'
+
+import { webSettings } from '../scripts/web-build-settings.mjs'
 
 /**
  * Everything below is written relative to the repository root, and this is
@@ -73,35 +74,9 @@ if (!serve && /\/\/(127\.0\.0\.1|localhost|\[::1\])/.test(apiBaseUrl)) {
  * still does the actual transform at its own speed. A full `@babel/preset-*`
  * pass here would transpile everything twice and cost far more than it does.
  */
-const worklets = {
-  name: 'reanimated-worklets',
-  setup(pluginBuild) {
-    // `.tsx?`, not `.tsx`: a hook file is plain TypeScript and is exactly where
-    // a shared worklet ends up, so a filter that missed it left
-    // `useAnimatedStyle` uncompiled and every screen using it blank.
-    pluginBuild.onLoad({ filter: /app\/.*\.tsx?$/ }, async args => {
-      const source = await readFile(args.path, 'utf8')
-      // Only files that mention Reanimated can contain a worklet, and the check
-      // costs nothing next to parsing a file that cannot.
-      if (!/react-native-reanimated|['"]worklet['"]/.test(source)) return null
-      const result = await babel.transformAsync(source, {
-        filename: args.path,
-        babelrc: false,
-        configFile: false,
-        sourceMaps: 'inline',
-        plugins: [
-          ['@babel/plugin-syntax-typescript', { isTSX: true }],
-          '@babel/plugin-syntax-jsx',
-          'react-native-worklets/plugin'
-        ]
-      })
-      return { contents: result.code, loader: 'tsx' }
-    })
-  }
-}
 
 const options = {
-  plugins: [worklets],
+  ...webSettings,
   entryPoints: ['src2/app/web/index.tsx'],
   // A content hash in the name, for production only. Without it the bundle is
   // always `/app.js`, and a browser that has cached one has no way to learn
@@ -121,27 +96,16 @@ const options = {
   // its native file and asks for `react-native/Libraries/...` internals that
   // react-native-web does not have, and the build fails on two imports that
   // have nothing to do with anything we wrote.
-  resolveExtensions: [
-    '.web.tsx',
-    '.web.ts',
-    '.web.jsx',
-    '.web.js',
-    '.tsx',
-    '.ts',
-    '.jsx',
-    '.js',
-    '.json'
-  ],
   sourcemap: true,
   minify: !serve,
   logLevel: 'info',
-  alias: { 'react-native': 'react-native-web' },
   define: {
     'process.env.NODE_ENV': JSON.stringify(
       serve ? 'development' : 'production'
     ),
     __DEV__: serve ? 'true' : 'false',
     GS_API_BASE_URL: JSON.stringify(apiBaseUrl),
+    GS_FIELD_PREVIEW: process.env.GS_FIELD_PREVIEW === '1' ? 'true' : 'false',
     // `global` is what a React Native runtime calls it and no browser does.
     // Worklets are compiled to code that reaches for it, and React Native Web
     // reaches for it too — stopping an `Animated` timing calls
