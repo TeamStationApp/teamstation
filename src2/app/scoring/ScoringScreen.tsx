@@ -900,6 +900,7 @@ function ScoringPanel(props: {
         <ScoringSheet
           textCancel={sheet === 'rosters'}
           fullScreen={sheet === 'rosters'}
+          scroll={sheet !== 'rosters'}
           title={
             {
               exit: 'Exit Current Game',
