@@ -446,7 +446,21 @@ describe('scoring browser', function () {
         }, label)
         expect(measured.bottom).lessThan(measured.footerTop)
         expect(measured.hit).equals(label)
-        await click(page, label)
+        const lower = await page.$eval(`[aria-label="Bottom ${label}"]`, n => {
+          const r = n.getBoundingClientRect()
+          const undo = document
+            .querySelector('[aria-label^="Undo "]')!
+            .getBoundingClientRect()
+          return {
+            bottom: r.bottom,
+            top: undo.top,
+            center: r.x + r.width / 2,
+            undoCenter: undo.x + undo.width / 2
+          }
+        })
+        expect(lower.bottom).closeTo(lower.top, 0.1)
+        expect(lower.center).closeTo(lower.undoCenter, 0.1)
+        await click(page, `Bottom ${label}`)
         await page.waitForSelector('[aria-label*="Batter Player 2"]', {
           timeout: 30000
         })
@@ -917,6 +931,68 @@ describe('scoring browser', function () {
         await click(page, 'Dismiss More')
         await click(page, 'Undo Put Batter on Base')
         await page.waitForSelector('[aria-label*="Batter Jordan K."]')
+        expect(unexpected).deep.equals([])
+      } finally {
+        await page.close()
+      }
+    })
+  for (const scenario of ['loaded-safe', 'loaded-out', 'empty-out'])
+    it(`automatically resolves dropped third strike ${scenario}`, async () => {
+      const { page, unexpected } = await open('/games/g1/score')
+      try {
+        await page.setViewport({ width: 390, height: 844 })
+        await click(page, 'Open scoring menu')
+        await click(page, 'Overrides')
+        await page.locator('[aria-label="strikes"]').fill('2')
+        if (scenario.startsWith('loaded')) {
+          await page.locator('[aria-label="outs"]').fill('2')
+          for (const [base, player] of [
+            ['First base', 'Player 6'],
+            ['Second base', 'Player 7'],
+            ['Third base', 'Player 8']
+          ]) {
+            await click(page, base)
+            await click(page, `Choose ${base} ${player}`)
+          }
+        }
+        await click(page, 'Apply Override')
+        await click(page, 'More')
+        await click(page, 'Dropped Third Strike')
+        const decision = scenario.startsWith('loaded')
+          ? 'Home plate decision for Player 8'
+          : 'Runner decision for Jordan K.'
+        await page.waitForSelector(`[aria-label="${decision}"]`, {
+          timeout: 30000
+        })
+        expect(await page.$('[aria-label="Time to edit play"]')).equals(null)
+        expect(await page.$('[aria-label="Back"]')).equals(null)
+        expect(await page.$$('[aria-label="Safe"]')).has.length(1)
+        await page.screenshot({
+          path: join(
+            process.env.GS_SCORING_ARTIFACT_DIR ?? '/tmp',
+            `dropped-third-${scenario}.png`
+          )
+        })
+        if (scenario.endsWith('safe')) {
+          await click(page, 'Safe')
+          await page.waitForSelector('[aria-label="Time to edit play"]', {
+            timeout: 30000
+          })
+          await page.waitForSelector('[aria-label*="Owls 1 · Hawks 0"]')
+          await click(page, 'Bottom Finish at-bat')
+          await page.waitForSelector('[aria-label*="Batter Player 2"]')
+        } else {
+          await click(page, 'Out')
+          await placeDefenderWithKeyboard(page)
+          await click(page, 'Bottom Finish defensive play')
+          await page.waitForSelector(
+            scenario === 'loaded-out'
+              ? '[aria-label*="Bottom 1st"]'
+              : '[aria-label*="Batter Player 2"]',
+            { timeout: 30000 }
+          )
+          await page.waitForSelector('[aria-label*="Owls 0 · Hawks 0"]')
+        }
         expect(unexpected).deep.equals([])
       } finally {
         await page.close()
@@ -1941,47 +2017,38 @@ describe('scoring browser', function () {
           })
         const parent = await bounds('More scoring actions')
         expect(parent.right).at.most(width / 2)
-        const headings = await page.$eval(
+        const headingCount = await page.$eval(
           '[aria-label="More scoring actions"]',
           panel =>
-            Array.from(panel.querySelectorAll('div'))
-              .filter(n =>
-                ['Between pitches', "Didn't see it", 'This pitch'].includes(
-                  // Browser closures cannot reference Sucrase's nullish helper.
-                  // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
-                  n.textContent == null ? '' : n.textContent
-                )
+            Array.from(panel.querySelectorAll('div')).filter(n =>
+              ['Between pitches', "Didn't see it", 'This pitch'].includes(
+                // Browser closures cannot reference Sucrase's nullish helper.
+                // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
+                n.textContent == null ? '' : n.textContent
               )
-              .map(n => ({
-                color: getComputedStyle(n).color,
-                background: getComputedStyle(panel).backgroundColor,
-                size: getComputedStyle(n).fontSize,
-                weight: getComputedStyle(n).fontWeight
-              }))
+            ).length
         )
-        expect(headings).has.length(1)
-        for (const heading of headings) {
-          expect(heading.color).not.equals(heading.background)
-          expect(heading.size).equals('14.4px')
-          expect(heading.weight).equals('700')
-        }
+        expect(headingCount).equals(0)
 
         expect(
           await page.$eval('[aria-label="Put Batter on Base"]', n => ({
             font: getComputedStyle(n).fontSize,
             weight: getComputedStyle(n).fontWeight
           }))
-        ).deep.equals({ font: '16.8px', weight: '700' })
+        ).deep.equals({ font: '13px', weight: '700' })
         await click(page, 'Put Batter on Base')
         expect(await bounds('More scoring actions')).deep.equals(parent)
         expect((await bounds('Batter base')).x).at.least(width / 2)
         await page.focus('[aria-label="First"]')
         expect(
           await page.$eval('[aria-label="First"]', node => ({
-            bg: getComputedStyle(node).backgroundColor,
+            bg: getComputedStyle(node).backgroundImage,
             text: getComputedStyle(node).color
           }))
-        ).deep.equals({ bg: 'rgb(36, 113, 61)', text: 'rgb(255, 255, 255)' })
+        ).deep.equals({
+          bg: 'linear-gradient(to right, rgb(29, 107, 66), rgb(22, 88, 53))',
+          text: 'rgb(255, 255, 255)'
+        })
         const child = await bounds('Batter base')
         expect(child.bottom).at.most(width === 844 ? 390 : 844)
         if (process.env.GS_SCORING_ARTIFACT_DIR != null)
@@ -2000,7 +2067,7 @@ describe('scoring browser', function () {
             font: getComputedStyle(n).fontSize,
             weight: getComputedStyle(n).fontWeight
           }))
-        ).deep.equals({ font: '16.8px', weight: '700' })
+        ).deep.equals({ font: '13px', weight: '700' })
         for (const label of [
           'Throw Out',
           'Ball Caught',
@@ -2099,14 +2166,12 @@ describe('scoring browser', function () {
           await click(page, 'Choose Destination base Second')
           await click(page, 'Place Runner')
         }
-        if (
-          ['Wild Pitch', 'Passed Ball', 'Dropped Third Strike'].includes(action)
-        ) {
-          await page.focus('[role="application"]')
-          await page.keyboard.press('Space')
-          for (let i = 0; i < 8; i++) await page.keyboard.press('ArrowUp')
-          await page.keyboard.press('s')
-          await page.keyboard.press('Enter')
+        if (action === 'Dropped Third Strike') {
+          await page.waitForSelector(
+            '[aria-label="Runner decision for Jordan K."]',
+            { timeout: 30000 }
+          )
+          await click(page, 'Safe')
         }
         if (action === 'Batter Out — Other') {
           await page.focus('[role="application"]')
@@ -3501,6 +3566,18 @@ describe('scoring browser', function () {
                 right: r.right,
                 h: r.height,
                 bg: st.backgroundColor,
+                font: getComputedStyle(
+                  n.querySelector('[data-testid="scoring-control-label"]') ==
+                    null
+                    ? n
+                    : n.querySelector('[data-testid="scoring-control-label"]')!
+                ).fontSize,
+                weight: getComputedStyle(
+                  n.querySelector('[data-testid="scoring-control-label"]') ==
+                    null
+                    ? n
+                    : n.querySelector('[data-testid="scoring-control-label"]')!
+                ).fontWeight,
                 shadow: st.boxShadow,
                 images: n.querySelectorAll('img').length
               }
@@ -3544,13 +3621,36 @@ describe('scoring browser', function () {
         }
         const swing = actual.controls.find(c => c.label === 'Swing in Play')!
         const bunt = actual.controls.find(c => c.label === 'Bunt in Play')!
-        expect(bunt.bottom - swing.y).closeTo(112, 0.1)
-        expect(bunt.y - swing.bottom).closeTo(8, 0.1)
+        expect(swing.bottom - bunt.y).closeTo(120, 0.1)
+        expect(swing.y - bunt.bottom).closeTo(8, 0.1)
         for (const c of actual.controls) {
-          expect(c.h, c.label).closeTo(52, 0.1)
-          expect(c.bg).equals(actual.controls[0].bg)
+          expect(c.h, c.label).closeTo(56, 0.1)
+          const backgrounds: Record<string, string> = {
+            More: 'rgb(28, 39, 33)',
+            'Nothing to undo': 'rgb(26, 38, 32)',
+            Ball: 'rgb(15, 92, 59)',
+            'Called Strike': 'rgb(146, 64, 14)',
+            'Swing and Miss': 'rgb(130, 30, 20)',
+            'Foul Ball': 'rgb(127, 100, 69)',
+            'Swing in Play': 'rgb(111, 66, 25)',
+            'Bunt in Play': 'rgb(111, 66, 25)'
+          }
+          expect(c.bg).equals(backgrounds[c.label] ?? actual.controls[0].bg)
           expect(c.shadow).not.equals('none')
           expect(c.images).equals(0)
+          expect(c.font).equals(
+            [
+              'Ball',
+              'Nothing to undo',
+              'Bunt in Play',
+              'Swing in Play'
+            ].includes(c.label)
+              ? '12px'
+              : '11px'
+          )
+          expect(c.weight).equals('900')
+          if (c.label !== 'Nothing to undo')
+            expect(c.right - c.x).closeTo(swing.right - swing.x, 0.2)
           expect(c.right).at.most(width)
           expect(c.bottom).at.most(height)
         }

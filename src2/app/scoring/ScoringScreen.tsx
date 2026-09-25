@@ -21,6 +21,7 @@ import type { FieldPlayer } from '../field/fieldModel'
 import type { BaseProjection } from '../field/fieldTypes'
 import { homeRunKind, homeRunLabel } from '../field/stadiumBoundary'
 import { useFieldSurface } from '../field/useFieldSurface'
+import { lstrings } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
 import { allowedAngle, trajectoryLabel } from './battedBall'
 import { battedBallField, fieldStageInstruction } from './battedBallField'
@@ -631,8 +632,8 @@ function ScoringSession(props: {
       }
       finishLabel={
         state.phase === 'chooseDefender'
-          ? 'Finish defensive play'
-          : 'Finish at-bat'
+          ? lstrings.scoring_finish_defensive_play
+          : lstrings.scoring_finish_at_bat
       }
       remainingMs={
         state.phase === 'correctionWindow' && state.presentation == null

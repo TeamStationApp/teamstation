@@ -21,6 +21,17 @@ describe('vintage scoreboard', function () {
     expect(countLights(-1, 3)).deep.equals([false, false, false])
     expect(countLights(NaN, 2)).deep.equals([false, false])
   })
+  it('lights scoreboard lettering to white-hot centers while retaining colored count lamps', () => {
+    const pixels = makeScoreboardPixels({ ...DEMO_SCOREBOARD, awayTeam: 'H' })
+    const pixel = (x: number, y: number): number[] => {
+      const offset = ((BOARD_HEIGHT - 1 - y) * BOARD_WIDTH + x) * 4
+      return Array.from(pixels.slice(offset, offset + 3))
+    }
+    expect(pixel(40, 30)).deep.equals([255, 255, 255])
+    const green = pixel(866, 37)
+    expect(green[1]).greaterThan(green[0])
+    expect(green[1]).greaterThan(green[2])
+  })
   it('renders count colors and responds to changing game data', function () {
     const pixels = makeScoreboardPixels(DEMO_SCOREBOARD)
     expect(pixels.length).equals(BOARD_WIDTH * BOARD_HEIGHT * 4)
