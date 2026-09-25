@@ -90,6 +90,7 @@ describe('game actions preserve box score and videos', function () {
     })
     client.teams = async () => []
     client.boxScore = async () => ({
+      stats: undefined,
       batting: [
         asBattingRow({
           userId: 1,
@@ -199,7 +200,11 @@ describe('game actions preserve box score and videos', function () {
       durationSec: 300,
       unavailable: false
     })
-    client.boxScore = async () => ({ batting: [], pitching: [] })
+    client.boxScore = async () => ({
+      batting: [],
+      pitching: [],
+      stats: undefined
+    })
     // Save the host method for restoration; it is never called unbound.
     // eslint-disable-next-line @typescript-eslint/unbound-method
     const play = window.HTMLMediaElement.prototype.play
