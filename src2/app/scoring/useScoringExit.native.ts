@@ -1,9 +1,16 @@
-/** The native renderer is unavailable; no scoring session can be entered. */
 export function useScoringExit(
   _gameId: string,
-  _dirty: boolean,
+  _saveFailed: boolean,
   onExit: () => void,
-  _requestConfirmation?: () => Promise<boolean>
+  flush?: () => Promise<boolean>
 ): () => void {
-  return onExit
+  return () => {
+    if (flush == null) onExit()
+    else
+      flush()
+        .then(saved => {
+          if (saved) onExit()
+        })
+        .catch(() => undefined)
+  }
 }

@@ -101,11 +101,14 @@ export class ScoringSession {
   private readonly setTimer: (run: () => void, ms: number) => unknown
   private readonly clearTimer: (handle: unknown) => void
 
+  /** What `open` read the game with, so `reload` can read it again. */
+  private context: SessionContext | null = null
+
   private constructor(
     private readonly store: EventStore,
     readonly gameId: string,
-    private readonly base: GameState,
-    options: SessionOptions
+    private base: GameState,
+    private readonly options: SessionOptions
   ) {
     this.game = base
     this.segment = { setupBefore: setupOf(base), actions: [] }
@@ -143,6 +146,7 @@ export class ScoringSession {
     const loaded = await store.load(gameId)
     const replayed = replayPlays(loaded, context)
     const session = new ScoringSession(store, gameId, replayed.base, options)
+    session.context = context
     const reopened = loaded.currentPlay?.about.atBatIndex
     const plays = loaded.plays
       .filter(play => play.about.atBatIndex !== reopened)
@@ -322,6 +326,58 @@ export class ScoringSession {
       if (applied.problems.length > 0) return applied.problems
     }
     return []
+  }
+
+  /**
+   * Reads the game the server holds again and takes it up, so a change
+   * somebody else saved arrives here. It does so only while nothing here is
+   * waiting to be saved, so none of this session's changes are lost; the last
+   * one saved wins. Says whether the game changed.
+   */
+  async reload(): Promise<boolean> {
+    const idle = (): boolean =>
+      this.context != null &&
+      this.refusal == null &&
+      this.running == null &&
+      this.pending === 0
+    if (!idle()) return false
+    const fresh = await ScoringSession.open(
+      this.store,
+      this.gameId,
+      this.context!,
+      this.options
+    )
+    if (!idle()) return false
+    if (
+      JSON.stringify(fresh.log) === JSON.stringify(this.log) &&
+      JSON.stringify(fresh.game) === JSON.stringify(this.game)
+    )
+      return false
+    this.base = fresh.base
+    this.log = fresh.log
+    this.savedLog = fresh.savedLog
+    this.game = fresh.game
+    this.completed = fresh.completed
+    this.segment = fresh.segment
+    this.postedCurrent = fresh.postedCurrent
+    this.failure = fresh.failure
+    for (const [target, source] of [
+      [this.times, fresh.times],
+      [this.posted, fresh.posted]
+    ] as const) {
+      target.clear()
+      for (const [key, value] of source)
+        (target as Map<number, unknown>).set(key, value)
+    }
+    for (const [target, source] of [
+      [this.stored, fresh.stored],
+      [this.derivedIndexes, fresh.derivedIndexes]
+    ] as const) {
+      target.clear()
+      for (const value of source) target.add(value)
+    }
+    this.notify()
+    return true
   }
 
   /** Saves whatever the server has not acknowledged. Tests await it. */

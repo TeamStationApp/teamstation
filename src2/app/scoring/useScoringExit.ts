@@ -2,45 +2,46 @@ import { useCallback, useEffect, useLayoutEffect } from 'react'
 
 import { setNavigationGuard } from '../navigation/useAddressBar'
 
+/**
+ * Leaving the game first saves it; only a save that could not finish holds the
+ * scorer back, and the page warns before unloading while one is outstanding.
+ */
 export function useScoringExit(
   gameId: string,
-  dirty: boolean,
+  saveFailed: boolean,
   onExit: () => void,
-  requestConfirmation?: () => Promise<boolean>
+  flush?: () => Promise<boolean>
 ): () => void {
-  const confirm = useCallback(
-    async () =>
-      !dirty ||
-      (requestConfirmation != null
-        ? await requestConfirmation()
-        : window.confirm(
-            'Exit Current Game? Your local development scoring will be discarded.'
-          )),
-    [dirty, requestConfirmation]
+  const save = useCallback(
+    async () => flush == null || (await flush()),
+    [flush]
   )
   useLayoutEffect(
-    () =>
-      setNavigationGuard(async () => await confirm(), { name: 'game', gameId }),
-    [confirm, gameId]
+    () => setNavigationGuard(save, { name: 'game', gameId }),
+    [save, gameId]
   )
   useEffect(() => {
-    if (!dirty) return
+    const pagehide = (): void => {
+      save().catch(() => undefined)
+    }
     const unload = (event: BeforeUnloadEvent): void => {
+      if (!saveFailed) return
       event.preventDefault()
-      // Older browser versions require returnValue as well as preventDefault.
       // eslint-disable-next-line @typescript-eslint/no-deprecated
       event.returnValue = ''
     }
+    window.addEventListener('pagehide', pagehide)
     window.addEventListener('beforeunload', unload)
     return () => {
+      window.removeEventListener('pagehide', pagehide)
       window.removeEventListener('beforeunload', unload)
     }
-  }, [dirty])
+  }, [save, saveFailed])
   return useCallback(() => {
-    confirm()
-      .then(accepted => {
-        if (accepted) onExit()
+    save()
+      .then(saved => {
+        if (saved) onExit()
       })
       .catch(() => undefined)
-  }, [confirm, onExit])
+  }, [save, onExit])
 }

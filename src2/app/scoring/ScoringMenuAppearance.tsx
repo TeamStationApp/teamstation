@@ -55,11 +55,13 @@ const decorations: Record<
 export function ScoringMenuLabel({
   label,
   active = false,
-  chevron
+  chevron,
+  danger = false
 }: {
   label: string
   active?: boolean
   chevron?: 'left' | 'right'
+  danger?: boolean
 }): React.ReactElement {
   const theme = useTheme()
   const decoration = decorations[label]
@@ -96,7 +98,7 @@ export function ScoringMenuLabel({
           lineHeight: 18,
           fontWeight: '700',
           letterSpacing: 0.2,
-          color: active ? '#ffffff' : SCORING_MENU.text
+          color: danger ? '#f87171' : active ? '#ffffff' : SCORING_MENU.text
         }}
       >
         {label === 'Place a Runner (Tiebreaker)' ? (
@@ -229,11 +231,13 @@ export function ScoringMenuButton({
   label,
   disabled = false,
   submenuRight = false,
+  danger = false,
   onPress
 }: {
   label: string
   disabled?: boolean
   submenuRight?: boolean
+  danger?: boolean
   onPress: () => void
 }): React.ReactElement {
   const [active, setActive] = useState(false)
@@ -274,6 +278,7 @@ export function ScoringMenuButton({
     >
       <ScoringMenuLabel
         label={label}
+        danger={danger}
         active={active && !disabled}
         chevron={submenuRight ? 'right' : undefined}
       />

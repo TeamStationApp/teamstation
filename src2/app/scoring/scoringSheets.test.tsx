@@ -271,7 +271,7 @@ describe('scoring slide-up sheets', function () {
           .querySelector(`[aria-label="${label}"]`)
           ?.getAttribute('aria-disabled')
       ).equals('true')
-    await click('Resume Game')
+    await click('Dismiss scoring menu')
     await menu('Settings')
     await click('Cancel')
     await menu('Exit Current Game')
