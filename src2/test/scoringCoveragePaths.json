@@ -1,4 +1,5 @@
 [
+  "scripts/coverage-source-paths.cjs",
   "src2/app/scoring/**/*.ts",
   "src2/app/scoring/**/*.tsx",
   "src2/app/App.tsx",
@@ -60,5 +61,6 @@
   "src2/app/field/teamUniform.ts",
   "src2/app/field/Dugout.tsx",
   "src2/app/field/useTeamLogo.ts",
-  "src2/app/components/useMotionPreference.ts"
+  "src2/app/components/useMotionPreference.ts",
+  "src2/app/components/LivePill.tsx"
 ]

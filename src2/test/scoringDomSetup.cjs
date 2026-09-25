@@ -27,6 +27,13 @@ for (const key of [
         : dom.window[key]
   })
 }
+// Reanimated starts animations with Node's performance clock. JSDOM rAF has
+// its own time origin, so supply the same clock to each frame callback.
+Object.defineProperty(globalThis, 'requestAnimationFrame', {
+  configurable: true,
+  value: callback =>
+    dom.window.requestAnimationFrame(() => callback(performance.now()))
+})
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 globalThis.ResizeObserver = class {
   observe() {}

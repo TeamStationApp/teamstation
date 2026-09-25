@@ -56,7 +56,8 @@ async function open(
   failedRoster = false,
   bats: 'switch' | 'left' | 'right' = 'switch',
   probe = false,
-  logos?: 'valid' | 'broken'
+  logos?: 'valid' | 'broken',
+  uiAnimations = false
 ): Promise<{ page: Page; unexpected: string[] }> {
   const page = await browser.newPage()
   if (probe)
@@ -106,13 +107,41 @@ async function open(
     let status = 200
     if (request.method() !== 'GET')
       unexpected.push(`${request.method()} ${url.pathname}`)
-    if (url.pathname === '/api/v1/auth/me')
+    if (uiAnimations && url.pathname.endsWith('/playback')) {
+      body = {
+        videoId: 'fixture-live',
+        storage: 'fixture',
+        url: null,
+        expiresAt: null,
+        durationSec: null,
+        unavailable: true
+      }
+    } else if (uiAnimations && url.pathname.endsWith('/highlights')) {
+      body = { withheld: null, droppedCount: 0, highlights: [] }
+    } else if (url.pathname === '/api/v1/auth/me')
       body = { id: 'scorer', displayName: 'Scorer', isAdmin: false }
     else if (url.pathname === '/api/v1/games/g1') {
       body =
         scored === false
           ? {
               ...game,
+              videos: uiAnimations
+                ? [
+                    {
+                      id: 'fixture-live',
+                      numCameras: 1,
+                      kind: 'game',
+                      title: 'Fixture live video',
+                      status: 'live',
+                      storage: 'fixture',
+                      startAt: null,
+                      durationSec: null,
+                      width: null,
+                      height: null,
+                      codecs: null
+                    }
+                  ]
+                : [],
               awayLogoUrl: logos == null ? null : `${base}/qa-logo-away.svg`,
               homeLogoUrl: logos == null ? null : `${base}/qa-logo-home.svg`
             }
@@ -142,7 +171,8 @@ async function open(
             }
           ]
         : []
-    } else if (url.pathname.endsWith('/live-streams')) body = { streams: [] }
+    } else if (url.pathname.endsWith('/live-streams'))
+      body = { gameId: 'g1', mine: [], others: [], canAdd: 0, maxCameras: 3 }
     else {
       unexpected.push(url.pathname)
       status = 500
@@ -3897,4 +3927,115 @@ describe('scoring browser', function () {
           await page.close()
         }
       })
+  it('animates the live badge with live reduced-motion changes', async () => {
+    const { page, unexpected } = await open(
+      '/games/g1',
+      false,
+      false,
+      false,
+      'right',
+      false,
+      undefined,
+      true
+    )
+    try {
+      await page.waitForSelector('[aria-label="Live now"]')
+      const sample = async (
+        selector: string,
+        transform = false
+      ): Promise<number[]> =>
+        await page.evaluate(
+          async (selector, transform) => {
+            const node = document.querySelector(selector)!
+            const values: number[] = []
+            const start = performance.now()
+            while (performance.now() - start < 3500) {
+              await new Promise(requestAnimationFrame)
+              const style = getComputedStyle(node)
+              values.push(
+                transform
+                  ? new DOMMatrixReadOnly(style.transform).m41
+                  : Number(style.opacity)
+              )
+            }
+            return values
+          },
+          selector,
+          transform
+        )
+      const pulse = await sample('[aria-label="Live now"]')
+      expect(Math.min(...pulse)).within(0.71, 0.76)
+      expect(Math.max(...pulse)).within(0.96, 1)
+      await page.emulateMediaFeatures([
+        { name: 'prefers-reduced-motion', value: 'reduce' }
+      ])
+      await page.waitForFunction(
+        () =>
+          getComputedStyle(document.querySelector('[aria-label="Live now"]')!)
+            .opacity === '1'
+      )
+      const still = await sample('[aria-label="Live now"]')
+      expect(still.every(value => value === 1)).equals(true)
+      await page.emulateMediaFeatures([
+        { name: 'prefers-reduced-motion', value: 'no-preference' }
+      ])
+      const resumed = await sample('[aria-label="Live now"]')
+      expect(Math.min(...resumed)).within(0.71, 0.76)
+      await page.screenshot({
+        path: join(
+          process.env.GS_SCORING_ARTIFACT_DIR ?? '/tmp',
+          'reanimated-live.png'
+        )
+      })
+      expect(unexpected).deep.equals([])
+    } finally {
+      await page.close()
+    }
+  })
+  it('pulses the switch-hitter hint with Reanimated and stops it for reduced motion and dismissal', async () => {
+    const { page } = await open('/games/g1/score')
+    try {
+      await page.evaluate(() => {
+        localStorage.removeItem('gamestation:scoring:scorer:switch-hitter')
+      })
+      await page.reload()
+      const selector = '[aria-label="Drag to the other batter box"]'
+      await page.waitForSelector(selector)
+      const values = await page.evaluate(async selector => {
+        const node = document.querySelector(selector)!
+        const result: number[] = []
+        const start = performance.now()
+        while (performance.now() - start < 3000) {
+          await new Promise(requestAnimationFrame)
+          result.push(Number(getComputedStyle(node).opacity))
+        }
+        return result
+      }, selector)
+      expect(Math.min(...values)).within(0.29, 0.4)
+      expect(Math.max(...values)).greaterThan(0.9)
+      await page.emulateMediaFeatures([
+        { name: 'prefers-reduced-motion', value: 'reduce' }
+      ])
+      await page.waitForFunction(
+        selector =>
+          getComputedStyle(document.querySelector(selector)!).opacity === '1',
+        {},
+        selector
+      )
+      await page.emulateMediaFeatures([
+        { name: 'prefers-reduced-motion', value: 'no-preference' }
+      ])
+      await page.waitForFunction(
+        selector =>
+          Number(getComputedStyle(document.querySelector(selector)!).opacity) <
+          0.5,
+        {},
+        selector
+      )
+      await click(page, 'OK')
+      expect(await page.$(selector)).equals(null)
+    } finally {
+      await page.close()
+    }
+  })
 })

@@ -1,13 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react'
-import {
-  Animated,
-  PanResponder,
-  Platform,
-  Pressable,
-  Text,
-  View
-} from 'react-native'
+import { PanResponder, Platform, Pressable, Text, View } from 'react-native'
+import Animated, {
+  cancelAnimation,
+  ReduceMotion,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming
+} from 'react-native-reanimated'
 
+import { useMotionPreference } from '../components/useMotionPreference'
 import { useTheme } from '../theme/ThemeContext'
 import { RosterSelectorDrag } from './RosterSelectorDrag'
 export const rosterSegmentAt = (
@@ -38,7 +39,9 @@ export function RosterSelector({
   const [width, setWidth] = useState(0)
   const root = useRef<React.ComponentRef<typeof View>>(null)
   const left = useRef(0)
-  const thumb = useRef(new Animated.Value(0)).current
+  const thumb = useSharedValue(0)
+  const reduced = useMotionPreference()
+  const animated = useAnimatedStyle(() => ({ left: thumb.value }))
   const latest = useRef({ value, width, onChange, count })
   latest.current = { value, width, onChange, count }
   const responder = useRef(
@@ -46,15 +49,14 @@ export function RosterSelector({
       onMoveShouldSetPanResponderCapture: (_, gesture) =>
         Math.abs(gesture.dx) > 6 && Math.abs(gesture.dx) > Math.abs(gesture.dy),
       onPanResponderMove: (_, gesture) => {
-        thumb.setValue(
-          Math.max(
-            0,
-            Math.min(
-              latest.current.width * (1 - 1 / latest.current.count),
-              gesture.moveX -
-                left.current -
-                latest.current.width / (2 * latest.current.count)
-            )
+        cancelAnimation(thumb)
+        thumb.value = Math.max(
+          0,
+          Math.min(
+            latest.current.width * (1 - 1 / latest.current.count),
+            gesture.moveX -
+              left.current -
+              latest.current.width / (2 * latest.current.count)
           )
         )
       },
@@ -67,7 +69,8 @@ export function RosterSelector({
             latest.current.count
           )
         )
-        thumb.setValue(
+        cancelAnimation(thumb)
+        thumb.value =
           (rosterSegmentAt(
             gesture.moveX,
             left.current,
@@ -75,28 +78,26 @@ export function RosterSelector({
             latest.current.count
           ) *
             latest.current.width) /
-            latest.current.count
-        )
+          latest.current.count
       },
       onPanResponderTerminate: () => {
-        thumb.setValue(
+        cancelAnimation(thumb)
+        thumb.value =
           (latest.current.value * latest.current.width) / latest.current.count
-        )
       },
       onPanResponderTerminationRequest: () => false
     })
   ).current
   useEffect(() => {
-    const animation = Animated.timing(thumb, {
-      toValue: (value * width) / count,
-      duration: 150,
-      useNativeDriver: false
+    thumb.value = withTiming((value * width) / count, {
+      duration: reduced ? 0 : 150,
+      reduceMotion: reduced ? ReduceMotion.Always : ReduceMotion.Never
     })
-    animation.start()
     return () => {
-      animation.stop()
+      cancelAnimation(thumb)
     }
-  }, [thumb, value, width, count])
+  }, [thumb, value, width, count, reduced])
+
   const content = (
     <View
       ref={root}
@@ -120,16 +121,19 @@ export function RosterSelector({
       }}
     >
       <Animated.View
+        testID="Roster selector thumb"
         pointerEvents="none"
-        style={{
-          position: 'absolute',
-          top: 0,
-          bottom: 0,
-          left: thumb,
-          width: `${100 / count}%`,
-          borderRadius: theme.radiusPill,
-          backgroundColor: theme.scoringMenuActiveBackground
-        }}
+        style={[
+          animated,
+          {
+            position: 'absolute',
+            top: 0,
+            bottom: 0,
+            width: `${100 / count}%`,
+            borderRadius: theme.radiusPill,
+            backgroundColor: theme.scoringMenuActiveBackground
+          }
+        ]}
       />
       {labels.map((label, index) => (
         <Pressable
@@ -172,7 +176,8 @@ export function RosterSelector({
       value={value}
       width={width}
       onMove={x => {
-        thumb.setValue(x)
+        cancelAnimation(thumb)
+        thumb.value = x
       }}
       onChange={onChange}
     >
