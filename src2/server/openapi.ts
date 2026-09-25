@@ -531,6 +531,110 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/games/{gameId}/events': {
+        post: {
+          summary: "Replace a game's plays",
+          description:
+            'One body is the whole set. A play is replaced when its ' +
+            '`about.atBatIndex` is already stored, and a stored index that is ' +
+            'not in the body is deleted, including a legacy line-score-only ' +
+            '`final_score` play, at index 9999 or, in a game with no other ' +
+            'plays, at index 0. `source.system` names the sender: ' +
+            '`gamestation`, `manual`, or an outside system spelled as an ' +
+            "external id's system is, and a post with no `source` or no " +
+            '`source.system` counts as an outside one. `gamestation` sets ' +
+            '`scoringOwner`. An outside post is stored as `external` and is ' +
+            'rejected once that owner is set. A post ' +
+            "whose plays carry both teams' scores sets " +
+            'the game `final`, and a final game refuses every later post with ' +
+            '409, so a game is posted once it is over. Otherwise a ' +
+            '`scheduled` game with plays becomes `inProgress`, and any other ' +
+            'status, `cancelled` included, is kept.',
+          security: [{ bearer: [] }],
+          parameters: [gameIdParam],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['plays'],
+                  properties: {
+                    plays: { type: 'array', items: { type: 'object' } },
+                    source: {
+                      type: 'object',
+                      properties: {
+                        system: {
+                          type: 'string',
+                          pattern: '^[a-z][a-zA-Z0-9]{0,31}$'
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            200: {
+              description: 'The stored plays, in atBatIndex order',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['plays'],
+                    properties: {
+                      plays: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          required: ['id', 'gameId', 'gumbo'],
+                          properties: {
+                            id: { type: 'string' },
+                            gameId: { type: 'string' },
+                            gumbo: { type: 'object' }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse,
+            409: errorResponse
+          }
+        },
+        get: {
+          summary: "A game's plays",
+          description: 'The stored plays in `atBatIndex` order.',
+          security: [{ bearer: [] }],
+          parameters: [gameIdParam],
+          responses: {
+            200: { description: '{ plays: [{ id, gameId, gumbo }] }' },
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/games/{gameId}/halves': {
+        get: {
+          summary: 'One outcome per half inning',
+          description:
+            '`inning`, `half`, `awayScore`, `homeScore`, `outs`, and `runs`. ' +
+            'Read off the stored plays. A play with no half is omitted.',
+          security: [{ bearer: [] }],
+          parameters: [gameIdParam],
+          responses: {
+            200: { description: '{ halves: [ ... ] }' },
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
       '/games/{gameId}/box-score': {
         get: {
           summary: "A game's batting and pitching lines",

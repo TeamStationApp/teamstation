@@ -2,6 +2,7 @@ import {
   asArray,
   asBoolean,
   asObject,
+  asOptional,
   asString,
   asValue,
   type Cleaner
@@ -90,6 +91,18 @@ function asCreditPerson(raw: unknown): unknown {
 }
 
 /**
+ * Who sent a post: `gamestation`, `manual`, or an outside system's own short
+ * name, spelled as an external id's system is.
+ */
+function asSourceSystem(raw: unknown): string {
+  const system = asString(raw)
+  if (!/^[a-z][a-zA-Z0-9]{0,31}$/.test(system)) {
+    throw new TypeError(`Not a system name: ${system}`)
+  }
+  return system
+}
+
+/**
  * One Gumbo play. Extra keys stay, at every level, because the document is
  * stored whole. `score_correction` and `final_score` are accepted event types.
  *
@@ -166,3 +179,12 @@ export function asGumboPlay(raw: unknown): GumboPlay {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === 'object' && !Array.isArray(value)
 }
+
+export const asPostEventsBody = asObject({
+  plays: asArray(asGumboPlay),
+  source: asOptional(
+    asObject({
+      system: asOptional(asSourceSystem)
+    })
+  )
+})
