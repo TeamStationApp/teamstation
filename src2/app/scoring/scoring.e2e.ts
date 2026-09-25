@@ -64,7 +64,7 @@ async function open(
   const context = await browser.createBrowserContext()
   const page = await context.newPage()
   page.once('close', () => {
-    void context.close().catch(() => undefined)
+    context.close().catch(() => undefined)
   })
   if (probe)
     await page.evaluateOnNewDocument(() => {
@@ -82,6 +82,36 @@ async function open(
         onCommitFiberUnmount(): void {}
       }
     })
+  // What this page's server holds for the game: a save is kept and read back,
+  // as the API does, so reading the game again returns what was scored.
+  const held: {
+    plays: Array<{
+      id: string
+      gameId: string
+      gumbo: { about: { atBatIndex: number } }
+    }>
+    currentPlay: unknown
+  } = { plays: [], currentPlay: null }
+  const keep = (change: {
+    plays?: Array<{ about: { atBatIndex: number } }>
+    remove?: number[]
+    currentPlay?: unknown
+  }): void => {
+    const kept = new Map(
+      held.plays.map(row => [row.gumbo.about.atBatIndex, row])
+    )
+    for (const index of change.remove ?? []) kept.delete(index)
+    for (const play of change.plays ?? [])
+      kept.set(play.about.atBatIndex, {
+        id: `evt_${play.about.atBatIndex}`,
+        gameId: 'g1',
+        gumbo: play
+      })
+    held.plays = [...kept.values()].sort(
+      (a, b) => a.gumbo.about.atBatIndex - b.gumbo.about.atBatIndex
+    )
+    if (change.currentPlay !== undefined) held.currentPlay = change.currentPlay
+  }
   const unexpected: string[] = []
   page.on('pageerror', error => {
     console.error('Browser error:', error)
@@ -129,9 +159,18 @@ async function open(
       body = { withheld: null, droppedCount: 0, highlights: [] }
     } else if (url.pathname === '/api/v1/auth/me')
       body = { id: 100, displayName: 'Scorer', isAdmin: false }
-    else if (url.pathname === '/api/v1/games/g1/events')
-      body = { plays: [], currentPlay: null }
-    else if (url.pathname === '/api/v1/games/g1') {
+    else if (url.pathname === '/api/v1/games/g1/events') {
+      const answer = async (): Promise<void> => {
+        if (saving) keep(JSON.parse((await request.fetchPostData()) ?? '{}'))
+        await request.respond({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(held)
+        })
+      }
+      answer().catch(() => undefined)
+      return
+    } else if (url.pathname === '/api/v1/games/g1') {
       body =
         scored === false
           ? {
@@ -686,7 +725,7 @@ describe('scoring browser', function () {
       await click(page, 'Ball')
       await click(page, 'Open scoring menu')
       await new Promise(resolve => setTimeout(resolve, 1400))
-      await click(page, 'Resume Game')
+      await page.keyboard.press('Escape')
       expect(
         await page.$eval('[aria-label="Ball"]', node =>
           node.getAttribute('aria-disabled')
@@ -3485,7 +3524,10 @@ describe('scoring browser', function () {
     const { page, unexpected } = await open('/games/g1/score', false, true)
     try {
       await page.waitForFunction(() =>
-        String(document.body.textContent).includes('Game not found.')
+        String(document.body.textContent).includes('Unable to load scoring.')
+      )
+      expect(await page.$('[aria-label="Retry loading scoring"]')).not.equals(
+        null
       )
       await click(page, 'Exit Current Game')
       await page.waitForFunction(() => location.pathname === '/games/g1')
@@ -3740,7 +3782,7 @@ describe('scoring browser', function () {
               weight: getComputedStyle(t).fontWeight
             }
           })
-        ).deep.equals({ font: '16.8px', weight: '700' })
+        ).deep.equals({ font: '13px', weight: '700' })
         await page.screenshot({
           path: join(
             process.env.GS_SCORING_ARTIFACT_DIR!,

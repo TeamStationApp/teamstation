@@ -38,6 +38,7 @@ import { RunnerDragTargets } from './RunnerDragTargets'
 import { scoringAudio } from './scoringAudio'
 import { runnerDecisionError } from './scoringFlow'
 import { initialScoringState, scoringReducer } from './scoringMachine'
+import { SCORING_MENU, ScoringMenuButton } from './ScoringMenuAppearance'
 import { scoringFieldPlayers } from './scoringMotion'
 import { scoringPreferences } from './scoringPreferences'
 import {
@@ -66,6 +67,7 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
   const theme = useTheme()
   const [opened, setOpened] = useState<GameSession>()
   const [failed, setFailed] = useState(false)
+  const [retry, setRetry] = useState(0)
   const surface = useFieldSurface()
   const fallback = useMemo(() => new DevelopmentScoringSource(), [])
   const source = props.source ?? fallback
@@ -88,7 +90,7 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
     return () => {
       live = false
     }
-  }, [props.client, props.gameId, source])
+  }, [props.client, props.gameId, source, retry])
   if (opened == null)
     return (
       <View
@@ -108,10 +110,18 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
               fontFamily: theme.regularTextFont
             }}
           >
-            Game not found.
+            Unable to load scoring.
           </Text>
         ) : (
           <ActivityIndicator accessibilityLabel="Loading game" />
+        )}
+        {failed && (
+          <ScoringButton
+            label="Retry loading scoring"
+            onPress={() => {
+              setRetry(value => value + 1)
+            }}
+          />
         )}
         <Pressable
           accessibilityRole="button"
@@ -132,7 +142,7 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
     )
   return (
     <ScoringPanel
-      key={props.gameId}
+      key={`${String(props.userId ?? 'local-scorer')}:${props.gameId}`}
       game={opened}
       persistent={source.persistent === true}
       onExit={props.onExit}
@@ -303,12 +313,52 @@ function ScoringPanel(props: {
   const actionsAllowed = bottomActionsAllowed(state) && !status.readOnly
   const session = state.session
   const line = session.liveData.linescore
+  const scoredHere = useRef(state.past.length)
+  scoredHere.current = state.past.length
+  // Leaving first saves what the server has not acknowledged, and asks only
+  // about changes that still did not reach it. A server that does not answer
+  // holds the scorer back three seconds at most.
+  const leave = useCallback(async (): Promise<boolean> => {
+    if (props.persistent) {
+      await Promise.race([
+        props.game.flush().catch(() => undefined),
+        new Promise<void>(resolve => {
+          setTimeout(() => {
+            resolve()
+          }, 3000)
+        })
+      ])
+      if (props.game.pending === 0) return true
+    } else if (scoredHere.current === 0) return true
+    return await requestConfirmation()
+  }, [props.game, props.persistent, requestConfirmation])
   const exit = useScoringExit(
     session.gamePk,
     props.persistent ? status.pending > 0 : state.past.length > 0,
     props.onExit,
-    requestConfirmation
+    leave
   )
+  // The rosters are read from the server on the way in, so another scorer's
+  // saved change is what the scorer edits; saving them posts at once. The
+  // last one saved wins.
+  const [rosterRead, setRosterRead] = useState(0)
+  const openRosters = (): void => {
+    setSheet('rosters')
+    if (!props.persistent) return
+    props.game
+      .reload()
+      .then(changed => {
+        if (!changed) return
+        dispatch({
+          type: 'RESET',
+          session: props.game.state,
+          log: [...props.game.actions]
+        })
+        // The editor starts again from the game the server holds.
+        setRosterRead(value => value + 1)
+      })
+      .catch(() => undefined)
+  }
   const { phase, pendingPlay, motions, runnerAction, presentation } = state
   const previousPlayers = useRef<FieldPlayer[]>([])
   const players = useMemo(() => {
@@ -832,8 +882,10 @@ function ScoringPanel(props: {
               maxHeight: '75%',
               zIndex: 100,
               overflow: 'hidden',
-              backgroundColor: theme.backgroundColor,
-              borderRadius: 8
+              backgroundColor: SCORING_MENU.background,
+              borderColor: SCORING_MENU.border,
+              borderWidth: 1,
+              borderRadius: 12
             }}
           >
             {(
@@ -843,19 +895,17 @@ function ScoringPanel(props: {
                 'Overrides',
                 'End Half Inning',
                 'Set Team Rosters',
-                'Resume Game',
                 'End Game'
               ] as const
             ).map((label, index) => (
-              <ScoringButton
+              <ScoringMenuButton
                 key={label}
-                row
-                menuText
+                danger={index === 5}
                 label={label}
                 disabled={
-                  // Read-only leaves only leaving, settings and resuming.
-                  (status.readOnly && [2, 3, 4, 6].includes(index)) ||
-                  (index === 6
+                  // Read-only leaves only leaving and settings.
+                  (status.readOnly && [2, 3, 4, 5].includes(index)) ||
+                  (index === 5
                     ? !(
                         state.phase === 'ready' ||
                         state.phase === 'awaitingBatter'
@@ -877,18 +927,13 @@ function ScoringPanel(props: {
                 onPress={() => {
                   setMenu(false)
                   if (index === 0) exit()
-                  else if (index === 6) setSheet('game')
-                  else if (index !== 5)
+                  else if (index === 5) setSheet('game')
+                  else if (index === 4) openRosters()
+                  else
                     setSheet(
-                      (
-                        [
-                          'exit',
-                          'settings',
-                          'overrides',
-                          'half',
-                          'rosters'
-                        ] as const
-                      )[index]
+                      (['exit', 'settings', 'overrides', 'half'] as const)[
+                        index
+                      ]
                     )
                 }}
               />
@@ -947,6 +992,7 @@ function ScoringPanel(props: {
           )}
           {sheet === 'rosters' && (
             <RosterEditor
+              key={rosterRead}
               state={state}
               onSave={(draft, nextBatter) => {
                 dispatch({ type: 'ROSTER', draft, nextBatter })

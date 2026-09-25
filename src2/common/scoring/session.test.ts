@@ -383,6 +383,25 @@ describe('a scoring session', function () {
     ).deep.equals([])
     expect(session.atBatOpen).equals(false)
   })
+  it('reads another scorer’s saved changes again, but never over its own unsaved ones', async function () {
+    const store = new FakeStore()
+    const mine = (await open(store)).session
+    const theirs = (await open(store)).session
+    expect(await mine.reload()).equals(false)
+    theirs.apply(ball)
+    theirs.apply(ball)
+    await theirs.flush()
+    expect(await mine.reload()).equals(true)
+    expect(mine.actions).deep.equals([ball, ball])
+    expect(mine.state.liveData.plays.currentPlay?.count.balls).equals(2)
+    expect(mine.pending).equals(0)
+    store.gate = new Promise(() => undefined)
+    mine.apply(strike)
+    theirs.apply(ball)
+    expect(await mine.reload()).equals(false)
+    expect(mine.actions).deep.equals([ball, ball, strike])
+  })
+
   it('ends the game at 9999 and takes it back on undo', async function () {
     const { session, store } = await open()
     session.apply({ type: 'result', eventType: 'home_run' })
