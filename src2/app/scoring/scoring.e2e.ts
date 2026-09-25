@@ -93,7 +93,7 @@ async function open(
           body:
             logos === 'broken'
               ? 'Missing image'
-              : `<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128"><rect width="128" height="128" fill="${away ? '#e17842' : '#b74242'}"/><path d="M64 8L98 45H78V74H50V45H30Z" fill="white"/><text x="64" y="115" text-anchor="middle" font-size="36" fill="white">${away ? 'A' : 'H'}</text></svg>`
+              : `<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128"><rect width="128" height="128" fill="${away ? '#294c78' : '#b74242'}"/><path d="M64 8L98 45H78V74H50V45H30Z" fill="white"/><text x="64" y="115" text-anchor="middle" font-size="36" fill="white">${away ? 'A' : 'H'}</text></svg>`
         })
         .catch(() => undefined)
       return
@@ -3117,8 +3117,8 @@ describe('scoring browser', function () {
               )
             }
           })
-          expect(data.offense).equals(half === 'top' ? 'e17842' : 'b74242')
-          expect(data.defense).equals(half === 'top' ? 'b74242' : 'e17842')
+          expect(data.offense).equals(half === 'top' ? '294c78' : 'b74242')
+          expect(data.defense).equals(half === 'top' ? 'b74242' : '294c78')
           expect(data.heads).equals(6)
           expect(data.logos).has.length(logos === 'valid' ? 2 : 0)
           await page.screenshot({

@@ -1,7 +1,7 @@
 import type { FieldPlayer } from './fieldModel'
 import { fieldPalette } from './fieldPalette'
 
-export const TEAM_COLORS = { away: '#e17842', home: '#b74242' } as const
+export const TEAM_COLORS = { away: '#294c78', home: '#b74242' } as const
 export interface FieldTeam {
   name: string
   logoUrl?: string | null
