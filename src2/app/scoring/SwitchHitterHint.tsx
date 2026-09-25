@@ -1,6 +1,15 @@
-import React, { useEffect, useRef } from 'react'
-import { Animated, Pressable, Text, View } from 'react-native'
+import React, { useEffect } from 'react'
+import { Pressable, Text, View } from 'react-native'
+import Animated, {
+  cancelAnimation,
+  ReduceMotion,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withTiming
+} from 'react-native-reanimated'
 
+import { useMotionPreference } from '../components/useMotionPreference'
 import { useTheme } from '../theme/ThemeContext'
 import type { ScoreboardBounds } from './InstructionToast'
 
@@ -12,27 +21,24 @@ export function SwitchHitterHint({
   bounds?: ScoreboardBounds
 }): React.ReactElement {
   const theme = useTheme()
-  const opacity = useRef(new Animated.Value(1)).current
+  const opacity = useSharedValue(1)
+  const reduceMotion = useMotionPreference()
+  const animated = useAnimatedStyle(() => ({ opacity: opacity.value }))
   useEffect(() => {
-    const animation = Animated.loop(
-      Animated.sequence([
-        Animated.timing(opacity, {
-          toValue: 0.3,
-          duration: 650,
-          useNativeDriver: false
-        }),
-        Animated.timing(opacity, {
-          toValue: 1,
-          duration: 650,
-          useNativeDriver: false
-        })
-      ])
-    )
-    animation.start()
+    opacity.value = 1
+    if (!reduceMotion)
+      opacity.value = withRepeat(
+        withTiming(0.3, { duration: 650, reduceMotion: ReduceMotion.Never }),
+        -1,
+        true,
+        undefined,
+        ReduceMotion.Never
+      )
     return () => {
-      animation.stop()
+      cancelAnimation(opacity)
     }
-  }, [opacity])
+  }, [opacity, reduceMotion])
+
   return (
     <View
       pointerEvents="box-none"
@@ -85,14 +91,16 @@ export function SwitchHitterHint({
       <Animated.Text
         pointerEvents="none"
         accessibilityLabel="Drag to the other batter box"
-        style={{
-          opacity,
-          fontSize: 40,
-          color: theme.scoringCountdownColor,
-          fontFamily: theme.semiBoldTextFont,
-          position: 'absolute',
-          bottom: 0
-        }}
+        style={[
+          animated,
+          {
+            fontSize: 40,
+            color: theme.scoringCountdownColor,
+            fontFamily: theme.semiBoldTextFont,
+            position: 'absolute',
+            bottom: 0
+          }
+        ]}
       >
         › › ›
       </Animated.Text>

@@ -88,28 +88,13 @@ if (
 }
 
 // Keep the whole changed-source aggregate honest as this plan grows.
-const changes = spawnSync(
-  'git',
-  [
-    'diff',
-    '--name-only',
-    '6d383fd876fa9e028b426b297968ee5a6ac09e75',
-    '--',
-    'src2/app'
-  ],
-  { encoding: 'utf8' }
+const { coverageSources } = createRequire(import.meta.url)(
+  './coverage-source-paths.cjs'
 )
-const untracked = spawnSync(
-  'git',
-  ['ls-files', '--others', '--exclude-standard', 'src2/app'],
-  { encoding: 'utf8' }
+const { paths, untracked } = coverageSources(
+  '6d383fd876fa9e028b426b297968ee5a6ac09e75'
 )
-const paths = new Set(
-  (changes.stdout + '\n' + untracked.stdout)
-    .trim()
-    .split('\n')
-    .filter(path => /\.tsx?$/.test(path) && !/\.(test|e2e)\./.test(path))
-)
+
 let covered = 0
 let total = 0
 for (const path of paths) {
@@ -138,12 +123,19 @@ if (process.env.GS_COVERAGE_BASE != null) {
   )
   const diff = spawnSync(
     'git',
-    ['diff', '--unified=0', process.env.GS_COVERAGE_BASE, '--', 'src2/app'],
+    [
+      'diff',
+      '--diff-filter=d',
+      '--unified=0',
+      process.env.GS_COVERAGE_BASE,
+      '--',
+      'src2/app'
+    ],
     { encoding: 'utf8' }
   )
   if (diff.status !== 0) throw new Error(diff.stderr)
   const changes = changedLines(diff.stdout)
-  for (const path of untracked.stdout.trim().split('\n').filter(Boolean))
+  for (const path of untracked)
     changes[path] = new Set(
       readFileSync(path, 'utf8')
         .split('\n')
