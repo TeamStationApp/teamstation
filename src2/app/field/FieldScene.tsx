@@ -19,12 +19,7 @@ import {
   runnerTargetAt
 } from '../scoring/runnerDrag'
 import { BallArc } from './BallArc'
-import {
-  arcHandle,
-  arcTarget,
-  type BallArcState,
-  dragLaunchAngle
-} from './ballArcModel'
+import { arcTarget, type BallArcState, dragLaunchAngle } from './ballArcModel'
 import { Ballpark } from './Ballpark'
 import { applyFieldCamera } from './cameraModel'
 import { fieldKey } from './fieldKeyboard'
@@ -52,6 +47,8 @@ import { scoreboardBounds } from './scoreboardBounds'
 import { homeRunLanding } from './stadiumBoundary'
 import { useSurfaceTextures } from './surfaceTextures'
 import { TERRAIN } from './terrain'
+import { trajectoryGrip } from './trajectoryGrip'
+import { guideBearing } from './trajectoryGuide'
 
 /** Scene is renderer-independent. Only the canvas adapter owns browser APIs. */
 export function FieldScene(props: FieldCanvasProps): React.ReactElement {
@@ -633,8 +630,12 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
       return
     const initial = arc ?? { target: { x: 0, z: -60 }, angle: 30 }
     if (arcMode === 'edit' && props.interaction == null) {
-      const tip = arcHandle(initial)
-      point.set(tip.x, tip.y, tip.z).project(camera)
+      const grip = trajectoryGrip(
+        { ...initial, guideBearing: guideBearing(initial.target) },
+        camera,
+        size
+      )
+      point.copy(grip.position).project(camera)
       const dx = ((point.x - event.pointer.x) * size.width) / 2
       const dy = ((point.y - event.pointer.y) * size.height) / 2
       if (!inArcGrabArea(dx, dy)) return

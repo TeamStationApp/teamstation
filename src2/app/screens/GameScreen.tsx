@@ -620,7 +620,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         if (live) setBox(rows)
       })
       .catch(() => {
-        if (live) setBox({ batting: [], pitching: [] })
+        if (live) setBox({ batting: [], pitching: [], stats: undefined })
       })
     return () => {
       live = false
