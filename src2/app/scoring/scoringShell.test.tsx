@@ -57,7 +57,7 @@ function fixtureFetch(signedIn = true): void {
           : input.url
     ).split('?')[0]
     const data = path.endsWith('/auth/me')
-      ? { id: 'scorer', displayName: 'Scorer', isAdmin: false }
+      ? { id: 100, displayName: 'Scorer', isAdmin: false }
       : path.endsWith('/games/g1')
         ? gameFixture
         : path.endsWith('/live-streams')

@@ -27,7 +27,7 @@ import type { ScoringState } from './scoringTypes'
 
 const roster = [
   asRosterEntry({
-    userId: 'usr_real-player',
+    userId: 102,
     shortName: 'Jordan K.',
     jersey: '00',
     positions: ['P'],
@@ -66,7 +66,7 @@ describe('local scoring sessions', function () {
       home: { id: 'home', name: 'Hawks', logoUrl: null }
     })
     expect(session.gameData.players[1]).includes({
-      sourceUserId: 'usr_real-player',
+      sourceUserId: 102,
       fullName: 'Jordan K.',
       jersey: '00',
       bats: 'switch'
@@ -85,7 +85,7 @@ describe('local scoring sessions', function () {
     expect(session.liveData.plays.currentPlay?.matchup.batSide.code).equals('R')
     const ignored = asRosterEntry({
       ...roster[0],
-      userId: 'coach',
+      userId: 104,
       isPlayer: false
     })
     expect(

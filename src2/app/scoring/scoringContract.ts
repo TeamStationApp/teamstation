@@ -30,5 +30,5 @@ export const moreEvents = {
   'Hit by Pitch': 'hit_by_pitch',
   'Intentional Walk': 'intent_walk',
   "Catcher's Interference": 'catcher_interf',
-  'Strike Three, Not Caught': 'strikeout'
+  'Dropped Third Strike': 'strikeout'
 } as const

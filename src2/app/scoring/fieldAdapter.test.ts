@@ -22,7 +22,7 @@ import { gameFixture } from './isUnscoredGame.test'
 
 const roster = [
   asRosterEntry({
-    userId: 'player',
+    userId: 103,
     shortName: 'Casey M.',
     jersey: '00',
     positions: [],

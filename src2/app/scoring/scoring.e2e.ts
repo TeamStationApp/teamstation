@@ -119,7 +119,7 @@ async function open(
     } else if (uiAnimations && url.pathname.endsWith('/highlights')) {
       body = { withheld: null, droppedCount: 0, highlights: [] }
     } else if (url.pathname === '/api/v1/auth/me')
-      body = { id: 'scorer', displayName: 'Scorer', isAdmin: false }
+      body = { id: 100, displayName: 'Scorer', isAdmin: false }
     else if (url.pathname === '/api/v1/games/g1') {
       body =
         scored === false
@@ -160,7 +160,7 @@ async function open(
       body = url.pathname.includes('/away/')
         ? [
             {
-              userId: 'usr_jordan',
+              userId: 101,
               shortName: 'Jordan K.',
               jersey: '00',
               positions: ['P'],
@@ -971,7 +971,7 @@ describe('scoring browser', function () {
     const { page, unexpected } = await open('/games/g1/score')
     try {
       await page.evaluate(() => {
-        localStorage.removeItem('gamestation:scoring:scorer:switch-hitter')
+        localStorage.removeItem('gamestation:scoring:100:switch-hitter')
       })
       await page.reload()
       await page.waitForSelector(
@@ -2069,7 +2069,7 @@ describe('scoring browser', function () {
     'Place a Runner (Tiebreaker)',
     'Balk',
     'Batter Out — Other',
-    'Strike Three, Not Caught'
+    'Dropped Third Strike'
   ])
     it(`More executes ${action} locally`, async function () {
       const { page, unexpected } = await open('/games/g1/score')
@@ -2083,7 +2083,7 @@ describe('scoring browser', function () {
         }
         if (action === 'Wild Pitch' || action === 'Passed Ball')
           await click(page, 'Ball')
-        if (action === 'Strike Three, Not Caught') {
+        if (action === 'Dropped Third Strike') {
           await click(page, 'Called Strike')
           await click(page, 'Called Strike')
         }
@@ -2100,9 +2100,7 @@ describe('scoring browser', function () {
           await click(page, 'Place Runner')
         }
         if (
-          ['Wild Pitch', 'Passed Ball', 'Strike Three, Not Caught'].includes(
-            action
-          )
+          ['Wild Pitch', 'Passed Ball', 'Dropped Third Strike'].includes(action)
         ) {
           await page.focus('[role="application"]')
           await page.keyboard.press('Space')
@@ -2138,7 +2136,7 @@ describe('scoring browser', function () {
         const expected =
           action === 'Hit by Pitch'
             ? 1
-            : action === 'Strike Three, Not Caught'
+            : action === 'Dropped Third Strike'
               ? 3
               : ['Wild Pitch', 'Passed Ball'].includes(action)
                 ? 1
@@ -3996,7 +3994,7 @@ describe('scoring browser', function () {
     const { page } = await open('/games/g1/score')
     try {
       await page.evaluate(() => {
-        localStorage.removeItem('gamestation:scoring:scorer:switch-hitter')
+        localStorage.removeItem('gamestation:scoring:100:switch-hitter')
       })
       await page.reload()
       const selector = '[aria-label="Drag to the other batter box"]'
