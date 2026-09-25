@@ -27,6 +27,8 @@ export interface FieldCanvasProps {
   teams?: FieldTeams
   constrainPlacement?: (point: GroundPoint) => GroundPoint
   acceptDefenderTap?: boolean
+  /** Record a fielding target without moving the defender before ball contact. */
+  deferDefenderPlacement?: boolean
   onLandingAccepted?: (arc: BallArcState, generation: number) => void
   onBaseProjection?: (value: BaseProjection) => void
   homeRunPlacement?: boolean

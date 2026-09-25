@@ -142,5 +142,37 @@ describe('field keyboard policy', function () {
     fieldKey(props, 'Enter')
     expect(accepted).equals(1)
     expect(fieldKey(props, 'ArrowLeft')).equals(false)
+    for (let i = 0; i < 100; i++) fieldKey(props, 'ArrowUp')
+    expect(props.arc!.angle).equals(85)
+    for (let i = 0; i < 200; i++) fieldKey(props, 'ArrowDown')
+    expect(props.arc!.angle).equals(-45)
+  })
+  it('restores the fielder after keyboard placement while retaining the chosen target', function () {
+    const players = createPlayers()
+    const origin = { ...players[0].position }
+    let destination: unknown
+    const props: FieldCanvasProps = {
+      players,
+      selected: players[0].id,
+      onSelect: () => undefined,
+      view: 'home',
+      zoom: 1,
+      deferDefenderPlacement: true,
+      interaction: {
+        generation: 0,
+        selectableIds: [players[0].id],
+        gestures: ['place']
+      },
+      onFieldPlacement: value => {
+        destination = value.point
+      }
+    }
+    fieldKey(props, ' ')
+    fieldKey(props, 'ArrowUp')
+    fieldKey(props, 'Enter')
+    expect(destination).deep.equals({ x: origin.x, z: origin.z - 3 })
+    expect(players[0].position).deep.equals(origin)
+    expect(players[0].target).deep.equals(origin)
+    expect(players[0].keyboardOrigin).equals(undefined)
   })
 })

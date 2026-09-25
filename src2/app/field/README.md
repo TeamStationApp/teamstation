@@ -177,7 +177,7 @@ Their preview is constrained to that basepath and snaps beyond 50%; releasing
 before that threshold leaves them in place. Base ownership updates on arrival.
 
 Arc targets may extend to 160m and raycast the actual spectator tiers for landing
-height. Launch adjustment reaches 70 degrees at every landing distance. Negative
+height. Launch adjustment reaches 85 degrees at every landing distance. Negative
 angles now switch to a straight descending segment from bat contact to the ground
 handle, followed by one separate chopping arc toward the destination. Further
 downward adjustment brings that ground handle closer to home. The renderer uses

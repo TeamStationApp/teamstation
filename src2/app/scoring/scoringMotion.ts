@@ -306,6 +306,7 @@ export function scoringFieldPlayers(
       pending != null &&
       player.playerId === pending.fielder &&
       pending.location != null &&
+      pending.trajectoryAccepted &&
       state.presentation?.kind !== 'hit'
     ) {
       player.position =
