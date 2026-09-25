@@ -1,0 +1,46 @@
+[
+  { "type": "pitch", "call": "B" },
+  { "type": "pitch", "call": "C" },
+  {
+    "type": "ballInPlay",
+    "contact": "swing",
+    "launchAngle": 15,
+    "location": { "x": 5, "z": -80 },
+    "fielder": 17
+  },
+  { "type": "result", "eventType": "single" },
+  { "type": "pitch", "call": "C" },
+  { "type": "pitch", "call": "S" },
+  { "type": "pitch", "call": "S" },
+  {
+    "type": "ballInPlay",
+    "contact": "swing",
+    "launchAngle": -10,
+    "location": { "x": -20, "z": -40 },
+    "fielder": 14
+  },
+  { "type": "result", "eventType": "field_out", "outBy": "throw" },
+  {
+    "type": "runnerMovement",
+    "runner": 3,
+    "to": "1B",
+    "out": true,
+    "reason": "Throw Out",
+    "fielders": [14, 12],
+    "locations": [
+      { "x": -20, "z": -40 },
+      { "x": 19.39735322150937, "z": -19.39735322150937 }
+    ],
+    "runnerLocation": { "x": 19.39735322150937, "z": -19.39735322150937 }
+  },
+  { "type": "runnerMovement", "runner": 1, "to": "2B", "reason": "Advance" },
+  {
+    "type": "ballInPlay",
+    "contact": "swing",
+    "launchAngle": 40,
+    "location": { "x": -45, "z": -75 },
+    "fielder": 16
+  },
+  { "type": "result", "eventType": "field_out", "outBy": "catch" },
+  { "type": "gameFlow", "kind": "closePlay" }
+]
