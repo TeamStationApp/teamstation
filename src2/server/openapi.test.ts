@@ -7,6 +7,7 @@ import type { MediaContext } from './media/mediaContext'
 import { openApiDocument } from './openapi'
 import { authRoutes } from './routes/auth'
 import { directorRoutes } from './routes/director'
+import { eventRoutes } from './routes/events'
 import { healthRoutes } from './routes/health'
 import { inviteRoutes } from './routes/invites'
 import { liveRoutes } from './routes/live'
@@ -95,6 +96,7 @@ describe('the API document', function () {
       ...routesOf(authRoutes(db, { sendCode: async () => undefined })),
       ...routesOf(seasonRoutes(db, media)),
       ...routesOf(teamRoutes(db, media)),
+      ...routesOf(eventRoutes(db)),
       ...routesOf(statsRoutes(db)),
       ...routesOf(mediaRoutes(db, media)),
       ...routesOf(liveRoutes(db, live)),
@@ -123,6 +125,7 @@ describe('the API document', function () {
       ...routesOf(authRoutes(db, { sendCode: async () => undefined })),
       ...routesOf(seasonRoutes(db, media)),
       ...routesOf(teamRoutes(db, media)),
+      ...routesOf(eventRoutes(db)),
       ...routesOf(statsRoutes(db)),
       ...routesOf(mediaRoutes(db, media)),
       ...routesOf(liveRoutes(db, live)),

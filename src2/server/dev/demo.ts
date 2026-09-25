@@ -1,7 +1,10 @@
+import type { GumboEventType } from '../../common/gumboEventTypes'
+import { asGumboPlay } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
 import { mintUserId } from '../../common/mintUserId'
 import { createSession } from '../auth/sessions'
 import { makeDatabase } from '../db/database'
+import { type PlayWrite, replaceGameEvents } from '../events/eventWrite'
 import { rebuildAll } from '../rollups'
 import { serverConfig } from '../serverConfig'
 
@@ -9,9 +12,9 @@ import { serverConfig } from '../serverConfig'
 // season and a video of the first, and prints tokens so the schedule, roster
 // and video routes can be walked with `curl`.
 //
-// No plays are stored: plays arrive through
-// `POST /api/v1/games/:gameId/events`. Until some are posted the games have no
-// highlights and the stat rollups are empty.
+// The first game gets three plays, written as GameStation's own, so its line
+// score and highlights have something to show. The stat rollups stay empty:
+// they are sums of stat lines, and nothing here writes any.
 //
 //   npm run demo
 //
@@ -20,6 +23,39 @@ import { serverConfig } from '../serverConfig'
 
 /** The home team's players, so the roster and box score have names. */
 const ROSTER = ['Robin Hale', 'Ash Berger', 'Sam Ortiz']
+
+/** A strikeout in the top of the first, then a home run and a single. */
+function demoPlays(homeTeamId: string, batters: number[]): PlayWrite[] {
+  const [first, second] = batters
+  const play = (
+    atBatIndex: number,
+    halfInning: 'top' | 'bottom',
+    eventType: GumboEventType,
+    homeScore: number,
+    batter: number | null,
+    description: string
+  ): PlayWrite => ({
+    gumbo: asGumboPlay({
+      about: {
+        atBatIndex,
+        inning: 1,
+        halfInning,
+        isScoringPlay: eventType === 'home_run'
+      },
+      result: { eventType, awayScore: 0, homeScore, description },
+      count: { outs: halfInning === 'top' ? 1 : 0 },
+      matchup: { batter: { id: batter } },
+      credits:
+        batter == null ? [] : [{ teamId: homeTeamId, creditUserId: batter }]
+    }),
+    source: 'gamestation'
+  })
+  return [
+    play(0, 'top', 'strikeout', 0, null, 'The leadoff batter strikes out'),
+    play(1, 'bottom', 'home_run', 2, first, 'Homers to left field'),
+    play(2, 'bottom', 'single', 2, second, 'Singles to right field')
+  ]
+}
 
 async function main(): Promise<void> {
   if (process.env.NODE_ENV === 'production') {
@@ -110,10 +146,12 @@ async function main(): Promise<void> {
 
     // Every name on the roster is a player, so plays posted later can credit
     // them and the box score has somebody to name.
+    const players: number[] = []
     for (const displayName of ROSTER) {
       const minted = mintUserId(id => heldIds.has(id))
       heldIds.add(minted.userId)
       const userId = minted.userId
+      players.push(userId)
       await db
         .insertInto('users')
         .values({
@@ -145,9 +183,18 @@ async function main(): Promise<void> {
         season_id: seasonId,
         start_at: startAt,
         venue: 'Demo Field',
-        status: 'final'
+        status: 'final',
+        away_score: 0,
+        home_score: 2,
+        scoringOwner: 'gamestation'
       })
       .execute()
+    await replaceGameEvents(db, {
+      gameId,
+      homeTeamId,
+      awayTeamId,
+      plays: demoPlays(homeTeamId, players)
+    })
 
     await db
       .insertInto('videos')
@@ -164,8 +211,8 @@ async function main(): Promise<void> {
       })
       .execute()
 
-    // The same teams play again in the other season, so once plays are posted
-    // to both games a career total has two seasons to add.
+    // The same teams play again in the other season, so once both games have
+    // stat lines a career total has two seasons to add.
     await db
       .insertInto('games')
       .values({
@@ -184,7 +231,7 @@ async function main(): Promise<void> {
     // Somebody who actually batted for the home team: the first name on a
     // roster may never have come to the plate, and a demo that points at them
     // looks like the stats are broken when they are merely empty. Null until
-    // plays have been posted and the rollups rebuilt.
+    // the games have stat lines and the rollups are rebuilt.
     const topBatter = await db
       .selectFrom('player_season_stats')
       .select(['user_id'])

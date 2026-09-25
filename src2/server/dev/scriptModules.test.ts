@@ -1,3 +1,4 @@
+import './backfillLinescore'
 import './demo'
 import './repairPeople'
 import './seed'

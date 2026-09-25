@@ -1,7 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { asGumboPlay } from './gumboPlay'
+import { asGumboPlay, asPostEventsBody } from './gumboPlay'
 
 const correction = {
   about: { atBatIndex: 142, isScoringPlay: false },
@@ -168,5 +168,24 @@ describe('a Gumbo play', function () {
       matchup: { batter: { id: 7 } }
     })
     expect((play.matchup as { batter: { id: number } }).batter.id).equals(7)
+    const body = asPostEventsBody({
+      plays: [correction],
+      source: { system: 'gamestation' }
+    })
+    expect(body.source?.system).equals('gamestation')
+    expect(asPostEventsBody({ plays: [] }).plays).deep.equals([])
+  })
+
+  it('accepts any source system spelled as an external id system is', function () {
+    for (const system of ['acme', 'manual', 'gamestation', 'teamScorer2']) {
+      expect(
+        asPostEventsBody({ plays: [], source: { system } }).source?.system
+      ).equals(system)
+    }
+    for (const system of ['Acme', '2acme', 'acme-scorer', '', 7]) {
+      expect(() =>
+        asPostEventsBody({ plays: [], source: { system } })
+      ).to.throw()
+    }
   })
 })
