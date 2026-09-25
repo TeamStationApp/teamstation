@@ -5,6 +5,7 @@ import { Pool } from 'pg'
 import { mintUserId } from '../common/mintUserId'
 import { migrations } from './migrations'
 import { migration037GameStatsState } from './migrations/037gameStatsState'
+import { migration038CurrentPlay } from './migrations/038currentPlay'
 import { migrateDown, migrateUp } from './runner'
 import { testDatabaseUrl } from './testDatabase'
 
@@ -200,6 +201,32 @@ describe('the scoring migrations over existing plays', function () {
        where indexname in ('events_game_order', 'external_ids_game_external')`
     )
     expect(indexes.rows).deep.equals([{ name: 'external_ids_game_external' }])
+  })
+
+  it('keeps the at-bat in progress on the game, and takes it away again', async function () {
+    const column = async (): Promise<string[]> =>
+      (
+        await pool.query<{ name: string }>(
+          `select column_name as name from information_schema.columns
+           where table_name = 'games' and column_name = 'currentPlay'`
+        )
+      ).rows.map(row => row.name)
+    expect(await column()).deep.equals(['currentPlay'])
+    const client = await pool.connect()
+    try {
+      await client.query('begin')
+      await client.query(migration038CurrentPlay.down)
+      const dropped = await client.query(
+        `select 1 from information_schema.columns
+         where table_name = 'games' and column_name = 'currentPlay'`
+      )
+      expect(dropped.rows).deep.equals([])
+      await client.query(migration038CurrentPlay.up)
+    } finally {
+      await client.query('rollback')
+      client.release()
+    }
+    expect(await column()).deep.equals(['currentPlay'])
   })
 
   it('rolls back to 030 and puts back what the down path claims to', async function () {
@@ -503,6 +530,7 @@ async function seed(pool: Pool): Promise<void> {
 }
 
 const through036 = migrations.filter(migration => migration.name < '037')
+const through037 = migrations.filter(migration => migration.name < '038')
 
 const batter = mintUserId(() => false)
 const pitcher = mintUserId(id => id === batter.userId)
@@ -541,7 +569,7 @@ describe('migration 037gameStatsState', function () {
   })
 
   it('skips the batter as a runner and leaves game_player_stats alone', async function () {
-    const applied = await migrateUp(pool, migrations)
+    const applied = await migrateUp(pool, through037)
     expect(applied.applied).deep.equals([migration037GameStatsState.name])
 
     const table = await pool.query(
@@ -583,7 +611,7 @@ describe('migration 037gameStatsState', function () {
   })
 
   it('restores the batter as a runner when 037 is rolled back', async function () {
-    const rolled = await migrateDown(pool, migrations, 1)
+    const rolled = await migrateDown(pool, through037, 1)
     expect(rolled).deep.equals([migration037GameStatsState.name])
 
     const table = await pool.query(

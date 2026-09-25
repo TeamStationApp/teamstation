@@ -211,3 +211,84 @@ export async function replaceGameEvents(
 
   await requestGameStats(db, input.gameId)
 }
+
+export interface UpsertGameEventsInput extends GameTeams {
+  gameId: string
+  /** Written in place at their index; nothing else is touched. */
+  plays: PlayWrite[]
+  /** The indexes to delete, and the only ones that are. */
+  remove: number[]
+}
+
+/**
+ * Writes a game being scored: each play is inserted, or rewritten in place at
+ * its index, and exactly the indexes in `remove` are deleted. A rewritten row
+ * keeps its id, whether it is hidden, its title, its time nudge and its
+ * fielder, catcher and scorer rows, and a play posted without `credits` keeps
+ * the list already stored. When a completed play changed, the game's stats
+ * are asked for again; an at-bat in progress alone changes none.
+ */
+export async function upsertGameEvents(
+  db: Kysely<Database>,
+  input: UpsertGameEventsInput
+): Promise<void> {
+  if (input.plays.length === 0 && input.remove.length === 0) return
+  await writeLivePlays(db, input)
+  await requestGameStats(db, input.gameId)
+}
+
+async function writeLivePlays(
+  db: Kysely<Database>,
+  input: UpsertGameEventsInput
+): Promise<void> {
+  if (input.remove.length > 0)
+    await db
+      .deleteFrom('events')
+      .where('gameId', '=', input.gameId)
+      .where('atBatIndex', 'in', input.remove)
+      .execute()
+  if (input.plays.length === 0) return
+  const existing = await db
+    .selectFrom('events')
+    .select(['atBatIndex', 'gumbo'])
+    .where('gameId', '=', input.gameId)
+    .where(
+      'atBatIndex',
+      'in',
+      input.plays.map(play => play.gumbo.about.atBatIndex)
+    )
+    .execute()
+  const stored = new Map(existing.map(row => [row.atBatIndex, row.gumbo]))
+  const teams = { homeTeamId: input.homeTeamId, awayTeamId: input.awayTeamId }
+  for (const play of input.plays) {
+    const gumbo = storedGumbo(
+      withKeptCredits(play.gumbo, stored.get(play.gumbo.about.atBatIndex)),
+      play.source
+    )
+    const battingTeamId = battingTeamForHalf(play.gumbo.about.halfInning, teams)
+    const startTime = play.startTime ?? null
+    const endTime = play.endTime ?? null
+    await db
+      .insertInto('events')
+      .values({
+        id: makeId('event'),
+        gameId: input.gameId,
+        startTime,
+        endTime,
+        battingTeamId,
+        gumbo,
+        source: play.source
+      })
+      .onConflict(conflict =>
+        conflict.constraint('events_game_atbat').doUpdateSet({
+          gumbo,
+          startTime,
+          endTime,
+          battingTeamId,
+          source: play.source,
+          updatedAt: new Date()
+        })
+      )
+      .execute()
+  }
+}

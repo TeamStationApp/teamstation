@@ -141,6 +141,11 @@ export const asGameDetail = asObject({
   awayScore: asNullable(asNumber),
   ingestStatus: asString,
   ingestMessage: asNullable(asString),
+  /** `gamestation` once GameStation scores the game, and nothing else may. */
+  scoringOwner: asOptional(
+    asNullable(asValue('external' as const, 'gamestation' as const)),
+    null
+  ),
   /** Each side's record in this game's season, `12–3`. */
   awayRecord: asOptional(asNullable(asString), null),
   homeRecord: asOptional(asNullable(asString), null),

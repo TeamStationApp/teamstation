@@ -2,7 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import type { GumboPlay } from '../../common/gumboPlay'
-import { withHalfOuts } from '../routes/events'
+import { withHalfOuts } from '../../common/scoring/linescore'
 import { storedGumbo } from './eventWrite'
 
 const play: GumboPlay = {

@@ -9,7 +9,11 @@ import {
   unauthorized
 } from '../../common/errors'
 import { asPostEventsBody, type GumboPlay } from '../../common/gumboPlay'
-import { hitsAndErrors } from '../../common/scoring/hitsAndErrors'
+import {
+  halfOutcomes,
+  lineScore,
+  withHalfOuts
+} from '../../common/scoring/linescore'
 import {
   adminScopes,
   canManageTeam,
@@ -21,27 +25,20 @@ import {
   type PlaySource,
   type PlayWrite,
   replaceGameEvents,
-  teamIdsOnCredits
+  teamIdsOnCredits,
+  upsertGameEvents
 } from '../events/eventWrite'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 
 type Trx = Kysely<Database>
 
-export interface HalfOutcome {
-  inning: number
-  half: 'top' | 'bottom'
-  awayScore: number | null
-  homeScore: number | null
-  outs: number
-  runs: number
-}
-
 /**
  * Post, read, and summarise a game's plays.
  *
- * One POST is the whole set: a stored play whose index the body does not name
- * is deleted, even after `scoringOwner` is `gamestation`. That includes a
+ * A post is one of two modes. A `replace` post, the default, is a finished
+ * game arriving whole: a stored play whose index the body does not name is
+ * deleted, even after `scoringOwner` is `gamestation`. That includes a
  * legacy line-score-only `final_score` play, stored for a game whose sender
  * had nothing but a line score and turned into Gumbo by migration 031. It
  * sits at index 9999 after a game's other plays, or at index 0 in a game that
@@ -53,12 +50,21 @@ export interface HalfOutcome {
  * own before it may write a game GameStation scores or have its play text
  * kept.
  *
- * A post whose plays carry both teams' scores sets the game `final`, with the
- * last score each side's plays carry, and a final game refuses every later
- * post with 409. So a game takes its plays once it is over, not inning by
- * inning while it is played. Any other post keeps the stored status, except
+ * A replace post whose plays carry both teams' scores sets the game `final`,
+ * with the last score each side's plays carry, and a final game refuses every
+ * later post with 409. Any other replace post keeps the stored status, except
  * that a scheduled game with plays is `inProgress`. A cancelled game stays
  * cancelled.
+ *
+ * A `live` post is a game being scored in GameStation, a play at a time. Its
+ * plays are written in place at their index, keeping each row's id; exactly
+ * the indexes in `remove` are deleted; and `currentPlay`, when the body has
+ * the key, is the at-bat in progress, kept on the game rather than as a row.
+ * The game is `final` when a stored play is its `final_score`, `inProgress`
+ * while it has plays or an at-bat in progress, and a cancelled game stays
+ * cancelled. The scorer is the record, so a live post never marks a score
+ * mismatch. The owning GameStation scorer may post to a final game to
+ * correct it; nobody else may.
  */
 export function eventRoutes(db: Kysely<Database>): Router {
   const router = Router()
@@ -102,13 +108,22 @@ export function eventRoutes(db: Kysely<Database>): Router {
               'away_score',
               'home_score',
               'ingest_status',
-              'ingest_message'
+              'ingest_message',
+              'currentPlay'
             ])
             .where('id', '=', gameId)
             .forUpdate()
             .executeTakeFirst()
           if (game == null) throw notFound()
-          if (game.status === 'final') {
+          const live = body.mode === 'live'
+          if (
+            game.status === 'final' &&
+            !(
+              live &&
+              system === 'gamestation' &&
+              game.scoringOwner === 'gamestation'
+            )
+          ) {
             throw conflict('This game is final')
           }
           const editors = await adminScopes(trx, actor.userId, actor.isAdmin)
@@ -148,37 +163,57 @@ export function eventRoutes(db: Kysely<Database>): Router {
               .where('id', '=', gameId)
               .execute()
           }
-          await replaceGameEvents(trx, {
+          const write = {
             gameId,
             homeTeamId: game.home_team_id,
             awayTeamId: game.away_team_id,
             plays
-          })
+          }
+          if (live) {
+            await upsertGameEvents(trx, { ...write, remove: body.remove ?? [] })
+          } else {
+            await replaceGameEvents(trx, write)
+          }
+          const currentPlay =
+            live && body.currentPlay !== undefined
+              ? body.currentPlay
+              : game.currentPlay
           const stored = await readPlays(trx, gameId)
+          const documents = stored.map(documentOf)
           const posted = scoresOf(stored)
-          const decision = ingestDecision(
-            game.away_score,
-            game.home_score,
-            posted.away,
-            posted.home,
-            game.ingest_status,
-            game.ingest_message
-          )
-          const halves = halfOutcomes(stored)
+          const decision = live
+            ? { ingestStatus: 'ok' as const, ingestMessage: null }
+            : ingestDecision(
+                game.away_score,
+                game.home_score,
+                posted.away,
+                posted.home,
+                game.ingest_status,
+                game.ingest_message
+              )
+          const halves = halfOutcomes(documents)
           await trx
             .updateTable('games')
             .set({
               away_score: posted.away,
               home_score: posted.home,
-              linescore: lineScore(stored, halves, posted.away, posted.home),
-              status: statusAfterPost(game.status, posted, stored.length),
+              linescore: lineScore(documents, halves, posted.away, posted.home),
+              status: live
+                ? statusAfterLivePost(game.status, stored, currentPlay != null)
+                : statusAfterPost(game.status, posted, stored.length),
               ingest_status: decision.ingestStatus,
               ingest_message: decision.ingestMessage,
+              ...(live && body.currentPlay !== undefined
+                ? { currentPlay: body.currentPlay }
+                : {}),
               updated_at: new Date()
             })
             .where('id', '=', gameId)
             .execute()
-          return { plays: stored.map(playJson) }
+          return {
+            plays: stored.map(playJson),
+            currentPlay: currentPlay ?? null
+          }
         })
         .catch((error: unknown) => {
           throw unknownUser(error, prepared) ?? error
@@ -196,7 +231,15 @@ export function eventRoutes(db: Kysely<Database>): Router {
       const gameId = pathParam(req.params.gameId)
       await requireVisibleGame(db, actor.userId, actor.isAdmin, gameId)
       const stored = await readPlays(db, gameId)
-      res.json({ plays: stored.map(playJson) })
+      const game = await db
+        .selectFrom('games')
+        .select('currentPlay')
+        .where('id', '=', gameId)
+        .executeTakeFirst()
+      res.json({
+        plays: stored.map(playJson),
+        currentPlay: game?.currentPlay ?? null
+      })
     })
   )
 
@@ -209,7 +252,7 @@ export function eventRoutes(db: Kysely<Database>): Router {
       const gameId = pathParam(req.params.gameId)
       await requireVisibleGame(db, actor.userId, actor.isAdmin, gameId)
       const stored = await readPlays(db, gameId)
-      res.json({ halves: halfOutcomes(stored) })
+      res.json({ halves: halfOutcomes(stored.map(documentOf)) })
     })
   )
 
@@ -375,6 +418,27 @@ export function statusAfterPost(
 }
 
 /**
+ * After a live post the stored plays decide: a cancelled game stays
+ * cancelled, a stored `final_score` makes it final, and plays or an at-bat in
+ * progress make it under way. A game with neither keeps its status.
+ */
+export function statusAfterLivePost(
+  status: 'scheduled' | 'inProgress' | 'final' | 'cancelled',
+  stored: Array<{ eventType: string | null }>,
+  atBat: boolean
+): 'scheduled' | 'inProgress' | 'final' | 'cancelled' {
+  if (status === 'cancelled') return status
+  if (stored.some(play => play.eventType === 'final_score')) return 'final'
+  if (stored.length > 0 || atBat) return 'inProgress'
+  return status
+}
+
+/** A stored row's document, which the line score is worked out from. */
+function documentOf(row: StoredPlay): GumboPlay {
+  return row.gumbo as GumboPlay
+}
+
+/**
  * Keep a matching stored score's status, including `scoreMismatch`. A null
  * stored score has nothing to compare. Two stored numbers that the post
  * disagrees with become `scoreMismatch`.
@@ -399,172 +463,6 @@ function ingestDecision(
   return {
     ingestStatus: 'scoreMismatch',
     ingestMessage: `Posted ${postedAway ?? '?'}-${postedHome ?? '?'}, stored ${storedAway}-${storedHome}`
-  }
-}
-
-/**
- * `about.halfOuts` on the last play of a half is what `GET /halves` reads.
- * A value already on that play stays. An Inning Ended marker in the half
- * supplies the outs. Otherwise the last play's own `count.outs` is copied.
- */
-export function withHalfOuts(plays: GumboPlay[]): GumboPlay[] {
-  const copies = plays.map(play => structuredClone(play))
-  const groups = new Map<string, GumboPlay[]>()
-  for (const play of copies) {
-    const half = play.about.halfInning
-    if (play.about.inning == null || half == null) continue
-    const key = `${play.about.inning}:${half}`
-    const list = groups.get(key) ?? []
-    list.push(play)
-    groups.set(key, list)
-  }
-  for (const list of groups.values()) {
-    list.sort((a, b) => a.about.atBatIndex - b.about.atBatIndex)
-    const last = list[list.length - 1]
-    if (last == null || last.about.halfOuts != null) continue
-    const marked = list.reduce<number | null>(
-      (found, play) => markerOuts(play) ?? found,
-      null
-    )
-    const outs = marked ?? last.count?.outs
-    if (outs != null) last.about.halfOuts = outs
-  }
-  return copies
-}
-
-function markerOuts(play: GumboPlay): number | null {
-  if (!Array.isArray(play.playEvents)) return null
-  for (const event of play.playEvents) {
-    if (event == null || typeof event !== 'object') continue
-    const record = event as Record<string, unknown>
-    // The marker by its type, never by a sentence written about it.
-    const type = typeof record.type === 'string' ? record.type : null
-    if (type == null || !/inning[ _]ended/i.test(type)) continue
-    if (typeof record.outs === 'number') return record.outs
-    const count = record.count
-    if (
-      count != null &&
-      typeof count === 'object' &&
-      typeof (count as { outs?: unknown }).outs === 'number'
-    ) {
-      return (count as { outs: number }).outs
-    }
-  }
-  return null
-}
-
-/**
- * One outcome per half that has a stored play. A null half is omitted. A half
- * whose last play carries no score for the side at bat scores no runs, rather
- * than the negative of everything before it.
- */
-export function halfOutcomes(rows: StoredPlay[]): HalfOutcome[] {
-  const byHalf = new Map<string, StoredPlay>()
-  for (const row of rows) {
-    if (row.inning == null) continue
-    if (row.halfInning !== 'top' && row.halfInning !== 'bottom') continue
-    const key = `${row.inning}:${row.halfInning}`
-    const previous = byHalf.get(key)
-    if (previous == null || row.atBatIndex > previous.atBatIndex) {
-      byHalf.set(key, row)
-    }
-  }
-  const ordered = [...byHalf.values()].sort((a, b) => {
-    const inning = (a.inning ?? 0) - (b.inning ?? 0)
-    if (inning !== 0) return inning
-    const aTop = a.halfInning === 'top' ? 0 : 1
-    const bTop = b.halfInning === 'top' ? 0 : 1
-    return aTop - bTop
-  })
-  let previousAway = 0
-  let previousHome = 0
-  return ordered.map(row => {
-    const half = row.halfInning === 'bottom' ? 'bottom' : 'top'
-    const baseline = half === 'top' ? previousAway : previousHome
-    const side = half === 'top' ? row.awayScore : row.homeScore
-    const about = aboutOf(row.gumbo)
-    const outs = typeof about.halfOuts === 'number' ? about.halfOuts : 0
-    previousAway = row.awayScore ?? previousAway
-    previousHome = row.homeScore ?? previousHome
-    return {
-      inning: row.inning ?? 0,
-      half,
-      awayScore: row.awayScore,
-      homeScore: row.homeScore,
-      outs,
-      runs: side == null ? 0 : side - baseline
-    }
-  })
-}
-
-function aboutOf(gumbo: unknown): { halfOuts?: number } {
-  if (gumbo == null || typeof gumbo !== 'object') return {}
-  const about = (gumbo as { about?: unknown }).about
-  if (about == null || typeof about !== 'object') return {}
-  return about
-}
-
-/**
- * `r` is the posted total, or 0 when that score is null. `runs` sums to `r`.
- * A side with no stored half gets `[r]`. Hits and errors stay null when the
- * plays cannot say.
- */
-export function lineScore(
-  rows: StoredPlay[],
-  halves: HalfOutcome[],
-  awayScore: number | null,
-  homeScore: number | null
-): {
-  away: ReturnType<typeof side>
-  home: ReturnType<typeof side>
-} {
-  const counted = hitsAndErrors(
-    rows.map(row => ({
-      halfInning:
-        row.halfInning === 'top' || row.halfInning === 'bottom'
-          ? row.halfInning
-          : null,
-      eventType: row.eventType ?? ''
-    }))
-  )
-  return {
-    away: side('top', halves, awayScore ?? 0, counted, 'away'),
-    home: side('bottom', halves, homeScore ?? 0, counted, 'home')
-  }
-}
-
-function side(
-  half: 'top' | 'bottom',
-  halves: HalfOutcome[],
-  r: number,
-  counted: ReturnType<typeof hitsAndErrors>,
-  which: 'away' | 'home'
-): {
-  runs: number[]
-  r: number
-  h: number | null
-  e: number | null
-  bb: number | null
-  k: number | null
-  hr: number | null
-  hbp: number | null
-} {
-  const mine = halves.filter(item => item.half === half)
-  const runs = mine.length === 0 ? [r] : mine.map(item => item.runs)
-  if (mine.length > 0) {
-    const sum = runs.reduce((total, value) => total + value, 0)
-    const last = runs.length - 1
-    runs[last] = (runs[last] ?? 0) + (r - sum)
-  }
-  return {
-    runs,
-    r,
-    h: counted.known ? counted.hits[which] : null,
-    e: counted.known ? counted.errors[which] : null,
-    bb: counted.known ? counted.walks[which] : null,
-    k: counted.known ? counted.strikeouts[which] : null,
-    hr: counted.known ? counted.homeRuns[which] : null,
-    hbp: counted.known ? counted.hitByPitch[which] : null
   }
 }
 
