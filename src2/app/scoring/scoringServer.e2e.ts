@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
@@ -7,6 +8,18 @@ import puppeteer, {
   type BrowserContext,
   type Page
 } from 'puppeteer'
+
+import type { GameDetail } from '../../common/api'
+import { cleanAction, type ScoringAction } from '../../common/scoring/actions'
+import { freshGame } from '../../common/scoring/rules'
+import {
+  applyAction,
+  type EventStore,
+  ScoringSession,
+  type StoredGame
+} from '../../common/scoring/session'
+import type { GameSetup, GameState } from '../../common/scoring/state'
+import { createDevelopmentSession, teamsOf } from './developmentSession'
 
 /**
  * The scoring screen against the running API, with nothing intercepted: every
@@ -226,6 +239,22 @@ async function hitTo(
   await frame(page)
   await page.keyboard.press('Enter')
 }
+/** Finishes a decided play when the screen leaves it open for correction. */
+async function finishAtBat(page: Page): Promise<void> {
+  await page.waitForFunction(
+    () => {
+      const ball = document.querySelector('[aria-label="Ball"]')
+      return (
+        document.querySelector('[aria-label="Finish at-bat"]') != null ||
+        (ball != null && ball.getAttribute('aria-disabled') !== 'true')
+      )
+    },
+    { timeout: 30000 }
+  )
+  if ((await page.$('[aria-label="Finish at-bat"]')) != null)
+    await click(page, 'Finish at-bat')
+}
+/** Places the player `presses` steps along the field's choosable list. */
 async function placeWithKeyboard(page: Page, presses: number): Promise<void> {
   // A relay asks for the next defender in the same words each time, so the
   // prompt alone does not show the screen has taken the last one.
@@ -431,6 +460,162 @@ describe('scoring into the server', function () {
     }
     expect(reopened[0]).not.equals('')
     expect(reopened[0]).equals(reopened[1])
+  })
+
+  it('scenario 3: a dictated half inning and the same one tapped make the same game', async function () {
+    const fixture = scoringGame()
+    const gameId = fixture.games[0]
+    const page = await openAs(scorer, `/games/${gameId}`)
+    try {
+      await openScoring(page, 'Score Game')
+      // A single to centre.
+      await pitch(page, 'Ball')
+      await pitch(page, 'Called Strike')
+      await hitTo(page, 'Single', 7, 15)
+      await finishAtBat(page)
+      // A strikeout.
+      await pitch(page, 'Called Strike')
+      await pitch(page, 'Swing and Miss')
+      await pitch(page, 'Swing and Miss')
+      await finishAtBat(page)
+      // Short to first for the batter, the runner taking second.
+      await hitTo(page, 'Throw Out', 4, -10)
+      await page.waitForSelector(
+        '[aria-label^="Tap or drag the next defender"]'
+      )
+      await page.focus('[role="application"]')
+      for (let i = 0; i < 3; i++) await page.keyboard.press(']')
+      await frame(page)
+      await page.keyboard.press('Space')
+      await page.keyboard.press('ArrowUp')
+      await page.keyboard.press('Enter')
+      await click(page, 'Finish defensive play')
+      await page.waitForSelector('[aria-label="Time to edit play"]', {
+        timeout: 30000
+      })
+      await dropRunnerWithKeyboard(page, 'Safe', true)
+      await finishAtBat(page)
+      // A fly to left for the third out.
+      await hitTo(page, 'Ball Caught', 6, 40)
+      await waitReady(page)
+      await waitSaved(page)
+    } finally {
+      await page.close()
+    }
+
+    const read = await stored(scorer, gameId)
+    const detail = (await (
+      await fetch(`${API}/games/${gameId}`, {
+        headers: { cookie: `gs_session=${encodeURIComponent(scorer)}` }
+      })
+    ).json()) as GameDetail
+    const first = read.plays[0].gumbo as {
+      gameStation: { setupBefore: GameSetup }
+    }
+    const setup = first.gameStation.setupBefore
+    const teams = teamsOf(detail)
+
+    // The fixture names the players of a game built from empty rosters; the
+    // same batting slot or position here is the same player.
+    const authored = createDevelopmentSession(detail, [], []).liveData.boxscore
+    const idOf = new Map<number, number>()
+    for (const side of ['away', 'home'] as const) {
+      authored.teams[side].battingOrder.forEach((id, slot) => {
+        idOf.set(id, setup.sides[side].battingOrder[slot])
+      })
+      for (const [position, id] of Object.entries(authored.teams[side].defense))
+        if (id != null)
+          idOf.set(
+            id,
+            setup.sides[side].defense[
+              position as keyof typeof setup.sides.home.defense
+            ]!
+          )
+    }
+    const mapped = (id: number): number => {
+      const found = idOf.get(id)
+      if (found == null) throw new Error(`No player for fixture id ${id}`)
+      return found
+    }
+    // Where the scorer's fingers put the ball and the throws: the browser's
+    // own actions say; everything else is the fixture's.
+    const tappedActions = [
+      ...read.plays,
+      ...(read.currentPlay == null ? [] : [{ gumbo: read.currentPlay }])
+    ].flatMap(
+      row =>
+        (row.gumbo as { gameStation?: { actions: ScoringAction[] } })
+          .gameStation?.actions ?? []
+    )
+    const placed = tappedActions.filter(
+      action =>
+        (action.type === 'ballInPlay' && action.location != null) ||
+        (action.type === 'runnerMovement' && action.locations != null)
+    )
+    const script = (
+      JSON.parse(
+        readFileSync(
+          'src2/common/scoring/fixtures/halfInning.actions.json',
+          'utf8'
+        )
+      ) as unknown[]
+    ).map(entry => {
+      const cleaned = cleanAction(entry)
+      if ('problem' in cleaned) throw new Error(cleaned.problem.message)
+      const action = cleaned.action
+      if (action.type === 'ballInPlay' && action.location != null) {
+        const from = placed.shift()
+        if (from?.type !== 'ballInPlay') throw new Error('No tapped hit')
+        return {
+          ...action,
+          fielder: mapped(action.fielder!),
+          location: from.location
+        }
+      }
+      if (action.type === 'runnerMovement') {
+        const from = action.locations == null ? undefined : placed.shift()
+        return {
+          ...action,
+          runner: mapped(action.runner),
+          ...(action.fielders == null
+            ? {}
+            : { fielders: action.fielders.map(mapped) }),
+          ...(from?.type === 'runnerMovement'
+            ? { locations: from.locations, runnerLocation: from.runnerLocation }
+            : {})
+        }
+      }
+      return action
+    })
+    expect(placed).deep.equals([])
+
+    let dictated: GameState = freshGame(gameId, teams, setup)
+    for (const action of script) {
+      const applied = applyAction(dictated, action)
+      expect(applied.problems, JSON.stringify(action)).deep.equals([])
+      dictated = applied.state
+    }
+    const store: EventStore = {
+      load: async () =>
+        ({
+          plays: read.plays.map(row => row.gumbo),
+          currentPlay: read.currentPlay
+        }) as unknown as StoredGame,
+      save: async () => {
+        throw new Error('read only')
+      }
+    }
+    const tapped = (
+      await ScoringSession.open(store, gameId, { gamePk: gameId, teams, setup })
+    ).state
+    expect(
+      tapped.liveData.plays.allPlays.map(play => play.result.eventType)
+    ).deep.equals(['single', 'strikeout', 'field_out', 'field_out'])
+    expect(tapped.liveData.plays.allPlays.map(comparable)).deep.equals(
+      dictated.liveData.plays.allPlays.map(comparable)
+    )
+    expect(tapped.liveData.linescore).deep.equals(dictated.liveData.linescore)
+    expect(tapped.liveData.boxscore).deep.equals(dictated.liveData.boxscore)
   })
 
   it('scenario 4: the game survives a reload in the middle of an at-bat', async function () {
