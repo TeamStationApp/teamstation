@@ -127,6 +127,8 @@ export const asGamePlay = asObject({
         asValue('out-of-park' as const, 'in-park' as const)
       ),
       landingHeight: asOptional(asNumber),
+      /** The lineup changed during this at-bat, so the at-bat is open. */
+      lineupChanged: asOptional(asBoolean),
       errorCredit: asOptional(
         asObject({ player: asPlayerRef, defensiveRoute: asRoute })
       ),
