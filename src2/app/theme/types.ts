@@ -58,6 +58,20 @@ export interface Theme {
   inputFocusBorderColor: string
   inputTextColor: string
 
+  // Scoring instruction and decision surfaces
+  scoringInstructionBackground: string
+  scoringInstructionBorder: string
+  scoringStatusText: string
+  scoringInstructionText: string
+  scoringCountdownColor: string
+  scoringMenuActiveBackground: string
+  scoringMenuActiveText: string
+  scoringSafeColor: string
+  scoringSafeIdleColor: string
+  scoringOutColor: string
+  scoringOutIdleColor: string
+  scoringDecisionText: string
+
   // Status
   activeColor: string
   successColor: string
@@ -117,6 +131,8 @@ export interface Theme {
   // The watch path's own names
   highlightRowBackground: string
   highlightRowActiveBackground: string
+  scoringControlBackground: string
+  scoringControlText: string
   scoringPlayColor: string
   videoBackgroundColor: string
   gridGutterRem: number
@@ -127,6 +143,7 @@ export interface Theme {
    * for large surfaces: the same 10% that reads on a card the width of the
    * screen is invisible under something three centimetres wide.
    */
+  scoringSelectorIdle: string
   buttonShadowColor: string
   backgroundGradientColors: string[]
   backgroundGradientStart: ThemeGradientPoint

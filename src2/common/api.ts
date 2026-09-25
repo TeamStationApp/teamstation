@@ -307,7 +307,22 @@ export const asBoxScore = asObject({
 })
 export type BoxScore = ReturnType<typeof asBoxScore>
 
+/** How a player bats and throws. Null is `nobody has said`, not `neither`. */
+export const asBats = asEither(
+  asValue(null),
+  asValue('left' as const),
+  asValue('right' as const),
+  asValue('switch' as const)
+)
+export const asThrows = asEither(
+  asValue(null),
+  asValue('left' as const),
+  asValue('right' as const)
+)
+
 export const asRosterEntry = asObject({
+  bats: asOptional(asBats, null),
+  throws: asOptional(asThrows, null),
   userId: asUserId,
   /**
    * First name, last initial. The field is named for what it is so a full
@@ -324,19 +339,6 @@ export const asRosterEntry = asObject({
   group: asOptional(asString, 'player')
 })
 export type RosterEntry = ReturnType<typeof asRosterEntry>
-
-/** How a player bats and throws. Null is `nobody has said`, not `neither`. */
-export const asBats = asEither(
-  asValue(null),
-  asValue('left' as const),
-  asValue('right' as const),
-  asValue('switch' as const)
-)
-export const asThrows = asEither(
-  asValue(null),
-  asValue('left' as const),
-  asValue('right' as const)
-)
 
 /** A team this player has played for, and in which season. */
 export const asPlayerTeam = asObject({

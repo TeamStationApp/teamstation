@@ -2,6 +2,31 @@ import { useEffect } from 'react'
 
 import { parseRoute, type Route, routePath } from './routes'
 
+let guard: { check: () => Promise<boolean>; destination: Route } | undefined
+let position = 0
+
+export function setNavigationGuard(
+  check: () => Promise<boolean>,
+  destination: Route
+): () => void {
+  const held = { check, destination }
+  guard = held
+  return () => {
+    if (guard === held) guard = undefined
+  }
+}
+
+function indexOfHistory(): number | undefined {
+  const index: unknown = window.history.state?.gsRouteIndex
+  return typeof index === 'number' ? index : undefined
+}
+
+function initializeHistory(): void {
+  position = indexOfHistory() ?? 0
+  if (indexOfHistory() == null)
+    window.history.replaceState({ gsRouteIndex: position }, '')
+}
+
 /**
  * Keeps the address bar and the screen you are on saying the same thing.
  *
@@ -43,10 +68,11 @@ export function currentRoute(): Route {
  */
 export function showRoute(route: Route, replace = false): void {
   if (typeof window === 'undefined') return
+  initializeHistory()
   const path = routePath(route)
   if (path === window.location.pathname + window.location.search) return
-  if (replace) window.history.replaceState(null, '', path)
-  else window.history.pushState(null, '', path)
+  if (replace) window.history.replaceState({ gsRouteIndex: position }, '', path)
+  else window.history.pushState({ gsRouteIndex: ++position }, '', path)
 }
 
 /**
@@ -64,8 +90,56 @@ export function popRoute(): void {
 export function useBrowserBack(onRoute: (route: Route) => void): void {
   useEffect(() => {
     if (typeof window === 'undefined') return
+    initializeHistory()
+    let restoring: (() => void) | undefined
+    let accepting = false
     const onPop = (): void => {
-      onRoute(currentRoute())
+      if (restoring != null) {
+        const done = restoring
+        restoring = undefined
+        done()
+        return
+      }
+      if (accepting) {
+        accepting = false
+        position = indexOfHistory() ?? position
+        return
+      }
+      const held = guard
+      if (held == null) {
+        position = indexOfHistory() ?? position
+        onRoute(currentRoute())
+        return
+      }
+      const nextPosition = indexOfHistory() ?? position - 1
+      const delta = nextPosition - position
+      // Restore the current entry before presenting a decision. Declining does
+      // not push a duplicate entry or discard the browser's forward history.
+      const decide = (): void => {
+        held
+          .check()
+          .then(accepted => {
+            if (!accepted || guard !== held) return
+            accepting = true
+            const finish = (): void => {
+              position = nextPosition
+              showRoute(held.destination, true)
+              onRoute(held.destination)
+            }
+            if (delta !== 0) {
+              window.addEventListener('popstate', finish, { once: true })
+              window.history.go(delta)
+            } else {
+              accepting = false
+              finish()
+            }
+          })
+          .catch(() => undefined)
+      }
+      if (delta !== 0) {
+        restoring = decide
+        window.history.go(-delta)
+      } else decide()
     }
     window.addEventListener('popstate', onPop)
     return () => {

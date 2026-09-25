@@ -1,8 +1,17 @@
-import React, { useEffect, useRef, useState } from 'react'
-import { AccessibilityInfo, Animated, Easing, Text } from 'react-native'
+import React, { useEffect } from 'react'
+import { Text } from 'react-native'
+import Animated, {
+  cancelAnimation,
+  Easing,
+  ReduceMotion,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withTiming
+} from 'react-native-reanimated'
 
-import { USE_NATIVE_DRIVER } from '../platform/nativeDriver'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { useMotionPreference } from './useMotionPreference'
 
 export interface LivePillProps {
   /** Sits over a picture by default; `inline` sits in a row of text. */
@@ -24,75 +33,31 @@ export interface LivePillProps {
 export function LivePill(props: LivePillProps): React.ReactElement {
   const { inline = false } = props
   const styles = getStyles(useTheme())
-  const [reduceMotion, setReduceMotion] = useState(false)
-  const opacity = useRef(new Animated.Value(1)).current
-
+  const reduceMotion = useMotionPreference()
+  const opacity = useSharedValue(1)
+  const animated = useAnimatedStyle(() => ({ opacity: opacity.value }))
   useEffect(() => {
-    let cancelled = false
-    AccessibilityInfo.isReduceMotionEnabled?.()
-      .then(on => {
-        if (!cancelled) setReduceMotion(on)
-      })
-      .catch(() => undefined)
-    const subscription = AccessibilityInfo.addEventListener?.(
-      'reduceMotionChanged',
-      on => {
-        setReduceMotion(on)
-      }
-    )
-    return () => {
-      cancelled = true
-      subscription?.remove()
-    }
-  }, [])
-
-  useEffect(() => {
-    if (reduceMotion) {
-      opacity.setValue(1)
-      return
-    }
-    // Down and back over 1.6 s: slow enough to read as breathing rather than
-    // flashing, and only as far as three-quarters. It sits over a picture, and
-    // a red pill faded much further than that over a bright one stops reading
-    // as red at all — which is the whole of what the pill is for.
-    //
-    // The driver is the platform's where there is one. A browser has none —
-    // asking react-native-web for it reaches into a bridge helper it does not
-    // have and brings the screen down — and a phone does, which matters here
-    // because this pill sits over a video that is decoding.
-    const pulse = Animated.loop(
-      Animated.sequence([
-        Animated.timing(opacity, {
-          toValue: 0.72,
+    opacity.value = 1
+    if (!reduceMotion)
+      opacity.value = withRepeat(
+        withTiming(0.72, {
           duration: 800,
-
-          // eslint-disable-next-line @typescript-eslint/unbound-method -- Easing.quad is a plain function, not a method with a `this`
           easing: Easing.inOut(Easing.quad),
-          useNativeDriver: USE_NATIVE_DRIVER
+          reduceMotion: ReduceMotion.Never
         }),
-        Animated.timing(opacity, {
-          toValue: 1,
-          duration: 800,
-
-          // eslint-disable-next-line @typescript-eslint/unbound-method -- Easing.quad is a plain function, not a method with a `this`
-          easing: Easing.inOut(Easing.quad),
-          useNativeDriver: USE_NATIVE_DRIVER
-        })
-      ])
-    )
-    pulse.start()
+        -1,
+        true,
+        undefined,
+        ReduceMotion.Never
+      )
     return () => {
-      pulse.stop()
+      cancelAnimation(opacity)
     }
   }, [opacity, reduceMotion])
 
   return (
     <Animated.View
-      style={[
-        styles.pill,
-        inline ? styles.inline : styles.overlay,
-        { opacity }
-      ]}
+      style={[styles.pill, inline ? styles.inline : styles.overlay, animated]}
       accessibilityRole="text"
       accessibilityLabel="Live now"
     >

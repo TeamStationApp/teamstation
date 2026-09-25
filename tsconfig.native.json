@@ -29,7 +29,11 @@
   // loads. A glob would also drag in every web file that has a native sibling
   // — `useAddressBar.ts`, `attachHls.ts` — and report the DOM they are
   // entitled to use. Those are `tsconfig.app.json`'s business.
-  "include": ["src2/app/native/index.tsx", "src2/app/native.d.ts"],
+  "include": [
+    "src2/app/native/index.tsx",
+    "src2/app/native.d.ts",
+    "src2/app/scoring/RosterEditor.tsx"
+  ],
   // The tests run under mocha in Node, not on a phone: they read fixtures off
   // the disk and are type-checked by `tsconfig.app.json`, which has the Node
   // types they need.

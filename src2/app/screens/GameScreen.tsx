@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -52,6 +53,7 @@ import { useVideoAspect } from '../player/useVideoAspect'
 import { HAVE_METADATA, type VideoHandle } from '../player/videoHandle'
 import { VideoView } from '../player/VideoView'
 import { windowOf } from '../player/wallClock'
+import { isUnscoredGame } from '../scoring/isUnscoredGame'
 import { cacheStyles, useTheme } from '../theme/ThemeContext'
 import type { Theme } from '../theme/types'
 import { gameStatusLine, shortDate, winnerOf } from './format'
@@ -61,6 +63,7 @@ import { openableTeams as teamsWithAPage } from './openableTeams'
 export interface GameScreenProps {
   client: GameStationClient
   gameId: string
+  onScoreGame?: () => void
   /** Which half to open on. A `Box Score` button means the box score. */
   initialTab?: Tab
   /** Start the video. Arriving here by pressing `Watch Replay` is a gesture a
@@ -903,10 +906,25 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     <PillTabs
       tabs={[
         { id: 'watch', label: lstrings.game_videos },
+        ...(Platform.OS === 'web' &&
+        isUnscoredGame(game) &&
+        props.onScoreGame != null
+          ? [
+              {
+                id: 'score' as const,
+                label: 'Score Game',
+                role: 'button' as const
+              }
+            ]
+          : []),
         { id: 'boxScore', label: lstrings.game_box_score }
       ]}
       selected={tab}
       onSelect={next => {
+        if (next === 'score') {
+          props.onScoreGame?.()
+          return
+        }
         // Leaving the video unmounts it, so where it had got to is written
         // down here and picked up by the attach that follows the remount.
         // Without this you came back to the start of the game, which is a

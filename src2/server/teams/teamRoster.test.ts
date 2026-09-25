@@ -1,0 +1,317 @@
+import type { Server } from 'node:http'
+
+import { expect } from 'chai'
+import express from 'express'
+import { Kysely, PostgresDialect } from 'kysely'
+import { after, before, describe, it } from 'mocha'
+import { Pool } from 'pg'
+
+import {
+  asBoxScore,
+  asGameDetail,
+  asGameSummary,
+  asHighlightsResponse,
+  asRosterEntry,
+  asTeamSummary
+} from '../../common/api'
+import { makeId } from '../../common/ids'
+import { migrations } from '../../migrate/migrations'
+import { migrateUp } from '../../migrate/runner'
+import type { Database } from '../db/database'
+import { errorHandler } from '../middleware/withErrors'
+import { teamRoutes } from '../routes/teams'
+
+const adminUrl =
+  process.env.GS_TEST_DATABASE_URL ?? 'postgres://localhost:5432/postgres'
+const name = `AppDb_gameStationScoringUi_roster_${Date.now()}`
+const url = new URL(adminUrl)
+url.pathname = `/${name}`
+describe('scoring roster HTTP contract', function () {
+  this.timeout(60000)
+  let admin: Pool
+  let db: Kysely<Database> | undefined
+  let server: Server | undefined
+  let address: string
+  let created = false
+  const team = makeId('team')
+  const season = makeId('season')
+  const opponent = makeId('team')
+  const game = makeId('game')
+  const video = makeId('video')
+  const child = makeId('user')
+  const coach = makeId('user')
+  const follower = makeId('user')
+  const outsider = makeId('user')
+  before(async function () {
+    admin = new Pool({ connectionString: adminUrl })
+    await admin.query(`create database "${name}"`)
+    created = true
+    const pool = new Pool({ connectionString: url.href })
+    db = new Kysely<Database>({ dialect: new PostgresDialect({ pool }) })
+    await migrateUp(pool, migrations)
+    await db
+      .insertInto('teams')
+      .values([
+        { id: team, name: 'Owls' },
+        { id: opponent, name: 'Hawks' }
+      ])
+      .execute()
+    await db
+      .insertInto('seasons')
+      .values({ id: season, name: 'Fall', year: 2026 })
+      .execute()
+    await db
+      .insertInto('season_teams')
+      .values({ team_id: team, season_id: season })
+      .execute()
+    await db
+      .insertInto('users')
+      .values([
+        {
+          id: child,
+          display_name: 'Jordan King',
+          first_name: 'Jordan',
+          last_name: 'King',
+          bats: 'switch',
+          throws: 'left'
+        },
+        { id: coach, display_name: 'Alex Coach', bats: null, throws: null },
+        {
+          id: follower,
+          display_name: 'Frank Fan',
+          bats: 'left',
+          throws: 'right'
+        },
+        { id: outsider, display_name: 'Outsider' }
+      ])
+      .execute()
+    await db
+      .insertInto('memberships')
+      .values([
+        {
+          id: makeId('membership'),
+          user_id: child,
+          team_id: team,
+          is_player: true,
+          jersey: '00',
+          positions: ['P', 'SS']
+        },
+        {
+          id: makeId('membership'),
+          user_id: coach,
+          team_id: team,
+          role: 'manager'
+        }
+      ])
+      .execute()
+    await db
+      .insertInto('season_members')
+      .values([
+        {
+          id: 'membership-follower',
+          season_id: season,
+          user_id: follower,
+          role: 'spectator'
+        },
+        {
+          id: 'membership-child',
+          season_id: season,
+          user_id: child,
+          role: 'spectator'
+        }
+      ])
+      .execute()
+    await db
+      .insertInto('games')
+      .values({
+        id: game,
+        home_team_id: opponent,
+        away_team_id: team,
+        season_id: season,
+        start_at: new Date('2026-09-22T10:00:00Z'),
+        ingest_status: 'ok'
+      })
+      .execute()
+    await db
+      .insertInto('videos')
+      .values({
+        id: video,
+        game_id: game,
+        kind: 'program',
+        title: 'Game',
+        storage: 'peertube',
+        status: 'unavailable',
+        duration_sec: 120,
+        start_at: new Date('2026-09-22T10:00:00Z')
+      })
+      .execute()
+    await db
+      .insertInto('game_player_stats')
+      .values({
+        id: 'stat-child',
+        game_id: game,
+        user_id: child,
+        team_id: team,
+        pa: 2,
+        ab: 2,
+        h: 1,
+        singles: 1,
+        pitch_bf: 4,
+        pitch_outs: 3,
+        pitch_h: 1
+      })
+      .execute()
+    await db
+      .insertInto('events')
+      .values({
+        id: 'event-single',
+        game_id: game,
+        at_bat_index: 0,
+        start_time: new Date('2026-09-22T10:00:30Z'),
+        inning: 1,
+        half_inning: 'top',
+        batting_team_id: team,
+        event_type: 'single',
+        description: 'Jordan singles.',
+        title_override: 'Single: Jordan K',
+        gumbo: {}
+      })
+      .execute()
+    const app = express()
+    app.use((req, _res, next) => {
+      const id = req.header('x-test-user')
+      if (id != null) req.actor = { userId: id, isAdmin: false, scopes: [] }
+      next()
+    })
+    app.use(
+      teamRoutes(db, {
+        mediaRoot: '',
+        workDir: '',
+        ffmpegPath: '',
+        mediaSecret: 'test',
+        publicUrl: 'http://localhost',
+        space: {
+          endpoint: '',
+          region: '',
+          bucket: '',
+          accessKeyId: '',
+          secretAccessKey: ''
+        }
+      })
+    )
+    app.use(errorHandler)
+    server = await new Promise<Server>(resolve => {
+      const listening = app.listen(0, '127.0.0.1', () => {
+        resolve(listening)
+      })
+    })
+    const bound = server.address()
+    if (bound == null || typeof bound === 'string')
+      throw new Error('Missing test port')
+    address = `http://127.0.0.1:${bound.port}/teams/${team}/roster`
+  })
+  after(async function () {
+    await new Promise<void>((resolve, reject) => {
+      if (server == null) {
+        resolve()
+        return
+      }
+      server.close(error => {
+        if (error != null) reject(error)
+        else resolve()
+      })
+    })
+    await db?.destroy()
+    if (created) await admin.query(`drop database "${name}"`)
+    await admin?.end()
+  })
+  it('returns handedness and exact ids for members and followers in the existing group order', async function () {
+    const response = await fetch(address, { headers: { 'x-test-user': coach } })
+    expect(response.status).equals(200)
+    const raw: unknown = await response.json()
+    if (!Array.isArray(raw)) throw new Error('Expected roster array')
+    const roster = raw.map(asRosterEntry)
+    expect(roster.map(row => row.group)).deep.equals([
+      'coach',
+      'player',
+      'follower'
+    ])
+    expect(roster[1]).includes({
+      userId: child,
+      shortName: 'Jordan K',
+      jersey: '00',
+      bats: 'switch',
+      throws: 'left',
+      isPlayer: true
+    })
+    expect(roster[1].positions).deep.equals(['P', 'SS'])
+    expect(roster[2]).includes({
+      userId: follower,
+      bats: 'left',
+      throws: 'right',
+      isPlayer: false
+    })
+    expect(roster[0]).includes({ bats: null, throws: null })
+    const followerResponse = await fetch(address, {
+      headers: { 'x-test-user': follower }
+    })
+    expect(followerResponse.status).equals(200)
+  })
+  it('keeps existing team/game/video/box-score reads working after roster extraction', async function () {
+    const origin = new URL(address).origin
+    const get = async (path: string): Promise<unknown> => {
+      const response = await fetch(origin + path, {
+        headers: { 'x-test-user': coach }
+      })
+      expect(response.status, path).equals(200)
+      return await response.json()
+    }
+    const teams = await get('/teams')
+    if (!Array.isArray(teams)) throw new Error('Expected team list')
+    expect(teams.map(asTeamSummary).map(row => row.id)).deep.equals([team])
+    const games = await get(`/teams/${team}/games`)
+    if (!Array.isArray(games)) throw new Error('Expected game list')
+    const listed = games.map(asGameSummary)
+    expect(listed[0]).includes({
+      id: game,
+      homeTeamName: 'Hawks',
+      awayTeamName: 'Owls',
+      videoCount: 1
+    })
+    const detail = asGameDetail(await get(`/games/${game}`))
+    expect(detail.videos[0]).includes({ id: video, status: 'unavailable' })
+    const box = asBoxScore(await get(`/games/${game}/box-score`))
+    expect(box.batting[0]).includes({
+      userId: child,
+      shortName: 'Jordan K',
+      h: 1,
+      ab: 2,
+      seasonAvg: 0.5
+    })
+    expect(box.pitching[0]).includes({ userId: child, ip: '1.0' })
+    const stats = await get(`/teams/${team}/stats?seasonId=${season}`)
+    expect(stats).is.an('array')
+    const highlights = asHighlightsResponse(
+      await get(`/videos/${video}/highlights`)
+    )
+    expect(highlights.highlights).is.an('array')
+    for (const path of [
+      `/games/${game}`,
+      `/games/${game}/box-score`,
+      `/teams/${team}/games`,
+      `/teams/${team}/stats`,
+      `/videos/${video}/highlights`
+    ]) {
+      expect(
+        (await fetch(origin + path, { headers: { 'x-test-user': outsider } }))
+          .status
+      ).equals(404)
+    }
+  })
+  it('preserves authorization and does not reveal a hidden team roster', async function () {
+    expect((await fetch(address)).status).equals(401)
+    expect(
+      (await fetch(address, { headers: { 'x-test-user': outsider } })).status
+    ).equals(404)
+  })
+})
