@@ -128,9 +128,12 @@ export function outcomeAvailable(
   return outcome !== "Fielder's Choice" || hasRunners
 }
 
+/** The steepest a ball can leave the bat, in degrees. */
+export const MAX_LAUNCH_ANGLE = 85
+
 /**
  * A caught ball, and a ball over the fence, left the bat at 10° or more; every
- * ball left it between -45° and 70°.
+ * ball left it between -45° and MAX_LAUNCH_ANGLE.
  */
 export function allowedAngle(
   angle: number,
@@ -143,7 +146,7 @@ export function allowedAngle(
         (outcome === 'Home Run' && kind === 'out-of-park')
         ? 10
         : -45,
-      Math.min(70, angle)
+      Math.min(MAX_LAUNCH_ANGLE, angle)
     )
   )
 }

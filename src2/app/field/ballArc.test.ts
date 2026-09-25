@@ -9,9 +9,11 @@ import {
   arcPoint,
   arcTarget,
   BALL_CONTACT,
+  BALL_GROUND,
   type BallArcState,
   dragLaunchAngle,
-  firstBounceFraction
+  firstBounceFraction,
+  MAX_LAUNCH_ANGLE
 } from './ballArcModel'
 import { createPlayers } from './fieldModel'
 import { FieldScene } from './FieldScene'
@@ -36,7 +38,7 @@ describe('ball flight authoring', function () {
       Math.tan(Math.PI / 6),
       0.001
     )
-    expect(dragLaunchAngle(30, 100)).equals(70)
+    expect(dragLaunchAngle(30, 200)).equals(MAX_LAUNCH_ANGLE)
     expect(dragLaunchAngle(30, -300)).equals(-45)
     expect(
       Math.hypot(...Object.values(arcTarget({ x: 200, z: -200 })))
@@ -145,6 +147,9 @@ describe('ball flight authoring', function () {
       event.pointer.y -= 0.8
       await renderer.fireEvent(edit, 'pointerMove', event)
       expect(current.angle).lessThan(5)
+      event.pointer.y += 2
+      await renderer.fireEvent(edit, 'pointerMove', event)
+      expect(current.angle).equals(85)
       await renderer.fireEvent(edit, 'pointerCancel', event)
       expect(captured).equals(false)
       expect(players.map(player => player.target)).deep.equals(
@@ -157,18 +162,39 @@ describe('ball flight authoring', function () {
 })
 
 describe('home runs and pop-ups', function () {
-  it('reaches 70 degrees even when the landing point is close to home', function () {
-    const angle = dragLaunchAngle(30, 80)
-    expect(angle).equals(70)
+  it('reaches 85 degrees even when the landing point is close to home', function () {
+    const angle = dragLaunchAngle(30, 200)
+    expect(angle).equals(85)
     for (const distance of [3, 8, 15, 140]) {
       const arc = { target: { x: 0, z: -distance }, angle }
       const start = arcPoint(arc, 0)
       const tiny = arcPoint(arc, 0.00001)
       expect((tiny.y - start.y) / Math.hypot(tiny.x, tiny.z)).closeTo(
-        Math.tan((70 * Math.PI) / 180),
+        Math.tan((85 * Math.PI) / 180),
         0.001
       )
       expect(arcHandle(arc).y).greaterThan(start.y)
+    }
+  })
+  it('keeps steep short and zero-distance arcs finite with exact endpoints', function () {
+    for (const distance of [0, 3, 8, 140]) {
+      const arc = { target: { x: 0, z: -distance }, angle: 85 }
+      expect(arcPoint(arc, 0)).deep.equals({ x: 0, y: BALL_CONTACT, z: 0 })
+      expect(arcPoint(arc, 1)).deep.equals({
+        x: 0,
+        y: BALL_GROUND,
+        z: -distance
+      })
+      for (let i = 0; i <= 100; i++)
+        expect(
+          Object.values(arcPoint(arc, i / 100)).every(Number.isFinite)
+        ).equals(true)
+      expect(Object.values(arcHandle(arc)).every(Number.isFinite)).equals(true)
+      if (distance === 3) {
+        expect(arcHandle(arc).y - BALL_GROUND).greaterThan(14)
+        expect(arcHandle(arc).y).greaterThan(15)
+        expect(arcHandle(arc).y).greaterThan(arcHandle({ ...arc, angle: 70 }).y)
+      }
     }
   })
   it('places a home-run landing on the spectator tiers instead of clamping to the outfield', async function () {

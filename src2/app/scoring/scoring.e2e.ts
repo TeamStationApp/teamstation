@@ -4473,4 +4473,89 @@ describe('scoring browser', function () {
       await page.close()
     }
   })
+  for (const outcome of ['Single', 'Ball Caught'] as const)
+    it(`keeps the fielding position through an 85-degree high fly for ${outcome}`, async function () {
+      const { page } = await open(
+        '/games/g1/score',
+        false,
+        false,
+        false,
+        'right',
+        true
+      )
+      try {
+        await page.setViewport({ width: 390, height: 844 })
+        await click(page, 'Swing in Play')
+        if (outcome === 'Ball Caught') await click(page, 'Batter Out')
+        await click(page, outcome)
+        await page.waitForSelector('canvas[data-field-ready="true"]')
+        await captureScene(page)
+        const before = await page.evaluate(() => {
+          const host = window as unknown as SceneProbeWindow
+          return {
+            player: host
+              .qaScene!.getObjectByName('player-defense-10')!
+              .position.toArray(),
+            camera: host.qaCamera!.position.toArray()
+          }
+        })
+        await page.focus('[role="application"]')
+        await page.keyboard.press('Space')
+        // Pitcher starts 18.44m from home; five steps toward home leaves a short 3.44m landing.
+        for (let i = 0; i < 5; i++) await page.keyboard.press('ArrowDown')
+        await page.keyboard.press('Enter')
+        await page.waitForSelector(
+          '[aria-label^="Drag up and down for ball trajectory."]'
+        )
+        for (let i = 0; i < 50; i++) await page.keyboard.press('ArrowUp')
+        await page.waitForSelector(
+          '[aria-label="Ball trajectory: 85° Pop Fly"]'
+        )
+        await captureScene(page)
+        const selected = await page.evaluate(() => {
+          const host = window as unknown as SceneProbeWindow
+          const curve = host.qaScene!.getObjectByName('ball-trajectory') as Mesh
+          curve.geometry.computeBoundingBox()
+          return {
+            player: host
+              .qaScene!.getObjectByName('player-defense-10')!
+              .position.toArray(),
+            camera: host.qaCamera!.position.toArray(),
+            apex: curve.geometry.boundingBox!.max.y
+          }
+        })
+        expect(selected.player).deep.equals(before.player)
+        expect(selected.camera).deep.equals(before.camera)
+        expect(selected.apex).greaterThan(15)
+        if (process.env.GS_SCORING_ARTIFACT_DIR != null)
+          await page.screenshot({
+            path: join(
+              process.env.GS_SCORING_ARTIFACT_DIR,
+              `high-fly-${outcome.replaceAll(' ', '-')}.png`
+            )
+          })
+        const sample = page.evaluate(async () => {
+          const scene = (window as unknown as SceneProbeWindow).qaScene!
+          const samples: number[][] = []
+          const start = performance.now()
+          while (performance.now() - start < 2300) {
+            await new Promise(requestAnimationFrame)
+            samples.push(
+              scene.getObjectByName('player-defense-10')!.position.toArray()
+            )
+          }
+          return samples
+        })
+        await page.keyboard.press('Enter')
+        const positions = await sample
+        expect(
+          positions.some(p => Math.abs(p[2] - before.player[2]) > 1)
+        ).equals(true)
+        expect(
+          positions.some(p => p[2] > before.player[2] + 1 && p[2] < -4)
+        ).equals(true)
+      } finally {
+        await page.close()
+      }
+    })
 })

@@ -11,6 +11,7 @@ import {
   canSwitchBatter,
   closesAutomatically,
   hasEligiblePitch,
+  MAX_LAUNCH_ANGLE,
   moreEligibility,
   nextDecision,
   outcomeAvailable,
@@ -62,7 +63,8 @@ describe('batted-ball rules', function () {
     expect(allowedAngle(-20, 'Ball Caught')).equals(10)
     expect(allowedAngle(-20, 'Home Run', 'out-of-park')).equals(10)
     expect(allowedAngle(-20, 'Home Run', 'in-park')).equals(-20)
-    expect(allowedAngle(99, 'Single')).equals(70)
+    expect(allowedAngle(99, 'Single')).equals(MAX_LAUNCH_ANGLE)
+    expect(MAX_LAUNCH_ANGLE).equals(85)
     expect(allowedAngle(-99, 'Single')).equals(-45)
   })
 })
