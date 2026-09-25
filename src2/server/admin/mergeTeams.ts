@@ -186,7 +186,9 @@ export async function mergeTeams(
 
       // Its own events go with it. They are the thinner record by definition —
       // that is how the survivor was chosen — and keeping both would double
-      // every play in the box score.
+      // every play in the box score. Where the table of archived responses
+      // still exists, the retired game's rows are kept with no game rather
+      // than moved to the kept one (036).
       await trx
         .deleteFrom('games')
         .where('id', '=', fixture.retiredGameId)
