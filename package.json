@@ -15,7 +15,9 @@
     "build.web": "node src2/build.mjs",
     "camera-sweep": "node -r sucrase/register src2/server/dev/cameraSweep.ts",
     "clean": "rimraf lib",
-    "coverage": "node scripts/build-scoring-tests.mjs && node scripts/scoring-coverage.mjs",
+    "coverage": "npm run coverage.app && npm run coverage.server",
+    "coverage.app": "node scripts/build-scoring-tests.mjs && node scripts/scoring-coverage.mjs",
+    "coverage.server": "node src2/migrate/requirePostgres18.js && c8 --all --reporter=text --check-coverage --lines 90 --include src2/common/userIdNumber.ts --include src2/server/db/int8.ts --include src2/common/gumboEventTypes.ts --include src2/common/gumboPlay.ts --include src2/server/events/**/*.ts --include src2/server/routes/events.ts --include src2/server/routes/teams.ts --include src2/server/routes/logs.ts --include src2/server/jsonBody.ts mocha -r sucrase/register --extension ts --spec 'src2/**/*.test.ts' --ignore '**/node_modules/**' --ignore 'lib/**'",
     "demo": "node -r sucrase/register src2/server/dev/demo.ts",
     "duplicate-people": "node -r sucrase/register src2/server/dev/duplicatePeople.ts",
     "fake-space": "node -r sucrase/register src2/server/dev/fakeSpace.ts",
@@ -44,8 +46,7 @@
     "stats-request": "node -r sucrase/register src2/server/statsBuilder/cli.ts",
     "test": "node scripts/build-scoring-tests.mjs && mocha -r sucrase/register -r ./src2/test/scoringDomSetup.cjs --extension ts --spec 'src2/**/*.test.ts' --spec lib/scoring-tests.cjs --ignore '**/node_modules/**'",
     "typecheck": "tsc -p tsconfig.app.json && tsc -p tsconfig.server.json --noEmit",
-    "typecheck.native": "tsc -p tsconfig.native.json",
-    "coverage.scoring": "node scripts/build-scoring-tests.mjs && node scripts/scoring-coverage.mjs"
+    "typecheck.native": "tsc -p tsconfig.native.json"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "^3.1.1",
