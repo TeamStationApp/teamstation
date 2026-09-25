@@ -132,4 +132,51 @@ describe('api client', function () {
     await client.teams()
     expect(calls[0].url).equals('http://x/api/v1/teams')
   })
+
+  it("reads a game's plays and the at-bat in progress", async function () {
+    const play = {
+      about: { atBatIndex: 0, inning: 1, halfInning: 'top' },
+      result: { eventType: 'single', awayScore: 0, homeScore: 0 }
+    }
+    const current = {
+      about: { atBatIndex: 1, inning: 1, halfInning: 'top', isComplete: false }
+    }
+    const { fetch, calls } = stubFetch(200, {
+      plays: [{ id: 'evt_1', gameId: 'gam_1', gumbo: play }],
+      currentPlay: current
+    })
+    const client = new GameStationClient({ baseUrl: 'http://x/api/v1', fetch })
+    const stored = await client.gameEvents('gam 1')
+    expect(calls[0].url).equals('http://x/api/v1/games/gam%201/events')
+    expect(JSON.parse(JSON.stringify(stored.plays))).deep.equals([play])
+    expect(stored.currentPlay).deep.equals(current)
+    const none = stubFetch(200, { plays: [] })
+    const bare = new GameStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: none.fetch
+    })
+    expect(await bare.gameEvents('g')).deep.equals({
+      plays: [],
+      currentPlay: null
+    })
+  })
+
+  it('scores into a game live, naming GameStation and only what changed', async function () {
+    const { fetch, calls } = stubFetch(200, { plays: [], currentPlay: null })
+    const client = new GameStationClient({ baseUrl: 'http://x/api/v1', fetch })
+    await client.saveGameEvents('gam_1', { plays: [], remove: [3] })
+    expect(calls[0].method).equals('POST')
+    expect(JSON.parse(calls[0].body!)).deep.equals({
+      mode: 'live',
+      source: { system: 'gamestation' },
+      plays: [],
+      remove: [3]
+    })
+    await client.saveGameEvents('gam_1', {
+      plays: [],
+      remove: [],
+      currentPlay: null
+    })
+    expect(JSON.parse(calls[1].body!)).to.have.property('currentPlay', null)
+  })
 })
