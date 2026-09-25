@@ -11,6 +11,8 @@ import {
 } from 'cleaners'
 
 import { type ApiError, asApiError, HttpError } from './errors'
+import { asCurrentPlay, asGumboPlay } from './gumboPlay'
+import type { SaveChange, StoredGame } from './scoring/session'
 import { asUserId } from './userIdNumber'
 
 /**
@@ -141,6 +143,11 @@ export const asGameDetail = asObject({
   awayScore: asNullable(asNumber),
   ingestStatus: asString,
   ingestMessage: asNullable(asString),
+  /** `gamestation` once GameStation scores the game, and nothing else may. */
+  scoringOwner: asOptional(
+    asNullable(asValue('external' as const, 'gamestation' as const)),
+    null
+  ),
   /** Each side's record in this game's season, `12–3`. */
   awayRecord: asOptional(asNullable(asString), null),
   homeRecord: asOptional(asNullable(asString), null),
@@ -356,6 +363,13 @@ export const asRosterEntry = asObject({
   group: asOptional(asString, 'player')
 })
 export type RosterEntry = ReturnType<typeof asRosterEntry>
+
+const asStoredGame = asObject({
+  plays: asArray(
+    asObject({ id: asString, gameId: asString, gumbo: asGumboPlay })
+  ),
+  currentPlay: asOptional(asNullable(asCurrentPlay), null)
+})
 
 /** A team this player has played for, and in which season. */
 export const asPlayerTeam = asObject({
@@ -1119,6 +1133,47 @@ export class GameStationClient {
       `/games/${encodeURIComponent(gameId)}/box-score`,
       asBoxScore
     )
+  }
+
+  /** A game's stored plays and the at-bat in progress. */
+  async gameEvents(gameId: string): Promise<StoredGame> {
+    const stored = await this.request(
+      'GET',
+      `/games/${encodeURIComponent(gameId)}/events`,
+      asStoredGame
+    )
+    return {
+      plays: stored.plays.map(row => row.gumbo),
+      currentPlay: stored.currentPlay
+    }
+  }
+
+  /**
+   * Scores into a game as it is played: the plays that changed, the indexes
+   * an undo took away, and the at-bat in progress when it changed.
+   */
+  async saveGameEvents(
+    gameId: string,
+    change: SaveChange
+  ): Promise<StoredGame> {
+    const stored = await this.request(
+      'POST',
+      `/games/${encodeURIComponent(gameId)}/events`,
+      asStoredGame,
+      {
+        mode: 'live',
+        source: { system: 'gamestation' },
+        plays: change.plays,
+        remove: change.remove,
+        ...(change.currentPlay === undefined
+          ? {}
+          : { currentPlay: change.currentPlay })
+      }
+    )
+    return {
+      plays: stored.plays.map(row => row.gumbo),
+      currentPlay: stored.currentPlay
+    }
   }
 
   async roster(teamId: string): Promise<RosterEntry[]> {

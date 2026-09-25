@@ -80,7 +80,8 @@ describe('runner decisions', function () {
       { type: 'HOME', decision: 'out' },
       { type: 'HOME', decision: 'back' }
     ])
-    state.pendingPlay!.movements.find(move => move.playerId === 4)!.force = true
+    state.session.pending!.movements.find(move => move.playerId === 4)!.force =
+      true
     await render(state)
     expect(document.querySelector('[aria-label="Back"]')).equals(null)
   })

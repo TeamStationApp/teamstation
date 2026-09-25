@@ -9,6 +9,7 @@ import { Pool } from 'pg'
 import { asGumboPlay } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
 import { mintUserId } from '../../common/mintUserId'
+import { halfOutcomes } from '../../common/scoring/linescore'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
@@ -20,7 +21,7 @@ import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
 import {
   eventRoutes,
-  halfOutcomes,
+  statusAfterLivePost,
   statusAfterPost,
   unknownUser
 } from './events'
@@ -98,6 +99,12 @@ describe('posting and reading plays', function () {
   const outsideId = makeId('game')
   const ownId = makeId('game')
   const twiceId = makeId('game')
+  const liveId = makeId('game')
+  const liveAtBatId = makeId('game')
+  const liveFinalId = makeId('game')
+  const liveCancelledId = makeId('game')
+  const liveRefusedId = makeId('game')
+  const ownerlessFinalId = makeId('game')
 
   before(async function () {
     adminPool = new Pool({ connectionString: adminUrl })
@@ -266,12 +273,34 @@ describe('posting and reading plays', function () {
           away_team_id: away,
           start_at: now
         },
-        ...[outsideId, ownId, twiceId].map(id => ({
+        ...[
+          outsideId,
+          ownId,
+          twiceId,
+          liveId,
+          liveAtBatId,
+          liveFinalId,
+          liveRefusedId
+        ].map(id => ({
           id,
           home_team_id: home,
           away_team_id: away,
           start_at: now
-        }))
+        })),
+        {
+          id: liveCancelledId,
+          home_team_id: home,
+          away_team_id: away,
+          start_at: now,
+          status: 'cancelled'
+        },
+        {
+          id: ownerlessFinalId,
+          home_team_id: home,
+          away_team_id: away,
+          start_at: now,
+          status: 'final'
+        }
       ])
       .execute()
     await db
@@ -869,6 +898,271 @@ describe('posting and reading plays', function () {
     )
     expect(owed.status).equals('pending')
   })
+
+  const live = async (
+    gameId: string,
+    body: Record<string, unknown>,
+    token: string | null = TOKEN
+  ): Promise<{ status: number; body: Record<string, unknown> }> =>
+    await ask(
+      `/games/${gameId}/events`,
+      'POST',
+      {
+        mode: 'live',
+        source: { system: 'gamestation' },
+        plays: [],
+        ...body
+      },
+      token
+    )
+  const gameRow = async (
+    id: string
+  ): Promise<{
+    status: string
+    ingest_status: string
+    away_score: number | null
+    currentPlay: unknown
+    scoringOwner: string | null
+  }> =>
+    await db!
+      .selectFrom('games')
+      .select([
+        'status',
+        'ingest_status',
+        'away_score',
+        'currentPlay',
+        'scoringOwner'
+      ])
+      .where('id', '=', id)
+      .executeTakeFirstOrThrow()
+  const rows = async (
+    id: string
+  ): Promise<Array<{ id: string; atBatIndex: number; hidden: boolean }>> =>
+    await db!
+      .selectFrom('events')
+      .select(['id', 'atBatIndex', 'hidden'])
+      .where('gameId', '=', id)
+      .orderBy('atBatIndex')
+      .execute()
+  const current = (
+    atBatIndex: number,
+    pitches = 1
+  ): Record<string, unknown> => ({
+    about: { atBatIndex, inning: 1, halfInning: 'top', isComplete: false },
+    matchup: { batter: { id: member.userId, fullName: 'Cam' } },
+    playEvents: Array.from({ length: pitches }, (_, index) => ({
+      index,
+      isPitch: true,
+      details: { code: 'B' }
+    }))
+  })
+
+  it('scores a game live without making it final or a mismatch', async function () {
+    const first = await live(liveId, {
+      plays: [play({ atBatIndex: 0, awayScore: 0, homeScore: 0, outs: 1 })]
+    })
+    expect(first.status).equals(200)
+    expect(await gameRow(liveId)).deep.include({
+      status: 'inProgress',
+      ingest_status: 'ok',
+      scoringOwner: 'gamestation'
+    })
+    const second = await live(liveId, {
+      plays: [play({ atBatIndex: 1, awayScore: 1, homeScore: 0, outs: 1 })]
+    })
+    expect(second.status).equals(200)
+    expect(await gameRow(liveId)).deep.include({
+      status: 'inProgress',
+      ingest_status: 'ok',
+      away_score: 1
+    })
+    expect((await rows(liveId)).map(row => row.atBatIndex)).deep.equals([0, 1])
+  })
+
+  it('rewrites a play in place, keeping its row, its hidden flag and its fielder', async function () {
+    const [before] = await rows(liveId)
+    await db!
+      .updateTable('events')
+      .set({ hidden: true })
+      .where('id', '=', before.id)
+      .execute()
+    await db!
+      .insertInto('event_players')
+      .values({
+        id: makeId('eventPlayer'),
+        event_id: before.id,
+        user_id: manager.userId,
+        team_id: home,
+        role: 'fielder'
+      })
+      .execute()
+    const again = await live(liveId, {
+      plays: [
+        play({
+          atBatIndex: 0,
+          awayScore: 0,
+          homeScore: 0,
+          outs: 2,
+          eventType: 'double'
+        })
+      ]
+    })
+    expect(again.status).equals(200)
+    const [after] = await rows(liveId)
+    expect(after).deep.equals({ id: before.id, atBatIndex: 0, hidden: true })
+    const stored = await db!
+      .selectFrom('events')
+      .select(['eventType'])
+      .where('id', '=', before.id)
+      .executeTakeFirstOrThrow()
+    expect(stored.eventType).equals('double')
+    const fielders = await db!
+      .selectFrom('event_players')
+      .select('role')
+      .where('event_id', '=', before.id)
+      .where('role', '=', 'fielder')
+      .execute()
+    expect(fielders).length(1)
+  })
+
+  const statsAsked = async (id: string): Promise<number> => {
+    const row = await db!
+      .selectFrom('game_stats_state')
+      .select('requested_generation')
+      .where('game_id', '=', id)
+      .executeTakeFirst()
+    return row == null ? 0 : Number(row.requested_generation)
+  }
+
+  it('deletes exactly the indexes named in remove, and nothing when none are', async function () {
+    await live(liveId, {
+      plays: [
+        play({ atBatIndex: 2, awayScore: 1, homeScore: 0, outs: 3 }),
+        play({
+          atBatIndex: 9999,
+          awayScore: 1,
+          homeScore: 0,
+          eventType: 'final_score'
+        })
+      ]
+    })
+    expect(await gameRow(liveId)).deep.include({ status: 'final' })
+    expect((await rows(liveId)).map(row => row.atBatIndex)).deep.equals([
+      0, 1, 2, 9999
+    ])
+    const correction = await live(liveId, {
+      plays: [play({ atBatIndex: 1, awayScore: 1, homeScore: 0, outs: 2 })]
+    })
+    expect(correction.status).equals(200)
+    expect((await rows(liveId)).map(row => row.atBatIndex)).deep.equals([
+      0, 1, 2, 9999
+    ])
+    expect(await gameRow(liveId)).deep.include({ status: 'final' })
+    const asked = await statsAsked(liveId)
+    expect(asked).greaterThan(0)
+    const removed = await live(liveId, { remove: [2] })
+    expect(removed.status).equals(200)
+    expect(await statsAsked(liveId)).equals(asked + 1)
+    expect((await rows(liveId)).map(row => row.atBatIndex)).deep.equals([
+      0, 1, 9999
+    ])
+    const reopened = await live(liveId, { remove: [9999] })
+    expect(reopened.status).equals(200)
+    expect(await gameRow(liveId)).deep.include({ status: 'inProgress' })
+  })
+
+  it('refuses an outside scorer on a game GameStation scored, final or not', async function () {
+    await live(liveId, {
+      plays: [
+        play({
+          atBatIndex: 9999,
+          awayScore: 1,
+          homeScore: 0,
+          eventType: 'final_score'
+        })
+      ]
+    })
+    const outsider = await ask(`/games/${liveId}/events`, 'POST', {
+      plays: [play({ atBatIndex: 0, awayScore: 1, homeScore: 0 })]
+    })
+    expect(outsider.status).equals(409)
+    const ownerless = await live(ownerlessFinalId, {
+      plays: [play({ atBatIndex: 0, awayScore: 1, homeScore: 0 })]
+    })
+    expect(ownerless.status).equals(409)
+  })
+
+  it('keeps the at-bat in progress on the game, never as a row', async function () {
+    const posted = await live(liveAtBatId, { currentPlay: current(0) })
+    expect(posted.status).equals(200)
+    expect(posted.body.currentPlay).deep.include({ about: current(0).about })
+    expect(await rows(liveAtBatId)).deep.equals([])
+    const players = await db!
+      .selectFrom('event_players')
+      .innerJoin('events', 'events.id', 'event_players.event_id')
+      .select('event_players.id')
+      .where('events.gameId', '=', liveAtBatId)
+      .execute()
+    expect(players).deep.equals([])
+    expect(await gameRow(liveAtBatId)).deep.include({ status: 'inProgress' })
+    const read = await ask(`/games/${liveAtBatId}/events`)
+    expect(read.body).deep.equals({ plays: [], currentPlay: current(0) })
+    await live(liveAtBatId, { plays: [] })
+    expect((await gameRow(liveAtBatId)).currentPlay).deep.equals(current(0))
+    await live(liveAtBatId, { currentPlay: current(0, 2) })
+    expect((await gameRow(liveAtBatId)).currentPlay).deep.equals(current(0, 2))
+    await live(liveAtBatId, { currentPlay: null })
+    expect((await gameRow(liveAtBatId)).currentPlay).equals(null)
+    // An at-bat in progress changes no stats, so none are asked for.
+    expect(await statsAsked(liveAtBatId)).equals(0)
+  })
+
+  it('leaves a cancelled game cancelled and refuses a teammate who cannot score', async function () {
+    const cancelled = await live(liveCancelledId, {
+      plays: [play({ atBatIndex: 0, awayScore: 1, homeScore: 0 })],
+      currentPlay: current(1)
+    })
+    expect(cancelled.status).equals(200)
+    expect(await gameRow(liveCancelledId)).deep.include({ status: 'cancelled' })
+    const refused = await live(
+      liveRefusedId,
+      { currentPlay: current(0) },
+      MEMBER
+    )
+    expect(refused.status).equals(403)
+  })
+
+  it('answers 400 to a replace post with live fields, and to a play both posted and removed', async function () {
+    const withCurrent = await ask(`/games/${liveRefusedId}/events`, 'POST', {
+      plays: [],
+      currentPlay: current(0)
+    })
+    expect(withCurrent.status).equals(400)
+    const withRemove = await ask(`/games/${liveRefusedId}/events`, 'POST', {
+      plays: [],
+      remove: [0]
+    })
+    expect(withRemove.status).equals(400)
+    const both = await live(liveRefusedId, {
+      plays: [play({ atBatIndex: 0, awayScore: 0, homeScore: 0 })],
+      remove: [0]
+    })
+    expect(both.status).equals(400)
+    expect(both.body.message).equals('A play is both posted and removed')
+  })
+})
+
+describe('the status a live post leaves', function () {
+  it('is final with a final score, under way with plays or an at-bat, and cancelled stays', function () {
+    const final = [{ eventType: 'single' }, { eventType: 'final_score' }]
+    expect(statusAfterLivePost('inProgress', final, false)).equals('final')
+    expect(
+      statusAfterLivePost('final', [{ eventType: 'single' }], false)
+    ).equals('inProgress')
+    expect(statusAfterLivePost('scheduled', [], true)).equals('inProgress')
+    expect(statusAfterLivePost('scheduled', [], false)).equals('scheduled')
+    expect(statusAfterLivePost('cancelled', final, true)).equals('cancelled')
+  })
 })
 
 describe('the status a post leaves', function () {
@@ -902,17 +1196,11 @@ describe('the outcome of each half', function () {
     halfInning: 'top' | 'bottom',
     awayScore: number | null,
     homeScore: number | null
-  ): Parameters<typeof halfOutcomes>[0][number] => ({
-    id: `evt_${atBatIndex}`,
-    gameId: 'gam_halves',
-    atBatIndex,
-    inning,
-    halfInning,
-    eventType: 'single',
-    awayScore,
-    homeScore,
-    gumbo: {}
-  })
+  ): Parameters<typeof halfOutcomes>[0][number] =>
+    asGumboPlay({
+      about: { atBatIndex, inning, halfInning },
+      result: { eventType: 'single', awayScore, homeScore }
+    })
 
   it('scores no runs for a half whose last play carries no score', function () {
     const halves = halfOutcomes([

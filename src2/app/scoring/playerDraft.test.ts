@@ -1,6 +1,8 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
+import { rosterError } from '../../common/scoring/rules'
+import { setupOf } from '../../common/scoring/state'
 import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import {
@@ -9,7 +11,6 @@ import {
   PLAYER_POSITIONS,
   playerDraftError
 } from './playerDraft'
-import { applyRosterDraft } from './scoringEdits'
 import { initialScoringState, scoringReducer } from './scoringMachine'
 
 describe('local player entry', function () {
@@ -65,7 +66,7 @@ describe('local player entry', function () {
         ).not.includes(id)
       }
     expect(JSON.stringify(session.liveData.boxscore)).not.equals(before)
-    expect(applyRosterDraft(state, session).error).equals(undefined)
+    expect(rosterError(state.session, setupOf(session))).equals(undefined)
     const saved = scoringReducer(state, { type: 'ROSTER', draft: session })
     expect(Object.keys(saved.session.gameData.players)).length(24)
     expect(scoringReducer(saved, { type: 'UNDO' }).session).deep.equals(

@@ -4,13 +4,23 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 import { asRosterEntry, GameStationClient } from '../../common/api'
+import { HttpError } from '../../common/errors'
+import {
+  applyAction,
+  ScoringSession as GameSession
+} from '../../common/scoring/session'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { createDevelopmentSession } from './developmentSession'
+import { CORRECTION_INSTRUCTION } from './InstructionToast'
 import { gameFixture } from './isUnscoredGame.test'
 import { scoringPreferences } from './scoringPreferences'
 import { scoringPreferences as nativePreferences } from './scoringPreferences.native'
-import { ScoringScreen } from './ScoringScreen'
-import type { ScoringStateSource } from './scoringStateSource'
+import { saveStatusText, ScoringScreen } from './ScoringScreen'
+import {
+  DevelopmentScoringSource,
+  memoryStore,
+  type ScoringSource
+} from './scoringSource'
 
 let root: Root | undefined
 // Host replacement is limited to WebGL; controls, state and preferences are real.
@@ -24,7 +34,7 @@ async function unmount(): Promise<void> {
 }
 async function mount(
   client: GameStationClient,
-  source?: ScoringStateSource
+  source?: ScoringSource
 ): Promise<void> {
   await unmount()
   HTMLCanvasElement.prototype.getContext = (() => null) as typeof getContext
@@ -129,27 +139,42 @@ describe('local scoring controls', function () {
       throw new Error('unavailable')
     }
     let fail = true
-    const source: ScoringStateSource = {
-      load: async (game, away, home) => {
+    const store = memoryStore()
+    const save = store.save
+    store.save = async (gameId, change) => {
+      if (fail) throw new HttpError('offline', 'The request never left')
+      return await save(gameId, change)
+    }
+    const source: ScoringSource = {
+      open: async (game, away, home) => {
         expect(away).deep.equals([])
         expect(home).deep.equals([])
-        return createDevelopmentSession(game, away, home)
-      },
-      save: async () => {
-        if (fail) throw new Error('offline')
+        return GameSession.start(
+          store,
+          game.id,
+          createDevelopmentSession(game, away, home)
+        )
       }
     }
     await mount(client, source)
     expect(document.body.textContent).includes('Owls 0 · Hawks 0')
-    expect(document.querySelector('[aria-label="Retry saving"]')).not.equals(
-      null
-    )
+    expect(document.querySelector('[aria-label="Save status"]')).equals(null)
+    await click('Ball')
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 5))
+    })
+    expect(
+      document.querySelector('[aria-label="Save status"]')?.textContent
+    ).equals('Offline — 1 play waiting')
     fail = false
-    await click('Retry saving')
-    expect(document.querySelector('[aria-label="Retry saving"]')).equals(null)
+    await click('Ball')
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 5))
+    })
+    expect(document.querySelector('[aria-label="Save status"]')).equals(null)
+    expect(store.games.get('g1')?.currentPlay).not.equals(null)
     await mount(client, {
-      ...source,
-      load: async () => {
+      open: async () => {
         throw new Error('bad state')
       }
     })
@@ -161,5 +186,180 @@ describe('local scoring controls', function () {
       help: false,
       shown: 2
     })
+  })
+})
+
+describe('saving from the scoring screen', function () {
+  it('says what the save is doing in one line', function () {
+    const base = { pending: 0, offline: false, readOnly: false, problem: null }
+    expect(saveStatusText(base)).equals(null)
+    expect(saveStatusText({ ...base, pending: 2 })).equals('Saving…')
+    expect(saveStatusText({ ...base, pending: 1, offline: true })).equals(
+      'Offline — 1 play waiting'
+    )
+    expect(saveStatusText({ ...base, pending: 3, offline: true })).equals(
+      'Offline — 3 plays waiting'
+    )
+    expect(
+      saveStatusText({ ...base, pending: 1, problem: 'play 0: bad' })
+    ).equals('Not saved: play 0: bad')
+    expect(saveStatusText({ ...base, readOnly: true, problem: 'No' })).equals(
+      null
+    )
+  })
+
+  it('goes read-only with the server’s reason when a save is refused', async function () {
+    const store = memoryStore()
+    store.save = async () => {
+      throw new HttpError(
+        'forbidden',
+        'Only someone who can score this game may change its plays'
+      )
+    }
+    const source: ScoringSource = {
+      open: async game =>
+        GameSession.start(
+          store,
+          game.id,
+          createDevelopmentSession(game, [], [])
+        )
+    }
+    await mount(clientForSwitchHitter('right'), source)
+    await click('Ball')
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 5))
+    })
+    const overlay = document.querySelector(
+      '[aria-label="Scoring is read-only"]'
+    )
+    expect(overlay?.textContent).includes(
+      'Only someone who can score this game may change its plays'
+    )
+    // The refused ball is not shown as scored, and nothing more can be.
+    expect(document.body.textContent).includes('0 balls')
+    expect(document.body.textContent).not.includes('1 balls')
+    for (const label of ['Ball', 'Called Strike', 'Swing in Play']) {
+      const control = document.querySelector(`[aria-label="${label}"]`)
+      expect(
+        control?.getAttribute('aria-disabled') === 'true' ||
+          (control as { disabled?: boolean } | null)?.disabled === true,
+        label
+      ).equals(true)
+    }
+    expect(document.querySelector('[aria-label="Undo Last play"]')).equals(null)
+    // The game menu still leaves, but changes nothing.
+    await click('Open scoring menu')
+    for (const label of [
+      'Overrides',
+      'End Half Inning',
+      'Set Team Rosters',
+      'End Game'
+    ])
+      expect(
+        document
+          .querySelector(`[aria-label="${label}"]`)
+          ?.getAttribute('aria-disabled'),
+        label
+      ).equals('true')
+    expect(
+      document
+        .querySelector('[aria-label="Exit Current Game"]')
+        ?.getAttribute('aria-disabled')
+    ).not.equals('true')
+  })
+
+  it('offers nothing to finish once a refused Done makes the screen read-only', async function () {
+    const store = memoryStore()
+    store.save = async () => {
+      throw new HttpError('forbidden', 'Not yours')
+    }
+    const source: ScoringSource = {
+      open: async game => {
+        let decided = createDevelopmentSession(game, [], [])
+        for (const action of [
+          { type: 'ballInPlay', contact: 'swing' },
+          { type: 'result', eventType: 'single' }
+        ] as const)
+          decided = applyAction(decided, action).state
+        return GameSession.start(store, game.id, decided)
+      }
+    }
+    await mount(clientForSwitchHitter('right'), source)
+    expect(document.body.textContent).includes(CORRECTION_INSTRUCTION)
+    await click('Finish at-bat')
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 5))
+    })
+    expect(
+      document.querySelector('[aria-label="Scoring is read-only"]')
+    ).not.equals(null)
+    expect(document.querySelector('[aria-label="Finish at-bat"]')).equals(null)
+    expect(document.body.textContent).not.includes(CORRECTION_INSTRUCTION)
+  })
+
+  it('undoes a play scored before the screen opened', async function () {
+    const source = new DevelopmentScoringSource()
+    const client = clientForSwitchHitter('right')
+    const first = await source.open(gameFixture, [], [])
+    first.apply({ type: 'pitch', call: 'B' })
+    first.apply({ type: 'pitch', call: 'B' })
+    await first.flush()
+    await mount(client, source)
+    expect(document.body.textContent).includes('2 balls')
+    await click('Undo Last play')
+    expect(document.body.textContent).includes('1 balls')
+    await click('Undo Last play')
+    expect(document.body.textContent).includes('0 balls')
+    expect(document.querySelector('[aria-label="Undo Last play"]')).equals(null)
+  })
+
+  it('opens a game saved with a ball in play and no result at the pitch before it', async function () {
+    const source = new DevelopmentScoringSource()
+    const first = await source.open(gameFixture, [], [])
+    first.apply({ type: 'pitch', call: 'B' })
+    first.apply({ type: 'ballInPlay', contact: 'swing' })
+    await first.flush()
+    await mount(clientForSwitchHitter('right'), source)
+    expect(document.body.textContent).includes('1 balls')
+    expect(document.body.textContent).includes('Pitches 1')
+    // Opening it saved nothing…
+    const kinds = async (): Promise<string[]> =>
+      (await source.open(gameFixture, [], [])).actions.map(
+        action => action.type
+      )
+    expect(await kinds()).deep.equals(['pitch', 'ballInPlay'])
+    // …and the scorer's next pitch saves the game from the pitch before.
+    await click('Ball')
+    expect(document.body.textContent).includes('2 balls')
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 5))
+    })
+    expect(await kinds()).deep.equals(['pitch', 'pitch'])
+  })
+
+  it('undoes a saved ball in play back to the pitch before it, not to a ball without a result', async function () {
+    const source = new DevelopmentScoringSource()
+    const first = await source.open(gameFixture, [], [])
+    for (const action of [
+      { type: 'pitch', call: 'B' },
+      { type: 'ballInPlay', contact: 'swing' },
+      {
+        type: 'ballInPlay',
+        contact: 'swing',
+        launchAngle: 15,
+        location: { x: 5, z: -80 },
+        fielder: 17
+      },
+      { type: 'result', eventType: 'single' },
+      { type: 'gameFlow', kind: 'closePlay' }
+    ] as const)
+      expect(first.apply(action).problems).deep.equals([])
+    await first.flush()
+    await mount(clientForSwitchHitter('right'), source)
+    await click('Undo Last play')
+    await click('Undo Last play')
+    expect(document.body.textContent).includes('1 balls')
+    await click('Ball')
+    expect(document.body.textContent).includes('2 balls')
   })
 })

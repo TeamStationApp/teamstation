@@ -1,88 +1,36 @@
-import type { GroundPoint } from '../field/fieldModel'
-import type { HomeRunKind } from '../field/stadiumBoundary'
-import type { MoreAction, MoreInput } from './moreActions'
-import type { PlayerIdentityMap } from './playerIdentity'
+import type { ScoringAction } from '../../common/scoring/actions'
+import type { HomeRunKind, Override } from '../../common/scoring/rules'
 import type {
-  ContactKind,
-  Outcome,
-  PlayerRef,
-  ScoringPlay
-} from './scoringContract'
-import type { OverrideDraft } from './scoringEdits'
+  BatSide,
+  GamePlayer,
+  GameSide,
+  GameState,
+  GameTeam
+} from '../../common/scoring/state'
+import type { GroundPoint } from '../field/fieldModel'
+import type { MoreAction, MoreInput } from './moreActions'
+import type { ContactKind, Outcome } from './scoringContract'
 import type { PresentationSequence } from './scoringPresentation'
 
-export const POSITIONS = [
-  'P',
-  'C',
-  '1B',
-  '2B',
-  'SS',
-  '3B',
-  'LF',
-  'CF',
-  'RF'
-] as const
-export type Position = (typeof POSITIONS)[number]
-export type Side = 'away' | 'home'
-export type BatSide = 'R' | 'L'
-export interface ScoringPlayer {
-  id: number
-  sourceUserId: string | number | null
-  teamId: string
-  fullName: string
-  firstName?: string
-  lastName?: string
-  jersey: string
-  bats: 'left' | 'right' | 'switch'
-  throws: 'left' | 'right' | null
-  positions: string[]
-  local: boolean
-}
-export interface ScoringTeam {
-  logoUrl?: string | null
-  id: string
-  name: string
-}
-export interface ScoringSide {
-  players: number[]
-  battingOrder: number[]
-  battingIndex: number
-  defense: Record<Position, number | null>
-  pitchCounts: Record<number, number>
-}
-export interface ScoringSessionState {
-  gamePk: string
-  gameData: {
-    teams: Record<Side, ScoringTeam>
-    players: Record<number, ScoringPlayer>
-  }
-  liveData: {
-    linescore: {
-      currentInning: number
-      currentInningOrdinal: string
-      inningState: 'Top' | 'Bottom'
-      isTopInning: boolean
-      balls: number
-      strikes: number
-      outs: number
-      teams: Record<Side, { runs: number; hits: number; errors: number }>
-      offense: {
-        batter: PlayerRef | null
-        first: PlayerRef | null
-        second: PlayerRef | null
-        third: PlayerRef | null
-      }
-      defense: Record<Position, PlayerRef | null>
-    }
-    boxscore: { teams: Record<Side, ScoringSide> }
-    plays: { allPlays: ScoringPlay[]; currentPlay: ScoringPlay | null }
-  }
-  meta: {
-    source: 'local-development' | 'api'
-    sequence: number
-    identities: PlayerIdentityMap
-  }
-}
+export { POSITIONS } from '../../common/scoring/state'
+export type {
+  BatSide,
+  Movement,
+  Position,
+  Side
+} from '../../common/scoring/state'
+export type { PlayerIdentityMap } from '../../common/scoring/state'
+
+/**
+ * The game the screen shows is the scoring library's: it changes only by the
+ * library applying an action, never by anything the screen draws or times.
+ */
+export type ScoringSessionState = GameState
+export type ScoringPlayer = GamePlayer
+export type ScoringTeam = GameTeam
+export type ScoringSide = GameSide
+export type OverrideDraft = Override
+
 export type ScoringPhase =
   | 'ready'
   | 'errorCredit'
@@ -98,27 +46,18 @@ export type ScoringPhase =
   | 'runnerDecision'
   | 'runnerReason'
   | 'correctionWindow'
-export interface Movement {
-  automaticHome?: boolean
-  homeReleased?: boolean
-  playerId: number
-  from: number
-  to: number
-  force: boolean
-  decision: 'pending' | 'safe' | 'out'
-  resolved?: boolean
-}
+/**
+ * The ball in play as the screen draws it: the outcome the scorer chose, where
+ * the ball went, who fielded it and holds it now, and where the batter-runner
+ * stands. Who went where, and what is still to be decided, is the game's.
+ */
 export interface PendingPlay {
   contactKind?: ContactKind
-  automaticAward?: boolean
-  errorPending?: boolean
   homeRunKind?: HomeRunKind
   landingHeight?: number
   ballHolder?: number
   ballLocation?: GroundPoint
   batterPoint?: GroundPoint
-  choiceApplied?: boolean
-  originalRunnerRecordCount?: number
   outcome:
     | Outcome
     | 'Walk'
@@ -127,11 +66,6 @@ export interface PendingPlay {
     | 'Batter Out — Other'
     | 'Dropped Third Strike'
     | 'Manual placement'
-  sameAppearance?: boolean
-  originalBases: Array<number | null>
-  originalRuns: number
-  originalOuts: number
-  movements: Movement[]
   fielder?: number
   location?: GroundPoint
   angle?: number
@@ -175,7 +109,6 @@ export interface ScoringSnapshot {
   presentationEnabled?: boolean
   presentation?: PresentationSequence | null
 
-  recentPitch?: { atBatIndex: number; index: number } | null
   moreDraft?: {
     action: MoreAction
     checkpoint: ScoringSnapshot
@@ -191,13 +124,11 @@ export interface ScoringSnapshot {
   session: ScoringSessionState
   phase: ScoringPhase
   pendingPlay: PendingPlay | null
-  homeQueue: number[]
-  awaitingBatter: {
-    teamId: string
-    dueIndex: number
-    duePlayerId: number
-  } | null
+  /** Every action applied to the game, in order: what the session saves. */
+  log: ScoringAction[]
   generation: number
+  /** The server refused this game's changes: nothing more is scored. */
+  readOnly?: boolean
 }
 export interface HistoryEntry {
   label: string
@@ -273,4 +204,12 @@ export type ScoringEvent =
       sequence?: number
     }
   | { type: 'END_HALF' }
+  | { type: 'END_GAME' }
+  | { type: 'PRESENTATION'; enabled: boolean }
+  | {
+      type: 'RESET'
+      session: ScoringSessionState
+      log: ScoringAction[]
+      readOnly?: boolean
+    }
   | { type: 'SWITCH_SIDE'; side: BatSide }

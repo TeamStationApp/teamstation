@@ -5,8 +5,8 @@ import { completeMotions } from '../../test/scoringHelpers'
 import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { moreEligibility, type MoreInput } from './moreActions'
-import { runnerReasons } from './runnerRules'
 import { asScoringPlay } from './scoringContract'
+import { runnerReasons } from './scoringFlow'
 import { initialScoringState, scoringReducer } from './scoringMachine'
 import { baseIds, playerRef } from './scoringSelectors'
 import type { ScoringState } from './scoringTypes'
@@ -27,7 +27,7 @@ function more(state: ScoringState, input: MoreInput): ScoringState {
 }
 function resolveHomes(state: ScoringState): ScoringState {
   state = completeMotions(state)
-  while (state.homeQueue.length > 0)
+  while (state.session.homeQueue.length > 0)
     state = completeMotions(
       scoringReducer(state, { type: 'HOME', decision: 'safe' })
     )
@@ -100,7 +100,7 @@ describe('More local scoring actions', function () {
         expect(state.phase).equals('ready')
         expect(state.pendingPlay).equals(null)
         expect(state.correctionWindow).equals(null)
-        expect(state.homeQueue).deep.equals([])
+        expect(state.session.homeQueue).deep.equals([])
         expect(baseIds(state.session)[base - 1]).equals(1)
         expect(state.session.liveData.linescore.offense.batter?.id).equals(2)
         expect(state.session.liveData.linescore.teams.away.hits).equals(0)
@@ -159,7 +159,7 @@ describe('More local scoring actions', function () {
           expect(play.playEvents.at(-1)!.isPitch).equals(false)
           expect(
             play.source.gamestation.runnerActions!.at(-1)!.pitchReference
-          ).deep.equals(pitch ? start.recentPitch : undefined)
+          ).deep.equals(pitch ? start.session.recentPitch : undefined)
           expect(scoringReducer(final, { type: 'UNDO' }).session).deep.equals(
             start.session
           )
@@ -282,7 +282,7 @@ describe('More local scoring actions', function () {
     expect(state.session.liveData.plays.currentPlay!.hitData).equals(undefined)
     expect(moreEligibility(initial(), 'Balk')).equals('No runners on base')
     const stale = initial(1)
-    stale.recentPitch = { atBatIndex: 999, index: 0 }
+    stale.session.recentPitch = { atBatIndex: 999, index: 0 }
     expect(more(stale, { action: 'Wild Pitch' })).equals(stale)
     const missing = initial()
     missing.session.liveData.plays.currentPlay = null

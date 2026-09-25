@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 
-import { outcomeName } from './outcomes'
+import { GUMBO_EVENT_TYPES } from './gumboEventTypes'
+import { OUTCOME_BY_TYPE, outcomeName } from './outcomes'
 
 const credit = (role: string): { role: string } => ({ role })
 
@@ -81,5 +82,38 @@ describe('what a player did, on their own page', function () {
     expect(
       outcomeName({ eventType: 'something_new', label: '', credit: null })
     ).equals('Play')
+  })
+})
+
+describe('outcome names by event type', function () {
+  it('has an entry for every stored event type', function () {
+    expect(Object.keys(OUTCOME_BY_TYPE).sort()).deep.equals(
+      [...GUMBO_EVENT_TYPES].sort()
+    )
+    for (const eventType of GUMBO_EVENT_TYPES) {
+      const name = outcomeName({
+        eventType,
+        label: 'Head: Someone',
+        credit: credit('batter')
+      })
+      const expected =
+        eventType === 'strikeout' || eventType === 'strikeout_double_play'
+          ? 'Dropped third strike'
+          : (OUTCOME_BY_TYPE[eventType] ?? 'Head')
+      expect(name, eventType).equals(expected)
+    }
+  })
+
+  it('credits a strikeout double play to the pitcher like a strikeout', function () {
+    expect(
+      outcomeName({
+        eventType: 'strikeout_double_play',
+        label: '',
+        credit: credit('pitcher')
+      })
+    ).equals('Strikeout pitching')
+    expect(
+      outcomeName({ eventType: 'run', label: 'Run: Harlow P', credit: null })
+    ).equals('Run scored')
   })
 })

@@ -289,7 +289,10 @@ describe('scoring roster HTTP contract', function () {
       awayTeamName: 'Owls',
       videoCount: 1
     })
-    const detail = asGameDetail(await get(`/games/${game}`))
+    const raw = await get(`/games/${game}`)
+    expect(raw).to.have.property('scoringOwner', null)
+    const detail = asGameDetail(raw)
+    expect(detail.scoringOwner).equals(null)
     expect(detail.videos[0]).includes({ id: video, status: 'unavailable' })
     const box = asBoxScore(await get(`/games/${game}/box-score`))
     expect(box.batting[0]).includes({

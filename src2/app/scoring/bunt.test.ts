@@ -1,8 +1,8 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
+import { asGamePlay as asEstimatedGumboPlay } from '../../common/scoring/state'
 import { completeMotions } from '../../test/scoringHelpers'
-import { asEstimatedGumboPlay } from './contracts/estimatedGumbo'
 import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { type Outcome, outcomeEvents } from './scoringContract'
@@ -33,7 +33,8 @@ describe('bunt contact identity', () => {
       expect(chosen.past.at(-1)!.label).equals(`Bunt: ${outcome}`)
       const play = chosen.session.liveData.plays.currentPlay!
       expect(play.playEvents.at(-1)!.details.description).equals('Bunt in Play')
-      expect(play.result.eventType).equals(outcomeEvents[outcome])
+      // The result reaches the game when the trajectory is accepted.
+      expect(chosen.pendingPlay!.outcome).equals(outcome)
       expect(
         asEstimatedGumboPlay(JSON.parse(JSON.stringify(play))).source
           .gamestation.contactKind

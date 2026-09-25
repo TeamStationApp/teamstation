@@ -1,6 +1,8 @@
 import React, { useContext, useState } from 'react'
 import { Pressable, Text, useWindowDimensions, View } from 'react-native'
 
+import { rosterError } from '../../common/scoring/rules'
+import { setupOf } from '../../common/scoring/state'
 import { Button } from '../components/Button'
 import { useTheme } from '../theme/ThemeContext'
 import { addPlaceholderPlayers } from './placeholderPlayers'
@@ -10,7 +12,6 @@ import { PlayerEntrySheet } from './PlayerEntrySheet'
 import { RosterDrag, RosterDragGroup, RosterScrollArea } from './RosterDrag'
 import { RosterRemoveButton } from './RosterRemoveButton'
 import { RosterSelector } from './RosterSelector'
-import { applyRosterDraft } from './scoringEdits'
 import { copyState } from './scoringMachine'
 import { baseIds, battingSide } from './scoringSelectors'
 import { ScoringButton, ScoringError, ScoringSheetHeight } from './ScoringSheet'
@@ -74,7 +75,7 @@ export function RosterEditor({
       list.battingOrder = list.battingOrder.filter(player => player !== id)
     })
   }
-  const validation = applyRosterDraft(state, draft, nextBatter).error
+  const validation = rosterError(state.session, setupOf(draft), nextBatter)
   const text = {
     color: theme.primaryTextColor,
     fontFamily: theme.regularTextFont,

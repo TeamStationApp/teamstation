@@ -1,7 +1,8 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { describePlay } from './describePlay'
+import { describePlay, DID_BY_TYPE } from './describePlay'
+import { GUMBO_EVENT_TYPES } from './gumboEventTypes'
 
 const credit = (
   eventType: string,
@@ -126,5 +127,39 @@ describe('a play in GameStation’s own words', function () {
       'Top 22nd: Walk.',
       'Top 23rd: Walk.'
     ])
+  })
+})
+
+describe('clauses by event type', function () {
+  it('has an entry for every stored event type', function () {
+    expect(Object.keys(DID_BY_TYPE).sort()).deep.equals(
+      [...GUMBO_EVENT_TYPES].sort()
+    )
+    for (const eventType of GUMBO_EVENT_TYPES) {
+      const text = describePlay({
+        eventType,
+        credits: [credit(eventType, 'Head: detail', 'Kai L')]
+      })
+      const did = DID_BY_TYPE[eventType]
+      const expected =
+        eventType === 'strikeout' || eventType === 'strikeout_double_play'
+          ? 'Kai L picks up a dropped third strike.'
+          : did != null
+            ? `Kai L ${did}.`
+            : 'Head, detail.'
+      expect(text, eventType).equals(expected)
+    }
+  })
+
+  it('says a pitcher struck out the batter on a strikeout double play', function () {
+    expect(
+      describePlay({
+        eventType: 'strikeout_double_play',
+        credits: [
+          credit('strikeout_double_play', '', 'Ace P', 'pitcher'),
+          credit('run', 'Run: Tom', 'Tom')
+        ]
+      })
+    ).equals('Ace P strikes out the batter. Tom scores.')
   })
 })

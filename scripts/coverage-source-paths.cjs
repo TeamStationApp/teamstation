@@ -13,14 +13,16 @@ function coverageSources(base, cwd = process.cwd()) {
     '-z',
     base,
     '--',
-    'src2/app'
+    'src2/app',
+    'src2/common'
   ])
   const untracked = names([
     'ls-files',
     '--others',
     '--exclude-standard',
     '-z',
-    'src2/app'
+    'src2/app',
+    'src2/common'
   ])
   return { paths: [...new Set([...changed, ...untracked])], untracked }
 }

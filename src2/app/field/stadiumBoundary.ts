@@ -1,17 +1,15 @@
+import { type HomeRunKind, homeRunKind, PARK } from '../../common/scoring/rules'
 import type { GroundPoint } from './fieldModel'
 
-export const OUTFIELD_RADIUS = 118
-export const WARNING_TRACK_INNER = 109
-export const OUTFIELD_HALF_ANGLE = Math.PI / 3.5
-export type HomeRunKind = 'out-of-park' | 'in-park'
-/** The visible fence is the classification boundary; a ball on it is in play. */
-export function homeRunKind(point: GroundPoint): HomeRunKind {
-  return point.z < 0 &&
-    Math.abs(Math.atan2(point.x, -point.z)) <= OUTFIELD_HALF_ANGLE + 1e-8 &&
-    Math.hypot(point.x, point.z) > OUTFIELD_RADIUS + 1e-8
-    ? 'out-of-park'
-    : 'in-park'
-}
+/**
+ * The wall as the field draws it, from the park profile the scoring library
+ * calls home runs by, so the fence a ball clears is the fence on screen.
+ */
+export const OUTFIELD_RADIUS = PARK.outfieldRadius
+export const WARNING_TRACK_INNER = PARK.warningTrackInner
+export const OUTFIELD_HALF_ANGLE = PARK.outfieldHalfAngle
+export { homeRunKind }
+export type { HomeRunKind }
 export function homeRunLanding(point: GroundPoint): GroundPoint {
   const distance = Math.hypot(point.x, point.z)
   if (

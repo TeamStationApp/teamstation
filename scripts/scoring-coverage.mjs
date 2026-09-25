@@ -91,9 +91,12 @@ if (
 const { coverageSources } = createRequire(import.meta.url)(
   './coverage-source-paths.cjs'
 )
-const { paths, untracked } = coverageSources(
-  process.env.GS_COVERAGE_BASE ?? '6d383fd876fa9e028b426b297968ee5a6ac09e75'
-)
+// The commit this branch was cut from, unless GS_COVERAGE_BASE names another.
+// Everything after it is this work.
+const base =
+  process.env.GS_COVERAGE_BASE ??
+  JSON.parse(readFileSync('src2/test/scoringCoverageBase.json', 'utf8')).base
+const { paths, untracked } = coverageSources(base)
 
 let covered = 0
 let total = 0
@@ -117,7 +120,26 @@ console.log(
 )
 if (changedPercent < 90) process.exitCode = 1
 
-if (process.env.GS_COVERAGE_BASE != null) {
+// The scoring library is held to the bar on its own, not only inside totals.
+let libraryCovered = 0
+let libraryTotal = 0
+for (const [path, entry] of Object.entries(summary)) {
+  if (!path.startsWith(resolve('src2/common/scoring') + '/')) continue
+  console.log(
+    `  ${path.slice(resolve('.').length + 1)}: ${entry.lines.pct}% (${entry.lines.covered}/${entry.lines.total})`
+  )
+  libraryCovered += entry.lines.covered
+  libraryTotal += entry.lines.total
+}
+const libraryPercent =
+  libraryTotal === 0 ? 100 : (100 * libraryCovered) / libraryTotal
+console.log(
+  `Scoring library line coverage: ${libraryPercent.toFixed(2)}% (${libraryCovered}/${libraryTotal})`
+)
+if (libraryPercent < 90) process.exitCode = 1
+
+const changedBase = process.env.GS_COVERAGE_BASE ?? base
+if (changedBase != null) {
   const { changedLines, lineReport } = createRequire(import.meta.url)(
     './changed-line-coverage.cjs'
   )
@@ -127,9 +149,10 @@ if (process.env.GS_COVERAGE_BASE != null) {
       'diff',
       '--diff-filter=d',
       '--unified=0',
-      process.env.GS_COVERAGE_BASE,
+      changedBase,
       '--',
-      'src2/app'
+      'src2/app',
+      'src2/common'
     ],
     { encoding: 'utf8' }
   )

@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { Text } from 'react-native'
 
 import { GameStationClient } from '../../common/api'
+import { ScoringSession } from '../../common/scoring/session'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
@@ -15,7 +16,7 @@ import {
 import { scoringPreferences } from './scoringPreferences'
 import { ScoringScreen } from './ScoringScreen'
 import { playerRef } from './scoringSelectors'
-import { DevelopmentScoringStateSource } from './scoringStateSource'
+import { memoryStore, type ScoringSource } from './scoringSource'
 import type { ScoringSessionState } from './scoringTypes'
 let root: Root | undefined
 // eslint-disable-next-line @typescript-eslint/unbound-method
@@ -104,11 +105,12 @@ async function mount(
   const client = new GameStationClient({ baseUrl: '/api/v1' })
   client.game = async () => gameFixture
   client.roster = async () => []
-  const source = new DevelopmentScoringStateSource()
-  source.load = async () => {
-    const session = createDevelopmentSession(gameFixture, [], [])
-    prepare?.(session)
-    return session
+  const source: ScoringSource = {
+    open: async () => {
+      const session = createDevelopmentSession(gameFixture, [], [])
+      prepare?.(session)
+      return ScoringSession.start(memoryStore(), 'g1', session)
+    }
   }
   const host = document.createElement('div')
   document.body.appendChild(host)
@@ -120,7 +122,7 @@ async function mount(
           client={client}
           gameId="g1"
           source={source}
-          userId="sheets"
+          userId={12}
           onExit={() => undefined}
         />
       </ThemeProvider>
@@ -249,7 +251,7 @@ describe('scoring slide-up sheets', function () {
     await menu('Settings')
     await click('Toggle switch-hitter help')
     await click('Reset shown count')
-    expect(await scoringPreferences.read('sheets')).deep.equals({
+    expect(await scoringPreferences.read('12')).deep.equals({
       help: false,
       shown: 0
     })
@@ -279,7 +281,13 @@ describe('scoring slide-up sheets', function () {
     await mount(session => {
       session.liveData.boxscore.teams.away.battingOrder = [1]
       session.liveData.linescore.offense.first = playerRef(session, 1)
+      session.liveData.linescore.offense.batter = null
       session.liveData.plays.currentPlay = null
+      session.awaitingBatter = {
+        teamId: session.gameData.teams.away.id,
+        dueIndex: 0,
+        duePlayerId: 1
+      }
     })
     expect(document.body.textContent).includes('Next batter is on base')
     await menu('Set Team Rosters')
@@ -353,5 +361,47 @@ describe('scoring slide-up sheets', function () {
       )
     })
     expect(host.textContent).equals('Roster')
+  })
+})
+
+describe('ending the game from the menu', function () {
+  it('confirms, stores the end, refuses further pitches, and undoes it', async function () {
+    await mount()
+    await menu('End Game')
+    expect(document.body.textContent).includes(
+      'End the game at Owls 0, Hawks 0?'
+    )
+    await click('Confirm End Game')
+    expect(document.querySelector('[aria-label="Game over"]')).not.equals(null)
+    await click('Ball')
+    expect(document.body.textContent).includes('0 balls')
+    await click('Undo End game')
+    expect(document.querySelector('[aria-label="Game over"]')).equals(null)
+    await click('Ball')
+    expect(document.body.textContent).includes('1 balls')
+  })
+
+  it('keeps End Game off while an at-bat is open', async function () {
+    await mount()
+    await click('Ball')
+    await click('Open scoring menu')
+    expect(
+      document
+        .querySelector('[aria-label="End Game"]')
+        ?.getAttribute('aria-disabled')
+    ).equals('true')
+  })
+})
+
+describe('the animation switch in settings', function () {
+  it('turns play animations off and back on', async function () {
+    await mount()
+    await menu('Settings')
+    await click('Toggle play animations')
+    expect(document.body.textContent).includes('Animate plays: Off')
+    expect((await scoringPreferences.read('12')).animations).equals(false)
+    await click('Toggle play animations')
+    expect(document.body.textContent).includes('Animate plays: On')
+    await click('Cancel')
   })
 })
