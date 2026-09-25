@@ -139,6 +139,13 @@ git -C "$REPO" archive HEAD \
   tsconfig.json tsconfig.app.json tsconfig.server.json \
   src2 |
   tar -x -C "$TARGET"
+# The web build's esbuild settings, which `src2/build.mjs` imports on any
+# branch that has the scoring field. Asked of the tree rather than assumed,
+# because a branch without the scoring field has no such file.
+if git -C "$REPO" cat-file -e HEAD:scripts/web-build-settings.mjs 2>/dev/null; then
+  git -C "$REPO" archive HEAD scripts/web-build-settings.mjs | tar -x -C "$TARGET"
+fi
+
 cd "$TARGET"
 npm ci --no-audit --fund=false
 npm run build

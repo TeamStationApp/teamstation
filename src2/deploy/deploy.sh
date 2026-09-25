@@ -141,6 +141,10 @@ git -C "$REPO" archive HEAD \
   src2 |
   tar -x -C "$TARGET"
 
+# The web build's esbuild settings, which `src2/build.mjs` imports from
+# `scripts/` so that the scoring tests' bundle compiles worklets the same way.
+git -C "$REPO" archive HEAD scripts/web-build-settings.mjs | tar -x -C "$TARGET"
+
 cd "$TARGET"
 npm ci --no-audit --fund=false
 npm run build        # tsc     src2/ → lib/
