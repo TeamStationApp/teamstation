@@ -1,7 +1,6 @@
 import React from 'react'
 import { Pressable, ScrollView, Text, View } from 'react-native'
 
-import { lstrings } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
 export interface PillTab<Id extends string = string> {
@@ -52,61 +51,24 @@ export function PillTabs<Id extends string = string>(
   props: PillTabsProps<Id>
 ): React.ReactElement {
   const { tabs, selected, onSelect, size = 'compact' } = props
-  const compact = size === 'compact'
   const theme = useTheme()
   const styles = getStyles(theme)
 
   const row = (
     <View style={styles.row}>
-      {tabs.map(tab => {
-        const isSelected = tab.id === selected
-        return (
-          <Pressable
-            key={tab.id}
-            accessibilityRole={tab.role ?? 'tab'}
-            accessibilityState={
-              tab.role === 'button' ? undefined : { selected: isSelected }
-            }
-            accessibilityLabel={tab.label}
-            onPress={() => {
-              onSelect(tab.id)
-            }}
-            style={({ pressed }) => [
-              styles.target,
-              pressed && !isSelected && styles.targetPressed
-            ]}
-          >
-            <View
-              style={[
-                styles.pill,
-                compact && styles.pillCompact,
-                isSelected ? styles.pillActive : styles.pillIdle
-              ]}
-            >
-              <Text
-                numberOfLines={1}
-                style={[
-                  styles.label,
-                  compact && styles.labelCompact,
-                  isSelected ? styles.labelActive : styles.labelIdle
-                ]}
-              >
-                {tab.label}
-              </Text>
-              {tab.badge != null && (
-                <Text
-                  style={[
-                    styles.badge,
-                    isSelected ? styles.labelActive : styles.badgeIdle
-                  ]}
-                >
-                  {tab.badge}
-                </Text>
-              )}
-            </View>
-          </Pressable>
-        )
-      })}
+      {tabs.map(tab => (
+        <PillButton
+          key={tab.id}
+          label={tab.label}
+          badge={tab.badge}
+          role={tab.role ?? 'tab'}
+          selected={tab.id === selected}
+          size={size}
+          onPress={() => {
+            onSelect(tab.id)
+          }}
+        />
+      ))}
     </View>
   )
 
@@ -123,32 +85,71 @@ export function PillTabs<Id extends string = string>(
   )
 }
 
-/** A single action with the exact compact Schedule pill appearance. */
-export function CompactPillButton({
+/** The shared pill used by camera-angle tabs and standalone actions. */
+export function PillButton({
+  label,
+  badge,
+  selected = true,
+  size = 'compact',
+  role = 'button',
   onPress,
   disabled = false,
-  accessibilityLabel
+  accessibilityLabel = label
 }: {
+  label: string
+  badge?: string
+  selected?: boolean
+  size?: 'regular' | 'compact'
+  role?: 'tab' | 'button'
   onPress?: () => void
   disabled?: boolean
-  accessibilityLabel: string
+  accessibilityLabel?: string
 }): React.ReactElement {
   const styles = getStyles(useTheme())
+  const compact = size === 'compact'
   return (
     <Pressable
-      accessibilityRole="button"
+      accessibilityRole={role}
+      accessibilityState={
+        role === 'tab' ? { selected, disabled } : { disabled }
+      }
       accessibilityLabel={accessibilityLabel}
       disabled={disabled}
       onPress={onPress}
-      style={[styles.target, { opacity: disabled ? 0.5 : 1 }]}
+      style={({ pressed }) => [
+        styles.target,
+        pressed && !selected && styles.targetPressed,
+        disabled && styles.disabled
+      ]}
     >
-      <View style={[styles.pill, styles.pillCompact, styles.pillActive]}>
+      <View
+        style={[
+          styles.pill,
+          compact && styles.pillCompact,
+          selected ? styles.pillActive : styles.pillIdle
+        ]}
+      >
         <Text
           selectable={false}
-          style={[styles.label, styles.labelCompact, styles.labelActive]}
+          numberOfLines={1}
+          style={[
+            styles.label,
+            compact && styles.labelCompact,
+            selected ? styles.labelActive : styles.labelIdle
+          ]}
         >
-          {lstrings.common_done}
+          {label}
         </Text>
+        {badge != null && (
+          <Text
+            style={[
+              styles.badge,
+              selected ? styles.labelActive : styles.badgeIdle
+            ]}
+          >
+            {badge}
+          </Text>
+        )}
       </View>
     </Pressable>
   )
@@ -172,6 +173,9 @@ const getStyles = cacheStyles((theme: Theme) => ({
   target: {
     minHeight: theme.rem(3),
     justifyContent: 'center'
+  },
+  disabled: {
+    opacity: 0.5
   },
   targetPressed: {
     opacity: 0.85

@@ -20,6 +20,7 @@ import { useTheme } from '../theme/ThemeContext'
 export function ScoringButton({
   label,
   text,
+  secondaryLabel,
   onPress,
   disabled = false,
   color,
@@ -31,6 +32,7 @@ export function ScoringButton({
 }: {
   label: string
   text?: string
+  secondaryLabel?: string
   onPress: () => void
   disabled?: boolean
   color?: string
@@ -114,6 +116,20 @@ export function ScoringButton({
         {submenu ? '‹  ' : ''}
         {text ?? label}
       </Text>
+      {secondaryLabel != null && (
+        <Text
+          selectable={false}
+          style={{
+            textAlign: 'center',
+            fontFamily: theme.semiBoldTextFont,
+            fontSize: 10.5,
+            lineHeight: 14,
+            color: theme.scoringDecisionText
+          }}
+        >
+          {secondaryLabel}
+        </Text>
+      )}
     </Pressable>
   )
 }
