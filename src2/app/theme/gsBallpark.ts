@@ -177,6 +177,8 @@ export const gsBallpark: Theme = {
   // The watch path's own names
   highlightRowBackground: palette.white,
   highlightRowActiveBackground: palette.cream,
+  scoringControlBackground: palette.cream,
+  scoringControlText: palette.forest,
   scoringPlayColor: palette.sage,
   videoBackgroundColor: palette.bark,
   gridGutterRem: 1,

@@ -55,7 +55,7 @@ async function freshGame() {
   await m.launchApp()
   url.searchParams.set('safariAcceptance', String(Date.now()))
   await m.openLink({ link: url.href, browser: true })
-  await visible('^Ball in Play$')
+  await visible('^Swing in Play$')
   if ((await nodes()).some(n => n.text === 'OK')) await tap('OK')
 }
 

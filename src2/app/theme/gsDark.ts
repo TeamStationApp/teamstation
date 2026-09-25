@@ -145,6 +145,8 @@ export const gsDark: Theme = {
   // The watch path
   highlightRowBackground: palette.gsDarkOlive,
   highlightRowActiveBackground: palette.gsMediumOlive,
+  scoringControlBackground: palette.gsBeige,
+  scoringControlText: palette.gsVeryDarkGreen,
   scoringPlayColor: palette.gold,
   videoBackgroundColor: palette.black,
   gridGutterRem: 0.75,

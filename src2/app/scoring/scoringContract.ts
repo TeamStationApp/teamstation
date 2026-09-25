@@ -17,6 +17,7 @@ export const outcomeEvents = {
   'Ball Caught': 'field_out',
   'Batter Interference': 'field_out'
 } as const
+export type ContactKind = 'swing' | 'bunt'
 export type Outcome = keyof typeof outcomeEvents
 
 export const moreEvents = {

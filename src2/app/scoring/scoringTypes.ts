@@ -2,7 +2,12 @@ import type { GroundPoint } from '../field/fieldModel'
 import type { HomeRunKind } from '../field/stadiumBoundary'
 import type { MoreAction, MoreInput } from './moreActions'
 import type { PlayerIdentityMap } from './playerIdentity'
-import type { Outcome, PlayerRef, ScoringPlay } from './scoringContract'
+import type {
+  ContactKind,
+  Outcome,
+  PlayerRef,
+  ScoringPlay
+} from './scoringContract'
 import type { OverrideDraft } from './scoringEdits'
 import type { PresentationSequence } from './scoringPresentation'
 
@@ -104,6 +109,7 @@ export interface Movement {
   resolved?: boolean
 }
 export interface PendingPlay {
+  contactKind?: ContactKind
   automaticAward?: boolean
   errorPending?: boolean
   homeRunKind?: HomeRunKind
@@ -247,7 +253,7 @@ export type ScoringEvent =
       runnerPoint?: GroundPoint
       generation: number
     }
-  | { type: 'OUTCOME'; outcome: Outcome }
+  | { type: 'OUTCOME'; outcome: Outcome; contactKind?: ContactKind }
   | {
       type: 'FIELDER'
       id: number

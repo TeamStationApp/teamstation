@@ -84,6 +84,7 @@ export const asEstimatedGumboPlay = asObject({
       version: asValue('estimated-v1' as const),
       outcome: asString,
       outSubtype: asOptional(asString),
+      contactKind: asOptional(asValue('swing' as const, 'bunt' as const)),
       foulCaught: asOptional(asBoolean),
       homeRunKind: asOptional(
         asValue('out-of-park' as const, 'in-park' as const)

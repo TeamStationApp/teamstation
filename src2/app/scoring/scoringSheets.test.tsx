@@ -329,7 +329,7 @@ describe('scoring slide-up sheets', function () {
   })
   it('enters fielder selection from a tapped outcome and restores ready with Undo', async function () {
     await mount()
-    await click('Ball in Play')
+    await click('Swing in Play')
     await click('Single')
     expect(document.body.textContent).includes(
       'Tap or drag a player to where the ball was fielded.'

@@ -25,6 +25,7 @@ export function ScoringButton({
   color,
   row = false,
   decision = false,
+  control = false,
   menuText = false,
   upChevrons = false,
   shape,
@@ -38,6 +39,7 @@ export function ScoringButton({
   color?: string
   row?: boolean
   decision?: boolean
+  control?: boolean
   menuText?: boolean
   upChevrons?: boolean
   shape?: 'pill' | 'circle'
@@ -75,7 +77,7 @@ export function ScoringButton({
         shadowRadius: row ? 0 : pressed ? 4 : 8,
         shadowOffset: { width: 0, height: pressed ? 1 : 3 },
         elevation: row ? 0 : pressed ? 1 : 3,
-        minHeight: decision ? 66 : 44,
+        minHeight: decision ? 66 : control ? 52 : 44,
         flexDirection: submenuRight ? 'row' : undefined,
         alignItems: submenuRight ? 'center' : undefined,
         padding: 10,
@@ -91,11 +93,13 @@ export function ScoringButton({
         borderBottomColor: theme.defaultBorderColor,
         backgroundColor:
           color ??
-          (row
-            ? (pressed || active) && !disabled
-              ? theme.scoringMenuActiveBackground
-              : theme.backgroundColor
-            : theme.primaryButtonColor),
+          (control
+            ? theme.scoringControlBackground
+            : row
+              ? (pressed || active) && !disabled
+                ? theme.scoringMenuActiveBackground
+                : theme.backgroundColor
+              : theme.primaryButtonColor),
         opacity: disabled ? 0.4 : 1
       })}
       onPress={onPress}
@@ -110,7 +114,7 @@ export function ScoringButton({
             top: 4,
             fontSize: 15,
             lineHeight: 9,
-            color: theme.buttonTextColor
+            color: control ? theme.scoringControlText : theme.buttonTextColor
           }}
         >
           {'⌃\n⌃\n⌃'}
@@ -122,8 +126,9 @@ export function ScoringButton({
           fontFamily: theme.semiBoldTextFont,
           fontSize: decision ? 21 : menuText ? 16.8 : undefined,
           fontWeight: decision || menuText ? '700' : undefined,
-          color:
-            color != null
+          color: control
+            ? theme.scoringControlText
+            : color != null
               ? theme.scoringDecisionText
               : row
                 ? active && !disabled

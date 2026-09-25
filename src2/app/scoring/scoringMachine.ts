@@ -370,7 +370,8 @@ export function scoringReducer(
   }
   const runnerResult = runnerTransition(state, event)
   if (runnerResult != null) return runnerResult
-  if (event.type === 'OUTCOME') return chooseOutcome(state, event.outcome)
+  if (event.type === 'OUTCOME')
+    return chooseOutcome(state, event.outcome, event.contactKind)
   if (event.type === 'LANDING')
     return placeLanding(
       state,

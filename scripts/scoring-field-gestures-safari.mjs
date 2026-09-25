@@ -129,7 +129,7 @@ async function freshGame() {
   await m.launchApp()
   url.searchParams.set('safariAcceptance', String(Date.now()))
   await m.openLink({ link: url.href, browser: true })
-  await visible('^Ball in Play$')
+  await visible('^Swing in Play$')
   if ((await nodes()).some(n => n.text === 'OK')) await tap('OK')
 }
 
@@ -162,7 +162,7 @@ try {
     ? []
     : [false, true]) {
     await freshGame()
-    await tap('Ball in Play')
+    await tap('Swing in Play')
     await tap('Home Run')
     await visible('Home run type: In-the-park Home Run')
     const g = await geometry()
@@ -204,7 +204,7 @@ try {
     await shot(outside ? 'stands-finished' : 'in-park-finished')
   }
   await freshGame()
-  await tap('Ball in Play')
+  await tap('Swing in Play')
   await tap('Batter Out')
   await tap('Batter Interference')
   await visible('Tap or drag a player to where the ball was fielded')

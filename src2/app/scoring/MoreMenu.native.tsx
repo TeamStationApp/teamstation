@@ -45,6 +45,7 @@ export function MoreMenu({
     <>
       <ScoringButton
         label="More"
+        control
         upChevrons
         text={'⋯\nMore'}
         disabled={disabled}
@@ -60,16 +61,18 @@ export function MoreMenu({
             <View style={{ width: '50%' }}>
               {MORE_GROUPS.map(group => (
                 <React.Fragment key={group.label}>
-                  <Text
-                    style={{
-                      color: theme.primaryTextColor,
-                      fontFamily: theme.semiBoldTextFont,
-                      fontSize: 14.4,
-                      fontWeight: '700'
-                    }}
-                  >
-                    {group.label}
-                  </Text>
+                  {group.label === 'This pitch' && (
+                    <Text
+                      style={{
+                        color: theme.primaryTextColor,
+                        fontFamily: theme.semiBoldTextFont,
+                        fontSize: 14.4,
+                        fontWeight: '700'
+                      }}
+                    >
+                      {group.label}
+                    </Text>
+                  )}
                   {group.actions
                     .filter(
                       action =>

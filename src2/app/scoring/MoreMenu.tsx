@@ -172,7 +172,7 @@ export function MoreMenu({
     <div
       style={{
         flex: 1,
-        maxWidth: '20%',
+        maxWidth: '25%',
         userSelect: 'none',
         WebkitUserSelect: 'none',
         WebkitTouchCallout: 'none',
@@ -194,9 +194,9 @@ export function MoreMenu({
           minHeight: 52,
           border: 0,
           borderRadius: theme.rem(theme.radiusRem),
-          background: theme.primaryButtonColor,
+          background: theme.scoringControlBackground,
           boxShadow: `0 3px 8px ${theme.buttonShadowColor}`,
-          color: theme.buttonTextColor,
+          color: theme.scoringControlText,
           fontFamily: theme.semiBoldTextFont,
           fontSize: 11,
           fontWeight: 600,
@@ -220,27 +220,47 @@ export function MoreMenu({
         onPointerMove={event => {
           const active = gesture.current
           if (disabled || active == null) return
-          if (active.y - event.clientY > 8) {
+          if (active.escaped) return
+          if (!active.dragged && active.y - event.clientY > 8) {
             active.dragged = true
             show()
           }
           if (!active.dragged) return
           const parentBounds = primaryPanel.current?.getBoundingClientRect()
           const childBounds = childPanel.current?.getBoundingClientRect()
-          const right = Math.max(
-            parentBounds?.right ?? 0,
-            childBounds?.right ?? 0
-          )
+          const inRect = (r: DOMRect | undefined): boolean =>
+            r != null &&
+            event.clientX >= r.left &&
+            event.clientX <= r.right &&
+            event.clientY >= r.top &&
+            event.clientY <= r.bottom
+          const keyUnderPointer = hit(event.clientX, event.clientY)
+          const bridge =
+            parentBounds != null &&
+            childBounds != null &&
+            event.clientX >= parentBounds.right &&
+            event.clientX <= childBounds.left &&
+            event.clientY >= childBounds.top &&
+            event.clientY <= childBounds.bottom
+          const approach =
+            parentBounds != null &&
+            event.clientX >= parentBounds.left &&
+            event.clientX <= parentBounds.right &&
+            event.clientY > parentBounds.bottom &&
+            event.clientY <= active.y
           if (
-            right > 0 &&
-            event.clientX > right &&
-            hit(event.clientX, event.clientY) == null
+            parentBounds != null &&
+            parentBounds.width > 0 &&
+            keyUnderPointer == null &&
+            !inRect(parentBounds) &&
+            !inRect(childBounds) &&
+            !bridge &&
+            !approach
           ) {
             active.escaped = true
-            setHover(undefined)
+            close()
             return
           }
-          if (active.escaped) return
           const key = hit(event.clientX, event.clientY)
           setHover(key)
           if (key === 'Put Batter on Base') setChild(true)
@@ -256,6 +276,7 @@ export function MoreMenu({
             skipClick.current = true
             const key = hit(event.clientX, event.clientY)
             if (!active.escaped && key != null) choose(key)
+            else close()
           }
         }}
         onPointerCancel={() => {
@@ -332,16 +353,18 @@ export function MoreMenu({
             >
               {MORE_GROUPS.map(group => (
                 <React.Fragment key={group.label}>
-                  <div
-                    style={{
-                      padding: '8px 12px',
-                      color: theme.primaryTextColor,
-                      fontSize: 14.4,
-                      fontWeight: 700
-                    }}
-                  >
-                    {group.label}
-                  </div>
+                  {group.label === 'This pitch' && (
+                    <div
+                      style={{
+                        padding: '8px 12px',
+                        color: theme.primaryTextColor,
+                        fontSize: 14.4,
+                        fontWeight: 700
+                      }}
+                    >
+                      {group.label}
+                    </div>
+                  )}
                   {group.actions
                     .filter(
                       action =>

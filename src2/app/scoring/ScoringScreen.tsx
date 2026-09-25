@@ -26,7 +26,7 @@ import { allowedAngle, trajectoryLabel } from './battedBall'
 import { battedBallField, fieldStageInstruction } from './battedBallField'
 import { ErrorCreditSheet } from './ErrorCreditSheet'
 import { MoreMenu } from './MoreMenu'
-import { OutcomePicker } from './OutcomePicker'
+import { OutcomeControls } from './OutcomeControls'
 import { OverridesEditor } from './OverridesEditor'
 import { RosterEditor } from './RosterEditor'
 import { RunnerControls } from './RunnerControls'
@@ -569,7 +569,7 @@ function ScoringSession(props: {
         />
       }
       ballInPlayControl={
-        <OutcomePicker
+        <OutcomeControls
           hasRunners={baseIds(session).some(id => id != null)}
           disabled={
             !actionsAllowed ||
@@ -579,11 +579,11 @@ function ScoringSession(props: {
             state.moreDraft != null
           }
           onActive={setOutcomeMenu}
-          onChoose={outcome => {
+          onChoose={(outcome, contactKind) => {
             if (!actionsAllowed || menu || sheet != null || moreOpen) return
             scoringAudio.unlock()
             setHint(false)
-            dispatch({ type: 'OUTCOME', outcome })
+            dispatch({ type: 'OUTCOME', outcome, contactKind })
           }}
         />
       }
@@ -755,6 +755,7 @@ function ScoringSession(props: {
               <ScoringButton
                 key={label}
                 row
+                menuText
                 label={label}
                 disabled={
                   index === 3

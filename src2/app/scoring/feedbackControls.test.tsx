@@ -91,7 +91,7 @@ describe('feedback control locking and reversible guides', () => {
       try {
         await render(false)
         const trigger = host.querySelector<HTMLElement>(
-          `[aria-label="${menu === 'outcomes' ? 'Ball in Play' : 'More'}"]`
+          `[aria-label="${menu === 'outcomes' ? 'Swing in Play' : 'More'}"]`
         )!
         await act(async () => {
           trigger.click()

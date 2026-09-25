@@ -3,6 +3,7 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
+import { OutcomeControls } from './OutcomeControls'
 import { OutcomePicker, PRIMARY_OUTCOMES } from './OutcomePicker'
 import { OutcomePicker as NativePicker } from './OutcomePicker.native'
 let root: Root | undefined
@@ -42,7 +43,7 @@ describe('ball-in-play outcome menu', function () {
     await mount(outcome => {
       chosen.push(outcome)
     })
-    await click('Ball in Play')
+    await click('Swing in Play')
     expect(
       Array.from(document.querySelectorAll('[data-outcome]')).map(node =>
         node.getAttribute('aria-label')
@@ -73,17 +74,17 @@ describe('ball-in-play outcome menu', function () {
       'Error',
       'Batter Interference'
     ]) {
-      await click('Ball in Play')
+      await click('Swing in Play')
       if (label === 'Batter Interference') await click('Batter Out')
       await click(label)
     }
     expect(chosen).has.length(8)
-    await click('Ball in Play')
-    await click('Ball in Play')
+    await click('Swing in Play')
+    await click('Swing in Play')
     expect(document.querySelector('[role="menu"]')).equals(null)
-    await click('Ball in Play')
+    await click('Swing in Play')
     await act(async () => {
-      button('Ball in Play').dispatchEvent(
+      button('Swing in Play').dispatchEvent(
         new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
       )
     })
@@ -112,7 +113,7 @@ describe('ball-in-play outcome menu', function () {
           clientY: y
         })
         Object.defineProperty(event, 'pointerId', { value: 1 })
-        button('Ball in Play').dispatchEvent(event)
+        button('Swing in Play').dispatchEvent(event)
       })
     }
     try {
@@ -139,7 +140,7 @@ describe('ball-in-play outcome menu', function () {
       await pointer('pointerup', 200, 680)
       expect(chosen).deep.equals(['Batter Interference'])
       // Consume the browser's post-drag click; it must not reopen the menu.
-      await click('Ball in Play')
+      await click('Swing in Play')
       expect(document.querySelector('[role="menu"]')).equals(null)
       hit = []
       await pointer('pointerdown', 900, 800)
@@ -159,11 +160,91 @@ describe('ball-in-play outcome menu', function () {
           />
         )
       })
-      expect(button('Ball in Play').getAttribute('aria-disabled')).equals(
+      expect(button('Swing in Play').getAttribute('aria-disabled')).equals(
+        'true'
+      )
+      await act(async () => {
+        root!.render(
+          <NativePicker
+            contactKind="bunt"
+            disabled
+            onChoose={() => undefined}
+            onActive={() => undefined}
+          />
+        )
+      })
+      expect(button('Bunt in Play').getAttribute('aria-disabled')).equals(
         'true'
       )
     } finally {
       document.elementsFromPoint = hitTest
     }
+  })
+})
+
+describe('swing and bunt paired controls', () => {
+  it('owns one menu at a time, filters bunt/FC, and delivers contact identity', async () => {
+    const node = document.createElement('div')
+    document.body.appendChild(node)
+    root = createRoot(node)
+    const choices: string[] = []
+    const active: boolean[] = []
+    const render = async (
+      disabled: boolean,
+      hasRunners = false
+    ): Promise<void> => {
+      await act(async () => {
+        root!.render(
+          <OutcomeControls
+            disabled={disabled}
+            hasRunners={hasRunners}
+            onActive={v => {
+              active.push(v)
+            }}
+            onChoose={(outcome, kind) => {
+              choices.push(`${kind}:${outcome}`)
+            }}
+          />
+        )
+      })
+    }
+    await render(false)
+    for (const kind of ['Bunt', 'Swing']) {
+      await click(`${kind} in Play`)
+      expect(button(`${kind} in Play outcomes`)).not.equals(null)
+      expect(
+        (
+          button(
+            `${kind === 'Bunt' ? 'Swing' : 'Bunt'} in Play`
+          ) as HTMLButtonElement
+        ).disabled
+      ).equals(true)
+      expect(document.querySelector('[aria-label="Home Run"]') != null).equals(
+        kind === 'Swing'
+      )
+      expect(document.querySelector('[aria-label="Fielder\'s Choice"]')).equals(
+        null
+      )
+      await click('Single')
+      expect(active.at(-1)).equals(false)
+    }
+    expect(choices).deep.equals(['bunt:Single', 'swing:Single'])
+    await render(false, true)
+    await click('Bunt in Play')
+    await click("Fielder's Choice")
+    for (const outcome of ['Throw Out', 'Ball Caught', 'Batter Interference']) {
+      await click('Bunt in Play')
+      await click('Batter Out')
+      await click(outcome)
+    }
+    await click('Bunt in Play')
+    await render(true)
+    expect(document.querySelector('[role="menu"]')).equals(null)
+    expect(active.at(-1)).equals(false)
+    expect((button('Bunt in Play') as HTMLButtonElement).disabled).equals(true)
+    await render(false)
+    await click('Swing in Play')
+    await click('Home Run')
+    expect(choices.at(-1)).equals('swing:Home Run')
   })
 })
