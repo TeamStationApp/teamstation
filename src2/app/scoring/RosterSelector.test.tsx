@@ -108,4 +108,87 @@ describe('roster selector', function () {
       expect(tab('Home').getAttribute('aria-selected')).equals('true')
     }
   })
+
+  it('shows captions in their own row above the pill and names tabs apart from their text', async function () {
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    const changes: number[] = []
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <RosterSelector
+            labels={['Owls', 'Hawks']}
+            captions={['Away', 'Home']}
+            accessibilityLabels={['Away Team', 'Home Team']}
+            value={0}
+            onChange={value => changes.push(value)}
+          />
+        </ThemeProvider>
+      )
+    })
+    const captions = host.querySelector(
+      '[data-testid="Roster selector captions"]'
+    )!
+    expect(captions.textContent).equals('AwayHome')
+    const cells = Array.from(captions.children) as HTMLElement[]
+    expect(cells.map(cell => cell.style.width)).deep.equals(['50%', '50%'])
+    // The caption row comes before the pill, outside it.
+    const away = host.querySelector('[aria-label="Away Team"]')!
+    expect(
+      captions.compareDocumentPosition(away) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).not.equals(0)
+    expect(captions.contains(away)).equals(false)
+    expect(away.textContent).equals('Owls')
+    expect(host.querySelector('[aria-label="Home Team"]')!.textContent).equals(
+      'Hawks'
+    )
+    expect(host.querySelector('[aria-label="Owls"]')).equals(null)
+    await act(async () => {
+      host.querySelector<HTMLElement>('[aria-label="Home Team"]')!.click()
+    })
+    expect(changes).deep.equals([1])
+  })
+
+  for (const name of ['Owls', ''])
+    it(`keeps two tabs with the same label ${JSON.stringify(name)} apart`, async function () {
+      host = document.createElement('div')
+      document.body.appendChild(host)
+      root = createRoot(host)
+      const warnings: unknown[] = []
+      const error = console.error
+      console.error = (...args: unknown[]) => {
+        warnings.push(args)
+      }
+      const changes: number[] = []
+      try {
+        await act(async () => {
+          root!.render(
+            <ThemeProvider>
+              <RosterSelector
+                labels={[name, name]}
+                captions={['Away', 'Home']}
+                accessibilityLabels={['Away Team', 'Home Team']}
+                value={0}
+                onChange={value => changes.push(value)}
+              />
+            </ThemeProvider>
+          )
+        })
+        const tabs = host.querySelectorAll('[role="tab"]')
+        expect(tabs).length(2)
+        await act(async () => {
+          host.querySelector<HTMLElement>('[aria-label="Home Team"]')!.click()
+        })
+        await act(async () => {
+          host.querySelector<HTMLElement>('[aria-label="Away Team"]')!.click()
+        })
+        expect(changes).deep.equals([1, 0])
+        expect(
+          warnings.filter(args => String(args).includes('same key'))
+        ).deep.equals([])
+      } finally {
+        console.error = error
+      }
+    })
 })

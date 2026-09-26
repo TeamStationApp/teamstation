@@ -122,21 +122,27 @@ export function RosterEditor({
   return (
     <View style={{ flex: 1, minHeight: 0, gap: 8 }}>
       <ScrollView
-        style={{ flexGrow: 0, maxHeight: height < 500 ? 100 : 230 }}
+        testID="Roster editor top"
+        // Short landscape shows both pills whole and no more: captions 17,
+        // gap 4, compact team pill 40, gap 4, Set Lineup 36 with 6 above and
+        // below. The instructions scroll under them.
+        style={{ flexGrow: 0, maxHeight: height < 500 ? 113 : 230 }}
         contentContainerStyle={{ gap: 4 }}
         keyboardShouldPersistTaps="handled"
       >
         <RosterSelector
-          fitContent
-          labels={['Away Team', 'Home Team']}
+          labels={[
+            draft.gameData.teams.away.name,
+            draft.gameData.teams.home.name
+          ]}
+          captions={['Away', 'Home']}
+          compact={height < 500}
+          accessibilityLabels={['Away Team', 'Home Team']}
           value={side === 'away' ? 0 : 1}
           onChange={index => {
             setSide(index === 0 ? 'away' : 'home')
           }}
         />
-        <Text style={{ ...text, textAlign: 'center', fontSize: 20 }}>
-          {draft.gameData.teams[side].name}
-        </Text>
         <RosterSelector
           fitContent
           labels={['Set Lineup', 'Set Defense']}
