@@ -930,6 +930,49 @@ describe('posting and reading plays', function () {
     expect(linescore.away.r).equals(5)
   })
 
+  it("stores older imports' own names as the listed codes (U26)", async function () {
+    const legacyId = makeId('game')
+    await db!
+      .insertInto('games')
+      .values({
+        id: legacyId,
+        home_team_id: home,
+        away_team_id: away,
+        start_at: new Date()
+      })
+      .execute()
+    const codes = [
+      'runner_out',
+      'batter_out',
+      'catcher_s_interference',
+      'fc_double_play',
+      'offensive_interference',
+      'batter_put_on_base',
+      'inning_changed_by_scorekeeper'
+    ]
+    const posted = await ask(`/games/${legacyId}/events`, 'POST', {
+      plays: codes.map((eventType, atBatIndex) =>
+        play({ atBatIndex, awayScore: 0, homeScore: 0, eventType })
+      )
+    })
+    expect(posted.status).equals(200)
+    const rows = await db!
+      .selectFrom('events')
+      .select('eventType')
+      .where('gameId', '=', legacyId)
+      .orderBy('atBatIndex')
+      .execute()
+    expect(rows.map(row => row.eventType)).deep.equals([
+      'other_out',
+      'field_out',
+      'catcher_interf',
+      'double_play',
+      'batter_interference',
+      'gs_manual_placement',
+      'final_score'
+    ])
+  })
+
   it('keeps the last score a play carried when the last play carries none', async function () {
     const posted = await ask(`/games/${unscoredId}/events`, 'POST', {
       plays: [

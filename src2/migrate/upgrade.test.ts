@@ -7,6 +7,7 @@ import { migrations } from './migrations'
 import { migration037GameStatsState } from './migrations/037gameStatsState'
 import { migration038CurrentPlay } from './migrations/038currentPlay'
 import { migration039GumboEventTypes } from './migrations/039gumboEventTypes'
+import { migration040LegacyEventTypes } from './migrations/040legacyEventTypes'
 import { migrateDown, migrateUp } from './runner'
 import { testDatabaseUrl } from './testDatabase'
 
@@ -875,5 +876,153 @@ describe('migration 039gumboEventTypes', function () {
     await migrateUp(pool, through039)
     expect(await eventTypes()).deep.equals([...listed, 'single'])
     expect(await hasSh()).equals(true)
+  })
+})
+
+const through040 = migrations.filter(migration => migration.name < '041')
+
+/**
+ * Migration 040 renames the imported codes a retired import parser stored as
+ * results, logs each row it renamed, and puts exactly those back when rolled
+ * back (U26).
+ */
+describe('migration 040legacyEventTypes', function () {
+  this.timeout(60000)
+
+  const scratchName = `gamestation_upgrade_040_${Date.now()}`
+  const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
+  const renames: Array<[legacy: string, listed: string]> = [
+    ['runner_out', 'other_out'],
+    ['batter_out', 'field_out'],
+    ['catcher_s_interference', 'catcher_interf'],
+    ['fc_double_play', 'double_play'],
+    ['offensive_interference', 'batter_interference'],
+    ['batter_put_on_base', 'gs_manual_placement'],
+    ['inning_changed_by_scorekeeper', 'final_score']
+  ]
+  // Genuine plays already carrying a new code, which 040 never touches.
+  const genuine = ['other_out', 'field_out']
+
+  let admin: Pool
+  let pool: Pool
+  /** The stored plays before 040. */
+  let original: string[]
+
+  const eventTypes = async (): Promise<string[]> =>
+    (
+      await pool.query<{ eventType: string }>(
+        `select "eventType" from events where "gameId" = 'gam_040'
+         order by "atBatIndex"`
+      )
+    ).rows.map(row => row.eventType)
+  /** Each stored play as Postgres writes it, to compare byte for byte. */
+  const stored = async (): Promise<string[]> =>
+    (
+      await pool.query<{ gumbo: string }>(
+        `select gumbo::text as gumbo from events where "gameId" = 'gam_040'
+         order by "atBatIndex"`
+      )
+    ).rows.map(row => row.gumbo)
+  const logs = async (): Promise<unknown[]> =>
+    (
+      await pool.query<{ log: unknown }>(
+        `select jsonb_build_array(
+           gumbo->'gameStation', gumbo->'credits', gumbo->'runners') as log
+         from events where "gameId" = 'gam_040' order by "atBatIndex"`
+      )
+    ).rows.map(row => row.log)
+  const hasLog = async (): Promise<boolean> =>
+    (await pool.query(`select to_regclass('legacy_event_type_renames') as t`))
+      .rows[0].t != null
+
+  before(async function () {
+    admin = new Pool({ connectionString: adminUrl })
+    await admin.query(`create database ${scratchName}`)
+    pool = new Pool({ connectionString: scratchUrl })
+    await migrateUp(pool, through039)
+    await pool.query(
+      `insert into teams (id, name) values
+         ('tem_home040', 'Home'), ('tem_away040', 'Away')`
+    )
+    await pool.query(
+      `insert into games (id, home_team_id, away_team_id, start_at)
+       values ('gam_040', 'tem_home040', 'tem_away040', $1)`,
+      [PLAYED]
+    )
+    const codes = [...renames.map(([legacy]) => legacy), ...genuine]
+    for (const [index, eventType] of codes.entries()) {
+      const gumbo = {
+        about: { atBatIndex: index, inning: 1, halfInning: 'top' },
+        result: { eventType, awayScore: 0, homeScore: 0 },
+        runners: [{ movement: { start: null, end: null }, details: {} }],
+        credits: [{ eventType, label: `${eventType}: Ada`, credit: {} }],
+        gameStation: { actions: [{ type: 'result', eventType }] }
+      }
+      await pool.query(
+        `insert into events (id, "gameId", "battingTeamId", gumbo)
+         values ($1, 'gam_040', 'tem_away040', $2::jsonb)`,
+        [`evt_040_${index}`, JSON.stringify(gumbo)]
+      )
+    }
+    original = await stored()
+  })
+
+  after(async function () {
+    if (pool != null) await pool.end()
+    if (admin != null) {
+      await admin.query(`drop database if exists ${scratchName}`)
+      await admin.end()
+    }
+  })
+
+  it('renames exactly the listed result codes and logs each row', async function () {
+    const beforeLogs = await logs()
+    const applied = await migrateUp(pool, through040)
+    expect(applied.applied).deep.equals([migration040LegacyEventTypes.name])
+
+    expect(await eventTypes()).deep.equals([
+      ...renames.map(([, listed]) => listed),
+      ...genuine
+    ])
+    const logged = await pool.query(
+      `select event_id, old_event_type, new_event_type
+       from legacy_event_type_renames order by event_id`
+    )
+    expect(logged.rows).deep.equals(
+      renames.map(([legacy, listed], index) => ({
+        event_id: `evt_040_${index}`,
+        old_event_type: legacy,
+        new_event_type: listed
+      }))
+    )
+    // Only the result changes: the action log, credits and runners stay.
+    expect(await logs()).deep.equals(beforeLogs)
+    expect((await stored()).slice(renames.length)).deep.equals(
+      original.slice(renames.length)
+    )
+  })
+
+  it('puts back exactly the rows it renamed, byte for byte, when rolled back', async function () {
+    const rolled = await migrateDown(pool, through040, 1)
+    expect(rolled).deep.equals([migration040LegacyEventTypes.name])
+    expect(await hasLog()).equals(false)
+    // Every play, the genuine other_out and field_out among them, as it was.
+    expect(await stored()).deep.equals(original)
+  })
+
+  it('leaves a play whose code changed after the rename when rolled back', async function () {
+    await migrateUp(pool, through040)
+    await pool.query(
+      `update events
+       set gumbo = jsonb_set(gumbo, '{result,eventType}', '"single"')
+       where id = 'evt_040_1'`
+    )
+    await migrateDown(pool, through040, 1)
+    const types = await eventTypes()
+    expect(types[1]).equals('single')
+    expect(types.slice(2)).deep.equals([
+      ...renames.slice(2).map(([legacy]) => legacy),
+      ...genuine
+    ])
   })
 })
