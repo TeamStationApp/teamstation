@@ -21,6 +21,7 @@ public struct DirectorRootView: View {
           case .cameras: SourceSelectionView()
           case .recordings: RecordingsView()
           case let .cameraControl(sourceIndex): CameraControlCover(sourceIndex: sourceIndex)
+          case let .digitalZoom(sourceIndex): DigitalZoomCover(sourceIndex: sourceIndex)
           }
         }
         .environment(environment)

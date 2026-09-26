@@ -1,4 +1,5 @@
 import Foundation
+import CameramanCore
 import DirectorCore
 import DirectorSources
 
@@ -32,6 +33,10 @@ public struct SourceSelection: Identifiable, Hashable, Sendable, Codable {
   /// never a media session. Set on the row that has the picture (an NDI capture of a phone's HDMI,
   /// say); the phone it names is taken off the grid and listed directly under this row.
   public var linkedControlID: SourceID?
+  /// Director's own zoom on this camera's picture, 1 for none, up to
+  /// `SourceSelectionRules.maximumDigitalZoom`. Cropped from what the camera sends, so it reaches
+  /// the tile and the programme but not the camera's own recording.
+  public var digitalZoom: Double
 
   public init(
     id: SourceID,
@@ -43,7 +48,8 @@ public struct SourceSelection: Identifiable, Hashable, Sendable, Codable {
     inputGain: Double = SourceSelectionRules.defaultInputGain,
     sourceIndex: Int? = nil,
     isPresent: Bool = true,
-    linkedControlID: SourceID? = nil
+    linkedControlID: SourceID? = nil,
+    digitalZoom: Double = 1
   ) {
     self.id = id
     self.kind = kind
@@ -55,11 +61,12 @@ public struct SourceSelection: Identifiable, Hashable, Sendable, Codable {
     self.sourceIndex = sourceIndex
     self.isPresent = isPresent
     self.linkedControlID = linkedControlID
+    self.digitalZoom = SourceSelectionRules.clampedDigitalZoom(digitalZoom)
   }
 
   enum CodingKeys: String, CodingKey {
     case id, kind, advertisedName, customName, isEnabled, usesAudio, inputGain, sourceIndex, isPresent
-    case tileIndex, linkedControlID
+    case tileIndex, linkedControlID, digitalZoom
   }
 
   /// Selections saved before `usesAudio` existed decode with audio on — not off, as a camera
@@ -80,7 +87,8 @@ public struct SourceSelection: Identifiable, Hashable, Sendable, Codable {
       sourceIndex: try container.decodeIfPresent(Int.self, forKey: .sourceIndex)
         ?? container.decodeIfPresent(Int.self, forKey: .tileIndex),
       isPresent: try container.decodeIfPresent(Bool.self, forKey: .isPresent) ?? true,
-      linkedControlID: try container.decodeIfPresent(SourceID.self, forKey: .linkedControlID)
+      linkedControlID: try container.decodeIfPresent(SourceID.self, forKey: .linkedControlID),
+      digitalZoom: try container.decodeIfPresent(Double.self, forKey: .digitalZoom) ?? 1
     )
   }
 
@@ -97,6 +105,7 @@ public struct SourceSelection: Identifiable, Hashable, Sendable, Codable {
     try container.encodeIfPresent(sourceIndex, forKey: .tileIndex)
     try container.encode(isPresent, forKey: .isPresent)
     try container.encodeIfPresent(linkedControlID, forKey: .linkedControlID)
+    try container.encode(digitalZoom, forKey: .digitalZoom)
   }
 
   public var displayName: String {
@@ -385,6 +394,23 @@ public enum SourceSelectionRules {
   /// unscaled camera; 100 percent is 2.0 and will clip a full-scale source.
   public static func mixMultiplier(forGain gain: Double) -> Double {
     clampedInputGain(gain) * 2
+  }
+
+  /// Director's zoom stops at the same 2x on top that Cameraman gives a phone.
+  public static let maximumDigitalZoom: Double = ZoomMapping.softwareZoomExtension
+
+  public static func clampedDigitalZoom(_ value: Double) -> Double {
+    guard value.isFinite else { return 1 }
+    return min(maximumDigitalZoom, max(1, value))
+  }
+
+  public static func setDigitalZoom(
+    _ zoom: Double,
+    for id: SourceID,
+    in selections: inout [SourceSelection]
+  ) {
+    guard let position = selections.firstIndex(where: { $0.id == id }) else { return }
+    selections[position].digitalZoom = clampedDigitalZoom(zoom)
   }
 
   public static func setInputGain(

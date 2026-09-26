@@ -44,6 +44,8 @@ public enum ControlCommand: Sendable, Equatable {
   case setSubnetScan(subnet: String?, on: Bool?)
   /// Opens or closes the Cameraman control screen on a 0-based source.
   case cameraControl(source: Int, open: Bool)
+  /// Director's own zoom on a 0-based source's picture, 1 for none.
+  case digitalZoom(source: Int, zoom: Double)
   case advanceClock(seconds: TimeInterval)
   case probeEncoders(maximum: Int, framesPerSession: Int, width: Int, height: Int, fps: Int)
   case probeThroughput(sessions: Int, seconds: Double, height: Int, hevc: Bool, fps: Int)
@@ -182,6 +184,11 @@ public enum ControlChannel {
     case "camera-control", "cameracontrol":
       guard let source = Self.slot(query) else { return nil }
       return .cameraControl(source: source - 1, open: LaunchConfiguration.boolean(query["open"]) ?? true)
+    case "digital-zoom", "digitalzoom":
+      guard let source = Self.slot(query),
+            let zoom = query["zoom"].flatMap({ Double($0) }), zoom.isFinite
+      else { return nil }
+      return .digitalZoom(source: source - 1, zoom: zoom)
     case "advance-clock", "advanceclock":
       guard let seconds = query["seconds"].flatMap({ Double($0) }) else { return nil }
       return .advanceClock(seconds: seconds)
