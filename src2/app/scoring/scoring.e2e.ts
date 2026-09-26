@@ -4480,6 +4480,86 @@ describe('scoring browser', function () {
         await page.close()
       }
     })
+  it('lists the roster by jersey number with players who have none last', async function () {
+    const { page } = await open('/games/g1/score')
+    try {
+      await page.setViewport({ width: 390, height: 844 })
+      await click(page, 'Open scoring menu')
+      await click(page, 'Set Team Rosters')
+      const create = async (
+        first: string,
+        last: string,
+        jersey: string
+      ): Promise<void> => {
+        await click(page, 'Create Player')
+        await page.waitForFunction(
+          () =>
+            document.activeElement!.getAttribute('aria-label') === 'First Name'
+        )
+        await page.locator('[aria-label="First Name"]').fill(first)
+        await page.locator('[aria-label="Last Name"]').fill(last)
+        if (jersey !== '')
+          await page.locator('[aria-label="Jersey Number"]').fill(jersey)
+        await click(page, 'Add Player')
+        await page.waitForSelector('[aria-label="First Name"]', {
+          hidden: true
+        })
+      }
+      // Added out of order, then five placeholders.
+      await create('Amy', 'Blank', '')
+      await create('Zed', 'Ten', '10')
+      await click(page, 'Add Placeholder Players')
+      await new Promise(resolve => setTimeout(resolve, 400))
+      await click(page, 'Player count 5')
+      await page.waitForSelector(
+        '[aria-label="Player count 5"][aria-selected="true"]'
+      )
+      // The list scrolls to the count it was given; let it settle there.
+      await new Promise(resolve => setTimeout(resolve, 600))
+      await page.waitForSelector(
+        '[aria-label="Player count 5"][aria-selected="true"]'
+      )
+      await click(page, 'Add')
+      await page.waitForSelector(
+        '[aria-label="Number of placeholder players"]',
+        { hidden: true }
+      )
+      await new Promise(resolve => setTimeout(resolve, 400))
+      const roster = async (): Promise<string[]> =>
+        await page.$$eval(
+          '[data-roster-target="roster"] [data-roster-player]',
+          nodes => nodes.map(n => String(n.textContent).trim())
+        )
+      const rows = await roster()
+      expect(rows).length(9 + 2 + 5)
+      const numbers = rows.map(row => /^#(\d+)/.exec(row)?.[1])
+      const numbered = numbers.filter(number => number != null)
+      // Numbers first, lowest first; then everyone without one, by name.
+      expect(numbers.slice(0, numbered.length)).deep.equals(numbered)
+      expect(numbered.map(Number)).deep.equals(
+        [...numbered].map(Number).sort((a, b) => a - b)
+      )
+      expect(numbered.at(-1)).equals('10')
+      const unnumbered = rows.slice(numbered.length)
+      expect(unnumbered).deep.equals(
+        [...unnumbered].sort((a, b) => a.localeCompare(b))
+      )
+      expect(unnumbered).includes('Amy Blank')
+      await click(page, 'Set Defense')
+      expect(await roster()).deep.equals(rows)
+      await click(page, 'Set Lineup')
+      // The lineup keeps the order it is built in.
+      await click(page, 'Add Zed Ten to Lineup')
+      const lineup = await page.$$eval(
+        '[data-roster-target^="lineup-"][data-roster-player]',
+        nodes => nodes.map(n => String(n.textContent))
+      )
+      expect(lineup.at(-1)).includes('Zed Ten')
+      await click(page, 'Cancel')
+    } finally {
+      await page.close()
+    }
+  })
   it('keeps a long team name on one line inside its half of the pill', async function () {
     awayTeamName = 'The Extremely Long Named Visiting Squadron'
     const { page } = await open('/games/g1/score')

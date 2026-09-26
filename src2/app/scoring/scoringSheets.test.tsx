@@ -171,6 +171,57 @@ describe('scoring slide-up sheets', function () {
     }
   })
 
+  it('lists the roster by jersey number, numbers first and no number last, in both modes', async function () {
+    await mount()
+    await menu('Set Team Rosters')
+    try {
+      // Added out of order: the player with no number first.
+      for (const [first, last, jersey] of [
+        ['Amy', 'Blank', ''],
+        ['Zed', 'Ten', '10']
+      ]) {
+        await click('Create Player')
+        await input('First Name', first)
+        await input('Last Name', last)
+        if (jersey !== '') await input('Jersey Number', jersey)
+        await click('Add Player')
+      }
+      const roster = (): string[] =>
+        Array.from(
+          document.querySelectorAll(
+            '[data-roster-target="roster"] [data-roster-player]'
+          )
+        ).map(node => node.textContent!.trim())
+      const inOrder = (rows: string[]): void => {
+        const numbers = rows.map(row => /^#(\d+)/.exec(row)?.[1])
+        const numbered = numbers.filter(number => number != null)
+        expect(numbers.slice(0, numbered.length)).deep.equals(numbered)
+        expect(numbered.map(Number)).deep.equals(
+          [...numbered].map(Number).sort((a, b) => a - b)
+        )
+        expect(rows.at(-1)).includes('Amy')
+      }
+      const lineup = roster()
+      inOrder(lineup)
+      expect(lineup.findIndex(row => row.includes('Zed'))).equals(
+        lineup.findIndex(row => row.startsWith('#10 '))
+      )
+      await click('Set Defense')
+      expect(roster()).deep.equals(lineup)
+      await click('Set Lineup')
+      // Adding to the lineup puts him last there; the lineup is not sorted.
+      await click('Add Zed Ten to Lineup')
+      const last = Array.from(
+        document.querySelectorAll(
+          '[data-roster-target^="lineup-"][data-roster-player]'
+        )
+      ).at(-1)!
+      expect(last.textContent).includes('Zed')
+    } finally {
+      await click('Cancel')
+    }
+  })
+
   it('edits both lineups and defense, adds local players and commits once with undo', async function () {
     await mount()
     await menu('Set Team Rosters')
