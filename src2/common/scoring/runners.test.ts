@@ -267,7 +267,11 @@ describe('the batter on a ball in play', function () {
     expect(bases(state)).deep.equals([1, null, null])
     const play = state.liveData.plays.allPlays[0]
     expect(play.result).includes({ event: 'Strikeout', eventType: 'strikeout' })
-    expect(play.playEvents.at(-1)!.details.code).equals('strikeout')
+    // Strike three the catcher dropped is a strike, not a ball in play.
+    expect(play.playEvents.at(-1)!.details).deep.includes({
+      code: 'S',
+      isInPlay: false
+    })
   })
 
   it('stands the batter on first after a dropped third strike until his call', function () {

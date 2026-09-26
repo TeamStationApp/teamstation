@@ -1,3 +1,4 @@
+import { type DescribedCredit, describePlay } from '../describePlay'
 import { GAME_POSITIONS } from '../gumbo/reference'
 import { eventTypeName } from '../gumboEventTypes'
 import {
@@ -13,6 +14,7 @@ import {
   type GameSetup,
   type GameState,
   type PlayerRef,
+  type PlayEvent,
   type Side,
   withoutUndefined
 } from './state'
@@ -111,6 +113,21 @@ function actionType(runner: Runner): string | null {
 }
 
 /**
+ * The event type of a runner's movement: the action that made it, or the
+ * play's own type for a movement the play made.
+ */
+function runnerEventType(runner: Runner, playType: string): string {
+  return (
+    actionType(runner) ??
+    (runner.details.byAction === true
+      ? runner.movement.isOut
+        ? 'other_out'
+        : 'other_advance'
+      : playType)
+  )
+}
+
+/**
  * Why a runner other than the batter moved, as MLB's runner detail types say
  * it. `onThrow` is a runner who took his base while the defence made a play
  * on another runner — not on the batter, whose out at first or on a catch is
@@ -182,7 +199,8 @@ function person(state: GameState, setup: GameSetup, ref: PlayerRef): Person {
 function runnersOf(
   state: GameState,
   setup: GameSetup,
-  play: GamePlay
+  play: GamePlay,
+  events: StoredEvents
 ): Array<Record<string, unknown>> {
   const who = (ref: PlayerRef): Person => person(state, setup, ref)
   const type = playEventType(play)
@@ -199,13 +217,7 @@ function runnersOf(
       : movement.end === 4 && !scored
         ? baseName(movement.start)
         : baseName(movement.end)
-    const eventType =
-      actionType(runner) ??
-      (details.byAction === true
-        ? movement.isOut
-          ? 'other_out'
-          : 'other_advance'
-        : type)
+    const eventType = runnerEventType(runner, type)
     const onThrow =
       details.movementReason === 'Advance' &&
       details.byAction !== true &&
@@ -244,7 +256,8 @@ function runnersOf(
         rbi: details.rbi === true,
         earned: details.earned === true,
         teamUnearned: details.teamUnearned === true,
-        playIndex: details.playIndex ?? null
+        playIndex:
+          details.playIndex == null ? null : events.indexOf(details.playIndex)
       },
       credits: runner.credits.map(credit => {
         const position = GAME_POSITIONS.get(credit.position)
@@ -255,6 +268,335 @@ function runnersOf(
         }
       })
     }
+  })
+}
+
+// ---- Play events ----
+
+/** Each call as the live feed describes it. */
+const CALL_DESCRIPTIONS: Record<string, string> = {
+  B: 'Ball',
+  C: 'Called Strike',
+  S: 'Swinging Strike',
+  F: 'Foul',
+  T: 'Foul Tip',
+  L: 'Foul Bunt',
+  H: 'Hit By Pitch',
+  X: 'In play, out(s)',
+  D: 'In play, no out',
+  E: 'In play, run(s)'
+}
+const STRIKE_CALLS: ReadonlySet<string> = new Set(['C', 'S', 'F', 'T', 'L'])
+const BALL_CALLS: ReadonlySet<string> = new Set(['B', 'H'])
+
+/** The event types of what a play came to without a pitch, by the engine's name. */
+const PLAY_ACTION_TYPES: Record<string, string> = {
+  balk: 'balk',
+  placed_runner: 'runner_placed',
+  intent_walk: 'intent_walk',
+  catcher_interference: 'catcher_interf',
+  manual_placement: 'gs_manual_placement',
+  other_out: 'gs_batter_out'
+}
+/** Awarded to the batter with no pitch: the sentence is about him. */
+const BATTER_ACTIONS: ReadonlySet<string> = new Set([
+  'intent_walk',
+  'catcher_interf',
+  'gs_manual_placement',
+  'gs_batter_out'
+])
+/** The pitcher's doing: the sentence names him. */
+const PITCHER_ACTIONS: ReadonlySet<string> = new Set(['balk', 'wild_pitch'])
+
+function scoredRunner(runner: Runner): boolean {
+  return runner.movement.runScored === true && !runner.movement.isOut
+}
+
+/**
+ * The runner entries an event made: those that name it as their play event,
+ * and the one a runner's action wrote.
+ */
+function entriesOf(play: GamePlay, event: PlayEvent): Runner[] {
+  const linked = event.details.runnerEntry
+  return play.runners.filter(
+    (runner, i) => i === linked || runner.details.playIndex === event.index
+  )
+}
+
+/** What happened to a runner, after his name: `to 2nd`, `scores`, `out at 3rd`. */
+function fate(runner: Runner): string {
+  const { start, end, isOut } = runner.movement
+  if (isOut)
+    return `out at ${end <= 1 ? '1st' : end >= 4 ? 'home' : ordinal(end)}`
+  if (scoredRunner(runner)) return 'scores'
+  // A run taken back, or a runner the play did not move.
+  return end >= 4 || end === start
+    ? `stays at ${ordinal(start)}`
+    : `to ${ordinal(end)}`
+}
+
+/**
+ * Who an action names first: the pitcher of a balk or a wild pitch, the
+ * batter of an award, or the runner who acted, with the player the clause
+ * already speaks for. The pitcher is the one on the mound at the event, not
+ * the matchup's, which a later change in the plate appearance replaces: a
+ * runner's action carries him, and a balk is his own event.
+ */
+function leadOf(
+  name: (ref: PlayerRef) => string,
+  play: GamePlay,
+  event: PlayEvent,
+  eventType: string,
+  entries: Runner[]
+): { credit: DescribedCredit; player: number | null } | null {
+  const credit = (
+    who: string,
+    role: string,
+    label: string
+  ): DescribedCredit => ({
+    eventType,
+    label,
+    credit: { name: who, role, position: null }
+  })
+  const title = eventTypeName(eventType)
+  if (PITCHER_ACTIONS.has(eventType))
+    return {
+      credit: credit(name(event.pitcher ?? event.player), 'pitcher', title),
+      player: null
+    }
+  if (eventType === 'passed_ball')
+    return {
+      credit: { eventType, label: title, credit: null },
+      player: null
+    }
+  if (BATTER_ACTIONS.has(eventType)) {
+    const batter = name(play.matchup.batter)
+    return {
+      credit: credit(batter, 'batter', `${title}: ${batter}`),
+      player: play.matchup.batter.id
+    }
+  }
+  const runner = entries.at(0)
+  if (runner == null) return null
+  const who = name(runner.details.runner)
+  // A steal or an out names the base itself; anything else says where to.
+  const said = eventType.startsWith('stolen_base') || runner.movement.isOut
+  return {
+    credit: credit(
+      who,
+      'runner',
+      `${title}: ${said ? who : `${who} ${fate(runner)}`}`
+    ),
+    player: runner.details.runner.id
+  }
+}
+
+/**
+ * An action in a sentence: who did it, then where each runner it moved went,
+ * `Wild pitch by Joe P. Chase T to 3rd. Kyle M to 2nd.` A runner's own action
+ * names him first, `Chase T steals second.`
+ */
+function actionDescription(
+  state: GameState,
+  setup: GameSetup,
+  play: GamePlay,
+  event: PlayEvent,
+  eventType: string,
+  entries: Runner[]
+): string {
+  const name = (ref: PlayerRef): string => person(state, setup, ref).fullName
+  const lead = leadOf(name, play, event, eventType, entries)
+  const credits: DescribedCredit[] = lead == null ? [] : [lead.credit]
+  for (const runner of entries)
+    if (
+      runner.details.runner.id !== lead?.player &&
+      (runner.movement.isOut || runner.movement.end !== runner.movement.start)
+    )
+      credits.push({
+        eventType: 'other_advance',
+        label: `${name(runner.details.runner)} ${fate(runner)}`,
+        credit: null
+      })
+  return describePlay({ eventType, credits })
+}
+
+/**
+ * A pitch as Gumbo writes it: its call, what the call means, and the count it
+ * left. The in-play pitch is `E` when the play scored a run on it, `X` when it
+ * made an out, and `D` otherwise.
+ */
+function pitchDocument(
+  event: PlayEvent,
+  pitchNumber: number,
+  made: Runner[],
+  who: (ref: PlayerRef) => Person
+): Record<string, unknown> {
+  const isOut = made.some(runner => runner.movement.isOut)
+  const isInPlay = event.details.isInPlay === true
+  const code = !isInPlay
+    ? event.details.code
+    : made.some(scoredRunner)
+      ? 'E'
+      : isOut
+        ? 'X'
+        : 'D'
+  const description = CALL_DESCRIPTIONS[code] ?? event.details.description
+  return {
+    index: event.index,
+    pitchNumber,
+    isPitch: true,
+    type: 'pitch',
+    details: {
+      call: { code, description },
+      code,
+      description,
+      isInPlay,
+      isStrike: STRIKE_CALLS.has(code),
+      isBall: BALL_CALLS.has(code),
+      isOut,
+      hasReview: false
+    },
+    count: { ...event.count },
+    player: who(event.player),
+    // No action says when it happened; the play's own times are on `about`.
+    startTime: null,
+    endTime: null
+  }
+}
+
+/**
+ * An action as Gumbo writes it: the event type of the runner entry it made,
+ * or of what the play came to, and a sentence.
+ */
+function actionDocument(
+  state: GameState,
+  setup: GameSetup,
+  play: GamePlay,
+  event: PlayEvent,
+  made: Runner[],
+  score: Score
+): Record<string, unknown> {
+  const playType = playEventType(play)
+  const first = made.at(0)
+  const eventType =
+    first == null
+      ? (PLAY_ACTION_TYPES[event.details.code] ?? playType)
+      : runnerEventType(first, playType)
+  const isBaseRunningPlay =
+    eventType === 'balk' ||
+    (eventType !== 'runner_placed' &&
+      made.some(runner => runner.details.byAction === true))
+  return {
+    index: event.index,
+    isPitch: false,
+    // The feed marks base running on the event, and only where it is true.
+    ...(isBaseRunningPlay ? { isBaseRunningPlay } : {}),
+    type: 'action',
+    details: {
+      description: actionDescription(
+        state,
+        setup,
+        play,
+        event,
+        eventType,
+        made
+      ),
+      event: eventTypeName(eventType),
+      eventType,
+      awayScore: score.away,
+      homeScore: score.home,
+      isScoringPlay: made.some(scoredRunner),
+      isOut: made.some(runner => runner.movement.isOut),
+      hasReview: false
+    },
+    count: { ...event.count },
+    player: person(state, setup, event.player),
+    startTime: null,
+    endTime: null
+  }
+}
+
+interface Score {
+  away: number
+  home: number
+}
+
+/**
+ * The score after each of the play's actions. Runner entries are written in
+ * the order they happened, so an action's score counts every run among the
+ * entries up to the last one it made: the one a runner's action wrote, or
+ * those that name it, or name an event before it. A pitch's own entries are
+ * counted by the actions after it; an in-play pitch's are still being
+ * written while the scorer decides the play.
+ */
+function scoresAfter(play: GamePlay): Score[] {
+  const runs = play.runners.map((runner): number =>
+    scoredRunner(runner) ? 1 : 0
+  )
+  const total = runs.reduce((sum, run) => sum + run, 0)
+  const batting = play.about.halfInning === 'top' ? 'away' : 'home'
+  // A completed play is stamped with the score it left; one in progress
+  // still holds the score it began with.
+  const start: Score = {
+    away: play.result.awayScore,
+    home: play.result.homeScore
+  }
+  if (play.about.isComplete) start[batting] -= total
+  let upTo = -1
+  return play.playEvents.map(event => {
+    const linked = event.details.runnerEntry
+    if (event.isPitch) return start
+    play.runners.forEach((runner, i) => {
+      const at = runner.details.playIndex ?? -1
+      if (linked == null ? at <= event.index : at === event.index)
+        upTo = Math.max(upTo, i)
+    })
+    if (linked != null) upTo = Math.max(upTo, linked)
+    const scored = runs.slice(0, upTo + 1).reduce((sum, run) => sum + run, 0)
+    return { ...start, [batting]: start[batting] + scored }
+  })
+}
+
+/**
+ * The engine's events a stored play keeps, and where each lands. MLB writes
+ * no event for a runner the ball in play moved: his entry points at the
+ * in-play pitch, as the engine's does already. The engine also writes an
+ * event for each runner the scorer moves or puts out while a play is being
+ * decided — the batter caught on a fly, a runner sent home on a double — and
+ * those are left out, so every event after one moves up.
+ */
+interface StoredEvents {
+  kept: PlayEvent[]
+  /** The stored index of the engine's event at `index`. */
+  indexOf: (index: number) => number
+}
+function storedEvents(play: GamePlay): StoredEvents {
+  const kept = play.playEvents.filter(event => {
+    const linked = event.details.runnerEntry
+    return linked == null || play.runners[linked]?.details.byAction === true
+  })
+  return {
+    kept,
+    indexOf: index => kept.filter(event => event.index < index).length
+  }
+}
+
+/** The play's events as Gumbo writes them, each with the runner entries it made. */
+function playEventsOf(
+  state: GameState,
+  setup: GameSetup,
+  play: GamePlay,
+  events: StoredEvents
+): Array<Record<string, unknown>> {
+  const who = (ref: PlayerRef): Person => person(state, setup, ref)
+  const scores = scoresAfter(play)
+  let pitchNumber = 0
+  return events.kept.map(event => {
+    const made = entriesOf(play, event)
+    const written = event.isPitch
+      ? pitchDocument(event, ++pitchNumber, made, who)
+      : actionDocument(state, setup, play, event, made, scores[event.index])
+    return { ...written, index: events.indexOf(event.index) }
   })
 }
 
@@ -372,6 +714,8 @@ function documentBody(
 ): Record<string, unknown> {
   const setup = stamp.setupBefore
   const who = (ref: PlayerRef): Person => person(state, setup, ref)
+  const events = storedEvents(play)
+  const runners = runnersOf(state, setup, play, events)
   return {
     about: {
       atBatIndex: play.about.atBatIndex,
@@ -390,15 +734,15 @@ function documentBody(
       pitcher: who(play.matchup.pitcher),
       batSide: { code: play.matchup.batSide.code }
     },
-    runners: runnersOf(state, setup, play),
-    playEvents: play.playEvents.map(event => ({
-      index: event.index,
-      isPitch: event.isPitch,
-      type: event.type,
-      details: { ...event.details },
-      count: { ...event.count },
-      player: who(event.player)
-    })),
+    runners,
+    playEvents: playEventsOf(state, setup, play, events),
+    pitchIndex: events.kept
+      .filter(event => event.isPitch)
+      .map(event => events.indexOf(event.index)),
+    actionIndex: events.kept
+      .filter(event => !event.isPitch)
+      .map(event => events.indexOf(event.index)),
+    runnerIndex: runners.map((runner, i) => i),
     ...(play.hitData == null
       ? {}
       : {
@@ -500,6 +844,9 @@ export function finalDocumentOf(state: GameState, stamp: PlayStamp): GumboPlay {
       homeScore: line.teams.home.runs,
       rbi: 0
     },
+    pitchIndex: [],
+    actionIndex: [],
+    runnerIndex: [],
     credits: [],
     gameStation: {
       version: 1,

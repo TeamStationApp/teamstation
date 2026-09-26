@@ -35,8 +35,11 @@ import { serverConfig } from '../serverConfig'
  * and its at-bat in progress, is folded again. A play is written only when it
  * differs from the stored one other than in what the server writes on it; the
  * write is the same `postGamePlays` a scorer's post makes. Plays GameStation
- * did not score are never touched, so a second run changes nothing. A game
- * whose log no longer replays is left alone and listed with its problem.
+ * did not score are never touched, so a second run changes nothing. A stored
+ * play the log no longer makes — one an undo took back that the old code left
+ * behind — is removed, as the scoring screen's own save removes it, through
+ * the same write's `remove`. A game whose log no longer replays is left alone
+ * and listed with its problem.
  *
  * Prints each game it changed, then each game it skipped; exits 1 when it
  * skipped any, or when `--game` names no game. A game is skipped too when a
@@ -49,6 +52,8 @@ export interface GameRefold {
   gameId: string
   /** The plays written, or that would be. */
   plays: number
+  /** The indexes of the plays removed, or that would be. */
+  removed: number[]
   /** The at-bat in progress was, or would be, written. */
   currentPlay: boolean
 }
@@ -250,7 +255,8 @@ export async function refoldGame(
       throw new Error('The refold writes through postGamePlays')
     }
   }
-  const picture = (await ScoringSession.open(store, gameId, context)).picture()
+  const session = await ScoringSession.open(store, gameId, context)
+  const picture = session.picture()
   const byIndex = new Map(
     stored.plays.map(play => [play.about.atBatIndex, play])
   )
@@ -271,7 +277,9 @@ export async function refoldGame(
     comparablePlay(picture.current),
     comparablePlay(stored.currentPlay)
   )
-  if (plays.length === 0 && !currentPlay) return { kind: 'unchanged' }
+  const removed = session.removals
+  if (plays.length === 0 && removed.length === 0 && !currentPlay)
+    return { kind: 'unchanged' }
   if (!preview)
     await postGamePlays(
       db,
@@ -280,13 +288,13 @@ export async function refoldGame(
         plays,
         source: { system: 'gamestation' },
         mode: 'live',
-        remove: [],
+        remove: removed,
         ...(currentPlay ? { currentPlay: picture.current } : {})
       })
     )
   return {
     kind: 'changed',
-    refold: { gameId, plays: plays.length, currentPlay }
+    refold: { gameId, plays: plays.length, removed, currentPlay }
   }
 }
 
@@ -333,9 +341,15 @@ export async function runRefold(
     return 1
   }
   const verb = preview ? 'would write' : 'wrote'
+  const removal = (indexes: number[]): string =>
+    indexes.length === 0
+      ? ''
+      : `, ${preview ? 'would remove' : 'removed'} the play` +
+        `${indexes.length === 1 ? '' : 's'} at ${indexes.join(', ')}`
   for (const game of report.changed)
     print(
       `changed ${game.gameId}: ${verb} ${game.plays} plays` +
+        removal(game.removed) +
         (game.currentPlay ? ', and the at-bat in progress' : '')
     )
   for (const game of report.skipped)

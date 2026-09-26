@@ -19,6 +19,7 @@ import {
 import { type HomeRunKind, homeRunKind, isFair, PARK } from './park'
 import {
   copyState,
+  type GamePlay,
   type GameSetup,
   type GameState,
   type Movement,
@@ -151,7 +152,10 @@ export function allowedAngle(
   )
 }
 
-/** A wild pitch or passed ball needs a ball, or a strike the catcher missed. */
+/**
+ * A wild pitch or passed ball needs a live ball the catcher could miss: a
+ * ball, a called strike or a swinging strike, by the pitch's call.
+ */
 export function hasEligiblePitch(state: GameState): boolean {
   const ref = state.recentPitch
   if (ref == null) return false
@@ -161,7 +165,20 @@ export function hasEligiblePitch(state: GameState): boolean {
   ]
   const pitch = plays.find(play => play?.about.atBatIndex === ref.atBatIndex)
     ?.playEvents[ref.index]
-  return pitch?.isPitch === true && ['B', 'C', 'S'].includes(pitch.details.code)
+  return (
+    pitch?.isPitch === true &&
+    ['B', 'C', 'S'].includes(pitch.details.call?.code ?? '')
+  )
+}
+
+/**
+ * The play's last pitch was put in play. Actions after it — a runner, a
+ * substitution — do not change that.
+ */
+export function inPlay(play: GamePlay | null | undefined): boolean {
+  return (
+    play?.playEvents.findLast(event => event.isPitch)?.details.isInPlay === true
+  )
 }
 
 export type MoreAction =
@@ -378,10 +395,7 @@ export function nextDecision(state: GameState): Decision {
  * ball or its result can follow — not a pitch.
  */
 export function awaitingResult(state: GameState): boolean {
-  return (
-    state.pending == null &&
-    state.liveData.plays.currentPlay?.playEvents.at(-1)?.details.code === 'X'
-  )
+  return state.pending == null && inPlay(state.liveData.plays.currentPlay)
 }
 
 /**

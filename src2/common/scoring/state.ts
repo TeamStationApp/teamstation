@@ -60,6 +60,53 @@ const asCredit = asObject({
 export type RunnerCredit = ReturnType<typeof asCredit>
 const asRoute = asArray(asObject({ player: asPlayerRef, location: asPoint }))
 
+/** One pitch or action of a play, in Gumbo's shape. */
+export interface PlayEvent {
+  index: number
+  isPitch: boolean
+  type: string
+  details: {
+    description: string
+    /** A pitch's call code, or the engine's own name for an action. */
+    code: string
+    /** The umpire's call on a pitch, as Gumbo writes it. */
+    call?: { code: string; description: string }
+    /** The pitch was put in play. */
+    isInPlay?: boolean
+    /** The runner entry a runner's action wrote, just before it. */
+    runnerEntry?: number
+  }
+  /** A lineup change, which does not begin a play. */
+  isSubstitution?: boolean
+  /** After a pitch, the count it left; the in-play pitch keeps its own. */
+  count: { balls: number; strikes: number; outs: number }
+  player: PlayerRef
+  /**
+   * On a runner's action, the pitcher on the mound when it happened: a
+   * pitching change later in the plate appearance changes the matchup, not
+   * who threw the wild pitch.
+   */
+  pitcher?: PlayerRef
+}
+const asPlayEvent = exactly(
+  asObject({
+    index: asSessionId,
+    isPitch: asBoolean,
+    type: asString,
+    details: asObject({
+      description: asString,
+      code: asString,
+      call: asOptional(asObject({ code: asString, description: asString })),
+      isInPlay: asOptional(asBoolean),
+      runnerEntry: asOptional(asNumber)
+    }),
+    isSubstitution: asOptional(asBoolean),
+    count: asCount,
+    player: asPlayerRef,
+    pitcher: asOptional(asPlayerRef)
+  })
+) as Cleaner<PlayEvent>
+
 /** One play as the game holds it, in GUMBO's shape, with session ids. */
 export const asGamePlay = asObject({
   about: asObject({
@@ -117,16 +164,7 @@ export const asGamePlay = asObject({
       credits: asArray(asCredit)
     })
   ),
-  playEvents: asArray(
-    asObject({
-      index: asSessionId,
-      isPitch: asBoolean,
-      type: asString,
-      details: asObject({ description: asString, code: asString }),
-      count: asCount,
-      player: asPlayerRef
-    })
-  ),
+  playEvents: asArray(asPlayEvent),
   hitData: asOptional(
     asObject({
       launchAngle: asNumber,

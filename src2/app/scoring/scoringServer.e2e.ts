@@ -1023,4 +1023,148 @@ describe('scoring into the server', function () {
     // Two runs off the starter: the error's unearned.
     expect(figures(pitcher)).equals('0 0 0 0 0 0 0 0 5 2 1 2 1')
   })
+
+  it('scenario 7: pitches and actions are stored in Gumbo shape, and undone to what was stored', async function () {
+    const fixture = scoringGame()
+    const gameId = fixture.games[0]
+    const page = await openAs(scorer, `/games/${gameId}`)
+    let before: Stored | null = null
+    let scored: Stored | null = null
+    let undone: Stored | null = null
+    try {
+      await openScoring(page, 'Score Game')
+      await click(page, 'Open scoring menu')
+      await click(page, 'Set Team Rosters')
+      await click(page, 'Save Rosters')
+      // A dropped third strike, and the batter makes first.
+      await pitch(page, 'Called Strike')
+      await pitch(page, 'Swing and Miss')
+      await waitReady(page)
+      await click(page, 'More')
+      await click(page, 'Dropped Third Strike')
+      await page.waitForSelector('[aria-label^="Runner decision for "]', {
+        timeout: 30000
+      })
+      await click(page, 'Safe')
+      await finishAtBat(page)
+      // Ball, called strike, foul, then the batter is hit.
+      await pitch(page, 'Ball')
+      await pitch(page, 'Called Strike')
+      await pitch(page, 'Foul Ball')
+      await waitReady(page)
+      await click(page, 'More')
+      await click(page, 'Hit by Pitch')
+      await waitReady(page)
+      await waitSaved(page)
+      before = await stored(scorer, gameId)
+      // A balk, then an intentional walk.
+      await click(page, 'More')
+      await click(page, 'Balk')
+      await waitReady(page)
+      await click(page, 'More')
+      await click(page, 'Intentional Walk')
+      await waitReady(page)
+      await waitSaved(page)
+      scored = await stored(scorer, gameId)
+      expect(
+        sql(
+          `select string_agg("eventType", ',' order by "atBatIndex") from events where "gameId"='${gameId}'`
+        )
+      ).equals('strikeout,hit_by_pitch,intent_walk')
+      // Both undone.
+      for (let i = 0; i < 2; i++) {
+        await page.locator('[aria-label^="Undo "]').click()
+        await waitReady(page)
+      }
+      await waitSaved(page)
+      undone = await stored(scorer, gameId)
+    } finally {
+      await page.close()
+    }
+
+    interface Event {
+      index: number
+      isPitch: boolean
+      isBaseRunningPlay?: boolean
+      pitchNumber?: number
+      details: Record<string, unknown>
+      count: { balls: number; strikes: number; outs: number }
+    }
+    interface Play {
+      about: { atBatIndex: number }
+      result: { eventType: string }
+      playEvents: Event[]
+      runners: Array<{
+        movement: { start: string | null; end: string | null }
+      }>
+      pitchIndex: number[]
+      actionIndex: number[]
+      runnerIndex: number[]
+    }
+    const plays = (from: Stored): Play[] =>
+      from.plays
+        .map(row => row.gumbo as unknown as Play)
+        .sort((a, b) => a.about.atBatIndex - b.about.atBatIndex)
+    const pitches = (play: Play): string[] =>
+      play.playEvents
+        .filter(event => event.isPitch)
+        .map(
+          event =>
+            `${String(event.details.code)} ${event.count.balls}-${event.count.strikes} ${event.count.outs}`
+        )
+    const [dropped, hit, balked] = plays(scored)
+    expect(dropped.result.eventType).equals('strikeout')
+    expect(pitches(dropped)).deep.equals(['C 0-1 0', 'S 0-2 0', 'S 0-3 0'])
+    expect(dropped.playEvents[2].details).deep.include({
+      call: { code: 'S', description: 'Swinging Strike' },
+      isInPlay: false,
+      isStrike: true,
+      isOut: false
+    })
+    expect(dropped.runners[0].movement).deep.include({ start: null, end: '1B' })
+    expect(hit.result.eventType).equals('hit_by_pitch')
+    expect(pitches(hit)).deep.equals([
+      'B 1-0 0',
+      'C 1-1 0',
+      'F 1-2 0',
+      'H 1-2 0'
+    ])
+    expect(hit.playEvents.map(event => event.pitchNumber)).deep.equals([
+      1, 2, 3, 4
+    ])
+    expect(hit).deep.include({ pitchIndex: [0, 1, 2, 3], actionIndex: [] })
+    expect(balked.result.eventType).equals('intent_walk')
+    expect(balked.pitchIndex).deep.equals([])
+    const [balk, walk] = balked.playEvents
+    expect(balk.isBaseRunningPlay).equals(true)
+    expect(balk.details).deep.include({
+      event: 'Balk',
+      eventType: 'balk',
+      isScoringPlay: false,
+      isOut: false,
+      hasReview: false
+    })
+    expect(String(balk.details.description)).matches(
+      /^Balk by [^.]+\. [^.]+ to 2nd\. [^.]+ to 3rd\.$/
+    )
+    expect(walk.isBaseRunningPlay).equals(undefined)
+    expect(walk.details).deep.include({ eventType: 'intent_walk' })
+    // Nobody on first, so nobody is forced along.
+    expect(String(walk.details.description)).matches(
+      /^[^.]+ is walked intentionally\.$/
+    )
+    console.log(`      balk: ${String(balk.details.description)}`)
+    console.log(`      walk: ${String(walk.details.description)}`)
+
+    // Undoing the walk and the balk leaves what was stored before them.
+    expect(plays(undone).map(comparable)).deep.equals(
+      plays(before).map(comparable)
+    )
+    expect(comparable(undone.currentPlay)).deep.equals(
+      comparable(before.currentPlay)
+    )
+    expect(
+      sql(`select count(*) from events where "gameId"='${gameId}'`)
+    ).equals('2')
+  })
 })
