@@ -112,6 +112,40 @@ public final class PixelConverter: @unchecked Sendable {
     return result
   }
 
+  /// Director's digital zoom: the centre `1 / factor` of the picture, scaled back up to the same
+  /// size and format. Nil for a factor of 1 or less, where there is nothing to do.
+  ///
+  /// The crop is the source's clean aperture, which VideoToolbox honours in
+  /// `CropSourceToCleanAperture` mode. The source is always a buffer this pipeline owns (the
+  /// converted live picture or a replay decode), so tagging it touches nothing anyone else reads.
+  public func zoom(_ pixelBuffer: CVPixelBuffer, by factor: Double) -> CVPixelBuffer? {
+    guard factor > 1.001, factor.isFinite else { return nil }
+    let width = CVPixelBufferGetWidth(pixelBuffer)
+    let height = CVPixelBufferGetHeight(pixelBuffer)
+    guard let aperture = Self.cleanAperture(width: width, height: height, zoom: factor) else { return nil }
+    CVBufferSetAttachment(pixelBuffer, kCVImageBufferCleanApertureKey, aperture as CFDictionary, .shouldPropagate)
+    defer { CVBufferRemoveAttachment(pixelBuffer, kCVImageBufferCleanApertureKey) }
+    return transfer(
+      pixelBuffer,
+      toWidth: width,
+      height: height,
+      format: CVPixelBufferGetPixelFormatType(pixelBuffer),
+      scalingMode: kVTScalingMode_CropSourceToCleanAperture
+    )
+  }
+
+  /// A centred clean aperture `1 / zoom` the size of the picture, in even pixels for 4:2:0.
+  static func cleanAperture(width: Int, height: Int, zoom: Double) -> [CFString: Any]? {
+    guard width > 1, height > 1, zoom > 1, zoom.isFinite else { return nil }
+    let even = { (value: Double) in max(2, Int((value / 2).rounded()) * 2) }
+    return [
+      kCVImageBufferCleanApertureWidthKey: even(Double(width) / zoom),
+      kCVImageBufferCleanApertureHeightKey: even(Double(height) / zoom),
+      kCVImageBufferCleanApertureHorizontalOffsetKey: 0,
+      kCVImageBufferCleanApertureVerticalOffsetKey: 0
+    ]
+  }
+
   /// Scales into an arbitrary size and format. Backs the proxy store's 640x360 downscale.
   public func scale(
     _ pixelBuffer: CVPixelBuffer,

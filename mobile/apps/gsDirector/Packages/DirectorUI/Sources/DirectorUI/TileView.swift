@@ -153,9 +153,12 @@ public struct TileView: View {
               .fixedSize()
               .layoutPriority(2)
           }
-          if telemetry.hasCameraControl {
+          // Every live tile has the menu: a Cameraman's own controls, or Director's zoom for any
+          // other camera. The thermal and battery pills are the phone's, so only a Cameraman has them.
+          if pipeline != nil || telemetry.hasCameraControl {
             HStack(spacing: 6) {
-              cameraStatusPills
+              if telemetry.hasCameraControl { cameraStatusPills }
+              if telemetry.digitalZoom > 1.001 { digitalZoomPill }
               cameraMenuButton
             }
             .fixedSize()
@@ -374,12 +377,23 @@ public struct TileView: View {
       .contentShape(Capsule())
       .highPriorityGesture(
         TapGesture().onEnded {
-          environment.openCameraControl(sourceIndex: sourceIndex)
+          environment.openCameraMenu(sourceIndex: sourceIndex)
         }
       )
       .accessibilityAddTraits(.isButton)
       .accessibilityIdentifier("source-\(sourceIndex + 1)-camera-menu")
-      .accessibilityLabel("Camera controls")
+      .accessibilityLabel(telemetry.hasCameraControl ? "Camera controls" : "Zoom")
+  }
+
+  /// Director's own zoom on this picture, in the yellow the zoom rail uses for software zoom.
+  private var digitalZoomPill: some View {
+    Text(ZoomMapping.label(forDisplayed: telemetry.digitalZoom))
+      .font(.system(size: 12, weight: .semibold, design: .rounded).monospacedDigit())
+      .foregroundStyle(.yellow)
+      .padding(.horizontal, 8)
+      .frame(height: 24)
+      .background(.black.opacity(0.45), in: Capsule())
+      .accessibilityIdentifier("source-\(sourceIndex + 1)-digital-zoom")
   }
 
   private var offsetBadge: some View {

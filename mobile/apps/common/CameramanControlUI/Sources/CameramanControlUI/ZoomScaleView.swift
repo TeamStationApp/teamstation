@@ -8,13 +8,25 @@ import SwiftUI
 /// readout sits to the left of the pills. Adjacent pill centers are reported so a full-screen
 /// drag can use the same points-per-segment as the drawn scale. Zoom past the camera's own ceiling
 /// is Cameraman's software zoom, and its pill, ticks and readout are yellow instead of white.
-struct ZoomScaleView: View {
+public struct ZoomScaleView: View {
   let mapping: ZoomMapping
   let displayedZoom: Double
   let onSelect: (Double) -> Void
   let onSegmentLength: (CGFloat) -> Void
 
-  var body: some View {
+  public init(
+    mapping: ZoomMapping,
+    displayedZoom: Double,
+    onSelect: @escaping (Double) -> Void,
+    onSegmentLength: @escaping (CGFloat) -> Void = { _ in }
+  ) {
+    self.mapping = mapping
+    self.displayedZoom = displayedZoom
+    self.onSelect = onSelect
+    self.onSegmentLength = onSegmentLength
+  }
+
+  public var body: some View {
     let presets = mapping.presetDisplayedZooms
     let highlight = mapping.scaleHighlight(forDisplayed: displayedZoom)
 

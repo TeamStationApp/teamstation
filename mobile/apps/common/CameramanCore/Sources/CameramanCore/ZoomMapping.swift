@@ -37,9 +37,24 @@ public struct ZoomMapping: Sendable, Equatable {
     self.switchOverDeviceZooms = switchOverDeviceZooms
       .filter { $0 > minimum && $0 <= maximum }
       .sorted()
+    // At the minimum is allowed: a camera with no zoom of its own is software from end to end.
     self.softwareZoomStartDeviceZoom = softwareZoomStartDeviceZoom.flatMap {
-      $0 > minimum && $0 < maximum ? $0 : nil
+      $0 >= minimum && $0 < maximum ? $0 : nil
     }
+  }
+
+  /// This mapping with a software range of `softwareZoomExtension` on top of its ceiling, or itself
+  /// when it already has one. What Director adds for a camera that does not zoom past its own
+  /// limit, and, from a single fixed zoom, the whole range of a camera with no zoom at all.
+  public func extendedBySoftwareZoom() -> ZoomMapping {
+    guard softwareZoomStartDeviceZoom == nil else { return self }
+    return ZoomMapping(
+      minimumDeviceZoom: minimumDeviceZoom,
+      maximumDeviceZoom: maximumDeviceZoom * Self.softwareZoomExtension,
+      displayMultiplier: displayMultiplier,
+      switchOverDeviceZooms: switchOverDeviceZooms,
+      softwareZoomStartDeviceZoom: maximumDeviceZoom
+    )
   }
 
   /// The camera's ceiling in displayed units: where the software range starts, or the maximum.
