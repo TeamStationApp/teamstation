@@ -1,3 +1,4 @@
+import type { Trajectory } from './actions'
 import {
   addPlayer,
   allocatePlayer,
@@ -109,17 +110,31 @@ export const HIT_BASES: Partial<Record<ResolutionOutcome, number>> = {
   'Home Run': 4
 }
 
-export function trajectoryLabel(angle: number): string {
+/** The trajectory a launch angle falls in, in the scorer's own terms. */
+export function trajectoryOf(angle: number): Trajectory {
   const value = Math.round(angle)
   return value >= 48
-    ? 'Pop Fly'
+    ? 'popup'
     : value >= 35
-      ? 'Fly Ball'
+      ? 'fly_ball'
       : value >= 10
-        ? 'Line Drive'
+        ? 'line_drive'
         : value >= -25
-          ? 'Ground Ball'
-          : 'Chopper'
+          ? 'ground_ball'
+          : 'chopper'
+}
+
+const TRAJECTORY_LABELS: Record<Trajectory, string> = {
+  popup: 'Pop Fly',
+  fly_ball: 'Fly Ball',
+  line_drive: 'Line Drive',
+  ground_ball: 'Ground Ball',
+  chopper: 'Chopper'
+}
+
+/** What the scoring screen calls the trajectory of a launch angle. */
+export function trajectoryLabel(angle: number): string {
+  return TRAJECTORY_LABELS[trajectoryOf(angle)]
 }
 
 export function outcomeAvailable(

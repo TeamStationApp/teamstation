@@ -17,7 +17,8 @@ import {
  * for a hit, or that the batter reached on, is credited with fielding it.
  */
 
-function positionOf(state: GameState, id: number): string {
+/** The position a fielder is playing, or '' when he is not in the field. */
+export function positionOf(state: GameState, id: number): string {
   return (
     POSITIONS.find(
       position => state.liveData.linescore.defense[position]?.id === id

@@ -9,12 +9,15 @@ import {
 } from '../gumboPlay'
 import type { ScoringAction } from './actions'
 import { ordinal } from './lineup'
+import { PARK } from './park'
+import { trajectoryOf } from './rules'
 import {
   type GamePlay,
   type GameSetup,
   type GameState,
   type PlayerRef,
   type PlayEvent,
+  type Point,
   type Side,
   withoutUndefined
 } from './state'
@@ -443,6 +446,81 @@ function actionDescription(
   return describePlay({ eventType, credits })
 }
 
+// ---- Hit data ----
+
+/** MLB's batted-ball trajectory for the scorer's, bunts on their own list. */
+const HIT_TRAJECTORIES: Record<string, { swing: string; bunt: string }> = {
+  ground_ball: { swing: 'ground_ball', bunt: 'bunt_grounder' },
+  chopper: { swing: 'ground_ball', bunt: 'bunt_grounder' },
+  line_drive: { swing: 'line_drive', bunt: 'bunt_line_drive' },
+  fly_ball: { swing: 'fly_ball', bunt: 'bunt_popup' },
+  popup: { swing: 'popup', bunt: 'bunt_popup' }
+}
+
+/**
+ * MLB's spray chart is a 250 by 250 grid with home plate at (125, 204), x
+ * growing toward right field and y toward the plate. The reference feed's
+ * fly balls put 2.4 feet in each grid unit: its `totalDistance` over the grid
+ * distance from home is 2.39 to 2.43 for 14 of the 19, and 2.41 at the
+ * median. The park model's fence is `PARK.outfieldRadius`, 118 m or 387 feet
+ * from home, so it lands on the grid's arc 161.3 units out: straightaway
+ * centre at (125, 42.7), the foul poles at (10.9, 89.9) and (239.1, 89.9).
+ * The field's own units are metres, with centre field negative z, so one
+ * metre is 1.367 grid units.
+ */
+export const SPRAY_HOME = { coordX: 125, coordY: 204 } as const
+const FEET_PER_SPRAY_UNIT = 2.4
+export const SPRAY_WALL = PARK.outfieldRadius / 0.3048 / FEET_PER_SPRAY_UNIT
+const SPRAY_PER_METRE = SPRAY_WALL / PARK.outfieldRadius
+
+/** Where a point on the field sits on MLB's spray chart. */
+export function sprayCoordinates(point: Point): {
+  coordX: number
+  coordY: number
+} {
+  const round = (value: number): number => Math.round(value * 100) / 100
+  return {
+    coordX: round(SPRAY_HOME.coordX + point.x * SPRAY_PER_METRE),
+    coordY: round(SPRAY_HOME.coordY + point.z * SPRAY_PER_METRE)
+  }
+}
+
+interface HitData {
+  trajectory?: string
+  location?: string
+  coordinates?: { coordX: number; coordY: number }
+}
+
+/**
+ * The ball in play as MLB writes it on the in-play pitch: the trajectory, the
+ * fielder's position code as `location`, and where the scorer put the ball.
+ * Each is written only when the scorer gave it. The launch angle is only ever
+ * an estimate here, so it stays in the record with the scorer's own
+ * trajectory, never in a Gumbo field.
+ */
+function hitDataOf(play: GamePlay): HitData | null {
+  const hit = play.hitData
+  if (hit == null) return null
+  const detail = play.source.gamestation
+  const picked =
+    detail.trajectory ??
+    (hit.launchAngle == null ? undefined : trajectoryOf(hit.launchAngle))
+  const trajectory = picked == null ? undefined : HIT_TRAJECTORIES[picked]
+  const location =
+    hit.position == null ? undefined : GAME_POSITIONS.get(hit.position)?.code
+  return withoutUndefined({
+    trajectory:
+      trajectory == null
+        ? undefined
+        : detail.contactKind === 'bunt'
+          ? trajectory.bunt
+          : trajectory.swing,
+    location,
+    coordinates:
+      hit.coordinates == null ? undefined : sprayCoordinates(hit.coordinates)
+  })
+}
+
 /**
  * A pitch as Gumbo writes it: its call, what the call means, and the count it
  * left. The in-play pitch is `E` when the play scored a run on it, `X` when it
@@ -452,7 +530,8 @@ function pitchDocument(
   event: PlayEvent,
   pitchNumber: number,
   made: Runner[],
-  who: (ref: PlayerRef) => Person
+  who: (ref: PlayerRef) => Person,
+  hitData: HitData | null
 ): Record<string, unknown> {
   const isOut = made.some(runner => runner.movement.isOut)
   const isInPlay = event.details.isInPlay === true
@@ -480,6 +559,7 @@ function pitchDocument(
       hasReview: false
     },
     count: { ...event.count },
+    ...(isInPlay && hitData != null ? { hitData } : {}),
     player: who(event.player),
     // No action says when it happened; the play's own times are on `about`.
     startTime: null,
@@ -617,7 +697,7 @@ function playEventsOf(
   return events.kept.map(event => {
     const made = entriesOf(play, event)
     const written = event.isPitch
-      ? pitchDocument(event, ++pitchNumber, made, who)
+      ? pitchDocument(event, ++pitchNumber, made, who, hitDataOf(play))
       : actionDocument(state, setup, play, event, made, scores[event.index])
     return { ...written, index: events.indexOf(event.index) }
   })
@@ -804,18 +884,6 @@ function documentBody(
       .filter(event => !event.isPitch)
       .map(event => events.indexOf(event.index)),
     runnerIndex: runners.map((runner, i) => i),
-    ...(play.hitData == null
-      ? {}
-      : {
-          hitData: {
-            launchAngle: play.hitData.launchAngle,
-            trajectory: play.hitData.trajectory,
-            coordinates: { ...play.hitData.coordinates },
-            ...(play.hitData.fielder == null
-              ? {}
-              : { fielder: who(play.hitData.fielder) })
-          }
-        }),
     gameStation: {
       version: 1,
       setupBefore: stamp.setupBefore,
