@@ -105,6 +105,23 @@ struct CameraParametersTests {
     #expect(set.names.first == "device.name")
   }
 
+  @Test("The software zoom start round-trips, and a phone without one sends it empty")
+  func softwareZoomStart() throws {
+    #expect(CameraParameters.encode(Self.snapshot())["videoSource.zoom.softwareStartDevice"] == "")
+    var original = Self.snapshot()
+    original.mapping = ZoomMapping(
+      minimumDeviceZoom: 1,
+      maximumDeviceZoom: 36,
+      displayMultiplier: 0.5,
+      switchOverDeviceZooms: [ 2, 6 ],
+      softwareZoomStartDeviceZoom: 18
+    )
+    let set = CameraParameters.encode(original)
+    #expect(set["videoSource.zoom.softwareStartDevice"] == "18")
+    let decoded = try #require(CameraParameters.decodeSnapshot(set))
+    #expect(decoded.mapping == original.mapping)
+  }
+
   @Test("The clean HDMI toggle is written as a settings change, and an old phone's silence reads as on")
   func cleanHDMI() throws {
     let write = try set("videoOutput.hdmi.clean: off\r\n")
