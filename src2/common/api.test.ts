@@ -3,6 +3,8 @@ import { describe, it } from 'mocha'
 
 import { GameStationClient } from './api'
 import { HttpError } from './errors'
+import { asGumboPlay } from './gumboPlay'
+import { halfOutcomes, lineScore } from './scoring/linescore'
 
 interface Call {
   url: string
@@ -218,6 +220,41 @@ describe('api client', function () {
       'http://x/api/v1/teams/tem%201/stats',
       'http://x/api/v1/teams/tem_1/stats?seasonId=sea%201'
     ])
+  })
+
+  it("reads a game whose stored line score carries Gumbo's innings", async function () {
+    const plays = [
+      asGumboPlay({
+        about: { atBatIndex: 0, inning: 1, halfInning: 'top' },
+        result: { eventType: 'home_run', awayScore: 1, homeScore: 0 }
+      })
+    ]
+    const linescore = lineScore(plays, halfOutcomes(plays), 1, 0)
+    expect(linescore.innings).to.have.length(1)
+    const { fetch } = stubFetch(200, {
+      id: 'gam_1',
+      homeTeamId: 'tem_h',
+      awayTeamId: 'tem_a',
+      homeTeamName: 'Hosts',
+      awayTeamName: 'Visitors',
+      seasonId: null,
+      startAt: null,
+      venue: null,
+      status: 'final',
+      homeScore: 0,
+      awayScore: 1,
+      ingestStatus: 'ok',
+      ingestMessage: null,
+      linescore: JSON.parse(JSON.stringify(linescore)),
+      videos: []
+    })
+    const client = new GameStationClient({ baseUrl: 'http://x/api/v1', fetch })
+    const game = await client.game('gam_1')
+    // The totals the scoreboard draws, and nothing it does not read.
+    expect(game.linescore).deep.equals({
+      away: { runs: [1], r: 1, h: 1, e: 0, bb: 0, k: 0, hr: 1, hbp: 0 },
+      home: { runs: [0], r: 0, h: 0, e: 0, bb: 0, k: 0, hr: 0, hbp: 0 }
+    })
   })
 
   it("asks for a season's standings by its escaped id", async function () {

@@ -7,12 +7,13 @@ import { readPlays } from '../routes/events'
 import { serverConfig } from '../serverConfig'
 
 /**
- * Fills in the line score of every game that has plays but none.
+ * Fills in the line score of every game that has plays but none, or one
+ * written before line scores carried Gumbo's `innings`.
  *
  * `POST /games/:gameId/events` writes a game's line score with its plays, so
- * only a game whose plays were stored some other way lacks one. This works it
- * out the same way, from the stored plays and the game's own final score, so a
- * line score and a final score cannot disagree.
+ * only a game whose plays were stored some other way, or not posted since,
+ * lacks one. This works it out the same way, from the stored plays and the
+ * game's own final score, so a line score and a final score cannot disagree.
  *
  *   npm run backfill-linescore -- --dry
  *   npm run backfill-linescore
@@ -25,7 +26,7 @@ async function main(): Promise<void> {
     const games = await db
       .selectFrom('games')
       .select(['id', 'home_score', 'away_score'])
-      .where('linescore', 'is', null)
+      .where(sql<boolean>`linescore is null or not (linescore ? 'innings')`)
       .execute()
 
     let written = 0

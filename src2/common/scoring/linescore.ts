@@ -110,10 +110,20 @@ export function halfOutcomes(plays: GumboPlay[]): HalfOutcome[] {
       half,
       awayScore,
       homeScore,
-      outs: typeof play.about.halfOuts === 'number' ? play.about.halfOuts : 0,
+      outs: halfOutsOf(play),
       runs: side == null ? 0 : side - baseline
     }
   })
+}
+
+/**
+ * The outs a half ended with: the server's `about.halfOuts` when its last play
+ * has one, else that play's own `count.outs`, else 0.
+ */
+function halfOutsOf(play: GumboPlay): number {
+  if (typeof play.about.halfOuts === 'number') return play.about.halfOuts
+  const outs = play.count?.outs
+  return typeof outs === 'number' ? outs : 0
 }
 
 export interface LineScoreSide {
@@ -127,31 +137,217 @@ export interface LineScoreSide {
   hbp: number | null
 }
 
+/** One side's figures in one inning, as MLB's `linescore.innings[]` has them. */
+export interface InningSide {
+  /** Absent for a half that was not played, as MLB leaves it. */
+  runs?: number
+  hits: number | null
+  errors: number | null
+  leftOnBase: number | null
+}
+
+export interface LineScoreInning {
+  num: number
+  ordinalNum: string
+  home: InningSide
+  away: InningSide
+}
+
+export interface LineScoreTeam {
+  runs: number
+  hits: number | null
+  errors: number | null
+  leftOnBase: number | null
+}
+
+export interface LineScore {
+  away: LineScoreSide
+  home: LineScoreSide
+  /** Gumbo's `linescore.innings[]`, beside the totals above. */
+  innings: LineScoreInning[]
+  /** Gumbo's `linescore.teams`: the same totals, and the runners left. */
+  teams: { home: LineScoreTeam; away: LineScoreTeam }
+}
+
 /**
  * `r` is the given total, or 0 when that score is null. `runs` sums to `r`.
  * A side with no half gets `[r]`. Hits and errors stay null when the plays
  * cannot say.
+ *
+ * `innings` and `teams` say the same in Gumbo's shape. An inning's runs are
+ * the side's `runs` for that half, so they sum to `r` whenever the side has a
+ * half. Hits and errors are counted inning by inning, and are null when the
+ * game's are. Runners left on base are counted only for a half GameStation
+ * scored whole (`leftOnBase`), and a side's total is null when any of its
+ * innings is, or when there are no innings.
+ *
+ * An imported game can hold only part of its play-by-play, so its halves do
+ * not account for its score. It keeps its totals from the score, and its
+ * `innings` from the halves it has: one entry per inning with a half, and no
+ * runs for a side that has no half in it. A side's last half takes the runs
+ * its halves do not account for, as `runs` always has, so a side's innings
+ * still sum to its total whenever it has a half.
  */
 export function lineScore(
   plays: GumboPlay[],
   halves: HalfOutcome[],
   awayScore: number | null,
   homeScore: number | null
-): { away: LineScoreSide; home: LineScoreSide } {
-  const counted = hitsAndErrors(
-    plays.map(play => ({
-      halfInning:
-        play.about.halfInning === 'top' || play.about.halfInning === 'bottom'
-          ? play.about.halfInning
-          : null,
-      eventType: play.result.eventType,
-      errorCredits: errorCredits(play)
-    }))
-  )
-  return {
-    away: side('top', halves, awayScore ?? 0, counted, 'away'),
-    home: side('bottom', halves, homeScore ?? 0, counted, 'home')
+): LineScore {
+  const counted = hitsAndErrors(plays.map(countedPlay))
+  const away = side('top', halves, awayScore ?? 0, counted, 'away')
+  const home = side('bottom', halves, homeScore ?? 0, counted, 'home')
+  const innings = inningsOf(plays, halves, { away, home }, counted.known)
+  const team = (which: 'away' | 'home'): LineScoreTeam => {
+    const line = which === 'away' ? away : home
+    const left = innings.map(inning => inning[which].leftOnBase)
+    return {
+      runs: line.r,
+      hits: line.h,
+      errors: line.e,
+      // A game with no innings cannot say who was left on.
+      leftOnBase:
+        left.length === 0 || left.some(value => value == null)
+          ? null
+          : left.reduce<number>((total, value) => total + (value ?? 0), 0)
+    }
   }
+  return {
+    away,
+    home,
+    innings,
+    teams: { home: team('home'), away: team('away') }
+  }
+}
+
+function countedPlay(play: GumboPlay): {
+  halfInning: 'top' | 'bottom' | null
+  eventType: string
+  errorCredits: number
+} {
+  return {
+    halfInning:
+      play.about.halfInning === 'top' || play.about.halfInning === 'bottom'
+        ? play.about.halfInning
+        : null,
+    eventType: play.result.eventType,
+    errorCredits: errorCredits(play)
+  }
+}
+
+/**
+ * One entry per inning that has a half, first inning first. A side's runs in
+ * an inning come from its `runs` list, which holds one entry per half it
+ * batted, in inning order.
+ */
+function inningsOf(
+  plays: GumboPlay[],
+  halves: HalfOutcome[],
+  sides: { away: LineScoreSide; home: LineScoreSide },
+  known: boolean
+): LineScoreInning[] {
+  const nums = [...new Set(halves.map(half => half.inning))].sort(
+    (a, b) => a - b
+  )
+  const runsIn = (
+    half: 'top' | 'bottom',
+    runs: number[]
+  ): Map<number, number> =>
+    new Map(
+      halves
+        .filter(item => item.half === half)
+        .map((item, index) => [item.inning, runs[index]])
+    )
+  const awayRuns = runsIn('top', sides.away.runs)
+  const homeRuns = runsIn('bottom', sides.home.runs)
+  const everyPlayRecorded = plays.every(hasRecord)
+  return nums.map(num => {
+    const inning = plays.filter(play => play.about.inning === num)
+    const counted = hitsAndErrors(inning.map(countedPlay))
+    const inningSide = (
+      which: 'away' | 'home',
+      runs: number | undefined
+    ): InningSide => {
+      const half = which === 'away' ? 'top' : 'bottom'
+      const own = inning.filter(play => play.about.halfInning === half)
+      return {
+        ...(runs == null ? {} : { runs }),
+        hits: known ? counted.hits[which] : null,
+        errors: known ? counted.errors[which] : null,
+        // A half nobody batted in left nobody on, when the game says so.
+        leftOnBase:
+          own.length === 0 ? (everyPlayRecorded ? 0 : null) : leftOnBase(own)
+      }
+    }
+    return {
+      num,
+      ordinalNum: ordinal(num),
+      home: inningSide('home', homeRuns.get(num)),
+      away: inningSide('away', awayRuns.get(num))
+    }
+  })
+}
+
+const ON_BASE = new Set(['1B', '2B', '3B'])
+
+/**
+ * The runners a half left on base: those whose last entry in the half's plays
+ * ends on a base, not out.
+ *
+ * Only a half whose every play carries a `gameStation` record lists every
+ * runner, and an override sets the bases without writing an entry, so any
+ * other half is null: an imported one, or one with an override.
+ */
+export function leftOnBase(plays: GumboPlay[]): number | null {
+  if (!plays.every(scoredWhole)) return null
+  const last = new Map<unknown, { end: unknown; isOut: unknown }>()
+  const ordered = [...plays].sort(
+    (a, b) => a.about.atBatIndex - b.about.atBatIndex
+  )
+  for (const play of ordered)
+    for (const runner of play.runners ?? []) {
+      const person = runner.details?.runner as
+        { id?: unknown; fullName?: unknown } | undefined
+      const key = person?.id ?? person?.fullName
+      if (key == null) continue
+      const movement = (runner as { movement?: unknown }).movement
+      const { end, isOut } =
+        movement != null && typeof movement === 'object'
+          ? (movement as { end?: unknown; isOut?: unknown })
+          : { end: undefined, isOut: undefined }
+      last.set(key, { end, isOut })
+    }
+  let left = 0
+  for (const { end, isOut } of last.values())
+    if (typeof end === 'string' && ON_BASE.has(end) && isOut !== true) left += 1
+  return left
+}
+
+/** A play GameStation scored, which lists every runner it moved. */
+function hasRecord(play: GumboPlay): boolean {
+  return play.gameStation != null && typeof play.gameStation === 'object'
+}
+
+/** A play GameStation scored, and whose runners no override set by hand. */
+function scoredWhole(play: GumboPlay): boolean {
+  if (!hasRecord(play)) return false
+  const actions = (play.gameStation as { actions?: unknown }).actions
+  if (!Array.isArray(actions)) return true
+  return !actions.some(
+    action =>
+      action != null &&
+      typeof action === 'object' &&
+      (action as { type?: unknown }).type === 'gameFlow' &&
+      (action as { kind?: unknown }).kind === 'override'
+  )
+}
+
+/** `1st`, `2nd`, `3rd`, `4th` … `11th`, `12th`, `13th` … `21st`. */
+export function ordinal(num: number): string {
+  const tens = num % 100
+  if (tens >= 11 && tens <= 13) return `${num}th`
+  const suffix = ['th', 'st', 'nd', 'rd'][num % 10] ?? 'th'
+  return `${num}${suffix}`
 }
 
 const ERROR_CREDITS = new Set(['f_fielding_error', 'f_throwing_error'])
