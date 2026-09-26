@@ -16,6 +16,7 @@ import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
+import { replaceGameEvents } from '../events/eventWrite'
 import { postGamePlays } from '../events/postPlays'
 import { jsonBody } from '../jsonBody'
 import { withActor } from '../middleware/withAuth'
@@ -92,6 +93,7 @@ describe('posting and reading plays', function () {
   const openId = makeId('game')
   const driftId = makeId('game')
   const markerId = makeId('game')
+  const halvesId = makeId('game')
   const refusedId = makeId('game')
   const raceId = makeId('game')
   const unscoredId = makeId('game')
@@ -239,6 +241,12 @@ describe('posting and reading plays', function () {
         },
         {
           id: markerId,
+          home_team_id: home,
+          away_team_id: away,
+          start_at: now
+        },
+        {
+          id: halvesId,
           home_team_id: home,
           away_team_id: away,
           start_at: now
@@ -690,6 +698,61 @@ describe('posting and reading plays', function () {
     expect(linescore.away.runs.reduce((sum, n) => sum + n, 0)).equals(7)
     expect(linescore.home.runs).deep.equals([0])
     expect(linescore.away.h).equals(2)
+    // Gumbo's innings beside the totals; nobody is counted left on base
+    // without GameStation's record of every runner.
+    const gumbo = game.linescore as {
+      innings: Array<{ num: number; away: { runs: number } }>
+      teams: { away: { runs: number; leftOnBase: number | null } }
+    }
+    expect(gumbo.innings.map(inning => inning.num)).deep.equals([1, 2])
+    expect(gumbo.innings.map(inning => inning.away.runs)).deep.equals([4, 3])
+    expect(gumbo.teams.away).deep.equals({
+      runs: 7,
+      hits: 2,
+      errors: 0,
+      leftOnBase: null
+    })
+  })
+
+  it("reads each half's outs from halfOuts, else its last play's count (U21)", async function () {
+    // Rows stored some way other than a post, so nothing wrote halfOuts.
+    const row = (
+      atBatIndex: number,
+      inning: number,
+      halfInning: 'top' | 'bottom',
+      extra: Record<string, unknown>
+    ): { gumbo: Record<string, unknown>; source: string } => ({
+      gumbo: {
+        about: { atBatIndex, inning, halfInning, isScoringPlay: false },
+        result: { eventType: 'field_out', awayScore: 0, homeScore: 0 },
+        ...extra
+      },
+      source: 'external'
+    })
+    await replaceGameEvents(db!, {
+      gameId: halvesId,
+      homeTeamId: home,
+      awayTeamId: away,
+      plays: [
+        row(0, 1, 'top', { count: { outs: 1 } }),
+        row(1, 1, 'top', {
+          about: {
+            atBatIndex: 1,
+            inning: 1,
+            halfInning: 'top',
+            halfOuts: 3,
+            isScoringPlay: false
+          },
+          count: { outs: 2 }
+        }),
+        row(2, 1, 'bottom', { count: { outs: 2 } }),
+        row(3, 2, 'top', {})
+      ]
+    })
+    const halves = await ask(`/games/${halvesId}/halves`)
+    expect(halves.status).equals(200)
+    const list = halves.body.halves as Array<{ outs: number }>
+    expect(list.map(half => half.outs)).deep.equals([3, 2, 0])
   })
 
   it('writes through postGamePlays exactly what the route writes', async function () {
