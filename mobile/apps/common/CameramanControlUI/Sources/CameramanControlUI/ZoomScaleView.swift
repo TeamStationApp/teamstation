@@ -6,7 +6,8 @@ import SwiftUI
 /// The rail fills the height below the thermal pill. First and last stops sit on that span
 /// whether there are two presets or five; ticks stretch to fill the gaps. The live zoom
 /// readout sits to the left of the pills. Adjacent pill centers are reported so a full-screen
-/// drag can use the same points-per-segment as the drawn scale.
+/// drag can use the same points-per-segment as the drawn scale. Zoom past the camera's own ceiling
+/// is Cameraman's software zoom, and its pill, ticks and readout are yellow instead of white.
 struct ZoomScaleView: View {
   let mapping: ZoomMapping
   let displayedZoom: Double
@@ -20,7 +21,7 @@ struct ZoomScaleView: View {
     HStack(alignment: .center, spacing: Metrics.labelGap) {
       Text(ZoomMapping.label(forDisplayed: displayedZoom))
         .font(.system(.caption2, design: .monospaced).weight(.semibold))
-        .foregroundStyle(.white)
+        .foregroundStyle(mapping.isSoftwareZoom(displayed: displayedZoom) ? Metrics.softwareColor : .white)
         .frame(minWidth: 28, alignment: .trailing)
         .accessibilityIdentifier("zoom-label")
 
@@ -68,14 +69,15 @@ struct ZoomScaleView: View {
     index: Int
   ) -> some View {
     let isActive = highlight == .preset(preset)
+    let color = mapping.isSoftwareZoom(displayed: preset) ? Metrics.softwareColor : .white
     return Button {
       onSelect(preset)
     } label: {
       Text(ZoomMapping.label(forDisplayed: preset))
         .font(.system(.caption2, design: .rounded).weight(.semibold))
         .frame(width: Metrics.buttonSize, height: Metrics.buttonSize)
-        .background(isActive ? .white.opacity(0.9) : .black.opacity(0.45), in: .circle)
-        .foregroundStyle(isActive ? .black : .white)
+        .background(isActive ? color.opacity(0.9) : Color.black.opacity(0.45), in: .circle)
+        .foregroundStyle(isActive ? .black : color)
     }
     .buttonStyle(.plain)
     .accessibilityIdentifier("zoom-preset-\(ZoomMapping.label(forDisplayed: preset))")
@@ -105,8 +107,9 @@ struct ZoomScaleView: View {
 
   private func tick(segment: Int, index: Int, highlight: ZoomMapping.ScaleHighlight) -> some View {
     let isActive = highlight == .tick(segment: segment, index: index)
+    let color = mapping.isSoftwareSegment(segment) ? Metrics.softwareColor : .white
     return Capsule()
-      .fill(isActive ? Color.white : Color.white.opacity(0.38))
+      .fill(isActive ? color : color.opacity(0.38))
       .frame(width: isActive ? 14 : 10, height: Metrics.tickThickness)
       .accessibilityIdentifier("zoom-tick-\(segment)-\(index)")
       .accessibilityAddTraits(isActive ? .isSelected : [])
@@ -136,6 +139,7 @@ struct ZoomScaleView: View {
     static let tickThickness: CGFloat = 1.5
     static let minSpacing: CGFloat = 1
     static let labelGap: CGFloat = 6
+    static let softwareColor = Color.yellow
   }
 }
 

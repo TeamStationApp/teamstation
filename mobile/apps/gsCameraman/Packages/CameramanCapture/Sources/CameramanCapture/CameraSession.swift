@@ -498,14 +498,19 @@ public final class CameraSession: @unchecked Sendable {
     switchOvers.sort()
 
     let recommended = device.activeFormat.systemRecommendedVideoZoomRange.map { Double($0.upperBound) }
+    let cameraCeiling = ZoomMapping.resolveMaximumDeviceZoom(
+      recommended: recommended,
+      available: device.maxAvailableVideoZoomFactor
+    )
+    // Software zoom past the camera's own ceiling: the device crops and upscales further, which
+    // `maxAvailableVideoZoomFactor` allows well beyond twice the recommended range.
+    let softwareCeiling = min(cameraCeiling * ZoomMapping.softwareZoomExtension, device.maxAvailableVideoZoomFactor)
     return ZoomMapping(
       minimumDeviceZoom: device.minAvailableVideoZoomFactor,
-      maximumDeviceZoom: ZoomMapping.resolveMaximumDeviceZoom(
-        recommended: recommended,
-        available: device.maxAvailableVideoZoomFactor
-      ),
+      maximumDeviceZoom: softwareCeiling,
       displayMultiplier: multiplier,
-      switchOverDeviceZooms: switchOvers
+      switchOverDeviceZooms: switchOvers,
+      softwareZoomStartDeviceZoom: cameraCeiling
     )
   }
 
