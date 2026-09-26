@@ -16,6 +16,7 @@ import { PlaceholderPlayersSheet } from './PlaceholderPlayersSheet'
 import { addPlayerDraft } from './playerDraft'
 import { PlayerEntrySheet } from './PlayerEntrySheet'
 import { RosterDrag, RosterDragGroup, RosterScrollArea } from './RosterDrag'
+import { byJersey } from './rosterOrder'
 import { RosterRemoveButton } from './RosterRemoveButton'
 import { RosterSelector } from './RosterSelector'
 import { copyState } from './scoringMachine'
@@ -188,7 +189,7 @@ export function RosterEditor({
                 targetId="roster"
                 onDropPlayer={defense ? undefined : remove}
               >
-                {team.players.map(id => (
+                {byJersey(team.players, names).map(id => (
                   <RosterDrag
                     key={id}
                     playerId={id}
