@@ -62,6 +62,26 @@ public struct ZoomMapping: Sendable, Equatable {
     softwareZoomStartDeviceZoom.map { displayedZoom(forDevice: $0) }
   }
 
+  /// The optical stops in displayed units: the widest lens and each lens switchover. Everything past
+  /// the last of them is digital, whether the camera or Cameraman does the cropping.
+  public var opticalDisplayedZooms: [Double] {
+    ([ minimumDeviceZoom ] + switchOverDeviceZooms).map { displayedZoom(forDevice: $0) }
+  }
+
+  /// True past the longest lens: the camera's own digital zoom and Cameraman's software zoom both.
+  /// What the rail draws in yellow, so an operator can see which stops are the lenses.
+  public func isDigitalZoom(displayed displayedZoom: Double) -> Bool {
+    guard let longest = opticalDisplayedZooms.last else { return false }
+    return Self.label(forDisplayed: displayedZoom) != Self.label(forDisplayed: longest) && displayedZoom > longest
+  }
+
+  /// True for a scale segment that starts at or past the longest lens.
+  public func isDigitalSegment(_ segment: Int) -> Bool {
+    let presets = presetDisplayedZooms
+    guard segment >= 0, segment + 1 < presets.count else { return false }
+    return isDigitalZoom(displayed: presets[segment + 1])
+  }
+
   /// True above the camera's own ceiling, where only Cameraman's software zoom reaches.
   public func isSoftwareZoom(displayed displayedZoom: Double) -> Bool {
     guard let start = softwareZoomStartDisplayedZoom else { return false }
@@ -99,8 +119,11 @@ public struct ZoomMapping: Sendable, Equatable {
     }
   }
 
-  /// Preset pills in displayed units: the minimum, every lens switchover, and the recommended
-  /// maximum.
+  /// Preset pills in displayed units: one per lens (the minimum and every lens switchover), then the
+  /// camera's digital ceiling, then Cameraman's software maximum.
+  ///
+  /// The lens pills are the optical stops and nothing else, so an operator aiming to avoid digital
+  /// zoom can land on one. Native sensor crops (a 48 MP lens's 2x) are not lenses and get no pill.
   ///
   /// The far-right mark is the zoom ceiling even when that value is digital rather than a
   /// constituent lens. On an iPhone 13 Pro that is 9x. A literal `0.5 / 1 / 2 / 5` is wrong on
@@ -109,7 +132,7 @@ public struct ZoomMapping: Sendable, Equatable {
   /// With a software range, the camera's ceiling is a pill of its own and the software maximum sits
   /// above it, so the last segment is exactly the software zoom.
   public var presetDisplayedZooms: [Double] {
-    var marks = ([ minimumDeviceZoom ] + switchOverDeviceZooms).map { displayedZoom(forDevice: $0) }
+    var marks = opticalDisplayedZooms
     let ceilings = [ softwareZoomStartDeviceZoom, maximumDeviceZoom ].compactMap { $0 }
     for ceiling in ceilings {
       let value = displayedZoom(forDevice: ceiling)

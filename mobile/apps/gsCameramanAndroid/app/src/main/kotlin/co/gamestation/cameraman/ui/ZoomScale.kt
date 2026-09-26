@@ -70,7 +70,7 @@ fun ZoomScale(
     ) {
         Text(
             text = ZoomMapping.label(displayedZoom),
-            color = if (mapping.isSoftwareZoom(displayedZoom)) softwareZoomColour else MaterialTheme.colorScheme.onSurface,
+            color = if (mapping.isDigitalZoom(displayedZoom)) digitalZoomColour else MaterialTheme.colorScheme.onSurface,
             fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.SemiBold,
             fontSize = 11.sp,
@@ -119,7 +119,7 @@ private fun Rail(
         verticalArrangement = if (presets.size <= 1) Arrangement.Center else Arrangement.Top
     ) {
         if (presets.size <= 1) {
-            presets.firstOrNull()?.let { PresetPill(it, mapping.isSoftwareZoom(it), highlight, onSelect) }
+            presets.firstOrNull()?.let { PresetPill(it, mapping.isDigitalZoom(it), highlight, onSelect) }
             return@Column
         }
 
@@ -127,7 +127,7 @@ private fun Rail(
         for (index in presets.indices.reversed()) {
             PresetPill(
                 preset = presets[index],
-                isSoftware = mapping.isSoftwareZoom(presets[index]),
+                isDigital = mapping.isDigitalZoom(presets[index]),
                 highlight = highlight,
                 onSelect = onSelect,
                 modifier = Modifier.onGloballyPositioned { coordinates ->
@@ -142,7 +142,7 @@ private fun Rail(
             if (index > 0) {
                 TickStack(
                     segment = index - 1,
-                    isSoftware = mapping.isSoftwareSegment(index - 1),
+                    isDigital = mapping.isDigitalSegment(index - 1),
                     highlight = highlight,
                     modifier = Modifier.weight(1f)
                 )
@@ -164,7 +164,7 @@ private fun segmentLength(centres: Map<Int, Float>): Float? {
 @Composable
 private fun PresetPill(
     preset: Double,
-    isSoftware: Boolean,
+    isDigital: Boolean,
     highlight: ZoomMapping.ScaleHighlight,
     onSelect: (Double) -> Unit,
     modifier: Modifier = Modifier
@@ -175,7 +175,7 @@ private fun PresetPill(
     // Animated so a pinch that walks past a lens reads as a handover rather than a flicker.
     val container by animateColorAsState(
         targetValue = if (isActive) {
-            if (isSoftware) softwareZoomColour else MaterialTheme.colorScheme.primary
+            if (isDigital) digitalZoomColour else MaterialTheme.colorScheme.primary
         } else {
             MaterialTheme.colorScheme.scrim.copy(alpha = CameramanTokens.chromeScrimAlpha)
         },
@@ -183,9 +183,9 @@ private fun PresetPill(
     )
     val content by animateColorAsState(
         targetValue = if (isActive) {
-            if (isSoftware) Color.Black else MaterialTheme.colorScheme.onPrimary
+            if (isDigital) Color.Black else MaterialTheme.colorScheme.onPrimary
         } else {
-            if (isSoftware) softwareZoomColour else MaterialTheme.colorScheme.onSurface
+            if (isDigital) digitalZoomColour else MaterialTheme.colorScheme.onSurface
         },
         label = "zoom-pill-content"
     )
@@ -220,7 +220,7 @@ private fun PresetPill(
 @Composable
 private fun TickStack(
     segment: Int,
-    isSoftware: Boolean,
+    isDigital: Boolean,
     highlight: ZoomMapping.ScaleHighlight,
     modifier: Modifier
 ) {
@@ -232,7 +232,7 @@ private fun TickStack(
         for (index in (ZoomMapping.scaleTicksPerSegment - 1) downTo 0) {
             Tick(
                 isActive = highlight == ZoomMapping.ScaleHighlight.Tick(segment, index),
-                isSoftware = isSoftware,
+                isDigital = isDigital,
                 segment = segment,
                 index = index
             )
@@ -242,15 +242,15 @@ private fun TickStack(
 }
 
 @Composable
-private fun Tick(isActive: Boolean, isSoftware: Boolean, segment: Int, index: Int) {
+private fun Tick(isActive: Boolean, isDigital: Boolean, segment: Int, index: Int) {
     val width by animateDpAsState(
         targetValue = if (isActive) 14.dp else 10.dp,
         label = "zoom-tick-width"
     )
     val colour by animateColorAsState(
         targetValue = when {
-            isSoftware && isActive -> softwareZoomColour
-            isSoftware -> softwareZoomColour.copy(alpha = 0.38f)
+            isDigital && isActive -> digitalZoomColour
+            isDigital -> digitalZoomColour.copy(alpha = 0.38f)
             isActive -> MaterialTheme.colorScheme.primary
             else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
         },
@@ -269,5 +269,8 @@ private val pillSize = 32.dp
 private val tickThickness = 2.dp
 private val labelGap = 6.dp
 
-/** Zoom past the camera's own ceiling is Cameraman's software zoom, drawn in yellow as on iOS. */
-private val softwareZoomColour = Color(0xFFFFD60A)
+/**
+ * Zoom past the longest lens is digital, the camera's own and then Cameraman's software zoom, and is
+ * drawn in yellow as on iOS so the white pills are exactly the lenses.
+ */
+private val digitalZoomColour = Color(0xFFFFD60A)

@@ -475,15 +475,10 @@ public final class CameraSession: @unchecked Sendable {
     catalog: [CameraLens] = [],
     position: CameraPosition = .back
   ) -> ZoomMapping {
-    var switchOvers = device.virtualDeviceSwitchOverVideoZoomFactors.map(\.doubleValue)
+    // Lens handovers only. A native crop such as the 2x is not a lens, so it is not a stop on the
+    // rail: the pills are the optical zooms an operator can aim for to avoid digital zoom.
+    let switchOvers = device.virtualDeviceSwitchOverVideoZoomFactors.map(\.doubleValue).sorted()
     let multiplier = device.displayVideoZoomFactorMultiplier
-    for lens in catalog where lens.position == position && lens.isSecondaryNative && selection.isEnabled(lens) {
-      let deviceZoom = lens.displayedZoom / max(multiplier, 0.01)
-      if !switchOvers.contains(where: { abs($0 - deviceZoom) < 0.05 }) {
-        switchOvers.append(deviceZoom)
-      }
-    }
-    switchOvers.sort()
 
     let recommended = device.activeFormat.systemRecommendedVideoZoomRange.map { Double($0.upperBound) }
     let cameraCeiling = ZoomMapping.resolveMaximumDeviceZoom(

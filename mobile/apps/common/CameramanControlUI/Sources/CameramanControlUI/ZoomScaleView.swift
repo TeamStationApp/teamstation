@@ -6,8 +6,9 @@ import SwiftUI
 /// The rail fills the height below the thermal pill. First and last stops sit on that span
 /// whether there are two presets or five; ticks stretch to fill the gaps. The live zoom
 /// readout sits to the left of the pills. Adjacent pill centers are reported so a full-screen
-/// drag can use the same points-per-segment as the drawn scale. Zoom past the camera's own ceiling
-/// is Cameraman's software zoom, and its pill, ticks and readout are yellow instead of white.
+/// drag can use the same points-per-segment as the drawn scale. The white pills are the lenses; zoom
+/// past the longest lens is digital (the camera's own, then Cameraman's software zoom), and its
+/// pills, ticks and readout are yellow instead of white.
 public struct ZoomScaleView: View {
   let mapping: ZoomMapping
   let displayedZoom: Double
@@ -33,7 +34,7 @@ public struct ZoomScaleView: View {
     HStack(alignment: .center, spacing: Metrics.labelGap) {
       Text(ZoomMapping.label(forDisplayed: displayedZoom))
         .font(.system(.caption2, design: .monospaced).weight(.semibold))
-        .foregroundStyle(mapping.isSoftwareZoom(displayed: displayedZoom) ? Metrics.softwareColor : .white)
+        .foregroundStyle(mapping.isDigitalZoom(displayed: displayedZoom) ? Metrics.softwareColor : .white)
         .frame(minWidth: 28, alignment: .trailing)
         .accessibilityIdentifier("zoom-label")
 
@@ -81,7 +82,7 @@ public struct ZoomScaleView: View {
     index: Int
   ) -> some View {
     let isActive = highlight == .preset(preset)
-    let color = mapping.isSoftwareZoom(displayed: preset) ? Metrics.softwareColor : .white
+    let color = mapping.isDigitalZoom(displayed: preset) ? Metrics.softwareColor : .white
     return Button {
       onSelect(preset)
     } label: {
@@ -119,7 +120,7 @@ public struct ZoomScaleView: View {
 
   private func tick(segment: Int, index: Int, highlight: ZoomMapping.ScaleHighlight) -> some View {
     let isActive = highlight == .tick(segment: segment, index: index)
-    let color = mapping.isSoftwareSegment(segment) ? Metrics.softwareColor : .white
+    let color = mapping.isDigitalSegment(segment) ? Metrics.softwareColor : .white
     return Capsule()
       .fill(isActive ? color : color.opacity(0.38))
       .frame(width: isActive ? 14 : 10, height: Metrics.tickThickness)

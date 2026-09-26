@@ -291,4 +291,22 @@ class ZoomMappingTest {
         assertNull(thirteenPro.softwareZoomStartDeviceZoom)
         assertFalse(thirteenPro.isSoftwareZoom(9.0))
     }
+
+    @Test
+    fun `the white pills are the lenses, and the two past the longest lens are digital`() {
+        val pixel = ZoomMapping(
+            minimumDeviceZoom = 0.556,
+            maximumDeviceZoom = 16.5,
+            switchOverDeviceZooms = listOf(1.0, 4.136)
+        ).extendedBySoftwareZoom()
+        assertEquals(listOf(0.556, 1.0, 4.136), pixel.opticalDisplayedZooms)
+        assertEquals(listOf(0.556, 1.0, 4.136, 16.5, 33.0), pixel.presetDisplayedZooms)
+        assertEquals(
+            listOf(false, false, false, true, true),
+            pixel.presetDisplayedZooms.map { pixel.isDigitalZoom(it) }
+        )
+        assertFalse(pixel.isDigitalSegment(1))
+        assertTrue(pixel.isDigitalSegment(2))
+        assertTrue(pixel.isDigitalSegment(3))
+    }
 }

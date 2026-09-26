@@ -87,6 +87,29 @@ class ZoomMapping(
         )
     }
 
+    /**
+     * The optical stops in displayed units: the widest lens and each lens switchover. Everything
+     * past the last of them is digital, whether the camera or Cameraman does the cropping.
+     */
+    val opticalDisplayedZooms: List<Double>
+        get() = (listOf(minimumDeviceZoom) + switchOverDeviceZooms).map { displayedZoom(it) }
+
+    /**
+     * True past the longest lens: the camera's own digital zoom and Cameraman's software zoom both.
+     * What the rail draws in yellow, so an operator can see which stops are the lenses.
+     */
+    fun isDigitalZoom(displayedZoom: Double): Boolean {
+        val longest = opticalDisplayedZooms.lastOrNull() ?: return false
+        return label(displayedZoom) != label(longest) && displayedZoom > longest
+    }
+
+    /** True for a scale segment that starts at or past the longest lens. */
+    fun isDigitalSegment(segment: Int): Boolean {
+        val presets = presetDisplayedZooms
+        if (segment < 0 || segment + 1 >= presets.size) return false
+        return isDigitalZoom(presets[segment + 1])
+    }
+
     /** True above the camera's own ceiling, where only Cameraman's software zoom reaches. */
     fun isSoftwareZoom(displayedZoom: Double): Boolean {
         val start = softwareZoomStartDisplayedZoom ?: return false
@@ -127,7 +150,9 @@ class ZoomMapping(
     fun lensIndex(deviceZoom: Double): Int = switchOverDeviceZooms.count { deviceZoom >= it }
 
     /**
-     * Preset pills in displayed units: the minimum, every lens switchover, and the ceiling.
+     * Preset pills in displayed units: one per lens (the minimum and every lens switchover), then
+     * the camera's digital ceiling, then Cameraman's software maximum. The lens pills are the
+     * optical stops and nothing else, so an operator aiming to avoid digital zoom can land on one.
      *
      * The far-right mark is the zoom ceiling even when that value is digital rather than a
      * constituent lens. A literal `0.5 / 1 / 2 / 5` is wrong on most handsets and wrong on the
@@ -136,9 +161,7 @@ class ZoomMapping(
      */
     val presetDisplayedZooms: List<Double>
         get() {
-            val marks = (listOf(minimumDeviceZoom) + switchOverDeviceZooms)
-                .map { displayedZoom(it) }
-                .toMutableList()
+            val marks = opticalDisplayedZooms.toMutableList()
             for (ceiling in listOfNotNull(softwareZoomStartDeviceZoom, maximumDeviceZoom)) {
                 val value = displayedZoom(ceiling)
                 val last = marks.lastOrNull()
