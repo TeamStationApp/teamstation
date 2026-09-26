@@ -159,6 +159,30 @@ export function battingCounts(type: string): {
   return { pa, ab: pa && !NOT_AT_BAT.has(type), k: STRIKEOUTS.has(type) }
 }
 
+/**
+ * Whom a play's strikeout is charged to (9.15(b)): a batter who left with
+ * two strikes, when the pinch hitter who replaced him struck out. With more
+ * than one pinch hitter, the man the first sent in at two strikes replaced.
+ * Read from the play's offensive substitutions for its batter, each with the
+ * count he came in at; otherwise the batter.
+ */
+export function strikeoutBatter(play: GamePlay): number {
+  let up = play.matchup.batter.id
+  let charged = up
+  for (const event of [...play.playEvents].reverse()) {
+    const replaced = event.replacedPlayer?.id
+    if (
+      event.details.code !== 'offensive_substitution' ||
+      event.player.id !== up ||
+      replaced == null
+    )
+      continue
+    if (event.count.strikes === 2) charged = replaced
+    up = replaced
+  }
+  return charged
+}
+
 /** Each batter's line and each pitcher's line, worked out from the plays. */
 export function statLines(plays: readonly GamePlay[]): {
   batting: Record<number, BattingLine>
@@ -185,7 +209,7 @@ export function statLines(plays: readonly GamePlay[]): {
     }
     const counts = battingCounts(type)
     if (!play.about.isComplete || !counts.pa) continue
-    const line = bat(batter)
+    const line = bat(counts.k ? strikeoutBatter(play) : batter)
     line.pa++
     if (counts.ab) line.ab++
     if (HITS.has(type)) {
@@ -201,7 +225,7 @@ export function statLines(plays: readonly GamePlay[]): {
       pitcher.bb++
     }
     if (type === 'hit_by_pitch') line.hbp++
-    line.rbi += play.result.rbi
+    if (play.result.rbi > 0) bat(batter).rbi += play.result.rbi
   }
   return { batting, pitching }
 }
