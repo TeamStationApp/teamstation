@@ -236,6 +236,61 @@ describe('the ball in play and the play begun (U13)', function () {
   })
 })
 
+describe('the ball in play and the play begun, with the lineup changes the engine writes (U13)', function () {
+  /** A reliever, 19, on the home bench, after a walk. */
+  const relief = (): GameState =>
+    after(walk(game()), {
+      type: 'lineup',
+      kind: 'addPlayer',
+      side: 'home',
+      name: 'Reliever'
+    })
+  const change: ScoringAction = {
+    type: 'lineup',
+    kind: 'substitute',
+    side: 'home',
+    player: 19,
+    replaces: F.P
+  }
+  const events = (state: GameState): string[] =>
+    state.liveData.plays.currentPlay!.playEvents.map(
+      event =>
+        `${event.details.code}${event.isSubstitution === true ? ' sub' : ''}`
+    )
+
+  it('leaves the ball in play after a pitching change made while it is', function () {
+    const changed = after(
+      relief(),
+      { type: 'ballInPlay', contact: 'swing' },
+      change
+    )
+    expect(events(changed)).deep.equals(['X', 'pitching_substitution sub'])
+    expect(awaitingResult(changed)).equals(true)
+    expect(applyAction(changed, ball).problems[0].message).equals(
+      'A ball in play needs its result'
+    )
+    // The batted result takes the ball in play, and throws no pitch.
+    const hit = after(changed, { type: 'result', eventType: 'single' })
+    expect(hit.liveData.plays.currentPlay!.result.eventType).equals('single')
+    expect(events(hit)).deep.equals(['X', 'pitching_substitution sub'])
+  })
+
+  it('refuses End Game after a lineup change by its flag, never by its event', function () {
+    const changed = after(relief(), change)
+    expect(events(changed)).deep.equals(['pitching_substitution sub'])
+    expect(applyAction(changed, endGame).problems[0]?.message).equals(
+      'Finish the at-bat first'
+    )
+    // Without the flag the substitution alone has not begun the play.
+    const flagless = copyState(changed)
+    delete flagless.liveData.plays.currentPlay!.source.gamestation.lineupChanged
+    expect(after(flagless, endGame).final).equals(true)
+    expect(
+      applyAction(after(flagless, ball), endGame).problems[0]?.message
+    ).equals('Finish the at-bat first')
+  })
+})
+
 describe('a pitch a wild pitch can follow (U14)', function () {
   it('is a B, C or S by its call code, and never an F, L, T or H', function () {
     const pointed = (state: GameState): GameState => {

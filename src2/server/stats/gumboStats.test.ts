@@ -571,6 +571,186 @@ describe('gameStatLines', function () {
     })
   })
 
+  it('credits an out made before a pitching change to the pitcher on the mound at its event', function () {
+    // Batter 1 singles off 11. Batter 2 bats to 16 after a change: 1 is
+    // caught stealing at event 1, and 2 strikes out at event 5.
+    const single = paPlay('single', { pitcher: 11 })
+    const changedAt = (change: number, atBatIndex = 1): GumboPlay =>
+      ({
+        ...paPlay('strikeout', { atBatIndex, batter: 2, pitcher: 16, outs: 2 }),
+        runners: [
+          {
+            movement: { start: '1B', end: null, isOut: true },
+            details: {
+              eventType: 'caught_stealing_2b',
+              runner: { id: 1 },
+              playIndex: 1
+            }
+          },
+          {
+            movement: { start: null, end: null, isOut: true },
+            details: { eventType: 'strikeout', runner: { id: 2 }, playIndex: 5 }
+          }
+        ],
+        playEvents: [
+          {
+            index: change,
+            isPitch: false,
+            type: 'action',
+            details: { eventType: 'pitching_substitution' },
+            player: { id: 16 }
+          }
+        ]
+      }) as unknown as GumboPlay
+    const outs = (plays: GumboPlay[]): number[][] => {
+      const result = gameStatLines(plays, teams, known)
+      if (result.kind !== 'lines') throw new Error(result.detail)
+      return result.lines
+        .filter(row => row.teamId === 'home')
+        .map(row => [row.userId, row.pitch_outs, row.pitch_bf])
+    }
+    // Changed after the caught stealing: that out is the starter's.
+    expect(outs([single, changedAt(2)])).deep.equals([
+      [11, 1, 1],
+      [16, 1, 1]
+    ])
+    // Changed before it, or between plate appearances: both are 16's.
+    expect(outs([single, changedAt(0)])).deep.equals([
+      [11, 0, 1],
+      [16, 2, 1]
+    ])
+    // With no play before it, the play began with its own pitcher.
+    expect(outs([changedAt(2, 0)])).deep.equals([[16, 2, 1]])
+  })
+
+  /** A plate appearance with its own events and runner entries. */
+  const eventful = (
+    play: GumboPlay,
+    changes: Array<[index: number, player: Record<string, unknown>]>,
+    runners: Array<[runner: number, eventType: string, playIndex: number]>
+  ): GumboPlay => ({
+    ...play,
+    runners: runners.map(([runner, eventType, playIndex]) => ({
+      movement: {
+        start: runner === play.matchup?.batter?.id ? null : '1B',
+        end: null,
+        isOut: true
+      },
+      details: { eventType, runner: { id: runner }, playIndex }
+    })),
+    playEvents: changes.map(([index, player]) => ({
+      index,
+      isPitch: false,
+      type: 'action',
+      details: { eventType: 'pitching_substitution' },
+      player
+    }))
+  })
+  const pitched = (plays: GumboPlay[]): unknown[][] => {
+    const result = gameStatLines(plays, teams, known)
+    if (result.kind !== 'lines') throw new Error(result.detail)
+    return result.lines
+      .filter(row => row.pitch_bf > 0 || row.pitch_outs > 0)
+      .map(row => [row.userId, row.teamId, row.pitch_outs, row.pitch_bf])
+  }
+
+  it('gives a reliever who leaves inside the plate appearance he entered in the outs he made', function () {
+    // 16 relieves 11 and 1 is caught stealing off him; 17 relieves 16 and
+    // strikes 2 out.
+    const single = paPlay('single', { pitcher: 11 })
+    const pa = paPlay('strikeout', {
+      atBatIndex: 1,
+      batter: 2,
+      pitcher: 17,
+      outs: 2
+    })
+    expect(
+      pitched([
+        single,
+        eventful(
+          pa,
+          [
+            [1, { id: 16 }],
+            [3, { id: 17 }]
+          ],
+          [
+            [1, 'caught_stealing_2b', 2],
+            [2, 'strikeout', 6]
+          ]
+        )
+      ])
+    ).deep.equals([
+      [11, 'home', 0, 1],
+      [16, 'home', 1, 0],
+      [17, 'home', 1, 1]
+    ])
+  })
+
+  it('begins a half with the pitcher a change at its first event brings in', function () {
+    // The visitors' 4 pitches the bottom of the 1st. Batting in the top of
+    // the 2nd they put 5 on the mound, which is written first in the
+    // bottom of the 2nd.
+    const k = (
+      atBatIndex: number,
+      inning: number,
+      halfInning: 'top' | 'bottom',
+      pitcher: number
+    ): GumboPlay =>
+      paPlay('strikeout', {
+        atBatIndex,
+        inning,
+        halfInning,
+        batter: halfInning === 'top' ? 1 : 12,
+        pitcher,
+        outs: 3
+      })
+    const changed = eventful(
+      k(3, 2, 'bottom', 5),
+      [[0, { id: 5 }]],
+      [[12, 'strikeout', 3]]
+    )
+    expect(
+      pitched([
+        k(0, 1, 'top', 11),
+        k(1, 1, 'bottom', 4),
+        k(2, 2, 'top', 11),
+        changed
+      ])
+    ).deep.equals([
+      [4, 'away', 3, 1],
+      [5, 'away', 3, 1],
+      [11, 'home', 6, 2]
+    ])
+  })
+
+  it('gives an out made while a pitcher with no user id is on the mound to nobody', function () {
+    // 11 gives way to a pitcher made at the field, who picks 1 off, and
+    // comes back to strike 2 out.
+    const single = paPlay('single', { pitcher: 11 })
+    const pa = paPlay('strikeout', {
+      atBatIndex: 1,
+      batter: 2,
+      pitcher: 11,
+      outs: 2
+    })
+    expect(
+      pitched([
+        single,
+        eventful(
+          pa,
+          [
+            [1, { fullName: 'Player 9' }],
+            [3, { id: 11 }]
+          ],
+          [
+            [1, 'pickoff_1b', 2],
+            [2, 'strikeout', 6]
+          ]
+        )
+      ])
+    ).deep.equals([[11, 'home', 1, 2]])
+  })
+
   it('skips game_advisory, score_correction and final_score', function () {
     const base = paPlay('single', { awayScore: 0, homeScore: 0 })
     const skips: GumboPlay[] = [

@@ -11,6 +11,7 @@ import {
   game,
   single,
   strike,
+  strikeout,
   walk
 } from '../../test/scoringGames'
 import {
@@ -26,12 +27,13 @@ import {
   currentDocumentOf,
   documentOf,
   finalDocumentOf,
+  PlayFolder,
   SPRAY_HOME,
   SPRAY_WALL,
   sprayCoordinates,
   storedEventType
 } from './document'
-import { newSetup } from './lineup'
+import { freshGame, newSetup } from './lineup'
 import { PARK } from './park'
 import { type GamePlay, type GameState, setupOf } from './state'
 
@@ -1543,5 +1545,562 @@ describe('hit data (U17)', function () {
       expect(detailOf(play)).not.have.property('launchSpeed')
     }
     expect(detailOf(plays[2]).launchAngle).equals(22)
+  })
+})
+
+describe('substitutions (U19)', function () {
+  interface Substitution extends StoredEvent {
+    isSubstitution?: boolean
+    player: { id?: number; fullName: string }
+    position?: Record<string, unknown>
+    battingOrder?: string
+    replacedPlayer?: { id?: number; fullName: string }
+  }
+  const substitutions = (play: GumboPlay): Substitution[] =>
+    (eventsOf(play) as Substitution[]).filter(
+      event => event.isSubstitution === true
+    )
+  /** Each substitution as `eventType position battingOrder replaced: sentence`. */
+  const said = (play: GumboPlay): string[] =>
+    substitutions(play).map(
+      event =>
+        `${String(event.details.eventType)} ${String(event.position?.abbreviation)} ${String(event.battingOrder)} ${String(event.replacedPlayer?.fullName)}: ${String(event.details.description)}`
+    )
+  const roster = (
+    state: GameState,
+    change: (setup: ReturnType<typeof setupOf>) => void
+  ): GameState => {
+    const setup = setupOf(state)
+    change(setup)
+    return after(state, { type: 'lineup', kind: 'roster', setup })
+  }
+  const bench = (state: GameState, side: 'away' | 'home'): GameState =>
+    after(state, {
+      type: 'lineup',
+      kind: 'addPlayer',
+      side,
+      name: `${side === 'away' ? 'Away' : 'Home'} Bench`
+    })
+  /** Away 1 on first after a walk, Away 2 due; a bench player a side, 19 and 20. */
+  const benched = (): GameState =>
+    bench(bench(walk(rostered()), 'away'), 'home')
+
+  it("writes each kind with the feed's keys, value types and position", function () {
+    const feed = JSON.parse(
+      readFileSync('src2/common/gumbo/reference/feed776258.json', 'utf8')
+    ) as {
+      liveData: {
+        plays: { allPlays: Array<{ playEvents: Substitution[] }> }
+      }
+    }
+    const feedOf = (eventType: string): Substitution =>
+      feed.liveData.plays.allPlays
+        .flatMap(play => play.playEvents)
+        .find(event => event.details.eventType === eventType)!
+    // A pinch hitter at 1-0 and a new pitcher, as the screen saves them.
+    const subbed = roster(after(benched(), ball), setup => {
+      setup.sides.away.battingOrder[1] = 19
+      setup.sides.home.defense.P = 20
+    })
+    // The pinch hitter stays in, at third, when his side takes the field.
+    const fielding = after(subbed, ball, ball, ball, close, {
+      type: 'gameFlow',
+      kind: 'endHalf'
+    })
+    const stays = roster(walk(fielding), setup => {
+      setup.sides.away.defense['3B'] = 19
+    })
+    const got = new Map(
+      [...substitutions(stored(subbed)), ...substitutions(stored(stays))].map(
+        event => [String(event.details.eventType), event]
+      )
+    )
+    for (const eventType of [
+      'offensive_substitution',
+      'pitching_substitution',
+      'defensive_switch'
+    ]) {
+      const want = feedOf(eventType)
+      const event = got.get(eventType)!
+      expect(Object.keys(event).sort(), eventType).deep.equals(
+        Object.keys(want).sort()
+      )
+      expect(Object.keys(event.details), eventType).deep.equals(
+        Object.keys(want.details)
+      )
+      // No action says when it happened, so its times are null.
+      for (const key of Object.keys(want).filter(key => !key.endsWith('Time')))
+        expect(typeOf(event[key as keyof Substitution]), key).equals(
+          typeOf(want[key as keyof Substitution])
+        )
+      for (const key of Object.keys(want.details))
+        expect(typeOf(event.details[key]), key).equals(
+          typeOf(want.details[key])
+        )
+      expect(Object.keys(event.position!)).deep.equals(
+        Object.keys(want.position!)
+      )
+      expect(event.details.event).equals(want.details.event)
+      expect(POSITION_CODES.has(String(event.position!.code))).equals(true)
+    }
+    // The pinch hitter bats in his man's place, in the count he left.
+    expect(stored(subbed).matchup).deep.include({
+      batter: { fullName: 'Away Bench' },
+      pitcher: { fullName: 'Home Bench' }
+    })
+    expect(stored(subbed).count).deep.include({ balls: 1, strikes: 0 })
+    // Only the pinch hitter and the switch carry his place and his man.
+    expect(got.get('pitching_substitution')).not.have.property('battingOrder')
+    expect(got.get('pitching_substitution')).not.have.property('replacedPlayer')
+    expect(said(stored(subbed))).deep.equals([
+      'pitching_substitution P undefined undefined: Pitching Change: Home Bench replaces Home 1.',
+      'offensive_substitution PH 201 Away 2: Offensive Substitution: Pinch-hitter Away Bench replaces Away 2.'
+    ])
+    expect(got.get('offensive_substitution')!.position).deep.equals({
+      code: '11',
+      name: 'Pinch Hitter',
+      type: 'Hitter',
+      abbreviation: 'PH'
+    })
+    expect(got.get('offensive_substitution')!.replacedPlayer).deep.equals({
+      id: 102,
+      fullName: 'Away 2'
+    })
+    // As the feed's McKinstry: the pinch hitter's place, and the man at third.
+    expect(said(stored(stays))).deep.equals([
+      'defensive_switch 3B 201 Away 6: Away Bench remains in the game as the third baseman.'
+    ])
+  })
+
+  it('writes a sub who comes in to field with the pitching change keys', function () {
+    const fielded = roster(benched(), setup => {
+      setup.sides.home.defense.LF = 20
+      setup.sides.home.battingOrder[6] = 20
+    })
+    const [event] = substitutions(stored(fielded))
+    expect(said(stored(fielded))).deep.equals([
+      'defensive_substitution LF undefined undefined: Defensive Substitution: Home Bench replaces Home 7, playing left field.'
+    ])
+    expect(event.position!.code).equals('7')
+    expect(Object.keys(event).sort()).deep.equals(
+      [
+        'count',
+        'details',
+        'endTime',
+        'index',
+        'isPitch',
+        'isSubstitution',
+        'player',
+        'position',
+        'startTime',
+        'type'
+      ].sort()
+    )
+  })
+
+  it('writes a shortstop moved to the mound as a pitching change and a switch, in one change or two', function () {
+    const swapped = roster(benched(), setup => {
+      setup.sides.home.defense.P = F.SS
+      setup.sides.home.defense.SS = F.P
+    })
+    const expected = [
+      'pitching_substitution P undefined undefined: Pitching Change: Home 5 replaces Home 1.',
+      'defensive_switch SS 100 Home 5: Defensive switch from pitcher to shortstop for Home 1.'
+    ]
+    expect(said(stored(swapped))).deep.equals(expected)
+    // The way the E0 session did it: one position at a time.
+    const stepwise = after(
+      benched(),
+      {
+        type: 'lineup',
+        kind: 'position',
+        side: 'home',
+        position: 'P',
+        player: F.SS
+      },
+      {
+        type: 'lineup',
+        kind: 'position',
+        side: 'home',
+        position: 'SS',
+        player: F.P
+      }
+    )
+    expect(said(stored(stepwise))).deep.equals(expected)
+    expect(stored(stepwise).matchup).deep.include({
+      pitcher: { id: 205, fullName: 'Home 5' }
+    })
+  })
+
+  it('writes a substitute who comes in to pitch, and numbers each sub into a place', function () {
+    const relieved = after(benched(), {
+      type: 'lineup',
+      kind: 'substitute',
+      side: 'home',
+      player: 20,
+      replaces: F.P
+    })
+    expect(said(stored(relieved))).deep.equals([
+      'pitching_substitution P undefined undefined: Pitching Change: Home Bench replaces Home 1.'
+    ])
+    // A second pinch hitter at the same place is its second sub.
+    const twice = after(
+      roster(benched(), setup => {
+        setup.sides.away.battingOrder[1] = 19
+      }),
+      { type: 'lineup', kind: 'addPlayer', side: 'away', name: 'Away Two' },
+      {
+        type: 'lineup',
+        kind: 'substitute',
+        side: 'away',
+        player: 21,
+        replaces: 19
+      }
+    )
+    expect(
+      substitutions(stored(twice)).map(event => event.battingOrder)
+    ).deep.equals(['201', '202'])
+    expect(stored(twice).matchup).deep.include({
+      batter: { fullName: 'Away Two' }
+    })
+  })
+
+  it('writes a pinch runner for a man on base, and a new batting order as gs_batting_order', function () {
+    const ran = roster(benched(), setup => {
+      setup.sides.away.battingOrder[0] = 19
+    })
+    expect(said(stored(ran))).deep.equals([
+      'offensive_substitution PR 101 Away 1: Offensive Substitution: Pinch-runner Away Bench replaces Away 1.'
+    ])
+    const reordered = roster(benched(), setup => {
+      const order = setup.sides.away.battingOrder
+      ;[order[2], order[3]] = [order[3], order[2]]
+    })
+    const [event] = substitutions(stored(reordered))
+    expect(event).not.have.property('position')
+    expect(event.details).deep.include({
+      eventType: 'gs_batting_order',
+      event: 'Batting Order Change',
+      description: 'Batting order change: Away 4 bats 3rd, Away 3 bats 4th.'
+    })
+    expect(event.player).deep.equals({ id: 104, fullName: 'Away 4' })
+    expect(STORED_EVENT_TYPES.has('gs_batting_order')).equals(true)
+  })
+
+  it('writes nothing for the lineups a game starts with, a new roster player or the batter changing sides', function () {
+    const pregame = roster(rostered(), setup => {
+      setup.sides.away.battingOrder.reverse()
+      setup.sides.home.defense.P = F.SS
+      setup.sides.home.defense.SS = F.P
+    })
+    expect(pregame.liveData.plays.currentPlay!.playEvents).deep.equals([])
+    const quiet = after(bench(walk(rostered()), 'away'), {
+      type: 'lineup',
+      kind: 'batterSide',
+      batSide: 'L'
+    })
+    expect(quiet.liveData.plays.currentPlay!.playEvents).deep.equals([])
+  })
+
+  it('writes a change the side at bat makes to its fielders first in the first play it fields', function () {
+    // At 1-0 the visitors, at bat, swap their pitcher and shortstop and send
+    // a pinch hitter up, with the score 1-0 after a home run.
+    const homeRun: ScoringAction[] = [
+      { type: 'ballInPlay', contact: 'swing', fielder: F.CF },
+      { type: 'result', eventType: 'home_run' },
+      close
+    ]
+    const swapped = roster(after(benched(), ...homeRun, ball), setup => {
+      const defense = setup.sides.away.defense
+      ;[defense.P, defense.SS] = [defense.SS, defense.P]
+      setup.sides.away.battingOrder[2] = 19
+    })
+    // The half they bat writes only the pinch hitter.
+    expect(said(stored(swapped))).deep.equals([
+      'offensive_substitution PH 301 Away 3: Offensive Substitution: Pinch-hitter Away Bench replaces Away 3.'
+    ])
+    const fielding = strikeout(strikeout(strikeout(swapped)))
+    const completed = (state: GameState): GumboPlay[] =>
+      state.liveData.plays.allPlays.map(play =>
+        documentOf(state, play, { setupBefore: setupOf(state), actions: [] })
+      )
+    expect(completed(fielding).map(said)).deep.equals([
+      [],
+      [],
+      [
+        'offensive_substitution PH 301 Away 3: Offensive Substitution: Pinch-hitter Away Bench replaces Away 3.'
+      ],
+      [],
+      []
+    ])
+    // As the feed writes a change between innings: before the first pitch,
+    // with the count and outs the half begins with and the score it stands at.
+    const announced = [
+      'pitching_substitution P undefined undefined: Pitching Change: Away 5 replaces Away 1.',
+      'defensive_switch SS 100 Away 5: Defensive switch from pitcher to shortstop for Away 1.'
+    ]
+    const first = stored(fielding)
+    expect(first.about).deep.include({ halfInning: 'bottom', inning: 1 })
+    expect(said(first)).deep.equals(announced)
+    expect(
+      eventsOf(first).map(({ index, count, details }) => [
+        index,
+        count,
+        details.awayScore,
+        details.homeScore
+      ])
+    ).deep.equals([
+      [0, { balls: 0, strikes: 0, outs: 0 }, 2, 0],
+      [1, { balls: 0, strikes: 0, outs: 0 }, 2, 0]
+    ])
+    expect(first.actionIndex).deep.equals([0, 1])
+    // The play's own events come after them, and its runners point past them.
+    const fanned = strikeout(after(fielding, ball))
+    const [bottom] = completed(fanned).slice(5)
+    expect(said(bottom)).deep.equals(announced)
+    expect(bottom.pitchIndex).deep.equals([2, 3, 4, 5])
+    expect(bottom.actionIndex).deep.equals([0, 1])
+    expect(eventsOf(bottom).map(event => event.index)).deep.equals([
+      0, 1, 2, 3, 4, 5
+    ])
+    expect(runnersOf(bottom)[0].details.playIndex).equals(5)
+    expect(bottom.matchup).deep.include({
+      pitcher: { id: 105, fullName: 'Away 5' }
+    })
+    // Only the first play of the half writes them.
+    expect(said(stored(fanned))).deep.equals([])
+  })
+
+  /** Each substitution of every play so far, the one in progress last. */
+  const everySaid = (state: GameState): string[][] => [
+    ...state.liveData.plays.allPlays.map(play =>
+      said(
+        documentOf(state, play, { setupBefore: setupOf(state), actions: [] })
+      )
+    ),
+    said(stored(state))
+  ]
+  /** The visitors put their shortstop on the mound and their pitcher at short. */
+  const swapAway = (state: GameState): GameState =>
+    roster(state, setup => {
+      const defense = setup.sides.away.defense
+      ;[defense.P, defense.SS] = [defense.SS, defense.P]
+    })
+  const away = (player: number, replaces: number): ScoringAction => ({
+    type: 'lineup',
+    kind: 'substitute',
+    side: 'away',
+    player,
+    replaces
+  })
+  const toTheField = (state: GameState): GameState => {
+    let next = state
+    while (next.liveData.linescore.isTopInning) next = strikeout(next)
+    return next
+  }
+
+  it('announces the pitcher who takes the mound, not one the side at bat moved there and replaced', function () {
+    // At bat, the visitors move Away 5 to the mound, then bring Away Bench
+    // in for him, who neither bats nor runs: in the next plate appearance,
+    // or in the same one.
+    const apart = after(
+      strikeout(swapAway(after(benched(), ball))),
+      away(19, 5)
+    )
+    const together = after(swapAway(after(benched(), ball)), away(19, 5))
+    for (const [name, batting] of [
+      ['apart', apart],
+      ['together', together]
+    ] as const) {
+      const fielding = toTheField(batting)
+      const all = everySaid(fielding)
+      // The half they bat writes none of it.
+      expect(all.slice(0, -1).flat(), name).deep.equals([])
+      expect(all.at(-1), name).deep.equals([
+        'pitching_substitution P undefined undefined: Pitching Change: Away Bench replaces Away 1.',
+        'defensive_switch SS 100 Away 5: Defensive switch from pitcher to shortstop for Away 1.'
+      ])
+      expect(stored(fielding).matchup, name).deep.include({
+        pitcher: { fullName: 'Away Bench' }
+      })
+    }
+    // The engine sees Away Bench come in to hit for Away 5, which he never
+    // did before his side took the field.
+    expect(
+      apart.liveData.plays.currentPlay!.playEvents.find(
+        event => event.isSubstitution === true
+      )
+    ).deep.include({
+      position: 'PH',
+      battingOrder: '501',
+      replacedPlayer: { id: 5, fullName: 'Away 5' }
+    })
+  })
+
+  it('announces nothing for a change the side undid before it took the field', function () {
+    // Swapped at bat and swapped back later in the half.
+    const back = toTheField(
+      swapAway(strikeout(swapAway(after(benched(), ball))))
+    )
+    expect(everySaid(back).flat()).deep.equals([])
+    // Swapped at bat, and back at the break before the first pitch.
+    const atBreak = swapAway(toTheField(swapAway(after(benched(), ball))))
+    expect(everySaid(atBreak).flat()).deep.equals([])
+    expect(everySaid(strikeout(atBreak)).flat()).deep.equals([])
+    // After the first pitch the change back is the side's own, written where
+    // it was made.
+    const pitched = swapAway(after(toTheField(swapAway(benched())), ball))
+    expect(said(stored(pitched))).deep.equals([
+      'pitching_substitution P undefined undefined: Pitching Change: Away 5 replaces Away 1.',
+      'defensive_switch SS 100 Away 5: Defensive switch from pitcher to shortstop for Away 1.',
+      'pitching_substitution P undefined undefined: Pitching Change: Away 1 replaces Away 5.',
+      'defensive_switch SS 500 Away 1: Defensive switch from pitcher to shortstop for Away 5.'
+    ])
+    // A change made one position at a time at the break is announced once.
+    const stepwise = after(
+      toTheField(benched()),
+      {
+        type: 'lineup',
+        kind: 'position',
+        side: 'away',
+        position: 'P',
+        player: 5
+      },
+      {
+        type: 'lineup',
+        kind: 'position',
+        side: 'away',
+        position: 'SS',
+        player: 1
+      }
+    )
+    expect(said(stored(stepwise))).deep.equals([
+      'pitching_substitution P undefined undefined: Pitching Change: Away 5 replaces Away 1.',
+      'defensive_switch SS 100 Away 5: Defensive switch from pitcher to shortstop for Away 1.'
+    ])
+  })
+
+  it('writes a pinch hitter who takes the field as a switch, and a bench player sent in to field as a substitution', function () {
+    // Away Bench pinch-hits for Away 2, the catcher, and Away Two comes in
+    // for Away 8, the center fielder, who neither bats nor runs.
+    const batting = after(
+      benched(),
+      away(19, 2),
+      { type: 'lineup', kind: 'addPlayer', side: 'away', name: 'Away Two' },
+      away(21, 8)
+    )
+    const all = everySaid(toTheField(batting))
+    expect(all.slice(0, -1).flat()).deep.equals([
+      'offensive_substitution PH 201 Away 2: Offensive Substitution: Pinch-hitter Away Bench replaces Away 2.'
+    ])
+    // As the feed's McKinstry, then the fielder the visitors sent in.
+    expect(all.at(-1)).deep.equals([
+      'defensive_switch C 201 Away 2: Away Bench remains in the game as the catcher.',
+      'defensive_substitution CF undefined undefined: Defensive Substitution: Away Two replaces Away 8, playing center field.'
+    ])
+  })
+
+  it('stays out of the pitches, the score and the in-play check', function () {
+    // Runs in, then a change: the event carries the score as it stands.
+    const homeRun: ScoringAction[] = [
+      { type: 'ballInPlay', contact: 'swing', fielder: F.CF },
+      { type: 'result', eventType: 'home_run' },
+      close
+    ]
+    const scored = roster(after(benched(), ...homeRun), setup => {
+      setup.sides.home.defense.P = 20
+    })
+    const play = stored(scored)
+    expect(substitutions(play)[0].details).deep.include({
+      awayScore: 2,
+      homeScore: 0,
+      isScoringPlay: false,
+      isOut: false
+    })
+    expect(play.pitchIndex).deep.equals([])
+    expect(play.actionIndex).deep.equals([0])
+  })
+})
+
+describe('the matchup', function () {
+  it("writes the batter's side by name, and the pitcher's hand when the roster knows it", function () {
+    const teams = {
+      away: { id: 'team-away', name: 'A' },
+      home: { id: 'team-home', name: 'H' }
+    }
+    const handed = freshGame(
+      'g1',
+      teams,
+      newSetup(teams, {
+        away: [{ userId: 1, shortName: 'Lefty', bats: 'left' }],
+        home: [{ userId: 2, shortName: 'Southpaw', throws: 'left' }]
+      })
+    )
+    expect(stored(handed).matchup).deep.equals({
+      batter: { id: 1, fullName: 'Lefty' },
+      batSide: { code: 'L', description: 'Left' },
+      pitcher: { id: 2, fullName: 'Southpaw' },
+      pitchHand: { code: 'L', description: 'Left' }
+    })
+    expect(stored(rostered()).matchup).deep.equals({
+      batter: { id: 101, fullName: 'Away 1' },
+      batSide: { code: 'R', description: 'Right' },
+      pitcher: { id: 201, fullName: 'Home 1' }
+    })
+  })
+})
+
+describe('folding a whole game', function () {
+  it('folds each play through one folder as it folds that play alone, in one step each', function () {
+    // A bench player sent in for Away 2 on deck, who bats, then fields: who
+    // has been announced is carried from play to play.
+    const K = [strike, strike, strike, close]
+    const state = after(
+      game(),
+      { type: 'lineup', kind: 'addPlayer', side: 'away', name: 'Away Bench' },
+      ball,
+      {
+        type: 'lineup',
+        kind: 'substitute',
+        side: 'away',
+        player: 19,
+        replaces: 2
+      },
+      ...Array.from({ length: 7 }, () => K).flat(),
+      ball
+    )
+    const stamp = { setupBefore: setupOf(state), actions: [] }
+    const plays = state.liveData.plays.allPlays
+    const current = state.liveData.plays.currentPlay
+    const alone = [
+      ...plays.map(play => documentOf(state, play, stamp)),
+      currentDocumentOf(state, current, stamp)
+    ]
+    const folder = new PlayFolder(state)
+    const before = PlayFolder.steps
+    const together = [
+      ...plays.map(play => folder.play(play, stamp)),
+      folder.current(current, stamp)
+    ]
+    expect(PlayFolder.steps - before).equals(plays.length + 1)
+    expect(together).deep.equals(alone)
+    expect(
+      together.flatMap(play =>
+        (
+          (play.playEvents ?? []) as Array<{
+            isSubstitution?: boolean
+            details: Record<string, unknown>
+          }>
+        )
+          .filter(event => event.isSubstitution === true)
+          .map(
+            event =>
+              `${play.about.atBatIndex} ${String(event.details.eventType)}`
+          )
+      )
+    ).deep.equals(['1 offensive_substitution', '3 defensive_switch'])
+    // Asked for an earlier play, it starts over from the game's first.
+    expect(folder.play(plays[1], stamp)).deep.equals(alone[1])
+    expect(folder.play(plays[4], stamp)).deep.equals(alone[4])
   })
 })

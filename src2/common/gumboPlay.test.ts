@@ -213,6 +213,7 @@ describe("MLB's event types", function () {
     expect([...GUMBO_EXTENSION_EVENT_TYPES].sort()).deep.equals([
       'final_score',
       'gs_batter_out',
+      'gs_batting_order',
       'gs_manual_placement',
       'score_correction'
     ])

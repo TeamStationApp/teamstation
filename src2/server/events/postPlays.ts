@@ -52,6 +52,13 @@ export async function postGamePlays(
   if (new Set(indexes).size !== indexes.length) {
     throw badRequest('Two plays share an about.atBatIndex')
   }
+  const unread = [...body.plays, body.currentPlay].find(
+    play => play != null && !readableVersion(play)
+  )
+  if (unread != null)
+    throw badRequest(
+      `Play ${unread.about.atBatIndex}: gameStation.version must be 1`
+    )
   const prepared = withHalfOuts(body.plays)
 
   return await db
@@ -172,6 +179,21 @@ export async function postGamePlays(
     .catch((error: unknown) => {
       throw unknownUser(error, prepared) ?? error
     })
+}
+
+/**
+ * A play GameStation scored is replayed from its record, which is version 1:
+ * a record in any other version would be dropped when the game is read
+ * back. A play with no record is read from its document.
+ */
+function readableVersion(play: object): boolean {
+  const record = (play as { gameStation?: unknown }).gameStation
+  if (record == null) return true
+  const version =
+    typeof record === 'object'
+      ? (record as { version?: unknown }).version
+      : undefined
+  return version === 1
 }
 
 /**

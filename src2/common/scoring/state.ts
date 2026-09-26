@@ -75,9 +75,19 @@ export interface PlayEvent {
     isInPlay?: boolean
     /** The runner entry a runner's action wrote, just before it. */
     runnerEntry?: number
+    /** Where a player who changed position played before. */
+    fromPosition?: string
   }
   /** A lineup change, which does not begin a play. */
   isSubstitution?: boolean
+  /** A lineup change's position: `P` to `RF`, or `PH` and `PR`. */
+  position?: string
+  /** A lineup change's place in the order as MLB writes it, `601`. */
+  battingOrder?: string
+  /** The player a lineup change took out of the order or off the field. */
+  replacedPlayer?: PlayerRef
+  /** A change of batting order: each man it moves and where he now bats. */
+  moved?: Array<{ player: PlayerRef; bats: number }>
   /** After a pitch, the count it left; the in-play pitch keeps its own. */
   count: { balls: number; strikes: number; outs: number }
   player: PlayerRef
@@ -98,14 +108,44 @@ const asPlayEvent = exactly(
       code: asString,
       call: asOptional(asObject({ code: asString, description: asString })),
       isInPlay: asOptional(asBoolean),
-      runnerEntry: asOptional(asNumber)
+      runnerEntry: asOptional(asNumber),
+      fromPosition: asOptional(asString)
     }),
     isSubstitution: asOptional(asBoolean),
+    position: asOptional(asString),
+    battingOrder: asOptional(asString),
+    replacedPlayer: asOptional(asPlayerRef),
+    moved: asOptional(
+      asArray(asObject({ player: asPlayerRef, bats: asNumber }))
+    ),
     count: asCount,
     player: asPlayerRef,
     pitcher: asOptional(asPlayerRef)
   })
 ) as Cleaner<PlayEvent>
+
+const asDefense = asObject(
+  Object.fromEntries(
+    POSITIONS.map(position => [position, asEither(asNull, asSessionId)])
+  ) as Record<Position, Cleaner<number | null>>
+)
+/** Each side's batting order and fielders at one moment of the game. */
+const asSideLineup = asObject({
+  battingOrder: asArray(asSessionId),
+  defense: asDefense
+})
+const asLineups = asObject({ away: asSideLineup, home: asSideLineup })
+export type Lineups = ReturnType<typeof asLineups>
+export type SideLineup = Lineups[Side]
+
+/** Each side's batting order and fielders as the game stands. */
+export function lineupsOf(state: GameState): Lineups {
+  const { away, home } = state.liveData.boxscore.teams
+  return copyState({
+    away: { battingOrder: away.battingOrder, defense: away.defense },
+    home: { battingOrder: home.battingOrder, defense: home.defense }
+  })
+}
 
 /** One play as the game holds it, in GUMBO's shape, with session ids. */
 export const asGamePlay = asObject({
@@ -165,6 +205,12 @@ export const asGamePlay = asObject({
     })
   ),
   playEvents: asArray(asPlayEvent),
+  /**
+   * The lineups as the play opened, and as its first pitch or action came:
+   * a side announces its fielding changes as the net of the two
+   * (`document.ts`), so a change undone before then is never written.
+   */
+  lineups: asOptional(asObject({ opened: asLineups, began: asLineups })),
   /**
    * The ball in play as the scoring screen draws it: the launch angle and its
    * label, where the scorer put the ball on the field, and the fielder who
@@ -446,11 +492,7 @@ const asSide = asObject({
   players: asArray(asSessionId),
   battingOrder: asArray(asSessionId),
   battingIndex: asNumber,
-  defense: asObject(
-    Object.fromEntries(
-      POSITIONS.map(position => [position, asEither(asNull, asSessionId)])
-    ) as Record<Position, Cleaner<number | null>>
-  ),
+  defense: asDefense,
   pitchCounts: asObject(asNumber)
 })
 const asPlayer = asObject({

@@ -11,12 +11,14 @@ import {
 import { makeId } from '../../common/ids'
 import { mintUserId } from '../../common/mintUserId'
 import type { ScoringAction } from '../../common/scoring/actions'
-import { newSetup } from '../../common/scoring/lineup'
+import { applyAction } from '../../common/scoring/apply'
+import { freshGame, newSetup } from '../../common/scoring/lineup'
 import {
   type EventStore,
   ScoringSession,
   type SessionContext
 } from '../../common/scoring/session'
+import { setupOf } from '../../common/scoring/state'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
@@ -567,5 +569,66 @@ describe('refolding the stored plays (U11)', function () {
       ])
       expect(await snapshot(gameId)).deep.equals(before)
     }
+  })
+
+  it('leaves a game whose log would now name another batter, and says which', async function () {
+    // Scored before a man put in a runner's place took his base: the sheet
+    // took Away 3 out while he stood on first and added a man at the end,
+    // and that code left Away 3 on base and the new man batting tenth.
+    // Today the new man runs for Away 3 and bats third, so the tenth plate
+    // appearance of the visitors would be Away 1's.
+    const old = await newGame()
+    const first: ScoringAction[] = [
+      ...strikeout,
+      ...strikeout,
+      ...single,
+      close,
+      { type: 'lineup', kind: 'addPlayer', side: 'away', name: 'Bench' }
+    ]
+    let state = freshGame(old, TEAMS, setup)
+    for (const action of first) state = applyAction(state, action).state
+    // What that code stored: the order as saved, with Away 3 kept in it so
+    // that today's code keeps him on base too.
+    const saved = setupOf(state)
+    const away = saved.sides.away
+    away.battingOrder.push(away.players.at(-1)!)
+    await score(old, [
+      ...first,
+      { type: 'lineup', kind: 'roster', setup: saved },
+      ...Array.from({ length: 13 }, () => strikeout).flat()
+    ])
+    // ...and the log it kept: the save that took Away 3 out.
+    for (const row of await readPlays(db, old)) {
+      const gumbo = row.gumbo as {
+        gameStation?: { actions: ScoringAction[] }
+      }
+      const save = gumbo.gameStation?.actions.find(
+        action => action.type === 'lineup' && action.kind === 'roster'
+      )
+      if (save?.type !== 'lineup' || save.setup == null) continue
+      save.setup.sides.away.battingOrder.splice(2, 1)
+      await db
+        .updateTable('events')
+        .set({ gumbo: JSON.stringify(gumbo) })
+        .where('id', '=', row.id)
+        .execute()
+    }
+    const before = await snapshot(old)
+    const lines: string[] = []
+    const print = (line: string): void => {
+      lines.push(line)
+    }
+    expect(await runRefold(db, ['--game', old, '--preview'], print)).equals(1)
+    expect(await runRefold(db, ['--game', old], print)).equals(1)
+    const skipped =
+      `skipped ${old}: rebuilding would change who played: ` +
+      'play 15 batter Bench → Away 1'
+    expect(lines).deep.equals([
+      skipped,
+      '0 changed, 0 unchanged, 1 skipped (preview)',
+      skipped,
+      '0 changed, 0 unchanged, 1 skipped'
+    ])
+    expect(await snapshot(old)).deep.equals(before)
   })
 })

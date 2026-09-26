@@ -4,6 +4,7 @@ import {
   type BatteryEventAction,
   cleanAction,
   destinationBase,
+  DESTINATIONS,
   type FieldingPlayAction,
   type GameFlowAction,
   type LineupAction,
@@ -38,6 +39,7 @@ import {
   battingSide,
   canSwitchBatter,
   fieldingSide,
+  lineupChanges,
   ordinal,
   playerRef,
   startAppearance
@@ -61,6 +63,7 @@ import {
   copyState,
   type GamePlay,
   type GameState,
+  lineupsOf,
   type Movement,
   type PlayerRef,
   type PlayEvent,
@@ -1305,6 +1308,13 @@ function commitSafe(
   }
   if (pending != null && from === to)
     refuse('illegal', 'The runner is already there')
+  // Between pitches, a runner who stays where he is was safe on a pickoff;
+  // nothing else leaves him on his base.
+  if (
+    from === to &&
+    (action.reason ?? 'Safe from Pickoff') !== 'Safe from Pickoff'
+  )
+    refuse('illegal', `That runner is already on ${DESTINATIONS[to]}`)
   const reason =
     action.reason ??
     (pending == null && from === to ? 'Safe from Pickoff' : 'Advance')
@@ -1388,6 +1398,13 @@ function baseRunning(ctx: Ctx, action: BaseRunningAction): void {
   if (from === 0) refuse('unknownPlayer', 'That runner is not on base')
   const next = Math.min(4, from + 1)
   const target = action.to == null ? next : destinationBase(action.to)
+  // A steal, or a runner let go, is to a base ahead of him.
+  if (
+    target === from &&
+    action.kind !== 'pickoff' &&
+    action.kind !== 'pickoff_safe'
+  )
+    refuse('illegal', `That runner is already on ${DESTINATIONS[from]}`)
   const move = (
     to: number,
     out: boolean,
@@ -1468,6 +1485,17 @@ function batteryEvent(ctx: Ctx, action: BatteryEventAction): void {
   applyAwardMovements(ctx, 'Balk')
 }
 
+/** The runner a pinch runner runs for: the side at bat's man on the base. */
+function pinchedFor(ctx: Ctx, action: LineupAction): number {
+  if (action.base == null || action.player == null)
+    refuse('malformed', 'Say who runs, and for the runner on which base')
+  const runner = baseIds(ctx.state)[destinationBase(action.base) - 1]
+  if (runner == null) refuse('illegal', `Nobody is on ${action.base}`)
+  if (action.side !== battingSide(ctx.state))
+    refuse('illegal', 'A pinch runner runs for the side at bat')
+  return runner
+}
+
 function lineup(ctx: Ctx, action: LineupAction): void {
   const state = ctx.state
   if (state.pending != null) refuse('notNow', 'Finish the current play first')
@@ -1484,6 +1512,8 @@ function lineup(ctx: Ctx, action: LineupAction): void {
     return
   }
   const setup = action.setup ?? setupOf(state)
+  // Who took whose place in the order: a substitute bats when his man was due.
+  const replaced: Record<number, number> = {}
   if (action.setup == null) {
     const sideName = action.side
     if (sideName == null) refuse('malformed', 'Say which team')
@@ -1509,9 +1539,10 @@ function lineup(ctx: Ctx, action: LineupAction): void {
         if (id === action.player)
           team.defense[position as keyof typeof team.defense] = null
       team.defense[action.position] = action.player
-    } else if (action.kind === 'substitute') {
+    } else if (action.kind === 'substitute' || action.kind === 'pinchRunner') {
       const incoming = action.player
-      const leaving = action.replaces
+      const leaving =
+        action.kind === 'substitute' ? action.replaces : pinchedFor(ctx, action)
       if (incoming == null || leaving == null)
         refuse('malformed', 'Say who comes in and who leaves')
       if (!team.players.includes(incoming)) team.players.push(incoming)
@@ -1521,20 +1552,45 @@ function lineup(ctx: Ctx, action: LineupAction): void {
       for (const [position, id] of Object.entries(team.defense))
         if (id === leaving)
           team.defense[position as keyof typeof team.defense] = incoming
+      replaced[leaving] = incoming
     } else refuse('malformed', 'A roster change carries its setup')
   }
-  const replaced: Record<number, number> =
-    action.kind === 'substitute' &&
-    action.replaces != null &&
-    action.player != null
-      ? { [action.replaces]: action.player }
-      : {}
   const applied = applyRoster(state, setup, action.nextBatter, replaced)
   if (applied.state == null)
     refuse('illegal', applied.error ?? 'Invalid lineup')
   ctx.state = applied.state
+  // A pinch runner takes the charges of the man he runs for (9.16).
+  const was = baseIds(state)
+  baseIds(ctx.state).forEach((id, index) => {
+    const runner = was[index]
+    if (id == null || runner == null || id === runner) return
+    ctx.charges.set(id, chargeOf(state, ctx.charges, runner))
+    ctx.charges.delete(runner)
+  })
   const play = ctx.state.liveData.plays.currentPlay
-  if (play != null) play.source.gamestation.lineupChanged = true
+  if (play != null) {
+    play.source.gamestation.lineupChanged = true
+    for (const change of lineupChanges(state, ctx.state, applied.takers))
+      play.playEvents.push(
+        withoutUndefined({
+          index: play.playEvents.length,
+          isPitch: false,
+          type: 'action',
+          details: {
+            description: change.description,
+            code: change.eventType,
+            fromPosition: change.fromPosition
+          },
+          isSubstitution: true,
+          position: change.position,
+          battingOrder: change.battingOrder,
+          replacedPlayer: change.replacedPlayer,
+          moved: change.moved,
+          count: count(ctx),
+          player: change.player
+        })
+      )
+  }
   ctx.out.push({
     type: 'batterChanged',
     batter: ctx.state.liveData.linescore.offense.batter?.id ?? null
@@ -1710,6 +1766,14 @@ export function applyAction(state: GameState, raw: ScoringAction): Applied {
     )
     settle(ctx)
     keepCharges(ctx.state, ctx.charges, mound)
+    // Until its first pitch or action, a play begins with the lineups as
+    // they stand.
+    const open = ctx.state.liveData.plays.currentPlay
+    if (
+      open?.lineups != null &&
+      open.playEvents.every(event => event.isSubstitution === true)
+    )
+      open.lineups.began = lineupsOf(ctx.state)
   } catch (error) {
     if (error instanceof Refused) return unchanged(error.problem)
     return unchanged({

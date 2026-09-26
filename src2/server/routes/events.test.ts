@@ -986,6 +986,68 @@ describe('posting and reading plays', function () {
     expect(JSON.stringify(row.gumbo)).not.contains('description')
   })
 
+  it('refuses a GameStation record in a version it cannot read, naming the play, and writes nothing', async function () {
+    const record = (version: unknown): unknown => ({
+      version,
+      setupBefore: {},
+      actions: []
+    })
+    for (const [body, message] of [
+      [
+        {
+          plays: [
+            play({ atBatIndex: 1, awayScore: 0, homeScore: 0 }),
+            {
+              ...play({ atBatIndex: 2, awayScore: 0, homeScore: 0 }),
+              gameStation: record(2)
+            }
+          ]
+        },
+        'Play 2: gameStation.version must be 1'
+      ],
+      [
+        {
+          plays: [],
+          currentPlay: {
+            about: {
+              atBatIndex: 5,
+              inning: 1,
+              halfInning: 'top',
+              isComplete: false
+            },
+            gameStation: record('2')
+          }
+        },
+        'Play 5: gameStation.version must be 1'
+      ],
+      [
+        {
+          plays: [
+            {
+              ...play({ atBatIndex: 0, awayScore: 0, homeScore: 0 }),
+              gameStation: { setupBefore: {}, actions: [] }
+            }
+          ]
+        },
+        'Play 0: gameStation.version must be 1'
+      ]
+    ] as const) {
+      const refused = await ask(`/games/${twiceId}/events`, 'POST', {
+        ...body,
+        source: { system: 'gamestation' },
+        mode: 'live'
+      })
+      expect(refused.status).equals(400)
+      expect(refused.body.message).equals(message)
+    }
+    const stored = await db!
+      .selectFrom('events')
+      .select('id')
+      .where('gameId', '=', twiceId)
+      .execute()
+    expect(stored).deep.equals([])
+  })
+
   it('refuses two plays at one atBatIndex and writes nothing', async function () {
     const refused = await ask(`/games/${twiceId}/events`, 'POST', {
       plays: [

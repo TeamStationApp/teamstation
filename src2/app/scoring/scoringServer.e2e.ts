@@ -1167,4 +1167,198 @@ describe('scoring into the server', function () {
       sql(`select count(*) from events where "gameId"='${gameId}'`)
     ).equals('2')
   })
+
+  it('scenario 8: substitutions are stored as feed actions, and do not hold the game open', async function () {
+    const fixture = scoringGame()
+    const gameId = fixture.games[0]
+    const page = await openAs(scorer, `/games/${gameId}`)
+    /** A player made up in the roster sheet, on the side it shows. */
+    const createPlayer = async (first: string, last: string): Promise<void> => {
+      await click(page, 'Create Player')
+      // Asked for directly: waitForSelector never saw the sheet's fields.
+      for (let i = 0; i < 50; i++) {
+        if ((await page.$('[aria-label="First Name"]')) != null) break
+        await new Promise(resolve => setTimeout(resolve, 200))
+      }
+      // The sheet moves focus to its first field once it has shown.
+      await new Promise(resolve => setTimeout(resolve, 500))
+      await page.locator('[aria-label="First Name"]').fill(first)
+      await page.locator('[aria-label="Last Name"]').fill(last)
+      await click(page, 'Add Player')
+      await page.waitForSelector('[aria-label="First Name"]', { hidden: true })
+    }
+    const menuItemDisabled = async (label: string): Promise<boolean> =>
+      await page.$eval(
+        `[aria-label="${label}"]`,
+        node => node.getAttribute('aria-disabled') === 'true'
+      )
+    let starter = ''
+    let dueBatter = ''
+    try {
+      await openScoring(page, 'Score Game')
+      await click(page, 'Open scoring menu')
+      await click(page, 'Set Team Rosters')
+      await click(page, 'Save Rosters')
+      // One pitch to the leadoff man.
+      await pitch(page, 'Ball')
+      await waitReady(page)
+      const board = await summary(page)
+      dueBatter = /Batter (.+?) (left|right) handed/.exec(board)![1]
+      starter = / · Pitcher (.+)$/.exec(board)![1]
+      // A pinch hitter for him, and a new pitcher, saved together.
+      await click(page, 'Open scoring menu')
+      await click(page, 'Set Team Rosters')
+      await createPlayer('Pinch', 'Hitter')
+      await click(page, 'Add Pinch Hitter to Lineup')
+      const order = await page.$$('[aria-label^="Reorder "]')
+      await page.focus('[aria-label="Reorder Pinch Hitter"]')
+      await page.keyboard.press('Enter')
+      for (let i = 1; i < order.length; i++)
+        await page.keyboard.press('ArrowUp')
+      await page.keyboard.press('Enter')
+      // In the browser, so no optional chaining: the test's compiler would
+      // call a helper the page does not have.
+      await page.waitForFunction(() => {
+        const first = document.querySelector('[aria-label^="Reorder "]')
+        return first === null
+          ? false
+          : first.getAttribute('aria-label') === 'Reorder Pinch Hitter'
+      })
+      await click(page, `Remove ${dueBatter}`)
+      await click(page, 'Home Team')
+      await click(page, 'Set Defense')
+      await createPlayer('Relief', 'Pitcher')
+      // Held, then dragged onto the mound.
+      const from = await page.waitForSelector('[aria-label="Relief Pitcher"]')
+      await from!.scrollIntoView()
+      const start = (await from!.boundingBox())!
+      const mound = (await (await page.$(
+        '[data-roster-target="defense-P"]'
+      ))!.boundingBox())!
+      await page.mouse.move(
+        start.x + start.width / 2,
+        start.y + start.height / 2
+      )
+      await page.mouse.down()
+      await new Promise(resolve => setTimeout(resolve, 700))
+      await page.mouse.move(
+        mound.x + mound.width / 2,
+        mound.y + mound.height / 2,
+        { steps: 12 }
+      )
+      await page.mouse.up()
+      await page.waitForFunction(() => {
+        const mound = document.querySelector('[data-roster-target="defense-P"]')
+        return mound === null
+          ? false
+          : String(mound.textContent).includes('Relief')
+      })
+      await click(page, 'Save Rosters')
+      await waitReady(page)
+      const changed = await summary(page)
+      expect(changed).includes('Batter Pinch Hitter')
+      expect(changed).includes('Pitcher Relief Pitcher')
+      // He walks, in the count his man left.
+      for (let i = 0; i < 3; i++) await pitch(page, 'Ball')
+      await finishAtBat(page)
+      await waitReady(page)
+      // A fresh plate appearance: the runner steals before a pitch, and the
+      // game cannot end.
+      await dropRunnerWithKeyboard(page, 'Safe', true)
+      await click(page, 'Steal')
+      await waitReady(page)
+      await click(page, 'Open scoring menu')
+      expect(await menuItemDisabled('End Game')).equals(true)
+      await click(page, 'Dismiss scoring menu')
+      // Undone, it can.
+      await page.locator('[aria-label^="Undo "]').click()
+      await waitReady(page)
+      await waitSaved(page)
+      await click(page, 'Open scoring menu')
+      expect(await menuItemDisabled('End Game')).equals(false)
+      await click(page, 'End Game')
+      await click(page, 'Confirm End Game')
+      await page.waitForSelector('[aria-label="Game over"]')
+      await waitSaved(page)
+    } finally {
+      await page.close()
+    }
+
+    expect(sql(`select status from games where id='${gameId}'`)).equals('final')
+    expect(
+      sql(
+        `select string_agg("eventType", ',' order by "atBatIndex") from events where "gameId"='${gameId}'`
+      )
+    ).equals('walk,final_score')
+    interface Event {
+      isPitch: boolean
+      isSubstitution?: boolean
+      details: Record<string, unknown>
+      count: { balls: number; strikes: number }
+      player: { id?: number; fullName: string }
+      position?: Record<string, unknown>
+      battingOrder?: string
+      replacedPlayer?: { id?: number; fullName: string }
+    }
+    const play = JSON.parse(
+      sql(
+        `select gumbo from events where "gameId"='${gameId}' and "atBatIndex"=0`
+      )
+    ) as {
+      playEvents: Event[]
+      matchup: Record<string, unknown>
+      actionIndex: number[]
+    }
+    const events = play.playEvents.map(event =>
+      event.isPitch
+        ? `pitch ${String(event.details.code)} ${event.count.balls}-${event.count.strikes}`
+        : `${String(event.details.eventType)} ${event.count.balls}-${event.count.strikes}`
+    )
+    expect(events).deep.equals([
+      'pitch B 1-0',
+      'pitching_substitution 1-0',
+      'offensive_substitution 1-0',
+      'pitch B 2-0',
+      'pitch B 3-0',
+      'pitch B 4-0'
+    ])
+    expect(play.actionIndex).deep.equals([1, 2])
+    const [pitching, pinch] = play.playEvents.slice(1, 3)
+    expect(pitching).deep.include({
+      isSubstitution: true,
+      player: { fullName: 'Relief Pitcher' },
+      position: {
+        code: '1',
+        name: 'Pitcher',
+        type: 'Pitcher',
+        abbreviation: 'P'
+      }
+    })
+    expect(pitching).not.have.property('battingOrder')
+    expect(pitching).not.have.property('replacedPlayer')
+    expect(pitching.details).deep.include({
+      event: 'Pitching Substitution',
+      description: `Pitching Change: Relief Pitcher replaces ${starter}.`
+    })
+    expect(pinch).deep.include({
+      isSubstitution: true,
+      player: { fullName: 'Pinch Hitter' },
+      battingOrder: '101'
+    })
+    expect(pinch.position).deep.include({ code: '11', abbreviation: 'PH' })
+    expect(pinch.replacedPlayer).deep.include({ fullName: dueBatter })
+    expect(pinch.replacedPlayer!.id).equals(fixture.away[0])
+    expect(pinch.details).deep.include({
+      event: 'Offensive Substitution',
+      description: `Offensive Substitution: Pinch-hitter Pinch Hitter replaces ${dueBatter}.`
+    })
+    // The reliever was made up with a right arm, so the hand is known.
+    expect(play.matchup).deep.include({
+      batter: { fullName: 'Pinch Hitter' },
+      pitcher: { fullName: 'Relief Pitcher' },
+      pitchHand: { code: 'R', description: 'Right' }
+    })
+    console.log(`      pitching: ${String(pitching.details.description)}`)
+    console.log(`      pinch: ${String(pinch.details.description)}`)
+  })
 })

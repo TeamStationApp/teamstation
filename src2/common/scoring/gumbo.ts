@@ -9,6 +9,7 @@ import {
   documentOf,
   FINAL_INDEX,
   finalDocumentOf,
+  PlayFolder,
   type PlayStamp
 } from './document'
 import {
@@ -91,6 +92,15 @@ export function foldCurrentPlay(
   stamp: PlayStamp
 ): CurrentPlay {
   return currentDocumentOf(state, play, stamp)
+}
+
+/**
+ * Folds several plays of one game, taken in the game's order, in one pass
+ * over it: `play` for each completed play, then `current` for the at-bat in
+ * progress.
+ */
+export function playFolder(state: GameState): PlayFolder {
+  return new PlayFolder(state)
 }
 
 /** The last play of a game, at index 9999: its final score. */

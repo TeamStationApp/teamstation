@@ -4,9 +4,8 @@ import type { Problem, ScoringAction } from './actions'
 import { type Applied, applyAction } from './apply'
 import {
   FINAL_INDEX,
-  foldCurrentPlay,
   foldFinal,
-  foldPlay,
+  playFolder,
   replayPlays,
   type Segment,
   segmentAfter
@@ -474,10 +473,13 @@ export class ScoringSession {
       const times = this.times.get(index)
       return { startTime: times?.start ?? null, endTime: times?.end ?? null }
     }
+    // One pass over the game folds every play: each is folded with who has
+    // been announced as the plays before it left it.
+    const folder = playFolder(this.game)
     for (const { play, segment } of this.completed)
       plays.set(
         play.about.atBatIndex,
-        foldPlay(this.game, play, {
+        folder.play(play, {
           ...segment,
           ...time(play.about.atBatIndex)
         })
@@ -492,11 +494,10 @@ export class ScoringSession {
     const index = this.game.liveData.plays.allPlays.length
     return {
       plays,
-      current: foldCurrentPlay(
-        this.game,
-        this.game.liveData.plays.currentPlay,
-        { ...this.segment, ...time(index) }
-      )
+      current: folder.current(this.game.liveData.plays.currentPlay, {
+        ...this.segment,
+        ...time(index)
+      })
     }
   }
 

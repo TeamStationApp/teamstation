@@ -8,7 +8,14 @@ import {
   type GumboPlay
 } from '../gumboPlay'
 import type { ScoringAction } from './actions'
-import { ordinal } from './lineup'
+import {
+  battersOf,
+  battingOrderSaid,
+  defensiveSubstitutionSaid,
+  fieldingChanges,
+  ordinal,
+  pinchSaid
+} from './lineup'
 import { PARK } from './park'
 import { trajectoryOf } from './rules'
 import {
@@ -18,7 +25,9 @@ import {
   type PlayerRef,
   type PlayEvent,
   type Point,
+  POSITIONS,
   type Side,
+  type SideLineup,
   withoutUndefined
 } from './state'
 
@@ -636,15 +645,8 @@ function scoresAfter(play: GamePlay): Score[] {
   const runs = play.runners.map((runner): number =>
     scoredRunner(runner) ? 1 : 0
   )
-  const total = runs.reduce((sum, run) => sum + run, 0)
   const batting = play.about.halfInning === 'top' ? 'away' : 'home'
-  // A completed play is stamped with the score it left; one in progress
-  // still holds the score it began with.
-  const start: Score = {
-    away: play.result.awayScore,
-    home: play.result.homeScore
-  }
-  if (play.about.isComplete) start[batting] -= total
+  const start = scoreBefore(play)
   let upTo = -1
   return play.playEvents.map(event => {
     const linked = event.details.runnerEntry
@@ -660,27 +662,584 @@ function scoresAfter(play: GamePlay): Score[] {
   })
 }
 
+/** The score a play began with. */
+function scoreBefore(play: GamePlay): Score {
+  const batting = play.about.halfInning === 'top' ? 'away' : 'home'
+  // A completed play is stamped with the score it left; one in progress
+  // still holds the score it began with.
+  const start: Score = {
+    away: play.result.awayScore,
+    home: play.result.homeScore
+  }
+  if (play.about.isComplete)
+    start[batting] -= play.runners.filter(scoredRunner).length
+  return start
+}
+
+/**
+ * The lineup changes MLB writes when a side takes the field: a pitcher, and
+ * a player coming in to field or changing position. A pinch hitter or runner
+ * and a new batting order belong to the side at bat.
+ */
+const FIELDING_CHANGES: ReadonlySet<string> = new Set([
+  'pitching_substitution',
+  'defensive_substitution',
+  'defensive_switch'
+])
+
+/**
+ * A change to a side's fielders that the play it was made in does not write,
+ * because MLB announces it only when that side takes the field
+ * (`takingTheField`): one the side at bat made — a pinch hitter who stays in
+ * to play third, a pitcher who starts the next inning — and, when this play
+ * is the first its fielders field, one they made before its first pitch or
+ * action. Its lineup changes where the scorer made the change. A game that
+ * ends before that side fields again writes it nowhere.
+ */
+function fieldsLater(
+  state: GameState,
+  setup: GameSetup,
+  play: GamePlay,
+  event: PlayEvent,
+  takingField: boolean
+): boolean {
+  if (
+    event.isSubstitution !== true ||
+    !FIELDING_CHANGES.has(event.details.code)
+  )
+    return false
+  const batting = play.about.halfInning === 'top' ? 'away' : 'home'
+  if (
+    playerOf(state, setup, event.player.id)?.teamId ===
+    state.gameData.teams[batting].id
+  )
+    return true
+  return (
+    takingField &&
+    play.playEvents.every(
+      earlier => earlier.index >= event.index || earlier.isSubstitution === true
+    )
+  )
+}
+
+/**
+ * Who the stored plays have announced, play by play. A man put in a batting
+ * order is announced where he first appears in play: at bat, as a pinch
+ * hitter; on a base, as a pinch runner; in the field, in the net change his
+ * side writes as it takes the field. Until then he is waiting, across halves
+ * if need be. One who leaves before he appears is never announced, and the
+ * man who then appears in his place is announced as replacing the last man
+ * who did. The lineups the game begins with announce nobody, and a man
+ * still waiting when the game ends is never announced. Everything here is
+ * read from the engine's plays, so an undo, a replay or a reopened game
+ * announces the same.
+ */
+interface Cast {
+  /**
+   * Each player in the game who has appeared since he came in, with the man
+   * he was announced replacing as a pinch hitter or runner.
+   */
+  appeared: Map<number, number | undefined>
+  /**
+   * Each player put in an order who has not appeared yet: the last man to
+   * appear in the place he took, and that place.
+   */
+  waiting: Map<number, { replaced?: number; slot: number }>
+  /** Each man a substitution took out, as he stood when he left. */
+  left: Map<number, number | undefined>
+  /**
+   * Each man last announced as a pinch hitter or runner who has not fielded
+   * since.
+   */
+  pinch: Map<number, 'PH' | 'PR'>
+  /**
+   * Each man who appeared replacing another, by the man who first held that
+   * place (himself, for the men the game began with).
+   */
+  place: Map<number, number>
+  /** The last man to appear in each such place. */
+  lastIn: Map<number, number>
+  /** Each side's places in the order as announced: `601`. */
+  codes: Record<Side, Map<number, number>>
+  seeded: boolean
+}
+
+/** Records that `id` appeared in the place of `replaced`, the last man there. */
+function succeeds(cast: Cast, id: number, replaced: number | undefined): void {
+  if (replaced == null) return
+  const place = cast.place.get(replaced) ?? replaced
+  cast.place.set(id, place)
+  cast.lastIn.set(place, id)
+}
+
+/**
+ * Whom a man coming in to field at the break replaces, and whether that man
+ * came in to hit or run: the last man to appear in the place of the one who
+ * held the position when the side last fielded, who may have left halves
+ * ago; else the last man to appear in the place he took in the order (the
+ * one he was sent in for, or the one who batted there then); else the
+ * holder. A man still in the game is not the one leaving.
+ */
+function leavingFor(
+  cast: Cast,
+  was: SideLineup,
+  now: SideLineup,
+  id: number,
+  holder: number | undefined
+): { replaced: number | undefined; pinch?: 'PH' | 'PR' } {
+  const inGame = (who: number): boolean =>
+    now.battingOrder.includes(who) || Object.values(now.defense).includes(who)
+  const last = (who: number | null | undefined): number | undefined =>
+    who == null
+      ? undefined
+      : (cast.lastIn.get(cast.place.get(who) ?? who) ?? who)
+  const replaced =
+    [
+      last(holder),
+      last(cast.waiting.get(id)?.replaced),
+      last(was.battingOrder[now.battingOrder.indexOf(id)])
+    ].find(who => who != null && who !== id && !inGame(who)) ?? holder
+  return {
+    replaced,
+    pinch: replaced == null ? undefined : cast.pinch.get(replaced)
+  }
+}
+
+function sideOfPlayer(state: GameState, setup: GameSetup, id: number): Side {
+  return sideOf(state, playerOf(state, setup, id)?.teamId)
+}
+
+/** The place in the order a lineup event names: its slot, or 0. */
+function slotOf(event: PlayEvent): number {
+  return event.battingOrder == null
+    ? 0
+    : Math.floor(Number(event.battingOrder) / 100)
+}
+
+/**
+ * The place in the order of a man coming in at `slot`, as MLB writes it:
+ * the slot, then how many have come in there, `602`. One coming back to a
+ * place he was announced in keeps its code.
+ */
+function enteringCode(
+  codes: Map<number, number>,
+  id: number,
+  slot: number
+): string {
+  const known = codes.get(id)
+  if (known != null && Math.floor(known / 100) === slot) return String(known)
+  const came = [...codes.values()]
+    .filter(code => Math.floor(code / 100) === slot)
+    .reduce((most, code) => Math.max(most, code % 100), 0)
+  const code = slot * 100 + came + 1
+  codes.set(id, code)
+  return String(code)
+}
+
+/** A pinch hitter's or runner's announcement, where he first appears. */
+function announce(
+  state: GameState,
+  setup: GameSetup,
+  cast: Cast,
+  id: number,
+  replaced: number | undefined,
+  running: boolean,
+  slot: number,
+  count: PlayEvent['count']
+): PlayEvent {
+  cast.waiting.delete(id)
+  cast.appeared.set(id, replaced)
+  cast.pinch.set(id, running ? 'PR' : 'PH')
+  succeeds(cast, id, replaced)
+  const named = (who: number): PlayerRef => ({
+    id: who,
+    fullName: playerOf(state, setup, who)?.fullName ?? ''
+  })
+  return withoutUndefined({
+    index: 0,
+    isPitch: false,
+    type: 'action',
+    details: {
+      description: pinchSaid(
+        running,
+        named(id).fullName,
+        replaced == null ? undefined : named(replaced).fullName
+      ),
+      code: 'offensive_substitution'
+    },
+    isSubstitution: true,
+    position: running ? 'PR' : 'PH',
+    battingOrder:
+      slot > 0
+        ? enteringCode(cast.codes[sideOfPlayer(state, setup, id)], id, slot)
+        : undefined,
+    replacedPlayer: replaced == null ? undefined : named(replaced),
+    count: { ...count },
+    player: named(id)
+  })
+}
+
+/**
+ * A man put in an order where the scorer made the change: announced there
+ * when he appears there — the pinch hitter for the batter, the pinch runner
+ * for a man on base — and otherwise waiting. A man put back in the place he
+ * left before anyone appeared in it is no change.
+ */
+function entered(
+  state: GameState,
+  setup: GameSetup,
+  cast: Cast,
+  play: GamePlay,
+  event: PlayEvent
+): PlayEvent | undefined {
+  const id = event.player.id
+  const out = event.replacedPlayer?.id
+  let replaced = out
+  if (out != null) {
+    const before = cast.waiting.get(out)
+    if (before != null) {
+      replaced = before.replaced
+      cast.waiting.delete(out)
+    } else if (cast.appeared.has(out)) {
+      cast.left.set(out, cast.appeared.get(out))
+      cast.appeared.delete(out)
+    }
+  }
+  if (id === replaced) {
+    cast.appeared.set(id, cast.left.get(id))
+    return undefined
+  }
+  const batting = play.about.halfInning === 'top' ? 'away' : 'home'
+  const running = event.position === 'PR'
+  if (
+    sideOfPlayer(state, setup, id) === batting &&
+    (running || battersOf(play).includes(id))
+  )
+    return {
+      ...announce(
+        state,
+        setup,
+        cast,
+        id,
+        replaced,
+        running,
+        slotOf(event),
+        event.count
+      ),
+      index: event.index
+    }
+  cast.appeared.delete(id)
+  cast.waiting.set(id, { replaced, slot: slotOf(event) })
+  return undefined
+}
+
+/**
+ * A change to the fielders written where the scorer made it. The man it
+ * puts in the field appears there, so one who had not appeared since he came
+ * in is a defensive substitution even when he was already in the order.
+ */
+function fielded(
+  state: GameState,
+  setup: GameSetup,
+  cast: Cast,
+  event: PlayEvent
+): PlayEvent {
+  const id = event.player.id
+  const fresh = !cast.appeared.has(id)
+  if (fresh) succeeds(cast, id, cast.waiting.get(id)?.replaced)
+  cast.waiting.delete(id)
+  cast.appeared.set(id, cast.appeared.get(id))
+  cast.pinch.delete(id)
+  const codes = cast.codes[sideOfPlayer(state, setup, id)]
+  const slot = slotOf(event)
+  const position = POSITIONS.find(known => known === event.position)
+  if (event.details.code !== 'defensive_switch') {
+    if (fresh && slot > 0) enteringCode(codes, id, slot)
+    return event
+  }
+  if (fresh && position != null) {
+    const holder = event.replacedPlayer
+    return withoutUndefined({
+      ...event,
+      details: {
+        description: defensiveSubstitutionSaid(
+          playerOf(state, setup, id)?.fullName ?? event.player.fullName,
+          holder == null
+            ? undefined
+            : (playerOf(state, setup, holder.id)?.fullName ?? holder.fullName),
+          position
+        ),
+        code: 'defensive_substitution'
+      },
+      battingOrder: slot > 0 ? enteringCode(codes, id, slot) : undefined
+    })
+  }
+  const known = codes.get(id)
+  return withoutUndefined({
+    ...event,
+    battingOrder:
+      slot === 0
+        ? undefined
+        : String(
+            known != null && Math.floor(known / 100) === slot
+              ? known
+              : slot * 100
+          )
+  })
+}
+
+/**
+ * A change of batting order, naming only the men who have appeared: one
+ * still waiting is announced where he first appears, so a reorder that moves
+ * only such men is not written.
+ */
+function reordered(
+  state: GameState,
+  setup: GameSetup,
+  cast: Cast,
+  event: PlayEvent
+): PlayEvent | undefined {
+  const all = event.moved ?? []
+  const moved = all.filter(({ player }) => !cast.waiting.has(player.id))
+  if (moved.length === all.length) return event
+  if (moved.length === 0) return undefined
+  return {
+    ...event,
+    details: {
+      ...event.details,
+      description: battingOrderSaid(
+        moved.map(({ player, bats }) => ({
+          name: playerOf(state, setup, player.id)?.fullName ?? player.fullName,
+          bats
+        }))
+      )
+    },
+    player: moved[0].player
+  }
+}
+
+/**
+ * What the side in the field announces at the start of the first play of
+ * its half: the net change to its fielders since it last left the field —
+ * as the half before began, when that half's first play opened — to its
+ * first pitch or action here. Every change it made in between, at bat or at
+ * the break, is folded in, so a change it undid is not written, and a man
+ * who never pitched is never announced. The game's first half has nothing
+ * before it: the lineups it begins with are the reference. Null when this
+ * play is not the first of its half, or a play the reference needs was not
+ * scored here.
+ */
+function takingTheField(
+  state: GameState,
+  plays: readonly GamePlay[],
+  at: number,
+  play: GamePlay,
+  cast: Cast
+): PlayEvent[] | null {
+  if (at === 0) return null
+  const last = plays[at - 1]
+  if (last.about.halfInning === play.about.halfInning) return null
+  let first = at - 1
+  while (
+    first > 0 &&
+    plays[first - 1].about.halfInning === last.about.halfInning &&
+    plays[first - 1].about.inning === last.about.inning
+  )
+    first--
+  const lineups = plays[first].lineups
+  const was = first === 0 ? lineups?.began : lineups?.opened
+  const now = play.lineups?.began
+  if (was == null || now == null) return null
+  const side: Side = play.about.halfInning === 'top' ? 'home' : 'away'
+  const codes = cast.codes[side]
+  const changes = fieldingChanges(
+    state,
+    was[side],
+    now[side],
+    cast.appeared,
+    codes,
+    (id, holder) => leavingFor(cast, was[side], now[side], id, holder)
+  )
+  for (const change of changes) {
+    const id = change.player.id
+    if (!cast.appeared.has(id)) {
+      const slot = now[side].battingOrder.indexOf(id) + 1
+      if (slot > 0) enteringCode(codes, id, slot)
+      cast.appeared.set(id, undefined)
+      succeeds(cast, id, cast.waiting.get(id)?.replaced)
+    }
+    cast.waiting.delete(id)
+    cast.pinch.delete(id)
+  }
+  return changes.map((change, index) =>
+    withoutUndefined({
+      index,
+      isPitch: false,
+      type: 'action',
+      details: {
+        description: change.description,
+        code: change.eventType,
+        fromPosition: change.fromPosition
+      },
+      isSubstitution: true,
+      position: change.position,
+      battingOrder: change.battingOrder,
+      replacedPlayer: change.replacedPlayer,
+      count: { balls: 0, strikes: 0, outs: 0 },
+      player: change.player
+    })
+  )
+}
+
 /**
  * The engine's events a stored play keeps, and where each lands. MLB writes
  * no event for a runner the ball in play moved: his entry points at the
  * in-play pitch, as the engine's does already. The engine also writes an
  * event for each runner the scorer moves or puts out while a play is being
  * decided — the batter caught on a fly, a runner sent home on a double — and
- * those are left out, so every event after one moves up.
+ * those are left out, so every event after one moves up. So is a change to
+ * a side's fielders that MLB announces when it takes the field
+ * (`fieldsLater`), and a man put in an order who has not appeared yet
+ * (`entered`). In the first play a side fields, the net of those changes
+ * comes first; in a play a waiting man bats in, his announcement follows;
+ * and a waiting man placed on base is announced just after he is placed.
  */
 interface StoredEvents {
+  /**
+   * Written first: the net change the side in the field announces, and the
+   * waiting man coming to bat.
+   */
+  carried: PlayEvent[]
   kept: PlayEvent[]
+  /** Announcements written just after the kept event at an engine index. */
+  after: Map<number, PlayEvent[]>
   /** The stored index of the engine's event at `index`. */
   indexOf: (index: number) => number
 }
-function storedEvents(play: GamePlay): StoredEvents {
-  const kept = play.playEvents.filter(event => {
+
+/**
+ * The stored events of `play`, the game's play at `at`, with `cast` as the
+ * plays before it left it; `plays` is read only before `at`.
+ */
+function eventsOfPlay(
+  state: GameState,
+  setup: GameSetup,
+  plays: readonly GamePlay[],
+  at: number,
+  play: GamePlay,
+  cast: Cast
+): StoredEvents {
+  const lineups = play.lineups
+  if (lineups != null) {
+    // The lineups the game begins with, or the first play scored here opens
+    // with, announce nobody; whoever has left since is out of the game.
+    const seen = cast.seeded
+      ? lineups.opened
+      : at === 0
+        ? lineups.began
+        : lineups.opened
+    const present = new Set(
+      (['away', 'home'] as const).flatMap(side => [
+        ...seen[side].battingOrder,
+        ...Object.values(seen[side].defense)
+      ])
+    )
+    if (!cast.seeded)
+      for (const id of present) if (id != null) cast.appeared.set(id, undefined)
+    cast.seeded = true
+    for (const id of [...cast.appeared.keys()])
+      if (!present.has(id)) cast.appeared.delete(id)
+    for (const id of [...cast.waiting.keys()])
+      if (!present.has(id)) cast.waiting.delete(id)
+  }
+  const taking = takingTheField(state, plays, at, play, cast)
+  const carried = [...(taking ?? [])]
+  const batter = battersOf(play)[0]
+  const waiting = cast.waiting.get(batter)
+  if (waiting != null) {
+    const batting = play.about.halfInning === 'top' ? 'away' : 'home'
+    const slot =
+      (lineups?.opened[batting].battingOrder.indexOf(batter) ?? -1) + 1
+    const previous = at > 0 ? plays[at - 1] : undefined
+    const outs =
+      previous?.about.inning === play.about.inning &&
+      previous.about.halfInning === play.about.halfInning
+        ? previous.count.outs
+        : 0
+    carried.push(
+      announce(
+        state,
+        setup,
+        cast,
+        batter,
+        waiting.replaced,
+        false,
+        slot > 0 ? slot : waiting.slot,
+        { balls: 0, strikes: 0, outs }
+      )
+    )
+  }
+  const kept: PlayEvent[] = []
+  const after = new Map<number, PlayEvent[]>()
+  for (const event of play.playEvents) {
     const linked = event.details.runnerEntry
-    return linked == null || play.runners[linked]?.details.byAction === true
-  })
+    if (linked != null && play.runners[linked]?.details.byAction !== true)
+      continue
+    if (event.isSubstitution === true) {
+      if (fieldsLater(state, setup, play, event, taking != null)) continue
+      const code = event.details.code
+      const written =
+        code === 'offensive_substitution'
+          ? entered(state, setup, cast, play, event)
+          : FIELDING_CHANGES.has(code)
+            ? fielded(state, setup, cast, event)
+            : code === 'gs_batting_order'
+              ? reordered(state, setup, cast, event)
+              : event
+      if (written != null) kept.push(written)
+      continue
+    }
+    kept.push(event)
+    const placed = cast.waiting.get(event.player.id)
+    if (event.details.code === 'placed_runner' && placed != null)
+      after.set(event.index, [
+        announce(
+          state,
+          setup,
+          cast,
+          event.player.id,
+          placed.replaced,
+          true,
+          placed.slot,
+          event.count
+        )
+      ])
+  }
   return {
+    carried,
     kept,
-    indexOf: index => kept.filter(event => event.index < index).length
+    after,
+    indexOf: index =>
+      carried.length +
+      kept
+        .filter(event => event.index < index)
+        .reduce(
+          (count, event) => count + 1 + (after.get(event.index)?.length ?? 0),
+          0
+        )
+  }
+}
+
+function emptyCast(): Cast {
+  return {
+    appeared: new Map(),
+    waiting: new Map(),
+    left: new Map(),
+    pinch: new Map(),
+    place: new Map(),
+    lastIn: new Map(),
+    codes: { away: new Map(), home: new Map() },
+    seeded: false
   }
 }
 
@@ -693,13 +1252,79 @@ function playEventsOf(
 ): Array<Record<string, unknown>> {
   const who = (ref: PlayerRef): Person => person(state, setup, ref)
   const scores = scoresAfter(play)
+  // The side in the field announces its changes as it takes the field,
+  // before the first pitch.
+  const written = events.carried.map(event =>
+    substitutionDocument(event, who, scoreBefore(play))
+  )
   let pitchNumber = 0
-  return events.kept.map(event => {
+  for (const event of events.kept) {
     const made = entriesOf(play, event)
-    const written = event.isPitch
-      ? pitchDocument(event, ++pitchNumber, made, who, hitDataOf(play))
-      : actionDocument(state, setup, play, event, made, scores[event.index])
-    return { ...written, index: events.indexOf(event.index) }
+    const score = scores[event.index]
+    written.push(
+      event.isPitch
+        ? pitchDocument(event, ++pitchNumber, made, who, hitDataOf(play))
+        : event.isSubstitution === true
+          ? substitutionDocument(event, who, score)
+          : actionDocument(state, setup, play, event, made, score)
+    )
+    for (const announced of events.after.get(event.index) ?? [])
+      written.push(substitutionDocument(announced, who, score))
+  }
+  return written.map((event, index) => ({ ...event, index }))
+}
+
+/** The substitutions the feed writes `battingOrder` and `replacedPlayer` on. */
+const ORDERED_SUBSTITUTIONS: ReadonlySet<string> = new Set([
+  'offensive_substitution',
+  'defensive_switch'
+])
+
+/**
+ * A lineup change as the feed writes it: who came in or moved, to which
+ * position, and the announcement. A pinch hitter and a defensive switch also
+ * carry the player's place in the order and the player he replaced; a
+ * pitching change and a defensive substitution carry neither, as in the feed.
+ * A change of batting order alone is GameStation's own `gs_batting_order`.
+ * A change to a side's fielders made while it bats is written where the feed
+ * writes it, as the net change at the start of the first play that side
+ * fields (`takingTheField`), and a man put in the order where he first
+ * appears (`Cast`).
+ */
+function substitutionDocument(
+  event: PlayEvent,
+  who: (ref: PlayerRef) => Person,
+  score: Score
+): Record<string, unknown> {
+  const eventType = event.details.code
+  const position =
+    event.position == null ? undefined : GAME_POSITIONS.get(event.position)
+  const ordered = ORDERED_SUBSTITUTIONS.has(eventType)
+  return withoutUndefined({
+    index: event.index,
+    isPitch: false,
+    isSubstitution: true,
+    type: 'action',
+    details: {
+      description: event.details.description,
+      event: mlbEventName(eventType),
+      eventType,
+      awayScore: score.away,
+      homeScore: score.home,
+      isScoringPlay: false,
+      isOut: false,
+      hasReview: false
+    },
+    count: { ...event.count },
+    player: who(event.player),
+    position: position == null ? undefined : { ...position },
+    battingOrder: ordered ? event.battingOrder : undefined,
+    replacedPlayer:
+      ordered && event.replacedPlayer != null
+        ? who(event.replacedPlayer)
+        : undefined,
+    startTime: null,
+    endTime: null
   })
 }
 
@@ -777,6 +1402,11 @@ export const HIGHLIGHT_CREDITED = {
     'defensive_indiff',
     'other_advance',
     'runner_placed',
+    'pitching_substitution',
+    'offensive_substitution',
+    'defensive_substitution',
+    'defensive_switch',
+    'gs_batting_order',
     'final_score'
   ])
 } as const satisfies Record<string, ReadonlySet<string>>
@@ -847,15 +1477,42 @@ function highlightCredits(
 
 // ---- Documents ----
 
+const HANDS = { L: 'Left', R: 'Right' } as const
+
+/**
+ * The batter, the side he stood on, and the pitcher, with the hand the
+ * pitcher throws with when the roster says it.
+ */
+function matchupOf(
+  state: GameState,
+  setup: GameSetup,
+  play: GamePlay
+): Record<string, unknown> {
+  const side = play.matchup.batSide.code
+  const pitcher = play.matchup.pitcher
+  const throws = (
+    state.gameData.players[pitcher.id] ?? setup.players[pitcher.id]
+  )?.throws
+  const hand = throws == null ? null : throws === 'left' ? 'L' : 'R'
+  return {
+    batter: person(state, setup, play.matchup.batter),
+    batSide: { code: side, description: HANDS[side] },
+    pitcher: person(state, setup, pitcher),
+    ...(hand == null
+      ? {}
+      : { pitchHand: { code: hand, description: HANDS[hand] } })
+  }
+}
+
 function documentBody(
   state: GameState,
   play: GamePlay,
-  stamp: PlayStamp
+  stamp: PlayStamp,
+  events: StoredEvents
 ): Record<string, unknown> {
   const setup = stamp.setupBefore
-  const who = (ref: PlayerRef): Person => person(state, setup, ref)
-  const events = storedEvents(play)
   const runners = runnersOf(state, setup, play, events)
+  const playEvents = playEventsOf(state, setup, play, events)
   return {
     about: {
       atBatIndex: play.about.atBatIndex,
@@ -870,19 +1527,15 @@ function documentBody(
       endTime: stamp.endTime ?? null
     },
     count: { ...play.count },
-    matchup: {
-      batter: who(play.matchup.batter),
-      pitcher: who(play.matchup.pitcher),
-      batSide: { code: play.matchup.batSide.code }
-    },
+    matchup: matchupOf(state, setup, play),
     runners,
-    playEvents: playEventsOf(state, setup, play, events),
-    pitchIndex: events.kept
-      .filter(event => event.isPitch)
-      .map(event => events.indexOf(event.index)),
-    actionIndex: events.kept
-      .filter(event => !event.isPitch)
-      .map(event => events.indexOf(event.index)),
+    playEvents,
+    pitchIndex: playEvents
+      .filter(event => event.isPitch === true)
+      .map(event => event.index),
+    actionIndex: playEvents
+      .filter(event => event.isPitch !== true)
+      .map(event => event.index),
     runnerIndex: runners.map((runner, i) => i),
     gameStation: {
       version: 1,
@@ -909,66 +1562,139 @@ function resultIsOut(play: GamePlay): boolean {
   )
 }
 
-/** A completed play, ready to store. */
+/**
+ * Folds a game's plays into stored plays, carrying the `Cast` from each play
+ * to the next, so folding every play of a game is one pass over it rather
+ * than one from the game's start for each. Each play is folded with the
+ * `Cast` as the plays before it left it. Plays asked for in the game's order
+ * cost one step each; asking for an earlier play starts over.
+ */
+export class PlayFolder {
+  /** Every step any folder has taken a `Cast` through a play, for tests. */
+  static steps = 0
+  private cast = emptyCast()
+  /** How many of the game's plays `cast` has been carried past. */
+  private through = 0
+
+  constructor(private readonly state: GameState) {}
+
+  /** A completed play, ready to store. */
+  play(play: GamePlay, stamp: PlayStamp): GumboPlay {
+    return asGumboPlay(
+      withoutUndefined({
+        ...this.body(play, stamp),
+        result: {
+          type: 'atBat',
+          event: eventName(playEventType(play), play),
+          eventType: playEventType(play),
+          description: play.result.description,
+          rbi: play.result.rbi,
+          awayScore: play.result.awayScore,
+          homeScore: play.result.homeScore,
+          isOut: resultIsOut(play)
+        },
+        credits: highlightCredits(this.state, stamp.setupBefore, play)
+      })
+    )
+  }
+
+  /**
+   * The at-bat in progress: no outcome and no score, because it has none
+   * yet. When the batter due is on base there is no play, and the record
+   * rides on a play that names only its place in the game.
+   */
+  current(play: GamePlay | null, stamp: PlayStamp): CurrentPlay {
+    const state = this.state
+    if (play == null) {
+      const line = state.liveData.linescore
+      return asCurrentPlay({
+        about: {
+          atBatIndex: state.liveData.plays.allPlays.length,
+          inning: line.currentInning,
+          halfInning: line.isTopInning ? 'top' : 'bottom',
+          isTopInning: line.isTopInning,
+          isComplete: false,
+          hasOut: false,
+          hasReview: false
+        },
+        gameStation: {
+          version: 1,
+          setupBefore: stamp.setupBefore,
+          actions: stamp.actions
+        }
+      })
+    }
+    const body = this.body(play, stamp)
+    return asCurrentPlay(
+      withoutUndefined({
+        ...body,
+        about: { ...(body.about as object), isComplete: false }
+      })
+    )
+  }
+
+  private body(play: GamePlay, stamp: PlayStamp): Record<string, unknown> {
+    return documentBody(
+      this.state,
+      play,
+      stamp,
+      this.eventsOf(stamp.setupBefore, play)
+    )
+  }
+
+  /** The play's stored events: the `Cast` carried up to it, then the play. */
+  private eventsOf(setup: GameSetup, play: GamePlay): StoredEvents {
+    const state = this.state
+    const all = state.liveData.plays.allPlays
+    const index = play.about.atBatIndex
+    let at = all[index]?.about.atBatIndex === index ? index : -1
+    if (at < 0) {
+      at = all.findIndex(earlier => earlier.about.atBatIndex === index)
+      if (at < 0) at = all.length
+    }
+    if (at < this.through) {
+      this.cast = emptyCast()
+      this.through = 0
+    }
+    for (; this.through < at; this.through++) {
+      PlayFolder.steps++
+      eventsOfPlay(
+        state,
+        setup,
+        all,
+        this.through,
+        all[this.through],
+        this.cast
+      )
+    }
+    PlayFolder.steps++
+    const events = eventsOfPlay(state, setup, all, at, play, this.cast)
+    // The play is the game's play at `at`, as it stands, so the cast is now
+    // carried past it; the at-bat in progress is not among them.
+    this.through = at < all.length ? at + 1 : Number.POSITIVE_INFINITY
+    return events
+  }
+}
+
+/**
+ * A completed play, ready to store. Folding more than one play of a game
+ * goes through one `PlayFolder`.
+ */
 export function documentOf(
   state: GameState,
   play: GamePlay,
   stamp: PlayStamp
 ): GumboPlay {
-  return asGumboPlay(
-    withoutUndefined({
-      ...documentBody(state, play, stamp),
-      result: {
-        type: 'atBat',
-        event: eventName(playEventType(play), play),
-        eventType: playEventType(play),
-        description: play.result.description,
-        rbi: play.result.rbi,
-        awayScore: play.result.awayScore,
-        homeScore: play.result.homeScore,
-        isOut: resultIsOut(play)
-      },
-      credits: highlightCredits(state, stamp.setupBefore, play)
-    })
-  )
+  return new PlayFolder(state).play(play, stamp)
 }
 
-/**
- * The at-bat in progress: no outcome and no score, because it has none yet.
- * When the batter due is on base there is no play, and the record rides on a
- * play that names only its place in the game.
- */
+/** The at-bat in progress, or the place of one whose batter is on base. */
 export function currentDocumentOf(
   state: GameState,
   play: GamePlay | null,
   stamp: PlayStamp
 ): CurrentPlay {
-  if (play == null) {
-    const line = state.liveData.linescore
-    return asCurrentPlay({
-      about: {
-        atBatIndex: state.liveData.plays.allPlays.length,
-        inning: line.currentInning,
-        halfInning: line.isTopInning ? 'top' : 'bottom',
-        isTopInning: line.isTopInning,
-        isComplete: false,
-        hasOut: false,
-        hasReview: false
-      },
-      gameStation: {
-        version: 1,
-        setupBefore: stamp.setupBefore,
-        actions: stamp.actions
-      }
-    })
-  }
-  const body = documentBody(state, play, stamp)
-  return asCurrentPlay(
-    withoutUndefined({
-      ...body,
-      about: { ...(body.about as object), isComplete: false }
-    })
-  )
+  return new PlayFolder(state).current(play, stamp)
 }
 
 /** The last play of a game, at index 9999: its final score. */
