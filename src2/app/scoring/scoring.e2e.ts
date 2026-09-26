@@ -52,6 +52,8 @@ const base = process.env.GS_SCORING_TEST_URL ?? 'http://127.0.0.1:8080'
 let browser: Browser
 /** Leaves every save unanswered, as a server that never replies would. */
 let holdSaves = false
+/** The away team's name in the mocked game, when a test needs another. */
+let awayTeamName: string | undefined
 async function open(
   path: string,
   scored: boolean | number = false,
@@ -176,6 +178,7 @@ async function open(
         scored === false
           ? {
               ...game,
+              ...(awayTeamName == null ? {} : { awayTeamName }),
               videos: uiAnimations
                 ? [
                     {
@@ -4377,6 +4380,134 @@ describe('scoring browser', function () {
       }
     })
   }
+  for (const [width, height] of [
+    [390, 844],
+    [844, 390]
+  ])
+    it(`names the teams inside a full-width Away/Home pill at ${width}×${height}`, async function () {
+      const { page } = await open('/games/g1/score')
+      const box = async (
+        selector: string
+      ): Promise<{ x: number; y: number; width: number; height: number }> =>
+        await page.$eval(selector, n => {
+          const r = n.getBoundingClientRect()
+          return { x: r.x, y: r.y, width: r.width, height: r.height }
+        })
+      try {
+        await page.setViewport({ width, height })
+        await click(page, 'Open scoring menu')
+        await click(page, 'Set Team Rosters')
+        await page.waitForSelector('[data-testid="Roster selector captions"]')
+        await new Promise(resolve => setTimeout(resolve, 300))
+        const footer = await box('[data-testid="Roster footer"]')
+        const away = await box('[aria-label="Away Team"]')
+        const home = await box('[aria-label="Home Team"]')
+        expect(away.x).closeTo(footer.x, 1)
+        expect(home.x + home.width).closeTo(footer.x + footer.width, 1)
+        expect(
+          await page.$eval('[aria-label="Away Team"]', n => n.textContent)
+        ).equals('Owls')
+        expect(
+          await page.$eval('[aria-label="Home Team"]', n => n.textContent)
+        ).equals('Hawks')
+        // "Away" and "Home" sit above their halves, centred on them.
+        const captions = await page.$$eval(
+          '[data-testid="Roster selector captions"] > * > *',
+          nodes =>
+            nodes.map(n => {
+              const r = n.getBoundingClientRect()
+              return {
+                text: n.textContent,
+                centre: r.x + r.width / 2,
+                bottom: r.bottom
+              }
+            })
+        )
+        expect(captions.map(c => c.text)).deep.equals(['Away', 'Home'])
+        expect(captions[0].centre).closeTo(away.x + away.width / 2, 2)
+        expect(captions[1].centre).closeTo(home.x + home.width / 2, 2)
+        for (const caption of captions)
+          expect(caption.bottom).at.most(Math.min(away.y, home.y))
+        // No team name stands on its own outside the pill.
+        const loose = await page.$$eval(
+          'body *',
+          nodes =>
+            nodes.filter(
+              n =>
+                n.children.length === 0 &&
+                ['Owls', 'Hawks'].includes(String(n.textContent)) &&
+                n.closest('[role="tab"]') == null
+            ).length
+        )
+        expect(loose).equals(0)
+        // Both pills show whole inside the editor's top area.
+        const top = await box('[data-testid="Roster editor top"]')
+        for (const tab of ['Away Team', 'Set Lineup', 'Set Defense']) {
+          const r = await box(`[aria-label="${tab}"]`)
+          expect(r.y).at.least(top.y - 0.5)
+          expect(r.y + r.height).at.most(top.y + top.height + 0.5)
+        }
+        if (process.env.GS_SCORING_ARTIFACT_DIR != null)
+          await page.screenshot({
+            path: `${process.env.GS_SCORING_ARTIFACT_DIR}/roster-pill-${width}.png`
+          })
+        // Tapping the right half picks the home team; dragging back picks away.
+        const lineup = async (): Promise<string> =>
+          await page.$eval('[aria-label="Batting lineup"]', n =>
+            String(n.textContent)
+          )
+        const awayLineup = await lineup()
+        await click(page, 'Home Team')
+        await page.waitForSelector(
+          '[aria-label="Home Team"][aria-selected="true"]'
+        )
+        expect(await lineup()).not.equals(awayLineup)
+        // Measured again: choosing a side can scroll the top of the editor.
+        const from = await box('[aria-label="Home Team"]')
+        const to = await box('[aria-label="Away Team"]')
+        await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2)
+        await page.mouse.down()
+        await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, {
+          steps: 8
+        })
+        await page.mouse.up()
+        await page.waitForSelector(
+          '[aria-label="Away Team"][aria-selected="true"]'
+        )
+        expect(await lineup()).equals(awayLineup)
+        await click(page, 'Cancel')
+      } finally {
+        await page.close()
+      }
+    })
+  it('keeps a long team name on one line inside its half of the pill', async function () {
+    awayTeamName = 'The Extremely Long Named Visiting Squadron'
+    const { page } = await open('/games/g1/score')
+    try {
+      await page.setViewport({ width: 390, height: 844 })
+      await click(page, 'Open scoring menu')
+      await click(page, 'Set Team Rosters')
+      await page.waitForSelector('[data-testid="Roster selector captions"]')
+      await new Promise(resolve => setTimeout(resolve, 300))
+      const sizes = await page.$$eval('[role="tab"]', nodes =>
+        nodes.slice(0, 2).map(n => {
+          const r = n.getBoundingClientRect()
+          const text = n.firstElementChild!.getBoundingClientRect()
+          return { width: r.width, height: r.height, textHeight: text.height }
+        })
+      )
+      expect(sizes[0].width).closeTo(sizes[1].width, 1)
+      expect(sizes[0].height).closeTo(sizes[1].height, 1)
+      expect(sizes[0].textHeight).closeTo(sizes[1].textHeight, 1)
+      expect(
+        await page.$eval('[aria-label="Away Team"]', n => n.textContent)
+      ).equals(awayTeamName)
+      await click(page, 'Cancel')
+    } finally {
+      awayTeamName = undefined
+      await page.close()
+    }
+  })
   it('roster flow keeps compact selectors and footer visible while full cards animate between columns', async function () {
     const { page } = await open(
       '/games/g1/score',
@@ -4429,9 +4560,14 @@ describe('scoring browser', function () {
           hasTouch: true
         })
         await new Promise(resolve => setTimeout(resolve, 250))
-        expect((await rect('[aria-label="Away Team"]')).width).lessThan(140)
-        expect((await rect('[aria-label="Set Lineup"]')).height).equals(36)
         const footer = await rect('[data-testid="Roster footer"]')
+        // The team pill spans the editor, one half per team.
+        const awayTab = await rect('[aria-label="Away Team"]')
+        const homeTab = await rect('[aria-label="Home Team"]')
+        expect(awayTab.x).closeTo(footer.x, 1)
+        expect(homeTab.x + homeTab.width).closeTo(footer.x + footer.width, 1)
+        expect(awayTab.width).closeTo(homeTab.width, 1)
+        expect((await rect('[aria-label="Set Lineup"]')).height).equals(36)
         expect(footer.bottom).at.most(height)
         expect(height - footer.bottom).lessThan(30)
         for (const label of ['Roster players', 'Batting lineup']) {

@@ -23,6 +23,8 @@ export const rosterSegmentAt = (
   )
 export function RosterSelector({
   labels,
+  captions,
+  accessibilityLabels,
   labelPrefix = '',
   compact = false,
   fitContent = false,
@@ -30,6 +32,10 @@ export function RosterSelector({
   onChange
 }: {
   labels: string[]
+  /** One caption per segment, shown in a row above the pill. */
+  captions?: string[]
+  /** Each tab's accessible name, when it differs from its visible label. */
+  accessibilityLabels?: string[]
   labelPrefix?: string
   compact?: boolean
   fitContent?: boolean
@@ -140,12 +146,14 @@ export function RosterSelector({
         ]}
       />
       {labels.map((label, index) => (
+        // Labels can be team names, which repeat or are empty: key by place.
         <Pressable
-          key={label}
+          key={index}
           accessibilityRole="tab"
           hitSlop={fitContent ? { top: 6, bottom: 6 } : undefined}
           accessibilityLabel={
-            labelPrefix === '' ? label : `${labelPrefix} ${label}`
+            accessibilityLabels?.[index] ??
+            (labelPrefix === '' ? label : `${labelPrefix} ${label}`)
           }
           accessibilityState={{ selected: value === index }}
           aria-selected={value === index}
@@ -155,7 +163,7 @@ export function RosterSelector({
           style={{
             width: fitContent ? undefined : `${100 / count}%`,
             minWidth: fitContent ? labelWidth + 24 : undefined,
-            paddingHorizontal: fitContent ? 12 : 0,
+            paddingHorizontal: fitContent ? 12 : 8,
             minHeight: fitContent ? 36 : compact ? 40 : 48,
             alignSelf: fitContent ? 'center' : undefined,
             justifyContent: 'center',
@@ -170,6 +178,8 @@ export function RosterSelector({
                 )
             }}
             selectable={false}
+            numberOfLines={1}
+            ellipsizeMode="tail"
             style={{
               fontFamily: theme.semiBoldTextFont,
               color:
@@ -198,9 +208,37 @@ export function RosterSelector({
       {content}
     </RosterSelectorDrag>
   )
-  return fitContent ? (
+  const pill = fitContent ? (
     <View style={{ alignSelf: 'center', paddingVertical: 6 }}>{control}</View>
   ) : (
     control
+  )
+  if (captions == null) return pill
+  // The captions are their own row, outside the pill and its drag area, each
+  // as wide as the segment under it so it sits centred over that segment.
+  return (
+    <View style={{ gap: 4 }}>
+      <View testID="Roster selector captions" style={{ flexDirection: 'row' }}>
+        {captions.map((caption, index) => (
+          <View
+            key={index}
+            style={{ width: `${100 / count}%`, alignItems: 'center' }}
+          >
+            <Text
+              selectable={false}
+              numberOfLines={1}
+              style={{
+                fontFamily: theme.regularTextFont,
+                fontSize: 13,
+                color: theme.secondaryTextColor
+              }}
+            >
+              {caption}
+            </Text>
+          </View>
+        ))}
+      </View>
+      {pill}
+    </View>
   )
 }
